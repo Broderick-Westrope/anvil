@@ -47,14 +47,9 @@ func newHeader(com *common.Common) *header {
 // after the theme changes.
 func (h *header) refresh() {
 	t := h.com.Styles
-	isHyper := h.com.IsHyper()
-	name := "ANVIL"
-	if isHyper {
-		name = "HYPERANVIL"
-	}
 	gradA, gradB := logo.RandomPalette()
 	h.gradRamp = lipgloss.Blend1D(64, gradA, gradB)
-	h.compactLogo = styles.ApplyBoldForegroundGrad(t.Header.LogoGradCanvas, name, gradA, gradB) + " "
+	h.compactLogo = styles.ApplyBoldForegroundGrad(t.Header.LogoGradCanvas, "ANVIL", gradA, gradB) + " "
 	// Force drawHeader to re-render the wide logo on the next frame.
 	h.width = 0
 	h.logo = ""
