@@ -127,7 +127,7 @@ func quickStyle(o quickStyleOpts) Styles {
 			StylePrimitive: ansi.StylePrimitive{
 				// BlockPrefix: "\n",
 				// BlockSuffix: "\n",
-				Color: hex(o.fgSubtle),
+				Color: hex(o.fgMoreSubtle),
 			},
 			// Margin: new(uint(defaultMargin)),
 		},
