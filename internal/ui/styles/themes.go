@@ -2,11 +2,6 @@ package styles
 
 import "image/color"
 
-// ThemeForProvider returns the TokyoNight theme regardless of provider.
-func ThemeForProvider(_ string) Styles {
-	return TokyoNight()
-}
-
 // tn constructs a TokyoNight palette color from RGB components.
 func tn(r, g, b uint8) color.Color {
 	return color.RGBA{R: r, G: g, B: b, A: 0xFF}
