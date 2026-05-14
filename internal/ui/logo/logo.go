@@ -44,12 +44,12 @@ func sparkGlyph(pos int) rune {
 	return sparkGlyphs[int(h)%len(sparkGlyphs)]
 }
 
-// sparkField builds a decorative field string of exactly n cells. offset is
+// SparkField builds a decorative field string of exactly n cells. offset is
 // the absolute start position for this row, so every row draws from a
 // completely independent region — no tiling, no shifted duplicates.
 // ramp is a pre-computed gradient; each non-space character is assigned a
 // random stop from it via a secondary hash of the same position.
-func sparkField(n, offset int, ramp []color.Color) string {
+func SparkField(n, offset int, ramp []color.Color) string {
 	if n <= 0 {
 		return ""
 	}
@@ -69,6 +69,13 @@ func sparkField(n, offset int, ramp []color.Color) string {
 		sb.WriteString(lipgloss.NewStyle().Foreground(ramp[colorIdx]).Render(string(ch)))
 	}
 	return sb.String()
+}
+
+// RandomPalette returns the stable-random gradient pair for this session,
+// drawn from the built-in ANVIL palette pool.
+func RandomPalette() (a, b color.Color) {
+	p := titlePalettes[cachedRandN(len(titlePalettes))]
+	return p.a, p.b
 }
 
 // Opts are the options for rendering the Anvil title art.
@@ -146,7 +153,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 		// Use a different row offset for each field line so they don't repeat.
 		const rowStride = 1024
 		mkField := func(row int) string {
-			return sparkField(crushWidth, row*rowStride, fieldRamp)
+			return SparkField(crushWidth, row*rowStride, fieldRamp)
 		}
 		return strings.Join([]string{mkField(0), mkField(1), crush, mkField(2), ""}, "\n")
 	}
@@ -158,7 +165,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	const rowStride = 1024
 	leftField := new(strings.Builder)
 	for i := range fieldHeight {
-		fmt.Fprintln(leftField, sparkField(leftWidth, i*rowStride, fieldRamp))
+		fmt.Fprintln(leftField, SparkField(leftWidth, i*rowStride, fieldRamp))
 	}
 
 	// Right field — steps down one cell per row, different offset per row.
@@ -166,7 +173,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	rightField := new(strings.Builder)
 	for i := range fieldHeight {
 		width := max(0, rightWidth-i)
-		fmt.Fprint(rightField, sparkField(width, i*rowStride+7, fieldRamp), "\n")
+		fmt.Fprint(rightField, SparkField(width, i*rowStride+7, fieldRamp), "\n")
 	}
 
 	// Return the wide version.
@@ -202,7 +209,7 @@ func SmallRender(t *styles.Styles, width int, o Opts) string {
 	title := styles.ApplyBoldForegroundGrad(t.Logo.GradCanvas, "Anvil", gradA, gradB)
 	remainingWidth := width - lipgloss.Width(title) - 1 // 1 for the space
 	if remainingWidth > 0 {
-		title = fmt.Sprintf("%s %s", title, sparkField(remainingWidth, 0, fieldRamp))
+		title = fmt.Sprintf("%s %s", title, SparkField(remainingWidth, 0, fieldRamp))
 	}
 	return title
 }
