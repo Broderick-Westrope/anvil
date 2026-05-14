@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/skills"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
@@ -470,6 +471,12 @@ func (w *ClientWorkspace) MarkProjectInitialized() error {
 
 func (w *ClientWorkspace) InitializePrompt() (string, error) {
 	return w.client.GetInitializePrompt(context.Background(), w.workspaceID())
+}
+
+// -- Skills --
+
+func (w *ClientWorkspace) SkillStates() []*skills.SkillState {
+	return nil
 }
 
 // -- MCP operations --

@@ -78,6 +78,7 @@ type Coordinator interface {
 	Summarize(context.Context, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
+	SkillStates() []*skills.SkillState
 }
 
 type coordinator struct {
@@ -94,8 +95,9 @@ type coordinator struct {
 	agents       map[string]SessionAgent
 
 	// Skills discovery results (session-start snapshot).
-	allSkills    []*skills.Skill // Pre-filter: all discovered after dedup.
-	activeSkills []*skills.Skill // Post-filter: active skills only.
+	allSkills    []*skills.Skill      // Pre-filter: all discovered after dedup.
+	activeSkills []*skills.Skill      // Post-filter: active skills only.
+	skillStates  []*skills.SkillState // Combined builtin + user states.
 	skillTracker *skills.Tracker
 
 	readyWg errgroup.Group
@@ -113,7 +115,7 @@ func NewCoordinator(
 	notify pubsub.Publisher[notify.Notification],
 ) (Coordinator, error) {
 	// Discover skills once at session start.
-	allSkills, activeSkills := discoverSkills(cfg)
+	allSkills, activeSkills, skillStates := discoverSkills(cfg)
 	skillTracker := skills.NewTracker(activeSkills)
 
 	c := &coordinator{
@@ -128,6 +130,7 @@ func NewCoordinator(
 		agents:       make(map[string]SessionAgent),
 		allSkills:    allSkills,
 		activeSkills: activeSkills,
+		skillStates:  skillStates,
 		skillTracker: skillTracker,
 	}
 
@@ -1178,11 +1181,18 @@ func (c *coordinator) updateParentSessionCost(ctx context.Context, childSessionI
 	return nil
 }
 
+// SkillStates returns the combined builtin and user skill discovery states
+// captured at session start.
+func (c *coordinator) SkillStates() []*skills.SkillState {
+	return c.skillStates
+}
+
 // discoverSkills runs the skill discovery pipeline and returns both the
-// pre-filter (all discovered, after dedup) and post-filter (active) lists.
-// It also emits a single diagnostic log line summarising the outcome to
-// help track skill-loading health over time.
-func discoverSkills(cfg *config.ConfigStore) (allSkills, activeSkills []*skills.Skill) {
+// pre-filter (all discovered, after dedup) and post-filter (active) lists,
+// plus the combined per-file discovery states. It also emits a single
+// diagnostic log line summarising the outcome to help track skill-loading
+// health over time.
+func discoverSkills(cfg *config.ConfigStore) (allSkills, activeSkills []*skills.Skill, allStates []*skills.SkillState) {
 	builtin, builtinStates := skills.DiscoverBuiltinWithStates()
 	discovered := append([]*skills.Skill(nil), builtin...)
 
@@ -1213,8 +1223,10 @@ func discoverSkills(cfg *config.ConfigStore) (allSkills, activeSkills []*skills.
 	}
 	activeSkills = skills.Filter(allSkills, disabledSkills)
 
+	allStates = append(builtinStates, userStates...)
+
 	logDiscoveryStats(builtin, builtinStates, userStates, userPaths, allSkills, activeSkills, disabledSkills)
-	return allSkills, activeSkills
+	return allSkills, activeSkills, allStates
 }
 
 // logTurnSkillUsage emits a per-turn diagnostic line showing which skills
