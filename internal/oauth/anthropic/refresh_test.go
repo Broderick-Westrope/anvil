@@ -17,11 +17,10 @@ func TestRefreshViaEndpoint_Success(t *testing.T) {
 	expiry := time.Now().Add(1 * time.Hour).Unix()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodPost, r.Method)
-		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		require.Equal(t, "application/x-www-form-urlencoded", r.Header.Get("Content-Type"))
 
-		var body map[string]string
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		require.Equal(t, "refresh_token", body["grant_type"])
+		require.NoError(t, r.ParseForm())
+		require.Equal(t, "refresh_token", r.FormValue("grant_type"))
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck

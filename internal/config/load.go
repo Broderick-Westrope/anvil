@@ -265,9 +265,15 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			prepared.SetupAnthropic()
 		case p.ID == catwalk.InferenceProviderCopilot && config.OAuthToken != nil:
 			prepared.SetupGitHubCopilot()
-		case p.ID == catwalk.InferenceProviderAnthropic &&
-			config.OAuthToken == nil && prepared.APIKey == "":
-			// Auto-detect credentials written by the Claude CLI.
+		case p.ID == catwalk.InferenceProviderAnthropic && config.OAuthToken == nil:
+			// Auto-detect credentials when no API key is configured.
+			// Note: prepared.APIKey holds the raw template (e.g.
+			// "$ANTHROPIC_API_KEY"), so we must resolve it to check
+			// whether the user actually has a key set.
+			resolvedKey, _ := resolver.ResolveValue(prepared.APIKey)
+			if resolvedKey != "" {
+				break // User has an API key — skip auto-detect.
+			}
 			token, err := anthropicoauth.ReadCredentials()
 			if err != nil {
 				slog.Warn("Failed to read Anthropic OAuth credentials", "error", err)

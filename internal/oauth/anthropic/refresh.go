@@ -1,16 +1,17 @@
 package anthropic
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/crush/internal/oauth"
@@ -37,27 +38,26 @@ func clientID() string {
 }
 
 // refreshViaEndpoint exchanges a refresh token for a new access token by
-// calling the Anthropic OAuth token endpoint.
+// calling the Anthropic OAuth token endpoint. Uses form-urlencoded
+// encoding matching the Claude CLI's format.
 func refreshViaEndpoint(ctx context.Context, refreshToken string) (*oauth.Token, error) {
-	reqBody, err := json.Marshal(map[string]string{
-		"grant_type":    "refresh_token",
-		"client_id":     clientID(),
-		"refresh_token": refreshToken,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshaling refresh request: %w", err)
+	formData := url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {clientID()},
+		"refresh_token": {refreshToken},
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(
-		ctx, http.MethodPost, tokenEndpoint, bytes.NewReader(reqBody),
+		ctx, http.MethodPost, tokenEndpoint,
+		strings.NewReader(formData.Encode()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating refresh request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
