@@ -1181,10 +1181,10 @@ func (c *coordinator) updateParentSessionCost(ctx context.Context, childSessionI
 	return nil
 }
 
-// SkillStates returns the combined builtin and user skill discovery states
-// captured at session start.
+// SkillStates returns a copy of the combined builtin and user skill
+// discovery states captured at session start.
 func (c *coordinator) SkillStates() []*skills.SkillState {
-	return c.skillStates
+	return slices.Clone(c.skillStates)
 }
 
 // discoverSkills runs the skill discovery pipeline and returns both the
@@ -1223,7 +1223,9 @@ func discoverSkills(cfg *config.ConfigStore) (allSkills, activeSkills []*skills.
 	}
 	activeSkills = skills.Filter(allSkills, disabledSkills)
 
-	allStates = append(builtinStates, userStates...)
+	allStates = make([]*skills.SkillState, 0, len(builtinStates)+len(userStates))
+	allStates = append(allStates, builtinStates...)
+	allStates = append(allStates, userStates...)
 
 	logDiscoveryStats(builtin, builtinStates, userStates, userPaths, allSkills, activeSkills, disabledSkills)
 	return allSkills, activeSkills, allStates
