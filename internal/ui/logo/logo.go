@@ -28,35 +28,47 @@ var sparkGlyphs = []rune{
 	' ', ' ', ' ', ' ', ' ', ' ', ' ', '·', '✧', '✦',
 }
 
-// sparkPatternLen is kept prime so the pattern avoids obvious repeats at
-// common terminal widths.
-const sparkPatternLen = 127
-
-// sparkSeq is a single random sequence generated once per process. Every call
-// to sparkField indexes into it, giving a stable-per-session but visually
-// random field that never obviously tiles.
-var sparkSeq = sync.OnceValue(func() []rune {
-	seed := uint64(cachedRandN(1 << 30))
-	rng := rand.New(rand.NewPCG(seed, seed^0xdeadbeef))
-	out := make([]rune, sparkPatternLen)
-	for i := range out {
-		out[i] = sparkGlyphs[rng.IntN(len(sparkGlyphs))]
-	}
-	return out
+// sparkSeed is a per-session random value mixed into all position hashes so
+// the field looks different on every launch.
+var sparkSeed = sync.OnceValue(func() uint32 {
+	return uint32(cachedRandN(1 << 30))
 })
 
-// sparkField builds a decorative field string of exactly n cells. offset
-// shifts the start position in the sequence so different rows look distinct.
-func sparkField(n, offset int) string {
+// sparkGlyph maps an absolute cell position to a glyph by hashing the
+// position with the session seed. Each cell is independent — no tiling.
+func sparkGlyph(pos int) rune {
+	h := (sparkSeed() ^ uint32(pos)) * 2654435761
+	h ^= h >> 16
+	h += h << 3
+	h ^= h >> 4
+	return sparkGlyphs[int(h)%len(sparkGlyphs)]
+}
+
+// sparkField builds a decorative field string of exactly n cells. offset is
+// the absolute start position for this row, so every row draws from a
+// completely independent region — no tiling, no shifted duplicates.
+// ramp is a pre-computed gradient; each non-space character is assigned a
+// random stop from it via a secondary hash of the same position.
+func sparkField(n, offset int, ramp []color.Color) string {
 	if n <= 0 {
 		return ""
 	}
-	pat := sparkSeq()
-	out := make([]rune, n)
+	var sb strings.Builder
 	for i := range n {
-		out[i] = pat[(offset+i)%sparkPatternLen]
+		pos := offset + i
+		ch := sparkGlyph(pos)
+		if ch == ' ' {
+			sb.WriteByte(' ')
+			continue
+		}
+		// Secondary hash for color — different multiplier avoids correlation
+		// with the glyph selection hash.
+		h := (sparkSeed() ^ uint32(pos)) * 2246822519
+		h ^= h >> 16
+		colorIdx := int(h) % len(ramp)
+		sb.WriteString(lipgloss.NewStyle().Foreground(ramp[colorIdx]).Render(string(ch)))
 	}
-	return string(out)
+	return sb.String()
 }
 
 // Opts are the options for rendering the Anvil title art.
@@ -111,6 +123,10 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 		colorA, colorB = p.a, p.b
 	}
 
+	// Pre-compute a gradient ramp shared by all field rows.
+	const gradSteps = 64
+	fieldRamp := lipgloss.Blend1D(gradSteps, colorA, colorB)
+
 	crushWidth := lipgloss.Width(crush)
 	b := new(strings.Builder)
 	for r := range strings.SplitSeq(crush, "\n") {
@@ -128,21 +144,21 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	// Narrow / sidebar version.
 	if compact {
 		// Use a different row offset for each field line so they don't repeat.
-		const rowStride = 17
+		const rowStride = 1024
 		mkField := func(row int) string {
-			return fg(o.FieldColor, sparkField(crushWidth, row*rowStride))
+			return sparkField(crushWidth, row*rowStride, fieldRamp)
 		}
 		return strings.Join([]string{mkField(0), mkField(1), crush, mkField(2), ""}, "\n")
 	}
 
 	fieldHeight := lipgloss.Height(crush)
 
-	// Left field — each row uses a different sequence offset.
+	// Left field — each row draws from a non-overlapping position range.
 	const leftWidth = 6
-	const rowStride = 17
+	const rowStride = 1024
 	leftField := new(strings.Builder)
 	for i := range fieldHeight {
-		fmt.Fprintln(leftField, fg(o.FieldColor, sparkField(leftWidth, i*rowStride)))
+		fmt.Fprintln(leftField, sparkField(leftWidth, i*rowStride, fieldRamp))
 	}
 
 	// Right field — steps down one cell per row, different offset per row.
@@ -150,7 +166,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	rightField := new(strings.Builder)
 	for i := range fieldHeight {
 		width := max(0, rightWidth-i)
-		fmt.Fprint(rightField, fg(o.FieldColor, sparkField(width, i*rowStride+7)), "\n")
+		fmt.Fprint(rightField, sparkField(width, i*rowStride+7, fieldRamp), "\n")
 	}
 
 	// Return the wide version.
@@ -181,10 +197,12 @@ func SmallRender(t *styles.Styles, width int, o Opts) string {
 		gradA, gradB = p.a, p.b
 	}
 
+	fieldRamp := lipgloss.Blend1D(64, gradA, gradB)
+
 	title := styles.ApplyBoldForegroundGrad(t.Logo.GradCanvas, "Anvil", gradA, gradB)
 	remainingWidth := width - lipgloss.Width(title) - 1 // 1 for the space
 	if remainingWidth > 0 {
-		title = fmt.Sprintf("%s %s", title, t.Logo.SmallDiagonals.Render(sparkField(remainingWidth, 0)))
+		title = fmt.Sprintf("%s %s", title, sparkField(remainingWidth, 0, fieldRamp))
 	}
 	return title
 }
