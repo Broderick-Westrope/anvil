@@ -48,42 +48,37 @@ in priority order.
 
 ## Phases
 
-### Phase 0: Anthropic OAuth (Blocker)
+### Phase 0: Anthropic OAuth ✅ DONE
 
-**Priority:** Critical — cannot use Crush without this.
-**Effort:** Medium (1-2 days)
+**Completed:** 2026-05-14
 
-Without Anthropic subscription auth, the harness is unusable for daily work.
+Implemented as a piggyback approach reading Claude CLI's stored OAuth
+credentials, rather than an independent device flow. Key decisions made
+during grilling:
 
-#### 0.1 Anthropic OAuth Device Flow
+- **Piggyback, not own PKCE flow** — reads from macOS Keychain
+  (`$USER` and `claude-code-user` accounts) and
+  `~/.claude/.credentials.json`. Requires Claude CLI to be installed
+  and authenticated.
+- **Token refresh chain** — re-read from disk → Anthropic endpoint
+  (form-urlencoded) → headless Claude CLI fallback.
+- **System prompt transform** — two modes (A: keep in system[], B: move
+  to user message), toggled via `CRUSH_ANTHROPIC_SYSTEM_MODE`.
+- **Billing header** — injected as system message text with CCH hash.
+- **MCP tool PascalCase rename** — presentation-layer only for billing
+  validation.
+- **OAuth preferred over API key** — when both exist, OAuth wins (free
+  vs per-token).
+- **Cost zeroing** via existing `flat_rate` mechanism.
 
-Implement a proper Anthropic OAuth device flow in `internal/oauth/anthropic/`,
-following the pattern established by Copilot and Hyper OAuth. This gives Crush
-its own first-class auth flow rather than piggybacking on Claude CLI tokens.
+See `plans/design-2026-05-14-anthropic-oauth.md` for full spec.
 
-- Implement device authorization grant flow against Anthropic's OAuth
-  endpoints.
-- Token persistence to config (matching existing `OAuthToken` pattern).
-- Token refresh before expiry + 401 retry logic (already exists in
-  coordinator for other providers).
-- TUI dialog for the device flow (3-state: initializing, display code,
-  success/error — same pattern as `dialog/oauth_copilot.go`).
-- Inject `Authorization: Bearer <token>` + required Anthropic billing
-  headers (`anthropic-beta`, `x-app`, user-agent).
-- Set model costs to zero when using subscription.
-
-#### 0.2 macOS Keychain Fallback (Optional Enhancement)
-
-As a secondary auth method, read from macOS Keychain to piggyback on Claude
-CLI's stored credentials. Lower priority since the device flow is
-self-sufficient, but useful as a fallback for users who already have Claude CLI
-installed.
-
-- Read from Keychain via `security find-generic-password`.
-- Cache with TTL + auto-refresh.
-- Only attempt on darwin.
-
-**Exit criteria:** Can run Crush against Anthropic subscription models.
+**Known limitations:**
+- Claude CLI v2.1.139+ stores tokens in encrypted Electron storage;
+  keychain `claudeAiOauth` is only populated after running `claude`.
+- Anthropic refresh endpoint is behind Cloudflare which blocks Go's
+  `net/http` TLS fingerprint; falls back to headless CLI refresh.
+- Own PKCE browser flow deferred (future enhancement if needed).
 
 ---
 
