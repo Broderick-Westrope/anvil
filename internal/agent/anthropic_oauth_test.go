@@ -27,38 +27,33 @@ func anthropicProviderCfg(withOAuth bool) config.ProviderConfig {
 func TestIsAnthropicOAuth(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name     string
+	tests := map[string]struct {
 		cfg      config.ProviderConfig
 		expected bool
 	}{
-		{
-			name:     "anthropic with OAuth token",
+		"anthropic with OAuth token": {
 			cfg:      anthropicProviderCfg(true),
 			expected: true,
 		},
-		{
-			name:     "anthropic without OAuth token",
+		"anthropic without OAuth token": {
 			cfg:      anthropicProviderCfg(false),
 			expected: false,
 		},
-		{
-			name: "openai with OAuth token",
+		"openai with OAuth token": {
 			cfg: config.ProviderConfig{
 				Type:       catwalk.TypeOpenAI,
 				OAuthToken: &oauth.Token{AccessToken: "token"},
 			},
 			expected: false,
 		},
-		{
-			name:     "empty provider config",
+		"empty provider config": {
 			cfg:      config.ProviderConfig{},
 			expected: false,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tt.expected, isAnthropicOAuth(tt.cfg))
 		})
