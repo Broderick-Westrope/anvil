@@ -48,23 +48,7 @@ type oauthFields struct {
 	ExpiresAt    int64  `json:"expiresAt"`
 }
 
-// opencodeAuthJSON represents the OpenCode/BroCode auth.json format at
-// ~/.local/share/opencode/auth.json.
-type opencodeAuthJSON struct {
-	Anthropic *opencodeOAuthEntry `json:"anthropic,omitempty"`
-}
 
-// opencodeOAuthEntry holds the OAuth token in OpenCode's format.
-type opencodeOAuthEntry struct {
-	Type    string `json:"type"`
-	Access  string `json:"access"`
-	Refresh string `json:"refresh"`
-	Expires int64  `json:"expires"` // Milliseconds since epoch.
-}
-
-// OpenCodeAuthPath is the path to OpenCode's auth store, relative to
-// XDG_DATA_HOME (or ~/.local/share).
-const OpenCodeAuthPath = "opencode/auth.json"
 
 // parseCredentials parses raw JSON bytes (from keychain or file) into an
 // oauth.Token. Supports both flat and nested claudeAiOauth formats.
@@ -99,52 +83,6 @@ func parseCredentials(data []byte) (*oauth.Token, error) {
 	token.SetExpiresIn()
 
 	return token, nil
-}
-
-// parseOpenCodeAuth parses OpenCode/BroCode auth.json format into an
-// oauth.Token. The expires field is in milliseconds since epoch.
-func parseOpenCodeAuth(data []byte) (*oauth.Token, error) {
-	var auth opencodeAuthJSON
-	if err := json.Unmarshal(data, &auth); err != nil {
-		return nil, fmt.Errorf("parsing opencode auth: %w", err)
-	}
-
-	if auth.Anthropic == nil || auth.Anthropic.Access == "" {
-		return nil, nil //nolint:nilnil // No Anthropic entry — not an error.
-	}
-
-	// OpenCode stores expires in milliseconds; convert to seconds.
-	expiresAtSec := auth.Anthropic.Expires / 1000
-
-	token := &oauth.Token{
-		AccessToken:  auth.Anthropic.Access,
-		RefreshToken: auth.Anthropic.Refresh,
-		ExpiresAt:    expiresAtSec,
-	}
-	token.SetExpiresIn()
-
-	return token, nil
-}
-
-// readOpenCodeAuth reads the OpenCode/BroCode auth.json file from
-// $XDG_DATA_HOME/opencode/auth.json (defaults to
-// ~/.local/share/opencode/auth.json). Returns nil, nil if not found.
-func readOpenCodeAuth() ([]byte, error) {
-	dataDir := os.Getenv("XDG_DATA_HOME")
-	if dataDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("resolving home directory: %w", err)
-		}
-		dataDir = filepath.Join(home, ".local", "share")
-	}
-
-	path := filepath.Join(dataDir, OpenCodeAuthPath)
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	return data, err
 }
 
 // readKeychain reads the Claude CLI credential from the macOS keychain.
@@ -220,7 +158,6 @@ func ReadCredentials() (*oauth.Token, error) {
 		{"keychain($USER)", func() ([]byte, error) { return readKeychain(os.Getenv("USER")) }, nil},
 		{"keychain(claude-code-user)", func() ([]byte, error) { return readKeychain(KeychainAccountAlt) }, nil},
 		{"~/.claude/.credentials.json", readCredentialsFile, nil},
-		{"opencode/auth.json", readOpenCodeAuth, parseOpenCodeAuth},
 	}
 
 	for _, src := range sources {
