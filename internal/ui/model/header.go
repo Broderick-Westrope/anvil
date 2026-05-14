@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -9,13 +10,13 @@ import (
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/ui/common"
+	"github.com/charmbracelet/crush/internal/ui/logo"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
 
 const (
-	headerDiag           = "╱"
 	minHeaderDiags       = 3
 	leftPadding          = 1
 	rightPadding         = 1
@@ -26,6 +27,7 @@ type header struct {
 	// cached logo and compact logo
 	logo        string
 	compactLogo string
+	gradRamp    []color.Color
 
 	com     *common.Common
 	width   int
@@ -45,17 +47,9 @@ func newHeader(com *common.Common) *header {
 // after the theme changes.
 func (h *header) refresh() {
 	t := h.com.Styles
-	isHyper := h.com.IsHyper()
-	charm := "Charm™"
-	if !isHyper {
-		charm = " " + charm
-	}
-	name := "CRUSH"
-	if isHyper {
-		name = "HYPERCRUSH"
-	}
-	h.compactLogo = t.Header.Charm.Render(charm) + " " +
-		styles.ApplyBoldForegroundGrad(t.Header.LogoGradCanvas, name, t.Header.LogoGradFromColor, t.Header.LogoGradToColor) + " "
+	gradA, gradB := logo.RandomPalette()
+	h.gradRamp = lipgloss.Blend1D(64, gradA, gradB)
+	h.compactLogo = styles.ApplyBoldForegroundGrad(t.Header.LogoGradCanvas, "ANVIL", gradA, gradB) + " "
 	// Force drawHeader to re-render the wide logo on the next frame.
 	h.width = 0
 	h.logo = ""
@@ -73,7 +67,7 @@ func (h *header) drawHeader(
 ) {
 	t := h.com.Styles
 	if width != h.width || compact != h.compact {
-		h.logo = renderLogo(h.com.Styles, compact, h.com.IsHyper(), width)
+		h.logo = renderLogo(h.com.Styles, compact, width)
 	}
 
 	h.width = width
@@ -113,9 +107,7 @@ func (h *header) drawHeader(
 		diagToDetailsSpacing
 
 	if remainingWidth > 0 {
-		b.WriteString(t.Header.Diagonals.Render(
-			strings.Repeat(headerDiag, max(minHeaderDiags, remainingWidth)),
-		))
+		b.WriteString(logo.SparkField(max(minHeaderDiags, remainingWidth), 0, h.gradRamp))
 		b.WriteString(" ")
 	}
 

@@ -500,23 +500,6 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 		c.Options.DisableDefaultProviders, _ = strconv.ParseBool(str)
 	}
 
-	if c.Options.Attribution == nil {
-		c.Options.Attribution = &Attribution{
-			TrailerStyle:  TrailerStyleAssistedBy,
-			GeneratedWith: true,
-		}
-	} else if c.Options.Attribution.TrailerStyle == "" {
-		// Migrate deprecated co_authored_by or apply default
-		if c.Options.Attribution.CoAuthoredBy != nil {
-			if *c.Options.Attribution.CoAuthoredBy {
-				c.Options.Attribution.TrailerStyle = TrailerStyleCoAuthoredBy
-			} else {
-				c.Options.Attribution.TrailerStyle = TrailerStyleNone
-			}
-		} else {
-			c.Options.Attribution.TrailerStyle = TrailerStyleAssistedBy
-		}
-	}
 	c.Options.InitializeAs = cmp.Or(c.Options.InitializeAs, defaultInitializeAs)
 }
 

@@ -61,8 +61,6 @@ const (
 type Styles struct {
 	// Header
 	Header struct {
-		Charm             lipgloss.Style // Style for "Charm™" label
-		Diagonals         lipgloss.Style // Style for diagonal separators (╱)
 		Percentage        lipgloss.Style // Style for context percentage
 		Hypercredit       lipgloss.Style // Style for Hypercredit count (◆ N)
 		Keystroke         lipgloss.Style // Style for keystroke hints (e.g., "ctrl+d")
@@ -136,16 +134,12 @@ type Styles struct {
 
 	// Logo
 	Logo struct {
-		FieldColor         color.Color
 		TitleColorA        color.Color
 		TitleColorB        color.Color
-		CharmColor         color.Color
 		VersionColor       color.Color
-		SmallCharm         lipgloss.Style // "Charm™" label in SmallRender
-		SmallDiagonals     lipgloss.Style // Diagonal line fill in SmallRender
 		GradCanvas         lipgloss.Style // Blank canvas for gradient painting
-		SmallGradFromColor color.Color    // Small "Crush" wordmark gradient start
-		SmallGradToColor   color.Color    // Small "Crush" wordmark gradient end
+		SmallGradFromColor color.Color    // Small "Anvil" wordmark gradient start
+		SmallGradToColor   color.Color    // Small "Anvil" wordmark gradient end
 	}
 
 	// Working indicator gradient (spinners/shimmers on assistant "thinking",
@@ -242,7 +236,9 @@ type Styles struct {
 		SectionHeader    lipgloss.Style
 
 		// Thinking section styles
-		ThinkingBox            lipgloss.Style // Background for thinking content
+		ThinkingBox            lipgloss.Style // Left-border container for thinking content
+		ThinkingLabel          lipgloss.Style // "Thinking:" prefix label (italic, primary color)
+		ThinkingLine           lipgloss.Style // Italic style applied to each thinking content line
 		ThinkingTruncationHint lipgloss.Style // "… (N lines hidden)" hint
 		ThinkingFooterTitle    lipgloss.Style // "Thought for" text
 		ThinkingFooterDuration lipgloss.Style // Duration value

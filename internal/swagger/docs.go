@@ -2593,20 +2593,6 @@ const docTemplate = `{
                 }
             }
         },
-        "config.Attribution": {
-            "type": "object",
-            "properties": {
-                "co_authored_by": {
-                    "type": "boolean"
-                },
-                "generated_with": {
-                    "type": "boolean"
-                },
-                "trailer_style": {
-                    "$ref": "#/definitions/config.TrailerStyle"
-                }
-            }
-        },
         "config.Completions": {
             "type": "object",
             "properties": {
@@ -2859,19 +2845,6 @@ const docTemplate = `{
                 }
             }
         },
-        "config.TrailerStyle": {
-            "type": "string",
-            "enum": [
-                "none",
-                "co-authored-by",
-                "assisted-by"
-            ],
-            "x-enum-varnames": [
-                "TrailerStyleNone",
-                "TrailerStyleCoAuthoredBy",
-                "TrailerStyleAssistedBy"
-            ]
-        },
         "csync.Map-string-config_ProviderConfig": {
             "type": "object"
         },
@@ -2926,9 +2899,6 @@ const docTemplate = `{
         "github_com_charmbracelet_crush_internal_config.Options": {
             "type": "object",
             "properties": {
-                "attribution": {
-                    "$ref": "#/definitions/config.Attribution"
-                },
                 "auto_lsp": {
                     "type": "boolean"
                 },

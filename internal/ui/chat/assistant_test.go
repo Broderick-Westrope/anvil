@@ -16,7 +16,7 @@ import (
 func TestAssistantMessageItemExpandable(t *testing.T) {
 	t.Parallel()
 
-	sty := styles.CharmtonePantera()
+	sty := styles.TokyoNight()
 	msg := &message.Message{ID: "m1", Role: message.Assistant}
 	item := NewAssistantMessageItem(&sty, msg)
 
@@ -34,7 +34,7 @@ func TestAssistantMessageItemExpandable(t *testing.T) {
 func TestAssistantMessageItemHandleMouseClick(t *testing.T) {
 	t.Parallel()
 
-	sty := styles.CharmtonePantera()
+	sty := styles.TokyoNight()
 	msg := &message.Message{ID: "m2", Role: message.Assistant}
 	item := NewAssistantMessageItem(&sty, msg).(*AssistantMessageItem)
 	item.thinkingBoxHeight = 5

@@ -143,7 +143,7 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 	sidebarLogo := m.sidebarLogo
 	if height < logoHeightBreakpoint {
 		sidebarLogo = logo.SmallRender(m.com.Styles, width, logo.Opts{
-			Hyper: m.com.IsHyper(),
+			RandomColor: true,
 		})
 	}
 	blocks := []string{
