@@ -34,9 +34,6 @@ func PascalCaseToolName(name string) string {
 		return name
 	}
 	rest := name[len(prefix):]
-	if len(rest) == 0 {
-		return name
-	}
 	runes := []rune(rest)
 	runes[0] = unicode.ToUpper(runes[0])
 	return prefix + string(runes)

@@ -4,9 +4,9 @@ import (
 	"strings"
 )
 
-// DefaultBetas is the set of Anthropic beta flags sent with every OAuth
+// defaultBetas is the set of Anthropic beta flags sent with every OAuth
 // request.
-var DefaultBetas = []string{
+var defaultBetas = []string{
 	"claude-code-20250219",
 	"oauth-2025-04-20",
 	"interleaved-thinking-2025-05-14",
@@ -15,10 +15,11 @@ var DefaultBetas = []string{
 
 // BetasForModel returns the beta flags appropriate for the given model ID.
 // Haiku models exclude the interleaved-thinking beta. Models in the 4-6 or
-// 4-7 family additionally include the effort beta.
+// 4-7 family additionally include the effort beta. A fresh slice is
+// returned on every call to prevent callers from mutating the defaults.
 func BetasForModel(modelID string) []string {
-	result := make([]string, 0, len(DefaultBetas)+1)
-	for _, b := range DefaultBetas {
+	result := make([]string, 0, len(defaultBetas)+1)
+	for _, b := range defaultBetas {
 		if strings.Contains(modelID, "haiku") && b == "interleaved-thinking-2025-05-14" {
 			continue
 		}

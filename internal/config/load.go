@@ -272,6 +272,7 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			if err != nil {
 				slog.Warn("Failed to read Anthropic OAuth credentials", "error", err)
 			} else if token != nil {
+				slog.Info("Auto-detected Anthropic OAuth credentials from Claude CLI")
 				prepared.OAuthToken = token
 				prepared.SetupAnthropic()
 			}

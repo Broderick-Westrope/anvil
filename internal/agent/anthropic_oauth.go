@@ -44,11 +44,7 @@ func anthropicSystemMode() string {
 // transformForAnthropicOAuth rewrites messages for Anthropic OAuth billing
 // compliance. It prepends a billing header and identity prefix, using the
 // mode selected by anthropicSystemMode.
-func transformForAnthropicOAuth(
-	messages []fantasy.Message,
-	_ string,
-	_ string,
-) []fantasy.Message {
+func transformForAnthropicOAuth(messages []fantasy.Message) []fantasy.Message {
 	switch anthropicSystemMode() {
 	case SystemModeB:
 		return transformModeB(messages)

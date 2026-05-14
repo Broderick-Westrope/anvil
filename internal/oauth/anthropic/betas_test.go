@@ -12,7 +12,7 @@ func TestBetasForModel_Default(t *testing.T) {
 
 	// A generic model should receive all four default betas.
 	betas := BetasForModel("claude-3-sonnet-20240229")
-	require.Equal(t, DefaultBetas, betas)
+	require.Equal(t, defaultBetas, betas)
 }
 
 func TestBetasForModel_Haiku(t *testing.T) {
@@ -27,7 +27,7 @@ func TestBetasForModel_Haiku(t *testing.T) {
 	}
 
 	// All other default betas must be present.
-	for _, d := range DefaultBetas {
+	for _, d := range defaultBetas {
 		if d == "interleaved-thinking-2025-05-14" {
 			continue
 		}
@@ -45,7 +45,7 @@ func TestBetasForModel_46(t *testing.T) {
 
 	// Should still include all default betas (including interleaved-thinking,
 	// since this is not a haiku model).
-	for _, d := range DefaultBetas {
+	for _, d := range defaultBetas {
 		require.Contains(t, betas, d)
 	}
 }

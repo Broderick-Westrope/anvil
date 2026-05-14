@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -86,6 +86,10 @@ func refreshViaEndpoint(ctx context.Context, refreshToken string) (*oauth.Token,
 		return nil, fmt.Errorf("parsing token response: %w", err)
 	}
 
+	if result.AccessToken == "" {
+		return nil, fmt.Errorf("token endpoint returned empty access token")
+	}
+
 	token := &oauth.Token{
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,
@@ -117,7 +121,10 @@ func refreshViaCLI(ctx context.Context) error {
 // The file is written atomically via a temp file + rename and with 0o600
 // permissions.
 func writeCredentialsFile(token *oauth.Token) error {
-	home := os.Getenv("HOME")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving home directory: %w", err)
+	}
 	dir := filepath.Join(home, ".claude")
 	path := filepath.Join(home, CredentialsFilePath)
 
@@ -198,24 +205,29 @@ func RefreshToken(ctx context.Context, currentToken *oauth.Token) (*oauth.Token,
 	}
 
 	// Step 2: Refresh via the Anthropic token endpoint.
-	newToken, err := refreshViaEndpoint(ctx, currentToken.RefreshToken)
-	if err == nil && newToken != nil {
-		if writeErr := writeCredentialsFile(newToken); writeErr == nil {
+	var endpointErr error
+	newToken, endpointErr := refreshViaEndpoint(ctx, currentToken.RefreshToken)
+	if endpointErr == nil && newToken != nil {
+		if writeErr := writeCredentialsFile(newToken); writeErr != nil {
+			slog.Warn("Failed to persist refreshed token", "error", writeErr)
+		} else {
 			Cache.Invalidate()
 		}
 		return newToken, nil
 	}
 
 	// Step 3: Trigger refresh via the Claude CLI.
-	if cliErr := refreshViaCLI(ctx); cliErr == nil {
+	var cliErr error
+	if cliErr = refreshViaCLI(ctx); cliErr == nil {
 		reread, readErr := ReadCredentials()
 		if readErr == nil && reread != nil {
 			return reread, nil
 		}
 	}
 
-	return nil, errors.New(
-		"token expired and refresh failed; run `claude /login` to " +
+	return nil, fmt.Errorf(
+		"token refresh failed (endpoint: %v, cli: %v); run `claude /login` to "+
 			"re-authenticate, or set ANTHROPIC_API_KEY",
+		endpointErr, cliErr,
 	)
 }

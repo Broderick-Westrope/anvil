@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,7 +125,10 @@ func readKeychain(account string) ([]byte, error) {
 // readCredentialsFile reads $HOME/.claude/.credentials.json.
 // Returns nil, nil if the file does not exist.
 func readCredentialsFile() ([]byte, error) {
-	home := os.Getenv("HOME")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolving home directory: %w", err)
+	}
 	path := filepath.Join(home, CredentialsFilePath)
 
 	data, err := os.ReadFile(path)
@@ -148,7 +152,8 @@ func ReadCredentials() (*oauth.Token, error) {
 	for _, src := range sources {
 		data, err := src()
 		if err != nil {
-			return nil, err
+			slog.Warn("Credential source failed, trying next", "error", err)
+			continue
 		}
 		if data == nil {
 			continue

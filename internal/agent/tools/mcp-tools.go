@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
@@ -105,8 +106,10 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 		return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for creating a new file")
 	}
 
-	// Skip permission for whitelisted Docker MCP tools.
-	if !slices.Contains(whitelistDockerTools, params.Name) {
+	// Skip permission for whitelisted Docker MCP tools. Normalize to
+	// lowercase so the check is unaffected by PascalCase OAuth renames.
+	normalizedName := strings.ToLower(params.Name)
+	if !slices.Contains(whitelistDockerTools, normalizedName) {
 		permissionDescription := fmt.Sprintf("execute %s with the following parameters:", m.Info().Name)
 		p, err := m.permissions.Request(ctx,
 			permission.CreatePermissionRequest{

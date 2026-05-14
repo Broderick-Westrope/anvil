@@ -102,7 +102,7 @@ func TestTransformModeA(t *testing.T) {
 		userMsg("Hello"),
 	}
 
-	result := transformForAnthropicOAuth(messages, "", "")
+	result := transformForAnthropicOAuth(messages)
 
 	// Expect: billing header, identity prefix, then original messages.
 	require.Len(t, result, 4)
@@ -134,7 +134,7 @@ func TestTransformModeA_BillingHeader(t *testing.T) {
 	systemContent := "You are a coding assistant."
 	messages := []fantasy.Message{systemMsg(systemContent)}
 
-	result := transformForAnthropicOAuth(messages, "", "")
+	result := transformForAnthropicOAuth(messages)
 
 	require.NotEmpty(t, result)
 	require.Equal(t, fantasy.MessageRoleSystem, result[0].Role)
@@ -159,7 +159,7 @@ func TestTransformModeB(t *testing.T) {
 		userMsg(userContent),
 	}
 
-	result := transformForAnthropicOAuth(messages, "", "")
+	result := transformForAnthropicOAuth(messages)
 
 	// Expect: billing header, identity prefix, then user message (no system).
 	require.Len(t, result, 3)
