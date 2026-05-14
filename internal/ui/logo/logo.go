@@ -1,4 +1,4 @@
-// Package logo renders a Crush wordmark in a stylized way.
+// Package logo renders the Anvil wordmark in a stylized way.
 package logo
 
 import (
@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"math/rand/v2"
 	"strings"
+	"sync"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/ui/styles"
@@ -16,55 +17,77 @@ import (
 // a given amount via the boolean argument.
 type letterform func(bool) string
 
-const diag = `╱`
+// sparkGlyphs is the weighted pool of runes used to build spark fields.
+// Heavy space weighting keeps the field sparse, like a star field.
+var sparkGlyphs = []rune{
+	' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+	' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+	' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+	' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+	' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+	' ', ' ', ' ', ' ', ' ', ' ', ' ', '·', '✧', '✦',
+}
 
-// Opts are the options for rendering the Crush title art.
+// sparkPatternLen is kept prime so the pattern avoids obvious repeats at
+// common terminal widths.
+const sparkPatternLen = 127
+
+// sparkSeq is a single random sequence generated once per process. Every call
+// to sparkField indexes into it, giving a stable-per-session but visually
+// random field that never obviously tiles.
+var sparkSeq = sync.OnceValue(func() []rune {
+	seed := uint64(cachedRandN(1 << 30))
+	rng := rand.New(rand.NewPCG(seed, seed^0xdeadbeef))
+	out := make([]rune, sparkPatternLen)
+	for i := range out {
+		out[i] = sparkGlyphs[rng.IntN(len(sparkGlyphs))]
+	}
+	return out
+})
+
+// sparkField builds a decorative field string of exactly n cells. offset
+// shifts the start position in the sequence so different rows look distinct.
+func sparkField(n, offset int) string {
+	if n <= 0 {
+		return ""
+	}
+	pat := sparkSeq()
+	out := make([]rune, n)
+	for i := range n {
+		out[i] = pat[(offset+i)%sparkPatternLen]
+	}
+	return string(out)
+}
+
+// Opts are the options for rendering the Anvil title art.
 type Opts struct {
-	FieldColor   color.Color // diagonal lines
+	FieldColor   color.Color // spark field color
 	TitleColorA  color.Color // left gradient ramp point (ignored when RandomColor is set)
 	TitleColorB  color.Color // right gradient ramp point (ignored when RandomColor is set)
-	CharmColor   color.Color // Charm™ text color
 	VersionColor color.Color // version text color
 	Width        int         // width of the rendered logo, used for truncation
-	Hyper        bool        // whether it is Crush or Hypercrush
 
 	// RandomColor picks a gradient from the built-in palette pool at random.
 	// The choice is stable across re-renders unless Unstable is also set.
 	RandomColor bool
 
-	// Unstable re-randomises both the stretched letterform and the color palette
-	// on every render. Mainly for testing/preview; use RandomColor alone in
-	// production to avoid jitter on resize.
+	// Unstable re-randomises the color palette on every render. Mainly for
+	// testing/preview; use RandomColor alone in production to avoid jitter on
+	// resize.
 	Unstable bool
 }
 
-// Render renders the Crush logo. Set the argument to true to render the narrow
-// version, intended for use in a sidebar.
+// Render renders the Anvil logo.
 //
 // The compact argument determines whether it renders compact for the sidebar
 // or wider for the main pane.
 func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
-	charm := "Charm™"
-	if !o.Hyper {
-		charm = " " + charm
-	}
-
 	fg := func(c color.Color, s string) string {
 		return lipgloss.NewStyle().Foreground(c).Render(s)
 	}
 
 	// Title.
 	const spacing = 1
-	var hyperLetterforms []letterform
-	if o.Hyper {
-		hyperLetterforms = []letterform{
-			LetterH,
-			LetterYAlt,
-			LetterP,
-			LetterE,
-			LetterR,
-		}
-	}
 	crushLetterforms := []letterform{
 		LetterA,
 		LetterN,
@@ -72,22 +95,9 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 		LetterI,
 		LetterL,
 	}
-	if o.Hyper && !compact {
-		crushLetterforms = append(hyperLetterforms, crushLetterforms...)
-	}
 
-	stretchIndex := -1 // -1 means no stretching.
-	if !compact && !o.Unstable {
-		// Always stretch the same letterform, which is picked once at random.
-		stretchIndex = cachedRandN(len(crushLetterforms))
-	} else if !compact && o.Unstable {
-		// Stretch a random letterform on every render.
-		stretchIndex = rand.IntN(len(crushLetterforms))
-	}
-	crush := renderWord(spacing, stretchIndex, crushLetterforms...)
-	if o.Hyper && compact {
-		crush = renderWord(spacing, stretchIndex, hyperLetterforms...) + "\n" + crush
-	}
+	crush := renderWord(spacing, -1, crushLetterforms...)
+
 	// Resolve the gradient colors, using a random palette if requested.
 	colorA, colorB := o.TitleColorA, o.TitleColorB
 	if o.RandomColor {
@@ -108,52 +118,44 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	}
 	crush = b.String()
 
-	// Charm and version.
-	metaRowGap := 1
-	maxVersionWidth := crushWidth - lipgloss.Width(charm) - metaRowGap
-	version = ansi.Truncate(version, maxVersionWidth, "…") // truncate version if too long.
-	if o.Hyper && compact {
-		version += " "
-	}
-	gap := max(0, crushWidth-lipgloss.Width(charm)-lipgloss.Width(version))
-	metaRow := fg(o.CharmColor, charm) + strings.Repeat(" ", gap) + fg(o.VersionColor, version)
-
-	// Join the meta row and big Crush title.
+	// Version row, right-aligned above the wordmark.
+	version = ansi.Truncate(version, crushWidth, "…")
+	gap := max(0, crushWidth-lipgloss.Width(version))
+	metaRow := strings.Repeat(" ", gap) + fg(o.VersionColor, version)
 	crush = strings.TrimSpace(metaRow + "\n" + crush)
 
-	// Narrow version. If this is Hypercrush, this is also a stacked version.
+	// Narrow / sidebar version.
 	if compact {
-		field := fg(o.FieldColor, strings.Repeat(diag, crushWidth))
-		return strings.Join([]string{field, field, crush, field, ""}, "\n")
+		// Use a different row offset for each field line so they don't repeat.
+		const rowStride = 17
+		mkField := func(row int) string {
+			return fg(o.FieldColor, sparkField(crushWidth, row*rowStride))
+		}
+		return strings.Join([]string{mkField(0), mkField(1), crush, mkField(2), ""}, "\n")
 	}
 
 	fieldHeight := lipgloss.Height(crush)
 
-	// Left field.
+	// Left field — each row uses a different sequence offset.
 	const leftWidth = 6
-	leftFieldRow := fg(o.FieldColor, strings.Repeat(diag, leftWidth))
+	const rowStride = 17
 	leftField := new(strings.Builder)
-	for range fieldHeight {
-		fmt.Fprintln(leftField, leftFieldRow)
+	for i := range fieldHeight {
+		fmt.Fprintln(leftField, fg(o.FieldColor, sparkField(leftWidth, i*rowStride)))
 	}
 
-	// Right field.
+	// Right field — steps down one cell per row, different offset per row.
 	rightWidth := max(15, o.Width-crushWidth-leftWidth-2) // 2 for the gap.
-	const stepDownAt = 0
 	rightField := new(strings.Builder)
 	for i := range fieldHeight {
-		width := rightWidth
-		if i >= stepDownAt {
-			width = rightWidth - (i - stepDownAt)
-		}
-		fmt.Fprint(rightField, fg(o.FieldColor, strings.Repeat(diag, width)), "\n")
+		width := max(0, rightWidth-i)
+		fmt.Fprint(rightField, fg(o.FieldColor, sparkField(width, i*rowStride+7)), "\n")
 	}
 
 	// Return the wide version.
 	const hGap = " "
 	logo := lipgloss.JoinHorizontal(lipgloss.Top, leftField.String(), hGap, crush, hGap, rightField.String())
 	if o.Width > 0 {
-		// Truncate the logo to the specified width.
 		lines := strings.Split(logo, "\n")
 		for i, line := range lines {
 			lines[i] = ansi.Truncate(line, o.Width, "")
@@ -163,18 +165,9 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	return logo
 }
 
-// SmallRender renders a smaller version of the Crush logo, suitable for
+// SmallRender renders a smaller version of the Anvil logo, suitable for
 // smaller windows or sidebar usage.
 func SmallRender(t *styles.Styles, width int, o Opts) string {
-	name := "Anvil"
-	if o.Hyper {
-		name = "HYPERANVIL"
-	}
-	charm := "Charm™"
-	if !o.Hyper {
-		charm = " " + charm
-	}
-
 	gradA, gradB := t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor
 	if o.RandomColor {
 		var idx int
@@ -187,12 +180,10 @@ func SmallRender(t *styles.Styles, width int, o Opts) string {
 		gradA, gradB = p.a, p.b
 	}
 
-	title := t.Logo.SmallCharm.Render(charm)
-	title = fmt.Sprintf("%s %s", title, styles.ApplyBoldForegroundGrad(t.Logo.GradCanvas, name, gradA, gradB))
-	remainingWidth := width - lipgloss.Width(title) - 1 // 1 for the space after the name
+	title := styles.ApplyBoldForegroundGrad(t.Logo.GradCanvas, "Anvil", gradA, gradB)
+	remainingWidth := width - lipgloss.Width(title) - 1 // 1 for the space
 	if remainingWidth > 0 {
-		lines := strings.Repeat("╱", remainingWidth)
-		title = fmt.Sprintf("%s %s", title, t.Logo.SmallDiagonals.Render(lines))
+		title = fmt.Sprintf("%s %s", title, t.Logo.SmallDiagonals.Render(sparkField(remainingWidth, 0)))
 	}
 	return title
 }

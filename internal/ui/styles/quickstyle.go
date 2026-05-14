@@ -679,9 +679,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Logo.FieldColor = o.primary
 	s.Logo.TitleColorA = o.secondary
 	s.Logo.TitleColorB = o.primary
-	s.Logo.CharmColor = o.secondary
 	s.Logo.VersionColor = o.primary
-	s.Logo.SmallCharm = lipgloss.NewStyle().Foreground(o.secondary)
 	s.Logo.SmallDiagonals = lipgloss.NewStyle().Foreground(o.primary)
 	s.Logo.GradCanvas = lipgloss.NewStyle()
 	s.Logo.SmallGradFromColor = o.secondary
@@ -783,7 +781,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	// Thinking section styles
 	s.Messages.ThinkingBox = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(o.fgMostSubtle).
+		BorderForeground(o.bgMostVisible).
 		Padding(0, 1)
 	s.Messages.ThinkingLine = lipgloss.NewStyle().Italic(true)
 	s.Messages.ThinkingLabel = lipgloss.NewStyle().Italic(true).Foreground(o.primary)
