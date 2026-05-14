@@ -129,7 +129,7 @@ type Workspace interface {
 	MarkProjectInitialized() error
 	InitializePrompt() (string, error)
 
-	// Skills
+	// Skills.
 	SkillStates() []*skills.SkillState
 
 	// MCP operations (server-side in client mode)
