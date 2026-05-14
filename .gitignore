@@ -54,3 +54,5 @@ manpages/
 completions/crush.*sh
 .prettierignore
 .task
+
+.opencode/
