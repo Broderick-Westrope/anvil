@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/skills"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -296,6 +297,15 @@ func (w *AppWorkspace) MarkProjectInitialized() error {
 
 func (w *AppWorkspace) InitializePrompt() (string, error) {
 	return agent.InitializePrompt(w.store)
+}
+
+// -- Skills --
+
+func (w *AppWorkspace) SkillStates() []*skills.SkillState {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.SkillStates()
 }
 
 // -- MCP operations --

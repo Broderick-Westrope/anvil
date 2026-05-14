@@ -339,6 +339,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		todoSpinner:         todoSpinner,
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
+		skillStates:         com.Workspace.SkillStates(),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
 		initialSessionID:    initialSessionID,
@@ -643,6 +644,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pubsub.Event[app.LSPEvent]:
 		m.lspStates = app.GetLSPStates()
 	case pubsub.Event[skills.Event]:
+		// NOTE: msg.Payload.States contains only user-discovered states
+		// (not builtins). The initial seed in New() includes both builtin
+		// and user states via Workspace.SkillStates(). This event
+		// currently fires before the subscription is wired (the original
+		// timing bug this branch fixes), so it is effectively dropped.
+		// If the pubsub timing is ever fixed upstream, this handler
+		// should merge with builtins rather than blindly replacing.
 		m.skillStates = msg.Payload.States
 	case pubsub.Event[mcp.Event]:
 		switch msg.Payload.Type {

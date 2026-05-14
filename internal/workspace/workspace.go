@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/skills"
 )
 
 // LSPClientInfo holds information about an LSP client's state. This is
@@ -127,6 +128,9 @@ type Workspace interface {
 	ProjectNeedsInitialization() (bool, error)
 	MarkProjectInitialized() error
 	InitializePrompt() (string, error)
+
+	// Skills.
+	SkillStates() []*skills.SkillState
 
 	// MCP operations (server-side in client mode)
 	MCPGetStates() map[string]mcptools.ClientInfo

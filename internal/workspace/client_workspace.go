@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/skills"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
@@ -470,6 +471,16 @@ func (w *ClientWorkspace) MarkProjectInitialized() error {
 
 func (w *ClientWorkspace) InitializePrompt() (string, error) {
 	return w.client.GetInitializePrompt(context.Background(), w.workspaceID())
+}
+
+// -- Skills --
+
+// SkillStates returns nil in client mode because the remote workspace
+// API does not yet expose a GetSkillStates endpoint. The splash screen
+// will show no skills until this is implemented.
+// TODO: add a proto round-trip once the server exposes skill states.
+func (w *ClientWorkspace) SkillStates() []*skills.SkillState {
+	return nil
 }
 
 // -- MCP operations --
