@@ -11,45 +11,39 @@ import (
 func TestAnvilLetterforms(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name     string
+	tests := map[string]struct {
 		letter   letterform
 		expected string
 	}{
-		{
-			name:   "A",
+		"A": {
 			letter: LetterA,
 			expected: "" +
 				"▄▀▀▀▄\n" +
 				"█▀▀▀█\n" +
 				"▀   ▀",
 		},
-		{
-			name:   "N",
+		"N": {
 			letter: LetterN,
 			expected: "" +
 				"█▄  █\n" +
 				"█ ▀▄█\n" +
 				"▀   ▀",
 		},
-		{
-			name:   "V",
+		"V": {
 			letter: LetterV,
 			expected: "" +
 				"█   █\n" +
 				"▀▄ ▄▀\n" +
 				"  ▀  ",
 		},
-		{
-			name:   "I",
+		"I": {
 			letter: LetterI,
 			expected: "" +
 				"▄▄▄▄▄\n" +
 				"  █  \n" +
 				"▀▀▀▀▀",
 		},
-		{
-			name:   "L",
+		"L": {
 			letter: LetterL,
 			expected: "" +
 				"█    \n" +
@@ -58,24 +52,24 @@ func TestAnvilLetterforms(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			// Static: stretch arg must have no effect.
 			require.Equal(t, tt.letter(false), tt.letter(true),
-				"stretch must be a no-op for static letter %s", tt.name)
+				"stretch must be a no-op for static letter %s", name)
 
 			got := tt.letter(false)
 			require.Equal(t, tt.expected, got)
 
 			// All rows must have the same cell width.
 			rows := strings.Split(got, "\n")
-			require.Len(t, rows, 3, "letter %s must have exactly 3 rows", tt.name)
+			require.Len(t, rows, 3, "letter %s must have exactly 3 rows", name)
 			w0 := lipgloss.Width(rows[0])
 			for i, row := range rows[1:] {
 				require.Equal(t, w0, lipgloss.Width(row),
-					"letter %s row %d width mismatch", tt.name, i+1)
+					"letter %s row %d width mismatch", name, i+1)
 			}
 		})
 	}
@@ -86,21 +80,18 @@ func TestAnvilLetterforms(t *testing.T) {
 func TestAnvilLetterformsConsistentWidth(t *testing.T) {
 	t.Parallel()
 
-	letters := []struct {
-		name string
-		fn   letterform
-	}{
-		{"A", LetterA},
-		{"N", LetterN},
-		{"V", LetterV},
-		{"I", LetterI},
-		{"L", LetterL},
+	letters := map[string]letterform{
+		"A": LetterA,
+		"N": LetterN,
+		"V": LetterV,
+		"I": LetterI,
+		"L": LetterL,
 	}
 
-	want := lipgloss.Width(letters[0].fn(false))
-	for _, l := range letters[1:] {
-		got := lipgloss.Width(l.fn(false))
+	want := lipgloss.Width(letters["A"](false))
+	for name, fn := range letters {
+		got := lipgloss.Width(fn(false))
 		require.Equal(t, want, got,
-			"letter %s has width %d, want %d (same as A)", l.name, got, want)
+			"letter %s has width %d, want %d (same as A)", name, got, want)
 	}
 }

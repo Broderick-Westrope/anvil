@@ -131,7 +131,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 
 	// Title.
 	const spacing = 1
-	crushLetterforms := []letterform{
+	anvilLetterforms := []letterform{
 		LetterA,
 		LetterN,
 		LetterV,
@@ -139,7 +139,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 		LetterL,
 	}
 
-	crush := renderWord(spacing, -1, crushLetterforms...)
+	anvil := renderWord(spacing, -1, anvilLetterforms...)
 
 	// Resolve the gradient colors, using a random palette if requested.
 	colorA, colorB := resolvePalette(o, o.TitleColorA, o.TitleColorB)
@@ -148,31 +148,31 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	const gradSteps = 64
 	fieldRamp := lipgloss.Blend1D(gradSteps, colorA, colorB)
 
-	crushWidth := lipgloss.Width(crush)
+	anvilWidth := lipgloss.Width(anvil)
 	b := new(strings.Builder)
-	for r := range strings.SplitSeq(crush, "\n") {
+	for r := range strings.SplitSeq(anvil, "\n") {
 		fmt.Fprintln(b, styles.ApplyForegroundGrad(base, r, colorA, colorB))
 	}
-	crush = b.String()
+	anvil = b.String()
 
 	// Version row, right-aligned above the wordmark in the right-end gradient color.
-	version = ansi.Truncate(version, crushWidth, "…")
-	gap := max(0, crushWidth-lipgloss.Width(version))
+	version = ansi.Truncate(version, anvilWidth, "…")
+	gap := max(0, anvilWidth-lipgloss.Width(version))
 	metaRow := strings.Repeat(" ", gap) + fg(colorB, version)
-	crush = strings.TrimRight(crush, "\n")
-	crush = metaRow + "\n" + crush
+	anvil = strings.TrimRight(anvil, "\n")
+	anvil = metaRow + "\n" + anvil
 
 	// Narrow / sidebar version.
 	if compact {
 		// Use a different row offset for each field line so they don't repeat.
 		const rowStride = 1024
 		mkField := func(row int) string {
-			return SparkField(crushWidth, row*rowStride, fieldRamp)
+			return SparkField(anvilWidth, row*rowStride, fieldRamp)
 		}
-		return strings.Join([]string{mkField(0), mkField(1), crush, mkField(2), ""}, "\n")
+		return strings.Join([]string{mkField(0), mkField(1), anvil, mkField(2), ""}, "\n")
 	}
 
-	fieldHeight := lipgloss.Height(crush)
+	fieldHeight := lipgloss.Height(anvil)
 
 	// Left field — each row draws from a non-overlapping position range.
 	const leftWidth = 6
@@ -183,7 +183,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	}
 
 	// Right field — steps down one cell per row, different offset per row.
-	rightWidth := max(15, o.Width-crushWidth-leftWidth-2) // 2 for the gap.
+	rightWidth := max(15, o.Width-anvilWidth-leftWidth-2) // 2 for the gap.
 	rightField := new(strings.Builder)
 	for i := range fieldHeight {
 		width := max(0, rightWidth-i)
@@ -192,7 +192,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 
 	// Return the wide version.
 	const hGap = " "
-	logo := lipgloss.JoinHorizontal(lipgloss.Top, leftField.String(), hGap, crush, hGap, rightField.String())
+	logo := lipgloss.JoinHorizontal(lipgloss.Top, leftField.String(), hGap, anvil, hGap, rightField.String())
 	if o.Width > 0 {
 		lines := strings.Split(logo, "\n")
 		for i, line := range lines {
