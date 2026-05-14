@@ -782,11 +782,8 @@ func quickStyle(o quickStyleOpts) Styles {
 
 	// Thinking section styles
 	s.Messages.ThinkingBox = lipgloss.NewStyle().
-		Border(lipgloss.Border{
-			Top: "━", Bottom: "━", Left: "┃", Right: "┃",
-			TopLeft: "╭", TopRight: "╮", BottomLeft: "╰", BottomRight: "╯",
-		}).
-		BorderForeground(o.bgLeastVisible).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(o.fgMostSubtle).
 		Padding(0, 1)
 	s.Messages.ThinkingLine = lipgloss.NewStyle().Italic(true)
 	s.Messages.ThinkingLabel = lipgloss.NewStyle().Italic(true).Foreground(o.primary)
