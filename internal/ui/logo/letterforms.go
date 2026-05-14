@@ -388,6 +388,133 @@ func LetterYAlt(stretch bool) string {
 	)
 }
 
+// LetterA renders the letter A in a stylized way. It takes a boolean that
+// determines whether to stretch the letter horizontally.
+func LetterA(stretch bool) string {
+	// Here's what we're making:
+	//
+	// ▄▀▀▀▄
+	// █▀▀▀█
+	// ▀   ▀
+
+	side := heredoc.Doc(`
+		▄
+		█
+		▀`)
+	middle := heredoc.Doc(`
+		▀
+		▀
+	`)
+	return joinLetterform(
+		side,
+		stretchLetterformPart(middle, letterformProps{
+			stretch:    stretch,
+			width:      3,
+			minStretch: 7,
+			maxStretch: 12,
+		}),
+		side,
+	)
+}
+
+// LetterI renders the letter I in a stylized way. It takes a boolean that
+// determines whether to stretch the letter horizontally.
+func LetterI(stretch bool) string {
+	// Here's what we're making:
+	//
+	// ▄▄▄▄▄
+	//   █
+	// ▀▀▀▀▀
+
+	center := "▄\n█\n▀"
+	outer := "▄\n \n▀"
+
+	stretched := stretchLetterformPart(outer, letterformProps{
+		stretch:    stretch,
+		width:      3,
+		minStretch: 5,
+		maxStretch: 8,
+	})
+
+	return joinLetterform(stretched, center, stretched)
+}
+
+// LetterL renders the letter L in a stylized way. It takes a boolean that
+// determines whether to stretch the letter horizontally.
+func LetterL(stretch bool) string {
+	// Here's what we're making:
+	//
+	// █
+	// █
+	// ▀▀▀▀▀
+
+	left := "█\n█\n▀"
+	bottom := " \n \n▀"
+
+	return joinLetterform(
+		left,
+		stretchLetterformPart(bottom, letterformProps{
+			stretch:    stretch,
+			width:      4,
+			minStretch: 7,
+			maxStretch: 12,
+		}),
+	)
+}
+
+// LetterN renders the letter N in a stylized way. It takes a boolean that
+// determines whether to stretch the letter horizontally.
+func LetterN(stretch bool) string {
+	// Here's what we're making:
+	//
+	// █▄▄▄█
+	// █   █
+	// ▀   ▀
+
+	side := heredoc.Doc(`
+		█
+		█
+		▀`)
+	middle := heredoc.Doc(`
+		▄
+
+	`)
+	return joinLetterform(
+		side,
+		stretchLetterformPart(middle, letterformProps{
+			stretch:    stretch,
+			width:      3,
+			minStretch: 7,
+			maxStretch: 12,
+		}),
+		side,
+	)
+}
+
+// LetterV renders the letter V in a stylized way. It takes a boolean that
+// determines whether to stretch the letter horizontally.
+func LetterV(stretch bool) string {
+	// Here's what we're making:
+	//
+	// █    █
+	// ▀▄  ▄▀
+	//   ▀
+
+	leftSide := "█\n▀▄"
+	rightSide := " █\n▄▀"
+	inner := " \n "
+	center := "\n\n▀"
+
+	stretchedInner := stretchLetterformPart(inner, letterformProps{
+		stretch:    stretch,
+		width:      1,
+		minStretch: 4,
+		maxStretch: 10,
+	})
+
+	return joinLetterform(leftSide, stretchedInner, center, stretchedInner, rightSide)
+}
+
 func joinLetterform(letters ...string) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, letters...)
 }

@@ -62,11 +62,11 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 		}
 	}
 	crushLetterforms := []letterform{
-		LetterC,
-		LetterR,
-		LetterU,
-		LetterSAlt,
-		LetterH,
+		LetterA,
+		LetterN,
+		LetterV,
+		LetterI,
+		LetterL,
 	}
 	if o.Hyper && !compact {
 		crushLetterforms = append(hyperLetterforms, crushLetterforms...)
@@ -149,9 +149,9 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 // SmallRender renders a smaller version of the Crush logo, suitable for
 // smaller windows or sidebar usage.
 func SmallRender(t *styles.Styles, width int, o Opts) string {
-	name := "Crush"
+	name := "Anvil"
 	if o.Hyper {
-		name = "HYPERCRUSH"
+		name = "HYPERANVIL"
 	}
 	charm := "Charm™"
 	if !o.Hyper {
