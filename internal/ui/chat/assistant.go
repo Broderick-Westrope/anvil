@@ -162,7 +162,10 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 
 // renderThinking renders the thinking/reasoning content with footer.
 func (a *AssistantMessageItem) renderThinking(thinking string, width int) string {
-	renderer := common.QuietMarkdownRenderer(a.sty, width)
+	// Account for the ThinkingBox border and padding so content wraps correctly.
+	innerWidth := width - a.sty.Messages.ThinkingBox.GetHorizontalFrameSize()
+
+	renderer := common.QuietMarkdownRenderer(a.sty, innerWidth)
 	rendered, err := renderer.Render(thinking)
 	if err != nil {
 		rendered = thinking
@@ -172,16 +175,29 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	lines := strings.Split(rendered, "\n")
 	totalLines := len(lines)
 
+	// hintLines tracks how many leading lines should not have ThinkingLine
+	// italic applied (the label+hint row and the blank spacer below it).
+	hintLines := 0
+	label := a.sty.Messages.ThinkingLabel.Render("Thinking:")
 	isTruncated := totalLines > maxCollapsedThinkingHeight
 	if !a.thinkingExpanded && isTruncated {
 		lines = lines[totalLines-maxCollapsedThinkingHeight:]
 		hint := a.sty.Messages.ThinkingTruncationHint.Render(
 			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
 		)
-		lines = append([]string{hint, ""}, lines...)
+		lines = append([]string{label + " " + hint, ""}, lines...)
+		hintLines = 2
+	} else {
+		lines = append([]string{label, ""}, lines...)
+		hintLines = 2
 	}
 
-	thinkingStyle := a.sty.Messages.ThinkingBox.Width(width)
+	// Apply italic to content lines, leaving the hint unstyled.
+	for i := hintLines; i < len(lines); i++ {
+		lines[i] = a.sty.Messages.ThinkingLine.Render(lines[i])
+	}
+
+	thinkingStyle := a.sty.Messages.ThinkingBox.Width(innerWidth)
 	result := thinkingStyle.Render(strings.Join(lines, "\n"))
 	a.thinkingBoxHeight = lipgloss.Height(result)
 

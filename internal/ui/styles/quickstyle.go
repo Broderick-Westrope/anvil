@@ -332,19 +332,16 @@ func quickStyle(o quickStyleOpts) Styles {
 	}
 
 	// QuietMarkdown style - muted colors on subtle background for thinking content.
-	plainBg := hex(o.bgLeastVisible)
 	plainFg := hex(o.fgMoreSubtle)
 	s.QuietMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 		},
 		BlockQuote: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 			Indent:      new(uint(1)),
 			IndentToken: new("│ "),
@@ -357,7 +354,6 @@ func quickStyle(o quickStyleOpts) Styles {
 				BlockSuffix:     "\n",
 				Bold:            new(true),
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 		},
 		H1: ansi.StyleBlock{
@@ -366,78 +362,65 @@ func quickStyle(o quickStyleOpts) Styles {
 				Suffix:          " ",
 				Bold:            new(true),
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 		},
 		H2: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          "## ",
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 		},
 		H3: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          "### ",
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 		},
 		H4: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          "#### ",
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 		},
 		H5: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          "##### ",
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 		},
 		H6: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          "###### ",
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 		},
 		Strikethrough: ansi.StylePrimitive{
 			CrossedOut:      new(true),
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		Emph: ansi.StylePrimitive{
 			Italic:          new(true),
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		Strong: ansi.StylePrimitive{
 			Bold:            new(true),
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		HorizontalRule: ansi.StylePrimitive{
 			Format:          "\n--------\n",
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		Item: ansi.StylePrimitive{
 			BlockPrefix:     "• ",
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		Enumeration: ansi.StylePrimitive{
 			BlockPrefix:     ". ",
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		Task: ansi.StyleTask{
 			StylePrimitive: ansi.StylePrimitive{
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 			Ticked:   "[✓] ",
 			Unticked: "[ ] ",
@@ -445,36 +428,30 @@ func quickStyle(o quickStyleOpts) Styles {
 		Link: ansi.StylePrimitive{
 			Underline:       new(true),
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		LinkText: ansi.StylePrimitive{
 			Bold:            new(true),
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		Image: ansi.StylePrimitive{
 			Underline:       new(true),
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		ImageText: ansi.StylePrimitive{
 			Format:          "Image: {{.text}} →",
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 		Code: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          " ",
 				Suffix:          " ",
 				Color:           plainFg,
-				BackgroundColor: plainBg,
 			},
 		},
 		CodeBlock: ansi.StyleCodeBlock{
 			StyleBlock: ansi.StyleBlock{
 				StylePrimitive: ansi.StylePrimitive{
 					Color:           plainFg,
-					BackgroundColor: plainBg,
 				},
 				Margin: new(uint(defaultMargin)),
 			},
@@ -483,14 +460,12 @@ func quickStyle(o quickStyleOpts) Styles {
 			StyleBlock: ansi.StyleBlock{
 				StylePrimitive: ansi.StylePrimitive{
 					Color:           plainFg,
-					BackgroundColor: plainBg,
 				},
 			},
 		},
 		DefinitionDescription: ansi.StylePrimitive{
 			BlockPrefix:     "\n ",
 			Color:           plainFg,
-			BackgroundColor: plainBg,
 		},
 	}
 
@@ -806,7 +781,15 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Messages.AssistantCanceled = lipgloss.NewStyle().Foreground(o.fgBase).Italic(true)
 
 	// Thinking section styles
-	s.Messages.ThinkingBox = subtle.Background(o.bgLeastVisible)
+	s.Messages.ThinkingBox = lipgloss.NewStyle().
+		Border(lipgloss.Border{
+			Top: "━", Bottom: "━", Left: "┃", Right: "┃",
+			TopLeft: "╭", TopRight: "╮", BottomLeft: "╰", BottomRight: "╯",
+		}).
+		BorderForeground(o.bgLeastVisible).
+		Padding(0, 1)
+	s.Messages.ThinkingLine = lipgloss.NewStyle().Italic(true)
+	s.Messages.ThinkingLabel = lipgloss.NewStyle().Italic(true).Foreground(o.primary)
 	s.Messages.ThinkingTruncationHint = muted
 	s.Messages.ThinkingFooterTitle = muted
 	s.Messages.ThinkingFooterDuration = subtle

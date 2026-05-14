@@ -242,7 +242,9 @@ type Styles struct {
 		SectionHeader    lipgloss.Style
 
 		// Thinking section styles
-		ThinkingBox            lipgloss.Style // Background for thinking content
+		ThinkingBox            lipgloss.Style // Left-border container for thinking content
+		ThinkingLabel          lipgloss.Style // "Thinking:" prefix label (italic, primary color)
+		ThinkingLine           lipgloss.Style // Italic style applied to each thinking content line
 		ThinkingTruncationHint lipgloss.Style // "… (N lines hidden)" hint
 		ThinkingFooterTitle    lipgloss.Style // "Thought for" text
 		ThinkingFooterDuration lipgloss.Style // Duration value
