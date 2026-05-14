@@ -61,8 +61,6 @@ const (
 type Styles struct {
 	// Header
 	Header struct {
-		Charm             lipgloss.Style // Style for "Charm™" label
-		Diagonals         lipgloss.Style // Style for diagonal separators (╱)
 		Percentage        lipgloss.Style // Style for context percentage
 		Hypercredit       lipgloss.Style // Style for Hypercredit count (◆ N)
 		Keystroke         lipgloss.Style // Style for keystroke hints (e.g., "ctrl+d")
@@ -136,14 +134,12 @@ type Styles struct {
 
 	// Logo
 	Logo struct {
-		FieldColor         color.Color
 		TitleColorA        color.Color
 		TitleColorB        color.Color
 		VersionColor       color.Color
-		SmallDiagonals     lipgloss.Style // Spark field fill in SmallRender
 		GradCanvas         lipgloss.Style // Blank canvas for gradient painting
-		SmallGradFromColor color.Color    // Small "Crush" wordmark gradient start
-		SmallGradToColor   color.Color    // Small "Crush" wordmark gradient end
+		SmallGradFromColor color.Color    // Small "Anvil" wordmark gradient start
+		SmallGradToColor   color.Color    // Small "Anvil" wordmark gradient end
 	}
 
 	// Working indicator gradient (spinners/shimmers on assistant "thinking",

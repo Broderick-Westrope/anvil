@@ -20,7 +20,6 @@ func main() {
 
 	s := styles.TokyoNight()
 	opts := logo.Opts{
-		FieldColor:   s.Logo.FieldColor,
 		VersionColor: s.Logo.VersionColor,
 		Width:        w,
 		RandomColor:  true,

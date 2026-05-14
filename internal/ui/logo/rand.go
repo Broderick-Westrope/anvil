@@ -10,6 +10,10 @@ var (
 	randCachesMu sync.Mutex
 )
 
+// cachedRandN returns a random int in [0, n), cached by n. All callers
+// passing the same n receive the same value for the lifetime of the
+// process. This provides stable-per-session randomness but means
+// independent random choices must use distinct values of n.
 func cachedRandN(n int) int {
 	randCachesMu.Lock()
 	defer randCachesMu.Unlock()

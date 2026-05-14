@@ -3097,7 +3097,7 @@ func (m *UI) renderEditorView(width int) string {
 
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
 func (m *UI) cacheSidebarLogo(width int) {
-	m.sidebarLogo = renderLogo(m.com.Styles, true, m.com.IsHyper(), width)
+	m.sidebarLogo = renderLogo(m.com.Styles, true, width)
 }
 
 // applyTheme replaces the active styles with the given theme, drops the
@@ -3813,10 +3813,9 @@ func (m *UI) disableDockerMCP() tea.Msg {
 	return util.NewInfoMsg("Docker MCP disabled successfully")
 }
 
-// renderLogo renders the Crush logo with the given styles and dimensions.
-func renderLogo(t *styles.Styles, compact, hyper bool, width int) string {
+// renderLogo renders the Anvil logo with the given styles and dimensions.
+func renderLogo(t *styles.Styles, compact bool, width int) string {
 	return logo.Render(t.Logo.GradCanvas, version.Version, compact, logo.Opts{
-		FieldColor:   t.Logo.FieldColor,
 		VersionColor: t.Logo.VersionColor,
 		Width:        width,
 		RandomColor:  true,

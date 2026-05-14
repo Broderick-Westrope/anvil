@@ -31,7 +31,7 @@ var sparkGlyphs = []rune{
 // sparkSeed is a per-session random value mixed into all position hashes so
 // the field looks different on every launch.
 var sparkSeed = sync.OnceValue(func() uint32 {
-	return uint32(cachedRandN(1 << 30))
+	return rand.Uint32()
 })
 
 // sparkGlyph maps an absolute cell position to a glyph by hashing the
@@ -41,7 +41,7 @@ func sparkGlyph(pos int) rune {
 	h ^= h >> 16
 	h += h << 3
 	h ^= h >> 4
-	return sparkGlyphs[int(h)%len(sparkGlyphs)]
+	return sparkGlyphs[h%uint32(len(sparkGlyphs))]
 }
 
 // SparkField builds a decorative field string of exactly n cells. offset is
@@ -53,6 +53,14 @@ func SparkField(n, offset int, ramp []color.Color) string {
 	if n <= 0 {
 		return ""
 	}
+
+	// Pre-build one style per ramp stop to avoid allocating a new
+	// lipgloss.Style for every non-space cell on each render frame.
+	rampStyles := make([]lipgloss.Style, len(ramp))
+	for i, c := range ramp {
+		rampStyles[i] = lipgloss.NewStyle().Foreground(c)
+	}
+
 	var sb strings.Builder
 	for i := range n {
 		pos := offset + i
@@ -65,8 +73,8 @@ func SparkField(n, offset int, ramp []color.Color) string {
 		// with the glyph selection hash.
 		h := (sparkSeed() ^ uint32(pos)) * 2246822519
 		h ^= h >> 16
-		colorIdx := int(h) % len(ramp)
-		sb.WriteString(lipgloss.NewStyle().Foreground(ramp[colorIdx]).Render(string(ch)))
+		colorIdx := h % uint32(len(ramp))
+		sb.WriteString(rampStyles[colorIdx].Render(string(ch)))
 	}
 	return sb.String()
 }
@@ -80,7 +88,6 @@ func RandomPalette() (a, b color.Color) {
 
 // Opts are the options for rendering the Anvil title art.
 type Opts struct {
-	FieldColor   color.Color // spark field color
 	TitleColorA  color.Color // left gradient ramp point (ignored when RandomColor is set)
 	TitleColorB  color.Color // right gradient ramp point (ignored when RandomColor is set)
 	VersionColor color.Color // version text color
@@ -94,6 +101,23 @@ type Opts struct {
 	// testing/preview; use RandomColor alone in production to avoid jitter on
 	// resize.
 	Unstable bool
+}
+
+// resolvePalette returns the gradient endpoints to use, respecting the
+// RandomColor and Unstable options. fallbackA/fallbackB are used when
+// RandomColor is not set.
+func resolvePalette(o Opts, fallbackA, fallbackB color.Color) (color.Color, color.Color) {
+	if !o.RandomColor {
+		return fallbackA, fallbackB
+	}
+	var idx int
+	if o.Unstable {
+		idx = rand.IntN(len(titlePalettes))
+	} else {
+		idx = cachedRandN(len(titlePalettes))
+	}
+	p := titlePalettes[idx]
+	return p.a, p.b
 }
 
 // Render renders the Anvil logo.
@@ -118,17 +142,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	crush := renderWord(spacing, -1, crushLetterforms...)
 
 	// Resolve the gradient colors, using a random palette if requested.
-	colorA, colorB := o.TitleColorA, o.TitleColorB
-	if o.RandomColor {
-		var idx int
-		if o.Unstable {
-			idx = rand.IntN(len(titlePalettes))
-		} else {
-			idx = cachedRandN(len(titlePalettes))
-		}
-		p := titlePalettes[idx]
-		colorA, colorB = p.a, p.b
-	}
+	colorA, colorB := resolvePalette(o, o.TitleColorA, o.TitleColorB)
 
 	// Pre-compute a gradient ramp shared by all field rows.
 	const gradSteps = 64
@@ -192,17 +206,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 // SmallRender renders a smaller version of the Anvil logo, suitable for
 // smaller windows or sidebar usage.
 func SmallRender(t *styles.Styles, width int, o Opts) string {
-	gradA, gradB := t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor
-	if o.RandomColor {
-		var idx int
-		if o.Unstable {
-			idx = rand.IntN(len(titlePalettes))
-		} else {
-			idx = cachedRandN(len(titlePalettes))
-		}
-		p := titlePalettes[idx]
-		gradA, gradB = p.a, p.b
-	}
+	gradA, gradB := resolvePalette(o, t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor)
 
 	fieldRamp := lipgloss.Blend1D(64, gradA, gradB)
 

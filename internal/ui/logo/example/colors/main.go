@@ -33,7 +33,6 @@ func main() {
 	}
 
 	opts := logo.Opts{
-		FieldColor:   s.Logo.FieldColor,
 		VersionColor: s.Logo.VersionColor,
 		Width:        80,
 	}

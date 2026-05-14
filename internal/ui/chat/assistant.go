@@ -175,9 +175,9 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	lines := strings.Split(rendered, "\n")
 	totalLines := len(lines)
 
-	// hintLines tracks how many leading lines should not have ThinkingLine
-	// italic applied (the label+hint row and the blank spacer below it).
-	hintLines := 0
+	// hintLines is the number of leading lines (label row + blank spacer)
+	// that should not have ThinkingLine italic applied.
+	const hintLines = 2
 	label := a.sty.Messages.ThinkingLabel.Render("Thinking:")
 	isTruncated := totalLines > maxCollapsedThinkingHeight
 	if !a.thinkingExpanded && isTruncated {
@@ -186,10 +186,8 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
 		)
 		lines = append([]string{label + " " + hint, ""}, lines...)
-		hintLines = 2
 	} else {
 		lines = append([]string{label, ""}, lines...)
-		hintLines = 2
 	}
 
 	// Apply italic to content lines, leaving the hint unstyled.
