@@ -21,16 +21,20 @@ const diag = `╱`
 // Opts are the options for rendering the Crush title art.
 type Opts struct {
 	FieldColor   color.Color // diagonal lines
-	TitleColorA  color.Color // left gradient ramp point
-	TitleColorB  color.Color // right gradient ramp point
+	TitleColorA  color.Color // left gradient ramp point (ignored when RandomColor is set)
+	TitleColorB  color.Color // right gradient ramp point (ignored when RandomColor is set)
 	CharmColor   color.Color // Charm™ text color
 	VersionColor color.Color // version text color
 	Width        int         // width of the rendered logo, used for truncation
 	Hyper        bool        // whether it is Crush or Hypercrush
 
-	// When true, stretch a random letterform on each render. Has no effect in
-	// compact mode. Mainly for testing. In production you will want to cache
-	// the stretched letterform to keep the logo from jittering on resize.
+	// RandomColor picks a gradient from the built-in palette pool at random.
+	// The choice is stable across re-renders unless Unstable is also set.
+	RandomColor bool
+
+	// Unstable re-randomises both the stretched letterform and the color palette
+	// on every render. Mainly for testing/preview; use RandomColor alone in
+	// production to avoid jitter on resize.
 	Unstable bool
 }
 
@@ -84,10 +88,23 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	if o.Hyper && compact {
 		crush = renderWord(spacing, stretchIndex, hyperLetterforms...) + "\n" + crush
 	}
+	// Resolve the gradient colors, using a random palette if requested.
+	colorA, colorB := o.TitleColorA, o.TitleColorB
+	if o.RandomColor {
+		var idx int
+		if o.Unstable {
+			idx = rand.IntN(len(titlePalettes))
+		} else {
+			idx = cachedRandN(len(titlePalettes))
+		}
+		p := titlePalettes[idx]
+		colorA, colorB = p.a, p.b
+	}
+
 	crushWidth := lipgloss.Width(crush)
 	b := new(strings.Builder)
 	for r := range strings.SplitSeq(crush, "\n") {
-		fmt.Fprintln(b, styles.ApplyForegroundGrad(base, r, o.TitleColorA, o.TitleColorB))
+		fmt.Fprintln(b, styles.ApplyForegroundGrad(base, r, colorA, colorB))
 	}
 	crush = b.String()
 
@@ -157,8 +174,21 @@ func SmallRender(t *styles.Styles, width int, o Opts) string {
 	if !o.Hyper {
 		charm = " " + charm
 	}
+
+	gradA, gradB := t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor
+	if o.RandomColor {
+		var idx int
+		if o.Unstable {
+			idx = rand.IntN(len(titlePalettes))
+		} else {
+			idx = cachedRandN(len(titlePalettes))
+		}
+		p := titlePalettes[idx]
+		gradA, gradB = p.a, p.b
+	}
+
 	title := t.Logo.SmallCharm.Render(charm)
-	title = fmt.Sprintf("%s %s", title, styles.ApplyBoldForegroundGrad(t.Logo.GradCanvas, name, t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor))
+	title = fmt.Sprintf("%s %s", title, styles.ApplyBoldForegroundGrad(t.Logo.GradCanvas, name, gradA, gradB))
 	remainingWidth := width - lipgloss.Width(title) - 1 // 1 for the space after the name
 	if remainingWidth > 0 {
 		lines := strings.Repeat("╱", remainingWidth)
