@@ -6,8 +6,8 @@ import (
 	"unicode"
 )
 
-// oauthRenameEnabled controls whether MCP tool names use PascalCase
-// for Anthropic OAuth compatibility.
+// oauthRenameEnabled is set once during coordinator initialization when
+// an Anthropic OAuth provider is detected. It is never reset.
 var oauthRenameEnabled atomic.Bool
 
 // SetOAuthRename enables or disables PascalCase tool name transform.
@@ -21,11 +21,11 @@ func OAuthRenameEnabled() bool {
 	return oauthRenameEnabled.Load()
 }
 
-// PascalCaseToolName capitalizes the first character after the "mcp_"
+// pascalCaseToolName capitalizes the first character after the "mcp_"
 // prefix in a composite MCP tool name. This transforms names like
 // "mcp_docker_find" to "mcp_Docker_find" for Anthropic OAuth billing
 // validation compatibility.
-func PascalCaseToolName(name string) string {
+func pascalCaseToolName(name string) string {
 	const prefix = "mcp_"
 	if len(name) <= len(prefix) {
 		return name

@@ -200,12 +200,13 @@ func RefreshToken(ctx context.Context, currentToken *oauth.Token) (*oauth.Token,
 	// Step 1: Maybe another session already refreshed — check disk first.
 	Cache.Invalidate()
 	diskToken, err := ReadCredentials()
-	if err == nil && diskToken != nil && diskToken.AccessToken != currentToken.AccessToken {
+	if err == nil && diskToken != nil &&
+		diskToken.AccessToken != currentToken.AccessToken &&
+		!NeedsRefresh(diskToken) {
 		return diskToken, nil
 	}
 
 	// Step 2: Refresh via the Anthropic token endpoint.
-	var endpointErr error
 	newToken, endpointErr := refreshViaEndpoint(ctx, currentToken.RefreshToken)
 	if endpointErr == nil && newToken != nil {
 		if writeErr := writeCredentialsFile(newToken); writeErr != nil {
@@ -220,7 +221,11 @@ func RefreshToken(ctx context.Context, currentToken *oauth.Token) (*oauth.Token,
 	var cliErr error
 	if cliErr = refreshViaCLI(ctx); cliErr == nil {
 		reread, readErr := ReadCredentials()
-		if readErr == nil && reread != nil {
+		if readErr != nil {
+			slog.Warn("Failed to re-read credentials after CLI refresh",
+				"error", readErr)
+		}
+		if reread != nil && !NeedsRefresh(reread) {
 			return reread, nil
 		}
 	}

@@ -100,11 +100,11 @@ func TestComputeVersionSuffix(t *testing.T) {
 	})
 }
 
-func TestBuildBillingHeader(t *testing.T) {
+func TestBuildBillingValue(t *testing.T) {
 	t.Parallel()
 
 	text := "You are a helpful assistant."
-	got := BuildBillingHeader(text)
+	got := BuildBillingValue(text)
 
 	// Must start with the header name.
 	require.True(t, strings.HasPrefix(got, "x-anthropic-billing-header: "), "expected header prefix")
@@ -126,10 +126,10 @@ func TestBuildBillingHeader(t *testing.T) {
 	require.True(t, strings.HasSuffix(got, ";"), "expected trailing semicolon")
 }
 
-func TestBuildBillingHeader_EmptyText(t *testing.T) {
+func TestBuildBillingValue_EmptyText(t *testing.T) {
 	t.Parallel()
 
-	got := BuildBillingHeader("")
+	got := BuildBillingValue("")
 	require.Contains(t, got, "cch="+ComputeCCH(""))
 	require.True(t, strings.HasPrefix(got, "x-anthropic-billing-header: "))
 }

@@ -37,9 +37,9 @@ func ComputeVersionSuffix(text, version string) string {
 	return fmt.Sprintf("%x", h)[:3]
 }
 
-// BuildBillingHeader assembles the full x-anthropic-billing-header value
+// BuildBillingValue assembles the full x-anthropic-billing-header value
 // from the given text (typically the system prompt or first user message).
-func BuildBillingHeader(text string) string {
+func BuildBillingValue(text string) string {
 	cch := ComputeCCH(text)
 	suffix := ComputeVersionSuffix(text, CLIVersion)
 	return fmt.Sprintf(

@@ -14,6 +14,7 @@ import (
 )
 
 func TestRefreshViaEndpoint_Success(t *testing.T) {
+	// Not parallel: mutates package-level tokenEndpoint.
 	expiry := time.Now().Add(1 * time.Hour).Unix()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodPost, r.Method)
@@ -44,6 +45,8 @@ func TestRefreshViaEndpoint_Success(t *testing.T) {
 }
 
 func TestRefreshViaEndpoint_ExpiresInFallback(t *testing.T) {
+	// Not parallel: mutates package-level tokenEndpoint.
+	//
 	// When the server returns expires_in but not expires_at, the token
 	// should call SetExpiresAt to populate ExpiresAt.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +70,7 @@ func TestRefreshViaEndpoint_ExpiresInFallback(t *testing.T) {
 }
 
 func TestRefreshViaEndpoint_HTTPError(t *testing.T) {
+	// Not parallel: mutates package-level tokenEndpoint.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}))
@@ -82,6 +86,7 @@ func TestRefreshViaEndpoint_HTTPError(t *testing.T) {
 }
 
 func TestRefreshViaEndpoint_InvalidJSON(t *testing.T) {
+	// Not parallel: mutates package-level tokenEndpoint.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{not valid json`)) //nolint:errcheck
@@ -97,6 +102,7 @@ func TestRefreshViaEndpoint_InvalidJSON(t *testing.T) {
 }
 
 func TestRefreshToken_DiskCheckShortCircuit(t *testing.T) {
+	// Not parallel: mutates package-level tokenEndpoint.
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USER", "crush-test-nonexistent-user-xyz")

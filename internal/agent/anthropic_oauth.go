@@ -61,7 +61,7 @@ func transformModeA(messages []fantasy.Message) []fantasy.Message {
 
 	// Compute billing header BEFORE prepending to avoid a self-referential
 	// hash.
-	billingHeader := anthropicoauth.BuildBillingHeader(systemText)
+	billingHeader := anthropicoauth.BuildBillingValue(systemText)
 
 	result := make([]fantasy.Message, 0, len(messages)+2)
 	result = append(result,
@@ -121,7 +121,7 @@ func transformModeB(messages []fantasy.Message) []fantasy.Message {
 		}
 		break
 	}
-	billingHeader := anthropicoauth.BuildBillingHeader(firstUserText.String())
+	billingHeader := anthropicoauth.BuildBillingValue(firstUserText.String())
 
 	result := make([]fantasy.Message, 0, len(nonSystem)+2)
 	result = append(result,

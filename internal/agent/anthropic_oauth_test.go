@@ -112,7 +112,7 @@ func TestTransformModeA(t *testing.T) {
 	require.Len(t, result[0].Content, 1)
 	tp0, ok := fantasy.AsMessagePart[fantasy.TextPart](result[0].Content[0])
 	require.True(t, ok)
-	expectedBilling := anthropicoauth.BuildBillingHeader(systemText)
+	expectedBilling := anthropicoauth.BuildBillingValue(systemText)
 	require.Equal(t, expectedBilling, tp0.Text)
 
 	// Second message: identity prefix (system role).

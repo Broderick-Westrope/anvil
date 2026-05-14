@@ -290,7 +290,10 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 				v, err := resolver.ResolveValue(p.APIKey)
 				if v == "" || err != nil {
 					if configExists {
-						slog.Warn("Skipping Anthropic provider due to missing credentials",
+						slog.Warn(
+							"Skipping Anthropic provider — no OAuth credentials or "+
+								"API key found. Run `claude /login` to authenticate, "+
+								"or set ANTHROPIC_API_KEY.",
 							"provider", p.ID)
 						c.Providers.Del(string(p.ID))
 					}

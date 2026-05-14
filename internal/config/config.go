@@ -183,7 +183,7 @@ func (c *ProviderConfig) SetupAnthropic() {
 	if c.ExtraHeaders == nil {
 		c.ExtraHeaders = make(map[string]string)
 	}
-	maps.Copy(c.ExtraHeaders, anthropicoauth.Headers(""))
+	maps.Copy(c.ExtraHeaders, anthropicoauth.Headers())
 }
 
 type MCPType string

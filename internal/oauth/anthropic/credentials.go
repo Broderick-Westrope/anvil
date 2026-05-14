@@ -48,8 +48,6 @@ type oauthFields struct {
 	ExpiresAt    int64  `json:"expiresAt"`
 }
 
-
-
 // parseCredentials parses raw JSON bytes (from keychain or file) into an
 // oauth.Token. Supports both flat and nested claudeAiOauth formats.
 func parseCredentials(data []byte) (*oauth.Token, error) {
@@ -150,9 +148,9 @@ type credentialSource struct {
 
 // ReadCredentials reads Anthropic OAuth credentials from available sources
 // in order: macOS keychain ($USER account), keychain (claude-code-user
-// account), Claude CLI credentials file, OpenCode/BroCode auth.json.
-// Returns the first successfully parsed token. Returns nil, nil if no
-// credentials are found anywhere.
+// account), credentials file (~/.claude/.credentials.json). Returns the
+// first successfully parsed token. Returns nil, nil if no credentials are
+// found anywhere.
 func ReadCredentials() (*oauth.Token, error) {
 	sources := []credentialSource{
 		{"keychain($USER)", func() ([]byte, error) { return readKeychain(os.Getenv("USER")) }, nil},
@@ -243,8 +241,4 @@ func NeedsRefresh(token *oauth.Token) bool {
 }
 
 // Cache is the package-level credential cache.
-var Cache *cachedCredentials
-
-func init() {
-	Cache = &cachedCredentials{}
-}
+var Cache = &cachedCredentials{}

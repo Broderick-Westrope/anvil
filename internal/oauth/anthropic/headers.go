@@ -5,7 +5,7 @@ package anthropic
 // the provider build layer where the model ID is known. The
 // Authorization header (Bearer token) is handled separately by the
 // provider configuration layer.
-func Headers(_ string) map[string]string {
+func Headers() map[string]string {
 	return map[string]string{
 		"anthropic-version": "2023-06-01",
 		"user-agent":        "claude-cli/" + CLIVersion + " (external, cli)",
