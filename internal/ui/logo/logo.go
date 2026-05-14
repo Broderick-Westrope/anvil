@@ -118,11 +118,12 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	}
 	crush = b.String()
 
-	// Version row, right-aligned above the wordmark.
+	// Version row, right-aligned above the wordmark in the right-end gradient color.
 	version = ansi.Truncate(version, crushWidth, "…")
 	gap := max(0, crushWidth-lipgloss.Width(version))
-	metaRow := strings.Repeat(" ", gap) + fg(o.VersionColor, version)
-	crush = strings.TrimSpace(metaRow + "\n" + crush)
+	metaRow := strings.Repeat(" ", gap) + fg(colorB, version)
+	crush = strings.TrimRight(crush, "\n")
+	crush = metaRow + "\n" + crush
 
 	// Narrow / sidebar version.
 	if compact {
