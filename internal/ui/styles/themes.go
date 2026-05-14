@@ -1,6 +1,10 @@
 package styles
 
-import "github.com/charmbracelet/x/exp/charmtone"
+import (
+	"image/color"
+
+	"github.com/charmbracelet/x/exp/charmtone"
+)
 
 // ThemeForProvider returns the Styles associated with the given provider
 // ID. Unknown or empty provider IDs yield the default Charmtone Pantera
@@ -30,10 +34,10 @@ func CharmtonePantera() Styles {
 
 		onPrimary: charmtone.Butter,
 
-		bgBase:         charmtone.Pepper,
-		bgLeastVisible: charmtone.BBQ,
-		bgLessVisible:  charmtone.Charcoal,
-		bgMostVisible:  charmtone.Iron,
+		bgBase:         color.RGBA{R: 0x16, G: 0x15, B: 0x1C, A: 0xFF},
+		bgLeastVisible: charmtone.Pepper,
+		bgLessVisible:  charmtone.BBQ,
+		bgMostVisible:  charmtone.Charcoal,
 
 		separator: charmtone.Charcoal,
 
@@ -65,10 +69,10 @@ func HypercrushObsidiana() Styles {
 
 		onPrimary: charmtone.Butter,
 
-		bgBase:         charmtone.Pepper,
-		bgLeastVisible: charmtone.BBQ,
-		bgLessVisible:  charmtone.Charcoal,
-		bgMostVisible:  charmtone.Iron,
+		bgBase:         color.RGBA{R: 0x16, G: 0x15, B: 0x1C, A: 0xFF},
+		bgLeastVisible: charmtone.Pepper,
+		bgLessVisible:  charmtone.BBQ,
+		bgMostVisible:  charmtone.Charcoal,
 
 		separator: charmtone.Charcoal,
 
