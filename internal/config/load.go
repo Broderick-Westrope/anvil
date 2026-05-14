@@ -24,6 +24,7 @@ import (
 	"github.com/charmbracelet/crush/internal/filepathext"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/home"
+	anthropicoauth "github.com/charmbracelet/crush/internal/oauth/anthropic"
 	powernapConfig "github.com/charmbracelet/x/powernap/pkg/config"
 	"github.com/qjebbs/go-jsons"
 )
@@ -261,18 +262,44 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 
 		switch {
 		case p.ID == catwalk.InferenceProviderAnthropic && config.OAuthToken != nil:
-			// Claude Code subscription is not supported anymore. Remove to show onboarding.
-			if !store.reloadInProgress {
-				store.RemoveConfigField(ScopeGlobal, "providers.anthropic")
-			}
-			c.Providers.Del(string(p.ID))
-			continue
+			prepared.SetupAnthropic()
 		case p.ID == catwalk.InferenceProviderCopilot && config.OAuthToken != nil:
 			prepared.SetupGitHubCopilot()
+		case p.ID == catwalk.InferenceProviderAnthropic && config.OAuthToken == nil:
+			// Always try OAuth first — subscription auth is free vs
+			// per-token API key billing. Falls back to API key if no
+			// OAuth credentials are found.
+			token, err := anthropicoauth.ReadCredentials()
+			if err != nil {
+				slog.Warn("Failed to read Anthropic OAuth credentials", "error", err)
+			} else if token != nil {
+				slog.Info("Auto-detected Anthropic OAuth credentials from Claude CLI")
+				prepared.OAuthToken = token
+				prepared.SetupAnthropic()
+			}
 		}
 
 		switch p.ID {
 		// Handle specific providers that require additional configuration
+		case catwalk.InferenceProviderAnthropic:
+			// Allow the provider when an OAuth token is present (either
+			// from config or auto-detected above). Without OAuth, fall
+			// back to the plain API key check so ANTHROPIC_API_KEY still
+			// works as before.
+			if prepared.OAuthToken == nil {
+				v, err := resolver.ResolveValue(p.APIKey)
+				if v == "" || err != nil {
+					if configExists {
+						slog.Warn(
+							"Skipping Anthropic provider — no OAuth credentials or "+
+								"API key found. Run `claude /login` to authenticate, "+
+								"or set ANTHROPIC_API_KEY.",
+							"provider", p.ID)
+						c.Providers.Del(string(p.ID))
+					}
+					continue
+				}
+			}
 		case catwalk.InferenceProviderVertexAI:
 			var (
 				project  = env.Get("VERTEXAI_PROJECT")

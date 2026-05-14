@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -478,8 +479,10 @@ func TestAutoReloadDisabledDuringReload(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "crush.json")
 
-	// Create initial config with a provider that will trigger config modification during reload
-	// (simulating the anthropic OAuth token removal case)
+	// Create initial config with an Anthropic provider using OAuth. With the
+	// new flow, configureProviders calls SetupAnthropic instead of removing
+	// the config. The guard under test (autoReloadDisabled) must still prevent
+	// any nested reload calls that would cause infinite recursion.
 	initialConfig := `{
 		"providers": {
 			"anthropic": {
@@ -490,8 +493,7 @@ func TestAutoReloadDisabledDuringReload(t *testing.T) {
 	}`
 	require.NoError(t, os.WriteFile(configPath, []byte(initialConfig), 0o600))
 
-	// Load will trigger configureProviders which removes anthropic OAuth config
-	// This should NOT cause infinite recursion thanks to autoReloadDisabled guard
+	// Load configures providers; autoReloadDisabled prevents re-entrant calls.
 	store, err := Load(dir, dir, false)
 	require.NoError(t, err)
 
@@ -723,4 +725,77 @@ func TestRefreshOAuthToken_UsesDiskTokenWhenDifferent(t *testing.T) {
 	require.Equal(t, "newer-access-token", updatedConfig.APIKey)
 	require.Equal(t, "newer-access-token", updatedConfig.OAuthToken.AccessToken)
 	require.Equal(t, "refresh-abc", updatedConfig.OAuthToken.RefreshToken)
+}
+
+// TestRefreshOAuthToken_Anthropic verifies that Anthropic is wired as a
+// supported OAuth provider and that SetupAnthropic is called when a newer
+// token is found on disk (no external network call required).
+func TestRefreshOAuthToken_Anthropic(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "crush.json")
+
+	// Write a newer Anthropic token to the config file on disk.
+	configContent := `{
+		"providers": {
+			"anthropic": {
+				"api_key": "Bearer newer-anthropic-token",
+				"oauth": {
+					"access_token": "newer-anthropic-token",
+					"refresh_token": "refresh-abc",
+					"expires_in": 3600,
+					"expires_at": 9999999999
+				}
+			}
+		}
+	}`
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o600))
+
+	// Build a store with an older in-memory token.
+	oldToken := &oauth.Token{
+		AccessToken:  "older-anthropic-token",
+		RefreshToken: "refresh-abc",
+		ExpiresIn:    3600,
+		ExpiresAt:    time.Now().Add(-time.Hour).Unix(), // Expired.
+	}
+
+	providers := csync.NewMap[string, ProviderConfig]()
+	providers.Set("anthropic", ProviderConfig{
+		ID:           "anthropic",
+		Name:         "Anthropic",
+		APIKey:       oldToken.AccessToken,
+		OAuthToken:   oldToken,
+		ExtraHeaders: make(map[string]string),
+	})
+
+	store := &ConfigStore{
+		config:         &Config{Providers: providers},
+		globalDataPath: configPath,
+	}
+
+	// RefreshOAuthToken should pick up the newer disk token without an
+	// external network call and call SetupAnthropic on the in-memory config.
+	err := store.RefreshOAuthToken(context.Background(), ScopeGlobal, "anthropic")
+	require.NoError(t, err)
+
+	updated, ok := store.config.Providers.Get("anthropic")
+	require.True(t, ok)
+
+	// SetupAnthropic must prefix the token with "Bearer ".
+	require.Equal(t, "Bearer newer-anthropic-token", updated.APIKey)
+	require.Equal(t, "newer-anthropic-token", updated.OAuthToken.AccessToken)
+
+	// Flat-rate billing must be enabled for OAuth sessions.
+	require.True(t, updated.FlatRate)
+
+	// OAuth-required headers must be present.
+	require.NotEmpty(t, updated.ExtraHeaders)
+	require.Contains(t, updated.ExtraHeaders, "anthropic-version")
+
+	// The Bearer prefix must not appear in the extra headers.
+	for _, v := range updated.ExtraHeaders {
+		require.False(t, strings.HasPrefix(v, "Bearer "),
+			"OAuth token must not appear in ExtraHeaders")
+	}
 }
