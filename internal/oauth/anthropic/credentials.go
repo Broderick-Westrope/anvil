@@ -153,7 +153,13 @@ type credentialSource struct {
 // found anywhere.
 func ReadCredentials() (*oauth.Token, error) {
 	sources := []credentialSource{
-		{"keychain($USER)", func() ([]byte, error) { return readKeychain(os.Getenv("USER")) }, nil},
+		{"keychain($USER)", func() ([]byte, error) {
+			user := os.Getenv("USER")
+			if user == "" {
+				return nil, nil
+			}
+			return readKeychain(user)
+		}, nil},
 		{"keychain(claude-code-user)", func() ([]byte, error) { return readKeychain(KeychainAccountAlt) }, nil},
 		{"~/.claude/.credentials.json", readCredentialsFile, nil},
 	}

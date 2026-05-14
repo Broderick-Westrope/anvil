@@ -37,8 +37,12 @@ func ComputeVersionSuffix(text, version string) string {
 	return fmt.Sprintf("%x", h)[:3]
 }
 
-// BuildBillingValue assembles the full x-anthropic-billing-header value
-// from the given text (typically the system prompt or first user message).
+// BuildBillingValue assembles the full billing header line from the given
+// text (typically the system prompt or first user message). The returned
+// string intentionally includes the header name
+// ("x-anthropic-billing-header: ...") because Anthropic reads billing
+// information from injected system prompt text rather than from HTTP
+// request headers.
 func BuildBillingValue(text string) string {
 	cch := ComputeCCH(text)
 	suffix := ComputeVersionSuffix(text, CLIVersion)

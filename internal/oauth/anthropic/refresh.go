@@ -107,11 +107,17 @@ func refreshViaEndpoint(ctx context.Context, refreshToken string) (*oauth.Token,
 // no-op prompt. The CLI refreshes its stored credentials as a side effect.
 // The refreshed token must be read back from disk/keychain afterward.
 func refreshViaCLI(ctx context.Context) error {
+	if _, err := exec.LookPath("claude"); err != nil {
+		return fmt.Errorf("claude CLI not found on PATH: %w", err)
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "claude", "-p", ".", "--model", "haiku", "hi")
 	cmd.Dir = os.TempDir()
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 
 	return cmd.Run()
 }

@@ -353,6 +353,7 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 
 	slog.Info("Successfully refreshed OAuth token", "provider", providerID)
 	providerConfig.OAuthToken = refreshedToken
+	// NOTE: SetupAnthropic below overwrites APIKey with the "Bearer " prefix.
 	providerConfig.APIKey = refreshedToken.AccessToken
 
 	switch providerID {
