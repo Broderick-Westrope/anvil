@@ -27,7 +27,7 @@ func TokyoNight() Styles {
 
 		// Background scale stepped up from the user's #050014 terminal bg.
 		bgBase:         tn(0x0c, 0x0e, 0x14), // bg_dark1     #0c0e14
-		bgLeastVisible: tn(0x16, 0x16, 0x1e), // bg_dark      #16161e
+		bgLeastVisible: tn(0x11, 0x12, 0x19), // midpoint     #111219
 		bgLessVisible:  tn(0x1a, 0x1b, 0x26), // bg           #1a1b26
 		bgMostVisible:  tn(0x29, 0x2e, 0x42), // bg_highlight #292e42
 
