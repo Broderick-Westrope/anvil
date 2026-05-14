@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/agent/tools"
+	toolsmcp "github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/filetracker"
@@ -31,6 +32,7 @@ import (
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
+	anthropicoauth "github.com/charmbracelet/crush/internal/oauth/anthropic"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -127,6 +129,16 @@ func NewCoordinator(
 		allSkills:    allSkills,
 		activeSkills: activeSkills,
 		skillTracker: skillTracker,
+	}
+
+	// Enable MCP OAuth tool-name rename when the Anthropic provider uses
+	// OAuth credentials. This must happen once during coordinator
+	// initialisation, before any tools are registered.
+	for providerCfg := range cfg.Config().Providers.Seq() {
+		if providerCfg.ID == string(catwalk.InferenceProviderAnthropic) && providerCfg.OAuthToken != nil {
+			toolsmcp.SetOAuthRename(true)
+			break
+		}
 	}
 
 	agentCfg, ok := cfg.Config().Agents[config.AgentCoder]
@@ -416,6 +428,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		Messages:             c.messages,
 		Tools:                nil,
 		Notify:               c.notify,
+		ProviderConfig:       largeProviderCfg,
 	})
 
 	c.readyWg.Go(func() error {
@@ -635,7 +648,24 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		}, nil
 }
 
-func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map[string]string, providerID string) (fantasy.Provider, error) {
+// betaQueryTransport is an http.RoundTripper that appends the
+// ?beta=true query param required by the Anthropic OAuth billing
+// endpoint to every outgoing request.
+type betaQueryTransport struct {
+	rt http.RoundTripper
+}
+
+// RoundTrip clones the request, sets beta=true in the query string,
+// then delegates to the wrapped transport.
+func (t *betaQueryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	q := clone.URL.Query()
+	q.Set("beta", "true")
+	clone.URL.RawQuery = q.Encode()
+	return t.rt.RoundTrip(clone)
+}
+
+func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map[string]string, providerID string, oauthActive bool) (fantasy.Provider, error) {
 	var opts []anthropic.Option
 
 	switch {
@@ -660,9 +690,20 @@ func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map
 		opts = append(opts, anthropic.WithBaseURL(baseURL))
 	}
 
+	// Build the HTTP transport chain. Debug logging is innermost so that
+	// the logged URL reflects the final ?beta=true mutation.
+	var transport http.RoundTripper = http.DefaultTransport
 	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, anthropic.WithHTTPClient(httpClient))
+		transport = &log.HTTPRoundTripLogger{Transport: transport}
+	}
+	// Anthropic OAuth requires ?beta=true on every request. Because the
+	// Anthropic SDK's URL resolution strips query params from the base
+	// URL, we inject the param via a custom round-tripper instead.
+	if oauthActive {
+		transport = &betaQueryTransport{rt: transport}
+	}
+	if transport != http.DefaultTransport {
+		opts = append(opts, anthropic.WithHTTPClient(&http.Client{Transport: transport}))
 	}
 	return anthropic.New(opts...)
 }
@@ -832,13 +873,23 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		headers = make(map[string]string)
 	}
 
-	// handle special headers for anthropic
+	// Handle special headers for anthropic.
 	if providerCfg.Type == anthropic.Name && c.isAnthropicThinking(model) {
 		if v, ok := headers["anthropic-beta"]; ok {
 			headers["anthropic-beta"] = v + ",interleaved-thinking-2025-05-14"
 		} else {
 			headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
 		}
+	}
+
+	// When the Anthropic provider uses OAuth, merge model-specific beta
+	// flags on top of any betas already present (e.g. from SetupAnthropic
+	// or the thinking-model logic above). MergeBetas deduplicates.
+	if providerCfg.OAuthToken != nil && providerCfg.Type == anthropic.Name {
+		headers["anthropic-beta"] = anthropicoauth.MergeBetas(
+			headers["anthropic-beta"],
+			anthropicoauth.BetasForModel(model.Model),
+		)
 	}
 
 	apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
@@ -848,7 +899,7 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 	case openai.Name:
 		return c.buildOpenaiProvider(baseURL, apiKey, headers)
 	case anthropic.Name:
-		return c.buildAnthropicProvider(baseURL, apiKey, headers, providerCfg.ID)
+		return c.buildAnthropicProvider(baseURL, apiKey, headers, providerCfg.ID, providerCfg.OAuthToken != nil)
 	case openrouter.Name:
 		return c.buildOpenrouterProvider(baseURL, apiKey, headers)
 	case vercel.Name:
@@ -966,9 +1017,21 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 	return err
 }
 
-// refreshTokenIfExpired proactively refreshes the OAuth token if it has expired.
+// refreshTokenIfExpired proactively refreshes the OAuth token if it is
+// approaching expiry. Anthropic tokens use a fixed 60-second window
+// (anthropicoauth.NeedsRefresh); all other providers use the generic
+// 10% margin from Token.IsExpired.
 func (c *coordinator) refreshTokenIfExpired(ctx context.Context, providerCfg config.ProviderConfig) error {
-	if providerCfg.OAuthToken == nil || !providerCfg.OAuthToken.IsExpired() {
+	if providerCfg.OAuthToken == nil {
+		return nil
+	}
+	var needsRefresh bool
+	if providerCfg.ID == string(catwalk.InferenceProviderAnthropic) {
+		needsRefresh = anthropicoauth.NeedsRefresh(providerCfg.OAuthToken)
+	} else {
+		needsRefresh = providerCfg.OAuthToken.IsExpired()
+	}
+	if !needsRefresh {
 		return nil
 	}
 	slog.Debug("Token needs to be refreshed", "provider", providerCfg.ID)

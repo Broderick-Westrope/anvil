@@ -13,6 +13,7 @@ import (
 	hyperp "github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/oauth"
+	anthropicoauth "github.com/charmbracelet/crush/internal/oauth/anthropic"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/oauth/hyper"
 	"github.com/tidwall/gjson"
@@ -261,6 +262,8 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 			switch providerID {
 			case string(catwalk.InferenceProviderCopilot):
 				providerConfig.SetupGitHubCopilot()
+			case string(catwalk.InferenceProviderAnthropic):
+				providerConfig.SetupAnthropic()
 			}
 		}
 	}
@@ -322,8 +325,11 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 		slog.Info("Using token refreshed by another session", "provider", providerID)
 		providerConfig.OAuthToken = newToken
 		providerConfig.APIKey = newToken.AccessToken
-		if providerID == string(catwalk.InferenceProviderCopilot) {
+		switch providerID {
+		case string(catwalk.InferenceProviderCopilot):
 			providerConfig.SetupGitHubCopilot()
+		case string(catwalk.InferenceProviderAnthropic):
+			providerConfig.SetupAnthropic()
 		}
 		s.config.Providers.Set(providerID, providerConfig)
 		return nil
@@ -336,6 +342,8 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 		refreshedToken, refreshErr = copilot.RefreshToken(ctx, providerConfig.OAuthToken.RefreshToken)
 	case hyperp.Name:
 		refreshedToken, refreshErr = hyper.ExchangeToken(ctx, providerConfig.OAuthToken.RefreshToken)
+	case string(catwalk.InferenceProviderAnthropic):
+		refreshedToken, refreshErr = anthropicoauth.RefreshToken(ctx, providerConfig.OAuthToken)
 	default:
 		return fmt.Errorf("OAuth refresh not supported for provider %s", providerID)
 	}
@@ -350,6 +358,8 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 	switch providerID {
 	case string(catwalk.InferenceProviderCopilot):
 		providerConfig.SetupGitHubCopilot()
+	case string(catwalk.InferenceProviderAnthropic):
+		providerConfig.SetupAnthropic()
 	}
 
 	s.config.Providers.Set(providerID, providerConfig)

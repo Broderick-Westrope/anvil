@@ -15,6 +15,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/oauth"
+	anthropicoauth "github.com/charmbracelet/crush/internal/oauth/anthropic"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/invopop/jsonschema"
 )
@@ -170,6 +171,19 @@ func (c *ProviderConfig) ToProvider() catwalk.Provider {
 
 func (c *ProviderConfig) SetupGitHubCopilot() {
 	maps.Copy(c.ExtraHeaders, copilot.Headers())
+}
+
+// SetupAnthropic configures Anthropic OAuth headers and flat-rate billing.
+func (c *ProviderConfig) SetupAnthropic() {
+	if c.OAuthToken == nil {
+		return
+	}
+	c.APIKey = "Bearer " + c.OAuthToken.AccessToken
+	c.FlatRate = true
+	if c.ExtraHeaders == nil {
+		c.ExtraHeaders = make(map[string]string)
+	}
+	maps.Copy(c.ExtraHeaders, anthropicoauth.Headers(""))
 }
 
 type MCPType string
@@ -779,7 +793,14 @@ func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
 			testURL = baseURL + "/models"
 		}
 
-		headers["x-api-key"] = apiKey
+		// OAuth tokens are presented as Bearer credentials; plain API
+		// keys use the x-api-key header expected by the Anthropic REST
+		// API.
+		if strings.HasPrefix(apiKey, "Bearer ") {
+			headers["Authorization"] = apiKey
+		} else {
+			headers["x-api-key"] = apiKey
+		}
 		headers["anthropic-version"] = "2023-06-01"
 	case catwalk.TypeGoogle:
 		baseURL, _ := resolver.ResolveValue(c.BaseURL)

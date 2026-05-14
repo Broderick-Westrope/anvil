@@ -56,6 +56,9 @@ func (m *Tool) ProviderOptions() fantasy.ProviderOptions {
 }
 
 func (m *Tool) Name() string {
+	if mcp.OAuthRenameEnabled() {
+		return mcp.OAuthToolName(m.mcpName, m.tool.Name)
+	}
 	return fmt.Sprintf("mcp_%s_%s", m.mcpName, m.tool.Name)
 }
 

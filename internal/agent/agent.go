@@ -119,6 +119,7 @@ type sessionAgent struct {
 	disableAutoSummarize bool
 	isYolo               bool
 	notify               pubsub.Publisher[notify.Notification]
+	providerConfig       config.ProviderConfig
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
@@ -136,6 +137,7 @@ type SessionAgentOptions struct {
 	Messages             message.Service
 	Tools                []fantasy.AgentTool
 	Notify               pubsub.Publisher[notify.Notification]
+	ProviderConfig       config.ProviderConfig
 }
 
 func NewSessionAgent(
@@ -153,6 +155,7 @@ func NewSessionAgent(
 		tools:                csync.NewSliceFrom(opts.Tools),
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
+		providerConfig:       opts.ProviderConfig,
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
 	}
@@ -182,6 +185,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	largeModel := a.largeModel.Get()
 	systemPrompt := a.systemPrompt.Get()
 	promptPrefix := a.systemPromptPrefix.Get()
+	providerCfg := a.providerConfig
 	var instructions strings.Builder
 
 	for _, server := range mcp.GetStates() {
@@ -308,6 +312,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 			if promptPrefix != "" {
 				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(promptPrefix)}, prepared.Messages...)
+			}
+
+			if isAnthropicOAuth(providerCfg) {
+				prepared.Messages = transformForAnthropicOAuth(
+					prepared.Messages, systemPrompt, largeModel.ModelCfg.Model,
+				)
 			}
 
 			var assistantMsg message.Message
@@ -633,6 +643,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
 	systemPromptPrefix := a.systemPromptPrefix.Get()
+	providerCfg := a.providerConfig
 
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
@@ -678,6 +689,11 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			prepared.Messages = options.Messages
 			if systemPromptPrefix != "" {
 				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(systemPromptPrefix)}, prepared.Messages...)
+			}
+			if isAnthropicOAuth(providerCfg) {
+				prepared.Messages = transformForAnthropicOAuth(
+					prepared.Messages, string(summaryPrompt), largeModel.ModelCfg.Model,
+				)
 			}
 			return callContext, prepared, nil
 		},
@@ -983,6 +999,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 	smallModel := a.smallModel.Get()
 	largeModel := a.largeModel.Get()
 	systemPromptPrefix := a.systemPromptPrefix.Get()
+	providerCfg := a.providerConfig
 
 	var maxOutputTokens int64 = 40
 	if smallModel.CatwalkCfg.CanReason {
@@ -1005,6 +1022,11 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 				prepared.Messages = append([]fantasy.Message{
 					fantasy.NewSystemMessage(systemPromptPrefix),
 				}, prepared.Messages...)
+			}
+			if isAnthropicOAuth(providerCfg) {
+				prepared.Messages = transformForAnthropicOAuth(
+					prepared.Messages, string(titlePrompt), largeModel.ModelCfg.Model,
+				)
 			}
 			return callCtx, prepared, nil
 		},
