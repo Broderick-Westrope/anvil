@@ -197,7 +197,7 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		lines[i] = a.sty.Messages.ThinkingLine.Render(lines[i])
 	}
 
-	thinkingStyle := a.sty.Messages.ThinkingBox.Width(innerWidth)
+	thinkingStyle := a.sty.Messages.ThinkingBox.Width(width)
 	result := thinkingStyle.Render(strings.Join(lines, "\n"))
 	a.thinkingBoxHeight = lipgloss.Height(result)
 
