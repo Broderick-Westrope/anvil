@@ -16,13 +16,28 @@ type AgentMD struct {
 	// DelegatesTo lists agent names this agent is allowed to delegate to.
 	DelegatesTo []string
 
-	// Body is the markdown content after the frontmatter block.
+	// Role is a one-line description used by the orchestrator for routing.
+	Role string
+
+	// DelegateWhen describes conditions under which the orchestrator should
+	// delegate to this agent.
+	DelegateWhen string
+
+	// DontDelegateWhen describes conditions under which the orchestrator should
+	// NOT delegate to this agent.
+	DontDelegateWhen string
+
+	// Body is the full specialist system prompt (markdown body after the
+	// frontmatter block).
 	Body string
 }
 
 // agentFrontmatter is the YAML structure expected in agent .md files.
 type agentFrontmatter struct {
-	DelegatesTo []string `yaml:"delegates_to"`
+	DelegatesTo      []string `yaml:"delegates_to"`
+	Role             string   `yaml:"role"`
+	DelegateWhen     string   `yaml:"delegate_when"`
+	DontDelegateWhen string   `yaml:"dont_delegate_when"`
 }
 
 // ParseAgentMD parses an agent description file with YAML frontmatter.
@@ -68,27 +83,35 @@ func ParseAgentMD(name string, content []byte) (AgentMD, error) {
 	}
 
 	agent.DelegatesTo = fm.DelegatesTo
+	agent.Role = fm.Role
+	agent.DelegateWhen = fm.DelegateWhen
+	agent.DontDelegateWhen = fm.DontDelegateWhen
 	agent.Body = body
 	return agent, nil
 }
 
 // BuildAgentsBlock generates the <Agents> block for the orchestrator prompt.
-// Each agent is listed with its name and body content (role, capabilities,
-// and routing guidance). The result is wrapped in <Agents> tags.
+// Each agent is listed with its routing metadata (role, delegate_when,
+// dont_delegate_when) sourced from frontmatter. The body is NOT included here;
+// it is used only for the specialist's own system prompt. The result is wrapped
+// in <Agents> tags.
 func BuildAgentsBlock(agents []AgentMD) string {
 	var sb strings.Builder
-	sb.WriteString("<Agents>\n")
+	sb.WriteString("<Agents>\n\n")
 	for _, a := range agents {
-		sb.WriteString("\n@")
-		sb.WriteString(a.Name)
-		sb.WriteString("\n")
-		body := strings.TrimSpace(a.Body)
-		if body != "" {
-			sb.WriteString(body)
-			sb.WriteString("\n")
+		sb.WriteString("@" + a.Name + "\n")
+		if a.Role != "" {
+			sb.WriteString("- Role: " + a.Role + "\n")
 		}
+		if a.DelegateWhen != "" {
+			sb.WriteString("- Delegate when: " + a.DelegateWhen + "\n")
+		}
+		if a.DontDelegateWhen != "" {
+			sb.WriteString("- Don't delegate when: " + a.DontDelegateWhen + "\n")
+		}
+		sb.WriteString("\n")
 	}
-	sb.WriteString("\n</Agents>")
+	sb.WriteString("</Agents>")
 	return sb.String()
 }
 

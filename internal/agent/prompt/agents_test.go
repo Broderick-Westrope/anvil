@@ -71,19 +71,28 @@ func TestBuildAgentsBlock(t *testing.T) {
 
 	agents := []AgentMD{
 		{
-			Name:        "oracle",
-			DelegatesTo: nil,
-			Body:        "- Role: Strategic advisor.\n- Capabilities: Deep reasoning.\n",
+			Name:             "oracle",
+			DelegatesTo:      nil,
+			Role:             "Strategic advisor.",
+			DelegateWhen:     "Deep reasoning needed.",
+			DontDelegateWhen: "Routine decisions.",
+			Body:             "Detailed specialist instructions for oracle.",
 		},
 		{
-			Name:        "fixer",
-			DelegatesTo: nil,
-			Body:        "- Role: Implementation specialist.\n- Capabilities: Code changes.\n",
+			Name:             "fixer",
+			DelegatesTo:      nil,
+			Role:             "Implementation specialist.",
+			DelegateWhen:     "Well-defined implementation work.",
+			DontDelegateWhen: "Task still needs discovery.",
+			Body:             "Detailed specialist instructions for fixer.",
 		},
 		{
-			Name:        "explorer",
-			DelegatesTo: nil,
-			Body:        "- Role: Search specialist.\n- Capabilities: Glob and grep.\n",
+			Name:             "explorer",
+			DelegatesTo:      nil,
+			Role:             "Search specialist.",
+			DelegateWhen:     "Broad codebase discovery.",
+			DontDelegateWhen: "Exact file path is known.",
+			Body:             "Detailed specialist instructions for explorer.",
 		},
 	}
 
@@ -102,12 +111,16 @@ func TestBuildAgentsBlock(t *testing.T) {
 		require.Contains(t, result, "@explorer")
 	})
 
-	t.Run("contains agent body content", func(t *testing.T) {
+	t.Run("contains routing field content not body", func(t *testing.T) {
 		t.Parallel()
 		result := BuildAgentsBlock(agents)
-		require.Contains(t, result, "Strategic advisor")
-		require.Contains(t, result, "Implementation specialist")
-		require.Contains(t, result, "Search specialist")
+		require.Contains(t, result, "- Role: Strategic advisor.")
+		require.Contains(t, result, "- Role: Implementation specialist.")
+		require.Contains(t, result, "- Role: Search specialist.")
+		require.Contains(t, result, "- Delegate when: Deep reasoning needed.")
+		require.Contains(t, result, "- Don't delegate when: Routine decisions.")
+		// Body must NOT appear in the agents block.
+		require.NotContains(t, result, "Detailed specialist instructions")
 	})
 
 	t.Run("empty agents list produces minimal block", func(t *testing.T) {
@@ -178,17 +191,17 @@ func TestBuildDelegationWorkflow(t *testing.T) {
 		t.Parallel()
 		// Build a realistic agents block using the actual agent .md files is not
 		// possible without embedding here, so we approximate with representative
-		// bodies that match typical agent description length.
+		// routing fields that match typical frontmatter content.
 		realisticRoster := []AgentMD{
-			{Name: "oracle", Body: "- Role: Strategic advisor for deep reasoning, architecture decisions, and complex debugging.\n- Capabilities: Thorough analysis of ambiguous or high-stakes problems.\n- Delegate when: Genuinely uncertain about a high-stakes decision.\n- Don't delegate when: Routine implementation decisions can be made confidently.\n"},
-			{Name: "explorer", Body: "- Role: Fast codebase search and pattern-matching specialist.\n- Capabilities: Glob file discovery, grep content search, AST-aware queries.\n- Delegate when: Discovering what exists before planning work.\n- Don't delegate when: You already know the exact file path.\n"},
-			{Name: "librarian", Body: "- Role: External documentation and library research specialist.\n- Capabilities: Fetches latest official docs, API signatures, usage examples.\n- Delegate when: Working with libraries that have frequent API changes.\n- Don't delegate when: The API is stable and well-known.\n"},
-			{Name: "designer", Body: "- Role: UI/UX specialist for intentional, polished user-facing experiences.\n- Capabilities: Visual direction, responsive layouts, design systems.\n- Delegate when: The output is user-facing and polish matters.\n- Don't delegate when: The work is purely backend or logic.\n"},
-			{Name: "fixer", Body: "- Role: Fast, bounded implementation specialist.\n- Capabilities: Receives complete context and a clear task specification, then executes.\n- Delegate when: The implementation work is well-defined with a clear spec.\n- Don't delegate when: The task still needs discovery or research.\n"},
-			{Name: "planner", Body: "- Role: Feature planning and specification specialist.\n- Capabilities: Grilling users to surface requirements, brainstorming approaches.\n- Delegate when: Starting a new feature that needs structured planning.\n- Don't delegate when: The change is small enough that a plan would cost more time.\n"},
-			{Name: "tester", Body: "- Role: Test analysis and planning specialist.\n- Capabilities: Analyses the codebase to identify coverage gaps.\n- Delegate when: Writing a comprehensive test suite for a module or feature.\n- Don't delegate when: Adding a single test case to an already well-covered area.\n"},
-			{Name: "reviewer", Body: "- Role: Code and PR reviewer focused on implementation quality.\n- Capabilities: Reviews diffs and implementations for correctness.\n- Delegate when: Reviewing a set of code changes or a pull request.\n- Don't delegate when: Doing a quick self-check on a small, obviously correct change.\n"},
-			{Name: "devils-advocate", Body: "- Role: Rigorous critic that finds weaknesses in specs and plans.\n- Capabilities: Identifies unstated assumptions, edge cases, hidden complexity.\n- Delegate when: A spec or plan needs adversarial review before implementation.\n- Don't delegate when: The work is implementation.\n"},
+			{Name: "oracle", Role: "Strategic advisor for deep reasoning, architecture decisions, and complex debugging.", DelegateWhen: "Genuinely uncertain about a high-stakes decision.", DontDelegateWhen: "Routine implementation decisions can be made confidently."},
+			{Name: "explorer", Role: "Fast codebase search and pattern-matching specialist.", DelegateWhen: "Discovering what exists before planning work.", DontDelegateWhen: "You already know the exact file path."},
+			{Name: "librarian", Role: "External documentation and library research specialist.", DelegateWhen: "Working with libraries that have frequent API changes.", DontDelegateWhen: "The API is stable and well-known."},
+			{Name: "designer", Role: "UI/UX specialist for intentional, polished user-facing experiences.", DelegateWhen: "The output is user-facing and polish matters.", DontDelegateWhen: "The work is purely backend or logic."},
+			{Name: "fixer", Role: "Fast, bounded implementation specialist.", DelegateWhen: "The implementation work is well-defined with a clear spec.", DontDelegateWhen: "The task still needs discovery or research."},
+			{Name: "planner", Role: "Feature planning and specification specialist.", DelegateWhen: "Starting a new feature that needs structured planning.", DontDelegateWhen: "The change is small enough that a plan would cost more time."},
+			{Name: "tester", Role: "Test analysis and planning specialist.", DelegateWhen: "Writing a comprehensive test suite for a module or feature.", DontDelegateWhen: "Adding a single test case to an already well-covered area."},
+			{Name: "reviewer", Role: "Code and PR reviewer focused on implementation quality.", DelegateWhen: "Reviewing a set of code changes or a pull request.", DontDelegateWhen: "Doing a quick self-check on a small, obviously correct change."},
+			{Name: "devils-advocate", Role: "Rigorous critic that finds weaknesses in specs and plans.", DelegateWhen: "A spec or plan needs adversarial review before implementation.", DontDelegateWhen: "The work is implementation."},
 		}
 
 		agentsBlock := BuildAgentsBlock(realisticRoster)
@@ -200,6 +213,72 @@ func TestBuildDelegationWorkflow(t *testing.T) {
 		require.Less(t, approxTokens, 4000,
 			"combined agents block and workflow should be under 4k tokens, got ~%d", approxTokens)
 	})
+}
+
+func TestParseAgentMD_FullFrontmatter(t *testing.T) {
+	t.Parallel()
+
+	content := []byte(
+		"---\n" +
+			"delegates_to: [fixer, explorer]\n" +
+			"role: Deep reasoning specialist.\n" +
+			"delegate_when: High-stakes decisions needed.\n" +
+			"dont_delegate_when: Routine tasks are sufficient.\n" +
+			"---\n" +
+			"# Oracle\n" +
+			"\n" +
+			"You are the oracle specialist. Apply deep reasoning to every problem.\n",
+	)
+
+	got, err := ParseAgentMD("oracle", content)
+	require.NoError(t, err)
+	require.Equal(t, "oracle", got.Name)
+	require.Equal(t, []string{"fixer", "explorer"}, got.DelegatesTo)
+	require.Equal(t, "Deep reasoning specialist.", got.Role)
+	require.Equal(t, "High-stakes decisions needed.", got.DelegateWhen)
+	require.Equal(t, "Routine tasks are sufficient.", got.DontDelegateWhen)
+	// Body should be only the markdown after the closing ---.
+	require.Equal(t, "# Oracle\n\nYou are the oracle specialist. Apply deep reasoning to every problem.\n", got.Body)
+	// Body must not contain any frontmatter keys.
+	require.NotContains(t, got.Body, "delegates_to")
+	require.NotContains(t, got.Body, "delegate_when")
+	require.NotContains(t, got.Body, "dont_delegate_when")
+}
+
+func TestBuildAgentsBlock_UsesRoutingNotBody(t *testing.T) {
+	t.Parallel()
+
+	agents := []AgentMD{
+		{
+			Name:             "oracle",
+			Role:             "Strategic routing role.",
+			DelegateWhen:     "When oracle is best.",
+			DontDelegateWhen: "When oracle is not needed.",
+			Body:             "SECRET BODY CONTENT that must not appear in the agents block.",
+		},
+		{
+			Name: "fixer",
+			Role: "Implementation routing role.",
+			// No DelegateWhen or DontDelegateWhen — optional fields.
+			Body: "ANOTHER SECRET BODY that must not appear.",
+		},
+	}
+
+	result := BuildAgentsBlock(agents)
+
+	// Routing fields must be present.
+	require.Contains(t, result, "- Role: Strategic routing role.")
+	require.Contains(t, result, "- Delegate when: When oracle is best.")
+	require.Contains(t, result, "- Don't delegate when: When oracle is not needed.")
+	require.Contains(t, result, "- Role: Implementation routing role.")
+
+	// Body text must NOT appear in the agents block.
+	require.NotContains(t, result, "SECRET BODY CONTENT")
+	require.NotContains(t, result, "ANOTHER SECRET BODY")
+
+	// Optional fields absent on fixer should not produce empty lines with labels.
+	require.NotContains(t, result, "- Delegate when: \n")
+	require.NotContains(t, result, "- Don't delegate when: \n")
 }
 
 func TestValidateDelegatesTo(t *testing.T) {
