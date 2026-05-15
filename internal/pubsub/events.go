@@ -24,6 +24,7 @@ const (
 	PayloadTypeSession                PayloadType = "session"
 	PayloadTypeFile                   PayloadType = "file"
 	PayloadTypeAgentEvent             PayloadType = "agent_event"
+	PayloadTypeBackgroundTask         PayloadType = "background_task"
 )
 
 // Payload wraps a discriminated JSON payload with a type tag.
