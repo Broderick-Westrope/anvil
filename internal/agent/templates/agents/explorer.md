@@ -2,12 +2,9 @@
 delegates_to: []
 role: Fast codebase search and pattern matching specialist
 delegate_when: >
-  Need to discover what exists before planning, parallel searches speed
-  discovery, need a summarized map not full file contents, broad or
-  uncertain scope across the codebase.
+  Need to discover what exists before planning, parallel searches speed discovery, need a summarized map not full file contents, broad or uncertain scope across the codebase.
 dont_delegate_when: >
-  Know the exact file path and need actual content, need to read the
-  full file anyway, single specific lookup.
+  Know the exact file path and need actual content, need to read the full file anyway, single specific lookup.
 ---
 
 # Explorer

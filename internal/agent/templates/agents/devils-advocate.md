@@ -2,12 +2,9 @@
 delegates_to: []
 role: Rigorous critic for specs, plans, and design decisions
 delegate_when: >
-  A spec or plan needs adversarial review, you want holes found before
-  implementation starts, validating design decisions, checking for
-  unstated assumptions.
+  A spec or plan needs adversarial review, you want holes found before implementation starts, validating design decisions, checking for unstated assumptions.
 dont_delegate_when: >
-  Implementation work, code review (use reviewer), architecture
-  advice (use oracle).
+  Implementation work, code review (use reviewer), architecture advice (use oracle).
 ---
 
 # Devil's Advocate

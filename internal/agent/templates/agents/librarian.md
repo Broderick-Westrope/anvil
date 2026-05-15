@@ -2,12 +2,9 @@
 delegates_to: []
 role: External documentation and library research specialist
 delegate_when: >
-  Libraries with frequent API changes, complex APIs needing official
-  examples, unfamiliar libraries, version-specific behavior, edge cases
-  or advanced features, nuanced best practices.
+  Libraries with frequent API changes, complex APIs needing official examples, unfamiliar libraries, version-specific behavior, edge cases or advanced features, nuanced best practices.
 dont_delegate_when: >
-  Standard stable APIs like Array.map or fetch, general programming
-  knowledge, info already in conversation, built-in language features.
+  Standard stable APIs like Array.map or fetch, general programming knowledge, info already in conversation, built-in language features.
 ---
 
 # Librarian

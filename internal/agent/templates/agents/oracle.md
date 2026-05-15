@@ -2,13 +2,9 @@
 delegates_to: []
 role: Strategic technical advisor for high-stakes decisions and complex debugging
 delegate_when: >
-  Genuinely uncertain about high-stakes architectural decisions, problems
-  persist after 2+ fix attempts, need a second opinion with deeper
-  reasoning, complex debugging with unclear root cause, security or
-  data integrity decisions.
+  Genuinely uncertain about high-stakes architectural decisions, problems persist after 2+ fix attempts, need a second opinion with deeper reasoning, complex debugging with unclear root cause, security or data integrity decisions.
 dont_delegate_when: >
-  Routine decisions, first bug fix attempt, straightforward tradeoffs,
-  quick research or testing can answer the question.
+  Routine decisions, first bug fix attempt, straightforward tradeoffs, quick research or testing can answer the question.
 ---
 
 # Oracle

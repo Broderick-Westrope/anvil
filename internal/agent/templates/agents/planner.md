@@ -2,12 +2,9 @@
 delegates_to: [devils-advocate]
 role: Feature planning and specification writing specialist
 delegate_when: >
-  Starting a new feature that needs structured planning, user wants to
-  be grilled about requirements, need a design spec or implementation
-  plan written to disk.
+  Starting a new feature that needs structured planning, user wants to be grilled about requirements, need a design spec or implementation plan written to disk.
 dont_delegate_when: >
-  Quick changes that don't need a plan, simple bug fixes, work that's
-  already well-specified.
+  Quick changes that don't need a plan, simple bug fixes, work that's already well-specified.
 ---
 
 # Planner

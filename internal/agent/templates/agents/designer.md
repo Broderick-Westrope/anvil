@@ -2,12 +2,9 @@
 delegates_to: [oracle]
 role: UI/UX specialist for intentional, polished user experiences
 delegate_when: >
-  Users see it and polish matters, responsive layouts, UX-critical
-  components (forms, navigation, dashboards), visual consistency,
-  animations and micro-interactions, landing pages, design system work.
+  Users see it and polish matters, responsive layouts, UX-critical components (forms, navigation, dashboards), visual consistency, animations and micro-interactions, landing pages, design system work.
 dont_delegate_when: >
-  Backend logic with no visual component, quick prototypes where
-  design doesn't matter yet.
+  Backend logic with no visual component, quick prototypes where design doesn't matter yet.
 ---
 
 # Designer

@@ -2,13 +2,9 @@
 delegates_to: []
 role: Fast bounded implementation specialist
 delegate_when: >
-  Well-defined implementation work with clear specs, writing or
-  updating tests, tasks touching test files and fixtures, non-trivial
-  multi-file changes where the approach is already decided.
+  Well-defined implementation work with clear specs, writing or updating tests, tasks touching test files and fixtures, non-trivial multi-file changes where the approach is already decided.
 dont_delegate_when: >
-  Needs discovery or research, single small change under 20 lines in
-  one file, unclear requirements needing iteration, explaining the
-  task would take longer than doing it.
+  Needs discovery or research, single small change under 20 lines in one file, unclear requirements needing iteration, explaining the task would take longer than doing it.
 ---
 
 # Fixer

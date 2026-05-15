@@ -2,11 +2,9 @@
 delegates_to: []
 role: Code and PR reviewer focused on implementation quality
 delegate_when: >
-  Code review of changes, after fixer implementations, PR review,
-  reviewing diffs and implementations for quality.
+  Code review of changes, after fixer implementations, PR review, reviewing diffs and implementations for quality.
 dont_delegate_when: >
-  Quick self-checks on small changes, architectural decisions (use
-  oracle), spec review (use devils-advocate).
+  Quick self-checks on small changes, architectural decisions (use oracle), spec review (use devils-advocate).
 ---
 
 # Reviewer

@@ -2,12 +2,9 @@
 delegates_to: [fixer]
 role: Test analysis, strategy, and planning specialist
 delegate_when: >
-  Writing comprehensive test suites, test strategy decisions, diagnosing
-  flaky tests, coverage gap analysis, need a test plan before
-  implementation.
+  Writing comprehensive test suites, test strategy decisions, diagnosing flaky tests, coverage gap analysis, need a test plan before implementation.
 dont_delegate_when: >
-  Adding a single test to existing coverage, the change is trivial
-  enough that the orchestrator can write the test inline.
+  Adding a single test to existing coverage, the change is trivial enough that the orchestrator can write the test inline.
 ---
 
 # Tester
