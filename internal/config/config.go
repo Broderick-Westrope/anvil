@@ -59,7 +59,6 @@ const (
 
 const (
 	AgentOrchestrator string = "orchestrator"
-	AgentTask         string = "task"
 )
 
 type SelectedModel struct {
@@ -527,14 +526,13 @@ type Agent struct {
 	AppendPrompt string `json:"append_prompt,omitempty"`
 }
 
-// EffectiveModelType returns the SelectedModelType for the agent's configured
-// model. An empty Model string (the default) falls back to
-// SelectedModelTypeLarge.
+// EffectiveModelType returns the model slot type for UI lookups.
+// Per-agent model resolution is handled by ResolveAgentModel in the
+// coordinator; this method always returns SelectedModelTypeLarge so that
+// the UI can locate the correct model slot regardless of whether the agent
+// has a custom model configured.
 func (a Agent) EffectiveModelType() SelectedModelType {
-	if a.Model == "" {
-		return SelectedModelTypeLarge
-	}
-	return SelectedModelType(a.Model)
+	return SelectedModelTypeLarge
 }
 
 // agentJSON is an alias used inside UnmarshalJSON to prevent recursion.
@@ -767,26 +765,6 @@ func readOnlyTools() []string {
 // for agents that can modify the codebase and run commands.
 func readWriteTools() []string {
 	return append(readOnlyTools(), "edit", "write", "bash", "multiedit")
-}
-
-func resolveAllowedTools(allTools []string, disabledTools []string) []string {
-	if disabledTools == nil {
-		return allTools
-	}
-	// Filter out disabled tools (exclude mode).
-	return filterSlice(allTools, disabledTools, false)
-}
-
-func filterSlice(data []string, mask []string, include bool) []string {
-	var filtered []string
-	for _, s := range data {
-		// if include is true, we include items that ARE in the mask
-		// if include is false, we include items that are NOT in the mask
-		if include == slices.Contains(mask, s) {
-			filtered = append(filtered, s)
-		}
-	}
-	return filtered
 }
 
 // SetupAgents initialises Config.Agents with the default 10-agent roster.

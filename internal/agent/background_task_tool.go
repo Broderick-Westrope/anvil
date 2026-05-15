@@ -103,9 +103,11 @@ func (c *coordinator) backgroundTaskTool(ctx context.Context, callerName string,
 				), nil
 			}
 
-			// Create a child context so the task is cancelled when the parent
-			// session context is cancelled.
-			taskCtx, cancel := context.WithCancel(ctx)
+			// Use context.Background() so the goroutine survives past the tool
+			// call return. Explicit cancellation is provided via the cancel func
+			// stored in bgTasks; the caller can cancel individual tasks or the
+			// session teardown path cancels them all via CancelBackgroundTask.
+			taskCtx, cancel := context.WithCancel(context.Background())
 			c.bgTasks.Set(taskID, cancel)
 
 			description := params.Description

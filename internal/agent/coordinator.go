@@ -113,6 +113,10 @@ type coordinator struct {
 	// agents is a lazy map of named sub-agents, populated on first delegation.
 	agents csync.Map[string, SessionAgent]
 
+	// agentBuildMu serialises lazy agent construction to prevent duplicate
+	// builds when two goroutines race on the same agent name.
+	agentBuildMu sync.Mutex
+
 	// agentConfigs holds per-agent config loaded from cfg at init.
 	agentConfigs map[string]config.Agent
 
@@ -124,8 +128,6 @@ type coordinator struct {
 	activeSkills []*skills.Skill      // Post-filter: active skills only.
 	skillStates  []*skills.SkillState // Combined builtin + user states.
 	skillTracker *skills.Tracker
-
-	readyWg errgroup.Group
 
 	// Background task infrastructure.
 	// bgSemaphore caps concurrent background tasks at 10.
@@ -172,8 +174,9 @@ func NewCoordinator(
 	}
 
 	// Start subscriber goroutine that drains bgBroker events into pendingResults.
+	// The goroutine is tied to the coordinator's lifecycle via ctx.
 	go func() {
-		sub := c.bgBroker.Subscribe(context.Background())
+		sub := c.bgBroker.Subscribe(ctx)
 		for event := range sub {
 			c.pendingMu.Lock()
 			c.pendingResults = append(c.pendingResults, event.Payload)
@@ -267,10 +270,6 @@ func loadAgentMDs(fsys embed.FS) (map[string]prompt.AgentMD, error) {
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
-	if err := c.readyWg.Wait(); err != nil {
-		return nil, err
-	}
-
 	// refresh models before each run
 	if err := c.UpdateModels(ctx); err != nil {
 		return nil, fmt.Errorf("failed to update models: %w", err)
@@ -305,6 +304,22 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		// NOTE(@andreynering): We don't return here because the event handling to ask the user to reauthenticate
 		// depends on the flow below. If refresh fails, proceed with the token we have.
 		slog.Error("Failed to refresh OAuth2 token. Proceeding with existing token.", "error", err)
+	}
+
+	// Drain any pending background task results and prepend them to the prompt
+	// so the orchestrator is aware of completed background work.
+	pendingResults := c.DrainPendingResults()
+	if len(pendingResults) > 0 {
+		var resultText strings.Builder
+		resultText.WriteString("Background task results:\n")
+		for _, r := range pendingResults {
+			if r.Success {
+				resultText.WriteString(fmt.Sprintf("- [%s] %s: %s\n", r.AgentName, r.TaskID[:8], r.Result))
+			} else {
+				resultText.WriteString(fmt.Sprintf("- [%s] %s FAILED: %s\n", r.AgentName, r.TaskID[:8], r.Result))
+			}
+		}
+		prompt = resultText.String() + "\n" + prompt
 	}
 
 	run := func() (*fantasy.AgentResult, error) {
@@ -553,7 +568,12 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 	largeProvider := large.Model.Provider()
 	largeModel := large.Model.Model()
 
-	c.readyWg.Go(func() error {
+	// Use a local errgroup so the agent is fully initialised (prompt + tools)
+	// before it is returned to the caller. This avoids the shared-errgroup
+	// reuse hazard and ensures each buildAgent call is self-contained.
+	var wg errgroup.Group
+
+	wg.Go(func() error {
 		p, buildErr := c.buildPrompt(agentName, agentCfg)
 		if buildErr != nil {
 			return buildErr
@@ -566,7 +586,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		return nil
 	})
 
-	c.readyWg.Go(func() error {
+	wg.Go(func() error {
 		agentTools, buildErr := c.buildTools(ctx, agentCfg, depth)
 		if buildErr != nil {
 			return buildErr
@@ -574,6 +594,10 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		result.SetTools(agentTools)
 		return nil
 	})
+
+	if err := wg.Wait(); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
@@ -619,14 +643,29 @@ func (c *coordinator) buildOrchestratorBlocks() (agentsBlock, delegationWorkflow
 			activeAgents = append(activeAgents, md)
 		}
 	}
+	// Sort for deterministic prompt output.
+	slices.SortFunc(activeAgents, func(a, b prompt.AgentMD) int {
+		return strings.Compare(a.Name, b.Name)
+	})
 	return prompt.BuildAgentsBlock(activeAgents), prompt.BuildDelegationWorkflow(activeAgents)
 }
 
 // getOrBuildAgent returns a cached sub-agent by name or lazily builds one.
+// A mutex ensures only one goroutine builds the agent even under concurrent
+// delegation; a second caller will hit the fast-path re-check after the lock.
 func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, depth int) (SessionAgent, error) {
 	if existing, ok := c.agents.Get(agentName); ok {
 		return existing, nil
 	}
+
+	c.agentBuildMu.Lock()
+	defer c.agentBuildMu.Unlock()
+
+	// Double-check after acquiring the lock.
+	if existing, ok := c.agents.Get(agentName); ok {
+		return existing, nil
+	}
+
 	agentCfg, ok := c.agentConfigs[agentName]
 	if !ok {
 		return nil, fmt.Errorf("agent %q not configured", agentName)
@@ -751,7 +790,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 		if len(agent.AllowedMCP) == 0 {
 			// No MCPs allowed.
 			slog.Debug("No MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
-			break
+			continue
 		}
 
 		for mcp, mcpTools := range agent.AllowedMCP {
