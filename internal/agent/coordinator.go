@@ -86,6 +86,13 @@ type Coordinator interface {
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	SkillStates() []*skills.SkillState
+	// BackgroundTaskStatus reports whether the given background task is still running.
+	BackgroundTaskStatus(taskID string) bool
+	// CancelBackgroundTask cancels a running background task by ID.
+	// Returns an error if the task ID is not found.
+	CancelBackgroundTask(taskID string) error
+	// DrainPendingResults returns and clears all completed background task results.
+	DrainPendingResults() []BackgroundTaskResult
 }
 
 type coordinator struct {
@@ -119,6 +126,17 @@ type coordinator struct {
 	skillTracker *skills.Tracker
 
 	readyWg errgroup.Group
+
+	// Background task infrastructure.
+	// bgSemaphore caps concurrent background tasks at 10.
+	bgSemaphore chan struct{}
+	// bgTasks maps task IDs to their cancel functions for cancellation support.
+	bgTasks csync.Map[string, context.CancelFunc]
+	// bgBroker publishes BackgroundTaskResult events to subscribers.
+	bgBroker *pubsub.Broker[BackgroundTaskResult]
+	// pendingResults holds completed results not yet drained by the caller.
+	pendingResults []BackgroundTaskResult
+	pendingMu      sync.Mutex
 }
 
 func NewCoordinator(
@@ -149,7 +167,19 @@ func NewCoordinator(
 		activeSkills: activeSkills,
 		skillStates:  skillStates,
 		skillTracker: skillTracker,
+		bgSemaphore:  make(chan struct{}, 10),
+		bgBroker:     pubsub.NewBroker[BackgroundTaskResult](),
 	}
+
+	// Start subscriber goroutine that drains bgBroker events into pendingResults.
+	go func() {
+		sub := c.bgBroker.Subscribe(context.Background())
+		for event := range sub {
+			c.pendingMu.Lock()
+			c.pendingResults = append(c.pendingResults, event.Payload)
+			c.pendingMu.Unlock()
+		}
+	}()
 
 	// Enable MCP OAuth tool-name rename when the Anthropic provider uses
 	// OAuth credentials. This must happen once during coordinator
@@ -626,13 +656,27 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 	// Assemble the full candidate tool set (before AllowedTools filtering).
 	var candidateTools []fantasy.AgentTool
 
-	// Add the agent (task) delegation tool if depth allows.
+	// Add the task and background_task delegation tools if depth allows and the
+	// agent has delegates.
 	if depth > 1 {
-		agentTool, err := c.agentTool(ctx)
-		if err != nil {
-			return nil, err
+		callerName := agent.ID
+		hasDelegates := callerName == config.AgentOrchestrator
+		if !hasDelegates {
+			if md, ok := c.agentMDs[callerName]; ok && len(md.DelegatesTo) > 0 {
+				hasDelegates = true
+			}
 		}
-		candidateTools = append(candidateTools, agentTool)
+		if hasDelegates {
+			taskTool, err := c.taskTool(ctx, callerName, depth)
+			if err != nil {
+				return nil, err
+			}
+			bgTaskTool, err := c.backgroundTaskTool(ctx, callerName, depth)
+			if err != nil {
+				return nil, err
+			}
+			candidateTools = append(candidateTools, taskTool, bgTaskTool)
+		}
 	}
 
 	// Add the agentic_fetch tool to the candidate set; filtering via AllowedTools applies below.
@@ -1375,6 +1419,37 @@ func (c *coordinator) updateParentSessionCost(ctx context.Context, childSessionI
 // discovery states captured at session start.
 func (c *coordinator) SkillStates() []*skills.SkillState {
 	return slices.Clone(c.skillStates)
+}
+
+// BackgroundTaskStatus reports whether the given background task is still
+// running. Returns false if the task ID is not found or has completed.
+func (c *coordinator) BackgroundTaskStatus(taskID string) bool {
+	_, ok := c.bgTasks.Get(taskID)
+	return ok
+}
+
+// CancelBackgroundTask cancels the background task with the given ID.
+// Returns an error if no such task is running.
+func (c *coordinator) CancelBackgroundTask(taskID string) error {
+	cancel, ok := c.bgTasks.Get(taskID)
+	if !ok {
+		return fmt.Errorf("background task %q not found", taskID)
+	}
+	cancel()
+	return nil
+}
+
+// DrainPendingResults returns and clears all completed background task results
+// that have not yet been consumed by the caller.
+func (c *coordinator) DrainPendingResults() []BackgroundTaskResult {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	if len(c.pendingResults) == 0 {
+		return nil
+	}
+	out := c.pendingResults
+	c.pendingResults = nil
+	return out
 }
 
 // discoverSkills runs the skill discovery pipeline and returns both the

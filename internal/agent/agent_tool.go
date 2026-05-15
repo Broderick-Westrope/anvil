@@ -4,6 +4,10 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"fmt"
+	"log/slog"
+	"slices"
+	"strings"
 
 	"charm.land/fantasy"
 
@@ -11,34 +15,61 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 )
 
-//go:embed templates/agent_tool.md
-var agentToolDescription string
+//go:embed templates/task_tool.md
+var taskToolDescription string
 
-type AgentParams struct {
-	Prompt string `json:"prompt" description:"The task for the agent to perform"`
+// TaskParams holds the parameters for the task tool.
+type TaskParams struct {
+	Prompt       string `json:"prompt" jsonschema:"description=The task for the agent to perform,required"`
+	SubagentType string `json:"subagent_type" jsonschema:"description=The type of specialized agent to use for this task,required"`
+	Description  string `json:"description" jsonschema:"description=A short (3-5 words) description of the task"`
 }
 
 const (
-	AgentToolName = "agent"
+	TaskToolName = "task"
 )
 
-func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) {
-	agentCfg, ok := c.cfg.Config().Agents[config.AgentTask]
-	if !ok {
-		// Fall back to a generic sub-agent config if AgentTask is not configured.
-		agentCfg = config.Agent{ID: config.AgentTask, Name: "Task"}
-	}
-
-	agent, err := c.buildAgent(ctx, config.AgentTask, agentCfg, 1)
-	if err != nil {
-		return nil, err
-	}
+// taskTool builds the task delegation tool for the given caller agent.
+// callerName is the agent's own ID (e.g. "orchestrator"); callerDepth is its
+// current delegation depth (3 = top-level orchestrator).
+func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDepth int) (fantasy.AgentTool, error) {
 	return fantasy.NewParallelAgentTool(
-		AgentToolName,
-		agentToolDescription,
-		func(ctx context.Context, params AgentParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		TaskToolName,
+		taskToolDescription,
+		func(ctx context.Context, params TaskParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.Prompt == "" {
 				return fantasy.NewTextErrorResponse("prompt is required"), nil
+			}
+			if params.SubagentType == "" {
+				return fantasy.NewTextErrorResponse("subagent_type is required"), nil
+			}
+
+			// Validate that the requested agent type is configured.
+			if _, ok := c.agentConfigs[params.SubagentType]; !ok {
+				validTypes := make([]string, 0, len(c.agentConfigs))
+				for name := range c.agentConfigs {
+					if name != config.AgentOrchestrator {
+						validTypes = append(validTypes, name)
+					}
+				}
+				slices.Sort(validTypes)
+				return fantasy.NewTextErrorResponse(
+					fmt.Sprintf("unknown subagent_type %q; valid types: %s",
+						params.SubagentType, strings.Join(validTypes, ", ")),
+				), nil
+			}
+
+			// Enforce delegation rules: non-orchestrator callers may only delegate
+			// to agents listed in their delegates_to frontmatter.
+			if callerName != config.AgentOrchestrator {
+				callerMD, hasMD := c.agentMDs[callerName]
+				if hasMD && !slices.Contains(callerMD.DelegatesTo, params.SubagentType) {
+					return fantasy.NewTextErrorResponse(
+						fmt.Sprintf("agent %q is not allowed to delegate to %q; allowed: %s",
+							callerName, params.SubagentType,
+							strings.Join(callerMD.DelegatesTo, ", ")),
+					), nil
+				}
 			}
 
 			sessionID := tools.GetSessionFromContext(ctx)
@@ -51,13 +82,31 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 				return fantasy.ToolResponse{}, errors.New("agent message id missing from context")
 			}
 
+			// Lazily build (or reuse) the target agent at depth-1.
+			targetDepth := callerDepth - 1
+			agent, err := c.getOrBuildAgent(ctx, params.SubagentType, targetDepth)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("building agent %q: %w", params.SubagentType, err)
+			}
+
+			// Truncate the prompt for logging.
+			promptSummary := params.Prompt
+			if len(promptSummary) > 100 {
+				promptSummary = promptSummary[:100]
+			}
+			slog.Info("Delegating to agent",
+				"agent", params.SubagentType,
+				"depth", targetDepth,
+				"task_summary", promptSummary,
+			)
+
 			return c.runSubAgent(ctx, subAgentParams{
 				Agent:          agent,
 				SessionID:      sessionID,
 				AgentMessageID: agentMessageID,
 				ToolCallID:     call.ID,
 				Prompt:         params.Prompt,
-				SessionTitle:   "New Agent Session",
+				SessionTitle:   params.Description,
 			})
 		}), nil
 }
