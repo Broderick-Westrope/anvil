@@ -607,13 +607,16 @@ func (c *coordinator) buildOrchestratorBlocks() (agentsBlock, delegationWorkflow
 // getOrBuildAgent returns a cached sub-agent by name or lazily builds one.
 // A mutex ensures only one goroutine builds the agent even under concurrent
 // delegation; a second caller will hit the fast-path re-check after the lock.
+// The cache key includes depth because depth controls whether the task
+// delegation tool is included (depth > 1). Without depth in the key, an
+// agent cached at depth=2 (with task tool) would be incorrectly served to a
+// caller at depth=1 (where delegation must be blocked).
 // When modelOverride is non-empty, a separate cache entry is used keyed by
-// "agentName|modelOverride" and the agent config is cloned with the override
-// applied before building.
+// "agentName|depth|modelOverride".
 func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, depth int, modelOverride string) (SessionAgent, error) {
-	cacheKey := agentName
+	cacheKey := fmt.Sprintf("%s|%d", agentName, depth)
 	if modelOverride != "" {
-		cacheKey = agentName + "|" + modelOverride
+		cacheKey = fmt.Sprintf("%s|%d|%s", agentName, depth, modelOverride)
 	}
 
 	if existing, ok := c.agents.Get(cacheKey); ok {

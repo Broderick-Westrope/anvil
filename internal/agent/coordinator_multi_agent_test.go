@@ -1,46 +1,64 @@
 package agent
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 // TestGetOrBuildAgentCacheKey verifies that the cache key construction for
-// getOrBuildAgent produces the expected values for the default (no override)
-// and model-override cases.
+// getOrBuildAgent produces the expected values including depth and optional
+// model override.
 func TestGetOrBuildAgentCacheKey(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name          string
 		agentName     string
+		depth         int
 		modelOverride string
 		wantKey       string
 	}{
 		{
-			name:          "no override uses agent name",
-			agentName:     "reviewer",
-			modelOverride: "",
-			wantKey:       "reviewer",
+			name:      "agent at depth 2 without override",
+			agentName: "reviewer",
+			depth:     2,
+			wantKey:   "reviewer|2",
 		},
 		{
-			name:          "model override appends with pipe separator",
+			name:      "agent at depth 1 without override",
+			agentName: "reviewer",
+			depth:     1,
+			wantKey:   "reviewer|1",
+		},
+		{
+			name:          "model override appends after depth",
 			agentName:     "reviewer",
+			depth:         2,
 			modelOverride: "anthropic/claude-opus-4-6",
-			wantKey:       "reviewer|anthropic/claude-opus-4-6",
+			wantKey:       "reviewer|2|anthropic/claude-opus-4-6",
 		},
 		{
 			name:          "different model produces different key",
 			agentName:     "reviewer",
+			depth:         2,
 			modelOverride: "anthropic/claude-sonnet-4-6",
-			wantKey:       "reviewer|anthropic/claude-sonnet-4-6",
+			wantKey:       "reviewer|2|anthropic/claude-sonnet-4-6",
 		},
 		{
-			name:          "different agent name with same model",
+			name:          "different agent name with same model and depth",
 			agentName:     "explorer",
+			depth:         2,
 			modelOverride: "anthropic/claude-opus-4-6",
-			wantKey:       "explorer|anthropic/claude-opus-4-6",
+			wantKey:       "explorer|2|anthropic/claude-opus-4-6",
+		},
+		{
+			name:          "same agent at different depths produces different keys",
+			agentName:     "fixer",
+			depth:         1,
+			modelOverride: "",
+			wantKey:       "fixer|1",
 		},
 	}
 
@@ -49,9 +67,9 @@ func TestGetOrBuildAgentCacheKey(t *testing.T) {
 			t.Parallel()
 
 			// Replicate the cache key logic from getOrBuildAgent.
-			cacheKey := tt.agentName
+			cacheKey := fmt.Sprintf("%s|%d", tt.agentName, tt.depth)
 			if tt.modelOverride != "" {
-				cacheKey = tt.agentName + "|" + tt.modelOverride
+				cacheKey = fmt.Sprintf("%s|%d|%s", tt.agentName, tt.depth, tt.modelOverride)
 			}
 
 			require.Equal(t, tt.wantKey, cacheKey)
