@@ -86,13 +86,6 @@ type Coordinator interface {
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	SkillStates() []*skills.SkillState
-	// BackgroundTaskStatus reports whether the given background task is still running.
-	BackgroundTaskStatus(taskID string) bool
-	// CancelBackgroundTask cancels a running background task by ID.
-	// Returns an error if the task ID is not found.
-	CancelBackgroundTask(taskID string) error
-	// DrainPendingResults returns and clears all completed background task results.
-	DrainPendingResults() []BackgroundTaskResult
 }
 
 type coordinator struct {
@@ -128,17 +121,6 @@ type coordinator struct {
 	activeSkills []*skills.Skill      // Post-filter: active skills only.
 	skillStates  []*skills.SkillState // Combined builtin + user states.
 	skillTracker *skills.Tracker
-
-	// Background task infrastructure.
-	// bgSemaphore caps concurrent background tasks at 10.
-	bgSemaphore chan struct{}
-	// bgTasks maps task IDs to their cancel functions for cancellation support.
-	bgTasks *csync.Map[string, context.CancelFunc]
-	// bgBroker publishes BackgroundTaskResult events to subscribers.
-	bgBroker *pubsub.Broker[BackgroundTaskResult]
-	// pendingResults holds completed results not yet drained by the caller.
-	pendingResults []BackgroundTaskResult
-	pendingMu      sync.Mutex
 }
 
 func NewCoordinator(
@@ -170,21 +152,7 @@ func NewCoordinator(
 		skillStates:  skillStates,
 		skillTracker: skillTracker,
 		agents:       csync.NewMap[string, SessionAgent](),
-		bgSemaphore:  make(chan struct{}, 10),
-		bgTasks:      csync.NewMap[string, context.CancelFunc](),
-		bgBroker:     pubsub.NewBroker[BackgroundTaskResult](),
 	}
-
-	// Start subscriber goroutine that drains bgBroker events into pendingResults.
-	// The goroutine is tied to the coordinator's lifecycle via ctx.
-	go func() {
-		sub := c.bgBroker.Subscribe(ctx)
-		for event := range sub {
-			c.pendingMu.Lock()
-			c.pendingResults = append(c.pendingResults, event.Payload)
-			c.pendingMu.Unlock()
-		}
-	}()
 
 	// Enable MCP OAuth tool-name rename when the Anthropic provider uses
 	// OAuth credentials. This must happen once during coordinator
@@ -306,16 +274,6 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		// NOTE(@andreynering): We don't return here because the event handling to ask the user to reauthenticate
 		// depends on the flow below. If refresh fails, proceed with the token we have.
 		slog.Error("Failed to refresh OAuth2 token. Proceeding with existing token.", "error", err)
-	}
-
-	// Drain any pending background task results and inject them as structured
-	// tool call + tool result message pairs so the orchestrator sees them as
-	// proper tool responses rather than user-pasted text.
-	pendingResults := c.DrainPendingResults()
-	if len(pendingResults) > 0 {
-		if err := c.injectBackgroundTaskResults(ctx, sessionID, pendingResults); err != nil {
-			slog.Error("Failed to inject background task results", "error", err)
-		}
 	}
 
 	run := func() (*fantasy.AgentResult, error) {
@@ -675,7 +633,7 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 }
 
 // buildTools assembles the tool set for an agent at the given delegation depth.
-// At depth ≤ 1 the task and background_task delegation tools are excluded.
+// At depth ≤ 1 the task delegation tool is excluded.
 // AllowedTools is applied via ParseFilterList; AllowedMCP is applied per server.
 func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int) ([]fantasy.AgentTool, error) {
 	isSubAgent := depth < 3
@@ -691,8 +649,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 	// Assemble the full candidate tool set (before AllowedTools filtering).
 	var candidateTools []fantasy.AgentTool
 
-	// Add the task and background_task delegation tools if depth allows and the
-	// agent has delegates.
+	// Add the task delegation tool if depth allows and the agent has delegates.
 	if depth > 1 {
 		callerName := agent.ID
 		hasDelegates := callerName == config.AgentOrchestrator
@@ -706,11 +663,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 			if err != nil {
 				return nil, err
 			}
-			bgTaskTool, err := c.backgroundTaskTool(ctx, callerName, depth)
-			if err != nil {
-				return nil, err
-			}
-			candidateTools = append(candidateTools, taskTool, bgTaskTool)
+			candidateTools = append(candidateTools, taskTool)
 		}
 	}
 
@@ -1454,86 +1407,6 @@ func (c *coordinator) updateParentSessionCost(ctx context.Context, childSessionI
 // discovery states captured at session start.
 func (c *coordinator) SkillStates() []*skills.SkillState {
 	return slices.Clone(c.skillStates)
-}
-
-// BackgroundTaskStatus reports whether the given background task is still
-// running. Returns false if the task ID is not found or has completed.
-func (c *coordinator) BackgroundTaskStatus(taskID string) bool {
-	_, ok := c.bgTasks.Get(taskID)
-	return ok
-}
-
-// CancelBackgroundTask cancels the background task with the given ID.
-// Returns an error if no such task is running.
-func (c *coordinator) CancelBackgroundTask(taskID string) error {
-	cancel, ok := c.bgTasks.Get(taskID)
-	if !ok {
-		return fmt.Errorf("background task %q not found", taskID)
-	}
-	cancel()
-	return nil
-}
-
-// injectBackgroundTaskResults writes completed background task results into
-// the session's message history as assistant tool-call + tool result pairs.
-// This makes them appear to the LLM as structured tool responses rather
-// than user-pasted text.
-func (c *coordinator) injectBackgroundTaskResults(ctx context.Context, sessionID string, results []BackgroundTaskResult) error {
-	for _, r := range results {
-		// Create an assistant message with a synthetic tool call.
-		toolCallID := fmt.Sprintf("bg_%s", r.TaskID)
-		inputJSON := fmt.Sprintf(`{"task_id":"%s","agent":"%s"}`, r.TaskID, r.AgentName)
-
-		_, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
-			Role: message.Assistant,
-			Parts: []message.ContentPart{
-				message.ToolCall{
-					ID:    toolCallID,
-					Name:  "background_task_result",
-					Input: inputJSON,
-				},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("creating bg task tool call message: %w", err)
-		}
-
-		// Create a tool result message with the actual result.
-		content := r.Result
-		isError := !r.Success
-		if isError && content == "" {
-			content = "Background task failed"
-		}
-
-		_, err = c.messages.Create(ctx, sessionID, message.CreateMessageParams{
-			Role: message.Tool,
-			Parts: []message.ContentPart{
-				message.ToolResult{
-					ToolCallID: toolCallID,
-					Name:       "background_task_result",
-					Content:    content,
-					IsError:    isError,
-				},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("creating bg task result message: %w", err)
-		}
-	}
-	return nil
-}
-
-// DrainPendingResults returns and clears all completed background task results
-// that have not yet been consumed by the caller.
-func (c *coordinator) DrainPendingResults() []BackgroundTaskResult {
-	c.pendingMu.Lock()
-	defer c.pendingMu.Unlock()
-	if len(c.pendingResults) == 0 {
-		return nil
-	}
-	out := c.pendingResults
-	c.pendingResults = nil
-	return out
 }
 
 // discoverSkills runs the skill discovery pipeline and returns both the

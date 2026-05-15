@@ -721,7 +721,6 @@ const maxRecentModelsPerType = 5
 func allToolNames() []string {
 	return []string{
 		"task",
-		"background_task",
 		"bash",
 		"crush_info",
 		"crush_logs",

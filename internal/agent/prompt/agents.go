@@ -160,9 +160,9 @@ func BuildDelegationWorkflow(agents []AgentMD) string {
 	sb.WriteString("   - Default: handle directly if no specialist is a clear fit.\n\n")
 
 	sb.WriteString("4. **Split and Parallelize** — If multiple independent sub-tasks exist, fire\n")
-	sb.WriteString("   them with background_task in the same turn. Do not wait for one to finish\n")
-	sb.WriteString("   before starting another. Use task (blocking) only when the result of one\n")
-	sb.WriteString("   sub-task is required as input to the next.\n\n")
+	sb.WriteString("   them with multiple task calls in the same turn. All calls execute in\n")
+	sb.WriteString("   parallel and results are returned together. Do not wait for one to finish\n")
+	sb.WriteString("   before starting another.\n\n")
 
 	sb.WriteString("5. **Execute** — Run delegated tasks or perform direct work. For delegated\n")
 	sb.WriteString("   work: provide the specialist with complete context and a clear spec so it\n")

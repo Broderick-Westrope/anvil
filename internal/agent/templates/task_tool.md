@@ -13,3 +13,5 @@ The `subagent_type` parameter selects which specialist to use. Available agent t
 - **devils-advocate**: Critical analysis specialist for identifying problems, risks, and failure modes.
 
 Select the `subagent_type` that best matches the nature of the task you are delegating.
+
+Launch multiple agents concurrently by using multiple task tool calls in a single message. All calls execute in parallel and results are returned together.

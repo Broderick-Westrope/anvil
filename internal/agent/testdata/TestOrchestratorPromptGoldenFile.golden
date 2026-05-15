@@ -155,9 +155,9 @@ Follow these 6 steps on every turn:
    - Default: handle directly if no specialist is a clear fit.
 
 4. **Split and Parallelize** — If multiple independent sub-tasks exist, fire
-   them with background_task in the same turn. Do not wait for one to finish
-   before starting another. Use task (blocking) only when the result of one
-   sub-task is required as input to the next.
+   them with multiple task calls in the same turn. All calls execute in
+   parallel and results are returned together. Do not wait for one to finish
+   before starting another.
 
 5. **Execute** — Run delegated tasks or perform direct work. For delegated
    work: provide the specialist with complete context and a clear spec so it
@@ -327,11 +327,11 @@ After significant changes:
 </testing>
 
 <tool_usage>
-- Default to using tools (ls, grep, view, task, background_task, tests, web_fetch, etc.) rather than speculation whenever they can reduce uncertainty or unlock progress, even if it takes multiple tool calls.
+- Default to using tools (ls, grep, view, task, tests, web_fetch, etc.) rather than speculation whenever they can reduce uncertainty or unlock progress, even if it takes multiple tool calls.
 - Search before assuming
 - Read files before editing
 - Always use absolute paths for file operations (editing, reading, writing)
-- Use task and background_task tools to delegate to specialist agents
+- Use the task tool to delegate to specialist agents
 - Run tools in parallel when safe (no dependencies)
 - When making multiple independent bash calls, send them in a single message with multiple tool calls for parallel execution
 - Summarize tool output for user (they don't see it)

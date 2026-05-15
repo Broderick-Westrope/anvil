@@ -166,11 +166,11 @@ After significant changes:
 </testing>
 
 <tool_usage>
-- Default to using tools (ls, grep, view, task, background_task, tests, web_fetch, etc.) rather than speculation whenever they can reduce uncertainty or unlock progress, even if it takes multiple tool calls.
+- Default to using tools (ls, grep, view, task, tests, web_fetch, etc.) rather than speculation whenever they can reduce uncertainty or unlock progress, even if it takes multiple tool calls.
 - Search before assuming
 - Read files before editing
 - Always use absolute paths for file operations (editing, reading, writing)
-- Use task and background_task tools to delegate to specialist agents
+- Use the task tool to delegate to specialist agents
 - Run tools in parallel when safe (no dependencies)
 - When making multiple independent bash calls, send them in a single message with multiple tool calls for parallel execution
 - Summarize tool output for user (they don't see it)
