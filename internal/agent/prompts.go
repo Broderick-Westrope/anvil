@@ -8,12 +8,6 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 )
 
-//go:embed templates/coder.md.tpl
-var coderPromptTmpl []byte
-
-//go:embed templates/task.md.tpl
-var taskPromptTmpl []byte
-
 //go:embed templates/initialize.md.tpl
 var initializePromptTmpl []byte
 
@@ -25,24 +19,6 @@ var orchestratorPromptTmpl []byte
 
 //go:embed templates/specialist.md.tpl
 var specialistPromptTmpl []byte
-
-// Deprecated: Use orchestratorPrompt instead.
-func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
-	systemPrompt, err := prompt.NewPrompt("coder", string(coderPromptTmpl), opts...)
-	if err != nil {
-		return nil, err
-	}
-	return systemPrompt, nil
-}
-
-// Deprecated: Use specialistPrompt instead.
-func taskPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
-	systemPrompt, err := prompt.NewPrompt("task", string(taskPromptTmpl), opts...)
-	if err != nil {
-		return nil, err
-	}
-	return systemPrompt, nil
-}
 
 func orchestratorPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 	combined := string(basePromptTmpl) + "\n" + string(orchestratorPromptTmpl)

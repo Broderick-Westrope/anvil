@@ -175,7 +175,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 			}
 
 			// Sub-agent tools run without hook interception. The top-level
-			// `agentic_fetch` call itself is already wrapped from the coder's
+			// `agentic_fetch` call itself is already wrapped from the orchestrator's
 			// side; firing hooks again for every inner tool call would run
 			// the user's hooks N times per delegated turn.
 

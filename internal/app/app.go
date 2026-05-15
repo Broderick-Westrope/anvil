@@ -517,8 +517,8 @@ func setupSubscriber[T any](
 }
 
 func (app *App) InitOrchestrator(ctx context.Context) error {
-	coderAgentCfg := app.config.Config().Agents[config.AgentOrchestrator]
-	if coderAgentCfg.ID == "" {
+	orchestratorAgentCfg := app.config.Config().Agents[config.AgentOrchestrator]
+	if orchestratorAgentCfg.ID == "" {
 		return fmt.Errorf("orchestrator agent configuration is missing")
 	}
 	var err error

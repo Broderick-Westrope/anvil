@@ -81,7 +81,7 @@ func (s *ConfigStore) KnownProviders() []catwalk.Provider {
 	return s.knownProviders
 }
 
-// SetupAgents configures the coder and task agents on the config.
+// SetupAgents configures the orchestrator and task agents on the config.
 func (s *ConfigStore) SetupAgents() {
 	s.config.SetupAgents()
 }
