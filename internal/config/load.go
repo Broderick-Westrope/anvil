@@ -121,7 +121,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if err := configureSelectedModels(store, store.knownProviders, true); err != nil {
 		return nil, fmt.Errorf("failed to configure selected models: %w", err)
 	}
-	store.SetupAgents()
+	store.config.configureAgents()
 
 	// Capture initial staleness snapshot
 	store.captureStalenessSnapshot(loadedPaths)

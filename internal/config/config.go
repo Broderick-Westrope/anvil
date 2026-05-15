@@ -70,6 +70,9 @@ type SelectedModel struct {
 	// Required.
 	Provider string `json:"provider" jsonschema:"required,description=The model provider ID that matches a key in the providers config,example=openai"`
 
+	// Variant is an optional model variant passthrough (e.g. thinking budget).
+	Variant string `json:"variant,omitempty" jsonschema:"description=Optional model variant passthrough (e.g. thinking budget)"`
+
 	// Only used by models that use the openai provider and need this set.
 	ReasoningEffort string `json:"reasoning_effort,omitempty" jsonschema:"description=Reasoning effort level for OpenAI models that support it,enum=low,enum=medium,enum=high"`
 
@@ -709,7 +712,8 @@ const maxRecentModelsPerType = 5
 
 func allToolNames() []string {
 	return []string{
-		"agent",
+		"task",
+		"background_task",
 		"bash",
 		"crush_info",
 		"crush_logs",
@@ -735,18 +739,32 @@ func allToolNames() []string {
 	}
 }
 
+// readOnlyTools returns the base read-only tool names for agents that
+// should only be able to inspect the codebase without modifying it.
+func readOnlyTools() []string {
+	return []string{
+		"glob",
+		"grep",
+		"ls",
+		"view",
+		"lsp_diagnostics",
+		"lsp_references",
+		"sourcegraph",
+	}
+}
+
+// readWriteTools returns read-only tools plus write and execution tools
+// for agents that can modify the codebase and run commands.
+func readWriteTools() []string {
+	return append(readOnlyTools(), "edit", "write", "bash", "multiedit")
+}
+
 func resolveAllowedTools(allTools []string, disabledTools []string) []string {
 	if disabledTools == nil {
 		return allTools
 	}
-	// filter out disabled tools (exclude mode)
+	// Filter out disabled tools (exclude mode).
 	return filterSlice(allTools, disabledTools, false)
-}
-
-func resolveReadOnlyTools(tools []string) []string {
-	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view"}
-	// filter to only include tools that are in allowedtools (include mode)
-	return filterSlice(tools, readOnlyTools, true)
 }
 
 func filterSlice(data []string, mask []string, include bool) []string {
@@ -761,27 +779,222 @@ func filterSlice(data []string, mask []string, include bool) []string {
 	return filtered
 }
 
+// SetupAgents initialises Config.Agents with the default 10-agent roster.
+// nil AllowedTools means unrestricted (all tools); nil AllowedSkills / AllowedMCP
+// means unrestricted for skills / MCPs respectively. An empty slice means none.
 func (c *Config) SetupAgents() {
-	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
-
-	agents := map[string]Agent{
+	c.Agents = map[string]Agent{
 		AgentOrchestrator: {
-			ID:           AgentOrchestrator,
-			Name:         "Orchestrator",
-			Description:  "An agent that helps with executing coding tasks.",
-			AllowedTools: allowedTools,
+			ID:            AgentOrchestrator,
+			Name:          "Orchestrator",
+			AllowedTools:  nil, // Nil = all tools unrestricted.
+			AllowedSkills: nil, // Nil = all skills unrestricted.
+			AllowedMCP:    nil, // Nil = all MCPs unrestricted.
 		},
-
-		AgentTask: {
-			ID:           AgentTask,
-			Name:         "Task",
-			Description:  "An agent that helps with searching for context and finding implementation details.",
-			AllowedTools: resolveReadOnlyTools(allowedTools),
-			// No MCPs by default.
+		"oracle": {
+			ID:            "oracle",
+			Name:          "Oracle",
+			AllowedTools:  nil, // All tools.
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"explorer": {
+			ID:            "explorer",
+			Name:          "Explorer",
+			AllowedTools:  readOnlyTools(),
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"librarian": {
+			ID:            "librarian",
+			Name:          "Librarian",
+			AllowedTools:  append(readOnlyTools(), "agentic_fetch"),
+			AllowedSkills: []string{},
+			AllowedMCP: map[string][]string{
+				"websearch": nil,
+				"context7":  nil,
+				"grep_app":  nil,
+				"sourcebot": nil,
+			},
+		},
+		"designer": {
+			ID:            "designer",
+			Name:          "Designer",
+			AllowedTools:  nil, // All tools.
+			AllowedSkills: []string{"agent-browser"},
+			AllowedMCP:    map[string][]string{},
+		},
+		"fixer": {
+			ID:            "fixer",
+			Name:          "Fixer",
+			AllowedTools:  nil, // All tools.
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"planner": {
+			ID:           "planner",
+			Name:         "Planner",
+			AllowedTools: readWriteTools(),
+			AllowedSkills: []string{
+				"grilling",
+				"brainstorming",
+				"drafting-tsds",
+				"writing-plans",
+				"planning-products",
+			},
 			AllowedMCP: map[string][]string{},
 		},
+		"tester": {
+			ID:           "tester",
+			Name:         "Tester",
+			AllowedTools: append(readOnlyTools(), "bash"),
+			AllowedSkills: []string{
+				"writing-tests",
+				"test-driven-development",
+				"scaffolding-plan-tests",
+				"fixing-flaky-tests",
+				"condition-based-waiting",
+			},
+			AllowedMCP: map[string][]string{},
+		},
+		"reviewer": {
+			ID:            "reviewer",
+			Name:          "Reviewer",
+			AllowedTools:  readOnlyTools(),
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"devils-advocate": {
+			ID:            "devils-advocate",
+			Name:          "Devils Advocate",
+			AllowedTools:  readOnlyTools(),
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
 	}
-	c.Agents = agents
+}
+
+// configureAgents sets up the agent roster from defaults plus any user overrides.
+// If Config.Agents is nil after JSON unmarshalling (no "agents" key in config),
+// pure defaults are used. If Config.Agents is non-nil, each user-defined agent
+// overlays its non-zero fields onto the corresponding default, and unknown agent
+// names are added as new entries. Disabled agents are removed last.
+func (c *Config) configureAgents() {
+	// Snapshot user-provided overrides before SetupAgents overwrites Agents.
+	userAgents := c.Agents
+
+	// Apply 10-agent defaults unconditionally.
+	c.SetupAgents()
+
+	if userAgents != nil {
+		for name, userAgent := range userAgents {
+			def, ok := c.Agents[name]
+			if !ok {
+				// User defined an agent not in the defaults; add it as-is.
+				c.Agents[name] = userAgent
+				continue
+			}
+			// Overlay non-zero fields from the user config onto the default.
+			if userAgent.Model != "" {
+				def.Model = userAgent.Model
+			}
+			if userAgent.Variant != "" {
+				def.Variant = userAgent.Variant
+			}
+			if userAgent.AllowedTools != nil {
+				def.AllowedTools = userAgent.AllowedTools
+			}
+			if userAgent.AllowedSkills != nil {
+				def.AllowedSkills = userAgent.AllowedSkills
+			}
+			if userAgent.AllowedMCP != nil {
+				def.AllowedMCP = userAgent.AllowedMCP
+			}
+			if userAgent.AppendPrompt != "" {
+				def.AppendPrompt = userAgent.AppendPrompt
+			}
+			if userAgent.Disabled {
+				def.Disabled = true
+			}
+			c.Agents[name] = def
+		}
+	}
+
+	// Remove any agents explicitly listed in DisabledAgents.
+	c.applyDisabledAgents()
+}
+
+// applyDisabledAgents removes any agents whose names appear in DisabledAgents
+// from the Agents map.
+func (c *Config) applyDisabledAgents() {
+	for _, name := range c.DisabledAgents {
+		delete(c.Agents, name)
+	}
+}
+
+// ResolveAgentModel resolves the SelectedModel for the given agent. If
+// agent.Model is empty the global large model from cfg is returned. Otherwise
+// agent.Model is parsed as "provider/model" and resolved against the
+// configured providers. If agent.Variant is set it is included in the
+// returned SelectedModel.
+func ResolveAgentModel(agent Agent, cfg *Config) (SelectedModel, error) {
+	if agent.Model == "" {
+		m, ok := cfg.Models[SelectedModelTypeLarge]
+		if !ok {
+			return SelectedModel{}, fmt.Errorf("agent %q: no large model configured", agent.ID)
+		}
+		if agent.Variant != "" {
+			m.Variant = agent.Variant
+		}
+		return m, nil
+	}
+
+	// Parse "provider/model" format; split on the first slash only.
+	slash := strings.IndexByte(agent.Model, '/')
+	if slash < 0 {
+		return SelectedModel{}, fmt.Errorf(
+			"agent %q: model %q must be in provider/model format",
+			agent.ID, agent.Model,
+		)
+	}
+	providerID := agent.Model[:slash]
+	modelID := agent.Model[slash+1:]
+
+	providerCfg, ok := cfg.Providers.Get(providerID)
+	if !ok {
+		return SelectedModel{}, fmt.Errorf(
+			"agent %q: provider %q not found",
+			agent.ID, providerID,
+		)
+	}
+
+	var found *catwalk.Model
+	for i := range providerCfg.Models {
+		if providerCfg.Models[i].ID == modelID {
+			m := providerCfg.Models[i]
+			found = &m
+			break
+		}
+	}
+	if found == nil {
+		return SelectedModel{}, fmt.Errorf(
+			"agent %q: model %q not found in provider %q",
+			agent.ID, modelID, providerID,
+		)
+	}
+
+	result := SelectedModel{
+		Provider:  providerID,
+		Model:     modelID,
+		MaxTokens: found.DefaultMaxTokens,
+	}
+	if found.DefaultReasoningEffort != "" {
+		result.ReasoningEffort = found.DefaultReasoningEffort
+	}
+	if agent.Variant != "" {
+		result.Variant = agent.Variant
+	}
+	return result, nil
 }
 
 func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
