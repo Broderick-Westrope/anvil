@@ -2236,7 +2236,7 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 		if m.textarea.Focused() {
 			cur := m.textarea.Cursor()
-			cur.X++                            // Adjust for app margins
+	
 			cur.Y += m.layout.editor.Min.Y + 1 // Offset for attachments row
 			return cur
 		}
@@ -2614,23 +2614,11 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 		}
 	}
 
-	// Add app margins
 	var appRect, helpRect image.Rectangle
 	layout.Vertical(
 		layout.Len(area.Dy()-helpHeight),
 		layout.Fill(1),
 	).Split(area).Assign(&appRect, &helpRect)
-	appRect.Min.Y += 1
-	appRect.Max.Y -= 1
-	helpRect.Min.Y -= 1
-	appRect.Min.X += 1
-	appRect.Max.X -= 1
-
-	if slices.Contains([]uiState{uiOnboarding, uiInitialize, uiLanding}, m.state) {
-		// extra padding on left and right for these states
-		appRect.Min.X += 1
-		appRect.Max.X -= 1
-	}
 
 	uiLayout := uiLayout{
 		area:   area,
@@ -2676,9 +2664,6 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			layout.Len(mainRect.Dy()-editorHeight),
 			layout.Fill(1),
 		).Split(mainRect).Assign(&mainRect, &editorRect)
-		// Remove extra padding from editor (but keep it for header and main)
-		editorRect.Min.X -= 1
-		editorRect.Max.X += 1
 		uiLayout.header = headerRect
 		uiLayout.main = mainRect
 		uiLayout.editor = editorRect
