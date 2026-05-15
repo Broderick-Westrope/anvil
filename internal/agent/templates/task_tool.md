@@ -1,19 +1,5 @@
-Launch a specialized sub-agent to handle a specific task. Use this tool to delegate work to agents with particular expertise.
+Launch a specialist agent to handle a task. The `subagent_type` parameter selects which agent to use — see the `<Agents>` block in your system prompt for available agents and when to use each.
 
-The `subagent_type` parameter selects which specialist to use. Available agent types:
-
-- **oracle**: Strategic advisor for deep reasoning, architecture decisions, and complex debugging.
-- **explorer**: Read-only specialist for exploring and understanding codebases.
-- **librarian**: Research specialist with web search, documentation, and external knowledge access.
-- **designer**: UI/UX specialist with browser tools for visual and front-end work.
-- **fixer**: Fast, bounded implementation specialist that executes well-defined code changes.
-- **planner**: Planning specialist for designing solutions, writing plans, and drafting technical specs.
-- **tester**: Testing specialist for running tests, writing test cases, and debugging flaky tests.
-- **reviewer**: Code review specialist for assessing quality, correctness, and style.
-- **devils-advocate**: Critical analysis specialist for identifying problems, risks, and failure modes.
-
-Select the `subagent_type` that best matches the nature of the task you are delegating.
-
-The optional `model` parameter overrides the model used by the selected agent for this call. Omit it to use the agent's configured default model. Use `provider/model` format (e.g. `anthropic/claude-opus-4-6`). This enables dual-model patterns — for example, running the same agent with two different models in parallel to obtain diverse perspectives.
+The optional `model` parameter overrides the agent's model for this call (format: `provider/model`, e.g. `anthropic/claude-opus-4-6`). Omit to use the agent's configured default. This enables dual-model patterns — run the same agent with two different models in parallel for diverse perspectives.
 
 Launch multiple agents concurrently by using multiple task tool calls in a single message. All calls execute in parallel and results are returned together.
