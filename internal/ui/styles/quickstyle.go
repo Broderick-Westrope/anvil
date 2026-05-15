@@ -331,8 +331,8 @@ func quickStyle(o quickStyleOpts) Styles {
 		},
 	}
 
-	// QuietMarkdown style - muted colors on subtle background for thinking content.
-	plainFg := hex(o.fgMoreSubtle)
+	// QuietMarkdown style - dimmed colors for thinking content.
+	plainFg := hex(o.fgMostSubtle)
 	s.QuietMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
@@ -779,7 +779,7 @@ func quickStyle(o quickStyleOpts) Styles {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(o.bgMostVisible).
 		Padding(0, 1)
-	s.Messages.ThinkingLine = lipgloss.NewStyle().Italic(true)
+	s.Messages.ThinkingLine = lipgloss.NewStyle().Italic(true).Foreground(o.fgMostSubtle)
 	s.Messages.ThinkingLabel = lipgloss.NewStyle().Italic(true).Foreground(o.primary)
 	s.Messages.ThinkingTruncationHint = muted
 	s.Messages.ThinkingFooterTitle = muted
