@@ -38,11 +38,11 @@ func TestAgentDisplayName(t *testing.T) {
 			want:         "My task",
 		},
 		{
-			name:         "all empty falls back to Agent",
+			name:         "all empty falls back to Unknown Agent",
 			subagentType: "",
 			description:  "",
 			model:        "",
-			want:         "Agent",
+			want:         "Unknown Agent",
 		},
 		{
 			name:         "model without claude- prefix is kept as-is after slash",

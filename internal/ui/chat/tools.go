@@ -1176,7 +1176,7 @@ func (t *baseToolMessageItem) formatParametersForCopy() string {
 		var params agent.TaskParams
 		if json.Unmarshal([]byte(t.toolCall.Input), &params) == nil {
 			name := agentDisplayName(params.SubagentType, params.Description, params.Model)
-			return fmt.Sprintf("**Agent:** %s\n**Task:**\n%s", name, params.Prompt)
+			return fmt.Sprintf("**Agent:** %s\n**Task:** %s", name, params.Prompt)
 		}
 	}
 
@@ -1545,7 +1545,7 @@ func (t *baseToolMessageItem) formatAgentResultForCopy() string {
 func prettifyToolName(name string) string {
 	switch name {
 	case agent.TaskToolName:
-		return "Agent"
+		return "Task"
 	case tools.BashToolName:
 		return "Bash"
 	case tools.JobOutputToolName:

@@ -170,7 +170,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 
 // agentDisplayName returns a human-readable name for a task tool call.
 // It capitalises the subagent type (e.g. "explorer" → "Explorer") and
-// falls back to the description or "Agent" when the type is empty.
+// falls back to the description or "Unknown Agent" when the type is empty.
 // When model is non-empty, a short model identifier is appended in
 // parentheses (e.g. "Reviewer (opus-4-6)").
 func agentDisplayName(subagentType, description, model string) string {
@@ -181,7 +181,7 @@ func agentDisplayName(subagentType, description, model string) string {
 	} else if description != "" {
 		name = description
 	} else {
-		name = "Agent"
+		name = "Unknown Agent"
 	}
 
 	if model != "" {
