@@ -100,17 +100,21 @@ type AgentToolRenderContext struct {
 // RenderTool implements the [ToolRenderer] interface.
 func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
-	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.agent.nestedTools) == 0 {
-		return pendingTool(sty, "Agent", opts.Anim, opts.Compact)
-	}
 
 	var params agent.TaskParams
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
 
+	// Build a display name from the subagent type (e.g. "Explorer", "Fixer").
+	displayName := agentDisplayName(params.SubagentType, params.Description)
+
+	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.agent.nestedTools) == 0 {
+		return pendingTool(sty, displayName, opts.Anim, opts.Compact)
+	}
+
 	prompt := params.Prompt
 	prompt = strings.ReplaceAll(prompt, "\n", " ")
 
-	header := toolHeader(sty, opts.Status, "Agent", cappedWidth, opts.Compact)
+	header := toolHeader(sty, opts.Status, displayName, cappedWidth, opts.Compact)
 	if opts.Compact {
 		return header
 	}
@@ -162,6 +166,20 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	return result
+}
+
+// agentDisplayName returns a human-readable name for a task tool call.
+// It capitalises the subagent type (e.g. "explorer" → "Explorer") and
+// falls back to the description or "Agent" when the type is empty.
+func agentDisplayName(subagentType, description string) string {
+	if subagentType != "" {
+		// Capitalise the first letter.
+		return strings.ToUpper(subagentType[:1]) + subagentType[1:]
+	}
+	if description != "" {
+		return description
+	}
+	return "Agent"
 }
 
 // -----------------------------------------------------------------------------
