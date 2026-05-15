@@ -561,6 +561,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 func (c *coordinator) buildPrompt(agentName string, agentCfg config.Agent) (*prompt.Prompt, error) {
 	opts := []prompt.Option{
 		prompt.WithWorkingDir(c.cfg.WorkingDir()),
+		prompt.WithAllowedSkills(agentCfg.AllowedSkills),
 	}
 
 	if agentName == config.AgentOrchestrator {

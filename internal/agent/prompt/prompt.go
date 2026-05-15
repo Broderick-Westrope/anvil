@@ -30,6 +30,7 @@ type Prompt struct {
 	delegationWorkflow string
 	agentBody          string
 	appendPrompt       string
+	allowedSkills      []string // nil = unrestricted, [] = none.
 }
 
 type PromptDat struct {
@@ -99,6 +100,14 @@ func WithAgentBody(body string) Option {
 func WithAppendPrompt(appendPrompt string) Option {
 	return func(p *Prompt) {
 		p.appendPrompt = appendPrompt
+	}
+}
+
+// WithAllowedSkills sets the per-agent skill allow-list. nil means
+// unrestricted (all skills); an empty slice means no skills.
+func WithAllowedSkills(allowed []string) Option {
+	return func(p *Prompt) {
+		p.allowedSkills = allowed
 	}
 }
 
@@ -229,6 +238,9 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 
 	// Filter out disabled skills.
 	allSkills = skills.Filter(allSkills, cfg.Options.DisabledSkills)
+
+	// Apply per-agent skill allow-list (nil = unrestricted, [] = none).
+	allSkills = skills.FilterByAllowList(allSkills, p.allowedSkills)
 
 	if len(allSkills) > 0 {
 		availSkillXML = skills.ToPromptXML(allSkills)
