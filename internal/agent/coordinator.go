@@ -308,20 +308,14 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		slog.Error("Failed to refresh OAuth2 token. Proceeding with existing token.", "error", err)
 	}
 
-	// Drain any pending background task results and prepend them to the prompt
-	// so the orchestrator is aware of completed background work.
+	// Drain any pending background task results and inject them as structured
+	// tool call + tool result message pairs so the orchestrator sees them as
+	// proper tool responses rather than user-pasted text.
 	pendingResults := c.DrainPendingResults()
 	if len(pendingResults) > 0 {
-		var resultText strings.Builder
-		resultText.WriteString("Background task results:\n")
-		for _, r := range pendingResults {
-			if r.Success {
-				resultText.WriteString(fmt.Sprintf("- [%s] %s: %s\n", r.AgentName, r.TaskID[:8], r.Result))
-			} else {
-				resultText.WriteString(fmt.Sprintf("- [%s] %s FAILED: %s\n", r.AgentName, r.TaskID[:8], r.Result))
-			}
+		if err := c.injectBackgroundTaskResults(ctx, sessionID, pendingResults); err != nil {
+			slog.Error("Failed to inject background task results", "error", err)
 		}
-		prompt = resultText.String() + "\n" + prompt
 	}
 
 	run := func() (*fantasy.AgentResult, error) {
@@ -1477,6 +1471,55 @@ func (c *coordinator) CancelBackgroundTask(taskID string) error {
 		return fmt.Errorf("background task %q not found", taskID)
 	}
 	cancel()
+	return nil
+}
+
+// injectBackgroundTaskResults writes completed background task results into
+// the session's message history as assistant tool-call + tool result pairs.
+// This makes them appear to the LLM as structured tool responses rather
+// than user-pasted text.
+func (c *coordinator) injectBackgroundTaskResults(ctx context.Context, sessionID string, results []BackgroundTaskResult) error {
+	for _, r := range results {
+		// Create an assistant message with a synthetic tool call.
+		toolCallID := fmt.Sprintf("bg_%s", r.TaskID)
+		inputJSON := fmt.Sprintf(`{"task_id":"%s","agent":"%s"}`, r.TaskID, r.AgentName)
+
+		_, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:    toolCallID,
+					Name:  "background_task_result",
+					Input: inputJSON,
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("creating bg task tool call message: %w", err)
+		}
+
+		// Create a tool result message with the actual result.
+		content := r.Result
+		isError := !r.Success
+		if isError && content == "" {
+			content = "Background task failed"
+		}
+
+		_, err = c.messages.Create(ctx, sessionID, message.CreateMessageParams{
+			Role: message.Tool,
+			Parts: []message.ContentPart{
+				message.ToolResult{
+					ToolCallID: toolCallID,
+					Name:       "background_task_result",
+					Content:    content,
+					IsError:    isError,
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("creating bg task result message: %w", err)
+		}
+	}
 	return nil
 }
 
