@@ -527,6 +527,16 @@ type Agent struct {
 	AppendPrompt string `json:"append_prompt,omitempty"`
 }
 
+// EffectiveModelType returns the SelectedModelType for the agent's configured
+// model. An empty Model string (the default) falls back to
+// SelectedModelTypeLarge.
+func (a Agent) EffectiveModelType() SelectedModelType {
+	if a.Model == "" {
+		return SelectedModelTypeLarge
+	}
+	return SelectedModelType(a.Model)
+}
+
 // agentJSON is an alias used inside UnmarshalJSON to prevent recursion.
 type agentJSON Agent
 

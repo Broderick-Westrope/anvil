@@ -241,7 +241,7 @@ func NewToolMessageItem(
 		item = NewSourcegraphToolMessageItem(sty, toolCall, result, canceled)
 	case tools.DiagnosticsToolName:
 		item = NewDiagnosticsToolMessageItem(sty, toolCall, result, canceled)
-	case agent.AgentToolName:
+	case agent.TaskToolName:
 		item = NewAgentToolMessageItem(sty, toolCall, result, canceled)
 	case tools.AgenticFetchToolName:
 		item = NewAgenticFetchToolMessageItem(sty, toolCall, result, canceled)
@@ -1172,8 +1172,8 @@ func (t *baseToolMessageItem) formatParametersForCopy() string {
 		}
 	case tools.DiagnosticsToolName:
 		return "**Project:** diagnostics"
-	case agent.AgentToolName:
-		var params agent.AgentParams
+	case agent.TaskToolName:
+		var params agent.TaskParams
 		if json.Unmarshal([]byte(t.toolCall.Input), &params) == nil {
 			return fmt.Sprintf("**Task:**\n%s", params.Prompt)
 		}
@@ -1225,7 +1225,7 @@ func (t *baseToolMessageItem) formatResultForCopy() string {
 		return t.formatAgenticFetchResultForCopy()
 	case tools.WebFetchToolName:
 		return t.formatWebFetchResultForCopy()
-	case agent.AgentToolName:
+	case agent.TaskToolName:
 		return t.formatAgentResultForCopy()
 	case tools.DownloadToolName, tools.GrepToolName, tools.GlobToolName, tools.LSToolName, tools.SourcegraphToolName, tools.DiagnosticsToolName, tools.TodosToolName:
 		return fmt.Sprintf("```\n%s\n```", t.result.Content)
@@ -1543,7 +1543,7 @@ func (t *baseToolMessageItem) formatAgentResultForCopy() string {
 // prettifyToolName returns a human-readable name for tool names.
 func prettifyToolName(name string) string {
 	switch name {
-	case agent.AgentToolName:
+	case agent.TaskToolName:
 		return "Agent"
 	case tools.BashToolName:
 		return "Bash"

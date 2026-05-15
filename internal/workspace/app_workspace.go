@@ -158,8 +158,8 @@ func (w *AppWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.app.UpdateAgentModel(ctx)
 }
 
-func (w *AppWorkspace) InitCoderAgent(ctx context.Context) error {
-	return w.app.InitCoderAgent(ctx)
+func (w *AppWorkspace) InitOrchestrator(ctx context.Context) error {
+	return w.app.InitOrchestrator(ctx)
 }
 
 func (w *AppWorkspace) GetDefaultSmallModel(providerID string) config.SelectedModel {

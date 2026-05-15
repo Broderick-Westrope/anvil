@@ -311,8 +311,8 @@ func setupClientServerWorkspace(cmd *cobra.Command) (workspace.Workspace, func()
 	clientWs := workspace.NewClientWorkspace(c, *protoWs)
 
 	if protoWs.Config.IsConfigured() {
-		if err := clientWs.InitCoderAgent(cmd.Context()); err != nil {
-			slog.Error("Failed to initialize coder agent", "error", err)
+		if err := clientWs.InitOrchestrator(cmd.Context()); err != nil {
+			slog.Error("Failed to initialize orchestrator", "error", err)
 		}
 	}
 

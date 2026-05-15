@@ -86,7 +86,7 @@ type Workspace interface {
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
 	UpdateAgentModel(ctx context.Context) error
-	InitCoderAgent(ctx context.Context) error
+	InitOrchestrator(ctx context.Context) error
 	GetDefaultSmallModel(providerID string) config.SelectedModel
 
 	// Permissions

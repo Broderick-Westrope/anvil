@@ -104,7 +104,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		return pendingTool(sty, "Agent", opts.Anim, opts.Compact)
 	}
 
-	var params agent.AgentParams
+	var params agent.TaskParams
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
 
 	prompt := params.Prompt

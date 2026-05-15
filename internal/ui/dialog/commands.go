@@ -431,11 +431,11 @@ func (c *Commands) defaultCommands() []*CommandItem {
 
 	// Add reasoning toggle for models that support it
 	cfg := c.com.Config()
-	if agentCfg, ok := cfg.Agents[config.AgentCoder]; ok {
-		providerCfg := cfg.GetProviderForModel(agentCfg.Model)
-		model := cfg.GetModelByType(agentCfg.Model)
+	if agentCfg, ok := cfg.Agents[config.AgentOrchestrator]; ok {
+		providerCfg := cfg.GetProviderForModel(agentCfg.EffectiveModelType())
+		model := cfg.GetModelByType(agentCfg.EffectiveModelType())
 		if providerCfg != nil && model != nil && model.CanReason {
-			selectedModel := cfg.Models[agentCfg.Model]
+			selectedModel := cfg.Models[agentCfg.EffectiveModelType()]
 
 			// Anthropic models: thinking toggle
 			if model.CanReason && len(model.ReasoningLevels) == 0 {
@@ -460,8 +460,8 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	if c.hasSession {
 		cfgPrime := c.com.Config()
-		agentCfg := cfgPrime.Agents[config.AgentCoder]
-		model := cfgPrime.GetModelByType(agentCfg.Model)
+		agentCfg := cfgPrime.Agents[config.AgentOrchestrator]
+		model := cfgPrime.GetModelByType(agentCfg.EffectiveModelType())
 		if model != nil && model.SupportsImages {
 			commands = append(commands, NewCommandItem(c.com.Styles, "file_picker", "Open File Picker", "ctrl+f", ActionOpenDialog{
 				DialogID: FilePickerID,
