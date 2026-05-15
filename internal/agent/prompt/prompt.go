@@ -43,17 +43,13 @@ type PromptDat struct {
 	GitStatus     string
 	ContextFiles  []ContextFile
 	AvailSkillXML string
-	// AgentsBlock is an optional XML/markdown block describing available agents
-	// for orchestrator prompts.
+	// AgentsBlock is an optional XML/markdown block describing available agents for orchestrator prompts.
 	AgentsBlock string
-	// DelegationWorkflow is an optional block describing when and how to delegate
-	// tasks to specialist agents.
+	// DelegationWorkflow is an optional block describing when and how to delegate tasks to specialist agents.
 	DelegationWorkflow string
-	// AgentBody is an optional block describing the specialist agent's role and
-	// capabilities, injected into specialist prompts.
+	// AgentBody is an optional block describing the specialist agent's role and capabilities, injected into specialist prompts.
 	AgentBody string
-	// AppendPrompt is optional text appended at the end of the prompt, after
-	// skills and context files.
+	// AppendPrompt is optional text appended at the end of the prompt, after skills and context files.
 	AppendPrompt string
 }
 
