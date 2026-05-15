@@ -111,7 +111,7 @@ type coordinator struct {
 	orchestratorMu sync.RWMutex
 
 	// agents is a lazy map of named sub-agents, populated on first delegation.
-	agents csync.Map[string, SessionAgent]
+	agents *csync.Map[string, SessionAgent]
 
 	// agentBuildMu serialises lazy agent construction to prevent duplicate
 	// builds when two goroutines race on the same agent name.
@@ -133,7 +133,7 @@ type coordinator struct {
 	// bgSemaphore caps concurrent background tasks at 10.
 	bgSemaphore chan struct{}
 	// bgTasks maps task IDs to their cancel functions for cancellation support.
-	bgTasks csync.Map[string, context.CancelFunc]
+	bgTasks *csync.Map[string, context.CancelFunc]
 	// bgBroker publishes BackgroundTaskResult events to subscribers.
 	bgBroker *pubsub.Broker[BackgroundTaskResult]
 	// pendingResults holds completed results not yet drained by the caller.
@@ -169,7 +169,9 @@ func NewCoordinator(
 		activeSkills: activeSkills,
 		skillStates:  skillStates,
 		skillTracker: skillTracker,
+		agents:       csync.NewMap[string, SessionAgent](),
 		bgSemaphore:  make(chan struct{}, 10),
+		bgTasks:      csync.NewMap[string, context.CancelFunc](),
 		bgBroker:     pubsub.NewBroker[BackgroundTaskResult](),
 	}
 
