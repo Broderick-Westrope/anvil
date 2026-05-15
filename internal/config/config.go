@@ -902,11 +902,16 @@ func (c *Config) configureAgents() {
 	c.applyDisabledAgents()
 }
 
-// applyDisabledAgents removes any agents whose names appear in DisabledAgents
-// from the Agents map.
+// applyDisabledAgents removes agents whose names appear in DisabledAgents
+// and agents whose Disabled field is true from the Agents map.
 func (c *Config) applyDisabledAgents() {
 	for _, name := range c.DisabledAgents {
 		delete(c.Agents, name)
+	}
+	for name, agent := range c.Agents {
+		if agent.Disabled {
+			delete(c.Agents, name)
+		}
 	}
 }
 
