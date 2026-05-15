@@ -526,15 +526,6 @@ type Agent struct {
 	AppendPrompt string `json:"append_prompt,omitempty"`
 }
 
-// EffectiveModelType returns the model slot type for UI lookups.
-// Per-agent model resolution is handled by ResolveAgentModel in the
-// coordinator; this method always returns SelectedModelTypeLarge so that
-// the UI can locate the correct model slot regardless of whether the agent
-// has a custom model configured.
-func (a Agent) EffectiveModelType() SelectedModelType {
-	return SelectedModelTypeLarge
-}
-
 // agentJSON is an alias used inside UnmarshalJSON to prevent recursion.
 type agentJSON Agent
 

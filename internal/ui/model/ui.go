@@ -1418,14 +1418,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				return util.ReportError(errors.New("configuration not found"))()
 			}
 
-			agentCfg, ok := cfg.Agents[config.AgentOrchestrator]
-			if !ok {
+			if _, ok := cfg.Agents[config.AgentOrchestrator]; !ok {
 				return util.ReportError(errors.New("agent configuration not found"))()
 			}
 
-			currentModel := cfg.Models[agentCfg.EffectiveModelType()]
+			currentModel := cfg.Models[config.SelectedModelTypeLarge]
 			currentModel.Think = !currentModel.Think
-			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, agentCfg.EffectiveModelType(), currentModel); err != nil {
+			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeLarge, currentModel); err != nil {
 				return util.ReportError(err)()
 			}
 			m.com.Workspace.UpdateAgentModel(context.TODO())
@@ -1489,15 +1488,14 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 
-		agentCfg, ok := cfg.Agents[config.AgentOrchestrator]
-		if !ok {
+		if _, ok := cfg.Agents[config.AgentOrchestrator]; !ok {
 			cmds = append(cmds, util.ReportError(errors.New("agent configuration not found")))
 			break
 		}
 
-		currentModel := cfg.Models[agentCfg.EffectiveModelType()]
+		currentModel := cfg.Models[config.SelectedModelTypeLarge]
 		currentModel.ReasoningEffort = msg.Effort
-		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, agentCfg.EffectiveModelType(), currentModel); err != nil {
+		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeLarge, currentModel); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
@@ -1703,7 +1701,7 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	if isOnboarding {
 		m.setState(uiLanding, uiFocusEditor)
 		m.com.Config().SetupAgents()
-		if err := m.com.Workspace.InitOrchestrator(context.TODO()); err != nil {
+		if err := m.com.Workspace.InitOrchestratorAgent(context.TODO()); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		}
 	} else if m.com.IsHyper() {
@@ -2490,11 +2488,10 @@ func (m *UI) currentModelSupportsImages() bool {
 	if cfg == nil {
 		return false
 	}
-	agentCfg, ok := cfg.Agents[config.AgentOrchestrator]
-	if !ok {
+	if _, ok := cfg.Agents[config.AgentOrchestrator]; !ok {
 		return false
 	}
-	model := cfg.GetModelByType(agentCfg.EffectiveModelType())
+	model := cfg.GetModelByType(config.SelectedModelTypeLarge)
 	return model != nil && model.SupportsImages
 }
 
@@ -3417,11 +3414,10 @@ func (m *UI) handleReAuthenticate(providerID string) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	agentCfg, ok := cfg.Agents[config.AgentOrchestrator]
-	if !ok {
+	if _, ok := cfg.Agents[config.AgentOrchestrator]; !ok {
 		return nil
 	}
-	return m.openAuthenticationDialog(providerCfg.ToProvider(), cfg.Models[agentCfg.EffectiveModelType()], agentCfg.EffectiveModelType())
+	return m.openAuthenticationDialog(providerCfg.ToProvider(), cfg.Models[config.SelectedModelTypeLarge], config.SelectedModelTypeLarge)
 }
 
 // newSession clears the current session state and prepares for a new session.
