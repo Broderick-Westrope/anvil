@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -228,18 +229,6 @@ func TestDepthAwareToolFiltering(t *testing.T) {
 		}
 	})
 
-	t.Run("depth=1 logic: no agent should get task tools", func(t *testing.T) {
-		t.Parallel()
-
-		// The coordinator's buildTools() has:
-		//   if depth > 1 { ... add task tools if hasDelegates ... }
-		// At depth=1 the condition is false for ALL agents.
-		// This test documents and verifies that the depth guard is the correct
-		// mechanism — independent of per-agent delegates_to rules.
-		const depthAtWhichTaskToolsAreExcluded = 1
-		require.LessOrEqual(t, depthAtWhichTaskToolsAreExcluded, 1,
-			"task tools should be excluded at depth <= 1")
-	})
 }
 
 // TestDisabledAgents verifies that an agent listed in DisabledAgents is
@@ -617,11 +606,11 @@ func TestDelegatesToValidation(t *testing.T) {
 		}
 		// One warning for tester→fixer, one for designer→oracle.
 		found := slices.ContainsFunc(warningTexts, func(s string) bool {
-			return contains(s, "tester") && contains(s, "fixer")
+			return strings.Contains(s, "tester") && strings.Contains(s, "fixer")
 		})
 		require.True(t, found, "expected warning about tester→fixer delegation")
 		found = slices.ContainsFunc(warningTexts, func(s string) bool {
-			return contains(s, "designer") && contains(s, "oracle")
+			return strings.Contains(s, "designer") && strings.Contains(s, "oracle")
 		})
 		require.True(t, found, "expected warning about designer→oracle delegation")
 	})
@@ -637,20 +626,6 @@ func TestDelegatesToValidation(t *testing.T) {
 		require.Empty(t, warnings)
 		require.Contains(t, errs[0].Error(), "totally-unknown-agent")
 	})
-}
-
-// contains is a tiny helper because strings.Contains is too verbose inline.
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || stringContains(s, sub))
-}
-
-func stringContains(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 // TestMultiLevelCostRollup verifies that updateParentSessionCost is present

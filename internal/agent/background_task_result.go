@@ -6,5 +6,4 @@ type BackgroundTaskResult struct {
 	AgentName string
 	Result    string
 	Success   bool
-	Cost      float64
 }
