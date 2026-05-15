@@ -1418,10 +1418,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				return util.ReportError(errors.New("configuration not found"))()
 			}
 
-			if _, ok := cfg.Agents[config.AgentOrchestrator]; !ok {
-				return util.ReportError(errors.New("agent configuration not found"))()
-			}
-
 			currentModel := cfg.Models[config.SelectedModelTypeLarge]
 			currentModel.Think = !currentModel.Think
 			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeLarge, currentModel); err != nil {
@@ -1485,11 +1481,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cfg := m.com.Config()
 		if cfg == nil {
 			cmds = append(cmds, util.ReportError(errors.New("configuration not found")))
-			break
-		}
-
-		if _, ok := cfg.Agents[config.AgentOrchestrator]; !ok {
-			cmds = append(cmds, util.ReportError(errors.New("agent configuration not found")))
 			break
 		}
 
@@ -2488,9 +2479,6 @@ func (m *UI) currentModelSupportsImages() bool {
 	if cfg == nil {
 		return false
 	}
-	if _, ok := cfg.Agents[config.AgentOrchestrator]; !ok {
-		return false
-	}
 	model := cfg.GetModelByType(config.SelectedModelTypeLarge)
 	return model != nil && model.SupportsImages
 }
@@ -3412,9 +3400,6 @@ func (m *UI) handleReAuthenticate(providerID string) tea.Cmd {
 	}
 	providerCfg, ok := cfg.Providers.Get(providerID)
 	if !ok {
-		return nil
-	}
-	if _, ok := cfg.Agents[config.AgentOrchestrator]; !ok {
 		return nil
 	}
 	return m.openAuthenticationDialog(providerCfg.ToProvider(), cfg.Models[config.SelectedModelTypeLarge], config.SelectedModelTypeLarge)

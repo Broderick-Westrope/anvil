@@ -219,11 +219,6 @@ func (r *Reasoning) FullHelp() [][]key.Binding {
 
 func (r *Reasoning) setReasoningItems() error {
 	cfg := r.com.Config()
-	_, ok := cfg.Agents[config.AgentOrchestrator]
-	if !ok {
-		return errors.New("agent configuration not found")
-	}
-
 	selectedModel := cfg.Models[config.SelectedModelTypeLarge]
 	model := cfg.GetModelByType(config.SelectedModelTypeLarge)
 	if model == nil {
