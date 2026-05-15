@@ -494,6 +494,63 @@ func TestDeduplicate(t *testing.T) {
 	}
 }
 
+func TestFilterByAllowList(t *testing.T) {
+	t.Parallel()
+
+	all := []*Skill{
+		{Name: "grilling"},
+		{Name: "brainstorming"},
+		{Name: "coding"},
+		{Name: "writing"},
+	}
+
+	tests := []struct {
+		name          string
+		allowedSkills []string
+		wantNames     []string
+	}{
+		{
+			name:          "nil input returns all skills",
+			allowedSkills: nil,
+			wantNames:     []string{"grilling", "brainstorming", "coding", "writing"},
+		},
+		{
+			name:          "wildcard returns all skills",
+			allowedSkills: []string{"*"},
+			wantNames:     []string{"grilling", "brainstorming", "coding", "writing"},
+		},
+		{
+			name:          "empty list returns no skills",
+			allowedSkills: []string{},
+			wantNames:     []string{},
+		},
+		{
+			name:          "explicit list returns only those skills",
+			allowedSkills: []string{"grilling", "brainstorming"},
+			wantNames:     []string{"grilling", "brainstorming"},
+		},
+		{
+			name:          "negation excludes named skill",
+			allowedSkills: []string{"!grilling"},
+			wantNames:     []string{"brainstorming", "coding", "writing"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := FilterByAllowList(all, tt.allowedSkills)
+
+			names := make([]string, len(result))
+			for i, s := range result {
+				names[i] = s.Name
+			}
+			require.Equal(t, tt.wantNames, names)
+		})
+	}
+}
+
 func TestFilter(t *testing.T) {
 	t.Parallel()
 
