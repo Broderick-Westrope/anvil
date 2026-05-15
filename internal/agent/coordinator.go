@@ -732,6 +732,22 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 		allowedNames = allToolNames
 	}
 
+	// Apply the global DisabledTools exclusion so that tools disabled at the
+	// top level are removed regardless of per-agent AllowedTools config.
+	if opts := c.cfg.Config().Options; opts != nil && len(opts.DisabledTools) > 0 {
+		disabled := make(map[string]struct{}, len(opts.DisabledTools))
+		for _, d := range opts.DisabledTools {
+			disabled[d] = struct{}{}
+		}
+		filtered := allowedNames[:0]
+		for _, n := range allowedNames {
+			if _, ok := disabled[n]; !ok {
+				filtered = append(filtered, n)
+			}
+		}
+		allowedNames = filtered
+	}
+
 	allowedSet := make(map[string]bool, len(allowedNames))
 	for _, n := range allowedNames {
 		allowedSet[n] = true
