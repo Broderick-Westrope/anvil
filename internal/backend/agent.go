@@ -50,7 +50,7 @@ func (b *Backend) InitAgent(ctx context.Context, workspaceID string) error {
 		return err
 	}
 
-	return ws.InitOrchestrator(ctx)
+	return ws.InitOrchestratorAgent(ctx)
 }
 
 // UpdateAgent reloads the agent model configuration.
