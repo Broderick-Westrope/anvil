@@ -39,7 +39,7 @@ func TestAnvilLetterforms(t *testing.T) {
 		"I": {
 			letter: LetterI,
 			expected: "" +
-				"▄▄▄▄▄\n" +
+				"▀▀█▀▀\n" +
 				"  █  \n" +
 				"▀▀▀▀▀",
 		},

@@ -44,10 +44,10 @@ func LetterA(_ bool) string {
 func LetterI(_ bool) string {
 	// Here's what we're making:
 	//
-	// ▄▄▄▄▄
+	// ▀▀█▀▀
 	//   █
 	// ▀▀▀▀▀
-	return "▄▄▄▄▄\n  █  \n▀▀▀▀▀"
+	return "▀▀█▀▀\n  █  \n▀▀▀▀▀"
 }
 
 // LetterL renders the letter L in a stylized way.
