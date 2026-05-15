@@ -7,7 +7,6 @@ import (
 
 	"charm.land/fantasy"
 
-	"github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
 )
@@ -26,14 +25,11 @@ const (
 func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) {
 	agentCfg, ok := c.cfg.Config().Agents[config.AgentTask]
 	if !ok {
-		return nil, errors.New("task agent not configured")
-	}
-	prompt, err := taskPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
-	if err != nil {
-		return nil, err
+		// Fall back to a generic sub-agent config if AgentTask is not configured.
+		agentCfg = config.Agent{ID: config.AgentTask, Name: "Task"}
 	}
 
-	agent, err := c.buildAgent(ctx, prompt, agentCfg, true)
+	agent, err := c.buildAgent(ctx, config.AgentTask, agentCfg, 1)
 	if err != nil {
 		return nil, err
 	}

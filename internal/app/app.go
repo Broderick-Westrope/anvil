@@ -517,7 +517,7 @@ func setupSubscriber[T any](
 }
 
 func (app *App) InitCoderAgent(ctx context.Context) error {
-	coderAgentCfg := app.config.Config().Agents[config.AgentCoder]
+	coderAgentCfg := app.config.Config().Agents[config.AgentOrchestrator]
 	if coderAgentCfg.ID == "" {
 		return fmt.Errorf("coder agent configuration is missing")
 	}

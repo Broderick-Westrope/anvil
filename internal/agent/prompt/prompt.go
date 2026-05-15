@@ -21,11 +21,15 @@ import (
 
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
-	name       string
-	template   string
-	now        func() time.Time
-	platform   string
-	workingDir string
+	name               string
+	template           string
+	now                func() time.Time
+	platform           string
+	workingDir         string
+	agentsBlock        string
+	delegationWorkflow string
+	agentBody          string
+	appendPrompt       string
 }
 
 type PromptDat struct {
@@ -75,6 +79,30 @@ func WithPlatform(platform string) Option {
 func WithWorkingDir(workingDir string) Option {
 	return func(p *Prompt) {
 		p.workingDir = workingDir
+	}
+}
+
+func WithAgentsBlock(block string) Option {
+	return func(p *Prompt) {
+		p.agentsBlock = block
+	}
+}
+
+func WithDelegationWorkflow(workflow string) Option {
+	return func(p *Prompt) {
+		p.delegationWorkflow = workflow
+	}
+}
+
+func WithAgentBody(body string) Option {
+	return func(p *Prompt) {
+		p.agentBody = body
+	}
+}
+
+func WithAppendPrompt(appendPrompt string) Option {
+	return func(p *Prompt) {
+		p.appendPrompt = appendPrompt
 	}
 }
 
@@ -212,14 +240,18 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 
 	isGit := isGitRepo(store.WorkingDir())
 	data := PromptDat{
-		Provider:      provider,
-		Model:         model,
-		Config:        *cfg,
-		WorkingDir:    filepath.ToSlash(workingDir),
-		IsGitRepo:     isGit,
-		Platform:      platform,
-		Date:          p.now().Format("1/2/2006"),
-		AvailSkillXML: availSkillXML,
+		Provider:           provider,
+		Model:              model,
+		Config:             *cfg,
+		WorkingDir:         filepath.ToSlash(workingDir),
+		IsGitRepo:          isGit,
+		Platform:           platform,
+		Date:               p.now().Format("1/2/2006"),
+		AvailSkillXML:      availSkillXML,
+		AgentsBlock:        p.agentsBlock,
+		DelegationWorkflow: p.delegationWorkflow,
+		AgentBody:          p.agentBody,
+		AppendPrompt:       p.appendPrompt,
 	}
 	if isGit {
 		var err error
