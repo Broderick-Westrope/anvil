@@ -3118,7 +3118,7 @@ func (m *UI) refreshStyles() {
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
 	if !m.com.Workspace.AgentIsReady() {
-		return util.ReportError(fmt.Errorf("coder agent is not initialized"))
+		return util.ReportError(fmt.Errorf("orchestrator agent is not initialized"))
 	}
 
 	var cmds []tea.Cmd

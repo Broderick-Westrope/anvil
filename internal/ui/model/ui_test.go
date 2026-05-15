@@ -21,7 +21,7 @@ func TestCurrentModelSupportsImages(t *testing.T) {
 		require.False(t, ui.currentModelSupportsImages())
 	})
 
-	t.Run("returns false when coder agent is missing", func(t *testing.T) {
+	t.Run("returns false when orchestrator agent is missing", func(t *testing.T) {
 		t.Parallel()
 
 		cfg := &config.Config{

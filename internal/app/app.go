@@ -519,7 +519,7 @@ func setupSubscriber[T any](
 func (app *App) InitOrchestrator(ctx context.Context) error {
 	coderAgentCfg := app.config.Config().Agents[config.AgentOrchestrator]
 	if coderAgentCfg.ID == "" {
-		return fmt.Errorf("coder agent configuration is missing")
+		return fmt.Errorf("orchestrator agent configuration is missing")
 	}
 	var err error
 	app.AgentCoordinator, err = agent.NewCoordinator(
@@ -534,7 +534,7 @@ func (app *App) InitOrchestrator(ctx context.Context) error {
 		app.agentNotifications,
 	)
 	if err != nil {
-		slog.Error("Failed to create coder agent", "err", err)
+		slog.Error("Failed to create orchestrator agent", "err", err)
 		return err
 	}
 	return nil

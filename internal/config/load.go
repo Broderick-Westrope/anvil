@@ -801,13 +801,6 @@ func validateAgentFilters(cfg *Config) error {
 		if err := ValidateFilterList(agent.AllowedSkills); err != nil {
 			return fmt.Errorf("agent %q skills: %w", name, err)
 		}
-		mcpKeys := make([]string, 0, len(agent.AllowedMCP))
-		for k := range agent.AllowedMCP {
-			mcpKeys = append(mcpKeys, k)
-		}
-		if err := ValidateFilterList(mcpKeys); err != nil {
-			return fmt.Errorf("agent %q mcps: %w", name, err)
-		}
 	}
 	return nil
 }
