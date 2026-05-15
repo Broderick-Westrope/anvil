@@ -3,6 +3,7 @@ package config
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -57,8 +58,8 @@ const (
 )
 
 const (
-	AgentCoder string = "coder"
-	AgentTask  string = "task"
+	AgentOrchestrator string = "orchestrator"
+	AgentTask         string = "task"
 )
 
 type SelectedModel struct {
@@ -487,27 +488,80 @@ func (l LSPConfig) ResolvedEnv(r VariableResolver) (map[string]string, error) {
 	return out, nil
 }
 
+// Agent defines the configuration for a named agent in the multi-agent
+// system. Fields left at their zero value fall back to global defaults.
 type Agent struct {
 	ID          string `json:"id,omitempty"`
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
-	// This is the id of the system prompt used by the agent
-	Disabled bool `json:"disabled,omitempty"`
+	Disabled    bool   `json:"disabled,omitempty"`
 
-	Model SelectedModelType `json:"model" jsonschema:"required,description=The model type to use for this agent,enum=large,enum=small,default=large"`
+	// Model is the full provider/model string (e.g. "anthropic/claude-opus-4-6").
+	// An empty string falls back to the global large model.
+	Model string `json:"model,omitempty"`
 
-	// The available tools for the agent
-	//  if this is nil, all tools are available
-	AllowedTools []string `json:"allowed_tools,omitempty"`
+	// Variant is the model variant (e.g. thinking budget passthrough).
+	Variant string `json:"variant,omitempty"`
 
-	// this tells us which MCPs are available for this agent
-	//  if this is empty all mcps are available
-	//  the string array is the list of tools from the AllowedMCP the agent has available
-	//  if the string array is nil, all tools from the AllowedMCP are available
-	AllowedMCP map[string][]string `json:"allowed_mcp,omitempty"`
+	// AllowedTools is the list of tools available to the agent.
+	// nil means all tools are available; [] means no tools.
+	AllowedTools []string `json:"tools,omitempty"`
 
-	// Overrides the context paths for this agent
-	ContextPaths []string `json:"context_paths,omitempty"`
+	// AllowedSkills is the list of skill names available to the agent.
+	// nil means all skills are available; [] means no skills.
+	AllowedSkills []string `json:"skills,omitempty"`
+
+	// AllowedMCP is the map of MCP server names to allowed tool names.
+	// An empty map means no MCPs; a nil map means all MCPs are available.
+	// Each value slice lists the allowed tools from that MCP server;
+	// a nil value means all tools from that server are available.
+	// This field is populated by UnmarshalJSON which accepts either
+	// []string or map[string][]string for the "mcps" JSON key.
+	AllowedMCP map[string][]string `json:"-"`
+
+	// AppendPrompt is injected verbatim at the end of the agent's system
+	// prompt.
+	AppendPrompt string `json:"append_prompt,omitempty"`
+}
+
+// agentJSON is an alias used inside UnmarshalJSON to prevent recursion.
+type agentJSON Agent
+
+// UnmarshalJSON implements custom JSON unmarshalling for Agent. It handles
+// the "mcps" field which may be either a []string (each name mapped to a nil
+// tool list) or a map[string][]string.
+func (a *Agent) UnmarshalJSON(data []byte) error {
+	aux := struct {
+		*agentJSON
+		MCPs json.RawMessage `json:"mcps,omitempty"`
+	}{
+		agentJSON: (*agentJSON)(a),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(aux.MCPs) == 0 {
+		return nil
+	}
+	// Try []string first.
+	var names []string
+	if err := json.Unmarshal(aux.MCPs, &names); err == nil {
+		if err := ValidateFilterList(names); err != nil {
+			return fmt.Errorf("mcps: %w", err)
+		}
+		a.AllowedMCP = make(map[string][]string, len(names))
+		for _, name := range names {
+			a.AllowedMCP[name] = nil
+		}
+		return nil
+	}
+	// Fall back to map[string][]string.
+	var mcpMap map[string][]string
+	if err := json.Unmarshal(aux.MCPs, &mcpMap); err != nil {
+		return fmt.Errorf("mcps field must be []string or map[string][]string: %w", err)
+	}
+	a.AllowedMCP = mcpMap
+	return nil
 }
 
 type Tools struct {
@@ -581,7 +635,13 @@ type Config struct {
 
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
 
-	Agents map[string]Agent `json:"-"`
+	// Agents is the map of named agent configurations. When absent, defaults
+	// from SetupAgents are used.
+	Agents map[string]Agent `json:"agents,omitempty"`
+
+	// DisabledAgents lists agent names to remove from the routing table and
+	// orchestrator prompt at startup.
+	DisabledAgents []string `json:"disabled_agents,omitempty"`
 }
 
 func (c *Config) EnabledProviders() []ProviderConfig {
@@ -705,12 +765,10 @@ func (c *Config) SetupAgents() {
 	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
 
 	agents := map[string]Agent{
-		AgentCoder: {
-			ID:           AgentCoder,
-			Name:         "Coder",
+		AgentOrchestrator: {
+			ID:           AgentOrchestrator,
+			Name:         "Orchestrator",
 			Description:  "An agent that helps with executing coding tasks.",
-			Model:        SelectedModelTypeLarge,
-			ContextPaths: c.Options.ContextPaths,
 			AllowedTools: allowedTools,
 		},
 
@@ -718,10 +776,8 @@ func (c *Config) SetupAgents() {
 			ID:           AgentTask,
 			Name:         "Task",
 			Description:  "An agent that helps with searching for context and finding implementation details.",
-			Model:        SelectedModelTypeLarge,
-			ContextPaths: c.Options.ContextPaths,
 			AllowedTools: resolveReadOnlyTools(allowedTools),
-			// NO MCPs or LSPs by default
+			// No MCPs by default.
 			AllowedMCP: map[string][]string{},
 		},
 	}
