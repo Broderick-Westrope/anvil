@@ -14,4 +14,6 @@ The `subagent_type` parameter selects which specialist to use. Available agent t
 
 Select the `subagent_type` that best matches the nature of the task you are delegating.
 
+The optional `model` parameter overrides the model used by the selected agent for this call. Omit it to use the agent's configured default model. Use `provider/model` format (e.g. `anthropic/claude-opus-4-6`). This enables dual-model patterns — for example, running the same agent with two different models in parallel to obtain diverse perspectives.
+
 Launch multiple agents concurrently by using multiple task tool calls in a single message. All calls execute in parallel and results are returned together.

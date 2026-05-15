@@ -1175,7 +1175,7 @@ func (t *baseToolMessageItem) formatParametersForCopy() string {
 	case agent.TaskToolName:
 		var params agent.TaskParams
 		if json.Unmarshal([]byte(t.toolCall.Input), &params) == nil {
-			name := agentDisplayName(params.SubagentType, params.Description)
+			name := agentDisplayName(params.SubagentType, params.Description, params.Model)
 			return fmt.Sprintf("**Agent:** %s\n**Task:**\n%s", name, params.Prompt)
 		}
 	}

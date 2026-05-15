@@ -105,7 +105,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
 
 	// Build a display name from the subagent type (e.g. "Explorer", "Fixer").
-	displayName := agentDisplayName(params.SubagentType, params.Description)
+	displayName := agentDisplayName(params.SubagentType, params.Description, params.Model)
 
 	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.agent.nestedTools) == 0 {
 		return pendingTool(sty, displayName, opts.Anim, opts.Compact)
@@ -171,15 +171,30 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 // agentDisplayName returns a human-readable name for a task tool call.
 // It capitalises the subagent type (e.g. "explorer" → "Explorer") and
 // falls back to the description or "Agent" when the type is empty.
-func agentDisplayName(subagentType, description string) string {
+// When model is non-empty, a short model identifier is appended in
+// parentheses (e.g. "Reviewer (opus-4-6)").
+func agentDisplayName(subagentType, description, model string) string {
+	var name string
 	if subagentType != "" {
 		// Capitalise the first letter.
-		return strings.ToUpper(subagentType[:1]) + subagentType[1:]
+		name = strings.ToUpper(subagentType[:1]) + subagentType[1:]
+	} else if description != "" {
+		name = description
+	} else {
+		name = "Agent"
 	}
-	if description != "" {
-		return description
+
+	if model != "" {
+		shortModel := model
+		if idx := strings.LastIndex(model, "/"); idx >= 0 {
+			shortModel = model[idx+1:]
+		}
+		// Strip common "claude-" prefix for brevity.
+		shortModel = strings.TrimPrefix(shortModel, "claude-")
+		name = name + " (" + shortModel + ")"
 	}
-	return "Agent"
+
+	return name
 }
 
 // -----------------------------------------------------------------------------

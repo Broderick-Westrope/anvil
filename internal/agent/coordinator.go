@@ -607,8 +607,16 @@ func (c *coordinator) buildOrchestratorBlocks() (agentsBlock, delegationWorkflow
 // getOrBuildAgent returns a cached sub-agent by name or lazily builds one.
 // A mutex ensures only one goroutine builds the agent even under concurrent
 // delegation; a second caller will hit the fast-path re-check after the lock.
-func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, depth int) (SessionAgent, error) {
-	if existing, ok := c.agents.Get(agentName); ok {
+// When modelOverride is non-empty, a separate cache entry is used keyed by
+// "agentName|modelOverride" and the agent config is cloned with the override
+// applied before building.
+func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, depth int, modelOverride string) (SessionAgent, error) {
+	cacheKey := agentName
+	if modelOverride != "" {
+		cacheKey = agentName + "|" + modelOverride
+	}
+
+	if existing, ok := c.agents.Get(cacheKey); ok {
 		return existing, nil
 	}
 
@@ -616,7 +624,7 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 	defer c.agentBuildMu.Unlock()
 
 	// Double-check after acquiring the lock.
-	if existing, ok := c.agents.Get(agentName); ok {
+	if existing, ok := c.agents.Get(cacheKey); ok {
 		return existing, nil
 	}
 
@@ -624,11 +632,17 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 	if !ok {
 		return nil, fmt.Errorf("agent %q not configured", agentName)
 	}
+
+	// Apply model override to a copy of the agent config when requested.
+	if modelOverride != "" {
+		agentCfg.Model = modelOverride
+	}
+
 	built, err := c.buildAgent(ctx, agentName, agentCfg, depth)
 	if err != nil {
 		return nil, err
 	}
-	c.agents.Set(agentName, built)
+	c.agents.Set(cacheKey, built)
 	return built, nil
 }
 

@@ -23,6 +23,7 @@ type TaskParams struct {
 	Prompt       string `json:"prompt" jsonschema:"description=The task for the agent to perform,required"`
 	SubagentType string `json:"subagent_type" jsonschema:"description=The type of specialized agent to use for this task,required"`
 	Description  string `json:"description" jsonschema:"description=A short (3-5 words) description of the task"`
+	Model        string `json:"model" jsonschema:"description=Optional model override (provider/model format e.g. anthropic/claude-opus-4-6). When set the agent uses this model instead of its configured default."`
 }
 
 const (
@@ -84,7 +85,7 @@ func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDep
 
 			// Lazily build (or reuse) the target agent at depth-1.
 			targetDepth := callerDepth - 1
-			agent, err := c.getOrBuildAgent(ctx, params.SubagentType, targetDepth)
+			agent, err := c.getOrBuildAgent(ctx, params.SubagentType, targetDepth, params.Model)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("building agent %q: %w", params.SubagentType, err)
 			}
@@ -97,6 +98,7 @@ func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDep
 			slog.Info("Delegating to agent",
 				"agent", params.SubagentType,
 				"depth", targetDepth,
+				"model_override", params.Model,
 				"task_summary", promptSummary,
 			)
 
