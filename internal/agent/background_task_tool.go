@@ -127,6 +127,23 @@ func (c *coordinator) backgroundTaskTool(ctx context.Context, callerName string,
 					c.bgTasks.Del(taskID)
 					cancel()
 				}()
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("Background task panicked",
+							"task_id", taskID,
+							"agent", subagentType,
+							"panic", r,
+						)
+						// Publish failure so the orchestrator learns about the panic.
+						result := BackgroundTaskResult{
+							TaskID:    taskID,
+							AgentName: subagentType,
+							Result:    fmt.Sprintf("Agent panicked: %v", r),
+							Success:   false,
+						}
+						c.bgBroker.Publish(BackgroundTaskFailedEvent, result)
+					}
+				}()
 
 				// Build (or reuse) the target agent.
 				agent, err := c.getOrBuildAgent(taskCtx, subagentType, targetDepth)

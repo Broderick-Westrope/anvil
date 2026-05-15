@@ -1263,7 +1263,7 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	orch.SetTools(agentTools)
 
 	// Invalidate lazily-built agents so they rebuild with new model config.
-	c.agents.Reset(nil)
+	c.agents.Reset(make(map[string]SessionAgent))
 
 	return nil
 }
