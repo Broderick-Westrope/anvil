@@ -1,27 +1,11 @@
-# yaml-language-server: $schema=https://goreleaser.com/static/schema-pro.json
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 # vim: set ts=2 sw=2 tw=0 fo=jcroql
 version: 2
 
 project_name: anvil
 
-includes:
-  - from_url:
-      url: charmbracelet/meta/main/notarize.yaml
-
 metadata:
   mod_timestamp: "{{ .CommitTimestamp }}"
-  license: "FSL-1.1-MIT"
-  homepage: "https://github.com/Broderick-Westrope/anvil"
-  description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
-  full_description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
-  maintainers:
-    - "kujtimiihoxha <kujtim@charm.sh>"
-    - "caarlos0 <carlos@charm.sh>" # for aur
-
-nightly:
-  publish_release: true
-  keep_single_release: true
-  version_template: "{{ incminor .Version }}-nightly"
 
 snapshot:
   version_template: "0.0.0-{{ .Timestamp }}"
@@ -96,213 +80,8 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-aur_sources:
-  - private_key: "{{ .Env.AUR_KEY }}"
-    disable: "{{ with .Prerelease }}true{{ end }}"
-    git_url: "ssh://aur@aur.archlinux.org/anvil.git"
-    commit_author:
-      name: "Broderick Westrope"
-      email: "broderick.westrope@users.noreply.github.com"
-    makedepends:
-      - go
-      - git
-    prepare: |-
-      go mod download
-    build: |-
-      mkdir completions
-      mkdir manpages
-      export CGO_CPPFLAGS="${CPPFLAGS}"
-      export CGO_CFLAGS="${CFLAGS}"
-      export CGO_CXXFLAGS="${CXXFLAGS}"
-      export CGO_LDFLAGS="${LDFLAGS}"
-      export GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw"
-      go build -ldflags="-w -s -buildid='' -linkmode=external -X github.com/Broderick-Westrope/anvil/internal/version.Version=v${pkgver}" .
-      ./anvil completion bash >./completions/anvil.bash
-      ./anvil completion zsh >./completions/anvil.zsh
-      ./anvil completion fish >./completions/anvil.fish
-      ./anvil man | gzip -c >./manpages/anvil.1.gz
-    package: |-
-      # bin
-      install -Dm755 "./anvil" "${pkgdir}/usr/bin/anvil"
-      # license
-      mkdir -p "${pkgdir}/usr/share/licenses/anvil/"
-      install -Dm644 ./LICENSE* "${pkgdir}/usr/share/licenses/anvil/"
-      # completions
-      mkdir -p "${pkgdir}/usr/share/bash-completion/completions/"
-      mkdir -p "${pkgdir}/usr/share/zsh/site-functions/"
-      mkdir -p "${pkgdir}/usr/share/fish/vendor_completions.d/"
-      install -Dm644 "./completions/anvil.bash" "${pkgdir}/usr/share/bash-completion/completions/anvil"
-      install -Dm644 "./completions/anvil.zsh" "${pkgdir}/usr/share/zsh/site-functions/_anvil"
-      install -Dm644 "./completions/anvil.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/anvil.fish"
-      # man pages
-      install -Dm644 "./manpages/anvil.1.gz" "${pkgdir}/usr/share/man/man1/anvil.1.gz"
-      # readme
-      mkdir -pv "${pkgdir}/usr/share/doc/anvil/"
-      install -Dm644 README* "${pkgdir}/usr/share/doc/anvil/"
-
-aurs:
-  - private_key: "{{ .Env.AUR_KEY }}"
-    disable: "{{ with .Prerelease }}true{{ end }}"
-    git_url: "ssh://aur@aur.archlinux.org/anvil-bin.git"
-    commit_author:
-      name: "Broderick Westrope"
-      email: "broderick.westrope@users.noreply.github.com"
-    provides:
-      - anvil
-    conflicts:
-      - anvil
-    package: |-
-      case "$CARCH" in
-        aarch64)
-          cd "${srcdir}/anvil_${pkgver}_Linux_arm64"
-          ;;
-        *)
-          cd "${srcdir}/anvil_${pkgver}_Linux_${CARCH}"
-          ;;
-      esac
-      # bin
-      install -Dm755 "./anvil" "${pkgdir}/usr/bin/anvil"
-      # license
-      mkdir -p "${pkgdir}/usr/share/licenses/anvil/"
-      install -Dm644 ./LICENSE* "${pkgdir}/usr/share/licenses/anvil/"
-      # completions
-      mkdir -p "${pkgdir}/usr/share/bash-completion/completions/"
-      mkdir -p "${pkgdir}/usr/share/zsh/site-functions/"
-      mkdir -p "${pkgdir}/usr/share/fish/vendor_completions.d/"
-      install -Dm644 "./completions/anvil.bash" "${pkgdir}/usr/share/bash-completion/completions/anvil"
-      install -Dm644 "./completions/anvil.zsh" "${pkgdir}/usr/share/zsh/site-functions/_anvil"
-      install -Dm644 "./completions/anvil.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/anvil.fish"
-      # man pages
-      install -Dm644 "./manpages/anvil.1.gz" "${pkgdir}/usr/share/man/man1/anvil.1.gz"
-      # readme
-      mkdir -pv "${pkgdir}/usr/share/doc/anvil/"
-      install -Dm644 README* "${pkgdir}/usr/share/doc/anvil/"
-
-furies:
-  - disable: "{{ if (or .Prerelease .IsNightly) }}true{{ end }}"
-    account: "{{ with .Env.FURY_TOKEN }}charmcli{{ else }}{{ end }}"
-    secret_name: FURY_TOKEN
-
-brews:
-  - repository:
-      owner: Broderick-Westrope
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    skip_upload: "{{ with .Prerelease }}true{{ end }}"
-    commit_author:
-      name: "Broderick Westrope"
-      email: "broderick.westrope@users.noreply.github.com"
-    goarm: 7
-    extra_install: |-
-      bash_completion.install "completions/{{ .ProjectName }}.bash" => "{{ .ProjectName }}"
-      zsh_completion.install "completions/{{ .ProjectName }}.zsh" => "_{{ .ProjectName }}"
-      fish_completion.install "completions/{{ .ProjectName }}.fish"
-      man1.install "manpages/{{ .ProjectName }}.1.gz"
-
-scoops:
-  - repository:
-      owner: Broderick-Westrope
-      name: scoop-bucket
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    skip_upload: "{{ with .Prerelease }}true{{ end }}"
-    commit_author:
-      name: "Broderick Westrope"
-      email: "broderick.westrope@users.noreply.github.com"
-
-npms:
-  - name: "@broderick-westrope/anvil"
-    repository: "git+https://github.com/Broderick-Westrope/anvil.git"
-    bugs: https://github.com/Broderick-Westrope/anvil/issues
-    access: public
-    disable: "{{ with .Prerelease }}true{{ end }}"
-
-nfpms:
-  - formats:
-      - apk
-      - deb
-      - rpm
-      - archlinux
-      - termux.deb
-    file_name_template: "{{ .ConventionalFileName }}"
-    contents:
-      - src: ./completions/anvil.bash
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files/usr{{ end }}/etc/bash_completion.d/anvil'
-      - src: ./completions/anvil.fish
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/fish/vendor_completions.d/anvil.fish'
-      - src: ./completions/anvil.zsh
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/zsh/site-functions/_anvil'
-      - src: ./manpages/anvil.1.gz
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/man/man1/anvil.1.gz'
-    rpm:
-      signature:
-        key_file: '{{ if ne (index .Env "GPG_KEY_PATH") "" }}{{ .Env.GPG_KEY_PATH }}{{ else }}{{ end }}'
-    deb:
-      signature:
-        key_file: '{{ if ne (index .Env "GPG_KEY_PATH") "" }}{{ .Env.GPG_KEY_PATH }}{{ else }}{{ end }}'
-
-signs:
-  - cmd: cosign
-    signature: "${artifact}.sigstore.json"
-    args:
-      - sign-blob
-      - "--bundle=${signature}"
-      - "${artifact}"
-      - "--yes"
-    artifacts: checksum
-    output: true
-
-source:
-  enabled: true
-
-sboms:
-  - artifacts: archive
-  - id: source
-    artifacts: source
-
-nix:
-  - repository:
-      owner: "Broderick-Westrope"
-      name: nur
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    commit_author:
-      name: "Broderick Westrope"
-      email: "broderick.westrope@users.noreply.github.com"
-    license: fsl11Mit
-    formatter: nixfmt
-    skip_upload: "{{ with .Prerelease }}true{{ end }}"
-    extra_install: |-
-      installManPage ./manpages/anvil.1.gz
-      installShellCompletion ./completions/*
-
-winget:
-  - publisher: Broderick-Westrope
-    copyright: Broderick Westrope
-    publisher_url: https://github.com/Broderick-Westrope
-    release_notes_url: "https://github.com/Broderick-Westrope/anvil/releases/tag/{{.Tag}}"
-    license_url: https://github.com/Broderick-Westrope/anvil/blob/main/LICENSE.md
-    skip_upload: "{{ with .Prerelease }}true{{ end }}"
-    commit_author:
-      name: "Broderick Westrope"
-      email: "broderick.westrope@users.noreply.github.com"
-    repository:
-      owner: "Broderick-Westrope"
-      name: winget-pkgs
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-      branch: "anvil-{{.Version}}"
-      pull_request:
-        enabled: true
-        draft: false
-        check_boxes: true
-        base:
-          owner: microsoft
-          name: winget-pkgs
-          branch: master
-        body: |
-          /cc @andreynering
-
 changelog:
   sort: asc
-  disable: "{{ .IsNightly }}"
   use: github
   filters:
     exclude:
@@ -346,6 +125,3 @@ changelog:
 
 release:
   prerelease: auto
-  footer:
-    from_url:
-      url: https://raw.githubusercontent.com/charmbracelet/meta/main/footer.md
