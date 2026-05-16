@@ -1,10 +1,7 @@
 # Anvil
 
-<p align="center">
-    <a href="https://stuff.github.com/Broderick-Westrope/anvil/charm-anvil.png"><img width="450" alt="Charm Anvil Logo" src="https://github.com/user-attachments/assets/cf8ca3ce-8b02-43f0-9d0f-5a331488da4b" /></a><br />
-    <a href="https://github.com/Broderick-Westrope/anvil/releases"><img src="https://img.shields.io/github/release/Broderick-Westrope/anvil" alt="Latest Release"></a>
-    <a href="https://github.com/Broderick-Westrope/anvil/actions"><img src="https://github.com/Broderick-Westrope/anvil/actions/workflows/build.yml/badge.svg" alt="Build Status"></a>
-</p>
+> [!NOTE]
+> Anvil began as a fork of [Crush](https://github.com/charmbracelet/crush/), with the intention of building upon their great work. Anvil is highly opinionated and experimental. If you're thinking of forking, I encourage you to fork Crush and cherry-pick anything from Anvil which is of interest.
 
 <p align="center">Your new coding bestie, now available in your favourite terminal.<br />Your tools, your code, and your workflows, wired into your LLM of choice.</p>
 <p align="center">终端里的编程新搭档，<br />无缝接入你的工具、代码与工作流，全面兼容主流 LLM 模型。</p>
@@ -442,21 +439,21 @@ activate on demand.
 
 The global paths we looks for skills are:
 
-* `$ANVIL_SKILLS_DIR`
-* `$XDG_CONFIG_HOME/agents/skills` or `~/.config/agents/skills/`
-* `$XDG_CONFIG_HOME/anvil/skills` or `~/.config/anvil/skills/`
-* On Windows, we _also_ look at
-  * `%LOCALAPPDATA%\agents\skills\` or `%USERPROFILE%\AppData\Local\agents\skills\`
-  * `%LOCALAPPDATA%\anvil\skills\` or `%USERPROFILE%\AppData\Local\anvil\skills\`
-* Additional paths configured via `options.skills_paths`
+- `$ANVIL_SKILLS_DIR`
+- `$XDG_CONFIG_HOME/agents/skills` or `~/.config/agents/skills/`
+- `$XDG_CONFIG_HOME/anvil/skills` or `~/.config/anvil/skills/`
+- On Windows, we _also_ look at
+  - `%LOCALAPPDATA%\agents\skills\` or `%USERPROFILE%\AppData\Local\agents\skills\`
+  - `%LOCALAPPDATA%\anvil\skills\` or `%USERPROFILE%\AppData\Local\anvil\skills\`
+- Additional paths configured via `options.skills_paths`
 
 On top of that, we _also_ load skills in your project from the following
 relative paths:
 
-* `.agents/skills`
-* `.anvil/skills`
-* `.claude/skills`
-* `.cursor/skills`
+- `.agents/skills`
+- `.anvil/skills`
+- `.claude/skills`
+- `.cursor/skills`
 
 ```jsonc
 {
