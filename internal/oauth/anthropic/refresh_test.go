@@ -194,12 +194,12 @@ func TestWriteCredentialsFile(t *testing.T) {
 }
 
 func TestClientID_EnvOverride(t *testing.T) {
-	t.Setenv("CRUSH_ANTHROPIC_CLIENT_ID", "custom-client-id")
+	t.Setenv("ANVIL_ANTHROPIC_CLIENT_ID", "custom-client-id")
 	require.Equal(t, "custom-client-id", clientID())
 }
 
 func TestClientID_Default(t *testing.T) {
 	// Ensure the env var is not set.
-	t.Setenv("CRUSH_ANTHROPIC_CLIENT_ID", "")
+	t.Setenv("ANVIL_ANTHROPIC_CLIENT_ID", "")
 	require.Equal(t, DefaultClientID, clientID())
 }
