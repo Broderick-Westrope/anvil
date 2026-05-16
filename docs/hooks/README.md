@@ -15,7 +15,7 @@ forward.
 - Hooks are just shell commands
 - Hooks can be written in any language because they’re just executables: Bash, Python, Node, Rust, Haskell, whatever
 - Hooks are Claude Code-compatible
-- Anvil ships with a builtin `anvil-hook` skill write, edit, and configure
+- Anvil ships with a builtin `anvil-hooks` skill write, edit, and configure
   hooks; just tell Anvil how to configure Anvil
 - Anvil currently supports just one hook, `PreToolUse`, with plans to support
   the full gamut; please let us know which hooks you'd like to see next

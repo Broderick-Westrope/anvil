@@ -20,7 +20,7 @@ import (
 // DummyHost is used to satisfy the http.Client's requirement for a URL.
 const DummyHost = "api.anvil.localhost"
 
-// Client represents an RPC client connected to a Anvil server.
+// Client represents an RPC client connected to an Anvil server.
 type Client struct {
 	h       *http.Client
 	path    string

@@ -55,7 +55,7 @@ var configDirCmd = &cobra.Command{
 
 var dataDirCmd = &cobra.Command{
 	Use:   "data",
-	Short: "Print the datauration directory used by Anvil",
+	Short: "Print the data directory used by Anvil",
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Println(filepath.Dir(config.GlobalConfigData()))
 	},
