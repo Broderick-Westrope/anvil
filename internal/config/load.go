@@ -784,25 +784,20 @@ func loadFromConfigPaths(configPaths []string) (*Config, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := validateAgentFilters(cfg); err != nil {
-		return nil, nil, err
-	}
-	return cfg, loaded, nil
-}
 
-// validateAgentFilters iterates over the agents in cfg and validates their
-// tools, skills, and mcps filter lists. It returns an error that identifies
-// the agent name and field if any list is invalid.
-func validateAgentFilters(cfg *Config) error {
+	// This validates all agent filters. It iterates over the agents in cfg and validates their
+	// tools, skills, and mcps filter lists. It returns an error that identifies
+	// the agent name and field if any list is invalid.
 	for name, agent := range cfg.Agents {
 		if err := ValidateFilterList(agent.AllowedTools); err != nil {
-			return fmt.Errorf("agent %q tools: %w", name, err)
+			return nil, nil, fmt.Errorf("agent %q tools: %w", name, err)
 		}
 		if err := ValidateFilterList(agent.AllowedSkills); err != nil {
-			return fmt.Errorf("agent %q skills: %w", name, err)
+			return nil, nil, fmt.Errorf("agent %q skills: %w", name, err)
 		}
 	}
-	return nil
+
+	return cfg, loaded, nil
 }
 
 func loadFromBytes(configs [][]byte) (*Config, error) {
