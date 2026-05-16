@@ -6,10 +6,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
-	"github.com/Broderick-Westrope/anvil/internal/oauth"
+	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/stretchr/testify/require"
 )
 
@@ -105,7 +106,8 @@ func TestRefreshToken_DiskCheckShortCircuit(t *testing.T) {
 	// Not parallel: mutates package-level tokenEndpoint.
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv("USER", "anvil-test-nonexistent-user-xyz")
+	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
@@ -136,6 +138,7 @@ func TestRefreshToken_DiskCheckShortCircuit(t *testing.T) {
 func TestWriteCredentialsFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	// Pre-populate with an existing field that should be preserved.
 	dir := filepath.Join(tmp, ".claude")
@@ -163,10 +166,12 @@ func TestWriteCredentialsFile(t *testing.T) {
 
 	require.NoError(t, writeCredentialsFile(newTok))
 
-	// Verify file permissions.
-	info, err := os.Stat(credPath)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	// Verify file permissions (skip on Windows where Unix perms don't apply).
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(credPath)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 
 	// Verify JSON structure.
 	data, err := os.ReadFile(credPath)
@@ -189,12 +194,12 @@ func TestWriteCredentialsFile(t *testing.T) {
 }
 
 func TestClientID_EnvOverride(t *testing.T) {
-	t.Setenv("ANVIL_ANTHROPIC_CLIENT_ID", "custom-client-id")
+	t.Setenv("CRUSH_ANTHROPIC_CLIENT_ID", "custom-client-id")
 	require.Equal(t, "custom-client-id", clientID())
 }
 
 func TestClientID_Default(t *testing.T) {
 	// Ensure the env var is not set.
-	t.Setenv("ANVIL_ANTHROPIC_CLIENT_ID", "")
+	t.Setenv("CRUSH_ANTHROPIC_CLIENT_ID", "")
 	require.Equal(t, DefaultClientID, clientID())
 }
