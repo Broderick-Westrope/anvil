@@ -10,7 +10,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
-	"charm.land/fantasy/providers/openaicompat"
+	"charm.land/fantasy/providers/anthropic"
 	"charm.land/x/vcr"
 	"github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/agent/tools"
@@ -47,12 +47,11 @@ type modelPair struct {
 	smallModel builderFunc
 }
 
-func hyperBuilder(model string) builderFunc {
+func anthropicBuilder(model string) builderFunc {
 	return func(t *testing.T, r *vcr.Recorder) (fantasy.LanguageModel, error) {
-		provider, err := openaicompat.New(
-			openaicompat.WithBaseURL("https://hyper.charm.land/v1"),
-			openaicompat.WithAPIKey(os.Getenv("CRUSH_HYPER_API_KEY")),
-			openaicompat.WithHTTPClient(&http.Client{Transport: r}),
+		provider, err := anthropic.New(
+			anthropic.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")),
+			anthropic.WithHTTPClient(&http.Client{Transport: r}),
 		)
 		if err != nil {
 			return nil, err
