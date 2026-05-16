@@ -504,40 +504,34 @@ func TestFilterByAllowList(t *testing.T) {
 		{Name: "writing"},
 	}
 
-	tests := []struct {
-		name          string
+	tests := map[string]struct {
 		allowedSkills []string
 		wantNames     []string
 	}{
-		{
-			name:          "nil input returns all skills",
+		"nil input returns all skills": {
 			allowedSkills: nil,
 			wantNames:     []string{"grilling", "brainstorming", "coding", "writing"},
 		},
-		{
-			name:          "wildcard returns all skills",
+		"wildcard returns all skills": {
 			allowedSkills: []string{"*"},
 			wantNames:     []string{"grilling", "brainstorming", "coding", "writing"},
 		},
-		{
-			name:          "empty list returns no skills",
+		"empty list returns no skills": {
 			allowedSkills: []string{},
 			wantNames:     []string{},
 		},
-		{
-			name:          "explicit list returns only those skills",
+		"explicit list returns only those skills": {
 			allowedSkills: []string{"grilling", "brainstorming"},
 			wantNames:     []string{"grilling", "brainstorming"},
 		},
-		{
-			name:          "negation excludes named skill",
+		"negation excludes named skill": {
 			allowedSkills: []string{"!grilling"},
 			wantNames:     []string{"brainstorming", "coding", "writing"},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			result := FilterByAllowList(all, tt.allowedSkills)
