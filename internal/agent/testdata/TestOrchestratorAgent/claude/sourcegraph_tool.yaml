@@ -136,7 +136,7 @@ interactions:
       Content-Type:
       - application/json
       User-Agent:
-      - crush/1.0
+      - anvil/1.0
     url: https://sourcegraph.com/.api/graphql
     method: POST
   response:
@@ -260,7 +260,7 @@ interactions:
       Content-Type:
       - application/json
       User-Agent:
-      - crush/1.0
+      - anvil/1.0
     url: https://sourcegraph.com/.api/graphql
     method: POST
   response:

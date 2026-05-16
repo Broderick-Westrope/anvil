@@ -144,7 +144,7 @@ func TestReadCredentials_FileNotFound(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
 	// Use a non-existent USER so keychain lookup returns not-found on darwin.
-	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
+	t.Setenv("USER", "anvil-test-nonexistent-user-xyz")
 
 	tok, err := ReadCredentials()
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestCachedCredentials_TTL(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
-	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
+	t.Setenv("USER", "anvil-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
@@ -183,7 +183,7 @@ func TestCachedCredentials_Invalidate(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
-	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
+	t.Setenv("USER", "anvil-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")
 	require.NoError(t, os.MkdirAll(dir, 0o700))

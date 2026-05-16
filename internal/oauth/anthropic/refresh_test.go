@@ -107,7 +107,7 @@ func TestRefreshToken_DiskCheckShortCircuit(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
-	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
+	t.Setenv("USER", "anvil-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")
 	require.NoError(t, os.MkdirAll(dir, 0o700))

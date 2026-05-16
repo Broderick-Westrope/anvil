@@ -215,7 +215,7 @@ interactions:
       data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"/t"}              }
 
       event: content_block_delta
-      data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"mp/crush-t"}  }
+      data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"mp/anvil-t"}  }
 
       event: content_block_delta
       data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"est/TestOr"}           }

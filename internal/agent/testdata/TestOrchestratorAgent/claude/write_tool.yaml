@@ -104,7 +104,7 @@ interactions:
       data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"/tmp"}}
 
       event: content_block_delta
-      data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"/crush-test"} }
+      data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"/anvil-test"} }
 
       event: content_block_delta
       data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"/TestOr"}             }

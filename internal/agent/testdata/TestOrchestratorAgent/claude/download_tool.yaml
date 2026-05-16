@@ -163,7 +163,7 @@ interactions:
     host: example-files.online-convert.com
     headers:
       User-Agent:
-      - crush/1.0
+      - anvil/1.0
     url: https://example-files.online-convert.com/document/txt/example.txt
     method: GET
   response:

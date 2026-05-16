@@ -200,7 +200,7 @@ interactions:
       data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"le_path\": \""}     }
 
       event: content_block_delta
-      data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"/tmp/crush"}        }
+      data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"/tmp/anvil"}        }
 
       event: content_block_delta
       data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"-test/Tes"}         }
@@ -344,7 +344,7 @@ interactions:
       data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": \""}  }
 
       event: content_block_delta
-      data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"/tmp/crush"}   }
+      data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"/tmp/anvil"}   }
 
       event: content_block_delta
       data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"-test/TestOr"}             }
