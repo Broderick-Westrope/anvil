@@ -1,5 +1,5 @@
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "lsp": {
     "gopls": {
       "options": {

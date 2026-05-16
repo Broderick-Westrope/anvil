@@ -15,7 +15,7 @@ Anvil uses JSON configuration files with the following priority (highest to lowe
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "models": {},
   "providers": {},
   "mcp": {},

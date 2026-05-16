@@ -269,7 +269,7 @@ like you would. LSPs can be added manually like so:
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "lsp": {
     "go": {
       "command": "gopls",
@@ -323,7 +323,7 @@ which do expand.
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "mcp": {
     "filesystem": {
       "type": "stdio",
@@ -382,7 +382,7 @@ permissions. Use this with care.
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "permissions": {
     "allowed_tools": [
       "view",
@@ -406,7 +406,7 @@ completely hidden from the agent.
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "options": {
     "disabled_tools": ["bash", "sourcegraph"]
   }
@@ -423,7 +423,7 @@ from the agent, including builtin skills and skills discovered from disk.
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "options": {
     "disabled_skills": ["anvil-config"]
   }
@@ -457,7 +457,7 @@ relative paths:
 
 ```jsonc
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "options": {
     "skills_paths": [
       "~/.config/anvil/skills", // Windows: "%LOCALAPPDATA%\\anvil\\skills",
@@ -493,7 +493,7 @@ focused _and_ your terminal supports reporting the focus state.
 
 ```jsonc
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "options": {
     "disable_notifications": false, // default
   },
@@ -513,7 +513,7 @@ name and location with the `initialize_as` option:
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "options": {
     "initialize_as": "AGENTS.md"
   }
@@ -533,7 +533,7 @@ it creates. You can customize this behavior with the `attribution` option:
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "options": {
     "attribution": {
       "trailer_style": "co-authored-by",
@@ -570,7 +570,7 @@ API. Don't forget to set `DEEPSEEK_API_KEY` in your environment.
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "providers": {
     "deepseek": {
       "type": "openai-compat",
@@ -599,7 +599,7 @@ Custom Anthropic-compatible providers follow this format:
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "providers": {
     "custom-anthropic": {
       "type": "anthropic",
@@ -648,7 +648,7 @@ To add specific models to the configuration, configure as such:
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "providers": {
     "vertexai": {
       "models": [
@@ -741,7 +741,7 @@ config:
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "options": {
     "debug": true,
     "debug_lsp": true
@@ -768,7 +768,7 @@ your `anvil.json` config:
 
 ```json
 {
-  "$schema": "https://charm.land/anvil.json",
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "options": {
     "disable_provider_auto_update": true
   }
