@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/oauth"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	"github.com/stretchr/testify/require"
 )
 
