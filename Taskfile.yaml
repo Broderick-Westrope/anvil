@@ -43,7 +43,7 @@ tasks:
   build:
     desc: Run build
     vars:
-      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/charmbracelet/crush/internal/version.Version={{.VERSION}}"{{end}}'
+      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/Broderick-Westrope/anvil/internal/version.Version={{.VERSION}}"{{end}}'
     cmds:
       - "go build -v {{if .RACE}}-race{{end}} {{.LDFLAGS}} ."
     sources:
@@ -116,7 +116,7 @@ tasks:
   install:
     desc: Install the application
     vars:
-      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/charmbracelet/crush/internal/version.Version={{.VERSION}}"{{end}}'
+      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/Broderick-Westrope/anvil/internal/version.Version={{.VERSION}}"{{end}}'
     cmds:
       - task: fetch-tags
       - go install {{.LDFLAGS}} -v .
