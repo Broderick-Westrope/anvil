@@ -27,7 +27,7 @@ Use a package manager:
 brew install Broderick-Westrope/tap/anvil
 
 # NPM
-npm install -g @charmland/anvil
+go install github.com/Broderick-Westrope/anvil@latest
 
 # Arch Linux (btw)
 yay -S anvil-bin
@@ -42,34 +42,19 @@ pkg install anvil
 Windows users:
 
 ```bash
-# Winget
-winget install charmbracelet.anvil
-
-# Scoop
-scoop bucket add charm https://github.com/charmbracelet/scoop-bucket.git
-scoop install anvil
+# Install from source
+go install github.com/Broderick-Westrope/anvil@latest
 ```
 
 <details>
 <summary><strong>Nix (NUR)</strong></summary>
 
-Anvil is available via the official Charm [NUR](https://github.com/nix-community/NUR) in `nur.repos.charmbracelet.anvil`, which is the most up-to-date way to get Anvil in Nix.
+NUR and Nix module support is not yet available for Anvil. The upstream Crush project provides these via the Charmbracelet NUR — Anvil may add its own NUR package in the future.
 
-You can also try out Anvil via the NUR with `nix-shell`:
-
-```bash
-# Add the NUR channel.
-nix-channel --add https://github.com/nix-community/NUR/archive/main.tar.gz nur
-nix-channel --update
-
-# Get Anvil in a Nix shell.
-nix-shell -p '(import <nur> { pkgs = import <nixpkgs> {}; }).repos.charmbracelet.anvil'
-```
-
+<!--
 ### NixOS & Home Manager Module Usage via NUR
 
-Anvil provides NixOS and Home Manager modules via NUR.
-You can use these modules directly in your flake by importing them from NUR. Since it auto detects whether its a home manager or nixos context you can use the import the exact same way :)
+TODO: Set up NUR package for Anvil.
 
 ```nix
 {
@@ -83,7 +68,7 @@ You can use these modules directly in your flake by importing them from NUR. Sin
       system = "x86_64-linux";
       modules = [
         nur.modules.nixos.default
-        nur.repos.charmbracelet.modules.anvil
+        nur.repos.TODO.modules.anvil
         {
           programs.anvil = {
             enable = true;
@@ -120,33 +105,7 @@ You can use these modules directly in your flake by importing them from NUR. Sin
   };
 }
 ```
-
-</details>
-
-<details>
-<summary><strong>Debian/Ubuntu</strong></summary>
-
-```bash
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
-echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list
-sudo apt update && sudo apt install anvil
-```
-
-</details>
-
-<details>
-<summary><strong>Fedora/RHEL</strong></summary>
-
-```bash
-echo '[charm]
-name=Charm
-baseurl=https://repo.charm.sh/yum/
-enabled=1
-gpgcheck=1
-gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo
-sudo yum install anvil
-```
+-->
 
 </details>
 
