@@ -2,7 +2,7 @@
 # vim: set ts=2 sw=2 tw=0 fo=jcroql
 version: 2
 
-project_name: crush
+project_name: anvil
 
 includes:
   - from_url:
@@ -11,7 +11,7 @@ includes:
 metadata:
   mod_timestamp: "{{ .CommitTimestamp }}"
   license: "FSL-1.1-MIT"
-  homepage: "https://charm.sh/crush"
+  homepage: "https://github.com/Broderick-Westrope/anvil"
   description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
   full_description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
   maintainers:
@@ -33,10 +33,10 @@ before:
     - mkdir completions
     - rm -rf manpages
     - mkdir manpages
-    - sh -c 'go run . completion bash >./completions/crush.bash'
-    - sh -c 'go run . completion zsh >./completions/crush.zsh'
-    - sh -c 'go run . completion fish >./completions/crush.fish'
-    - sh -c 'go run . man | gzip -c >./manpages/crush.1.gz'
+    - sh -c 'go run . completion bash >./completions/anvil.bash'
+    - sh -c 'go run . completion zsh >./completions/anvil.zsh'
+    - sh -c 'go run . completion fish >./completions/anvil.fish'
+    - sh -c 'go run . man | gzip -c >./manpages/anvil.1.gz'
 
 # gomod:
 #   proxy: true
@@ -70,13 +70,13 @@ builds:
       - goos: windows
         goarch: arm
     ldflags:
-      - -s -w -X github.com/charmbracelet/crush/internal/version.Version={{.Version}}
+      - -s -w -X github.com/Broderick-Westrope/anvil/internal/version.Version={{.Version}}
     flags:
       - -trimpath
 
 archives:
   - name_template: >-
-      crush_
+      anvil_
       {{- .Version }}_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
@@ -99,7 +99,7 @@ checksum:
 aur_sources:
   - private_key: "{{ .Env.AUR_KEY }}"
     disable: "{{ with .Prerelease }}true{{ end }}"
-    git_url: "ssh://aur@aur.archlinux.org/crush.git"
+    git_url: "ssh://aur@aur.archlinux.org/anvil.git"
     commit_author:
       name: "Charm"
       email: "charmcli@users.noreply.github.com"
@@ -116,67 +116,67 @@ aur_sources:
       export CGO_CXXFLAGS="${CXXFLAGS}"
       export CGO_LDFLAGS="${LDFLAGS}"
       export GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw"
-      go build -ldflags="-w -s -buildid='' -linkmode=external -X github.com/charmbracelet/crush/internal/version.Version=v${pkgver}" .
-      ./crush completion bash >./completions/crush.bash
-      ./crush completion zsh >./completions/crush.zsh
-      ./crush completion fish >./completions/crush.fish
-      ./crush man | gzip -c >./manpages/crush.1.gz
+      go build -ldflags="-w -s -buildid='' -linkmode=external -X github.com/Broderick-Westrope/anvil/internal/version.Version=v${pkgver}" .
+      ./anvil completion bash >./completions/anvil.bash
+      ./anvil completion zsh >./completions/anvil.zsh
+      ./anvil completion fish >./completions/anvil.fish
+      ./anvil man | gzip -c >./manpages/anvil.1.gz
     package: |-
       # bin
-      install -Dm755 "./crush" "${pkgdir}/usr/bin/crush"
+      install -Dm755 "./anvil" "${pkgdir}/usr/bin/anvil"
       # license
-      mkdir -p "${pkgdir}/usr/share/licenses/crush/"
-      install -Dm644 ./LICENSE* "${pkgdir}/usr/share/licenses/crush/"
+      mkdir -p "${pkgdir}/usr/share/licenses/anvil/"
+      install -Dm644 ./LICENSE* "${pkgdir}/usr/share/licenses/anvil/"
       # completions
       mkdir -p "${pkgdir}/usr/share/bash-completion/completions/"
       mkdir -p "${pkgdir}/usr/share/zsh/site-functions/"
       mkdir -p "${pkgdir}/usr/share/fish/vendor_completions.d/"
-      install -Dm644 "./completions/crush.bash" "${pkgdir}/usr/share/bash-completion/completions/crush"
-      install -Dm644 "./completions/crush.zsh" "${pkgdir}/usr/share/zsh/site-functions/_crush"
-      install -Dm644 "./completions/crush.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/crush.fish"
+      install -Dm644 "./completions/anvil.bash" "${pkgdir}/usr/share/bash-completion/completions/anvil"
+      install -Dm644 "./completions/anvil.zsh" "${pkgdir}/usr/share/zsh/site-functions/_anvil"
+      install -Dm644 "./completions/anvil.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/anvil.fish"
       # man pages
-      install -Dm644 "./manpages/crush.1.gz" "${pkgdir}/usr/share/man/man1/crush.1.gz"
+      install -Dm644 "./manpages/anvil.1.gz" "${pkgdir}/usr/share/man/man1/anvil.1.gz"
       # readme
-      mkdir -pv "${pkgdir}/usr/share/doc/crush/"
-      install -Dm644 README* "${pkgdir}/usr/share/doc/crush/"
+      mkdir -pv "${pkgdir}/usr/share/doc/anvil/"
+      install -Dm644 README* "${pkgdir}/usr/share/doc/anvil/"
 
 aurs:
   - private_key: "{{ .Env.AUR_KEY }}"
     disable: "{{ with .Prerelease }}true{{ end }}"
-    git_url: "ssh://aur@aur.archlinux.org/crush-bin.git"
+    git_url: "ssh://aur@aur.archlinux.org/anvil-bin.git"
     commit_author:
       name: "Charm"
       email: "charmcli@users.noreply.github.com"
     provides:
-      - crush
+      - anvil
     conflicts:
-      - crush
+      - anvil
     package: |-
       case "$CARCH" in
         aarch64)
-          cd "${srcdir}/crush_${pkgver}_Linux_arm64"
+          cd "${srcdir}/anvil_${pkgver}_Linux_arm64"
           ;;
         *)
-          cd "${srcdir}/crush_${pkgver}_Linux_${CARCH}"
+          cd "${srcdir}/anvil_${pkgver}_Linux_${CARCH}"
           ;;
       esac
       # bin
-      install -Dm755 "./crush" "${pkgdir}/usr/bin/crush"
+      install -Dm755 "./anvil" "${pkgdir}/usr/bin/anvil"
       # license
-      mkdir -p "${pkgdir}/usr/share/licenses/crush/"
-      install -Dm644 ./LICENSE* "${pkgdir}/usr/share/licenses/crush/"
+      mkdir -p "${pkgdir}/usr/share/licenses/anvil/"
+      install -Dm644 ./LICENSE* "${pkgdir}/usr/share/licenses/anvil/"
       # completions
       mkdir -p "${pkgdir}/usr/share/bash-completion/completions/"
       mkdir -p "${pkgdir}/usr/share/zsh/site-functions/"
       mkdir -p "${pkgdir}/usr/share/fish/vendor_completions.d/"
-      install -Dm644 "./completions/crush.bash" "${pkgdir}/usr/share/bash-completion/completions/crush"
-      install -Dm644 "./completions/crush.zsh" "${pkgdir}/usr/share/zsh/site-functions/_crush"
-      install -Dm644 "./completions/crush.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/crush.fish"
+      install -Dm644 "./completions/anvil.bash" "${pkgdir}/usr/share/bash-completion/completions/anvil"
+      install -Dm644 "./completions/anvil.zsh" "${pkgdir}/usr/share/zsh/site-functions/_anvil"
+      install -Dm644 "./completions/anvil.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/anvil.fish"
       # man pages
-      install -Dm644 "./manpages/crush.1.gz" "${pkgdir}/usr/share/man/man1/crush.1.gz"
+      install -Dm644 "./manpages/anvil.1.gz" "${pkgdir}/usr/share/man/man1/anvil.1.gz"
       # readme
-      mkdir -pv "${pkgdir}/usr/share/doc/crush/"
-      install -Dm644 README* "${pkgdir}/usr/share/doc/crush/"
+      mkdir -pv "${pkgdir}/usr/share/doc/anvil/"
+      install -Dm644 README* "${pkgdir}/usr/share/doc/anvil/"
 
 furies:
   - disable: "{{ if (or .Prerelease .IsNightly) }}true{{ end }}"
@@ -210,9 +210,9 @@ scoops:
       email: "charmcli@users.noreply.github.com"
 
 npms:
-  - name: "@charmland/crush"
-    repository: "git+https://github.com/charmbracelet/crush.git"
-    bugs: https://github.com/charmbracelet/crush/issues
+  - name: "@charmland/anvil"
+    repository: "git+https://github.com/Broderick-Westrope/anvil.git"
+    bugs: https://github.com/Broderick-Westrope/anvil/issues
     access: public
     disable: "{{ with .Prerelease }}true{{ end }}"
 
@@ -225,14 +225,14 @@ nfpms:
       - termux.deb
     file_name_template: "{{ .ConventionalFileName }}"
     contents:
-      - src: ./completions/crush.bash
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files/usr{{ end }}/etc/bash_completion.d/crush'
-      - src: ./completions/crush.fish
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/fish/vendor_completions.d/crush.fish'
-      - src: ./completions/crush.zsh
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/zsh/site-functions/_crush'
-      - src: ./manpages/crush.1.gz
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/man/man1/crush.1.gz'
+      - src: ./completions/anvil.bash
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files/usr{{ end }}/etc/bash_completion.d/anvil'
+      - src: ./completions/anvil.fish
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/fish/vendor_completions.d/anvil.fish'
+      - src: ./completions/anvil.zsh
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/zsh/site-functions/_anvil'
+      - src: ./manpages/anvil.1.gz
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/man/man1/anvil.1.gz'
     rpm:
       signature:
         key_file: '{{ if ne (index .Env "GPG_KEY_PATH") "" }}{{ .Env.GPG_KEY_PATH }}{{ else }}{{ end }}'
@@ -271,15 +271,15 @@ nix:
     formatter: nixfmt
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
     extra_install: |-
-      installManPage ./manpages/crush.1.gz
+      installManPage ./manpages/anvil.1.gz
       installShellCompletion ./completions/*
 
 winget:
   - publisher: charmbracelet
     copyright: Charmbracelet, Inc
     publisher_url: https://charm.land
-    release_notes_url: "https://github.com/charmbracelet/crush/releases/tag/{{.Tag}}"
-    license_url: https://github.com/charmbracelet/crush/blob/main/LICENSE.md
+    release_notes_url: "https://github.com/Broderick-Westrope/anvil/releases/tag/{{.Tag}}"
+    license_url: https://github.com/Broderick-Westrope/anvil/blob/main/LICENSE.md
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
     commit_author:
       name: "Charm"
@@ -288,7 +288,7 @@ winget:
       owner: "charmbracelet"
       name: winget-pkgs
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-      branch: "crush-{{.Version}}"
+      branch: "anvil-{{.Version}}"
       pull_request:
         enabled: true
         draft: false

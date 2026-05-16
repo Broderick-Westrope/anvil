@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/oauth"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
 )
 
 const (
@@ -29,9 +29,9 @@ const (
 var tokenEndpoint = TokenURL
 
 // clientID returns the OAuth client ID, allowing override via the
-// CRUSH_ANTHROPIC_CLIENT_ID environment variable.
+// ANVIL_ANTHROPIC_CLIENT_ID environment variable.
 func clientID() string {
-	if id := os.Getenv("CRUSH_ANTHROPIC_CLIENT_ID"); id != "" {
+	if id := os.Getenv("ANVIL_ANTHROPIC_CLIENT_ID"); id != "" {
 		return id
 	}
 	return DefaultClientID

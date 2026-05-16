@@ -12,8 +12,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/diffview"
 	"github.com/alecthomas/chroma/v2"
-	"github.com/charmbracelet/crush/internal/ui/diffview"
 )
 
 const (
@@ -68,9 +68,9 @@ type Styles struct {
 		WorkingDir        lipgloss.Style // Style for current working directory
 		Separator         lipgloss.Style // Style for separator dots (•)
 		Wrapper           lipgloss.Style // Outer container for the entire header row
-		LogoGradCanvas    lipgloss.Style // Canvas for the compact "CRUSH" gradient
-		LogoGradFromColor color.Color    // "CRUSH" wordmark gradient start
-		LogoGradToColor   color.Color    // "CRUSH" wordmark gradient end
+		LogoGradCanvas    lipgloss.Style // Canvas for the compact "ANVIL" gradient
+		LogoGradFromColor color.Color    // "ANVIL" wordmark gradient start
+		LogoGradToColor   color.Color    // "ANVIL" wordmark gradient end
 	}
 
 	CompactDetails struct {

@@ -12,15 +12,15 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/proto"
-	"github.com/charmbracelet/crush/internal/server"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/proto"
+	"github.com/Broderick-Westrope/anvil/internal/server"
 )
 
 // DummyHost is used to satisfy the http.Client's requirement for a URL.
-const DummyHost = "api.crush.localhost"
+const DummyHost = "api.anvil.localhost"
 
-// Client represents an RPC client connected to a Crush server.
+// Client represents an RPC client connected to a Anvil server.
 type Client struct {
 	h       *http.Client
 	path    string

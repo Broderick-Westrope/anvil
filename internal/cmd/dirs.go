@@ -6,25 +6,25 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
-	"github.com/charmbracelet/crush/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
 
 var dirsCmd = &cobra.Command{
 	Use:   "dirs",
-	Short: "Print directories used by Crush",
-	Long: `Print the directories where Crush stores its configuration and data files.
+	Short: "Print directories used by Anvil",
+	Long: `Print the directories where Anvil stores its configuration and data files.
 This includes the global configuration directory and data directory.`,
 	Example: `
 # Print all directories
-crush dirs
+anvil dirs
 
 # Print only the config directory
-crush dirs config
+anvil dirs config
 
 # Print only the data directory
-crush dirs data
+anvil dirs data
   `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if term.IsTerminal(os.Stdout.Fd()) {
@@ -47,7 +47,7 @@ crush dirs data
 
 var configDirCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Print the configuration directory used by Crush",
+	Short: "Print the configuration directory used by Anvil",
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Println(filepath.Dir(config.GlobalConfig()))
 	},
@@ -55,7 +55,7 @@ var configDirCmd = &cobra.Command{
 
 var dataDirCmd = &cobra.Command{
 	Use:   "data",
-	Short: "Print the datauration directory used by Crush",
+	Short: "Print the datauration directory used by Anvil",
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Println(filepath.Dir(config.GlobalConfigData()))
 	},

@@ -3,10 +3,10 @@ package model
 import (
 	"testing"
 
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/skills"
-	"github.com/charmbracelet/crush/internal/ui/common"
-	uistyles "github.com/charmbracelet/crush/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/skills"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	uistyles "github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,7 +65,7 @@ func TestSkillStatusItemsExcludesDisabledSkills(t *testing.T) {
 	ui := &UI{
 		com: &common.Common{
 			Styles:    &st,
-			Workspace: &testWorkspace{cfg: &config.Config{Options: &config.Options{DisabledSkills: []string{"go-doc", "crush-config"}}}},
+			Workspace: &testWorkspace{cfg: &config.Config{Options: &config.Options{DisabledSkills: []string{"go-doc", "anvil-config"}}}},
 		},
 		skillStates: []*skills.SkillState{
 			{Name: "go-doc", Path: "/tmp/go-doc/SKILL.md", State: skills.StateNormal},
@@ -76,6 +76,6 @@ func TestSkillStatusItemsExcludesDisabledSkills(t *testing.T) {
 
 	for _, item := range items {
 		require.NotEqual(t, "go-doc", item.name)
-		require.NotEqual(t, "crush-config", item.name)
+		require.NotEqual(t, "anvil-config", item.name)
 	}
 }

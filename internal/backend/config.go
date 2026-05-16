@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/charmbracelet/crush/internal/agent"
-	mcptools "github.com/charmbracelet/crush/internal/agent/tools/mcp"
-	"github.com/charmbracelet/crush/internal/commands"
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/oauth"
+	"github.com/Broderick-Westrope/anvil/internal/agent"
+	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
 )
 
 // MCPResourceContents holds the contents of an MCP resource returned

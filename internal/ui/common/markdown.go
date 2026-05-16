@@ -5,12 +5,12 @@ import (
 	"sync"
 
 	"charm.land/glamour/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/xchroma"
 	"github.com/alecthomas/chroma/v2/formatters"
-	"github.com/charmbracelet/crush/internal/ui/styles"
-	"github.com/charmbracelet/crush/internal/ui/xchroma"
 )
 
-const formatterName = "crush"
+const formatterName = "anvil"
 
 func init() {
 	// NOTE: Glamour does not offer us an option to pass the formatter

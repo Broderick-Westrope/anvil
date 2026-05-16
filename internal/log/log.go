@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/event"
+	"github.com/Broderick-Westrope/anvil/internal/event"
 	"github.com/charmbracelet/x/term"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -74,11 +74,11 @@ func RecoverPanic(name string, cleanup func()) {
 
 		// Always print to stderr so the user can find it even if the
 		// terminal is garbled.
-		fmt.Fprintf(os.Stderr, "\n=== CRUSH PANIC (%s) ===\n%v\n\nStack:\n%s\n", name, r, stack)
+		fmt.Fprintf(os.Stderr, "\n=== ANVIL PANIC (%s) ===\n%v\n\nStack:\n%s\n", name, r, stack)
 
 		// Write a timestamped panic log to the temp directory.
 		timestamp := time.Now().Format("20060102-150405")
-		filename := fmt.Sprintf("crush-panic-%s-%s.log", name, timestamp)
+		filename := fmt.Sprintf("anvil-panic-%s-%s.log", name, timestamp)
 		filepath := fmt.Sprintf("%s/%s", os.TempDir(), filename)
 
 		file, err := os.Create(filepath)

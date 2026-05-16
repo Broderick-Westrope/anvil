@@ -11,16 +11,16 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
-	"github.com/charmbracelet/crush/internal/client"
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/event"
-	"github.com/charmbracelet/crush/internal/format"
-	"github.com/charmbracelet/crush/internal/proto"
-	"github.com/charmbracelet/crush/internal/pubsub"
-	"github.com/charmbracelet/crush/internal/session"
-	"github.com/charmbracelet/crush/internal/ui/anim"
-	"github.com/charmbracelet/crush/internal/ui/styles"
-	"github.com/charmbracelet/crush/internal/workspace"
+	"github.com/Broderick-Westrope/anvil/internal/client"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/event"
+	"github.com/Broderick-Westrope/anvil/internal/format"
+	"github.com/Broderick-Westrope/anvil/internal/proto"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
@@ -35,28 +35,28 @@ var runCmd = &cobra.Command{
 The prompt can be provided as arguments or piped from stdin.`,
 	Example: `
 # Run a simple prompt
-crush run "Guess my 5 favorite Pokémon"
+anvil run "Guess my 5 favorite Pokémon"
 
 # Pipe input from stdin
-curl https://charm.land | crush run "Summarize this website"
+curl https://charm.land | anvil run "Summarize this website"
 
 # Read from a file
-crush run "What is this code doing?" <<< prrr.go
+anvil run "What is this code doing?" <<< prrr.go
 
 # Redirect output to a file
-crush run "Generate a hot README for this project" > MY_HOT_README.md
+anvil run "Generate a hot README for this project" > MY_HOT_README.md
 
 # Run in quiet mode (hide the spinner)
-crush run --quiet "Generate a README for this project"
+anvil run --quiet "Generate a README for this project"
 
 # Run in verbose mode (show logs)
-crush run --verbose "Generate a README for this project"
+anvil run --verbose "Generate a README for this project"
 
 # Continue a previous session
-crush run --session {session-id} "Follow up on your last response"
+anvil run --session {session-id} "Follow up on your last response"
 
 # Continue the most recent session
-crush run --continue "Follow up on your last response"
+anvil run --continue "Follow up on your last response"
 
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -112,7 +112,7 @@ crush run --continue "Follow up on your last response"
 			}
 
 			if !ws.Config.IsConfigured() {
-				return fmt.Errorf("no providers configured - please run 'crush' to set up a provider interactively")
+				return fmt.Errorf("no providers configured - please run 'anvil' to set up a provider interactively")
 			}
 
 			if verbose {
@@ -131,7 +131,7 @@ crush run --continue "Follow up on your last response"
 		event.AppInitialized()
 
 		if !ws.Config().IsConfigured() {
-			return fmt.Errorf("no providers configured - please run 'crush' to set up a provider interactively")
+			return fmt.Errorf("no providers configured - please run 'anvil' to set up a provider interactively")
 		}
 
 		if verbose {
@@ -503,7 +503,7 @@ func resolveSession(ctx context.Context, c *client.Client, wsID, continueSession
 }
 
 // resolveSessionByID resolves a session ID that may be a full UUID or a hash
-// prefix returned by crush session list.
+// prefix returned by anvil session list.
 func resolveSessionByID(ctx context.Context, c *client.Client, wsID, id string) (*proto.Session, error) {
 	if sess, err := c.GetSession(ctx, wsID, id); err == nil {
 		return sess, nil

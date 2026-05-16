@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/oauth"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	"github.com/stretchr/testify/require"
 )
 
@@ -141,7 +141,7 @@ func TestReadCredentials_FileNotFound(t *testing.T) {
 	// Point HOME at an empty temp directory so no credentials file exists.
 	t.Setenv("HOME", t.TempDir())
 	// Use a non-existent USER so keychain lookup returns not-found on darwin.
-	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
+	t.Setenv("USER", "anvil-test-nonexistent-user-xyz")
 
 	tok, err := ReadCredentials()
 	require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestReadCredentials_FileNotFound(t *testing.T) {
 func TestCachedCredentials_TTL(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
+	t.Setenv("USER", "anvil-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
@@ -178,7 +178,7 @@ func TestCachedCredentials_TTL(t *testing.T) {
 func TestCachedCredentials_Invalidate(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
+	t.Setenv("USER", "anvil-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")
 	require.NoError(t, os.MkdirAll(dir, 0o700))

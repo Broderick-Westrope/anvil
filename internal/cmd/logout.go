@@ -8,8 +8,8 @@ import (
 	"os/signal"
 
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/crush/internal/client"
-	"github.com/charmbracelet/crush/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/client"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 )
@@ -23,17 +23,17 @@ var (
 var logoutCmd = &cobra.Command{
 	Aliases: []string{"signout"},
 	Use:     "logout [platform]",
-	Short:   "Logout Crush from a platform",
-	Long: `Logout Crush from a specified platform, removing stored credentials.
+	Short:   "Logout Anvil from a platform",
+	Long: `Logout Anvil from a specified platform, removing stored credentials.
 The platform should be provided as an argument.
 If no argument is given, a list of logged-in platforms will be shown.
 Available platforms are: hyper, copilot.`,
 	Example: `
 # Sign out from Charm Hyper
-crush logout hyper
+anvil logout hyper
 
 # Sign out from GitHub Copilot
-crush logout copilot
+anvil logout copilot
   `,
 	ValidArgs: []cobra.Completion{
 		"hyper",

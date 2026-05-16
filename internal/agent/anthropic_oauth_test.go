@@ -5,9 +5,9 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/oauth"
-	anthropicoauth "github.com/charmbracelet/crush/internal/oauth/anthropic"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
+	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
 	"github.com/stretchr/testify/require"
 )
 
