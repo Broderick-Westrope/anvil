@@ -659,6 +659,21 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
+
+		// Update the cached session for any matching drill-stack entry so the
+		// sidebar reflects live token/cost data for the viewed subagent.
+		for i := range m.drillStack {
+			if m.drillStack[i].sessionID == msg.Payload.ID {
+				s := msg.Payload
+				m.drillStack[i].session = &s
+			}
+		}
+
+		// Update agent item token/cost stats for child sessions.
+		if m.session != nil && msg.Payload.ID != m.session.ID {
+			m.updateAgentItemSessionStats(msg.Payload)
+		}
+
 		if m.session != nil && msg.Payload.ID == m.session.ID {
 			prevHasInProgress := hasInProgressTodo(m.session.Todos)
 			m.session = &msg.Payload
@@ -673,6 +688,27 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.session == nil {
 			break
 		}
+
+		// Update live stats on agent items for any child session message.
+		// This runs regardless of whether we are drilled in.
+		if msg.Payload.SessionID != m.session.ID {
+			m.updateAgentItemStats(msg.Payload.SessionID, msg)
+		}
+
+		// Route to the drilled-in Chat when the user is viewing a subagent.
+		// Fall through afterwards so handleChildSessionMessage still updates
+		// the collapsed view on the root chat.
+		if m.isDrilledIn() && msg.Payload.SessionID == m.viewedSessionID() {
+			switch msg.Type {
+			case pubsub.CreatedEvent:
+				cmds = append(cmds, m.appendSessionMessageToChat(m.activeChat(), msg.Payload))
+			case pubsub.UpdatedEvent:
+				cmds = append(cmds, m.updateSessionMessageToChat(m.activeChat(), msg.Payload))
+			case pubsub.DeletedEvent:
+				m.activeChat().RemoveMessage(msg.Payload.ID)
+			}
+		}
+
 		if msg.Payload.SessionID != m.session.ID {
 			// This might be a child session message from an agent tool.
 			if cmd := m.handleChildSessionMessage(msg); cmd != nil {
@@ -1171,14 +1207,21 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 	}
 }
 
-// appendSessionMessage appends a new message to the current session in the chat
-// if the message is a tool result it will update the corresponding tool call message
+// appendSessionMessage appends a new message to the root session chat. It is a
+// thin wrapper around appendSessionMessageToChat.
 func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
+	return m.appendSessionMessageToChat(m.chat, msg)
+}
+
+// appendSessionMessageToChat appends a new message to the given chat. If the
+// message is a tool result it will update the corresponding tool call message.
+// Auto-scroll only fires when c is the currently visible chat.
+func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
 
-	existing := m.chat.MessageItem(msg.ID)
+	existing := c.MessageItem(msg.ID)
 	if existing != nil {
-		// message already exists, skip
+		// Message already exists, skip.
 		return nil
 	}
 
@@ -1193,9 +1236,12 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 				}
 			}
 		}
-		m.chat.AppendMessages(items...)
-		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
-			cmds = append(cmds, cmd)
+		c.AppendMessages(items...)
+		// Only auto-scroll if this chat is currently visible.
+		if c == m.activeChat() {
+			if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	case message.Assistant:
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
@@ -1206,32 +1252,34 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 				}
 			}
 		}
-		m.chat.AppendMessages(items...)
-		if m.chat.Follow() {
-			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+		c.AppendMessages(items...)
+		// Only auto-scroll if this chat is currently visible.
+		if c == m.activeChat() && c.Follow() {
+			if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
 		if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 			infoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-			m.chat.AppendMessages(infoItem)
-			if m.chat.Follow() {
-				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+			c.AppendMessages(infoItem)
+			if c == m.activeChat() && c.Follow() {
+				if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}
 		}
 	case message.Tool:
 		for _, tr := range msg.ToolResults() {
-			toolItem := m.chat.MessageItem(tr.ToolCallID)
+			toolItem := c.MessageItem(tr.ToolCallID)
 			if toolItem == nil {
-				// we should have an item!
+				// We should have an item.
 				continue
 			}
 			if toolMsgItem, ok := toolItem.(chat.ToolMessageItem); ok {
 				toolMsgItem.SetResult(&tr)
-				if m.chat.Follow() {
-					if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+				// Only auto-scroll if this chat is currently visible.
+				if c == m.activeChat() && c.Follow() {
+					if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
 				}
@@ -1259,13 +1307,19 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 	return cmd
 }
 
-// updateSessionMessage updates an existing message in the current session in
-// the chat when an assistant message is updated it may include updated tool
-// calls as well that is why we need to handle creating/updating each tool call
-// message too.
+// updateSessionMessage updates an existing message in the root session chat.
+// It is a thin wrapper around updateSessionMessageToChat.
 func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
+	return m.updateSessionMessageToChat(m.chat, msg)
+}
+
+// updateSessionMessageToChat updates an existing message in the given chat.
+// When an assistant message is updated it may include updated tool calls as
+// well — each tool call message is created or updated accordingly.
+// Auto-scroll only fires when c is the currently visible chat.
+func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
-	existingItem := m.chat.MessageItem(msg.ID)
+	existingItem := c.MessageItem(msg.ID)
 
 	if existingItem != nil {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
@@ -1280,28 +1334,28 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	// renders so the footer (model/provider/duration) remains visible when,
 	// for example, a hook halts the turn.
 	if !shouldRenderAssistant && len(msg.ToolCalls()) > 0 && existingItem != nil {
-		m.chat.RemoveMessage(msg.ID)
+		c.RemoveMessage(msg.ID)
 		if !isEndTurn {
-			if infoItem := m.chat.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem != nil {
-				m.chat.RemoveMessage(chat.AssistantInfoID(msg.ID))
+			if infoItem := c.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem != nil {
+				c.RemoveMessage(chat.AssistantInfoID(msg.ID))
 			}
 		}
 	}
 
 	if isEndTurn {
-		if infoItem := m.chat.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem == nil {
+		if infoItem := c.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem == nil {
 			newInfoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-			m.chat.AppendMessages(newInfoItem)
+			c.AppendMessages(newInfoItem)
 		}
 	}
 
 	var items []chat.MessageItem
 	for _, tc := range msg.ToolCalls() {
-		existingToolItem := m.chat.MessageItem(tc.ID)
+		existingToolItem := c.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {
 			existingToolCall := toolItem.ToolCall()
-			// only update if finished state changed or input changed
-			// to avoid clearing the cache
+			// Only update if finished state changed or input changed
+			// to avoid clearing the cache.
 			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input {
 				toolItem.SetToolCall(tc)
 			}
@@ -1319,12 +1373,13 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		}
 	}
 
-	m.chat.AppendMessages(items...)
-	if m.chat.Follow() {
-		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+	c.AppendMessages(items...)
+	// Only auto-scroll if this chat is currently visible.
+	if c == m.activeChat() && c.Follow() {
+		if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.chat.SelectLast()
+		c.SelectLast()
 	}
 
 	return tea.Sequence(cmds...)
@@ -1367,6 +1422,17 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	if agentItem == nil {
 		return nil
+	}
+
+	// Set the child session ID and mark that messages have arrived so the
+	// collapsed stats view and drill-in navigation can activate.
+	type childSessionSetter interface {
+		SetChildSessionID(string)
+		SetHasChildMessages(bool)
+	}
+	if setter, ok := agentItem.(childSessionSetter); ok {
+		setter.SetChildSessionID(childSessionID)
+		setter.SetHasChildMessages(true)
 	}
 
 	// Get existing nested tools.
@@ -1421,6 +1487,95 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	}
 
 	return tea.Sequence(cmds...)
+}
+
+// updateAgentItemStats increments the turn and tool-call counters on the
+// parent agent item that owns childSessionID. It searches both the root chat
+// and every drill-stack chat so nested drill-ins are covered.
+func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[message.Message]) {
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
+	if !ok {
+		return
+	}
+
+	// Search root chat and all drill-stack chats for the parent item.
+	item := m.chat.MessageItem(toolCallID)
+	if item == nil {
+		for _, entry := range m.drillStack {
+			item = entry.chat.MessageItem(toolCallID)
+			if item != nil {
+				break
+			}
+		}
+	}
+	if item == nil {
+		return
+	}
+
+	type statsUpdater interface {
+		IncrementTurns()
+		IncrementToolCalls(n int)
+	}
+	updater, ok := item.(statsUpdater)
+	if !ok {
+		return
+	}
+
+	// Count assistant-role message creations as turns.
+	if event.Type == pubsub.CreatedEvent && event.Payload.Role == message.Assistant {
+		updater.IncrementTurns()
+	}
+
+	// Count tool calls with deduplication via CountedToolIDs to avoid
+	// double-counting when UpdatedEvent repeats the same tool calls.
+	type toolIDTracker interface {
+		CountedToolIDs() map[string]bool
+	}
+	if tracker, ok2 := item.(toolIDTracker); ok2 {
+		counted := tracker.CountedToolIDs()
+		newCount := 0
+		for _, tc := range event.Payload.ToolCalls() {
+			if !counted[tc.ID] {
+				counted[tc.ID] = true
+				newCount++
+			}
+		}
+		if newCount > 0 {
+			updater.IncrementToolCalls(newCount)
+		}
+	}
+}
+
+// updateAgentItemSessionStats propagates token and cost data from a child
+// session update onto the parent agent item that owns that session.
+func (m *UI) updateAgentItemSessionStats(s session.Session) {
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(s.ID)
+	if !ok {
+		return
+	}
+
+	// Search root chat and all drill-stack chats for the parent item.
+	item := m.chat.MessageItem(toolCallID)
+	if item == nil {
+		for _, entry := range m.drillStack {
+			item = entry.chat.MessageItem(toolCallID)
+			if item != nil {
+				break
+			}
+		}
+	}
+	if item == nil {
+		return
+	}
+
+	type sessionStatsUpdater interface {
+		SetTokens(int64)
+		SetCost(float64)
+	}
+	if u, ok := item.(sessionStatsUpdater); ok {
+		u.SetTokens(s.PromptTokens + s.CompletionTokens)
+		u.SetCost(s.Cost)
+	}
 }
 
 // loadDrillInSession asynchronously loads the messages and session metadata
