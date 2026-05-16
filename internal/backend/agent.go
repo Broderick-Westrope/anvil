@@ -3,8 +3,8 @@ package backend
 import (
 	"context"
 
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/proto"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/proto"
 )
 
 // SendMessage sends a prompt to the agent coordinator for the given

@@ -97,7 +97,7 @@ MANDATORY activation flow:
 
 Do NOT skip step 2 because you think you already know how to do the task. Do NOT infer a skill's behavior from its name or description. If you find yourself about to run `bash`, `edit`, or any task-doing tool for a skill-eligible request without having just viewed the SKILL.md, stop and load the skill first.
 
-Builtin skills (type=builtin) use virtual `crush://skills/...` location identifiers. The "crush://" prefix is NOT a URL, network address, or MCP resource — it is a special internal identifier the View tool understands natively. Pass the `<location>` verbatim to View.
+Builtin skills (type=builtin) use virtual `anvil://skills/...` location identifiers. The "anvil://" prefix is NOT a URL, network address, or MCP resource — it is a special internal identifier the View tool understands natively. Pass the `<location>` verbatim to View.
 
 Do not use MCP tools (including read_mcp_resource) to load skills.
 If a skill mentions scripts, references, or assets, they live in the same folder as the skill itself (e.g., scripts/, references/, assets/ subdirectories within the skill's folder).

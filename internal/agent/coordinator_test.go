@@ -9,7 +9,7 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
-	"github.com/charmbracelet/crush/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

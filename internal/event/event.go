@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/version"
+	"github.com/Broderick-Westrope/anvil/internal/version"
 	"github.com/posthog/posthog-go"
 )
 

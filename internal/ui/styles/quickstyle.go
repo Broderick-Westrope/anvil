@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/crush/internal/ui/diffview"
+	"github.com/Broderick-Westrope/anvil/internal/ui/diffview"
 	"github.com/charmbracelet/x/exp/charmtone"
 )
 
@@ -336,12 +336,12 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.QuietMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color:           plainFg,
+				Color: plainFg,
 			},
 		},
 		BlockQuote: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color:           plainFg,
+				Color: plainFg,
 			},
 			Indent:      new(uint(1)),
 			IndentToken: new("│ "),
@@ -351,107 +351,107 @@ func quickStyle(o quickStyleOpts) Styles {
 		},
 		Heading: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				BlockSuffix:     "\n",
-				Bold:            new(true),
-				Color:           plainFg,
+				BlockSuffix: "\n",
+				Bold:        new(true),
+				Color:       plainFg,
 			},
 		},
 		H1: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          " ",
-				Suffix:          " ",
-				Bold:            new(true),
-				Color:           plainFg,
+				Prefix: " ",
+				Suffix: " ",
+				Bold:   new(true),
+				Color:  plainFg,
 			},
 		},
 		H2: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          "## ",
-				Color:           plainFg,
+				Prefix: "## ",
+				Color:  plainFg,
 			},
 		},
 		H3: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          "### ",
-				Color:           plainFg,
+				Prefix: "### ",
+				Color:  plainFg,
 			},
 		},
 		H4: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          "#### ",
-				Color:           plainFg,
+				Prefix: "#### ",
+				Color:  plainFg,
 			},
 		},
 		H5: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          "##### ",
-				Color:           plainFg,
+				Prefix: "##### ",
+				Color:  plainFg,
 			},
 		},
 		H6: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          "###### ",
-				Color:           plainFg,
+				Prefix: "###### ",
+				Color:  plainFg,
 			},
 		},
 		Strikethrough: ansi.StylePrimitive{
-			CrossedOut:      new(true),
-			Color:           plainFg,
+			CrossedOut: new(true),
+			Color:      plainFg,
 		},
 		Emph: ansi.StylePrimitive{
-			Italic:          new(true),
-			Color:           plainFg,
+			Italic: new(true),
+			Color:  plainFg,
 		},
 		Strong: ansi.StylePrimitive{
-			Bold:            new(true),
-			Color:           plainFg,
+			Bold:  new(true),
+			Color: plainFg,
 		},
 		HorizontalRule: ansi.StylePrimitive{
-			Format:          "\n--------\n",
-			Color:           plainFg,
+			Format: "\n--------\n",
+			Color:  plainFg,
 		},
 		Item: ansi.StylePrimitive{
-			BlockPrefix:     "• ",
-			Color:           plainFg,
+			BlockPrefix: "• ",
+			Color:       plainFg,
 		},
 		Enumeration: ansi.StylePrimitive{
-			BlockPrefix:     ". ",
-			Color:           plainFg,
+			BlockPrefix: ". ",
+			Color:       plainFg,
 		},
 		Task: ansi.StyleTask{
 			StylePrimitive: ansi.StylePrimitive{
-				Color:           plainFg,
+				Color: plainFg,
 			},
 			Ticked:   "[✓] ",
 			Unticked: "[ ] ",
 		},
 		Link: ansi.StylePrimitive{
-			Underline:       new(true),
-			Color:           plainFg,
+			Underline: new(true),
+			Color:     plainFg,
 		},
 		LinkText: ansi.StylePrimitive{
-			Bold:            new(true),
-			Color:           plainFg,
+			Bold:  new(true),
+			Color: plainFg,
 		},
 		Image: ansi.StylePrimitive{
-			Underline:       new(true),
-			Color:           plainFg,
+			Underline: new(true),
+			Color:     plainFg,
 		},
 		ImageText: ansi.StylePrimitive{
-			Format:          "Image: {{.text}} →",
-			Color:           plainFg,
+			Format: "Image: {{.text}} →",
+			Color:  plainFg,
 		},
 		Code: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          " ",
-				Suffix:          " ",
-				Color:           plainFg,
+				Prefix: " ",
+				Suffix: " ",
+				Color:  plainFg,
 			},
 		},
 		CodeBlock: ansi.StyleCodeBlock{
 			StyleBlock: ansi.StyleBlock{
 				StylePrimitive: ansi.StylePrimitive{
-					Color:           plainFg,
+					Color: plainFg,
 				},
 				Margin: new(uint(defaultMargin)),
 			},
@@ -459,13 +459,13 @@ func quickStyle(o quickStyleOpts) Styles {
 		Table: ansi.StyleTable{
 			StyleBlock: ansi.StyleBlock{
 				StylePrimitive: ansi.StylePrimitive{
-					Color:           plainFg,
+					Color: plainFg,
 				},
 			},
 		},
 		DefinitionDescription: ansi.StylePrimitive{
-			BlockPrefix:     "\n ",
-			Color:           plainFg,
+			BlockPrefix: "\n ",
+			Color:       plainFg,
 		},
 	}
 

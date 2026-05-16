@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/agent/prompt"
-	"github.com/charmbracelet/crush/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/charmbracelet/x/exp/golden"
 	"github.com/stretchr/testify/require"
 )

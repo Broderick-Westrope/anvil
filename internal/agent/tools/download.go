@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/crush/internal/filepathext"
-	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/filepathext"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 )
 
 type DownloadParams struct {
@@ -121,7 +121,7 @@ func NewDownloadTool(permissions permission.Service, workingDir string, client *
 				return fantasy.ToolResponse{}, fmt.Errorf("failed to create request: %w", err)
 			}
 
-			req.Header.Set("User-Agent", "crush/1.0")
+			req.Header.Set("User-Agent", "anvil/1.0")
 
 			resp, err := client.Do(req)
 			if err != nil {

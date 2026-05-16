@@ -57,6 +57,6 @@ func TestDiscoverWithStates_MissingPath(t *testing.T) {
 	t.Parallel()
 
 	// A clearly nonexistent path should not panic; it may log an error.
-	skills, _ := DiscoverWithStates([]string{"/nonexistent/crush/skills/path"})
+	skills, _ := DiscoverWithStates([]string{"/nonexistent/anvil/skills/path"})
 	require.Empty(t, skills)
 }

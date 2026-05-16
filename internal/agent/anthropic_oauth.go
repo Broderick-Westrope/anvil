@@ -6,8 +6,8 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
-	"github.com/charmbracelet/crush/internal/config"
-	anthropicoauth "github.com/charmbracelet/crush/internal/oauth/anthropic"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
 )
 
 const (
@@ -17,7 +17,7 @@ const (
 
 	// SystemModeEnvVar is the environment variable that controls how the
 	// system prompt is delivered when using Anthropic OAuth.
-	SystemModeEnvVar = "CRUSH_ANTHROPIC_SYSTEM_MODE"
+	SystemModeEnvVar = "ANVIL_ANTHROPIC_SYSTEM_MODE"
 
 	// SystemModeA keeps the system prompt in the system[] array (default).
 	SystemModeA = "system"

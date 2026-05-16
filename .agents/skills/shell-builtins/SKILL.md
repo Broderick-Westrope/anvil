@@ -1,11 +1,11 @@
 ---
 name: shell-builtins
-description: Use when creating a new shell builtin command for Crush (internal/shell/), editing an existing one, or when the user needs to understand how commands are intercepted in Crush's embedded shell.
+description: Use when creating a new shell builtin command for Anvil (internal/shell/), editing an existing one, or when the user needs to understand how commands are intercepted in Anvil's embedded shell.
 ---
 
 # Shell Builtins
 
-Crush's shell (`internal/shell/`) uses `mvdan.cc/sh/v3` for POSIX shell
+Anvil's shell (`internal/shell/`) uses `mvdan.cc/sh/v3` for POSIX shell
 emulation. Commands can be intercepted before they reach the OS by adding
 **builtins** — functions handled in-process.
 

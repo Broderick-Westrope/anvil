@@ -15,7 +15,7 @@ const docTemplate = `{
         },
         "license": {
             "name": "MIT",
-            "url": "https://github.com/charmbracelet/crush/blob/main/LICENSE"
+            "url": "https://github.com/Broderick-Westrope/anvil/blob/main/LICENSE"
         },
         "version": "{{.Version}}"
     },
@@ -1757,7 +1757,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_charmbracelet_crush_internal_proto.Message"
+                                "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_proto.Message"
                             }
                         }
                     },
@@ -2451,7 +2451,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_charmbracelet_crush_internal_proto.Message"
+                                "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_proto.Message"
                             }
                         }
                     },
@@ -2501,7 +2501,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_charmbracelet_crush_internal_proto.Message"
+                                "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_proto.Message"
                             }
                         }
                     },
@@ -2848,7 +2848,7 @@ const docTemplate = `{
         "csync.Map-string-config_ProviderConfig": {
             "type": "object"
         },
-        "github_com_charmbracelet_crush_internal_config.Config": {
+        "github_com_Broderick_Westrope_anvil_internal_config.Config": {
             "type": "object",
             "properties": {
                 "$schema": {
@@ -2868,7 +2868,7 @@ const docTemplate = `{
                     }
                 },
                 "options": {
-                    "$ref": "#/definitions/github_com_charmbracelet_crush_internal_config.Options"
+                    "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_config.Options"
                 },
                 "permissions": {
                     "$ref": "#/definitions/config.Permissions"
@@ -2896,7 +2896,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_charmbracelet_crush_internal_config.Options": {
+        "github_com_Broderick_Westrope_anvil_internal_config.Options": {
             "type": "object",
             "properties": {
                 "auto_lsp": {
@@ -2909,7 +2909,7 @@ const docTemplate = `{
                     }
                 },
                 "data_directory": {
-                    "description": "DataDirectory is where Crush keeps per-project state such as the SQLite database and workspace overrides. Relative paths are resolved against the working directory; absolute paths are used verbatim. After defaulting the stored value is always absolute.",
+                    "description": "DataDirectory is where Anvil keeps per-project state such as the SQLite database and workspace overrides. Relative paths are resolved against the working directory; absolute paths are used verbatim. After defaulting the stored value is always absolute.",
                     "type": "string"
                 },
                 "debug": {
@@ -2956,7 +2956,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_charmbracelet_crush_internal_proto.Message": {
+        "github_com_Broderick_Westrope_anvil_internal_proto.Message": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -3485,7 +3485,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "config": {
-                    "$ref": "#/definitions/github_com_charmbracelet_crush_internal_config.Config"
+                    "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_config.Config"
                 },
                 "data_dir": {
                     "type": "string"
@@ -3546,8 +3546,8 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/v1",
 	Schemes:          []string{},
-	Title:            "Crush API",
-	Description:      "Crush is a terminal-based AI coding assistant. This API is served over a Unix socket (or Windows named pipe) and provides programmatic access to workspaces, sessions, agents, LSP, MCP, and more.",
+	Title:            "Anvil API",
+	Description:      "Anvil is a terminal-based AI coding assistant. This API is served over a Unix socket (or Windows named pipe) and provides programmatic access to workspaces, sessions, agents, LSP, MCP, and more.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

@@ -10,12 +10,12 @@ import (
 	"slices"
 
 	"charm.land/catwalk/pkg/catwalk"
-	hyperp "github.com/charmbracelet/crush/internal/agent/hyper"
-	"github.com/charmbracelet/crush/internal/env"
-	"github.com/charmbracelet/crush/internal/oauth"
-	anthropicoauth "github.com/charmbracelet/crush/internal/oauth/anthropic"
-	"github.com/charmbracelet/crush/internal/oauth/copilot"
-	"github.com/charmbracelet/crush/internal/oauth/hyper"
+	hyperp "github.com/Broderick-Westrope/anvil/internal/agent/hyper"
+	"github.com/Broderick-Westrope/anvil/internal/env"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
+	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
+	"github.com/Broderick-Westrope/anvil/internal/oauth/copilot"
+	"github.com/Broderick-Westrope/anvil/internal/oauth/hyper"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -42,8 +42,8 @@ type ConfigStore struct {
 	config             *Config
 	workingDir         string
 	resolver           VariableResolver
-	globalDataPath     string   // ~/.local/share/crush/crush.json
-	workspacePath      string   // .crush/crush.json
+	globalDataPath     string   // ~/.local/share/anvil/anvil.json
+	workspacePath      string   // .anvil/anvil.json
 	loadedPaths        []string // config files that were successfully loaded
 	knownProviders     []catwalk.Provider
 	overrides          RuntimeOverrides
@@ -305,7 +305,7 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 
 // RefreshOAuthToken refreshes the OAuth token for the given provider.
 // Before making an external refresh request, it checks the config file on
-// disk to see if another Crush session has already refreshed the token. If
+// disk to see if another Anvil session has already refreshed the token. If
 // a newer token is found, it is used instead of refreshing.
 func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, providerID string) error {
 	providerConfig, exists := s.config.Providers.Get(providerID)

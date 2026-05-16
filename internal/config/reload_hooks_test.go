@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/hooks"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/hooks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +29,7 @@ func TestReloadFromDisk_CompilesHookMatchers(t *testing.T) {
 
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
-	configPath := filepath.Join(workDir, "crush.json")
+	configPath := filepath.Join(workDir, "anvil.json")
 	cfgJSON := `{
         "hooks": {
             "PreToolUse": [
@@ -83,7 +83,7 @@ func TestSetConfigField_AutoReload_PreservesHookMatcherFiltering(t *testing.T) {
 
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
-	configPath := filepath.Join(workDir, "crush.json")
+	configPath := filepath.Join(workDir, "anvil.json")
 	cfgJSON := `{
         "hooks": {
             "PreToolUse": [
