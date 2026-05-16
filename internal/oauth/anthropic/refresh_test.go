@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -105,6 +106,7 @@ func TestRefreshToken_DiskCheckShortCircuit(t *testing.T) {
 	// Not parallel: mutates package-level tokenEndpoint.
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")
@@ -136,6 +138,7 @@ func TestRefreshToken_DiskCheckShortCircuit(t *testing.T) {
 func TestWriteCredentialsFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	// Pre-populate with an existing field that should be preserved.
 	dir := filepath.Join(tmp, ".claude")
@@ -163,10 +166,12 @@ func TestWriteCredentialsFile(t *testing.T) {
 
 	require.NoError(t, writeCredentialsFile(newTok))
 
-	// Verify file permissions.
-	info, err := os.Stat(credPath)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	// Verify file permissions (skip on Windows where Unix perms don't apply).
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(credPath)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 
 	// Verify JSON structure.
 	data, err := os.ReadFile(credPath)
