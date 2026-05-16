@@ -170,20 +170,22 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 
 // agentDisplayName returns a human-readable name for a task tool call.
 // It capitalises the subagent type (e.g. "explorer" → "Explorer") and
-// falls back to the description or "Unknown Agent" when the type is empty.
-// When model is non-empty, a short model identifier is appended in
-// parentheses (e.g. "Reviewer (opus-4-6)").
+// appends a dash-separated description when available (e.g.
+// "Explorer — Search auth middleware"). Falls back to the description
+// alone or "Unknown Agent" when the type is empty. When model is
+// non-empty, a short model identifier is appended in parentheses
+// (e.g. "Reviewer (opus-4-6)").
 func agentDisplayName(subagentType, description, model string) string {
 	var name string
 	if subagentType != "" {
 		// Capitalise the first letter.
 		name = strings.ToUpper(subagentType[:1]) + subagentType[1:]
-	} else if description != "" {
-		name = description
 	} else {
 		name = "Unknown Agent"
 	}
 
+	// Append a short model identifier to the agent name so the user
+	// sees who is running (e.g. "Reviewer (opus-4-6)").
 	if model != "" {
 		shortModel := model
 		if idx := strings.LastIndex(model, "/"); idx >= 0 {
@@ -192,6 +194,12 @@ func agentDisplayName(subagentType, description, model string) string {
 		// Strip common "claude-" prefix for brevity.
 		shortModel = strings.TrimPrefix(shortModel, "claude-")
 		name = name + " (" + shortModel + ")"
+	}
+
+	// Append the task description after the identity so the user sees
+	// what the agent is doing (e.g. "Explorer (opus-4-6) — Search auth").
+	if description != "" {
+		name = name + " — " + description
 	}
 
 	return name

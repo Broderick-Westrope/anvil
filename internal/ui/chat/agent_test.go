@@ -17,49 +17,48 @@ func TestAgentDisplayName(t *testing.T) {
 	}{
 		"subagent type capitalised, no model": {
 			subagentType: "explorer",
-			description:  "",
-			model:        "",
 			want:         "Explorer",
+		},
+		"subagent type with description": {
+			subagentType: "explorer",
+			description:  "Search auth middleware",
+			want:         "Explorer — Search auth middleware",
 		},
 		"reviewer with opus model override": {
 			subagentType: "reviewer",
-			description:  "",
 			model:        "anthropic/claude-opus-4-6",
 			want:         "Reviewer (opus-4-6)",
 		},
-		"empty subagent type falls back to description": {
-			subagentType: "",
-			description:  "My task",
-			model:        "",
-			want:         "My task",
+		"subagent type with description and model": {
+			subagentType: "fixer",
+			description:  "Fix login bug",
+			model:        "anthropic/claude-sonnet-4-6",
+			want:         "Fixer (sonnet-4-6) — Fix login bug",
+		},
+		"empty subagent type shows Unknown Agent with description": {
+			description: "My task",
+			want:        "Unknown Agent — My task",
 		},
 		"all empty falls back to Unknown Agent": {
-			subagentType: "",
-			description:  "",
-			model:        "",
-			want:         "Unknown Agent",
+			want: "Unknown Agent",
 		},
 		"model without claude- prefix is kept as-is after slash": {
 			subagentType: "explorer",
-			description:  "",
 			model:        "openai/gpt-4o",
 			want:         "Explorer (gpt-4o)",
 		},
 		"model with no slash uses full value": {
 			subagentType: "fixer",
-			description:  "",
 			model:        "gpt-4o",
 			want:         "Fixer (gpt-4o)",
 		},
-		"description with model override": {
-			subagentType: "",
-			description:  "Analyse security",
-			model:        "anthropic/claude-sonnet-4-6",
-			want:         "Analyse security (sonnet-4-6)",
+		"description with model override and no subagent type": {
+			description: "Analyse security",
+			model:       "anthropic/claude-sonnet-4-6",
+			want:        "Unknown Agent (sonnet-4-6) — Analyse security",
 		},
 		"subagent type with sonnet model": {
 			subagentType: "reviewer",
-			description:  "",
 			model:        "anthropic/claude-sonnet-4-6",
 			want:         "Reviewer (sonnet-4-6)",
 		},
