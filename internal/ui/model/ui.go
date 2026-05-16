@@ -56,6 +56,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
 	"github.com/charmbracelet/ultraviolet/screen"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/editor"
 	xstrings "github.com/charmbracelet/x/exp/strings"
 )
@@ -148,6 +149,14 @@ type (
 	// copyChatHighlightMsg is sent to copy the current chat highlight to clipboard.
 	copyChatHighlightMsg struct{}
 
+	// drillInSessionLoadedMsg is sent when a drilled-in session's messages and
+	// metadata have been loaded asynchronously.
+	drillInSessionLoadedMsg struct {
+		sessionID string
+		messages  []message.Message
+		session   *session.Session
+	}
+
 	// sessionFilesUpdatesMsg is sent when the files for this session have been updated
 	sessionFilesUpdatesMsg struct {
 		sessionFiles []SessionFile
@@ -223,6 +232,15 @@ type UI struct {
 	// Chat components
 	chat *Chat
 
+	// drillStack holds entries for each level of drill-in navigation. When
+	// non-empty, the user is viewing a subagent session instead of the root
+	// session. m.chat and m.session always refer to the root session.
+	drillStack []drillInEntry
+
+	// elapsedTickRunning tracks whether the elapsed-time tick command is
+	// currently scheduled so we avoid scheduling duplicate ticks.
+	elapsedTickRunning bool
+
 	// onboarding state
 	onboarding struct {
 		yesInitializeSelected bool
@@ -279,6 +297,15 @@ type UI struct {
 		index    int
 		draft    string
 	}
+}
+
+// drillInEntry represents one level of drill-in navigation into a subagent
+// session.
+type drillInEntry struct {
+	sessionID string           // child session being viewed
+	chat      *Chat            // Chat instance for this level
+	label     string           // breadcrumb label, e.g. "Explorer: Search auth"
+	session   *session.Session // cached session for sidebar stats
 }
 
 // New creates a new instance of the [UI] model.
@@ -485,6 +512,38 @@ func (m *UI) loadMCPrompts() tea.Msg {
 	return mcpPromptsLoadedMsg{Prompts: prompts}
 }
 
+// activeChat returns the currently visible Chat — the top of the drill stack,
+// or m.chat when no drill-in is active.
+func (m *UI) activeChat() *Chat {
+	if len(m.drillStack) > 0 {
+		return m.drillStack[len(m.drillStack)-1].chat
+	}
+	return m.chat
+}
+
+// viewedSessionID returns the session ID currently being viewed. Returns the
+// top drill-stack entry's session ID, or the root session ID when not drilled in.
+func (m *UI) viewedSessionID() string {
+	if len(m.drillStack) > 0 {
+		return m.drillStack[len(m.drillStack)-1].sessionID
+	}
+	if m.session != nil {
+		return m.session.ID
+	}
+	return ""
+}
+
+// isDrilledIn returns true when the user is viewing a subagent session rather
+// than the root session.
+func (m *UI) isDrilledIn() bool {
+	return len(m.drillStack) > 0
+}
+
+// clearDrillStack pops all drill-in entries and restores root state.
+func (m *UI) clearDrillStack() {
+	m.drillStack = nil
+}
+
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -517,6 +576,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case loadSessionMsg:
+		m.clearDrillStack()
 		if m.forceCompactMode {
 			m.isCompact = true
 		}
@@ -690,8 +750,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.updateLayoutAndSize()
-		if m.state == uiChat && m.chat.Follow() {
-			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+		if m.state == uiChat && m.activeChat().Follow() {
+			if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
@@ -704,8 +764,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case copyChatHighlightMsg:
 		cmds = append(cmds, m.copyChatHighlight())
 	case DelayedClickMsg:
-		// Handle delayed single-click action (e.g., expansion).
-		m.chat.HandleDelayedClick(msg)
+		// Handle delayed single-click action (e.g., expansion or drill-in).
+		if _, cmd := m.activeChat().HandleDelayedClick(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case tea.MouseClickMsg:
 		// Pass mouse events to dialogs first if any are open.
 		if m.dialog.HasDialogs() {
@@ -724,7 +786,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x -= m.layout.main.Min.X
 			y -= m.layout.main.Min.Y
 			if !image.Pt(msg.X, msg.Y).In(m.layout.sidebar) {
-				if handled, cmd := m.chat.HandleMouseDown(x, y); handled {
+				if handled, cmd := m.activeChat().HandleMouseDown(x, y); handled {
 					m.lastClickTime = time.Now()
 					if cmd != nil {
 						cmds = append(cmds, cmd)
@@ -743,22 +805,22 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.state {
 		case uiChat:
 			if msg.Y <= 0 {
-				if cmd := m.chat.ScrollByAndAnimate(-1); cmd != nil {
+				if cmd := m.activeChat().ScrollByAndAnimate(-1); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				if !m.chat.SelectedItemInView() {
-					m.chat.SelectPrev()
-					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
+				if !m.activeChat().SelectedItemInView() {
+					m.activeChat().SelectPrev()
+					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
 				}
-			} else if msg.Y >= m.chat.Height()-1 {
-				if cmd := m.chat.ScrollByAndAnimate(1); cmd != nil {
+			} else if msg.Y >= m.activeChat().Height()-1 {
+				if cmd := m.activeChat().ScrollByAndAnimate(1); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				if !m.chat.SelectedItemInView() {
-					m.chat.SelectNext()
-					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
+				if !m.activeChat().SelectedItemInView() {
+					m.activeChat().SelectNext()
+					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
 				}
@@ -768,7 +830,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Adjust for chat area position
 			x -= m.layout.main.Min.X
 			y -= m.layout.main.Min.Y
-			m.chat.HandleMouseDrag(x, y)
+			m.activeChat().HandleMouseDrag(x, y)
 		}
 
 	case tea.MouseReleaseMsg:
@@ -784,7 +846,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Adjust for chat area position
 			x -= m.layout.main.Min.X
 			y -= m.layout.main.Min.Y
-			if m.chat.HandleMouseUp(x, y) && m.chat.HasHighlight() {
+			if m.activeChat().HandleMouseUp(x, y) && m.activeChat().HasHighlight() {
 				cmds = append(cmds, tea.Tick(doubleClickThreshold, func(t time.Time) tea.Msg {
 					if time.Since(m.lastClickTime) >= doubleClickThreshold {
 						return copyChatHighlightMsg{}
@@ -805,26 +867,26 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case uiChat:
 			switch msg.Button {
 			case tea.MouseWheelUp:
-				if cmd := m.chat.ScrollByAndAnimate(-MouseScrollThreshold); cmd != nil {
+				if cmd := m.activeChat().ScrollByAndAnimate(-MouseScrollThreshold); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				if !m.chat.SelectedItemInView() {
-					m.chat.SelectPrev()
-					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
+				if !m.activeChat().SelectedItemInView() {
+					m.activeChat().SelectPrev()
+					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
 				}
 			case tea.MouseWheelDown:
-				if cmd := m.chat.ScrollByAndAnimate(MouseScrollThreshold); cmd != nil {
+				if cmd := m.activeChat().ScrollByAndAnimate(MouseScrollThreshold); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				if !m.chat.SelectedItemInView() {
-					if m.chat.AtBottom() {
-						m.chat.SelectLast()
+				if !m.activeChat().SelectedItemInView() {
+					if m.activeChat().AtBottom() {
+						m.activeChat().SelectLast()
 					} else {
-						m.chat.SelectNext()
+						m.activeChat().SelectNext()
 					}
-					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
+					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
 				}
@@ -832,11 +894,18 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case anim.StepMsg:
 		if m.state == uiChat {
+			// Dispatch animation steps to all chats, not just the active one,
+			// so animations don't freeze when navigating between levels.
 			if cmd := m.chat.Animate(msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			if m.chat.Follow() {
-				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+			for _, entry := range m.drillStack {
+				if cmd := entry.chat.Animate(msg); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+			if m.activeChat().Follow() {
+				if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}
@@ -910,6 +979,59 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"response", string(msg.Payload),
 				"options", msg.Options)
 		}
+	case util.DrillInMsg:
+		if msg.SessionID == "" {
+			break
+		}
+		newChat := NewChat(m.com)
+		newChat.SetSize(m.layout.main.Dx(), m.layout.main.Dy()-1) // -1 for breadcrumb line
+		newChat.SetFollow(true)
+		m.drillStack = append(m.drillStack, drillInEntry{
+			sessionID: msg.SessionID,
+			chat:      newChat,
+			label:     msg.Label,
+		})
+		// Disable the editor while viewing a subagent.
+		m.textarea.Blur()
+		m.focus = uiFocusMain
+		cmds = append(cmds, m.loadDrillInSession(msg.SessionID))
+
+	case drillInSessionLoadedMsg:
+		// Find the matching entry and populate it.
+		for i := range m.drillStack {
+			if m.drillStack[i].sessionID != msg.sessionID {
+				continue
+			}
+			m.drillStack[i].session = msg.session
+
+			// Convert messages to chat items using the shared helper.
+			items := m.messagesToChatItems(msg.messages)
+			m.drillStack[i].chat.SetMessages(items...)
+
+			// Start animations for all newly loaded items.
+			for _, item := range items {
+				if a, ok := item.(chat.Animatable); ok {
+					if cmd := a.StartAnimation(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
+			}
+
+			// Update nested tool ID maps for animation routing.
+			for _, item := range items {
+				if _, ok := item.(chat.NestedToolContainer); ok {
+					if tmi, ok := item.(chat.ToolMessageItem); ok {
+						m.drillStack[i].chat.UpdateNestedToolIDs(tmi.ToolCall().ID)
+					}
+				}
+			}
+
+			if m.drillStack[i].chat.Follow() {
+				m.drillStack[i].chat.ScrollToBottom()
+			}
+			break
+		}
+
 	default:
 		if m.dialog.HasDialogs() {
 			if cmd := m.handleDialogMsg(msg); cmd != nil {
@@ -1128,11 +1250,11 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 	case m.focus != uiFocusEditor && image.Pt(msg.X, msg.Y).In(m.layout.editor):
 		m.focus = uiFocusEditor
 		cmd = m.textarea.Focus()
-		m.chat.Blur()
+		m.activeChat().Blur()
 	case m.focus != uiFocusMain && image.Pt(msg.X, msg.Y).In(m.layout.main):
 		m.focus = uiFocusMain
 		m.textarea.Blur()
-		m.chat.Focus()
+		m.activeChat().Focus()
 	}
 	return cmd
 }
@@ -1301,6 +1423,69 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	return tea.Sequence(cmds...)
 }
 
+// loadDrillInSession asynchronously loads the messages and session metadata
+// for a drilled-in child session. It never does IO in Update — all work
+// happens inside the returned tea.Cmd.
+func (m *UI) loadDrillInSession(sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		msgs, err := m.com.Workspace.ListMessages(context.Background(), sessionID)
+		if err != nil {
+			return util.ReportError(err)
+		}
+		sess, err := m.com.Workspace.GetSession(context.Background(), sessionID)
+		if err != nil {
+			// Non-fatal — session metadata (tokens/cost) won't be available.
+			return drillInSessionLoadedMsg{
+				sessionID: sessionID,
+				messages:  msgs,
+			}
+		}
+		return drillInSessionLoadedMsg{
+			sessionID: sessionID,
+			messages:  msgs,
+			session:   &sess,
+		}
+	}
+}
+
+// messagesToChatItems converts a slice of messages into renderable chat items
+// using the same pipeline as the root session. Nested tool calls are loaded
+// synchronously (matching the existing setSessionMessages behaviour).
+func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
+	msgPtrs := make([]*message.Message, len(msgs))
+	for i := range msgs {
+		msgPtrs[i] = &msgs[i]
+	}
+	toolResultMap := chat.BuildToolResultMap(msgPtrs)
+	var lastUserMessageTime int64
+	if len(msgPtrs) > 0 {
+		lastUserMessageTime = msgPtrs[0].CreatedAt
+	}
+
+	items := make([]chat.MessageItem, 0, len(msgs)*2)
+	for _, msg := range msgPtrs {
+		switch msg.Role {
+		case message.User:
+			lastUserMessageTime = msg.CreatedAt
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+		case message.Assistant:
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
+				infoItem := chat.NewAssistantInfoItem(
+					m.com.Styles, msg, m.com.Config(),
+					time.Unix(lastUserMessageTime, 0),
+				)
+				items = append(items, infoItem)
+			}
+		default:
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+		}
+	}
+
+	m.loadNestedToolCalls(items)
+	return items
+}
+
 func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 	action := m.dialog.Update(msg)
@@ -1340,6 +1525,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	// Session dialog messages.
 	case dialog.ActionSelectSession:
 		m.dialog.CloseDialog(dialog.SessionsID)
+		m.clearDrillStack()
 		cmds = append(cmds, m.loadSession(msg.Session.ID))
 
 	// Open dialog message.
@@ -1821,6 +2007,12 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 	case uiChat, uiLanding:
 		switch m.focus {
 		case uiFocusEditor:
+			// Redirect to main focus when viewing a subagent — the editor is
+			// disabled while drilled in.
+			if m.isDrilledIn() {
+				m.focus = uiFocusMain
+				break
+			}
 			// Handle completions if open.
 			if m.completionsOpen {
 				if msg, ok := m.completions.Update(msg); ok {
@@ -1909,8 +2101,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if m.state != uiLanding {
 					m.setState(m.state, uiFocusMain)
 					m.textarea.Blur()
-					m.chat.Focus()
-					m.chat.SetSelected(m.chat.Len() - 1)
+					m.activeChat().Focus()
+					m.activeChat().SetSelected(m.activeChat().Len() - 1)
 				}
 			case key.Matches(msg, m.keyMap.Editor.OpenEditor):
 				if m.isAgentBusy() {
@@ -2004,9 +2196,21 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case uiFocusMain:
 			switch {
 			case key.Matches(msg, m.keyMap.Tab):
+				// Do not focus the editor while drilled into a subagent.
+				if m.isDrilledIn() {
+					break
+				}
 				m.focus = uiFocusEditor
 				cmds = append(cmds, m.textarea.Focus())
-				m.chat.Blur()
+				m.activeChat().Blur()
+			case m.isDrilledIn() && key.Matches(msg, m.keyMap.Chat.PillLeft):
+				// Navigate back one drill-in level.
+				m.drillStack = m.drillStack[:len(m.drillStack)-1]
+				if !m.isDrilledIn() {
+					cmds = append(cmds, m.textarea.Focus())
+					m.focus = uiFocusEditor
+				}
+				m.updateLayoutAndSize()
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
@@ -2020,69 +2224,69 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Chat.Expand):
-				m.chat.ToggleExpandedSelectedItem()
+				m.activeChat().ToggleExpandedSelectedItem()
 			case key.Matches(msg, m.keyMap.Chat.Up):
-				if cmd := m.chat.ScrollByAndAnimate(-1); cmd != nil {
+				if cmd := m.activeChat().ScrollByAndAnimate(-1); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				if !m.chat.SelectedItemInView() {
-					m.chat.SelectPrev()
-					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
+				if !m.activeChat().SelectedItemInView() {
+					m.activeChat().SelectPrev()
+					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
 				}
 			case key.Matches(msg, m.keyMap.Chat.Down):
-				if cmd := m.chat.ScrollByAndAnimate(1); cmd != nil {
+				if cmd := m.activeChat().ScrollByAndAnimate(1); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				if !m.chat.SelectedItemInView() {
-					m.chat.SelectNext()
-					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
+				if !m.activeChat().SelectedItemInView() {
+					m.activeChat().SelectNext()
+					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
 				}
 			case key.Matches(msg, m.keyMap.Chat.UpOneItem):
-				m.chat.SelectPrev()
-				if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
+				m.activeChat().SelectPrev()
+				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Chat.DownOneItem):
-				m.chat.SelectNext()
-				if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
+				m.activeChat().SelectNext()
+				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Chat.HalfPageUp):
-				if cmd := m.chat.ScrollByAndAnimate(-m.chat.Height() / 2); cmd != nil {
+				if cmd := m.activeChat().ScrollByAndAnimate(-m.activeChat().Height() / 2); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				m.chat.SelectFirstInView()
+				m.activeChat().SelectFirstInView()
 			case key.Matches(msg, m.keyMap.Chat.HalfPageDown):
-				if cmd := m.chat.ScrollByAndAnimate(m.chat.Height() / 2); cmd != nil {
+				if cmd := m.activeChat().ScrollByAndAnimate(m.activeChat().Height() / 2); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				m.chat.SelectLastInView()
+				m.activeChat().SelectLastInView()
 			case key.Matches(msg, m.keyMap.Chat.PageUp):
-				if cmd := m.chat.ScrollByAndAnimate(-m.chat.Height()); cmd != nil {
+				if cmd := m.activeChat().ScrollByAndAnimate(-m.activeChat().Height()); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				m.chat.SelectFirstInView()
+				m.activeChat().SelectFirstInView()
 			case key.Matches(msg, m.keyMap.Chat.PageDown):
-				if cmd := m.chat.ScrollByAndAnimate(m.chat.Height()); cmd != nil {
+				if cmd := m.activeChat().ScrollByAndAnimate(m.activeChat().Height()); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				m.chat.SelectLastInView()
+				m.activeChat().SelectLastInView()
 			case key.Matches(msg, m.keyMap.Chat.Home):
-				if cmd := m.chat.ScrollToTopAndAnimate(); cmd != nil {
+				if cmd := m.activeChat().ScrollToTopAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				m.chat.SelectFirst()
+				m.activeChat().SelectFirst()
 			case key.Matches(msg, m.keyMap.Chat.End):
-				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+				if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				m.chat.SelectLast()
+				m.activeChat().SelectLast()
 			default:
-				if ok, cmd := m.chat.HandleKeyMsg(msg); ok {
+				if ok, cmd := m.activeChat().HandleKeyMsg(msg); ok {
 					cmds = append(cmds, cmd)
 				} else {
 					handleGlobalKeys(msg)
@@ -2096,6 +2300,26 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	return tea.Sequence(cmds...)
+}
+
+// renderBreadcrumb renders the drill-in breadcrumb bar (e.g. "Main > Explorer:
+// Search auth") for the given display width. Returns an empty string when not
+// drilled in.
+func (m *UI) renderBreadcrumb(width int) string {
+	if !m.isDrilledIn() {
+		return ""
+	}
+	t := m.com.Styles
+	sep := t.Breadcrumb.Sep.Render(" > ")
+	parts := []string{t.Breadcrumb.Root.Render("Main")}
+	for _, entry := range m.drillStack {
+		parts = append(parts, t.Breadcrumb.Label.Render(entry.label))
+	}
+	full := strings.Join(parts, sep)
+	if ansi.StringWidth(full) > width {
+		full = ansi.Truncate(full, width-1, "…")
+	}
+	return full
 }
 
 // drawHeader draws the header section of the UI.
@@ -2151,17 +2375,35 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			m.drawSidebar(scr, layout.sidebar)
 		}
 
-		m.chat.Draw(scr, layout.main)
-		if layout.pills.Dy() > 0 && m.pillsView != "" {
-			uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
-		}
+		if m.isDrilledIn() {
+			// Render breadcrumb bar at the top of the main area.
+			breadcrumb := m.renderBreadcrumb(layout.main.Dx())
+			bcHeight := max(lipgloss.Height(breadcrumb), 1)
+			bcArea := image.Rect(
+				layout.main.Min.X, layout.main.Min.Y,
+				layout.main.Max.X, layout.main.Min.Y+bcHeight,
+			)
+			uv.NewStyledString(breadcrumb).Draw(scr, bcArea)
 
-		editorWidth := scr.Bounds().Dx()
-		if !m.isCompact {
-			editorWidth -= layout.sidebar.Dx()
+			// Render the drill-in chat below the breadcrumb.
+			chatArea := image.Rect(
+				layout.main.Min.X, layout.main.Min.Y+bcHeight,
+				layout.main.Max.X, layout.main.Max.Y,
+			)
+			m.activeChat().Draw(scr, chatArea)
+		} else {
+			m.activeChat().Draw(scr, layout.main)
+			if layout.pills.Dy() > 0 && m.pillsView != "" {
+				uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
+			}
+
+			editorWidth := scr.Bounds().Dx()
+			if !m.isCompact {
+				editorWidth -= layout.sidebar.Dx()
+			}
+			editor := uv.NewStyledString(m.renderEditorView(editorWidth))
+			editor.Draw(scr, layout.editor)
 		}
-		editor := uv.NewStyledString(m.renderEditorView(editorWidth))
-		editor.Draw(scr, layout.editor)
 
 		// Draw details overlay in compact mode when open
 		if m.isCompact && m.detailsOpen {
@@ -2297,7 +2539,8 @@ func (m *UI) ShortHelp() []key.Binding {
 			tab.SetHelp("tab", "focus editor")
 		}
 
-		binds = append(binds,
+		binds = append(
+			binds,
 			tab,
 			commands,
 			k.Models,
@@ -2305,11 +2548,13 @@ func (m *UI) ShortHelp() []key.Binding {
 
 		switch m.focus {
 		case uiFocusEditor:
-			binds = append(binds,
+			binds = append(
+				binds,
 				k.Editor.Newline,
 			)
 		case uiFocusMain:
-			binds = append(binds,
+			binds = append(
+				binds,
 				k.Chat.UpDown,
 				k.Chat.UpDownOneItem,
 				k.Chat.PageUp,
@@ -2324,14 +2569,16 @@ func (m *UI) ShortHelp() []key.Binding {
 		// TODO: other states
 		// if m.session == nil {
 		// no session selected
-		binds = append(binds,
+		binds = append(
+			binds,
 			commands,
 			k.Models,
 			k.Editor.Newline,
 		)
 	}
 
-	binds = append(binds,
+	binds = append(
+		binds,
 		k.Quit,
 		k.Help,
 	)
@@ -2378,7 +2625,8 @@ func (m *UI) FullHelp() [][]key.Binding {
 			tab.SetHelp("tab", "focus editor")
 		}
 
-		mainBinds = append(mainBinds,
+		mainBinds = append(
+			mainBinds,
 			tab,
 			commands,
 			k.Models,
@@ -2402,7 +2650,8 @@ func (m *UI) FullHelp() [][]key.Binding {
 			}
 			binds = append(binds, editorBinds)
 			if hasAttachments {
-				binds = append(binds,
+				binds = append(
+					binds,
 					[]key.Binding{
 						k.Editor.AttachmentDeleteMode,
 						k.Editor.DeleteAllAttachments,
@@ -2411,7 +2660,8 @@ func (m *UI) FullHelp() [][]key.Binding {
 				)
 			}
 		case uiFocusMain:
-			binds = append(binds,
+			binds = append(
+				binds,
 				[]key.Binding{
 					k.Chat.UpDown,
 					k.Chat.UpDownOneItem,
@@ -2436,7 +2686,8 @@ func (m *UI) FullHelp() [][]key.Binding {
 	default:
 		if m.session == nil {
 			// no session selected
-			binds = append(binds,
+			binds = append(
+				binds,
 				[]key.Binding{
 					commands,
 					k.Models,
@@ -2453,7 +2704,8 @@ func (m *UI) FullHelp() [][]key.Binding {
 			}
 			binds = append(binds, editorBinds)
 			if hasAttachments {
-				binds = append(binds,
+				binds = append(
+					binds,
 					[]key.Binding{
 						k.Editor.AttachmentDeleteMode,
 						k.Editor.DeleteAllAttachments,
@@ -2464,7 +2716,8 @@ func (m *UI) FullHelp() [][]key.Binding {
 		}
 	}
 
-	binds = append(binds,
+	binds = append(
+		binds,
 		[]key.Binding{
 			help,
 			k.Quit,
@@ -2563,7 +2816,19 @@ func (m *UI) updateSize() {
 	// Set status width
 	m.status.SetWidth(m.layout.status.Dx())
 
-	m.chat.SetSize(m.layout.main.Dx(), m.layout.main.Dy())
+	chatWidth := m.layout.main.Dx()
+	chatHeight := m.layout.main.Dy()
+	// Root chat always gets the full main area height.
+	m.chat.SetSize(chatWidth, chatHeight)
+	// Drill-in chats: the active one loses one row for the breadcrumb.
+	for i, entry := range m.drillStack {
+		h := chatHeight
+		if i == len(m.drillStack)-1 {
+			h = max(0, chatHeight-1) // breadcrumb line
+		}
+		entry.chat.SetSize(chatWidth, h)
+	}
+
 	m.textarea.MaxHeight = TextareaMaxHeight
 	m.textarea.SetWidth(m.layout.editor.Dx())
 	m.renderPills()
@@ -2586,7 +2851,12 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	// The help height
 	helpHeight := 1
 	// The editor height: textarea height + margin for attachments and bottom spacing.
+	// When drilled into a subagent, the editor is hidden (height = 0) so the
+	// main area can use all available vertical space.
 	editorHeight := m.textarea.Height() + editorHeightMargin
+	if m.isDrilledIn() {
+		editorHeight = 0
+	}
 	// The sidebar width
 	sidebarWidth := 30
 	// The header height
@@ -3098,6 +3368,9 @@ func (m *UI) refreshStyles() {
 	m.todoSpinner.Style = t.Pills.TodoSpinner
 	m.status.help.Styles = t.Help
 	m.chat.InvalidateRenderCaches()
+	for _, entry := range m.drillStack {
+		entry.chat.InvalidateRenderCaches()
+	}
 }
 
 // sendMessage sends a message with the given content and attachments.
@@ -3359,6 +3632,10 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 // handlePermissionNotification updates tool items when permission state changes.
 func (m *UI) handlePermissionNotification(notification permission.PermissionNotification) {
 	toolItem := m.chat.MessageItem(notification.ToolCallID)
+	if toolItem == nil && m.isDrilledIn() {
+		// Fall back to the active drill-in chat when not found in root.
+		toolItem = m.activeChat().MessageItem(notification.ToolCallID)
+	}
 	if toolItem == nil {
 		return
 	}
@@ -3413,6 +3690,7 @@ func (m *UI) newSession() tea.Cmd {
 		return nil
 	}
 
+	m.clearDrillStack()
 	m.session = nil
 	m.sessionFiles = nil
 	m.sessionFileReads = nil
@@ -3751,12 +4029,12 @@ func handleMCPResourcesEvent(ws workspace.Workspace, name string) tea.Cmd {
 }
 
 func (m *UI) copyChatHighlight() tea.Cmd {
-	text := m.chat.HighlightContent()
+	text := m.activeChat().HighlightContent()
 	return common.CopyToClipboardWithCallback(
 		text,
 		"Selected text copied to clipboard",
 		func() tea.Msg {
-			m.chat.ClearMouse()
+			m.activeChat().ClearMouse()
 			return nil
 		},
 	)
