@@ -100,17 +100,21 @@ type AgentToolRenderContext struct {
 // RenderTool implements the [ToolRenderer] interface.
 func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
-	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.agent.nestedTools) == 0 {
-		return pendingTool(sty, "Agent", opts.Anim, opts.Compact)
-	}
 
-	var params agent.AgentParams
+	var params agent.TaskParams
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
+
+	// Build a display name from the subagent type (e.g. "Explorer", "Fixer").
+	displayName := agentDisplayName(params.SubagentType, params.Description, params.Model)
+
+	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.agent.nestedTools) == 0 {
+		return pendingTool(sty, displayName, opts.Anim, opts.Compact)
+	}
 
 	prompt := params.Prompt
 	prompt = strings.ReplaceAll(prompt, "\n", " ")
 
-	header := toolHeader(sty, opts.Status, "Agent", cappedWidth, opts.Compact)
+	header := toolHeader(sty, opts.Status, displayName, cappedWidth, opts.Compact)
 	if opts.Compact {
 		return header
 	}
@@ -162,6 +166,50 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	return result
+}
+
+// agentDisplayName returns a human-readable name for a task tool call.
+// It capitalises the subagent type (e.g. "explorer" → "Explorer") and
+// appends a dash-separated description when available (e.g.
+// "Explorer — Search auth middleware"). Falls back to the description
+// alone or "Unknown Agent" when the type is empty. When model is
+// non-empty, a short model identifier is appended in parentheses
+// (e.g. "Reviewer (opus-4-6)").
+func agentDisplayName(subagentType, description, model string) string {
+	var name string
+	if subagentType != "" {
+		// Capitalise each word and replace hyphens with spaces
+		// (e.g. "devils-advocate" → "Devils Advocate").
+		parts := strings.Split(subagentType, "-")
+		for i, p := range parts {
+			if len(p) > 0 {
+				parts[i] = strings.ToUpper(p[:1]) + p[1:]
+			}
+		}
+		name = strings.Join(parts, " ")
+	} else {
+		name = "Unknown Agent"
+	}
+
+	// Append a short model identifier to the agent name so the user
+	// sees who is running (e.g. "Reviewer (opus-4-6)").
+	if model != "" {
+		shortModel := model
+		if idx := strings.LastIndex(model, "/"); idx >= 0 {
+			shortModel = model[idx+1:]
+		}
+		// Strip common "claude-" prefix for brevity.
+		shortModel = strings.TrimPrefix(shortModel, "claude-")
+		name = name + " (" + shortModel + ")"
+	}
+
+	// Append the task description after the identity so the user sees
+	// what the agent is doing (e.g. "Explorer (opus-4-6) — Search auth").
+	if description != "" {
+		name = name + " — " + description
+	}
+
+	return name
 }
 
 // -----------------------------------------------------------------------------

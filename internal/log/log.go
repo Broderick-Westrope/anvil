@@ -63,27 +63,38 @@ func Initialized() bool {
 	return initialized.Load()
 }
 
+// RecoverPanic recovers from a panic, logs the stack trace to a file and
+// stderr, then calls the cleanup function if provided. The panic log is
+// written to the system temp directory so it is always writable.
 func RecoverPanic(name string, cleanup func()) {
 	if r := recover(); r != nil {
 		event.Error(r, "panic", true, "name", name)
 
-		// Create a timestamped panic log file
+		stack := debug.Stack()
+
+		// Always print to stderr so the user can find it even if the
+		// terminal is garbled.
+		fmt.Fprintf(os.Stderr, "\n=== CRUSH PANIC (%s) ===\n%v\n\nStack:\n%s\n", name, r, stack)
+
+		// Write a timestamped panic log to the temp directory.
 		timestamp := time.Now().Format("20060102-150405")
 		filename := fmt.Sprintf("crush-panic-%s-%s.log", name, timestamp)
+		filepath := fmt.Sprintf("%s/%s", os.TempDir(), filename)
 
-		file, err := os.Create(filename)
+		file, err := os.Create(filepath)
 		if err == nil {
 			defer file.Close()
 
-			// Write panic information and stack trace
 			fmt.Fprintf(file, "Panic in %s: %v\n\n", name, r)
 			fmt.Fprintf(file, "Time: %s\n\n", time.Now().Format(time.RFC3339))
-			fmt.Fprintf(file, "Stack Trace:\n%s\n", debug.Stack())
+			fmt.Fprintf(file, "Stack Trace:\n%s\n", stack)
 
-			// Execute cleanup function if provided
-			if cleanup != nil {
-				cleanup()
-			}
+			fmt.Fprintf(os.Stderr, "Panic log written to: %s\n", filepath)
+		}
+
+		// Execute cleanup function if provided.
+		if cleanup != nil {
+			cleanup()
 		}
 	}
 }

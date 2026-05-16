@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/charlievieth/fastwalk"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"gopkg.in/yaml.v3"
 )
@@ -309,6 +310,42 @@ func ApproxTokenCount(s string) int {
 		return 0
 	}
 	return (len(s) + 3) / 4
+}
+
+// FilterByAllowList returns only the skills whose names are permitted by
+// allowedSkills. If allowedSkills is nil, all skills are returned unchanged
+// (default = unrestricted). Pass ["*"] to include all skills explicitly.
+// Entries prefixed with "!" exclude the named skill from the full set.
+// If the allow-list cannot be resolved, a warning is logged and all skills
+// are returned unchanged.
+func FilterByAllowList(all []*Skill, allowedSkills []string) []*Skill {
+	if allowedSkills == nil {
+		return all
+	}
+
+	allNames := make([]string, len(all))
+	for i, s := range all {
+		allNames[i] = s.Name
+	}
+
+	resolved, err := config.ParseFilterList(allowedSkills, allNames)
+	if err != nil {
+		slog.Warn("Failed to resolve skill allow-list, returning all skills", "error", err)
+		return all
+	}
+
+	allowed := make(map[string]bool, len(resolved))
+	for _, name := range resolved {
+		allowed[name] = true
+	}
+
+	result := make([]*Skill, 0, len(resolved))
+	for _, s := range all {
+		if allowed[s.Name] {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 // Filter removes skills whose names appear in the disabled list.

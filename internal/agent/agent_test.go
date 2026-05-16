@@ -44,12 +44,12 @@ func setupAgent(t *testing.T, pair modelPair) (SessionAgent, fakeEnv) {
 	env := testEnv(t)
 
 	createSimpleGoProject(t, env.workingDir)
-	agent, err := coderAgent(r, env, large, small)
+	agent, err := orchestratorAgent(r, env, large, small)
 	require.NoError(t, err)
 	return agent, env
 }
 
-func TestCoderAgent(t *testing.T) {
+func TestOrchestratorAgent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on windows for now")
 	}

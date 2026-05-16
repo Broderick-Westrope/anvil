@@ -8,22 +8,34 @@ import (
 )
 
 func TestConfig_AgentIDs(t *testing.T) {
+	t.Parallel()
+
 	cfg := &Config{
 		Options: &Options{
 			DisabledTools: []string{},
 		},
 	}
-	cfg.SetupAgents()
+	cfg.setupDefaultAgents()
 
-	t.Run("Coder agent should have correct ID", func(t *testing.T) {
-		coderAgent, ok := cfg.Agents[AgentCoder]
-		require.True(t, ok)
-		assert.Equal(t, AgentCoder, coderAgent.ID, "Coder agent ID should be '%s'", AgentCoder)
-	})
-
-	t.Run("Task agent should have correct ID", func(t *testing.T) {
-		taskAgent, ok := cfg.Agents[AgentTask]
-		require.True(t, ok)
-		assert.Equal(t, AgentTask, taskAgent.ID, "Task agent ID should be '%s'", AgentTask)
-	})
+	// Verify each agent in the 10-agent roster exists with the correct ID.
+	agentNames := []string{
+		AgentOrchestrator,
+		"oracle",
+		"explorer",
+		"librarian",
+		"designer",
+		"fixer",
+		"planner",
+		"tester",
+		"reviewer",
+		"devils-advocate",
+	}
+	for _, name := range agentNames {
+		t.Run(name+" agent should have correct ID", func(t *testing.T) {
+			t.Parallel()
+			agent, ok := cfg.Agents[name]
+			require.Truef(t, ok, "agent %q should be present in default roster", name)
+			assert.Equal(t, name, agent.ID, "agent %q: ID field should match map key", name)
+		})
+	}
 }

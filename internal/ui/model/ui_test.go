@@ -21,7 +21,7 @@ func TestCurrentModelSupportsImages(t *testing.T) {
 		require.False(t, ui.currentModelSupportsImages())
 	})
 
-	t.Run("returns false when coder agent is missing", func(t *testing.T) {
+	t.Run("returns false when orchestrator agent is missing", func(t *testing.T) {
 		t.Parallel()
 
 		cfg := &config.Config{
@@ -38,7 +38,7 @@ func TestCurrentModelSupportsImages(t *testing.T) {
 		cfg := &config.Config{
 			Providers: csync.NewMap[string, config.ProviderConfig](),
 			Agents: map[string]config.Agent{
-				config.AgentCoder: {Model: config.SelectedModelTypeLarge},
+				config.AgentOrchestrator: {Model: string(config.SelectedModelTypeLarge)},
 			},
 		}
 		ui := newTestUIWithConfig(t, cfg)
@@ -65,7 +65,7 @@ func TestCurrentModelSupportsImages(t *testing.T) {
 			},
 			Providers: providers,
 			Agents: map[string]config.Agent{
-				config.AgentCoder: {Model: config.SelectedModelTypeLarge},
+				config.AgentOrchestrator: {Model: string(config.SelectedModelTypeLarge)},
 			},
 		}
 

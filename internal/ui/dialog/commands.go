@@ -431,27 +431,25 @@ func (c *Commands) defaultCommands() []*CommandItem {
 
 	// Add reasoning toggle for models that support it
 	cfg := c.com.Config()
-	if agentCfg, ok := cfg.Agents[config.AgentCoder]; ok {
-		providerCfg := cfg.GetProviderForModel(agentCfg.Model)
-		model := cfg.GetModelByType(agentCfg.Model)
-		if providerCfg != nil && model != nil && model.CanReason {
-			selectedModel := cfg.Models[agentCfg.Model]
+	providerCfg := cfg.GetProviderForModel(config.SelectedModelTypeLarge)
+	model := cfg.GetModelByType(config.SelectedModelTypeLarge)
+	if providerCfg != nil && model != nil && model.CanReason {
+		selectedModel := cfg.Models[config.SelectedModelTypeLarge]
 
-			// Anthropic models: thinking toggle
-			if model.CanReason && len(model.ReasoningLevels) == 0 {
-				status := "Enable"
-				if selectedModel.Think {
-					status = "Disable"
-				}
-				commands = append(commands, NewCommandItem(c.com.Styles, "toggle_thinking", status+" Thinking Mode", "", ActionToggleThinking{}))
+		// Anthropic models: thinking toggle
+		if model.CanReason && len(model.ReasoningLevels) == 0 {
+			status := "Enable"
+			if selectedModel.Think {
+				status = "Disable"
 			}
+			commands = append(commands, NewCommandItem(c.com.Styles, "toggle_thinking", status+" Thinking Mode", "", ActionToggleThinking{}))
+		}
 
-			// OpenAI models: reasoning effort dialog
-			if len(model.ReasoningLevels) > 0 {
-				commands = append(commands, NewCommandItem(c.com.Styles, "select_reasoning_effort", "Select Reasoning Effort", "", ActionOpenDialog{
-					DialogID: ReasoningID,
-				}))
-			}
+		// OpenAI models: reasoning effort dialog
+		if len(model.ReasoningLevels) > 0 {
+			commands = append(commands, NewCommandItem(c.com.Styles, "select_reasoning_effort", "Select Reasoning Effort", "", ActionOpenDialog{
+				DialogID: ReasoningID,
+			}))
 		}
 	}
 	// Only show toggle compact mode command if window width is larger than compact breakpoint (120)
@@ -460,8 +458,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	if c.hasSession {
 		cfgPrime := c.com.Config()
-		agentCfg := cfgPrime.Agents[config.AgentCoder]
-		model := cfgPrime.GetModelByType(agentCfg.Model)
+		model := cfgPrime.GetModelByType(config.SelectedModelTypeLarge)
 		if model != nil && model.SupportsImages {
 			commands = append(commands, NewCommandItem(c.com.Styles, "file_picker", "Open File Picker", "ctrl+f", ActionOpenDialog{
 				DialogID: FilePickerID,

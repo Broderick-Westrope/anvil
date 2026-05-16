@@ -127,8 +127,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		slog.Warn("No agent configuration found")
 		return app, nil
 	}
-	if err := app.InitCoderAgent(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
+	if err := app.InitOrchestratorAgent(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize orchestrator agent: %w", err)
 	}
 
 	// Set up callback for LSP state updates.
@@ -516,10 +516,10 @@ func setupSubscriber[T any](
 	})
 }
 
-func (app *App) InitCoderAgent(ctx context.Context) error {
-	coderAgentCfg := app.config.Config().Agents[config.AgentCoder]
-	if coderAgentCfg.ID == "" {
-		return fmt.Errorf("coder agent configuration is missing")
+func (app *App) InitOrchestratorAgent(ctx context.Context) error {
+	orchestratorAgentCfg := app.config.Config().Agents[config.AgentOrchestrator]
+	if orchestratorAgentCfg.ID == "" {
+		return fmt.Errorf("orchestrator agent configuration is missing")
 	}
 	var err error
 	app.AgentCoordinator, err = agent.NewCoordinator(
@@ -534,7 +534,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.agentNotifications,
 	)
 	if err != nil {
-		slog.Error("Failed to create coder agent", "err", err)
+		slog.Error("Failed to create orchestrator agent", "err", err)
 		return err
 	}
 	return nil

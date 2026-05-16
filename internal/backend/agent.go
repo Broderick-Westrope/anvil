@@ -43,14 +43,14 @@ func (b *Backend) GetAgentInfo(workspaceID string) (proto.AgentInfo, error) {
 	return agentInfo, nil
 }
 
-// InitAgent initializes the coder agent for the workspace.
+// InitAgent initializes the orchestrator agent for the workspace.
 func (b *Backend) InitAgent(ctx context.Context, workspaceID string) error {
 	ws, err := b.GetWorkspace(workspaceID)
 	if err != nil {
 		return err
 	}
 
-	return ws.InitCoderAgent(ctx)
+	return ws.InitOrchestratorAgent(ctx)
 }
 
 // UpdateAgent reloads the agent model configuration.

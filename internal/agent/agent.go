@@ -114,6 +114,7 @@ type sessionAgent struct {
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
 
+	depth                int
 	isSubAgent           bool
 	sessions             session.Service
 	messages             message.Service
@@ -131,6 +132,7 @@ type SessionAgentOptions struct {
 	SmallModel           Model
 	SystemPromptPrefix   string
 	SystemPrompt         string
+	Depth                int
 	IsSubAgent           bool
 	DisableAutoSummarize bool
 	IsYolo               bool
@@ -149,6 +151,7 @@ func NewSessionAgent(
 		smallModel:           csync.NewValue(opts.SmallModel),
 		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
 		systemPrompt:         csync.NewValue(opts.SystemPrompt),
+		depth:                opts.Depth,
 		isSubAgent:           opts.IsSubAgent,
 		sessions:             opts.Sessions,
 		messages:             opts.Messages,

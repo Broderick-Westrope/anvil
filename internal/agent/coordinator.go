@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
@@ -24,6 +27,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	toolsmcp "github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/history"
@@ -52,9 +56,12 @@ import (
 	"github.com/qjebbs/go-jsons"
 )
 
+//go:embed templates/agents/*.md
+var agentMDFS embed.FS
+
 // Coordinator errors.
 var (
-	errCoderAgentNotConfigured         = errors.New("coder agent not configured")
+	errOrchestratorAgentNotConfigured  = errors.New("orchestrator agent not configured")
 	errModelProviderNotConfigured      = errors.New("model provider not configured")
 	errLargeModelNotSelected           = errors.New("large model not selected")
 	errSmallModelNotSelected           = errors.New("small model not selected")
@@ -91,16 +98,29 @@ type coordinator struct {
 	lspManager  *lsp.Manager
 	notify      pubsub.Publisher[notify.Notification]
 
-	currentAgent SessionAgent
-	agents       map[string]SessionAgent
+	// orchestrator is the eagerly-built top-level agent. Protected by orchestratorMu.
+	// Do NOT use csync.Value[SessionAgent] — it panics on interface types backed by pointers.
+	orchestrator   SessionAgent
+	orchestratorMu sync.RWMutex
+
+	// agents is a lazy map of named sub-agents, populated on first delegation.
+	agents *csync.Map[string, SessionAgent]
+
+	// agentBuildMu serialises lazy agent construction to prevent duplicate
+	// builds when two goroutines race on the same agent name.
+	agentBuildMu sync.Mutex
+
+	// agentConfigs holds per-agent config loaded from cfg at init.
+	agentConfigs map[string]config.Agent
+
+	// agentMDs holds parsed agent .md description files, keyed by agent name.
+	agentMDs map[string]prompt.AgentMD
 
 	// Skills discovery results (session-start snapshot).
 	allSkills    []*skills.Skill      // Pre-filter: all discovered after dedup.
 	activeSkills []*skills.Skill      // Post-filter: active skills only.
 	skillStates  []*skills.SkillState // Combined builtin + user states.
 	skillTracker *skills.Tracker
-
-	readyWg errgroup.Group
 }
 
 func NewCoordinator(
@@ -127,11 +147,11 @@ func NewCoordinator(
 		filetracker:  filetracker,
 		lspManager:   lspManager,
 		notify:       notify,
-		agents:       make(map[string]SessionAgent),
 		allSkills:    allSkills,
 		activeSkills: activeSkills,
 		skillStates:  skillStates,
 		skillTracker: skillTracker,
+		agents:       csync.NewMap[string, SessionAgent](),
 	}
 
 	// Enable MCP OAuth tool-name rename when the Anthropic provider uses
@@ -144,38 +164,89 @@ func NewCoordinator(
 		}
 	}
 
-	agentCfg, ok := cfg.Config().Agents[config.AgentCoder]
+	// Load all agent configs from the current config.
+	c.agentConfigs = make(map[string]config.Agent, len(cfg.Config().Agents))
+	for name, agentCfg := range cfg.Config().Agents {
+		c.agentConfigs[name] = agentCfg
+	}
+
+	// Parse agent .md description files from the embedded FS.
+	agentMDs, err := loadAgentMDs(agentMDFS)
+	if err != nil {
+		return nil, fmt.Errorf("loading agent descriptions: %w", err)
+	}
+	c.agentMDs = agentMDs
+
+	// Validate delegates_to references. Warn on disabled refs, error on missing.
+	agentMDSlice := make([]prompt.AgentMD, 0, len(agentMDs))
+	for _, md := range agentMDs {
+		agentMDSlice = append(agentMDSlice, md)
+	}
+	errs, warnings := prompt.ValidateDelegatesTo(agentMDSlice, cfg.Config().DisabledAgents)
+	for _, w := range warnings {
+		slog.Warn("Agent delegation warning", "error", w)
+	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("agent delegates_to validation failed: %w", errors.Join(errs...))
+	}
+
+	// Build the orchestrator eagerly at depth=3.
+	orchestratorCfg, ok := c.agentConfigs[config.AgentOrchestrator]
 	if !ok {
-		return nil, errCoderAgentNotConfigured
+		return nil, errOrchestratorAgentNotConfigured
 	}
-
-	// TODO: make this dynamic when we support multiple agents
-	prompt, err := coderPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
+	orchestrator, err := c.buildAgent(ctx, config.AgentOrchestrator, orchestratorCfg, 3)
 	if err != nil {
 		return nil, err
 	}
+	c.orchestratorMu.Lock()
+	c.orchestrator = orchestrator
+	c.orchestratorMu.Unlock()
 
-	agent, err := c.buildAgent(ctx, prompt, agentCfg, false)
-	if err != nil {
-		return nil, err
-	}
-	c.currentAgent = agent
-	c.agents[config.AgentCoder] = agent
 	return c, nil
+}
+
+// loadAgentMDs reads all *.md files from the embedded agent templates FS and
+// parses each one using prompt.ParseAgentMD. The returned map is keyed by agent
+// name (filename without extension).
+func loadAgentMDs(fsys embed.FS) (map[string]prompt.AgentMD, error) {
+	result := make(map[string]prompt.AgentMD)
+	err := fs.WalkDir(fsys, "templates/agents", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		content, readErr := fsys.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("reading %s: %w", path, readErr)
+		}
+		// Derive agent name from filename (strip directory and .md suffix).
+		base := filepath.Base(path)
+		name := strings.TrimSuffix(base, ".md")
+		md, parseErr := prompt.ParseAgentMD(name, content)
+		if parseErr != nil {
+			return fmt.Errorf("parsing %s: %w", path, parseErr)
+		}
+		result[name] = md
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
-	if err := c.readyWg.Wait(); err != nil {
-		return nil, err
-	}
-
 	// refresh models before each run
 	if err := c.UpdateModels(ctx); err != nil {
 		return nil, fmt.Errorf("failed to update models: %w", err)
 	}
 
-	model := c.currentAgent.Model()
+	orch := c.getOrchestrator()
+	model := orch.Model()
 	maxTokens := model.CatwalkCfg.DefaultMaxTokens
 	if model.ModelCfg.MaxTokens != 0 {
 		maxTokens = model.ModelCfg.MaxTokens
@@ -206,7 +277,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 	}
 
 	run := func() (*fantasy.AgentResult, error) {
-		return c.currentAgent.Run(ctx, SessionAgentCall{
+		return orch.Run(ctx, SessionAgentCall{
 			SessionID:        sessionID,
 			Prompt:           prompt,
 			Attachments:      attachments,
@@ -230,6 +301,13 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 	}
 
 	return result, originalErr
+}
+
+// getOrchestrator returns the orchestrator session agent, reading under lock.
+func (c *coordinator) getOrchestrator() SessionAgent {
+	c.orchestratorMu.RLock()
+	defer c.orchestratorMu.RUnlock()
+	return c.orchestrator
 }
 
 func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
@@ -412,8 +490,13 @@ func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderO
 	return modelOptions, temp, topP, topK, freqPenalty, presPenalty
 }
 
-func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, agent config.Agent, isSubAgent bool) (SessionAgent, error) {
-	large, small, err := c.buildAgentModels(ctx, isSubAgent)
+// buildAgent constructs a SessionAgent for the named agent at the given depth.
+// depth=3 is the top-level orchestrator; depth decreases with each delegation
+// level. isSubAgent is derived as depth < 3.
+func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg config.Agent, depth int) (SessionAgent, error) {
+	isSubAgent := depth < 3
+
+	large, small, err := c.buildAgentModels(ctx, agentCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -424,6 +507,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		SmallModel:           small,
 		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
 		SystemPrompt:         "",
+		Depth:                depth,
 		IsSubAgent:           isSubAgent,
 		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
 		IsYolo:               c.permissions.SkipRequests(),
@@ -434,44 +518,143 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		ProviderConfig:       largeProviderCfg,
 	})
 
-	c.readyWg.Go(func() error {
-		systemPrompt, err := prompt.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
-		if err != nil {
-			return err
+	// Capture values needed in goroutines.
+	largeProvider := large.Model.Provider()
+	largeModel := large.Model.Model()
+
+	// Use a local errgroup so the agent is fully initialised (prompt + tools)
+	// before it is returned to the caller. This avoids the shared-errgroup
+	// reuse hazard and ensures each buildAgent call is self-contained.
+	var wg errgroup.Group
+
+	wg.Go(func() error {
+		p, buildErr := c.buildPrompt(agentName, agentCfg)
+		if buildErr != nil {
+			return buildErr
+		}
+		systemPrompt, buildErr := p.Build(ctx, largeProvider, largeModel, c.cfg)
+		if buildErr != nil {
+			return buildErr
 		}
 		result.SetSystemPrompt(systemPrompt)
 		return nil
 	})
 
-	c.readyWg.Go(func() error {
-		tools, err := c.buildTools(ctx, agent, isSubAgent)
-		if err != nil {
-			return err
+	wg.Go(func() error {
+		agentTools, buildErr := c.buildTools(ctx, agentCfg, depth)
+		if buildErr != nil {
+			return buildErr
 		}
-		result.SetTools(tools)
+		result.SetTools(agentTools)
 		return nil
 	})
+
+	if err := wg.Wait(); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
 
-func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubAgent bool) ([]fantasy.AgentTool, error) {
-	var allTools []fantasy.AgentTool
-	if slices.Contains(agent.AllowedTools, AgentToolName) {
-		agentTool, err := c.agentTool(ctx)
-		if err != nil {
-			return nil, err
-		}
-		allTools = append(allTools, agentTool)
+// buildPrompt constructs the system prompt for the given agent name and config.
+// Orchestrator agents use orchestratorPrompt; all others use specialistPrompt.
+func (c *coordinator) buildPrompt(agentName string, agentCfg config.Agent) (*prompt.Prompt, error) {
+	opts := []prompt.Option{
+		prompt.WithWorkingDir(c.cfg.WorkingDir()),
+		prompt.WithAllowedSkills(agentCfg.AllowedSkills),
 	}
 
-	if slices.Contains(agent.AllowedTools, tools.AgenticFetchToolName) {
-		agenticFetchTool, err := c.agenticFetchTool(ctx, nil)
-		if err != nil {
-			return nil, err
-		}
-		allTools = append(allTools, agenticFetchTool)
+	if agentName == config.AgentOrchestrator {
+		// Build agents block and delegation workflow from parsed .md files.
+		agentsBlock, delegationWorkflow := c.buildOrchestratorBlocks()
+		opts = append(opts,
+			prompt.WithAgentsBlock(agentsBlock),
+			prompt.WithDelegationWorkflow(delegationWorkflow),
+			prompt.WithAppendPrompt(agentCfg.AppendPrompt),
+		)
+		return orchestratorPrompt(opts...)
 	}
+
+	// Specialist: include agent body if available.
+	agentBody := ""
+	if md, ok := c.agentMDs[agentName]; ok {
+		agentBody = md.Body
+	}
+	opts = append(opts,
+		prompt.WithAgentBody(agentBody),
+		prompt.WithAppendPrompt(agentCfg.AppendPrompt),
+	)
+	return specialistPrompt(opts...)
+}
+
+// buildOrchestratorBlocks generates the AgentsBlock and DelegationWorkflow
+// strings for the orchestrator prompt from the parsed agent .md files,
+// excluding agents that are not in the active agentConfigs.
+func (c *coordinator) buildOrchestratorBlocks() (agentsBlock, delegationWorkflow string) {
+	activeAgents := make([]prompt.AgentMD, 0, len(c.agentMDs))
+	for name, md := range c.agentMDs {
+		// Only include agents that are configured and not the orchestrator itself.
+		if _, ok := c.agentConfigs[name]; ok && name != config.AgentOrchestrator {
+			activeAgents = append(activeAgents, md)
+		}
+	}
+	// Sort for deterministic prompt output.
+	slices.SortFunc(activeAgents, func(a, b prompt.AgentMD) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return prompt.BuildAgentsBlock(activeAgents), prompt.BuildDelegationWorkflow(activeAgents)
+}
+
+// getOrBuildAgent returns a cached sub-agent by name or lazily builds one.
+// A mutex ensures only one goroutine builds the agent even under concurrent
+// delegation; a second caller will hit the fast-path re-check after the lock.
+// The cache key includes depth because depth controls whether the task
+// delegation tool is included (depth > 1). Without depth in the key, an
+// agent cached at depth=2 (with task tool) would be incorrectly served to a
+// caller at depth=1 (where delegation must be blocked).
+// When modelOverride is non-empty, a separate cache entry is used keyed by
+// "agentName|depth|modelOverride".
+func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, depth int, modelOverride string) (SessionAgent, error) {
+	cacheKey := fmt.Sprintf("%s|%d", agentName, depth)
+	if modelOverride != "" {
+		cacheKey = fmt.Sprintf("%s|%d|%s", agentName, depth, modelOverride)
+	}
+
+	if existing, ok := c.agents.Get(cacheKey); ok {
+		return existing, nil
+	}
+
+	c.agentBuildMu.Lock()
+	defer c.agentBuildMu.Unlock()
+
+	// Double-check after acquiring the lock.
+	if existing, ok := c.agents.Get(cacheKey); ok {
+		return existing, nil
+	}
+
+	agentCfg, ok := c.agentConfigs[agentName]
+	if !ok {
+		return nil, fmt.Errorf("agent %q not configured", agentName)
+	}
+
+	// Apply model override to a copy of the agent config when requested.
+	if modelOverride != "" {
+		agentCfg.Model = modelOverride
+	}
+
+	built, err := c.buildAgent(ctx, agentName, agentCfg, depth)
+	if err != nil {
+		return nil, err
+	}
+	c.agents.Set(cacheKey, built)
+	return built, nil
+}
+
+// buildTools assembles the tool set for an agent at the given delegation depth.
+// At depth ≤ 1 the task delegation tool is excluded.
+// AllowedTools is applied via ParseFilterList; AllowedMCP is applied per server.
+func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int) ([]fantasy.AgentTool, error) {
+	isSubAgent := depth < 3
 
 	logFile := filepath.Join(c.cfg.Config().Options.DataDirectory, "logs", "crush.log")
 
@@ -481,7 +664,34 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		hookRunner = hooks.NewRunner(preToolHooks, c.cfg.WorkingDir(), c.cfg.WorkingDir())
 	}
 
-	allTools = append(allTools,
+	// Assemble the full candidate tool set (before AllowedTools filtering).
+	var candidateTools []fantasy.AgentTool
+
+	// Add the task delegation tool if depth allows and the agent has delegates.
+	if depth > 1 {
+		callerName := agent.ID
+		hasDelegates := callerName == config.AgentOrchestrator
+		if !hasDelegates {
+			if md, ok := c.agentMDs[callerName]; ok && len(md.DelegatesTo) > 0 {
+				hasDelegates = true
+			}
+		}
+		if hasDelegates {
+			taskTool, err := c.taskTool(ctx, callerName, depth)
+			if err != nil {
+				return nil, err
+			}
+			candidateTools = append(candidateTools, taskTool)
+		}
+	}
+
+	// Add the agentic_fetch tool to the candidate set; filtering via AllowedTools applies below.
+	agenticFetch, err := c.agenticFetchTool(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	candidateTools = append(candidateTools,
+		agenticFetch,
 		tools.NewBashTool(c.permissions, c.cfg.WorkingDir()),
 		tools.NewCrushInfoTool(c.cfg, c.lspManager, c.allSkills, c.activeSkills, c.skillTracker),
 		tools.NewCrushLogsTool(logFile),
@@ -502,41 +712,75 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
 	if len(c.cfg.Config().LSP) > 0 || c.cfg.Config().Options.AutoLSP == nil || *c.cfg.Config().Options.AutoLSP {
-		allTools = append(allTools, tools.NewDiagnosticsTool(c.lspManager), tools.NewReferencesTool(c.lspManager), tools.NewLSPRestartTool(c.lspManager))
+		candidateTools = append(candidateTools, tools.NewDiagnosticsTool(c.lspManager), tools.NewReferencesTool(c.lspManager), tools.NewLSPRestartTool(c.lspManager))
 	}
 
 	if len(c.cfg.Config().MCP) > 0 {
-		allTools = append(
-			allTools,
+		candidateTools = append(
+			candidateTools,
 			tools.NewListMCPResourcesTool(c.cfg, c.permissions),
 			tools.NewReadMCPResourceTool(c.cfg, c.permissions),
 		)
 	}
 
+	// Build the full list of candidate tool names for ParseFilterList.
+	allToolNames := make([]string, 0, len(candidateTools))
+	for _, t := range candidateTools {
+		allToolNames = append(allToolNames, t.Info().Name)
+	}
+
+	// Resolve allowed tool names using ParseFilterList.
+	allowedNames, err := config.ParseFilterList(agent.AllowedTools, allToolNames)
+	if err != nil {
+		slog.Warn("Invalid AllowedTools filter for agent; falling back to all tools", "agent", agent.Name, "error", err)
+		allowedNames = allToolNames
+	}
+
+	// Apply the global DisabledTools exclusion so that tools disabled at the
+	// top level are removed regardless of per-agent AllowedTools config.
+	if opts := c.cfg.Config().Options; opts != nil && len(opts.DisabledTools) > 0 {
+		disabled := make(map[string]struct{}, len(opts.DisabledTools))
+		for _, d := range opts.DisabledTools {
+			disabled[d] = struct{}{}
+		}
+		filtered := allowedNames[:0]
+		for _, n := range allowedNames {
+			if _, ok := disabled[n]; !ok {
+				filtered = append(filtered, n)
+			}
+		}
+		allowedNames = filtered
+	}
+
+	allowedSet := make(map[string]bool, len(allowedNames))
+	for _, n := range allowedNames {
+		allowedSet[n] = true
+	}
+
 	var filteredTools []fantasy.AgentTool
-	for _, tool := range allTools {
-		if slices.Contains(agent.AllowedTools, tool.Info().Name) {
-			filteredTools = append(filteredTools, tool)
+	for _, t := range candidateTools {
+		if allowedSet[t.Info().Name] {
+			filteredTools = append(filteredTools, t)
 		}
 	}
 
 	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
 		if agent.AllowedMCP == nil {
-			// No MCP restrictions
+			// No MCP restrictions.
 			filteredTools = append(filteredTools, tool)
 			continue
 		}
 		if len(agent.AllowedMCP) == 0 {
-			// No MCPs allowed
+			// No MCPs allowed.
 			slog.Debug("No MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
-			break
+			continue
 		}
 
-		for mcp, tools := range agent.AllowedMCP {
+		for mcp, mcpTools := range agent.AllowedMCP {
 			if mcp != tool.MCP() {
 				continue
 			}
-			if len(tools) == 0 || slices.Contains(tools, tool.MCPToolName()) {
+			if len(mcpTools) == 0 || slices.Contains(mcpTools, tool.MCPToolName()) {
 				filteredTools = append(filteredTools, tool)
 				break
 			}
@@ -548,25 +792,36 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	})
 
 	// Wrap tools with hook interception for the top-level agent only.
-	// Sub-agents (the `agent` task tool, `agentic_fetch`, etc.) run
-	// without hook interception to avoid firing the user's hook N times
-	// per delegated turn. The top-level invocation of the sub-agent tool
-	// itself is still wrapped from the coder's side.
+	// Sub-agents run without hook interception to avoid firing the user's
+	// hooks N times per delegated turn. The top-level invocation of the
+	// sub-agent tool itself is still wrapped from the orchestrator's side.
 	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent)
 
 	return filteredTools, nil
 }
 
-// TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
-func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Model, Model, error) {
-	largeModelCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeLarge]
-	if !ok {
-		return Model{}, Model{}, errLargeModelNotSelected
+// buildAgentModels resolves the large and small models for an agent.
+// If agentCfg.Model is set it is used for the large model via ResolveAgentModel;
+// otherwise the global large model is used. The small model always comes from
+// the global small model config.
+func (c *coordinator) buildAgentModels(ctx context.Context, agentCfg config.Agent) (Model, Model, error) {
+	// Resolve large model — per-agent if configured, else global large.
+	largeModelCfg, err := config.ResolveAgentModel(agentCfg, c.cfg.Config())
+	if err != nil {
+		// Fall back to global large model on resolution failure.
+		var globalOk bool
+		largeModelCfg, globalOk = c.cfg.Config().Models[config.SelectedModelTypeLarge]
+		if !globalOk {
+			return Model{}, Model{}, errLargeModelNotSelected
+		}
 	}
+
 	smallModelCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeSmall]
 	if !ok {
 		return Model{}, Model{}, errSmallModelNotSelected
 	}
+
+	isSubAgent := agentCfg.ID != config.AgentOrchestrator
 
 	largeProviderCfg, ok := c.cfg.Config().Providers.Get(largeModelCfg.Provider)
 	if !ok {
@@ -937,65 +1192,74 @@ func isExactoSupported(modelID string) bool {
 }
 
 func (c *coordinator) Cancel(sessionID string) {
-	c.currentAgent.Cancel(sessionID)
+	c.getOrchestrator().Cancel(sessionID)
 }
 
 func (c *coordinator) CancelAll() {
-	c.currentAgent.CancelAll()
+	c.getOrchestrator().CancelAll()
 }
 
 func (c *coordinator) ClearQueue(sessionID string) {
-	c.currentAgent.ClearQueue(sessionID)
+	c.getOrchestrator().ClearQueue(sessionID)
 }
 
 func (c *coordinator) IsBusy() bool {
-	return c.currentAgent.IsBusy()
+	return c.getOrchestrator().IsBusy()
 }
 
 func (c *coordinator) IsSessionBusy(sessionID string) bool {
-	return c.currentAgent.IsSessionBusy(sessionID)
+	return c.getOrchestrator().IsSessionBusy(sessionID)
 }
 
 func (c *coordinator) Model() Model {
-	return c.currentAgent.Model()
+	return c.getOrchestrator().Model()
 }
 
+// UpdateModels rebuilds the orchestrator with the latest model config and
+// clears the lazy agent map so sub-agents are rebuilt on next delegation.
 func (c *coordinator) UpdateModels(ctx context.Context) error {
-	// build the models again so we make sure we get the latest config
-	large, small, err := c.buildAgentModels(ctx, false)
+	orchestratorCfg, ok := c.agentConfigs[config.AgentOrchestrator]
+	if !ok {
+		return errOrchestratorAgentNotConfigured
+	}
+
+	// Rebuild the orchestrator models.
+	large, small, err := c.buildAgentModels(ctx, orchestratorCfg)
 	if err != nil {
 		return err
 	}
-	c.currentAgent.SetModels(large, small)
+
+	orch := c.getOrchestrator()
+	orch.SetModels(large, small)
 
 	// Update provider config so the agent sees the refreshed token.
 	if largeProviderCfg, ok := c.cfg.Config().Providers.Get(large.ModelCfg.Provider); ok {
-		c.currentAgent.SetProviderConfig(largeProviderCfg)
+		orch.SetProviderConfig(largeProviderCfg)
 	}
 
-	agentCfg, ok := c.cfg.Config().Agents[config.AgentCoder]
-	if !ok {
-		return errCoderAgentNotConfigured
-	}
-
-	tools, err := c.buildTools(ctx, agentCfg, false)
+	agentTools, err := c.buildTools(ctx, orchestratorCfg, 3)
 	if err != nil {
 		return err
 	}
-	c.currentAgent.SetTools(tools)
+	orch.SetTools(agentTools)
+
+	// Invalidate lazily-built agents so they rebuild with new model config.
+	c.agents.Reset(make(map[string]SessionAgent))
+
 	return nil
 }
 
 func (c *coordinator) QueuedPrompts(sessionID string) int {
-	return c.currentAgent.QueuedPrompts(sessionID)
+	return c.getOrchestrator().QueuedPrompts(sessionID)
 }
 
 func (c *coordinator) QueuedPromptsList(sessionID string) []string {
-	return c.currentAgent.QueuedPromptsList(sessionID)
+	return c.getOrchestrator().QueuedPromptsList(sessionID)
 }
 
 func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
-	providerCfg, ok := c.cfg.Config().Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
+	orch := c.getOrchestrator()
+	providerCfg, ok := c.cfg.Config().Providers.Get(orch.Model().ModelCfg.Provider)
 	if !ok {
 		return errModelProviderNotConfigured
 	}
@@ -1005,7 +1269,7 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 	}
 
 	summarize := func() error {
-		return c.currentAgent.Summarize(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg))
+		return orch.Summarize(ctx, sessionID, getProviderOptions(orch.Model(), providerCfg))
 	}
 
 	err := summarize()

@@ -3,6 +3,7 @@ package config
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -57,8 +58,7 @@ const (
 )
 
 const (
-	AgentCoder string = "coder"
-	AgentTask  string = "task"
+	AgentOrchestrator string = "orchestrator"
 )
 
 type SelectedModel struct {
@@ -68,6 +68,9 @@ type SelectedModel struct {
 	// The model provider, same as the key/id used in the providers config.
 	// Required.
 	Provider string `json:"provider" jsonschema:"required,description=The model provider ID that matches a key in the providers config,example=openai"`
+
+	// Variant is an optional model variant passthrough (e.g. thinking budget).
+	Variant string `json:"variant,omitempty" jsonschema:"description=Optional model variant passthrough (e.g. thinking budget)"`
 
 	// Only used by models that use the openai provider and need this set.
 	ReasoningEffort string `json:"reasoning_effort,omitempty" jsonschema:"description=Reasoning effort level for OpenAI models that support it,enum=low,enum=medium,enum=high"`
@@ -487,27 +490,80 @@ func (l LSPConfig) ResolvedEnv(r VariableResolver) (map[string]string, error) {
 	return out, nil
 }
 
+// Agent defines the configuration for a named agent in the multi-agent
+// system. Fields left at their zero value fall back to global defaults.
 type Agent struct {
 	ID          string `json:"id,omitempty"`
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
-	// This is the id of the system prompt used by the agent
-	Disabled bool `json:"disabled,omitempty"`
+	Disabled    bool   `json:"disabled,omitempty"`
 
-	Model SelectedModelType `json:"model" jsonschema:"required,description=The model type to use for this agent,enum=large,enum=small,default=large"`
+	// Model is the full provider/model string (e.g. "anthropic/claude-opus-4-6").
+	// An empty string falls back to the global large model.
+	Model string `json:"model,omitempty"`
 
-	// The available tools for the agent
-	//  if this is nil, all tools are available
-	AllowedTools []string `json:"allowed_tools,omitempty"`
+	// Variant is the model variant (e.g. thinking budget passthrough).
+	Variant string `json:"variant,omitempty"`
 
-	// this tells us which MCPs are available for this agent
-	//  if this is empty all mcps are available
-	//  the string array is the list of tools from the AllowedMCP the agent has available
-	//  if the string array is nil, all tools from the AllowedMCP are available
-	AllowedMCP map[string][]string `json:"allowed_mcp,omitempty"`
+	// AllowedTools is the list of tools available to the agent.
+	// nil means all tools are available; [] means no tools.
+	AllowedTools []string `json:"tools,omitempty"`
 
-	// Overrides the context paths for this agent
-	ContextPaths []string `json:"context_paths,omitempty"`
+	// AllowedSkills is the list of skill names available to the agent.
+	// nil means all skills are available; [] means no skills.
+	AllowedSkills []string `json:"skills,omitempty"`
+
+	// AllowedMCP is the map of MCP server names to allowed tool names.
+	// An empty map means no MCPs; a nil map means all MCPs are available.
+	// Each value slice lists the allowed tools from that MCP server;
+	// a nil value means all tools from that server are available.
+	// This field is populated by UnmarshalJSON which accepts either
+	// []string or map[string][]string for the "mcps" JSON key.
+	AllowedMCP map[string][]string `json:"-"`
+
+	// AppendPrompt is injected verbatim at the end of the agent's system
+	// prompt.
+	AppendPrompt string `json:"append_prompt,omitempty"`
+}
+
+// agentJSON is an alias used inside UnmarshalJSON to prevent recursion.
+type agentJSON Agent
+
+// UnmarshalJSON implements custom JSON unmarshalling for Agent. It handles
+// the "mcps" field which may be either a []string (each name mapped to a nil
+// tool list) or a map[string][]string.
+func (a *Agent) UnmarshalJSON(data []byte) error {
+	aux := struct {
+		*agentJSON
+		MCPs json.RawMessage `json:"mcps,omitempty"`
+	}{
+		agentJSON: (*agentJSON)(a),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(aux.MCPs) == 0 {
+		return nil
+	}
+	// Try []string first.
+	var names []string
+	if err := json.Unmarshal(aux.MCPs, &names); err == nil {
+		if err := ValidateFilterList(names); err != nil {
+			return fmt.Errorf("mcps: %w", err)
+		}
+		a.AllowedMCP = make(map[string][]string, len(names))
+		for _, name := range names {
+			a.AllowedMCP[name] = nil
+		}
+		return nil
+	}
+	// Fall back to map[string][]string.
+	var mcpMap map[string][]string
+	if err := json.Unmarshal(aux.MCPs, &mcpMap); err != nil {
+		return fmt.Errorf("mcps field must be []string or map[string][]string: %w", err)
+	}
+	a.AllowedMCP = mcpMap
+	return nil
 }
 
 type Tools struct {
@@ -581,7 +637,13 @@ type Config struct {
 
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
 
-	Agents map[string]Agent `json:"-"`
+	// Agents is the map of named agent configurations. When absent, defaults
+	// from SetupAgents are used.
+	Agents map[string]Agent `json:"agents,omitempty"`
+
+	// DisabledAgents lists agent names to remove from the routing table and
+	// orchestrator prompt at startup.
+	DisabledAgents []string `json:"disabled_agents,omitempty"`
 }
 
 func (c *Config) EnabledProviders() []ProviderConfig {
@@ -649,7 +711,7 @@ const maxRecentModelsPerType = 5
 
 func allToolNames() []string {
 	return []string{
-		"agent",
+		"task",
 		"bash",
 		"crush_info",
 		"crush_logs",
@@ -675,57 +737,248 @@ func allToolNames() []string {
 	}
 }
 
-func resolveAllowedTools(allTools []string, disabledTools []string) []string {
-	if disabledTools == nil {
-		return allTools
+// readOnlyTools returns the base read-only tool names for agents that
+// should only be able to inspect the codebase without modifying it.
+func readOnlyTools() []string {
+	return []string{
+		"glob",
+		"grep",
+		"ls",
+		"view",
+		"lsp_diagnostics",
+		"lsp_references",
+		"sourcegraph",
 	}
-	// filter out disabled tools (exclude mode)
-	return filterSlice(allTools, disabledTools, false)
 }
 
-func resolveReadOnlyTools(tools []string) []string {
-	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view"}
-	// filter to only include tools that are in allowedtools (include mode)
-	return filterSlice(tools, readOnlyTools, true)
+// readWriteTools returns read-only tools plus write and execution tools
+// for agents that can modify the codebase and run commands.
+func readWriteTools() []string {
+	return append(
+		readOnlyTools(),
+		"edit",
+		"write",
+		"bash",
+		"multiedit",
+	)
 }
 
-func filterSlice(data []string, mask []string, include bool) []string {
-	var filtered []string
-	for _, s := range data {
-		// if include is true, we include items that ARE in the mask
-		// if include is false, we include items that are NOT in the mask
-		if include == slices.Contains(mask, s) {
-			filtered = append(filtered, s)
-		}
-	}
-	return filtered
-}
-
-func (c *Config) SetupAgents() {
-	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
-
-	agents := map[string]Agent{
-		AgentCoder: {
-			ID:           AgentCoder,
-			Name:         "Coder",
-			Description:  "An agent that helps with executing coding tasks.",
-			Model:        SelectedModelTypeLarge,
-			ContextPaths: c.Options.ContextPaths,
-			AllowedTools: allowedTools,
+// setupDefaultAgents initialises Config.Agents with the default 10-agent roster.
+// nil AllowedTools means unrestricted (all tools); nil AllowedSkills / AllowedMCP
+// means unrestricted for skills / MCPs respectively. An empty slice means none.
+func (c *Config) setupDefaultAgents() {
+	c.Agents = map[string]Agent{
+		AgentOrchestrator: {
+			ID:            AgentOrchestrator,
+			Name:          "Orchestrator",
+			AllowedTools:  nil, // Nil = all tools unrestricted.
+			AllowedSkills: nil, // Nil = all skills unrestricted.
+			AllowedMCP:    nil, // Nil = all MCPs unrestricted.
 		},
-
-		AgentTask: {
-			ID:           AgentTask,
-			Name:         "Task",
-			Description:  "An agent that helps with searching for context and finding implementation details.",
-			Model:        SelectedModelTypeLarge,
-			ContextPaths: c.Options.ContextPaths,
-			AllowedTools: resolveReadOnlyTools(allowedTools),
-			// NO MCPs or LSPs by default
+		"oracle": {
+			ID:            "oracle",
+			Name:          "Oracle",
+			AllowedTools:  nil, // All tools.
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"explorer": {
+			ID:            "explorer",
+			Name:          "Explorer",
+			AllowedTools:  readOnlyTools(),
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"librarian": {
+			ID:            "librarian",
+			Name:          "Librarian",
+			AllowedTools:  append(readOnlyTools(), "agentic_fetch"),
+			AllowedSkills: []string{},
+			AllowedMCP: map[string][]string{
+				"websearch": nil,
+				"context7":  nil,
+				"grep_app":  nil,
+				"sourcebot": nil,
+			},
+		},
+		"designer": {
+			ID:            "designer",
+			Name:          "Designer",
+			AllowedTools:  nil, // All tools.
+			AllowedSkills: []string{"agent-browser"},
+			AllowedMCP:    map[string][]string{},
+		},
+		"fixer": {
+			ID:            "fixer",
+			Name:          "Fixer",
+			AllowedTools:  nil, // All tools.
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"planner": {
+			ID:           "planner",
+			Name:         "Planner",
+			AllowedTools: readWriteTools(),
+			AllowedSkills: []string{
+				"grilling",
+				"brainstorming",
+				"drafting-tsds",
+				"writing-plans",
+				"planning-products",
+			},
 			AllowedMCP: map[string][]string{},
 		},
+		"tester": {
+			ID:           "tester",
+			Name:         "Tester",
+			AllowedTools: append(readOnlyTools(), "bash"),
+			AllowedSkills: []string{
+				"writing-tests",
+				"test-driven-development",
+				"scaffolding-plan-tests",
+				"fixing-flaky-tests",
+				"condition-based-waiting",
+			},
+			AllowedMCP: map[string][]string{},
+		},
+		"reviewer": {
+			ID:            "reviewer",
+			Name:          "Reviewer",
+			AllowedTools:  readOnlyTools(),
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"devils-advocate": {
+			ID:            "devils-advocate",
+			Name:          "Devils Advocate",
+			AllowedTools:  readOnlyTools(),
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
 	}
-	c.Agents = agents
+}
+
+// SetupAgents sets up the agent roster from defaults plus any user overrides.
+// If Config.Agents is nil after JSON unmarshalling (no "agents" key in config),
+// pure defaults are used. If Config.Agents is non-nil, each user-defined agent
+// overlays its non-zero fields onto the corresponding default, and unknown agent
+// names are added as new entries. Disabled agents are removed last.
+func (c *Config) SetupAgents() {
+	// Snapshot user-provided overrides before setupDefaultAgents overwrites Agents.
+	userAgents := c.Agents
+
+	// Apply 10-agent defaults unconditionally.
+	c.setupDefaultAgents()
+
+	if userAgents != nil {
+		for name, userAgent := range userAgents {
+			def, ok := c.Agents[name]
+			if !ok {
+				// User defined an agent not in the defaults; add it as-is.
+				c.Agents[name] = userAgent
+				continue
+			}
+			// Overlay non-zero fields from the user config onto the default.
+			if userAgent.Model != "" {
+				def.Model = userAgent.Model
+			}
+			if userAgent.Variant != "" {
+				def.Variant = userAgent.Variant
+			}
+			if userAgent.AllowedTools != nil {
+				def.AllowedTools = userAgent.AllowedTools
+			}
+			if userAgent.AllowedSkills != nil {
+				def.AllowedSkills = userAgent.AllowedSkills
+			}
+			if userAgent.AllowedMCP != nil {
+				def.AllowedMCP = userAgent.AllowedMCP
+			}
+			if userAgent.AppendPrompt != "" {
+				def.AppendPrompt = userAgent.AppendPrompt
+			}
+			if userAgent.Disabled {
+				def.Disabled = true
+			}
+			c.Agents[name] = def
+		}
+	}
+
+	// Remove any agents whose names appear in DisabledAgents
+	// and agents whose Disabled field is true from the Agents map.
+	for _, name := range c.DisabledAgents {
+		delete(c.Agents, name)
+	}
+	for name, agent := range c.Agents {
+		if agent.Disabled {
+			delete(c.Agents, name)
+		}
+	}
+}
+
+// ResolveAgentModel resolves the SelectedModel for the given agent. If
+// agent.Model is empty the global large model from cfg is returned. Otherwise
+// agent.Model is parsed as "provider/model" and resolved against the
+// configured providers. If agent.Variant is set it is included in the
+// returned SelectedModel.
+func ResolveAgentModel(agent Agent, cfg *Config) (SelectedModel, error) {
+	if agent.Model == "" {
+		m, ok := cfg.Models[SelectedModelTypeLarge]
+		if !ok {
+			return SelectedModel{}, fmt.Errorf("agent %q: no large model configured", agent.ID)
+		}
+		if agent.Variant != "" {
+			m.Variant = agent.Variant
+		}
+		return m, nil
+	}
+
+	// Parse "provider/model" format; split on the first slash only.
+	slash := strings.IndexByte(agent.Model, '/')
+	if slash < 0 {
+		return SelectedModel{}, fmt.Errorf(
+			"agent %q: model %q must be in provider/model format",
+			agent.ID, agent.Model,
+		)
+	}
+	providerID := agent.Model[:slash]
+	modelID := agent.Model[slash+1:]
+
+	providerCfg, ok := cfg.Providers.Get(providerID)
+	if !ok {
+		return SelectedModel{}, fmt.Errorf(
+			"agent %q: provider %q not found",
+			agent.ID, providerID,
+		)
+	}
+
+	var found *catwalk.Model
+	for i := range providerCfg.Models {
+		if providerCfg.Models[i].ID == modelID {
+			m := providerCfg.Models[i]
+			found = &m
+			break
+		}
+	}
+	if found == nil {
+		return SelectedModel{}, fmt.Errorf(
+			"agent %q: model %q not found in provider %q",
+			agent.ID, modelID, providerID,
+		)
+	}
+
+	result := SelectedModel{
+		Provider:  providerID,
+		Model:     modelID,
+		MaxTokens: found.DefaultMaxTokens,
+	}
+	if found.DefaultReasoningEffort != "" {
+		result.ReasoningEffort = found.DefaultReasoningEffort
+	}
+	if agent.Variant != "" {
+		result.Variant = agent.Variant
+	}
+	return result, nil
 }
 
 func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {

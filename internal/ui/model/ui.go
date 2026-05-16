@@ -1418,14 +1418,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				return util.ReportError(errors.New("configuration not found"))()
 			}
 
-			agentCfg, ok := cfg.Agents[config.AgentCoder]
-			if !ok {
-				return util.ReportError(errors.New("agent configuration not found"))()
-			}
-
-			currentModel := cfg.Models[agentCfg.Model]
+			currentModel := cfg.Models[config.SelectedModelTypeLarge]
 			currentModel.Think = !currentModel.Think
-			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, agentCfg.Model, currentModel); err != nil {
+			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeLarge, currentModel); err != nil {
 				return util.ReportError(err)()
 			}
 			m.com.Workspace.UpdateAgentModel(context.TODO())
@@ -1489,15 +1484,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 
-		agentCfg, ok := cfg.Agents[config.AgentCoder]
-		if !ok {
-			cmds = append(cmds, util.ReportError(errors.New("agent configuration not found")))
-			break
-		}
-
-		currentModel := cfg.Models[agentCfg.Model]
+		currentModel := cfg.Models[config.SelectedModelTypeLarge]
 		currentModel.ReasoningEffort = msg.Effort
-		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, agentCfg.Model, currentModel); err != nil {
+		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeLarge, currentModel); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
@@ -1703,7 +1692,7 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	if isOnboarding {
 		m.setState(uiLanding, uiFocusEditor)
 		m.com.Config().SetupAgents()
-		if err := m.com.Workspace.InitCoderAgent(context.TODO()); err != nil {
+		if err := m.com.Workspace.InitOrchestratorAgent(context.TODO()); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		}
 	} else if m.com.IsHyper() {
@@ -2236,7 +2225,7 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 		if m.textarea.Focused() {
 			cur := m.textarea.Cursor()
-	
+
 			cur.Y += m.layout.editor.Min.Y + 1 // Offset for attachments row
 			return cur
 		}
@@ -2490,11 +2479,7 @@ func (m *UI) currentModelSupportsImages() bool {
 	if cfg == nil {
 		return false
 	}
-	agentCfg, ok := cfg.Agents[config.AgentCoder]
-	if !ok {
-		return false
-	}
-	model := cfg.GetModelByType(agentCfg.Model)
+	model := cfg.GetModelByType(config.SelectedModelTypeLarge)
 	return model != nil && model.SupportsImages
 }
 
@@ -3118,7 +3103,7 @@ func (m *UI) refreshStyles() {
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
 	if !m.com.Workspace.AgentIsReady() {
-		return util.ReportError(fmt.Errorf("coder agent is not initialized"))
+		return util.ReportError(fmt.Errorf("orchestrator agent is not initialized"))
 	}
 
 	var cmds []tea.Cmd
@@ -3417,11 +3402,7 @@ func (m *UI) handleReAuthenticate(providerID string) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	agentCfg, ok := cfg.Agents[config.AgentCoder]
-	if !ok {
-		return nil
-	}
-	return m.openAuthenticationDialog(providerCfg.ToProvider(), cfg.Models[agentCfg.Model], agentCfg.Model)
+	return m.openAuthenticationDialog(providerCfg.ToProvider(), cfg.Models[config.SelectedModelTypeLarge], config.SelectedModelTypeLarge)
 }
 
 // newSession clears the current session state and prepares for a new session.

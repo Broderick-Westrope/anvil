@@ -21,11 +21,16 @@ import (
 
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
-	name       string
-	template   string
-	now        func() time.Time
-	platform   string
-	workingDir string
+	name               string
+	template           string
+	now                func() time.Time
+	platform           string
+	workingDir         string
+	agentsBlock        string
+	delegationWorkflow string
+	agentBody          string
+	appendPrompt       string
+	allowedSkills      []string // nil = unrestricted, [] = none.
 }
 
 type PromptDat struct {
@@ -39,6 +44,14 @@ type PromptDat struct {
 	GitStatus     string
 	ContextFiles  []ContextFile
 	AvailSkillXML string
+	// AgentsBlock is an optional XML/markdown block describing available agents for orchestrator prompts.
+	AgentsBlock string
+	// DelegationWorkflow is an optional block describing when and how to delegate tasks to specialist agents.
+	DelegationWorkflow string
+	// AgentBody is an optional block describing the specialist agent's role and capabilities, injected into specialist prompts.
+	AgentBody string
+	// AppendPrompt is optional text appended at the end of the prompt, after skills and context files.
+	AppendPrompt string
 }
 
 type ContextFile struct {
@@ -63,6 +76,38 @@ func WithPlatform(platform string) Option {
 func WithWorkingDir(workingDir string) Option {
 	return func(p *Prompt) {
 		p.workingDir = workingDir
+	}
+}
+
+func WithAgentsBlock(block string) Option {
+	return func(p *Prompt) {
+		p.agentsBlock = block
+	}
+}
+
+func WithDelegationWorkflow(workflow string) Option {
+	return func(p *Prompt) {
+		p.delegationWorkflow = workflow
+	}
+}
+
+func WithAgentBody(body string) Option {
+	return func(p *Prompt) {
+		p.agentBody = body
+	}
+}
+
+func WithAppendPrompt(appendPrompt string) Option {
+	return func(p *Prompt) {
+		p.appendPrompt = appendPrompt
+	}
+}
+
+// WithAllowedSkills sets the per-agent skill allow-list. nil means
+// unrestricted (all skills); an empty slice means no skills.
+func WithAllowedSkills(allowed []string) Option {
+	return func(p *Prompt) {
+		p.allowedSkills = allowed
 	}
 }
 
@@ -194,20 +239,27 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 	// Filter out disabled skills.
 	allSkills = skills.Filter(allSkills, cfg.Options.DisabledSkills)
 
+	// Apply per-agent skill allow-list (nil = unrestricted, [] = none).
+	allSkills = skills.FilterByAllowList(allSkills, p.allowedSkills)
+
 	if len(allSkills) > 0 {
 		availSkillXML = skills.ToPromptXML(allSkills)
 	}
 
 	isGit := isGitRepo(store.WorkingDir())
 	data := PromptDat{
-		Provider:      provider,
-		Model:         model,
-		Config:        *cfg,
-		WorkingDir:    filepath.ToSlash(workingDir),
-		IsGitRepo:     isGit,
-		Platform:      platform,
-		Date:          p.now().Format("1/2/2006"),
-		AvailSkillXML: availSkillXML,
+		Provider:           provider,
+		Model:              model,
+		Config:             *cfg,
+		WorkingDir:         filepath.ToSlash(workingDir),
+		IsGitRepo:          isGit,
+		Platform:           platform,
+		Date:               p.now().Format("1/2/2006"),
+		AvailSkillXML:      availSkillXML,
+		AgentsBlock:        p.agentsBlock,
+		DelegationWorkflow: p.delegationWorkflow,
+		AgentBody:          p.agentBody,
+		AppendPrompt:       p.appendPrompt,
 	}
 	if isGit {
 		var err error

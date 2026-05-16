@@ -784,6 +784,19 @@ func loadFromConfigPaths(configPaths []string) (*Config, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// This validates all agent filters. It iterates over the agents in cfg and validates their
+	// tools, skills, and mcps filter lists. It returns an error that identifies
+	// the agent name and field if any list is invalid.
+	for name, agent := range cfg.Agents {
+		if err := ValidateFilterList(agent.AllowedTools); err != nil {
+			return nil, nil, fmt.Errorf("agent %q tools: %w", name, err)
+		}
+		if err := ValidateFilterList(agent.AllowedSkills); err != nil {
+			return nil, nil, fmt.Errorf("agent %q skills: %w", name, err)
+		}
+	}
+
 	return cfg, loaded, nil
 }
 
