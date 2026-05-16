@@ -696,7 +696,7 @@ func TestConfig_IsConfigured(t *testing.T) {
 	})
 }
 
-func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
+func TestConfig_setupDefaultAgentsWithNoDisabledTools(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
@@ -705,7 +705,7 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 		},
 	}
 
-	cfg.SetupAgents()
+	cfg.setupDefaultAgents()
 
 	// Orchestrator should have nil AllowedTools (unrestricted).
 	orchestrator, ok := cfg.Agents[AgentOrchestrator]
@@ -718,7 +718,7 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 	assert.Len(t, cfg.Agents, 10, "expected 10 agents in the default roster")
 }
 
-func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
+func TestConfig_setupDefaultAgentsWithDisabledTools(t *testing.T) {
 	t.Parallel()
 
 	// SetupAgents no longer filters by DisabledTools; it sets nil for
@@ -730,7 +730,7 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 		},
 	}
 
-	cfg.SetupAgents()
+	cfg.setupDefaultAgents()
 
 	// Explorer should have read-only tools (not filtered by DisabledTools at
 	// this layer).
@@ -744,7 +744,7 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	assert.Equal(t, readOnlyTools(), reviewer.AllowedTools)
 }
 
-func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
+func TestConfig_setupDefaultAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	t.Parallel()
 
 	// SetupAgents is a pure defaults function; it does not filter by
@@ -756,7 +756,7 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 		},
 	}
 
-	cfg.SetupAgents()
+	cfg.setupDefaultAgents()
 
 	// Librarian has read-only tools plus agentic_fetch.
 	librarian, ok := cfg.Agents["librarian"]

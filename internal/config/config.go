@@ -757,10 +757,10 @@ func readWriteTools() []string {
 	return append(readOnlyTools(), "edit", "write", "bash", "multiedit")
 }
 
-// SetupAgents initialises Config.Agents with the default 10-agent roster.
+// setupDefaultAgents initialises Config.Agents with the default 10-agent roster.
 // nil AllowedTools means unrestricted (all tools); nil AllowedSkills / AllowedMCP
 // means unrestricted for skills / MCPs respectively. An empty slice means none.
-func (c *Config) SetupAgents() {
+func (c *Config) setupDefaultAgents() {
 	c.Agents = map[string]Agent{
 		AgentOrchestrator: {
 			ID:            AgentOrchestrator,
@@ -852,17 +852,17 @@ func (c *Config) SetupAgents() {
 	}
 }
 
-// configureAgents sets up the agent roster from defaults plus any user overrides.
+// SetupAgents sets up the agent roster from defaults plus any user overrides.
 // If Config.Agents is nil after JSON unmarshalling (no "agents" key in config),
 // pure defaults are used. If Config.Agents is non-nil, each user-defined agent
 // overlays its non-zero fields onto the corresponding default, and unknown agent
 // names are added as new entries. Disabled agents are removed last.
-func (c *Config) configureAgents() {
-	// Snapshot user-provided overrides before SetupAgents overwrites Agents.
+func (c *Config) SetupAgents() {
+	// Snapshot user-provided overrides before setupDefaultAgents overwrites Agents.
 	userAgents := c.Agents
 
 	// Apply 10-agent defaults unconditionally.
-	c.SetupAgents()
+	c.setupDefaultAgents()
 
 	if userAgents != nil {
 		for name, userAgent := range userAgents {

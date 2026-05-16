@@ -81,7 +81,8 @@ func (s *ConfigStore) KnownProviders() []catwalk.Provider {
 	return s.knownProviders
 }
 
-// SetupAgents configures the orchestrator and task agents on the config.
+// SetupAgents configures the default agent roster and applies any user
+// overrides and disabled-agent removals from the config.
 func (s *ConfigStore) SetupAgents() {
 	s.config.SetupAgents()
 }

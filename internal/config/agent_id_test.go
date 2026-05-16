@@ -15,7 +15,7 @@ func TestConfig_AgentIDs(t *testing.T) {
 			DisabledTools: []string{},
 		},
 	}
-	cfg.SetupAgents()
+	cfg.setupDefaultAgents()
 
 	// Verify each agent in the 10-agent roster exists with the correct ID.
 	agentNames := []string{
