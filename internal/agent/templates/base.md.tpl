@@ -1,4 +1,4 @@
-{{ define "critical_rules" }}
+{{- define "critical_rules" -}}
 <critical_rules>
 These rules override everything else. Follow them strictly:
 
@@ -17,9 +17,9 @@ These rules override everything else. Follow them strictly:
 13. **TOOL CONSTRAINTS**: Only use documented tools. Never attempt 'apply_patch' or 'apply_diff' - they don't exist. Use 'edit' or 'multiedit' instead.
 14. **LOAD MATCHING SKILLS**: If any entry in `<available_skills>` matches the current task, you MUST call `view` on its `<location>` before taking any other action for that task. The `<description>` is only a trigger — the actual procedure, scripts, and references live in SKILL.md. Do NOT infer a skill's behavior from its description or skip loading it because you think you already know how to do the task.
 </critical_rules>
-{{ end }}
+{{- end -}}
 
-{{ define "communication_style" }}
+{{- define "communication_style" -}}
 <communication_style>
 Keep responses minimal:
 - ALWAYS think and respond in the same spoken language the prompt was written in.
@@ -57,30 +57,31 @@ When referencing specific functions or code locations, use the pattern `file_pat
 - Example: "The error is handled in src/main.go:45"
 - Example: "See the implementation in pkg/utils/helper.go:123-145"
 </code_references>
-{{ end }}
+{{- end -}}
 
-{{ define "environment" }}
+{{- define "environment" -}}
 <env>
 Working directory: {{.WorkingDir}}
 Is directory a git repo: {{if .IsGitRepo}}yes{{else}}no{{end}}
 Platform: {{.Platform}}
 Today's date: {{.Date}}
-{{if .GitStatus}}
+{{- if .GitStatus}}
+
 Git status (snapshot at conversation start - may be outdated):
 {{.GitStatus}}
-{{end}}
+{{- end}}
 </env>
+{{- if gt (len .Config.LSP) 0}}
 
-{{if gt (len .Config.LSP) 0}}
 <lsp>
 Diagnostics (lint/typecheck) included in tool output.
 - Fix issues in files you changed
 - Ignore issues in files you didn't touch (unless user asks)
 </lsp>
-{{end}}
-{{ end }}
+{{- end}}
+{{- end -}}
 
-{{ define "skills_and_context" }}
+{{- define "skills_and_context" -}}
 {{- if .AvailSkillXML}}
 
 {{.AvailSkillXML}}
@@ -101,20 +102,19 @@ Builtin skills (type=builtin) use virtual `crush://skills/...` location identifi
 Do not use MCP tools (including read_mcp_resource) to load skills.
 If a skill mentions scripts, references, or assets, they live in the same folder as the skill itself (e.g., scripts/, references/, assets/ subdirectories within the skill's folder).
 </skills_usage>
-{{end}}
+{{- end}}
+{{- if .ContextFiles}}
 
-{{if .ContextFiles}}
 <memory>
-{{range .ContextFiles}}
+{{- range .ContextFiles}}
 <file path="{{.Path}}">
 {{.Content}}
 </file>
-{{end}}
+{{- end}}
 </memory>
-{{end}}
-
+{{- end}}
 {{- if .AppendPrompt}}
 
 {{.AppendPrompt}}
-{{end}}
-{{ end }}
+{{- end}}
+{{- end -}}

@@ -231,6 +231,7 @@ Adapt verbosity to match the work completed:
 - Keep tone direct and factual, like handing off work to a teammate
 </final_answers>
 
+
 {{ template "environment" . }}
 
 {{ template "skills_and_context" . }}
