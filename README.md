@@ -426,8 +426,8 @@ mv _temp/skills/* . && rm -rf _temp
 
 ```powershell
 # Windows (PowerShell)
-mkdir -Force "$env:LOCALAPPDATAnvil\skills"
-cd "$env:LOCALAPPDATAnvil\skills"
+mkdir -Force "$env:LOCALAPPDATA\anvil\skills"
+cd "$env:LOCALAPPDATA\anvil\skills"
 git clone https://github.com/anthropics/skills.git _temp
 mv _temp/skills/* . ; rm -r -force _temp
 ```

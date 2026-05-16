@@ -185,7 +185,7 @@ furies:
 
 brews:
   - repository:
-      owner: charmbracelet
+      owner: Broderick-Westrope
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
@@ -201,7 +201,7 @@ brews:
 
 scoops:
   - repository:
-      owner: charmbracelet
+      owner: Broderick-Westrope
       name: scoop-bucket
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
@@ -261,7 +261,7 @@ sboms:
 
 nix:
   - repository:
-      owner: "charmbracelet"
+      owner: "Broderick-Westrope"
       name: nur
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     commit_author:
@@ -285,7 +285,7 @@ winget:
       name: "Broderick Westrope"
       email: "broderick.westrope@users.noreply.github.com"
     repository:
-      owner: "charmbracelet"
+      owner: "Broderick-Westrope"
       name: winget-pkgs
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
       branch: "anvil-{{.Version}}"
