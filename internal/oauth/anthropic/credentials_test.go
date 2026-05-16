@@ -111,6 +111,7 @@ func TestNeedsRefresh(t *testing.T) {
 func TestReadCredentialsFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	// Create the .claude directory and write a credentials file.
 	dir := filepath.Join(tmp, ".claude")
@@ -139,7 +140,9 @@ func TestReadCredentialsFile(t *testing.T) {
 
 func TestReadCredentials_FileNotFound(t *testing.T) {
 	// Point HOME at an empty temp directory so no credentials file exists.
-	t.Setenv("HOME", t.TempDir())
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	// Use a non-existent USER so keychain lookup returns not-found on darwin.
 	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
 
@@ -151,6 +154,7 @@ func TestReadCredentials_FileNotFound(t *testing.T) {
 func TestCachedCredentials_TTL(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")
@@ -178,6 +182,7 @@ func TestCachedCredentials_TTL(t *testing.T) {
 func TestCachedCredentials_Invalidate(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")

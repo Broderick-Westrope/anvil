@@ -105,6 +105,7 @@ func TestRefreshToken_DiskCheckShortCircuit(t *testing.T) {
 	// Not parallel: mutates package-level tokenEndpoint.
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("USER", "crush-test-nonexistent-user-xyz")
 
 	dir := filepath.Join(tmp, ".claude")
@@ -136,6 +137,7 @@ func TestRefreshToken_DiskCheckShortCircuit(t *testing.T) {
 func TestWriteCredentialsFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	// Pre-populate with an existing field that should be preserved.
 	dir := filepath.Join(tmp, ".claude")

@@ -77,6 +77,7 @@ func assertHookFilters(t *testing.T, store *config.ConfigStore) {
 func TestSetConfigField_AutoReload_PreservesHookMatcherFiltering(t *testing.T) {
 	isolated := t.TempDir()
 	t.Setenv("HOME", isolated)
+	t.Setenv("USERPROFILE", isolated)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolated, ".config"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(isolated, ".local", "share"))
 
