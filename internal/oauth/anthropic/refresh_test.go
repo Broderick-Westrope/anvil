@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -165,10 +166,12 @@ func TestWriteCredentialsFile(t *testing.T) {
 
 	require.NoError(t, writeCredentialsFile(newTok))
 
-	// Verify file permissions.
-	info, err := os.Stat(credPath)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	// Verify file permissions (skip on Windows where Unix perms don't apply).
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(credPath)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 
 	// Verify JSON structure.
 	data, err := os.ReadFile(credPath)
