@@ -754,7 +754,13 @@ func readOnlyTools() []string {
 // readWriteTools returns read-only tools plus write and execution tools
 // for agents that can modify the codebase and run commands.
 func readWriteTools() []string {
-	return append(readOnlyTools(), "edit", "write", "bash", "multiedit")
+	return append(
+		readOnlyTools(),
+		"edit",
+		"write",
+		"bash",
+		"multiedit",
+	)
 }
 
 // setupDefaultAgents initialises Config.Agents with the default 10-agent roster.
@@ -898,13 +904,8 @@ func (c *Config) SetupAgents() {
 		}
 	}
 
-	// Remove any agents explicitly listed in DisabledAgents.
-	c.applyDisabledAgents()
-}
-
-// applyDisabledAgents removes agents whose names appear in DisabledAgents
-// and agents whose Disabled field is true from the Agents map.
-func (c *Config) applyDisabledAgents() {
+	// Remove any agents whose names appear in DisabledAgents
+	// and agents whose Disabled field is true from the Agents map.
 	for _, name := range c.DisabledAgents {
 		delete(c.Agents, name)
 	}
