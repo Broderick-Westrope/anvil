@@ -101,8 +101,8 @@ aur_sources:
     disable: "{{ with .Prerelease }}true{{ end }}"
     git_url: "ssh://aur@aur.archlinux.org/anvil.git"
     commit_author:
-      name: "Charm"
-      email: "charmcli@users.noreply.github.com"
+      name: "Broderick Westrope"
+      email: "broderick.westrope@users.noreply.github.com"
     makedepends:
       - go
       - git
@@ -145,8 +145,8 @@ aurs:
     disable: "{{ with .Prerelease }}true{{ end }}"
     git_url: "ssh://aur@aur.archlinux.org/anvil-bin.git"
     commit_author:
-      name: "Charm"
-      email: "charmcli@users.noreply.github.com"
+      name: "Broderick Westrope"
+      email: "broderick.westrope@users.noreply.github.com"
     provides:
       - anvil
     conflicts:
@@ -190,8 +190,8 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
     commit_author:
-      name: "Charm"
-      email: "charmcli@users.noreply.github.com"
+      name: "Broderick Westrope"
+      email: "broderick.westrope@users.noreply.github.com"
     goarm: 7
     extra_install: |-
       bash_completion.install "completions/{{ .ProjectName }}.bash" => "{{ .ProjectName }}"
@@ -206,11 +206,11 @@ scoops:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
     commit_author:
-      name: "Charm"
-      email: "charmcli@users.noreply.github.com"
+      name: "Broderick Westrope"
+      email: "broderick.westrope@users.noreply.github.com"
 
 npms:
-  - name: "@charmland/anvil"
+  - name: "@broderick-westrope/anvil"
     repository: "git+https://github.com/Broderick-Westrope/anvil.git"
     bugs: https://github.com/Broderick-Westrope/anvil/issues
     access: public
@@ -265,8 +265,8 @@ nix:
       name: nur
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     commit_author:
-      name: "Charm"
-      email: "charmcli@users.noreply.github.com"
+      name: "Broderick Westrope"
+      email: "broderick.westrope@users.noreply.github.com"
     license: fsl11Mit
     formatter: nixfmt
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
@@ -275,15 +275,15 @@ nix:
       installShellCompletion ./completions/*
 
 winget:
-  - publisher: charmbracelet
-    copyright: Charmbracelet, Inc
-    publisher_url: https://charm.land
+  - publisher: Broderick-Westrope
+    copyright: Broderick Westrope
+    publisher_url: https://github.com/Broderick-Westrope
     release_notes_url: "https://github.com/Broderick-Westrope/anvil/releases/tag/{{.Tag}}"
     license_url: https://github.com/Broderick-Westrope/anvil/blob/main/LICENSE.md
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
     commit_author:
-      name: "Charm"
-      email: "charmcli@users.noreply.github.com"
+      name: "Broderick Westrope"
+      email: "broderick.westrope@users.noreply.github.com"
     repository:
       owner: "charmbracelet"
       name: winget-pkgs
