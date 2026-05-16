@@ -37,7 +37,9 @@ Out of scope:
 **Constraints:**
 - Must work within the single Bubble Tea model architecture
   (`UI.Update()` is sole dispatch point)
-- Max nesting depth is 3 (orchestrator → subagent → nested subagent)
+- Nesting depth is currently 3 (orchestrator → subagent → nested
+  subagent) but the UI must handle arbitrary depth — the drill stack,
+  breadcrumb, and routing should not hardcode a max
 - Child sessions are real SQLite sessions — reuse existing
   `Workspace.ListMessages()` for loading
 - Reuse existing chat rendering pipeline for drill-in view (no custom
@@ -46,26 +48,26 @@ Out of scope:
   subagent — must be easy to re-enable later for future steering feature
 - Animation IDs must remain unique; `UpdateNestedToolIDs()` contract
   must be maintained
-- Left/right arrow keys are free at the item level but occupied by
-  pill navigation when pills are expanded — drill-in takes priority
-  when an `AgentToolMessageItem` is focused (see Key Binding Resolution)
-- `AgenticFetchToolMessageItem` also implements `NestedToolContainer`
-  but is NOT drillable — only `AgentToolMessageItem` (task subagents)
-  supports drill-in
+- Left/right arrow keys are shared with pill navigation but cannot
+  conflict due to focus dispatch order (see Key Binding Dispatch)
+- Both `AgentToolMessageItem` and `AgenticFetchToolMessageItem`
+  implement `NestedToolContainer` and have real child sessions — both
+  are drillable
 
 **Success Criteria:**
 - [ ] Collapsed task view shows only name line + stats line (no prompt,
       no nested tool tree, no result text)
 - [ ] Stats line (turns, tools, tokens, cost, elapsed time) live-updates
       while subagent is running
-- [ ] Pressing → on a focused AgentToolMessageItem replaces the chat
-      viewport with the child session's full message thread
+- [ ] Pressing → on a focused drillable item (AgentToolMessageItem or
+      AgenticFetchToolMessageItem) replaces the chat viewport with the
+      child session's full message thread
 - [ ] Pressing ← while in a drilled-in view returns to the parent
       session
-- [ ] Mouse click on an AgentToolMessageItem drills into it
+- [ ] Mouse click on a drillable item drills into it
 - [ ] Breadcrumb bar appears at top of chat viewport when drilled in,
-      showing `Main > AgentName > AgentName: Description` (description
-      only on the deepest/current level)
+      showing `Main > AgentName: Description > AgentName: Description`
+      (descriptions shown at all subagent levels)
 - [ ] Breadcrumb is hidden when viewing the top-level session
 - [ ] Sidebar model info block updates to reflect the currently viewed
       session (main or subagent)
@@ -115,11 +117,12 @@ Out of scope:
 - **Mouse click to drill in.** Introduce a `DrillInHandler` interface
   with a `DrillIn()` method. `HandleDelayedClick` checks for this
   interface before `Expandable` — if the selected item implements
-  `DrillInHandler`, call `DrillIn()` instead of `ToggleExpanded()`. Only
-  `AgentToolMessageItem` implements `DrillInHandler`. Other tool items
-  retain their existing click-to-expand behavior. `space` (expand key)
-  continues to call `ToggleExpanded` — on the collapsed agent tool item
-  this is a no-op since there is no expandable content.
+  `DrillInHandler`, call `DrillIn()` instead of `ToggleExpanded()`. Both
+  `AgentToolMessageItem` and `AgenticFetchToolMessageItem` implement
+  `DrillInHandler`. Other tool items retain their existing click-to-expand
+  behavior. `space` (expand key) continues to call `ToggleExpanded` — on
+  collapsed drillable items this is a no-op since there is no expandable
+  content.
 
 - **Single-char shimmer for working state.** Maintains consistent
   single-character width across all states (spawned spinner, working
@@ -129,14 +132,13 @@ Out of scope:
 - **Disable input editor, don't remove it.** Keeps the component tree
   intact so re-enabling for future subagent steering is straightforward.
 
-- **Breadcrumb shows descriptions only on the current level.** Ancestor
-  entries show only the agent type name (e.g., "Explorer", not the full
-  `agentDisplayName()` which includes model and description). The current
-  (deepest) entry shows type name + description. Max depth of 3 means at
-  most 3 segments. Uses `>` chevrons for depth direction (matching the
-  `→` drill-in key), e.g., `Main > Explorer > Fixer: Update tests`.
-  Breadcrumb segment names are stored on `drillInEntry`, not derived from
-  `agentDisplayName()`.
+- **Breadcrumb shows descriptions at all subagent levels.** Each
+  subagent entry shows agent type name + description (e.g.,
+  `Explorer: Search auth`). The root entry shows only `Main`. Uses `>`
+  chevrons for depth direction (matching the `→` drill-in key), e.g.,
+  `Main > Explorer: Search auth > Fixer: Update tests`.   Breadcrumb segment labels are captured at drill-in time from the
+  item being drilled into (agent type + description), stored on
+  `drillInEntry.label`. No render-time lookup needed.
 
 **Icon States:**
 
@@ -152,46 +154,44 @@ message arrives.
 
 **State Model for View Switching:**
 
-The `UI` struct gains these new fields:
+The `UI` struct gains one new field:
 
 ```
-viewedSessionID string           // currently displayed session (empty = root)
-drillStack      []drillInEntry   // navigation history
-drillChat       *Chat            // chat instance for drilled-in view (nil at root)
+drillStack []drillInEntry
 ```
 
-Where `drillInEntry` captures the state needed to restore a parent view:
+Where each entry represents a drilled-in level:
 
 ```
 type drillInEntry struct {
-    sessionID     string
-    chat          *Chat    // preserved Chat instance with full state
+    sessionID  string   // child session being viewed
+    chat       *Chat    // Chat instance for this level
+    label      string   // breadcrumb label, e.g. "Explorer: Search auth"
 }
 ```
 
 - `m.session` always points to the root/parent session (never swapped).
-- `m.viewedSessionID` tracks which session is rendered in the chat
-  viewport. Empty string means the root session.
-- `m.drillChat` holds the `Chat` instance for the currently drilled-in
-  view. When drilled in, the UI renders `m.drillChat` instead of
-  `m.chat`. When at root, `m.drillChat` is nil.
 - `m.chat` always refers to the root session's `Chat` and is never
   replaced.
-- On drill-in: push `{viewedSessionID, drillChat}` onto `drillStack`,
-  create a new `Chat` via `NewChat()` and assign to `m.drillChat`, set
-  `viewedSessionID` to child session ID. Load child messages via a
-  `tea.Cmd` (async) calling `Workspace.ListMessages()` — never do IO
-  in `Update`. Apply the current layout/size to the new Chat.
-- On back (←): pop `drillStack`, restore `viewedSessionID` and
-  `drillChat` (nil if returning to root). The restored `Chat` retains
+- `drillStack` holds entries for each drilled-in level. When non-empty,
+  the user is viewing a subagent.
+- On drill-in: create a new `Chat` via `NewChat()`, load child messages
+  via a `tea.Cmd` (async) calling `Workspace.ListMessages()` — never
+  do IO in `Update`. Apply the current layout/size to the new Chat.
+  Push `{sessionID, newChat, label}` onto `drillStack`, where `label`
+  is captured from the drilled-into item (e.g., "Explorer: Search auth").
+- On back (←): pop `drillStack`. The now-top entry's `Chat` (or
+  `m.chat` if the stack is empty) becomes the active view, retaining
   its scroll position, selected index, and animation state.
-- A helper `m.activeChat()` returns `m.drillChat` if non-nil, else
-  `m.chat`. All rendering, animation dispatch (`Animate()`), key
-  routing (`HandleKeyMsg`), mouse handling, and resize
-  (`updateLayoutAndSize`) use `m.activeChat()` instead of `m.chat`
-  directly.
-- Max stack depth is 2 (root → subagent → nested subagent), matching the
-  depth-3 agent limit.
+- A helper `m.activeChat()` returns `drillStack[top].chat` if
+  non-empty, else `m.chat`. All rendering, animation dispatch
+  (`Animate()`), key routing (`HandleKeyMsg`), mouse handling, and
+  resize (`updateLayoutAndSize`) use `m.activeChat()` instead of
+  `m.chat` directly.
+- A helper `m.viewedSessionID()` returns `drillStack[top].sessionID`
+  if non-empty, else `m.session.ID`.
+- Stack depth is unbounded — supports arbitrary nesting as agent depth
+  limits evolve.
 - The sidebar reads from the session matching `viewedSessionID` (or
   `m.session` if empty) for model, tokens, cost, turns, and tool count.
 
@@ -203,8 +203,8 @@ type drillInEntry struct {
 New routing branch in the `pubsub.Event[message.Message]` handler
 (before the existing `SessionID != m.session.ID` check):
 
-1. If `msg.Payload.SessionID == m.viewedSessionID` and
-   `m.viewedSessionID != ""`: route the message to `m.drillChat`
+1. If `len(m.drillStack) > 0` and `msg.Payload.SessionID` matches
+   `m.viewedSessionID()`: route the message to `m.activeChat()`
    using the same `appendSessionMessage`/`updateSessionMessage`
    pattern used for the root chat. This handles ALL message types
    (assistant text, thinking, user messages, tool calls, tool results).
@@ -224,24 +224,18 @@ must NOT filter — the full message thread needs every message type.
   The collapsed view in the parent also updates via the existing
   `handleChildSessionMessage` path.
 
-**Key Binding Resolution:**
+**Key Binding Dispatch:**
 
-Left/right arrows conflict with `PillLeft`/`PillRight` when pills are
-expanded. Resolution:
+Left/right arrows are used by pills (when expanded) and by drill-in
+navigation. These cannot conflict because focus is never shared:
 
 - `→` (drill in): `AgentToolMessageItem.HandleKeyEvent` consumes the
-  right arrow key. Since item-level key handling runs before
-  `handleGlobalKeys` in the dispatch chain (via `m.chat.HandleKeyMsg` in
-  the `default` branch of `uiFocusMain`), `PillRight` never fires when
-  an `AgentToolMessageItem` is focused.
-- `←` (back): Add an explicit `case` in the `uiFocusMain` switch block
-  (around the existing Up/Down/PageUp cases) that matches left arrow
-  when `len(m.drillStack) > 0`. This runs before the `default` branch
-  fallthrough to `handleGlobalKeys`/`PillLeft`. When not drilled in,
-  the left arrow falls through to the default branch and pill navigation
-  works as before.
-- When no `AgentToolMessageItem` is focused and pills are expanded,
-  left/right retain their pill navigation behavior.
+  key. Item-level handling runs before `handleGlobalKeys` in the
+  dispatch chain, so pills never see it.
+- `←` (back): An explicit `case` in the `uiFocusMain` switch block
+  matches left arrow when `len(m.drillStack) > 0`. This runs before the
+  `default` branch that reaches pills. When not drilled in, left arrow
+  falls through to pills as normal.
 
 **Turns and Tool Call Count Data:**
 
@@ -289,8 +283,9 @@ At narrow terminal widths (<80 cols), abbreviate progressively:
 
 **Behavioral Edge Cases:**
 
-- **Drill into spawned (no messages yet):** Allowed. Shows an empty chat
-  with the breadcrumb bar and a spinner. Messages appear as they arrive.
+- **Drill into spawned (no messages yet):** Allowed. Shows the prompt
+  given to the subagent (as a user message) with the breadcrumb bar and
+  a spinner. Assistant messages appear as they arrive.
 - **Subagent completes while drilled in:** Stay on the completed view.
   Status icon updates, elapsed time freezes. User navigates back manually.
 - **Ctrl+C while drilled in:** Cancels the root agent (same as today).
