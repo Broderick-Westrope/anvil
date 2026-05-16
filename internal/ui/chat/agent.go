@@ -178,8 +178,15 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 func agentDisplayName(subagentType, description, model string) string {
 	var name string
 	if subagentType != "" {
-		// Capitalise the first letter.
-		name = strings.ToUpper(subagentType[:1]) + subagentType[1:]
+		// Capitalise each word and replace hyphens with spaces
+		// (e.g. "devils-advocate" → "Devils Advocate").
+		parts := strings.Split(subagentType, "-")
+		for i, p := range parts {
+			if len(p) > 0 {
+				parts[i] = strings.ToUpper(p[:1]) + p[1:]
+			}
+		}
+		name = strings.Join(parts, " ")
 	} else {
 		name = "Unknown Agent"
 	}

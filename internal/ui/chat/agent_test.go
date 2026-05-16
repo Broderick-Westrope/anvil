@@ -62,6 +62,16 @@ func TestAgentDisplayName(t *testing.T) {
 			model:        "anthropic/claude-sonnet-4-6",
 			want:         "Reviewer (sonnet-4-6)",
 		},
+		"hyphenated agent name capitalises each word": {
+			subagentType: "devils-advocate",
+			want:         "Devils Advocate",
+		},
+		"hyphenated agent name with description and model": {
+			subagentType: "devils-advocate",
+			description:  "Review the spec",
+			model:        "anthropic/claude-opus-4-6",
+			want:         "Devils Advocate (opus-4-6) — Review the spec",
+		},
 	}
 
 	for name, tt := range tests {
