@@ -65,9 +65,8 @@ read plans/design-2025-05-16-subagent-drill-in.md
 - Modify: `internal/ui/chat/messages.go` (add `DrillInHandler` interface)
 - Modify: `internal/ui/chat/agent.go` (add stats fields, implement
   `DrillInHandler`, rewrite `RenderTool` for collapsed view)
-- Modify: `internal/ui/chat/tools.go` (add `ToolRenderOpts.StatsLine`
-  field or equivalent)
-- Modify: `internal/ui/styles/styles.go` (add stats line styles)
+- Modify: `internal/ui/styles/styles.go` (add stats line + breadcrumb
+  styles)
 
 **Steps:**
 
@@ -88,7 +87,7 @@ read plans/design-2025-05-16-subagent-drill-in.md
    }
    ```
 
-2. [ ] In `internal/ui/chat/agent.go`, add stats fields to
+2. [ ] In `internal/ui/chat/agent.go`, add stats and state fields to
    `AgentToolMessageItem` (line 28):
 
    ```go
@@ -96,133 +95,187 @@ read plans/design-2025-05-16-subagent-drill-in.md
        *baseToolMessageItem
        nestedTools []ToolMessageItem
 
+       // Drill-in state.
+       childSessionID  string
+       hasChildMessages bool
+
        // Live stats updated via pubsub as child session messages arrive.
-       turns     int
-       toolCalls int
+       turns           int
+       toolCalls       int
+       tokens          int64
+       cost            float64
+       countedToolIDs  map[string]bool // track already-counted tool call IDs
    }
    ```
 
    Add the same fields to `AgenticFetchToolMessageItem` (line 220).
 
-   Add exported setters and getters for both:
+   Add exported methods for both types. Use a shared `agentStats` embedded
+   struct if the duplication is large, or just implement on both:
    ```go
    func (a *AgentToolMessageItem) Stats() (turns, toolCalls int) {
        return a.turns, a.toolCalls
    }
-   func (a *AgentToolMessageItem) IncrementTurns() { a.turns++; a.clearCache() }
-   func (a *AgentToolMessageItem) IncrementToolCalls(n int) { a.toolCalls += n; a.clearCache() }
+   func (a *AgentToolMessageItem) SetChildSessionID(id string) {
+       a.childSessionID = id
+   }
+   func (a *AgentToolMessageItem) SetHasChildMessages(v bool) {
+       a.hasChildMessages = v
+       a.clearCache()
+   }
+   func (a *AgentToolMessageItem) IncrementTurns() {
+       a.turns++
+       a.clearCache()
+   }
+   func (a *AgentToolMessageItem) IncrementToolCalls(n int) {
+       a.toolCalls += n
+       a.clearCache()
+   }
+   func (a *AgentToolMessageItem) SetTokens(t int64) {
+       a.tokens = t
+       a.clearCache()
+   }
+   func (a *AgentToolMessageItem) SetCost(c float64) {
+       a.cost = c
+       a.clearCache()
+   }
    ```
 
-3. [ ] Implement `DrillInHandler` on `AgentToolMessageItem`. The child
-   session ID is derived from `m.com.Workspace.CreateAgentToolSessionID`
-   using the tool call's parent message ID and tool call ID. However, the
-   item doesn't have access to `Workspace` — so instead, store the session
-   ID on the item. Add a `childSessionID string` field, set it when the
-   first child session message arrives (in `handleChildSessionMessage` in
-   Task 4). For now, add the field and the interface methods:
+3. [ ] Implement `DrillInHandler` on `AgentToolMessageItem`. Reuse the
+   existing `agentDisplayName()` helper (line 178) for label generation,
+   but strip the model info suffix since the breadcrumb should be compact:
 
    ```go
-   func (a *AgentToolMessageItem) SetChildSessionID(id string) { a.childSessionID = id }
    func (a *AgentToolMessageItem) DrillIn() string { return a.childSessionID }
    func (a *AgentToolMessageItem) DrillInLabel() string {
        var params agent.TaskParams
        _ = json.Unmarshal([]byte(a.toolCall.Input), &params)
-       name := strings.Split(params.SubagentType, "-")
-       for i, p := range name {
-           if len(p) > 0 { name[i] = strings.ToUpper(p[:1]) + p[1:] }
-       }
-       label := strings.Join(name, " ")
-       if label == "" { label = "Agent" }
-       if params.Description != "" {
-           label += ": " + params.Description
-       }
-       return label
+       // Reuse the name-building logic from agentDisplayName but without
+       // model info — breadcrumb labels should be concise.
+       return agentBreadcrumbLabel(params.SubagentType, params.Description)
    }
    ```
 
-   Do the same for `AgenticFetchToolMessageItem`, where `DrillInLabel()`
-   returns `"Fetch: " + params.Prompt` (truncated to ~40 chars) and
-   `DrillIn()` returns `a.childSessionID`.
+   Extract a shared helper from `agentDisplayName()`:
+   ```go
+   // agentBreadcrumbLabel builds a breadcrumb label like "Explorer: Search auth".
+   func agentBreadcrumbLabel(subagentType, description string) string {
+       var name string
+       if subagentType != "" {
+           parts := strings.Split(subagentType, "-")
+           for i, p := range parts {
+               if len(p) > 0 { parts[i] = strings.ToUpper(p[:1]) + p[1:] }
+           }
+           name = strings.Join(parts, " ")
+       } else {
+           name = "Agent"
+       }
+       if description != "" {
+           name += ": " + description
+       }
+       return name
+   }
+   ```
 
-4. [ ] Implement `KeyEventHandler` on `AgentToolMessageItem` to handle
-   the `→` key for drill-in. Return `true` to consume the key, along with
-   a `tea.Cmd` that sends a new `DrillInMsg` (a new message type to be
-   defined — just a struct with the session ID and label). The message type
-   should be defined in `internal/ui/util/` alongside other message types:
+   For `AgenticFetchToolMessageItem`, `DrillInLabel()` returns
+   `"Fetch: " + truncate(params.Prompt, 40)`.
+
+4. [ ] Implement `KeyEventHandler` on both `AgentToolMessageItem` and
+   `AgenticFetchToolMessageItem` to handle the `→` key for drill-in.
+
+   First, define the message type in `internal/ui/util/` (create
+   `internal/ui/util/drill.go` if needed, or add to existing messages
+   file):
 
    ```go
-   // In internal/ui/util/messages.go (or a new file)
+   // DrillInMsg requests the UI to drill into a subagent session.
    type DrillInMsg struct {
        SessionID string
        Label     string
    }
-   type DrillBackMsg struct{}
    ```
 
-   The `HandleKeyEvent` on `AgentToolMessageItem`:
+   Then the handler:
    ```go
    func (a *AgentToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
        if key.Key().Code == tea.KeyRight && a.childSessionID != "" {
            return true, func() tea.Msg {
-               return util.DrillInMsg{SessionID: a.childSessionID, Label: a.DrillInLabel()}
+               return util.DrillInMsg{
+                   SessionID: a.childSessionID,
+                   Label:     a.DrillInLabel(),
+               }
            }
        }
        return false, nil
    }
    ```
 
-   Same for `AgenticFetchToolMessageItem`.
-
 5. [ ] Rewrite `AgentToolRenderContext.RenderTool()` to produce the collapsed
-   two-line format. The current implementation (lines 101–169) shows a header,
-   prompt tag, and nested tool tree. Replace with:
+   two-line format. Replace the current implementation (lines 101–169) with:
 
-   - **Line 1:** Status icon + display name (reuse existing `toolHeader`
-     with `compact: true` — but without params, so the header is just the
-     icon + name).
+   - **Line 1:** Status icon + display name (via `toolHeader` with
+     `compact: true`).
    - **Line 2:** Stats line: `  3 turns · 12 tools · 4.2k tokens · $0.02 · 14s`
      (indented to align under the name).
-   - No prompt text, no nested tool tree, no result body.
-   - The animation (`opts.Anim.Render()`) is no longer appended — the status
-     icon in the header handles visual state.
-
-   The stats line should use data from `r.agent.turns`, `r.agent.toolCalls`,
-   and the session's token/cost data. Tokens and cost come from the tool
-   result when available, or can be derived from the session. For now, use
-   the agent item's `ToolCall()` and available data. The format function
-   should handle zero values gracefully (show `0 turns · 0 tools` when
-   spawned, which updates live).
+   - No prompt text, no nested tool tree, no result body, no trailing
+     animation.
 
    Add a helper function `formatStatsLine` in `agent.go`:
    ```go
    func formatStatsLine(sty *styles.Styles, turns, toolCalls int, tokens int64, cost float64, elapsed string, width int) string
    ```
 
-   For narrow widths (<80), use abbreviated format:
+   Handle zero values gracefully (show `0 turns · 0 tools` at spawn).
+   For narrow widths (<80 cols), use abbreviated format:
    `3t · 12tl · 4.2k · $0.02 · 14s`.
 
-6. [ ] Apply the same collapsed rendering treatment to
-   `AgenticFetchToolRenderContext.RenderTool()`. Same two-line format:
-   icon + "Agentic Fetch" (or "Fetch: <url>") on line 1, stats on line 2.
+6. [ ] Apply the same collapsed rendering to
+   `AgenticFetchToolRenderContext.RenderTool()`.
 
-7. [ ] In `internal/ui/styles/styles.go`, add styles for the stats line
-   inside the `Tool` struct. A muted/dim style for the stats text, and
-   separator style for the `·` dots:
+7. [ ] In `internal/ui/styles/styles.go`, add new styles:
 
+   Inside the `Tool` struct:
    ```go
-   StatsLine    lipgloss.Style  // dim/muted for stats text
-   StatsSep     lipgloss.Style  // for · separator
+   StatsLine lipgloss.Style  // dim/muted for stats text
+   StatsSep  lipgloss.Style  // for · separator
    ```
 
-   Initialize them in the `New()` or theme setup function with appropriate
-   muted colors.
+   Add a new top-level `Breadcrumb` struct:
+   ```go
+   Breadcrumb struct {
+       Root  lipgloss.Style  // "Main" label — bold
+       Label lipgloss.Style  // subagent label — normal
+       Sep   lipgloss.Style  // ">" separator — muted
+   }
+   ```
+
+   Inside the `ModelInfo` struct:
+   ```go
+   Stats   lipgloss.Style  // for "3 turns · 12 tools" sidebar line
+   Elapsed lipgloss.Style  // for elapsed time
+   ```
+
+   Initialize all with appropriate muted/dim colors.
 
 8. [ ] Update the `Animate` method on `AgentToolMessageItem` (line 56).
-   Currently it delegates to nested tools — since nested tools are no longer
-   rendered in the collapsed view, the `Animate` method should only handle
-   the item's own animation (for the status icon shimmer). Remove the
-   nested tool animation loop. Nested tools will get their own animation
-   when viewed via drill-in (they'll be in a separate `Chat` instance).
+   Remove the nested tool animation dispatch loop — nested tools are no
+   longer rendered in the collapsed view. Only handle the item's own
+   animation:
+
+   ```go
+   func (a *AgentToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
+       if a.result != nil || a.Status() == ToolStatusCanceled {
+           return nil
+       }
+       if msg.ID == a.ID() {
+           return a.anim.Animate(msg)
+       }
+       return nil
+   }
+   ```
+
+   Nested tools get their own animations when loaded into a drill-in
+   `Chat` instance.
 
 **Verify:**
 ```bash
@@ -237,53 +290,37 @@ go test ./internal/ui/chat/... -count=1
 **Context:** `internal/ui/model/`, `internal/ui/util/`
 
 **Files:**
-- Modify: `internal/ui/model/ui.go` (add drillStack, helpers, key/mouse
-  handling, DrillInMsg/DrillBackMsg handlers, editor disable)
+- Modify: `internal/ui/model/ui.go` (drillStack, helpers, key/mouse
+  handling, DrillInMsg handler, editor disable, session lifecycle guards)
 - Modify: `internal/ui/model/chat.go` (HandleDelayedClick for
-  DrillInHandler)
-- Create: `internal/ui/util/drill.go` (DrillInMsg, DrillBackMsg types)
+  DrillInHandler, return signature change)
 
 **Steps:**
 
-1. [ ] Create `internal/ui/util/drill.go` with the message types:
+1. [ ] In `internal/ui/model/ui.go`, define the `drillInEntry` type and
+   add the `drillStack` field to the `UI` struct (after the `chat *Chat`
+   field, around line 224):
 
    ```go
-   package util
-
-   // DrillInMsg requests the UI to drill into a subagent session.
-   type DrillInMsg struct {
-       SessionID string
-       Label     string
-   }
-
-   // DrillBackMsg requests the UI to navigate back from a drilled-in view.
-   type DrillBackMsg struct{}
-   ```
-
-2. [ ] In `internal/ui/model/ui.go`, define the `drillInEntry` type and add
-   the `drillStack` field to the `UI` struct (after the `chat *Chat` field,
-   around line 224):
-
-   ```go
-   // drillInEntry represents one level of drill-in navigation into a
-   // subagent session.
+   // drillInEntry represents one level of drill-in navigation.
    type drillInEntry struct {
        sessionID string
        chat      *Chat
-       label     string // breadcrumb label, e.g., "Explorer: Search auth"
+       label     string           // breadcrumb label, cached at drill-in time
+       session   *session.Session // cached session for sidebar stats
    }
    ```
 
    Add to `UI` struct:
    ```go
-   drillStack []drillInEntry
+   drillStack         []drillInEntry
+   elapsedTickRunning bool
    ```
 
-3. [ ] Add helper methods on `UI`:
+2. [ ] Add helper methods on `UI`:
 
    ```go
-   // activeChat returns the currently visible Chat — either the top of the
-   // drill stack or the root chat.
+   // activeChat returns the currently visible Chat.
    func (m *UI) activeChat() *Chat {
        if len(m.drillStack) > 0 {
            return m.drillStack[len(m.drillStack)-1].chat
@@ -306,73 +343,113 @@ go test ./internal/ui/chat/... -count=1
    func (m *UI) isDrilledIn() bool {
        return len(m.drillStack) > 0
    }
-   ```
 
-4. [ ] Replace direct `m.chat` references with `m.activeChat()` in the
-   following locations in `ui.go`. This is critical — miss one and the
-   drill-in view won't work. The key replacements are:
-
-   **In `Draw()` (line 2154):**
-   ```go
-   // Before: m.chat.Draw(scr, layout.main)
-   // After:
-   m.activeChat().Draw(scr, layout.main)
-   ```
-
-   **In `uiFocusMain` key handling (lines 2004–2090):** Replace all
-   `m.chat.` calls with `m.activeChat().`:
-   - `m.chat.Blur()` → `m.activeChat().Blur()`
-   - `m.chat.ToggleExpandedSelectedItem()` → `m.activeChat().ToggleExpandedSelectedItem()`
-   - `m.chat.ScrollByAndAnimate(...)` → `m.activeChat().ScrollByAndAnimate(...)`
-   - `m.chat.SelectedItemInView()` → `m.activeChat().SelectedItemInView()`
-   - `m.chat.SelectPrev/Next/First/Last()` → `m.activeChat().Select...()`
-   - `m.chat.ScrollToSelectedAndAnimate()` → etc.
-   - `m.chat.ScrollToTopAndAnimate()` → etc.
-   - `m.chat.ScrollToBottomAndAnimate()` → etc.
-   - `m.chat.HandleKeyMsg(msg)` → `m.activeChat().HandleKeyMsg(msg)`
-   - `m.chat.Height()` → `m.activeChat().Height()`
-
-   **In mouse handling (lines 706–733):**
-   - `m.chat.HandleDelayedClick(msg)` → `m.activeChat().HandleDelayedClick(msg)`
-   - `m.chat.HandleMouseDown(x, y)` → `m.activeChat().HandleMouseDown(x, y)`
-
-   **In `WindowSizeMsg` handler (line 693):**
-   - `m.chat.Follow()` → `m.activeChat().Follow()`
-   - `m.chat.ScrollToBottomAndAnimate()` → `m.activeChat().ScrollToBottomAndAnimate()`
-
-   **In `anim.StepMsg` handler** (find where `m.chat.Animate(msg)` is
-   called): → `m.activeChat().Animate(msg)`
-
-   **In `updateSize()` (line 2566):**
-   - `m.chat.SetSize(...)` → `m.activeChat().SetSize(...)`
-   - BUT also set size on all drill stack chats when resizing:
-   ```go
-   m.chat.SetSize(m.layout.main.Dx(), m.layout.main.Dy())
-   for _, entry := range m.drillStack {
-       entry.chat.SetSize(m.layout.main.Dx(), m.layout.main.Dy())
+   // clearDrillStack pops all drill-in entries and restores root state.
+   func (m *UI) clearDrillStack() {
+       m.drillStack = nil
    }
    ```
 
-   **IMPORTANT:** Do NOT replace `m.chat` in:
-   - `handleChildSessionMessage()` — this must always update the root chat
-   - `appendSessionMessage()` / `updateSessionMessage()` / `RemoveMessage()`
-     for `m.session.ID` messages — these are root session messages
-   - `m.chat.InvalidateRenderCaches()` in `refreshStyles()` — also
-     invalidate drill stack chats
-   - `m.chat.Follow()` checks in pubsub message handler (line 632 area)
-     — these are for the root session
+3. [ ] **CRITICAL: Comprehensive `m.chat` → `m.activeChat()` replacement.**
+   Run `grep 'm\.chat\.'` in `ui.go` to find ALL ~100 references. Replace
+   the ones that should operate on the visible chat. Do NOT replace ones
+   that must always operate on the root chat.
 
-5. [ ] Add `DrillInMsg` handler in the `Update()` switch (after existing
-   message type handlers):
+   **Replace with `m.activeChat()`** — these operate on whichever chat the
+   user sees:
+   - `Draw()` (line 2154): `m.chat.Draw(...)` → `m.activeChat().Draw(...)`
+   - `uiFocusMain` key handling (lines 2004–2090): ALL `m.chat.` calls
+     (`Blur`, `ToggleExpandedSelectedItem`, `ScrollByAndAnimate`,
+     `SelectedItemInView`, `SelectPrev/Next/First/Last`,
+     `ScrollToSelectedAndAnimate`, `ScrollToTopAndAnimate`,
+     `ScrollToBottomAndAnimate`, `HandleKeyMsg`, `Height`)
+   - `DelayedClickMsg` handler (line 708): `m.chat.HandleDelayedClick(msg)`
+   - `tea.MouseClickMsg` handler (line 727): `m.chat.HandleMouseDown(x, y)`
+   - **Mouse motion handler** (lines ~746–763): `m.chat.ScrollByAndAnimate`,
+     `m.chat.SelectedItemInView`, `m.chat.SelectPrev/Next`,
+     `m.chat.HandleMouseDrag`
+   - **Mouse up handler** (line ~787): `m.chat.HandleMouseUp`,
+     `m.chat.HasHighlight`
+   - **Mouse wheel handler** (lines ~808–827): `m.chat.ScrollByAndAnimate`,
+     `m.chat.SelectedItemInView`, `m.chat.SelectPrev/Next`
+   - `WindowSizeMsg` handler (line 693): `m.chat.Follow()`,
+     `m.chat.ScrollToBottomAndAnimate()`
+   - `anim.StepMsg` handler: see step 4 below for special handling
+   - `copyChatHighlight` if it references `m.chat`
+
+   **Keep as `m.chat`** — these always operate on the root:
+   - `handleChildSessionMessage()` — updates nested tool state on root chat
+   - `appendSessionMessage()` / `updateSessionMessage()` for root session
+     messages (where `SessionID == m.session.ID`)
+   - `handlePermissionNotification()` — search both `m.chat` AND
+     `m.activeChat()` (see step 8)
+   - `loadNestedToolCalls()` if it exists
+
+   **Update `updateSize()`** (line 2562) to size ALL chats:
+   ```go
+   func (m *UI) updateSize() {
+       m.status.SetWidth(m.layout.status.Dx())
+       chatWidth := m.layout.main.Dx()
+       chatHeight := m.layout.main.Dy()
+       if m.isDrilledIn() {
+           chatHeight -= 1 // breadcrumb line
+       }
+       // Size the root chat.
+       m.chat.SetSize(chatWidth, m.layout.main.Dy())
+       // Size all drill-in chats (active one gets breadcrumb-adjusted height).
+       for i, entry := range m.drillStack {
+           if i == len(m.drillStack)-1 {
+               entry.chat.SetSize(chatWidth, chatHeight)
+           } else {
+               entry.chat.SetSize(chatWidth, m.layout.main.Dy())
+           }
+       }
+       // ... rest of updateSize
+   }
+   ```
+
+   **Update `refreshStyles()`** to invalidate drill stack caches:
+   ```go
+   m.chat.InvalidateRenderCaches()
+   for _, entry := range m.drillStack {
+       entry.chat.InvalidateRenderCaches()
+   }
+   ```
+
+4. [ ] **Animation dispatch to all chats.** The `anim.StepMsg` handler
+   must dispatch to ALL chats, not just the active one. Otherwise,
+   animations on non-visible chats freeze and look broken when the user
+   navigates back:
+
+   ```go
+   case anim.StepMsg:
+       // Dispatch animation step to all chats that might have active animations.
+       if cmd := m.chat.Animate(msg); cmd != nil {
+           cmds = append(cmds, cmd)
+       }
+       for _, entry := range m.drillStack {
+           if cmd := entry.chat.Animate(msg); cmd != nil {
+               cmds = append(cmds, cmd)
+           }
+       }
+   ```
+
+   Note: `Chat.Animate()` already handles pausing off-screen animations
+   via `pausedAnimations`. Non-visible chats will have all items
+   "off-screen" and pause them — but their `anim.StepMsg` will still
+   cycle. This is acceptable overhead (each chat does a map lookup, finds
+   nothing visible, returns nil). If this becomes a perf concern, add an
+   `isActive bool` flag on Chat and skip entirely when inactive.
+
+5. [ ] Add `DrillInMsg` handler in the `Update()` switch:
 
    ```go
    case util.DrillInMsg:
        if msg.SessionID == "" {
            break
        }
-       // Create a new Chat for the drilled-in session.
        newChat := NewChat(m.com)
-       newChat.SetSize(m.layout.main.Dx(), m.layout.main.Dy())
+       newChat.SetSize(m.layout.main.Dx(), m.layout.main.Dy()-1) // -1 for breadcrumb
        newChat.SetFollow(true)
 
        m.drillStack = append(m.drillStack, drillInEntry{
@@ -381,50 +458,64 @@ go test ./internal/ui/chat/... -count=1
            label:     msg.Label,
        })
 
-       // Disable the editor (blur it, switch focus to main).
+       // Disable the editor.
        m.textarea.Blur()
        m.focus = uiFocusMain
 
-       // Load the child session's messages asynchronously.
-       cmds = append(cmds, m.loadDrillInMessages(msg.SessionID))
+       // Load child session messages + session metadata asynchronously.
+       cmds = append(cmds, m.loadDrillInSession(msg.SessionID))
    ```
 
-   Add the `loadDrillInMessages` method:
+   The `loadDrillInSession` cmd loads BOTH messages and session metadata
+   (fixing C1 from review):
+
    ```go
-   func (m *UI) loadDrillInMessages(sessionID string) tea.Cmd {
+   type drillInSessionLoadedMsg struct {
+       sessionID string
+       messages  []message.Message
+       session   *session.Session
+   }
+
+   func (m *UI) loadDrillInSession(sessionID string) tea.Cmd {
        return func() tea.Msg {
            msgs, err := m.com.Workspace.ListMessages(sessionID)
            if err != nil {
                return util.ReportError(err)
            }
-           return drillInMessagesLoadedMsg{
+           sess, err := m.com.Workspace.GetSession(sessionID)
+           if err != nil {
+               // Non-fatal — session stats won't be available.
+               return drillInSessionLoadedMsg{
+                   sessionID: sessionID,
+                   messages:  msgs,
+               }
+           }
+           return drillInSessionLoadedMsg{
                sessionID: sessionID,
                messages:  msgs,
+               session:   sess,
            }
        }
    }
    ```
 
-   Define `drillInMessagesLoadedMsg` as a private type in `ui.go`:
+   Handle it:
    ```go
-   type drillInMessagesLoadedMsg struct {
-       sessionID string
-       messages  []message.Message
-   }
-   ```
-
-   Handle it in `Update()`:
-   ```go
-   case drillInMessagesLoadedMsg:
-       // Find the matching drill stack entry.
-       for _, entry := range m.drillStack {
-           if entry.sessionID != msg.sessionID {
+   case drillInSessionLoadedMsg:
+       for i := range m.drillStack {
+           if m.drillStack[i].sessionID != msg.sessionID {
                continue
            }
-           // Convert messages to chat items and set them.
+           m.drillStack[i].session = msg.session
+
+           // Convert messages to chat items. Find and reuse the existing
+           // message-to-item conversion logic (search for how
+           // loadSessionMessages or the session load handler converts
+           // []message.Message → []chat.MessageItem).
            items := m.messagesToChatItems(msg.messages)
-           entry.chat.SetMessages(items...)
-           // Start animations for any running tools.
+           m.drillStack[i].chat.SetMessages(items...)
+
+           // Start animations.
            for _, item := range items {
                if a, ok := item.(chat.Animatable); ok {
                    if cmd := a.StartAnimation(); cmd != nil {
@@ -432,83 +523,27 @@ go test ./internal/ui/chat/... -count=1
                    }
                }
            }
-           if entry.chat.Follow() {
-               entry.chat.ScrollToBottom()
+
+           // Update nested tool IDs for any agent items.
+           for _, item := range items {
+               if ntc, ok := item.(chat.NestedToolContainer); ok {
+                   if tmi, ok := item.(chat.ToolMessageItem); ok {
+                       _ = ntc
+                       m.drillStack[i].chat.UpdateNestedToolIDs(tmi.ToolCall().ID)
+                   }
+               }
+           }
+
+           if m.drillStack[i].chat.Follow() {
+               m.drillStack[i].chat.ScrollToBottom()
            }
            break
        }
    ```
 
-   The `messagesToChatItems` method likely already exists in some form (used
-   for the main session load). Find and reuse it, or extract a shared
-   helper. Look for how `loadSessionMessages` or similar converts
-   `[]message.Message` to `[]chat.MessageItem`.
-
-6. [ ] Add `DrillBackMsg` handler (or handle `←` directly):
-
-   ```go
-   case util.DrillBackMsg:
-       if len(m.drillStack) > 0 {
-           m.drillStack = m.drillStack[:len(m.drillStack)-1]
-           // Re-enable editor if back at root.
-           if !m.isDrilledIn() {
-               cmds = append(cmds, m.textarea.Focus())
-               m.focus = uiFocusEditor
-           }
-       }
-   ```
-
-7. [ ] Add `←` key handling in the `uiFocusMain` switch block (lines
-   2004–2090). Add a new case BEFORE the `default` branch:
-
-   ```go
-   case key.Matches(msg, m.keyMap.Chat.PillLeft):
-       if m.isDrilledIn() {
-           m.drillStack = m.drillStack[:len(m.drillStack)-1]
-           if !m.isDrilledIn() {
-               // Back at root — re-enable editor.
-               cmds = append(cmds, m.textarea.Focus())
-               m.focus = uiFocusEditor
-           }
-       } else {
-           // Fall through to default for pill handling.
-           if ok, cmd := m.activeChat().HandleKeyMsg(msg); ok {
-               cmds = append(cmds, cmd)
-           } else {
-               handleGlobalKeys(msg)
-           }
-       }
-   ```
-
-   Wait — this conflicts with how the switch works. The `PillLeft` match
-   would always match `←`. Instead, handle it in the `default` branch:
-
-   In the `default` block (line 2084), before delegating to
-   `m.chat.HandleKeyMsg`:
-
-   ```go
-   default:
-       // Check for drill-back navigation.
-       if m.isDrilledIn() && key.Matches(msg, m.keyMap.Chat.PillLeft) {
-           m.drillStack = m.drillStack[:len(m.drillStack)-1]
-           if !m.isDrilledIn() {
-               cmds = append(cmds, m.textarea.Focus())
-               m.focus = uiFocusEditor
-           }
-           break  // from the inner switch
-       }
-       if ok, cmd := m.activeChat().HandleKeyMsg(msg); ok {
-           cmds = append(cmds, cmd)
-       } else {
-           handleGlobalKeys(msg)
-       }
-   ```
-
-   Actually, the issue is that there's already a switch/case structure here.
-   The `default` block in the existing `switch` at line 2004 uses a
-   `switch { case ...: }` pattern (not `switch msg { case ...: }`), so we
-   need to add a new `case` for the left-arrow-when-drilled-in condition.
-   Add it right before the `default:` at line 2084:
+6. [ ] Add `←` key handling. In the `uiFocusMain` switch block, add a
+   new case right before `default:` (line 2084). Since the switch uses
+   `switch { case ...: }` pattern, add:
 
    ```go
    case m.isDrilledIn() && key.Matches(msg, m.keyMap.Chat.PillLeft):
@@ -517,92 +552,88 @@ go test ./internal/ui/chat/... -count=1
            cmds = append(cmds, m.textarea.Focus())
            m.focus = uiFocusEditor
        }
+       m.updateLayoutAndSize() // recalculate for breadcrumb height change
    ```
 
-8. [ ] Modify `HandleDelayedClick` in `internal/ui/model/chat.go` (line
-   591) to check for `DrillInHandler` before `Expandable`:
+   No `DrillBackMsg` type needed — handle `←` directly per AGENTS.md
+   guidance ("Never use commands to send messages when you can directly
+   mutate children or state").
 
-   Find the section where it calls `ToggleExpanded()` on the selected item
-   after a single click. Before that check, add:
+7. [ ] Modify `HandleDelayedClick` in `internal/ui/model/chat.go` (line
+   591). Change return type from `bool` to `(bool, tea.Cmd)` to support
+   emitting `DrillInMsg`. Before the existing `Expandable` check, add:
 
    ```go
    if driller, ok := selectedItem.(chat.DrillInHandler); ok {
        sessionID := driller.DrillIn()
        if sessionID != "" {
-           return true  // or however the return works — need to emit DrillInMsg
+           cmd := func() tea.Msg {
+               return util.DrillInMsg{
+                   SessionID: sessionID,
+                   Label:     driller.DrillInLabel(),
+               }
+           }
+           return true, cmd
        }
    }
    ```
 
-   The challenge: `HandleDelayedClick` currently returns `bool`. It needs
-   to return a `tea.Cmd` to emit `DrillInMsg`. Check the current signature
-   and adjust. If it returns `bool`, change it to return `(bool, tea.Cmd)`
-   and update the caller in `ui.go` (line 708):
-
+   Update the caller in `ui.go` (line 708):
    ```go
-   // Before:
-   m.chat.HandleDelayedClick(msg)
+   // Before: m.chat.HandleDelayedClick(msg)
    // After:
-   if cmd := m.activeChat().HandleDelayedClick(msg); cmd != nil {
+   if _, cmd := m.activeChat().HandleDelayedClick(msg); cmd != nil {
        cmds = append(cmds, cmd)
    }
    ```
 
-9. [ ] Hide the editor when drilled in. In the `Draw()` method at line
-   2147 (`case uiChat:`), conditionally skip drawing the editor and pills:
+   Update all other callers of `HandleDelayedClick` to use the new
+   signature.
+
+8. [ ] **CRITICAL: Guard session lifecycle transitions.** Clear
+   `drillStack` whenever the session changes to prevent stale entries:
+
+   - In `newSession()` (search for it): add `m.clearDrillStack()` at the
+     top.
+   - In `loadSessionMsg` handler (search for it): add
+     `m.clearDrillStack()` before loading new session data.
+   - In session switch handler (from session dialog): add
+     `m.clearDrillStack()`.
+
+9. [ ] **Guard `handlePermissionNotification`** to search both root and
+   active chat. Find the method (search for `handlePermissionNotification`)
+   and where it calls `m.chat.MessageItem(notification.ToolCallID)`, also
+   check `m.activeChat()` if the first lookup returns nil:
 
    ```go
-   case uiChat:
-       if m.isCompact {
-           m.drawHeader(scr, layout.header)
-       } else {
-           m.drawSidebar(scr, layout.sidebar)
-       }
-
-       m.activeChat().Draw(scr, layout.main)
-
-       if !m.isDrilledIn() {
-           if layout.pills.Dy() > 0 && m.pillsView != "" {
-               uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
-           }
-           editorWidth := scr.Bounds().Dx()
-           if !m.isCompact {
-               editorWidth -= layout.sidebar.Dx()
-           }
-           editor := uv.NewStyledString(m.renderEditorView(editorWidth))
-           editor.Draw(scr, layout.editor)
-       }
+   item := m.chat.MessageItem(notification.ToolCallID)
+   if item == nil && m.isDrilledIn() {
+       item = m.activeChat().MessageItem(notification.ToolCallID)
+   }
    ```
 
-   Also adjust `generateLayout()` to give the editor's space to the main
-   area when drilled in (so the chat viewport is taller). This means
-   `layout.editor` should have zero height and `layout.main` should extend
-   to fill the space. Add a parameter or check `m.isDrilledIn()` in the
-   layout calculation.
+10. [ ] Hide editor and prevent input when drilled in. In `Draw()` at line
+    2147, conditionally skip editor and pills (see Task 4 for the full
+    Draw rewrite with breadcrumb). In key handling:
 
-10. [ ] Prevent input when drilled in. In the `uiFocusEditor` key handling
-    section, early-return if drilled in to prevent typing:
+    - `uiFocusEditor`: early-return if drilled in:
+      ```go
+      case uiFocusEditor:
+          if m.isDrilledIn() {
+              m.focus = uiFocusMain
+              break
+          }
+      ```
+    - `Tab` key (uiFocusMain → editor): skip if drilled in:
+      ```go
+      case key.Matches(msg, m.keyMap.Tab):
+          if m.isDrilledIn() { break }
+          m.focus = uiFocusEditor
+          // ...
+      ```
 
-    ```go
-    case uiFocusEditor:
-        if m.isDrilledIn() {
-            // Switch to main focus — editor is disabled while viewing a subagent.
-            m.focus = uiFocusMain
-            break
-        }
-        // ... existing editor handling
-    ```
-
-    Similarly, when `Tab` key switches from main to editor focus, skip if
-    drilled in:
-    ```go
-    case key.Matches(msg, m.keyMap.Tab):
-        if m.isDrilledIn() {
-            break
-        }
-        m.focus = uiFocusEditor
-        // ...
-    ```
+    Also adjust `generateLayout()` to give the editor's space to the main
+    area when drilled in (editor height = 0, main area expands).
 
 **Verify:**
 ```bash
@@ -612,20 +643,48 @@ go test ./internal/ui/... -count=1
 
 ---
 
-### Task 3: Pubsub Routing for Drilled-In View
+### Task 3: Pubsub Routing and Live Stats
 
 **Context:** `internal/ui/model/ui.go`
 
 **Files:**
-- Modify: `internal/ui/model/ui.go` (pubsub message routing, stats
-  updates, child session ID tracking)
+- Modify: `internal/ui/model/ui.go` (pubsub routing, stats updates,
+  refactored message append/update)
 
 **Steps:**
 
-1. [ ] In the `pubsub.Event[message.Message]` handler (line 611), add a
-   new routing branch BEFORE the existing `SessionID != m.session.ID` check.
-   When drilled in and the message matches the viewed session, route it to
-   the active chat:
+1. [ ] **Refactor `appendSessionMessage` and `updateSessionMessage` to
+   accept a `*Chat` parameter** (fixing C2 from review). These methods
+   currently hardcode `m.chat`. Extract the chat-specific logic:
+
+   ```go
+   // Before: func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd
+   // After:
+   func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd
+   ```
+
+   Keep the original as a thin wrapper:
+   ```go
+   func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
+       return m.appendSessionMessageToChat(m.chat, msg)
+   }
+   ```
+
+   Do the same for `updateSessionMessage` → `updateSessionMessageToChat`.
+
+   Inside the refactored methods, replace all `m.chat.` calls with the `c`
+   parameter. **Important:** guard auto-scroll to only fire when the target
+   chat is the active one (fixing I2):
+   ```go
+   // Only auto-scroll if this chat is currently visible.
+   if c == m.activeChat() && c.Follow() {
+       // scroll to bottom...
+   }
+   ```
+
+2. [ ] In the `pubsub.Event[message.Message]` handler (line 611), add
+   a new routing branch. Place `updateAgentItemStats` BEFORE the session
+   ID check so it runs for ALL child session messages:
 
    ```go
    case pubsub.Event[message.Message]:
@@ -633,25 +692,22 @@ go test ./internal/ui/... -count=1
            break
        }
 
-       // Route messages to the drilled-in Chat when viewing a subagent.
+       // Update stats on agent items for any child session message.
+       if msg.Payload.SessionID != m.session.ID {
+           m.updateAgentItemStats(msg.Payload.SessionID, msg)
+       }
+
+       // Route to drilled-in Chat when viewing a subagent.
        if m.isDrilledIn() && msg.Payload.SessionID == m.viewedSessionID() {
            switch msg.Type {
            case pubsub.CreatedEvent:
-               cmds = append(cmds, m.appendDrillInMessage(msg.Payload))
+               cmds = append(cmds, m.appendSessionMessageToChat(m.activeChat(), msg.Payload))
            case pubsub.UpdatedEvent:
-               cmds = append(cmds, m.updateDrillInMessage(msg.Payload))
+               cmds = append(cmds, m.updateSessionMessageToChat(m.activeChat(), msg.Payload))
            case pubsub.DeletedEvent:
                m.activeChat().RemoveMessage(msg.Payload.ID)
            }
-           // Auto-scroll if following.
-           if m.activeChat().Follow() {
-               if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
-                   cmds = append(cmds, cmd)
-               }
-               m.activeChat().SelectLast()
-           }
-           // Fall through — also update the root chat's collapsed view
-           // via handleChildSessionMessage below.
+           // Fall through to also update root chat's collapsed view.
        }
 
        if msg.Payload.SessionID != m.session.ID {
@@ -660,65 +716,25 @@ go test ./internal/ui/... -count=1
            }
            break
        }
-       // ... existing root session handling
+       // ... existing root session handling unchanged
    ```
 
-   The `appendDrillInMessage` and `updateDrillInMessage` methods mirror
-   `appendSessionMessage` and `updateSessionMessage` but operate on
-   `m.activeChat()` instead of `m.chat`. Extract the shared logic or
-   create thin wrappers.
-
-2. [ ] In `handleChildSessionMessage` (line 1212), set the
-   `childSessionID` on the agent item when first encountered. After finding
-   `agentItem` (line 1244), add:
-
-   ```go
-   // Set the child session ID on the agent item for drill-in navigation.
-   if setter, ok := agentItem.(interface{ SetChildSessionID(string) }); ok {
-       setter.SetChildSessionID(childSessionID)
-   }
-   ```
-
-3. [ ] In `handleChildSessionMessage`, update the stats tallies. After
-   updating nested tools (line 1289), increment counts:
-
-   ```go
-   // Update live stats on the agent item.
-   // Count new tool calls added this update.
-   newToolCalls := len(event.Payload.ToolCalls())
-   // Only count genuinely new ones (not updates to existing).
-   existingIDs := make(map[string]bool)
-   for _, t := range previousNestedTools {
-       existingIDs[t.ToolCall().ID] = true
-   }
-   newCount := 0
-   for _, tc := range event.Payload.ToolCalls() {
-       if !existingIDs[tc.ID] { newCount++ }
-   }
-   ```
-
-   For turn counting: increment when an assistant-role message is first
-   created (not updated). This requires checking `event.Type ==
-   pubsub.CreatedEvent` and `event.Payload.Role == "assistant"`. But
-   `handleChildSessionMessage` currently filters to tool-call/result
-   messages only (line 1216). The turn counting must happen elsewhere — in
-   the new drill-in routing branch (step 1), or via a separate counter.
-
-   Better approach: maintain turn and tool counts on the agent item, updated
-   from the drill-in pubsub routing. When a message arrives for a child
-   session:
-   - If it's a `CreatedEvent` with role `assistant` → increment turns
-   - If it has new tool calls → increment tool call count
-
-   This logic should run regardless of whether the user is drilled in.
-   Add a new method `updateAgentStats` called from both the drill-in
-   routing and `handleChildSessionMessage`:
+3. [ ] Implement `updateAgentItemStats`. This must search ALL chats (root
+   + drill stack) to find the parent agent item (fixing C3):
 
    ```go
    func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[message.Message]) {
        _, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
        if !ok { return }
+
+       // Search root chat and all drill stack chats for the parent item.
        item := m.chat.MessageItem(toolCallID)
+       if item == nil {
+           for _, entry := range m.drillStack {
+               item = entry.chat.MessageItem(toolCallID)
+               if item != nil { break }
+           }
+       }
        if item == nil { return }
 
        type statsUpdater interface {
@@ -728,55 +744,91 @@ go test ./internal/ui/... -count=1
        updater, ok := item.(statsUpdater)
        if !ok { return }
 
+       // Count assistant-role message creations as turns.
        if event.Type == pubsub.CreatedEvent && event.Payload.Role() == message.Assistant {
            updater.IncrementTurns()
        }
-       newToolCalls := len(event.Payload.ToolCalls())
-       if newToolCalls > 0 && event.Type == pubsub.CreatedEvent {
-           updater.IncrementToolCalls(newToolCalls)
+
+       // Count tool calls — track already-counted IDs to avoid double-counting
+       // on UpdatedEvent (tool calls appear on Created, get updated later).
+       type toolIDTracker interface {
+           CountedToolIDs() map[string]bool
+       }
+       if tracker, ok := item.(toolIDTracker); ok {
+           counted := tracker.CountedToolIDs()
+           newCount := 0
+           for _, tc := range event.Payload.ToolCalls() {
+               if !counted[tc.ID] {
+                   counted[tc.ID] = true
+                   newCount++
+               }
+           }
+           if newCount > 0 {
+               updater.IncrementToolCalls(newCount)
+           }
        }
    }
    ```
 
-   Call this from the top of the `pubsub.Event[message.Message]` handler,
-   for ALL child session messages (not just when drilled in):
-
+   Add `CountedToolIDs()` method to `AgentToolMessageItem`:
    ```go
-   if msg.Payload.SessionID != m.session.ID {
-       m.updateAgentItemStats(msg.Payload.SessionID, msg)
+   func (a *AgentToolMessageItem) CountedToolIDs() map[string]bool {
+       if a.countedToolIDs == nil {
+           a.countedToolIDs = make(map[string]bool)
+       }
+       return a.countedToolIDs
    }
    ```
 
-4. [ ] Add token/cost data to the stats line. The session's
-   `PromptTokens`, `CompletionTokens`, and `Cost` are available on the
-   `session.Session` struct. When the collapsed view renders, it needs
-   these. Options:
-   - Store them on the agent item (updated via `pubsub.Event[session.Session]`
-     handler at line 602).
-   - Query the session from the DB.
+4. [ ] In `handleChildSessionMessage` (line 1212), set the child session
+   ID and hasChildMessages flag on the agent item. After finding
+   `agentItem` (line 1244):
 
-   Use the pubsub session update path. In the
-   `pubsub.Event[session.Session]` handler (line 602), when the session
-   update is for a child session (not `m.session.ID`), update the agent
-   item's token/cost data. Add `tokens int64` and `cost float64` fields
-   to `AgentToolMessageItem` with setters. Update them when the child
-   session's pubsub event arrives:
+   ```go
+   type childSessionSetter interface {
+       SetChildSessionID(string)
+       SetHasChildMessages(bool)
+   }
+   if setter, ok := agentItem.(childSessionSetter); ok {
+       setter.SetChildSessionID(childSessionID)
+       setter.SetHasChildMessages(true)
+   }
+   ```
+
+5. [ ] Add token/cost updates via the session pubsub path. In the
+   `pubsub.Event[session.Session]` handler (line 602), update both drill
+   stack entries and agent items:
 
    ```go
    case pubsub.Event[session.Session]:
-       // ... existing root session handling ...
+       // Update drill stack session cache.
+       for i := range m.drillStack {
+           if m.drillStack[i].sessionID == msg.Payload.ID {
+               s := msg.Payload
+               m.drillStack[i].session = &s
+           }
+       }
 
-       // Update child session stats on agent items.
-       if msg.Payload.ID != m.session.ID {
+       // Update agent item token/cost stats for child sessions.
+       if m.session != nil && msg.Payload.ID != m.session.ID {
            m.updateAgentItemSessionStats(msg.Payload)
        }
+
+       // ... existing root session handling
    ```
 
    ```go
    func (m *UI) updateAgentItemSessionStats(s session.Session) {
        _, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(s.ID)
        if !ok { return }
+       // Search all chats.
        item := m.chat.MessageItem(toolCallID)
+       if item == nil {
+           for _, entry := range m.drillStack {
+               item = entry.chat.MessageItem(toolCallID)
+               if item != nil { break }
+           }
+       }
        if item == nil { return }
        type sessionStatsUpdater interface {
            SetTokens(int64)
@@ -802,13 +854,13 @@ go test ./internal/ui/... -count=1
 **Context:** `internal/ui/model/`
 
 **Files:**
-- Modify: `internal/ui/model/ui.go` (breadcrumb rendering + draw
+- Modify: `internal/ui/model/ui.go` (breadcrumb rendering, Draw
   integration)
 
 **Steps:**
 
-1. [ ] Add a `renderBreadcrumb` method on `UI` that builds the breadcrumb
-   string from the drill stack:
+1. [ ] Add a `renderBreadcrumb` method on `UI`. Use `ansi.Truncate` for
+   reliable truncation when the breadcrumb exceeds terminal width:
 
    ```go
    func (m *UI) renderBreadcrumb(width int) string {
@@ -822,36 +874,16 @@ go test ./internal/ui/... -count=1
            parts = append(parts, t.Breadcrumb.Label.Render(entry.label))
        }
        full := strings.Join(parts, sep)
-       // Truncate if too wide — keep the last segments visible.
+       // Simple truncation — keep as much as fits, add ellipsis.
        if ansi.StringWidth(full) > width {
-           // Show "… > last two entries" at minimum.
-           for len(parts) > 2 {
-               parts = append([]string{parts[0], t.Breadcrumb.Sep.Render("…")}, parts[len(parts)-1:]...)
-               full = strings.Join(parts, sep)
-               if ansi.StringWidth(full) <= width { break }
-               parts = parts[1:]  // drop from front
-           }
+           full = ansi.Truncate(full, width-1, "…")
        }
        return full
    }
    ```
 
-2. [ ] Add breadcrumb styles to `internal/ui/styles/styles.go`:
-
-   ```go
-   Breadcrumb struct {
-       Root  lipgloss.Style  // "Main" label style
-       Label lipgloss.Style  // subagent label style
-       Sep   lipgloss.Style  // ">" separator style
-       Bar   lipgloss.Style  // background bar style
-   }
-   ```
-
-   Initialize with appropriate colors — Root bold, Label normal, Sep muted.
-
-3. [ ] Integrate breadcrumb into the Draw pipeline. In `Draw()` at line
-   2147, when drilled in, draw the breadcrumb above the chat area. Adjust
-   the layout to allocate one line for the breadcrumb:
+2. [ ] Integrate breadcrumb into Draw. In `Draw()` at line 2147, rewrite
+   the `uiChat` case:
 
    ```go
    case uiChat:
@@ -862,16 +894,14 @@ go test ./internal/ui/... -count=1
        }
 
        if m.isDrilledIn() {
-           // Draw breadcrumb at top of main area.
            breadcrumb := m.renderBreadcrumb(layout.main.Dx())
-           bcHeight := lipgloss.Height(breadcrumb)
+           bcHeight := max(lipgloss.Height(breadcrumb), 1)
            bcArea := image.Rect(
                layout.main.Min.X, layout.main.Min.Y,
                layout.main.Max.X, layout.main.Min.Y+bcHeight,
            )
            uv.NewStyledString(breadcrumb).Draw(scr, bcArea)
 
-           // Draw chat below breadcrumb.
            chatArea := image.Rect(
                layout.main.Min.X, layout.main.Min.Y+bcHeight,
                layout.main.Max.X, layout.main.Max.Y,
@@ -879,23 +909,20 @@ go test ./internal/ui/... -count=1
            m.activeChat().Draw(scr, chatArea)
        } else {
            m.activeChat().Draw(scr, layout.main)
+           if layout.pills.Dy() > 0 && m.pillsView != "" {
+               uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
+           }
+           editorWidth := scr.Bounds().Dx()
+           if !m.isCompact {
+               editorWidth -= layout.sidebar.Dx()
+           }
+           editor := uv.NewStyledString(m.renderEditorView(editorWidth))
+           editor.Draw(scr, layout.editor)
        }
-       // ... rest of draw
-   ```
 
-   Note: The chat's `SetSize` in `updateSize()` should account for the
-   breadcrumb height when drilled in. Alternatively, just draw into the
-   sub-rectangle and let the chat render at whatever size it gets. The
-   simplest approach is to adjust the draw area at render time (as above)
-   and set the chat size to match:
-
-   In `updateSize()`:
-   ```go
-   chatHeight := m.layout.main.Dy()
-   if m.isDrilledIn() {
-       chatHeight -= 1 // breadcrumb line
-   }
-   m.activeChat().SetSize(m.layout.main.Dx(), chatHeight)
+       if m.isCompact && m.detailsOpen {
+           m.drawSessionDetails(scr, layout.sessionDetails)
+       }
    ```
 
 **Verify:**
@@ -906,114 +933,62 @@ go test ./internal/ui/... -count=1
 
 ---
 
-### Task 5: Sidebar Enhancements and Elapsed Time
+### Task 5: Sidebar Enhancements and Elapsed Time Tick
 
 **Context:** `internal/ui/model/`, `internal/ui/common/`
 
 **Files:**
-- Modify: `internal/ui/model/sidebar.go` (extended stats, session-aware)
+- Modify: `internal/ui/model/sidebar.go` (session-aware modelInfo)
 - Modify: `internal/ui/model/ui.go` (elapsed time tick lifecycle)
-- Modify: `internal/ui/common/elements.go` (new helper functions)
+- Modify: `internal/ui/common/elements.go` (formatDuration helper)
 
 **Steps:**
 
-1. [ ] Modify `modelInfo()` in `sidebar.go` (line 17) to be session-aware.
-   When drilled in, show the subagent's model, tokens, and cost instead of
-   the main session's. The subagent's session can be loaded from the DB:
+1. [ ] Modify `modelInfo()` in `sidebar.go` to be session-aware. Use the
+   cached session from the drill stack (no IO in Draw):
 
    ```go
    func (m *UI) modelInfo(width int) string {
-       // Determine which session's data to show.
-       var tokens int64
-       var cost float64
+       // Determine which session to show stats for.
+       var sess *session.Session
        if m.isDrilledIn() {
-           // For drilled-in sessions, use cached stats from the agent item.
-           // Or load the session from the DB.
-           sid := m.viewedSessionID()
-           if s, err := m.com.Workspace.GetSession(sid); err == nil {
-               tokens = s.PromptTokens + s.CompletionTokens
-               cost = s.Cost
-           }
-       } else if m.session != nil {
-           tokens = m.session.PromptTokens + m.session.CompletionTokens
-           cost = m.session.Cost
+           entry := m.drillStack[len(m.drillStack)-1]
+           sess = entry.session
+       } else {
+           sess = m.session
        }
-       // ... rest of model info rendering, using tokens and cost
-   ```
-
-   Wait — `GetSession` would be I/O in `View`/`Draw`, which violates the
-   "never do IO in Update" rule (and Draw is even worse). Instead, cache
-   the subagent session data. When drill-in happens, load the session and
-   store it. When session update pubsub events arrive for the viewed
-   session, update the cached data.
-
-   Better approach: Add a `viewedSession *session.Session` field that's
-   populated when drilling in (from the `loadDrillInMessages` cmd) and
-   updated via the `pubsub.Event[session.Session]` handler:
-
-   ```go
-   // In drillInEntry, add:
-   type drillInEntry struct {
-       sessionID string
-       chat      *Chat
-       label     string
-       session   *session.Session // cached session for sidebar stats
-   }
-   ```
-
-   In the session pubsub handler:
-   ```go
-   case pubsub.Event[session.Session]:
-       // Update drill stack entries if applicable.
-       for i := range m.drillStack {
-           if m.drillStack[i].sessionID == msg.Payload.ID {
-               s := msg.Payload
-               m.drillStack[i].session = &s
-           }
+       if sess == nil {
+           // Fallback to m.session for model info.
+           sess = m.session
        }
-       // ... existing handling
+       // Use sess.PromptTokens, sess.CompletionTokens, sess.Cost
+       // for the ModelContextInfo instead of always m.session.
+       // ... adapt existing logic to use sess
    ```
 
-   In `drillInMessagesLoadedMsg` handler, also load and cache the session:
-   ```go
-   // Include the session in the loaded message.
-   type drillInMessagesLoadedMsg struct {
-       sessionID string
-       messages  []message.Message
-       session   *session.Session
-   }
-   ```
-
-   Then `modelInfo` reads from `m.drillStack[top].session` when drilled in.
-
-2. [ ] Add turns and tool call count to the sidebar `modelInfo` output.
-   Below the token/cost line, add:
+2. [ ] Add turns and tool call count below the token/cost line in
+   `modelInfo`. Derive from `m.activeChat()` items:
 
    ```go
-   // After the context info...
-   if turnsCount > 0 || toolCallCount > 0 {
-       statsLine := fmt.Sprintf("%d turns · %d tools", turnsCount, toolCallCount)
+   turns, toolCalls := m.viewedSessionStats()
+   if turns > 0 || toolCalls > 0 {
+       statsLine := fmt.Sprintf("%d turns · %d tools", turns, toolCalls)
        parts = append(parts, t.ModelInfo.Stats.Render(statsLine))
    }
    ```
 
-   For the root session, derive these from the chat items. For subagent
-   sessions, derive from the drilled-in chat items or the cached agent item
-   stats. Add a helper:
-
    ```go
    func (m *UI) viewedSessionStats() (turns, toolCalls int) {
-       chat := m.activeChat()
-       for i := range chat.Len() {
-           item, ok := chat.list.ItemAt(i).(chat.MessageItem)
-           if !ok { continue }
+       c := m.activeChat()
+       for i := range c.Len() {
+           item := c.ItemAt(i)
+           if item == nil { continue }
            // Count assistant messages as turns.
            if _, ok := item.(*chat.AssistantMessageItem); ok {
                turns++
            }
-           // Count tool calls.
-           if tmi, ok := item.(chat.ToolMessageItem); ok {
-               _ = tmi
+           // Count tool message items as tool calls.
+           if _, ok := item.(chat.ToolMessageItem); ok {
                toolCalls++
            }
        }
@@ -1021,39 +996,58 @@ go test ./internal/ui/... -count=1
    }
    ```
 
-3. [ ] Add elapsed time for subagent sessions. When viewing a subagent,
-   show elapsed time below the stats. Use `session.CreatedAt` and either
-   `time.Now()` (running) or `session.UpdatedAt` (completed):
+   Note: `Chat` may need an `ItemAt(i)` method exposed, or use the list
+   directly. Check what's available and add a thin wrapper if needed.
+
+3. [ ] Add elapsed time for subagent sessions. Use the agent item's
+   `ToolStatus` to determine if still running (fixing I7 — no time-based
+   heuristic):
 
    ```go
    if m.isDrilledIn() {
        entry := m.drillStack[len(m.drillStack)-1]
        if entry.session != nil {
-           elapsed := m.formatElapsedTime(entry.session)
-           parts = append(parts, t.ModelInfo.Elapsed.Render(elapsed))
+           start := time.Unix(entry.session.CreatedAt, 0)
+           // Determine if running by checking the parent agent item's status.
+           isRunning := m.isViewedSubagentRunning()
+           var d time.Duration
+           if isRunning {
+               d = time.Since(start)
+           } else {
+               d = time.Unix(entry.session.UpdatedAt, 0).Sub(start)
+           }
+           parts = append(parts, t.ModelInfo.Elapsed.Render(common.FormatDuration(d)))
        }
    }
    ```
 
+   Add `isViewedSubagentRunning()`:
    ```go
-   func (m *UI) formatElapsedTime(s *session.Session) string {
-       start := time.Unix(s.CreatedAt, 0)
-       var d time.Duration
-       // Check if session is still active (heuristic: no completion yet,
-       // or last update was very recent).
-       // For now, use UpdatedAt if it differs from CreatedAt by a meaningful amount,
-       // otherwise use time.Now().
-       end := time.Unix(s.UpdatedAt, 0)
-       if time.Since(end) < 5*time.Second {
-           // Likely still running — use now.
-           d = time.Since(start)
-       } else {
-           d = end.Sub(start)
+   func (m *UI) isViewedSubagentRunning() bool {
+       if !m.isDrilledIn() { return false }
+       sid := m.viewedSessionID()
+       _, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(sid)
+       if !ok { return false }
+       item := m.chat.MessageItem(toolCallID)
+       if item == nil {
+           // Search parent drill stack entries.
+           for i := len(m.drillStack) - 2; i >= 0; i-- {
+               item = m.drillStack[i].chat.MessageItem(toolCallID)
+               if item != nil { break }
+           }
        }
-       return formatDuration(d)
+       if tmi, ok := item.(chat.ToolMessageItem); ok {
+           return tmi.Status() == chat.ToolStatusRunning
+       }
+       return false
    }
+   ```
 
-   func formatDuration(d time.Duration) string {
+4. [ ] Add `FormatDuration` to `internal/ui/common/elements.go`:
+
+   ```go
+   // FormatDuration formats a duration compactly: 14s, 2m30s, 1h5m.
+   func FormatDuration(d time.Duration) string {
        d = d.Round(time.Second)
        if d < time.Minute {
            return fmt.Sprintf("%ds", int(d.Seconds()))
@@ -1061,6 +1055,9 @@ go test ./internal/ui/... -count=1
        if d < time.Hour {
            m := int(d.Minutes())
            s := int(d.Seconds()) % 60
+           if s == 0 {
+               return fmt.Sprintf("%dm", m)
+           }
            return fmt.Sprintf("%dm%ds", m, s)
        }
        h := int(d.Hours())
@@ -1069,8 +1066,7 @@ go test ./internal/ui/... -count=1
    }
    ```
 
-4. [ ] Implement the elapsed time tick. Add a `tickElapsedTimeMsg` type
-   and the tick command:
+5. [ ] Implement the elapsed time tick. Add types and handler:
 
    ```go
    type tickElapsedTimeMsg struct{}
@@ -1082,53 +1078,56 @@ go test ./internal/ui/... -count=1
    }
    ```
 
-   Handle it in `Update()`:
+   Handler in `Update()`:
    ```go
    case tickElapsedTimeMsg:
-       // Re-render the sidebar/stats for elapsed time updates.
-       // Re-schedule if any subagent is still running.
-       if m.hasRunningSubagents() || (m.isDrilledIn() && m.isViewedSubagentRunning()) {
+       shouldContinue := m.hasRunningSubagents() ||
+           (m.isDrilledIn() && m.isViewedSubagentRunning())
+       if shouldContinue {
            cmds = append(cmds, tickElapsedTime())
+       } else {
+           m.elapsedTickRunning = false
        }
-       // Invalidate cached renders on running agent items so stats line updates.
+       // Invalidate agent item caches so elapsed time updates.
        m.invalidateRunningAgentCaches()
    ```
 
-   Start the tick when a subagent spawns (in `handleChildSessionMessage`
-   when the first message arrives for a new agent tool session):
+   Start the tick in `handleChildSessionMessage` when the first child
+   message arrives for any agent:
    ```go
-   // If this is the first message for this agent, start the elapsed tick.
    if !m.elapsedTickRunning {
        m.elapsedTickRunning = true
        cmds = append(cmds, tickElapsedTime())
    }
    ```
 
-   Add `elapsedTickRunning bool` to `UI` struct. Set it to false in the
-   `tickElapsedTimeMsg` handler when no running subagents remain.
-
-   Add helper:
    ```go
    func (m *UI) hasRunningSubagents() bool {
        for i := range m.chat.Len() {
-           item, ok := m.chat.list.ItemAt(i).(chat.ToolMessageItem)
-           if !ok { continue }
-           if _, ok := item.(chat.NestedToolContainer); !ok { continue }
-           if item.Status() == chat.ToolStatusRunning {
-               return true
+           if item, ok := m.chat.ItemAt(i).(chat.ToolMessageItem); ok {
+               if _, isAgent := item.(chat.NestedToolContainer); isAgent {
+                   if item.Status() == chat.ToolStatusRunning {
+                       return true
+                   }
+               }
            }
        }
        return false
    }
-   ```
 
-5. [ ] Add new styles for sidebar stats and elapsed time to
-   `styles/styles.go`:
-
-   ```go
-   // Inside ModelInfo struct:
-   Stats   lipgloss.Style  // for "3 turns · 12 tools" line
-   Elapsed lipgloss.Style  // for elapsed time
+   func (m *UI) invalidateRunningAgentCaches() {
+       for i := range m.chat.Len() {
+           if item, ok := m.chat.ItemAt(i).(chat.ToolMessageItem); ok {
+               if _, isAgent := item.(chat.NestedToolContainer); isAgent {
+                   if item.Status() == chat.ToolStatusRunning {
+                       if cached, ok := item.(interface{ ClearCache() }); ok {
+                           cached.ClearCache()
+                       }
+                   }
+               }
+           }
+       }
+   }
    ```
 
 **Verify:**
@@ -1144,33 +1143,14 @@ go test ./internal/ui/... -count=1
 **Context:** `internal/ui/chat/`, `internal/ui/anim/`
 
 **Files:**
-- Modify: `internal/ui/chat/agent.go` (icon state logic)
-- Modify: `internal/ui/chat/tools.go` (toolHeader icon selection)
+- Modify: `internal/ui/chat/agent.go` (icon state logic, anim setup)
+- Modify: `internal/ui/chat/tools.go` (toolHeader icon selection, if needed)
 
 **Steps:**
 
-1. [ ] The current icon states use `ToolPending` (●) while running and
-   `ToolSuccess`/`ToolError` when done. The spec requires:
-   - **Spawned:** MiniDot braille spinner (⠋⠙⠹...)
-   - **Working:** Single-char shimmer (`anim.Anim` Size:1)
-   - **Done:** ✓ or ×
+1. [ ] Modify `NewAgentToolMessageItem` to use `Size: 1` for the animation
+   (single-char shimmer for the Working state):
 
-   The transition from Spawned → Working happens when the first child
-   session message arrives. Track this on the agent item:
-
-   ```go
-   // Add to AgentToolMessageItem:
-   hasChildMessages bool
-   ```
-
-   Set `hasChildMessages = true` in `handleChildSessionMessage` when
-   updating the agent item (alongside `SetChildSessionID`).
-
-2. [ ] Modify the animation setup. Currently, `newBaseToolMessageItem`
-   creates an `anim.Anim` with default settings. For agent tool items,
-   override with `Size: 1`:
-
-   In `NewAgentToolMessageItem`:
    ```go
    t.anim = anim.New(anim.Settings{
        ID:   t.ID(),
@@ -1178,40 +1158,32 @@ go test ./internal/ui/... -count=1
    })
    ```
 
-   This gives the single-char shimmer for the Working state.
+   Same for `NewAgenticFetchToolMessageItem`.
 
-3. [ ] For the Spawned state (before any child messages), use a
-   `spinner.MiniDot`. Add a `spinner spinner.Model` field to
-   `AgentToolMessageItem`. Initialize it in the constructor. The spinner
-   needs to tick — when the item starts animation, start the spinner.
+2. [ ] In `AgentToolRenderContext.RenderTool()`, use the `hasChildMessages`
+   field to select the icon:
 
-   Actually, the existing `anim.Anim` is already used for the spinning
-   state. The distinction between Spawned and Working is about WHICH
-   animation plays. Simplest approach: use the existing `anim.Anim` for
-   both states but change the rendered character set. Or use a conditional
-   in the render:
+   - `!hasResult && !isCanceled && !hasChildMessages`: Spawned state →
+     render static `SpinnerIcon` (⋯) via `sty.Tool.IconPending`
+   - `!hasResult && !isCanceled && hasChildMessages`: Working state →
+     render `opts.Anim.Render()` (single-char shimmer)
+   - `hasResult && isError`: Error → `ToolError` (×)
+   - `hasResult && !isError`: Success → `ToolSuccess` (✓)
 
-   In `RenderTool`, when rendering the status icon:
-   ```go
-   if !opts.HasResult() && !opts.IsCanceled() {
-       if r.agent.hasChildMessages {
-           // Working state — single-char shimmer (from anim.Anim Size:1)
-           icon = opts.Anim.Render()
-       } else {
-           // Spawned state — braille spinner
-           icon = sty.Tool.IconPending.Render(styles.SpinnerIcon)
-           // Or use the MiniDot spinner character
-       }
-   }
-   ```
+   Modify the `toolHeader` call or construct the icon manually before
+   passing to the header builder. If `toolHeader` doesn't support custom
+   icon injection, either modify it or build the header string directly
+   in `RenderTool`.
 
-   The simplest implementation: use the existing spinner icon (⋯) for
-   spawned state and the `anim.Anim` shimmer for working state. The
-   `toolHeader` function already handles the icon based on status — modify
-   it to accept an extra parameter or have the agent render context supply
-   the icon directly.
+3. [ ] Apply the same icon logic to `AgenticFetchToolRenderContext.RenderTool()`.
 
-4. [ ] Apply the same icon state logic to `AgenticFetchToolMessageItem`.
+4. [ ] Ensure the `spinningFunc` still works correctly. Currently it
+   returns `true` when `!HasResult() && !IsCanceled()`. The Spawned state
+   uses a static icon, not the anim — but `spinningFunc` controls whether
+   `baseToolMessageItem.isSpinning()` returns true, which affects
+   `StartAnimation()`. The animation should still start at creation time
+   (so it's ready when `hasChildMessages` flips), but the render just
+   chooses which visual to show.
 
 **Verify:**
 ```bash
@@ -1221,23 +1193,89 @@ go test ./internal/ui/chat/... -count=1
 
 ---
 
+### Task 7: Tests for Drill-In State Machine
+
+**Context:** `internal/ui/model/`
+
+**Files:**
+- Create or modify: `internal/ui/model/drill_test.go`
+
+**Steps:**
+
+1. [ ] Write unit tests for the state helpers:
+   - `activeChat()` returns `m.chat` when stack is empty, top entry when
+     non-empty
+   - `viewedSessionID()` returns root ID when empty, top entry ID when
+     non-empty
+   - `isDrilledIn()` reflects stack state
+   - `clearDrillStack()` empties the stack
+
+2. [ ] Write tests for breadcrumb rendering:
+   - Single level: `"Main > Explorer: Search auth"`
+   - Two levels: `"Main > Explorer: Search auth > Fixer: Update tests"`
+   - Truncation at narrow widths
+   - Empty when not drilled in
+
+3. [ ] Write tests for `FormatDuration`:
+   - Seconds: `14s`
+   - Minutes+seconds: `2m30s`
+   - Hours+minutes: `1h5m`
+   - Edge cases: 0s, exactly 1m, exactly 1h
+
+4. [ ] Write tests for `formatStatsLine`:
+   - Zero values: `0 turns · 0 tools`
+   - Normal values
+   - Token formatting: k/M suffixes
+   - Narrow width abbreviation
+
+**Verify:**
+```bash
+go test ./internal/ui/model/... -count=1 -run TestDrill
+go test ./internal/ui/common/... -count=1 -run TestFormatDuration
+```
+
+---
+
 ## Execution Order
 
 ```
 Task 1 (Chat Layer: interfaces, types, collapsed rendering)
     ↓
-Task 2 (Core: state model, navigation, editor disable)
+Task 2 (Core: state model, navigation, editor disable, lifecycle guards)
     ↓
-Task 3 (Pubsub routing, stats updates)
+Task 3 (Pubsub routing, refactored message methods, live stats)
     ↓
 Task 4 (Breadcrumb bar)  ←→  Task 5 (Sidebar + elapsed tick)  [parallel possible]
     ↓                              ↓
-Task 6 (Icon state transitions)  — last, depends on stats fields from Task 3
+Task 6 (Icon state transitions)
+    ↓
+Task 7 (Tests)
 ```
 
-Tasks 4 and 5 touch different files (breadcrumb is in ui.go Draw,
-sidebar is in sidebar.go) but Task 5's tick handler is in ui.go. If
-parallelizing, ensure Task 5's ui.go changes don't conflict with Task 4's
-ui.go Draw changes.
+Tasks 4 and 5 can potentially run in parallel — Task 4 modifies the
+`Draw()` method in `ui.go`, Task 5 modifies `sidebar.go` + adds tick
+handlers in `ui.go`. If parallelizing, coordinate on the `Draw()` block
+to avoid conflicts.
 
-<!-- Review notes: TBD — will be populated after devil's advocate review -->
+<!-- Review notes:
+Devil's advocate review caught 6 critical and 7 important issues.
+All addressed:
+- C1: loadDrillInSession now loads both messages and session metadata
+- C2: appendSessionMessage/updateSessionMessage refactored to accept *Chat
+- C3: updateAgentItemStats searches all chats (root + drill stack)
+- C4: Stale drill-in messages safely ignored (entry not found in stack)
+- C5: Animation dispatch to ALL chats, not just active
+- C6: clearDrillStack() called on newSession, loadSession, session switch
+- I1: ALL mouse handlers (motion, drag, up, wheel) included in replacement list
+- I2: Auto-scroll guarded to only fire when target chat is active
+- I3: Tool call counting uses countedToolIDs map to handle UpdatedEvent
+- I4: DrillInLabel uses shared agentBreadcrumbLabel helper
+- I5: HandleDelayedClick returns (bool, tea.Cmd)
+- I6: Breadcrumb truncation uses ansi.Truncate (simple, reliable)
+- I7: Elapsed time uses ToolStatus, not time heuristic
+- M3: DrillBackMsg removed, ← handled directly
+- M4: refreshStyles invalidates drill stack caches
+- M5: Task 7 added for tests
+- M6: UpdateNestedToolIDs called for drill-in chat items
+- M7: handlePermissionNotification searches both chats
+-->
