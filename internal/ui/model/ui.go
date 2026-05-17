@@ -2644,9 +2644,10 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			)
 			uv.NewStyledString(breadcrumb).Draw(scr, bcArea)
 
-			// Render the drill-in chat below the breadcrumb.
+			// Render the drill-in chat below the breadcrumb with a
+			// 1-line margin separating them.
 			chatArea := image.Rect(
-				layout.main.Min.X, layout.main.Min.Y+bcHeight,
+				layout.main.Min.X, layout.main.Min.Y+bcHeight+1,
 				layout.main.Max.X, layout.main.Max.Y,
 			)
 			m.activeChat().Draw(scr, chatArea)
@@ -3083,7 +3084,7 @@ func (m *UI) updateSize() {
 	for i, entry := range m.drillStack {
 		h := chatHeight
 		if i == len(m.drillStack)-1 {
-			h = max(0, chatHeight-1) // breadcrumb line
+			h = max(0, chatHeight-2) // breadcrumb line + margin
 		}
 		entry.chat.SetSize(chatWidth, h)
 	}
@@ -3207,8 +3208,11 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			).Split(appRect).Assign(&sessionDetailsArea, new(image.Rectangle))
 			uiLayout.sessionDetails = sessionDetailsArea
 			uiLayout.sessionDetails.Min.Y += compactHeaderHeight // adjust for header
-			// Add one line gap between header and main content
-			mainRect.Min.Y += 1
+			// Add one line gap between header and main content, unless the
+			// breadcrumb is present — it visually connects to the header.
+			if !m.isDrilledIn() {
+				mainRect.Min.Y += 1
+			}
 			var editorRect image.Rectangle
 			layout.Vertical(
 				layout.Len(mainRect.Dy()-editorHeight),
