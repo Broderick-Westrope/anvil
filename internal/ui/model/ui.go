@@ -546,6 +546,7 @@ func (m *UI) isDrilledIn() bool {
 // clearDrillStack pops all drill-in entries and restores root state.
 func (m *UI) clearDrillStack() {
 	m.drillStack = nil
+	m.elapsedTickRunning = false
 }
 
 // findMessageItem searches the root chat and all drill-stack chats for
@@ -1671,7 +1672,7 @@ func (m *UI) loadDrillInSession(sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		msgs, err := ws.ListMessages(context.Background(), sessionID)
 		if err != nil {
-			return util.ReportError(err)
+			return util.ReportError(err)()
 		}
 		sess, err := ws.GetSession(context.Background(), sessionID)
 		if err != nil {
@@ -2190,20 +2191,20 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 				return true
 			}
-	case key.Matches(msg, m.keyMap.Chat.PillLeft):
-		if m.state == uiChat && m.hasSession() && m.pillsExpanded && m.focus != uiFocusEditor && !m.isDrilledIn() {
-			if cmd := m.switchPillSection(-1); cmd != nil {
-				cmds = append(cmds, cmd)
+		case key.Matches(msg, m.keyMap.Chat.PillLeft):
+			if m.state == uiChat && m.hasSession() && m.pillsExpanded && m.focus != uiFocusEditor && !m.isDrilledIn() {
+				if cmd := m.switchPillSection(-1); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return true
 			}
-			return true
-		}
-	case key.Matches(msg, m.keyMap.Chat.PillRight):
-		if m.state == uiChat && m.hasSession() && m.pillsExpanded && m.focus != uiFocusEditor && !m.isDrilledIn() {
-			if cmd := m.switchPillSection(1); cmd != nil {
-				cmds = append(cmds, cmd)
+		case key.Matches(msg, m.keyMap.Chat.PillRight):
+			if m.state == uiChat && m.hasSession() && m.pillsExpanded && m.focus != uiFocusEditor && !m.isDrilledIn() {
+				if cmd := m.switchPillSection(1); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return true
 			}
-			return true
-		}
 		case key.Matches(msg, m.keyMap.Suspend):
 			if m.isAgentBusy() {
 				cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))

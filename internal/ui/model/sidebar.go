@@ -92,8 +92,6 @@ func (m *UI) modelInfo(width int) string {
 	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, m.hyperCredits, extraLines...)
 }
 
-
-
 // viewedSessionStats returns the turn and tool-call counts for the session
 // currently shown in the chat pane.
 //
