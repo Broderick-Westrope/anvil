@@ -175,6 +175,14 @@ type Styles struct {
 		WorkingDir   lipgloss.Style // Working directory path (PrettyPath)
 	}
 
+	// Breadcrumb styles the navigation breadcrumb bar shown when drilled
+	// into a subagent session.
+	Breadcrumb struct {
+		Root  lipgloss.Style // "Main" root label — bold
+		Label lipgloss.Style // Subagent breadcrumb label — normal weight
+		Sep   lipgloss.Style // ">" separator between segments — muted
+	}
+
 	// ModelInfo (model name, provider, reasoning, token/cost summary)
 	ModelInfo struct {
 		Icon             lipgloss.Style // Model icon (◇)
@@ -187,6 +195,8 @@ type Styles struct {
 		Cost             lipgloss.Style // "$0.42" cost readout
 		HypercreditIcon  lipgloss.Style // Hypercredit icon (◆)
 		HypercreditText  lipgloss.Style // Remaining Hypercredits text
+		Stats            lipgloss.Style // "3 turns · 12 tools" sidebar stats line
+		Elapsed          lipgloss.Style // Elapsed time display for subagent sessions
 	}
 
 	// Resource styles the LSP/MCP/skills sidebar lists: their heading,
@@ -351,6 +361,10 @@ type Styles struct {
 		ResultTruncation lipgloss.Style // "… and N more" truncation line
 		ResultItemName   lipgloss.Style // Item name (left column in result lists)
 		ResultItemDesc   lipgloss.Style // Item description (right column)
+
+		// Collapsed agent stats line.
+		StatsLine lipgloss.Style // Dim/muted text for the stats line values
+		StatsSep  lipgloss.Style // "·" separator between stats segments
 	}
 
 	// Dialog styles

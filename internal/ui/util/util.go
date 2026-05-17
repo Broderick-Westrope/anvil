@@ -71,6 +71,12 @@ type (
 		TTL  time.Duration
 	}
 	ClearStatusMsg struct{}
+
+	// DrillInMsg requests the UI to drill into a subagent session.
+	DrillInMsg struct {
+		SessionID string
+		Label     string
+	}
 )
 
 // IsEmpty checks if the [InfoMsg] is empty.

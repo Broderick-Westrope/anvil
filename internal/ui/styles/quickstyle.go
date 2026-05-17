@@ -657,6 +657,10 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Tool.ResultItemName = lipgloss.NewStyle().Foreground(o.fgBase)
 	s.Tool.ResultItemDesc = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 
+	// Collapsed agent stats line.
+	s.Tool.StatsLine = muted
+	s.Tool.StatsSep = subtle
+
 	// Buttons
 	s.Button.Focused = lipgloss.NewStyle().Foreground(o.onPrimary).Background(o.secondary)
 	s.Button.Blurred = lipgloss.NewStyle().Foreground(o.fgBase).Background(o.bgLessVisible)
@@ -724,6 +728,11 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Sidebar.SessionTitle = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.Sidebar.WorkingDir = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 
+	// Breadcrumb navigation bar (shown when drilled into a subagent).
+	s.Breadcrumb.Root = lipgloss.NewStyle().Foreground(o.fgBase).Bold(true)
+	s.Breadcrumb.Label = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.Breadcrumb.Sep = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+
 	// ModelInfo
 	s.ModelInfo.Icon = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 	s.ModelInfo.Name = lipgloss.NewStyle().Foreground(o.fgBase)
@@ -735,6 +744,8 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.ModelInfo.Cost = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.ModelInfo.HypercreditIcon = lipgloss.NewStyle().Foreground(charmtone.Dolly)
 	s.ModelInfo.HypercreditText = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.ModelInfo.Stats = lipgloss.NewStyle().Foreground(o.fgMostSubtle).PaddingLeft(2)
+	s.ModelInfo.Elapsed = lipgloss.NewStyle().Foreground(o.fgMostSubtle).PaddingLeft(2)
 
 	// ResourceGroup
 	s.Resource.DefaultTitleFg = o.fgMoreSubtle

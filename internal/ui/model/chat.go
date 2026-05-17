@@ -10,6 +10,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/clipperhouse/displaywidth"
@@ -105,6 +106,11 @@ func (m *Chat) SetSize(width, height int) {
 // Len returns the number of items in the chat list.
 func (m *Chat) Len() int {
 	return m.list.Len()
+}
+
+// ItemAt returns the list item at the given index, or nil if out of bounds.
+func (m *Chat) ItemAt(i int) list.Item {
+	return m.list.ItemAt(i)
 }
 
 // InvalidateRenderCaches drops cached rendered output on every message
@@ -264,6 +270,12 @@ func (m *Chat) AtBottom() bool {
 // bottom on new messages).
 func (m *Chat) Follow() bool {
 	return m.follow
+}
+
+// SetFollow sets whether the chat view should auto-scroll to bottom on new
+// messages.
+func (m *Chat) SetFollow(v bool) {
+	m.follow = v
 }
 
 // ScrollToBottom scrolls the chat view to the bottom.
@@ -589,22 +601,37 @@ func (m *Chat) HandleMouseDown(x, y int) (bool, tea.Cmd) {
 	return true, cmd
 }
 
-// HandleDelayedClick handles a delayed single-click action (like expansion).
-// It only executes if the click ID matches (i.e., no double-click occurred)
-// and no text selection was made (drag to select).
-func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) bool {
+// HandleDelayedClick handles a delayed single-click action (like expansion or
+// drill-in). It only executes if the click ID matches (i.e., no double-click
+// occurred) and no text selection was made (drag to select).
+func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 	// Ignore if this click was superseded by a newer click (double/triple).
 	if msg.ClickID != m.pendingClickID {
-		return false
+		return false, nil
 	}
 
 	// Don't expand if user dragged to select text.
 	if m.HasHighlight() {
-		return false
+		return false, nil
 	}
 
-	// Execute the click action (e.g., expansion).
+	// Execute the click action (e.g., expansion or drill-in).
 	selectedItem := m.list.SelectedItem()
+
+	// Check for drill-in before Expandable — DrillInHandler takes priority.
+	if driller, ok := selectedItem.(chat.DrillInHandler); ok {
+		sessionID := driller.DrillIn()
+		if sessionID != "" {
+			cmd := func() tea.Msg {
+				return util.DrillInMsg{
+					SessionID: sessionID,
+					Label:     driller.DrillInLabel(),
+				}
+			}
+			return true, cmd
+		}
+	}
+
 	if clickable, ok := selectedItem.(list.MouseClickable); ok {
 		handled := clickable.HandleMouseClick(ansi.MouseButton1, msg.X, msg.Y)
 		// Toggle expansion only when the item signalled it handled the
@@ -621,10 +648,10 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) bool {
 		if m.AtBottom() {
 			m.ScrollToBottom()
 		}
-		return handled
+		return handled, nil
 	}
 
-	return false
+	return false, nil
 }
 
 // HandleMouseUp handles mouse up events for the chat component.

@@ -48,6 +48,18 @@ type KeyEventHandler interface {
 	HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd)
 }
 
+// DrillInHandler is implemented by items that support drill-in navigation.
+// HandleDelayedClick checks for this interface before Expandable — if the
+// selected item implements DrillInHandler, DrillIn() is called instead of
+// ToggleExpanded().
+type DrillInHandler interface {
+	// DrillIn returns the child session ID to drill into.
+	DrillIn() string
+	// DrillInLabel returns the breadcrumb label for this item
+	// (e.g., "Explorer: Search auth").
+	DrillInLabel() string
+}
+
 // MessageItem represents a [message.Message] item that can be displayed in the
 // UI and be part of a [list.List] identifiable by a unique ID.
 type MessageItem interface {
