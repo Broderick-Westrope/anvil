@@ -31,10 +31,9 @@ type MCPToolRenderContext struct{}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	cappedWidth := cappedMessageWidth(width)
 	toolNameParts := strings.SplitN(opts.ToolCall.Name, "_", 3)
 	if len(toolNameParts) != 3 {
-		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid tool name"}, cappedWidth)
+		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid tool name"}, width)
 	}
 	mcpName := humanizedToolName(toolNameParts[1])
 	toolName := humanizedToolName(toolNameParts[2])
@@ -50,7 +49,7 @@ func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *T
 
 	var params map[string]any
 	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
-		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, cappedWidth)
+		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, width)
 	}
 
 	var toolParams []string
@@ -59,12 +58,12 @@ func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *T
 		toolParams = append(toolParams, string(parsed))
 	}
 
-	header := toolHeader(sty, opts.Status, name, cappedWidth, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, name, width, opts.Compact, toolParams...)
 	if opts.Compact {
 		return header
 	}
 
-	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
+	if earlyState, ok := toolEarlyStateContent(sty, opts, width); ok {
 		return joinToolParts(header, earlyState)
 	}
 
@@ -72,7 +71,7 @@ func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *T
 		return header
 	}
 
-	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: cappedWidth}, opts.ExpandedContent)
+	bodyWidth := width - toolBodyLeftPaddingTotal
+	body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: width}, opts.ExpandedContent)
 	return joinToolParts(header, body)
 }

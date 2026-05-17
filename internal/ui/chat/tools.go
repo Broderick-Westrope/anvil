@@ -168,8 +168,13 @@ func newBaseToolMessageItem(
 	toolRenderer ToolRenderer,
 	canceled bool,
 ) *baseToolMessageItem {
-	// we only do full width for diffs (as far as I know)
-	hasCappedWidth := toolCall.Name != tools.EditToolName && toolCall.Name != tools.MultiEditToolName
+	var hasCappedWidth bool
+	switch toolCall.Name {
+	case tools.JobKillToolName, tools.DownloadToolName, tools.LSPRestartToolName,
+		tools.TodosToolName, tools.FetchToolName, tools.WebFetchToolName,
+		tools.WebSearchToolName, tools.AgenticFetchToolName, agent.TaskToolName:
+		hasCappedWidth = true
+	}
 
 	status := ToolStatusRunning
 	if canceled {
@@ -967,11 +972,6 @@ func roundedEnumerator(lPadding, width int) tree.Enumerator {
 // toolOutputMarkdownContent renders markdown content with optional truncation.
 func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded bool) string {
 	content = stringext.NormalizeSpace(content)
-
-	// Cap width for readability.
-	if width > maxTextWidth {
-		width = maxTextWidth
-	}
 
 	renderer := common.QuietMarkdownRenderer(sty, width)
 	rendered, err := renderer.Render(content)
