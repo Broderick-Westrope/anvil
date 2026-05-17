@@ -218,8 +218,6 @@ type AgentToolRenderContext struct {
 
 // RenderTool implements the [ToolRenderer] interface.
 func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	cappedWidth := cappedMessageWidth(width)
-
 	var params agent.TaskParams
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
 
@@ -241,9 +239,9 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 			// Spawned state: static ellipsis in the pending colour.
 			icon = sty.Tool.IconPending.Render(styles.SpinnerIcon)
 		}
-		header = toolHeaderWithIcon(sty, icon, displayName, cappedWidth, opts.Compact)
+		header = toolHeaderWithIcon(sty, icon, displayName, width, opts.Compact)
 	} else {
-		header = toolHeader(sty, opts.Status, displayName, cappedWidth, opts.Compact)
+		header = toolHeader(sty, opts.Status, displayName, width, opts.Compact)
 	}
 
 	if opts.Compact {
@@ -251,7 +249,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	// Line 2: live stats (turns, tools, tokens, cost, elapsed).
-	statsLine := formatStatsLine(sty, r.agent.turns, r.agent.toolCalls, r.agent.tokens, r.agent.cost, "", cappedWidth)
+	statsLine := formatStatsLine(sty, r.agent.turns, r.agent.toolCalls, r.agent.tokens, r.agent.cost, "", width)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, statsLine)
 }
@@ -488,8 +486,6 @@ type agenticFetchParams struct {
 
 // RenderTool implements the [ToolRenderer] interface.
 func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	cappedWidth := cappedMessageWidth(width)
-
 	var params agenticFetchParams
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
 
@@ -515,9 +511,9 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 			// Spawned state: static ellipsis in the pending colour.
 			icon = sty.Tool.IconPending.Render(styles.SpinnerIcon)
 		}
-		header = toolHeaderWithIcon(sty, icon, "Agentic Fetch", cappedWidth, opts.Compact, toolParams...)
+		header = toolHeaderWithIcon(sty, icon, "Agentic Fetch", width, opts.Compact, toolParams...)
 	} else {
-		header = toolHeader(sty, opts.Status, "Agentic Fetch", cappedWidth, opts.Compact, toolParams...)
+		header = toolHeader(sty, opts.Status, "Agentic Fetch", width, opts.Compact, toolParams...)
 	}
 
 	if opts.Compact {
@@ -525,7 +521,7 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 	}
 
 	// Line 2: live stats (turns, tools, tokens, cost, elapsed).
-	statsLine := formatStatsLine(sty, r.fetch.turns, r.fetch.toolCalls, r.fetch.tokens, r.fetch.cost, "", cappedWidth)
+	statsLine := formatStatsLine(sty, r.fetch.turns, r.fetch.toolCalls, r.fetch.tokens, r.fetch.cost, "", width)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, statsLine)
 }

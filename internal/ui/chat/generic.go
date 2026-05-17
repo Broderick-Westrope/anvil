@@ -30,7 +30,6 @@ type GenericToolRenderContext struct{}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (g *GenericToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	cappedWidth := cappedMessageWidth(width)
 	name := humanizedToolName(opts.ToolCall.Name)
 
 	if opts.IsPending() {
@@ -39,7 +38,7 @@ func (g *GenericToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 
 	var params map[string]any
 	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
-		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, cappedWidth)
+		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, width)
 	}
 
 	var toolParams []string
@@ -48,12 +47,12 @@ func (g *GenericToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 		toolParams = append(toolParams, string(parsed))
 	}
 
-	header := toolHeader(sty, opts.Status, name, cappedWidth, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, name, width, opts.Compact, toolParams...)
 	if opts.Compact {
 		return header
 	}
 
-	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
+	if earlyState, ok := toolEarlyStateContent(sty, opts, width); ok {
 		return joinToolParts(header, earlyState)
 	}
 
@@ -61,13 +60,13 @@ func (g *GenericToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 		return header
 	}
 
-	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
+	bodyWidth := width - toolBodyLeftPaddingTotal
 
 	if opts.Result.Data != "" && strings.HasPrefix(opts.Result.MIMEType, "image/") {
 		body := sty.Tool.Body.Render(toolOutputImageContent(sty, opts.Result.Data, opts.Result.MIMEType))
 		return joinToolParts(header, body)
 	}
 
-	body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: cappedWidth}, opts.ExpandedContent)
+	body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: width}, opts.ExpandedContent)
 	return joinToolParts(header, body)
 }

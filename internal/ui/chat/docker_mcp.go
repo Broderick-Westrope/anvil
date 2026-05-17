@@ -36,8 +36,6 @@ type DockerMCPToolRenderContext struct{}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (d *DockerMCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	cappedWidth := cappedMessageWidth(width)
-
 	var params map[string]any
 	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
 		params = make(map[string]any)
@@ -116,29 +114,29 @@ func (d *DockerMCPToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 		return pendingTool(sty, d.formatToolName(sty, tool), opts.Anim, false)
 	}
 
-	header := d.makeHeader(sty, tool, cappedWidth, opts, toolParams...)
+	header := d.makeHeader(sty, tool, width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}
 
-	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
+	if earlyState, ok := toolEarlyStateContent(sty, opts, width); ok {
 		return joinToolParts(header, earlyState)
 	}
 
 	if tool == "mcp-find" {
-		return joinToolParts(header, d.renderMCPServers(sty, opts, cappedWidth))
+		return joinToolParts(header, d.renderMCPServers(sty, opts, width))
 	}
 
 	if !opts.HasResult() {
 		return header
 	}
 
-	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
+	bodyWidth := width - toolBodyLeftPaddingTotal
 	var parts []string
 
 	// Handle text content.
 	if opts.Result.Content != "" {
-		body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: cappedWidth}, opts.ExpandedContent)
+		body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: width}, opts.ExpandedContent)
 		parts = append(parts, body)
 	}
 
@@ -176,7 +174,7 @@ func (d *DockerMCPToolRenderContext) renderMCPServers(sty *styles.Styles, opts *
 		return sty.Tool.ResultEmpty.Render("No MCP servers found.")
 	}
 
-	bodyWidth := min(120, width) - toolBodyLeftPaddingTotal
+	bodyWidth := min(maxTextWidth, width) - toolBodyLeftPaddingTotal
 	rows := [][]string{}
 	moreServers := ""
 	for i, server := range result.Servers {
