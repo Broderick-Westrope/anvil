@@ -130,10 +130,14 @@ func NewAgentToolMessageItem(
 	t.spinningFunc = func(state SpinningState) bool {
 		return !state.HasResult() && !state.IsCanceled()
 	}
-	// Use a single-char shimmer animation for agent items.
+	// Use a single-char shimmer animation for agent items, matching the
+	// theme gradient used by other tool animations.
 	t.anim = anim.New(anim.Settings{
-		ID:   t.ID(),
-		Size: 1,
+		ID:          t.ID(),
+		Size:        1,
+		GradColorA:  sty.WorkingGradFromColor,
+		GradColorB:  sty.WorkingGradToColor,
+		CycleColors: true,
 	})
 	return t
 }
@@ -389,10 +393,14 @@ func NewAgenticFetchToolMessageItem(
 	t.spinningFunc = func(state SpinningState) bool {
 		return !state.HasResult() && !state.IsCanceled()
 	}
-	// Use a single-char shimmer animation for agent items.
+	// Use a single-char shimmer animation for agent items, matching the
+	// theme gradient used by other tool animations.
 	t.anim = anim.New(anim.Settings{
-		ID:   t.ID(),
-		Size: 1,
+		ID:          t.ID(),
+		Size:        1,
+		GradColorA:  sty.WorkingGradFromColor,
+		GradColorB:  sty.WorkingGradToColor,
+		CycleColors: true,
 	})
 	return t
 }
