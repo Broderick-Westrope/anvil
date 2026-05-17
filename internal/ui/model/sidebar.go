@@ -92,10 +92,49 @@ func (m *UI) modelInfo(width int) string {
 	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, m.hyperCredits, extraLines...)
 }
 
-// viewedSessionStats counts the turns (assistant messages) and tool calls
-// in the currently viewed chat. It derives counts from the active chat's
-// items so no IO is performed.
+// statsProvider is a local interface for chat items that expose cached
+// turn and tool-call counts.
+type statsProvider interface {
+	Stats() (int, int)
+}
+
+// viewedSessionStats returns the turn and tool-call counts for the session
+// currently shown in the chat pane.
+//
+// When drilled in, it looks up the parent agent item (the same way
+// isViewedSubagentRunning does) and delegates to its cached Stats(). This
+// avoids an O(n) scan on every sidebar render.
+//
+// When viewing the root session, the O(n) scan is kept because there is no
+// parent agent item with pre-computed stats. The root session is only shown
+// when NOT drilled in, so tick-driven performance is not a concern there.
 func (m *UI) viewedSessionStats() (turns, toolCalls int) {
+	if m.isDrilledIn() {
+		sid := m.viewedSessionID()
+		_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(sid)
+		if !ok {
+			return 0, 0
+		}
+
+		// Search root chat first, then walk up the drill stack.
+		var item chat.MessageItem
+		item = m.chat.MessageItem(toolCallID)
+		if item == nil {
+			for i := len(m.drillStack) - 2; i >= 0; i-- {
+				item = m.drillStack[i].chat.MessageItem(toolCallID)
+				if item != nil {
+					break
+				}
+			}
+		}
+
+		if sp, ok := item.(statsProvider); ok {
+			return sp.Stats()
+		}
+		return 0, 0
+	}
+
+	// Root session: derive counts from the chat item list.
 	c := m.activeChat()
 	for i := range c.Len() {
 		item := c.ItemAt(i)
