@@ -1224,6 +1224,41 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 
 		// Set nested tools on the parent.
 		nestedContainer.SetNestedTools(nestedTools)
+
+		// Populate drill-in state and stats from the loaded messages so
+		// that sessions restored from the DB have working navigation and
+		// accurate collapsed stats. During a live session these are set
+		// incrementally via handleChildSessionMessage / updateAgentItemStats.
+		type drillInInitializer interface {
+			SetChildSessionID(string)
+			SetHasChildMessages(bool)
+			IncrementTurns()
+			IncrementToolCalls(n int)
+		}
+		if init, ok := item.(drillInInitializer); ok {
+			init.SetChildSessionID(agentSessionID)
+			init.SetHasChildMessages(true)
+
+			// Derive turn and tool call counts from the loaded messages.
+			for _, nm := range nestedMsgPtrs {
+				if nm.Role == message.Assistant {
+					init.IncrementTurns()
+				}
+				init.IncrementToolCalls(len(nm.ToolCalls()))
+			}
+		}
+
+		// Populate token/cost stats from the child session.
+		type sessionStatsUpdater interface {
+			SetTokens(int64)
+			SetCost(float64)
+		}
+		if u, ok := item.(sessionStatsUpdater); ok {
+			if sess, err := m.com.Workspace.GetSession(context.Background(), agentSessionID); err == nil {
+				u.SetTokens(sess.PromptTokens + sess.CompletionTokens)
+				u.SetCost(sess.Cost)
+			}
+		}
 	}
 }
 
