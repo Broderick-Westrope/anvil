@@ -2583,10 +2583,18 @@ func (m *UI) renderBreadcrumb(width int) string {
 
 // drawHeader draws the header section of the UI.
 func (m *UI) drawHeader(scr uv.Screen, area uv.Rectangle) {
+	// Use the viewed session's stats when drilled in so the context
+	// percentage reflects the subagent, not the root session.
+	sess := m.session
+	if m.isDrilledIn() {
+		if entry := m.drillStack[len(m.drillStack)-1]; entry.session != nil {
+			sess = entry.session
+		}
+	}
 	m.header.drawHeader(
 		scr,
 		area,
-		m.session,
+		sess,
 		m.isCompact,
 		m.detailsOpen,
 		area.Dx(),
