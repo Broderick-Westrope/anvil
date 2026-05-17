@@ -1032,8 +1032,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		newChat := NewChat(m.com)
-		newChat.SetSize(m.layout.main.Dx(), m.layout.main.Dy()-1) // -1 for breadcrumb line
 		newChat.SetFollow(true)
+		newChat.Focus()
 		m.drillStack = append(m.drillStack, drillInEntry{
 			sessionID: msg.SessionID,
 			chat:      newChat,
@@ -1042,7 +1042,15 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Disable the editor while viewing a subagent.
 		m.textarea.Blur()
 		m.focus = uiFocusMain
+		// Recalculate layout so editor height becomes 0 and main area
+		// expands. This also correctly sizes the new chat.
+		m.updateLayoutAndSize()
 		cmds = append(cmds, m.loadDrillInSession(msg.SessionID))
+		// Start the elapsed tick if the viewed subagent is running.
+		if !m.elapsedTickRunning && m.isViewedSubagentRunning() {
+			m.elapsedTickRunning = true
+			cmds = append(cmds, tickElapsedTime())
+		}
 
 	case drillInSessionLoadedMsg:
 		// Find the matching entry and populate it.
@@ -1462,22 +1470,11 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		return nil
 	}
 
-	// Find the parent agent tool item.
+	// Find the parent agent tool item by ID lookup.
 	var agentItem chat.NestedToolContainer
-	for i := 0; i < m.chat.Len(); i++ {
-		item := m.chat.MessageItem(toolCallID)
-		if item == nil {
-			continue
-		}
+	if item := m.chat.MessageItem(toolCallID); item != nil {
 		if agent, ok := item.(chat.NestedToolContainer); ok {
-			if toolMessageItem, ok := item.(chat.ToolMessageItem); ok {
-				if toolMessageItem.ToolCall().ID == toolCallID {
-					// Verify this agent belongs to the correct parent message.
-					// We can't directly check parentMessageID on the item, so we trust the session parsing.
-					agentItem = agent
-					break
-				}
-			}
+			agentItem = agent
 		}
 	}
 
@@ -2426,13 +2423,14 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				cmds = append(cmds, m.textarea.Focus())
 				m.activeChat().Blur()
 			case m.isDrilledIn() && key.Matches(msg, m.keyMap.Chat.PillLeft):
-				// Navigate back one drill-in level.
-				m.drillStack = m.drillStack[:len(m.drillStack)-1]
-				if !m.isDrilledIn() {
-					cmds = append(cmds, m.textarea.Focus())
-					m.focus = uiFocusEditor
-				}
-				m.updateLayoutAndSize()
+			// Navigate back one drill-in level.
+			m.drillStack = m.drillStack[:len(m.drillStack)-1]
+			if !m.isDrilledIn() {
+				// Keep focus on main chat — don't jump to editor.
+			} else {
+				m.activeChat().Focus()
+			}
+			m.updateLayoutAndSize()
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
@@ -3007,8 +3005,8 @@ func (m *UI) handleTextareaHeightChange(prevHeight int) tea.Cmd {
 		return nil
 	}
 	m.updateLayoutAndSize()
-	if m.state == uiChat && m.chat.Follow() {
-		return m.chat.ScrollToBottomAndAnimate()
+	if m.state == uiChat && m.activeChat().Follow() {
+		return m.activeChat().ScrollToBottomAndAnimate()
 	}
 	return nil
 }

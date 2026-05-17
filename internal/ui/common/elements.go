@@ -101,9 +101,10 @@ func ModelInfo(t *styles.Styles, modelName, providerName, reasoningInfo string, 
 	}
 
 	// Append any caller-supplied extra lines (e.g. stats, elapsed time).
+	// Lines are expected to be pre-styled with appropriate padding.
 	for _, line := range extraLines {
 		if line != "" {
-			parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(line))
+			parts = append(parts, line)
 		}
 	}
 

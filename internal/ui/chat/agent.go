@@ -123,6 +123,9 @@ func (a *AgentToolMessageItem) SetChildSessionID(id string) {
 
 // SetHasChildMessages sets whether the child session has received messages.
 func (a *AgentToolMessageItem) SetHasChildMessages(v bool) {
+	if a.hasChildMessages == v {
+		return
+	}
 	a.hasChildMessages = v
 	a.clearCache()
 }
@@ -394,6 +397,17 @@ func NewAgenticFetchToolMessageItem(
 	return t
 }
 
+// Animate progresses the message animation if it should be spinning.
+func (a *AgenticFetchToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
+	if a.result != nil || a.Status() == ToolStatusCanceled {
+		return nil
+	}
+	if msg.ID == a.ID() {
+		return a.anim.Animate(msg)
+	}
+	return nil
+}
+
 // NestedTools returns the nested tools.
 func (a *AgenticFetchToolMessageItem) NestedTools() []ToolMessageItem {
 	return a.nestedTools
@@ -435,6 +449,9 @@ func (a *AgenticFetchToolMessageItem) SetChildSessionID(id string) {
 
 // SetHasChildMessages sets whether the child session has received messages.
 func (a *AgenticFetchToolMessageItem) SetHasChildMessages(v bool) {
+	if a.hasChildMessages == v {
+		return
+	}
 	a.hasChildMessages = v
 	a.clearCache()
 }
