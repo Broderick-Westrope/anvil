@@ -116,18 +116,7 @@ func (m *UI) viewedSessionStats() (turns, toolCalls int) {
 			return 0, 0
 		}
 
-		// Search root chat first, then walk up the drill stack.
-		var item chat.MessageItem
-		item = m.chat.MessageItem(toolCallID)
-		if item == nil {
-			for i := len(m.drillStack) - 2; i >= 0; i-- {
-				item = m.drillStack[i].chat.MessageItem(toolCallID)
-				if item != nil {
-					break
-				}
-			}
-		}
-
+		item := m.findParentMessageItem(toolCallID)
 		if sp, ok := item.(statsProvider); ok {
 			return sp.Stats()
 		}
@@ -161,18 +150,7 @@ func (m *UI) isViewedSubagentRunning() bool {
 		return false
 	}
 
-	// Search root chat first, then walk up the drill stack.
-	var item chat.MessageItem
-	item = m.chat.MessageItem(toolCallID)
-	if item == nil {
-		for i := len(m.drillStack) - 2; i >= 0; i-- {
-			item = m.drillStack[i].chat.MessageItem(toolCallID)
-			if item != nil {
-				break
-			}
-		}
-	}
-
+	item := m.findParentMessageItem(toolCallID)
 	tmi, ok := item.(chat.ToolMessageItem)
 	if !ok {
 		return false

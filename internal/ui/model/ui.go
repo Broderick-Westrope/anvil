@@ -548,6 +548,36 @@ func (m *UI) clearDrillStack() {
 	m.drillStack = nil
 }
 
+// findMessageItem searches the root chat and all drill-stack chats for
+// an item matching the given ID. Returns nil if not found.
+func (m *UI) findMessageItem(id string) chat.MessageItem {
+	if item := m.chat.MessageItem(id); item != nil {
+		return item
+	}
+	for _, entry := range m.drillStack {
+		if item := entry.chat.MessageItem(id); item != nil {
+			return item
+		}
+	}
+	return nil
+}
+
+// findParentMessageItem searches the root chat and drill-stack chats
+// (excluding the top entry) for an item matching the given ID. This is
+// used when the top entry is the viewed session and we need the parent
+// agent item that owns it.
+func (m *UI) findParentMessageItem(id string) chat.MessageItem {
+	if item := m.chat.MessageItem(id); item != nil {
+		return item
+	}
+	for i := len(m.drillStack) - 2; i >= 0; i-- {
+		if item := m.drillStack[i].chat.MessageItem(id); item != nil {
+			return item
+		}
+	}
+	return nil
+}
+
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -1598,16 +1628,7 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 		return
 	}
 
-	// Search root chat and all drill-stack chats for the parent item.
-	item := m.chat.MessageItem(toolCallID)
-	if item == nil {
-		for _, entry := range m.drillStack {
-			item = entry.chat.MessageItem(toolCallID)
-			if item != nil {
-				break
-			}
-		}
-	}
+	item := m.findMessageItem(toolCallID)
 	if item == nil {
 		return
 	}
@@ -1654,16 +1675,7 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 		return
 	}
 
-	// Search root chat and all drill-stack chats for the parent item.
-	item := m.chat.MessageItem(toolCallID)
-	if item == nil {
-		for _, entry := range m.drillStack {
-			item = entry.chat.MessageItem(toolCallID)
-			if item != nil {
-				break
-			}
-		}
-	}
+	item := m.findMessageItem(toolCallID)
 	if item == nil {
 		return
 	}
