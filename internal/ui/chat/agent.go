@@ -26,13 +26,11 @@ type NestedToolContainer interface {
 	AddNestedTool(tool ToolMessageItem)
 }
 
-// AgentToolMessageItem is a message item that represents an agent tool call.
-type AgentToolMessageItem struct {
-	*baseToolMessageItem
-
-	nestedTools []ToolMessageItem
-
-	// Drill-in state.
+// drillableAgentState holds the drill-in navigation fields and live stats
+// shared by agent-like tool items. Methods call clearFunc to invalidate the
+// render cache on state changes; set clearFunc to the owning item's
+// clearCache method during construction.
+type drillableAgentState struct {
 	childSessionID   string
 	hasChildMessages bool
 
@@ -42,6 +40,73 @@ type AgentToolMessageItem struct {
 	tokens         int64
 	cost           float64
 	countedToolIDs map[string]bool // track already-counted tool call IDs.
+
+	clearFunc func() // set to baseToolMessageItem.clearCache during construction.
+}
+
+// DrillIn returns the child session ID to drill into.
+func (s *drillableAgentState) DrillIn() string {
+	return s.childSessionID
+}
+
+// SetChildSessionID sets the child session ID for drill-in navigation.
+func (s *drillableAgentState) SetChildSessionID(id string) {
+	s.childSessionID = id
+}
+
+// SetHasChildMessages sets whether the child session has received messages.
+func (s *drillableAgentState) SetHasChildMessages(v bool) {
+	if s.hasChildMessages == v {
+		return
+	}
+	s.hasChildMessages = v
+	s.clearFunc()
+}
+
+// Stats returns the current turn and tool call counts.
+func (s *drillableAgentState) Stats() (turns, toolCalls int) {
+	return s.turns, s.toolCalls
+}
+
+// IncrementTurns increments the turn count and clears the render cache.
+func (s *drillableAgentState) IncrementTurns() {
+	s.turns++
+	s.clearFunc()
+}
+
+// IncrementToolCalls increments the tool call count and clears the render cache.
+func (s *drillableAgentState) IncrementToolCalls(n int) {
+	s.toolCalls += n
+	s.clearFunc()
+}
+
+// SetTokens sets the token count and clears the render cache.
+func (s *drillableAgentState) SetTokens(t int64) {
+	s.tokens = t
+	s.clearFunc()
+}
+
+// SetCost sets the cost and clears the render cache.
+func (s *drillableAgentState) SetCost(c float64) {
+	s.cost = c
+	s.clearFunc()
+}
+
+// CountedToolIDs returns the map of already-counted tool call IDs, initialising
+// it lazily.
+func (s *drillableAgentState) CountedToolIDs() map[string]bool {
+	if s.countedToolIDs == nil {
+		s.countedToolIDs = make(map[string]bool)
+	}
+	return s.countedToolIDs
+}
+
+// AgentToolMessageItem is a message item that represents an agent tool call.
+type AgentToolMessageItem struct {
+	*baseToolMessageItem
+	drillableAgentState
+
+	nestedTools []ToolMessageItem
 }
 
 var (
@@ -60,6 +125,7 @@ func NewAgentToolMessageItem(
 ) *AgentToolMessageItem {
 	t := &AgentToolMessageItem{}
 	t.baseToolMessageItem = newBaseToolMessageItem(sty, toolCall, result, &AgentToolRenderContext{agent: t}, canceled)
+	t.drillableAgentState.clearFunc = t.baseToolMessageItem.clearCache
 	// For the agent tool we keep spinning until the tool call is finished.
 	t.spinningFunc = func(state SpinningState) bool {
 		return !state.HasResult() && !state.IsCanceled()
@@ -104,68 +170,11 @@ func (a *AgentToolMessageItem) AddNestedTool(tool ToolMessageItem) {
 	a.clearCache()
 }
 
-// DrillIn returns the child session ID to drill into.
-func (a *AgentToolMessageItem) DrillIn() string {
-	return a.childSessionID
-}
-
 // DrillInLabel returns the breadcrumb label for this item.
 func (a *AgentToolMessageItem) DrillInLabel() string {
 	var params agent.TaskParams
 	_ = json.Unmarshal([]byte(a.toolCall.Input), &params)
 	return agentBreadcrumbLabel(params.SubagentType, params.Description)
-}
-
-// SetChildSessionID sets the child session ID for drill-in navigation.
-func (a *AgentToolMessageItem) SetChildSessionID(id string) {
-	a.childSessionID = id
-}
-
-// SetHasChildMessages sets whether the child session has received messages.
-func (a *AgentToolMessageItem) SetHasChildMessages(v bool) {
-	if a.hasChildMessages == v {
-		return
-	}
-	a.hasChildMessages = v
-	a.clearCache()
-}
-
-// Stats returns the current turn and tool call counts.
-func (a *AgentToolMessageItem) Stats() (turns, toolCalls int) {
-	return a.turns, a.toolCalls
-}
-
-// IncrementTurns increments the turn count and clears the render cache.
-func (a *AgentToolMessageItem) IncrementTurns() {
-	a.turns++
-	a.clearCache()
-}
-
-// IncrementToolCalls increments the tool call count and clears the render cache.
-func (a *AgentToolMessageItem) IncrementToolCalls(n int) {
-	a.toolCalls += n
-	a.clearCache()
-}
-
-// SetTokens sets the token count and clears the render cache.
-func (a *AgentToolMessageItem) SetTokens(t int64) {
-	a.tokens = t
-	a.clearCache()
-}
-
-// SetCost sets the cost and clears the render cache.
-func (a *AgentToolMessageItem) SetCost(c float64) {
-	a.cost = c
-	a.clearCache()
-}
-
-// CountedToolIDs returns the map of already-counted tool call IDs, initialising
-// it lazily.
-func (a *AgentToolMessageItem) CountedToolIDs() map[string]bool {
-	if a.countedToolIDs == nil {
-		a.countedToolIDs = make(map[string]bool)
-	}
-	return a.countedToolIDs
 }
 
 // HandleKeyEvent implements [KeyEventHandler]. It handles the → key for
@@ -354,19 +363,9 @@ func formatAgentTokens(tokens int64, abbreviated bool) string {
 // AgenticFetchToolMessageItem is a message item that represents an agentic fetch tool call.
 type AgenticFetchToolMessageItem struct {
 	*baseToolMessageItem
+	drillableAgentState
 
 	nestedTools []ToolMessageItem
-
-	// Drill-in state.
-	childSessionID   string
-	hasChildMessages bool
-
-	// Live stats updated via pubsub as child session messages arrive.
-	turns          int
-	toolCalls      int
-	tokens         int64
-	cost           float64
-	countedToolIDs map[string]bool // track already-counted tool call IDs.
 }
 
 var (
@@ -385,6 +384,7 @@ func NewAgenticFetchToolMessageItem(
 ) *AgenticFetchToolMessageItem {
 	t := &AgenticFetchToolMessageItem{}
 	t.baseToolMessageItem = newBaseToolMessageItem(sty, toolCall, result, &AgenticFetchToolRenderContext{fetch: t}, canceled)
+	t.drillableAgentState.clearFunc = t.baseToolMessageItem.clearCache
 	// For the agentic fetch tool we keep spinning until the tool call is finished.
 	t.spinningFunc = func(state SpinningState) bool {
 		return !state.HasResult() && !state.IsCanceled()
@@ -429,69 +429,12 @@ func (a *AgenticFetchToolMessageItem) AddNestedTool(tool ToolMessageItem) {
 	a.clearCache()
 }
 
-// DrillIn returns the child session ID to drill into.
-func (a *AgenticFetchToolMessageItem) DrillIn() string {
-	return a.childSessionID
-}
-
 // DrillInLabel returns the breadcrumb label for this item.
 func (a *AgenticFetchToolMessageItem) DrillInLabel() string {
 	var params agenticFetchParams
 	_ = json.Unmarshal([]byte(a.toolCall.Input), &params)
 	prompt := ansi.Truncate(params.Prompt, 40, "…")
 	return "Fetch: " + prompt
-}
-
-// SetChildSessionID sets the child session ID for drill-in navigation.
-func (a *AgenticFetchToolMessageItem) SetChildSessionID(id string) {
-	a.childSessionID = id
-}
-
-// SetHasChildMessages sets whether the child session has received messages.
-func (a *AgenticFetchToolMessageItem) SetHasChildMessages(v bool) {
-	if a.hasChildMessages == v {
-		return
-	}
-	a.hasChildMessages = v
-	a.clearCache()
-}
-
-// Stats returns the current turn and tool call counts.
-func (a *AgenticFetchToolMessageItem) Stats() (turns, toolCalls int) {
-	return a.turns, a.toolCalls
-}
-
-// IncrementTurns increments the turn count and clears the render cache.
-func (a *AgenticFetchToolMessageItem) IncrementTurns() {
-	a.turns++
-	a.clearCache()
-}
-
-// IncrementToolCalls increments the tool call count and clears the render cache.
-func (a *AgenticFetchToolMessageItem) IncrementToolCalls(n int) {
-	a.toolCalls += n
-	a.clearCache()
-}
-
-// SetTokens sets the token count and clears the render cache.
-func (a *AgenticFetchToolMessageItem) SetTokens(t int64) {
-	a.tokens = t
-	a.clearCache()
-}
-
-// SetCost sets the cost and clears the render cache.
-func (a *AgenticFetchToolMessageItem) SetCost(c float64) {
-	a.cost = c
-	a.clearCache()
-}
-
-// CountedToolIDs returns the map of already-counted tool call IDs, initialising
-// it lazily.
-func (a *AgenticFetchToolMessageItem) CountedToolIDs() map[string]bool {
-	if a.countedToolIDs == nil {
-		a.countedToolIDs = make(map[string]bool)
-	}
-	return a.countedToolIDs
 }
 
 // HandleKeyEvent implements [KeyEventHandler]. It handles the → key for
