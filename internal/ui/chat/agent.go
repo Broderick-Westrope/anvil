@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
@@ -36,6 +38,8 @@ type DrillableAgent interface {
 	CountedToolIDs() map[string]bool
 	SetTokens(int64)
 	SetCost(float64)
+	SetStartedAt(time.Time)
+	SetFinishedAt(time.Time)
 	Stats() (turns int, toolCalls int)
 }
 
@@ -55,6 +59,12 @@ type drillableAgentState struct {
 	tokens         int64
 	cost           float64
 	countedToolIDs map[string]bool // track already-counted tool call IDs.
+
+	// Timestamps for elapsed time display. startedAt is set once when the
+	// first child message arrives; finishedAt is set when the tool call
+	// finishes.
+	startedAt  time.Time
+	finishedAt time.Time
 
 	clearFunc func() // set to baseToolMessageItem.clearCache during construction.
 }
@@ -105,6 +115,47 @@ func (s *drillableAgentState) SetTokens(t int64) {
 func (s *drillableAgentState) SetCost(c float64) {
 	s.cost = c
 	s.clearFunc()
+}
+
+// SetStartedAt records when the subagent began working. The first call wins,
+// unless a later call provides an earlier timestamp from persisted session
+// metadata.
+func (s *drillableAgentState) SetStartedAt(t time.Time) {
+	if t.IsZero() {
+		return
+	}
+	if !s.startedAt.IsZero() && !t.Before(s.startedAt) {
+		return
+	}
+	s.startedAt = t
+	s.clearFunc()
+}
+
+// SetFinishedAt records when the subagent finished.
+func (s *drillableAgentState) SetFinishedAt(t time.Time) {
+	if t.IsZero() {
+		return
+	}
+	s.finishedAt = t
+	s.clearFunc()
+}
+
+// elapsed returns a formatted elapsed-time string for the stats line.
+// Returns "" when the start time has not been set.
+func (s *drillableAgentState) elapsed() string {
+	if s.startedAt.IsZero() {
+		return ""
+	}
+	var d time.Duration
+	if s.finishedAt.IsZero() {
+		d = time.Since(s.startedAt)
+	} else {
+		d = s.finishedAt.Sub(s.startedAt)
+	}
+	if d < 0 {
+		d = 0
+	}
+	return common.FormatDuration(d)
 }
 
 // CountedToolIDs returns the map of already-counted tool call IDs, initialising
@@ -249,7 +300,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	// Line 2: live stats (turns, tools, tokens, cost, elapsed).
-	statsLine := formatStatsLine(sty, r.agent.turns, r.agent.toolCalls, r.agent.tokens, r.agent.cost, "", width)
+	statsLine := formatStatsLine(sty, r.agent.turns, r.agent.toolCalls, r.agent.tokens, r.agent.cost, r.agent.elapsed(), width)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, statsLine)
 }
@@ -521,7 +572,7 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 	}
 
 	// Line 2: live stats (turns, tools, tokens, cost, elapsed).
-	statsLine := formatStatsLine(sty, r.fetch.turns, r.fetch.toolCalls, r.fetch.tokens, r.fetch.cost, "", width)
+	statsLine := formatStatsLine(sty, r.fetch.turns, r.fetch.toolCalls, r.fetch.tokens, r.fetch.cost, r.fetch.elapsed(), width)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, statsLine)
 }

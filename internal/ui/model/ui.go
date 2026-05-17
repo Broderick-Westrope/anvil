@@ -1273,10 +1273,16 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 				da.IncrementToolCalls(len(nm.ToolCalls()))
 			}
 
-			// Populate token/cost stats from the child session.
+			// Populate token/cost stats and timestamps from the child session.
 			if sess, err := m.com.Workspace.GetSession(context.Background(), agentSessionID); err == nil {
 				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
 				da.SetCost(sess.Cost)
+				if sess.CreatedAt > 0 {
+					da.SetStartedAt(time.Unix(sess.CreatedAt, 0))
+				}
+				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.ToolCall().Finished && sess.UpdatedAt > sess.CreatedAt {
+					da.SetFinishedAt(time.Unix(sess.UpdatedAt, 0))
+				}
 			}
 		}
 	}
@@ -1434,6 +1440,12 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input {
 				toolItem.SetToolCall(tc)
 			}
+			// Record finish time for elapsed-time display on agent items.
+			if tc.Finished && !existingToolCall.Finished {
+				if da, ok := existingToolItem.(chat.DrillableAgent); ok {
+					da.SetFinishedAt(time.Now())
+				}
+			}
 		}
 		if existingToolItem == nil {
 			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false))
@@ -1565,6 +1577,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	// collapsed stats view and drill-in navigation can activate.
 	if da, ok := agentItem.(chat.DrillableAgent); ok {
 		da.SetChildSessionID(childSessionID)
+		da.SetStartedAt(time.Now())
 		da.SetHasChildMessages(true)
 	}
 
@@ -1667,8 +1680,8 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 	}
 }
 
-// updateAgentItemSessionStats propagates token and cost data from a child
-// session update onto the parent agent item that owns that session.
+// updateAgentItemSessionStats propagates token, cost, and timestamp data from
+// a child session update onto the parent agent item that owns that session.
 func (m *UI) updateAgentItemSessionStats(s session.Session) {
 	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(s.ID)
 	if !ok {
@@ -1683,6 +1696,12 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 	if da, ok := item.(chat.DrillableAgent); ok {
 		da.SetTokens(s.PromptTokens + s.CompletionTokens)
 		da.SetCost(s.Cost)
+		if s.CreatedAt > 0 {
+			da.SetStartedAt(time.Unix(s.CreatedAt, 0))
+		}
+		if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.ToolCall().Finished && s.UpdatedAt > s.CreatedAt {
+			da.SetFinishedAt(time.Unix(s.UpdatedAt, 0))
+		}
 	}
 }
 

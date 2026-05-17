@@ -2,6 +2,7 @@ package chat
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -83,6 +84,85 @@ func TestAgentDisplayName(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestDrillableAgentStateElapsed(t *testing.T) {
+	t.Parallel()
+
+	newState := func() *drillableAgentState {
+		return &drillableAgentState{clearFunc: func() {}}
+	}
+
+	t.Run("elapsed is empty before start time is set", func(t *testing.T) {
+		t.Parallel()
+
+		state := newState()
+		require.Empty(t, state.elapsed())
+	})
+
+	t.Run("SetStartedAt ignores zero time", func(t *testing.T) {
+		t.Parallel()
+
+		state := newState()
+		startedAt := time.Unix(100, 0)
+		state.SetStartedAt(startedAt)
+		state.SetStartedAt(time.Time{})
+
+		require.Equal(t, startedAt, state.startedAt)
+	})
+
+	t.Run("SetStartedAt keeps earliest non-zero time", func(t *testing.T) {
+		t.Parallel()
+
+		state := newState()
+		late := time.Unix(200, 0)
+		early := time.Unix(100, 0)
+		state.SetStartedAt(late)
+		state.SetStartedAt(early)
+		state.SetStartedAt(time.Unix(300, 0))
+
+		require.Equal(t, early, state.startedAt)
+	})
+
+	t.Run("SetFinishedAt ignores zero time", func(t *testing.T) {
+		t.Parallel()
+
+		state := newState()
+		finishedAt := time.Unix(200, 0)
+		state.SetFinishedAt(finishedAt)
+		state.SetFinishedAt(time.Time{})
+
+		require.Equal(t, finishedAt, state.finishedAt)
+	})
+
+	t.Run("elapsed uses fixed finished duration", func(t *testing.T) {
+		t.Parallel()
+
+		state := newState()
+		state.SetStartedAt(time.Unix(100, 0))
+		state.SetFinishedAt(time.Unix(145, 0))
+
+		require.Equal(t, "45s", state.elapsed())
+	})
+
+	t.Run("elapsed clamps negative finished duration", func(t *testing.T) {
+		t.Parallel()
+
+		state := newState()
+		state.SetStartedAt(time.Unix(200, 0))
+		state.SetFinishedAt(time.Unix(100, 0))
+
+		require.Equal(t, "0s", state.elapsed())
+	})
+
+	t.Run("elapsed uses live duration while unfinished", func(t *testing.T) {
+		t.Parallel()
+
+		state := newState()
+		state.SetStartedAt(time.Now().Add(-2 * time.Second))
+
+		require.NotEmpty(t, state.elapsed())
+	})
 }
 
 func TestAgentBreadcrumbLabel(t *testing.T) {
