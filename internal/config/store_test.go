@@ -786,9 +786,6 @@ func TestRefreshOAuthToken_Anthropic(t *testing.T) {
 	require.Equal(t, "Bearer newer-anthropic-token", updated.APIKey)
 	require.Equal(t, "newer-anthropic-token", updated.OAuthToken.AccessToken)
 
-	// Flat-rate billing must be enabled for OAuth sessions.
-	require.True(t, updated.FlatRate)
-
 	// OAuth-required headers must be present.
 	require.NotEmpty(t, updated.ExtraHeaders)
 	require.Contains(t, updated.ExtraHeaders, "anthropic-version")

@@ -181,7 +181,6 @@ func (c *ProviderConfig) SetupAnthropic() {
 		return
 	}
 	c.APIKey = "Bearer " + c.OAuthToken.AccessToken
-	c.FlatRate = true
 	if c.ExtraHeaders == nil {
 		c.ExtraHeaders = make(map[string]string)
 	}
