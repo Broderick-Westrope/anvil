@@ -1085,6 +1085,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.drillStack[i].chat.Follow() {
 				m.drillStack[i].chat.ScrollToBottom()
 			}
+			m.drillStack[i].chat.SelectLast()
 			break
 		}
 
