@@ -2,7 +2,7 @@
 
 **Author:** Broderick Westrope
 **Date:** 2026-05-14
-**Status:** Draft — Pending Review
+**Status:** Active — Phases 0-1 complete
 
 ---
 
@@ -82,8 +82,9 @@ See `plans/design-2026-05-14-anthropic-oauth.md` for full spec.
 
 ---
 
-### Phase 1: Multi-Agent Routing + Agent Config
+### Phase 1: Multi-Agent Routing + Agent Config ✅ DONE
 
+**Completed:** 2026-05-17
 **Priority:** High — unlocks the entire orchestrator workflow.
 **Effort:** Large (3-5 days)
 
@@ -178,6 +179,16 @@ later when exploring non-Anthropic models.
 **Exit criteria:** Can start a session, have the orchestrator delegate to
 explorer, fixer, librarian, oracle based on task. Manual `@agent` override
 works.
+
+**Delivered:**
+- Dynamic agent registry with per-agent tool/skill/MCP filtering.
+- Orchestrator system prompt generated dynamically from agent configs.
+- Task tool routes to named agents via `subagent_type` parameter.
+- **Subagent drill-in UI** (`feat/subagent-drill-in`): drill stack
+  navigation with breadcrumb bar, collapsed 2-line agent view with live
+  stats (turns, tools, tokens, cost, elapsed time), keyboard (`→`/`←`)
+  and click navigation, per-second elapsed time tick, async session
+  loading, and sidebar stats reflecting the viewed subagent session.
 
 ---
 
