@@ -1573,11 +1573,11 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	// Update the chat so it updates the index map for animations to work as expected
 	m.chat.UpdateNestedToolIDs(toolCallID)
 
-	if m.activeChat().Follow() {
-		if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
+	if m.chat.Follow() {
+		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.activeChat().SelectLast()
+		m.chat.SelectLast()
 	}
 
 	// Start the elapsed-time tick when the first child session message arrives.
