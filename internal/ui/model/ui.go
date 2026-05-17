@@ -1469,10 +1469,24 @@ func tickElapsedTime() tea.Cmd {
 }
 
 // hasRunningSubagents reports whether any NestedToolContainer in the root
-// chat is still running (not yet finished).
+// chat or any drill-stack chat is still running (not yet finished).
 func (m *UI) hasRunningSubagents() bool {
-	for i := range m.chat.Len() {
-		item := m.chat.ItemAt(i)
+	if chatHasRunningAgent(m.chat) {
+		return true
+	}
+	for _, entry := range m.drillStack {
+		if chatHasRunningAgent(entry.chat) {
+			return true
+		}
+	}
+	return false
+}
+
+// chatHasRunningAgent reports whether the given chat contains any running
+// NestedToolContainer item.
+func chatHasRunningAgent(c *Chat) bool {
+	for i := range c.Len() {
+		item := c.ItemAt(i)
 		if _, ok := item.(chat.NestedToolContainer); !ok {
 			continue
 		}
@@ -1488,10 +1502,20 @@ func (m *UI) hasRunningSubagents() bool {
 }
 
 // invalidateRunningAgentCaches clears the render cache on any running
-// NestedToolContainer items so that the next draw reflects live state.
+// NestedToolContainer items in the root chat and all drill-stack chats
+// so that the next draw reflects live state.
 func (m *UI) invalidateRunningAgentCaches() {
-	for i := range m.chat.Len() {
-		item := m.chat.ItemAt(i)
+	invalidateRunningAgentsInChat(m.chat)
+	for _, entry := range m.drillStack {
+		invalidateRunningAgentsInChat(entry.chat)
+	}
+}
+
+// invalidateRunningAgentsInChat clears the render cache on any running
+// NestedToolContainer items in the given chat.
+func invalidateRunningAgentsInChat(c *Chat) {
+	for i := range c.Len() {
+		item := c.ItemAt(i)
 		mi, ok := item.(chat.MessageItem)
 		if !ok {
 			continue
