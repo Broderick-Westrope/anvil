@@ -1537,11 +1537,11 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	// Update the chat so it updates the index map for animations to work as expected
 	m.chat.UpdateNestedToolIDs(toolCallID)
 
-	if m.chat.Follow() {
-		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+	if m.activeChat().Follow() {
+		if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.chat.SelectLast()
+		m.activeChat().SelectLast()
 	}
 
 	// Start the elapsed-time tick when the first child session message arrives.
@@ -1646,12 +1646,15 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 // for a drilled-in child session. It never does IO in Update — all work
 // happens inside the returned tea.Cmd.
 func (m *UI) loadDrillInSession(sessionID string) tea.Cmd {
+	// Capture workspace reference locally to avoid holding a pointer to
+	// the full UI model inside the command closure.
+	ws := m.com.Workspace
 	return func() tea.Msg {
-		msgs, err := m.com.Workspace.ListMessages(context.Background(), sessionID)
+		msgs, err := ws.ListMessages(context.Background(), sessionID)
 		if err != nil {
 			return util.ReportError(err)
 		}
-		sess, err := m.com.Workspace.GetSession(context.Background(), sessionID)
+		sess, err := ws.GetSession(context.Background(), sessionID)
 		if err != nil {
 			// Non-fatal — session metadata (tokens/cost) won't be available.
 			return drillInSessionLoadedMsg{
@@ -2168,20 +2171,20 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 				return true
 			}
-		case key.Matches(msg, m.keyMap.Chat.PillLeft):
-			if m.state == uiChat && m.hasSession() && m.pillsExpanded && m.focus != uiFocusEditor {
-				if cmd := m.switchPillSection(-1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				return true
+	case key.Matches(msg, m.keyMap.Chat.PillLeft):
+		if m.state == uiChat && m.hasSession() && m.pillsExpanded && m.focus != uiFocusEditor && !m.isDrilledIn() {
+			if cmd := m.switchPillSection(-1); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
-		case key.Matches(msg, m.keyMap.Chat.PillRight):
-			if m.state == uiChat && m.hasSession() && m.pillsExpanded && m.focus != uiFocusEditor {
-				if cmd := m.switchPillSection(1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				return true
+			return true
+		}
+	case key.Matches(msg, m.keyMap.Chat.PillRight):
+		if m.state == uiChat && m.hasSession() && m.pillsExpanded && m.focus != uiFocusEditor && !m.isDrilledIn() {
+			if cmd := m.switchPillSection(1); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
+			return true
+		}
 		case key.Matches(msg, m.keyMap.Suspend):
 			if m.isAgentBusy() {
 				cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
@@ -2423,14 +2426,14 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				cmds = append(cmds, m.textarea.Focus())
 				m.activeChat().Blur()
 			case m.isDrilledIn() && key.Matches(msg, m.keyMap.Chat.PillLeft):
-			// Navigate back one drill-in level.
-			m.drillStack = m.drillStack[:len(m.drillStack)-1]
-			if !m.isDrilledIn() {
-				// Keep focus on main chat — don't jump to editor.
-			} else {
-				m.activeChat().Focus()
-			}
-			m.updateLayoutAndSize()
+				// Navigate back one drill-in level.
+				m.drillStack = m.drillStack[:len(m.drillStack)-1]
+				if m.isDrilledIn() {
+					m.activeChat().Focus()
+				} else {
+					m.chat.Focus()
+				}
+				m.updateLayoutAndSize()
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
