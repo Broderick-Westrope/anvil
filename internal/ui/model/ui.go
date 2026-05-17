@@ -2574,7 +2574,7 @@ func (m *UI) renderBreadcrumb(width int) string {
 	for _, entry := range m.drillStack {
 		parts = append(parts, t.Breadcrumb.Label.Render(entry.label))
 	}
-	full := strings.Join(parts, sep)
+	full := " " + strings.Join(parts, sep)
 	if ansi.StringWidth(full) > width {
 		full = ansi.Truncate(full, width-1, "…")
 	}
