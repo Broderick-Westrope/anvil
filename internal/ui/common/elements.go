@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent/hyper"
@@ -38,9 +39,30 @@ type ModelContextInfo struct {
 	Cost         float64
 }
 
+// FormatDuration formats a duration as a compact human-readable string.
+// Examples: "14s", "3m20s", "2h5m".
+func FormatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		if s == 0 {
+			return fmt.Sprintf("%dm", m)
+		}
+		return fmt.Sprintf("%dm%ds", m, s)
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	return fmt.Sprintf("%dh%dm", h, m)
+}
+
 // ModelInfo renders model information including name, provider, reasoning
-// settings, and optional context usage/cost.
-func ModelInfo(t *styles.Styles, modelName, providerName, reasoningInfo string, context *ModelContextInfo, width int, hyperCredits *int) string {
+// settings, and optional context usage/cost. Any non-empty extraLines are
+// appended after the context block with two spaces of left padding.
+func ModelInfo(t *styles.Styles, modelName, providerName, reasoningInfo string, context *ModelContextInfo, width int, hyperCredits *int, extraLines ...string) string {
 	modelIcon := t.ModelInfo.Icon.Render(styles.ModelIcon)
 	modelName = t.ModelInfo.Name.Render(modelName)
 
@@ -76,6 +98,13 @@ func ModelInfo(t *styles.Styles, modelName, providerName, reasoningInfo string, 
 	if context != nil {
 		formattedInfo := formatTokensAndCost(t, context.ContextUsed, context.ModelContext, context.Cost)
 		parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(formattedInfo))
+	}
+
+	// Append any caller-supplied extra lines (e.g. stats, elapsed time).
+	for _, line := range extraLines {
+		if line != "" {
+			parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(line))
+		}
 	}
 
 	if providerName == hyper.DisplayName && hyperCredits != nil {

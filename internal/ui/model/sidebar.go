@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"fmt"
 	"image"
+	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/logo"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -13,19 +15,20 @@ import (
 )
 
 // modelInfo renders the current model information including reasoning
-// settings and context usage/cost for the sidebar.
+// settings and context usage/cost for the sidebar. When drilled in to a
+// subagent session, stats and elapsed time for that session are appended.
 func (m *UI) modelInfo(width int) string {
 	model := m.selectedLargeModel()
 	reasoningInfo := ""
 	providerName := ""
 
 	if model != nil {
-		// Get provider name first
+		// Get provider name first.
 		providerConfig, ok := m.com.Config().Providers.Get(model.ModelCfg.Provider)
 		if ok {
 			providerName = providerConfig.Name
 
-			// Only check reasoning if model can reason
+			// Only check reasoning if model can reason.
 			if model.CatwalkCfg.CanReason {
 				if len(model.CatwalkCfg.ReasoningLevels) == 0 {
 					if model.ModelCfg.Think {
@@ -41,11 +44,20 @@ func (m *UI) modelInfo(width int) string {
 		}
 	}
 
+	// Use the drilled-in session's stats when applicable; fall back to root.
+	activeSession := m.session
+	if m.isDrilledIn() {
+		top := m.drillStack[len(m.drillStack)-1]
+		if top.session != nil {
+			activeSession = top.session
+		}
+	}
+
 	var modelContext *common.ModelContextInfo
-	if model != nil && m.session != nil {
+	if model != nil && activeSession != nil {
 		modelContext = &common.ModelContextInfo{
-			ContextUsed:  m.session.CompletionTokens + m.session.PromptTokens,
-			Cost:         m.session.Cost,
+			ContextUsed:  activeSession.CompletionTokens + activeSession.PromptTokens,
+			Cost:         activeSession.Cost,
 			ModelContext: model.CatwalkCfg.ContextWindow,
 		}
 	}
@@ -53,7 +65,80 @@ func (m *UI) modelInfo(width int) string {
 	if model != nil {
 		modelName = model.CatwalkCfg.Name
 	}
-	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, m.hyperCredits)
+
+	// Build extra sidebar lines for drilled-in subagent sessions.
+	var extraLines []string
+	if m.isDrilledIn() {
+		t := m.com.Styles
+		turns, toolCalls := m.viewedSessionStats()
+		statsStr := t.ModelInfo.Stats.Render(fmt.Sprintf("%d turns · %d tools", turns, toolCalls))
+		extraLines = append(extraLines, statsStr)
+
+		// Compute elapsed time using the cached session timestamps.
+		if activeSession != nil {
+			var dur time.Duration
+			if m.isViewedSubagentRunning() {
+				dur = time.Since(time.Unix(activeSession.CreatedAt, 0))
+			} else if activeSession.UpdatedAt > activeSession.CreatedAt {
+				dur = time.Unix(activeSession.UpdatedAt, 0).Sub(time.Unix(activeSession.CreatedAt, 0))
+			}
+			if dur > 0 {
+				elapsedStr := t.ModelInfo.Elapsed.Render(common.FormatDuration(dur))
+				extraLines = append(extraLines, elapsedStr)
+			}
+		}
+	}
+
+	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, m.hyperCredits, extraLines...)
+}
+
+// viewedSessionStats counts the turns (assistant messages) and tool calls
+// in the currently viewed chat. It derives counts from the active chat's
+// items so no IO is performed.
+func (m *UI) viewedSessionStats() (turns, toolCalls int) {
+	c := m.activeChat()
+	for i := range c.Len() {
+		item := c.ItemAt(i)
+		if _, ok := item.(*chat.AssistantMessageItem); ok {
+			turns++
+		}
+		if _, ok := item.(chat.ToolMessageItem); ok {
+			toolCalls++
+		}
+	}
+	return
+}
+
+// isViewedSubagentRunning reports whether the subagent session currently
+// being viewed is still running. It determines running state from the
+// parent agent item's ToolStatus rather than a time heuristic.
+func (m *UI) isViewedSubagentRunning() bool {
+	if !m.isDrilledIn() {
+		return false
+	}
+	sid := m.viewedSessionID()
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(sid)
+	if !ok {
+		return false
+	}
+
+	// Search root chat first, then walk up the drill stack.
+	var item chat.MessageItem
+	item = m.chat.MessageItem(toolCallID)
+	if item == nil {
+		for i := len(m.drillStack) - 2; i >= 0; i-- {
+			item = m.drillStack[i].chat.MessageItem(toolCallID)
+			if item != nil {
+				break
+			}
+		}
+	}
+
+	tmi, ok := item.(chat.ToolMessageItem)
+	if !ok {
+		return false
+	}
+	return tmi.Status() == chat.ToolStatusRunning && !tmi.ToolCall().Finished
 }
 
 // getDynamicHeightLimits will give us the num of items to show in each section based on the height

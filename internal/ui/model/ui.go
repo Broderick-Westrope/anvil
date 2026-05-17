@@ -166,6 +166,10 @@ type (
 	creditsUpdatedMsg struct {
 		credits int
 	}
+
+	// tickElapsedTimeMsg is sent once per second to refresh elapsed-time
+	// displays for running subagent sessions.
+	tickElapsedTimeMsg struct{}
 )
 
 // UI represents the main user interface model.
@@ -981,6 +985,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case creditsUpdatedMsg:
 		m.hyperCredits = &msg.credits
+	case tickElapsedTimeMsg:
+		shouldContinue := m.hasRunningSubagents() || (m.isDrilledIn() && m.isViewedSubagentRunning())
+		if shouldContinue {
+			cmds = append(cmds, tickElapsedTime())
+		} else {
+			m.elapsedTickRunning = false
+		}
+		m.invalidateRunningAgentCaches()
 	case util.InfoMsg:
 		if msg.Type == util.InfoTypeError {
 			slog.Error("Error reported", "error", msg.Msg)
@@ -1385,6 +1397,55 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	return tea.Sequence(cmds...)
 }
 
+// tickElapsedTime returns a command that fires tickElapsedTimeMsg after one
+// second.
+func tickElapsedTime() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return tickElapsedTimeMsg{}
+	})
+}
+
+// hasRunningSubagents reports whether any NestedToolContainer in the root
+// chat is still running (not yet finished).
+func (m *UI) hasRunningSubagents() bool {
+	for i := range m.chat.Len() {
+		item := m.chat.ItemAt(i)
+		if _, ok := item.(chat.NestedToolContainer); !ok {
+			continue
+		}
+		tmi, ok := item.(chat.ToolMessageItem)
+		if !ok {
+			continue
+		}
+		if tmi.Status() == chat.ToolStatusRunning && !tmi.ToolCall().Finished {
+			return true
+		}
+	}
+	return false
+}
+
+// invalidateRunningAgentCaches clears the render cache on any running
+// NestedToolContainer items so that the next draw reflects live state.
+func (m *UI) invalidateRunningAgentCaches() {
+	for i := range m.chat.Len() {
+		item := m.chat.ItemAt(i)
+		mi, ok := item.(chat.MessageItem)
+		if !ok {
+			continue
+		}
+		if _, ok := mi.(chat.NestedToolContainer); !ok {
+			continue
+		}
+		tmi, ok := mi.(chat.ToolMessageItem)
+		if !ok {
+			continue
+		}
+		if tmi.Status() == chat.ToolStatusRunning && !tmi.ToolCall().Finished {
+			chat.ClearItemCaches([]chat.MessageItem{mi})
+		}
+	}
+}
+
 // handleChildSessionMessage handles messages from child sessions (agent tools).
 func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.Cmd {
 	var cmds []tea.Cmd
@@ -1484,6 +1545,12 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 			cmds = append(cmds, cmd)
 		}
 		m.chat.SelectLast()
+	}
+
+	// Start the elapsed-time tick when the first child session message arrives.
+	if !m.elapsedTickRunning {
+		m.elapsedTickRunning = true
+		cmds = append(cmds, tickElapsedTime())
 	}
 
 	return tea.Sequence(cmds...)

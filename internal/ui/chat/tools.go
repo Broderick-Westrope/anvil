@@ -535,6 +535,14 @@ func toolParamList(sty *styles.Styles, params []string, width int) string {
 // toolHeader builds the tool header line: "● ToolName params..."
 func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, nested bool, params ...string) string {
 	icon := toolIcon(sty, status)
+	return toolHeaderWithIcon(sty, icon, name, width, nested, params...)
+}
+
+// toolHeaderWithIcon builds the tool header line using a pre-rendered icon
+// string. It is identical to toolHeader but accepts a custom icon instead of
+// deriving one from status. Use this when the caller needs to supply a dynamic
+// icon (e.g. an animated shimmer or a state-specific glyph).
+func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, nested bool, params ...string) string {
 	nameStyle := sty.Tool.NameNormal
 	if nested {
 		nameStyle = sty.Tool.NameNested

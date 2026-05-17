@@ -108,6 +108,11 @@ func (m *Chat) Len() int {
 	return m.list.Len()
 }
 
+// ItemAt returns the list item at the given index, or nil if out of bounds.
+func (m *Chat) ItemAt(i int) list.Item {
+	return m.list.ItemAt(i)
+}
+
 // InvalidateRenderCaches drops cached rendered output on every message
 // item so the next draw re-renders with the current styles.
 func (m *Chat) InvalidateRenderCaches() {

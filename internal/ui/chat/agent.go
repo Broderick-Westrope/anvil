@@ -195,7 +195,26 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	displayName := agentDisplayName(params.SubagentType, params.Description, params.Model)
 
 	// Line 1: status icon + display name.
-	header := toolHeader(sty, opts.Status, displayName, cappedWidth, opts.Compact)
+	// While the tool is running, override the icon to reflect the two running
+	// sub-states:
+	//   Spawned  (!hasChildMessages) — static ⋯ icon in the pending colour.
+	//   Working  (hasChildMessages)  — single-char animated shimmer.
+	// Once the tool finishes, fall back to the standard ✓/× icon via toolHeader.
+	var header string
+	if !opts.HasResult() && !opts.IsCanceled() {
+		var icon string
+		if r.agent.hasChildMessages {
+			// Working state: single-char animated shimmer.
+			icon = opts.Anim.Render()
+		} else {
+			// Spawned state: static ellipsis in the pending colour.
+			icon = sty.Tool.IconPending.Render(styles.SpinnerIcon)
+		}
+		header = toolHeaderWithIcon(sty, icon, displayName, cappedWidth, opts.Compact)
+	} else {
+		header = toolHeader(sty, opts.Status, displayName, cappedWidth, opts.Compact)
+	}
+
 	if opts.Compact {
 		return header
 	}
@@ -498,7 +517,26 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 	}
 
 	// Line 1: status icon + display name with optional URL.
-	header := toolHeader(sty, opts.Status, "Agentic Fetch", cappedWidth, opts.Compact, toolParams...)
+	// While the tool is running, override the icon to reflect the two running
+	// sub-states:
+	//   Spawned  (!hasChildMessages) — static ⋯ icon in the pending colour.
+	//   Working  (hasChildMessages)  — single-char animated shimmer.
+	// Once the tool finishes, fall back to the standard ✓/× icon via toolHeader.
+	var header string
+	if !opts.HasResult() && !opts.IsCanceled() {
+		var icon string
+		if r.fetch.hasChildMessages {
+			// Working state: single-char animated shimmer.
+			icon = opts.Anim.Render()
+		} else {
+			// Spawned state: static ellipsis in the pending colour.
+			icon = sty.Tool.IconPending.Render(styles.SpinnerIcon)
+		}
+		header = toolHeaderWithIcon(sty, icon, "Agentic Fetch", cappedWidth, opts.Compact, toolParams...)
+	} else {
+		header = toolHeader(sty, opts.Status, "Agentic Fetch", cappedWidth, opts.Compact, toolParams...)
+	}
+
 	if opts.Compact {
 		return header
 	}
