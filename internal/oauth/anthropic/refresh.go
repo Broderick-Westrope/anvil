@@ -47,7 +47,7 @@ func refreshViaEndpoint(ctx context.Context, refreshToken string) (*oauth.Token,
 		"refresh_token": {refreshToken},
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(

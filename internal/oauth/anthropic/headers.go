@@ -7,8 +7,9 @@ package anthropic
 // provider configuration layer.
 func Headers() map[string]string {
 	return map[string]string{
-		"anthropic-version": "2023-06-01",
-		"user-agent":        "claude-cli/" + CLIVersion + " (external, cli)",
-		"x-app":             "cli",
+		"anthropic-dangerous-direct-browser-access": "true",
+		"anthropic-version":                         "2023-06-01",
+		"user-agent":                                "claude-cli/" + CLIVersion + " (external, cli)",
+		"x-app":                                     "cli",
 	}
 }
