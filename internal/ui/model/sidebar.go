@@ -92,11 +92,7 @@ func (m *UI) modelInfo(width int) string {
 	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, m.hyperCredits, extraLines...)
 }
 
-// statsProvider is a local interface for chat items that expose cached
-// turn and tool-call counts.
-type statsProvider interface {
-	Stats() (int, int)
-}
+
 
 // viewedSessionStats returns the turn and tool-call counts for the session
 // currently shown in the chat pane.
@@ -117,8 +113,8 @@ func (m *UI) viewedSessionStats() (turns, toolCalls int) {
 		}
 
 		item := m.findParentMessageItem(toolCallID)
-		if sp, ok := item.(statsProvider); ok {
-			return sp.Stats()
+		if da, ok := item.(chat.DrillableAgent); ok {
+			return da.Stats()
 		}
 		return 0, 0
 	}

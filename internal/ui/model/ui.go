@@ -1260,34 +1260,22 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// that sessions restored from the DB have working navigation and
 		// accurate collapsed stats. During a live session these are set
 		// incrementally via handleChildSessionMessage / updateAgentItemStats.
-		type drillInInitializer interface {
-			SetChildSessionID(string)
-			SetHasChildMessages(bool)
-			IncrementTurns()
-			IncrementToolCalls(n int)
-		}
-		if init, ok := item.(drillInInitializer); ok {
-			init.SetChildSessionID(agentSessionID)
-			init.SetHasChildMessages(true)
+		if da, ok := item.(chat.DrillableAgent); ok {
+			da.SetChildSessionID(agentSessionID)
+			da.SetHasChildMessages(true)
 
 			// Derive turn and tool call counts from the loaded messages.
 			for _, nm := range nestedMsgPtrs {
 				if nm.Role == message.Assistant {
-					init.IncrementTurns()
+					da.IncrementTurns()
 				}
-				init.IncrementToolCalls(len(nm.ToolCalls()))
+				da.IncrementToolCalls(len(nm.ToolCalls()))
 			}
-		}
 
-		// Populate token/cost stats from the child session.
-		type sessionStatsUpdater interface {
-			SetTokens(int64)
-			SetCost(float64)
-		}
-		if u, ok := item.(sessionStatsUpdater); ok {
+			// Populate token/cost stats from the child session.
 			if sess, err := m.com.Workspace.GetSession(context.Background(), agentSessionID); err == nil {
-				u.SetTokens(sess.PromptTokens + sess.CompletionTokens)
-				u.SetCost(sess.Cost)
+				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
+				da.SetCost(sess.Cost)
 			}
 		}
 	}
@@ -1550,13 +1538,9 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	// Set the child session ID and mark that messages have arrived so the
 	// collapsed stats view and drill-in navigation can activate.
-	type childSessionSetter interface {
-		SetChildSessionID(string)
-		SetHasChildMessages(bool)
-	}
-	if setter, ok := agentItem.(childSessionSetter); ok {
-		setter.SetChildSessionID(childSessionID)
-		setter.SetHasChildMessages(true)
+	if da, ok := agentItem.(chat.DrillableAgent); ok {
+		da.SetChildSessionID(childSessionID)
+		da.SetHasChildMessages(true)
 	}
 
 	// Get existing nested tools.
@@ -1633,37 +1617,28 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 		return
 	}
 
-	type statsUpdater interface {
-		IncrementTurns()
-		IncrementToolCalls(n int)
-	}
-	updater, ok := item.(statsUpdater)
+	da, ok := item.(chat.DrillableAgent)
 	if !ok {
 		return
 	}
 
 	// Count assistant-role message creations as turns.
 	if event.Type == pubsub.CreatedEvent && event.Payload.Role == message.Assistant {
-		updater.IncrementTurns()
+		da.IncrementTurns()
 	}
 
 	// Count tool calls with deduplication via CountedToolIDs to avoid
 	// double-counting when UpdatedEvent repeats the same tool calls.
-	type toolIDTracker interface {
-		CountedToolIDs() map[string]bool
+	counted := da.CountedToolIDs()
+	newCount := 0
+	for _, tc := range event.Payload.ToolCalls() {
+		if !counted[tc.ID] {
+			counted[tc.ID] = true
+			newCount++
+		}
 	}
-	if tracker, ok2 := item.(toolIDTracker); ok2 {
-		counted := tracker.CountedToolIDs()
-		newCount := 0
-		for _, tc := range event.Payload.ToolCalls() {
-			if !counted[tc.ID] {
-				counted[tc.ID] = true
-				newCount++
-			}
-		}
-		if newCount > 0 {
-			updater.IncrementToolCalls(newCount)
-		}
+	if newCount > 0 {
+		da.IncrementToolCalls(newCount)
 	}
 }
 
@@ -1680,13 +1655,9 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 		return
 	}
 
-	type sessionStatsUpdater interface {
-		SetTokens(int64)
-		SetCost(float64)
-	}
-	if u, ok := item.(sessionStatsUpdater); ok {
-		u.SetTokens(s.PromptTokens + s.CompletionTokens)
-		u.SetCost(s.Cost)
+	if da, ok := item.(chat.DrillableAgent); ok {
+		da.SetTokens(s.PromptTokens + s.CompletionTokens)
+		da.SetCost(s.Cost)
 	}
 }
 

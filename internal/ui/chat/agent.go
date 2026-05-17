@@ -26,6 +26,21 @@ type NestedToolContainer interface {
 	AddNestedTool(tool ToolMessageItem)
 }
 
+// DrillableAgent is implemented by tool items that own a child session and
+// track live stats for collapsed display and drill-in navigation.
+type DrillableAgent interface {
+	SetChildSessionID(string)
+	SetHasChildMessages(bool)
+	IncrementTurns()
+	IncrementToolCalls(n int)
+	CountedToolIDs() map[string]bool
+	SetTokens(int64)
+	SetCost(float64)
+	Stats() (turns int, toolCalls int)
+}
+
+var _ DrillableAgent = (*drillableAgentState)(nil)
+
 // drillableAgentState holds the drill-in navigation fields and live stats
 // shared by agent-like tool items. Methods call clearFunc to invalidate the
 // render cache on state changes; set clearFunc to the owning item's
