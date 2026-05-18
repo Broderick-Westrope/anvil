@@ -10,7 +10,7 @@ import (
 func TestBetasForModel_Default(t *testing.T) {
 	t.Parallel()
 
-	// A generic model should receive all four default betas.
+	// A generic model should receive all default betas.
 	betas := BetasForModel("claude-3-sonnet-20240229")
 	require.Equal(t, defaultBetas, betas)
 }
@@ -71,8 +71,8 @@ func TestBetasForModel_HaikuNoEffort(t *testing.T) {
 func TestMergeBetas_NoDuplicates(t *testing.T) {
 	t.Parallel()
 
-	existing := "claude-code-20250219,oauth-2025-04-20"
-	modelBetas := []string{"oauth-2025-04-20", "effort-2025-11-24"}
+	existing := "claude-code-20250219,context-management-2025-06-27"
+	modelBetas := []string{"context-management-2025-06-27", "effort-2025-11-24"}
 
 	got := MergeBetas(existing, modelBetas)
 
@@ -86,7 +86,7 @@ func TestMergeBetas_NoDuplicates(t *testing.T) {
 	}
 
 	require.Contains(t, got, "claude-code-20250219")
-	require.Contains(t, got, "oauth-2025-04-20")
+	require.Contains(t, got, "context-management-2025-06-27")
 	require.Contains(t, got, "effort-2025-11-24")
 }
 

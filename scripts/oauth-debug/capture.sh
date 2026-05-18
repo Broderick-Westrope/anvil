@@ -9,6 +9,7 @@
 #   ./capture.sh                      # Uses default model (haiku) and prompt ("hi")
 #   ./capture.sh --model sonnet       # Capture with a specific model
 #   ./capture.sh --prompt "explain x" # Capture with a specific prompt
+#   ./capture.sh --force-oauth         # Unset ANTHROPIC_API_KEY to use OAuth
 #   ./capture.sh --port 8888          # Use a different proxy port
 #
 # Output:
@@ -23,14 +24,16 @@ MODEL="haiku"
 PROMPT="hi"
 PORT=8080
 OUTFILE="${SCRIPT_DIR}/capture.json"
+FORCE_OAUTH=false
 
 # Parse arguments.
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --model)   MODEL="$2";   shift 2 ;;
-        --prompt)  PROMPT="$2";  shift 2 ;;
-        --port)    PORT="$2";    shift 2 ;;
-        --outfile) OUTFILE="$2"; shift 2 ;;
+        --model)       MODEL="$2";   shift 2 ;;
+        --prompt)      PROMPT="$2";  shift 2 ;;
+        --port)        PORT="$2";    shift 2 ;;
+        --outfile)     OUTFILE="$2"; shift 2 ;;
+        --force-oauth) FORCE_OAUTH=true; shift ;;
         -h|--help)
             sed -n '2,/^$/s/^# //p' "$0"
             exit 0
@@ -78,12 +81,21 @@ trap cleanup EXIT
 echo "==> Running: claude -p . --model ${MODEL} \"${PROMPT}\""
 echo "    (proxied through localhost:${PORT})"
 
+# Build the env for the Claude CLI invocation.
+PROXY_ENV=(
+    HTTPS_PROXY="http://127.0.0.1:${PORT}"
+    HTTP_PROXY="http://127.0.0.1:${PORT}"
+    NODE_TLS_REJECT_UNAUTHORIZED=0
+)
+
+if [[ "${FORCE_OAUTH}" == "true" ]]; then
+    echo "    --force-oauth: unsetting ANTHROPIC_API_KEY to use OAuth credentials"
+    PROXY_ENV+=(ANTHROPIC_API_KEY= ANTHROPIC_AUTH_TOKEN=)
+fi
+
 # Route Claude Code through the proxy. NODE_TLS_REJECT_UNAUTHORIZED=0
 # is required because mitmproxy uses its own CA certificate.
-HTTPS_PROXY="http://127.0.0.1:${PORT}" \
-HTTP_PROXY="http://127.0.0.1:${PORT}" \
-NODE_TLS_REJECT_UNAUTHORIZED=0 \
-    claude -p . --model "${MODEL}" "${PROMPT}" 2>/dev/null || true
+env "${PROXY_ENV[@]}" claude -p . --model "${MODEL}" "${PROMPT}" 2>/dev/null || true
 
 # Give mitmdump a moment to flush.
 sleep 1

@@ -9,7 +9,7 @@ func Headers() map[string]string {
 	return map[string]string{
 		"anthropic-dangerous-direct-browser-access": "true",
 		"anthropic-version":                         "2023-06-01",
-		"user-agent":                                "claude-cli/" + CLIVersion + " (external, cli)",
+		"user-agent":                                "claude-cli/" + CLIVersion + " (external, sdk-cli)",
 		"x-app":                                     "cli",
 	}
 }

@@ -11,6 +11,10 @@ var defaultBetas = []string{
 	"oauth-2025-04-20",
 	"interleaved-thinking-2025-05-14",
 	"prompt-caching-scope-2026-01-05",
+	"context-management-2025-06-27",
+	"advisor-tool-2026-03-01",
+	"cache-diagnosis-2026-04-07",
+	"extended-cache-ttl-2025-04-11",
 }
 
 // BetasForModel returns the beta flags appropriate for the given model ID.

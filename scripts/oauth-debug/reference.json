@@ -1,7 +1,7 @@
 {
   "_description": "Known-good Anthropic OAuth request protocol as implemented by Anvil. Compare mitmproxy captures against this file to detect protocol drift.",
   "_last_verified": "2026-05-18",
-  "_source": "Reverse-engineered from Claude Code CLI + community projects (opencode-claude-auth, claude-agent-rs, LiteLLM).",
+  "_source": "Captured from Claude Code CLI v2.1.143 via mitmproxy.",
 
   "endpoints": {
     "api": "https://api.anthropic.com/v1/messages",
@@ -10,15 +10,23 @@
 
   "headers": {
     "required": {
-      "Authorization": "Bearer <oauth-access-token>",
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
-      "user-agent": "claude-cli/<version> (external, cli)",
+      "user-agent": "claude-cli/<version> (external, sdk-cli)",
       "x-app": "cli",
       "anthropic-beta": "<model-dependent, see beta_flags>",
       "content-type": "application/json"
     },
+    "auth_oauth": {
+      "_note": "When using OAuth tokens (sk-ant-oat01-...), send as Authorization: Bearer. Capture from v2.1.143 used x-api-key with a regular API key — unclear if OAuth tokens also moved to x-api-key. Verify with an OAuth-only capture.",
+      "Authorization": "Bearer <oauth-access-token>"
+    },
+    "auth_api_key": {
+      "_note": "When using regular API keys (sk-ant-api03-...).",
+      "x-api-key": "<api-key>"
+    },
     "must_not_send": {
+      "_note": "x-api-key must not be present when using OAuth Bearer auth.",
       "x-api-key": "Deleted when using OAuth Bearer auth."
     }
   },
@@ -31,7 +39,11 @@
     "always": [
       "claude-code-20250219",
       "oauth-2025-04-20",
-      "prompt-caching-scope-2026-01-05"
+      "prompt-caching-scope-2026-01-05",
+      "context-management-2025-06-27",
+      "advisor-tool-2026-03-01",
+      "cache-diagnosis-2026-04-07",
+      "extended-cache-ttl-2025-04-11"
     ],
     "non_haiku": [
       "interleaved-thinking-2025-05-14"
@@ -39,7 +51,7 @@
     "model_4_6_and_4_7": [
       "effort-2025-11-24"
     ],
-    "_note": "Flags are comma-separated in the anthropic-beta header. Order does not matter."
+    "_note": "Flags are comma-separated in the anthropic-beta header. Order does not matter. oauth-2025-04-20 is present on OAuth requests but absent from API key requests."
   },
 
   "system_message_injection": {
@@ -50,7 +62,8 @@
     },
     "identity_prefix": {
       "text": "You are Claude Code, Anthropic's official CLI for Claude.",
-      "position": "Second system message (after billing header)."
+      "position": "Second system message (after billing header).",
+      "_note": "Not observed in v2.1.143 capture — may be conditionally included or moved."
     }
   },
 
@@ -66,8 +79,18 @@
   },
 
   "anvil_constants": {
-    "cli_version": "2.1.112",
+    "cli_version": "2.1.143",
     "billing_salt": "59cf53e54c78",
     "billing_entrypoint": "cli"
+  },
+
+  "stainless_headers_observed": {
+    "_note": "These are set by the Anthropic SDK, not by application code. Listed for reference only.",
+    "X-Stainless-Arch": "arm64",
+    "X-Stainless-Lang": "js",
+    "X-Stainless-OS": "MacOS",
+    "X-Stainless-Package-Version": "0.94.0",
+    "X-Stainless-Runtime": "node",
+    "X-Stainless-Runtime-Version": "v24.3.0"
   }
 }

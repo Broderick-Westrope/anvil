@@ -56,3 +56,6 @@ completions/anvil.*sh
 .task
 
 .opencode/
+
+# OAuth debug captures (contain secrets)
+scripts/oauth-debug/capture.json

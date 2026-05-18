@@ -77,11 +77,15 @@ def request(flow: http.HTTPFlow) -> None:
     # Build header dict, preserving case.
     headers = dict(req.headers)
 
-    # Redact the actual bearer token but keep the prefix.
+    # Redact secrets but keep prefixes for identification.
     if "Authorization" in headers:
         val = headers["Authorization"]
         if val.startswith("Bearer ") and len(val) > 20:
             headers["Authorization"] = val[:20] + "...<redacted>"
+    if "x-api-key" in headers:
+        val = headers["x-api-key"]
+        if len(val) > 20:
+            headers["x-api-key"] = val[:20] + "...<redacted>"
 
     # Parse query params.
     query_params = dict(req.query)
