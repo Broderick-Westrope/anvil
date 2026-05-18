@@ -1,0 +1,73 @@
+{
+  "_description": "Known-good Anthropic OAuth request protocol as implemented by Anvil. Compare mitmproxy captures against this file to detect protocol drift.",
+  "_last_verified": "2026-05-18",
+  "_source": "Reverse-engineered from Claude Code CLI + community projects (opencode-claude-auth, claude-agent-rs, LiteLLM).",
+
+  "endpoints": {
+    "api": "https://api.anthropic.com/v1/messages",
+    "token_refresh": "https://claude.ai/v1/oauth/token"
+  },
+
+  "headers": {
+    "required": {
+      "Authorization": "Bearer <oauth-access-token>",
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+      "user-agent": "claude-cli/<version> (external, cli)",
+      "x-app": "cli",
+      "anthropic-beta": "<model-dependent, see beta_flags>",
+      "content-type": "application/json"
+    },
+    "must_not_send": {
+      "x-api-key": "Deleted when using OAuth Bearer auth."
+    }
+  },
+
+  "query_params": {
+    "beta": "true"
+  },
+
+  "beta_flags": {
+    "always": [
+      "claude-code-20250219",
+      "oauth-2025-04-20",
+      "prompt-caching-scope-2026-01-05"
+    ],
+    "non_haiku": [
+      "interleaved-thinking-2025-05-14"
+    ],
+    "model_4_6_and_4_7": [
+      "effort-2025-11-24"
+    ],
+    "_note": "Flags are comma-separated in the anthropic-beta header. Order does not matter."
+  },
+
+  "system_message_injection": {
+    "billing_header": {
+      "format": "x-anthropic-billing-header: cc_version=<cli_version>.<hash_suffix>; cc_entrypoint=cli; cch=<sha256_derived>;",
+      "position": "First system message (prepended before all others).",
+      "hash_input": "SHA-256 of system prompt text + salt + CLI version."
+    },
+    "identity_prefix": {
+      "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+      "position": "Second system message (after billing header)."
+    }
+  },
+
+  "token_refresh": {
+    "method": "POST",
+    "url": "https://claude.ai/v1/oauth/token",
+    "content_type": "application/x-www-form-urlencoded",
+    "body": {
+      "grant_type": "refresh_token",
+      "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+      "refresh_token": "<refresh-token>"
+    }
+  },
+
+  "anvil_constants": {
+    "cli_version": "2.1.112",
+    "billing_salt": "59cf53e54c78",
+    "billing_entrypoint": "cli"
+  }
+}
