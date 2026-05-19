@@ -56,7 +56,7 @@ import (
 	"github.com/qjebbs/go-jsons"
 )
 
-//go:embed templates/agents/*.md
+//go:embed all:templates/agents
 var agentMDFS embed.FS
 
 // Coordinator errors.

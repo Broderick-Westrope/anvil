@@ -45,6 +45,11 @@ type AgentMD struct {
 	// to specific tools.
 	MCPs map[string][]string
 
+	// RoutingHint is a short routing rule for the orchestrator's delegation
+	// workflow (e.g. "Route deep reasoning to @oracle."). Empty means no
+	// routing hint is emitted.
+	RoutingHint string
+
 	// Body is the full specialist system prompt (markdown body after the
 	// frontmatter block).
 	Body string
@@ -60,6 +65,7 @@ type agentFrontmatter struct {
 	Tools            []string            `yaml:"tools"`
 	Skills           []string            `yaml:"skills"`
 	MCPs             map[string][]string `yaml:"mcps"`
+	RoutingHint      string              `yaml:"routing_hint"`
 }
 
 // ParseAgentMD parses an agent description file with YAML frontmatter.
@@ -112,6 +118,7 @@ func ParseAgentMD(name string, content []byte) (AgentMD, error) {
 	agent.Tools = fm.Tools
 	agent.Skills = fm.Skills
 	agent.MCPs = fm.MCPs
+	agent.RoutingHint = fm.RoutingHint
 	agent.Body = body
 	return agent, nil
 }
@@ -141,36 +148,16 @@ func BuildAgentsBlock(agents []AgentMD) string {
 	return sb.String()
 }
 
-// agentRoutingRules maps agent names to a short routing hint used in the
-// delegation workflow. The hint is included only when the agent is enabled.
-var agentRoutingRules = map[string]string{
-	"oracle":          "Route deep reasoning, high-stakes architecture decisions, or persistent bugs to @oracle.",
-	"explorer":        "Route broad codebase discovery and parallel search tasks to @explorer.",
-	"librarian":       "Route external documentation lookup and unfamiliar library research to @librarian.",
-	"designer":        "Route UI/UX work and user-facing polish to @designer.",
-	"fixer":           "Route well-defined, bounded implementation work and test writing to @fixer.",
-	"planner":         "Route feature planning, requirement interviews, and spec writing to @planner.",
-	"tester":          "Route comprehensive test strategy, coverage analysis, and flaky-test diagnosis to @tester.",
-	"reviewer":        "Route code review, diff analysis, and PR quality checks to @reviewer.",
-	"devils-advocate": "Route adversarial review of specs and plans to @devils-advocate.",
-}
-
 // BuildDelegationWorkflow generates the <Workflow> block for the orchestrator
 // prompt. It describes the 6-step routing pattern and includes dynamic
 // validation routing rules based on the enabled agents.
 func BuildDelegationWorkflow(agents []AgentMD) string {
-	// Build the set of enabled agent names for dynamic rule inclusion.
-	enabled := make(map[string]bool, len(agents))
-	for _, a := range agents {
-		enabled[a.Name] = true
-	}
-
-	// Collect per-agent routing rules for enabled agents.
+	// Collect per-agent routing hints for enabled agents.
 	var rules strings.Builder
 	for _, a := range agents {
-		if rule, ok := agentRoutingRules[a.Name]; ok {
+		if a.RoutingHint != "" {
 			rules.WriteString("  - ")
-			rules.WriteString(rule)
+			rules.WriteString(a.RoutingHint)
 			rules.WriteString("\n")
 		}
 	}

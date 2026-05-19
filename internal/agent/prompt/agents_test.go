@@ -136,15 +136,15 @@ func TestBuildDelegationWorkflow(t *testing.T) {
 
 	// Full roster of 9 agents matching the project spec.
 	fullRoster := []AgentMD{
-		{Name: "oracle"},
-		{Name: "explorer"},
-		{Name: "librarian"},
-		{Name: "designer"},
-		{Name: "fixer"},
-		{Name: "planner"},
-		{Name: "tester"},
-		{Name: "reviewer"},
-		{Name: "devils-advocate"},
+		{Name: "oracle", RoutingHint: "Route deep reasoning, high-stakes architecture decisions, or persistent bugs to @oracle."},
+		{Name: "explorer", RoutingHint: "Route broad codebase discovery and parallel search tasks to @explorer."},
+		{Name: "librarian", RoutingHint: "Route external documentation lookup and unfamiliar library research to @librarian."},
+		{Name: "designer", RoutingHint: "Route UI/UX work and user-facing polish to @designer."},
+		{Name: "fixer", RoutingHint: "Route well-defined, bounded implementation work and test writing to @fixer."},
+		{Name: "planner", RoutingHint: "Route feature planning, requirement interviews, and spec writing to @planner."},
+		{Name: "tester", RoutingHint: "Route comprehensive test strategy, coverage analysis, and flaky-test diagnosis to @tester."},
+		{Name: "reviewer", RoutingHint: "Route code review, diff analysis, and PR quality checks to @reviewer."},
+		{Name: "devils-advocate", RoutingHint: "Route adversarial review of specs and plans to @devils-advocate."},
 	}
 
 	t.Run("contains all 6 workflow steps", func(t *testing.T) {
@@ -176,8 +176,8 @@ func TestBuildDelegationWorkflow(t *testing.T) {
 	t.Run("subset roster omits disabled agent routing rules", func(t *testing.T) {
 		t.Parallel()
 		subset := []AgentMD{
-			{Name: "oracle"},
-			{Name: "fixer"},
+			{Name: "oracle", RoutingHint: "Route deep reasoning, high-stakes architecture decisions, or persistent bugs to @oracle."},
+			{Name: "fixer", RoutingHint: "Route well-defined, bounded implementation work and test writing to @fixer."},
 		}
 		result := BuildDelegationWorkflow(subset)
 		// Designer is not in the subset, so its routing rule should be absent.
@@ -193,15 +193,15 @@ func TestBuildDelegationWorkflow(t *testing.T) {
 		// possible without embedding here, so we approximate with representative
 		// routing fields that match typical frontmatter content.
 		realisticRoster := []AgentMD{
-			{Name: "oracle", Role: "Strategic advisor for deep reasoning, architecture decisions, and complex debugging.", DelegateWhen: "Genuinely uncertain about a high-stakes decision.", DontDelegateWhen: "Routine implementation decisions can be made confidently."},
-			{Name: "explorer", Role: "Fast codebase search and pattern-matching specialist.", DelegateWhen: "Discovering what exists before planning work.", DontDelegateWhen: "You already know the exact file path."},
-			{Name: "librarian", Role: "External documentation and library research specialist.", DelegateWhen: "Working with libraries that have frequent API changes.", DontDelegateWhen: "The API is stable and well-known."},
-			{Name: "designer", Role: "UI/UX specialist for intentional, polished user-facing experiences.", DelegateWhen: "The output is user-facing and polish matters.", DontDelegateWhen: "The work is purely backend or logic."},
-			{Name: "fixer", Role: "Fast, bounded implementation specialist.", DelegateWhen: "The implementation work is well-defined with a clear spec.", DontDelegateWhen: "The task still needs discovery or research."},
-			{Name: "planner", Role: "Feature planning and specification specialist.", DelegateWhen: "Starting a new feature that needs structured planning.", DontDelegateWhen: "The change is small enough that a plan would cost more time."},
-			{Name: "tester", Role: "Test analysis and planning specialist.", DelegateWhen: "Writing a comprehensive test suite for a module or feature.", DontDelegateWhen: "Adding a single test case to an already well-covered area."},
-			{Name: "reviewer", Role: "Code and PR reviewer focused on implementation quality.", DelegateWhen: "Reviewing a set of code changes or a pull request.", DontDelegateWhen: "Doing a quick self-check on a small, obviously correct change."},
-			{Name: "devils-advocate", Role: "Rigorous critic that finds weaknesses in specs and plans.", DelegateWhen: "A spec or plan needs adversarial review before implementation.", DontDelegateWhen: "The work is implementation."},
+			{Name: "oracle", Role: "Strategic advisor for deep reasoning, architecture decisions, and complex debugging.", DelegateWhen: "Genuinely uncertain about a high-stakes decision.", DontDelegateWhen: "Routine implementation decisions can be made confidently.", RoutingHint: "Route deep reasoning, high-stakes architecture decisions, or persistent bugs to @oracle."},
+			{Name: "explorer", Role: "Fast codebase search and pattern-matching specialist.", DelegateWhen: "Discovering what exists before planning work.", DontDelegateWhen: "You already know the exact file path.", RoutingHint: "Route broad codebase discovery and parallel search tasks to @explorer."},
+			{Name: "librarian", Role: "External documentation and library research specialist.", DelegateWhen: "Working with libraries that have frequent API changes.", DontDelegateWhen: "The API is stable and well-known.", RoutingHint: "Route external documentation lookup and unfamiliar library research to @librarian."},
+			{Name: "designer", Role: "UI/UX specialist for intentional, polished user-facing experiences.", DelegateWhen: "The output is user-facing and polish matters.", DontDelegateWhen: "The work is purely backend or logic.", RoutingHint: "Route UI/UX work and user-facing polish to @designer."},
+			{Name: "fixer", Role: "Fast, bounded implementation specialist.", DelegateWhen: "The implementation work is well-defined with a clear spec.", DontDelegateWhen: "The task still needs discovery or research.", RoutingHint: "Route well-defined, bounded implementation work and test writing to @fixer."},
+			{Name: "planner", Role: "Feature planning and specification specialist.", DelegateWhen: "Starting a new feature that needs structured planning.", DontDelegateWhen: "The change is small enough that a plan would cost more time.", RoutingHint: "Route feature planning, requirement interviews, and spec writing to @planner."},
+			{Name: "tester", Role: "Test analysis and planning specialist.", DelegateWhen: "Writing a comprehensive test suite for a module or feature.", DontDelegateWhen: "Adding a single test case to an already well-covered area.", RoutingHint: "Route comprehensive test strategy, coverage analysis, and flaky-test diagnosis to @tester."},
+			{Name: "reviewer", Role: "Code and PR reviewer focused on implementation quality.", DelegateWhen: "Reviewing a set of code changes or a pull request.", DontDelegateWhen: "Doing a quick self-check on a small, obviously correct change.", RoutingHint: "Route code review, diff analysis, and PR quality checks to @reviewer."},
+			{Name: "devils-advocate", Role: "Rigorous critic that finds weaknesses in specs and plans.", DelegateWhen: "A spec or plan needs adversarial review before implementation.", DontDelegateWhen: "The work is implementation.", RoutingHint: "Route adversarial review of specs and plans to @devils-advocate."},
 		}
 
 		agentsBlock := BuildAgentsBlock(realisticRoster)
@@ -408,6 +408,14 @@ func TestParseAgentMD_CapabilityFields(t *testing.T) {
 		got, err := ParseAgentMD("agent", content)
 		require.NoError(t, err)
 		require.Empty(t, got.Model)
+	})
+
+	t.Run("routing_hint is parsed correctly", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nrouting_hint: Route X to @agent.\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Equal(t, "Route X to @agent.", got.RoutingHint)
 	})
 
 	t.Run("full frontmatter with all capability fields parses correctly", func(t *testing.T) {

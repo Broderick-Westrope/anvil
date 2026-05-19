@@ -756,18 +756,6 @@ func readOnlyTools() []string {
 	}
 }
 
-// readWriteTools returns read-only tools plus write and execution tools
-// for agents that can modify the codebase and run commands.
-func readWriteTools() []string {
-	return append(
-		readOnlyTools(),
-		"edit",
-		"write",
-		"bash",
-		"multiedit",
-	)
-}
-
 // setupDefaultAgents initialises Config.Agents with only the orchestrator
 // default. The orchestrator has no .md file, so its config is always hardcoded.
 // Other agent defaults are sourced from .md files at coordinator init via
@@ -784,113 +772,20 @@ func (c *Config) setupDefaultAgents() {
 	}
 }
 
-// SetupAgents sets up the agent roster from the hardcoded 10-agent defaults
-// plus any user overrides from anvil.json. This is called during config loading
-// before .md files are parsed; the coordinator later calls SetupAgentsWithDefaults
-// to replace the non-orchestrator defaults with .md-derived values.
-//
-// If Config.Agents is nil after JSON unmarshalling (no "agents" key in config),
-// pure defaults are used. If Config.Agents is non-nil, each user-defined agent
-// overlays its non-zero fields onto the corresponding default, and unknown agent
-// names are added as new entries. Disabled agents are removed last.
+// SetupAgents sets up the agent roster with the orchestrator default plus any
+// user overrides from anvil.json. Non-orchestrator agents are not defined here;
+// they are loaded from .md files by the coordinator via SetupAgentsWithDefaults.
+// This is called during config loading.
 func (c *Config) SetupAgents() {
-	// Snapshot user-provided overrides before we overwrite Agents. Store in a
-	// dedicated field so SetupAgentsWithDefaults can re-apply them later.
+	// Store the raw user-provided overrides so SetupAgentsWithDefaults can
+	// re-apply them after replacing defaults with .md-derived values.
 	c.userAgentOverrides = c.Agents
-	userAgents := c.Agents
 
-	// Apply the hardcoded 10-agent defaults unconditionally.
-	c.Agents = map[string]Agent{
-		AgentOrchestrator: {
-			ID:            AgentOrchestrator,
-			Name:          "Orchestrator",
-			AllowedTools:  nil, // Nil = all tools unrestricted.
-			AllowedSkills: nil, // Nil = all skills unrestricted.
-			AllowedMCP:    nil, // Nil = all MCPs unrestricted.
-		},
-		"oracle": {
-			ID:            "oracle",
-			Name:          "Oracle",
-			AllowedTools:  nil, // All tools.
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
-		"explorer": {
-			ID:            "explorer",
-			Name:          "Explorer",
-			AllowedTools:  readOnlyTools(),
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
-		"librarian": {
-			ID:            "librarian",
-			Name:          "Librarian",
-			AllowedTools:  append(readOnlyTools(), "agentic_fetch"),
-			AllowedSkills: []string{},
-			AllowedMCP: map[string][]string{
-				"websearch": nil,
-				"context7":  nil,
-				"grep_app":  nil,
-				"sourcebot": nil,
-			},
-		},
-		"designer": {
-			ID:            "designer",
-			Name:          "Designer",
-			AllowedTools:  nil, // All tools.
-			AllowedSkills: []string{"agent-browser"},
-			AllowedMCP:    map[string][]string{},
-		},
-		"fixer": {
-			ID:            "fixer",
-			Name:          "Fixer",
-			AllowedTools:  nil, // All tools.
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
-		"planner": {
-			ID:           "planner",
-			Name:         "Planner",
-			AllowedTools: readWriteTools(),
-			AllowedSkills: []string{
-				"grilling",
-				"brainstorming",
-				"drafting-tsds",
-				"writing-plans",
-				"planning-products",
-			},
-			AllowedMCP: map[string][]string{},
-		},
-		"tester": {
-			ID:           "tester",
-			Name:         "Tester",
-			AllowedTools: append(readOnlyTools(), "bash"),
-			AllowedSkills: []string{
-				"writing-tests",
-				"test-driven-development",
-				"scaffolding-plan-tests",
-				"fixing-flaky-tests",
-				"condition-based-waiting",
-			},
-			AllowedMCP: map[string][]string{},
-		},
-		"reviewer": {
-			ID:            "reviewer",
-			Name:          "Reviewer",
-			AllowedTools:  readOnlyTools(),
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
-		"devils-advocate": {
-			ID:            "devils-advocate",
-			Name:          "Devils Advocate",
-			AllowedTools:  readOnlyTools(),
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
-	}
+	// Start with only the orchestrator. Non-orchestrator agent defaults are
+	// sourced from .md files at coordinator init via SetupAgentsWithDefaults.
+	c.setupDefaultAgents()
 
-	c.applyAgentOverrides(userAgents)
+	c.applyAgentOverrides(c.userAgentOverrides)
 }
 
 // SetupAgentsWithDefaults sets up the agent roster from .md-derived defaults,
