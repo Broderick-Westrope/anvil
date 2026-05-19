@@ -5,6 +5,25 @@ delegate_when: >
   Starting a new feature that needs structured planning, user wants to be grilled about requirements, need a design spec or implementation plan written to disk.
 dont_delegate_when: >
   Quick changes that don't need a plan, simple bug fixes, work that's already well-specified.
+tools:
+  - glob
+  - grep
+  - ls
+  - view
+  - lsp_diagnostics
+  - lsp_references
+  - sourcegraph
+  - edit
+  - write
+  - bash
+  - multiedit
+skills:
+  - grilling
+  - brainstorming
+  - drafting-tsds
+  - writing-plans
+  - planning-products
+mcps: {}
 ---
 
 # Planner

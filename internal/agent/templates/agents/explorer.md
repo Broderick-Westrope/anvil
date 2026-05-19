@@ -5,6 +5,16 @@ delegate_when: >
   Need to discover what exists before planning, parallel searches speed discovery, need a summarized map not full file contents, broad or uncertain scope across the codebase.
 dont_delegate_when: >
   Know the exact file path and need actual content, need to read the full file anyway, single specific lookup.
+tools:
+  - glob
+  - grep
+  - ls
+  - view
+  - lsp_diagnostics
+  - lsp_references
+  - sourcegraph
+skills: []
+mcps: {}
 ---
 
 # Explorer

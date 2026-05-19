@@ -640,6 +640,12 @@ type Config struct {
 	// from SetupAgents are used.
 	Agents map[string]Agent `json:"agents,omitempty"`
 
+	// userAgentOverrides stores the raw user-provided agent overrides from
+	// anvil.json before SetupAgents overwrites c.Agents with defaults. This
+	// allows SetupAgentsWithDefaults (called later by the coordinator) to
+	// re-apply user overrides on top of .md-derived defaults.
+	userAgentOverrides map[string]Agent
+
 	// DisabledAgents lists agent names to remove from the routing table and
 	// orchestrator prompt at startup.
 	DisabledAgents []string `json:"disabled_agents,omitempty"`
@@ -762,10 +768,38 @@ func readWriteTools() []string {
 	)
 }
 
-// setupDefaultAgents initialises Config.Agents with the default 10-agent roster.
-// nil AllowedTools means unrestricted (all tools); nil AllowedSkills / AllowedMCP
-// means unrestricted for skills / MCPs respectively. An empty slice means none.
+// setupDefaultAgents initialises Config.Agents with only the orchestrator
+// default. The orchestrator has no .md file, so its config is always hardcoded.
+// Other agent defaults are sourced from .md files at coordinator init via
+// SetupAgentsWithDefaults.
 func (c *Config) setupDefaultAgents() {
+	c.Agents = map[string]Agent{
+		AgentOrchestrator: {
+			ID:            AgentOrchestrator,
+			Name:          "Orchestrator",
+			AllowedTools:  nil, // Nil = all tools unrestricted.
+			AllowedSkills: nil, // Nil = all skills unrestricted.
+			AllowedMCP:    nil, // Nil = all MCPs unrestricted.
+		},
+	}
+}
+
+// SetupAgents sets up the agent roster from the hardcoded 10-agent defaults
+// plus any user overrides from anvil.json. This is called during config loading
+// before .md files are parsed; the coordinator later calls SetupAgentsWithDefaults
+// to replace the non-orchestrator defaults with .md-derived values.
+//
+// If Config.Agents is nil after JSON unmarshalling (no "agents" key in config),
+// pure defaults are used. If Config.Agents is non-nil, each user-defined agent
+// overlays its non-zero fields onto the corresponding default, and unknown agent
+// names are added as new entries. Disabled agents are removed last.
+func (c *Config) SetupAgents() {
+	// Snapshot user-provided overrides before we overwrite Agents. Store in a
+	// dedicated field so SetupAgentsWithDefaults can re-apply them later.
+	c.userAgentOverrides = c.Agents
+	userAgents := c.Agents
+
+	// Apply the hardcoded 10-agent defaults unconditionally.
 	c.Agents = map[string]Agent{
 		AgentOrchestrator: {
 			ID:            AgentOrchestrator,
@@ -855,20 +889,39 @@ func (c *Config) setupDefaultAgents() {
 			AllowedMCP:    map[string][]string{},
 		},
 	}
+
+	c.applyAgentOverrides(userAgents)
 }
 
-// SetupAgents sets up the agent roster from defaults plus any user overrides.
-// If Config.Agents is nil after JSON unmarshalling (no "agents" key in config),
-// pure defaults are used. If Config.Agents is non-nil, each user-defined agent
-// overlays its non-zero fields onto the corresponding default, and unknown agent
-// names are added as new entries. Disabled agents are removed last.
-func (c *Config) SetupAgents() {
-	// Snapshot user-provided overrides before setupDefaultAgents overwrites Agents.
-	userAgents := c.Agents
+// SetupAgentsWithDefaults sets up the agent roster from .md-derived defaults,
+// plus the orchestrator default, plus any user overrides from anvil.json.
+// mdDefaults contains agents parsed from .md frontmatter (keyed by agent name).
+// The orchestrator is always added from internal defaults since it has no .md
+// file. This must be called after SetupAgents (which stores the raw user
+// overrides). The coordinator calls this after parsing .md files.
+func (c *Config) SetupAgentsWithDefaults(mdDefaults map[string]Agent) {
+	// Use the raw user overrides stored by SetupAgents, not c.Agents which
+	// now contains the full hardcoded roster.
+	userAgents := c.userAgentOverrides
 
-	// Apply 10-agent defaults unconditionally.
+	// Start with only the orchestrator default.
 	c.setupDefaultAgents()
 
+	// Merge in .md-derived defaults. The orchestrator is already present so
+	// mdDefaults entries with the orchestrator key are silently ignored.
+	for name, agent := range mdDefaults {
+		if _, exists := c.Agents[name]; !exists {
+			c.Agents[name] = agent
+		}
+	}
+
+	c.applyAgentOverrides(userAgents)
+}
+
+// applyAgentOverrides overlays non-zero fields from userAgents onto the
+// current c.Agents map and removes any disabled agents. It is shared by
+// SetupAgents and SetupAgentsWithDefaults to avoid duplication.
+func (c *Config) applyAgentOverrides(userAgents map[string]Agent) {
 	if userAgents != nil {
 		for name, userAgent := range userAgents {
 			def, ok := c.Agents[name]

@@ -5,6 +5,22 @@ delegate_when: >
   Writing comprehensive test suites, test strategy decisions, diagnosing flaky tests, coverage gap analysis, need a test plan before implementation.
 dont_delegate_when: >
   Adding a single test to existing coverage, the change is trivial enough that the orchestrator can write the test inline.
+tools:
+  - glob
+  - grep
+  - ls
+  - view
+  - lsp_diagnostics
+  - lsp_references
+  - sourcegraph
+  - bash
+skills:
+  - writing-tests
+  - test-driven-development
+  - scaffolding-plan-tests
+  - fixing-flaky-tests
+  - condition-based-waiting
+mcps: {}
 ---
 
 # Tester

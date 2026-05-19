@@ -5,6 +5,16 @@ delegate_when: >
   A spec or plan needs adversarial review, you want holes found before implementation starts, validating design decisions, checking for unstated assumptions.
 dont_delegate_when: >
   Implementation work, code review (use reviewer), architecture advice (use oracle).
+tools:
+  - glob
+  - grep
+  - ls
+  - view
+  - lsp_diagnostics
+  - lsp_references
+  - sourcegraph
+skills: []
+mcps: {}
 ---
 
 # Devil's Advocate

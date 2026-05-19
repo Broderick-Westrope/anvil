@@ -419,3 +419,25 @@ func TestGetProviderOptionsReasoningEffort(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentIDToName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		id   string
+		want string
+	}{
+		{"explorer", "Explorer"},
+		{"oracle", "Oracle"},
+		{"devils-advocate", "Devils Advocate"},
+		{"fixer", "Fixer"},
+		{"", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, agentIDToName(tc.id))
+		})
+	}
+}

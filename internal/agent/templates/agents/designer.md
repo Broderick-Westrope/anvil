@@ -5,6 +5,9 @@ delegate_when: >
   Users see it and polish matters, responsive layouts, UX-critical components (forms, navigation, dashboards), visual consistency, animations and micro-interactions, landing pages, design system work.
 dont_delegate_when: >
   Backend logic with no visual component, quick prototypes where design doesn't matter yet.
+skills:
+  - agent-browser
+mcps: {}
 ---
 
 # Designer

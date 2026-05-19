@@ -5,6 +5,21 @@ delegate_when: >
   Libraries with frequent API changes, complex APIs needing official examples, unfamiliar libraries, version-specific behavior, edge cases or advanced features, nuanced best practices.
 dont_delegate_when: >
   Standard stable APIs like Array.map or fetch, general programming knowledge, info already in conversation, built-in language features.
+tools:
+  - glob
+  - grep
+  - ls
+  - view
+  - lsp_diagnostics
+  - lsp_references
+  - sourcegraph
+  - agentic_fetch
+skills: []
+mcps:
+  websearch:
+  context7:
+  grep_app:
+  sourcebot:
 ---
 
 # Librarian

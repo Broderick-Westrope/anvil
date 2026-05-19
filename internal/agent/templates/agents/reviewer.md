@@ -5,6 +5,16 @@ delegate_when: >
   Code review of changes, after fixer implementations, PR review, reviewing diffs and implementations for quality.
 dont_delegate_when: >
   Quick self-checks on small changes, architectural decisions (use oracle), spec review (use devils-advocate).
+tools:
+  - glob
+  - grep
+  - ls
+  - view
+  - lsp_diagnostics
+  - lsp_references
+  - sourcegraph
+skills: []
+mcps: {}
 ---
 
 # Reviewer

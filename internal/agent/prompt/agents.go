@@ -27,6 +27,24 @@ type AgentMD struct {
 	// NOT delegate to this agent.
 	DontDelegateWhen string
 
+	// Model is the provider/model string (e.g. "anthropic/claude-opus-4-6").
+	// Empty means inherit from the orchestrator.
+	Model string
+
+	// Tools is the allowed tools list. nil means all tools (unrestricted),
+	// empty slice means no tools.
+	Tools []string
+
+	// Skills is the allowed skills list. nil means all skills (unrestricted),
+	// empty slice means no skills.
+	Skills []string
+
+	// MCPs is the allowed MCP servers and tools. nil means all MCPs
+	// (unrestricted), empty map means no MCPs. Map keys are server names;
+	// nil values mean all tools from that server, non-nil values restrict
+	// to specific tools.
+	MCPs map[string][]string
+
 	// Body is the full specialist system prompt (markdown body after the
 	// frontmatter block).
 	Body string
@@ -34,10 +52,14 @@ type AgentMD struct {
 
 // agentFrontmatter is the YAML structure expected in agent .md files.
 type agentFrontmatter struct {
-	DelegatesTo      []string `yaml:"delegates_to"`
-	Role             string   `yaml:"role"`
-	DelegateWhen     string   `yaml:"delegate_when"`
-	DontDelegateWhen string   `yaml:"dont_delegate_when"`
+	DelegatesTo      []string            `yaml:"delegates_to"`
+	Role             string              `yaml:"role"`
+	DelegateWhen     string              `yaml:"delegate_when"`
+	DontDelegateWhen string              `yaml:"dont_delegate_when"`
+	Model            string              `yaml:"model"`
+	Tools            []string            `yaml:"tools"`
+	Skills           []string            `yaml:"skills"`
+	MCPs             map[string][]string `yaml:"mcps"`
 }
 
 // ParseAgentMD parses an agent description file with YAML frontmatter.
@@ -86,6 +108,10 @@ func ParseAgentMD(name string, content []byte) (AgentMD, error) {
 	agent.Role = fm.Role
 	agent.DelegateWhen = fm.DelegateWhen
 	agent.DontDelegateWhen = fm.DontDelegateWhen
+	agent.Model = fm.Model
+	agent.Tools = fm.Tools
+	agent.Skills = fm.Skills
+	agent.MCPs = fm.MCPs
 	agent.Body = body
 	return agent, nil
 }
@@ -228,6 +254,50 @@ func ValidateDelegatesTo(agents []AgentMD, disabledAgents []string) (errs []erro
 					a.Name, ref,
 				))
 			}
+		}
+	}
+
+	// Detect cycles in the delegates_to graph.
+	// Build adjacency list.
+	adj := make(map[string][]string, len(agents))
+	for _, a := range agents {
+		adj[a.Name] = a.DelegatesTo
+	}
+
+	// DFS cycle detection.
+	const (
+		white = 0 // unvisited
+		gray  = 1 // in current path
+		black = 2 // fully visited
+	)
+	color := make(map[string]int, len(agents))
+
+	var dfs func(node string) bool
+	dfs = func(node string) bool {
+		color[node] = gray
+		for _, neighbor := range adj[node] {
+			if color[neighbor] == gray {
+				// Found a cycle — this is a hard error since cycles could
+				// cause infinite delegation loops at runtime.
+				errs = append(errs, fmt.Errorf(
+					"delegation cycle detected: agent %q delegates to %q which is in the current delegation chain",
+					node, neighbor,
+				))
+				return true
+			}
+			if _, inGraph := adj[neighbor]; inGraph && color[neighbor] == white {
+				if dfs(neighbor) {
+					return true
+				}
+			}
+		}
+		color[node] = black
+		return false
+	}
+
+	for _, a := range agents {
+		if color[a.Name] == white {
+			dfs(a.Name)
 		}
 	}
 

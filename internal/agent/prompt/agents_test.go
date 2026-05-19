@@ -281,6 +281,217 @@ func TestBuildAgentsBlock_UsesRoutingNotBody(t *testing.T) {
 	require.NotContains(t, result, "- Don't delegate when: \n")
 }
 
+func TestParseAgentMD_CapabilityFields(t *testing.T) {
+	t.Parallel()
+
+	t.Run("absent tools field means nil (all tools)", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nrole: Agent.\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Nil(t, got.Tools)
+	})
+
+	t.Run("tools null means nil (all tools)", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\ntools: null\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Nil(t, got.Tools)
+	})
+
+	t.Run("tools empty slice means no tools", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\ntools: []\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.NotNil(t, got.Tools)
+		require.Empty(t, got.Tools)
+	})
+
+	t.Run("tools list is parsed correctly", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\ntools: [glob, grep]\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Equal(t, []string{"glob", "grep"}, got.Tools)
+	})
+
+	t.Run("absent skills field means nil (all skills)", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nrole: Agent.\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Nil(t, got.Skills)
+	})
+
+	t.Run("skills null means nil (all skills)", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nskills: null\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Nil(t, got.Skills)
+	})
+
+	t.Run("skills empty slice means no skills", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nskills: []\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.NotNil(t, got.Skills)
+		require.Empty(t, got.Skills)
+	})
+
+	t.Run("skills list is parsed correctly", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nskills: [search, summarise]\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Equal(t, []string{"search", "summarise"}, got.Skills)
+	})
+
+	t.Run("absent mcps field means nil (all MCPs)", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nrole: Agent.\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Nil(t, got.MCPs)
+	})
+
+	t.Run("mcps null means nil (all MCPs)", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nmcps: null\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Nil(t, got.MCPs)
+	})
+
+	t.Run("mcps empty map means no MCPs", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nmcps: {}\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.NotNil(t, got.MCPs)
+		require.Empty(t, got.MCPs)
+	})
+
+	t.Run("mcps map with nil value means all tools from that server", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nmcps:\n  linear: null\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.NotNil(t, got.MCPs)
+		val, ok := got.MCPs["linear"]
+		require.True(t, ok)
+		require.Nil(t, val)
+	})
+
+	t.Run("mcps map with specific tools restricts to those tools", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nmcps:\n  linear: [search, create]\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Equal(t, []string{"search", "create"}, got.MCPs["linear"])
+	})
+
+	t.Run("model field is parsed correctly", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nmodel: anthropic/claude-opus-4-6\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Equal(t, "anthropic/claude-opus-4-6", got.Model)
+	})
+
+	t.Run("absent model field means empty string", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nrole: Agent.\n---\nBody.\n")
+		got, err := ParseAgentMD("agent", content)
+		require.NoError(t, err)
+		require.Empty(t, got.Model)
+	})
+
+	t.Run("full frontmatter with all capability fields parses correctly", func(t *testing.T) {
+		t.Parallel()
+		content := []byte(
+			"---\n" +
+				"delegates_to: [fixer]\n" +
+				"role: Full agent.\n" +
+				"delegate_when: Always.\n" +
+				"dont_delegate_when: Never.\n" +
+				"model: anthropic/claude-opus-4-6\n" +
+				"tools: [glob, grep, bash]\n" +
+				"skills: [search]\n" +
+				"mcps:\n" +
+				"  linear: [create, search]\n" +
+				"  datadog: null\n" +
+				"---\n" +
+				"Body content.\n",
+		)
+		got, err := ParseAgentMD("full", content)
+		require.NoError(t, err)
+		require.Equal(t, "full", got.Name)
+		require.Equal(t, []string{"fixer"}, got.DelegatesTo)
+		require.Equal(t, "Full agent.", got.Role)
+		require.Equal(t, "Always.", got.DelegateWhen)
+		require.Equal(t, "Never.", got.DontDelegateWhen)
+		require.Equal(t, "anthropic/claude-opus-4-6", got.Model)
+		require.Equal(t, []string{"glob", "grep", "bash"}, got.Tools)
+		require.Equal(t, []string{"search"}, got.Skills)
+		require.Equal(t, []string{"create", "search"}, got.MCPs["linear"])
+		require.Nil(t, got.MCPs["datadog"])
+		require.Equal(t, "Body content.\n", got.Body)
+	})
+}
+
+func TestValidateDelegatesTo_CycleDetection(t *testing.T) {
+	t.Parallel()
+
+	t.Run("direct cycle A to B to A produces error", func(t *testing.T) {
+		t.Parallel()
+		agents := []AgentMD{
+			{Name: "a", DelegatesTo: []string{"b"}},
+			{Name: "b", DelegatesTo: []string{"a"}},
+		}
+		errs, _ := ValidateDelegatesTo(agents, nil)
+		require.NotEmpty(t, errs)
+		require.Contains(t, errs[0].Error(), "delegation cycle detected")
+	})
+
+	t.Run("indirect cycle A to B to C to A produces error", func(t *testing.T) {
+		t.Parallel()
+		agents := []AgentMD{
+			{Name: "a", DelegatesTo: []string{"b"}},
+			{Name: "b", DelegatesTo: []string{"c"}},
+			{Name: "c", DelegatesTo: []string{"a"}},
+		}
+		errs, _ := ValidateDelegatesTo(agents, nil)
+		require.NotEmpty(t, errs)
+		require.Contains(t, errs[0].Error(), "delegation cycle detected")
+	})
+
+	t.Run("self reference A to A produces error", func(t *testing.T) {
+		t.Parallel()
+		agents := []AgentMD{
+			{Name: "a", DelegatesTo: []string{"a"}},
+		}
+		errs, _ := ValidateDelegatesTo(agents, nil)
+		require.NotEmpty(t, errs)
+		require.Contains(t, errs[0].Error(), "delegation cycle detected")
+	})
+
+	t.Run("no cycle produces no cycle warnings", func(t *testing.T) {
+		t.Parallel()
+		agents := []AgentMD{
+			{Name: "orchestrator", DelegatesTo: []string{"fixer", "oracle"}},
+			{Name: "fixer", DelegatesTo: nil},
+			{Name: "oracle", DelegatesTo: nil},
+		}
+		errs, warnings := ValidateDelegatesTo(agents, nil)
+		require.Empty(t, errs)
+		require.Empty(t, warnings)
+	})
+}
+
 func TestValidateDelegatesTo(t *testing.T) {
 	t.Parallel()
 

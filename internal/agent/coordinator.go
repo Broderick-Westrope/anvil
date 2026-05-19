@@ -164,18 +164,34 @@ func NewCoordinator(
 		}
 	}
 
-	// Load all agent configs from the current config.
-	c.agentConfigs = make(map[string]config.Agent, len(cfg.Config().Agents))
-	for name, agentCfg := range cfg.Config().Agents {
-		c.agentConfigs[name] = agentCfg
-	}
-
 	// Parse agent .md description files from the embedded FS.
 	agentMDs, err := loadAgentMDs(agentMDFS)
 	if err != nil {
 		return nil, fmt.Errorf("loading agent descriptions: %w", err)
 	}
 	c.agentMDs = agentMDs
+
+	// Convert AgentMD capability fields to config.Agent defaults and re-setup
+	// the agent roster, replacing the hardcoded non-orchestrator defaults set
+	// during config loading with values sourced from the .md frontmatter.
+	mdDefaults := make(map[string]config.Agent, len(agentMDs))
+	for name, md := range agentMDs {
+		mdDefaults[name] = config.Agent{
+			ID:            name,
+			Name:          agentIDToName(name),
+			AllowedTools:  md.Tools,
+			AllowedSkills: md.Skills,
+			AllowedMCP:    md.MCPs,
+			Model:         md.Model,
+		}
+	}
+	cfg.Config().SetupAgentsWithDefaults(mdDefaults)
+
+	// Load all agent configs from the updated config.
+	c.agentConfigs = make(map[string]config.Agent, len(cfg.Config().Agents))
+	for name, agentCfg := range cfg.Config().Agents {
+		c.agentConfigs[name] = agentCfg
+	}
 
 	// Validate delegates_to references. Warn on disabled refs, error on missing.
 	agentMDSlice := make([]prompt.AgentMD, 0, len(agentMDs))
@@ -204,6 +220,19 @@ func NewCoordinator(
 	c.orchestratorMu.Unlock()
 
 	return c, nil
+}
+
+// agentIDToName converts an agent ID (e.g. "devils-advocate") to a
+// human-readable name (e.g. "Devils Advocate") by replacing hyphens with
+// spaces and title-casing each word.
+func agentIDToName(id string) string {
+	words := strings.Split(strings.ReplaceAll(id, "-", " "), " ")
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 // loadAgentMDs reads all *.md files from the embedded agent templates FS and
