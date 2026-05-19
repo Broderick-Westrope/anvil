@@ -9,17 +9,18 @@
 
 | # | Name | Depends On | Effort | PR |
 |---|------|-----------|--------|-----|
-| 1 | [Agent `.md` migration](phase-1-agent-md-migration.md) | — | 1–2 days | |
-| 2 | [Plugin discovery + config](phase-2-plugin-discovery.md) | Phase 1 | 1–2 days | |
+| 1 | [Agent `.md` migration](phase-1-agent-md-migration.md) | — | 1–2 days | ✅ |
+| 1b | [Externalize agent definitions](phase-1b-externalize-agents.md) | Phase 1 | 0.5–1 day | |
+| 2 | [Plugin discovery + config](phase-2-plugin-discovery.md) | Phase 1b | 1–2 days | |
 | 3 | [Command format + execution](phase-3-command-format.md) | Phase 2 | 1 day | |
 | 4 | [`/` autocomplete](phase-4-slash-autocomplete.md) | Phase 3 | 2–3 days | |
 | 5 | [Skill attachment + picker](phase-5-skill-attachment.md) | Phase 4 | 1–2 days | |
 | 6 | [Plugin reload](phase-6-plugin-reload.md) | Phase 2 | 1 day | |
 
 ```
-Phase 1 ──► Phase 2 ──► Phase 3 ──► Phase 4 ──► Phase 5
-                │
-                └──► Phase 6 (can start after Phase 2)
+Phase 1 ──► Phase 1b ──► Phase 2 ──► Phase 3 ──► Phase 4 ──► Phase 5
+                              │
+                              └──► Phase 6 (can start after Phase 2)
 ```
 
 Phases 5 and 6 are independent of each other and can be parallelized.
