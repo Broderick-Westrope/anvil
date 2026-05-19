@@ -73,9 +73,14 @@ func Discover(cfg config.PluginConfig) *Plugin {
 		return nil
 	}
 
+	dirName := filepath.Base(absPath)
+	if !validatePluginName(dirName) {
+		slog.Warn("Plugin directory name is invalid", "path", absPath, "name", dirName)
+		return nil
+	}
 	p := &Plugin{
 		Path: absPath,
-		Name: filepath.Base(absPath),
+		Name: dirName,
 	}
 
 	// Check for optional manifest.
@@ -141,22 +146,50 @@ func resolveSubdir(baseDir, override, defaultName string) string {
 		return ""
 	}
 
+	// Reject overrides that resolve to the plugin root itself.
+	if filepath.Clean(dir) == filepath.Clean(baseDir) {
+		slog.Warn("Plugin subdirectory resolves to plugin root",
+			"base", baseDir, "override", override)
+		return ""
+	}
+
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		return ""
 	}
+
+	// Resolve symlinks and re-check containment.
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return ""
+	}
+	realBase, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		return ""
+	}
+	if !strings.HasPrefix(filepath.Clean(realDir)+string(filepath.Separator),
+		filepath.Clean(realBase)+string(filepath.Separator)) {
+		slog.Warn("Plugin subdirectory escapes plugin root via symlink",
+			"base", baseDir, "resolved", realDir)
+		return ""
+	}
+
 	return dir
 }
 
 // validatePluginName checks that a plugin name is safe for use in source
-// strings and collision detection. Returns true if valid.
+// strings and collision detection. Returns true if valid. Names must be
+// non-empty identifiers consisting of [a-zA-Z0-9._-].
 func validatePluginName(name string) bool {
 	if name == "" {
 		return true // Empty is fine — directory name will be used.
 	}
-	// Reject names with path separators, colons, or control characters.
+	if name == "." || name == ".." {
+		return false
+	}
 	for _, r := range name {
-		if r == '/' || r == '\\' || r == ':' || r < ' ' {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
 			return false
 		}
 	}

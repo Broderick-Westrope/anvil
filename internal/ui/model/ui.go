@@ -2009,7 +2009,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			content = commands.SubstituteArgs(content, msg.Args, "")
 		}
 
-		// Resolve and prepend skill content.
+		// Resolve and prepend skill content. This is safe to call in Update
+		// because ActiveSkillByName is an in-memory lookup (no IO). If it
+		// ever becomes an RPC, this must move to a tea.Cmd.
 		if len(msg.Skills) > 0 {
 			var skillParts []string
 			for _, skillName := range msg.Skills {

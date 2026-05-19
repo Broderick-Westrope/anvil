@@ -145,6 +145,33 @@ func TestDiscover_ManifestInvalidName(t *testing.T) {
 	require.Nil(t, p)
 }
 
+func TestDiscover_ManifestNameWithSpaces(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	mkdirs(t, dir, "skills")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile),
+		[]byte(`{"name": "my plugin", "skills": "skills"}`), 0o644))
+
+	p := Discover(config.PluginConfig{Path: dir})
+
+	require.Nil(t, p)
+}
+
+func TestDiscover_ManifestDotOverride(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile),
+		[]byte(`{"skills": "."}`), 0o644))
+
+	p := Discover(config.PluginConfig{Path: dir})
+
+	require.NotNil(t, p)
+	// "." should resolve to plugin root and be rejected.
+	require.Empty(t, p.SkillsPath)
+}
+
 func TestDiscover_TildeExpansion(t *testing.T) {
 	t.Parallel()
 

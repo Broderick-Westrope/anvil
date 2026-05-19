@@ -91,13 +91,26 @@ func SubscribeEvents(ctx context.Context) <-chan pubsub.Event[Event] {
 }
 
 // ItemName returns the skill name for collision detection.
+// Implements plugin.NamedItem.
 func (s *Skill) ItemName() string { return s.Name }
 
 // ItemSource returns the skill source for collision detection.
+// Implements plugin.NamedItem.
 func (s *Skill) ItemSource() string { return s.Source }
 
 // SetDisplayName sets the display name for collision detection.
+// Implements plugin.NamedItem.
 func (s *Skill) SetDisplayName(name string) { s.DisplayName = name }
+
+// EffectiveName returns the display-ready name for the skill. If
+// DisplayName is set (from collision detection), it is used; otherwise
+// the raw Name is returned.
+func (s *Skill) EffectiveName() string {
+	if s.DisplayName != "" {
+		return s.DisplayName
+	}
+	return s.Name
+}
 
 // Validate checks if the skill meets spec requirements.
 func (s *Skill) Validate() error {

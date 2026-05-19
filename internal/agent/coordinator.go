@@ -14,6 +14,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -190,9 +191,13 @@ func NewCoordinator(
 		// Merge plugin agents — later plugins override earlier ones.
 		for name, md := range pluginAgentMDs {
 			if existing, ok := agentMDs[name]; ok {
+				existingSource := existing.Source
+				if existingSource == "" {
+					existingSource = "builtin"
+				}
 				slog.Warn("Plugin agent overrides existing agent",
 					"plugin", p.Name, "agent", name,
-					"existingSource", existing.Source)
+					"existingSource", existingSource)
 			}
 			md.Source = "plugin:" + p.Name
 			agentMDs[name] = md
@@ -200,6 +205,10 @@ func NewCoordinator(
 	}
 
 	c.agentMDs = agentMDs
+
+	if len(agentMDs) == 0 {
+		slog.Warn("No specialist agents discovered; the orchestrator will handle all tasks directly. Configure plugins to provide agent definitions.")
+	}
 
 	// Convert AgentMD capability fields to config.Agent defaults and re-setup
 	// the agent roster, replacing the hardcoded non-orchestrator defaults set
@@ -256,17 +265,17 @@ func NewCoordinator(
 // human-readable name (e.g. "Devils Advocate") by replacing hyphens with
 // spaces and title-casing each word.
 func agentIDToName(id string) string {
-	words := strings.Split(strings.ReplaceAll(id, "-", " "), " ")
+	words := strings.Fields(strings.ReplaceAll(id, "-", " "))
 	for i, w := range words {
-		if len(w) > 0 {
-			words[i] = strings.ToUpper(w[:1]) + w[1:]
-		}
+		words[i] = strings.ToUpper(w[:1]) + w[1:]
 	}
 	return strings.Join(words, " ")
 }
 
-// loadAgentMDsFromDir reads all *.md files from a filesystem directory and
-// parses each one using prompt.ParseAgentMD. Used for plugin agent discovery.
+// loadAgentMDsFromDir reads *.md files from a filesystem directory (non-
+// recursive, unlike loadAgentMDs which uses fs.WalkDir) and parses each one
+// using prompt.ParseAgentMD. Used for plugin agent discovery. Subdirectories
+// are intentionally ignored; plugin agents must be at the top level.
 func loadAgentMDsFromDir(dir string) (map[string]prompt.AgentMD, error) {
 	result := make(map[string]prompt.AgentMD)
 	entries, err := os.ReadDir(dir)
@@ -312,7 +321,7 @@ func loadAgentMDs(fsys embed.FS) (map[string]prompt.AgentMD, error) {
 			return fmt.Errorf("reading %s: %w", path, readErr)
 		}
 		// Derive agent name from filename (strip directory and .md suffix).
-		base := filepath.Base(path)
+		base := pathpkg.Base(path)
 		name := strings.TrimSuffix(base, ".md")
 		md, parseErr := prompt.ParseAgentMD(name, content)
 		if parseErr != nil {

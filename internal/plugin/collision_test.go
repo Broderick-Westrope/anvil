@@ -3,7 +3,7 @@ package plugin
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // testItem implements NamedItem for testing.
@@ -25,9 +25,9 @@ func TestDetectCollisions_NoCollision(t *testing.T) {
 		{name: "baz", source: ""},
 	}
 	DetectCollisions(items)
-	assert.Empty(t, items[0].displayName)
-	assert.Empty(t, items[1].displayName)
-	assert.Empty(t, items[2].displayName)
+	require.Empty(t, items[0].displayName)
+	require.Empty(t, items[1].displayName)
+	require.Empty(t, items[2].displayName)
 }
 
 func TestDetectCollisions_TwoPluginsSameName(t *testing.T) {
@@ -37,8 +37,8 @@ func TestDetectCollisions_TwoPluginsSameName(t *testing.T) {
 		{name: "foo", source: "plugin:b"},
 	}
 	DetectCollisions(items)
-	assert.Equal(t, "a:foo", items[0].displayName)
-	assert.Equal(t, "foo", items[1].displayName)
+	require.Equal(t, "a:foo", items[0].displayName)
+	require.Empty(t, items[1].displayName)
 }
 
 func TestDetectCollisions_PluginVsUser(t *testing.T) {
@@ -49,8 +49,8 @@ func TestDetectCollisions_PluginVsUser(t *testing.T) {
 		{name: "foo", source: ""},
 	}
 	DetectCollisions(items)
-	assert.Equal(t, "ce:foo", items[0].displayName)
-	assert.Equal(t, "foo", items[1].displayName)
+	require.Equal(t, "ce:foo", items[0].displayName)
+	require.Empty(t, items[1].displayName)
 }
 
 func TestDetectCollisions_PluginVsBuiltin(t *testing.T) {
@@ -61,8 +61,8 @@ func TestDetectCollisions_PluginVsBuiltin(t *testing.T) {
 		{name: "foo", source: "plugin:ce"},
 	}
 	DetectCollisions(items)
-	assert.Equal(t, "builtin:foo", items[0].displayName)
-	assert.Equal(t, "foo", items[1].displayName)
+	require.Equal(t, "builtin:foo", items[0].displayName)
+	require.Empty(t, items[1].displayName)
 }
 
 func TestDetectCollisions_ThreeWay(t *testing.T) {
@@ -73,15 +73,16 @@ func TestDetectCollisions_ThreeWay(t *testing.T) {
 		{name: "foo", source: ""},
 	}
 	DetectCollisions(items)
-	assert.Equal(t, "builtin:foo", items[0].displayName)
-	assert.Equal(t, "ce:foo", items[1].displayName)
-	assert.Equal(t, "foo", items[2].displayName)
+	require.Equal(t, "builtin:foo", items[0].displayName)
+	require.Equal(t, "ce:foo", items[1].displayName)
+	require.Empty(t, items[2].displayName)
 }
 
 func TestShortSource(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "ce", shortSource("plugin:ce"))
-	assert.Equal(t, "builtin", shortSource("builtin"))
-	assert.Equal(t, "user", shortSource(""))
-	assert.Equal(t, "project", shortSource("project"))
+	require.Equal(t, "ce", shortSource("plugin:ce"))
+	require.Equal(t, "builtin", shortSource("builtin"))
+	require.Equal(t, "user", shortSource(""))
+	require.Equal(t, "project", shortSource("project"))
+	require.Equal(t, "plugin", shortSource("plugin:"))
 }

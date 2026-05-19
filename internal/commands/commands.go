@@ -191,7 +191,8 @@ func loadFromSource(source commandSource) ([]CustomCommand, error) {
 
 		cmd, err := loadCommand(path, source.path, source.prefix)
 		if err != nil {
-			return nil // Skip invalid files
+			slog.Warn("Failed to load command, skipping", "path", path, "error", err)
+			return nil // Skip invalid files.
 		}
 
 		cmd.Source = source.source
@@ -221,7 +222,8 @@ func loadCommand(path, baseDir, prefix string) (CustomCommand, error) {
 	// Look for frontmatter delimited by "---".
 	const delim = "---"
 
-	if !strings.HasPrefix(strings.TrimLeft(text, "\n"), delim) {
+	trimmed := strings.TrimLeft(text, "\n")
+	if !strings.HasPrefix(trimmed, delim+"\n") && trimmed != delim {
 		// No frontmatter — entire content is body.
 		cmd.Content = text
 		cmd.Arguments = extractArgNames(text)
@@ -229,11 +231,16 @@ func loadCommand(path, baseDir, prefix string) (CustomCommand, error) {
 	}
 
 	// Advance past the first "---".
-	rest := strings.TrimLeft(text, "\n")
-	rest = rest[len(delim):]
+	rest := trimmed[len(delim):]
 
-	// Find the closing "---".
-	idx := strings.Index(rest, "\n"+delim)
+	// Find the closing "---" on its own line.
+	idx := strings.Index(rest, "\n"+delim+"\n")
+	if idx == -1 {
+		// Check if "---" is the last line (no trailing newline).
+		if strings.HasSuffix(rest, "\n"+delim) {
+			idx = len(rest) - len(delim) - 1
+		}
+	}
 	if idx == -1 {
 		// Malformed frontmatter — treat whole content as body.
 		cmd.Content = text
@@ -260,16 +267,17 @@ func loadCommand(path, baseDir, prefix string) (CustomCommand, error) {
 	return cmd, nil
 }
 
-// SubstituteArgs replaces $ARGUMENTS and named $ARG_NAME placeholders in content.
+// SubstituteArgs replaces $ARGUMENTS and named $ARG_NAME placeholders in
+// content using a single-pass replacer to prevent double-substitution (e.g.
+// a rawArguments value containing "$FOO" won't be re-expanded by a named
+// arg "FOO").
 func SubstituteArgs(content string, args map[string]string, rawArguments string) string {
-	// Replace $ARGUMENTS with the raw argument string.
-	content = strings.ReplaceAll(content, "$ARGUMENTS", rawArguments)
-	// Replace named $ARG_NAME placeholders.
+	pairs := make([]string, 0, (len(args)+1)*2)
+	pairs = append(pairs, "$ARGUMENTS", rawArguments)
 	for name, value := range args {
-		placeholder := "$" + name
-		content = strings.ReplaceAll(content, placeholder, value)
+		pairs = append(pairs, "$"+name, value)
 	}
-	return content
+	return strings.NewReplacer(pairs...).Replace(content)
 }
 
 func extractArgNames(content string) []Argument {
@@ -283,6 +291,9 @@ func extractArgNames(content string) []Argument {
 
 	for _, match := range matches {
 		arg := match[1]
+		if arg == "ARGUMENTS" {
+			continue // Reserved placeholder — handled by SubstituteArgs.
+		}
 		if !seen[arg] {
 			seen[arg] = true
 			// for normal custom commands, all args are required

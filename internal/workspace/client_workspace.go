@@ -483,8 +483,10 @@ func (w *ClientWorkspace) SkillStates() []*skills.SkillState {
 	return nil
 }
 
-// ActiveSkillByName returns nil in client mode because the remote workspace
-// API does not yet expose skill lookup by name.
+// ActiveSkillByName always returns nil in client mode — the server API
+// does not yet expose skill lookup by name.
+// TODO: Implement once the server exposes skill lookup by name (see
+// SkillStates TODO above).
 func (w *ClientWorkspace) ActiveSkillByName(_ string) *skills.Skill {
 	return nil
 }

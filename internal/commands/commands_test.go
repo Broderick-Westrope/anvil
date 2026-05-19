@@ -172,6 +172,48 @@ func TestLoadFromSource_ExistingDir(t *testing.T) {
 	require.Equal(t, "say hello", cmds[0].Content)
 }
 
+func TestSubstituteArgs_NoDoubleSubstitution(t *testing.T) {
+	t.Parallel()
+
+	result := SubstituteArgs("$ARGUMENTS and $FOO", map[string]string{"FOO": "bar"}, "has $FOO inside")
+	require.Equal(t, "has $FOO inside and bar", result)
+}
+
+func TestExtractArgNames_ExcludesARGUMENTS(t *testing.T) {
+	t.Parallel()
+
+	args := extractArgNames("Run $ARGUMENTS with $NAME")
+	require.Len(t, args, 1)
+	require.Equal(t, "NAME", args[0].ID)
+}
+
+func TestLoadCommand_DashesInBody(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	content := "---\ndescription: test\n---\nSome text\n\n---\n\nMore text\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cmd.md"), []byte(content), 0o644))
+
+	cmd, err := loadCommand(filepath.Join(dir, "cmd.md"), dir, "user:")
+	require.NoError(t, err)
+	require.Equal(t, "test", cmd.Description)
+	require.Equal(t, "Some text\n\n---\n\nMore text\n", cmd.Content)
+}
+
+func TestLoadCommand_OpeningDelimiterNotAlone(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// "---text" should NOT trigger frontmatter.
+	content := "---text on same line\nmore content"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cmd.md"), []byte(content), 0o644))
+
+	cmd, err := loadCommand(filepath.Join(dir, "cmd.md"), dir, "user:")
+	require.NoError(t, err)
+	require.Equal(t, content, cmd.Content) // Entire file is body.
+	require.Empty(t, cmd.Description)
+}
+
 func TestLoadAll_MixedSources(t *testing.T) {
 	t.Parallel()
 

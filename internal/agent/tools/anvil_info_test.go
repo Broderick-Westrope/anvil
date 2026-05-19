@@ -474,6 +474,27 @@ func TestAnvilInfo_Skills_BuiltinOrigin(t *testing.T) {
 	require.Contains(t, output, "my-skill = user, unloaded")
 }
 
+func TestAnvilInfo_Skills_PluginSource(t *testing.T) {
+	t.Parallel()
+
+	allSkills := []*skills.Skill{
+		{Name: "ce-helpers", Source: "plugin:ce"},
+		{Name: "my-skill"},
+	}
+	activeSkills := allSkills
+	tracker := skills.NewTracker(activeSkills)
+
+	cfg := config.NewTestStore(&config.Config{
+		Providers: csync.NewMap[string, config.ProviderConfig](),
+	})
+	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker)
+	require.Contains(t, output, "[skills]")
+	// Plugin source should show short form "ce", not full "plugin:ce".
+	require.Contains(t, output, "ce-helpers = ce, unloaded")
+	require.NotContains(t, output, "plugin:ce")
+	require.Contains(t, output, "my-skill = user, unloaded")
+}
+
 func TestAnvilInfo_Hooks(t *testing.T) {
 	t.Parallel()
 

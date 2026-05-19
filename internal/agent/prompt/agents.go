@@ -85,6 +85,9 @@ func ParseAgentMD(name string, content []byte) (AgentMD, error) {
 	// Normalise line endings.
 	text := string(bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n")))
 
+	// Strip UTF-8 BOM if present.
+	text = strings.TrimPrefix(text, "\ufeff")
+
 	if !strings.HasPrefix(strings.TrimLeft(text, "\n"), delim) {
 		// No frontmatter — entire content is body.
 		agent.Body = text
@@ -95,19 +98,25 @@ func ParseAgentMD(name string, content []byte) (AgentMD, error) {
 	rest := strings.TrimLeft(text, "\n")
 	rest = rest[len(delim):]
 
-	// Find the closing "---".
-	idx := strings.Index(rest, "\n"+delim)
-	if idx == -1 {
+	// Find the closing "---" line (tolerating trailing whitespace on the
+	// delimiter line). Split on newlines; lines[0] is the content after the
+	// opening "---" marker (usually empty), so the search starts at index 1.
+	lines := strings.Split(rest, "\n")
+	closingLine := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], " \t") == delim {
+			closingLine = i
+			break
+		}
+	}
+	if closingLine == -1 {
 		// Malformed frontmatter — treat whole content as body.
 		agent.Body = text
 		return agent, nil
 	}
 
-	yamlContent := rest[:idx]
-	body := rest[idx+len("\n"+delim):]
-
-	// Strip a single leading newline from the body if present.
-	body = strings.TrimPrefix(body, "\n")
+	yamlContent := strings.Join(lines[1:closingLine], "\n")
+	body := strings.Join(lines[closingLine+1:], "\n")
 
 	var fm agentFrontmatter
 	if err := yaml.Unmarshal([]byte(yamlContent), &fm); err != nil {

@@ -306,7 +306,12 @@ func writeSkills(b *strings.Builder, allSkills []*skills.Skill, activeSkills []*
 		case s.Source == skills.SourceBuiltin:
 			originMap[s.Name] = "builtin"
 		case strings.HasPrefix(s.Source, "plugin:"):
-			originMap[s.Name] = s.Source
+			after, _ := strings.CutPrefix(s.Source, "plugin:")
+			if after == "" {
+				originMap[s.Name] = "plugin"
+			} else {
+				originMap[s.Name] = after
+			}
 		default:
 			originMap[s.Name] = "user"
 		}
@@ -326,7 +331,7 @@ func writeSkills(b *strings.Builder, allSkills []*skills.Skill, activeSkills []*
 			state = "loaded"
 		}
 		origin := originMap[s.Name]
-		entries = append(entries, entry{name: s.Name, origin: origin, state: state})
+		entries = append(entries, entry{name: s.EffectiveName(), origin: origin, state: state})
 	}
 
 	// Disabled skills.

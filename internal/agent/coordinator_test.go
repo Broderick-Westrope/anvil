@@ -424,18 +424,24 @@ func TestAgentIDToName(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
+		name string
 		id   string
 		want string
 	}{
-		{"explorer", "Explorer"},
-		{"oracle", "Oracle"},
-		{"devils-advocate", "Devils Advocate"},
-		{"fixer", "Fixer"},
-		{"", ""},
+		{"single word", "explorer", "Explorer"},
+		{"single word 2", "oracle", "Oracle"},
+		{"hyphenated", "devils-advocate", "Devils Advocate"},
+		{"single word 3", "fixer", "Fixer"},
+		{"empty string", "", ""},
+		{"leading hyphen", "-leading", "Leading"},
+		{"trailing hyphen", "trailing-", "Trailing"},
+		{"double hyphen", "a--b", "A B"},
+		{"triple hyphen", "---", ""},
+		{"single char", "a", "A"},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.id, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, agentIDToName(tc.id))
 		})

@@ -402,8 +402,11 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 			if cmd.ArgumentHint != "" {
 				title += " " + cmd.ArgumentHint
 			}
-			desc := cmd.Description
-			commandItems = append(commandItems, NewCommandItem(c.com.Styles, "custom_"+cmd.ID, title, desc, action))
+			item := NewCommandItem(c.com.Styles, "custom_"+cmd.ID, title, "", action)
+			if cmd.Description != "" {
+				item = item.WithDescription(cmd.Description)
+			}
+			commandItems = append(commandItems, item)
 		}
 	case MCPPrompts:
 		for _, cmd := range c.mcpPrompts {

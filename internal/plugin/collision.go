@@ -11,18 +11,19 @@ type NamedItem interface {
 }
 
 // DetectCollisions groups items by name. When multiple items share a name,
-// the highest-priority item (last in the slice, since slices are ordered by
-// discovery priority with "last wins") keeps the bare name. Lower-priority
-// items get their display name prefixed with a short source label.
+// the highest-priority item (last in the slice) keeps an empty display name
+// (callers should fall back to ItemName()). Lower-priority items get their
+// display name set to "<source>:<name>". Items with unique names are not
+// modified. T must be a pointer type so that SetDisplayName mutations are
+// visible to the caller.
 func DetectCollisions[T NamedItem](items []T) {
 	// Group items by name.
 	type entry struct {
-		index int
-		item  T
+		item T
 	}
 	groups := make(map[string][]entry, len(items))
-	for i, item := range items {
-		groups[item.ItemName()] = append(groups[item.ItemName()], entry{i, item})
+	for _, item := range items {
+		groups[item.ItemName()] = append(groups[item.ItemName()], entry{item})
 	}
 
 	for _, entries := range groups {
@@ -34,13 +35,12 @@ func DetectCollisions[T NamedItem](items []T) {
 		// It keeps the bare name. Others get prefixed.
 		for i, e := range entries {
 			if i == len(entries)-1 {
-				// Highest priority — bare name.
-				e.item.SetDisplayName(e.item.ItemName())
-			} else {
-				// Lower priority — prefix with short source label.
-				prefix := shortSource(e.item.ItemSource())
-				e.item.SetDisplayName(prefix + ":" + e.item.ItemName())
+				// Highest priority — display name stays empty (bare Name is used).
+				continue
 			}
+			// Lower priority — prefix with short source label.
+			prefix := shortSource(e.item.ItemSource())
+			e.item.SetDisplayName(prefix + ":" + e.item.ItemName())
 		}
 	}
 }
@@ -51,8 +51,11 @@ func shortSource(source string) string {
 	if source == "" {
 		return "user"
 	}
-	if strings.HasPrefix(source, "plugin:") {
-		return strings.TrimPrefix(source, "plugin:")
+	if after, ok := strings.CutPrefix(source, "plugin:"); ok {
+		if after == "" {
+			return "plugin"
+		}
+		return after
 	}
 	return source
 }

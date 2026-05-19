@@ -645,8 +645,9 @@ type Config struct {
 
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
 
-	// Agents is the map of named agent configurations. When absent, defaults
-	// from SetupAgents are used.
+	// Agents is the map of named agent configurations. After SetupAgents,
+	// only the orchestrator is present. The full roster is populated by
+	// SetupAgentsWithDefaults when the coordinator loads .md files.
 	Agents map[string]Agent `json:"agents,omitempty"`
 
 	// userAgentOverrides stores the raw user-provided agent overrides from
@@ -654,6 +655,10 @@ type Config struct {
 	// allows SetupAgentsWithDefaults (called later by the coordinator) to
 	// re-apply user overrides on top of .md-derived defaults.
 	userAgentOverrides map[string]Agent
+
+	// agentsInitialized is set true by SetupAgents on its first call to
+	// guard against SetupAgentsWithDefaults running before it.
+	agentsInitialized bool
 
 	// DisabledAgents lists agent names to remove from the routing table and
 	// orchestrator prompt at startup.
@@ -785,20 +790,26 @@ func (c *Config) setupDefaultAgents() {
 	}
 }
 
-// SetupAgents sets up the agent roster with the orchestrator default plus any
-// user overrides from anvil.json. Non-orchestrator agents are not defined here;
-// they are loaded from .md files by the coordinator via SetupAgentsWithDefaults.
-// This is called during config loading.
+// SetupAgents sets up the orchestrator agent default and stores the raw user
+// overrides from anvil.json for later use by SetupAgentsWithDefaults. Non-
+// orchestrator agents are loaded from .md files by the coordinator. On the
+// first call, the current c.Agents value is snapshotted as user overrides;
+// subsequent calls (e.g. config reload) reuse the original snapshot.
 func (c *Config) SetupAgents() {
-	// Store the raw user-provided overrides so SetupAgentsWithDefaults can
-	// re-apply them after replacing defaults with .md-derived values.
-	c.userAgentOverrides = c.Agents
+	// Only snapshot user overrides on the first call. Subsequent calls (e.g.
+	// config reload) reuse the original snapshot to avoid capturing processed
+	// defaults from a prior SetupAgentsWithDefaults call.
+	if !c.agentsInitialized {
+		c.userAgentOverrides = c.Agents
+	}
 
 	// Start with only the orchestrator. Non-orchestrator agent defaults are
 	// sourced from .md files at coordinator init via SetupAgentsWithDefaults.
 	c.setupDefaultAgents()
 
 	c.applyAgentOverrides(c.userAgentOverrides)
+
+	c.agentsInitialized = true
 }
 
 // SetupAgentsWithDefaults sets up the agent roster from .md-derived defaults,
@@ -809,7 +820,7 @@ func (c *Config) SetupAgents() {
 // overrides). The coordinator calls this after parsing .md files.
 func (c *Config) SetupAgentsWithDefaults(mdDefaults map[string]Agent) {
 	// Guard: SetupAgents must have been called first to store user overrides.
-	if c.userAgentOverrides == nil && c.Agents != nil {
+	if !c.agentsInitialized {
 		slog.Warn("SetupAgentsWithDefaults called before SetupAgents; user overrides may be lost")
 	}
 
@@ -840,6 +851,13 @@ func (c *Config) applyAgentOverrides(userAgents map[string]Agent) {
 			def, ok := c.Agents[name]
 			if !ok {
 				// User defined an agent not in the defaults; add it as-is.
+				// Ensure ID and Name are set from the map key if not provided.
+				if userAgent.ID == "" {
+					userAgent.ID = name
+				}
+				if userAgent.Name == "" {
+					userAgent.Name = name
+				}
 				c.Agents[name] = userAgent
 				continue
 			}
