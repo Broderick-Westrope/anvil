@@ -39,6 +39,7 @@ import (
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
 	"github.com/Broderick-Westrope/anvil/internal/oauth/copilot"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -169,6 +170,31 @@ func NewCoordinator(
 	if err != nil {
 		return nil, fmt.Errorf("loading agent descriptions: %w", err)
 	}
+
+	// Discover plugin agents.
+	plugins := plugin.DiscoverAll(cfg.Config().Plugins)
+	for _, p := range plugins {
+		if p.AgentsPath == "" {
+			continue
+		}
+		pluginAgentMDs, err := loadAgentMDsFromDir(p.AgentsPath)
+		if err != nil {
+			slog.Warn("Failed to load plugin agents",
+				"plugin", p.Name, "path", p.AgentsPath, "error", err)
+			continue
+		}
+		// Merge plugin agents — later plugins override earlier ones.
+		for name, md := range pluginAgentMDs {
+			if existing, ok := agentMDs[name]; ok {
+				slog.Warn("Plugin agent overrides existing agent",
+					"plugin", p.Name, "agent", name,
+					"existingSource", existing.Source)
+			}
+			md.Source = "plugin:" + p.Name
+			agentMDs[name] = md
+		}
+	}
+
 	c.agentMDs = agentMDs
 
 	// Convert AgentMD capability fields to config.Agent defaults and re-setup
@@ -233,6 +259,36 @@ func agentIDToName(id string) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+// loadAgentMDsFromDir reads all *.md files from a filesystem directory and
+// parses each one using prompt.ParseAgentMD. Used for plugin agent discovery.
+func loadAgentMDsFromDir(dir string) (map[string]prompt.AgentMD, error) {
+	result := make(map[string]prompt.AgentMD)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("reading agent directory %q: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".md")
+		content, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			slog.Warn("Failed to read plugin agent file",
+				"path", filepath.Join(dir, entry.Name()), "error", err)
+			continue
+		}
+		md, err := prompt.ParseAgentMD(name, content)
+		if err != nil {
+			slog.Warn("Failed to parse plugin agent file",
+				"path", filepath.Join(dir, entry.Name()), "error", err)
+			continue
+		}
+		result[name] = md
+	}
+	return result, nil
 }
 
 // loadAgentMDs reads all *.md files from the embedded agent templates FS and
@@ -1480,6 +1536,25 @@ func (c *coordinator) SkillStates() []*skills.SkillState {
 func discoverSkills(cfg *config.ConfigStore) (allSkills, activeSkills []*skills.Skill, allStates []*skills.SkillState) {
 	builtin, builtinStates := skills.DiscoverBuiltinWithStates()
 	discovered := append([]*skills.Skill(nil), builtin...)
+	allStates = append(allStates, builtinStates...)
+
+	// Discover skills from plugins (lower priority than user/project skills).
+	plugins := plugin.DiscoverAll(cfg.Config().Plugins)
+	// Iterate in reverse config order so last-configured plugin has lowest priority
+	// (will be overridden by earlier plugins and user skills via Deduplicate).
+	for i := len(plugins) - 1; i >= 0; i-- {
+		p := plugins[i]
+		if p.SkillsPath == "" {
+			continue
+		}
+		pluginSkills, pluginStates := skills.DiscoverWithStates([]string{p.SkillsPath})
+		// Tag each skill with its plugin source.
+		for _, s := range pluginSkills {
+			s.Source = "plugin:" + p.Name
+		}
+		discovered = append(discovered, pluginSkills...)
+		allStates = append(allStates, pluginStates...)
+	}
 
 	var userStates []*skills.SkillState
 	var userPaths []string
@@ -1499,18 +1574,16 @@ func discoverSkills(cfg *config.ConfigStore) (allSkills, activeSkills []*skills.
 		var userSkills []*skills.Skill
 		userSkills, userStates = skills.DiscoverWithStates(userPaths)
 		discovered = append(discovered, userSkills...)
+		allStates = append(allStates, userStates...)
 	}
 
+	plugin.DetectCollisions(discovered)
 	allSkills = skills.Deduplicate(discovered)
 	var disabledSkills []string
 	if opts != nil {
 		disabledSkills = opts.DisabledSkills
 	}
 	activeSkills = skills.Filter(allSkills, disabledSkills)
-
-	allStates = make([]*skills.SkillState, 0, len(builtinStates)+len(userStates))
-	allStates = append(allStates, builtinStates...)
-	allStates = append(allStates, userStates...)
 
 	logDiscoveryStats(builtin, builtinStates, userStates, userPaths, allSkills, activeSkills, disabledSkills)
 	return allSkills, activeSkills, allStates

@@ -589,6 +589,14 @@ func (t ToolGrep) GetTimeout() time.Duration {
 	return ptrValOr(t.Timeout, 5*time.Second)
 }
 
+// PluginConfig defines an external plugin directory that provides skills,
+// commands, and/or agent definitions.
+type PluginConfig struct {
+	// Path is the filesystem path to the plugin directory. Supports ~ and
+	// environment variable expansion.
+	Path string `json:"path" jsonschema:"description=Path to the plugin directory"`
+}
+
 // HookConfig defines a user-configured shell command that fires on a hook
 // event (e.g. PreToolUse). This is a pure-data struct: matcher compilation
 // is owned by hooks.Runner so a JSON round-trip, merge, or reload can't
@@ -649,6 +657,10 @@ type Config struct {
 	// DisabledAgents lists agent names to remove from the routing table and
 	// orchestrator prompt at startup.
 	DisabledAgents []string `json:"disabled_agents,omitempty"`
+
+	// Plugins is a list of external plugin directories to load skills,
+	// commands, and agents from.
+	Plugins []PluginConfig `json:"plugins,omitempty" jsonschema:"description=External plugin directories"`
 }
 
 func (c *Config) EnabledProviders() []ProviderConfig {

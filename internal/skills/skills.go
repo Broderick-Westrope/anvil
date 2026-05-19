@@ -28,6 +28,13 @@ const (
 	MaxCompatibilityLength = 500
 )
 
+// Skill source constants.
+const (
+	SourceBuiltin = "builtin"
+	SourceUser    = "" // Default, from skills_paths.
+	// Plugin sources use "plugin:{name}" format, e.g., "plugin:ce".
+)
+
 var (
 	namePattern    = regexp.MustCompile(`^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$`)
 	promptReplacer = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&apos;")
@@ -43,7 +50,14 @@ type Skill struct {
 	Instructions  string            `yaml:"-" json:"instructions"`
 	Path          string            `yaml:"-" json:"path"`
 	SkillFilePath string            `yaml:"-" json:"skill_file_path"`
-	Builtin       bool              `yaml:"-" json:"builtin"`
+	// Source indicates where the skill was discovered from. Empty string
+	// means user-provided (from skills_paths), "builtin" means embedded,
+	// "plugin:{name}" means from a plugin directory.
+	Source string `yaml:"-" json:"source,omitempty"`
+	// DisplayName is the name shown in the UI. Empty means use Name. Set
+	// by collision detection when multiple skills share the same name from
+	// different sources.
+	DisplayName string `yaml:"-" json:"display_name,omitempty"`
 }
 
 // DiscoveryState represents the outcome of discovering a single skill file.
@@ -75,6 +89,15 @@ var broker = pubsub.NewBroker[Event]()
 func SubscribeEvents(ctx context.Context) <-chan pubsub.Event[Event] {
 	return broker.Subscribe(ctx)
 }
+
+// ItemName returns the skill name for collision detection.
+func (s *Skill) ItemName() string { return s.Name }
+
+// ItemSource returns the skill source for collision detection.
+func (s *Skill) ItemSource() string { return s.Source }
+
+// SetDisplayName sets the display name for collision detection.
+func (s *Skill) SetDisplayName(name string) { s.DisplayName = name }
 
 // Validate checks if the skill meets spec requirements.
 func (s *Skill) Validate() error {
@@ -271,7 +294,7 @@ func ToPromptXML(skills []*Skill) string {
 		fmt.Fprintf(&sb, "    <name>%s</name>\n", escape(s.Name))
 		fmt.Fprintf(&sb, "    <description>%s</description>\n", escape(s.Description))
 		fmt.Fprintf(&sb, "    <location>%s</location>\n", escape(s.SkillFilePath))
-		if s.Builtin {
+		if s.Source == SourceBuiltin {
 			sb.WriteString("    <type>builtin</type>\n")
 		}
 		sb.WriteString("  </skill>\n")

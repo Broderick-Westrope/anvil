@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/home"
+	"github.com/Broderick-Westrope/anvil/internal/plugin"
 )
 
 var namedArgPattern = regexp.MustCompile(`\$([A-Z][A-Z0-9_]*)`)
@@ -41,21 +43,64 @@ type MCPPrompt struct {
 
 // CustomCommand represents a user-defined custom command loaded from markdown files.
 type CustomCommand struct {
-	ID        string
-	Name      string
-	Content   string
-	Arguments []Argument
+	ID          string
+	Name        string
+	Content     string
+	Arguments   []Argument
+	Source      string // "" = user, "project" = project, "plugin:{name}" = plugin.
+	DisplayName string // Set by collision detection. Empty = use Name.
 }
+
+// ItemName returns the command name for collision detection.
+func (c *CustomCommand) ItemName() string { return c.Name }
+
+// ItemSource returns the command source for collision detection.
+func (c *CustomCommand) ItemSource() string { return c.Source }
+
+// SetDisplayName sets the display name for collision detection.
+func (c *CustomCommand) SetDisplayName(name string) { c.DisplayName = name }
+
+// TODO: Wire plugin.DetectCollisions into command merging. LoadCustomCommands
+// and LoadPluginCommands return []CustomCommand (value slices), so collision
+// detection requires converting to []*CustomCommand at the call site.
 
 type commandSource struct {
 	path   string
 	prefix string
+	source string
 }
 
 // LoadCustomCommands loads custom commands from multiple sources including
 // XDG config directory, home directory, and project directory.
 func LoadCustomCommands(cfg *config.Config) ([]CustomCommand, error) {
 	return loadAll(buildCommandSources(cfg))
+}
+
+// LoadPluginCommands loads custom commands from plugin directories.
+func LoadPluginCommands(plugins []*plugin.Plugin) ([]CustomCommand, error) {
+	var all []CustomCommand
+	for _, p := range plugins {
+		if p.CommandsPath == "" {
+			continue
+		}
+		src := commandSource{
+			path:   p.CommandsPath,
+			prefix: "plugin:" + p.Name + ":",
+			source: "plugin:" + p.Name,
+		}
+		cmds, err := loadFromSource(src)
+		if err != nil {
+			slog.Warn("Failed to load plugin commands",
+				"plugin", p.Name, "path", p.CommandsPath, "error", err)
+			continue // Don't fail — skip this plugin's commands.
+		}
+		// Tag each command with its source.
+		for i := range cmds {
+			cmds[i].Source = "plugin:" + p.Name
+		}
+		all = append(all, cmds...)
+	}
+	return all, nil
 }
 
 // LoadMCPPrompts loads custom commands from available MCP servers.
@@ -95,14 +140,17 @@ func buildCommandSources(cfg *config.Config) []commandSource {
 		{
 			path:   filepath.Join(home.Config(), "anvil", "commands"),
 			prefix: userCommandPrefix,
+			source: "",
 		},
 		{
 			path:   filepath.Join(home.Dir(), ".anvil", "commands"),
 			prefix: userCommandPrefix,
+			source: "",
 		},
 		{
 			path:   filepath.Join(cfg.Options.DataDirectory, "commands"),
 			prefix: projectCommandPrefix,
+			source: "project",
 		},
 	}
 }
@@ -136,6 +184,7 @@ func loadFromSource(source commandSource) ([]CustomCommand, error) {
 			return nil // Skip invalid files
 		}
 
+		cmd.Source = source.source
 		commands = append(commands, cmd)
 		return nil
 	})

@@ -50,6 +50,10 @@ type AgentMD struct {
 	// routing hint is emitted.
 	RoutingHint string
 
+	// Source indicates where the agent was discovered from. Empty string
+	// means embedded/builtin, "plugin:{name}" means from a plugin.
+	Source string
+
 	// Body is the full specialist system prompt (markdown body after the
 	// frontmatter block).
 	Body string

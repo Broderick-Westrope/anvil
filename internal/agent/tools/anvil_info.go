@@ -302,7 +302,7 @@ func writeSkills(b *strings.Builder, allSkills []*skills.Skill, activeSkills []*
 	// Build origin map from the pre-filter list.
 	originMap := make(map[string]string, len(allSkills))
 	for _, s := range allSkills {
-		if s.Builtin {
+		if s.Source == skills.SourceBuiltin {
 			originMap[s.Name] = "builtin"
 		} else {
 			originMap[s.Name] = "user"
