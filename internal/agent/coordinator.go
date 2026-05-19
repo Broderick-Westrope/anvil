@@ -177,8 +177,11 @@ func NewCoordinator(
 		return nil, fmt.Errorf("loading agent descriptions: %w", err)
 	}
 
-	// Discover plugin agents.
-	for _, p := range plugins {
+	// Discover plugin agents in reverse config order so that the first-
+	// configured plugin has highest priority (its agents are written to the
+	// map last and thus win).
+	for i := len(plugins) - 1; i >= 0; i-- {
+		p := plugins[i]
 		if p.AgentsPath == "" {
 			continue
 		}
@@ -188,7 +191,8 @@ func NewCoordinator(
 				"plugin", p.Name, "path", p.AgentsPath, "error", err)
 			continue
 		}
-		// Merge plugin agents — later plugins override earlier ones.
+		// First-configured plugin wins — since we iterate in reverse,
+		// earlier plugins overwrite later ones.
 		for name, md := range pluginAgentMDs {
 			if existing, ok := agentMDs[name]; ok {
 				existingSource := existing.Source
@@ -1562,9 +1566,11 @@ func discoverSkills(cfg *config.ConfigStore, plugins []*plugin.Plugin) (allSkill
 	discovered := append([]*skills.Skill(nil), builtin...)
 	allStates = append(allStates, builtinStates...)
 
-	// Discover skills from plugins. Later-configured plugins override earlier
-	// ones (Deduplicate keeps the last occurrence).
-	for _, p := range plugins {
+	// Discover skills from plugins in reverse config order so that the first-
+	// configured plugin has highest priority (appears last in the slice, and
+	// Deduplicate keeps the last occurrence).
+	for i := len(plugins) - 1; i >= 0; i-- {
+		p := plugins[i]
 		if p.SkillsPath == "" {
 			continue
 		}

@@ -2006,6 +2006,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		content := msg.Content
 		if msg.Args != nil {
+			// TODO(Phase 4): rawArguments is empty when args come from the
+			// dialog. $ARGUMENTS will only be populated when inline args are
+			// supported via the `/` autocomplete (e.g. `/commit fix typo`).
 			content = commands.SubstituteArgs(content, msg.Args, "")
 		}
 

@@ -265,9 +265,10 @@ per-field basis using **replace** semantics (not append):
 - If `anvil.json` sets `agents.oracle.tools`, it replaces the `.md`'s
   `tools` list entirely.
 - Fields not present in `anvil.json` keep their `.md` values.
-- A field set to `null` in `anvil.json` resets to the default (e.g.,
-  `"tools": null` means "all tools allowed" regardless of what the `.md`
-  restricts).
+- A field set to `null` (or absent) in `anvil.json` does not override
+  the `.md` value. To stop overriding a field, remove it from the JSON.
+  (Go's JSON unmarshaling cannot distinguish absent from null, so both
+  are treated as "don't override.")
 - The existing filter-list syntax (`["*", "!foo"]`) works on the final
   merged value.
 
@@ -276,9 +277,9 @@ per-field basis using **replace** semantics (not append):
 Plugin agents can introduce delegation cycles (`A → B → A`). The
 existing depth mechanism (orchestrator=3, sub-agents decrement) prevents
 infinite recursion at runtime. Additionally, at discovery time, validate
-`delegates_to` references: warn (don't error) if a cycle is detected or
-if a referenced agent doesn't exist. This matches the existing
-`ValidateDelegatesTo` behavior, extended with cycle detection.
+`delegates_to` references: error if a cycle is detected (cycles could
+cause infinite delegation loops at runtime), warn if a referenced agent
+doesn't exist or is disabled.
 
 ### Migration
 
