@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/url"
@@ -807,6 +808,11 @@ func (c *Config) SetupAgents() {
 // file. This must be called after SetupAgents (which stores the raw user
 // overrides). The coordinator calls this after parsing .md files.
 func (c *Config) SetupAgentsWithDefaults(mdDefaults map[string]Agent) {
+	// Guard: SetupAgents must have been called first to store user overrides.
+	if c.userAgentOverrides == nil && c.Agents != nil {
+		slog.Warn("SetupAgentsWithDefaults called before SetupAgents; user overrides may be lost")
+	}
+
 	// Use the raw user overrides stored by SetupAgents, not c.Agents which
 	// now contains the full hardcoded roster.
 	userAgents := c.userAgentOverrides

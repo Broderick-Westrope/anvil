@@ -138,8 +138,10 @@ func NewCoordinator(
 	lspManager *lsp.Manager,
 	notify pubsub.Publisher[notify.Notification],
 ) (Coordinator, error) {
+	// Discover plugins once for both skills and agents.
+	plugins := plugin.DiscoverAll(cfg.Config().Plugins)
 	// Discover skills once at session start.
-	allSkills, activeSkills, skillStates := discoverSkills(cfg)
+	allSkills, activeSkills, skillStates := discoverSkills(cfg, plugins)
 	skillTracker := skills.NewTracker(activeSkills)
 
 	c := &coordinator{
@@ -175,7 +177,6 @@ func NewCoordinator(
 	}
 
 	// Discover plugin agents.
-	plugins := plugin.DiscoverAll(cfg.Config().Plugins)
 	for _, p := range plugins {
 		if p.AgentsPath == "" {
 			continue
@@ -1547,17 +1548,14 @@ func (c *coordinator) ActiveSkillByName(name string) *skills.Skill {
 // plus the combined per-file discovery states. It also emits a single
 // diagnostic log line summarising the outcome to help track skill-loading
 // health over time.
-func discoverSkills(cfg *config.ConfigStore) (allSkills, activeSkills []*skills.Skill, allStates []*skills.SkillState) {
+func discoverSkills(cfg *config.ConfigStore, plugins []*plugin.Plugin) (allSkills, activeSkills []*skills.Skill, allStates []*skills.SkillState) {
 	builtin, builtinStates := skills.DiscoverBuiltinWithStates()
 	discovered := append([]*skills.Skill(nil), builtin...)
 	allStates = append(allStates, builtinStates...)
 
-	// Discover skills from plugins (lower priority than user/project skills).
-	plugins := plugin.DiscoverAll(cfg.Config().Plugins)
-	// Iterate in reverse config order so last-configured plugin has lowest priority
-	// (will be overridden by earlier plugins and user skills via Deduplicate).
-	for i := len(plugins) - 1; i >= 0; i-- {
-		p := plugins[i]
+	// Discover skills from plugins. Later-configured plugins override earlier
+	// ones (Deduplicate keeps the last occurrence).
+	for _, p := range plugins {
 		if p.SkillsPath == "" {
 			continue
 		}

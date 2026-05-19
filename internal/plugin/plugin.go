@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/home"
@@ -87,6 +88,11 @@ func Discover(cfg config.PluginConfig) *Plugin {
 			return nil
 		}
 		if m.Name != "" {
+			if !validatePluginName(m.Name) {
+				slog.Warn("Plugin manifest has invalid name, skipping plugin",
+					"path", manifestPath, "name", m.Name)
+				return nil
+			}
 			p.Name = m.Name
 		}
 		// Resolve subdirectory paths relative to the manifest's directory.
@@ -125,9 +131,34 @@ func resolveSubdir(baseDir, override, defaultName string) string {
 		name = override
 	}
 	dir := filepath.Join(baseDir, name)
+
+	// Verify the resolved path stays within the plugin root.
+	cleanDir := filepath.Clean(dir) + string(filepath.Separator)
+	cleanBase := filepath.Clean(baseDir) + string(filepath.Separator)
+	if !strings.HasPrefix(cleanDir, cleanBase) {
+		slog.Warn("Plugin subdirectory escapes plugin root",
+			"base", baseDir, "override", override)
+		return ""
+	}
+
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		return ""
 	}
 	return dir
+}
+
+// validatePluginName checks that a plugin name is safe for use in source
+// strings and collision detection. Returns true if valid.
+func validatePluginName(name string) bool {
+	if name == "" {
+		return true // Empty is fine — directory name will be used.
+	}
+	// Reject names with path separators, colons, or control characters.
+	for _, r := range name {
+		if r == '/' || r == '\\' || r == ':' || r < ' ' {
+			return false
+		}
+	}
+	return true
 }

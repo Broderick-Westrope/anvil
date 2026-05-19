@@ -263,8 +263,8 @@ func ValidateDelegatesTo(agents []AgentMD, disabledAgents []string) (errs []erro
 	)
 	color := make(map[string]int, len(agents))
 
-	var dfs func(node string) bool
-	dfs = func(node string) bool {
+	var dfs func(node string)
+	dfs = func(node string) {
 		color[node] = gray
 		for _, neighbor := range adj[node] {
 			if color[neighbor] == gray {
@@ -274,16 +274,13 @@ func ValidateDelegatesTo(agents []AgentMD, disabledAgents []string) (errs []erro
 					"delegation cycle detected: agent %q delegates to %q which is in the current delegation chain",
 					node, neighbor,
 				))
-				return true
+				continue
 			}
 			if _, inGraph := adj[neighbor]; inGraph && color[neighbor] == white {
-				if dfs(neighbor) {
-					return true
-				}
+				dfs(neighbor)
 			}
 		}
 		color[node] = black
-		return false
 	}
 
 	for _, a := range agents {

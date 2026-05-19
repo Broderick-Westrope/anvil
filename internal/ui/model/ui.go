@@ -2006,7 +2006,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		content := msg.Content
 		if msg.Args != nil {
-			content = substituteArgs(content, msg.Args)
+			content = commands.SubstituteArgs(content, msg.Args, "")
 		}
 
 		// Resolve and prepend skill content.
@@ -2047,15 +2047,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	}
 
 	return tea.Batch(cmds...)
-}
-
-// substituteArgs replaces $ARG_NAME placeholders in content with actual values.
-func substituteArgs(content string, args map[string]string) string {
-	for name, value := range args {
-		placeholder := "$" + name
-		content = strings.ReplaceAll(content, placeholder, value)
-	}
-	return content
 }
 
 // refreshHyperAndRetrySelect returns a command that silently refreshes

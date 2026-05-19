@@ -116,6 +116,35 @@ func TestDiscoverAll_MixedValidity(t *testing.T) {
 	require.Equal(t, validDir, result[0].Path)
 }
 
+func TestDiscover_ManifestPathTraversal(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// Create a directory outside the plugin root that would be traversed to.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile),
+		[]byte(`{"skills": "../../etc"}`), 0o644))
+
+	p := Discover(config.PluginConfig{Path: dir})
+
+	require.NotNil(t, p)
+	// Skills path should be empty — traversal was blocked.
+	require.Empty(t, p.SkillsPath)
+}
+
+func TestDiscover_ManifestInvalidName(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	mkdirs(t, dir, "skills")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile),
+		[]byte(`{"name": "../../bad:name", "skills": "skills"}`), 0o644))
+
+	p := Discover(config.PluginConfig{Path: dir})
+
+	// Invalid name should cause the plugin to be skipped entirely.
+	require.Nil(t, p)
+}
+
 func TestDiscover_TildeExpansion(t *testing.T) {
 	t.Parallel()
 

@@ -108,10 +108,6 @@ func LoadPluginCommands(plugins []*plugin.Plugin) ([]CustomCommand, error) {
 				"plugin", p.Name, "path", p.CommandsPath, "error", err)
 			continue // Don't fail — skip this plugin's commands.
 		}
-		// Tag each command with its source.
-		for i := range cmds {
-			cmds[i].Source = "plugin:" + p.Name
-		}
 		all = append(all, cmds...)
 	}
 	return all, nil
