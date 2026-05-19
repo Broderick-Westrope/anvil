@@ -87,6 +87,9 @@ type Coordinator interface {
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	SkillStates() []*skills.SkillState
+	// ActiveSkillByName returns the active skill with the given name, or nil
+	// if not found.
+	ActiveSkillByName(name string) *skills.Skill
 }
 
 type coordinator struct {
@@ -1526,6 +1529,17 @@ func (c *coordinator) updateParentSessionCost(ctx context.Context, childSessionI
 // discovery states captured at session start.
 func (c *coordinator) SkillStates() []*skills.SkillState {
 	return slices.Clone(c.skillStates)
+}
+
+// ActiveSkillByName returns the active skill with the given name, or nil if
+// not found.
+func (c *coordinator) ActiveSkillByName(name string) *skills.Skill {
+	for _, s := range c.activeSkills {
+		if s.Name == name {
+			return s
+		}
+	}
+	return nil
 }
 
 // discoverSkills runs the skill discovery pipeline and returns both the

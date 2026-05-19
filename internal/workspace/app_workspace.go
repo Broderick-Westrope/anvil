@@ -308,6 +308,15 @@ func (w *AppWorkspace) SkillStates() []*skills.SkillState {
 	return w.app.AgentCoordinator.SkillStates()
 }
 
+// ActiveSkillByName returns the active skill with the given name, or nil if
+// not found.
+func (w *AppWorkspace) ActiveSkillByName(name string) *skills.Skill {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.ActiveSkillByName(name)
+}
+
 // -- MCP operations --
 
 func (w *AppWorkspace) MCPGetStates() map[string]mcptools.ClientInfo {

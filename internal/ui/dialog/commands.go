@@ -393,8 +393,17 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 			action := ActionRunCustomCommand{
 				Content:   cmd.Content,
 				Arguments: cmd.Arguments,
+				Skills:    cmd.Skills,
 			}
-			commandItems = append(commandItems, NewCommandItem(c.com.Styles, "custom_"+cmd.ID, cmd.Name, "", action))
+			title := cmd.Name
+			if cmd.DisplayName != "" {
+				title = cmd.DisplayName
+			}
+			if cmd.ArgumentHint != "" {
+				title += " " + cmd.ArgumentHint
+			}
+			desc := cmd.Description
+			commandItems = append(commandItems, NewCommandItem(c.com.Styles, "custom_"+cmd.ID, title, desc, action))
 		}
 	case MCPPrompts:
 		for _, cmd := range c.mcpPrompts {

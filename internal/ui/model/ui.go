@@ -2008,6 +2008,23 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if msg.Args != nil {
 			content = substituteArgs(content, msg.Args)
 		}
+
+		// Resolve and prepend skill content.
+		if len(msg.Skills) > 0 {
+			var skillParts []string
+			for _, skillName := range msg.Skills {
+				skill := m.com.Workspace.ActiveSkillByName(skillName)
+				if skill == nil {
+					slog.Warn("Command references unknown skill", "skill", skillName)
+					continue
+				}
+				skillParts = append(skillParts, fmt.Sprintf("<skill_content name=%q>\n%s\n</skill_content>", skill.Name, skill.Instructions))
+			}
+			if len(skillParts) > 0 {
+				content = strings.Join(skillParts, "\n\n") + "\n\n" + content
+			}
+		}
+
 		cmds = append(cmds, m.sendMessage(content))
 		m.dialog.CloseFrontDialog()
 	case dialog.ActionRunMCPPrompt:

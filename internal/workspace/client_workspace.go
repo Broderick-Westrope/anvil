@@ -483,6 +483,12 @@ func (w *ClientWorkspace) SkillStates() []*skills.SkillState {
 	return nil
 }
 
+// ActiveSkillByName returns nil in client mode because the remote workspace
+// API does not yet expose skill lookup by name.
+func (w *ClientWorkspace) ActiveSkillByName(_ string) *skills.Skill {
+	return nil
+}
+
 // -- MCP operations --
 
 func (w *ClientWorkspace) MCPGetStates() map[string]mcp.ClientInfo {

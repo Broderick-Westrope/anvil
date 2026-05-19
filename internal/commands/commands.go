@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -9,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -43,12 +47,22 @@ type MCPPrompt struct {
 
 // CustomCommand represents a user-defined custom command loaded from markdown files.
 type CustomCommand struct {
-	ID          string
-	Name        string
-	Content     string
-	Arguments   []Argument
-	Source      string // "" = user, "project" = project, "plugin:{name}" = plugin.
-	DisplayName string // Set by collision detection. Empty = use Name.
+	ID           string
+	Name         string
+	Description  string   // From frontmatter.
+	ArgumentHint string   // From frontmatter.
+	Skills       []string // Skill names to preload before execution.
+	Content      string
+	Arguments    []Argument
+	Source       string // "" = user, "project" = project, "plugin:{name}" = plugin.
+	DisplayName  string // Set by collision detection. Empty = use Name.
+}
+
+// commandFrontmatter is the YAML structure expected in command .md files.
+type commandFrontmatter struct {
+	Description  string   `yaml:"description,omitempty"`
+	ArgumentHint string   `yaml:"argument_hint,omitempty"`
+	Skills       []string `yaml:"skills,omitempty"`
 }
 
 // ItemName returns the command name for collision detection.
@@ -200,12 +214,66 @@ func loadCommand(path, baseDir, prefix string) (CustomCommand, error) {
 
 	id := buildCommandID(path, baseDir, prefix)
 
-	return CustomCommand{
-		ID:        id,
-		Name:      id,
-		Content:   string(content),
-		Arguments: extractArgNames(string(content)),
-	}, nil
+	// Normalise line endings.
+	text := string(bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n")))
+
+	cmd := CustomCommand{
+		ID:   id,
+		Name: id,
+	}
+
+	// Look for frontmatter delimited by "---".
+	const delim = "---"
+
+	if !strings.HasPrefix(strings.TrimLeft(text, "\n"), delim) {
+		// No frontmatter — entire content is body.
+		cmd.Content = text
+		cmd.Arguments = extractArgNames(text)
+		return cmd, nil
+	}
+
+	// Advance past the first "---".
+	rest := strings.TrimLeft(text, "\n")
+	rest = rest[len(delim):]
+
+	// Find the closing "---".
+	idx := strings.Index(rest, "\n"+delim)
+	if idx == -1 {
+		// Malformed frontmatter — treat whole content as body.
+		cmd.Content = text
+		cmd.Arguments = extractArgNames(text)
+		return cmd, nil
+	}
+
+	yamlContent := rest[:idx]
+	body := rest[idx+len("\n"+delim):]
+
+	// Strip a single leading newline from the body if present.
+	body = strings.TrimPrefix(body, "\n")
+
+	var fm commandFrontmatter
+	if err := yaml.Unmarshal([]byte(yamlContent), &fm); err != nil {
+		return CustomCommand{}, fmt.Errorf("parsing frontmatter for command %q: %w", id, err)
+	}
+
+	cmd.Description = fm.Description
+	cmd.ArgumentHint = fm.ArgumentHint
+	cmd.Skills = fm.Skills
+	cmd.Content = body
+	cmd.Arguments = extractArgNames(body)
+	return cmd, nil
+}
+
+// SubstituteArgs replaces $ARGUMENTS and named $ARG_NAME placeholders in content.
+func SubstituteArgs(content string, args map[string]string, rawArguments string) string {
+	// Replace $ARGUMENTS with the raw argument string.
+	content = strings.ReplaceAll(content, "$ARGUMENTS", rawArguments)
+	// Replace named $ARG_NAME placeholders.
+	for name, value := range args {
+		placeholder := "$" + name
+		content = strings.ReplaceAll(content, placeholder, value)
+	}
+	return content
 }
 
 func extractArgNames(content string) []Argument {

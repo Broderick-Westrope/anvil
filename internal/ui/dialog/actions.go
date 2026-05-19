@@ -70,6 +70,7 @@ type (
 	ActionRunCustomCommand struct {
 		Content   string
 		Arguments []commands.Argument
+		Skills    []string          // Skill names to preload.
 		Args      map[string]string // Actual argument values
 	}
 	// ActionRunMCPPrompt is a message to run a custom command.
