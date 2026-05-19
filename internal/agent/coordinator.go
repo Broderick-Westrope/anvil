@@ -276,19 +276,25 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		slog.Error("Failed to refresh OAuth2 token. Proceeding with existing token.", "error", err)
 	}
 
+	var messageCreated bool
 	run := func() (*fantasy.AgentResult, error) {
-		return orch.Run(ctx, SessionAgentCall{
-			SessionID:        sessionID,
-			Prompt:           prompt,
-			Attachments:      attachments,
-			MaxOutputTokens:  maxTokens,
-			ProviderOptions:  mergedOptions,
-			Temperature:      temp,
-			TopP:             topP,
-			TopK:             topK,
-			FrequencyPenalty: freqPenalty,
-			PresencePenalty:  presPenalty,
+		result, err := orch.Run(ctx, SessionAgentCall{
+			SessionID:         sessionID,
+			Prompt:            prompt,
+			Attachments:       attachments,
+			MaxOutputTokens:   maxTokens,
+			ProviderOptions:   mergedOptions,
+			Temperature:       temp,
+			TopP:              topP,
+			TopK:              topK,
+			FrequencyPenalty:  freqPenalty,
+			PresencePenalty:   presPenalty,
+			skipCreateMessage: messageCreated,
 		})
+		// Safe to set unconditionally: isUnauthorized only matches
+		// 401 ProviderErrors which occur after createUserMessage.
+		messageCreated = true
+		return result, err
 	}
 	beforeLoaded := c.skillTracker.LoadedNames()
 	result, originalErr := run()
