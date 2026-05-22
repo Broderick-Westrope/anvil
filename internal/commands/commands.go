@@ -275,26 +275,31 @@ func loadCommand(path, baseDir, prefix string) (CustomCommand, error) {
 		return cmd, nil
 	}
 
-	// Advance past the first "---".
+	// Advance past the first "---\n".
 	rest := trimmed[len(delim):]
+	if len(rest) > 0 && rest[0] == '\n' {
+		rest = rest[1:]
+	}
 
-	// Find the closing "---" on its own line.
-	idx := strings.Index(rest, "\n"+delim+"\n")
-	if idx == -1 {
-		// Check if "---" is the last line (no trailing newline).
-		if strings.HasSuffix(rest, "\n"+delim) {
-			idx = len(rest) - len(delim) - 1
+	// Find the closing "---" on its own line. Tolerate trailing whitespace
+	// on the delimiter line for consistency with the agent .md parser.
+	lines := strings.Split(rest, "\n")
+	closingLine := -1
+	for i, line := range lines {
+		if strings.TrimRight(line, " \t") == delim {
+			closingLine = i
+			break
 		}
 	}
-	if idx == -1 {
+	if closingLine == -1 {
 		// Malformed frontmatter — treat whole content as body.
 		cmd.Content = text
 		cmd.Arguments = extractArgNames(text)
 		return cmd, nil
 	}
 
-	yamlContent := rest[:idx]
-	body := rest[idx+len("\n"+delim):]
+	yamlContent := strings.Join(lines[:closingLine], "\n")
+	body := strings.Join(lines[closingLine+1:], "\n")
 
 	// Strip a single leading newline from the body if present.
 	body = strings.TrimPrefix(body, "\n")
