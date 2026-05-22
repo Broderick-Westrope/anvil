@@ -178,8 +178,9 @@ func resolveSubdir(baseDir, override, defaultName string) string {
 }
 
 // validatePluginName checks that a plugin name is safe for use in source
-// strings and collision detection. Returns true if valid. Names must be
-// non-empty identifiers consisting of [a-zA-Z0-9._-].
+// strings and collision detection. Returns true if valid. An empty name is
+// valid (the directory name will be used). Non-empty names must consist of
+// [a-zA-Z0-9._-].
 func validatePluginName(name string) bool {
 	if name == "" {
 		return true // Empty is fine — directory name will be used.
