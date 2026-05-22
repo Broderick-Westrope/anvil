@@ -3,13 +3,18 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
+	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -446,4 +451,35 @@ func TestAgentIDToName(t *testing.T) {
 			assert.Equal(t, tc.want, agentIDToName(tc.id))
 		})
 	}
+}
+
+func TestReloadPluginsPreservesStateOnFailure(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	cfg, err := config.Init(workingDir, "", false)
+	require.NoError(t, err)
+
+	pluginDir := filepath.Join(workingDir, "plug")
+	skillDir := filepath.Join(pluginDir, "skills", "plugin-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: plugin-skill\ndescription: plugin skill\n---\nUse it.\n"), 0o644))
+	cfg.Config().Plugins = []config.PluginConfig{{Path: pluginDir}}
+
+	oldSkill := &skills.Skill{Name: "old-skill", Description: "old"}
+	coord := &coordinator{
+		cfg:          cfg,
+		allSkills:    []*skills.Skill{oldSkill},
+		activeSkills: []*skills.Skill{oldSkill},
+		skillStates:  []*skills.SkillState{{Name: "old-skill", State: skills.StateNormal}},
+		skillTracker: skills.NewTracker([]*skills.Skill{oldSkill}),
+		agentConfigs: map[string]config.Agent{}, // Missing orchestrator forces reload failure after discovery.
+		agentMDs:     map[string]prompt.AgentMD{},
+		agents:       csync.NewMap[string, SessionAgent](),
+	}
+
+	err = coord.ReloadPlugins(t.Context())
+	require.Error(t, err)
+	require.Equal(t, []*skills.Skill{oldSkill}, coord.activeSkills)
+	require.Equal(t, []*skills.SkillState{{Name: "old-skill", State: skills.StateNormal}}, coord.skillStates)
 }

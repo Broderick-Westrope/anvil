@@ -662,15 +662,25 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 // buildPrompt constructs the system prompt for the given agent name and config.
 // Orchestrator agents use orchestratorPrompt; all others use specialistPrompt.
 func (c *coordinator) buildPrompt(agentName string, agentCfg config.Agent) (*prompt.Prompt, error) {
+	return c.buildPromptWithState(agentName, agentCfg, c.activeSkills, c.agentMDs, c.agentConfigs)
+}
+
+func (c *coordinator) buildPromptWithState(
+	agentName string,
+	agentCfg config.Agent,
+	activeSkills []*skills.Skill,
+	agentMDs map[string]prompt.AgentMD,
+	agentConfigs map[string]config.Agent,
+) (*prompt.Prompt, error) {
 	opts := []prompt.Option{
 		prompt.WithWorkingDir(c.cfg.WorkingDir()),
 		prompt.WithAllowedSkills(agentCfg.AllowedSkills),
-		prompt.WithAvailableSkills(c.activeSkills),
+		prompt.WithAvailableSkills(activeSkills),
 	}
 
 	if agentName == config.AgentOrchestrator {
 		// Build agents block and delegation workflow from parsed .md files.
-		agentsBlock, delegationWorkflow := c.buildOrchestratorBlocks()
+		agentsBlock, delegationWorkflow := buildOrchestratorBlocksFromState(agentMDs, agentConfigs)
 		opts = append(opts,
 			prompt.WithAgentsBlock(agentsBlock),
 			prompt.WithDelegationWorkflow(delegationWorkflow),
@@ -681,7 +691,7 @@ func (c *coordinator) buildPrompt(agentName string, agentCfg config.Agent) (*pro
 
 	// Specialist: include agent body if available.
 	agentBody := ""
-	if md, ok := c.agentMDs[agentName]; ok {
+	if md, ok := agentMDs[agentName]; ok {
 		agentBody = md.Body
 	}
 	opts = append(opts,
@@ -695,10 +705,17 @@ func (c *coordinator) buildPrompt(agentName string, agentCfg config.Agent) (*pro
 // strings for the orchestrator prompt from the parsed agent .md files,
 // excluding agents that are not in the active agentConfigs.
 func (c *coordinator) buildOrchestratorBlocks() (agentsBlock, delegationWorkflow string) {
-	activeAgents := make([]prompt.AgentMD, 0, len(c.agentMDs))
-	for name, md := range c.agentMDs {
+	return buildOrchestratorBlocksFromState(c.agentMDs, c.agentConfigs)
+}
+
+func buildOrchestratorBlocksFromState(
+	agentMDs map[string]prompt.AgentMD,
+	agentConfigs map[string]config.Agent,
+) (agentsBlock, delegationWorkflow string) {
+	activeAgents := make([]prompt.AgentMD, 0, len(agentMDs))
+	for name, md := range agentMDs {
 		// Only include agents that are configured and not the orchestrator itself.
-		if _, ok := c.agentConfigs[name]; ok && name != config.AgentOrchestrator {
+		if _, ok := agentConfigs[name]; ok && name != config.AgentOrchestrator {
 			activeAgents = append(activeAgents, md)
 		}
 	}
@@ -758,6 +775,18 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 // At depth ≤ 1 the task delegation tool is excluded.
 // AllowedTools is applied via ParseFilterList; AllowedMCP is applied per server.
 func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int) ([]fantasy.AgentTool, error) {
+	return c.buildToolsWithState(ctx, agent, depth, c.allSkills, c.activeSkills, c.skillTracker, c.agentMDs)
+}
+
+func (c *coordinator) buildToolsWithState(
+	ctx context.Context,
+	agent config.Agent,
+	depth int,
+	allSkills []*skills.Skill,
+	activeSkills []*skills.Skill,
+	skillTracker *skills.Tracker,
+	agentMDs map[string]prompt.AgentMD,
+) ([]fantasy.AgentTool, error) {
 	isSubAgent := depth < 3
 
 	logFile := filepath.Join(c.cfg.Config().Options.DataDirectory, "logs", "anvil.log")
@@ -776,7 +805,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 		callerName := agent.ID
 		hasDelegates := callerName == config.AgentOrchestrator
 		if !hasDelegates {
-			if md, ok := c.agentMDs[callerName]; ok && len(md.DelegatesTo) > 0 {
+			if md, ok := agentMDs[callerName]; ok && len(md.DelegatesTo) > 0 {
 				hasDelegates = true
 			}
 		}
@@ -797,7 +826,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 	candidateTools = append(candidateTools,
 		agenticFetch,
 		tools.NewBashTool(c.permissions, c.cfg.WorkingDir()),
-		tools.NewAnvilInfoTool(c.cfg, c.lspManager, c.allSkills, c.activeSkills, c.skillTracker),
+		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker),
 		tools.NewAnvilLogsTool(logFile),
 		tools.NewJobOutputTool(),
 		tools.NewJobKillTool(),
@@ -810,7 +839,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, c.skillTracker, c.cfg.WorkingDir(), c.cfg.Config().Options.SkillsPaths...),
+		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, c.cfg.WorkingDir(), c.cfg.Config().Options.SkillsPaths...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 	)
 
@@ -1625,27 +1654,21 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		return fmt.Errorf("agent delegates_to validation failed on reload: %w", errors.Join(errs...))
 	}
 
-	// 6. Atomic swap of coordinator state.
-	c.orchestratorMu.Lock()
-	c.allSkills = newAll
-	c.activeSkills = newActive
-	c.skillStates = newStates
-	c.skillTracker = skills.NewTracker(newActive)
-	c.agentConfigs = newAgentConfigs
-	c.agentMDs = newAgentMDs
-	// Clear lazy agent cache so sub-agents rebuild on next use.
-	c.agents.Reset(make(map[string]SessionAgent))
-	c.orchestratorMu.Unlock()
-
-	// 7. Rebuild orchestrator prompt and tools.
+	// 6. Rebuild orchestrator prompt and tools against the proposed state before
+	// swapping coordinator fields. Any failure below must leave the existing
+	// runtime state intact.
 	orchestratorCfg, ok := newAgentConfigs[config.AgentOrchestrator]
 	if !ok {
 		return errOrchestratorAgentNotConfigured
 	}
 
 	orch := c.getOrchestrator()
+	if orch == nil {
+		return errOrchestratorAgentNotConfigured
+	}
 
-	p, err := c.buildPrompt(config.AgentOrchestrator, orchestratorCfg)
+	newSkillTracker := skills.NewTracker(newActive)
+	p, err := c.buildPromptWithState(config.AgentOrchestrator, orchestratorCfg, newActive, newAgentMDs, newAgentConfigs)
 	if err != nil {
 		return fmt.Errorf("rebuilding orchestrator prompt: %w", err)
 	}
@@ -1655,13 +1678,25 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building orchestrator system prompt: %w", err)
 	}
-	orch.SetSystemPrompt(systemPrompt)
 
-	agentTools, err := c.buildTools(ctx, orchestratorCfg, 3)
+	agentTools, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs)
 	if err != nil {
 		return fmt.Errorf("rebuilding orchestrator tools: %w", err)
 	}
+
+	// 7. Atomic swap of coordinator state.
+	c.orchestratorMu.Lock()
+	c.allSkills = newAll
+	c.activeSkills = newActive
+	c.skillStates = newStates
+	c.skillTracker = newSkillTracker
+	c.agentConfigs = newAgentConfigs
+	c.agentMDs = newAgentMDs
+	// Clear lazy agent cache so sub-agents rebuild on next use.
+	c.agents.Reset(make(map[string]SessionAgent))
+	orch.SetSystemPrompt(systemPrompt)
 	orch.SetTools(agentTools)
+	c.orchestratorMu.Unlock()
 
 	slog.Info("Plugin reload complete",
 		"skills", len(newActive),
