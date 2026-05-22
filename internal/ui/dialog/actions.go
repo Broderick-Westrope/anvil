@@ -86,6 +86,8 @@ type (
 	ActionEnableDockerMCP struct{}
 	// ActionDisableDockerMCP is a message to disable Docker MCP.
 	ActionDisableDockerMCP struct{}
+	// ActionReloadPlugins is dispatched to re-discover all plugin content.
+	ActionReloadPlugins struct{}
 	// ActionAttachSkill is dispatched when a skill is selected from the
 	// slash autocomplete or the Browse Skills picker dialog.
 	ActionAttachSkill struct {

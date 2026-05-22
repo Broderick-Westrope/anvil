@@ -299,6 +299,17 @@ func (w *AppWorkspace) InitializePrompt() (string, error) {
 	return agent.InitializePrompt(w.store)
 }
 
+// -- Plugins --
+
+// ReloadPlugins re-discovers all plugin content and rebuilds the
+// orchestrator.
+func (w *AppWorkspace) ReloadPlugins(ctx context.Context) error {
+	if w.app.AgentCoordinator == nil {
+		return fmt.Errorf("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.ReloadPlugins(ctx)
+}
+
 // -- Skills --
 
 func (w *AppWorkspace) SkillStates() []*skills.SkillState {

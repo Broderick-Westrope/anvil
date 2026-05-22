@@ -87,6 +87,7 @@ type Coordinator interface {
 	Summarize(context.Context, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
+	ReloadPlugins(ctx context.Context) error
 	SkillStates() []*skills.SkillState
 	// ActiveSkillByName returns the active skill with the given name, or nil
 	// if not found.
@@ -1553,6 +1554,118 @@ func (c *coordinator) ActiveSkillByName(name string) *skills.Skill {
 			return s
 		}
 	}
+	return nil
+}
+
+// ReloadPlugins re-discovers all plugin content (skills, agents, commands)
+// and rebuilds the orchestrator's system prompt and tools. The swap is
+// atomic: if any step fails, the previous state is preserved. Lazy
+// sub-agent caches are cleared so they rebuild on next use.
+func (c *coordinator) ReloadPlugins(ctx context.Context) error {
+	cfg := c.cfg.Config()
+
+	// 1. Discover plugins.
+	plugins := plugin.DiscoverAll(cfg.Plugins)
+
+	// 2. Rebuild skills.
+	newAll, newActive, newStates := discoverSkills(c.cfg, plugins)
+
+	// 3. Rebuild agent MDs from embedded + plugins.
+	newAgentMDs, err := loadAgentMDs(agentMDFS)
+	if err != nil {
+		return fmt.Errorf("reloading agent descriptions: %w", err)
+	}
+	for i := len(plugins) - 1; i >= 0; i-- {
+		p := plugins[i]
+		if p.AgentsPath == "" {
+			continue
+		}
+		pluginAgentMDs, loadErr := loadAgentMDsFromDir(p.AgentsPath)
+		if loadErr != nil {
+			slog.Warn("Failed to load plugin agents on reload",
+				"plugin", p.Name, "path", p.AgentsPath, "error", loadErr)
+			continue
+		}
+		for name, md := range pluginAgentMDs {
+			md.Source = "plugin:" + p.Name
+			newAgentMDs[name] = md
+		}
+	}
+
+	// 4. Re-apply .md defaults to config agents.
+	mdDefaults := make(map[string]config.Agent, len(newAgentMDs))
+	for name, md := range newAgentMDs {
+		mdDefaults[name] = config.Agent{
+			ID:            name,
+			Name:          agentIDToName(name),
+			AllowedTools:  md.Tools,
+			AllowedSkills: md.Skills,
+			AllowedMCP:    md.MCPs,
+			Model:         md.Model,
+		}
+	}
+	cfg.SetupAgentsWithDefaults(mdDefaults)
+
+	newAgentConfigs := make(map[string]config.Agent, len(cfg.Agents))
+	for name, agentCfg := range cfg.Agents {
+		newAgentConfigs[name] = agentCfg
+	}
+
+	// 5. Validate delegates_to.
+	agentMDSlice := make([]prompt.AgentMD, 0, len(newAgentMDs))
+	for _, md := range newAgentMDs {
+		agentMDSlice = append(agentMDSlice, md)
+	}
+	errs, warnings := prompt.ValidateDelegatesTo(agentMDSlice, cfg.DisabledAgents)
+	for _, w := range warnings {
+		slog.Warn("Agent delegation warning on reload", "error", w)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("agent delegates_to validation failed on reload: %w", errors.Join(errs...))
+	}
+
+	// 6. Atomic swap of coordinator state.
+	c.orchestratorMu.Lock()
+	c.allSkills = newAll
+	c.activeSkills = newActive
+	c.skillStates = newStates
+	c.skillTracker = skills.NewTracker(newActive)
+	c.agentConfigs = newAgentConfigs
+	c.agentMDs = newAgentMDs
+	// Clear lazy agent cache so sub-agents rebuild on next use.
+	c.agents.Reset(make(map[string]SessionAgent))
+	c.orchestratorMu.Unlock()
+
+	// 7. Rebuild orchestrator prompt and tools.
+	orchestratorCfg, ok := newAgentConfigs[config.AgentOrchestrator]
+	if !ok {
+		return errOrchestratorAgentNotConfigured
+	}
+
+	orch := c.getOrchestrator()
+
+	p, err := c.buildPrompt(config.AgentOrchestrator, orchestratorCfg)
+	if err != nil {
+		return fmt.Errorf("rebuilding orchestrator prompt: %w", err)
+	}
+
+	large := orch.Model()
+	systemPrompt, err := p.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
+	if err != nil {
+		return fmt.Errorf("building orchestrator system prompt: %w", err)
+	}
+	orch.SetSystemPrompt(systemPrompt)
+
+	agentTools, err := c.buildTools(ctx, orchestratorCfg, 3)
+	if err != nil {
+		return fmt.Errorf("rebuilding orchestrator tools: %w", err)
+	}
+	orch.SetTools(agentTools)
+
+	slog.Info("Plugin reload complete",
+		"skills", len(newActive),
+		"agents", len(newAgentConfigs)-1, // exclude orchestrator
+		"plugins", len(plugins))
 	return nil
 }
 

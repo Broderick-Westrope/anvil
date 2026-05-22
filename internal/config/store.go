@@ -717,11 +717,12 @@ func (s *ConfigStore) ReloadFromDisk(ctx context.Context) error {
 			setupErr = fmt.Errorf("failed to configure selected models during reload: %w", err)
 		} else {
 			s.SetupAgents()
-			// TODO(Phase 6): After SetupAgents, the config only has the
+			// NOTE: After SetupAgents, the config only has the
 			// orchestrator agent. Non-orchestrator agents come from
-			// SetupAgentsWithDefaults (called by the coordinator). On
-			// config reload, the coordinator must re-apply .md defaults.
-			// This is handled by the plugin reload pipeline in Phase 6.
+			// SetupAgentsWithDefaults (called by the coordinator).
+			// The coordinator.ReloadPlugins method re-applies .md
+			// defaults. Callers must trigger ReloadPlugins after
+			// config changes that affect the plugins key.
 		}
 	}
 
