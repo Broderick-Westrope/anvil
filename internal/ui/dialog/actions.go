@@ -86,8 +86,8 @@ type (
 	ActionEnableDockerMCP struct{}
 	// ActionDisableDockerMCP is a message to disable Docker MCP.
 	ActionDisableDockerMCP struct{}
-	// ActionAttachSkill is dispatched when a skill is selected from autocomplete.
-	// Phase 5 implements the actual attachment handler.
+	// ActionAttachSkill is dispatched when a skill is selected from the
+	// slash autocomplete or the Browse Skills picker dialog.
 	ActionAttachSkill struct {
 		Name         string
 		Instructions string

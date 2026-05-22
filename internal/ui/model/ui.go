@@ -2079,15 +2079,15 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		cmds = append(cmds, m.runMCPPrompt(msg.ClientID, msg.PromptID, msg.Args))
 	case dialog.ActionAttachSkill:
-		m.closeSlashAC(true)
+		if m.slashACOpen {
+			m.closeSlashAC(true)
+		}
 		m.dialog.CloseDialog(dialog.CommandsID)
 		m.dialog.CloseDialog(dialog.SkillPickerID)
-		cmds = append(cmds, func() tea.Msg {
-			return attachments.SkillAttachment{
-				Name:         msg.Name,
-				Instructions: msg.Instructions,
-				Source:       msg.Source,
-			}
+		m.attachments.Update(attachments.SkillAttachment{
+			Name:         msg.Name,
+			Instructions: msg.Instructions,
+			Source:       msg.Source,
 		})
 	default:
 		cmds = append(cmds, util.CmdHandler(msg))
@@ -2474,25 +2474,29 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 				fileAttachments := m.attachments.List()
 				skillAttachments := m.attachments.SkillList()
-				m.attachments.Reset()
 
 				// Block submit when there is no text and no text file
 				// attachment. Skills alone are context — they need an
-				// accompanying request.
+				// accompanying request. Don't reset attachments so the
+				// user keeps their chips.
 				if len(value) == 0 && !message.ContainsTextAttachment(fileAttachments) {
-					return nil
-				}
-
-				// Prepend skill content to the user message.
-				if len(skillAttachments) > 0 {
-					var sb strings.Builder
-					for _, skill := range skillAttachments {
-						fmt.Fprintf(&sb, "I've loaded the %s skill:\n\n", skill.Name)
-						fmt.Fprintf(&sb, "<skill_content name=%q>\n%s\n</skill_content>\n\n",
-							skill.Name, skill.Instructions)
+					if len(skillAttachments) > 0 {
+						cmds = append(cmds, util.ReportInfo("Type a message to send with the attached skill(s)."))
 					}
-					sb.WriteString(value)
-					value = sb.String()
+					return tea.Batch(cmds...)
+				}
+				m.attachments.Reset()
+
+				// Prepend skill content to the user message. Uses the
+				// same XML format as the command/slash-AC skill paths.
+				if len(skillAttachments) > 0 {
+					var skillParts []string
+					for _, skill := range skillAttachments {
+						skillParts = append(skillParts,
+							fmt.Sprintf("<skill_content name=%q>\n%s\n</skill_content>",
+								skill.Name, skill.Instructions))
+					}
+					value = strings.Join(skillParts, "\n\n") + "\n\n" + value
 				}
 
 				m.randomizePlaceholders()
@@ -4084,7 +4088,10 @@ func (m *UI) openSkillPickerDialog() tea.Cmd {
 		return nil
 	}
 
-	// Collect active skills from skill states.
+	// Collect active skills from skill states. This is safe to call
+	// in Update because ActiveSkillByName is an in-memory lookup
+	// (no IO). If it ever becomes an RPC, this must move to a
+	// tea.Cmd.
 	var activeSkills []*skills.Skill
 	for _, ss := range m.skillStates {
 		if ss.State != skills.StateNormal {

@@ -47,7 +47,6 @@ type Attachments struct {
 func (m *Attachments) List() []message.Attachment   { return m.list }
 func (m *Attachments) SkillList() []SkillAttachment { return m.skills }
 func (m *Attachments) Reset()                       { m.list = nil; m.skills = nil }
-func (m *Attachments) ResetSkills()                 { m.skills = nil }
 
 func (m *Attachments) Update(msg tea.Msg) bool {
 	switch msg := msg.(type) {
@@ -162,7 +161,8 @@ func (r *Renderer) Render(fileAtts []message.Attachment, skillAtts []SkillAttach
 		}
 
 		if i == fits && totalItems > i+1 {
-			chips = append(chips, lipgloss.NewStyle().Width(maxItemWidth).Render(fmt.Sprintf("%d more…", totalItems-fits)))
+			remaining := totalItems - fits - 1
+			chips = append(chips, lipgloss.NewStyle().Width(maxItemWidth).Render(fmt.Sprintf("%d more…", remaining)))
 			return lipgloss.JoinHorizontal(lipgloss.Left, chips...)
 		}
 	}
@@ -190,7 +190,8 @@ func (r *Renderer) Render(fileAtts []message.Attachment, skillAtts []SkillAttach
 		}
 
 		if globalIdx == fits && totalItems > globalIdx+1 {
-			chips = append(chips, lipgloss.NewStyle().Width(maxItemWidth).Render(fmt.Sprintf("%d more…", totalItems-fits)))
+			remaining := totalItems - fits - 1
+			chips = append(chips, lipgloss.NewStyle().Width(maxItemWidth).Render(fmt.Sprintf("%d more…", remaining)))
 			break
 		}
 	}

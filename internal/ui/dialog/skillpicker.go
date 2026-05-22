@@ -122,7 +122,7 @@ func NewSkillPicker(com *common.Common, activeSkills []*skills.Skill) *SkillPick
 		key.WithHelp("↑/↓", "choose"),
 	)
 	sp.keyMap.Next = key.NewBinding(
-		key.WithKeys("down"),
+		key.WithKeys("down", "ctrl+n"),
 		key.WithHelp("↓", "next item"),
 	)
 	sp.keyMap.Previous = key.NewBinding(
