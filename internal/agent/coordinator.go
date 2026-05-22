@@ -661,8 +661,14 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 
 // buildPrompt constructs the system prompt for the given agent name and config.
 // Orchestrator agents use orchestratorPrompt; all others use specialistPrompt.
+// It snapshots coordinator fields under RLock to avoid races with ReloadPlugins.
 func (c *coordinator) buildPrompt(agentName string, agentCfg config.Agent) (*prompt.Prompt, error) {
-	return c.buildPromptWithState(agentName, agentCfg, c.activeSkills, c.agentMDs, c.agentConfigs)
+	c.orchestratorMu.RLock()
+	activeSkills := c.activeSkills
+	agentMDs := c.agentMDs
+	agentConfigs := c.agentConfigs
+	c.orchestratorMu.RUnlock()
+	return c.buildPromptWithState(agentName, agentCfg, activeSkills, agentMDs, agentConfigs)
 }
 
 func (c *coordinator) buildPromptWithState(
@@ -774,8 +780,15 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 // buildTools assembles the tool set for an agent at the given delegation depth.
 // At depth ≤ 1 the task delegation tool is excluded.
 // AllowedTools is applied via ParseFilterList; AllowedMCP is applied per server.
+// It snapshots coordinator fields under RLock to avoid races with ReloadPlugins.
 func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int) ([]fantasy.AgentTool, error) {
-	return c.buildToolsWithState(ctx, agent, depth, c.allSkills, c.activeSkills, c.skillTracker, c.agentMDs)
+	c.orchestratorMu.RLock()
+	allSkills := c.allSkills
+	activeSkills := c.activeSkills
+	skillTracker := c.skillTracker
+	agentMDs := c.agentMDs
+	c.orchestratorMu.RUnlock()
+	return c.buildToolsWithState(ctx, agent, depth, allSkills, activeSkills, skillTracker, agentMDs)
 }
 
 func (c *coordinator) buildToolsWithState(
@@ -1573,12 +1586,16 @@ func (c *coordinator) updateParentSessionCost(ctx context.Context, childSessionI
 // SkillStates returns a copy of the combined builtin and user skill
 // discovery states captured at session start.
 func (c *coordinator) SkillStates() []*skills.SkillState {
+	c.orchestratorMu.RLock()
+	defer c.orchestratorMu.RUnlock()
 	return slices.Clone(c.skillStates)
 }
 
 // ActiveSkillByName returns the active skill with the given name, or nil if
 // not found.
 func (c *coordinator) ActiveSkillByName(name string) *skills.Skill {
+	c.orchestratorMu.RLock()
+	defer c.orchestratorMu.RUnlock()
 	for _, s := range c.activeSkills {
 		if s.Name == name {
 			return s
