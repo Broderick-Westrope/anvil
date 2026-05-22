@@ -2066,25 +2066,19 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		))
 
 	case dialog.ActionRunCustomCommand:
-		if len(msg.Arguments) > 0 && msg.Args == nil {
+		if customCommandNeedsArgumentDialog(msg) {
 			m.dialog.CloseFrontDialog()
 			argsDialog := dialog.NewArguments(
 				m.com,
 				"Custom Command Arguments",
 				"",
-				msg.Arguments,
+				customCommandDialogArguments(msg),
 				msg, // Pass the action as the result
 			)
 			m.dialog.OpenDialog(argsDialog)
 			break
 		}
-		content := msg.Content
-		if msg.Args != nil {
-			// When args come from the dialog, rawArguments is empty since the
-			// user fills named fields. The inline `/` autocomplete path in
-			// executeSlashACSelection handles $ARGUMENTS substitution directly.
-			content = commands.SubstituteArgs(content, msg.Args, "")
-		}
+		content := substituteCustomCommandArgs(msg)
 
 		// Resolve and prepend skill content. This is safe to call in Update
 		// because ActiveSkillByName is an in-memory lookup (no IO). If it
