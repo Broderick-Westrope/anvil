@@ -42,6 +42,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
+	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/completions"
@@ -108,6 +109,16 @@ const (
 	uiInitialize
 	uiLanding
 	uiChat
+)
+
+// Slash autocomplete key bindings.
+var (
+	slashACUp    = key.NewBinding(key.WithKeys("up"))
+	slashACDown  = key.NewBinding(key.WithKeys("down"))
+	slashACEnter = key.NewBinding(key.WithKeys("enter"))
+	slashACEsc   = key.NewBinding(key.WithKeys("esc", "alt+esc"))
+	slashACTab   = key.NewBinding(key.WithKeys("tab"))
+	slashACCtrlP = key.NewBinding(key.WithKeys("ctrl+p"))
 )
 
 type openEditorMsg struct {
@@ -232,6 +243,11 @@ type UI struct {
 	completionsStartIndex    int
 	completionsQuery         string
 	completionsPositionStart image.Point // x,y where user typed '@'
+
+	// Slash-command autocomplete state.
+	slashAC           *autocomplete.Autocomplete
+	slashACOpen       bool
+	slashACStartIndex int // Position in textarea where '/' was typed.
 
 	// Chat components
 	chat *Chat
@@ -376,6 +392,17 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		initialSessionID:    initialSessionID,
 		continueLastSession: continueLast,
 	}
+
+	// Initialize slash-command autocomplete.
+	ui.slashAC = autocomplete.New(nil, 10)
+	ui.slashAC.SetStyles(autocomplete.Styles{
+		Normal:      com.Styles.SlashAutocomplete.Normal,
+		Focused:     com.Styles.SlashAutocomplete.Focused,
+		Match:       com.Styles.SlashAutocomplete.Match,
+		CommandIcon: com.Styles.SlashAutocomplete.CommandIcon,
+		SkillIcon:   com.Styles.SlashAutocomplete.SkillIcon,
+		Description: com.Styles.SlashAutocomplete.Description,
+	})
 
 	status := NewStatus(com, ui)
 
@@ -653,6 +680,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
+		m.slashAC.SetItems(m.buildSlashACItems())
 		dia := m.dialog.Dialog(dialog.CommandsID)
 		if dia == nil {
 			break
@@ -783,6 +811,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If the pubsub timing is ever fixed upstream, this handler
 		// should merge with builtins rather than blindly replacing.
 		m.skillStates = msg.Payload.States
+		m.slashAC.SetItems(m.buildSlashACItems())
 	case pubsub.Event[mcp.Event]:
 		switch msg.Payload.Type {
 		case mcp.EventStateChanged:
@@ -1006,6 +1035,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case openEditorMsg:
+		m.closeSlashAC(true)
 		prevHeight := m.textarea.Height()
 		m.textarea.SetValue(msg.Text)
 		m.textarea.MoveToEnd()
@@ -2006,9 +2036,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		content := msg.Content
 		if msg.Args != nil {
-			// TODO(Phase 4): rawArguments is empty when args come from the
-			// dialog. $ARGUMENTS will only be populated when inline args are
-			// supported via the `/` autocomplete (e.g. `/commit fix typo`).
+			// When args come from the dialog, rawArguments is empty since the
+			// user fills named fields. The inline `/` autocomplete path in
+			// executeSlashACSelection handles $ARGUMENTS substitution directly.
 			content = commands.SubstituteArgs(content, msg.Args, "")
 		}
 
@@ -2047,6 +2077,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		cmds = append(cmds, m.runMCPPrompt(msg.ClientID, msg.PromptID, msg.Args))
+	case dialog.ActionAttachSkill:
+		// Skill attachment is not yet implemented; this is a placeholder.
+		slog.Info("Skill attachment triggered", "skill", msg.Name)
+		cmds = append(cmds, util.ReportInfo("Skill attachment is not yet implemented."))
 	default:
 		cmds = append(cmds, util.CmdHandler(msg))
 	}
@@ -2311,6 +2345,62 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.focus = uiFocusMain
 				break
 			}
+			// Handle slash autocomplete keys before normal editor dispatch.
+			if m.slashACOpen {
+				switch {
+				case key.Matches(msg, slashACUp):
+					m.slashAC.MoveUp()
+					return nil
+				case key.Matches(msg, slashACDown):
+					m.slashAC.MoveDown()
+					return nil
+				case key.Matches(msg, slashACEnter):
+					selected := m.slashAC.Selected()
+					textValue := m.textarea.Value()
+					m.closeSlashAC(true)
+					if selected != nil {
+						cmds = append(cmds, m.executeSlashACSelection(*selected, textValue))
+					}
+					return tea.Batch(cmds...)
+				case key.Matches(msg, slashACEsc):
+					m.closeSlashAC(true)
+					return nil
+				case key.Matches(msg, slashACTab):
+					// Tab executes the selected item, same as Enter.
+					selected := m.slashAC.Selected()
+					textValue := m.textarea.Value()
+					m.closeSlashAC(true)
+					if selected != nil {
+						cmds = append(cmds, m.executeSlashACSelection(*selected, textValue))
+					}
+					return tea.Batch(cmds...)
+				case key.Matches(msg, slashACCtrlP):
+					// Ctrl+P opens palette regardless of autocomplete state.
+					m.closeSlashAC(true)
+					if cmd := m.openCommandsDialog(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					return tea.Batch(cmds...)
+				default:
+					// Let the character through to the textarea, then update the query.
+					prevHeight := m.textarea.Height()
+					cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
+					// Update autocomplete query from textarea content after "/".
+					value := m.textarea.Value()
+					if len(value) <= m.slashACStartIndex || value[m.slashACStartIndex] != '/' {
+						// User deleted past the "/".
+						m.closeSlashAC(false)
+					} else {
+						query := value[m.slashACStartIndex+1:]
+						m.slashAC.SetQuery(query)
+						if m.slashAC.Len() == 0 && query != "" {
+							// No matches — close autocomplete, keep the text.
+							m.closeSlashAC(false)
+						}
+					}
+					return tea.Batch(cmds...)
+				}
+			}
 			// Handle completions if open.
 			if m.completionsOpen {
 				if msg, ok := m.completions.Update(msg); ok {
@@ -2428,10 +2518,16 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-			case key.Matches(msg, m.keyMap.Editor.Commands) && m.textarea.Value() == "":
-				if cmd := m.openCommandsDialog(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+			case key.Matches(msg, m.keyMap.Editor.Commands) && m.textarea.Value() == "" && !m.slashACOpen:
+				// Open inline autocomplete instead of palette dialog.
+				m.slashACOpen = true
+				m.slashACStartIndex = 0
+				m.slashAC.SetQuery("")
+				m.slashAC.Show()
+				// Insert the "/" into the textarea so the user sees it.
+				prevHeight := m.textarea.Height()
+				m.textarea.InsertRune('/')
+				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
 			default:
 				if handleGlobalKeys(msg) {
 					// Handle global keys first before passing to textarea.
@@ -2742,6 +2838,21 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		completionsView.Draw(scr, image.Rectangle{
 			Min: image.Pt(x, y),
 			Max: image.Pt(x+w, y+h),
+		})
+	}
+
+	// Draw slash autocomplete popup if open.
+	if !isOnboarding && m.slashACOpen && m.slashAC.Len() > 0 {
+		h := m.slashAC.ViewHeight()
+		// Position above the editor, left-aligned with the editor.
+		x := m.layout.editor.Min.X
+		y := m.layout.editor.Min.Y - h
+		y = max(0, y+1) // Offset for attachments row.
+
+		acView := uv.NewStyledString(m.slashAC.Render(min(80, m.layout.editor.Dx())))
+		acView.Draw(scr, image.Rectangle{
+			Min: image.Pt(x, y),
+			Max: image.Pt(x+min(80, m.layout.editor.Dx()), y+h),
 		})
 	}
 
@@ -3453,6 +3564,123 @@ func (m *UI) closeCompletions() {
 	m.completions.Close()
 }
 
+// buildSlashACItems builds the unified autocomplete item list from
+// custom commands and active skills.
+func (m *UI) buildSlashACItems() []autocomplete.Item {
+	var items []autocomplete.Item
+	for _, cmd := range m.customCommands {
+		name := cmd.Name
+		if cmd.DisplayName != "" {
+			name = cmd.DisplayName
+		}
+		items = append(items, autocomplete.Item{
+			Name:        cmd.Name,
+			DisplayName: name,
+			Description: cmd.Description,
+			Type:        autocomplete.CommandItem,
+			ID:          "cmd:" + cmd.ID,
+		})
+	}
+	for _, ss := range m.skillStates {
+		if ss.State != skills.StateNormal {
+			continue
+		}
+		desc := ""
+		if skill := m.com.Workspace.ActiveSkillByName(ss.Name); skill != nil {
+			desc = skill.Description
+		}
+		items = append(items, autocomplete.Item{
+			Name:        ss.Name,
+			Description: desc,
+			Type:        autocomplete.SkillItem,
+			ID:          "skill:" + ss.Name,
+		})
+	}
+	return items
+}
+
+// closeSlashAC hides the slash autocomplete and optionally clears the
+// textarea.
+func (m *UI) closeSlashAC(clearText bool) {
+	m.slashACOpen = false
+	m.slashAC.Hide()
+	if clearText {
+		m.textarea.SetValue("")
+	}
+}
+
+// executeSlashACSelection dispatches the appropriate action for the selected
+// autocomplete item. Returns a tea.Cmd if action requires one.
+func (m *UI) executeSlashACSelection(item autocomplete.Item, textValue string) tea.Cmd {
+	switch item.Type {
+	case autocomplete.CommandItem:
+		// Find the matching custom command by ID prefix "cmd:".
+		cmdID := strings.TrimPrefix(item.ID, "cmd:")
+		for _, cmd := range m.customCommands {
+			if cmd.ID == cmdID {
+				// Extract raw arguments from the captured textarea value.
+				rawArgs := extractSlashArgs(textValue, cmd.Name)
+				content := cmd.Content
+				if len(cmd.Arguments) > 0 && rawArgs == "" {
+					// Command has named arguments — open the argument dialog.
+					action := dialog.ActionRunCustomCommand{
+						Content:   cmd.Content,
+						Arguments: cmd.Arguments,
+						Skills:    cmd.Skills,
+					}
+					return func() tea.Msg { return action }
+				}
+				// Substitute $ARGUMENTS with inline args.
+				if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
+					content = commands.SubstituteArgs(content, nil, rawArgs)
+				}
+				// Resolve and prepend skill content.
+				if len(cmd.Skills) > 0 {
+					var skillParts []string
+					for _, skillName := range cmd.Skills {
+						skill := m.com.Workspace.ActiveSkillByName(skillName)
+						if skill == nil {
+							slog.Warn("Command references unknown skill", "skill", skillName)
+							continue
+						}
+						skillParts = append(skillParts, fmt.Sprintf("<skill_content name=%q>\n%s\n</skill_content>", skill.Name, skill.Instructions))
+					}
+					if len(skillParts) > 0 {
+						content = strings.Join(skillParts, "\n\n") + "\n\n" + content
+					}
+				}
+				return m.sendMessage(content)
+			}
+		}
+	case autocomplete.SkillItem:
+		// Dispatch ActionAttachSkill for skill attachment handling.
+		skillName := strings.TrimPrefix(item.ID, "skill:")
+		skill := m.com.Workspace.ActiveSkillByName(skillName)
+		if skill != nil {
+			return func() tea.Msg {
+				return dialog.ActionAttachSkill{
+					Name:         skill.Name,
+					Instructions: skill.Instructions,
+					Source:       skill.Source,
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// extractSlashArgs extracts the raw argument string from the given textarea
+// value. Given "/commit fix typo" and command name "commit", returns
+// "fix typo".
+func extractSlashArgs(textValue, cmdName string) string {
+	prefix := "/" + cmdName
+	if !strings.HasPrefix(textValue, prefix) {
+		return ""
+	}
+	rest := textValue[len(prefix):]
+	return strings.TrimLeft(rest, " ")
+}
+
 // insertCompletionText replaces the @query in the textarea with the given text.
 // Returns false if the replacement cannot be performed.
 func (m *UI) insertCompletionText(text string) bool {
@@ -3670,6 +3898,14 @@ func (m *UI) refreshStyles() {
 	}
 	m.textarea.SetStyles(t.Editor.Textarea)
 	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
+	m.slashAC.SetStyles(autocomplete.Styles{
+		Normal:      t.SlashAutocomplete.Normal,
+		Focused:     t.SlashAutocomplete.Focused,
+		Match:       t.SlashAutocomplete.Match,
+		CommandIcon: t.SlashAutocomplete.CommandIcon,
+		SkillIcon:   t.SlashAutocomplete.SkillIcon,
+		Description: t.SlashAutocomplete.Description,
+	})
 	m.attachments.Renderer().SetStyles(
 		t.Attachments.Normal,
 		t.Attachments.Deleting,
@@ -4082,6 +4318,7 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 		return true
 	}
 	if !allExistsAndValid() {
+		m.closeSlashAC(true)
 		prevHeight := m.textarea.Height()
 		return m.updateTextareaWithPrevHeight(msg, prevHeight)
 	}

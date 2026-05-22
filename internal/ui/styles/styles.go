@@ -506,6 +506,16 @@ type Styles struct {
 		Match   lipgloss.Style
 	}
 
+	// SlashAutocomplete styles for the inline "/" autocomplete dropdown.
+	SlashAutocomplete struct {
+		Normal      lipgloss.Style
+		Focused     lipgloss.Style
+		Match       lipgloss.Style
+		CommandIcon lipgloss.Style
+		SkillIcon   lipgloss.Style
+		Description lipgloss.Style
+	}
+
 	// Attachments styles
 	Attachments struct {
 		Normal   lipgloss.Style
