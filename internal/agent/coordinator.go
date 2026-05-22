@@ -1634,6 +1634,10 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 			continue
 		}
 		for name, md := range pluginAgentMDs {
+			if existing, ok := newAgentMDs[name]; ok {
+				slog.Warn("Plugin agent overrides existing agent on reload",
+					"agent", name, "plugin", p.Name, "previous_source", existing.Source)
+			}
 			md.Source = "plugin:" + p.Name
 			newAgentMDs[name] = md
 		}
