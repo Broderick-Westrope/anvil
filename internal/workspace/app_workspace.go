@@ -32,10 +32,14 @@ type AppWorkspace struct {
 // NewAppWorkspace creates a new AppWorkspace wrapping the given app
 // and config store.
 func NewAppWorkspace(a *app.App, store *config.ConfigStore) *AppWorkspace {
-	return &AppWorkspace{
+	w := &AppWorkspace{
 		app:   a,
 		store: store,
 	}
+	store.SetPluginsChangedHook(func(ctx context.Context) error {
+		return w.ReloadPlugins(ctx)
+	})
+	return w
 }
 
 // -- Sessions --

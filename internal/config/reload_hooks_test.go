@@ -71,6 +71,36 @@ func assertHookFilters(t *testing.T, store *config.ConfigStore) {
 	require.Equal(t, 1, match.HookCount, "bash must match ^bash$ matcher")
 }
 
+// TestSetConfigField_AutoReload_RunsPluginsChangedHook verifies that config
+// writes which change the plugins key trigger the registered plugin reload hook
+// after auto-reloading in-memory config.
+func TestSetConfigField_AutoReload_RunsPluginsChangedHook(t *testing.T) {
+	isolated := t.TempDir()
+	t.Setenv("HOME", isolated)
+	t.Setenv("USERPROFILE", isolated)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolated, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(isolated, ".local", "share"))
+
+	workDir := t.TempDir()
+	dataDir := t.TempDir()
+	store, err := config.Load(workDir, dataDir, false)
+	require.NoError(t, err)
+
+	calls := 0
+	store.SetPluginsChangedHook(func(context.Context) error {
+		calls++
+		return nil
+	})
+
+	pluginDir := filepath.Join(workDir, "plug")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+	require.NoError(t, store.SetConfigField(config.ScopeGlobal, "plugins", []config.PluginConfig{{Path: pluginDir}}))
+	require.Equal(t, 1, calls)
+
+	require.NoError(t, store.SetConfigField(config.ScopeGlobal, "options.debug", true))
+	require.Equal(t, 1, calls, "non-plugin config changes must not reload plugins")
+}
+
 // TestSetConfigField_AutoReload_PreservesHookMatcherFiltering verifies the
 // dominant real-world trigger path: config writes call autoReload,
 // autoReload calls ReloadFromDisk, and hook matching must remain correct.

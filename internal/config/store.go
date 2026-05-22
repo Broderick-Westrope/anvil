@@ -51,6 +51,14 @@ type ConfigStore struct {
 	snapshots          map[string]fileSnapshot // path -> snapshot at last capture
 	autoReloadDisabled bool                    // set during load/reload to prevent re-entrancy
 	reloadInProgress   bool                    // set during reload to avoid disk writes mid-reload
+	pluginsChangedHook func(context.Context) error
+}
+
+// SetPluginsChangedHook registers a callback run after ReloadFromDisk observes
+// a successful change to the plugins config key. The callback is intended for
+// runtime services that need to re-discover plugin-provided resources.
+func (s *ConfigStore) SetPluginsChangedHook(fn func(context.Context) error) {
+	s.pluginsChangedHook = fn
 }
 
 // Config returns the pure-data config struct (read-only after load).
@@ -740,7 +748,25 @@ func (s *ConfigStore) ReloadFromDisk(ctx context.Context) error {
 	// Rebuild staleness tracking
 	s.captureStalenessSnapshot(loadedPaths)
 
+	if oldConfig != nil && !pluginConfigsEqual(oldConfig.Plugins, cfg.Plugins) && s.pluginsChangedHook != nil {
+		if err := s.pluginsChangedHook(ctx); err != nil {
+			return fmt.Errorf("plugins changed hook failed: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func pluginConfigsEqual(a, b []PluginConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Path != b[i].Path {
+			return false
+		}
+	}
+	return true
 }
 
 // autoReload conditionally reloads config from disk after writes.
