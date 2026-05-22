@@ -97,7 +97,7 @@ func (m *UserMessageItem) renderAttachments(width int) string {
 			MimeType: at.MIMEType,
 		})
 	}
-	return m.attachments.Render(attachments, false, width)
+	return m.attachments.Render(attachments, nil, false, width)
 }
 
 // HandleKeyEvent implements KeyEventHandler.

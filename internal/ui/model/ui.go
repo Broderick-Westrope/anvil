@@ -364,6 +364,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 			com.Styles.Attachments.Deleting,
 			com.Styles.Attachments.Image,
 			com.Styles.Attachments.Text,
+			com.Styles.Attachments.Skill,
 		),
 		attachments.Keymap{
 			DeleteMode: keyMap.Editor.AttachmentDeleteMode,
@@ -2078,9 +2079,16 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		cmds = append(cmds, m.runMCPPrompt(msg.ClientID, msg.PromptID, msg.Args))
 	case dialog.ActionAttachSkill:
-		// Skill attachment is not yet implemented; this is a placeholder.
-		slog.Info("Skill attachment triggered", "skill", msg.Name)
-		cmds = append(cmds, util.ReportInfo("Skill attachment is not yet implemented."))
+		m.closeSlashAC(true)
+		m.dialog.CloseDialog(dialog.CommandsID)
+		m.dialog.CloseDialog(dialog.SkillPickerID)
+		cmds = append(cmds, func() tea.Msg {
+			return attachments.SkillAttachment{
+				Name:         msg.Name,
+				Instructions: msg.Instructions,
+				Source:       msg.Source,
+			}
+		})
 	default:
 		cmds = append(cmds, util.CmdHandler(msg))
 	}
@@ -2464,16 +2472,33 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					return m.openQuitDialog()
 				}
 
-				attachments := m.attachments.List()
+				fileAttachments := m.attachments.List()
+				skillAttachments := m.attachments.SkillList()
 				m.attachments.Reset()
-				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
+
+				// Block submit when there is no text and no text file
+				// attachment. Skills alone are context — they need an
+				// accompanying request.
+				if len(value) == 0 && !message.ContainsTextAttachment(fileAttachments) {
 					return nil
+				}
+
+				// Prepend skill content to the user message.
+				if len(skillAttachments) > 0 {
+					var sb strings.Builder
+					for _, skill := range skillAttachments {
+						fmt.Fprintf(&sb, "I've loaded the %s skill:\n\n", skill.Name)
+						fmt.Fprintf(&sb, "<skill_content name=%q>\n%s\n</skill_content>\n\n",
+							skill.Name, skill.Instructions)
+					}
+					sb.WriteString(value)
+					value = sb.String()
 				}
 
 				m.randomizePlaceholders()
 				m.historyReset()
 
-				return tea.Batch(m.sendMessage(value, attachments...), m.loadPromptHistory())
+				return tea.Batch(m.sendMessage(value, fileAttachments...), m.loadPromptHistory())
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
@@ -3911,6 +3936,7 @@ func (m *UI) refreshStyles() {
 		t.Attachments.Deleting,
 		t.Attachments.Image,
 		t.Attachments.Text,
+		t.Attachments.Skill,
 	)
 	m.todoSpinner.Style = t.Pills.TodoSpinner
 	m.status.help.Styles = t.Help
@@ -4036,6 +4062,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openFilesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.SkillPickerID:
+		if cmd := m.openSkillPickerDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.QuitID:
 		if cmd := m.openQuitDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -4045,6 +4075,29 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		break
 	}
 	return tea.Batch(cmds...)
+}
+
+// openSkillPickerDialog opens the skill picker dialog.
+func (m *UI) openSkillPickerDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.SkillPickerID) {
+		m.dialog.BringToFront(dialog.SkillPickerID)
+		return nil
+	}
+
+	// Collect active skills from skill states.
+	var activeSkills []*skills.Skill
+	for _, ss := range m.skillStates {
+		if ss.State != skills.StateNormal {
+			continue
+		}
+		if skill := m.com.Workspace.ActiveSkillByName(ss.Name); skill != nil {
+			activeSkills = append(activeSkills, skill)
+		}
+	}
+
+	sp := dialog.NewSkillPicker(m.com, activeSkills)
+	m.dialog.OpenDialog(sp)
+	return nil
 }
 
 // openQuitDialog opens the quit confirmation dialog.
