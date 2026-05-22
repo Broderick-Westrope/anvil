@@ -665,6 +665,7 @@ func (c *coordinator) buildPrompt(agentName string, agentCfg config.Agent) (*pro
 	opts := []prompt.Option{
 		prompt.WithWorkingDir(c.cfg.WorkingDir()),
 		prompt.WithAllowedSkills(agentCfg.AllowedSkills),
+		prompt.WithAvailableSkills(c.activeSkills),
 	}
 
 	if agentName == config.AgentOrchestrator {
