@@ -3637,13 +3637,13 @@ func (m *UI) closeCompletions() {
 func (m *UI) buildSlashACItems() []autocomplete.Item {
 	var items []autocomplete.Item
 	for _, cmd := range m.customCommands {
-		name := cmd.Name
+		displayName := cmd.Name
 		if cmd.DisplayName != "" {
-			name = cmd.DisplayName
+			displayName = cmd.DisplayName
 		}
 		items = append(items, autocomplete.Item{
-			Name:        cmd.Name,
-			DisplayName: name,
+			Name:        displayName,
+			DisplayName: displayName,
 			Description: cmd.Description,
 			Type:        autocomplete.CommandItem,
 			ID:          "cmd:" + cmd.ID,
@@ -3686,8 +3686,13 @@ func (m *UI) executeSlashACSelection(item autocomplete.Item, textValue string) t
 		cmdID := strings.TrimPrefix(item.ID, "cmd:")
 		for _, cmd := range m.customCommands {
 			if cmd.ID == cmdID {
-				// Extract raw arguments from the captured textarea value.
-				rawArgs := extractSlashArgs(textValue, cmd.Name)
+				// Extract raw arguments using the display name (short name)
+				// since that's what the user types in the textarea.
+				argName := cmd.Name
+				if cmd.DisplayName != "" {
+					argName = cmd.DisplayName
+				}
+				rawArgs := extractSlashArgs(textValue, argName)
 				content := cmd.Content
 				if len(cmd.Arguments) > 0 && rawArgs == "" {
 					// Command has named arguments — open the argument dialog.
