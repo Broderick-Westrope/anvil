@@ -96,7 +96,9 @@ func LoadAllCommands(cfg *config.Config) ([]CustomCommand, error) {
 	for i := len(plugins) - 1; i >= 0; i-- {
 		cmds, err := LoadPluginCommands([]*plugin.Plugin{plugins[i]})
 		if err != nil {
-			return nil, err
+			slog.Warn("Failed to load commands for plugin, skipping",
+				"plugin", plugins[i].Name, "error", err)
+			continue
 		}
 		all = append(all, cmds...)
 	}
