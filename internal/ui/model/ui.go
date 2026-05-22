@@ -2587,16 +2587,15 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-			case key.Matches(msg, m.keyMap.Editor.Commands) && m.textarea.Value() == "" && !m.slashACOpen:
-				// Open inline autocomplete instead of palette dialog.
-				m.slashACOpen = true
-				m.slashACStartIndex = 0
-				m.slashAC.SetQuery("")
-				m.slashAC.Show()
-				// Insert the "/" into the textarea so the user sees it.
-				prevHeight := m.textarea.Height()
-				m.textarea.InsertRune('/')
-				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
+		case key.Matches(msg, m.keyMap.Editor.Commands) && m.textarea.Value() == "" && !m.slashACOpen:
+			// Open inline autocomplete instead of palette dialog.
+			m.slashACOpen = true
+			m.slashACStartIndex = 0
+			m.slashAC.SetQuery("")
+			m.slashAC.Show()
+			// Let textarea.Update handle inserting the "/" character.
+			prevHeight := m.textarea.Height()
+			cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
 			default:
 				if handleGlobalKeys(msg) {
 					// Handle global keys first before passing to textarea.
