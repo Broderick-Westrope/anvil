@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -229,4 +230,71 @@ func TestLoadAll_MixedSources(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cmds, 1)
 	require.Equal(t, "user:cmd", cmds[0].ID)
+}
+
+func TestLoadAllCommands_IncludesPluginCommands(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dataDir := filepath.Join(root, ".anvil")
+	projectCommands := filepath.Join(dataDir, "commands")
+	require.NoError(t, os.MkdirAll(projectCommands, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectCommands, "project.md"), []byte("project body"), 0o644))
+
+	pluginDir := filepath.Join(root, "plug")
+	pluginCommands := filepath.Join(pluginDir, "commands")
+	require.NoError(t, os.MkdirAll(pluginCommands, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginCommands, "plugcmd.md"), []byte("plugin body"), 0o644))
+
+	cfg := &config.Config{
+		Options: &config.Options{DataDirectory: dataDir},
+		Plugins: []config.PluginConfig{{Path: pluginDir}},
+	}
+
+	cmds, err := LoadAllCommands(cfg)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"project:project", "plugin:plug:plugcmd"}, commandIDs(cmds))
+}
+
+func TestLoadAllCommands_CommandCollisionsGetDisplayNames(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dataDir := filepath.Join(root, ".anvil")
+	projectCommands := filepath.Join(dataDir, "commands")
+	require.NoError(t, os.MkdirAll(projectCommands, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectCommands, "same.md"), []byte("project body"), 0o644))
+
+	pluginDir := filepath.Join(root, "plug")
+	pluginCommands := filepath.Join(pluginDir, "commands")
+	require.NoError(t, os.MkdirAll(pluginCommands, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginCommands, "same.md"), []byte("plugin body"), 0o644))
+
+	cfg := &config.Config{
+		Options: &config.Options{DataDirectory: dataDir},
+		Plugins: []config.PluginConfig{{Path: pluginDir}},
+	}
+
+	cmds, err := LoadAllCommands(cfg)
+	require.NoError(t, err)
+
+	byID := commandsByID(cmds)
+	require.Equal(t, "plug:same", byID["plugin:plug:same"].DisplayName)
+	require.Empty(t, byID["project:same"].DisplayName)
+}
+
+func commandIDs(cmds []CustomCommand) []string {
+	ids := make([]string, 0, len(cmds))
+	for _, cmd := range cmds {
+		ids = append(ids, cmd.ID)
+	}
+	return ids
+}
+
+func commandsByID(cmds []CustomCommand) map[string]CustomCommand {
+	byID := make(map[string]CustomCommand, len(cmds))
+	for _, cmd := range cmds {
+		byID[cmd.ID] = cmd
+	}
+	return byID
 }

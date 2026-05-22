@@ -65,18 +65,14 @@ type commandFrontmatter struct {
 	Skills       []string `yaml:"skills,omitempty"`
 }
 
-// ItemName returns the command name for collision detection.
-func (c *CustomCommand) ItemName() string { return c.Name }
+// ItemName returns the logical command name for collision detection.
+func (c *CustomCommand) ItemName() string { return commandCollisionName(c) }
 
 // ItemSource returns the command source for collision detection.
 func (c *CustomCommand) ItemSource() string { return c.Source }
 
 // SetDisplayName sets the display name for collision detection.
 func (c *CustomCommand) SetDisplayName(name string) { c.DisplayName = name }
-
-// TODO: Wire plugin.DetectCollisions into command merging. LoadCustomCommands
-// and LoadPluginCommands return []CustomCommand (value slices), so collision
-// detection requires converting to []*CustomCommand at the call site.
 
 type commandSource struct {
 	path   string
@@ -88,6 +84,30 @@ type commandSource struct {
 // XDG config directory, home directory, and project directory.
 func LoadCustomCommands(cfg *config.Config) ([]CustomCommand, error) {
 	return loadAll(buildCommandSources(cfg))
+}
+
+// LoadAllCommands loads custom commands from user, project, and plugin
+// directories. Plugin commands are ordered before user/project commands so
+// project commands have highest priority for collision display.
+func LoadAllCommands(cfg *config.Config) ([]CustomCommand, error) {
+	plugins := plugin.DiscoverAll(cfg.Plugins)
+
+	var all []CustomCommand
+	for i := len(plugins) - 1; i >= 0; i-- {
+		cmds, err := LoadPluginCommands([]*plugin.Plugin{plugins[i]})
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, cmds...)
+	}
+
+	custom, err := LoadCustomCommands(cfg)
+	if err != nil {
+		return nil, err
+	}
+	all = append(all, custom...)
+	applyCommandCollisions(all)
+	return all, nil
 }
 
 // LoadPluginCommands loads custom commands from plugin directories.
@@ -143,6 +163,29 @@ func LoadMCPPrompts() ([]MCPPrompt, error) {
 		}
 	}
 	return commands, nil
+}
+
+func commandCollisionName(cmd *CustomCommand) string {
+	name := cmd.Name
+	switch {
+	case cmd.Source == "project" && strings.HasPrefix(name, projectCommandPrefix):
+		return strings.TrimPrefix(name, projectCommandPrefix)
+	case strings.HasPrefix(cmd.Source, "plugin:"):
+		pluginName := strings.TrimPrefix(cmd.Source, "plugin:")
+		return strings.TrimPrefix(name, "plugin:"+pluginName+":")
+	case cmd.Source == "" && strings.HasPrefix(name, userCommandPrefix):
+		return strings.TrimPrefix(name, userCommandPrefix)
+	default:
+		return name
+	}
+}
+
+func applyCommandCollisions(commands []CustomCommand) {
+	ptrs := make([]*CustomCommand, 0, len(commands))
+	for i := range commands {
+		ptrs = append(ptrs, &commands[i])
+	}
+	plugin.DetectCollisions(ptrs)
 }
 
 func buildCommandSources(cfg *config.Config) []commandSource {

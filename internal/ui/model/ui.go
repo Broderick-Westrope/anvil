@@ -532,7 +532,7 @@ func (m *UI) setState(state uiState, focus uiFocusState) {
 // loadCustomCommands loads the custom commands asynchronously.
 func (m *UI) loadCustomCommands() tea.Cmd {
 	return func() tea.Msg {
-		customCommands, err := commands.LoadCustomCommands(m.com.Config())
+		customCommands, err := commands.LoadAllCommands(m.com.Config())
 		if err != nil {
 			slog.Error("Failed to load custom commands", "error", err)
 		}
@@ -548,7 +548,7 @@ func (m *UI) reloadPlugins() tea.Cmd {
 			return pluginReloadFailedMsg{Err: err}
 		}
 		// Reload custom commands (which now include plugin commands).
-		customCmds, err := commands.LoadCustomCommands(m.com.Config())
+		customCmds, err := commands.LoadAllCommands(m.com.Config())
 		if err != nil {
 			slog.Error("Failed to reload custom commands after plugin reload", "error", err)
 		}
