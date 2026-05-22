@@ -1639,7 +1639,9 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		}
 	}
 
-	// 4. Re-apply .md defaults to config agents.
+	// 4. Re-apply .md defaults to config agents. Save previous state so we
+	// can restore it if a later step fails, since SetupAgentsWithDefaults
+	// mutates the live Config.Agents in place.
 	mdDefaults := make(map[string]config.Agent, len(newAgentMDs))
 	for name, md := range newAgentMDs {
 		mdDefaults[name] = config.Agent{
@@ -1651,7 +1653,9 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 			Model:         md.Model,
 		}
 	}
+	savedAgents := maps.Clone(cfg.Agents)
 	cfg.SetupAgentsWithDefaults(mdDefaults)
+	restoreAgents := func() { cfg.Agents = savedAgents }
 
 	newAgentConfigs := make(map[string]config.Agent, len(cfg.Agents))
 	for name, agentCfg := range cfg.Agents {
@@ -1668,6 +1672,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		slog.Warn("Agent delegation warning on reload", "error", w)
 	}
 	if len(errs) > 0 {
+		restoreAgents()
 		return fmt.Errorf("agent delegates_to validation failed on reload: %w", errors.Join(errs...))
 	}
 
@@ -1676,28 +1681,33 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	// runtime state intact.
 	orchestratorCfg, ok := newAgentConfigs[config.AgentOrchestrator]
 	if !ok {
+		restoreAgents()
 		return errOrchestratorAgentNotConfigured
 	}
 
 	orch := c.getOrchestrator()
 	if orch == nil {
+		restoreAgents()
 		return errOrchestratorAgentNotConfigured
 	}
 
 	newSkillTracker := skills.NewTracker(newActive)
 	p, err := c.buildPromptWithState(config.AgentOrchestrator, orchestratorCfg, newActive, newAgentMDs, newAgentConfigs)
 	if err != nil {
+		restoreAgents()
 		return fmt.Errorf("rebuilding orchestrator prompt: %w", err)
 	}
 
 	large := orch.Model()
 	systemPrompt, err := p.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
 	if err != nil {
+		restoreAgents()
 		return fmt.Errorf("building orchestrator system prompt: %w", err)
 	}
 
 	agentTools, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs)
 	if err != nil {
+		restoreAgents()
 		return fmt.Errorf("rebuilding orchestrator tools: %w", err)
 	}
 
