@@ -3624,7 +3624,10 @@ func (m *UI) closeCompletions() {
 func (m *UI) buildSlashACItems() []autocomplete.Item {
 	var items []autocomplete.Item
 	for _, cmd := range m.customCommands {
-		displayName := cmd.Name
+		// Use DisplayName if set (collision-resolved), otherwise fall back
+		// to ItemName() which strips the source prefix (e.g., "greet" not
+		// "plugin:test-plugin:greet").
+		displayName := cmd.ItemName()
 		if cmd.DisplayName != "" {
 			displayName = cmd.DisplayName
 		}
@@ -3673,9 +3676,9 @@ func (m *UI) executeSlashACSelection(item autocomplete.Item, textValue string) t
 		cmdID := strings.TrimPrefix(item.ID, "cmd:")
 		for _, cmd := range m.customCommands {
 			if cmd.ID == cmdID {
-				// Extract raw arguments using the display name (short name)
-				// since that's what the user types in the textarea.
-				argName := cmd.Name
+				// Extract raw arguments using the short name since
+				// that's what the user types in the textarea.
+				argName := cmd.ItemName()
 				if cmd.DisplayName != "" {
 					argName = cmd.DisplayName
 				}
