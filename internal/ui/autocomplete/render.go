@@ -29,7 +29,10 @@ func (a *Autocomplete) SetStyles(s Styles) {
 }
 
 // Render returns the dropdown as a string block with at most maxItems rows.
-// An empty string is returned if the dropdown is not visible or has no items.
+// The Normal style is applied as a container around the entire block so the
+// background covers the full width uniformly (matching the @ completions
+// dropdown). An empty string is returned if the dropdown is not visible or
+// has no items.
 func (a *Autocomplete) Render(width int) string {
 	if !a.visible || len(a.filtered) == 0 {
 		return ""
@@ -57,7 +60,9 @@ func (a *Autocomplete) Render(width int) string {
 		}
 		sb.WriteString(a.renderRow(i, width))
 	}
-	return sb.String()
+	// Wrap the entire block with Normal style so the background covers
+	// the full width, not just the text spans.
+	return a.styles.Normal.Width(width).Render(sb.String())
 }
 
 // renderRow renders a single dropdown row at index i.
@@ -101,7 +106,8 @@ func (a *Autocomplete) renderRow(i, width int) string {
 		return a.styles.SkillFocused.Render(plainLine)
 	}
 
-	// Unselected: apply per-span coloring within the normal row background.
+	// Unselected: apply per-span foreground coloring only. The container
+	// Normal style provides the background for the whole dropdown.
 	var nameStyle lipgloss.Style
 	if item.Type == CommandItem {
 		nameStyle = a.styles.CommandName
@@ -111,16 +117,7 @@ func (a *Autocomplete) renderRow(i, width int) string {
 
 	renderedName := nameStyle.Render(display)
 	renderedSuffix := " " + a.styles.Description.Render(typeSuffix)
-	line := renderedName + renderedSuffix
-
-	// Pad to width.
-	lineWidth = ansi.StringWidth(line)
-	if lineWidth < width {
-		line += strings.Repeat(" ", width-lineWidth)
-	} else if lineWidth > width {
-		line = ansi.Truncate(line, width, "")
-	}
-	return a.styles.Normal.Render(line)
+	return renderedName + renderedSuffix
 }
 
 // ViewHeight returns the number of visible rows the dropdown will occupy.
