@@ -9,10 +9,17 @@ import (
 
 // Styles holds the rendering styles for the autocomplete dropdown.
 type Styles struct {
-	Normal      lipgloss.Style
-	Focused     lipgloss.Style
+	// Normal is the row background for unselected items.
+	Normal lipgloss.Style
+	// CommandName styles the name text for command items.
 	CommandName lipgloss.Style
-	SkillName   lipgloss.Style
+	// SkillName styles the name text for skill items.
+	SkillName lipgloss.Style
+	// CommandFocused is the row style for a selected command (swapped fg/bg).
+	CommandFocused lipgloss.Style
+	// SkillFocused is the row style for a selected skill (swapped fg/bg).
+	SkillFocused lipgloss.Style
+	// Description styles the dim (cmd)/(skill) type suffix.
 	Description lipgloss.Style
 }
 
@@ -58,43 +65,60 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	item := a.filtered[i]
 	focused := i == a.selected
 
-	// Build name portion with type-specific color.
 	name := item.DisplayName
 	if name == "" {
 		name = item.Name
 	}
 
-	var nameStyle lipgloss.Style
 	var typeSuffix string
 	if item.Type == CommandItem {
-		nameStyle = a.styles.CommandName
 		typeSuffix = "(cmd)"
 	} else {
-		nameStyle = a.styles.SkillName
 		typeSuffix = "(skill)"
 	}
 
-	// Build: "name [argHint] (type)"
+	// Build plain text: "name [argHint] (type)".
 	display := name
 	if item.ArgumentHint != "" {
 		display += " " + item.ArgumentHint
 	}
+	plainLine := display + " " + typeSuffix
+
+	// Pad/truncate to width.
+	lineWidth := ansi.StringWidth(plainLine)
+	if lineWidth < width {
+		plainLine += strings.Repeat(" ", width-lineWidth)
+	} else if lineWidth > width {
+		plainLine = ansi.Truncate(plainLine, width, "")
+	}
+
+	// When focused, the row style swaps fg/bg for the item's type color.
+	// All spans use the same style so the whole row is uniform.
+	if focused {
+		if item.Type == CommandItem {
+			return a.styles.CommandFocused.Render(plainLine)
+		}
+		return a.styles.SkillFocused.Render(plainLine)
+	}
+
+	// Unselected: apply per-span coloring within the normal row background.
+	var nameStyle lipgloss.Style
+	if item.Type == CommandItem {
+		nameStyle = a.styles.CommandName
+	} else {
+		nameStyle = a.styles.SkillName
+	}
 
 	renderedName := nameStyle.Render(display)
 	renderedSuffix := " " + a.styles.Description.Render(typeSuffix)
-
 	line := renderedName + renderedSuffix
 
-	// Pad/truncate to width.
-	lineWidth := ansi.StringWidth(line)
+	// Pad to width.
+	lineWidth = ansi.StringWidth(line)
 	if lineWidth < width {
 		line += strings.Repeat(" ", width-lineWidth)
 	} else if lineWidth > width {
 		line = ansi.Truncate(line, width, "")
-	}
-
-	if focused {
-		return a.styles.Focused.Render(line)
 	}
 	return a.styles.Normal.Render(line)
 }

@@ -254,9 +254,10 @@ type UI struct {
 	completionsPositionStart image.Point // x,y where user typed '@'
 
 	// Slash-command autocomplete state.
-	slashAC           *autocomplete.Autocomplete
-	slashACOpen       bool
-	slashACStartIndex int // Position in textarea where '/' was typed.
+	slashAC              *autocomplete.Autocomplete
+	slashACOpen          bool
+	slashACStartIndex    int         // Position in textarea where '/' was typed.
+	slashACPositionStart image.Point // Screen position where '/' was typed.
 
 	// Chat components
 	chat *Chat
@@ -406,11 +407,12 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
 	ui.slashAC.SetStyles(autocomplete.Styles{
-		Normal:      com.Styles.SlashAutocomplete.Normal,
-		Focused:     com.Styles.SlashAutocomplete.Focused,
-		CommandName: com.Styles.SlashAutocomplete.CommandName,
-		SkillName:   com.Styles.SlashAutocomplete.SkillName,
-		Description: com.Styles.SlashAutocomplete.Description,
+		Normal:         com.Styles.SlashAutocomplete.Normal,
+		CommandName:    com.Styles.SlashAutocomplete.CommandName,
+		SkillName:      com.Styles.SlashAutocomplete.SkillName,
+		CommandFocused: com.Styles.SlashAutocomplete.CommandFocused,
+		SkillFocused:   com.Styles.SlashAutocomplete.SkillFocused,
+		Description:    com.Styles.SlashAutocomplete.Description,
 	})
 
 	status := NewStatus(com, ui)
@@ -2577,6 +2579,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				// Open inline autocomplete instead of palette dialog.
 				m.slashACOpen = true
 				m.slashACStartIndex = 0
+				m.slashACPositionStart = m.completionsPosition()
 				m.slashAC.SetQuery("")
 				m.slashAC.Show()
 				// Let textarea.Update handle inserting the "/" character.
@@ -2895,18 +2898,24 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		})
 	}
 
-	// Draw slash autocomplete popup if open.
+	// Draw slash autocomplete popup if open, positioned like the @
+	// completions dropdown — left edge aligned with the "/" cursor.
 	if !isOnboarding && m.slashACOpen && m.slashAC.Len() > 0 {
+		w := min(80, m.layout.editor.Dx())
 		h := m.slashAC.ViewHeight()
-		// Position above the editor, left-aligned with the editor.
-		x := m.layout.editor.Min.X
-		y := m.layout.editor.Min.Y - h
+		x := m.slashACPositionStart.X
+		y := m.slashACPositionStart.Y - h
+		screenW := area.Dx()
+		if x+w > screenW {
+			x = screenW - w
+		}
+		x = max(0, x)
 		y = max(0, y+1) // Offset for attachments row.
 
-		acView := uv.NewStyledString(m.slashAC.Render(min(80, m.layout.editor.Dx())))
+		acView := uv.NewStyledString(m.slashAC.Render(w))
 		acView.Draw(scr, image.Rectangle{
 			Min: image.Pt(x, y),
-			Max: image.Pt(x+min(80, m.layout.editor.Dx()), y+h),
+			Max: image.Pt(x+w, y+h),
 		})
 	}
 
@@ -3976,11 +3985,12 @@ func (m *UI) refreshStyles() {
 	m.textarea.SetStyles(t.Editor.Textarea)
 	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
 	m.slashAC.SetStyles(autocomplete.Styles{
-		Normal:      t.SlashAutocomplete.Normal,
-		Focused:     t.SlashAutocomplete.Focused,
-		CommandName: t.SlashAutocomplete.CommandName,
-		SkillName:   t.SlashAutocomplete.SkillName,
-		Description: t.SlashAutocomplete.Description,
+		Normal:         t.SlashAutocomplete.Normal,
+		CommandName:    t.SlashAutocomplete.CommandName,
+		SkillName:      t.SlashAutocomplete.SkillName,
+		CommandFocused: t.SlashAutocomplete.CommandFocused,
+		SkillFocused:   t.SlashAutocomplete.SkillFocused,
+		Description:    t.SlashAutocomplete.Description,
 	})
 	m.attachments.Renderer().SetStyles(
 		t.Attachments.Normal,

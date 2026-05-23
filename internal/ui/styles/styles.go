@@ -509,11 +509,12 @@ type Styles struct {
 
 	// SlashAutocomplete styles for the inline "/" autocomplete dropdown.
 	SlashAutocomplete struct {
-		Normal      lipgloss.Style
-		Focused     lipgloss.Style
-		CommandName lipgloss.Style
-		SkillName   lipgloss.Style
-		Description lipgloss.Style
+		Normal         lipgloss.Style
+		CommandName    lipgloss.Style
+		SkillName      lipgloss.Style
+		CommandFocused lipgloss.Style
+		SkillFocused   lipgloss.Style
+		Description    lipgloss.Style
 	}
 
 	// Attachments styles
