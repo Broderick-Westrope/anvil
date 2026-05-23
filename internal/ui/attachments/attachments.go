@@ -14,7 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-const maxFilename = 15
+const maxFilename = 25
 
 // SkillAttachment represents a skill attached to a message.
 type SkillAttachment struct {
