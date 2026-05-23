@@ -906,9 +906,8 @@ func quickStyle(o quickStyleOpts) Styles {
 	// SlashAutocomplete styles
 	s.SlashAutocomplete.Normal = s.Completions.Normal
 	s.SlashAutocomplete.Focused = s.Completions.Focused
-	s.SlashAutocomplete.Match = s.Completions.Match
-	s.SlashAutocomplete.CommandIcon = lipgloss.NewStyle().Foreground(o.keyword)
-	s.SlashAutocomplete.SkillIcon = lipgloss.NewStyle().Foreground(o.secondary)
+	s.SlashAutocomplete.CommandName = lipgloss.NewStyle().Foreground(o.keyword)
+	s.SlashAutocomplete.SkillName = lipgloss.NewStyle().Foreground(o.secondary)
 	s.SlashAutocomplete.Description = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 
 	// Attachments styles

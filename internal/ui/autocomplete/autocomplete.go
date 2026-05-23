@@ -15,10 +15,11 @@ const (
 
 // Item represents one entry in the autocomplete dropdown.
 type Item struct {
-	Name        string
-	DisplayName string // May include prefix on collision.
-	Description string
-	Type        ItemType
+	Name         string
+	DisplayName  string // May include prefix on collision.
+	Description  string
+	ArgumentHint string // Optional inline argument hint shown after the name.
+	Type         ItemType
 	// Opaque ID for execution — the handler maps this back to
 	// the domain object. Avoids importing commands/skills packages.
 	ID string // e.g., "cmd:commit" or "skill:grilling"
@@ -26,14 +27,13 @@ type Item struct {
 
 // Autocomplete manages the dropdown state.
 type Autocomplete struct {
-	items        []Item
-	filtered     []Item
-	query        string
-	selected     int
-	visible      bool
-	maxItems     int
-	styles       Styles
-	iconColWidth int // Fixed column width for icons so names align.
+	items    []Item
+	filtered []Item
+	query    string
+	selected int
+	visible  bool
+	maxItems int
+	styles   Styles
 }
 
 // New creates a new Autocomplete with the given items and maximum visible items.
@@ -47,11 +47,10 @@ func New(items []Item, maxItems int) *Autocomplete {
 	copy(filtered, items)
 
 	return &Autocomplete{
-		items:        items,
-		filtered:     filtered,
-		maxItems:     maxItems,
-		visible:      false,
-		iconColWidth: iconColumnWidth(),
+		items:    items,
+		filtered: filtered,
+		maxItems: maxItems,
+		visible:  false,
 	}
 }
 

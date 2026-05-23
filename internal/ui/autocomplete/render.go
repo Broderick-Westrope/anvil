@@ -11,25 +11,9 @@ import (
 type Styles struct {
 	Normal      lipgloss.Style
 	Focused     lipgloss.Style
-	Match       lipgloss.Style
-	CommandIcon lipgloss.Style
-	SkillIcon   lipgloss.Style
+	CommandName lipgloss.Style
+	SkillName   lipgloss.Style
 	Description lipgloss.Style
-}
-
-const (
-	commandIcon = "▶"
-	skillIcon   = "⚡"
-)
-
-// iconColumnWidth returns the display width needed to hold the widest icon.
-func iconColumnWidth() int {
-	cmdW := ansi.StringWidth(commandIcon)
-	skillW := ansi.StringWidth(skillIcon)
-	if cmdW > skillW {
-		return cmdW
-	}
-	return skillW
 }
 
 // SetStyles updates the rendering styles used by Render.
@@ -74,27 +58,32 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	item := a.filtered[i]
 	focused := i == a.selected
 
-	// Choose icon and style. Padding is inside the style render so the
-	// background covers the full icon column width for both types.
-	var icon string
-	if item.Type == CommandItem {
-		pad := strings.Repeat(" ", a.iconColWidth-ansi.StringWidth(commandIcon))
-		icon = a.styles.CommandIcon.Render(commandIcon + pad)
-	} else {
-		pad := strings.Repeat(" ", a.iconColWidth-ansi.StringWidth(skillIcon))
-		icon = a.styles.SkillIcon.Render(skillIcon + pad)
-	}
-
-	// Build name and description portions.
+	// Build name portion with type-specific color.
 	name := item.DisplayName
 	if name == "" {
 		name = item.Name
 	}
-	desc := item.Description
 
-	// Layout: "[icon] name  description"
-	nameDesc := buildNameDesc(name, desc, width-a.iconColWidth-1, a.styles.Description)
-	line := icon + " " + nameDesc
+	var nameStyle lipgloss.Style
+	var typeSuffix string
+	if item.Type == CommandItem {
+		nameStyle = a.styles.CommandName
+		typeSuffix = "(cmd)"
+	} else {
+		nameStyle = a.styles.SkillName
+		typeSuffix = "(skill)"
+	}
+
+	// Build: "name [argHint] (type)"
+	display := name
+	if item.ArgumentHint != "" {
+		display += " " + item.ArgumentHint
+	}
+
+	renderedName := nameStyle.Render(display)
+	renderedSuffix := " " + a.styles.Description.Render(typeSuffix)
+
+	line := renderedName + renderedSuffix
 
 	// Pad/truncate to width.
 	lineWidth := ansi.StringWidth(line)
@@ -108,43 +97,6 @@ func (a *Autocomplete) renderRow(i, width int) string {
 		return a.styles.Focused.Render(line)
 	}
 	return a.styles.Normal.Render(line)
-}
-
-// buildNameDesc combines name and description into a string of at most maxWidth
-// visible characters. Description is right-aligned when space permits.
-func buildNameDesc(name, desc string, maxWidth int, descStyle lipgloss.Style) string {
-	if maxWidth <= 0 {
-		return ""
-	}
-
-	nameWidth := ansi.StringWidth(name)
-	if desc == "" || nameWidth >= maxWidth {
-		if nameWidth > maxWidth {
-			return ansi.Truncate(name, maxWidth, "…")
-		}
-		return name
-	}
-
-	// Available space for description (2 spaces gap).
-	gap := 2
-	descAvail := maxWidth - nameWidth - gap
-	if descAvail <= 0 {
-		return ansi.Truncate(name, maxWidth, "…")
-	}
-
-	descRendered := descStyle.Render(desc)
-	descVisual := ansi.StringWidth(descRendered)
-	if descVisual > descAvail {
-		descRendered = descStyle.Render(ansi.Truncate(desc, descAvail, "…"))
-		descVisual = ansi.StringWidth(descRendered)
-	}
-
-	// Right-align description by padding between name and desc.
-	padding := maxWidth - nameWidth - descVisual
-	if padding < gap {
-		padding = gap
-	}
-	return name + strings.Repeat(" ", padding) + descRendered
 }
 
 // ViewHeight returns the number of visible rows the dropdown will occupy.

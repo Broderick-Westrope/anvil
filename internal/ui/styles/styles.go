@@ -511,9 +511,8 @@ type Styles struct {
 	SlashAutocomplete struct {
 		Normal      lipgloss.Style
 		Focused     lipgloss.Style
-		Match       lipgloss.Style
-		CommandIcon lipgloss.Style
-		SkillIcon   lipgloss.Style
+		CommandName lipgloss.Style
+		SkillName   lipgloss.Style
 		Description lipgloss.Style
 	}
 

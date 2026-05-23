@@ -408,9 +408,8 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.slashAC.SetStyles(autocomplete.Styles{
 		Normal:      com.Styles.SlashAutocomplete.Normal,
 		Focused:     com.Styles.SlashAutocomplete.Focused,
-		Match:       com.Styles.SlashAutocomplete.Match,
-		CommandIcon: com.Styles.SlashAutocomplete.CommandIcon,
-		SkillIcon:   com.Styles.SlashAutocomplete.SkillIcon,
+		CommandName: com.Styles.SlashAutocomplete.CommandName,
+		SkillName:   com.Styles.SlashAutocomplete.SkillName,
 		Description: com.Styles.SlashAutocomplete.Description,
 	})
 
@@ -3632,11 +3631,12 @@ func (m *UI) buildSlashACItems() []autocomplete.Item {
 			displayName = cmd.DisplayName
 		}
 		items = append(items, autocomplete.Item{
-			Name:        displayName,
-			DisplayName: displayName,
-			Description: cmd.Description,
-			Type:        autocomplete.CommandItem,
-			ID:          "cmd:" + cmd.ID,
+			Name:         displayName,
+			DisplayName:  displayName,
+			Description:  cmd.Description,
+			ArgumentHint: cmd.ArgumentHint,
+			Type:         autocomplete.CommandItem,
+			ID:           "cmd:" + cmd.ID,
 		})
 	}
 	for _, ss := range m.skillStates {
@@ -3978,9 +3978,8 @@ func (m *UI) refreshStyles() {
 	m.slashAC.SetStyles(autocomplete.Styles{
 		Normal:      t.SlashAutocomplete.Normal,
 		Focused:     t.SlashAutocomplete.Focused,
-		Match:       t.SlashAutocomplete.Match,
-		CommandIcon: t.SlashAutocomplete.CommandIcon,
-		SkillIcon:   t.SlashAutocomplete.SkillIcon,
+		CommandName: t.SlashAutocomplete.CommandName,
+		SkillName:   t.SlashAutocomplete.SkillName,
 		Description: t.SlashAutocomplete.Description,
 	})
 	m.attachments.Renderer().SetStyles(
