@@ -905,12 +905,14 @@ func quickStyle(o quickStyleOpts) Styles {
 
 	// SlashAutocomplete styles — dropdown matches the @ completions
 	// background. Selected rows swap fg/bg for the item's type color.
+	// Span styles include the Normal background explicitly so that
+	// per-span ANSI resets don't punch through the container background.
 	s.SlashAutocomplete.Normal = s.Completions.Normal
-	s.SlashAutocomplete.CommandName = lipgloss.NewStyle().Foreground(o.keyword)
-	s.SlashAutocomplete.SkillName = lipgloss.NewStyle().Foreground(o.secondary)
+	s.SlashAutocomplete.CommandName = lipgloss.NewStyle().Foreground(o.keyword).Background(o.bgLessVisible)
+	s.SlashAutocomplete.SkillName = lipgloss.NewStyle().Foreground(o.secondary).Background(o.bgLessVisible)
 	s.SlashAutocomplete.CommandFocused = base.Background(o.keyword).Foreground(o.bgLessVisible)
 	s.SlashAutocomplete.SkillFocused = base.Background(o.secondary).Foreground(o.bgLessVisible)
-	s.SlashAutocomplete.Description = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.SlashAutocomplete.Description = lipgloss.NewStyle().Foreground(o.fgMoreSubtle).Background(o.bgLessVisible)
 
 	// Attachments styles
 	attachmentIconStyle := base.Foreground(o.bgLessVisible).Background(o.success).Padding(0, 1)
