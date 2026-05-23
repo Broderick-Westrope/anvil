@@ -3093,7 +3093,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 	k := &m.keyMap
 	help := k.Help
 	help.SetHelp("ctrl+g", "less")
-	hasAttachments := len(m.attachments.List()) > 0
+	hasAttachments := len(m.attachments.List()) > 0 || len(m.attachments.SkillList()) > 0
 	hasSession := m.hasSession()
 	commands := k.Commands
 	if m.focus == uiFocusEditor && m.textarea.Value() == "" {
@@ -3963,7 +3963,7 @@ func (m *UI) randomizePlaceholders() {
 // renderEditorView renders the editor view with attachments if any.
 func (m *UI) renderEditorView(width int) string {
 	var attachmentsView string
-	if len(m.attachments.List()) > 0 {
+	if len(m.attachments.List()) > 0 || len(m.attachments.SkillList()) > 0 {
 		attachmentsView = m.attachments.Render(width)
 	}
 	return strings.Join([]string{
