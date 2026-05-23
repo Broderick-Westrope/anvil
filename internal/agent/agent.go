@@ -81,6 +81,12 @@ type SessionAgentCall struct {
 	FrequencyPenalty *float64
 	PresencePenalty  *float64
 	NonInteractive   bool
+
+	// skipCreateMessage is set on retry to avoid creating a duplicate
+	// user message. When true, Run trims the already-persisted user
+	// message (and any empty assistant message) from history so the
+	// prompt is sent exactly once.
+	skipCreateMessage bool
 }
 
 type SessionAgent interface {
@@ -239,10 +245,18 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	}
 	defer wg.Wait()
 
-	// Add the user message to the session.
-	_, err = a.createUserMessage(ctx, call)
-	if err != nil {
-		return nil, err
+	if call.skipCreateMessage {
+		// On retry the user message already exists in the DB and
+		// appears in msgs. Trim it (plus any trailing empty assistant
+		// message from the failed PrepareStep) so the prompt is only
+		// sent once via the Prompt field.
+		msgs = a.cleanupFailedAttemptMessages(ctx, msgs)
+	} else {
+		// Add the user message to the session.
+		_, err = a.createUserMessage(ctx, call)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Add the session to the context.
@@ -793,6 +807,56 @@ func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
 			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
 		},
 	}
+}
+
+// cleanupFailedAttemptMessages removes trailing messages left by a
+// failed Run attempt so the prompt is not duplicated on retry. It
+// strips any trailing empty assistant message (created by PrepareStep)
+// and the preceding user message (which will be re-sent via the Prompt
+// field). Removed assistant messages are also deleted from the DB so
+// they don't appear as stale error bubbles on session reopen.
+func (a *sessionAgent) cleanupFailedAttemptMessages(ctx context.Context, msgs []message.Message) []message.Message {
+	before := len(msgs)
+	msgs, removedIDs := trimFailedAttemptMessages(msgs)
+	if len(msgs) == before {
+		slog.Warn("Retry cleanup did not find a trailing user message to remove")
+	}
+	for _, id := range removedIDs {
+		if err := a.messages.Delete(ctx, id); err != nil {
+			slog.Warn("Failed to delete stale assistant message from failed attempt", "id", id, "error", err)
+		}
+	}
+	return msgs
+}
+
+// trimFailedAttemptMessages removes trailing messages left by a failed
+// Run attempt. It strips any trailing empty assistant messages (created
+// by PrepareStep) and the preceding user message (which will be re-sent
+// via the Prompt field). Returns the trimmed slice and the IDs of
+// removed assistant messages.
+//
+// The assistant emptiness check mirrors preparePrompt's skip condition:
+// a Finish-only part does not count as content.
+func trimFailedAttemptMessages(msgs []message.Message) ([]message.Message, []string) {
+	var removedIDs []string
+	for len(msgs) > 0 {
+		last := msgs[len(msgs)-1]
+		if last.Role == message.Assistant &&
+			last.Content().Text == "" &&
+			len(last.ToolCalls()) == 0 &&
+			last.ReasoningContent().String() == "" {
+			if last.ID != "" {
+				removedIDs = append(removedIDs, last.ID)
+			}
+			msgs = msgs[:len(msgs)-1]
+			continue
+		}
+		if last.Role == message.User {
+			msgs = msgs[:len(msgs)-1]
+		}
+		break
+	}
+	return msgs, removedIDs
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall) (message.Message, error) {
