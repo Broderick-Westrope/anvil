@@ -4375,6 +4375,7 @@ func (m *UI) newSession() tea.Cmd {
 	m.textarea.Focus()
 	m.chat.Blur()
 	m.chat.ClearMessages()
+	m.attachments.Reset()
 	m.pillsExpanded = false
 	m.promptQueue = 0
 	m.pillsView = ""
