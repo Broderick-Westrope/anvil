@@ -2395,8 +2395,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				case key.Matches(msg, slashACEnter), key.Matches(msg, slashACTab):
 					selected := m.slashAC.Selected()
 					if selected == nil {
-						m.closeSlashAC(true)
-						return nil
+						// No matches — close the AC and fall through to
+						// the normal editor dispatch so Enter submits.
+						m.closeSlashAC(false)
+						break
 					}
 					if selected.Type == autocomplete.SkillItem {
 						// Attach skill inline — no tea.Cmd round-trip
