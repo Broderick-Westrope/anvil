@@ -26,13 +26,14 @@ type Item struct {
 
 // Autocomplete manages the dropdown state.
 type Autocomplete struct {
-	items    []Item
-	filtered []Item
-	query    string
-	selected int
-	visible  bool
-	maxItems int
-	styles   Styles
+	items        []Item
+	filtered     []Item
+	query        string
+	selected     int
+	visible      bool
+	maxItems     int
+	styles       Styles
+	iconColWidth int // Fixed column width for icons so names align.
 }
 
 // New creates a new Autocomplete with the given items and maximum visible items.
@@ -46,10 +47,11 @@ func New(items []Item, maxItems int) *Autocomplete {
 	copy(filtered, items)
 
 	return &Autocomplete{
-		items:    items,
-		filtered: filtered,
-		maxItems: maxItems,
-		visible:  false,
+		items:        items,
+		filtered:     filtered,
+		maxItems:     maxItems,
+		visible:      false,
+		iconColWidth: iconColumnWidth(),
 	}
 }
 

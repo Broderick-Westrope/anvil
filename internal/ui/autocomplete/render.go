@@ -22,6 +22,16 @@ const (
 	skillIcon   = "⚡"
 )
 
+// iconColumnWidth returns the display width needed to hold the widest icon.
+func iconColumnWidth() int {
+	cmdW := ansi.StringWidth(commandIcon)
+	skillW := ansi.StringWidth(skillIcon)
+	if cmdW > skillW {
+		return cmdW
+	}
+	return skillW
+}
+
 // SetStyles updates the rendering styles used by Render.
 func (a *Autocomplete) SetStyles(s Styles) {
 	a.styles = s
@@ -79,12 +89,15 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	}
 	desc := item.Description
 
-	// Account for icon width + spaces.
+	// Use a fixed icon column width so command and skill names align.
 	iconWidth := ansi.StringWidth(icon)
-	// Layout: "[icon] name  description"
-	// Reserve space: icon + 1 space + name + 2 spaces + description.
-	nameDesc := buildNameDesc(name, desc, width-iconWidth-1, a.styles.Description)
-	line := icon + " " + nameDesc
+	iconPad := a.iconColWidth - iconWidth
+	if iconPad < 0 {
+		iconPad = 0
+	}
+	// Layout: "[icon][pad] name  description"
+	nameDesc := buildNameDesc(name, desc, width-a.iconColWidth-1, a.styles.Description)
+	line := icon + strings.Repeat(" ", iconPad) + " " + nameDesc
 
 	// Pad/truncate to width.
 	lineWidth := ansi.StringWidth(line)
