@@ -116,7 +116,7 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	}
 
 	renderedName := nameStyle.Render(display)
-	renderedSuffix := " " + a.styles.Description.Render(typeSuffix)
+	renderedSuffix := a.styles.Description.Render(" " + typeSuffix)
 	return renderedName + renderedSuffix
 }
 
