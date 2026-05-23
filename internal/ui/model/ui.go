@@ -2429,12 +2429,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						// User deleted past the "/".
 						m.closeSlashAC(false)
 					} else {
-						query := value[m.slashACStartIndex+1:]
-						m.slashAC.SetQuery(query)
-						if m.slashAC.Len() == 0 && query != "" {
-							// No matches — close autocomplete, keep the text.
-							m.closeSlashAC(false)
-						}
+					query := value[m.slashACStartIndex+1:]
+					m.slashAC.SetQuery(query)
 					}
 					return tea.Batch(cmds...)
 				}
