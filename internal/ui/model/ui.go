@@ -2392,26 +2392,42 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				case key.Matches(msg, slashACDown):
 					m.slashAC.MoveDown()
 					return nil
-				case key.Matches(msg, slashACEnter):
+				case key.Matches(msg, slashACEnter), key.Matches(msg, slashACTab):
 					selected := m.slashAC.Selected()
-					textValue := m.textarea.Value()
-					m.closeSlashAC(true)
-					if selected != nil {
-						cmds = append(cmds, m.executeSlashACSelection(*selected, textValue))
+					if selected == nil {
+						m.closeSlashAC(true)
+						return nil
 					}
-					return tea.Batch(cmds...)
+					if selected.Type == autocomplete.SkillItem {
+						// Attach skill inline — no tea.Cmd round-trip
+						// needed since ActionAttachSkill is only handled
+						// by handleDialogMsg which requires an open dialog.
+						skillName := strings.TrimPrefix(selected.ID, "skill:")
+						skill := m.com.Workspace.ActiveSkillByName(skillName)
+						m.closeSlashAC(true)
+						if skill != nil {
+							m.attachments.Update(attachments.SkillAttachment{
+								Name:         skill.Name,
+								Instructions: skill.Instructions,
+								Source:       skill.Source,
+							})
+						}
+						return nil
+					}
+					// Commands: fill the name into the textarea so the
+					// user can add arguments before pressing Enter to
+					// submit.
+					name := selected.DisplayName
+					if name == "" {
+						name = selected.Name
+					}
+					m.closeSlashAC(false) // Keep text, we'll replace it.
+					m.textarea.SetValue("/" + name + " ")
+					m.textarea.MoveToEnd()
+					return nil
 				case key.Matches(msg, slashACEsc):
 					m.closeSlashAC(true)
 					return nil
-				case key.Matches(msg, slashACTab):
-					// Tab executes the selected item, same as Enter.
-					selected := m.slashAC.Selected()
-					textValue := m.textarea.Value()
-					m.closeSlashAC(true)
-					if selected != nil {
-						cmds = append(cmds, m.executeSlashACSelection(*selected, textValue))
-					}
-					return tea.Batch(cmds...)
 				case key.Matches(msg, slashACCtrlP):
 					// Ctrl+P opens palette regardless of autocomplete state.
 					m.closeSlashAC(true)
@@ -2429,8 +2445,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						// User deleted past the "/".
 						m.closeSlashAC(false)
 					} else {
-					query := value[m.slashACStartIndex+1:]
-					m.slashAC.SetQuery(query)
+						query := value[m.slashACStartIndex+1:]
+						m.slashAC.SetQuery(query)
 					}
 					return tea.Batch(cmds...)
 				}
@@ -2496,6 +2512,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
+				}
+
+				// Check for /command prefix and execute as a slash
+				// command instead of sending as a plain message.
+				if cmd := m.tryExecuteSlashCommand(value); cmd != nil {
+					cmds = append(cmds, cmd)
+					return tea.Batch(cmds...)
 				}
 
 				fileAttachments := m.attachments.List()
@@ -3662,6 +3685,54 @@ func (m *UI) buildSlashACItems() []autocomplete.Item {
 	return items
 }
 
+// tryExecuteSlashCommand checks if value starts with "/" followed by a known
+// command name. If matched, it executes the command (with argument
+// substitution and skill preloading) and returns a tea.Cmd. Returns nil if
+// the value is not a slash command.
+func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
+	if !strings.HasPrefix(value, "/") {
+		return nil
+	}
+
+	for _, cmd := range m.customCommands {
+		argName := cmd.ItemName()
+		if cmd.DisplayName != "" {
+			argName = cmd.DisplayName
+		}
+		rawArgs := extractSlashArgs(value, argName)
+		prefix := "/" + argName
+		// Check for exact prefix match (the value must start with
+		// "/name" followed by a space or end of string).
+		if !strings.HasPrefix(value, prefix) {
+			continue
+		}
+		if len(value) > len(prefix) && value[len(prefix)] != ' ' {
+			continue
+		}
+
+		// Command matched. If it has named arguments and none were
+		// provided inline, open the argument dialog.
+		if len(cmd.Arguments) > 0 && rawArgs == "" {
+			action := dialog.ActionRunCustomCommand{
+				Content:   cmd.Content,
+				Arguments: cmd.Arguments,
+				Skills:    cmd.Skills,
+			}
+			return func() tea.Msg { return action }
+		}
+
+		content := cmd.Content
+		if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
+			content = commands.SubstituteArgs(content, nil, rawArgs)
+		}
+		if resolved := resolveSkillContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
+			content = resolved + "\n\n" + content
+		}
+		return m.sendMessage(content)
+	}
+	return nil
+}
+
 // closeSlashAC hides the slash autocomplete and optionally clears the
 // textarea.
 func (m *UI) closeSlashAC(clearText bool) {
@@ -3670,60 +3741,6 @@ func (m *UI) closeSlashAC(clearText bool) {
 	if clearText {
 		m.textarea.SetValue("")
 	}
-}
-
-// executeSlashACSelection dispatches the appropriate action for the selected
-// autocomplete item. Returns a tea.Cmd if action requires one.
-func (m *UI) executeSlashACSelection(item autocomplete.Item, textValue string) tea.Cmd {
-	switch item.Type {
-	case autocomplete.CommandItem:
-		// Find the matching custom command by ID prefix "cmd:".
-		cmdID := strings.TrimPrefix(item.ID, "cmd:")
-		for _, cmd := range m.customCommands {
-			if cmd.ID == cmdID {
-				// Extract raw arguments using the short name since
-				// that's what the user types in the textarea.
-				argName := cmd.ItemName()
-				if cmd.DisplayName != "" {
-					argName = cmd.DisplayName
-				}
-				rawArgs := extractSlashArgs(textValue, argName)
-				content := cmd.Content
-				if len(cmd.Arguments) > 0 && rawArgs == "" {
-					// Command has named arguments — open the argument dialog.
-					action := dialog.ActionRunCustomCommand{
-						Content:   cmd.Content,
-						Arguments: cmd.Arguments,
-						Skills:    cmd.Skills,
-					}
-					return func() tea.Msg { return action }
-				}
-				// Substitute $ARGUMENTS with inline args.
-				if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
-					content = commands.SubstituteArgs(content, nil, rawArgs)
-				}
-				// Resolve and prepend skill content.
-				if resolved := resolveSkillContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
-					content = resolved + "\n\n" + content
-				}
-				return m.sendMessage(content)
-			}
-		}
-	case autocomplete.SkillItem:
-		// Dispatch ActionAttachSkill for skill attachment handling.
-		skillName := strings.TrimPrefix(item.ID, "skill:")
-		skill := m.com.Workspace.ActiveSkillByName(skillName)
-		if skill != nil {
-			return func() tea.Msg {
-				return dialog.ActionAttachSkill{
-					Name:         skill.Name,
-					Instructions: skill.Instructions,
-					Source:       skill.Source,
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // extractSlashArgs extracts the raw argument string from the given textarea
