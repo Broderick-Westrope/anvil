@@ -6,6 +6,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/stretchr/testify/require"
@@ -92,4 +93,90 @@ type testWorkspace struct {
 
 func (w *testWorkspace) Config() *config.Config {
 	return w.cfg
+}
+
+func TestFormatSkillContentXML(t *testing.T) {
+	t.Parallel()
+
+	got := formatSkillContentXML("grilling", "Ask questions about features")
+	want := "<skill_content name=\"grilling\">\nAsk questions about features\n</skill_content>"
+	require.Equal(t, want, got)
+}
+
+func TestResolveSkillContent_Found(t *testing.T) {
+	t.Parallel()
+
+	lookup := func(name string) *skills.Skill {
+		if name == "grilling" {
+			return &skills.Skill{Name: "grilling", Instructions: "Ask deep questions"}
+		}
+		return nil
+	}
+
+	got := resolveSkillContent([]string{"grilling"}, lookup)
+	require.Contains(t, got, `<skill_content name="grilling">`)
+	require.Contains(t, got, "Ask deep questions")
+}
+
+func TestResolveSkillContent_NotFound(t *testing.T) {
+	t.Parallel()
+
+	lookup := func(_ string) *skills.Skill { return nil }
+
+	got := resolveSkillContent([]string{"missing"}, lookup)
+	require.Empty(t, got)
+}
+
+func TestResolveSkillContent_Empty(t *testing.T) {
+	t.Parallel()
+
+	lookup := func(_ string) *skills.Skill { return nil }
+
+	got := resolveSkillContent(nil, lookup)
+	require.Empty(t, got)
+}
+
+func TestExtractSlashArgs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		textValue string
+		cmdName   string
+		want      string
+	}{
+		{
+			name:      "command with args",
+			textValue: "/commit fix typo",
+			cmdName:   "commit",
+			want:      "fix typo",
+		},
+		{
+			name:      "command only no args",
+			textValue: "/commit",
+			cmdName:   "commit",
+			want:      "",
+		},
+		{
+			name:      "leading spaces trimmed",
+			textValue: "/commit  extra spaces",
+			cmdName:   "commit",
+			want:      "extra spaces",
+		},
+		{
+			name:      "no prefix match",
+			textValue: "/other stuff",
+			cmdName:   "commit",
+			want:      "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := extractSlashArgs(tc.textValue, tc.cmdName)
+			require.Equal(t, tc.want, got)
+		})
+	}
 }

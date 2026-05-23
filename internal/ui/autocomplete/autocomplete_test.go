@@ -177,3 +177,118 @@ func TestShowHide(t *testing.T) {
 	ac.Hide()
 	require.False(t, ac.Visible())
 }
+
+func TestFuzzyMatch_EmptyQuery(t *testing.T) {
+	t.Parallel()
+
+	// Empty query matches everything with score 1.
+	ok, score := fuzzyMatch("", "anything")
+	require.True(t, ok)
+	require.Equal(t, 1, score)
+}
+
+func TestFuzzyMatch_ExactPrefix(t *testing.T) {
+	t.Parallel()
+
+	// Prefix match has score 0.
+	ok, score := fuzzyMatch("com", "commit")
+	require.True(t, ok)
+	require.Equal(t, 0, score)
+}
+
+func TestFuzzyMatch_Subsequence(t *testing.T) {
+	t.Parallel()
+
+	// Subsequence match has score 1.
+	ok, score := fuzzyMatch("cmt", "commit")
+	require.True(t, ok)
+	require.Equal(t, 1, score)
+}
+
+func TestFuzzyMatch_NoMatch(t *testing.T) {
+	t.Parallel()
+
+	ok, score := fuzzyMatch("xyz", "commit")
+	require.False(t, ok)
+	require.Equal(t, 0, score)
+}
+
+func TestFuzzyMatch_CaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	// Case-insensitive prefix match has score 0.
+	ok, score := fuzzyMatch("COM", "commit")
+	require.True(t, ok)
+	require.Equal(t, 0, score)
+}
+
+func TestSetQuery_SortStability_CommandBeforeSkillAtSameScore(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Name: "fix", Type: SkillItem},
+		{Name: "fix-it", Type: CommandItem},
+		{Name: "fix", Type: CommandItem},
+	}
+	ac := New(items, 10)
+	ac.SetQuery("fix")
+
+	filtered := ac.FilteredItems()
+	require.NotEmpty(t, filtered)
+
+	// Find the positions of the CommandItem "fix" and SkillItem "fix".
+	cmdIdx := -1
+	skillIdx := -1
+	for i, item := range filtered {
+		if item.Name == "fix" && item.Type == CommandItem && cmdIdx == -1 {
+			cmdIdx = i
+		}
+		if item.Name == "fix" && item.Type == SkillItem && skillIdx == -1 {
+			skillIdx = i
+		}
+	}
+
+	require.NotEqual(t, -1, cmdIdx, "CommandItem 'fix' not found in filtered results")
+	require.NotEqual(t, -1, skillIdx, "SkillItem 'fix' not found in filtered results")
+	require.Less(t, cmdIdx, skillIdx, "CommandItem 'fix' should appear before SkillItem 'fix'")
+}
+
+func TestMoveDown_EmptyList(t *testing.T) {
+	t.Parallel()
+
+	ac := New(nil, 10)
+
+	// Must not panic on an empty list.
+	require.NotPanics(t, func() { ac.MoveDown() })
+	require.Nil(t, ac.Selected())
+}
+
+func TestMoveUp_EmptyList(t *testing.T) {
+	t.Parallel()
+
+	ac := New(nil, 10)
+
+	// Must not panic on an empty list.
+	require.NotPanics(t, func() { ac.MoveUp() })
+	require.Nil(t, ac.Selected())
+}
+
+func TestSetItems_PreservesQuery(t *testing.T) {
+	t.Parallel()
+
+	ac := New(nil, 10)
+	ac.SetQuery("bet")
+
+	// Introduce items after the query is set — the filter must be re-applied.
+	ac.SetItems([]Item{
+		{Name: "alpha", Type: CommandItem},
+		{Name: "beta", Type: CommandItem},
+	})
+
+	filtered := ac.FilteredItems()
+	require.Len(t, filtered, 1)
+	require.Equal(t, "beta", filtered[0].Name)
+
+	// The query itself must be unchanged.
+	require.Equal(t, "bet", ac.Query())
+}

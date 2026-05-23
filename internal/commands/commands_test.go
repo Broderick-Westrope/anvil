@@ -298,3 +298,83 @@ func commandsByID(cmds []CustomCommand) map[string]CustomCommand {
 	}
 	return byID
 }
+
+func TestExtractArgNames_Dedup(t *testing.T) {
+	t.Parallel()
+
+	args := extractArgNames("$FOO and $FOO and $BAR")
+	require.Len(t, args, 2)
+	require.Equal(t, "FOO", args[0].ID)
+	require.Equal(t, "BAR", args[1].ID)
+}
+
+func TestExtractArgNames_NoArgs(t *testing.T) {
+	t.Parallel()
+
+	args := extractArgNames("no args here")
+	require.Nil(t, args)
+}
+
+func TestExtractArgNames_OnlyARGUMENTS(t *testing.T) {
+	t.Parallel()
+
+	// ARGUMENTS is a reserved placeholder and must be excluded.
+	args := extractArgNames("$ARGUMENTS only")
+	require.Nil(t, args)
+}
+
+func TestCommandCollisionName_UserSource(t *testing.T) {
+	t.Parallel()
+
+	cmd := CustomCommand{Name: "user:commit", Source: ""}
+	require.Equal(t, "commit", commandCollisionName(&cmd))
+}
+
+func TestCommandCollisionName_ProjectSource(t *testing.T) {
+	t.Parallel()
+
+	cmd := CustomCommand{Name: "project:deploy", Source: "project"}
+	require.Equal(t, "deploy", commandCollisionName(&cmd))
+}
+
+func TestCommandCollisionName_PluginSource(t *testing.T) {
+	t.Parallel()
+
+	cmd := CustomCommand{Name: "plugin:ce:greet", Source: "plugin:ce"}
+	require.Equal(t, "greet", commandCollisionName(&cmd))
+}
+
+func TestCommandCollisionName_UnknownSource(t *testing.T) {
+	t.Parallel()
+
+	// Unrecognised source falls through to the default case.
+	cmd := CustomCommand{Name: "whatever", Source: "unknown"}
+	require.Equal(t, "whatever", commandCollisionName(&cmd))
+}
+
+func TestLoadCommand_TrailingWhitespaceOnDelimiter(t *testing.T) {
+	t.Parallel()
+
+	// The closing "---" has trailing spaces; the parser must still recognise it.
+	content := "---\ndescription: test\n---   \nbody text\n"
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "cmd.md")
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0o644))
+
+	cmd, err := loadCommand(filePath, dir, "user:")
+	require.NoError(t, err)
+	require.Equal(t, "test", cmd.Description)
+	require.Equal(t, "body text\n", cmd.Content)
+}
+
+func TestSubstituteArgs_AdversarialRawArgs(t *testing.T) {
+	t.Parallel()
+
+	// rawArguments contains "$NAME", which must not be expanded a second time.
+	result := SubstituteArgs(
+		"$ARGUMENTS and $NAME",
+		map[string]string{"NAME": "alice"},
+		"$NAME is raw",
+	)
+	require.Equal(t, "$NAME is raw and alice", result)
+}

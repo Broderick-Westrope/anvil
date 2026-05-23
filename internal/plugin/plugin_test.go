@@ -198,3 +198,85 @@ func TestDiscover_TildeExpansion(t *testing.T) {
 	require.Equal(t, tmpDir, p.Path)
 	require.Equal(t, filepath.Join(tmpDir, "skills"), p.SkillsPath)
 }
+
+func TestValidatePluginName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantOK  bool
+	}{
+		{name: "empty string", input: "", wantOK: true},
+		{name: "valid hyphenated name", input: "valid-name", wantOK: true},
+		{name: "valid underscored name", input: "valid_name", wantOK: true},
+		{name: "valid dotted name", input: "valid.name", wantOK: true},
+		{name: "valid camel case with digits", input: "CamelCase123", wantOK: true},
+		{name: "single dot", input: ".", wantOK: false},
+		{name: "double dot", input: "..", wantOK: false},
+		{name: "contains slash", input: "foo/bar", wantOK: false},
+		{name: "contains space", input: "foo bar", wantOK: false},
+		{name: "contains colon", input: "foo:bar", wantOK: false},
+		{name: "contains exclamation", input: "name!", wantOK: false},
+		{name: "leading dot", input: ".hidden", wantOK: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := validatePluginName(tc.input)
+			require.Equal(t, tc.wantOK, got)
+		})
+	}
+}
+
+func TestResolveSubdir_SymlinkOutsideRoot(t *testing.T) {
+	t.Parallel()
+
+	pluginRoot := t.TempDir()
+	outsideDir := t.TempDir()
+	symlinkPath := filepath.Join(pluginRoot, "escape")
+
+	if err := os.Symlink(outsideDir, symlinkPath); err != nil {
+		t.Skip("symlinks not supported")
+	}
+
+	result := resolveSubdir(pluginRoot, "escape", "skills")
+
+	// Symlink pointing outside the plugin root must be blocked.
+	require.Empty(t, result)
+}
+
+func TestResolveSubdir_DefaultName(t *testing.T) {
+	t.Parallel()
+
+	pluginRoot := t.TempDir()
+	mkdirs(t, pluginRoot, "skills")
+
+	result := resolveSubdir(pluginRoot, "", "skills")
+
+	require.Equal(t, filepath.Join(pluginRoot, "skills"), result)
+}
+
+func TestResolveSubdir_Override(t *testing.T) {
+	t.Parallel()
+
+	pluginRoot := t.TempDir()
+	mkdirs(t, pluginRoot, "my-skills")
+
+	result := resolveSubdir(pluginRoot, "my-skills", "skills")
+
+	require.Equal(t, filepath.Join(pluginRoot, "my-skills"), result)
+}
+
+func TestResolveSubdir_NonexistentDir(t *testing.T) {
+	t.Parallel()
+
+	pluginRoot := t.TempDir()
+
+	result := resolveSubdir(pluginRoot, "", "nope")
+
+	// Non-existent directory should return empty string.
+	require.Empty(t, result)
+}

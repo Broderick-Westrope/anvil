@@ -86,3 +86,21 @@ func TestShortSource(t *testing.T) {
 	require.Equal(t, "project", shortSource("project"))
 	require.Equal(t, "plugin", shortSource("plugin:"))
 }
+
+func TestDetectCollisions_EmptySlice(t *testing.T) {
+	t.Parallel()
+
+	// An empty slice should not panic.
+	require.NotPanics(t, func() {
+		DetectCollisions([]*testItem{})
+	})
+}
+
+func TestDetectCollisions_SingleItem(t *testing.T) {
+	t.Parallel()
+
+	// A single item has no collision partner, so DisplayName must stay empty.
+	item := &testItem{name: "foo", source: "plugin:a"}
+	DetectCollisions([]*testItem{item})
+	require.Empty(t, item.displayName)
+}
