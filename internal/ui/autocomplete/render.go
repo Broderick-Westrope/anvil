@@ -74,12 +74,15 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	item := a.filtered[i]
 	focused := i == a.selected
 
-	// Choose icon.
+	// Choose icon and style. Padding is inside the style render so the
+	// background covers the full icon column width for both types.
 	var icon string
 	if item.Type == CommandItem {
-		icon = a.styles.CommandIcon.Render(commandIcon)
+		pad := strings.Repeat(" ", a.iconColWidth-ansi.StringWidth(commandIcon))
+		icon = a.styles.CommandIcon.Render(commandIcon + pad)
 	} else {
-		icon = a.styles.SkillIcon.Render(skillIcon)
+		pad := strings.Repeat(" ", a.iconColWidth-ansi.StringWidth(skillIcon))
+		icon = a.styles.SkillIcon.Render(skillIcon + pad)
 	}
 
 	// Build name and description portions.
@@ -89,15 +92,9 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	}
 	desc := item.Description
 
-	// Use a fixed icon column width so command and skill names align.
-	iconWidth := ansi.StringWidth(icon)
-	iconPad := a.iconColWidth - iconWidth
-	if iconPad < 0 {
-		iconPad = 0
-	}
-	// Layout: "[icon][pad] name  description"
+	// Layout: "[icon] name  description"
 	nameDesc := buildNameDesc(name, desc, width-a.iconColWidth-1, a.styles.Description)
-	line := icon + strings.Repeat(" ", iconPad) + " " + nameDesc
+	line := icon + " " + nameDesc
 
 	// Pad/truncate to width.
 	lineWidth := ansi.StringWidth(line)
