@@ -31,10 +31,11 @@ read internal/ui/dialog/sessions.go
 2. [ ] In `tryExecuteSlashCommand()` (~line 3695), add a builtin command check **before** the `m.customCommands` loop. Match `/sessions` and return a `tea.Cmd` that calls `m.openSessionsDialog()`. This ensures builtin precedence over user-defined commands.
 3. [ ] Verify `/sessions` in the command palette still works via the existing `defaultCommands()` entry (`"switch_session"` → `ActionOpenDialog{SessionsID}`). No change needed — the palette path already works. The slash command is a new entry point to the same modal.
 4. [ ] Add placeholder entries for `/tree` and `/branch` in the builtin command list (both in `buildSlashACItems` and `tryExecuteSlashCommand`). These should show in autocomplete but return a no-op or "not yet implemented" info message when executed. This reserves the names and validates the pattern.
-5. [ ] Add command palette entries for Tree and Branch in `defaultCommands()`:
-   - `NewCommandItem(c.com.Styles, "tree", "Session Tree", "", ActionOpenDialog{TreeID})` — will be wired in Phase 3
-   - `NewCommandItem(c.com.Styles, "branch", "Branch From Message", "", ActionOpenDialog{BranchID})` — will be wired in Phase 3
-   - Define `TreeID` and `BranchID` string constants (can be in a shared location or in `commands.go` for now)
+5. [ ] Define `TreeID` and `BranchID` string constants in `internal/ui/dialog/dialog.go` (the shared location where `SessionsID` and other dialog IDs are defined). Phase 3 will reference these constants — do NOT redefine them in `tree.go` or `branch.go`.
+6. [ ] Add command palette entries for Tree and Branch in `defaultCommands()`:
+   - `NewCommandItem(c.com.Styles, "tree", "Session Tree", "", ActionOpenDialog{TreeID})`
+   - `NewCommandItem(c.com.Styles, "branch", "Branch From Message", "", ActionOpenDialog{BranchID})`
+7. [ ] Add a guard in `openDialog()` for unrecognized dialog IDs: if the dialog ID has no handler (e.g., `TreeID` and `BranchID` before Phase 3 wires them), show a "Not yet implemented" info toast instead of silently doing nothing or panicking. This makes the command palette entries safe to merge before the modals exist.
 
 **Verify:**
 ```bash

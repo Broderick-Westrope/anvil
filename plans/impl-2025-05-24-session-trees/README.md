@@ -13,22 +13,22 @@ Conversations are modeled as append-only trees. Users can navigate to any prior 
 | Phase | Description | Tasks | Dependencies | PR |
 |-------|-------------|-------|--------------|-----|
 | [Phase 1](./phase-1-builtin-commands.md) | Builtin slash command infrastructure + `/sessions` | Task 1 | None | — |
-| [Phase 2](./phase-2-tree-engine.md) | Tree data model, services, context building, compaction, metadata | Tasks 2–5 | None | — |
+| [Phase 2](./phase-2-tree-engine.md) | Tree data model, services, Go-based data migration, context building, compaction, metadata | Tasks 2–5 | None | — |
 | [Phase 3](./phase-3-navigation-ui.md) | Navigation infrastructure, `/tree` modal, `/branch` modal | Tasks 6–8 | Phases 1 + 2 | — |
-| [Phase 4](./phase-4-migration.md) | Manual data migration | Task 9 | Phase 2 compiled | — |
 
 Phases 1 and 2 can be developed and merged in parallel.
 
 Phase 3 depends on both Phase 1 (builtin command wiring) and Phase 2 (tree services).
 
-Phase 4 is a manual execution step, run once after Phase 2 code is compiled.
+Data migration is handled by a Go-based goose migration within Phase 2. It runs automatically on app startup (goose auto-runs embedded migrations), so there is no separate migration phase. Existing data is converted atomically: columns added → messages chained → leaf pointers set → compaction data converted → old columns dropped.
 
 ## Execution Diagram
 
 ```
   ┌──────────────────┐     ┌──────────────────┐
   │  Phase 1:        │     │  Phase 2:        │
-  │  Builtin cmds    │     │  Tree engine     │
+  │  Builtin cmds    │     │  Tree engine +   │
+  │                  │     │  data migration  │
   └────────┬─────────┘     └────────┬─────────┘
            │                        │
            └────────┬───────────────┘
@@ -37,11 +37,5 @@ Phase 4 is a manual execution step, run once after Phase 2 code is compiled.
            ┌──────────────────┐
            │  Phase 3:        │
            │  Navigation UI   │
-           └────────┬─────────┘
-                    │
-                    ▼
-           ┌──────────────────┐
-           │  Phase 4:        │
-           │  Migration       │
            └──────────────────┘
 ```

@@ -29,8 +29,7 @@ read internal/workspace/app_workspace.go
 **Context:** `internal/db/`, `internal/message/`, `internal/session/`, `internal/proto/`, `internal/workspace/`, `internal/server/`
 
 **Files:**
-- Create: `internal/db/migrations/YYYYMMDD000000_add_tree_columns.sql`
-- Create: `internal/db/migrations/YYYYMMDD000001_drop_summary_columns.sql`
+- Create: `internal/db/migrations/YYYYMMDD000000_add_tree_and_migrate_data.go` — Go-based goose migration that adds columns, migrates existing data, and drops old columns atomically
 - Modify: `internal/db/sql/messages.sql` — new queries for tree operations, remove `is_summary_message` from `CreateMessage`
 - Modify: `internal/db/sql/sessions.sql` — update queries for `leaf_message_id`, remove `summary_message_id`
 - Modify: `internal/message/content.go` — new `ContentPart` subtypes, `MessageType` constants, `Message` struct fields (`ParentMessageID`, `MessageType`)
@@ -46,13 +45,46 @@ read internal/workspace/app_workspace.go
 
 **Steps:**
 
-1. [ ] Create migration `add_tree_columns.sql`:
+1. [ ] Create a **Go-based goose migration** `YYYYMMDD000000_add_tree_and_migrate_data.go` that performs all schema and data changes atomically on app startup. This is critical because goose auto-runs migrations via `goose.Up()` in `internal/db/connect.go:102` — a separate "manual Phase 4" would leave a dangerous gap where the app runs new code against un-migrated data.
+
+   The migration function should execute these steps in order within a single transaction:
+
+   **Step A — Add new columns:**
    - `ALTER TABLE messages ADD COLUMN parent_message_id TEXT;`
    - `ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'message';`
    - `CREATE INDEX idx_messages_parent ON messages (parent_message_id);`
    - `ALTER TABLE sessions ADD COLUMN leaf_message_id TEXT;`
 
-2. [ ] Create migration `drop_summary_columns.sql`:
+   **Step B — Chain existing messages linearly per session:**
+   ```sql
+   WITH ordered AS (
+     SELECT id, session_id,
+            LAG(id) OVER (PARTITION BY session_id ORDER BY created_at ASC, rowid ASC) as prev_id
+     FROM messages
+   )
+   UPDATE messages SET parent_message_id = (
+     SELECT prev_id FROM ordered WHERE ordered.id = messages.id
+   );
+   ```
+
+   **Step C — Set leaf pointers:**
+   ```sql
+   UPDATE sessions SET leaf_message_id = (
+     SELECT id FROM messages
+     WHERE messages.session_id = sessions.id
+     ORDER BY created_at DESC, rowid DESC
+     LIMIT 1
+   );
+   ```
+
+   **Step D — Convert summary messages to compaction type:**
+   ```sql
+   UPDATE messages SET message_type = 'compaction'
+   WHERE id IN (SELECT summary_message_id FROM sessions WHERE summary_message_id IS NOT NULL);
+   ```
+   Then for each converted compaction message, use Go code to: find the next message after the summary in chronological order (its `firstKeptEntryId`), construct a `CompactionContent` JSON part, and update the `parts` column. This requires Go logic because the JSON construction can't be done cleanly in pure SQL.
+
+   **Step E — Drop old columns:**
    - `ALTER TABLE sessions DROP COLUMN summary_message_id;`
    - `ALTER TABLE messages DROP COLUMN is_summary_message;`
 
@@ -72,11 +104,16 @@ read internal/workspace/app_workspace.go
    - Update `Create()` in message.go to accept `ParentMessageID` and `MessageType` in params, pass to DB query
    - Update `fromDBMessage()` to populate new fields
 
-5. [ ] Update `internal/message/message.go` — new service methods:
+5. [ ] Update `internal/message/message.go` — add new methods to **both** the `Service` interface (line 23) **and** the `service` struct implementation:
    - Add `GetBranchPath(ctx, leafMessageID) ([]Message, error)` — returns messages from leaf to root via recursive CTE, reversed to root→leaf order. This is the core tree walk used by context building.
    - Add `GetChildren(ctx, messageID) ([]Message, error)` — returns direct children of a message. Used by tree view.
    - Add `GetAllSessionMessages(ctx, sessionID) ([]Message, error)` — returns all messages in the session regardless of branch. Used by tree view to build the full tree structure.
-   - Update `Delete()` to accept a `sessionID` parameter. When the deleted message is the session's `leaf_message_id`, atomically move the leaf to the deleted message's `parent_message_id`. To achieve atomicity: the message service currently only has a `db.Querier` (not `*sql.DB`), so add a new combined SQL query `DeleteMessageAndUpdateLeaf` that does both operations. Alternatively, pass the `db.DBTX` interface to allow transaction creation — check what pattern the codebase already uses for multi-statement atomicity (see `session.go:130` Delete which uses `s.db.BeginTx`).
+   - Update `Delete()` for leaf pointer maintenance. The current `Delete()` already fetches the message via `Get()` (line 48) before deleting, so it has access to `msg.SessionID` and `msg.ParentMessageID` — no need to add a `sessionID` parameter. After the delete, check if the deleted message's ID matches the session's `leaf_message_id` (fetch session or cache it). If so, update the leaf to the deleted message's `ParentMessageID`.
+   - **Atomicity approach for both Create and Delete:** Give the `message.service` struct access to `db.DBTX` for transaction support, matching the pattern at `session.go:130` which uses `s.db.BeginTx`. This enables:
+     - `Create()`: begin tx → INSERT message → UPDATE session leaf → commit
+     - `Delete()`: begin tx → DELETE message → UPDATE session leaf (if needed) → commit
+   - Add a `CreateMessageAndAdvanceLeaf` SQL query that does both in a CTE or as two statements within the transaction. Similarly for delete.
+   - This same transaction pattern is needed by Task 5 step 4 (regular message creation auto-advancing the leaf).
 
 6. [ ] Update SQL queries in `internal/db/sql/messages.sql`:
    - Update `CreateMessage` to include `parent_message_id` and `message_type` columns, remove `is_summary_message`
@@ -132,6 +169,15 @@ read internal/workspace/app_workspace.go
 
 14. [ ] Run `sqlc generate` to regenerate DB code
 15. [ ] Run `go build .` to verify compilation — fix any remaining `SummaryMessageID`/`is_summary_message` compilation errors across the codebase by grepping and cleaning up
+
+16. [ ] **Write tests for the recursive CTE tree walk** (`GetBranchPath`). This is the most complex new query and the backbone of the feature. Create test cases in `internal/message/` (or `internal/db/`) covering:
+    - Single message (parent_message_id = NULL) — returns just that message
+    - Linear chain of 5 messages — returns all 5 in root→leaf order
+    - Branched tree: message A → B → C, and A → D → E — walking from C returns [A, B, C]; walking from E returns [A, D, E]
+    - Empty session (leaf = NULL or empty string) — returns empty slice or error
+    - Invalid leaf ID — returns error or empty slice
+
+17. [ ] **Update `loadSession()` in `internal/ui/model/ui.go`** to use `GetBranchPath(leafMessageID)` instead of `ListMessages(sessionID)` when loading a session's chat view. This ensures that opening an existing session shows only the current branch, not all messages across all branches. Find where `loadSession()` fetches messages and replace the flat list query with the tree walk.
 
 **Verify:**
 ```bash

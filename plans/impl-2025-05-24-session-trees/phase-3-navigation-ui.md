@@ -44,10 +44,10 @@ read internal/ui/model/chat.go
    ```
 
 2. [ ] Add `handleNavigateTree(msg ActionNavigateTree) tea.Cmd` method in `ui.go`:
-   - If the agent is busy (`m.com.Workspace.IsSessionBusy(m.session.ID)`):
+   - If the agent is busy (`m.com.Workspace.AgentIsSessionBusy(m.session.ID)` — note: the method is `AgentIsSessionBusy`, not `IsSessionBusy`):
      - Call `m.com.Workspace.AgentCancel(m.session.ID)` to cancel
      - Show "Cancelling..." info message
-     - **Use a `tea.Cmd` polling pattern** (Bubble Tea models must not block in Update): return a cmd that sleeps 200ms then sends a custom `checkAgentIdleMsg` back to the model. When `checkAgentIdleMsg` is received, check `IsSessionBusy()` again — if still busy, return another poll cmd (up to 5 second timeout via attempt counter). If idle, proceed with navigation. If timeout: show error toast and abort.
+     - **Use a `tea.Cmd` polling pattern** (Bubble Tea models must not block in Update): return a cmd that sleeps 200ms then sends a custom `checkAgentIdleMsg` back to the model. When `checkAgentIdleMsg` is received, check `AgentIsSessionBusy()` again — if still busy, return another poll cmd (up to 5 second timeout via attempt counter). If idle, proceed with navigation. If timeout: show error toast and abort.
    - Determine the target leaf:
      - If `msg.Role == message.User`: target leaf = the message's `ParentMessageID` (navigate to the parent, since we're branching *from* here)
      - Otherwise: target leaf = `msg.MessageID`
@@ -84,7 +84,7 @@ Read `internal/ui/AGENTS.md` before starting this task.
 **Steps:**
 
 1. [ ] Create `internal/ui/dialog/tree.go`:
-   - Define `const TreeID = "tree"`
+   - Use the `TreeID` constant already defined in `dialog.go` (from Phase 1) — do NOT redefine it
    - Implement `Tree` struct with `Dialog` interface (`ID()`, `HandleMsg()`, `Draw()`)
    - Constructor `NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree, error)`:
      - Fetch all session messages via `com.Workspace.GetAllSessionMessages(ctx, sessionID)`
@@ -147,7 +147,7 @@ Read `internal/ui/AGENTS.md` before starting this task.
 **Steps:**
 
 1. [ ] Create `internal/ui/dialog/branch.go`:
-   - Define `const BranchID = "branch"`
+   - Use the `BranchID` constant already defined in `dialog.go` (from Phase 1) — do NOT redefine it
    - Implement `Branch` struct with `Dialog` interface
    - Constructor `NewBranch(com *common.Common, sessionID string, leafMessageID string) (*Branch, error)`:
      - Fetch branch path via `com.Workspace.GetBranchPath(ctx, leafMessageID)` (root→leaf order)
