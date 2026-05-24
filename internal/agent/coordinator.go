@@ -1670,14 +1670,17 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 			Model:         md.Model,
 		}
 	}
+	// SetupAgentsWithDefaults mutates cfg.Agents in place. To avoid
+	// exposing a half-mutated state to concurrent readers (e.g. the UI
+	// reading Config.Agents for the commands palette), we save the
+	// current state, run the setup, copy the result, and immediately
+	// restore the live config. The new agent configs are only committed
+	// in the atomic swap section below.
 	savedAgents := maps.Clone(cfg.Agents)
 	cfg.SetupAgentsWithDefaults(mdDefaults)
-	restoreAgents := func() { cfg.Agents = savedAgents }
-
-	newAgentConfigs := make(map[string]config.Agent, len(cfg.Agents))
-	for name, agentCfg := range cfg.Agents {
-		newAgentConfigs[name] = agentCfg
-	}
+	newAgentConfigs := maps.Clone(cfg.Agents)
+	cfg.Agents = savedAgents // Restore immediately — live config stays stable.
+	restoreAgents := func() {} // No-op: live config was already restored.
 
 	// 5. Validate delegates_to.
 	agentMDSlice := make([]prompt.AgentMD, 0, len(newAgentMDs))
@@ -1728,8 +1731,11 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		return fmt.Errorf("rebuilding orchestrator tools: %w", err)
 	}
 
-	// 7. Atomic swap of coordinator state.
+	// 7. Atomic swap of coordinator state. Also commit the new agent
+	// configs to the live Config so the rest of the application sees
+	// a consistent view.
 	c.orchestratorMu.Lock()
+	cfg.Agents = newAgentConfigs
 	c.allSkills = newAll
 	c.activeSkills = newActive
 	c.skillStates = newStates
