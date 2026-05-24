@@ -21,7 +21,7 @@ Phases 1 and 2 can be developed and merged in parallel.
 
 Phase 3 depends on both Phase 1 (builtin command wiring) and Phase 2 (tree services).
 
-Phase 4 is a manual one-time migration, not committed to the codebase. It populates the new tree columns for existing sessions, then drops the old summary columns. Phase 2 includes a fallback path (`getSessionMessages()` falls back to linear list when `leaf_message_id` is empty) so the app works correctly between Phase 2 merge and Phase 4 execution.
+Phase 4 is a manual one-time migration, not committed to the codebase. It populates the new tree columns for existing sessions, then drops the old summary columns. **Phase 4 must be run before using Phase 2 code** — without it, existing sessions will appear empty. This is acceptable since the migration only needs to run on one machine.
 
 ## Execution Diagram
 
@@ -31,15 +31,20 @@ Phase 4 is a manual one-time migration, not committed to the codebase. It popula
   │  Builtin cmds    │     │  Tree engine     │
   └────────┬─────────┘     └────────┬─────────┘
            │                        │
-           │                        ├──────────────────┐
-           │                        │                  │
-           └────────┬───────────────┘                  ▼
-                    │                         ┌──────────────────┐
-                    ▼                         │  Phase 4:        │
-           ┌──────────────────┐               │  Manual          │
-           │  Phase 3:        │               │  migration       │
-           │  Navigation UI   │               └──────────────────┘
-           └──────────────────┘
+           │               ┌────────┘
+           │               ▼
+           │      ┌──────────────────┐
+           │      │  Phase 4:        │
+           │      │  Manual          │
+           │      │  migration       │
+           │      └────────┬─────────┘
+           │               │
+           └───────┬───────┘
+                   ▼
+          ┌──────────────────┐
+          │  Phase 3:        │
+          │  Navigation UI   │
+          └──────────────────┘
 ```
 
-Phase 4 can run anytime after Phase 2 merges — before, during, or after Phase 3 development. The fallback path keeps everything working in the meantime.
+**Sequence:** Phase 4 runs immediately after Phase 2 merges (before using the app). Phase 3 depends on Phases 1 + 2 + 4.

@@ -162,8 +162,8 @@ go test ./internal/message/... ./internal/session/... ./internal/db/...
 
 1. [ ] Rewrite `getSessionMessages()` (~line 1035) to use tree walk:
    - Load the session to get `LeafMessageID`
-   - **Fallback for un-migrated sessions:** If `LeafMessageID` is empty BUT the session has messages (check `message_count > 0` or similar), fall back to the old `messages.List(ctx, sessionID)` query to load messages linearly. This ensures existing sessions continue working between Phase 2 merge and the manual data migration. Once the migration populates `leaf_message_id`, the fallback path is never hit.
-   - If `LeafMessageID` is empty and no messages exist, return empty slice (genuinely empty session)
+   - If `LeafMessageID` is empty, return empty slice (empty session)
+   - Note: Phase 4 (manual migration) must be run before using Phase 2 code. The migration populates `leaf_message_id` for all existing sessions. Without it, existing sessions will appear empty. This is acceptable — the migration is a prerequisite, not a follow-up.
    - Call `messages.GetBranchPath(ctx, session.LeafMessageID)` to get root→leaf path
    - Scan the path for the most recent `compaction` message (nearest to leaf = last in the root→leaf ordered list with `MessageType == "compaction"`)
    - If no compaction found: filter out non-message types (`label`, `model_change`, `thinking_level_change`), return conversation messages. For `branch_summary` messages: convert to a synthetic user message with content wrapped in `<summary>` tags and preamble "The following is a summary of a branch that this conversation came back from:"
