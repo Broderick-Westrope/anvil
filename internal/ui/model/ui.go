@@ -2420,13 +2420,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					}
 					if selected.Type == autocomplete.BuiltinItem {
 						// Builtins execute immediately on selection —
-						// no argument step needed.
-						name := selected.DisplayName
-						if name == "" {
-							name = selected.Name
-						}
+						// no argument step needed. Use the ID field
+						// (always "builtin:<name>") for dispatch rather
+						// than DisplayName to avoid silent failures if
+						// display names ever diverge from execution keys.
+						builtinName := strings.TrimPrefix(selected.ID, "builtin:")
 						m.closeSlashAC(true)
-						cmd := m.tryExecuteBuiltinCommand("/" + name)
+						cmd := m.tryExecuteBuiltinCommand("/" + builtinName)
 						if cmd != nil {
 							return cmd
 						}
@@ -3672,16 +3672,7 @@ func (m *UI) buildSlashACItems() []autocomplete.Item {
 
 	// Builtin slash commands are added first so they take precedence
 	// over user-defined commands and skills with the same name.
-	builtins := []struct {
-		name string
-		desc string
-	}{
-		{"new", "Start a new session"},
-		{"sessions", "Switch between sessions"},
-		{"tree", "View session tree"},
-		{"branch", "Branch from a message"},
-	}
-	for _, b := range builtins {
+	for _, b := range m.builtinCommands() {
 		items = append(items, autocomplete.Item{
 			Name:        b.name,
 			DisplayName: b.name,
@@ -3788,6 +3779,35 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 	return nil
 }
 
+// builtinDef defines a single builtin slash command. This is the single
+// source of truth consumed by both buildSlashACItems (display) and
+// tryExecuteBuiltinCommand (dispatch).
+type builtinDef struct {
+	name   string
+	desc   string
+	action func() tea.Cmd
+}
+
+// builtinCommands returns the list of builtin slash commands. The slice
+// is rebuilt on each call because actions capture the receiver.
+func (m *UI) builtinCommands() []builtinDef {
+	return []builtinDef{
+		{"new", "Start a new session", func() tea.Cmd {
+			if !m.hasSession() {
+				return util.ReportInfo("Already on the landing page")
+			}
+			return m.newSession()
+		}},
+		{"sessions", "Switch between sessions", m.openSessionsDialog},
+		{"tree", "View session tree", func() tea.Cmd {
+			return m.openDialog(dialog.TreeID)
+		}},
+		{"branch", "Branch from a message", func() tea.Cmd {
+			return m.openDialog(dialog.BranchID)
+		}},
+	}
+}
+
 // noopCmd is a sentinel command that signals a builtin matched but produced
 // no side-effect command. It prevents callers from falling through to the
 // message-sending path.
@@ -3795,23 +3815,19 @@ var noopCmd tea.Cmd = func() tea.Msg { return nil }
 
 // tryExecuteBuiltinCommand checks if value matches a builtin slash command
 // (e.g. "/sessions", "/tree", "/branch"). Returns a non-nil tea.Cmd when
-// matched (even if the action itself has no cmd), nil otherwise.
+// matched (even if the action itself has no cmd), nil otherwise. Builtins
+// don't accept arguments — only exact "/name" matches.
 func (m *UI) tryExecuteBuiltinCommand(value string) tea.Cmd {
-	builtins := map[string]func() tea.Cmd{
-		"new":      m.newSession,
-		"sessions": m.openSessionsDialog,
-		"tree":     func() tea.Cmd { return m.openDialog(dialog.TreeID) },
-		"branch":   func() tea.Cmd { return m.openDialog(dialog.BranchID) },
+	name, ok := strings.CutPrefix(value, "/")
+	if !ok {
+		return nil
 	}
 
-	for name, action := range builtins {
-		// Builtins don't accept arguments — only match exact "/name".
-		// This lets users send "/sessions are great" as a normal
-		// message without triggering the modal.
-		if value != "/"+name {
+	for _, b := range m.builtinCommands() {
+		if name != b.name {
 			continue
 		}
-		if cmd := action(); cmd != nil {
+		if cmd := b.action(); cmd != nil {
 			return cmd
 		}
 		// Action matched but returned nil (e.g. openSessionsDialog
@@ -4214,7 +4230,7 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		// Unknown or not-yet-implemented dialog — show an info toast
 		// so command palette entries merged before their modals exist
 		// give user feedback instead of silently doing nothing.
-		return util.ReportInfo("Not yet implemented")
+		return util.ReportInfo(fmt.Sprintf("Not yet implemented: %s", id))
 	}
 	return tea.Batch(cmds...)
 }

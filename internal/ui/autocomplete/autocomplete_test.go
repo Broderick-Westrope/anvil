@@ -103,6 +103,25 @@ func TestSetQuery_CommandsBeforeSkills(t *testing.T) {
 	require.Equal(t, CommandItem, filtered[0].Type, "commands should sort before skills at equal score")
 }
 
+func TestSetQuery_BuiltinsBeforeCommandsBeforeSkills(t *testing.T) {
+	t.Parallel()
+
+	// All three types share the same prefix score for query "fix".
+	items := []Item{
+		{Name: "fix-skill", Type: SkillItem},
+		{Name: "fix-cmd", Type: CommandItem},
+		{Name: "fix-builtin", Type: BuiltinItem},
+	}
+	ac := New(items, 10)
+	ac.SetQuery("fix")
+
+	filtered := ac.FilteredItems()
+	require.Len(t, filtered, 3)
+	require.Equal(t, BuiltinItem, filtered[0].Type, "builtins should sort before commands")
+	require.Equal(t, CommandItem, filtered[1].Type, "commands should sort before skills")
+	require.Equal(t, SkillItem, filtered[2].Type, "skills should sort last")
+}
+
 func TestMoveDown_Wraps(t *testing.T) {
 	t.Parallel()
 

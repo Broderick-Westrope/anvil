@@ -5,12 +5,15 @@ import (
 	"strings"
 )
 
-// ItemType distinguishes commands from skills in the dropdown.
+// ItemType distinguishes builtins, commands, and skills in the dropdown.
 type ItemType int
 
 const (
+	// BuiltinItem represents a built-in slash command (e.g. /new, /sessions).
 	BuiltinItem ItemType = iota
+	// CommandItem represents a user-defined custom command.
 	CommandItem
+	// SkillItem represents an active skill.
 	SkillItem
 )
 

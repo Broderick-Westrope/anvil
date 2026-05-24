@@ -9,6 +9,8 @@ import (
 )
 
 // Dialog ID constants for dialogs that don't yet have their own file.
+// TODO(session-trees): Move these to their own files when the tree and
+// branch dialogs are implemented in Phase 3.
 const (
 	// TreeID is the identifier for the session tree dialog.
 	TreeID = "tree"
