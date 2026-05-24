@@ -399,9 +399,16 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		messageCreated = true
 		return result, err
 	}
-	beforeLoaded := c.skillTracker.LoadedNames()
+	// Snapshot skill state under lock to avoid a data race with
+	// ReloadPlugins which writes these fields under orchestratorMu.
+	c.orchestratorMu.RLock()
+	activeSkillsSnap := slices.Clone(c.activeSkills)
+	skillTrackerSnap := c.skillTracker
+	c.orchestratorMu.RUnlock()
+
+	beforeLoaded := skillTrackerSnap.LoadedNames()
 	result, originalErr := run()
-	logTurnSkillUsage(sessionID, prompt, c.activeSkills, c.skillTracker, beforeLoaded)
+	logTurnSkillUsage(sessionID, prompt, activeSkillsSnap, skillTrackerSnap, beforeLoaded)
 
 	if c.isUnauthorized(originalErr) {
 		if err := c.retryAfterUnauthorized(ctx, providerCfg); err == nil {
