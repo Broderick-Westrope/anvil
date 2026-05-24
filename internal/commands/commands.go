@@ -89,8 +89,14 @@ func LoadCustomCommands(cfg *config.Config) ([]CustomCommand, error) {
 // LoadAllCommands loads custom commands from user, project, and plugin
 // directories. Plugin commands are ordered before user/project commands so
 // project commands have highest priority for collision display.
-func LoadAllCommands(cfg *config.Config) ([]CustomCommand, error) {
-	plugins := plugin.DiscoverAll(cfg.Plugins)
+//
+// If plugins is nil, plugins are discovered from cfg.Plugins. Callers that
+// have already discovered plugins (e.g. after a coordinator reload) should
+// pass them to avoid redundant filesystem walks and TOCTOU divergence.
+func LoadAllCommands(cfg *config.Config, plugins []*plugin.Plugin) ([]CustomCommand, error) {
+	if plugins == nil {
+		plugins = plugin.DiscoverAll(cfg.Plugins)
+	}
 
 	var all []CustomCommand
 	for i := len(plugins) - 1; i >= 0; i-- {

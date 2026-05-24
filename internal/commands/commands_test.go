@@ -251,7 +251,7 @@ func TestLoadAllCommands_IncludesPluginCommands(t *testing.T) {
 		Plugins: []config.PluginConfig{{Path: pluginDir}},
 	}
 
-	cmds, err := LoadAllCommands(cfg)
+	cmds, err := LoadAllCommands(cfg, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"project:project", "plugin:plug:plugcmd"}, commandIDs(cmds))
 }
@@ -275,7 +275,7 @@ func TestLoadAllCommands_CommandCollisionsGetDisplayNames(t *testing.T) {
 		Plugins: []config.PluginConfig{{Path: pluginDir}},
 	}
 
-	cmds, err := LoadAllCommands(cfg)
+	cmds, err := LoadAllCommands(cfg, nil)
 	require.NoError(t, err)
 
 	byID := commandsByID(cmds)
