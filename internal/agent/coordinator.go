@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"maps"
 	"net/http"
 	"os"
 	pathpkg "path"
@@ -29,16 +28,13 @@ import (
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
-	"github.com/Broderick-Westrope/anvil/internal/event"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
-	"github.com/Broderick-Westrope/anvil/internal/log"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
-	"github.com/Broderick-Westrope/anvil/internal/oauth/copilot"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -54,7 +50,6 @@ import (
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
-	openaisdk "github.com/charmbracelet/openai-go/option"
 	"github.com/qjebbs/go-jsons"
 )
 
@@ -172,43 +167,10 @@ func NewCoordinator(
 		}
 	}
 
-	// Parse agent .md description files from the embedded FS.
-	agentMDs, err := loadAgentMDs(agentMDFS)
+	agentMDs, err := discoverAgentMDs(agentMDFS, plugins)
 	if err != nil {
 		return nil, fmt.Errorf("loading agent descriptions: %w", err)
 	}
-
-	// Discover plugin agents in reverse config order so that the first-
-	// configured plugin has highest priority (its agents are written to the
-	// map last and thus win).
-	for i := len(plugins) - 1; i >= 0; i-- {
-		p := plugins[i]
-		if p.AgentsPath == "" {
-			continue
-		}
-		pluginAgentMDs, err := loadAgentMDsFromDir(p.AgentsPath)
-		if err != nil {
-			slog.Warn("Failed to load plugin agents",
-				"plugin", p.Name, "path", p.AgentsPath, "error", err)
-			continue
-		}
-		// First-configured plugin wins — since we iterate in reverse,
-		// earlier plugins overwrite later ones.
-		for name, md := range pluginAgentMDs {
-			if existing, ok := agentMDs[name]; ok {
-				existingSource := existing.Source
-				if existingSource == "" {
-					existingSource = "builtin"
-				}
-				slog.Warn("Plugin agent overrides existing agent",
-					"plugin", p.Name, "agent", name,
-					"existingSource", existingSource)
-			}
-			md.Source = "plugin:" + p.Name
-			agentMDs[name] = md
-		}
-	}
-
 	c.agentMDs = agentMDs
 
 	if len(agentMDs) == 0 {
@@ -229,13 +191,8 @@ func NewCoordinator(
 			Model:         md.Model,
 		}
 	}
-	cfg.Config().SetupAgentsWithDefaults(mdDefaults)
-
-	// Load all agent configs from the updated config.
-	c.agentConfigs = make(map[string]config.Agent, len(cfg.Config().Agents))
-	for name, agentCfg := range cfg.Config().Agents {
-		c.agentConfigs[name] = agentCfg
-	}
+	// Load all agent configs from the computed defaults + user overrides.
+	c.agentConfigs = cfg.Config().SetupAgentsWithDefaults(mdDefaults)
 
 	// Validate delegates_to references. Warn on disabled refs, error on missing.
 	agentMDSlice := make([]prompt.AgentMD, 0, len(agentMDs))
@@ -309,10 +266,10 @@ func loadAgentMDsFromDir(dir string) (map[string]prompt.AgentMD, error) {
 	return result, nil
 }
 
-// loadAgentMDs reads all *.md files from the embedded agent templates FS and
-// parses each one using prompt.ParseAgentMD. The returned map is keyed by agent
+// loadAgentMDs reads all *.md files from the given filesystem and parses
+// each one using prompt.ParseAgentMD. The returned map is keyed by agent
 // name (filename without extension).
-func loadAgentMDs(fsys embed.FS) (map[string]prompt.AgentMD, error) {
+func loadAgentMDs(fsys fs.FS) (map[string]prompt.AgentMD, error) {
 	result := make(map[string]prompt.AgentMD)
 	err := fs.WalkDir(fsys, "templates/agents", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -321,7 +278,7 @@ func loadAgentMDs(fsys embed.FS) (map[string]prompt.AgentMD, error) {
 		if d.IsDir() || !strings.HasSuffix(path, ".md") {
 			return nil
 		}
-		content, readErr := fsys.ReadFile(path)
+		content, readErr := fs.ReadFile(fsys, path)
 		if readErr != nil {
 			return fmt.Errorf("reading %s: %w", path, readErr)
 		}
@@ -339,6 +296,42 @@ func loadAgentMDs(fsys embed.FS) (map[string]prompt.AgentMD, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// discoverAgentMDs loads built-in agent definitions from the embedded
+// filesystem and overlays plugin-provided definitions in reverse priority
+// order (earlier-configured plugins win on name collisions).
+func discoverAgentMDs(builtinFS fs.FS, plugins []*plugin.Plugin) (map[string]prompt.AgentMD, error) {
+	agentMDs, err := loadAgentMDs(builtinFS)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(plugins) - 1; i >= 0; i-- {
+		p := plugins[i]
+		if p.AgentsPath == "" {
+			continue
+		}
+		pluginAgentMDs, loadErr := loadAgentMDsFromDir(p.AgentsPath)
+		if loadErr != nil {
+			slog.Warn("Failed to load plugin agents",
+				"plugin", p.Name, "path", p.AgentsPath, "error", loadErr)
+			continue
+		}
+		for name, md := range pluginAgentMDs {
+			if existing, ok := agentMDs[name]; ok {
+				existingSource := existing.Source
+				if existingSource == "" {
+					existingSource = "builtin"
+				}
+				slog.Warn("Plugin agent overrides existing agent",
+					"plugin", p.Name, "agent", name,
+					"existingSource", existingSource)
+			}
+			md.Source = "plugin:" + p.Name
+			agentMDs[name] = md
+		}
+	}
+	return agentMDs, nil
 }
 
 // Run implements Coordinator.
@@ -1057,288 +1050,6 @@ func (c *coordinator) buildAgentModels(ctx context.Context, agentCfg config.Agen
 		}, nil
 }
 
-// betaQueryTransport is an http.RoundTripper that appends the
-// ?beta=true query param required by the Anthropic OAuth billing
-// endpoint to every outgoing request.
-type betaQueryTransport struct {
-	rt http.RoundTripper
-}
-
-// RoundTrip clones the request, sets beta=true in the query string,
-// then delegates to the wrapped transport.
-func (t *betaQueryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	clone := req.Clone(req.Context())
-	q := clone.URL.Query()
-	q.Set("beta", "true")
-	clone.URL.RawQuery = q.Encode()
-	return t.rt.RoundTrip(clone)
-}
-
-func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map[string]string, providerID string, oauthActive bool) (fantasy.Provider, error) {
-	var opts []anthropic.Option
-
-	switch {
-	case strings.HasPrefix(apiKey, "Bearer "):
-		// NOTE: Prevent the SDK from picking up the API key from env.
-		os.Setenv("ANTHROPIC_API_KEY", "")
-		headers["Authorization"] = apiKey
-
-	case providerID == string(catwalk.InferenceProviderMiniMax) || providerID == string(catwalk.InferenceProviderMiniMaxChina):
-		// NOTE: Prevent the SDK from picking up the API key from env.
-		os.Setenv("ANTHROPIC_API_KEY", "")
-		headers["Authorization"] = "Bearer " + apiKey
-	case apiKey != "":
-		// X-Api-Key header
-		opts = append(opts, anthropic.WithAPIKey(apiKey))
-	}
-
-	if len(headers) > 0 {
-		opts = append(opts, anthropic.WithHeaders(headers))
-	}
-
-	if baseURL != "" {
-		opts = append(opts, anthropic.WithBaseURL(baseURL))
-	}
-
-	// Build the HTTP transport chain. Debug logging is innermost so that
-	// the logged URL reflects the final ?beta=true mutation.
-	var transport http.RoundTripper = http.DefaultTransport
-	if c.cfg.Config().Options.Debug {
-		transport = &log.HTTPRoundTripLogger{Transport: transport}
-	}
-	// Anthropic OAuth requires ?beta=true on every request. Because the
-	// Anthropic SDK's URL resolution strips query params from the base
-	// URL, we inject the param via a custom round-tripper instead.
-	if oauthActive {
-		transport = &betaQueryTransport{rt: transport}
-	}
-	if transport != http.DefaultTransport {
-		opts = append(opts, anthropic.WithHTTPClient(&http.Client{Transport: transport}))
-	}
-	return anthropic.New(opts...)
-}
-
-func (c *coordinator) buildOpenaiProvider(baseURL, apiKey string, headers map[string]string) (fantasy.Provider, error) {
-	opts := []openai.Option{
-		openai.WithAPIKey(apiKey),
-		openai.WithUseResponsesAPI(),
-	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, openai.WithHTTPClient(httpClient))
-	}
-	if len(headers) > 0 {
-		opts = append(opts, openai.WithHeaders(headers))
-	}
-	if baseURL != "" {
-		opts = append(opts, openai.WithBaseURL(baseURL))
-	}
-	return openai.New(opts...)
-}
-
-func (c *coordinator) buildOpenrouterProvider(_, apiKey string, headers map[string]string) (fantasy.Provider, error) {
-	opts := []openrouter.Option{
-		openrouter.WithAPIKey(apiKey),
-	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, openrouter.WithHTTPClient(httpClient))
-	}
-	if len(headers) > 0 {
-		opts = append(opts, openrouter.WithHeaders(headers))
-	}
-	return openrouter.New(opts...)
-}
-
-func (c *coordinator) buildVercelProvider(_, apiKey string, headers map[string]string) (fantasy.Provider, error) {
-	opts := []vercel.Option{
-		vercel.WithAPIKey(apiKey),
-	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, vercel.WithHTTPClient(httpClient))
-	}
-	if len(headers) > 0 {
-		opts = append(opts, vercel.WithHeaders(headers))
-	}
-	return vercel.New(opts...)
-}
-
-func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers map[string]string, extraBody map[string]any, providerID string, isSubAgent bool) (fantasy.Provider, error) {
-	opts := []openaicompat.Option{
-		openaicompat.WithBaseURL(baseURL),
-		openaicompat.WithAPIKey(apiKey),
-	}
-
-	// Set HTTP client based on provider and debug mode.
-	var httpClient *http.Client
-	if providerID == string(catwalk.InferenceProviderCopilot) {
-		opts = append(opts, openaicompat.WithUseResponsesAPI())
-		httpClient = copilot.NewClient(isSubAgent, c.cfg.Config().Options.Debug)
-	} else if c.cfg.Config().Options.Debug {
-		httpClient = log.NewHTTPClient()
-	}
-	if httpClient != nil {
-		opts = append(opts, openaicompat.WithHTTPClient(httpClient))
-	}
-
-	if len(headers) > 0 {
-		opts = append(opts, openaicompat.WithHeaders(headers))
-	}
-
-	for extraKey, extraValue := range extraBody {
-		opts = append(opts, openaicompat.WithSDKOptions(openaisdk.WithJSONSet(extraKey, extraValue)))
-	}
-
-	return openaicompat.New(opts...)
-}
-
-func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[string]string, options map[string]string) (fantasy.Provider, error) {
-	opts := []azure.Option{
-		azure.WithBaseURL(baseURL),
-		azure.WithAPIKey(apiKey),
-		azure.WithUseResponsesAPI(),
-	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, azure.WithHTTPClient(httpClient))
-	}
-	if options == nil {
-		options = make(map[string]string)
-	}
-	if apiVersion, ok := options["apiVersion"]; ok {
-		opts = append(opts, azure.WithAPIVersion(apiVersion))
-	}
-	if len(headers) > 0 {
-		opts = append(opts, azure.WithHeaders(headers))
-	}
-
-	return azure.New(opts...)
-}
-
-func (c *coordinator) buildBedrockProvider(apiKey string, headers map[string]string) (fantasy.Provider, error) {
-	var opts []bedrock.Option
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, bedrock.WithHTTPClient(httpClient))
-	}
-	if len(headers) > 0 {
-		opts = append(opts, bedrock.WithHeaders(headers))
-	}
-	switch {
-	case apiKey != "":
-		opts = append(opts, bedrock.WithAPIKey(apiKey))
-	case os.Getenv("AWS_BEARER_TOKEN_BEDROCK") != "":
-		opts = append(opts, bedrock.WithAPIKey(os.Getenv("AWS_BEARER_TOKEN_BEDROCK")))
-	default:
-		// Skip, let the SDK do authentication.
-	}
-	return bedrock.New(opts...)
-}
-
-func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[string]string) (fantasy.Provider, error) {
-	opts := []google.Option{
-		google.WithBaseURL(baseURL),
-		google.WithGeminiAPIKey(apiKey),
-	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, google.WithHTTPClient(httpClient))
-	}
-	if len(headers) > 0 {
-		opts = append(opts, google.WithHeaders(headers))
-	}
-	return google.New(opts...)
-}
-
-func (c *coordinator) buildGoogleVertexProvider(headers map[string]string, options map[string]string) (fantasy.Provider, error) {
-	opts := []google.Option{}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, google.WithHTTPClient(httpClient))
-	}
-	if len(headers) > 0 {
-		opts = append(opts, google.WithHeaders(headers))
-	}
-
-	project := options["project"]
-	location := options["location"]
-
-	opts = append(opts, google.WithVertex(project, location))
-
-	return google.New(opts...)
-}
-
-func (c *coordinator) isAnthropicThinking(model config.SelectedModel) bool {
-	if model.Think {
-		return true
-	}
-	opts, err := anthropic.ParseOptions(model.ProviderOptions)
-	return err == nil && opts.Thinking != nil
-}
-
-func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model config.SelectedModel, isSubAgent bool) (fantasy.Provider, error) {
-	headers := maps.Clone(providerCfg.ExtraHeaders)
-	if headers == nil {
-		headers = make(map[string]string)
-	}
-
-	// Handle special headers for anthropic.
-	if providerCfg.Type == anthropic.Name && c.isAnthropicThinking(model) {
-		if v, ok := headers["anthropic-beta"]; ok {
-			headers["anthropic-beta"] = v + ",interleaved-thinking-2025-05-14"
-		} else {
-			headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
-		}
-	}
-
-	// When the Anthropic provider uses OAuth, merge model-specific beta
-	// flags on top of any betas already present (e.g. from SetupAnthropic
-	// or the thinking-model logic above). MergeBetas deduplicates.
-	if providerCfg.OAuthToken != nil && providerCfg.Type == anthropic.Name {
-		headers["anthropic-beta"] = anthropicoauth.MergeBetas(
-			headers["anthropic-beta"],
-			anthropicoauth.BetasForModel(model.Model),
-		)
-	}
-
-	apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
-	baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
-
-	switch providerCfg.Type {
-	case openai.Name:
-		return c.buildOpenaiProvider(baseURL, apiKey, headers)
-	case anthropic.Name:
-		return c.buildAnthropicProvider(baseURL, apiKey, headers, providerCfg.ID, providerCfg.OAuthToken != nil)
-	case openrouter.Name:
-		return c.buildOpenrouterProvider(baseURL, apiKey, headers)
-	case vercel.Name:
-		return c.buildVercelProvider(baseURL, apiKey, headers)
-	case azure.Name:
-		return c.buildAzureProvider(baseURL, apiKey, headers, providerCfg.ExtraParams)
-	case bedrock.Name:
-		return c.buildBedrockProvider(apiKey, headers)
-	case google.Name:
-		return c.buildGoogleProvider(baseURL, apiKey, headers)
-	case "google-vertex":
-		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
-	case openaicompat.Name, hyper.Name:
-		switch providerCfg.ID {
-		case hyper.Name:
-			baseURL = hyper.BaseURL() + "/v1"
-			headers["x-anvil-id"] = event.GetID()
-		case string(catwalk.InferenceProviderZAI):
-			if providerCfg.ExtraBody == nil {
-				providerCfg.ExtraBody = map[string]any{}
-			}
-			providerCfg.ExtraBody["tool_stream"] = true
-		}
-		return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, isSubAgent)
-	default:
-		return nil, fmt.Errorf("provider type not supported: %q", providerCfg.Type)
-	}
-}
-
 func isExactoSupported(modelID string) bool {
 	supportedModels := []string{
 		"moonshotai/kimi-k2-0905",
@@ -1631,34 +1342,14 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	newAll, newActive, newStates := discoverSkills(c.cfg, plugins)
 
 	// 3. Rebuild agent MDs from embedded + plugins.
-	newAgentMDs, err := loadAgentMDs(agentMDFS)
+	newAgentMDs, err := discoverAgentMDs(agentMDFS, plugins)
 	if err != nil {
 		return fmt.Errorf("reloading agent descriptions: %w", err)
 	}
-	for i := len(plugins) - 1; i >= 0; i-- {
-		p := plugins[i]
-		if p.AgentsPath == "" {
-			continue
-		}
-		pluginAgentMDs, loadErr := loadAgentMDsFromDir(p.AgentsPath)
-		if loadErr != nil {
-			slog.Warn("Failed to load plugin agents on reload",
-				"plugin", p.Name, "path", p.AgentsPath, "error", loadErr)
-			continue
-		}
-		for name, md := range pluginAgentMDs {
-			if existing, ok := newAgentMDs[name]; ok {
-				slog.Warn("Plugin agent overrides existing agent on reload",
-					"agent", name, "plugin", p.Name, "previous_source", existing.Source)
-			}
-			md.Source = "plugin:" + p.Name
-			newAgentMDs[name] = md
-		}
-	}
 
-	// 4. Re-apply .md defaults to config agents. Save previous state so we
-	// can restore it if a later step fails, since SetupAgentsWithDefaults
-	// mutates the live Config.Agents in place.
+	// 4. Re-apply .md defaults to produce new agent configs.
+	// SetupAgentsWithDefaults is pure; cfg.Agents is not mutated until
+	// the atomic swap below.
 	mdDefaults := make(map[string]config.Agent, len(newAgentMDs))
 	for name, md := range newAgentMDs {
 		mdDefaults[name] = config.Agent{
@@ -1670,17 +1361,10 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 			Model:         md.Model,
 		}
 	}
-	// SetupAgentsWithDefaults mutates cfg.Agents in place. To avoid
-	// exposing a half-mutated state to concurrent readers (e.g. the UI
-	// reading Config.Agents for the commands palette), we save the
-	// current state, run the setup, copy the result, and immediately
-	// restore the live config. The new agent configs are only committed
+	// SetupAgentsWithDefaults is a pure function; it returns a new map
+	// without touching cfg.Agents. The new agent configs are only committed
 	// in the atomic swap section below.
-	savedAgents := maps.Clone(cfg.Agents)
-	cfg.SetupAgentsWithDefaults(mdDefaults)
-	newAgentConfigs := maps.Clone(cfg.Agents)
-	cfg.Agents = savedAgents // Restore immediately — live config stays stable.
-	restoreAgents := func() {} // No-op: live config was already restored.
+	newAgentConfigs := cfg.SetupAgentsWithDefaults(mdDefaults)
 
 	// 5. Validate delegates_to.
 	agentMDSlice := make([]prompt.AgentMD, 0, len(newAgentMDs))
@@ -1692,7 +1376,6 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		slog.Warn("Agent delegation warning on reload", "error", w)
 	}
 	if len(errs) > 0 {
-		restoreAgents()
 		return fmt.Errorf("agent delegates_to validation failed on reload: %w", errors.Join(errs...))
 	}
 
@@ -1701,33 +1384,28 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	// runtime state intact.
 	orchestratorCfg, ok := newAgentConfigs[config.AgentOrchestrator]
 	if !ok {
-		restoreAgents()
 		return errOrchestratorAgentNotConfigured
 	}
 
 	orch := c.getOrchestrator()
 	if orch == nil {
-		restoreAgents()
 		return errOrchestratorAgentNotConfigured
 	}
 
 	newSkillTracker := skills.NewTracker(newActive)
 	p, err := c.buildPromptWithState(config.AgentOrchestrator, orchestratorCfg, newActive, newAgentMDs, newAgentConfigs)
 	if err != nil {
-		restoreAgents()
 		return fmt.Errorf("rebuilding orchestrator prompt: %w", err)
 	}
 
 	large := orch.Model()
 	systemPrompt, err := p.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
 	if err != nil {
-		restoreAgents()
 		return fmt.Errorf("building orchestrator system prompt: %w", err)
 	}
 
 	agentTools, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs)
 	if err != nil {
-		restoreAgents()
 		return fmt.Errorf("rebuilding orchestrator tools: %w", err)
 	}
 

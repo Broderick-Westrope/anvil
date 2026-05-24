@@ -812,43 +812,58 @@ func (c *Config) SetupAgents() {
 	c.agentsInitialized = true
 }
 
-// SetupAgentsWithDefaults sets up the agent roster from .md-derived defaults,
-// plus the orchestrator default, plus any user overrides from anvil.json.
-// mdDefaults contains agents parsed from .md frontmatter (keyed by agent name).
-// The orchestrator is always added from internal defaults since it has no .md
-// file. This must be called after SetupAgents (which stores the raw user
-// overrides). The coordinator calls this after parsing .md files.
-func (c *Config) SetupAgentsWithDefaults(mdDefaults map[string]Agent) {
+// SetupAgentsWithDefaults returns a new agent map built from .md-derived
+// defaults, plus the orchestrator default, plus any user overrides from
+// anvil.json. mdDefaults contains agents parsed from .md frontmatter (keyed
+// by agent name). The orchestrator is always added from internal defaults
+// since it has no .md file. This must be called after SetupAgents (which
+// stores the raw user overrides). The coordinator calls this after parsing
+// .md files. The receiver is not mutated.
+func (c *Config) SetupAgentsWithDefaults(mdDefaults map[string]Agent) map[string]Agent {
 	// Guard: SetupAgents must have been called first to store user overrides.
 	if !c.agentsInitialized {
 		slog.Warn("SetupAgentsWithDefaults called before SetupAgents; user overrides may be lost")
 	}
 
-	// Use the raw user overrides stored by SetupAgents, not c.Agents which
-	// now contains the full hardcoded roster.
-	userAgents := c.userAgentOverrides
-
-	// Start with only the orchestrator default.
-	c.setupDefaultAgents()
+	// Start with only the orchestrator default on a fresh map.
+	agents := map[string]Agent{
+		AgentOrchestrator: {
+			ID:            AgentOrchestrator,
+			Name:          "Orchestrator",
+			AllowedTools:  nil, // Nil = all tools unrestricted.
+			AllowedSkills: nil, // Nil = all skills unrestricted.
+			AllowedMCP:    nil, // Nil = all MCPs unrestricted.
+		},
+	}
 
 	// Merge in .md-derived defaults. The orchestrator is already present so
 	// mdDefaults entries with the orchestrator key are silently ignored.
 	for name, agent := range mdDefaults {
-		if _, exists := c.Agents[name]; !exists {
-			c.Agents[name] = agent
+		if _, exists := agents[name]; !exists {
+			agents[name] = agent
 		}
 	}
 
-	c.applyAgentOverrides(userAgents)
+	// Apply the raw user overrides stored by SetupAgents, not c.Agents which
+	// now contains the full hardcoded roster.
+	agents = applyOverrides(agents, c.userAgentOverrides, c.DisabledAgents)
+
+	return agents
 }
 
 // applyAgentOverrides overlays non-zero fields from userAgents onto the
-// current c.Agents map and removes any disabled agents. It is shared by
-// SetupAgents and SetupAgentsWithDefaults to avoid duplication.
+// current c.Agents map and removes any disabled agents. It is used by
+// SetupAgents.
 func (c *Config) applyAgentOverrides(userAgents map[string]Agent) {
+	c.Agents = applyOverrides(c.Agents, userAgents, c.DisabledAgents)
+}
+
+// applyOverrides overlays non-zero fields from userAgents onto agents and
+// removes disabled agents. It returns the modified map.
+func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabledAgents []string) map[string]Agent {
 	if userAgents != nil {
 		for name, userAgent := range userAgents {
-			def, ok := c.Agents[name]
+			def, ok := agents[name]
 			if !ok {
 				// User defined an agent not in the defaults; add it as-is.
 				// Ensure ID and Name are set from the map key if not provided.
@@ -858,7 +873,7 @@ func (c *Config) applyAgentOverrides(userAgents map[string]Agent) {
 				if userAgent.Name == "" {
 					userAgent.Name = name
 				}
-				c.Agents[name] = userAgent
+				agents[name] = userAgent
 				continue
 			}
 			// Overlay non-zero fields from the user config onto the default.
@@ -883,20 +898,22 @@ func (c *Config) applyAgentOverrides(userAgents map[string]Agent) {
 			if userAgent.Disabled {
 				def.Disabled = true
 			}
-			c.Agents[name] = def
+			agents[name] = def
 		}
 	}
 
-	// Remove any agents whose names appear in DisabledAgents
-	// and agents whose Disabled field is true from the Agents map.
-	for _, name := range c.DisabledAgents {
-		delete(c.Agents, name)
+	// Remove any agents whose names appear in disabledAgents and agents
+	// whose Disabled field is true.
+	for _, name := range disabledAgents {
+		delete(agents, name)
 	}
-	for name, agent := range c.Agents {
+	for name, agent := range agents {
 		if agent.Disabled {
-			delete(c.Agents, name)
+			delete(agents, name)
 		}
 	}
+
+	return agents
 }
 
 // ResolveAgentModel resolves the SelectedModel for the given agent. If

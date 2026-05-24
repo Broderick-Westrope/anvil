@@ -747,16 +747,16 @@ func TestConfig_setupDefaultAgentsWithDisabledTools(t *testing.T) {
 			AllowedMCP:    map[string][]string{},
 		},
 	}
-	cfg.SetupAgentsWithDefaults(mdDefaults)
+	result := cfg.SetupAgentsWithDefaults(mdDefaults)
 
 	// Explorer should have read-only tools (not filtered by DisabledTools at
 	// this layer).
-	explorer, ok := cfg.Agents["explorer"]
+	explorer, ok := result["explorer"]
 	require.True(t, ok)
 	assert.Equal(t, readOnlyTools(), explorer.AllowedTools)
 
 	// Reviewer should also have read-only tools.
-	reviewer, ok := cfg.Agents["reviewer"]
+	reviewer, ok := result["reviewer"]
 	require.True(t, ok)
 	assert.Equal(t, readOnlyTools(), reviewer.AllowedTools)
 }
@@ -800,15 +800,15 @@ func TestConfig_setupDefaultAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 			AllowedMCP: map[string][]string{},
 		},
 	}
-	cfg.SetupAgentsWithDefaults(mdDefaults)
+	result := cfg.SetupAgentsWithDefaults(mdDefaults)
 
 	// Librarian has read-only tools plus agentic_fetch.
-	librarian, ok := cfg.Agents["librarian"]
+	librarian, ok := result["librarian"]
 	require.True(t, ok)
 	assert.Equal(t, append(readOnlyTools(), "agentic_fetch"), librarian.AllowedTools)
 
 	// Tester has read-only tools plus bash.
-	tester, ok := cfg.Agents["tester"]
+	tester, ok := result["tester"]
 	require.True(t, ok)
 	assert.Equal(t, append(readOnlyTools(), "bash"), tester.AllowedTools)
 }
@@ -846,10 +846,10 @@ func TestConfig_SetupAgentsWithDefaults_UserOverridesApplied(t *testing.T) {
 			AllowedMCP:    map[string][]string{},
 		},
 	}
-	cfg.SetupAgentsWithDefaults(mdDefaults)
+	result := cfg.SetupAgentsWithDefaults(mdDefaults)
 
 	// Explorer should have the .md-derived tools and the user's model override.
-	explorer, ok := cfg.Agents["explorer"]
+	explorer, ok := result["explorer"]
 	require.True(t, ok)
 	assert.Equal(t, "anthropic/claude-haiku-3-5", explorer.Model,
 		"user model override should survive SetupAgentsWithDefaults")
@@ -857,13 +857,13 @@ func TestConfig_SetupAgentsWithDefaults_UserOverridesApplied(t *testing.T) {
 		"explorer should have .md-derived tools, not hardcoded SetupAgents tools")
 
 	// Oracle should have .md-derived values (no user override).
-	oracle, ok := cfg.Agents["oracle"]
+	oracle, ok := result["oracle"]
 	require.True(t, ok)
 	assert.Nil(t, oracle.AllowedTools, "oracle AllowedTools should be nil (unrestricted)")
 	assert.Equal(t, []string{}, oracle.AllowedSkills, "oracle should have no skills from .md")
 
 	// Orchestrator should still be present.
-	_, ok = cfg.Agents[AgentOrchestrator]
+	_, ok = result[AgentOrchestrator]
 	require.True(t, ok, "orchestrator should be present")
 }
 

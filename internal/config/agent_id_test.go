@@ -51,13 +51,13 @@ func TestConfig_AgentIDs(t *testing.T) {
 				DisabledTools: []string{},
 			},
 		}
-		cfg.SetupAgentsWithDefaults(mdDefaults)
+		result := cfg.SetupAgentsWithDefaults(mdDefaults)
 
 		allNames := append([]string{AgentOrchestrator}, nonOrchestratorNames...)
 		for _, name := range allNames {
 			t.Run(name+" agent should have correct ID", func(t *testing.T) {
 				t.Parallel()
-				agent, ok := cfg.Agents[name]
+				agent, ok := result[name]
 				require.Truef(t, ok, "agent %q should be present", name)
 				assert.Equal(t, name, agent.ID, "agent %q: ID field should match map key", name)
 			})

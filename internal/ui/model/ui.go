@@ -2084,7 +2084,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		// Resolve and prepend skill content. This is safe to call in Update
 		// because ActiveSkillByName is an in-memory lookup (no IO). If it
 		// ever becomes an RPC, this must move to a tea.Cmd.
-		if resolved := resolveSkillContent(msg.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
+		if resolved := skills.ResolveContent(msg.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
 			content = resolved + "\n\n" + content
 		}
 
@@ -2544,7 +2544,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if len(skillAttachments) > 0 {
 					var parts []string
 					for _, skill := range skillAttachments {
-						parts = append(parts, formatSkillContentXML(skill.Name, skill.Instructions))
+						parts = append(parts, skills.FormatContentXML(skill.Name, skill.Instructions))
 					}
 					value = strings.Join(parts, "\n\n") + "\n\n" + value
 				}
@@ -3728,14 +3728,14 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
 			content = commands.SubstituteArgs(content, nil, rawArgs)
 		}
-		if resolved := resolveSkillContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
+		if resolved := skills.ResolveContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
 			content = resolved + "\n\n" + content
 		}
 
 		// Include any user-attached skill chips so they are not
 		// silently dropped when submitting via a slash command.
 		for _, sa := range m.attachments.SkillList() {
-			content = formatSkillContentXML(sa.Name, sa.Instructions) + "\n\n" + content
+			content = skills.FormatContentXML(sa.Name, sa.Instructions) + "\n\n" + content
 		}
 
 		return m.sendMessage(content)
@@ -3763,31 +3763,6 @@ func extractSlashArgs(textValue, cmdName string) string {
 	}
 	rest := textValue[len(prefix):]
 	return strings.TrimLeft(rest, " ")
-}
-
-// formatSkillContentXML formats a single skill's instructions as a
-// <skill_content> XML block for inclusion in a user message.
-func formatSkillContentXML(name, instructions string) string {
-	return fmt.Sprintf("<skill_content name=%q>\n%s\n</skill_content>", name, instructions)
-}
-
-// resolveSkillContent resolves skill names to their XML content blocks using
-// the given lookup function. Unknown skills are logged and skipped. Returns
-// the joined XML blocks or an empty string if none resolved.
-func resolveSkillContent(skillNames []string, lookup func(string) *skills.Skill) string {
-	var parts []string
-	for _, name := range skillNames {
-		skill := lookup(name)
-		if skill == nil {
-			slog.Warn("Command references unknown skill", "skill", name)
-			continue
-		}
-		parts = append(parts, formatSkillContentXML(skill.Name, skill.Instructions))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, "\n\n")
 }
 
 // insertCompletionText replaces the @query in the textarea with the given text.
