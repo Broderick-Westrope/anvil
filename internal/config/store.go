@@ -750,6 +750,15 @@ func (s *ConfigStore) ReloadFromDisk(ctx context.Context) error {
 
 	if oldConfig != nil && !pluginConfigsEqual(oldConfig.Plugins, cfg.Plugins) && s.pluginsChangedHook != nil {
 		if err := s.pluginsChangedHook(ctx); err != nil {
+			// Rollback: the config store is already updated but the
+			// coordinator failed to reload plugin state. Restore the
+			// previous config so the store and coordinator stay in sync.
+			s.config = oldConfig
+			s.loadedPaths = oldLoadedPaths
+			s.resolver = oldResolver
+			s.knownProviders = oldKnownProviders
+			s.overrides = oldOverrides
+			s.workspacePath = oldWorkspacePath
 			return fmt.Errorf("plugins changed hook failed: %w", err)
 		}
 	}
