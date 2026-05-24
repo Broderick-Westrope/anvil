@@ -2519,6 +2519,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				// Check for /command prefix and execute as a slash
 				// command instead of sending as a plain message.
 				if cmd := m.tryExecuteSlashCommand(value); cmd != nil {
+					m.attachments.Reset()
 					cmds = append(cmds, cmd)
 					return tea.Batch(cmds...)
 				}
@@ -3730,6 +3731,13 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		if resolved := resolveSkillContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
 			content = resolved + "\n\n" + content
 		}
+
+		// Include any user-attached skill chips so they are not
+		// silently dropped when submitting via a slash command.
+		for _, sa := range m.attachments.SkillList() {
+			content = formatSkillContentXML(sa.Name, sa.Instructions) + "\n\n" + content
+		}
+
 		return m.sendMessage(content)
 	}
 	return nil
