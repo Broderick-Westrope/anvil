@@ -29,7 +29,7 @@ read internal/workspace/app_workspace.go
 **Context:** `internal/db/`, `internal/message/`, `internal/session/`, `internal/proto/`, `internal/workspace/`, `internal/server/`
 
 **Files:**
-- Create: `internal/db/migrations/YYYYMMDD000000_add_tree_and_migrate_data.go` — Go-based goose migration that adds columns, migrates existing data, and drops old columns atomically
+- Create: `internal/db/migrations/YYYYMMDD000000_add_tree_columns.sql` — adds new columns only (never drops old ones)
 - Modify: `internal/db/sql/messages.sql` — new queries for tree operations, remove `is_summary_message` from `CreateMessage`
 - Modify: `internal/db/sql/sessions.sql` — update queries for `leaf_message_id`, remove `summary_message_id`
 - Modify: `internal/message/content.go` — new `ContentPart` subtypes, `MessageType` constants, `Message` struct fields (`ParentMessageID`, `MessageType`)
@@ -45,48 +45,11 @@ read internal/workspace/app_workspace.go
 
 **Steps:**
 
-1. [ ] Create a **Go-based goose migration** `YYYYMMDD000000_add_tree_and_migrate_data.go` that performs all schema and data changes atomically on app startup. This is critical because goose auto-runs migrations via `goose.Up()` in `internal/db/connect.go:102` — a separate "manual Phase 4" would leave a dangerous gap where the app runs new code against un-migrated data.
-
-   The migration function should execute these steps in order within a single transaction:
-
-   **Step A — Add new columns:**
+1. [ ] Create migration `add_tree_columns.sql` — **only adds columns, never drops old ones**. Goose auto-runs this on startup (`goose.Up()` in `internal/db/connect.go:102`), so it must be safe to run against un-migrated data. The old `summary_message_id` and `is_summary_message` columns remain harmlessly present; the new code ignores them.
    - `ALTER TABLE messages ADD COLUMN parent_message_id TEXT;`
    - `ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'message';`
    - `CREATE INDEX idx_messages_parent ON messages (parent_message_id);`
    - `ALTER TABLE sessions ADD COLUMN leaf_message_id TEXT;`
-
-   **Step B — Chain existing messages linearly per session:**
-   ```sql
-   WITH ordered AS (
-     SELECT id, session_id,
-            LAG(id) OVER (PARTITION BY session_id ORDER BY created_at ASC, rowid ASC) as prev_id
-     FROM messages
-   )
-   UPDATE messages SET parent_message_id = (
-     SELECT prev_id FROM ordered WHERE ordered.id = messages.id
-   );
-   ```
-
-   **Step C — Set leaf pointers:**
-   ```sql
-   UPDATE sessions SET leaf_message_id = (
-     SELECT id FROM messages
-     WHERE messages.session_id = sessions.id
-     ORDER BY created_at DESC, rowid DESC
-     LIMIT 1
-   );
-   ```
-
-   **Step D — Convert summary messages to compaction type:**
-   ```sql
-   UPDATE messages SET message_type = 'compaction'
-   WHERE id IN (SELECT summary_message_id FROM sessions WHERE summary_message_id IS NOT NULL);
-   ```
-   Then for each converted compaction message, use Go code to: find the next message after the summary in chronological order (its `firstKeptEntryId`), construct a `CompactionContent` JSON part, and update the `parts` column. This requires Go logic because the JSON construction can't be done cleanly in pure SQL.
-
-   **Step E — Drop old columns:**
-   - `ALTER TABLE sessions DROP COLUMN summary_message_id;`
-   - `ALTER TABLE messages DROP COLUMN is_summary_message;`
 
 3. [ ] Add new `ContentPart` subtypes in `internal/message/content.go`:
    - Define `MessageType` string type with constants: `MessageTypeMessage = "message"`, `MessageTypeCompaction = "compaction"`, `MessageTypeBranchSummary = "branch_summary"`, `MessageTypeLabel = "label"`, `MessageTypeModelChange = "model_change"`, `MessageTypeThinkingLevelChange = "thinking_level_change"`
@@ -139,13 +102,13 @@ read internal/workspace/app_workspace.go
 7. [ ] Update `internal/db/sql/sessions.sql`:
    - Update `CreateSession` to include `leaf_message_id` (nullable)
    - Update `UpdateSession` to include `leaf_message_id`
-   - Remove `summary_message_id` from all queries
+   - **Keep `summary_message_id` in queries for now** — the column still exists (old columns aren't dropped until manual migration). The code simply ignores the value. Remove references from Go domain structs/logic but don't break the SQL queries that SELECT all columns.
    - Add `UpdateSessionLeaf` query: `UPDATE sessions SET leaf_message_id = @leaf_id WHERE id = @id;`
 
 8. [ ] Update `internal/session/session.go`:
    - Add `LeafMessageID string` field to `Session` struct
-   - Remove `SummaryMessageID string` field
-   - Update `fromDBSession()` to populate `LeafMessageID`, remove `SummaryMessageID`
+   - Remove `SummaryMessageID string` field from the Go domain struct (stop using it in logic). The DB column still exists but is ignored — `fromDBSession()` simply doesn't read it. sqlc-generated code will still have the field; just don't propagate it to the domain struct.
+   - Update `fromDBSession()` to populate `LeafMessageID`
    - Add `MoveLeaf(ctx, sessionID, leafMessageID) error` method — wraps `UpdateSessionLeaf` query + publishes `UpdatedEvent`
    - Update `Save()` to persist `LeafMessageID`
 
@@ -165,10 +128,10 @@ read internal/workspace/app_workspace.go
 
 12. [ ] Implement the new interface methods in `internal/workspace/app_workspace.go` (delegate to message/session services) and `internal/workspace/client_workspace.go` (HTTP client calls)
 
-13. [ ] Remove all `SummaryMessageID` references from `internal/workspace/client_workspace.go` and `internal/server/events.go`
+13. [ ] Stop **using** `SummaryMessageID` in Go logic across `internal/workspace/client_workspace.go`, `internal/server/events.go`, and anywhere else. The DB column and sqlc-generated field still exist (old columns aren't dropped yet), but no Go code should read or write the value. The `getSessionMessages()` fallback path (Task 3) handles un-migrated sessions without needing `SummaryMessageID`.
 
 14. [ ] Run `sqlc generate` to regenerate DB code
-15. [ ] Run `go build .` to verify compilation — fix any remaining `SummaryMessageID`/`is_summary_message` compilation errors across the codebase by grepping and cleaning up
+15. [ ] Run `go build .` to verify compilation — fix any remaining compilation errors from the `SummaryMessageID` usage removal
 
 16. [ ] **Write tests for the recursive CTE tree walk** (`GetBranchPath`). This is the most complex new query and the backbone of the feature. Create test cases in `internal/message/` (or `internal/db/`) covering:
     - Single message (parent_message_id = NULL) — returns just that message
@@ -199,7 +162,8 @@ go test ./internal/message/... ./internal/session/... ./internal/db/...
 
 1. [ ] Rewrite `getSessionMessages()` (~line 1035) to use tree walk:
    - Load the session to get `LeafMessageID`
-   - If `LeafMessageID` is empty, return empty slice (empty session)
+   - **Fallback for un-migrated sessions:** If `LeafMessageID` is empty BUT the session has messages (check `message_count > 0` or similar), fall back to the old `messages.List(ctx, sessionID)` query to load messages linearly. This ensures existing sessions continue working between Phase 2 merge and the manual data migration. Once the migration populates `leaf_message_id`, the fallback path is never hit.
+   - If `LeafMessageID` is empty and no messages exist, return empty slice (genuinely empty session)
    - Call `messages.GetBranchPath(ctx, session.LeafMessageID)` to get root→leaf path
    - Scan the path for the most recent `compaction` message (nearest to leaf = last in the root→leaf ordered list with `MessageType == "compaction"`)
    - If no compaction found: filter out non-message types (`label`, `model_change`, `thinking_level_change`), return conversation messages. For `branch_summary` messages: convert to a synthetic user message with content wrapped in `<summary>` tags and preamble "The following is a summary of a branch that this conversation came back from:"
