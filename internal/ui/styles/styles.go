@@ -510,8 +510,10 @@ type Styles struct {
 	// SlashAutocomplete styles for the inline "/" autocomplete dropdown.
 	SlashAutocomplete struct {
 		Normal         lipgloss.Style
+		BuiltinName    lipgloss.Style
 		CommandName    lipgloss.Style
 		SkillName      lipgloss.Style
+		BuiltinFocused lipgloss.Style
 		CommandFocused lipgloss.Style
 		SkillFocused   lipgloss.Style
 		Description    lipgloss.Style

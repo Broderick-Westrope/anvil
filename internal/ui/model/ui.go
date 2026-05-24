@@ -408,8 +408,10 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.slashAC = autocomplete.New(nil, 10)
 	ui.slashAC.SetStyles(autocomplete.Styles{
 		Normal:         com.Styles.SlashAutocomplete.Normal,
+		BuiltinName:    com.Styles.SlashAutocomplete.BuiltinName,
 		CommandName:    com.Styles.SlashAutocomplete.CommandName,
 		SkillName:      com.Styles.SlashAutocomplete.SkillName,
+		BuiltinFocused: com.Styles.SlashAutocomplete.BuiltinFocused,
 		CommandFocused: com.Styles.SlashAutocomplete.CommandFocused,
 		SkillFocused:   com.Styles.SlashAutocomplete.SkillFocused,
 		Description:    com.Styles.SlashAutocomplete.Description,
@@ -2416,6 +2418,20 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						}
 						return nil
 					}
+					if selected.Type == autocomplete.BuiltinItem {
+						// Builtins execute immediately on selection —
+						// no argument step needed.
+						name := selected.DisplayName
+						if name == "" {
+							name = selected.Name
+						}
+						m.closeSlashAC(true)
+						cmd := m.tryExecuteBuiltinCommand("/" + name)
+						if cmd != nil {
+							return cmd
+						}
+						return nil
+					}
 					// Commands: fill the name into the textarea so the
 					// user can add arguments before pressing Enter to
 					// submit.
@@ -3660,6 +3676,7 @@ func (m *UI) buildSlashACItems() []autocomplete.Item {
 		name string
 		desc string
 	}{
+		{"new", "Start a new session"},
 		{"sessions", "Switch between sessions"},
 		{"tree", "View session tree"},
 		{"branch", "Branch from a message"},
@@ -3771,26 +3788,36 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 	return nil
 }
 
+// noopCmd is a sentinel command that signals a builtin matched but produced
+// no side-effect command. It prevents callers from falling through to the
+// message-sending path.
+var noopCmd tea.Cmd = func() tea.Msg { return nil }
+
 // tryExecuteBuiltinCommand checks if value matches a builtin slash command
-// (e.g. "/sessions", "/tree", "/branch"). Returns a tea.Cmd if matched,
-// nil otherwise.
+// (e.g. "/sessions", "/tree", "/branch"). Returns a non-nil tea.Cmd when
+// matched (even if the action itself has no cmd), nil otherwise.
 func (m *UI) tryExecuteBuiltinCommand(value string) tea.Cmd {
 	builtins := map[string]func() tea.Cmd{
+		"new":      m.newSession,
 		"sessions": m.openSessionsDialog,
 		"tree":     func() tea.Cmd { return m.openDialog(dialog.TreeID) },
 		"branch":   func() tea.Cmd { return m.openDialog(dialog.BranchID) },
 	}
 
 	for name, action := range builtins {
-		prefix := "/" + name
-		if !strings.HasPrefix(value, prefix) {
+		// Builtins don't accept arguments — only match exact "/name".
+		// This lets users send "/sessions are great" as a normal
+		// message without triggering the modal.
+		if value != "/"+name {
 			continue
 		}
-		// Must be exact match or followed by a space.
-		if len(value) > len(prefix) && value[len(prefix)] != ' ' {
-			continue
+		if cmd := action(); cmd != nil {
+			return cmd
 		}
-		return action()
+		// Action matched but returned nil (e.g. openSessionsDialog
+		// mutates state directly). Return a noop so the caller knows
+		// the command was handled.
+		return noopCmd
 	}
 	return nil
 }
@@ -4036,8 +4063,10 @@ func (m *UI) refreshStyles() {
 	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
 	m.slashAC.SetStyles(autocomplete.Styles{
 		Normal:         t.SlashAutocomplete.Normal,
+		BuiltinName:    t.SlashAutocomplete.BuiltinName,
 		CommandName:    t.SlashAutocomplete.CommandName,
 		SkillName:      t.SlashAutocomplete.SkillName,
+		BuiltinFocused: t.SlashAutocomplete.BuiltinFocused,
 		CommandFocused: t.SlashAutocomplete.CommandFocused,
 		SkillFocused:   t.SlashAutocomplete.SkillFocused,
 		Description:    t.SlashAutocomplete.Description,
