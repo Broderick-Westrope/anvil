@@ -9,7 +9,8 @@ import (
 type ItemType int
 
 const (
-	CommandItem ItemType = iota
+	BuiltinItem ItemType = iota
+	CommandItem
 	SkillItem
 )
 
@@ -92,13 +93,14 @@ func (a *Autocomplete) applyFilter(q string) {
 		}
 	}
 
-	// Sort: lower score first (prefix < subsequence), then commands before
-	// skills within the same tier.
+	// Sort: lower score first (prefix < subsequence), then builtins
+	// before commands before skills within the same tier.
 	slices.SortStableFunc(matches, func(a, b scored) int {
 		if a.score != b.score {
 			return a.score - b.score
 		}
-		// Within same tier, commands sort before skills.
+		// Within same tier, builtins sort before commands, commands
+		// before skills.
 		if a.item.Type != b.item.Type {
 			return int(a.item.Type) - int(b.item.Type)
 		}

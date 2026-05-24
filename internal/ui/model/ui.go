@@ -3653,6 +3653,27 @@ func (m *UI) closeCompletions() {
 // custom commands and active skills.
 func (m *UI) buildSlashACItems() []autocomplete.Item {
 	var items []autocomplete.Item
+
+	// Builtin slash commands are added first so they take precedence
+	// over user-defined commands and skills with the same name.
+	builtins := []struct {
+		name string
+		desc string
+	}{
+		{"sessions", "Switch between sessions"},
+		{"tree", "View session tree"},
+		{"branch", "Branch from a message"},
+	}
+	for _, b := range builtins {
+		items = append(items, autocomplete.Item{
+			Name:        b.name,
+			DisplayName: b.name,
+			Description: b.desc,
+			Type:        autocomplete.BuiltinItem,
+			ID:          "builtin:" + b.name,
+		})
+	}
+
 	for _, cmd := range m.customCommands {
 		// Use DisplayName if set (collision-resolved), otherwise fall back
 		// to ItemName() which strips the source prefix (e.g., "greet" not
@@ -3697,6 +3718,13 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		return nil
 	}
 
+	// Builtin slash commands are checked before user-defined commands.
+	// If a user has a custom command with the same name as a builtin,
+	// the builtin wins.
+	if cmd := m.tryExecuteBuiltinCommand(value); cmd != nil {
+		return cmd
+	}
+
 	for _, cmd := range m.customCommands {
 		argName := cmd.ItemName()
 		if cmd.DisplayName != "" {
@@ -3739,6 +3767,30 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		}
 
 		return m.sendMessage(content)
+	}
+	return nil
+}
+
+// tryExecuteBuiltinCommand checks if value matches a builtin slash command
+// (e.g. "/sessions", "/tree", "/branch"). Returns a tea.Cmd if matched,
+// nil otherwise.
+func (m *UI) tryExecuteBuiltinCommand(value string) tea.Cmd {
+	builtins := map[string]func() tea.Cmd{
+		"sessions": m.openSessionsDialog,
+		"tree":     func() tea.Cmd { return m.openDialog(dialog.TreeID) },
+		"branch":   func() tea.Cmd { return m.openDialog(dialog.BranchID) },
+	}
+
+	for name, action := range builtins {
+		prefix := "/" + name
+		if !strings.HasPrefix(value, prefix) {
+			continue
+		}
+		// Must be exact match or followed by a space.
+		if len(value) > len(prefix) && value[len(prefix)] != ' ' {
+			continue
+		}
+		return action()
 	}
 	return nil
 }
@@ -4130,8 +4182,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	default:
-		// Unknown dialog
-		break
+		// Unknown or not-yet-implemented dialog — show an info toast
+		// so command palette entries merged before their modals exist
+		// give user feedback instead of silently doing nothing.
+		return util.ReportInfo("Not yet implemented")
 	}
 	return tea.Batch(cmds...)
 }

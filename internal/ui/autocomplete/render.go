@@ -76,9 +76,12 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	}
 
 	var typeSuffix string
-	if item.Type == CommandItem {
+	switch item.Type {
+	case CommandItem:
 		typeSuffix = "(cmd)"
-	} else {
+	case BuiltinItem:
+		typeSuffix = "(builtin)"
+	default:
 		typeSuffix = "(skill)"
 	}
 
@@ -100,7 +103,7 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	// When focused, the row style swaps fg/bg for the item's type color.
 	// All spans use the same style so the whole row is uniform.
 	if focused {
-		if item.Type == CommandItem {
+		if item.Type == CommandItem || item.Type == BuiltinItem {
 			return a.styles.CommandFocused.Render(plainLine)
 		}
 		return a.styles.SkillFocused.Render(plainLine)
@@ -110,7 +113,7 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	// to fill the remaining width so each row is uniform, matching
 	// the explicit padding used for focused rows.
 	var nameStyle lipgloss.Style
-	if item.Type == CommandItem {
+	if item.Type == CommandItem || item.Type == BuiltinItem {
 		nameStyle = a.styles.CommandName
 	} else {
 		nameStyle = a.styles.SkillName
