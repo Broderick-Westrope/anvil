@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/url"
@@ -589,6 +590,14 @@ func (t ToolGrep) GetTimeout() time.Duration {
 	return ptrValOr(t.Timeout, 5*time.Second)
 }
 
+// PluginConfig defines an external plugin directory that provides skills,
+// commands, and/or agent definitions.
+type PluginConfig struct {
+	// Path is the filesystem path to the plugin directory. Supports ~ and
+	// environment variable expansion.
+	Path string `json:"path" jsonschema:"description=Path to the plugin directory"`
+}
+
 // HookConfig defines a user-configured shell command that fires on a hook
 // event (e.g. PreToolUse). This is a pure-data struct: matcher compilation
 // is owned by hooks.Runner so a JSON round-trip, merge, or reload can't
@@ -636,13 +645,28 @@ type Config struct {
 
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
 
-	// Agents is the map of named agent configurations. When absent, defaults
-	// from SetupAgents are used.
+	// Agents is the map of named agent configurations. After SetupAgents,
+	// only the orchestrator is present. The full roster is populated by
+	// SetupAgentsWithDefaults when the coordinator loads .md files.
 	Agents map[string]Agent `json:"agents,omitempty"`
+
+	// userAgentOverrides stores the raw user-provided agent overrides from
+	// anvil.json before SetupAgents overwrites c.Agents with defaults. This
+	// allows SetupAgentsWithDefaults (called later by the coordinator) to
+	// re-apply user overrides on top of .md-derived defaults.
+	userAgentOverrides map[string]Agent
+
+	// agentsInitialized is set true by SetupAgents on its first call to
+	// guard against SetupAgentsWithDefaults running before it.
+	agentsInitialized bool
 
 	// DisabledAgents lists agent names to remove from the routing table and
 	// orchestrator prompt at startup.
 	DisabledAgents []string `json:"disabled_agents,omitempty"`
+
+	// Plugins is a list of external plugin directories to load skills,
+	// commands, and agents from.
+	Plugins []PluginConfig `json:"plugins,omitempty" jsonschema:"description=External plugin directories"`
 }
 
 func (c *Config) EnabledProviders() []ProviderConfig {
@@ -750,21 +774,10 @@ func readOnlyTools() []string {
 	}
 }
 
-// readWriteTools returns read-only tools plus write and execution tools
-// for agents that can modify the codebase and run commands.
-func readWriteTools() []string {
-	return append(
-		readOnlyTools(),
-		"edit",
-		"write",
-		"bash",
-		"multiedit",
-	)
-}
-
-// setupDefaultAgents initialises Config.Agents with the default 10-agent roster.
-// nil AllowedTools means unrestricted (all tools); nil AllowedSkills / AllowedMCP
-// means unrestricted for skills / MCPs respectively. An empty slice means none.
+// setupDefaultAgents initialises Config.Agents with only the orchestrator
+// default. The orchestrator has no .md file, so its config is always hardcoded.
+// Other agent defaults are sourced from .md files at coordinator init via
+// SetupAgentsWithDefaults.
 func (c *Config) setupDefaultAgents() {
 	c.Agents = map[string]Agent{
 		AgentOrchestrator: {
@@ -774,107 +787,93 @@ func (c *Config) setupDefaultAgents() {
 			AllowedSkills: nil, // Nil = all skills unrestricted.
 			AllowedMCP:    nil, // Nil = all MCPs unrestricted.
 		},
-		"oracle": {
-			ID:            "oracle",
-			Name:          "Oracle",
-			AllowedTools:  nil, // All tools.
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
-		"explorer": {
-			ID:            "explorer",
-			Name:          "Explorer",
-			AllowedTools:  readOnlyTools(),
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
-		"librarian": {
-			ID:            "librarian",
-			Name:          "Librarian",
-			AllowedTools:  append(readOnlyTools(), "agentic_fetch"),
-			AllowedSkills: []string{},
-			AllowedMCP: map[string][]string{
-				"websearch": nil,
-				"context7":  nil,
-				"grep_app":  nil,
-				"sourcebot": nil,
-			},
-		},
-		"designer": {
-			ID:            "designer",
-			Name:          "Designer",
-			AllowedTools:  nil, // All tools.
-			AllowedSkills: []string{"agent-browser"},
-			AllowedMCP:    map[string][]string{},
-		},
-		"fixer": {
-			ID:            "fixer",
-			Name:          "Fixer",
-			AllowedTools:  nil, // All tools.
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
-		"planner": {
-			ID:           "planner",
-			Name:         "Planner",
-			AllowedTools: readWriteTools(),
-			AllowedSkills: []string{
-				"grilling",
-				"brainstorming",
-				"drafting-tsds",
-				"writing-plans",
-				"planning-products",
-			},
-			AllowedMCP: map[string][]string{},
-		},
-		"tester": {
-			ID:           "tester",
-			Name:         "Tester",
-			AllowedTools: append(readOnlyTools(), "bash"),
-			AllowedSkills: []string{
-				"writing-tests",
-				"test-driven-development",
-				"scaffolding-plan-tests",
-				"fixing-flaky-tests",
-				"condition-based-waiting",
-			},
-			AllowedMCP: map[string][]string{},
-		},
-		"reviewer": {
-			ID:            "reviewer",
-			Name:          "Reviewer",
-			AllowedTools:  readOnlyTools(),
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
-		"devils-advocate": {
-			ID:            "devils-advocate",
-			Name:          "Devils Advocate",
-			AllowedTools:  readOnlyTools(),
-			AllowedSkills: []string{},
-			AllowedMCP:    map[string][]string{},
-		},
 	}
 }
 
-// SetupAgents sets up the agent roster from defaults plus any user overrides.
-// If Config.Agents is nil after JSON unmarshalling (no "agents" key in config),
-// pure defaults are used. If Config.Agents is non-nil, each user-defined agent
-// overlays its non-zero fields onto the corresponding default, and unknown agent
-// names are added as new entries. Disabled agents are removed last.
+// SetupAgents sets up the orchestrator agent default and stores the raw user
+// overrides from anvil.json for later use by SetupAgentsWithDefaults. Non-
+// orchestrator agents are loaded from .md files by the coordinator. On the
+// first call, the current c.Agents value is snapshotted as user overrides;
+// subsequent calls (e.g. config reload) reuse the original snapshot.
 func (c *Config) SetupAgents() {
-	// Snapshot user-provided overrides before setupDefaultAgents overwrites Agents.
-	userAgents := c.Agents
+	// Only snapshot user overrides on the first call. Subsequent calls (e.g.
+	// config reload) reuse the original snapshot to avoid capturing processed
+	// defaults from a prior SetupAgentsWithDefaults call.
+	if !c.agentsInitialized {
+		c.userAgentOverrides = c.Agents
+	}
 
-	// Apply 10-agent defaults unconditionally.
+	// Start with only the orchestrator. Non-orchestrator agent defaults are
+	// sourced from .md files at coordinator init via SetupAgentsWithDefaults.
 	c.setupDefaultAgents()
 
+	c.applyAgentOverrides(c.userAgentOverrides)
+
+	c.agentsInitialized = true
+}
+
+// SetupAgentsWithDefaults returns a new agent map built from .md-derived
+// defaults, plus the orchestrator default, plus any user overrides from
+// anvil.json. mdDefaults contains agents parsed from .md frontmatter (keyed
+// by agent name). The orchestrator is always added from internal defaults
+// since it has no .md file. This must be called after SetupAgents (which
+// stores the raw user overrides). The coordinator calls this after parsing
+// .md files. The receiver is not mutated.
+func (c *Config) SetupAgentsWithDefaults(mdDefaults map[string]Agent) map[string]Agent {
+	// Guard: SetupAgents must have been called first to store user overrides.
+	if !c.agentsInitialized {
+		slog.Warn("SetupAgentsWithDefaults called before SetupAgents; user overrides may be lost")
+	}
+
+	// Start with only the orchestrator default on a fresh map.
+	agents := map[string]Agent{
+		AgentOrchestrator: {
+			ID:            AgentOrchestrator,
+			Name:          "Orchestrator",
+			AllowedTools:  nil, // Nil = all tools unrestricted.
+			AllowedSkills: nil, // Nil = all skills unrestricted.
+			AllowedMCP:    nil, // Nil = all MCPs unrestricted.
+		},
+	}
+
+	// Merge in .md-derived defaults. The orchestrator is already present so
+	// mdDefaults entries with the orchestrator key are silently ignored.
+	for name, agent := range mdDefaults {
+		if _, exists := agents[name]; !exists {
+			agents[name] = agent
+		}
+	}
+
+	// Apply the raw user overrides stored by SetupAgents, not c.Agents which
+	// now contains the full hardcoded roster.
+	agents = applyOverrides(agents, c.userAgentOverrides, c.DisabledAgents)
+
+	return agents
+}
+
+// applyAgentOverrides overlays non-zero fields from userAgents onto the
+// current c.Agents map and removes any disabled agents. It is used by
+// SetupAgents.
+func (c *Config) applyAgentOverrides(userAgents map[string]Agent) {
+	c.Agents = applyOverrides(c.Agents, userAgents, c.DisabledAgents)
+}
+
+// applyOverrides overlays non-zero fields from userAgents onto agents and
+// removes disabled agents. It returns the modified map.
+func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabledAgents []string) map[string]Agent {
 	if userAgents != nil {
 		for name, userAgent := range userAgents {
-			def, ok := c.Agents[name]
+			def, ok := agents[name]
 			if !ok {
 				// User defined an agent not in the defaults; add it as-is.
-				c.Agents[name] = userAgent
+				// Ensure ID and Name are set from the map key if not provided.
+				if userAgent.ID == "" {
+					userAgent.ID = name
+				}
+				if userAgent.Name == "" {
+					userAgent.Name = name
+				}
+				agents[name] = userAgent
 				continue
 			}
 			// Overlay non-zero fields from the user config onto the default.
@@ -899,20 +898,22 @@ func (c *Config) SetupAgents() {
 			if userAgent.Disabled {
 				def.Disabled = true
 			}
-			c.Agents[name] = def
+			agents[name] = def
 		}
 	}
 
-	// Remove any agents whose names appear in DisabledAgents
-	// and agents whose Disabled field is true from the Agents map.
-	for _, name := range c.DisabledAgents {
-		delete(c.Agents, name)
+	// Remove any agents whose names appear in disabledAgents and agents
+	// whose Disabled field is true.
+	for _, name := range disabledAgents {
+		delete(agents, name)
 	}
-	for name, agent := range c.Agents {
+	for name, agent := range agents {
 		if agent.Disabled {
-			delete(c.Agents, name)
+			delete(agents, name)
 		}
 	}
+
+	return agents
 }
 
 // ResolveAgentModel resolves the SelectedModel for the given agent. If

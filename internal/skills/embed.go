@@ -61,7 +61,7 @@ func DiscoverBuiltinWithStates() ([]*Skill, []*SkillState) {
 		relPath = filepath.ToSlash(relPath)
 		skill.SkillFilePath = BuiltinPrefix + relPath
 		skill.Path = BuiltinPrefix + filepath.Dir(relPath)
-		skill.Builtin = true
+		skill.Source = SourceBuiltin
 
 		if err := skill.Validate(); err != nil {
 			slog.Warn("Builtin skill validation failed", "path", path, "error", err)

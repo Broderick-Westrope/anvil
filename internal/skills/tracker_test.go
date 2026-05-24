@@ -62,8 +62,8 @@ func TestTracker_BuiltinSkillTracking(t *testing.T) {
 
 	// Simulate active skills including a builtin skill (anvil-config).
 	activeSkills := []*Skill{
-		{Name: "anvil-config", Description: "Anvil config", Builtin: true},
-		{Name: "go-doc", Description: "Go docs", Builtin: false},
+		{Name: "anvil-config", Description: "Anvil config", Source: SourceBuiltin},
+		{Name: "go-doc", Description: "Go docs"},
 	}
 	tracker := NewTracker(activeSkills)
 
@@ -86,7 +86,7 @@ func TestTracker_OverriddenBuiltinNotTracked(t *testing.T) {
 	// Simulate scenario where builtin "bash" is overridden by user "bash".
 	// After dedup, only user "bash" is active.
 	activeSkills := []*Skill{
-		{Name: "bash", Description: "User bash override", Builtin: false},
+		{Name: "bash", Description: "User bash override"},
 	}
 	tracker := NewTracker(activeSkills)
 

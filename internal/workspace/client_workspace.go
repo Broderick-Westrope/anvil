@@ -473,6 +473,13 @@ func (w *ClientWorkspace) InitializePrompt() (string, error) {
 	return w.client.GetInitializePrompt(context.Background(), w.workspaceID())
 }
 
+// -- Plugins --
+
+// ReloadPlugins is not supported in client mode.
+func (w *ClientWorkspace) ReloadPlugins(_ context.Context) error {
+	return fmt.Errorf("plugin reload is not supported in client mode")
+}
+
 // -- Skills --
 
 // SkillStates returns nil in client mode because the remote workspace
@@ -480,6 +487,14 @@ func (w *ClientWorkspace) InitializePrompt() (string, error) {
 // will show no skills until this is implemented.
 // TODO: add a proto round-trip once the server exposes skill states.
 func (w *ClientWorkspace) SkillStates() []*skills.SkillState {
+	return nil
+}
+
+// ActiveSkillByName always returns nil in client mode — the server API
+// does not yet expose skill lookup by name.
+// TODO: Implement once the server exposes skill lookup by name (see
+// SkillStates TODO above).
+func (w *ClientWorkspace) ActiveSkillByName(_ string) *skills.Skill {
 	return nil
 }
 

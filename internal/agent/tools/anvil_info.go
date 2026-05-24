@@ -302,9 +302,17 @@ func writeSkills(b *strings.Builder, allSkills []*skills.Skill, activeSkills []*
 	// Build origin map from the pre-filter list.
 	originMap := make(map[string]string, len(allSkills))
 	for _, s := range allSkills {
-		if s.Builtin {
+		switch {
+		case s.Source == skills.SourceBuiltin:
 			originMap[s.Name] = "builtin"
-		} else {
+		case strings.HasPrefix(s.Source, "plugin:"):
+			after, _ := strings.CutPrefix(s.Source, "plugin:")
+			if after == "" {
+				originMap[s.Name] = "plugin"
+			} else {
+				originMap[s.Name] = after
+			}
+		default:
 			originMap[s.Name] = "user"
 		}
 	}
@@ -323,7 +331,7 @@ func writeSkills(b *strings.Builder, allSkills []*skills.Skill, activeSkills []*
 			state = "loaded"
 		}
 		origin := originMap[s.Name]
-		entries = append(entries, entry{name: s.Name, origin: origin, state: state})
+		entries = append(entries, entry{name: s.EffectiveName(), origin: origin, state: state})
 	}
 
 	// Disabled skills.

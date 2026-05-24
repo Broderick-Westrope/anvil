@@ -387,9 +387,9 @@ func TestAnvilInfo_Skills_MixedLoadedUnloaded(t *testing.T) {
 	t.Parallel()
 
 	allSkills := []*skills.Skill{
-		{Name: "go-doc", Builtin: false},
-		{Name: "bash", Builtin: false},
-		{Name: "anvil-config", Builtin: true},
+		{Name: "go-doc"},
+		{Name: "bash"},
+		{Name: "anvil-config", Source: skills.SourceBuiltin},
 	}
 	activeSkills := allSkills
 
@@ -411,13 +411,13 @@ func TestAnvilInfo_Skills_DisabledSkills(t *testing.T) {
 	t.Parallel()
 
 	allSkills := []*skills.Skill{
-		{Name: "bash", Builtin: false},
-		{Name: "anvil-config", Builtin: true},
-		{Name: "image-convert", Builtin: false},
+		{Name: "bash"},
+		{Name: "anvil-config", Source: skills.SourceBuiltin},
+		{Name: "image-convert"},
 	}
 	activeSkills := []*skills.Skill{
-		{Name: "bash", Builtin: false},
-		{Name: "anvil-config", Builtin: true},
+		{Name: "bash"},
+		{Name: "anvil-config", Source: skills.SourceBuiltin},
 	}
 
 	tracker := skills.NewTracker(activeSkills)
@@ -437,9 +437,9 @@ func TestAnvilInfo_Skills_Ordering(t *testing.T) {
 	t.Parallel()
 
 	allSkills := []*skills.Skill{
-		{Name: "z-skill", Builtin: false},
-		{Name: "a-skill", Builtin: true},
-		{Name: "m-skill", Builtin: false},
+		{Name: "z-skill"},
+		{Name: "a-skill", Source: skills.SourceBuiltin},
+		{Name: "m-skill"},
 	}
 	activeSkills := allSkills
 	tracker := skills.NewTracker(activeSkills)
@@ -460,8 +460,8 @@ func TestAnvilInfo_Skills_BuiltinOrigin(t *testing.T) {
 	t.Parallel()
 
 	allSkills := []*skills.Skill{
-		{Name: "anvil-config", Builtin: true},
-		{Name: "my-skill", Builtin: false},
+		{Name: "anvil-config", Source: skills.SourceBuiltin},
+		{Name: "my-skill"},
 	}
 	activeSkills := allSkills
 	tracker := skills.NewTracker(activeSkills)
@@ -471,6 +471,27 @@ func TestAnvilInfo_Skills_BuiltinOrigin(t *testing.T) {
 	})
 	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker)
 	require.Contains(t, output, "anvil-config = builtin, unloaded")
+	require.Contains(t, output, "my-skill = user, unloaded")
+}
+
+func TestAnvilInfo_Skills_PluginSource(t *testing.T) {
+	t.Parallel()
+
+	allSkills := []*skills.Skill{
+		{Name: "ce-helpers", Source: "plugin:ce"},
+		{Name: "my-skill"},
+	}
+	activeSkills := allSkills
+	tracker := skills.NewTracker(activeSkills)
+
+	cfg := config.NewTestStore(&config.Config{
+		Providers: csync.NewMap[string, config.ProviderConfig](),
+	})
+	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker)
+	require.Contains(t, output, "[skills]")
+	// Plugin source should show short form "ce", not full "plugin:ce".
+	require.Contains(t, output, "ce-helpers = ce, unloaded")
+	require.NotContains(t, output, "plugin:ce")
 	require.Contains(t, output, "my-skill = user, unloaded")
 }
 

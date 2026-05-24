@@ -796,3 +796,66 @@ func TestRefreshOAuthToken_Anthropic(t *testing.T) {
 			"OAuth token must not appear in ExtraHeaders")
 	}
 }
+
+func TestPluginConfigsEqual(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a    []PluginConfig
+		b    []PluginConfig
+		want bool
+	}{
+		{
+			name: "both nil",
+			a:    nil,
+			b:    nil,
+			want: true,
+		},
+		{
+			name: "both empty slices",
+			a:    []PluginConfig{},
+			b:    []PluginConfig{},
+			want: true,
+		},
+		{
+			name: "same paths same order",
+			a:    []PluginConfig{{Path: "/a"}, {Path: "/b"}},
+			b:    []PluginConfig{{Path: "/a"}, {Path: "/b"}},
+			want: true,
+		},
+		{
+			name: "same paths different order",
+			a:    []PluginConfig{{Path: "/a"}, {Path: "/b"}},
+			b:    []PluginConfig{{Path: "/b"}, {Path: "/a"}},
+			want: false,
+		},
+		{
+			name: "different lengths",
+			a:    []PluginConfig{{Path: "/a"}},
+			b:    []PluginConfig{{Path: "/a"}, {Path: "/b"}},
+			want: false,
+		},
+		{
+			name: "one nil one empty",
+			a:    nil,
+			b:    []PluginConfig{},
+			want: true,
+		},
+		{
+			name: "different paths",
+			a:    []PluginConfig{{Path: "/a"}},
+			b:    []PluginConfig{{Path: "/z"}},
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := pluginConfigsEqual(tc.a, tc.b)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}

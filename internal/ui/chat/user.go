@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"regexp"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -46,7 +47,7 @@ func (m *UserMessageItem) RawRender(width int) string {
 
 	renderer := common.MarkdownRenderer(m.sty, cappedWidth)
 
-	msgContent := strings.TrimSpace(m.message.Content().Text)
+	msgContent := stripSkillContentForDisplay(strings.TrimSpace(m.message.Content().Text))
 	result, err := renderer.Render(msgContent)
 	if err != nil {
 		content = msgContent
@@ -97,7 +98,7 @@ func (m *UserMessageItem) renderAttachments(width int) string {
 			MimeType: at.MIMEType,
 		})
 	}
-	return m.attachments.Render(attachments, false, width)
+	return m.attachments.Render(attachments, nil, false, width)
 }
 
 // HandleKeyEvent implements KeyEventHandler.
@@ -107,4 +108,35 @@ func (m *UserMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 		return true, common.CopyToClipboard(text, "Message copied to clipboard")
 	}
 	return false, nil
+}
+
+// skillContentRe matches <skill_content name="...">...</skill_content> blocks
+// and captures the skill name.
+var skillContentRe = regexp.MustCompile(`(?s)<skill_content name="([^"]+)">\n.*?\n</skill_content>`)
+
+// stripSkillContentForDisplay replaces verbose <skill_content> XML blocks
+// with compact "Using skill: name" labels for display in the chat thread.
+// The full content is still sent to the LLM.
+func stripSkillContentForDisplay(text string) string {
+	names := skillContentRe.FindAllStringSubmatch(text, -1)
+	if len(names) == 0 {
+		return text
+	}
+
+	// Collect skill names.
+	var skillNames []string
+	for _, match := range names {
+		skillNames = append(skillNames, match[1])
+	}
+
+	// Strip the XML blocks.
+	stripped := skillContentRe.ReplaceAllString(text, "")
+	stripped = strings.TrimSpace(stripped)
+
+	// Prepend compact skill labels.
+	label := "Using skill: " + strings.Join(skillNames, ", ")
+	if stripped == "" {
+		return label
+	}
+	return label + "\n\n" + stripped
 }

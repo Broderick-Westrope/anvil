@@ -32,10 +32,14 @@ type AppWorkspace struct {
 // NewAppWorkspace creates a new AppWorkspace wrapping the given app
 // and config store.
 func NewAppWorkspace(a *app.App, store *config.ConfigStore) *AppWorkspace {
-	return &AppWorkspace{
+	w := &AppWorkspace{
 		app:   a,
 		store: store,
 	}
+	store.SetPluginsChangedHook(func(ctx context.Context) error {
+		return w.ReloadPlugins(ctx)
+	})
+	return w
 }
 
 // -- Sessions --
@@ -299,6 +303,17 @@ func (w *AppWorkspace) InitializePrompt() (string, error) {
 	return agent.InitializePrompt(w.store)
 }
 
+// -- Plugins --
+
+// ReloadPlugins re-discovers all plugin content and rebuilds the
+// orchestrator.
+func (w *AppWorkspace) ReloadPlugins(ctx context.Context) error {
+	if w.app.AgentCoordinator == nil {
+		return fmt.Errorf("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.ReloadPlugins(ctx)
+}
+
 // -- Skills --
 
 func (w *AppWorkspace) SkillStates() []*skills.SkillState {
@@ -306,6 +321,15 @@ func (w *AppWorkspace) SkillStates() []*skills.SkillState {
 		return nil
 	}
 	return w.app.AgentCoordinator.SkillStates()
+}
+
+// ActiveSkillByName returns the active skill with the given name, or nil if
+// not found.
+func (w *AppWorkspace) ActiveSkillByName(name string) *skills.Skill {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.ActiveSkillByName(name)
 }
 
 // -- MCP operations --

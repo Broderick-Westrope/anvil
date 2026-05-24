@@ -129,8 +129,14 @@ type Workspace interface {
 	MarkProjectInitialized() error
 	InitializePrompt() (string, error)
 
+	// Plugins.
+	ReloadPlugins(ctx context.Context) error
+
 	// Skills.
 	SkillStates() []*skills.SkillState
+	// ActiveSkillByName returns the active skill with the given name, or nil
+	// if not found.
+	ActiveSkillByName(name string) *skills.Skill
 
 	// MCP operations (server-side in client mode)
 	MCPGetStates() map[string]mcptools.ClientInfo

@@ -393,8 +393,20 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 			action := ActionRunCustomCommand{
 				Content:   cmd.Content,
 				Arguments: cmd.Arguments,
+				Skills:    cmd.Skills,
 			}
-			commandItems = append(commandItems, NewCommandItem(c.com.Styles, "custom_"+cmd.ID, cmd.Name, "", action))
+			title := cmd.Name
+			if cmd.DisplayName != "" {
+				title = cmd.DisplayName
+			}
+			if cmd.ArgumentHint != "" {
+				title += " " + cmd.ArgumentHint
+			}
+			item := NewCommandItem(c.com.Styles, "custom_"+cmd.ID, title, "", action)
+			if cmd.Description != "" {
+				item = item.WithDescription(cmd.Description)
+			}
+			commandItems = append(commandItems, item)
 		}
 	case MCPPrompts:
 		for _, cmd := range c.mcpPrompts {
@@ -521,6 +533,8 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_transparent", transparentLabel, "", ActionToggleTransparentBackground{}))
 
 	commands = append(commands,
+		NewCommandItem(c.com.Styles, "browse_skills", "Browse Skills", "", ActionOpenDialog{SkillPickerID}),
+		NewCommandItem(c.com.Styles, "reload_plugins", "Reload Plugins", "", ActionReloadPlugins{}),
 		NewCommandItem(c.com.Styles, "quit", "Quit", "ctrl+c", tea.QuitMsg{}).WithAliases("exit"),
 	)
 

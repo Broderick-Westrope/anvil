@@ -707,39 +707,56 @@ func TestConfig_setupDefaultAgentsWithNoDisabledTools(t *testing.T) {
 
 	cfg.setupDefaultAgents()
 
+	// Only the orchestrator should be present after setupDefaultAgents.
+	require.Len(t, cfg.Agents, 1, "setupDefaultAgents should produce only the orchestrator")
+
 	// Orchestrator should have nil AllowedTools (unrestricted).
 	orchestrator, ok := cfg.Agents[AgentOrchestrator]
 	require.True(t, ok)
 	assert.Nil(t, orchestrator.AllowedTools, "orchestrator AllowedTools should be nil (unrestricted)")
 	assert.Nil(t, orchestrator.AllowedSkills, "orchestrator AllowedSkills should be nil (unrestricted)")
 	assert.Nil(t, orchestrator.AllowedMCP, "orchestrator AllowedMCP should be nil (unrestricted)")
-
-	// All 10 agents should be present.
-	assert.Len(t, cfg.Agents, 10, "expected 10 agents in the default roster")
 }
 
 func TestConfig_setupDefaultAgentsWithDisabledTools(t *testing.T) {
 	t.Parallel()
 
-	// SetupAgents no longer filters by DisabledTools; it sets nil for
+	// SetupAgentsWithDefaults does not filter by DisabledTools; it sets nil for
 	// unrestricted agents. Filtering is applied by the caller (coordinator)
-	// at runtime. Verify the read-only specialist tools are correct.
+	// at runtime. Verify the read-only specialist tools are correct when
+	// provided via .md-derived defaults.
 	cfg := &Config{
 		Options: &Options{
 			DisabledTools: []string{"edit", "download", "grep"},
 		},
 	}
 
-	cfg.setupDefaultAgents()
+	mdDefaults := map[string]Agent{
+		"explorer": {
+			ID:            "explorer",
+			Name:          "Explorer",
+			AllowedTools:  readOnlyTools(),
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"reviewer": {
+			ID:            "reviewer",
+			Name:          "Reviewer",
+			AllowedTools:  readOnlyTools(),
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+	}
+	result := cfg.SetupAgentsWithDefaults(mdDefaults)
 
 	// Explorer should have read-only tools (not filtered by DisabledTools at
 	// this layer).
-	explorer, ok := cfg.Agents["explorer"]
+	explorer, ok := result["explorer"]
 	require.True(t, ok)
 	assert.Equal(t, readOnlyTools(), explorer.AllowedTools)
 
 	// Reviewer should also have read-only tools.
-	reviewer, ok := cfg.Agents["reviewer"]
+	reviewer, ok := result["reviewer"]
 	require.True(t, ok)
 	assert.Equal(t, readOnlyTools(), reviewer.AllowedTools)
 }
@@ -747,7 +764,7 @@ func TestConfig_setupDefaultAgentsWithDisabledTools(t *testing.T) {
 func TestConfig_setupDefaultAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	t.Parallel()
 
-	// SetupAgents is a pure defaults function; it does not filter by
+	// SetupAgentsWithDefaults is a pure merge function; it does not filter by
 	// DisabledTools. Verify that librarian has its expected tool set
 	// regardless of what is in DisabledTools.
 	cfg := &Config{
@@ -756,17 +773,98 @@ func TestConfig_setupDefaultAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 		},
 	}
 
-	cfg.setupDefaultAgents()
+	mdDefaults := map[string]Agent{
+		"librarian": {
+			ID:            "librarian",
+			Name:          "Librarian",
+			AllowedTools:  append(readOnlyTools(), "agentic_fetch"),
+			AllowedSkills: []string{},
+			AllowedMCP: map[string][]string{
+				"websearch": nil,
+				"context7":  nil,
+				"grep_app":  nil,
+				"sourcebot": nil,
+			},
+		},
+		"tester": {
+			ID:           "tester",
+			Name:         "Tester",
+			AllowedTools: append(readOnlyTools(), "bash"),
+			AllowedSkills: []string{
+				"writing-tests",
+				"test-driven-development",
+				"scaffolding-plan-tests",
+				"fixing-flaky-tests",
+				"condition-based-waiting",
+			},
+			AllowedMCP: map[string][]string{},
+		},
+	}
+	result := cfg.SetupAgentsWithDefaults(mdDefaults)
 
 	// Librarian has read-only tools plus agentic_fetch.
-	librarian, ok := cfg.Agents["librarian"]
+	librarian, ok := result["librarian"]
 	require.True(t, ok)
 	assert.Equal(t, append(readOnlyTools(), "agentic_fetch"), librarian.AllowedTools)
 
 	// Tester has read-only tools plus bash.
-	tester, ok := cfg.Agents["tester"]
+	tester, ok := result["tester"]
 	require.True(t, ok)
 	assert.Equal(t, append(readOnlyTools(), "bash"), tester.AllowedTools)
+}
+
+func TestConfig_SetupAgentsWithDefaults_UserOverridesApplied(t *testing.T) {
+	t.Parallel()
+
+	// Simulate the real flow: user has agent overrides in anvil.json,
+	// SetupAgents is called during config load, then the coordinator calls
+	// SetupAgentsWithDefaults with .md-derived defaults.
+	cfg := &Config{
+		Options: &Options{DisabledTools: []string{}},
+		Agents: map[string]Agent{
+			"explorer": {Model: "anthropic/claude-haiku-3-5"}, // User override.
+		},
+	}
+
+	// Config load calls SetupAgents (stores user overrides internally).
+	cfg.SetupAgents()
+
+	// Coordinator calls SetupAgentsWithDefaults with .md-derived defaults.
+	mdDefaults := map[string]Agent{
+		"explorer": {
+			ID:            "explorer",
+			Name:          "Explorer",
+			AllowedTools:  readOnlyTools(),
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+		"oracle": {
+			ID:            "oracle",
+			Name:          "Oracle",
+			AllowedTools:  nil,
+			AllowedSkills: []string{},
+			AllowedMCP:    map[string][]string{},
+		},
+	}
+	result := cfg.SetupAgentsWithDefaults(mdDefaults)
+
+	// Explorer should have the .md-derived tools and the user's model override.
+	explorer, ok := result["explorer"]
+	require.True(t, ok)
+	assert.Equal(t, "anthropic/claude-haiku-3-5", explorer.Model,
+		"user model override should survive SetupAgentsWithDefaults")
+	assert.Equal(t, readOnlyTools(), explorer.AllowedTools,
+		"explorer should have .md-derived tools, not hardcoded SetupAgents tools")
+
+	// Oracle should have .md-derived values (no user override).
+	oracle, ok := result["oracle"]
+	require.True(t, ok)
+	assert.Nil(t, oracle.AllowedTools, "oracle AllowedTools should be nil (unrestricted)")
+	assert.Equal(t, []string{}, oracle.AllowedSkills, "oracle should have no skills from .md")
+
+	// Orchestrator should still be present.
+	_, ok = result[AgentOrchestrator]
+	require.True(t, ok, "orchestrator should be present")
 }
 
 func TestConfig_configureProvidersWithDisabledProvider(t *testing.T) {

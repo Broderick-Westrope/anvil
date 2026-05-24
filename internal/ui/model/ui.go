@@ -42,6 +42,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
+	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/completions"
@@ -110,6 +111,16 @@ const (
 	uiChat
 )
 
+// Slash autocomplete key bindings.
+var (
+	slashACUp    = key.NewBinding(key.WithKeys("up"))
+	slashACDown  = key.NewBinding(key.WithKeys("down"))
+	slashACEnter = key.NewBinding(key.WithKeys("enter"))
+	slashACEsc   = key.NewBinding(key.WithKeys("esc", "alt+esc"))
+	slashACTab   = key.NewBinding(key.WithKeys("tab"))
+	slashACCtrlP = key.NewBinding(key.WithKeys("ctrl+p"))
+)
+
 type openEditorMsg struct {
 	Text string
 }
@@ -124,6 +135,15 @@ type (
 	// mcpPromptsLoadedMsg is sent when mcp prompts are loaded.
 	mcpPromptsLoadedMsg struct {
 		Prompts []commands.MCPPrompt
+	}
+	// pluginReloadedMsg is sent when plugin reload completes successfully.
+	pluginReloadedMsg struct {
+		SkillStates    []*skills.SkillState
+		CustomCommands []commands.CustomCommand
+	}
+	// pluginReloadFailedMsg is sent when plugin reload fails.
+	pluginReloadFailedMsg struct {
+		Err error
 	}
 	// mcpStateChangedMsg is sent when there is a change in MCP client states.
 	mcpStateChangedMsg struct {
@@ -232,6 +252,12 @@ type UI struct {
 	completionsStartIndex    int
 	completionsQuery         string
 	completionsPositionStart image.Point // x,y where user typed '@'
+
+	// Slash-command autocomplete state.
+	slashAC              *autocomplete.Autocomplete
+	slashACOpen          bool
+	slashACStartIndex    int         // Position in textarea where '/' was typed.
+	slashACPositionStart image.Point // Screen position where '/' was typed.
 
 	// Chat components
 	chat *Chat
@@ -348,6 +374,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 			com.Styles.Attachments.Deleting,
 			com.Styles.Attachments.Image,
 			com.Styles.Attachments.Text,
+			com.Styles.Attachments.Skill,
 		),
 		attachments.Keymap{
 			DeleteMode: keyMap.Editor.AttachmentDeleteMode,
@@ -376,6 +403,17 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		initialSessionID:    initialSessionID,
 		continueLastSession: continueLast,
 	}
+
+	// Initialize slash-command autocomplete.
+	ui.slashAC = autocomplete.New(nil, 10)
+	ui.slashAC.SetStyles(autocomplete.Styles{
+		Normal:         com.Styles.SlashAutocomplete.Normal,
+		CommandName:    com.Styles.SlashAutocomplete.CommandName,
+		SkillName:      com.Styles.SlashAutocomplete.SkillName,
+		CommandFocused: com.Styles.SlashAutocomplete.CommandFocused,
+		SkillFocused:   com.Styles.SlashAutocomplete.SkillFocused,
+		Description:    com.Styles.SlashAutocomplete.Description,
+	})
 
 	status := NewStatus(com, ui)
 
@@ -495,11 +533,30 @@ func (m *UI) setState(state uiState, focus uiFocusState) {
 // loadCustomCommands loads the custom commands asynchronously.
 func (m *UI) loadCustomCommands() tea.Cmd {
 	return func() tea.Msg {
-		customCommands, err := commands.LoadCustomCommands(m.com.Config())
+		customCommands, err := commands.LoadAllCommands(m.com.Config(), nil)
 		if err != nil {
 			slog.Error("Failed to load custom commands", "error", err)
 		}
 		return userCommandsLoadedMsg{Commands: customCommands}
+	}
+}
+
+// reloadPlugins re-discovers all plugin content asynchronously.
+func (m *UI) reloadPlugins() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		if err := m.com.Workspace.ReloadPlugins(ctx); err != nil {
+			return pluginReloadFailedMsg{Err: err}
+		}
+		// Reload custom commands (which now include plugin commands).
+		customCmds, err := commands.LoadAllCommands(m.com.Config(), nil)
+		if err != nil {
+			slog.Error("Failed to reload custom commands after plugin reload", "error", err)
+		}
+		return pluginReloadedMsg{
+			SkillStates:    m.com.Workspace.SkillStates(),
+			CustomCommands: customCmds,
+		}
 	}
 }
 
@@ -653,6 +710,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
+		m.slashAC.SetItems(m.buildSlashACItems())
 		dia := m.dialog.Dialog(dialog.CommandsID)
 		if dia == nil {
 			break
@@ -663,6 +721,21 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			commands.SetCustomCommands(m.customCommands)
 		}
 
+	case pluginReloadedMsg:
+		// Update skill states and custom commands after reload.
+		m.skillStates = msg.SkillStates
+		m.customCommands = msg.CustomCommands
+		m.slashAC.SetItems(m.buildSlashACItems())
+		// Update open commands dialog if present.
+		if dia := m.dialog.Dialog(dialog.CommandsID); dia != nil {
+			if cmdsDialog, ok := dia.(*dialog.Commands); ok {
+				cmdsDialog.SetCustomCommands(m.customCommands)
+			}
+		}
+		cmds = append(cmds, util.ReportInfo("Plugins reloaded."))
+	case pluginReloadFailedMsg:
+		slog.Error("Plugin reload failed", "error", msg.Err)
+		cmds = append(cmds, util.ReportError(msg.Err))
 	case mcpStateChangedMsg:
 		m.mcpStates = msg.states
 	case mcpPromptsLoadedMsg:
@@ -783,6 +856,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If the pubsub timing is ever fixed upstream, this handler
 		// should merge with builtins rather than blindly replacing.
 		m.skillStates = msg.Payload.States
+		m.slashAC.SetItems(m.buildSlashACItems())
 	case pubsub.Event[mcp.Event]:
 		switch msg.Payload.Type {
 		case mcp.EventStateChanged:
@@ -1006,6 +1080,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case openEditorMsg:
+		m.closeSlashAC(true)
 		prevHeight := m.textarea.Height()
 		m.textarea.SetValue(msg.Text)
 		m.textarea.MoveToEnd()
@@ -1992,22 +2067,27 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		))
 
 	case dialog.ActionRunCustomCommand:
-		if len(msg.Arguments) > 0 && msg.Args == nil {
+		if customCommandNeedsArgumentDialog(msg) {
 			m.dialog.CloseFrontDialog()
 			argsDialog := dialog.NewArguments(
 				m.com,
 				"Custom Command Arguments",
 				"",
-				msg.Arguments,
+				customCommandDialogArguments(msg),
 				msg, // Pass the action as the result
 			)
 			m.dialog.OpenDialog(argsDialog)
 			break
 		}
-		content := msg.Content
-		if msg.Args != nil {
-			content = substituteArgs(content, msg.Args)
+		content := substituteCustomCommandArgs(msg)
+
+		// Resolve and prepend skill content. This is safe to call in Update
+		// because ActiveSkillByName is an in-memory lookup (no IO). If it
+		// ever becomes an RPC, this must move to a tea.Cmd.
+		if resolved := skills.ResolveContent(msg.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
+			content = resolved + "\n\n" + content
 		}
+
 		cmds = append(cmds, m.sendMessage(content))
 		m.dialog.CloseFrontDialog()
 	case dialog.ActionRunMCPPrompt:
@@ -2025,20 +2105,25 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		cmds = append(cmds, m.runMCPPrompt(msg.ClientID, msg.PromptID, msg.Args))
+	case dialog.ActionReloadPlugins:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		cmds = append(cmds, m.reloadPlugins())
+	case dialog.ActionAttachSkill:
+		if m.slashACOpen {
+			m.closeSlashAC(true)
+		}
+		m.dialog.CloseDialog(dialog.CommandsID)
+		m.dialog.CloseDialog(dialog.SkillPickerID)
+		m.attachments.Update(attachments.SkillAttachment{
+			Name:         msg.Name,
+			Instructions: msg.Instructions,
+			Source:       msg.Source,
+		})
 	default:
 		cmds = append(cmds, util.CmdHandler(msg))
 	}
 
 	return tea.Batch(cmds...)
-}
-
-// substituteArgs replaces $ARG_NAME placeholders in content with actual values.
-func substituteArgs(content string, args map[string]string) string {
-	for name, value := range args {
-		placeholder := "$" + name
-		content = strings.ReplaceAll(content, placeholder, value)
-	}
-	return content
 }
 
 // refreshHyperAndRetrySelect returns a command that silently refreshes
@@ -2298,6 +2383,76 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.focus = uiFocusMain
 				break
 			}
+			// Handle slash autocomplete keys before normal editor dispatch.
+			if m.slashACOpen {
+				switch {
+				case key.Matches(msg, slashACUp):
+					m.slashAC.MoveUp()
+					return nil
+				case key.Matches(msg, slashACDown):
+					m.slashAC.MoveDown()
+					return nil
+				case key.Matches(msg, slashACEnter), key.Matches(msg, slashACTab):
+					selected := m.slashAC.Selected()
+					if selected == nil {
+						// No matches — close the AC and fall through to
+						// the normal editor dispatch so Enter submits.
+						m.closeSlashAC(false)
+						break
+					}
+					if selected.Type == autocomplete.SkillItem {
+						// Attach skill inline — no tea.Cmd round-trip
+						// needed since ActionAttachSkill is only handled
+						// by handleDialogMsg which requires an open dialog.
+						skillName := strings.TrimPrefix(selected.ID, "skill:")
+						skill := m.com.Workspace.ActiveSkillByName(skillName)
+						m.closeSlashAC(true)
+						if skill != nil {
+							m.attachments.Update(attachments.SkillAttachment{
+								Name:         skill.Name,
+								Instructions: skill.Instructions,
+								Source:       skill.Source,
+							})
+						}
+						return nil
+					}
+					// Commands: fill the name into the textarea so the
+					// user can add arguments before pressing Enter to
+					// submit.
+					name := selected.DisplayName
+					if name == "" {
+						name = selected.Name
+					}
+					m.closeSlashAC(false) // Keep text, we'll replace it.
+					m.textarea.SetValue("/" + name + " ")
+					m.textarea.MoveToEnd()
+					return nil
+				case key.Matches(msg, slashACEsc):
+					m.closeSlashAC(true)
+					return nil
+				case key.Matches(msg, slashACCtrlP):
+					// Ctrl+P opens palette regardless of autocomplete state.
+					m.closeSlashAC(true)
+					if cmd := m.openCommandsDialog(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					return tea.Batch(cmds...)
+				default:
+					// Let the character through to the textarea, then update the query.
+					prevHeight := m.textarea.Height()
+					cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
+					// Update autocomplete query from textarea content after "/".
+					value := m.textarea.Value()
+					if len(value) <= m.slashACStartIndex || value[m.slashACStartIndex] != '/' {
+						// User deleted past the "/".
+						m.closeSlashAC(false)
+					} else {
+						query := value[m.slashACStartIndex+1:]
+						m.slashAC.SetQuery(query)
+					}
+					return tea.Batch(cmds...)
+				}
+			}
 			// Handle completions if open.
 			if m.completionsOpen {
 				if msg, ok := m.completions.Update(msg); ok {
@@ -2361,16 +2516,43 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					return m.openQuitDialog()
 				}
 
-				attachments := m.attachments.List()
+				// Check for /command prefix and execute as a slash
+				// command instead of sending as a plain message.
+				if cmd := m.tryExecuteSlashCommand(value); cmd != nil {
+					m.attachments.Reset()
+					cmds = append(cmds, cmd)
+					return tea.Batch(cmds...)
+				}
+
+				fileAttachments := m.attachments.List()
+				skillAttachments := m.attachments.SkillList()
+
+				// Block submit when there is no text and no text file
+				// attachment. Skills alone are context — they need an
+				// accompanying request. Don't reset attachments so the
+				// user keeps their chips.
+				if len(value) == 0 && !message.ContainsTextAttachment(fileAttachments) {
+					if len(skillAttachments) > 0 {
+						cmds = append(cmds, util.ReportInfo("Type a message to send with the attached skill(s)."))
+					}
+					return tea.Batch(cmds...)
+				}
 				m.attachments.Reset()
-				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
-					return nil
+
+				// Prepend skill content to the user message. Uses the
+				// same XML format as the command/slash-AC skill paths.
+				if len(skillAttachments) > 0 {
+					var parts []string
+					for _, skill := range skillAttachments {
+						parts = append(parts, skills.FormatContentXML(skill.Name, skill.Instructions))
+					}
+					value = strings.Join(parts, "\n\n") + "\n\n" + value
 				}
 
 				m.randomizePlaceholders()
 				m.historyReset()
 
-				return tea.Batch(m.sendMessage(value, attachments...), m.loadPromptHistory())
+				return tea.Batch(m.sendMessage(value, fileAttachments...), m.loadPromptHistory())
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
@@ -2415,10 +2597,16 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-			case key.Matches(msg, m.keyMap.Editor.Commands) && m.textarea.Value() == "":
-				if cmd := m.openCommandsDialog(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+			case key.Matches(msg, m.keyMap.Editor.Commands) && m.textarea.Value() == "" && !m.slashACOpen:
+				// Open inline autocomplete instead of palette dialog.
+				m.slashACOpen = true
+				m.slashACStartIndex = 0
+				m.slashACPositionStart = m.completionsPosition()
+				m.slashAC.SetQuery("")
+				m.slashAC.Show()
+				// Let textarea.Update handle inserting the "/" character.
+				prevHeight := m.textarea.Height()
+				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
 			default:
 				if handleGlobalKeys(msg) {
 					// Handle global keys first before passing to textarea.
@@ -2732,6 +2920,27 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		})
 	}
 
+	// Draw slash autocomplete popup if open, positioned like the @
+	// completions dropdown — left edge aligned with the "/" cursor.
+	if !isOnboarding && m.slashACOpen && m.slashAC.Len() > 0 {
+		w := min(80, m.layout.editor.Dx())
+		h := m.slashAC.ViewHeight()
+		x := m.slashACPositionStart.X
+		y := m.slashACPositionStart.Y - h
+		screenW := area.Dx()
+		if x+w > screenW {
+			x = screenW - w
+		}
+		x = max(0, x)
+		y = max(0, y+1) // Offset for attachments row.
+
+		acView := uv.NewStyledString(m.slashAC.Render(w))
+		acView.Draw(scr, image.Rectangle{
+			Min: image.Pt(x, y),
+			Max: image.Pt(x+w, y+h),
+		})
+	}
+
 	// Debugging rendering (visually see when the tui rerenders)
 	if os.Getenv("ANVIL_UI_DEBUG") == "true" {
 		debugView := lipgloss.NewStyle().Background(lipgloss.ANSIColor(rand.Intn(256))).Width(4).Height(2)
@@ -2887,7 +3096,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 	k := &m.keyMap
 	help := k.Help
 	help.SetHelp("ctrl+g", "less")
-	hasAttachments := len(m.attachments.List()) > 0
+	hasAttachments := len(m.attachments.List()) > 0 || len(m.attachments.SkillList()) > 0
 	hasSession := m.hasSession()
 	commands := k.Commands
 	if m.focus == uiFocusEditor && m.textarea.Value() == "" {
@@ -3440,6 +3649,122 @@ func (m *UI) closeCompletions() {
 	m.completions.Close()
 }
 
+// buildSlashACItems builds the unified autocomplete item list from
+// custom commands and active skills.
+func (m *UI) buildSlashACItems() []autocomplete.Item {
+	var items []autocomplete.Item
+	for _, cmd := range m.customCommands {
+		// Use DisplayName if set (collision-resolved), otherwise fall back
+		// to ItemName() which strips the source prefix (e.g., "greet" not
+		// "plugin:test-plugin:greet").
+		displayName := cmd.ItemName()
+		if cmd.DisplayName != "" {
+			displayName = cmd.DisplayName
+		}
+		items = append(items, autocomplete.Item{
+			Name:         displayName,
+			DisplayName:  displayName,
+			Description:  cmd.Description,
+			ArgumentHint: cmd.ArgumentHint,
+			Type:         autocomplete.CommandItem,
+			ID:           "cmd:" + cmd.ID,
+		})
+	}
+	for _, ss := range m.skillStates {
+		if ss.State != skills.StateNormal {
+			continue
+		}
+		desc := ""
+		if skill := m.com.Workspace.ActiveSkillByName(ss.Name); skill != nil {
+			desc = skill.Description
+		}
+		items = append(items, autocomplete.Item{
+			Name:        ss.Name,
+			Description: desc,
+			Type:        autocomplete.SkillItem,
+			ID:          "skill:" + ss.Name,
+		})
+	}
+	return items
+}
+
+// tryExecuteSlashCommand checks if value starts with "/" followed by a known
+// command name. If matched, it executes the command (with argument
+// substitution and skill preloading) and returns a tea.Cmd. Returns nil if
+// the value is not a slash command.
+func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
+	if !strings.HasPrefix(value, "/") {
+		return nil
+	}
+
+	for _, cmd := range m.customCommands {
+		argName := cmd.ItemName()
+		if cmd.DisplayName != "" {
+			argName = cmd.DisplayName
+		}
+		rawArgs := extractSlashArgs(value, argName)
+		prefix := "/" + argName
+		// Check for exact prefix match (the value must start with
+		// "/name" followed by a space or end of string).
+		if !strings.HasPrefix(value, prefix) {
+			continue
+		}
+		if len(value) > len(prefix) && value[len(prefix)] != ' ' {
+			continue
+		}
+
+		// Command matched. If it has named arguments and none were
+		// provided inline, open the argument dialog.
+		if len(cmd.Arguments) > 0 && rawArgs == "" {
+			action := dialog.ActionRunCustomCommand{
+				Content:   cmd.Content,
+				Arguments: cmd.Arguments,
+				Skills:    cmd.Skills,
+			}
+			return func() tea.Msg { return action }
+		}
+
+		content := cmd.Content
+		if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
+			content = commands.SubstituteArgs(content, nil, rawArgs)
+		}
+		if resolved := skills.ResolveContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
+			content = resolved + "\n\n" + content
+		}
+
+		// Include any user-attached skill chips so they are not
+		// silently dropped when submitting via a slash command.
+		for _, sa := range m.attachments.SkillList() {
+			content = skills.FormatContentXML(sa.Name, sa.Instructions) + "\n\n" + content
+		}
+
+		return m.sendMessage(content)
+	}
+	return nil
+}
+
+// closeSlashAC hides the slash autocomplete and optionally clears the
+// textarea.
+func (m *UI) closeSlashAC(clearText bool) {
+	m.slashACOpen = false
+	m.slashAC.Hide()
+	if clearText {
+		m.textarea.SetValue("")
+	}
+}
+
+// extractSlashArgs extracts the raw argument string from the given textarea
+// value. Given "/commit fix typo" and command name "commit", returns
+// "fix typo".
+func extractSlashArgs(textValue, cmdName string) string {
+	prefix := "/" + cmdName
+	if !strings.HasPrefix(textValue, prefix) {
+		return ""
+	}
+	rest := textValue[len(prefix):]
+	return strings.TrimLeft(rest, " ")
+}
+
 // insertCompletionText replaces the @query in the textarea with the given text.
 // Returns false if the replacement cannot be performed.
 func (m *UI) insertCompletionText(text string) bool {
@@ -3623,7 +3948,7 @@ func (m *UI) randomizePlaceholders() {
 // renderEditorView renders the editor view with attachments if any.
 func (m *UI) renderEditorView(width int) string {
 	var attachmentsView string
-	if len(m.attachments.List()) > 0 {
+	if len(m.attachments.List()) > 0 || len(m.attachments.SkillList()) > 0 {
 		attachmentsView = m.attachments.Render(width)
 	}
 	return strings.Join([]string{
@@ -3657,11 +3982,20 @@ func (m *UI) refreshStyles() {
 	}
 	m.textarea.SetStyles(t.Editor.Textarea)
 	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
+	m.slashAC.SetStyles(autocomplete.Styles{
+		Normal:         t.SlashAutocomplete.Normal,
+		CommandName:    t.SlashAutocomplete.CommandName,
+		SkillName:      t.SlashAutocomplete.SkillName,
+		CommandFocused: t.SlashAutocomplete.CommandFocused,
+		SkillFocused:   t.SlashAutocomplete.SkillFocused,
+		Description:    t.SlashAutocomplete.Description,
+	})
 	m.attachments.Renderer().SetStyles(
 		t.Attachments.Normal,
 		t.Attachments.Deleting,
 		t.Attachments.Image,
 		t.Attachments.Text,
+		t.Attachments.Skill,
 	)
 	m.todoSpinner.Style = t.Pills.TodoSpinner
 	m.status.help.Styles = t.Help
@@ -3787,6 +4121,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openFilesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.SkillPickerID:
+		if cmd := m.openSkillPickerDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.QuitID:
 		if cmd := m.openQuitDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -3796,6 +4134,32 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		break
 	}
 	return tea.Batch(cmds...)
+}
+
+// openSkillPickerDialog opens the skill picker dialog.
+func (m *UI) openSkillPickerDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.SkillPickerID) {
+		m.dialog.BringToFront(dialog.SkillPickerID)
+		return nil
+	}
+
+	// Collect active skills from skill states. This is safe to call
+	// in Update because ActiveSkillByName is an in-memory lookup
+	// (no IO). If it ever becomes an RPC, this must move to a
+	// tea.Cmd.
+	var activeSkills []*skills.Skill
+	for _, ss := range m.skillStates {
+		if ss.State != skills.StateNormal {
+			continue
+		}
+		if skill := m.com.Workspace.ActiveSkillByName(ss.Name); skill != nil {
+			activeSkills = append(activeSkills, skill)
+		}
+	}
+
+	sp := dialog.NewSkillPicker(m.com, activeSkills)
+	m.dialog.OpenDialog(sp)
+	return nil
 }
 
 // openQuitDialog opens the quit confirmation dialog.
@@ -3996,6 +4360,7 @@ func (m *UI) newSession() tea.Cmd {
 	m.textarea.Focus()
 	m.chat.Blur()
 	m.chat.ClearMessages()
+	m.attachments.Reset()
 	m.pillsExpanded = false
 	m.promptQueue = 0
 	m.pillsView = ""
@@ -4069,6 +4434,7 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 		return true
 	}
 	if !allExistsAndValid() {
+		m.closeSlashAC(true)
 		prevHeight := m.textarea.Height()
 		return m.updateTextareaWithPrevHeight(msg, prevHeight)
 	}

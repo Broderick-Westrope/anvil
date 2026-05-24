@@ -43,6 +43,7 @@ const (
 
 	ImageIcon string = "■"
 	TextIcon  string = "≡"
+	SkillIcon string = "⚡"
 
 	ScrollbarThumb string = "┃"
 	ScrollbarTrack string = "│"
@@ -506,11 +507,22 @@ type Styles struct {
 		Match   lipgloss.Style
 	}
 
+	// SlashAutocomplete styles for the inline "/" autocomplete dropdown.
+	SlashAutocomplete struct {
+		Normal         lipgloss.Style
+		CommandName    lipgloss.Style
+		SkillName      lipgloss.Style
+		CommandFocused lipgloss.Style
+		SkillFocused   lipgloss.Style
+		Description    lipgloss.Style
+	}
+
 	// Attachments styles
 	Attachments struct {
 		Normal   lipgloss.Style
 		Image    lipgloss.Style
 		Text     lipgloss.Style
+		Skill    lipgloss.Style
 		Deleting lipgloss.Style
 	}
 

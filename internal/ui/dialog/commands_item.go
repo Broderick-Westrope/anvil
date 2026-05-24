@@ -9,15 +9,16 @@ import (
 
 // CommandItem wraps a uicmd.Command to implement the ListItem interface.
 type CommandItem struct {
-	id       string
-	title    string
-	shortcut string
-	action   Action
-	aliases  []string
-	t        *styles.Styles
-	m        fuzzy.Match
-	cache    map[int]string
-	focused  bool
+	id          string
+	title       string
+	shortcut    string
+	description string // Display-only description, never matched as shortcut key.
+	action      Action
+	aliases     []string
+	t           *styles.Styles
+	m           fuzzy.Match
+	cache       map[int]string
+	focused     bool
 }
 
 var _ ListItem = &CommandItem{}
@@ -36,6 +37,13 @@ func NewCommandItem(t *styles.Styles, id, title, shortcut string, action Action)
 // WithAliases returns the CommandItem with the given aliases for filtering.
 func (c *CommandItem) WithAliases(aliases ...string) *CommandItem {
 	c.aliases = aliases
+	return c
+}
+
+// WithDescription sets a description shown in the info slot. Unlike shortcut,
+// this is never matched as a key binding.
+func (c *CommandItem) WithDescription(desc string) *CommandItem {
+	c.description = desc
 	return c
 }
 
@@ -84,5 +92,9 @@ func (c *CommandItem) Render(width int) string {
 		InfoTextBlurred: c.t.Dialog.ListItem.InfoBlurred,
 		InfoTextFocused: c.t.Dialog.ListItem.InfoFocused,
 	}
-	return renderItem(styles, c.title, c.shortcut, c.focused, width, c.cache, &c.m)
+	info := c.shortcut
+	if c.description != "" {
+		info = c.description
+	}
+	return renderItem(styles, c.title, info, c.focused, width, c.cache, &c.m)
 }

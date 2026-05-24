@@ -70,6 +70,7 @@ type (
 	ActionRunCustomCommand struct {
 		Content   string
 		Arguments []commands.Argument
+		Skills    []string          // Skill names to preload.
 		Args      map[string]string // Actual argument values
 	}
 	// ActionRunMCPPrompt is a message to run a custom command.
@@ -85,6 +86,15 @@ type (
 	ActionEnableDockerMCP struct{}
 	// ActionDisableDockerMCP is a message to disable Docker MCP.
 	ActionDisableDockerMCP struct{}
+	// ActionReloadPlugins is dispatched to re-discover all plugin content.
+	ActionReloadPlugins struct{}
+	// ActionAttachSkill is dispatched when a skill is selected from the
+	// slash autocomplete or the Browse Skills picker dialog.
+	ActionAttachSkill struct {
+		Name         string
+		Instructions string
+		Source       string
+	}
 )
 
 // Messages for API key input dialog.

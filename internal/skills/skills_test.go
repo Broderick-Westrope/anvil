@@ -368,7 +368,7 @@ func TestToPromptXMLBuiltinType(t *testing.T) {
 	t.Parallel()
 
 	skills := []*Skill{
-		{Name: "builtin-skill", Description: "A builtin.", SkillFilePath: "anvil://skills/builtin-skill/SKILL.md", Builtin: true},
+		{Name: "builtin-skill", Description: "A builtin.", SkillFilePath: "anvil://skills/builtin-skill/SKILL.md", Source: SourceBuiltin},
 		{Name: "user-skill", Description: "A user skill.", SkillFilePath: "/home/user/.config/anvil/skills/user-skill/SKILL.md"},
 	}
 	xml := ToPromptXML(skills)
@@ -420,7 +420,7 @@ func TestDiscoverBuiltin(t *testing.T) {
 			require.Equal(t, "anvil://skills/anvil-config", s.Path)
 			require.NotEmpty(t, s.Description)
 			require.NotEmpty(t, s.Instructions)
-			require.True(t, s.Builtin)
+			require.Equal(t, SourceBuiltin, s.Source)
 		}
 	}
 	require.True(t, found, "anvil-config builtin skill not found")
@@ -433,7 +433,7 @@ func TestDiscoverBuiltin(t *testing.T) {
 			require.Equal(t, "anvil://skills/jq", s.Path)
 			require.NotEmpty(t, s.Description)
 			require.NotEmpty(t, s.Instructions)
-			require.True(t, s.Builtin)
+			require.Equal(t, SourceBuiltin, s.Source)
 		}
 	}
 	require.True(t, foundJQ, "jq builtin skill not found")
@@ -446,7 +446,7 @@ func TestDiscoverBuiltin(t *testing.T) {
 			require.Equal(t, "anvil://skills/anvil-hooks", s.Path)
 			require.NotEmpty(t, s.Description)
 			require.NotEmpty(t, s.Instructions)
-			require.True(t, s.Builtin)
+			require.Equal(t, SourceBuiltin, s.Source)
 		}
 	}
 	require.True(t, foundHooks, "anvil-hooks builtin skill not found")

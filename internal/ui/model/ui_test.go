@@ -93,3 +93,48 @@ type testWorkspace struct {
 func (w *testWorkspace) Config() *config.Config {
 	return w.cfg
 }
+
+func TestExtractSlashArgs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		textValue string
+		cmdName   string
+		want      string
+	}{
+		{
+			name:      "command with args",
+			textValue: "/commit fix typo",
+			cmdName:   "commit",
+			want:      "fix typo",
+		},
+		{
+			name:      "command only no args",
+			textValue: "/commit",
+			cmdName:   "commit",
+			want:      "",
+		},
+		{
+			name:      "leading spaces trimmed",
+			textValue: "/commit  extra spaces",
+			cmdName:   "commit",
+			want:      "extra spaces",
+		},
+		{
+			name:      "no prefix match",
+			textValue: "/other stuff",
+			cmdName:   "commit",
+			want:      "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := extractSlashArgs(tc.textValue, tc.cmdName)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
