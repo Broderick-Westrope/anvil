@@ -4,9 +4,9 @@
 >
 > **Scope:** One-time manual migration of existing data on the developer's machine. Not committed to the codebase. Populates the new tree columns and drops the old summary columns.
 >
-> **Depends on:** Phase 2 merged (new columns exist, code uses them, fallback handles un-migrated data)
+> **Depends on:** Phase 2 merged (new columns exist, code uses them)
 >
-> **Timing:** Run after Phase 2 is merged. Can be done before or after Phase 3 — Phase 2's fallback path keeps existing sessions working in the meantime.
+> **Timing:** Must be run after Phase 2 is merged and **before using the app**. Without this migration, existing sessions will appear empty (no `leaf_message_id` populated). This is acceptable since it only needs to run on one machine.
 
 ## Prerequisites
 
@@ -69,7 +69,7 @@
 3. [ ] After dropping old columns, update the sqlc queries to remove `summary_message_id` and `is_summary_message` from SELECT lists, then `sqlc generate` and `go build .` to confirm. This cleanup can be a small follow-up commit.
 
 4. [ ] Launch the application and verify:
-   - Existing sessions load via tree walk (not fallback)
+   - Existing sessions load correctly via tree walk
    - Chat history displays properly
    - New messages advance the leaf pointer
    - `/tree` shows the linear history as a single branch (if Phase 3 is merged)

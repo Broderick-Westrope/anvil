@@ -128,7 +128,7 @@ read internal/workspace/app_workspace.go
 
 12. [ ] Implement the new interface methods in `internal/workspace/app_workspace.go` (delegate to message/session services) and `internal/workspace/client_workspace.go` (HTTP client calls)
 
-13. [ ] Stop **using** `SummaryMessageID` in Go logic across `internal/workspace/client_workspace.go`, `internal/server/events.go`, and anywhere else. The DB column and sqlc-generated field still exist (old columns aren't dropped yet), but no Go code should read or write the value. The `getSessionMessages()` fallback path (Task 3) handles un-migrated sessions without needing `SummaryMessageID`.
+13. [ ] Stop **using** `SummaryMessageID` in Go logic across `internal/workspace/client_workspace.go`, `internal/server/events.go`, and anywhere else. The DB column and sqlc-generated field still exist (old columns aren't dropped until Phase 4), but no Go code should read or write the value.
 
 14. [ ] Run `sqlc generate` to regenerate DB code
 15. [ ] Run `go build .` to verify compilation — fix any remaining compilation errors from the `SummaryMessageID` usage removal
