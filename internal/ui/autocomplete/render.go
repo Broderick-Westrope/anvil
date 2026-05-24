@@ -106,8 +106,9 @@ func (a *Autocomplete) renderRow(i, width int) string {
 		return a.styles.SkillFocused.Render(plainLine)
 	}
 
-	// Unselected: apply per-span foreground coloring only. The container
-	// Normal style provides the background for the whole dropdown.
+	// Unselected: apply per-span foreground coloring. Pad the suffix
+	// to fill the remaining width so each row is uniform, matching
+	// the explicit padding used for focused rows.
 	var nameStyle lipgloss.Style
 	if item.Type == CommandItem {
 		nameStyle = a.styles.CommandName
@@ -115,8 +116,15 @@ func (a *Autocomplete) renderRow(i, width int) string {
 		nameStyle = a.styles.SkillName
 	}
 
+	suffixText := " " + typeSuffix
+	nameWidth := ansi.StringWidth(display)
+	remaining := width - nameWidth
+	if remaining > ansi.StringWidth(suffixText) {
+		suffixText += strings.Repeat(" ", remaining-ansi.StringWidth(suffixText))
+	}
+
 	renderedName := nameStyle.Render(display)
-	renderedSuffix := a.styles.Description.Render(" " + typeSuffix)
+	renderedSuffix := a.styles.Description.Render(suffixText)
 	return renderedName + renderedSuffix
 }
 
