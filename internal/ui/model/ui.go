@@ -408,8 +408,10 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.slashAC = autocomplete.New(nil, 10)
 	ui.slashAC.SetStyles(autocomplete.Styles{
 		Normal:         com.Styles.SlashAutocomplete.Normal,
+		BuiltinName:    com.Styles.SlashAutocomplete.BuiltinName,
 		CommandName:    com.Styles.SlashAutocomplete.CommandName,
 		SkillName:      com.Styles.SlashAutocomplete.SkillName,
+		BuiltinFocused: com.Styles.SlashAutocomplete.BuiltinFocused,
 		CommandFocused: com.Styles.SlashAutocomplete.CommandFocused,
 		SkillFocused:   com.Styles.SlashAutocomplete.SkillFocused,
 		Description:    com.Styles.SlashAutocomplete.Description,
@@ -2416,6 +2418,20 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						}
 						return nil
 					}
+					if selected.Type == autocomplete.BuiltinItem {
+						// Builtins execute immediately on selection —
+						// no argument step needed. Use the ID field
+						// (always "builtin:<name>") for dispatch rather
+						// than DisplayName to avoid silent failures if
+						// display names ever diverge from execution keys.
+						builtinName := strings.TrimPrefix(selected.ID, "builtin:")
+						m.closeSlashAC(true)
+						cmd := m.tryExecuteBuiltinCommand("/" + builtinName)
+						if cmd != nil {
+							return cmd
+						}
+						return nil
+					}
 					// Commands: fill the name into the textarea so the
 					// user can add arguments before pressing Enter to
 					// submit.
@@ -3653,6 +3669,19 @@ func (m *UI) closeCompletions() {
 // custom commands and active skills.
 func (m *UI) buildSlashACItems() []autocomplete.Item {
 	var items []autocomplete.Item
+
+	// Builtin slash commands are added first so they take precedence
+	// over user-defined commands and skills with the same name.
+	for _, b := range m.builtinCommands() {
+		items = append(items, autocomplete.Item{
+			Name:        b.name,
+			DisplayName: b.name,
+			Description: b.desc,
+			Type:        autocomplete.BuiltinItem,
+			ID:          "builtin:" + b.name,
+		})
+	}
+
 	for _, cmd := range m.customCommands {
 		// Use DisplayName if set (collision-resolved), otherwise fall back
 		// to ItemName() which strips the source prefix (e.g., "greet" not
@@ -3697,6 +3726,13 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		return nil
 	}
 
+	// Builtin slash commands are checked before user-defined commands.
+	// If a user has a custom command with the same name as a builtin,
+	// the builtin wins.
+	if cmd := m.tryExecuteBuiltinCommand(value); cmd != nil {
+		return cmd
+	}
+
 	for _, cmd := range m.customCommands {
 		argName := cmd.ItemName()
 		if cmd.DisplayName != "" {
@@ -3739,6 +3775,65 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		}
 
 		return m.sendMessage(content)
+	}
+	return nil
+}
+
+// builtinDef defines a single builtin slash command. This is the single
+// source of truth consumed by both buildSlashACItems (display) and
+// tryExecuteBuiltinCommand (dispatch).
+type builtinDef struct {
+	name   string
+	desc   string
+	action func() tea.Cmd
+}
+
+// builtinCommands returns the list of builtin slash commands. The slice
+// is rebuilt on each call because actions capture the receiver.
+func (m *UI) builtinCommands() []builtinDef {
+	return []builtinDef{
+		{"new", "Start a new session", func() tea.Cmd {
+			if !m.hasSession() {
+				return util.ReportInfo("Already on the landing page")
+			}
+			return m.newSession()
+		}},
+		{"sessions", "Switch between sessions", m.openSessionsDialog},
+		{"tree", "View session tree", func() tea.Cmd {
+			return m.openDialog(dialog.TreeID)
+		}},
+		{"branch", "Branch from a message", func() tea.Cmd {
+			return m.openDialog(dialog.BranchID)
+		}},
+	}
+}
+
+// noopCmd is a sentinel command that signals a builtin matched but produced
+// no side-effect command. It prevents callers from falling through to the
+// message-sending path.
+var noopCmd tea.Cmd = func() tea.Msg { return nil }
+
+// tryExecuteBuiltinCommand checks if value matches a builtin slash command
+// (e.g. "/sessions", "/tree", "/branch"). Returns a non-nil tea.Cmd when
+// matched (even if the action itself has no cmd), nil otherwise. Builtins
+// don't accept arguments — only exact "/name" matches.
+func (m *UI) tryExecuteBuiltinCommand(value string) tea.Cmd {
+	name, ok := strings.CutPrefix(value, "/")
+	if !ok {
+		return nil
+	}
+
+	for _, b := range m.builtinCommands() {
+		if name != b.name {
+			continue
+		}
+		if cmd := b.action(); cmd != nil {
+			return cmd
+		}
+		// Action matched but returned nil (e.g. openSessionsDialog
+		// mutates state directly). Return a noop so the caller knows
+		// the command was handled.
+		return noopCmd
 	}
 	return nil
 }
@@ -3984,8 +4079,10 @@ func (m *UI) refreshStyles() {
 	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
 	m.slashAC.SetStyles(autocomplete.Styles{
 		Normal:         t.SlashAutocomplete.Normal,
+		BuiltinName:    t.SlashAutocomplete.BuiltinName,
 		CommandName:    t.SlashAutocomplete.CommandName,
 		SkillName:      t.SlashAutocomplete.SkillName,
+		BuiltinFocused: t.SlashAutocomplete.BuiltinFocused,
 		CommandFocused: t.SlashAutocomplete.CommandFocused,
 		SkillFocused:   t.SlashAutocomplete.SkillFocused,
 		Description:    t.SlashAutocomplete.Description,
@@ -4130,8 +4227,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	default:
-		// Unknown dialog
-		break
+		// Unknown or not-yet-implemented dialog — show an info toast
+		// so command palette entries merged before their modals exist
+		// give user feedback instead of silently doing nothing.
+		return util.ReportInfo(fmt.Sprintf("Not yet implemented: %s", id))
 	}
 	return tea.Batch(cmds...)
 }

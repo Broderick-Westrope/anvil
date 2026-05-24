@@ -11,10 +11,14 @@ import (
 type Styles struct {
 	// Normal is the row background for unselected items.
 	Normal lipgloss.Style
+	// BuiltinName styles the name text for builtin items.
+	BuiltinName lipgloss.Style
 	// CommandName styles the name text for command items.
 	CommandName lipgloss.Style
 	// SkillName styles the name text for skill items.
 	SkillName lipgloss.Style
+	// BuiltinFocused is the row style for a selected builtin (swapped fg/bg).
+	BuiltinFocused lipgloss.Style
 	// CommandFocused is the row style for a selected command (swapped fg/bg).
 	CommandFocused lipgloss.Style
 	// SkillFocused is the row style for a selected skill (swapped fg/bg).
@@ -76,9 +80,12 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	}
 
 	var typeSuffix string
-	if item.Type == CommandItem {
+	switch item.Type {
+	case CommandItem:
 		typeSuffix = "(cmd)"
-	} else {
+	case BuiltinItem:
+		typeSuffix = "(builtin)"
+	default:
 		typeSuffix = "(skill)"
 	}
 
@@ -100,19 +107,26 @@ func (a *Autocomplete) renderRow(i, width int) string {
 	// When focused, the row style swaps fg/bg for the item's type color.
 	// All spans use the same style so the whole row is uniform.
 	if focused {
-		if item.Type == CommandItem {
+		switch item.Type {
+		case BuiltinItem:
+			return a.styles.BuiltinFocused.Render(plainLine)
+		case CommandItem:
 			return a.styles.CommandFocused.Render(plainLine)
+		default:
+			return a.styles.SkillFocused.Render(plainLine)
 		}
-		return a.styles.SkillFocused.Render(plainLine)
 	}
 
 	// Unselected: apply per-span foreground coloring. Pad the suffix
 	// to fill the remaining width so each row is uniform, matching
 	// the explicit padding used for focused rows.
 	var nameStyle lipgloss.Style
-	if item.Type == CommandItem {
+	switch item.Type {
+	case BuiltinItem:
+		nameStyle = a.styles.BuiltinName
+	case CommandItem:
 		nameStyle = a.styles.CommandName
-	} else {
+	default:
 		nameStyle = a.styles.SkillName
 	}
 
