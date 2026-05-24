@@ -53,7 +53,7 @@ type Session struct {
 	MessageCount     int64
 	PromptTokens     int64
 	CompletionTokens int64
-	SummaryMessageID string
+	LeafMessageID    string
 	Cost             float64
 	Todos            []Todo
 	CreatedAt        int64
@@ -71,6 +71,7 @@ type Service interface {
 	Save(ctx context.Context, session Session) (Session, error)
 	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error
 	Rename(ctx context.Context, id string, title string) error
+	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
 	Delete(ctx context.Context, id string) error
 
 	// Agent tool session management
@@ -186,11 +187,8 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 		Title:            session.Title,
 		PromptTokens:     session.PromptTokens,
 		CompletionTokens: session.CompletionTokens,
-		SummaryMessageID: sql.NullString{
-			String: session.SummaryMessageID,
-			Valid:  session.SummaryMessageID != "",
-		},
-		Cost: session.Cost,
+		SummaryMessageID: sql.NullString{},
+		Cost:             session.Cost,
 		Todos: sql.NullString{
 			String: todosJSON,
 			Valid:  todosJSON != "",
@@ -214,6 +212,24 @@ func (s *service) UpdateTitleAndUsage(ctx context.Context, sessionID, title stri
 		CompletionTokens: completionTokens,
 		Cost:             cost,
 	})
+}
+
+// MoveLeaf updates the leaf_message_id for a session and publishes an
+// UpdatedEvent so subscribers see the change.
+func (s *service) MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error {
+	err := s.q.UpdateSessionLeaf(ctx, db.UpdateSessionLeafParams{
+		ID:     sessionID,
+		LeafID: sql.NullString{String: leafMessageID, Valid: leafMessageID != ""},
+	})
+	if err != nil {
+		return fmt.Errorf("updating session leaf: %w", err)
+	}
+	session, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	s.Publish(pubsub.UpdatedEvent, session)
+	return nil
 }
 
 // Rename updates only the title of a session without touching updated_at or
@@ -249,7 +265,7 @@ func (s service) fromDBItem(item db.Session) Session {
 		MessageCount:     item.MessageCount,
 		PromptTokens:     item.PromptTokens,
 		CompletionTokens: item.CompletionTokens,
-		SummaryMessageID: item.SummaryMessageID.String,
+		LeafMessageID:    item.LeafMessageID.String,
 		Cost:             item.Cost,
 		Todos:            todos,
 		CreatedAt:        item.CreatedAt,

@@ -229,7 +229,7 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 func (a *AssistantMessageItem) renderSpinning() string {
 	if a.message.IsThinking() {
 		a.anim.SetLabel("Thinking")
-	} else if a.message.IsSummaryMessage {
+	} else if a.message.MessageType == message.MessageTypeCompaction {
 		a.anim.SetLabel("Summarizing")
 	}
 	return a.anim.Render()

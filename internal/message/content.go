@@ -42,6 +42,18 @@ const (
 	FinishReasonUnknown FinishReason = "unknown"
 )
 
+// MessageType classifies messages within the conversation tree.
+type MessageType string
+
+const (
+	MessageTypeMessage             MessageType = "message"
+	MessageTypeCompaction          MessageType = "compaction"
+	MessageTypeBranchSummary       MessageType = "branch_summary"
+	MessageTypeLabel               MessageType = "label"
+	MessageTypeModelChange         MessageType = "model_change"
+	MessageTypeThinkingLevelChange MessageType = "thinking_level_change"
+)
+
 type ContentPart interface {
 	isPart()
 }
@@ -129,16 +141,57 @@ type Finish struct {
 
 func (Finish) isPart() {}
 
+// CompactionContent stores metadata for a compaction entry.
+type CompactionContent struct {
+	Summary          string `json:"summary"`
+	FirstKeptEntryID string `json:"first_kept_entry_id"`
+	TokensBefore     int    `json:"tokens_before"`
+}
+
+func (CompactionContent) isPart() {}
+
+// BranchSummaryContent stores metadata for a branch summary entry.
+type BranchSummaryContent struct {
+	Summary string `json:"summary"`
+	FromID  string `json:"from_id"`
+}
+
+func (BranchSummaryContent) isPart() {}
+
+// LabelContent stores metadata for a label entry.
+type LabelContent struct {
+	TargetID string `json:"target_id"`
+	Label    string `json:"label"`
+}
+
+func (LabelContent) isPart() {}
+
+// ModelChangeContent stores metadata for a model change entry.
+type ModelChangeContent struct {
+	Provider string `json:"provider"`
+	ModelID  string `json:"model_id"`
+}
+
+func (ModelChangeContent) isPart() {}
+
+// ThinkingLevelChangeContent stores metadata for a thinking level change entry.
+type ThinkingLevelChangeContent struct {
+	ThinkingLevel string `json:"thinking_level"`
+}
+
+func (ThinkingLevelChangeContent) isPart() {}
+
 type Message struct {
-	ID               string
-	Role             MessageRole
-	SessionID        string
-	Parts            []ContentPart
-	Model            string
-	Provider         string
-	CreatedAt        int64
-	UpdatedAt        int64
-	IsSummaryMessage bool
+	ID              string
+	Role            MessageRole
+	SessionID       string
+	Parts           []ContentPart
+	Model           string
+	Provider        string
+	ParentMessageID string
+	MessageType     MessageType
+	CreatedAt       int64
+	UpdatedAt       int64
 }
 
 func (m *Message) Content() TextContent {

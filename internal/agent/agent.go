@@ -229,6 +229,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
+	currentLeaf := currentSession.LeafMessageID
 
 	msgs, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
@@ -253,10 +254,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		msgs = a.cleanupFailedAttemptMessages(ctx, msgs)
 	} else {
 		// Add the user message to the session.
-		_, err = a.createUserMessage(ctx, call)
+		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
 		if err != nil {
 			return nil, err
 		}
+		currentLeaf = userMsg.ID
 	}
 
 	// Add the session to the context.
@@ -303,10 +305,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			queuedCalls, _ := a.messageQueue.Get(call.SessionID)
 			a.messageQueue.Del(call.SessionID)
 			for _, queued := range queuedCalls {
-				userMessage, createErr := a.createUserMessage(callContext, queued)
+				userMessage, createErr := a.createUserMessage(callContext, queued, currentLeaf)
 				if createErr != nil {
 					return callContext, prepared, createErr
 				}
+				currentLeaf = userMessage.ID
 				prepared.Messages = append(prepared.Messages, userMessage.ToAIMessage()...)
 			}
 
@@ -338,14 +341,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 			var assistantMsg message.Message
 			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
-				Role:     message.Assistant,
-				Parts:    []message.ContentPart{},
-				Model:    largeModel.ModelCfg.Model,
-				Provider: largeModel.ModelCfg.Provider,
+				Role:            message.Assistant,
+				Parts:           []message.ContentPart{},
+				Model:           largeModel.ModelCfg.Model,
+				Provider:        largeModel.ModelCfg.Provider,
+				ParentMessageID: currentLeaf,
 			})
 			if err != nil {
 				return callContext, prepared, err
 			}
+			currentLeaf = assistantMsg.ID
 			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
@@ -423,13 +428,18 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			toolResult := a.convertToToolResult(result)
 			// Use parent ctx instead of genCtx to ensure the message is created
 			// even if the request is canceled mid-stream
-			_, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
+			toolMsg, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
 				},
+				ParentMessageID: currentLeaf,
 			})
-			return createMsgErr
+			if createMsgErr != nil {
+				return createMsgErr
+			}
+			currentLeaf = toolMsg.ID
+			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
 			finishReason := message.FinishReasonUnknown
@@ -551,15 +561,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Content:    content,
 				IsError:    true,
 			}
-			_, createErr = a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
+			errToolMsg, createErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
 				},
+				ParentMessageID: currentLeaf,
 			})
 			if createErr != nil {
 				return nil, createErr
 			}
+			currentLeaf = errToolMsg.ID
 		}
 		var fantasyErr *fantasy.Error
 		var providerErr *fantasy.ProviderError
@@ -685,11 +697,25 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		fantasy.WithSystemPrompt(string(summaryPrompt)),
 		fantasy.WithUserAgent(userAgent),
 	)
-	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
-		Role:             message.Assistant,
-		Model:            largeModel.Model.Model(),
-		Provider:         largeModel.Model.Provider(),
-		IsSummaryMessage: true,
+
+	// Determine the firstKeptEntryId by walking from newest to oldest,
+	// accumulating token estimates. Keep ~20000 tokens of recent messages.
+	firstKeptEntryID := computeFirstKeptEntryID(msgs, 20000)
+
+	// Estimate total tokens before compaction.
+	totalTokensBefore := 0
+	for _, m := range msgs {
+		totalTokensBefore += estimateMessageTokens(m)
+	}
+
+	// Create a compaction message as a placeholder (MessageType =
+	// compaction), parented to the current leaf.
+	compactionMsg, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
+		Role:            message.Assistant,
+		Model:           largeModel.Model.Model(),
+		Provider:        largeModel.Model.Provider(),
+		ParentMessageID: currentSession.LeafMessageID,
+		MessageType:     message.MessageTypeCompaction,
 	})
 	if err != nil {
 		return err
@@ -712,42 +738,51 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			return callContext, prepared, nil
 		},
 		OnReasoningDelta: func(id string, text string) error {
-			summaryMessage.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			compactionMsg.AppendReasoningContent(text)
+			return a.messages.Update(genCtx, compactionMsg)
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
 			// Handle anthropic signature.
 			if anthropicData, ok := reasoning.ProviderMetadata["anthropic"]; ok {
 				if signature, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok && signature.Signature != "" {
-					summaryMessage.AppendReasoningSignature(signature.Signature)
+					compactionMsg.AppendReasoningSignature(signature.Signature)
 				}
 			}
-			summaryMessage.FinishThinking()
-			return a.messages.Update(genCtx, summaryMessage)
+			compactionMsg.FinishThinking()
+			return a.messages.Update(genCtx, compactionMsg)
 		},
 		OnTextDelta: func(id, text string) error {
-			summaryMessage.AppendContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			compactionMsg.AppendContent(text)
+			return a.messages.Update(genCtx, compactionMsg)
 		},
 	})
 	if err != nil {
 		isCancelErr := errors.Is(err, context.Canceled)
 		if isCancelErr {
-			// User cancelled summarize we need to remove the summary message.
-			deleteErr := a.messages.Delete(ctx, summaryMessage.ID)
+			// User cancelled — remove the compaction placeholder.
+			deleteErr := a.messages.Delete(ctx, compactionMsg.ID)
 			return deleteErr
 		}
-		// Mark the summary message as finished with an error so the UI
-		// stops spinning.
-		summaryMessage.AddFinish(message.FinishReasonError, "Summarization Error", err.Error())
-		if updateErr := a.messages.Update(ctx, summaryMessage); updateErr != nil {
+		// Mark the compaction message as finished with an error so the
+		// UI stops spinning.
+		compactionMsg.AddFinish(message.FinishReasonError, "Summarization Error", err.Error())
+		if updateErr := a.messages.Update(ctx, compactionMsg); updateErr != nil {
 			return updateErr
 		}
 		return err
 	}
 
-	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
-	err = a.messages.Update(genCtx, summaryMessage)
+	// Populate the CompactionContent part with the generated summary.
+	summaryText := compactionMsg.Content().Text
+	compactionMsg.Parts = []message.ContentPart{
+		message.CompactionContent{
+			Summary:          summaryText,
+			FirstKeptEntryID: firstKeptEntryID,
+			TokensBefore:     totalTokensBefore,
+		},
+	}
+	compactionMsg.AddFinish(message.FinishReasonEndTurn, "", "")
+	err = a.messages.Update(genCtx, compactionMsg)
 	if err != nil {
 		return err
 	}
@@ -766,13 +801,17 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, openrouterCost)
 
-	// Just in case, get just the last usage info.
+	// Update session usage; the leaf now points to the compaction message.
 	usage := resp.Response.Usage
-	currentSession.SummaryMessageID = summaryMessage.ID
 	currentSession.CompletionTokens = usage.OutputTokens
 	currentSession.PromptTokens = 0
 	_, err = a.sessions.Save(genCtx, currentSession)
 	if err != nil {
+		return err
+	}
+
+	// Advance the leaf to the compaction message.
+	if err := a.sessions.MoveLeaf(ctx, sessionID, compactionMsg.ID); err != nil {
 		return err
 	}
 
@@ -790,6 +829,57 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	a.messageQueue.Set(sessionID, queuedMessages[1:])
 	_, qErr := a.Run(ctx, firstQueuedMessage)
 	return qErr
+}
+
+// computeFirstKeptEntryID walks messages from newest to oldest,
+// accumulating estimated token counts. Once the accumulated tokens
+// exceed the keepTokens threshold, it continues backward to find a
+// semantically complete boundary (a user message or the first message
+// after a complete assistant→tool exchange). Returns the ID of that
+// boundary message.
+func computeFirstKeptEntryID(msgs []message.Message, keepTokens int) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+
+	accumulated := 0
+	boundaryIdx := 0 // Default to the start of the conversation.
+	for i := len(msgs) - 1; i >= 0; i-- {
+		accumulated += estimateMessageTokens(msgs[i])
+		if accumulated >= keepTokens {
+			// Continue backward to find a valid cut point.
+			for j := i; j >= 0; j-- {
+				if msgs[j].Role == message.User {
+					boundaryIdx = j
+					break
+				}
+			}
+			break
+		}
+	}
+	return msgs[boundaryIdx].ID
+}
+
+// estimateMessageTokens provides a rough token estimate for a message.
+// Uses ceil(chars/4) as a simple heuristic.
+func estimateMessageTokens(msg message.Message) int {
+	total := 0
+	for _, part := range msg.Parts {
+		switch p := part.(type) {
+		case message.TextContent:
+			total += (len(p.Text) + 3) / 4
+		case message.ReasoningContent:
+			total += (len(p.Thinking) + 3) / 4
+		case message.ToolCall:
+			total += (len(p.Input) + 3) / 4
+		case message.ToolResult:
+			total += (len(p.Content) + 3) / 4
+		}
+	}
+	if total == 0 {
+		total = 1
+	}
+	return total
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
@@ -859,7 +949,7 @@ func trimFailedAttemptMessages(msgs []message.Message) ([]message.Message, []str
 	return msgs, removedIDs
 }
 
-func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall) (message.Message, error) {
+func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall, parentMessageID string) (message.Message, error) {
 	parts := []message.ContentPart{message.TextContent{Text: call.Prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
@@ -867,8 +957,9 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	}
 	parts = append(parts, attachmentParts...)
 	msg, err := a.messages.Create(ctx, call.SessionID, message.CreateMessageParams{
-		Role:  message.User,
-		Parts: parts,
+		Role:            message.User,
+		Parts:           parts,
+		ParentMessageID: parentMessageID,
 	})
 	if err != nil {
 		return message.Message{}, fmt.Errorf("failed to create user message: %w", err)
@@ -1032,26 +1123,140 @@ func syntheticToolResultsForOrphanedCalls(m message.Message, knownToolResultIDs 
 	}, true
 }
 
-func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.Session) ([]message.Message, error) {
-	msgs, err := a.messages.List(ctx, session.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list messages: %w", err)
+func (a *sessionAgent) getSessionMessages(ctx context.Context, sess session.Session) ([]message.Message, error) {
+	if sess.LeafMessageID == "" {
+		return nil, nil
 	}
 
-	if session.SummaryMessageID != "" {
-		summaryMsgIndex := -1
-		for i, msg := range msgs {
-			if msg.ID == session.SummaryMessageID {
-				summaryMsgIndex = i
+	path, err := a.messages.GetBranchPath(ctx, sess.LeafMessageID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get branch path: %w", err)
+	}
+	if len(path) == 0 {
+		return nil, nil
+	}
+
+	return filterBranchPathForContext(path), nil
+}
+
+// filterBranchPathForContext processes a root→leaf branch path into the
+// message slice that should be sent to the LLM. It handles compaction
+// boundaries, branch summaries, and filters out metadata entries.
+func filterBranchPathForContext(path []message.Message) []message.Message {
+	// Find the most recent compaction message (nearest to leaf = last
+	// occurrence in root→leaf order).
+	compactionIdx := -1
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i].MessageType == message.MessageTypeCompaction {
+			compactionIdx = i
+			break
+		}
+	}
+
+	var result []message.Message
+
+	if compactionIdx >= 0 {
+		compaction := path[compactionIdx]
+		// Emit the compaction summary as a synthetic user message.
+		var summaryText string
+		for _, part := range compaction.Parts {
+			if cc, ok := part.(message.CompactionContent); ok {
+				summaryText = cc.Summary
 				break
 			}
 		}
-		if summaryMsgIndex != -1 {
-			msgs = msgs[summaryMsgIndex:]
-			msgs[0].Role = message.User
+		if summaryText != "" {
+			result = append(result, message.Message{
+				Role: message.User,
+				Parts: []message.ContentPart{
+					message.TextContent{
+						Text: "<summary>The conversation history before this point was compacted into the following summary:\n\n" + summaryText + "</summary>",
+					},
+				},
+			})
+		}
+
+		// Emit "kept" messages: find firstKeptEntryId and emit from
+		// there, plus all messages after the compaction entry.
+		var firstKeptEntryID string
+		for _, part := range compaction.Parts {
+			if cc, ok := part.(message.CompactionContent); ok {
+				firstKeptEntryID = cc.FirstKeptEntryID
+				break
+			}
+		}
+
+		// Messages between firstKeptEntryId and compaction entry
+		// (inclusive of firstKeptEntryId, exclusive of compaction).
+		if firstKeptEntryID != "" {
+			inKeptRange := false
+			for i, msg := range path {
+				if msg.ID == firstKeptEntryID {
+					inKeptRange = true
+				}
+				if i == compactionIdx {
+					break
+				}
+				if inKeptRange {
+					if filtered := filterMetadataMessage(msg); filtered != nil {
+						result = append(result, *filtered)
+					}
+				}
+			}
+		}
+
+		// All messages after the compaction entry.
+		for i := compactionIdx + 1; i < len(path); i++ {
+			if filtered := filterMetadataMessage(path[i]); filtered != nil {
+				result = append(result, *filtered)
+			}
+		}
+	} else {
+		// No compaction — emit all messages, filtering metadata types.
+		for _, msg := range path {
+			if filtered := filterMetadataMessage(msg); filtered != nil {
+				result = append(result, *filtered)
+			}
 		}
 	}
-	return msgs, nil
+
+	return result
+}
+
+// filterMetadataMessage returns nil for metadata-only message types that
+// should not appear in LLM context. For branch_summary messages, it
+// converts them to a synthetic user message with summary tags. For
+// regular messages, it returns a pointer to the original.
+func filterMetadataMessage(msg message.Message) *message.Message {
+	switch msg.MessageType {
+	case message.MessageTypeLabel, message.MessageTypeModelChange, message.MessageTypeThinkingLevelChange:
+		return nil
+	case message.MessageTypeCompaction:
+		// Older compactions on the path are skipped — only the most
+		// recent one is processed by the caller.
+		return nil
+	case message.MessageTypeBranchSummary:
+		var summaryText string
+		for _, part := range msg.Parts {
+			if bs, ok := part.(message.BranchSummaryContent); ok {
+				summaryText = bs.Summary
+				break
+			}
+		}
+		if summaryText == "" {
+			return nil
+		}
+		return &message.Message{
+			Role: message.User,
+			Parts: []message.ContentPart{
+				message.TextContent{
+					Text: "<summary>The following is a summary of a branch that this conversation came back from:\n\n" + summaryText + "</summary>",
+				},
+			},
+		}
+	default:
+		return &msg
+	}
 }
 
 // generateTitle generates a session titled based on the initial prompt.

@@ -79,7 +79,7 @@ type App struct {
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
 	sessions := session.NewService(q, conn)
-	messages := message.NewService(q)
+	messages := message.NewService(q, conn)
 	files := history.NewService(q, conn)
 	cfg := store.Config()
 	skipPermissionsRequests := store.Overrides().SkipPermissionRequests

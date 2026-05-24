@@ -692,7 +692,7 @@ func protoToSession(s proto.Session) session.Session {
 		ID:               s.ID,
 		ParentSessionID:  s.ParentSessionID,
 		Title:            s.Title,
-		SummaryMessageID: s.SummaryMessageID,
+		LeafMessageID:    s.LeafMessageID,
 		MessageCount:     s.MessageCount,
 		PromptTokens:     s.PromptTokens,
 		CompletionTokens: s.CompletionTokens,
@@ -788,7 +788,7 @@ func sessionToProto(s session.Session) proto.Session {
 		ID:               s.ID,
 		ParentSessionID:  s.ParentSessionID,
 		Title:            s.Title,
-		SummaryMessageID: s.SummaryMessageID,
+		LeafMessageID:    s.LeafMessageID,
 		MessageCount:     s.MessageCount,
 		PromptTokens:     s.PromptTokens,
 		CompletionTokens: s.CompletionTokens,
@@ -796,4 +796,20 @@ func sessionToProto(s session.Session) proto.Session {
 		CreatedAt:        s.CreatedAt,
 		UpdatedAt:        s.UpdatedAt,
 	}
+}
+
+func (w *ClientWorkspace) WriteMetadataEntry(_ context.Context, _ string, _ message.CreateMessageParams) error {
+	return fmt.Errorf("WriteMetadataEntry not yet implemented in client mode")
+}
+
+func (w *ClientWorkspace) GetBranchPath(ctx context.Context, leafMessageID string) ([]message.Message, error) {
+	return nil, fmt.Errorf("GetBranchPath not yet implemented in client mode")
+}
+
+func (w *ClientWorkspace) GetAllSessionMessages(ctx context.Context, sessionID string) ([]message.Message, error) {
+	return nil, fmt.Errorf("GetAllSessionMessages not yet implemented in client mode")
+}
+
+func (w *ClientWorkspace) MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error {
+	return fmt.Errorf("MoveLeaf not yet implemented in client mode")
 }

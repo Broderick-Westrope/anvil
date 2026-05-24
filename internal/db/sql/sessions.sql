@@ -62,7 +62,6 @@ SET
     updated_at = strftime('%s', 'now')
 WHERE id = ?;
 
-
 -- name: RenameSession :exec
 UPDATE sessions
 SET

@@ -86,6 +86,26 @@ func (w *AppWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Messa
 	return w.app.Messages.ListAllUserMessages(ctx)
 }
 
+func (w *AppWorkspace) GetBranchPath(ctx context.Context, leafMessageID string) ([]message.Message, error) {
+	return w.app.Messages.GetBranchPath(ctx, leafMessageID)
+}
+
+func (w *AppWorkspace) GetAllSessionMessages(ctx context.Context, sessionID string) ([]message.Message, error) {
+	return w.app.Messages.GetAllSessionMessages(ctx, sessionID)
+}
+
+func (w *AppWorkspace) MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error {
+	return w.app.Sessions.MoveLeaf(ctx, sessionID, leafMessageID)
+}
+
+func (w *AppWorkspace) WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error {
+	msg, err := w.app.Messages.Create(ctx, sessionID, params)
+	if err != nil {
+		return err
+	}
+	return w.app.Sessions.MoveLeaf(ctx, sessionID, msg.ID)
+}
+
 // -- Agent --
 
 func (w *AppWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {
