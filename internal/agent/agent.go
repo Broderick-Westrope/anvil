@@ -224,12 +224,26 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		fantasy.WithUserAgent(userAgent),
 	)
 
+	// sessionLock protects currentSession and currentLeaf from concurrent
+	// access across agent callbacks (e.g. parallel OnToolResult calls).
 	sessionLock := sync.Mutex{}
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 	currentLeaf := currentSession.LeafMessageID
+
+	// getLeaf and setLeaf provide thread-safe access to currentLeaf.
+	getLeaf := func() string {
+		sessionLock.Lock()
+		defer sessionLock.Unlock()
+		return currentLeaf
+	}
+	setLeaf := func(id string) {
+		sessionLock.Lock()
+		defer sessionLock.Unlock()
+		currentLeaf = id
+	}
 
 	msgs, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
@@ -305,11 +319,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			queuedCalls, _ := a.messageQueue.Get(call.SessionID)
 			a.messageQueue.Del(call.SessionID)
 			for _, queued := range queuedCalls {
-				userMessage, createErr := a.createUserMessage(callContext, queued, currentLeaf)
+				userMessage, createErr := a.createUserMessage(callContext, queued, getLeaf())
 				if createErr != nil {
 					return callContext, prepared, createErr
 				}
-				currentLeaf = userMessage.ID
+				setLeaf(userMessage.ID)
 				prepared.Messages = append(prepared.Messages, userMessage.ToAIMessage()...)
 			}
 
@@ -345,12 +359,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Parts:           []message.ContentPart{},
 				Model:           largeModel.ModelCfg.Model,
 				Provider:        largeModel.ModelCfg.Provider,
-				ParentMessageID: currentLeaf,
+				ParentMessageID: getLeaf(),
 			})
 			if err != nil {
 				return callContext, prepared, err
 			}
-			currentLeaf = assistantMsg.ID
+			setLeaf(assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
@@ -427,18 +441,20 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
 			// Use parent ctx instead of genCtx to ensure the message is created
-			// even if the request is canceled mid-stream
+			// even if the request is canceled mid-stream.
+			// Lock around getLeaf/setLeaf because OnToolResult may be called
+			// from parallel tool-execution goroutines.
 			toolMsg, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
 				},
-				ParentMessageID: currentLeaf,
+				ParentMessageID: getLeaf(),
 			})
 			if createMsgErr != nil {
 				return createMsgErr
 			}
-			currentLeaf = toolMsg.ID
+			setLeaf(toolMsg.ID)
 			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
@@ -566,12 +582,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Parts: []message.ContentPart{
 					toolResult,
 				},
-				ParentMessageID: currentLeaf,
+				ParentMessageID: getLeaf(),
 			})
 			if createErr != nil {
 				return nil, createErr
 			}
-			currentLeaf = errToolMsg.ID
+			setLeaf(errToolMsg.ID)
 		}
 		var fantasyErr *fantasy.Error
 		var providerErr *fantasy.ProviderError
@@ -686,6 +702,17 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return nil
 	}
 
+	// Fetch the raw branch path (before context filtering) for computing
+	// compaction boundaries. The raw path contains real message IDs,
+	// unlike the filtered path which has synthetic messages with empty IDs.
+	var rawPath []message.Message
+	if currentSession.LeafMessageID != "" {
+		rawPath, err = a.messages.GetBranchPath(ctx, currentSession.LeafMessageID)
+		if err != nil {
+			return fmt.Errorf("failed to get raw branch path: %w", err)
+		}
+	}
+
 	aiMsgs, _ := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages)
 
 	genCtx, cancel := context.WithCancel(ctx)
@@ -698,13 +725,13 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		fantasy.WithUserAgent(userAgent),
 	)
 
-	// Determine the firstKeptEntryId by walking from newest to oldest,
-	// accumulating token estimates. Keep ~20000 tokens of recent messages.
-	firstKeptEntryID := computeFirstKeptEntryID(msgs, 20000)
+	// Determine the firstKeptEntryId using the raw branch path (which
+	// has real message IDs, not synthetic entries from context filtering).
+	firstKeptEntryID := computeFirstKeptEntryID(rawPath, 20000)
 
-	// Estimate total tokens before compaction.
+	// Estimate total tokens before compaction using the raw path.
 	totalTokensBefore := 0
-	for _, m := range msgs {
+	for _, m := range rawPath {
 		totalTokensBefore += estimateMessageTokens(m)
 	}
 
@@ -759,9 +786,15 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	if err != nil {
 		isCancelErr := errors.Is(err, context.Canceled)
 		if isCancelErr {
-			// User cancelled — remove the compaction placeholder.
+			// User cancelled — remove the compaction placeholder and
+			// restore the leaf to its pre-compaction position. Create()
+			// already advanced the leaf to compactionMsg.ID, so we must
+			// move it back to prevent a dangling pointer.
 			deleteErr := a.messages.Delete(ctx, compactionMsg.ID)
-			return deleteErr
+			if deleteErr != nil {
+				return deleteErr
+			}
+			return a.sessions.MoveLeaf(ctx, sessionID, currentSession.LeafMessageID)
 		}
 		// Mark the compaction message as finished with an error so the
 		// UI stops spinning.
@@ -801,17 +834,13 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, openrouterCost)
 
-	// Update session usage; the leaf now points to the compaction message.
+	// Update session usage. The leaf already points to the compaction
+	// message (advanced atomically by Create() above).
 	usage := resp.Response.Usage
 	currentSession.CompletionTokens = usage.OutputTokens
 	currentSession.PromptTokens = 0
 	_, err = a.sessions.Save(genCtx, currentSession)
 	if err != nil {
-		return err
-	}
-
-	// Advance the leaf to the compaction message.
-	if err := a.sessions.MoveLeaf(ctx, sessionID, compactionMsg.ID); err != nil {
 		return err
 	}
 
@@ -904,7 +933,9 @@ func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
 // strips any trailing empty assistant message (created by PrepareStep)
 // and the preceding user message (which will be re-sent via the Prompt
 // field). Removed assistant messages are also deleted from the DB so
-// they don't appear as stale error bubbles on session reopen.
+// they don't appear as stale error bubbles on session reopen. After
+// deletion, the session's leaf pointer is restored to the last
+// remaining message to prevent dangling references.
 func (a *sessionAgent) cleanupFailedAttemptMessages(ctx context.Context, msgs []message.Message) []message.Message {
 	before := len(msgs)
 	msgs, removedIDs := trimFailedAttemptMessages(msgs)
@@ -914,6 +945,17 @@ func (a *sessionAgent) cleanupFailedAttemptMessages(ctx context.Context, msgs []
 	for _, id := range removedIDs {
 		if err := a.messages.Delete(ctx, id); err != nil {
 			slog.Warn("Failed to delete stale assistant message from failed attempt", "id", id, "error", err)
+		}
+	}
+	// Restore the leaf pointer to the last remaining message. The
+	// deleted messages may have advanced the leaf via Create(), so it
+	// could point to a now-deleted message.
+	if len(removedIDs) > 0 && len(msgs) > 0 {
+		lastMsg := msgs[len(msgs)-1]
+		if lastMsg.SessionID != "" {
+			if err := a.sessions.MoveLeaf(ctx, lastMsg.SessionID, lastMsg.ID); err != nil {
+				slog.Warn("Failed to restore leaf after cleanup", "error", err)
+			}
 		}
 	}
 	return msgs

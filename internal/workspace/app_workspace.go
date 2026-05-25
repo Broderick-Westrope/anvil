@@ -98,12 +98,12 @@ func (w *AppWorkspace) MoveLeaf(ctx context.Context, sessionID, leafMessageID st
 	return w.app.Sessions.MoveLeaf(ctx, sessionID, leafMessageID)
 }
 
+// WriteMetadataEntry creates a metadata message and advances the leaf.
+// The leaf is advanced atomically inside Create() when ParentMessageID
+// is set, so no separate MoveLeaf call is needed.
 func (w *AppWorkspace) WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error {
-	msg, err := w.app.Messages.Create(ctx, sessionID, params)
-	if err != nil {
-		return err
-	}
-	return w.app.Sessions.MoveLeaf(ctx, sessionID, msg.ID)
+	_, err := w.app.Messages.Create(ctx, sessionID, params)
+	return err
 }
 
 // -- Agent --
