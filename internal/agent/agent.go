@@ -440,21 +440,25 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
-			// Use parent ctx instead of genCtx to ensure the message is created
-			// even if the request is canceled mid-stream.
-			// Lock around getLeaf/setLeaf because OnToolResult may be called
-			// from parallel tool-execution goroutines.
+			// Hold sessionLock across the entire read→create→update
+			// sequence. OnToolResult may be called from parallel
+			// tool-execution goroutines; without the lock two goroutines
+			// could read the same leaf and create sibling messages
+			// (an unintended fork).
+			sessionLock.Lock()
 			toolMsg, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
 				},
-				ParentMessageID: getLeaf(),
+				ParentMessageID: currentLeaf,
 			})
 			if createMsgErr != nil {
+				sessionLock.Unlock()
 				return createMsgErr
 			}
-			setLeaf(toolMsg.ID)
+			currentLeaf = toolMsg.ID
+			sessionLock.Unlock()
 			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
@@ -783,7 +787,11 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			if deleteErr != nil {
 				return deleteErr
 			}
-			return a.sessions.MoveLeaf(ctx, sessionID, currentSession.LeafMessageID)
+			// Restore leaf to the compaction message's parent — this is
+			// the actual pre-compaction leaf recorded atomically by
+			// Create(), rather than the potentially stale snapshot in
+			// currentSession.LeafMessageID.
+			return a.sessions.MoveLeaf(ctx, sessionID, compactionMsg.ParentMessageID)
 		}
 		// Mark the compaction message as finished with an error so the
 		// UI stops spinning.
@@ -804,7 +812,12 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		},
 	}
 	compactionMsg.AddFinish(message.FinishReasonEndTurn, "", "")
-	err = a.messages.Update(genCtx, compactionMsg)
+	// Use parent ctx (not genCtx) so the CompactionContent update
+	// survives even if the user cancels between LLM completion and
+	// this write. Without this, the compaction message would retain
+	// its streaming TextContent instead of the final CompactionContent,
+	// silently losing all compacted history.
+	err = a.messages.Update(ctx, compactionMsg)
 	if err != nil {
 		return err
 	}
