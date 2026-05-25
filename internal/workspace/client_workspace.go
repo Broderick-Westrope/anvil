@@ -716,13 +716,15 @@ func protoToFile(f proto.File) history.File {
 
 func protoToMessage(m proto.Message) message.Message {
 	msg := message.Message{
-		ID:        m.ID,
-		SessionID: m.SessionID,
-		Role:      message.MessageRole(m.Role),
-		Model:     m.Model,
-		Provider:  m.Provider,
-		CreatedAt: m.CreatedAt,
-		UpdatedAt: m.UpdatedAt,
+		ID:              m.ID,
+		SessionID:       m.SessionID,
+		Role:            message.MessageRole(m.Role),
+		Model:           m.Model,
+		Provider:        m.Provider,
+		ParentMessageID: m.ParentMessageID,
+		MessageType:     message.MessageType(m.MessageType),
+		CreatedAt:       m.CreatedAt,
+		UpdatedAt:       m.UpdatedAt,
 	}
 
 	for _, p := range m.Parts {
@@ -761,6 +763,31 @@ func protoToMessage(m proto.Message) message.Message {
 			msg.Parts = append(msg.Parts, message.ImageURLContent{URL: v.URL, Detail: v.Detail})
 		case proto.BinaryContent:
 			msg.Parts = append(msg.Parts, message.BinaryContent{Path: v.Path, MIMEType: v.MIMEType, Data: v.Data})
+		case proto.CompactionContent:
+			msg.Parts = append(msg.Parts, message.CompactionContent{
+				Summary:          v.Summary,
+				FirstKeptEntryID: v.FirstKeptEntryID,
+				TokensBefore:     v.TokensBefore,
+			})
+		case proto.BranchSummaryContent:
+			msg.Parts = append(msg.Parts, message.BranchSummaryContent{
+				Summary: v.Summary,
+				FromID:  v.FromID,
+			})
+		case proto.LabelContent:
+			msg.Parts = append(msg.Parts, message.LabelContent{
+				TargetID: v.TargetID,
+				Label:    v.Label,
+			})
+		case proto.ModelChangeContent:
+			msg.Parts = append(msg.Parts, message.ModelChangeContent{
+				Provider: v.Provider,
+				ModelID:  v.ModelID,
+			})
+		case proto.ThinkingLevelChangeContent:
+			msg.Parts = append(msg.Parts, message.ThinkingLevelChangeContent{
+				ThinkingLevel: v.ThinkingLevel,
+			})
 		}
 	}
 

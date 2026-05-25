@@ -45,6 +45,9 @@ type service struct {
 // NewService creates a new message service. The conn parameter is used
 // for transaction support (atomic create + leaf advance).
 func NewService(q *db.Queries, conn *sql.DB) Service {
+	if conn == nil {
+		panic("message.NewService: conn must not be nil")
+	}
 	return &service{
 		Broker: pubsub.NewBroker[Message](),
 		conn:   conn,
@@ -68,7 +71,7 @@ func (s *service) Delete(ctx context.Context, id string) error {
 }
 
 func (s *service) Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error) {
-	if params.Role != Assistant {
+	if params.Role != Assistant && (params.MessageType == "" || params.MessageType == MessageTypeMessage) {
 		params.Parts = append(params.Parts, Finish{
 			Reason: "stop",
 		})
@@ -97,7 +100,7 @@ func (s *service) Create(ctx context.Context, sessionID string, params CreateMes
 	// When a ParentMessageID is provided, atomically create the message
 	// and advance the session's leaf pointer within a transaction.
 	var dbMessage db.Message
-	if params.ParentMessageID != "" && s.conn != nil {
+	if params.ParentMessageID != "" {
 		tx, txErr := s.conn.BeginTx(ctx, nil)
 		if txErr != nil {
 			return Message{}, fmt.Errorf("beginning transaction: %w", txErr)

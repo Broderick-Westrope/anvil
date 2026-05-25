@@ -245,7 +245,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		currentLeaf = id
 	}
 
-	msgs, err := a.getSessionMessages(ctx, currentSession)
+	msgs, _, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session messages: %w", err)
 	}
@@ -693,24 +693,13 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
-	msgs, err := a.getSessionMessages(ctx, currentSession)
+	msgs, rawPath, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return err
 	}
 	if len(msgs) == 0 {
 		// Nothing to summarize.
 		return nil
-	}
-
-	// Fetch the raw branch path (before context filtering) for computing
-	// compaction boundaries. The raw path contains real message IDs,
-	// unlike the filtered path which has synthetic messages with empty IDs.
-	var rawPath []message.Message
-	if currentSession.LeafMessageID != "" {
-		rawPath, err = a.messages.GetBranchPath(ctx, currentSession.LeafMessageID)
-		if err != nil {
-			return fmt.Errorf("failed to get raw branch path: %w", err)
-		}
 	}
 
 	aiMsgs, _ := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages)
@@ -727,12 +716,12 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	// Determine the firstKeptEntryId using the raw branch path (which
 	// has real message IDs, not synthetic entries from context filtering).
-	firstKeptEntryID := computeFirstKeptEntryID(rawPath, 20000)
+	firstKeptEntryID := message.ComputeFirstKeptEntryID(rawPath, 20000)
 
 	// Estimate total tokens before compaction using the raw path.
 	totalTokensBefore := 0
 	for _, m := range rawPath {
-		totalTokensBefore += estimateMessageTokens(m)
+		totalTokensBefore += message.EstimateMessageTokens(m)
 	}
 
 	// Create a compaction message as a placeholder (MessageType =
@@ -858,57 +847,6 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	a.messageQueue.Set(sessionID, queuedMessages[1:])
 	_, qErr := a.Run(ctx, firstQueuedMessage)
 	return qErr
-}
-
-// computeFirstKeptEntryID walks messages from newest to oldest,
-// accumulating estimated token counts. Once the accumulated tokens
-// exceed the keepTokens threshold, it continues backward to find a
-// semantically complete boundary (a user message or the first message
-// after a complete assistant→tool exchange). Returns the ID of that
-// boundary message.
-func computeFirstKeptEntryID(msgs []message.Message, keepTokens int) string {
-	if len(msgs) == 0 {
-		return ""
-	}
-
-	accumulated := 0
-	boundaryIdx := 0 // Default to the start of the conversation.
-	for i := len(msgs) - 1; i >= 0; i-- {
-		accumulated += estimateMessageTokens(msgs[i])
-		if accumulated >= keepTokens {
-			// Continue backward to find a valid cut point.
-			for j := i; j >= 0; j-- {
-				if msgs[j].Role == message.User {
-					boundaryIdx = j
-					break
-				}
-			}
-			break
-		}
-	}
-	return msgs[boundaryIdx].ID
-}
-
-// estimateMessageTokens provides a rough token estimate for a message.
-// Uses ceil(chars/4) as a simple heuristic.
-func estimateMessageTokens(msg message.Message) int {
-	total := 0
-	for _, part := range msg.Parts {
-		switch p := part.(type) {
-		case message.TextContent:
-			total += (len(p.Text) + 3) / 4
-		case message.ReasoningContent:
-			total += (len(p.Thinking) + 3) / 4
-		case message.ToolCall:
-			total += (len(p.Input) + 3) / 4
-		case message.ToolResult:
-			total += (len(p.Content) + 3) / 4
-		}
-	}
-	if total == 0 {
-		total = 1
-	}
-	return total
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
@@ -1165,140 +1103,20 @@ func syntheticToolResultsForOrphanedCalls(m message.Message, knownToolResultIDs 
 	}, true
 }
 
-func (a *sessionAgent) getSessionMessages(ctx context.Context, sess session.Session) ([]message.Message, error) {
+func (a *sessionAgent) getSessionMessages(ctx context.Context, sess session.Session) (filtered, raw []message.Message, err error) {
 	if sess.LeafMessageID == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	path, err := a.messages.GetBranchPath(ctx, sess.LeafMessageID)
+	raw, err = a.messages.GetBranchPath(ctx, sess.LeafMessageID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get branch path: %w", err)
+		return nil, nil, fmt.Errorf("failed to get branch path: %w", err)
 	}
-	if len(path) == 0 {
-		return nil, nil
-	}
-
-	return filterBranchPathForContext(path), nil
-}
-
-// filterBranchPathForContext processes a root→leaf branch path into the
-// message slice that should be sent to the LLM. It handles compaction
-// boundaries, branch summaries, and filters out metadata entries.
-func filterBranchPathForContext(path []message.Message) []message.Message {
-	// Find the most recent compaction message (nearest to leaf = last
-	// occurrence in root→leaf order).
-	compactionIdx := -1
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i].MessageType == message.MessageTypeCompaction {
-			compactionIdx = i
-			break
-		}
+	if len(raw) == 0 {
+		return nil, nil, nil
 	}
 
-	var result []message.Message
-
-	if compactionIdx >= 0 {
-		compaction := path[compactionIdx]
-		// Emit the compaction summary as a synthetic user message.
-		var summaryText string
-		for _, part := range compaction.Parts {
-			if cc, ok := part.(message.CompactionContent); ok {
-				summaryText = cc.Summary
-				break
-			}
-		}
-		if summaryText != "" {
-			result = append(result, message.Message{
-				Role: message.User,
-				Parts: []message.ContentPart{
-					message.TextContent{
-						Text: "<summary>The conversation history before this point was compacted into the following summary:\n\n" + summaryText + "</summary>",
-					},
-				},
-			})
-		}
-
-		// Emit "kept" messages: find firstKeptEntryId and emit from
-		// there, plus all messages after the compaction entry.
-		var firstKeptEntryID string
-		for _, part := range compaction.Parts {
-			if cc, ok := part.(message.CompactionContent); ok {
-				firstKeptEntryID = cc.FirstKeptEntryID
-				break
-			}
-		}
-
-		// Messages between firstKeptEntryId and compaction entry
-		// (inclusive of firstKeptEntryId, exclusive of compaction).
-		if firstKeptEntryID != "" {
-			inKeptRange := false
-			for i, msg := range path {
-				if msg.ID == firstKeptEntryID {
-					inKeptRange = true
-				}
-				if i == compactionIdx {
-					break
-				}
-				if inKeptRange {
-					if filtered := filterMetadataMessage(msg); filtered != nil {
-						result = append(result, *filtered)
-					}
-				}
-			}
-		}
-
-		// All messages after the compaction entry.
-		for i := compactionIdx + 1; i < len(path); i++ {
-			if filtered := filterMetadataMessage(path[i]); filtered != nil {
-				result = append(result, *filtered)
-			}
-		}
-	} else {
-		// No compaction — emit all messages, filtering metadata types.
-		for _, msg := range path {
-			if filtered := filterMetadataMessage(msg); filtered != nil {
-				result = append(result, *filtered)
-			}
-		}
-	}
-
-	return result
-}
-
-// filterMetadataMessage returns nil for metadata-only message types that
-// should not appear in LLM context. For branch_summary messages, it
-// converts them to a synthetic user message with summary tags. For
-// regular messages, it returns a pointer to the original.
-func filterMetadataMessage(msg message.Message) *message.Message {
-	switch msg.MessageType {
-	case message.MessageTypeLabel, message.MessageTypeModelChange, message.MessageTypeThinkingLevelChange:
-		return nil
-	case message.MessageTypeCompaction:
-		// Older compactions on the path are skipped — only the most
-		// recent one is processed by the caller.
-		return nil
-	case message.MessageTypeBranchSummary:
-		var summaryText string
-		for _, part := range msg.Parts {
-			if bs, ok := part.(message.BranchSummaryContent); ok {
-				summaryText = bs.Summary
-				break
-			}
-		}
-		if summaryText == "" {
-			return nil
-		}
-		return &message.Message{
-			Role: message.User,
-			Parts: []message.ContentPart{
-				message.TextContent{
-					Text: "<summary>The following is a summary of a branch that this conversation came back from:\n\n" + summaryText + "</summary>",
-				},
-			},
-		}
-	default:
-		return &msg
-	}
+	return message.FilterBranchPathForContext(raw), raw, nil
 }
 
 // generateTitle generates a session titled based on the initial prompt.
