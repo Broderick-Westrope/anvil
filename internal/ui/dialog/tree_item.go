@@ -1,0 +1,138 @@
+package dialog
+
+import (
+	"fmt"
+	"strings"
+
+	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/sahilm/fuzzy"
+)
+
+// TreeItem represents a single node in the session tree, rendered as a
+// list item with indentation and expand/collapse indicators.
+type TreeItem struct {
+	node           *treeNode
+	label          string
+	depth          int
+	hasChildren    bool
+	isExpanded     bool
+	isLeaf         bool
+	isOnActivePath bool
+	t              *styles.Styles
+	m              fuzzy.Match
+	focused        bool
+	cache          map[int]string
+}
+
+var _ list.FilterableItem = (*TreeItem)(nil)
+
+// NewTreeItem creates a new TreeItem for display in the tree dialog.
+func NewTreeItem(
+	t *styles.Styles,
+	node *treeNode,
+	depth int,
+	hasChildren bool,
+	isExpanded bool,
+	isLeaf bool,
+	isOnActivePath bool,
+	label string,
+) *TreeItem {
+	return &TreeItem{
+		node:           node,
+		label:          label,
+		depth:          depth,
+		hasChildren:    hasChildren,
+		isExpanded:     isExpanded,
+		isLeaf:         isLeaf,
+		isOnActivePath: isOnActivePath,
+		t:              t,
+	}
+}
+
+// Filter implements [list.FilterableItem].
+func (ti *TreeItem) Filter() string {
+	return ti.label
+}
+
+// SetMatch implements [list.MatchSettable].
+func (ti *TreeItem) SetMatch(m fuzzy.Match) {
+	ti.cache = nil
+	ti.m = m
+}
+
+// SetFocused implements [list.Focusable].
+func (ti *TreeItem) SetFocused(focused bool) {
+	if ti.focused != focused {
+		ti.cache = nil
+	}
+	ti.focused = focused
+}
+
+// Render implements [list.Item].
+func (ti *TreeItem) Render(width int) string {
+	if ti.cache != nil {
+		if cached, ok := ti.cache[width]; ok {
+			return cached
+		}
+	}
+
+	// Build the prefix: indentation + tree connector.
+	indent := strings.Repeat("  ", ti.depth)
+	var connector string
+	switch {
+	case ti.hasChildren && ti.isExpanded:
+		connector = "▼ "
+	case ti.hasChildren && !ti.isExpanded:
+		connector = "▶ "
+	default:
+		connector = "  "
+	}
+
+	// Build role indicator.
+	role := ti.node.msg.Role
+	var rolePrefix string
+	switch role {
+	case message.User:
+		rolePrefix = "👤 "
+	case message.Assistant:
+		rolePrefix = "🤖 "
+	case message.Tool:
+		rolePrefix = "🔧 "
+	default:
+		rolePrefix = "   "
+	}
+
+	prefix := indent + connector + rolePrefix
+	prefixWidth := lipgloss.Width(prefix)
+
+	// Truncate the label to fit.
+	maxLabelWidth := max(0, width-prefixWidth)
+	truncLabel := ansi.Truncate(ti.label, maxLabelWidth, "…")
+
+	// Leaf and active path markers.
+	var suffix string
+	if ti.isLeaf {
+		suffix = " ●"
+	} else if ti.isOnActivePath {
+		suffix = " •"
+	}
+
+	content := fmt.Sprintf("%s%s%s", prefix, truncLabel, suffix)
+
+	style := ti.t.Dialog.NormalItem
+	if ti.focused {
+		style = ti.t.Dialog.SelectedItem
+	}
+
+	result := style.Render(ansi.Truncate(content, width, "…"))
+
+	if ti.cache == nil {
+		ti.cache = make(map[int]string)
+	}
+	ti.cache[width] = result
+	return result
+}
