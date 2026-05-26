@@ -13,3 +13,4 @@
 - add a way to clear the input ; perhaps using ctrl+c override as clear input when there is text, otherwise continue using as double press to exit TUI?
 - the running indicator (animated text shimmer) for subagents is visually buggy. perhaps we use a different loading spinner. the main issue is just that it appears like its staying the same character, but i think its switching between two characters at a rate that makes it seem like only one character for 90% of the time.
 - it would be good to include the model on the stats line for subagent summaries
+- look at what posthog is being used for and whether it can be ripped out. or perhaps rewired to be useful for myself?
