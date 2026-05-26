@@ -82,7 +82,4 @@ FROM messages
 WHERE session_id = @session_id
 ORDER BY created_at ASC, rowid ASC;
 
--- name: UpdateSessionLeaf :exec
-UPDATE sessions
-SET leaf_message_id = @leaf_id
-WHERE id = @id;
+

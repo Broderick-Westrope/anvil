@@ -238,6 +238,22 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 	return i, err
 }
 
+const updateSessionLeaf = `-- name: UpdateSessionLeaf :exec
+UPDATE sessions
+SET leaf_message_id = ?1
+WHERE id = ?2
+`
+
+type UpdateSessionLeafParams struct {
+	LeafID sql.NullString `json:"leaf_id"`
+	ID     string         `json:"id"`
+}
+
+func (q *Queries) UpdateSessionLeaf(ctx context.Context, arg UpdateSessionLeafParams) error {
+	_, err := q.exec(ctx, q.updateSessionLeafStmt, updateSessionLeaf, arg.LeafID, arg.ID)
+	return err
+}
+
 const updateSessionTitleAndUsage = `-- name: UpdateSessionTitleAndUsage :exec
 UPDATE sessions
 SET

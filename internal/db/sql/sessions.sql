@@ -68,3 +68,8 @@ WHERE id = ?;
 -- name: DeleteSession :exec
 DELETE FROM sessions
 WHERE id = ?;
+
+-- name: UpdateSessionLeaf :exec
+UPDATE sessions
+SET leaf_message_id = @leaf_id
+WHERE id = @id;

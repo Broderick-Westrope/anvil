@@ -9,5 +9,7 @@ ALTER TABLE sessions ADD COLUMN leaf_message_id TEXT;
 -- +goose Down
 -- +goose StatementBegin
 DROP INDEX IF EXISTS idx_messages_parent;
--- SQLite doesn't support DROP COLUMN, so down migration is a no-op for columns
+ALTER TABLE messages DROP COLUMN parent_message_id;
+ALTER TABLE messages DROP COLUMN message_type;
+ALTER TABLE sessions DROP COLUMN leaf_message_id;
 -- +goose StatementEnd
