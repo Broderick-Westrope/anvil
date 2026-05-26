@@ -18,7 +18,7 @@
 
 **Steps:**
 
-1. [ ] Write a SQL migration script (temporary, not in repo) that:
+1. [x] Write a SQL migration script (temporary, not in repo) that:
    - Chains existing messages linearly per session:
      ```sql
      WITH ordered AS (
@@ -51,7 +51,7 @@
      ALTER TABLE messages DROP COLUMN is_summary_message;
      ```
 
-2. [ ] Execute the migration:
+2. [x] Execute the migration:
    - `sqlite3 <db_path> < migrate_session_trees.sql`
    - Run the Go script for compaction metadata if needed
    - Verify:
@@ -66,9 +66,9 @@
      # No is_summary_message column, has parent_message_id, message_type
      ```
 
-3. [ ] After dropping old columns, update the sqlc queries to remove `summary_message_id` and `is_summary_message` from SELECT lists, then `sqlc generate` and `go build .` to confirm. This cleanup can be a small follow-up commit.
+3. [x] After dropping old columns, update the sqlc queries to remove `summary_message_id` and `is_summary_message` from SELECT lists, then `sqlc generate` and `go build .` to confirm. This cleanup can be a small follow-up commit.
 
-4. [ ] Launch the application and verify:
+4. [ ] Launch the application and verify (manual):
    - Existing sessions load correctly via tree walk
    - Chat history displays properly
    - New messages advance the leaf pointer

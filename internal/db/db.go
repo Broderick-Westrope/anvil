@@ -11,10 +11,10 @@ import (
 )
 
 type DBTX interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
 	PrepareContext(context.Context, string) (*sql.Stmt, error)
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 }
 
 func New(db DBTX) *Queries {
@@ -48,8 +48,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteSessionMessagesStmt, err = db.PrepareContext(ctx, deleteSessionMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSessionMessages: %w", err)
 	}
+	if q.getAllSessionMessagesStmt, err = db.PrepareContext(ctx, getAllSessionMessages); err != nil {
+		return nil, fmt.Errorf("error preparing query GetAllSessionMessages: %w", err)
+	}
 	if q.getAverageResponseTimeStmt, err = db.PrepareContext(ctx, getAverageResponseTime); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAverageResponseTime: %w", err)
+	}
+	if q.getBranchPathStmt, err = db.PrepareContext(ctx, getBranchPath); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBranchPath: %w", err)
 	}
 	if q.getFileStmt, err = db.PrepareContext(ctx, getFile); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFile: %w", err)
@@ -68,6 +74,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getMessageStmt, err = db.PrepareContext(ctx, getMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMessage: %w", err)
+	}
+	if q.getMessageChildrenStmt, err = db.PrepareContext(ctx, getMessageChildren); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMessageChildren: %w", err)
 	}
 	if q.getRecentActivityStmt, err = db.PrepareContext(ctx, getRecentActivity); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRecentActivity: %w", err)
@@ -132,6 +141,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateSessionStmt, err = db.PrepareContext(ctx, updateSession); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSession: %w", err)
 	}
+	if q.updateSessionLeafStmt, err = db.PrepareContext(ctx, updateSessionLeaf); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateSessionLeaf: %w", err)
+	}
 	if q.updateSessionTitleAndUsageStmt, err = db.PrepareContext(ctx, updateSessionTitleAndUsage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSessionTitleAndUsage: %w", err)
 	}
@@ -180,9 +192,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteSessionMessagesStmt: %w", cerr)
 		}
 	}
+	if q.getAllSessionMessagesStmt != nil {
+		if cerr := q.getAllSessionMessagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getAllSessionMessagesStmt: %w", cerr)
+		}
+	}
 	if q.getAverageResponseTimeStmt != nil {
 		if cerr := q.getAverageResponseTimeStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAverageResponseTimeStmt: %w", cerr)
+		}
+	}
+	if q.getBranchPathStmt != nil {
+		if cerr := q.getBranchPathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBranchPathStmt: %w", cerr)
 		}
 	}
 	if q.getFileStmt != nil {
@@ -213,6 +235,11 @@ func (q *Queries) Close() error {
 	if q.getMessageStmt != nil {
 		if cerr := q.getMessageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getMessageStmt: %w", cerr)
+		}
+	}
+	if q.getMessageChildrenStmt != nil {
+		if cerr := q.getMessageChildrenStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMessageChildrenStmt: %w", cerr)
 		}
 	}
 	if q.getRecentActivityStmt != nil {
@@ -320,6 +347,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateSessionStmt: %w", cerr)
 		}
 	}
+	if q.updateSessionLeafStmt != nil {
+		if cerr := q.updateSessionLeafStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateSessionLeafStmt: %w", cerr)
+		}
+	}
 	if q.updateSessionTitleAndUsageStmt != nil {
 		if cerr := q.updateSessionTitleAndUsageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateSessionTitleAndUsageStmt: %w", cerr)
@@ -372,13 +404,16 @@ type Queries struct {
 	deleteSessionStmt              *sql.Stmt
 	deleteSessionFilesStmt         *sql.Stmt
 	deleteSessionMessagesStmt      *sql.Stmt
+	getAllSessionMessagesStmt      *sql.Stmt
 	getAverageResponseTimeStmt     *sql.Stmt
+	getBranchPathStmt              *sql.Stmt
 	getFileStmt                    *sql.Stmt
 	getFileByPathAndSessionStmt    *sql.Stmt
 	getFileReadStmt                *sql.Stmt
 	getHourDayHeatmapStmt          *sql.Stmt
 	getLastSessionStmt             *sql.Stmt
 	getMessageStmt                 *sql.Stmt
+	getMessageChildrenStmt         *sql.Stmt
 	getRecentActivityStmt          *sql.Stmt
 	getSessionByIDStmt             *sql.Stmt
 	getToolUsageStmt               *sql.Stmt
@@ -400,6 +435,7 @@ type Queries struct {
 	renameSessionStmt              *sql.Stmt
 	updateMessageStmt              *sql.Stmt
 	updateSessionStmt              *sql.Stmt
+	updateSessionLeafStmt          *sql.Stmt
 	updateSessionTitleAndUsageStmt *sql.Stmt
 }
 
@@ -415,13 +451,16 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteSessionStmt:              q.deleteSessionStmt,
 		deleteSessionFilesStmt:         q.deleteSessionFilesStmt,
 		deleteSessionMessagesStmt:      q.deleteSessionMessagesStmt,
+		getAllSessionMessagesStmt:      q.getAllSessionMessagesStmt,
 		getAverageResponseTimeStmt:     q.getAverageResponseTimeStmt,
+		getBranchPathStmt:              q.getBranchPathStmt,
 		getFileStmt:                    q.getFileStmt,
 		getFileByPathAndSessionStmt:    q.getFileByPathAndSessionStmt,
 		getFileReadStmt:                q.getFileReadStmt,
 		getHourDayHeatmapStmt:          q.getHourDayHeatmapStmt,
 		getLastSessionStmt:             q.getLastSessionStmt,
 		getMessageStmt:                 q.getMessageStmt,
+		getMessageChildrenStmt:         q.getMessageChildrenStmt,
 		getRecentActivityStmt:          q.getRecentActivityStmt,
 		getSessionByIDStmt:             q.getSessionByIDStmt,
 		getToolUsageStmt:               q.getToolUsageStmt,
@@ -443,6 +482,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		renameSessionStmt:              q.renameSessionStmt,
 		updateMessageStmt:              q.updateMessageStmt,
 		updateSessionStmt:              q.updateSessionStmt,
+		updateSessionLeafStmt:          q.updateSessionLeafStmt,
 		updateSessionTitleAndUsageStmt: q.updateSessionTitleAndUsageStmt,
 	}
 }

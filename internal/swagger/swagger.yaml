@@ -47,20 +47,62 @@ definitions:
       top_p:
         type: number
     type: object
-  config.Attribution:
+  config.Agent:
     properties:
-      co_authored_by:
+      append_prompt:
+        description: |-
+          AppendPrompt is injected verbatim at the end of the agent's system
+          prompt.
+        type: string
+      description:
+        type: string
+      disabled:
         type: boolean
-      generated_with:
-        type: boolean
-      trailer_style:
-        $ref: '#/definitions/config.TrailerStyle'
+      id:
+        type: string
+      model:
+        description: |-
+          Model is the full provider/model string (e.g. "anthropic/claude-opus-4-6").
+          An empty string falls back to the global large model.
+        type: string
+      name:
+        type: string
+      skills:
+        description: |-
+          AllowedSkills is the list of skill names available to the agent.
+          nil means all skills are available; [] means no skills.
+        items:
+          type: string
+        type: array
+      tools:
+        description: |-
+          AllowedTools is the list of tools available to the agent.
+          nil means all tools are available; [] means no tools.
+        items:
+          type: string
+        type: array
+      variant:
+        description: Variant is the model variant (e.g. thinking budget passthrough).
+        type: string
     type: object
   config.Completions:
     properties:
       max_depth:
         type: integer
       max_items:
+        type: integer
+    type: object
+  config.HookConfig:
+    properties:
+      command:
+        description: Shell command to execute.
+        type: string
+      matcher:
+        description: Regex pattern tested against the tool name. Empty means match
+          all.
+        type: string
+      timeout:
+        description: Timeout in seconds. Default 30.
         type: integer
     type: object
   config.LSPConfig:
@@ -112,6 +154,10 @@ definitions:
         items:
           type: string
         type: array
+      enabled_tools:
+        items:
+          type: string
+        type: array
       env:
         additionalProperties:
           type: string
@@ -119,7 +165,13 @@ definitions:
       headers:
         additionalProperties:
           type: string
-        description: 'TODO: maybe make it possible to get the value from the env'
+        description: |-
+          Headers are HTTP headers for HTTP/SSE MCP servers. Values run
+          through shell expansion at MCP startup, so $VAR and $(cmd)
+          work. A header whose value resolves to the empty string (unset
+          bare $VAR under lenient nounset, $(echo), or literal "") is
+          omitted from the outgoing request rather than sent as
+          "Header:". See PLAN.md Phase 2 design decision #18.
         type: object
       timeout:
         type: integer
@@ -149,14 +201,14 @@ definitions:
           type: string
         type: array
     type: object
-  config.Scope:
-    enum:
-    - 0
-    - 1
-    type: integer
-    x-enum-varnames:
-    - ScopeGlobal
-    - ScopeWorkspace
+  config.PluginConfig:
+    properties:
+      path:
+        description: |-
+          Path is the filesystem path to the plugin directory. Supports ~ and
+          environment variable expansion.
+        type: string
+    type: object
   config.SelectedModel:
     properties:
       frequency_penalty:
@@ -194,6 +246,10 @@ definitions:
         type: integer
       top_p:
         type: number
+      variant:
+        description: Variant is an optional model variant passthrough (e.g. thinking
+          budget).
+        type: string
     type: object
   config.SelectedModelType:
     enum:
@@ -233,22 +289,33 @@ definitions:
       ls:
         $ref: '#/definitions/config.ToolLs'
     type: object
-  config.TrailerStyle:
-    enum:
-    - none
-    - co-authored-by
-    - assisted-by
-    type: string
-    x-enum-varnames:
-    - TrailerStyleNone
-    - TrailerStyleCoAuthoredBy
-    - TrailerStyleAssistedBy
   csync.Map-string-config_ProviderConfig:
     type: object
-  github_com_Broderick_Westrope_anvil_internal_config.Config:
+  github_com_Broderick-Westrope_anvil_internal_config.Config:
     properties:
       $schema:
         type: string
+      agents:
+        additionalProperties:
+          $ref: '#/definitions/config.Agent'
+        description: |-
+          Agents is the map of named agent configurations. After SetupAgents,
+          only the orchestrator is present. The full roster is populated by
+          SetupAgentsWithDefaults when the coordinator loads .md files.
+        type: object
+      disabled_agents:
+        description: |-
+          DisabledAgents lists agent names to remove from the routing table and
+          orchestrator prompt at startup.
+        items:
+          type: string
+        type: array
+      hooks:
+        additionalProperties:
+          items:
+            $ref: '#/definitions/config.HookConfig'
+          type: array
+        type: object
       lsp:
         $ref: '#/definitions/config.LSPs'
       mcp:
@@ -259,9 +326,16 @@ definitions:
         description: We currently only support large/small as values here.
         type: object
       options:
-        $ref: '#/definitions/github_com_Broderick_Westrope_anvil_internal_config.Options'
+        $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Options'
       permissions:
         $ref: '#/definitions/config.Permissions'
+      plugins:
+        description: |-
+          Plugins is a list of external plugin directories to load skills,
+          commands, and agents from.
+        items:
+          $ref: '#/definitions/config.PluginConfig'
+        type: array
       providers:
         allOf:
         - $ref: '#/definitions/csync.Map-string-config_ProviderConfig'
@@ -276,10 +350,8 @@ definitions:
       tools:
         $ref: '#/definitions/config.Tools'
     type: object
-  github_com_Broderick_Westrope_anvil_internal_config.Options:
+  github_com_Broderick-Westrope_anvil_internal_config.Options:
     properties:
-      attribution:
-        $ref: '#/definitions/config.Attribution'
       auto_lsp:
         type: boolean
       context_paths:
@@ -288,10 +360,10 @@ definitions:
         type: array
       data_directory:
         description: |-
-          DataDirectory is where Anvil keeps per-project state such as the SQLite
-          database and workspace overrides. Relative paths are resolved against
-          the working directory; absolute paths are used verbatim. After
-          defaulting the stored value is always absolute.
+          DataDirectory is where Anvil keeps per-project state such as
+          the SQLite database and workspace overrides. Relative paths are
+          resolved against the working directory; absolute paths are used
+          verbatim. After defaulting the stored value is always absolute.
         type: string
       debug:
         type: boolean
@@ -307,6 +379,10 @@ definitions:
         type: boolean
       disable_provider_auto_update:
         type: boolean
+      disabled_skills:
+        items:
+          type: string
+        type: array
       disabled_tools:
         items:
           type: string
@@ -322,13 +398,25 @@ definitions:
       tui:
         $ref: '#/definitions/config.TUIOptions'
     type: object
-  github_com_Broderick_Westrope_anvil_internal_proto.Message:
+  github_com_Broderick-Westrope_anvil_internal_config.Scope:
+    enum:
+    - 0
+    - 1
+    type: integer
+    x-enum-varnames:
+    - ScopeGlobal
+    - ScopeWorkspace
+  github_com_Broderick-Westrope_anvil_internal_proto.Message:
     properties:
       created_at:
         type: integer
       id:
         type: string
+      message_type:
+        type: string
       model:
+        type: string
+      parent_message_id:
         type: string
       parts:
         items: {}
@@ -392,14 +480,14 @@ definitions:
         type: string
       is_busy:
         type: boolean
+      leaf_message_id:
+        type: string
       message_count:
         type: integer
       parent_session_id:
         type: string
       prompt_tokens:
         type: integer
-      summary_message_id:
-        type: string
       title:
         type: string
       updated_at:
@@ -423,7 +511,7 @@ definitions:
       enabled:
         type: boolean
       scope:
-        $ref: '#/definitions/config.Scope'
+        $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope'
     type: object
   proto.ConfigModelRequest:
     properties:
@@ -432,7 +520,7 @@ definitions:
       model_type:
         $ref: '#/definitions/config.SelectedModelType'
       scope:
-        $ref: '#/definitions/config.Scope'
+        $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope'
     type: object
   proto.ConfigProviderKeyRequest:
     properties:
@@ -440,28 +528,28 @@ definitions:
       provider_id:
         type: string
       scope:
-        $ref: '#/definitions/config.Scope'
+        $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope'
     type: object
   proto.ConfigRefreshOAuthRequest:
     properties:
       provider_id:
         type: string
       scope:
-        $ref: '#/definitions/config.Scope'
+        $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope'
     type: object
   proto.ConfigRemoveRequest:
     properties:
       key:
         type: string
       scope:
-        $ref: '#/definitions/config.Scope'
+        $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope'
     type: object
   proto.ConfigSetRequest:
     properties:
       key:
         type: string
       scope:
-        $ref: '#/definitions/config.Scope'
+        $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope'
       value: {}
     type: object
   proto.Error:
@@ -649,14 +737,14 @@ definitions:
         type: integer
       id:
         type: string
+      leaf_message_id:
+        type: string
       message_count:
         type: integer
       parent_session_id:
         type: string
       prompt_tokens:
         type: integer
-      summary_message_id:
-        type: string
       title:
         type: string
       updated_at:
@@ -676,7 +764,7 @@ definitions:
   proto.Workspace:
     properties:
       config:
-        $ref: '#/definitions/github_com_Broderick_Westrope_anvil_internal_config.Config'
+        $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Config'
       data_dir:
         type: string
       debug:
@@ -1639,6 +1727,50 @@ paths:
       summary: Stop all LSP servers
       tags:
       - lsp
+  /workspaces/{id}/mcp/docker/disable:
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Disable Docker MCP
+      tags:
+      - mcp
+  /workspaces/{id}/mcp/docker/enable:
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Enable Docker MCP
+      tags:
+      - mcp
   /workspaces/{id}/mcp/get-prompt:
     post:
       consumes:
@@ -1860,7 +1992,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/github_com_Broderick_Westrope_anvil_internal_proto.Message'
+              $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_proto.Message'
             type: array
         "404":
           description: Not Found
@@ -2316,7 +2448,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/github_com_Broderick_Westrope_anvil_internal_proto.Message'
+              $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_proto.Message'
             type: array
         "404":
           description: Not Found
@@ -2349,7 +2481,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/github_com_Broderick_Westrope_anvil_internal_proto.Message'
+              $ref: '#/definitions/github_com_Broderick-Westrope_anvil_internal_proto.Message'
             type: array
         "404":
           description: Not Found

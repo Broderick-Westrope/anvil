@@ -18,23 +18,25 @@ INSERT INTO messages (
     parts,
     model,
     provider,
-    is_summary_message,
+    parent_message_id,
+    message_type,
     created_at,
     updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now')
+    ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now')
 )
-RETURNING id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message
+RETURNING id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 `
 
 type CreateMessageParams struct {
-	ID               string         `json:"id"`
-	SessionID        string         `json:"session_id"`
-	Role             string         `json:"role"`
-	Parts            string         `json:"parts"`
-	Model            sql.NullString `json:"model"`
-	Provider         sql.NullString `json:"provider"`
-	IsSummaryMessage int64          `json:"is_summary_message"`
+	ID              string         `json:"id"`
+	SessionID       string         `json:"session_id"`
+	Role            string         `json:"role"`
+	Parts           string         `json:"parts"`
+	Model           sql.NullString `json:"model"`
+	Provider        sql.NullString `json:"provider"`
+	ParentMessageID sql.NullString `json:"parent_message_id"`
+	MessageType     string         `json:"message_type"`
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error) {
@@ -45,7 +47,8 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		arg.Parts,
 		arg.Model,
 		arg.Provider,
-		arg.IsSummaryMessage,
+		arg.ParentMessageID,
+		arg.MessageType,
 	)
 	var i Message
 	err := row.Scan(
@@ -58,7 +61,8 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.Provider,
-		&i.IsSummaryMessage,
+		&i.ParentMessageID,
+		&i.MessageType,
 	)
 	return i, err
 }
@@ -83,8 +87,117 @@ func (q *Queries) DeleteSessionMessages(ctx context.Context, sessionID string) e
 	return err
 }
 
+const getAllSessionMessages = `-- name: GetAllSessionMessages :many
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
+FROM messages
+WHERE session_id = ?1
+ORDER BY created_at ASC, rowid ASC
+`
+
+func (q *Queries) GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error) {
+	rows, err := q.query(ctx, q.getAllSessionMessagesStmt, getAllSessionMessages, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Role,
+			&i.Parts,
+			&i.Model,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+			&i.Provider,
+			&i.ParentMessageID,
+			&i.MessageType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getBranchPath = `-- name: GetBranchPath :many
+WITH RECURSIVE branch AS (
+    SELECT m.id, m.session_id, m.role, m.parts, m.model, m.created_at, m.updated_at,
+           m.finished_at, m.provider, m.parent_message_id, m.message_type,
+           0 AS depth
+    FROM messages m WHERE m.id = ?1
+    UNION ALL
+    SELECT p.id, p.session_id, p.role, p.parts, p.model, p.created_at, p.updated_at,
+           p.finished_at, p.provider, p.parent_message_id, p.message_type,
+           b.depth + 1
+    FROM messages p JOIN branch b ON p.id = b.parent_message_id
+    WHERE b.depth < 10000
+)
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at,
+       provider, parent_message_id, message_type
+FROM branch ORDER BY depth DESC
+`
+
+type GetBranchPathRow struct {
+	ID              string         `json:"id"`
+	SessionID       string         `json:"session_id"`
+	Role            string         `json:"role"`
+	Parts           string         `json:"parts"`
+	Model           sql.NullString `json:"model"`
+	CreatedAt       int64          `json:"created_at"`
+	UpdatedAt       int64          `json:"updated_at"`
+	FinishedAt      sql.NullInt64  `json:"finished_at"`
+	Provider        sql.NullString `json:"provider"`
+	ParentMessageID sql.NullString `json:"parent_message_id"`
+	MessageType     string         `json:"message_type"`
+}
+
+func (q *Queries) GetBranchPath(ctx context.Context, leafID string) ([]GetBranchPathRow, error) {
+	rows, err := q.query(ctx, q.getBranchPathStmt, getBranchPath, leafID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetBranchPathRow{}
+	for rows.Next() {
+		var i GetBranchPathRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Role,
+			&i.Parts,
+			&i.Model,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+			&i.Provider,
+			&i.ParentMessageID,
+			&i.MessageType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMessage = `-- name: GetMessage :one
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE id = ? LIMIT 1
 `
@@ -102,13 +215,56 @@ func (q *Queries) GetMessage(ctx context.Context, id string) (Message, error) {
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.Provider,
-		&i.IsSummaryMessage,
+		&i.ParentMessageID,
+		&i.MessageType,
 	)
 	return i, err
 }
 
+const getMessageChildren = `-- name: GetMessageChildren :many
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
+FROM messages
+WHERE parent_message_id = ?1
+ORDER BY created_at ASC
+`
+
+func (q *Queries) GetMessageChildren(ctx context.Context, parentID sql.NullString) ([]Message, error) {
+	rows, err := q.query(ctx, q.getMessageChildrenStmt, getMessageChildren, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Role,
+			&i.Parts,
+			&i.Model,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+			&i.Provider,
+			&i.ParentMessageID,
+			&i.MessageType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllUserMessages = `-- name: ListAllUserMessages :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE role = 'user'
 ORDER BY created_at DESC
@@ -133,7 +289,8 @@ func (q *Queries) ListAllUserMessages(ctx context.Context) ([]Message, error) {
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Provider,
-			&i.IsSummaryMessage,
+			&i.ParentMessageID,
+			&i.MessageType,
 		); err != nil {
 			return nil, err
 		}
@@ -149,7 +306,7 @@ func (q *Queries) ListAllUserMessages(ctx context.Context) ([]Message, error) {
 }
 
 const listMessagesBySession = `-- name: ListMessagesBySession :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE session_id = ?
 ORDER BY created_at ASC
@@ -174,7 +331,8 @@ func (q *Queries) ListMessagesBySession(ctx context.Context, sessionID string) (
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Provider,
-			&i.IsSummaryMessage,
+			&i.ParentMessageID,
+			&i.MessageType,
 		); err != nil {
 			return nil, err
 		}
@@ -190,7 +348,7 @@ func (q *Queries) ListMessagesBySession(ctx context.Context, sessionID string) (
 }
 
 const listUserMessagesBySession = `-- name: ListUserMessagesBySession :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE session_id = ? AND role = 'user'
 ORDER BY created_at DESC
@@ -215,7 +373,8 @@ func (q *Queries) ListUserMessagesBySession(ctx context.Context, sessionID strin
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Provider,
-			&i.IsSummaryMessage,
+			&i.ParentMessageID,
+			&i.MessageType,
 		); err != nil {
 			return nil, err
 		}

@@ -12,22 +12,26 @@ import (
 
 // CreateMessageParams represents parameters for creating a message.
 type CreateMessageParams struct {
-	Role     MessageRole   `json:"role"`
-	Parts    []ContentPart `json:"parts"`
-	Model    string        `json:"model"`
-	Provider string        `json:"provider,omitempty"`
+	Role            MessageRole   `json:"role"`
+	Parts           []ContentPart `json:"parts"`
+	Model           string        `json:"model"`
+	Provider        string        `json:"provider,omitempty"`
+	ParentMessageID string        `json:"parent_message_id,omitempty"`
+	MessageType     string        `json:"message_type,omitempty"`
 }
 
 // Message represents a message in the proto layer.
 type Message struct {
-	ID        string        `json:"id"`
-	Role      MessageRole   `json:"role"`
-	SessionID string        `json:"session_id"`
-	Parts     []ContentPart `json:"parts"`
-	Model     string        `json:"model"`
-	Provider  string        `json:"provider"`
-	CreatedAt int64         `json:"created_at"`
-	UpdatedAt int64         `json:"updated_at"`
+	ID              string        `json:"id"`
+	Role            MessageRole   `json:"role"`
+	SessionID       string        `json:"session_id"`
+	Parts           []ContentPart `json:"parts"`
+	Model           string        `json:"model"`
+	Provider        string        `json:"provider"`
+	ParentMessageID string        `json:"parent_message_id"`
+	MessageType     string        `json:"message_type"`
+	CreatedAt       int64         `json:"created_at"`
+	UpdatedAt       int64         `json:"updated_at"`
 }
 
 // MessageRole represents the role of a message sender.
@@ -168,6 +172,46 @@ type Finish struct {
 }
 
 func (Finish) isPart() {}
+
+// CompactionContent stores metadata for a compaction entry.
+type CompactionContent struct {
+	Summary          string `json:"summary"`
+	FirstKeptEntryID string `json:"first_kept_entry_id"`
+	TokensBefore     int    `json:"tokens_before"`
+}
+
+func (CompactionContent) isPart() {}
+
+// BranchSummaryContent stores metadata for a branch summary entry.
+type BranchSummaryContent struct {
+	Summary string `json:"summary"`
+	FromID  string `json:"from_id"`
+}
+
+func (BranchSummaryContent) isPart() {}
+
+// LabelContent stores metadata for a label entry.
+type LabelContent struct {
+	TargetID string `json:"target_id"`
+	Label    string `json:"label"`
+}
+
+func (LabelContent) isPart() {}
+
+// ModelChangeContent stores metadata for a model change entry.
+type ModelChangeContent struct {
+	Provider string `json:"provider"`
+	ModelID  string `json:"model_id"`
+}
+
+func (ModelChangeContent) isPart() {}
+
+// ThinkingLevelChangeContent stores metadata for a thinking level change entry.
+type ThinkingLevelChangeContent struct {
+	ThinkingLevel string `json:"thinking_level"`
+}
+
+func (ThinkingLevelChangeContent) isPart() {}
 
 // MarshalJSON implements the [json.Marshaler] interface.
 func (m Message) MarshalJSON() ([]byte, error) {
@@ -492,13 +536,18 @@ func (m *Message) AddBinary(mimeType string, data []byte) {
 type partType string
 
 const (
-	reasoningType  partType = "reasoning"
-	textType       partType = "text"
-	imageURLType   partType = "image_url"
-	binaryType     partType = "binary"
-	toolCallType   partType = "tool_call"
-	toolResultType partType = "tool_result"
-	finishType     partType = "finish"
+	reasoningType           partType = "reasoning"
+	textType                partType = "text"
+	imageURLType            partType = "image_url"
+	binaryType              partType = "binary"
+	toolCallType            partType = "tool_call"
+	toolResultType          partType = "tool_result"
+	finishType              partType = "finish"
+	compactionType          partType = "compaction"
+	branchSummaryType       partType = "branch_summary"
+	labelType               partType = "label"
+	modelChangeType         partType = "model_change"
+	thinkingLevelChangeType partType = "thinking_level_change"
 )
 
 type partWrapper struct {
@@ -528,6 +577,16 @@ func MarshalParts(parts []ContentPart) ([]byte, error) {
 			typ = toolResultType
 		case Finish:
 			typ = finishType
+		case CompactionContent:
+			typ = compactionType
+		case BranchSummaryContent:
+			typ = branchSummaryType
+		case LabelContent:
+			typ = labelType
+		case ModelChangeContent:
+			typ = modelChangeType
+		case ThinkingLevelChangeContent:
+			typ = thinkingLevelChangeType
 		default:
 			return nil, fmt.Errorf("unknown part type: %T", part)
 		}
@@ -599,6 +658,36 @@ func UnmarshalParts(data []byte) ([]ContentPart, error) {
 			parts = append(parts, part)
 		case finishType:
 			part := Finish{}
+			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
+		case compactionType:
+			part := CompactionContent{}
+			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
+		case branchSummaryType:
+			part := BranchSummaryContent{}
+			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
+		case labelType:
+			part := LabelContent{}
+			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
+		case modelChangeType:
+			part := ModelChangeContent{}
+			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
+		case thinkingLevelChangeType:
+			part := ThinkingLevelChangeContent{}
 			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
 				return nil, err
 			}

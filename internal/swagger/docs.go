@@ -1418,6 +1418,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/workspaces/{id}/mcp/docker/disable": {
+            "post": {
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Disable Docker MCP",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/workspaces/{id}/mcp/docker/enable": {
+            "post": {
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Enable Docker MCP",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/workspaces/{id}/mcp/get-prompt": {
             "post": {
                 "consumes": [
@@ -1757,7 +1825,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_proto.Message"
+                                "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_proto.Message"
                             }
                         }
                     },
@@ -2451,7 +2519,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_proto.Message"
+                                "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_proto.Message"
                             }
                         }
                     },
@@ -2501,7 +2569,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_proto.Message"
+                                "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_proto.Message"
                             }
                         }
                     },
@@ -2593,6 +2661,49 @@ const docTemplate = `{
                 }
             }
         },
+        "config.Agent": {
+            "type": "object",
+            "properties": {
+                "append_prompt": {
+                    "description": "AppendPrompt is injected verbatim at the end of the agent's system\nprompt.",
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "disabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "model": {
+                    "description": "Model is the full provider/model string (e.g. \"anthropic/claude-opus-4-6\").\nAn empty string falls back to the global large model.",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "skills": {
+                    "description": "AllowedSkills is the list of skill names available to the agent.\nnil means all skills are available; [] means no skills.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tools": {
+                    "description": "AllowedTools is the list of tools available to the agent.\nnil means all tools are available; [] means no tools.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "variant": {
+                    "description": "Variant is the model variant (e.g. thinking budget passthrough).",
+                    "type": "string"
+                }
+            }
+        },
         "config.Completions": {
             "type": "object",
             "properties": {
@@ -2600,6 +2711,23 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "max_items": {
+                    "type": "integer"
+                }
+            }
+        },
+        "config.HookConfig": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "description": "Shell command to execute.",
+                    "type": "string"
+                },
+                "matcher": {
+                    "description": "Regex pattern tested against the tool name. Empty means match all.",
+                    "type": "string"
+                },
+                "timeout": {
+                    "description": "Timeout in seconds. Default 30.",
                     "type": "integer"
                 }
             }
@@ -2677,6 +2805,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "enabled_tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "env": {
                     "type": "object",
                     "additionalProperties": {
@@ -2684,7 +2818,7 @@ const docTemplate = `{
                     }
                 },
                 "headers": {
-                    "description": "TODO: maybe make it possible to get the value from the env",
+                    "description": "Headers are HTTP headers for HTTP/SSE MCP servers. Values run\nthrough shell expansion at MCP startup, so $VAR and $(cmd)\nwork. A header whose value resolves to the empty string (unset\nbare $VAR under lenient nounset, $(echo), or literal \"\") is\nomitted from the outgoing request rather than sent as\n\"Header:\". See PLAN.md Phase 2 design decision #18.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "string"
@@ -2731,16 +2865,14 @@ const docTemplate = `{
                 }
             }
         },
-        "config.Scope": {
-            "type": "integer",
-            "enum": [
-                0,
-                1
-            ],
-            "x-enum-varnames": [
-                "ScopeGlobal",
-                "ScopeWorkspace"
-            ]
+        "config.PluginConfig": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "description": "Path is the filesystem path to the plugin directory. Supports ~ and\nenvironment variable expansion.",
+                    "type": "string"
+                }
+            }
         },
         "config.SelectedModel": {
             "type": "object",
@@ -2784,6 +2916,10 @@ const docTemplate = `{
                 },
                 "top_p": {
                     "type": "number"
+                },
+                "variant": {
+                    "description": "Variant is an optional model variant passthrough (e.g. thinking budget).",
+                    "type": "string"
                 }
             }
         },
@@ -2848,11 +2984,34 @@ const docTemplate = `{
         "csync.Map-string-config_ProviderConfig": {
             "type": "object"
         },
-        "github_com_Broderick_Westrope_anvil_internal_config.Config": {
+        "github_com_Broderick-Westrope_anvil_internal_config.Config": {
             "type": "object",
             "properties": {
                 "$schema": {
                     "type": "string"
+                },
+                "agents": {
+                    "description": "Agents is the map of named agent configurations. After SetupAgents,\nonly the orchestrator is present. The full roster is populated by\nSetupAgentsWithDefaults when the coordinator loads .md files.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/config.Agent"
+                    }
+                },
+                "disabled_agents": {
+                    "description": "DisabledAgents lists agent names to remove from the routing table and\norchestrator prompt at startup.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "hooks": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/config.HookConfig"
+                        }
+                    }
                 },
                 "lsp": {
                     "$ref": "#/definitions/config.LSPs"
@@ -2868,10 +3027,17 @@ const docTemplate = `{
                     }
                 },
                 "options": {
-                    "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_config.Options"
+                    "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Options"
                 },
                 "permissions": {
                     "$ref": "#/definitions/config.Permissions"
+                },
+                "plugins": {
+                    "description": "Plugins is a list of external plugin directories to load skills,\ncommands, and agents from.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/config.PluginConfig"
+                    }
                 },
                 "providers": {
                     "description": "The providers that are configured",
@@ -2896,7 +3062,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_Broderick_Westrope_anvil_internal_config.Options": {
+        "github_com_Broderick-Westrope_anvil_internal_config.Options": {
             "type": "object",
             "properties": {
                 "auto_lsp": {
@@ -2909,7 +3075,7 @@ const docTemplate = `{
                     }
                 },
                 "data_directory": {
-                    "description": "DataDirectory is where Anvil keeps per-project state such as the SQLite database and workspace overrides. Relative paths are resolved against the working directory; absolute paths are used verbatim. After defaulting the stored value is always absolute.",
+                    "description": "DataDirectory is where Anvil keeps per-project state such as\nthe SQLite database and workspace overrides. Relative paths are\nresolved against the working directory; absolute paths are used\nverbatim. After defaulting the stored value is always absolute.",
                     "type": "string"
                 },
                 "debug": {
@@ -2932,6 +3098,12 @@ const docTemplate = `{
                 },
                 "disable_provider_auto_update": {
                     "type": "boolean"
+                },
+                "disabled_skills": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "disabled_tools": {
                     "type": "array",
@@ -2956,7 +3128,18 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_Broderick_Westrope_anvil_internal_proto.Message": {
+        "github_com_Broderick-Westrope_anvil_internal_config.Scope": {
+            "type": "integer",
+            "enum": [
+                0,
+                1
+            ],
+            "x-enum-varnames": [
+                "ScopeGlobal",
+                "ScopeWorkspace"
+            ]
+        },
+        "github_com_Broderick-Westrope_anvil_internal_proto.Message": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -2965,7 +3148,13 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "message_type": {
+                    "type": "string"
+                },
                 "model": {
+                    "type": "string"
+                },
+                "parent_message_id": {
                     "type": "string"
                 },
                 "parts": {
@@ -3057,6 +3246,9 @@ const docTemplate = `{
                 "is_busy": {
                     "type": "boolean"
                 },
+                "leaf_message_id": {
+                    "type": "string"
+                },
                 "message_count": {
                     "type": "integer"
                 },
@@ -3065,9 +3257,6 @@ const docTemplate = `{
                 },
                 "prompt_tokens": {
                     "type": "integer"
-                },
-                "summary_message_id": {
-                    "type": "string"
                 },
                 "title": {
                     "type": "string"
@@ -3104,7 +3293,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "scope": {
-                    "$ref": "#/definitions/config.Scope"
+                    "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope"
                 }
             }
         },
@@ -3118,7 +3307,7 @@ const docTemplate = `{
                     "$ref": "#/definitions/config.SelectedModelType"
                 },
                 "scope": {
-                    "$ref": "#/definitions/config.Scope"
+                    "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope"
                 }
             }
         },
@@ -3130,7 +3319,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "scope": {
-                    "$ref": "#/definitions/config.Scope"
+                    "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope"
                 }
             }
         },
@@ -3141,7 +3330,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "scope": {
-                    "$ref": "#/definitions/config.Scope"
+                    "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope"
                 }
             }
         },
@@ -3152,7 +3341,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "scope": {
-                    "$ref": "#/definitions/config.Scope"
+                    "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope"
                 }
             }
         },
@@ -3163,7 +3352,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "scope": {
-                    "$ref": "#/definitions/config.Scope"
+                    "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Scope"
                 },
                 "value": {}
             }
@@ -3444,6 +3633,9 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "leaf_message_id": {
+                    "type": "string"
+                },
                 "message_count": {
                     "type": "integer"
                 },
@@ -3452,9 +3644,6 @@ const docTemplate = `{
                 },
                 "prompt_tokens": {
                     "type": "integer"
-                },
-                "summary_message_id": {
-                    "type": "string"
                 },
                 "title": {
                     "type": "string"
@@ -3485,7 +3674,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "config": {
-                    "$ref": "#/definitions/github_com_Broderick_Westrope_anvil_internal_config.Config"
+                    "$ref": "#/definitions/github_com_Broderick-Westrope_anvil_internal_config.Config"
                 },
                 "data_dir": {
                     "type": "string"

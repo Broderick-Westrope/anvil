@@ -678,7 +678,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = msg.session
 		m.sessionFiles = msg.files
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
-		msgs, err := m.com.Workspace.ListMessages(context.Background(), m.session.ID)
+		var msgs []message.Message
+		var err error
+		if m.session.LeafMessageID != "" {
+			msgs, err = m.com.Workspace.GetBranchPath(context.Background(), m.session.LeafMessageID)
+		} else {
+			msgs, err = m.com.Workspace.ListMessages(context.Background(), m.session.ID)
+		}
 		if err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
@@ -2033,10 +2039,33 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 
 		currentModel := cfg.Models[config.SelectedModelTypeLarge]
+		oldEffort := currentModel.ReasoningEffort
 		currentModel.ReasoningEffort = msg.Effort
 		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeLarge, currentModel); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
+		}
+
+		// Write a thinking_level_change metadata entry if the effort actually changed.
+		// Skip when the agent is busy to avoid racing the leaf pointer.
+		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort && !m.isAgentBusy() {
+			ws := m.com.Workspace
+			sid := m.session.ID
+			leafID := m.session.LeafMessageID
+			effort := msg.Effort
+			cmds = append(cmds, func() tea.Msg {
+				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
+					ParentMessageID: leafID,
+					MessageType:     message.MessageTypeThinkingLevelChange,
+					Parts: []message.ContentPart{
+						message.ThinkingLevelChangeContent{ThinkingLevel: effort},
+					},
+				})
+				if err != nil {
+					slog.Error("Failed to write thinking_level_change entry", "error", err)
+				}
+				return nil
+			})
 		}
 
 		cmds = append(cmds, func() tea.Msg {
@@ -2181,6 +2210,8 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		return util.ReportWarn("Agent is busy, please wait...")
 	}
 
+	oldAgentModel := m.com.Workspace.AgentModel()
+
 	cfg := m.com.Config()
 	if cfg == nil {
 		return util.ReportError(errors.New("configuration not found"))
@@ -2229,6 +2260,31 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 			smallModel := m.com.Workspace.GetDefaultSmallModel(providerID)
 			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeSmall, smallModel); err != nil {
 				cmds = append(cmds, util.ReportError(err))
+			}
+		}
+
+		// Write a model_change metadata entry if the large model actually changed.
+		// Skip when the agent is busy to avoid racing the leaf pointer.
+		if msg.ModelType == config.SelectedModelTypeLarge && m.session != nil && m.session.LeafMessageID != "" && !m.isAgentBusy() {
+			if oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model {
+				ws := m.com.Workspace
+				sid := m.session.ID
+				leafID := m.session.LeafMessageID
+				provider := msg.Model.Provider
+				modelID := msg.Model.Model
+				cmds = append(cmds, func() tea.Msg {
+					err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
+						ParentMessageID: leafID,
+						MessageType:     message.MessageTypeModelChange,
+						Parts: []message.ContentPart{
+							message.ModelChangeContent{Provider: provider, ModelID: modelID},
+						},
+					})
+					if err != nil {
+						slog.Error("Failed to write model_change entry", "error", err)
+					}
+					return nil
+				})
 			}
 		}
 	}

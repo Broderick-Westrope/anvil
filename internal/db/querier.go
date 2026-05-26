@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
@@ -17,13 +18,16 @@ type Querier interface {
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionFiles(ctx context.Context, sessionID string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
+	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
 	GetAverageResponseTime(ctx context.Context) (int64, error)
+	GetBranchPath(ctx context.Context, leafID string) ([]GetBranchPathRow, error)
 	GetFile(ctx context.Context, id string) (File, error)
 	GetFileByPathAndSession(ctx context.Context, arg GetFileByPathAndSessionParams) (File, error)
 	GetFileRead(ctx context.Context, arg GetFileReadParams) (ReadFile, error)
 	GetHourDayHeatmap(ctx context.Context) ([]GetHourDayHeatmapRow, error)
 	GetLastSession(ctx context.Context) (Session, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
+	GetMessageChildren(ctx context.Context, parentID sql.NullString) ([]Message, error)
 	GetRecentActivity(ctx context.Context) ([]GetRecentActivityRow, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
 	GetToolUsage(ctx context.Context) ([]GetToolUsageRow, error)
@@ -45,6 +49,7 @@ type Querier interface {
 	RenameSession(ctx context.Context, arg RenameSessionParams) error
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
+	UpdateSessionLeaf(ctx context.Context, arg UpdateSessionLeafParams) error
 	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
 }
 
