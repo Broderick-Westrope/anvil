@@ -247,6 +247,7 @@ func (s *service) GetBranchPath(ctx context.Context, leafMessageID string) ([]Me
 			Parts:           dbMessage.Parts,
 			Model:           dbMessage.Model,
 			Provider:        dbMessage.Provider,
+			FinishedAt:      dbMessage.FinishedAt,
 			ParentMessageID: dbMessage.ParentMessageID,
 			MessageType:     dbMessage.MessageType,
 			CreatedAt:       dbMessage.CreatedAt,

@@ -65,6 +65,7 @@ WITH RECURSIVE branch AS (
            p.finished_at, p.provider, p.parent_message_id, p.message_type,
            b.depth + 1
     FROM messages p JOIN branch b ON p.id = b.parent_message_id
+    WHERE b.depth < 10000
 )
 SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at,
        provider, parent_message_id, message_type

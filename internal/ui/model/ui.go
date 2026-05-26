@@ -2047,7 +2047,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 
 		// Write a thinking_level_change metadata entry if the effort actually changed.
-		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort {
+		// Skip when the agent is busy to avoid racing the leaf pointer.
+		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort && !m.isAgentBusy() {
 			ws := m.com.Workspace
 			sid := m.session.ID
 			leafID := m.session.LeafMessageID
@@ -2263,7 +2264,8 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		}
 
 		// Write a model_change metadata entry if the large model actually changed.
-		if msg.ModelType == config.SelectedModelTypeLarge && m.session != nil && m.session.LeafMessageID != "" {
+		// Skip when the agent is busy to avoid racing the leaf pointer.
+		if msg.ModelType == config.SelectedModelTypeLarge && m.session != nil && m.session.LeafMessageID != "" && !m.isAgentBusy() {
 			if oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model {
 				ws := m.com.Workspace
 				sid := m.session.ID

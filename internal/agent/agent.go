@@ -266,6 +266,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		// message from the failed PrepareStep) so the prompt is only
 		// sent once via the Prompt field.
 		msgs = a.cleanupFailedAttemptMessages(ctx, msgs)
+		// Refresh currentLeaf after cleanup — the deleted messages may
+		// have advanced the leaf, so it could point to a now-deleted
+		// message. Use the last remaining message in the branch path.
+		if len(msgs) > 0 {
+			currentLeaf = msgs[len(msgs)-1].ID
+		}
 	} else {
 		// Add the user message to the session.
 		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
@@ -841,7 +847,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	usage := resp.Response.Usage
 	currentSession.CompletionTokens = usage.OutputTokens
 	currentSession.PromptTokens = 0
-	_, err = a.sessions.Save(genCtx, currentSession)
+	_, err = a.sessions.Save(ctx, currentSession)
 	if err != nil {
 		return err
 	}
