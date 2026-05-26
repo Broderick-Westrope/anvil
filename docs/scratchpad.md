@@ -14,3 +14,6 @@
 - the running indicator (animated text shimmer) for subagents is visually buggy. perhaps we use a different loading spinner. the main issue is just that it appears like its staying the same character, but i think its switching between two characters at a rate that makes it seem like only one character for 90% of the time.
 - it would be good to include the model on the stats line for subagent summaries
 - look at what posthog is being used for and whether it can be ripped out. or perhaps rewired to be useful for myself?
+- perhaps skill loading shouldnt require explicit read perms?
+- better perm system altogether? what could it look like to have something innovative for perms?
+- `anvil_info` is missing `[plugins]`, `[agents]`, and `[commands]` sections. Plugins and agents data lives on the coordinator already; commands only exist in the UI layer and would need threading through. Low priority — completeness, no known pain point.
