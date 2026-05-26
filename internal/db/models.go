@@ -19,18 +19,17 @@ type File struct {
 }
 
 type Message struct {
-	ID               string         `json:"id"`
-	SessionID        string         `json:"session_id"`
-	Role             string         `json:"role"`
-	Parts            string         `json:"parts"`
-	Model            sql.NullString `json:"model"`
-	CreatedAt        int64          `json:"created_at"`
-	UpdatedAt        int64          `json:"updated_at"`
-	FinishedAt       sql.NullInt64  `json:"finished_at"`
-	Provider         sql.NullString `json:"provider"`
-	IsSummaryMessage int64          `json:"is_summary_message"`
-	ParentMessageID  sql.NullString `json:"parent_message_id"`
-	MessageType      string         `json:"message_type"`
+	ID              string         `json:"id"`
+	SessionID       string         `json:"session_id"`
+	Role            string         `json:"role"`
+	Parts           string         `json:"parts"`
+	Model           sql.NullString `json:"model"`
+	CreatedAt       int64          `json:"created_at"`
+	UpdatedAt       int64          `json:"updated_at"`
+	FinishedAt      sql.NullInt64  `json:"finished_at"`
+	Provider        sql.NullString `json:"provider"`
+	ParentMessageID sql.NullString `json:"parent_message_id"`
+	MessageType     string         `json:"message_type"`
 }
 
 type ReadFile struct {
@@ -49,7 +48,6 @@ type Session struct {
 	Cost             float64        `json:"cost"`
 	UpdatedAt        int64          `json:"updated_at"`
 	CreatedAt        int64          `json:"created_at"`
-	SummaryMessageID sql.NullString `json:"summary_message_id"`
 	Todos            sql.NullString `json:"todos"`
 	LeafMessageID    sql.NullString `json:"leaf_message_id"`
 }

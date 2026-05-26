@@ -187,7 +187,6 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 		Title:            session.Title,
 		PromptTokens:     session.PromptTokens,
 		CompletionTokens: session.CompletionTokens,
-		SummaryMessageID: sql.NullString{},
 		Cost:             session.Cost,
 		Todos: sql.NullString{
 			String: todosJSON,

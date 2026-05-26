@@ -25,7 +25,7 @@ INSERT INTO messages (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now')
 )
-RETURNING id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message, parent_message_id, message_type
+RETURNING id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 `
 
 type CreateMessageParams struct {
@@ -61,7 +61,6 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.Provider,
-		&i.IsSummaryMessage,
 		&i.ParentMessageID,
 		&i.MessageType,
 	)
@@ -89,7 +88,7 @@ func (q *Queries) DeleteSessionMessages(ctx context.Context, sessionID string) e
 }
 
 const getAllSessionMessages = `-- name: GetAllSessionMessages :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message, parent_message_id, message_type
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE session_id = ?1
 ORDER BY created_at ASC, rowid ASC
@@ -114,7 +113,6 @@ func (q *Queries) GetAllSessionMessages(ctx context.Context, sessionID string) (
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Provider,
-			&i.IsSummaryMessage,
 			&i.ParentMessageID,
 			&i.MessageType,
 		); err != nil {
@@ -198,7 +196,7 @@ func (q *Queries) GetBranchPath(ctx context.Context, leafID string) ([]GetBranch
 }
 
 const getMessage = `-- name: GetMessage :one
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message, parent_message_id, message_type
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE id = ? LIMIT 1
 `
@@ -216,7 +214,6 @@ func (q *Queries) GetMessage(ctx context.Context, id string) (Message, error) {
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.Provider,
-		&i.IsSummaryMessage,
 		&i.ParentMessageID,
 		&i.MessageType,
 	)
@@ -224,7 +221,7 @@ func (q *Queries) GetMessage(ctx context.Context, id string) (Message, error) {
 }
 
 const getMessageChildren = `-- name: GetMessageChildren :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message, parent_message_id, message_type
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE parent_message_id = ?1
 ORDER BY created_at ASC
@@ -249,7 +246,6 @@ func (q *Queries) GetMessageChildren(ctx context.Context, parentID sql.NullStrin
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Provider,
-			&i.IsSummaryMessage,
 			&i.ParentMessageID,
 			&i.MessageType,
 		); err != nil {
@@ -267,7 +263,7 @@ func (q *Queries) GetMessageChildren(ctx context.Context, parentID sql.NullStrin
 }
 
 const listAllUserMessages = `-- name: ListAllUserMessages :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message, parent_message_id, message_type
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE role = 'user'
 ORDER BY created_at DESC
@@ -292,7 +288,6 @@ func (q *Queries) ListAllUserMessages(ctx context.Context) ([]Message, error) {
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Provider,
-			&i.IsSummaryMessage,
 			&i.ParentMessageID,
 			&i.MessageType,
 		); err != nil {
@@ -310,7 +305,7 @@ func (q *Queries) ListAllUserMessages(ctx context.Context) ([]Message, error) {
 }
 
 const listMessagesBySession = `-- name: ListMessagesBySession :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message, parent_message_id, message_type
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE session_id = ?
 ORDER BY created_at ASC
@@ -335,7 +330,6 @@ func (q *Queries) ListMessagesBySession(ctx context.Context, sessionID string) (
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Provider,
-			&i.IsSummaryMessage,
 			&i.ParentMessageID,
 			&i.MessageType,
 		); err != nil {
@@ -353,7 +347,7 @@ func (q *Queries) ListMessagesBySession(ctx context.Context, sessionID string) (
 }
 
 const listUserMessagesBySession = `-- name: ListUserMessagesBySession :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, is_summary_message, parent_message_id, message_type
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
 WHERE session_id = ? AND role = 'user'
 ORDER BY created_at DESC
@@ -378,7 +372,6 @@ func (q *Queries) ListUserMessagesBySession(ctx context.Context, sessionID strin
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Provider,
-			&i.IsSummaryMessage,
 			&i.ParentMessageID,
 			&i.MessageType,
 		); err != nil {
