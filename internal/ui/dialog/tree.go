@@ -87,7 +87,7 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		}
 		// Skip assistant messages with no text content (tool-call-only
 		// or error-only messages add noise without value).
-		if msg.Role == message.Assistant && extractTextContent(msg) == "" {
+		if msg.Role == message.Assistant && messageTextContent(msg) == "" {
 			continue
 		}
 		t.nodeMap[msg.ID] = &treeNode{msg: msg}
@@ -255,15 +255,16 @@ func (t *Tree) HandleMsg(msg tea.Msg) Action {
 		case key.Matches(msg, t.keyMap.Select):
 			if item := t.selectedTreeItem(); item != nil {
 				return ActionNavigateTree{
-					MessageID: item.node.msg.ID,
-					Role:      item.node.msg.Role,
-					Content:   extractTextContent(item.node.msg),
+					MessageID:       item.node.msg.ID,
+					ParentMessageID: item.node.msg.ParentMessageID,
+					Role:            item.node.msg.Role,
+					Content:         messageTextContent(item.node.msg),
 				}
 			}
 
 		case key.Matches(msg, t.keyMap.Collapse):
 			if item := t.selectedTreeItem(); item != nil {
-				if item.hasChildren && t.expanded[item.node.msg.ID] {
+				if item.isCollapsible && t.expanded[item.node.msg.ID] {
 					t.expanded[item.node.msg.ID] = false
 					t.list.SetItems(t.rebuildItems()...)
 				}
@@ -271,7 +272,7 @@ func (t *Tree) HandleMsg(msg tea.Msg) Action {
 
 		case key.Matches(msg, t.keyMap.Expand):
 			if item := t.selectedTreeItem(); item != nil {
-				if item.hasChildren && !t.expanded[item.node.msg.ID] {
+				if item.isCollapsible && !t.expanded[item.node.msg.ID] {
 					t.expanded[item.node.msg.ID] = true
 					t.list.SetItems(t.rebuildItems()...)
 				}
@@ -361,7 +362,7 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 			isCollapsible := isBranchPoint || node.isBranchHead
 			isExpanded := t.expanded[node.msg.ID]
 			isLeaf := node.msg.ID == t.leafMessageID
-			label := extractTextContent(node.msg)
+			label := messageTextContent(node.msg)
 
 			items = append(items, NewTreeItem(
 				t.com.Styles,
@@ -390,14 +391,12 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 	return items
 }
 
-// extractTextContent returns the first text content found in a message's
-// parts as a single line, or an empty string if none is found. Newlines
-// are collapsed to spaces so tree items never span multiple lines.
-func extractTextContent(msg message.Message) string {
+// messageTextContent returns the first text content from a message, with
+// whitespace collapsed to single spaces for single-line display.
+func messageTextContent(msg message.Message) string {
 	for _, part := range msg.Parts {
 		if tc, ok := part.(message.TextContent); ok {
-			text := strings.Join(strings.Fields(tc.Text), " ")
-			return text
+			return strings.Join(strings.Fields(tc.Text), " ")
 		}
 	}
 	return ""

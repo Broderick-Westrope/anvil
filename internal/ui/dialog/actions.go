@@ -99,9 +99,10 @@ type (
 	// selects a message to navigate to. The receiver uses Role and
 	// Content to decide whether to pre-fill the editor.
 	ActionNavigateTree struct {
-		MessageID string
-		Role      message.MessageRole
-		Content   string
+		MessageID       string
+		ParentMessageID string
+		Role            message.MessageRole
+		Content         string
 	}
 )
 

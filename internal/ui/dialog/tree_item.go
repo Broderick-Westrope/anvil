@@ -18,7 +18,7 @@ type TreeItem struct {
 	node           *treeNode
 	label          string
 	depth          int
-	hasChildren    bool
+	isCollapsible  bool
 	isExpanded     bool
 	isLeaf         bool
 	isOnActivePath bool
@@ -35,7 +35,7 @@ func NewTreeItem(
 	t *styles.Styles,
 	node *treeNode,
 	depth int,
-	hasChildren bool,
+	isCollapsible bool,
 	isExpanded bool,
 	isLeaf bool,
 	isOnActivePath bool,
@@ -45,7 +45,7 @@ func NewTreeItem(
 		node:           node,
 		label:          label,
 		depth:          depth,
-		hasChildren:    hasChildren,
+		isCollapsible:    isCollapsible,
 		isExpanded:     isExpanded,
 		isLeaf:         isLeaf,
 		isOnActivePath: isOnActivePath,
@@ -58,7 +58,9 @@ func (ti *TreeItem) Filter() string {
 	return ti.label
 }
 
-// SetMatch implements [list.MatchSettable].
+// SetMatch implements [list.MatchSettable]. The match is stored but not
+// yet used for inline highlighting due to the complex ANSI prefix; the
+// cache is cleared so the item re-renders when the filter changes.
 func (ti *TreeItem) SetMatch(m fuzzy.Match) {
 	ti.cache = nil
 	ti.m = m
@@ -97,9 +99,9 @@ func (ti *TreeItem) Render(width int) string {
 	// Expand/collapse indicator.
 	var connector string
 	switch {
-	case ti.hasChildren && ti.isExpanded:
+	case ti.isCollapsible && ti.isExpanded:
 		connector = "▼ "
-	case ti.hasChildren && !ti.isExpanded:
+	case ti.isCollapsible && !ti.isExpanded:
 		connector = "▶ "
 	default:
 		connector = "  "

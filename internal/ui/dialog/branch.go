@@ -97,9 +97,10 @@ func (b *Branch) HandleMsg(msg tea.Msg) Action {
 			if item := b.list.SelectedItem(); item != nil {
 				branchItem := item.(*BranchItem)
 				return ActionNavigateTree{
-					MessageID: branchItem.msg.ID,
-					Role:      message.User,
-					Content:   extractBranchTextContent(branchItem.msg),
+					MessageID:       branchItem.msg.ID,
+					ParentMessageID: branchItem.msg.ParentMessageID,
+					Role:            message.User,
+					Content:         messageTextContent(branchItem.msg),
 				}
 			}
 
@@ -166,13 +167,4 @@ func (b *Branch) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	return cur
 }
 
-// extractBranchTextContent returns the first text content found in a
-// message's parts, or an empty string if none is found.
-func extractBranchTextContent(msg message.Message) string {
-	for _, part := range msg.Parts {
-		if tc, ok := part.(message.TextContent); ok {
-			return tc.Text
-		}
-	}
-	return ""
-}
+

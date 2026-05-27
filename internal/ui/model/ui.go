@@ -4430,23 +4430,12 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 		return nil
 	}
 
-	// Determine target leaf.
+	// Determine target leaf. For user messages, move to the parent so the
+	// user can re-submit from that point. The ParentMessageID is passed
+	// directly from the dialog to avoid an extra DB fetch.
 	targetLeafID := msg.MessageID
-	if msg.Role == message.User {
-		// For user messages, navigate to the parent (branch from here).
-		// We need to look up the parent.
-		msgs, err := m.com.Workspace.GetBranchPath(context.Background(), msg.MessageID)
-		if err == nil && len(msgs) > 0 {
-			// Find the message and use its parent.
-			for _, m := range msgs {
-				if m.ID == msg.MessageID {
-					if m.ParentMessageID != "" {
-						targetLeafID = m.ParentMessageID
-					}
-					break
-				}
-			}
-		}
+	if msg.Role == message.User && msg.ParentMessageID != "" {
+		targetLeafID = msg.ParentMessageID
 	}
 
 	ws := m.com.Workspace

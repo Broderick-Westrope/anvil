@@ -23,12 +23,7 @@ func NewBranchItem(t *styles.Styles, msg message.Message) *BranchItem {
 
 // Filter returns the filterable text content of the message.
 func (b *BranchItem) Filter() string {
-	for _, part := range b.msg.Parts {
-		if tc, ok := part.(message.TextContent); ok {
-			return tc.Text
-		}
-	}
-	return ""
+	return messageTextContent(b.msg)
 }
 
 // SetMatch sets the fuzzy match for the branch item.
