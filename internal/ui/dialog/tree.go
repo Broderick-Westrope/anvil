@@ -83,6 +83,11 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		if msg.Role != message.User && msg.Role != message.Assistant {
 			continue
 		}
+		// Skip assistant messages with no text content (tool-call-only
+		// or error-only messages add noise without value).
+		if msg.Role == message.Assistant && extractTextContent(msg) == "" {
+			continue
+		}
 		t.nodeMap[msg.ID] = &treeNode{msg: msg}
 	}
 
@@ -308,9 +313,6 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 			isExpanded := t.expanded[node.msg.ID]
 			isLeaf := node.msg.ID == t.leafMessageID
 			label := extractTextContent(node.msg)
-			if label == "" {
-				label = string(node.msg.Role)
-			}
 
 			items = append(items, NewTreeItem(
 				t.com.Styles,
@@ -342,3 +344,5 @@ func extractTextContent(msg message.Message) string {
 	}
 	return ""
 }
+
+
