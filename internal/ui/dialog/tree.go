@@ -125,13 +125,17 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 	}
 	setDepth(t.roots, 0)
 
-	// Compute active path by walking from leaf to root.
+	// Compute active path by walking from leaf to root through the
+	// *original* message chain (allByID) so filtered-out tool messages
+	// don't break the walk. Only visible nodes get marked.
 	activePath := make(map[string]bool)
 	cur := leafMessageID
 	for cur != "" {
-		activePath[cur] = true
-		if node, ok := t.nodeMap[cur]; ok {
-			cur = node.msg.ParentMessageID
+		if _, ok := t.nodeMap[cur]; ok {
+			activePath[cur] = true
+		}
+		if orig, ok := allByID[cur]; ok {
+			cur = orig.ParentMessageID
 		} else {
 			break
 		}
