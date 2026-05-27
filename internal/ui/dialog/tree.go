@@ -115,6 +115,30 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		}
 	}
 
+	// Collapse assistant→assistant single-child chains so each assistant
+	// turn is shown as one entry (the last text response). Walk the tree
+	// and whenever an assistant node has exactly one child that is also
+	// assistant, remove the parent and re-link the child in its place.
+	var collapseAssistantChains func(nodes []*treeNode) []*treeNode
+	collapseAssistantChains = func(nodes []*treeNode) []*treeNode {
+		var result []*treeNode
+		for _, node := range nodes {
+			// Walk down assistant→assistant single-child chains,
+			// keeping the last node.
+			for node.msg.Role == message.Assistant &&
+				len(node.children) == 1 &&
+				node.children[0].msg.Role == message.Assistant {
+				child := node.children[0]
+				delete(t.nodeMap, node.msg.ID)
+				node = child
+			}
+			node.children = collapseAssistantChains(node.children)
+			result = append(result, node)
+		}
+		return result
+	}
+	t.roots = collapseAssistantChains(t.roots)
+
 	// Compute depths: only increment when a parent has multiple children
 	// (a branch point). Single-child chains stay at the same depth so
 	// linear conversations remain flat.
