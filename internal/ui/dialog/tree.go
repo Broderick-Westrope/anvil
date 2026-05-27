@@ -22,6 +22,7 @@ type treeNode struct {
 	children       []*treeNode
 	depth          int
 	isOnActivePath bool
+	isBranchHead   bool // direct child of a node with 2+ children
 }
 
 // Tree is a dialog that displays an ASCII tree of all session messages.
@@ -139,21 +140,43 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 	}
 	t.roots = collapseAssistantChains(t.roots)
 
-	// Compute depths: only increment when a parent has multiple children
-	// (a branch point). Single-child chains stay at the same depth so
-	// linear conversations remain flat.
-	var setDepth func(nodes []*treeNode, depth int)
-	setDepth = func(nodes []*treeNode, depth int) {
+	// Compute depths and mark branch heads.
+	//
+	// Indentation rules:
+	//   - Linear chains (0-1 children): stay flat at the same depth.
+	//   - Branch point children: indent +1, marked as branch heads.
+	//   - Immediate children of branch heads: indent +1 more (so the
+	//     branch head's subtree is visually grouped under it).
+	//   - After that first generation, depth stays flat again until the
+	//     next branch point.
+	var setDepth func(nodes []*treeNode, depth int, parentIsBranchHead bool)
+	setDepth = func(nodes []*treeNode, depth int, parentIsBranchHead bool) {
 		for _, n := range nodes {
 			n.depth = depth
-			childDepth := depth
-			if len(n.children) > 1 {
-				childDepth = depth + 1
+			isBranchPoint := len(n.children) > 1
+
+			if isBranchPoint {
+				// Children of a branch point indent +1 and are
+				// marked as branch heads.
+				for _, child := range n.children {
+					child.isBranchHead = true
+				}
+				setDepth(n.children, depth+1, false)
+			} else if n.isBranchHead {
+				// Immediate children of a branch head indent +1
+				// more, then go flat.
+				setDepth(n.children, depth+1, true)
+			} else if parentIsBranchHead {
+				// We just indented for the branch head's first
+				// generation — go flat from here.
+				setDepth(n.children, depth, false)
+			} else {
+				// Linear — stay flat.
+				setDepth(n.children, depth, false)
 			}
-			setDepth(n.children, childDepth)
 		}
 	}
-	setDepth(t.roots, 0)
+	setDepth(t.roots, 0, false)
 
 	// Compute active path by walking from leaf to root through the
 	// *original* message chain (allByID) so filtered-out tool messages
@@ -335,6 +358,7 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 	walk = func(nodes []*treeNode) {
 		for _, node := range nodes {
 			isBranchPoint := len(node.children) > 1
+			isCollapsible := isBranchPoint || node.isBranchHead
 			isExpanded := t.expanded[node.msg.ID]
 			isLeaf := node.msg.ID == t.leafMessageID
 			label := extractTextContent(node.msg)
@@ -343,16 +367,17 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 				t.com.Styles,
 				node,
 				node.depth,
-				isBranchPoint,
+				isCollapsible,
 				isExpanded,
 				isLeaf,
 				node.isOnActivePath,
 				label,
 			))
 
-			// Always show children of single-child nodes. Only
-			// respect expand/collapse state at branch points.
-			if isBranchPoint {
+			// Collapsible nodes (branch points and branch heads)
+			// respect expand/collapse state. All other nodes always
+			// show their children.
+			if isCollapsible {
 				if isExpanded {
 					walk(node.children)
 				}
