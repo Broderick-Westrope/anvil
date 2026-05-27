@@ -105,15 +105,15 @@ func (ti *TreeItem) Render(width int) string {
 		connector = "  "
 	}
 
-	// Role indicator.
+	// Role indicator (colored — primary for user, secondary for assistant).
 	var rolePrefix string
 	switch ti.node.msg.Role {
 	case message.User:
-		rolePrefix = "U "
+		rolePrefix = lipgloss.NewStyle().Foreground(ti.t.Dialog.TitleGradFromColor).Bold(true).Render("U:") + " "
 	case message.Assistant:
-		rolePrefix = "A "
+		rolePrefix = lipgloss.NewStyle().Foreground(ti.t.Dialog.TitleGradToColor).Bold(true).Render("A:") + " "
 	default:
-		rolePrefix = "  "
+		rolePrefix = "   "
 	}
 
 	style := ti.t.Dialog.NormalItem
