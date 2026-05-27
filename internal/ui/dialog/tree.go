@@ -2,6 +2,7 @@ package dialog
 
 import (
 	"context"
+	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
@@ -341,11 +342,13 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 }
 
 // extractTextContent returns the first text content found in a message's
-// parts, or an empty string if none is found.
+// parts as a single line, or an empty string if none is found. Newlines
+// are collapsed to spaces so tree items never span multiple lines.
 func extractTextContent(msg message.Message) string {
 	for _, part := range msg.Parts {
 		if tc, ok := part.(message.TextContent); ok {
-			return tc.Text
+			text := strings.Join(strings.Fields(tc.Text), " ")
+			return text
 		}
 	}
 	return ""
