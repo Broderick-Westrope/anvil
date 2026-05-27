@@ -309,7 +309,7 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 	var walk func(nodes []*treeNode)
 	walk = func(nodes []*treeNode) {
 		for _, node := range nodes {
-			hasChildren := len(node.children) > 0
+			isBranchPoint := len(node.children) > 1
 			isExpanded := t.expanded[node.msg.ID]
 			isLeaf := node.msg.ID == t.leafMessageID
 			label := extractTextContent(node.msg)
@@ -318,14 +318,20 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 				t.com.Styles,
 				node,
 				node.depth,
-				hasChildren,
+				isBranchPoint,
 				isExpanded,
 				isLeaf,
 				node.isOnActivePath,
 				label,
 			))
 
-			if hasChildren && isExpanded {
+			// Always show children of single-child nodes. Only
+			// respect expand/collapse state at branch points.
+			if isBranchPoint {
+				if isExpanded {
+					walk(node.children)
+				}
+			} else {
 				walk(node.children)
 			}
 		}
