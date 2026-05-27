@@ -109,13 +109,13 @@ func (ti *TreeItem) Render(width int) string {
 	var rolePrefix string
 	switch ti.node.msg.Role {
 	case message.User:
-		rolePrefix = "👤 "
+		rolePrefix = "U "
 	case message.Assistant:
-		rolePrefix = "🤖 "
+		rolePrefix = "A "
 	case message.Tool:
-		rolePrefix = "🔧 "
+		rolePrefix = "T "
 	default:
-		rolePrefix = "   "
+		rolePrefix = "  "
 	}
 
 	style := ti.t.Dialog.NormalItem
