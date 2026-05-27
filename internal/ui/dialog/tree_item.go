@@ -112,8 +112,6 @@ func (ti *TreeItem) Render(width int) string {
 		rolePrefix = "U "
 	case message.Assistant:
 		rolePrefix = "A "
-	case message.Tool:
-		rolePrefix = "T "
 	default:
 		rolePrefix = "  "
 	}

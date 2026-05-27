@@ -67,23 +67,45 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		leafMessageID: leafMessageID,
 	}
 
-	// Build the in-memory tree, filtering out hidden message types.
+	// Index all messages by ID so we can walk parent chains through
+	// filtered-out nodes.
+	allByID := make(map[string]message.Message, len(msgs))
+	for _, msg := range msgs {
+		allByID[msg.ID] = msg
+	}
+
+	// Build the in-memory tree, filtering out hidden message types and
+	// non-conversation roles (tool messages add noise without value).
 	for _, msg := range msgs {
 		if hiddenMessageTypes[msg.MessageType] {
+			continue
+		}
+		if msg.Role != message.User && msg.Role != message.Assistant {
 			continue
 		}
 		t.nodeMap[msg.ID] = &treeNode{msg: msg}
 	}
 
-	// Link children to parents and collect roots.
+	// Link children to parents and collect roots. When a node's direct
+	// parent was filtered out, walk up the original message chain to
+	// find the nearest visible ancestor.
 	for _, node := range t.nodeMap {
-		if node.msg.ParentMessageID == "" {
+		parentID := node.msg.ParentMessageID
+		// Walk through filtered-out ancestors to find a visible parent.
+		for parentID != "" {
+			if _, ok := t.nodeMap[parentID]; ok {
+				break
+			}
+			if orig, ok := allByID[parentID]; ok {
+				parentID = orig.ParentMessageID
+			} else {
+				parentID = ""
+			}
+		}
+		if parentID == "" {
 			t.roots = append(t.roots, node)
-		} else if parent, ok := t.nodeMap[node.msg.ParentMessageID]; ok {
-			parent.children = append(parent.children, node)
 		} else {
-			// Parent was filtered out; treat as root.
-			t.roots = append(t.roots, node)
+			t.nodeMap[parentID].children = append(t.nodeMap[parentID].children, node)
 		}
 	}
 
