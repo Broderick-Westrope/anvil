@@ -80,8 +80,21 @@ func (ti *TreeItem) Render(width int) string {
 		}
 	}
 
-	// Build the prefix: indentation + tree connector.
+	// Active path marker in a fixed-width prefix column.
+	var marker string
+	switch {
+	case ti.isLeaf:
+		marker = "● "
+	case ti.isOnActivePath:
+		marker = "• "
+	default:
+		marker = "  "
+	}
+
+	// Indentation (only present at branch points).
 	indent := strings.Repeat("  ", ti.depth)
+
+	// Expand/collapse indicator.
 	var connector string
 	switch {
 	case ti.hasChildren && ti.isExpanded:
@@ -92,10 +105,9 @@ func (ti *TreeItem) Render(width int) string {
 		connector = "  "
 	}
 
-	// Build role indicator.
-	role := ti.node.msg.Role
+	// Role indicator.
 	var rolePrefix string
-	switch role {
+	switch ti.node.msg.Role {
 	case message.User:
 		rolePrefix = "👤 "
 	case message.Assistant:
@@ -106,29 +118,24 @@ func (ti *TreeItem) Render(width int) string {
 		rolePrefix = "   "
 	}
 
-	prefix := indent + connector + rolePrefix
-	prefixWidth := lipgloss.Width(prefix)
-
-	// Truncate the label to fit.
-	maxLabelWidth := max(0, width-prefixWidth)
-	truncLabel := ansi.Truncate(ti.label, maxLabelWidth, "…")
-
-	// Leaf and active path markers.
-	var suffix string
-	if ti.isLeaf {
-		suffix = " ●"
-	} else if ti.isOnActivePath {
-		suffix = " •"
-	}
-
-	content := fmt.Sprintf("%s%s%s", prefix, truncLabel, suffix)
-
 	style := ti.t.Dialog.NormalItem
 	if ti.focused {
 		style = ti.t.Dialog.SelectedItem
 	}
 
-	result := style.Render(ansi.Truncate(content, width, "…"))
+	prefix := marker + indent + connector + rolePrefix
+	prefixWidth := lipgloss.Width(prefix)
+	// Account for horizontal frame (padding/border/margin) that the
+	// style adds so the final rendered string never exceeds width.
+	frameWidth := style.GetHorizontalFrameSize()
+
+	// Truncate the label to exactly fill remaining width.
+	maxLabelWidth := max(0, width-prefixWidth-frameWidth)
+	truncLabel := ansi.Truncate(ti.label, maxLabelWidth, "…")
+
+	content := fmt.Sprintf("%s%s", prefix, truncLabel)
+
+	result := style.Render(content)
 
 	if ti.cache == nil {
 		ti.cache = make(map[int]string)

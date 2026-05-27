@@ -87,12 +87,18 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		}
 	}
 
-	// Compute depths via BFS from roots.
+	// Compute depths: only increment when a parent has multiple children
+	// (a branch point). Single-child chains stay at the same depth so
+	// linear conversations remain flat.
 	var setDepth func(nodes []*treeNode, depth int)
 	setDepth = func(nodes []*treeNode, depth int) {
 		for _, n := range nodes {
 			n.depth = depth
-			setDepth(n.children, depth+1)
+			childDepth := depth
+			if len(n.children) > 1 {
+				childDepth = depth + 1
+			}
+			setDepth(n.children, childDepth)
 		}
 	}
 	setDepth(t.roots, 0)
