@@ -116,12 +116,20 @@ func (ti *TreeItem) Render(width int) string {
 		rolePrefix = "   "
 	}
 
-	style := ti.t.Dialog.NormalItem
+	// Selection indicator: a colored left bar when focused, space otherwise.
+	// Uses the same width so layout stays stable.
+	var selIndicator string
 	if ti.focused {
-		style = ti.t.Dialog.SelectedItem
+		selIndicator = lipgloss.NewStyle().Foreground(ti.t.Dialog.TitleGradFromColor).Render("▎")
+	} else {
+		selIndicator = " "
 	}
 
-	prefix := marker + indent + connector + rolePrefix
+	// Always use NormalItem style — selection is indicated by the left
+	// bar, not a background color change that would obscure role colors.
+	style := ti.t.Dialog.NormalItem
+
+	prefix := selIndicator + marker + indent + connector + rolePrefix
 	prefixWidth := lipgloss.Width(prefix)
 	// Account for horizontal frame (padding/border/margin) that the
 	// style adds so the final rendered string never exceeds width.
