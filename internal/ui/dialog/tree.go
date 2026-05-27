@@ -13,8 +13,11 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
-// treeDialogMaxWidth is the maximum width for the tree dialog.
-const treeDialogMaxWidth = 100
+// Navigation dialog sizing constants shared by the tree and branch dialogs.
+const (
+	navDialogMaxWidth = 100
+	navDialogHeight   = 30
+)
 
 // treeNode represents a single node in the in-memory message tree.
 type treeNode struct {
@@ -317,8 +320,8 @@ func (t *Tree) Cursor() *tea.Cursor {
 // Draw implements [Dialog].
 func (t *Tree) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	sty := t.com.Styles
-	width := max(0, min(treeDialogMaxWidth, area.Dx()-sty.Dialog.View.GetHorizontalBorderSize()))
-	height := max(0, min(defaultDialogHeight, area.Dy()-sty.Dialog.View.GetVerticalBorderSize()))
+	width := max(0, min(navDialogMaxWidth, area.Dx()-sty.Dialog.View.GetHorizontalBorderSize()))
+	height := max(0, min(navDialogHeight, area.Dy()-sty.Dialog.View.GetVerticalBorderSize()))
 	innerWidth := width - sty.Dialog.View.GetHorizontalFrameSize()
 	heightOffset := sty.Dialog.Title.GetVerticalFrameSize() + titleContentHeight +
 		sty.Dialog.InputPrompt.GetVerticalFrameSize() + inputContentHeight +

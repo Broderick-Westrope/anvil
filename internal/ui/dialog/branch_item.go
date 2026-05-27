@@ -49,5 +49,13 @@ func (b *BranchItem) Render(width int) string {
 		InfoTextBlurred: b.t.Dialog.Sessions.InfoBlurred,
 		InfoTextFocused: b.t.Dialog.Sessions.InfoFocused,
 	}
-	return renderItem(s, textContent, "", b.focused, width, b.cache, &b.m)
+	// Subtract the style's horizontal frame (padding) from the available
+	// width so renderItem truncates content correctly before the style
+	// adds its frame.
+	style := s.ItemBlurred
+	if b.focused {
+		style = s.ItemFocused
+	}
+	innerWidth := max(0, width-style.GetHorizontalFrameSize())
+	return renderItem(s, textContent, "", b.focused, innerWidth, b.cache, &b.m)
 }
