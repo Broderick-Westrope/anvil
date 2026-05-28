@@ -402,6 +402,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		notifyWindowFocused: true,
 		initialSessionID:    initialSessionID,
 		continueLastSession: continueLast,
+		skillStates:         skills.GetLatestStates(),
 	}
 
 	// Initialize slash-command autocomplete.

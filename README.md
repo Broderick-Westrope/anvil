@@ -291,6 +291,8 @@ The global paths we looks for skills are:
 - `$ANVIL_SKILLS_DIR`
 - `$XDG_CONFIG_HOME/agents/skills` or `~/.config/agents/skills/`
 - `$XDG_CONFIG_HOME/anvil/skills` or `~/.config/anvil/skills/`
+- `~/.agents/skills/`
+- `~/.claude/skills/`
 - On Windows, we _also_ look at
   - `%LOCALAPPDATA%\agents\skills\` or `%USERPROFILE%\AppData\Local\agents\skills\`
   - `%LOCALAPPDATA%\anvil\skills\` or `%USERPROFILE%\AppData\Local\anvil\skills\`
