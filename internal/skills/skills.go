@@ -290,7 +290,7 @@ func DiscoverWithStates(paths []string) ([]*Skill, []*SkillState) {
 		return left < right
 	})
 
-	broker.Publish(pubsub.UpdatedEvent, Event{States: states})
+
 	return skills, states
 }
 
