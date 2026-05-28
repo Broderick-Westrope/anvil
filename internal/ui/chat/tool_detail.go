@@ -49,13 +49,13 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 	var items []MessageItem
 
 	// 1. Header.
-	items = append(items, &toolDetailHeaderItem{
+	items = append(items, &toolDetailHeaderItem{Versioned: list.NewVersioned(),
 		sty:    sty,
 		source: source,
 	})
 
 	// 2. Input section divider.
-	items = append(items, &toolDetailSectionItem{
+	items = append(items, &toolDetailSectionItem{Versioned: list.NewVersioned(),
 		sty:        sty,
 		label:      "Input",
 		toolCallID: tc.ID,
@@ -65,7 +65,7 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 	items = append(items, buildParamItems(sty, tc)...)
 
 	// 4. Output section divider.
-	items = append(items, &toolDetailSectionItem{
+	items = append(items, &toolDetailSectionItem{Versioned: list.NewVersioned(),
 		sty:        sty,
 		label:      "Output",
 		toolCallID: tc.ID,
@@ -73,7 +73,7 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 
 	// 5. Output item (or awaiting permission).
 	if status == ToolStatusAwaitingPermission {
-		items = append(items, &toolDetailStaticItem{
+		items = append(items, &toolDetailStaticItem{Versioned: list.NewVersioned(),
 			sty:        sty,
 			id:         "tool-detail-output:" + tc.ID,
 			content:    "Awaiting permission...",
@@ -81,7 +81,7 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 			toolCallID: tc.ID,
 		})
 	} else {
-		items = append(items, &toolDetailOutputItem{
+		items = append(items, &toolDetailOutputItem{Versioned: list.NewVersioned(),
 			sty:    sty,
 			source: source,
 		})
@@ -94,7 +94,7 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 // toolDetailParamItem for each parameter, sorted by key.
 func buildParamItems(sty *styles.Styles, tc message.ToolCall) []MessageItem {
 	if tc.Input == "" {
-		return []MessageItem{&toolDetailStaticItem{
+		return []MessageItem{&toolDetailStaticItem{Versioned: list.NewVersioned(),
 			sty:        sty,
 			id:         "tool-detail-param:no-input:" + tc.ID,
 			content:    "  (no input)",
@@ -105,7 +105,7 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall) []MessageItem {
 
 	var params map[string]any
 	if err := json.Unmarshal([]byte(tc.Input), &params); err != nil {
-		return []MessageItem{&toolDetailStaticItem{
+		return []MessageItem{&toolDetailStaticItem{Versioned: list.NewVersioned(),
 			sty:        sty,
 			id:         "tool-detail-param:raw:" + tc.ID,
 			content:    "  " + tc.Input,
@@ -126,7 +126,7 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall) []MessageItem {
 	var items []MessageItem
 	for _, k := range keys {
 		v := params[k]
-		items = append(items, &toolDetailParamItem{
+		items = append(items, &toolDetailParamItem{Versioned: list.NewVersioned(),
 			sty:        sty,
 			key:        k,
 			value:      v,
@@ -153,6 +153,7 @@ func sectionHeader(sty *styles.Styles, label string, width int) string {
 
 // toolDetailHeaderItem renders the metadata header: icon + tool display name.
 type toolDetailHeaderItem struct {
+	*list.Versioned
 	sty          *styles.Styles
 	source       ToolMessageItem
 	focused      bool
@@ -161,6 +162,9 @@ type toolDetailHeaderItem struct {
 	cachedFocus  bool
 	lastStatus   ToolStatus
 }
+
+// Finished implements list.Item.
+func (h *toolDetailHeaderItem) Finished() bool { return true }
 
 // ID implements MessageItem.
 func (h *toolDetailHeaderItem) ID() string {
@@ -210,6 +214,7 @@ func (h *toolDetailHeaderItem) SetFocused(v bool) { h.focused = v }
 
 // toolDetailSectionItem renders a section divider line.
 type toolDetailSectionItem struct {
+	*list.Versioned
 	sty          *styles.Styles
 	label        string
 	toolCallID   string
@@ -218,6 +223,9 @@ type toolDetailSectionItem struct {
 	cachedWidth  int
 	cachedFocus  bool
 }
+
+// Finished implements list.Item.
+func (s *toolDetailSectionItem) Finished() bool { return true }
 
 // ID implements MessageItem.
 func (s *toolDetailSectionItem) ID() string {
@@ -261,6 +269,7 @@ func (s *toolDetailSectionItem) SetFocused(v bool) { s.focused = v }
 
 // toolDetailStaticItem renders a static text line. Not expandable.
 type toolDetailStaticItem struct {
+	*list.Versioned
 	sty          *styles.Styles
 	id           string
 	content      string
@@ -271,6 +280,9 @@ type toolDetailStaticItem struct {
 	cachedWidth  int
 	cachedFocus  bool
 }
+
+// Finished implements list.Item.
+func (s *toolDetailStaticItem) Finished() bool { return true }
 
 // ID implements MessageItem.
 func (s *toolDetailStaticItem) ID() string {
@@ -315,6 +327,7 @@ func (s *toolDetailStaticItem) SetFocused(v bool) { s.focused = v }
 // toolDetailParamItem renders a single input parameter. Single-line values
 // are always inline. Multi-line values are expandable/collapsible.
 type toolDetailParamItem struct {
+	*list.Versioned
 	sty        *styles.Styles
 	key        string
 	value      any
@@ -328,6 +341,9 @@ type toolDetailParamItem struct {
 	cachedExpand bool
 	cachedFocus  bool
 }
+
+// Finished implements list.Item.
+func (p *toolDetailParamItem) Finished() bool { return true }
 
 // ID implements MessageItem.
 func (p *toolDetailParamItem) ID() string {
@@ -435,6 +451,7 @@ func (p *toolDetailParamItem) SetFocused(v bool) { p.focused = v }
 // toolDetailOutputItem renders the tool output. Collapsed shows the
 // truncated output; expanded shows the full output.
 type toolDetailOutputItem struct {
+	*list.Versioned
 	sty    *styles.Styles
 	source ToolMessageItem
 
@@ -448,6 +465,9 @@ type toolDetailOutputItem struct {
 	lastToolCall  message.ToolCall
 	lastResultVer uint64
 }
+
+// Finished implements list.Item.
+func (o *toolDetailOutputItem) Finished() bool { return true }
 
 // ID implements MessageItem.
 func (o *toolDetailOutputItem) ID() string {

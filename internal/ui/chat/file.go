@@ -137,17 +137,31 @@ func (w *WriteToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		return header
 	}
 
-	if earlyState, ok := toolEarlyStateContent(sty, opts, width); ok {
-		return joinToolParts(header, earlyState)
-	}
-
-	if params.Content == "" {
+	if !opts.HasResult() {
+		if earlyState, ok := toolEarlyStateContent(sty, opts, width); ok {
+			return joinToolParts(header, earlyState)
+		}
 		return header
 	}
 
+	// On error with diff metadata (e.g. denied permission), show error + diff.
+	if opts.Result.IsError {
+		var meta tools.WriteResponseMetadata
+		if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err == nil && meta.Diff != "" {
+			errLine := toolErrorContent(sty, opts.Result, width)
+			diff := toolOutputDiffContentFromUnified(sty, meta.Diff, width, opts.ExpandedContent, opts.NoTruncate)
+			return strings.Join([]string{header, "", errLine, "", diff}, "\n")
+		}
+		return joinToolParts(header, toolErrorContent(sty, opts.Result, width))
+	}
+
 	// Render code content with syntax highlighting.
-	body := toolOutputCodeContent(sty, params.FilePath, params.Content, 0, width, opts.ExpandedContent, opts.NoTruncate)
-	return joinToolParts(header, body)
+	if params.Content != "" {
+		body := toolOutputCodeContent(sty, params.FilePath, params.Content, 0, width, opts.ExpandedContent, opts.NoTruncate)
+		return joinToolParts(header, body)
+	}
+
+	return header
 }
 
 // -----------------------------------------------------------------------------
@@ -192,11 +206,10 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		return header
 	}
 
-	if earlyState, ok := toolEarlyStateContent(sty, opts, width); ok {
-		return joinToolParts(header, earlyState)
-	}
-
 	if !opts.HasResult() {
+		if earlyState, ok := toolEarlyStateContent(sty, opts, width); ok {
+			return joinToolParts(header, earlyState)
+		}
 		return header
 	}
 
@@ -208,9 +221,15 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		return joinToolParts(header, body)
 	}
 
-	// Render diff.
-	body := toolOutputDiffContent(sty, file, meta.OldContent, meta.NewContent, width, opts.ExpandedContent, opts.NoTruncate)
-	return joinToolParts(header, body)
+	diff := toolOutputDiffContent(sty, file, meta.OldContent, meta.NewContent, width, opts.ExpandedContent, opts.NoTruncate)
+
+	// On error (e.g. denied permission), show error above the diff.
+	if opts.Result.IsError {
+		errLine := toolErrorContent(sty, opts.Result, width)
+		return strings.Join([]string{header, "", errLine, "", diff}, "\n")
+	}
+
+	return joinToolParts(header, diff)
 }
 
 // -----------------------------------------------------------------------------
@@ -260,11 +279,10 @@ func (m *MultiEditToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 		return header
 	}
 
-	if earlyState, ok := toolEarlyStateContent(sty, opts, width); ok {
-		return joinToolParts(header, earlyState)
-	}
-
 	if !opts.HasResult() {
+		if earlyState, ok := toolEarlyStateContent(sty, opts, width); ok {
+			return joinToolParts(header, earlyState)
+		}
 		return header
 	}
 
@@ -277,8 +295,15 @@ func (m *MultiEditToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	}
 
 	// Render diff with optional failed edits note.
-	body := toolOutputMultiEditDiffContent(sty, file, meta, len(params.Edits), width, opts.ExpandedContent, opts.NoTruncate)
-	return joinToolParts(header, body)
+	diff := toolOutputMultiEditDiffContent(sty, file, meta, len(params.Edits), width, opts.ExpandedContent, opts.NoTruncate)
+
+	// On error (e.g. denied permission), show error above the diff.
+	if opts.Result.IsError {
+		errLine := toolErrorContent(sty, opts.Result, width)
+		return strings.Join([]string{header, "", errLine, "", diff}, "\n")
+	}
+
+	return joinToolParts(header, diff)
 }
 
 // -----------------------------------------------------------------------------

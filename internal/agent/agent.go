@@ -289,6 +289,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	defer cancel()
 	defer a.activeRequests.Del(call.SessionID)
+	// Drain any debounced message updates before returning. message.Service
+	// already flushes synchronously on terminal updates, but a defer here
+	// guarantees the contract at every Run exit (success, error, panic
+	// recovery upstream) without callers needing to know.
+	defer func() {
+		if flushErr := a.messages.FlushAll(ctx); flushErr != nil {
+			slog.Error("Failed to flush pending message updates after run", "error", flushErr)
+		}
+	}()
 
 	history, files := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages, call.Attachments...)
 
@@ -296,6 +305,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	a.eventPromptSent(call.SessionID)
 
 	var currentAssistant *message.Message
+	var stepMessages []fantasy.Message
 	var shouldSummarize bool
 	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
 	var maxOutputTokens *int64
@@ -358,6 +368,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if isAnthropicOAuth(providerCfg) {
 				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
 			}
+
+			sessionLock.Lock()
+			stepMessages = cloneFantasyMessages(prepared.Messages)
+			sessionLock.Unlock()
 
 			var assistantMsg message.Message
 			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
@@ -452,6 +466,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			// could read the same leaf and create sibling messages
 			// (an unintended fork).
 			sessionLock.Lock()
+			defer sessionLock.Unlock()
 			toolMsg, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
@@ -460,11 +475,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				ParentMessageID: currentLeaf,
 			})
 			if createMsgErr != nil {
-				sessionLock.Unlock()
 				return createMsgErr
 			}
 			currentLeaf = toolMsg.ID
-			sessionLock.Unlock()
 			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
@@ -497,7 +510,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if getSessionErr != nil {
 				return getSessionErr
 			}
-			a.updateSessionUsage(largeModel, &updatedSession, stepResult.Usage, a.openrouterCost(stepResult.ProviderMetadata))
+			usage, estimated := fallbackStepUsage(stepMessages, stepResult)
+			a.updateSessionUsage(largeModel, &updatedSession, usage, a.openrouterCost(stepResult.ProviderMetadata), estimated)
 			_, sessionErr := a.sessions.Save(ctx, updatedSession)
 			if sessionErr != nil {
 				return sessionErr
@@ -642,6 +656,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if updateErr != nil {
 			return nil, updateErr
 		}
+		// Ensure the session's leaf pointer is synced and published so
+		// the UI reflects the current position (e.g. branch dialog).
+		// message.Create already advanced the DB leaf, but no session
+		// pubsub event was fired because OnStepFinish never ran.
+		if moveErr := a.sessions.MoveLeaf(ctx, call.SessionID, getLeaf()); moveErr != nil {
+			slog.Warn("Failed to sync session leaf after error", "err", moveErr)
+		}
 		return nil, err
 	}
 
@@ -718,6 +739,11 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	a.activeRequests.Set(sessionID, cancel)
 	defer a.activeRequests.Del(sessionID)
 	defer cancel()
+	defer func() {
+		if flushErr := a.messages.FlushAll(ctx); flushErr != nil {
+			slog.Error("Failed to flush pending message updates after summarize", "error", flushErr)
+		}
+	}()
 
 	agent := fantasy.NewAgent(largeModel.Model,
 		fantasy.WithSystemPrompt(string(summaryPrompt)),
@@ -785,19 +811,14 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	if err != nil {
 		isCancelErr := errors.Is(err, context.Canceled)
 		if isCancelErr {
-			// User cancelled — remove the compaction placeholder and
-			// restore the leaf to its pre-compaction position. Create()
-			// already advanced the leaf to compactionMsg.ID, so we must
-			// move it back to prevent a dangling pointer.
-			deleteErr := a.messages.Delete(ctx, compactionMsg.ID)
-			if deleteErr != nil {
-				return deleteErr
+			// User cancelled — restore the leaf to its pre-compaction
+			// position first, then remove the compaction placeholder.
+			// This order ensures the leaf never points to a deleted
+			// message if the second operation fails.
+			if moveErr := a.sessions.MoveLeaf(ctx, sessionID, compactionMsg.ParentMessageID); moveErr != nil {
+				return moveErr
 			}
-			// Restore leaf to the compaction message's parent — this is
-			// the actual pre-compaction leaf recorded atomically by
-			// Create(), rather than the potentially stale snapshot in
-			// currentSession.LeafMessageID.
-			return a.sessions.MoveLeaf(ctx, sessionID, compactionMsg.ParentMessageID)
+			return a.messages.Delete(ctx, compactionMsg.ID)
 		}
 		// Mark the compaction message as finished with an error so the
 		// UI stops spinning.
@@ -840,14 +861,15 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		}
 	}
 
-	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, openrouterCost)
+	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, openrouterCost, false)
 
 	// Update session usage. The leaf already points to the compaction
 	// message (advanced atomically by Create() above).
 	usage := resp.Response.Usage
-	currentSession.CompletionTokens = usage.OutputTokens
+	currentSession.CompletionTokens = summaryCompletionTokens(usage, compactionMsg)
 	currentSession.PromptTokens = 0
-	_, err = a.sessions.Save(ctx, currentSession)
+	currentSession.EstimatedUsage = usageIsZero(usage)
+	_, err = a.sessions.Save(genCtx, currentSession)
 	if err != nil {
 		return err
 	}
@@ -1281,28 +1303,53 @@ func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float6
 	return &opts.Usage.Cost
 }
 
-func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64) {
+func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) {
+	if !usageIsZero(usage) {
+		session.EstimatedUsage = estimated
+	}
+
 	modelConfig := model.CatwalkCfg
 	cost := modelConfig.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
 		modelConfig.CostPer1MOutCached/1e6*float64(usage.CacheReadTokens) +
 		modelConfig.CostPer1MIn/1e6*float64(usage.InputTokens) +
 		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
 
-	a.eventTokensUsed(session.ID, model, usage, cost)
-
-	// Use override cost if available (e.g., from OpenRouter).
-	if overrideCost != nil {
-		cost = *overrideCost
+	if !estimated {
+		a.eventTokensUsed(session.ID, model, usage, cost)
 	}
 
-	// Skip cost accumulation
-	if model.FlatRate {
+	if estimated {
 		cost = 0
+	} else {
+		// Use override cost if available (e.g., from OpenRouter).
+		if overrideCost != nil {
+			cost = *overrideCost
+		}
+
+		// Skip cost accumulation
+		if model.FlatRate {
+			cost = 0
+		}
 	}
 
 	session.Cost += cost
-	session.CompletionTokens = usage.OutputTokens
-	session.PromptTokens = usage.InputTokens + usage.CacheReadTokens
+	updateSessionTokenCounters(session, usage)
+}
+
+func updateSessionTokenCounters(session *session.Session, usage fantasy.Usage) {
+	if usage.OutputTokens != 0 {
+		session.CompletionTokens = usage.OutputTokens
+	}
+	if promptTokens := usage.InputTokens + usage.CacheReadTokens; promptTokens != 0 {
+		session.PromptTokens = promptTokens
+	}
+}
+
+func summaryCompletionTokens(usage fantasy.Usage, summaryMessage message.Message) int64 {
+	if usage.OutputTokens != 0 {
+		return usage.OutputTokens
+	}
+	return approxTokenCount(summaryMessage.Content().Text) + approxTokenCount(summaryMessage.ReasoningContent().String())
 }
 
 func (a *sessionAgent) Cancel(sessionID string) {

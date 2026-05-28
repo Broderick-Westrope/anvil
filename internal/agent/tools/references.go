@@ -24,10 +24,6 @@ type ReferencesParams struct {
 	Path   string `json:"path,omitempty" description:"The directory to search in. Use a directory/file to narrow down the symbol search. Defaults to the current working directory."`
 }
 
-type referencesTool struct {
-	lspManager *lsp.Manager
-}
-
 const ReferencesToolName = "lsp_references"
 
 //go:embed references.md
@@ -42,11 +38,8 @@ func NewReferencesTool(lspManager *lsp.Manager) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse("symbol is required"), nil
 			}
 
-			if lspManager.Clients().Len() == 0 {
-				return fantasy.NewTextErrorResponse("no LSP clients available"), nil
-			}
-
 			workingDir := cmp.Or(params.Path, ".")
+			lspManager.Start(ctx, workingDir)
 
 			matches, _, err := searchFiles(ctx, regexp.QuoteMeta(params.Symbol), workingDir, "", 100)
 			if err != nil {
@@ -90,71 +83,19 @@ func NewReferencesTool(lspManager *lsp.Manager) fantasy.AgentTool {
 		})
 }
 
-func (r *referencesTool) Name() string {
-	return ReferencesToolName
-}
-
 func find(ctx context.Context, lspManager *lsp.Manager, symbol string, match grepMatch) ([]protocol.Location, error) {
 	absPath, err := filepath.Abs(match.path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path: %s", err)
 	}
 
-	var client *lsp.Client
-	for c := range lspManager.Clients().Seq() {
-		if c.HandlesFile(absPath) {
-			client = c
-			break
-		}
-	}
-
+	client := findLSPClient(lspManager, absPath)
 	if client == nil {
 		slog.Warn("No LSP clients to handle", "path", match.path)
 		return nil, nil
 	}
 
-	return client.FindReferences(
-		ctx,
-		absPath,
-		match.lineNum,
-		match.charNum+getSymbolOffset(symbol),
-		true,
-	)
-}
-
-// getSymbolOffset returns the character offset to the actual symbol name
-// in a qualified symbol (e.g., "Bar" in "foo.Bar" or "method" in "Class::method").
-func getSymbolOffset(symbol string) int {
-	// Check for :: separator (Rust, C++, Ruby modules/classes, PHP static).
-	if idx := strings.LastIndex(symbol, "::"); idx != -1 {
-		return idx + 2
-	}
-	// Check for . separator (Go, Python, JavaScript, Java, C#, Ruby methods).
-	if idx := strings.LastIndex(symbol, "."); idx != -1 {
-		return idx + 1
-	}
-	// Check for \ separator (PHP namespaces).
-	if idx := strings.LastIndex(symbol, "\\"); idx != -1 {
-		return idx + 1
-	}
-	return 0
-}
-
-func cleanupLocations(locations []protocol.Location) []protocol.Location {
-	slices.SortFunc(locations, func(a, b protocol.Location) int {
-		if a.URI != b.URI {
-			return strings.Compare(string(a.URI), string(b.URI))
-		}
-		if a.Range.Start.Line != b.Range.Start.Line {
-			return cmp.Compare(a.Range.Start.Line, b.Range.Start.Line)
-		}
-		return cmp.Compare(a.Range.Start.Character, b.Range.Start.Character)
-	})
-	return slices.CompactFunc(locations, func(a, b protocol.Location) bool {
-		return a.URI == b.URI &&
-			a.Range.Start.Line == b.Range.Start.Line &&
-			a.Range.Start.Character == b.Range.Start.Character
-	})
+	return client.FindReferences(ctx, absPath, match.lineNum, match.charNum+getSymbolOffset(symbol), true)
 }
 
 func groupByFilename(locations []protocol.Location) map[string][]protocol.Location {

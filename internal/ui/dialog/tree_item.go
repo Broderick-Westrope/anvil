@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
-	"github.com/Broderick-Westrope/anvil/internal/ui/list"
+	uilist "github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
@@ -15,6 +15,7 @@ import (
 // TreeItem represents a single node in the session tree, rendered as a
 // list item with indentation and expand/collapse indicators.
 type TreeItem struct {
+	*uilist.Versioned
 	node           *treeNode
 	label          string
 	depth          int
@@ -22,13 +23,14 @@ type TreeItem struct {
 	isExpanded     bool
 	isLeaf         bool
 	isOnActivePath bool
+	filtered       bool
 	t              *styles.Styles
 	m              fuzzy.Match
 	focused        bool
 	cache          map[int]string
 }
 
-var _ list.FilterableItem = (*TreeItem)(nil)
+var _ uilist.FilterableItem = (*TreeItem)(nil)
 
 // NewTreeItem creates a new TreeItem for display in the tree dialog.
 func NewTreeItem(
@@ -42,10 +44,11 @@ func NewTreeItem(
 	label string,
 ) *TreeItem {
 	return &TreeItem{
+		Versioned:      uilist.NewVersioned(),
 		node:           node,
 		label:          label,
 		depth:          depth,
-		isCollapsible:    isCollapsible,
+		isCollapsible:  isCollapsible,
 		isExpanded:     isExpanded,
 		isLeaf:         isLeaf,
 		isOnActivePath: isOnActivePath,
@@ -64,12 +67,14 @@ func (ti *TreeItem) Filter() string {
 func (ti *TreeItem) SetMatch(m fuzzy.Match) {
 	ti.cache = nil
 	ti.m = m
+	ti.Bump()
 }
 
 // SetFocused implements [list.Focusable].
 func (ti *TreeItem) SetFocused(focused bool) {
 	if ti.focused != focused {
 		ti.cache = nil
+		ti.Bump()
 	}
 	ti.focused = focused
 }
@@ -93,18 +98,19 @@ func (ti *TreeItem) Render(width int) string {
 		marker = "  "
 	}
 
-	// Indentation (only present at branch points).
-	indent := strings.Repeat("  ", ti.depth)
-
-	// Expand/collapse indicator.
-	var connector string
-	switch {
-	case ti.isCollapsible && ti.isExpanded:
-		connector = "▼ "
-	case ti.isCollapsible && !ti.isExpanded:
-		connector = "▶ "
-	default:
-		connector = "  "
+	// Indentation and expand/collapse indicator are hidden when
+	// the list is showing filtered results (flat list).
+	var indent, connector string
+	if !ti.filtered {
+		indent = strings.Repeat("  ", ti.depth)
+		switch {
+		case ti.isCollapsible && ti.isExpanded:
+			connector = "▼ "
+		case ti.isCollapsible && !ti.isExpanded:
+			connector = "▶ "
+		default:
+			connector = "  "
+		}
 	}
 
 	// Role indicator (colored — primary for user, secondary for assistant).
@@ -150,4 +156,9 @@ func (ti *TreeItem) Render(width int) string {
 	}
 	ti.cache[width] = result
 	return result
+}
+
+// Finished implements [list.Item]. TreeItems are static.
+func (ti *TreeItem) Finished() bool {
+	return true
 }

@@ -1,0 +1,8 @@
+{
+  "last_checked_commit": {
+    "hash": "7d927319c4039f324614ed233db66219218fbc24",
+    "author": "Christian Rocha",
+    "date": "2026-05-26T23:19:36-04:00",
+    "message": "fix(server): one client's cancel should not send a 500 to others"
+  }
+}

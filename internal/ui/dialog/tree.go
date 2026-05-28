@@ -1,7 +1,9 @@
 package dialog
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -30,21 +32,30 @@ type treeNode struct {
 
 // Tree is a dialog that displays an ASCII tree of all session messages.
 type Tree struct {
-	com           *common.Common
-	input         textinput.Model
-	list          *list.FilterableList
-	roots         []*treeNode
-	nodeMap       map[string]*treeNode
-	expanded      map[string]bool
-	leafMessageID string
+	com                *common.Common
+	input              textinput.Model
+	list               *list.FilterableList
+	roots              []*treeNode
+	nodeMap            map[string]*treeNode
+	allByID            map[string]message.Message
+	expanded           map[string]bool
+	leafMessageID      string
+	needsInitialScroll bool
+	filtering          bool
+	preFilterSelectedID string
 
 	keyMap struct {
-		Select   key.Binding
-		Next     key.Binding
-		Previous key.Binding
-		Expand   key.Binding
-		Collapse key.Binding
-		Close    key.Binding
+		Select         key.Binding
+		Next           key.Binding
+		Previous       key.Binding
+		FilterNext     key.Binding
+		FilterPrevious key.Binding
+		Left           key.Binding
+		Right          key.Binding
+		Close          key.Binding
+		GoTop          key.Binding
+		GoBottom       key.Binding
+		OpenFilter     key.Binding
 	}
 }
 
@@ -74,9 +85,9 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 
 	// Index all messages by ID so we can walk parent chains through
 	// filtered-out nodes.
-	allByID := make(map[string]message.Message, len(msgs))
+	t.allByID = make(map[string]message.Message, len(msgs))
 	for _, msg := range msgs {
-		allByID[msg.ID] = msg
+		t.allByID[msg.ID] = msg
 	}
 
 	// Build the in-memory tree, filtering out hidden message types and
@@ -106,7 +117,7 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 			if _, ok := t.nodeMap[parentID]; ok {
 				break
 			}
-			if orig, ok := allByID[parentID]; ok {
+			if orig, ok := t.allByID[parentID]; ok {
 				parentID = orig.ParentMessageID
 			} else {
 				parentID = ""
@@ -117,6 +128,13 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		} else {
 			t.nodeMap[parentID].children = append(t.nodeMap[parentID].children, node)
 		}
+	}
+
+	// Sort roots and children by creation time so the tree order is
+	// deterministic (map iteration order in Go is random).
+	sortNodes(t.roots)
+	for _, node := range t.nodeMap {
+		sortNodes(node.children)
 	}
 
 	// Collapse assistant→assistant single-child chains so each assistant
@@ -190,7 +208,7 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		if _, ok := t.nodeMap[cur]; ok {
 			activePath[cur] = true
 		}
-		if orig, ok := allByID[cur]; ok {
+		if orig, ok := t.allByID[cur]; ok {
 			cur = orig.ParentMessageID
 		} else {
 			break
@@ -205,16 +223,26 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		t.expanded[id] = true
 	}
 
-	// Build the filterable list.
-	t.list = list.NewFilterableList(t.rebuildItems()...)
+	// Build the filterable list and pre-select the current leaf.
+	items := t.rebuildItems()
+	t.list = list.NewFilterableList(items...)
 	t.list.Focus()
+	for i, item := range items {
+		if ti, ok := item.(*TreeItem); ok && ti.isLeaf {
+			t.list.SetSelected(i)
+			break
+		}
+	}
+	t.needsInitialScroll = true
 
-	// Set up text input for filtering.
+	// Set up text input for filtering (starts blurred — press / to
+	// activate, esc to dismiss).
 	t.input = textinput.New()
 	t.input.SetVirtualCursor(false)
-	t.input.Placeholder = "Filter messages..."
+	t.input.Placeholder = "/ to filter..."
+	t.input.Prompt = " > "
 	t.input.SetStyles(com.Styles.TextInput)
-	t.input.Focus()
+	t.input.Blur()
 
 	// Key bindings.
 	t.keyMap.Select = key.NewBinding(
@@ -222,20 +250,38 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		key.WithHelp("enter", "select"),
 	)
 	t.keyMap.Next = key.NewBinding(
-		key.WithKeys("down", "ctrl+n"),
-		key.WithHelp("↓", "next"),
+		key.WithKeys("down", "ctrl+n", "j"),
+		key.WithHelp("↓/j", "next"),
 	)
 	t.keyMap.Previous = key.NewBinding(
+		key.WithKeys("up", "ctrl+p", "k"),
+		key.WithHelp("↑/k", "previous"),
+	)
+	t.keyMap.Left = key.NewBinding(
+		key.WithKeys("left", "h"),
+		key.WithHelp("←/h", "collapse/parent"),
+	)
+	t.keyMap.Right = key.NewBinding(
+		key.WithKeys("right", "l"),
+		key.WithHelp("→/l", "expand/child"),
+	)
+	t.keyMap.GoTop = key.NewBinding(
+		key.WithKeys("g"),
+		key.WithHelp("g", "go to top"),
+	)
+	t.keyMap.GoBottom = key.NewBinding(
+		key.WithKeys("G"),
+		key.WithHelp("G", "go to bottom"),
+	)
+	t.keyMap.OpenFilter = key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/", "filter"),
+	)
+	t.keyMap.FilterPrevious = key.NewBinding(
 		key.WithKeys("up", "ctrl+p"),
-		key.WithHelp("↑", "previous"),
 	)
-	t.keyMap.Expand = key.NewBinding(
-		key.WithKeys("right"),
-		key.WithHelp("→", "expand"),
-	)
-	t.keyMap.Collapse = key.NewBinding(
-		key.WithKeys("left"),
-		key.WithHelp("←", "collapse"),
+	t.keyMap.FilterNext = key.NewBinding(
+		key.WithKeys("down", "ctrl+n"),
 	)
 	t.keyMap.Close = CloseKey
 
@@ -247,73 +293,220 @@ func (t *Tree) ID() string {
 	return TreeID
 }
 
-// HandleMsg implements [Dialog].
+// HandleMsg implements [Dialog]. The tree dialog operates in two modes:
+// navigation mode (default) where single keys drive tree traversal, and
+// filter mode (activated by /) where keys are typed into the filter
+// input.
 func (t *Tree) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		switch {
-		case key.Matches(msg, t.keyMap.Close):
-			return ActionClose{}
-
-		case key.Matches(msg, t.keyMap.Select):
-			if item := t.selectedTreeItem(); item != nil {
-				return ActionNavigateTree{
-					MessageID:       item.node.msg.ID,
-					ParentMessageID: item.node.msg.ParentMessageID,
-					Role:            item.node.msg.Role,
-					Content:         messageTextContent(item.node.msg),
-				}
-			}
-
-		case key.Matches(msg, t.keyMap.Collapse):
-			if item := t.selectedTreeItem(); item != nil {
-				if item.isCollapsible && t.expanded[item.node.msg.ID] {
-					t.expanded[item.node.msg.ID] = false
-					t.list.SetItems(t.rebuildItems()...)
-				}
-			}
-
-		case key.Matches(msg, t.keyMap.Expand):
-			if item := t.selectedTreeItem(); item != nil {
-				if item.isCollapsible && !t.expanded[item.node.msg.ID] {
-					t.expanded[item.node.msg.ID] = true
-					t.list.SetItems(t.rebuildItems()...)
-				}
-			}
-
-		case key.Matches(msg, t.keyMap.Previous):
-			t.list.Focus()
-			if t.list.IsSelectedFirst() {
-				t.list.SelectLast()
-			} else {
-				t.list.SelectPrev()
-			}
-			t.list.ScrollToSelected()
-
-		case key.Matches(msg, t.keyMap.Next):
-			t.list.Focus()
-			if t.list.IsSelectedLast() {
-				t.list.SelectFirst()
-			} else {
-				t.list.SelectNext()
-			}
-			t.list.ScrollToSelected()
-
-		default:
-			var cmd tea.Cmd
-			t.input, cmd = t.input.Update(msg)
-			value := t.input.Value()
-			t.list.SetFilter(value)
-			t.list.ScrollToTop()
-			t.list.SetSelected(0)
-			return ActionCmd{cmd}
+		if t.filtering {
+			return t.handleFilterKey(msg)
 		}
+		return t.handleNavKey(msg)
 	}
 	return nil
 }
 
-// Cursor returns the cursor position relative to the dialog.
+// handleNavKey processes keys in navigation mode.
+func (t *Tree) handleNavKey(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, t.keyMap.Close):
+		return ActionClose{}
+
+	case key.Matches(msg, t.keyMap.Select):
+		if item := t.selectedTreeItem(); item != nil {
+			return ActionNavigateTree{
+				MessageID:       item.node.msg.ID,
+				ParentMessageID: item.node.msg.ParentMessageID,
+				Role:            item.node.msg.Role,
+				Content:         messageTextContent(item.node.msg),
+			}
+		}
+
+	case key.Matches(msg, t.keyMap.OpenFilter):
+		t.filtering = true
+		if item := t.selectedTreeItem(); item != nil {
+			t.preFilterSelectedID = item.node.msg.ID
+		}
+		t.input.SetValue("")
+		t.list.SetFilter("")
+		t.setItemsFiltered(false)
+		t.input.Prompt = ">> "
+		sty := t.input.Styles()
+		sty.Focused.Prompt = sty.Focused.Prompt.Bold(true)
+		t.input.SetStyles(sty)
+		t.input.Focus()
+
+	case key.Matches(msg, t.keyMap.GoTop):
+		t.list.SelectFirst()
+		t.list.ScrollToSelected()
+
+	case key.Matches(msg, t.keyMap.GoBottom):
+		t.list.SelectLast()
+		t.list.ScrollToSelected()
+
+	case key.Matches(msg, t.keyMap.Left):
+		if item := t.selectedTreeItem(); item != nil {
+			id := item.node.msg.ID
+			if item.isCollapsible && t.expanded[id] {
+				t.expanded[id] = false
+				t.list.SetItems(t.rebuildItems()...)
+			} else {
+				t.selectVisibleParent(id)
+			}
+		}
+
+	case key.Matches(msg, t.keyMap.Right):
+		if item := t.selectedTreeItem(); item != nil {
+			id := item.node.msg.ID
+			if item.isCollapsible && !t.expanded[id] {
+				t.expanded[id] = true
+				t.list.SetItems(t.rebuildItems()...)
+			} else {
+				t.selectNextBranchPointTowardLeaf(id)
+			}
+		}
+
+	case key.Matches(msg, t.keyMap.Previous):
+		t.list.Focus()
+		if t.list.IsSelectedFirst() {
+			t.list.SelectLast()
+		} else {
+			t.list.SelectPrev()
+		}
+		t.list.ScrollToSelected()
+
+	case key.Matches(msg, t.keyMap.Next):
+		t.list.Focus()
+		if t.list.IsSelectedLast() {
+			t.list.SelectFirst()
+		} else {
+			t.list.SelectNext()
+		}
+		t.list.ScrollToSelected()
+	}
+	return nil
+}
+
+// handleFilterKey processes keys in filter mode.
+func (t *Tree) handleFilterKey(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, t.keyMap.Close):
+		t.filtering = false
+		t.input.Blur()
+		t.input.Prompt = " > "
+		t.input.SetStyles(t.com.Styles.TextInput)
+		t.input.SetValue("")
+		t.list.SetFilter("")
+		t.setItemsFiltered(false)
+		if t.preFilterSelectedID != "" {
+			t.selectByMessageID(t.preFilterSelectedID)
+		}
+
+	case key.Matches(msg, t.keyMap.Select):
+		// Submit the search: exit filter mode but keep the filtered
+		// results so the user can navigate them.
+		t.filtering = false
+		t.input.Prompt = " > "
+		t.input.SetStyles(t.com.Styles.TextInput)
+		t.input.Blur()
+
+	case key.Matches(msg, t.keyMap.FilterPrevious):
+		// Swallow arrow keys in filter mode — navigation happens
+		// after submitting the search with Enter.
+
+	case key.Matches(msg, t.keyMap.FilterNext):
+		// Same as above.
+
+	default:
+		var cmd tea.Cmd
+		t.input, cmd = t.input.Update(msg)
+		t.list.SetFilter(t.input.Value())
+		t.setItemsFiltered(t.input.Value() != "")
+		t.list.ScrollToTop()
+		t.list.SetSelected(0)
+		return ActionCmd{cmd}
+	}
+	return nil
+}
+
+// selectByMessageID finds the item with the given message ID in the
+// current list and selects it.
+func (t *Tree) selectByMessageID(messageID string) {
+	for i := range t.list.Len() {
+		item := t.list.ItemAt(i)
+		if ti, ok := item.(*TreeItem); ok && ti.node.msg.ID == messageID {
+			t.list.SetSelected(i)
+			t.list.ScrollToSelected()
+			return
+		}
+	}
+}
+
+// selectVisibleParent walks up the original message chain from the
+// given message ID to find the nearest visible ancestor that is a
+// branch point (has >1 children in the visible tree), and selects it.
+// If no branch ancestor exists, selects the root.
+func (t *Tree) selectVisibleParent(messageID string) {
+	cur := messageID
+	for {
+		orig, ok := t.allByID[cur]
+		if !ok || orig.ParentMessageID == "" {
+			return
+		}
+		cur = orig.ParentMessageID
+		if node, ok := t.nodeMap[cur]; ok {
+			if len(node.children) > 1 {
+				t.selectByMessageID(cur)
+				return
+			}
+		}
+	}
+}
+
+// selectNextBranchPointTowardLeaf walks from the given node toward
+// the leaf along the active path, stopping at the next visible node
+// that is a branch point (has >1 children) or the leaf itself. If the
+// current node is a branch point, it first descends into the
+// active-path child before looking for the next branch point.
+func (t *Tree) selectNextBranchPointTowardLeaf(messageID string) {
+	node, ok := t.nodeMap[messageID]
+	if !ok {
+		return
+	}
+	cur := node
+	for {
+		var next *treeNode
+		for _, child := range cur.children {
+			if child.isOnActivePath || child.msg.ID == t.leafMessageID {
+				next = child
+				break
+			}
+		}
+		if next == nil {
+			// No active-path child found. If the current node has
+			// children at all, pick the first one as a best effort.
+			if len(cur.children) > 0 {
+				next = cur.children[0]
+			} else {
+				return
+			}
+		}
+		if len(next.children) > 1 || next.msg.ID == t.leafMessageID || len(next.children) == 0 {
+			t.selectByMessageID(next.msg.ID)
+			return
+		}
+		cur = next
+	}
+}
+
+// Cursor returns the cursor position relative to the dialog. Only
+// visible when the filter input is focused.
 func (t *Tree) Cursor() *tea.Cursor {
+	if !t.filtering {
+		return nil
+	}
 	return InputCursor(t.com.Styles, t.input.Cursor())
 }
 
@@ -328,6 +521,10 @@ func (t *Tree) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		sty.Dialog.View.GetVerticalFrameSize()
 	t.input.SetWidth(max(0, innerWidth-sty.Dialog.InputPrompt.GetHorizontalFrameSize()-1))
 	t.list.SetSize(innerWidth, height-heightOffset)
+	if t.needsInitialScroll {
+		t.needsInitialScroll = false
+		t.list.ScrollToSelected()
+	}
 
 	rc := NewRenderContext(sty, width)
 	rc.Title = "Session Tree"
@@ -394,6 +591,19 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 	return items
 }
 
+// setItemsFiltered marks all source items as filtered or unfiltered,
+// which controls whether indentation and expand/collapse indicators
+// are rendered.
+func (t *Tree) setItemsFiltered(filtered bool) {
+	for _, item := range t.list.Items() {
+		if ti, ok := item.(*TreeItem); ok && ti.filtered != filtered {
+			ti.filtered = filtered
+			ti.cache = nil
+			ti.Bump()
+		}
+	}
+}
+
 // messageTextContent returns the first text content from a message, with
 // whitespace collapsed to single spaces for single-line display.
 func messageTextContent(msg message.Message) string {
@@ -403,6 +613,14 @@ func messageTextContent(msg message.Message) string {
 		}
 	}
 	return ""
+}
+
+// sortNodes sorts a slice of tree nodes by message creation time so the
+// tree display order is deterministic.
+func sortNodes(nodes []*treeNode) {
+	slices.SortFunc(nodes, func(a, b *treeNode) int {
+		return cmp.Compare(a.msg.CreatedAt, b.msg.CreatedAt)
+	})
 }
 
 

@@ -467,10 +467,13 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		return options
 	}
 
+	shouldSetEffort := model.CatwalkCfg.CanReason &&
+		slices.Contains(model.CatwalkCfg.ReasoningLevels, model.ModelCfg.ReasoningEffort)
+
 	switch providerCfg.Type {
 	case openai.Name, azure.Name:
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
-		if !hasReasoningEffort && model.ModelCfg.ReasoningEffort != "" {
+if !hasReasoningEffort && shouldSetEffort {
 			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
 		}
 		if openai.IsResponsesModel(model.CatwalkCfg.ID) {
@@ -494,7 +497,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			_, hasThink  = mergedOptions["thinking"]
 		)
 		switch {
-		case !hasEffort && model.ModelCfg.ReasoningEffort != "":
+case !hasEffort && shouldSetEffort:
 			mergedOptions["effort"] = model.ModelCfg.ReasoningEffort
 		case !hasThink && model.ModelCfg.Think:
 			mergedOptions["thinking"] = map[string]any{"budget_tokens": 2000}
@@ -506,7 +509,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 
 	case openrouter.Name:
 		_, hasReasoning := mergedOptions["reasoning"]
-		if !hasReasoning && model.ModelCfg.ReasoningEffort != "" {
+		if !hasReasoning && shouldSetEffort {
 			mergedOptions["reasoning"] = map[string]any{
 				"enabled": true,
 				"effort":  model.ModelCfg.ReasoningEffort,
@@ -518,7 +521,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		}
 	case vercel.Name:
 		_, hasReasoning := mergedOptions["reasoning"]
-		if !hasReasoning && model.ModelCfg.ReasoningEffort != "" {
+		if !hasReasoning && shouldSetEffort {
 			mergedOptions["reasoning"] = map[string]any{
 				"enabled": true,
 				"effort":  model.ModelCfg.ReasoningEffort,
@@ -548,12 +551,17 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			options[google.Name] = parsed
 		}
 	case openaicompat.Name, hyper.Name:
-		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
-		if !hasReasoningEffort && model.ModelCfg.ReasoningEffort != "" {
-			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
-		}
-
 		extraBody := make(map[string]any)
+
+		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
+if !hasReasoningEffort && shouldSetEffort {
+			switch providerCfg.ID {
+			case string(catwalk.InferenceProviderIoNet):
+				extraBody["reasoning"] = map[string]string{"effort": model.ModelCfg.ReasoningEffort}
+			default:
+				mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
+			}
+		}
 
 		// "reasoning effort" is a standard OpenAI field, but "thinking" is not.
 		// Setting it in the right way for each provider.
@@ -563,11 +571,15 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		case hyper.Name:
 			extraBody["thinking"] = model.ModelCfg.Think
 		case string(catwalk.InferenceProviderIoNet):
-			extraBody["chat_template_kwargs"] = map[string]any{
-				"thinking": model.ModelCfg.Think,
+			if _, ok := extraBody["reasoning"]; !ok && model.CatwalkCfg.CanReason {
+				if model.ModelCfg.Think {
+					extraBody["reasoning"] = map[string]string{"effort": "medium"}
+				} else {
+					extraBody["reasoning"] = map[string]string{"effort": "none"}
+				}
 			}
 		case string(catwalk.InferenceProviderZAI), string(catwalk.InferenceProviderDeepSeek):
-			if model.ModelCfg.Think {
+			if model.ModelCfg.Think || model.ModelCfg.ReasoningEffort != "" {
 				extraBody["thinking"] = map[string]any{
 					"type": "enabled",
 				}
@@ -864,7 +876,16 @@ func (c *coordinator) buildToolsWithState(
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
 	if len(c.cfg.Config().LSP) > 0 || c.cfg.Config().Options.AutoLSP == nil || *c.cfg.Config().Options.AutoLSP {
-		candidateTools = append(candidateTools, tools.NewDiagnosticsTool(c.lspManager), tools.NewReferencesTool(c.lspManager), tools.NewLSPRestartTool(c.lspManager))
+		candidateTools = append(candidateTools,
+			tools.NewDiagnosticsTool(c.lspManager),
+			tools.NewReferencesTool(c.lspManager),
+			tools.NewLSPRestartTool(c.lspManager),
+			tools.NewSymbolsTool(c.lspManager),
+			tools.NewDefinitionTool(c.lspManager),
+			tools.NewCallHierarchyTool(c.lspManager),
+			tools.NewRenameTool(c.lspManager, c.permissions, c.history, c.filetracker),
+			tools.NewReplaceSymbolTool(c.lspManager, c.permissions, c.history, c.filetracker),
+		)
 	}
 
 	if len(c.cfg.Config().MCP) > 0 {
@@ -1488,6 +1509,14 @@ func discoverSkills(cfg *config.ConfigStore, plugins []*plugin.Plugin) (allSkill
 		disabledSkills = opts.DisabledSkills
 	}
 	activeSkills = skills.Filter(allSkills, disabledSkills)
+
+	allStates = skills.DeduplicateStates(allStates)
+
+	slices.SortStableFunc(allStates, func(a, b *skills.SkillState) int {
+		return strings.Compare(strings.ToLower(a.Path), strings.ToLower(b.Path))
+	})
+	skills.SetLatestStates(allStates)
+	skills.PublishStates(allStates)
 
 	logDiscoveryStats(builtin, builtinStates, userStates, userPaths, allSkills, activeSkills, disabledSkills)
 	return allSkills, activeSkills, allStates

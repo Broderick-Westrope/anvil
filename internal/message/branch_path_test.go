@@ -41,7 +41,7 @@ func newTestService(t *testing.T) (message.Service, string) {
 	})
 	require.NoError(t, err)
 
-	svc := message.NewService(q, sqlDB)
+	svc := message.NewService(q, message.WithConn(sqlDB))
 	return svc, sess.ID
 }
 

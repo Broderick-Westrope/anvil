@@ -1,14 +1,19 @@
 package dialog
 
 import (
+	"time"
+
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/dustin/go-humanize"
 	"github.com/sahilm/fuzzy"
 )
 
 // BranchItem wraps a [message.Message] to implement the [ListItem]
 // interface for branch picker lists.
 type BranchItem struct {
+	*list.Versioned
 	msg     message.Message
 	t       *styles.Styles
 	focused bool
@@ -18,7 +23,7 @@ type BranchItem struct {
 
 // NewBranchItem creates a new BranchItem from a message and styles.
 func NewBranchItem(t *styles.Styles, msg message.Message) *BranchItem {
-	return &BranchItem{msg: msg, t: t}
+	return &BranchItem{Versioned: list.NewVersioned(), msg: msg, t: t}
 }
 
 // Filter returns the filterable text content of the message.
@@ -30,12 +35,14 @@ func (b *BranchItem) Filter() string {
 func (b *BranchItem) SetMatch(m fuzzy.Match) {
 	b.m = m
 	b.cache = nil
+	b.Bump()
 }
 
 // SetFocused sets the focus state of the branch item.
 func (b *BranchItem) SetFocused(focused bool) {
 	if b.focused != focused {
 		b.cache = nil
+		b.Bump()
 	}
 	b.focused = focused
 }
@@ -57,5 +64,11 @@ func (b *BranchItem) Render(width int) string {
 		style = s.ItemFocused
 	}
 	innerWidth := max(0, width-style.GetHorizontalFrameSize())
-	return renderItem(s, textContent, "", b.focused, innerWidth, b.cache, &b.m)
+	info := humanize.Time(time.Unix(b.msg.CreatedAt, 0))
+	return renderItem(s, textContent, info, b.focused, innerWidth, b.cache, &b.m)
+}
+
+// Finished implements [list.Item]. BranchItems are static.
+func (b *BranchItem) Finished() bool {
+	return true
 }

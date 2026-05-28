@@ -40,6 +40,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
+	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
@@ -194,8 +195,9 @@ type (
 	// checkAgentIdleMsg is sent as a polling message to wait for the agent
 	// to finish cancelling before navigating to a new branch position.
 	checkAgentIdleMsg struct {
-		nav     dialog.ActionNavigateTree
-		attempt int
+		nav       dialog.ActionNavigateTree
+		sessionID string // The session being cancelled.
+		attempt   int
 	}
 )
 
@@ -314,6 +316,7 @@ type UI struct {
 
 	// pills state
 	pillsExpanded      bool
+	pillsAutoExpanded  bool
 	focusedPillSection pillSection
 	promptQueue        int
 	pillsView          string
@@ -410,7 +413,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		todoSpinner:         todoSpinner,
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
-		skillStates:         com.Workspace.SkillStates(),
+		skillStates:         skills.GetLatestStates(),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
 		initialSessionID:    initialSessionID,
@@ -476,6 +479,8 @@ func (m *UI) Init() tea.Cmd {
 	cmds = append(cmds, m.loadCustomCommands())
 	// load prompt history async
 	cmds = append(cmds, m.loadPromptHistory())
+	// load initial LSP state
+	m.lspStates = app.GetLSPStates()
 	// load initial session if specified
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
@@ -705,6 +710,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.setSessionMessages(msgs); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		if cmd := m.autoExpandPillsIfReasonable(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if hasInProgressTodo(m.session.Todos) {
 			// only start spinner if there is an in-progress todo
 			if m.isAgentBusy() {
@@ -811,6 +819,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.todoSpinner.Tick)
 				m.updateLayoutAndSize()
 			}
+			m.autoExpandPillsIfReasonable()
 		}
 	case pubsub.Event[message.Message]:
 		// Check if this is a child session message for an agent tool.
@@ -827,37 +836,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Route to the drilled-in Chat when the user is viewing a subagent.
 		// Fall through afterwards so handleChildSessionMessage still updates
 		// the collapsed view on the root chat.
-		if m.isDrilledIn() {
-			topEntry := m.drillStack[len(m.drillStack)-1]
-			if topEntry.toolView != nil {
-				// Tool drill-in: updates flow through the parent session.
-				// The tool detail items hold a reference to the same
-				// ToolMessageItem in the parent chat, so updating the
-				// parent automatically refreshes the detail view.
-				parentSessionID := m.session.ID
-				if len(m.drillStack) > 1 {
-					if prev := m.drillStack[len(m.drillStack)-2]; prev.sessionID != "" {
-						parentSessionID = prev.sessionID
-					}
-				}
-				if msg.Type == pubsub.UpdatedEvent && msg.Payload.SessionID == parentSessionID {
-					var parentChat *Chat
-					if len(m.drillStack) > 1 {
-						parentChat = m.drillStack[len(m.drillStack)-2].chat
-					} else {
-						parentChat = m.chat
-					}
-					cmds = append(cmds, m.updateSessionMessageToChat(parentChat, msg.Payload))
-				}
-			} else if msg.Payload.SessionID == m.viewedSessionID() {
-				switch msg.Type {
-				case pubsub.CreatedEvent:
-					cmds = append(cmds, m.appendSessionMessageToChat(m.activeChat(), msg.Payload))
-				case pubsub.UpdatedEvent:
-					cmds = append(cmds, m.updateSessionMessageToChat(m.activeChat(), msg.Payload))
-				case pubsub.DeletedEvent:
-					m.activeChat().RemoveMessage(msg.Payload.ID)
-				}
+		if m.isDrilledIn() && msg.Payload.SessionID == m.viewedSessionID() {
+			switch msg.Type {
+			case pubsub.CreatedEvent:
+				cmds = append(cmds, m.appendSessionMessageToChat(m.activeChat(), msg.Payload))
+			case pubsub.UpdatedEvent:
+				cmds = append(cmds, m.updateSessionMessageToChat(m.activeChat(), msg.Payload))
+			case pubsub.DeletedEvent:
+				m.activeChat().RemoveMessage(msg.Payload.ID)
 			}
 		}
 
@@ -2380,7 +2366,14 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 			return util.ReportError(err)
 		}
 
-		modelMsg := fmt.Sprintf("%s model changed to %s", msg.ModelType, msg.Model.Model)
+		var (
+			modelType = stringext.Capitalize(string(msg.ModelType))
+			modelName = msg.Model.Model
+		)
+		if catwalkModel := cfg.GetModel(msg.Model.Provider, msg.Model.Model); catwalkModel != nil && catwalkModel.Name != "" {
+			modelName = catwalkModel.Name
+		}
+		modelMsg := fmt.Sprintf("%s model changed to %s", modelType, modelName)
 
 		return util.NewInfoMsg(modelMsg)
 	})
@@ -2483,6 +2476,16 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				return true
 			}
 			cmds = append(cmds, tea.Suspend)
+			return true
+		case key.Matches(msg, m.keyMap.ToggleYolo):
+			yolo := !m.com.Workspace.PermissionSkipRequests()
+			m.com.Workspace.PermissionSetSkipRequests(yolo)
+			m.setEditorPrompt(yolo)
+			status := "disabled"
+			if yolo {
+				status = "enabled"
+			}
+			cmds = append(cmds, util.ReportInfo("Yolo mode "+status))
 			return true
 		}
 		return false
@@ -3293,6 +3296,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 			commands,
 			k.Models,
 			k.Sessions,
+			k.ToggleYolo,
 		)
 		if hasSession {
 			mainBinds = append(mainBinds, k.Chat.NewSession)
@@ -3354,6 +3358,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 					commands,
 					k.Models,
 					k.Sessions,
+					k.ToggleYolo,
 				},
 			)
 			editorBinds := []key.Binding{
@@ -3983,9 +3988,10 @@ func (m *UI) tryExecuteBuiltinCommand(value string) tea.Cmd {
 // closeSlashAC hides the slash autocomplete and optionally clears the
 // textarea.
 func (m *UI) closeSlashAC(clearText bool) {
+	wasOpen := m.slashACOpen
 	m.slashACOpen = false
 	m.slashAC.Hide()
-	if clearText {
+	if clearText && wasOpen {
 		m.textarea.SetValue("")
 	}
 }
@@ -4442,7 +4448,7 @@ func (m *UI) openBranchDialog() tea.Cmd {
 		return nil
 	}
 
-	d, err := dialog.NewBranch(m.com, m.session.ID, m.session.LeafMessageID)
+	d, err := dialog.NewBranch(m.com, m.session.LeafMessageID)
 	if err != nil {
 		return util.ReportError(err)
 	}
@@ -4454,10 +4460,11 @@ func (m *UI) openBranchDialog() tea.Cmd {
 // is busy, it cancels and polls until idle before proceeding.
 func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
 	if m.hasSession() && m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
-		m.com.Workspace.AgentCancel(m.session.ID)
+		sessionID := m.session.ID
+		m.com.Workspace.AgentCancel(sessionID)
 		return tea.Batch(
 			util.ReportInfo("Cancelling..."),
-			m.pollAgentIdle(msg, 0),
+			m.pollAgentIdle(msg, sessionID, 0),
 		)
 	}
 	return m.navigateToTreeNode(msg)
@@ -4468,25 +4475,27 @@ const maxIdlePolls = 25 // 25 * 200ms = 5s
 
 // pollAgentIdle returns a command that waits 200ms then sends a
 // checkAgentIdleMsg to poll whether the agent has stopped.
-func (m *UI) pollAgentIdle(nav dialog.ActionNavigateTree, attempt int) tea.Cmd {
+func (m *UI) pollAgentIdle(nav dialog.ActionNavigateTree, sessionID string, attempt int) tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg {
-		return checkAgentIdleMsg{nav: nav, attempt: attempt}
+		return checkAgentIdleMsg{nav: nav, sessionID: sessionID, attempt: attempt}
 	})
 }
 
 // handleCheckAgentIdle checks if the agent is idle and either proceeds
-// with navigation or schedules another poll.
+// with navigation or schedules another poll. Uses the original session
+// ID from the cancel request so a session switch during polling doesn't
+// cause a mismatch.
 func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
-	if !m.hasSession() {
+	if !m.hasSession() || m.session.ID != msg.sessionID {
 		return nil
 	}
-	if !m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
+	if !m.com.Workspace.AgentIsSessionBusy(msg.sessionID) {
 		return m.navigateToTreeNode(msg.nav)
 	}
 	if msg.attempt >= maxIdlePolls {
 		return util.ReportError(fmt.Errorf("timed out waiting for agent to stop"))
 	}
-	return m.pollAgentIdle(msg.nav, msg.attempt+1)
+	return m.pollAgentIdle(msg.nav, msg.sessionID, msg.attempt+1)
 }
 
 // navigateToTreeNode moves the session leaf pointer and reloads the chat.
@@ -4516,28 +4525,40 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 			return util.ReportError(err)()
 		}
 
-		// Reload the session to get the updated leaf.
+		// Reload the session and branch path in the command (not in
+		// Update) to avoid doing IO in the Bubble Tea update loop.
 		sess, err := ws.GetSession(ctx, sessionID)
 		if err != nil {
 			return util.ReportError(err)()
 		}
 
+		var msgs []message.Message
+		if targetLeafID != "" {
+			msgs, err = ws.GetBranchPath(ctx, targetLeafID)
+			if err != nil {
+				return util.ReportError(err)()
+			}
+		}
+
 		return navigateTreeDoneMsg{
-			session: &sess,
-			leafID:  targetLeafID,
-			content: content,
-			role:    role,
+			session:  &sess,
+			leafID:   targetLeafID,
+			messages: msgs,
+			content:  content,
+			role:     role,
 		}
 	}
 }
 
-// navigateTreeDoneMsg is sent after the leaf pointer has been moved and
-// the session reloaded. The UI handles this to rebuild the chat view.
+// navigateTreeDoneMsg is sent after the leaf pointer has been moved,
+// the session reloaded, and the branch path fetched. All IO happens
+// inside the command; Update only mutates state.
 type navigateTreeDoneMsg struct {
-	session *session.Session
-	leafID  string
-	content string
-	role    message.MessageRole
+	session  *session.Session
+	leafID   string
+	messages []message.Message
+	content  string
+	role     message.MessageRole
 }
 
 // handleNavigateTreeDone rebuilds the chat view after the leaf pointer has
@@ -4548,14 +4569,12 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.session = msg.session
 	m.clearDrillStack()
 
-	// Reload the branch path for the new leaf.
-	msgs, err := m.com.Workspace.GetBranchPath(context.Background(), msg.leafID)
-	if err != nil {
-		return util.ReportError(err)
+	if cmd := m.setSessionMessages(msg.messages); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 
-	if cmd := m.setSessionMessages(msgs); cmd != nil {
-		cmds = append(cmds, cmd)
+	if len(msg.messages) == 0 {
+		m.lastUserMessageTime = 0
 	}
 
 	// Pre-fill editor for user messages.
@@ -4775,6 +4794,7 @@ func (m *UI) newSession() tea.Cmd {
 	m.chat.ClearMessages()
 	m.attachments.Reset()
 	m.pillsExpanded = false
+	m.pillsAutoExpanded = false
 	m.promptQueue = 0
 	m.pillsView = ""
 	m.historyReset()

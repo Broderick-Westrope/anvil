@@ -326,21 +326,12 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			prepared.BaseURL = endpoint
 			prepared.ExtraParams["apiVersion"] = env.Get("AZURE_OPENAI_API_VERSION")
 		case catwalk.InferenceProviderBedrock:
-			if !hasAWSCredentials(env) {
+			if p.APIKey == "" && !hasAWSCredentials(env) {
 				if configExists {
 					slog.Warn("Skipping Bedrock provider due to missing AWS credentials")
 					c.Providers.Del(string(p.ID))
 				}
 				continue
-			}
-			prepared.ExtraParams["region"] = env.Get("AWS_REGION")
-			if prepared.ExtraParams["region"] == "" {
-				prepared.ExtraParams["region"] = env.Get("AWS_DEFAULT_REGION")
-			}
-			for _, model := range p.Models {
-				if !strings.HasPrefix(model.ID, "anthropic.") {
-					return fmt.Errorf("bedrock provider only supports anthropic models for now, found: %s", model.ID)
-				}
 			}
 		case catwalk.InferenceProvider("hyper"):
 			if apiKey := env.Get("HYPER_API_KEY"); apiKey != "" {
@@ -872,6 +863,11 @@ func GlobalCacheDir() string {
 	return filepath.Join(home.Dir(), ".cache", appName)
 }
 
+// ProjectConfigs returns list of current project configs paths.
+func ProjectConfigs(cwd string) []string {
+	return lookupConfigs(cwd)
+}
+
 // GlobalConfigData returns the path to the main data directory for the application.
 // this config is used when the app overrides configurations instead of updating the global config.
 func GlobalConfigData() string {
@@ -973,6 +969,9 @@ func GlobalSkillsDirs() []string {
 	paths := []string{
 		filepath.Join(home.Config(), appName, "skills"),
 		filepath.Join(home.Config(), "agents", "skills"),
+		// Per the Agent Skills spec, scan ~/.agents/skills
+		filepath.Join(home.Dir(), ".agents", "skills"),
+		filepath.Join(home.Dir(), ".claude", "skills"),
 	}
 
 	// On Windows, also load from app data on top of `$HOME/.config/anvil`.

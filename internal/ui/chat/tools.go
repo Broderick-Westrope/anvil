@@ -20,6 +20,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
@@ -138,6 +139,7 @@ func (f ToolRendererFunc) RenderTool(sty *styles.Styles, width int, opts *ToolRe
 
 // baseToolMessageItem represents a tool call message that can be displayed in the UI.
 type baseToolMessageItem struct {
+	*list.Versioned
 	*highlightableMessageItem
 	*cachedMessageItem
 	*focusableMessageItem
@@ -186,10 +188,12 @@ func newBaseToolMessageItem(
 		status = ToolStatusCanceled
 	}
 
+	v := list.NewVersioned()
 	t := &baseToolMessageItem{
-		highlightableMessageItem: defaultHighlighter(sty),
+		Versioned:                v,
+		highlightableMessageItem: defaultHighlighter(sty, v),
 		cachedMessageItem:        &cachedMessageItem{},
-		focusableMessageItem:     &focusableMessageItem{},
+		focusableMessageItem:     newFocusableMessageItem(v),
 		sty:                      sty,
 		toolRenderer:             toolRenderer,
 		toolCall:                 toolCall,
@@ -293,8 +297,12 @@ func NewToolMessageItem(
 
 // SetCompact implements the Compactable interface.
 func (t *baseToolMessageItem) SetCompact(compact bool) {
+	if t.isCompact == compact {
+		return
+	}
 	t.isCompact = compact
 	t.clearCache()
+	t.Bump()
 }
 
 // SetNoTruncate enables or disables line-level truncation for rendering.
@@ -328,10 +336,22 @@ func (t *baseToolMessageItem) StartAnimation() tea.Cmd {
 }
 
 // Animate progresses the assistant message animation if it should be spinning.
+//
+// Bumps the F6 list-cache version so the next draw re-renders this
+// item: a spinner tick mutates anim's internal frame counter, which
+// changes the rendered output but is invisible to the per-item
+// caches. Without the bump the list cache would serve the previously
+// rendered frame indefinitely and the spinner would appear frozen.
+// The ID gate keeps unrelated ticks (routed here by a future change
+// to chat.Animate's dispatch) from churning the cache.
 func (t *baseToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
 	if !t.isSpinning() {
 		return nil
 	}
+	if msg.ID != t.toolCall.ID {
+		return nil
+	}
+	t.Bump()
 	return t.anim.Animate(msg)
 }
 
@@ -373,6 +393,24 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 
 // Render renders the tool message item at the given width.
 func (t *baseToolMessageItem) Render(width int) string {
+	// Cache the prefixed output keyed by (width, prefix variant).
+	// Bypass the cache while spinning (RawRender output is
+	// frame-dependent) or while a highlight range is active.
+	useCache := !t.isSpinning() && !t.isHighlighted()
+	var key uint64
+	switch {
+	case t.isCompact:
+		key = 2
+	case t.focused:
+		key = 1
+	default:
+		key = 0
+	}
+	if useCache {
+		if cached, ok := t.getCachedPrefixedRender(width, key); ok {
+			return cached
+		}
+	}
 	var prefix string
 	if t.focused {
 		prefix = t.sty.Messages.ToolCallFocused.Render()
@@ -383,7 +421,11 @@ func (t *baseToolMessageItem) Render(width int) string {
 	for i, ln := range lines {
 		lines[i] = prefix + ln
 	}
-	return strings.Join(lines, "\n")
+	out := strings.Join(lines, "\n")
+	if useCache {
+		t.setCachedPrefixedRender(out, width, key)
+	}
+	return out
 }
 
 // ToolCall returns the tool call associated with this message item.
@@ -395,6 +437,7 @@ func (t *baseToolMessageItem) ToolCall() message.ToolCall {
 func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
 	t.toolCall = tc
 	t.clearCache()
+	t.Bump()
 }
 
 // SetResult sets the tool result associated with this message item.
@@ -402,6 +445,7 @@ func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.result = res
 	t.resultVersion++
 	t.clearCache()
+	t.Bump()
 }
 
 // MessageID returns the ID of the message containing this tool call.
@@ -410,14 +454,20 @@ func (t *baseToolMessageItem) MessageID() string {
 }
 
 // SetMessageID sets the ID of the message containing this tool call.
+// MessageID is metadata only and does not affect the rendered output,
+// so we deliberately do not bump the version here.
 func (t *baseToolMessageItem) SetMessageID(id string) {
 	t.messageID = id
 }
 
 // SetStatus sets the tool status.
 func (t *baseToolMessageItem) SetStatus(status ToolStatus) {
+	if t.status == status {
+		return
+	}
 	t.status = status
 	t.clearCache()
+	t.Bump()
 }
 
 // Status returns the current tool status.
@@ -457,6 +507,7 @@ func (t *baseToolMessageItem) SetSpinningFunc(fn SpinningFunc) {
 func (t *baseToolMessageItem) ToggleExpanded() bool {
 	t.expandedContent = !t.expandedContent
 	t.clearCache()
+	t.Bump()
 	return t.expandedContent
 }
 
@@ -474,6 +525,21 @@ func (t *baseToolMessageItem) ToolDrillIn() ToolMessageItem {
 // ToolDrillInLabel returns the tool display name for the breadcrumb.
 func (t *baseToolMessageItem) ToolDrillInLabel() string {
 	return prettifyToolName(t.toolCall.Name)
+}
+
+// Finished implements list.Item. A tool call is freezable once the
+// tool call itself is marked finished AND a result has been recorded
+// (or it has been canceled). Tools that override the spinning logic
+// via spinningFunc would short-circuit live ticks; we still gate
+// freezing on isSpinning to keep the contract conservative.
+func (t *baseToolMessageItem) Finished() bool {
+	if t.isSpinning() {
+		return false
+	}
+	if t.status == ToolStatusCanceled {
+		return true
+	}
+	return t.toolCall.Finished && t.result != nil
 }
 
 // HandleMouseClick implements MouseClickable.
@@ -537,12 +603,18 @@ func toolEarlyStateContent(sty *styles.Styles, opts *ToolRenderOpts, width int) 
 	return msg, true
 }
 
-// toolErrorContent formats an error message with ERROR tag.
+// toolErrorContent formats an error message with an ERROR or WARN tag.
 func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int) string {
 	if result == nil {
 		return ""
 	}
 	errContent := strings.ReplaceAll(result.Content, "\n", " ")
+	if strings.Contains(errContent, "User denied permission") {
+		deniedTag := sty.Tool.WarnTag.Render("WARN")
+		deniedTagWidth := lipgloss.Width(deniedTag)
+		errContent = ansi.Truncate(errContent, width-deniedTagWidth-3, "…")
+		return fmt.Sprintf("%s %s", deniedTag, sty.Tool.WarnMessage.Render(errContent))
+	}
 	errTag := sty.Tool.ErrorTag.Render("ERROR")
 	tagWidth := lipgloss.Width(errTag)
 	errContent = ansi.Truncate(errContent, width-tagWidth-3, "…")
@@ -1061,7 +1133,10 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 	content = stringext.NormalizeSpace(content)
 
 	renderer := common.QuietMarkdownRenderer(sty, width)
+	mu := common.LockMarkdownRenderer(renderer)
+	mu.Lock()
 	rendered, err := renderer.Render(content)
+	mu.Unlock()
 	if err != nil {
 		return toolOutputPlainContent(sty, content, width, expanded, noTruncate)
 	}

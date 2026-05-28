@@ -57,13 +57,14 @@ type KeyMap struct {
 	}
 
 	// Global key maps
-	Quit     key.Binding
-	Help     key.Binding
-	Commands key.Binding
-	Models   key.Binding
-	Suspend  key.Binding
-	Sessions key.Binding
-	Tab      key.Binding
+	Quit       key.Binding
+	Help       key.Binding
+	Commands   key.Binding
+	Models     key.Binding
+	Suspend    key.Binding
+	Sessions   key.Binding
+	Tab        key.Binding
+	ToggleYolo key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -96,6 +97,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "change focus"),
 		),
+		ToggleYolo: key.NewBinding(
+			key.WithKeys("ctrl+y"),
+			key.WithHelp("ctrl+y", "toggle yolo"),
+		),
 	}
 
 	km.Editor.AddFile = key.NewBinding(
@@ -111,7 +116,7 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("ctrl+o", "open editor"),
 	)
 	km.Editor.Newline = key.NewBinding(
-		key.WithKeys("shift+enter", "ctrl+j"),
+		key.WithKeys("shift+enter", "alt+enter", "ctrl+j"),
 		// "ctrl+j" is a common keybinding for newline in many editors. If
 		// the terminal supports "shift+enter", we substitute the help tex
 		// to reflect that.
