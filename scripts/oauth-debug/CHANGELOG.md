@@ -24,6 +24,36 @@ Manual `curl` to the refresh endpoint confirmed the 403. Adding
 | `internal/oauth/anthropic/refresh.go` | Added `User-Agent` header to token refresh HTTP request |
 | `internal/oauth/anthropic/refresh_test.go` | Assert `User-Agent` is sent |
 
+## 2026-05-29 — Millisecond expiresAt from macOS keychain
+
+**Symptom:** 401 Unauthorized persists even after User-Agent fix above.
+Token refresh never triggers despite the access token being expired.
+
+**Root cause:** Claude CLI (Node.js) stores `expiresAt` in the macOS
+keychain in **milliseconds** (JavaScript `Date.now()` convention), e.g.
+`1779952908669`. Anvil's `NeedsRefresh()` compares this against
+`time.Now().Unix()` which returns **seconds** (~1.78 billion). Since
+1.78 trillion > 1.78 billion, the token appeared to expire in ~56,000
+years. Proactive refresh never fired; the expired access token was sent
+as-is.
+
+A secondary issue: `ReadCredentials()` returned the first parseable
+token (keychain) even if expired, ignoring a potentially fresher token
+in `~/.claude/.credentials.json`.
+
+**Diagnosis:** Inspecting keychain vs file showed different `expiresAt`
+magnitudes. `keychain: 1779952908669` (ms), `file: 1779982648` (s).
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `internal/oauth/anthropic/credentials.go` | `parseCredentials`: normalize ms → s when `expiresAt > 10 billion` |
+| `internal/oauth/anthropic/credentials.go` | `ReadCredentials`: prefer fresh tokens; fall back to freshest stale token |
+| `internal/oauth/anthropic/credentials_test.go` | Added `TestParseCredentials_MillisecondExpiry` |
+
+---
+
 **Also updated (protocol sync with Claude Code v2.1.153):**
 
 | File | Change |

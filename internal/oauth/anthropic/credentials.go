@@ -73,6 +73,14 @@ func parseCredentials(data []byte) (*oauth.Token, error) {
 		return nil, errors.New("credentials missing access token")
 	}
 
+	// Claude CLI (Node.js) may store expiresAt in milliseconds
+	// (JavaScript Date.now() convention) while Go uses seconds. Any
+	// value above 10 billion (~year 2286 in seconds) is certainly
+	// milliseconds.
+	if expiresAt > 10_000_000_000 {
+		expiresAt /= 1000
+	}
+
 	token := &oauth.Token{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -148,9 +156,9 @@ type credentialSource struct {
 
 // ReadCredentials reads Anthropic OAuth credentials from available sources
 // in order: macOS keychain ($USER account), keychain (claude-code-user
-// account), credentials file (~/.claude/.credentials.json). Returns the
-// first successfully parsed token. Returns nil, nil if no credentials are
-// found anywhere.
+// account), credentials file (~/.claude/.credentials.json). Prefers a
+// token that does not need refresh; falls back to any parseable token if
+// all are stale. Returns nil, nil if no credentials are found anywhere.
 func ReadCredentials() (*oauth.Token, error) {
 	sources := []credentialSource{
 		{"keychain($USER)", func() ([]byte, error) {
@@ -163,6 +171,12 @@ func ReadCredentials() (*oauth.Token, error) {
 		{"keychain(claude-code-user)", func() ([]byte, error) { return readKeychain(KeychainAccountAlt) }, nil},
 		{"~/.claude/.credentials.json", readCredentialsFile, nil},
 	}
+
+	// First pass: return the first token that does not need refresh.
+	// Second pass (fallback): return the freshest expired token so the
+	// caller can attempt a refresh with its refresh_token.
+	var bestStale *oauth.Token
+	var bestStaleName string
 
 	for _, src := range sources {
 		data, err := src.read()
@@ -190,9 +204,23 @@ func ReadCredentials() (*oauth.Token, error) {
 			continue
 		}
 
-		slog.Debug("Read Anthropic OAuth credentials",
-			"source", src.name)
-		return token, nil
+		if !NeedsRefresh(token) {
+			slog.Debug("Read Anthropic OAuth credentials",
+				"source", src.name)
+			return token, nil
+		}
+
+		// Track the freshest stale token (highest ExpiresAt).
+		if bestStale == nil || token.ExpiresAt > bestStale.ExpiresAt {
+			bestStale = token
+			bestStaleName = src.name
+		}
+	}
+
+	if bestStale != nil {
+		slog.Debug("All credential sources stale, using freshest",
+			"source", bestStaleName)
+		return bestStale, nil
 	}
 
 	return nil, nil
