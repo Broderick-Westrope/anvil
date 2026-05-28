@@ -227,7 +227,7 @@ func (dv *DiffView) String() string {
 	}
 
 	style := lipgloss.NewStyle()
-	if dv.width > 0 {
+	if dv.width > 0 && !dv.noTruncate {
 		style = style.MaxWidth(dv.width)
 	}
 	if dv.height > 0 {
@@ -419,7 +419,7 @@ func (dv *DiffView) resizeCodeWidth() {
 func (dv *DiffView) renderUnified() string {
 	var b strings.Builder
 
-	fullContentStyle := lipgloss.NewStyle().MaxWidth(dv.fullCodeWidth)
+	fullContentStyle := dv.contentMaxWidth(dv.fullCodeWidth)
 	printedLines := -dv.yOffset
 	shouldWrite := func() bool { return printedLines >= 0 }
 
@@ -495,7 +495,7 @@ outer:
 						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
 					}
 					b.WriteString(fullContentStyle.Render(
-						ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content),
+						dv.codeStyle(ls.Code, dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content),
 					))
 				}
 				beforeLine++
@@ -510,7 +510,7 @@ outer:
 					}
 					b.WriteString(fullContentStyle.Render(
 						ls.Symbol.Render(ternary(leadingEllipsis, "+…", "+ ")) +
-							ls.Code.Width(dv.codeWidth).Render(content),
+							dv.codeStyle(ls.Code, dv.codeWidth).Render(content),
 					))
 				}
 				afterLine++
@@ -524,7 +524,7 @@ outer:
 					}
 					b.WriteString(fullContentStyle.Render(
 						ls.Symbol.Render(ternary(leadingEllipsis, "-…", "- ")) +
-							ls.Code.Width(dv.codeWidth).Render(content),
+							dv.codeStyle(ls.Code, dv.codeWidth).Render(content),
 					))
 				}
 				beforeLine++
@@ -544,8 +544,8 @@ outer:
 func (dv *DiffView) renderSplit() string {
 	var b strings.Builder
 
-	beforeFullContentStyle := lipgloss.NewStyle().MaxWidth(dv.fullCodeWidth)
-	afterFullContentStyle := lipgloss.NewStyle().MaxWidth(dv.fullCodeWidth + btoi(dv.extraColOnAfter))
+	beforeFullContentStyle := dv.contentMaxWidth(dv.fullCodeWidth)
+	afterFullContentStyle := dv.contentMaxWidth(dv.fullCodeWidth + btoi(dv.extraColOnAfter))
 	printedLines := -dv.yOffset
 	shouldWrite := func() bool { return printedLines >= 0 }
 
@@ -648,7 +648,7 @@ outer:
 						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
 					}
 					b.WriteString(beforeFullContentStyle.Render(
-						ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content),
+						dv.codeStyle(ls.Code, dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content),
 					))
 				}
 				beforeLine++
@@ -661,7 +661,7 @@ outer:
 					}
 					b.WriteString(beforeFullContentStyle.Render(
 						ls.Symbol.Render(ternary(leadingEllipsis, "-…", "- ")) +
-							ls.Code.Width(dv.codeWidth).Render(content),
+							dv.codeStyle(ls.Code, dv.codeWidth).Render(content),
 					))
 				}
 				beforeLine++
@@ -686,7 +686,7 @@ outer:
 						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
 					}
 					b.WriteString(afterFullContentStyle.Render(
-						ls.Code.Width(dv.fullCodeWidth + btoi(dv.extraColOnAfter)).Render(ternary(leadingEllipsis, " …", "  ") + content),
+						dv.codeStyle(ls.Code, dv.fullCodeWidth+btoi(dv.extraColOnAfter)).Render(ternary(leadingEllipsis, " …", "  ") + content),
 					))
 				}
 				afterLine++
@@ -699,7 +699,7 @@ outer:
 					}
 					b.WriteString(afterFullContentStyle.Render(
 						ls.Symbol.Render(ternary(leadingEllipsis, "+…", "+ ")) +
-							ls.Code.Width(dv.codeWidth+btoi(dv.extraColOnAfter)).Render(content),
+							dv.codeStyle(ls.Code, dv.codeWidth+btoi(dv.extraColOnAfter)).Render(content),
 					))
 				}
 				afterLine++
@@ -825,6 +825,24 @@ func (dv *DiffView) getChromaLexer() chroma.Lexer {
 
 func (dv *DiffView) getChromaFormatter(bgColor color.Color) chroma.Formatter {
 	return xchroma.Formatter(bgColor, processChromaValue)
+}
+
+// codeStyle returns the code style with or without a width constraint
+// depending on the noTruncate setting.
+func (dv *DiffView) codeStyle(base lipgloss.Style, width int) lipgloss.Style {
+	if dv.noTruncate {
+		return base
+	}
+	return base.Width(width)
+}
+
+// contentMaxWidth returns a style that constrains max width unless
+// noTruncate is set.
+func (dv *DiffView) contentMaxWidth(width int) lipgloss.Style {
+	if dv.noTruncate {
+		return lipgloss.NewStyle()
+	}
+	return lipgloss.NewStyle().MaxWidth(width)
 }
 
 func processChromaValue(value string) string {
