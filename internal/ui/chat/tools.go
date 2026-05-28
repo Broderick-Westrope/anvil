@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2/tree"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/diff"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
@@ -156,6 +158,7 @@ type baseToolMessageItem struct {
 	sty             *styles.Styles
 	anim            *anim.Anim
 	expandedContent bool
+	resultVersion   uint64
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -215,6 +218,7 @@ func NewToolMessageItem(
 	toolCall message.ToolCall,
 	result *message.ToolResult,
 	canceled bool,
+	expandedPatterns []string,
 ) ToolMessageItem {
 	var item ToolMessageItem
 	switch toolCall.Name {
@@ -269,6 +273,18 @@ func NewToolMessageItem(
 			item = NewGenericToolMessageItem(sty, toolCall, result, canceled)
 		}
 	}
+	// Default most tools to compact rendering. Todos and agent-like tools
+	// are excluded because they manage their own display.
+	switch toolCall.Name {
+	case tools.TodosToolName, agent.TaskToolName, tools.AgenticFetchToolName:
+		// Keep current (expanded) behavior.
+	default:
+		compact := !config.IsToolExpanded(expandedPatterns, toolCall.Name)
+		if compactable, ok := item.(Compactable); ok {
+			compactable.SetCompact(compact)
+		}
+	}
+
 	item.SetMessageID(messageID)
 	return item
 }
@@ -277,6 +293,17 @@ func NewToolMessageItem(
 func (t *baseToolMessageItem) SetCompact(compact bool) {
 	t.isCompact = compact
 	t.clearCache()
+}
+
+// IsCompact reports whether this tool is currently in compact rendering mode.
+func (t *baseToolMessageItem) IsCompact() bool {
+	return t.isCompact
+}
+
+// ResultVersion returns a counter that increments each time the result is set.
+// Used for cache invalidation in ToolDetailItem.
+func (t *baseToolMessageItem) ResultVersion() uint64 {
+	return t.resultVersion
 }
 
 // ID returns the unique identifier for this tool message item.
@@ -366,6 +393,7 @@ func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
 // SetResult sets the tool result associated with this message item.
 func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.result = res
+	t.resultVersion++
 	t.clearCache()
 }
 
@@ -423,6 +451,21 @@ func (t *baseToolMessageItem) ToggleExpanded() bool {
 	t.expandedContent = !t.expandedContent
 	t.clearCache()
 	return t.expandedContent
+}
+
+// ToolDrillIn returns this item as a ToolMessageItem for drill-in navigation.
+func (t *baseToolMessageItem) ToolDrillIn() ToolMessageItem {
+	return t
+}
+
+// ToolDrillInLabel returns a label for the tool drill-in breadcrumb.
+func (t *baseToolMessageItem) ToolDrillInLabel() string {
+	name := prettifyToolName(t.toolCall.Name)
+	keyParam := toolDrillInKeyParam(t.toolCall)
+	if keyParam == "" {
+		return name
+	}
+	return name + " " + keyParam
 }
 
 // HandleMouseClick implements MouseClickable.
@@ -637,9 +680,10 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 
 	// Add truncation message if needed.
 	if len(lines) > maxLines && !expanded {
-		out = append(out, sty.Tool.ContentCodeTruncation.
-			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
+		out = append(
+			out, sty.Tool.ContentCodeTruncation.
+				Width(width).
+				Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
 		)
 	}
 
@@ -798,7 +842,8 @@ func renderHookLine(sty *styles.Styles, hi hooks.HookInfo, rawName, detail strin
 		arrowStyle = sty.Tool.HookDeniedLabel
 	}
 
-	return fmt.Sprintf("%s %s%s%s %s %s",
+	return fmt.Sprintf(
+		"%s %s%s%s %s %s",
 		labelStyle.Render("Hook"),
 		name,
 		namePad,
@@ -1002,9 +1047,10 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 	}
 
 	if len(lines) > maxLines && !expanded {
-		out = append(out, sty.Tool.ContentTruncation.
-			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
+		out = append(
+			out, sty.Tool.ContentTruncation.
+				Width(width).
+				Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
 		)
 	}
 
@@ -1591,4 +1637,79 @@ func prettifyToolName(name string) string {
 	default:
 		return humanizedToolName(name)
 	}
+}
+
+// toolDrillInKeyParam extracts the most relevant parameter from a tool call's
+// input JSON and returns it as a short label string.
+func toolDrillInKeyParam(toolCall message.ToolCall) string {
+	var params map[string]any
+	if err := json.Unmarshal([]byte(toolCall.Input), &params); err != nil {
+		return ""
+	}
+
+	getString := func(key string) string {
+		if v, ok := params[key]; ok {
+			if s, ok := v.(string); ok {
+				return s
+			}
+		}
+		return ""
+	}
+
+	name := toolCall.Name
+	switch {
+	case strings.Contains(name, "bash"):
+		cmd := getString("command")
+		if cmd != "" {
+			cmd = ansi.Truncate(cmd, 40, "…")
+			return `"` + cmd + `"`
+		}
+	case name == tools.ViewToolName, name == tools.WriteToolName,
+		name == tools.EditToolName, name == tools.MultiEditToolName,
+		name == tools.DownloadToolName:
+		return getString("file_path")
+	case name == tools.GrepToolName:
+		if p := getString("pattern"); p != "" {
+			return `"` + p + `"`
+		}
+	case name == tools.GlobToolName:
+		if p := getString("pattern"); p != "" {
+			return `"` + p + `"`
+		}
+	case name == tools.LSToolName:
+		if p := getString("path"); p != "" {
+			return p
+		}
+		return "."
+	case name == tools.FetchToolName, name == tools.AgenticFetchToolName,
+		name == tools.WebFetchToolName:
+		return getString("url")
+	case name == tools.WebSearchToolName, name == tools.SourcegraphToolName:
+		if q := getString("query"); q != "" {
+			return `"` + q + `"`
+		}
+	case name == tools.DiagnosticsToolName:
+		if p := getString("file_path"); p != "" {
+			return p
+		}
+		return "project"
+	case name == tools.ReferencesToolName:
+		return getString("symbol")
+	case name == tools.LSPRestartToolName:
+		return getString("name")
+	case strings.HasPrefix(name, "mcp_"):
+		// Extract first string value from sorted keys for determinism.
+		keys := make([]string, 0, len(params))
+		for k := range params {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			if s, ok := params[k].(string); ok {
+				return s
+			}
+		}
+	}
+
+	return ""
 }

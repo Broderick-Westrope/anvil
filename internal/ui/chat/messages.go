@@ -60,6 +60,13 @@ type DrillInHandler interface {
 	DrillInLabel() string
 }
 
+// ToolDrillInHandler is implemented by tool items that support drill-in
+// to a detail view (as opposed to session drill-in for agents).
+type ToolDrillInHandler interface {
+	ToolDrillIn() ToolMessageItem
+	ToolDrillInLabel() string
+}
+
 // MessageItem represents a [message.Message] item that can be displayed in the
 // UI and be part of a [list.List] identifiable by a unique ID.
 type MessageItem interface {
@@ -290,7 +297,7 @@ func cappedMessageWidth(availableWidth int) int {
 //
 // For assistant messages with tool calls, pass a toolResults map to link results.
 // Use BuildToolResultMap to create this map from all messages in a session.
-func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult) []MessageItem {
+func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult, expandedPatterns []string) []MessageItem {
 	switch msg.Role {
 	case message.User:
 		r := attachments.NewRenderer(
@@ -317,6 +324,7 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 				tc,
 				result,
 				msg.FinishReason() == message.FinishReasonCanceled,
+				expandedPatterns,
 			))
 		}
 		return items
