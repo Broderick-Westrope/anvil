@@ -96,7 +96,8 @@ func (d *ToolDetailItem) Render(width int) string {
 }
 
 // renderInput renders the input section with a dimmed header and sorted
-// key-value pairs from the tool call's JSON input.
+// key-value pairs from the tool call's JSON input. Multi-line string
+// values are rendered as syntax-highlighted code blocks.
 func (d *ToolDetailItem) renderInput(width int) string {
 	header := d.sectionHeader("Input", width)
 
@@ -117,27 +118,44 @@ func (d *ToolDetailItem) renderInput(width int) string {
 	}
 	sort.Strings(keys)
 
+	// Try to find a file_path for syntax highlighting of code blocks.
+	filePath, _ := params["file_path"].(string)
+
 	var lines []string
 	lines = append(lines, header)
 	for _, k := range keys {
 		v := params[k]
-		var valStr string
+		key := d.sty.Tool.NameNested.Render(k + ":")
+
 		switch val := v.(type) {
 		case string:
-			valStr = val
+			if strings.Contains(val, "\n") {
+				// Multi-line string: render as a code block below the key.
+				lines = append(lines, "  "+key)
+				block := toolOutputCodeContent(
+					d.sty, filePath, val, 0, width, true, true,
+				)
+				lines = append(lines, block)
+			} else {
+				// Single-line string: inline key-value.
+				keyWidth := lipgloss.Width(key)
+				indent := 2 + keyWidth + 1
+				valStr := val
+				if indent < width {
+					valStr = lipgloss.NewStyle().Width(width - indent).Render(valStr)
+				}
+				lines = append(lines, fmt.Sprintf("  %s %s", key, valStr))
+			}
 		default:
 			b, _ := json.Marshal(val)
-			valStr = string(b)
+			valStr := string(b)
+			keyWidth := lipgloss.Width(key)
+			indent := 2 + keyWidth + 1
+			if indent < width {
+				valStr = lipgloss.NewStyle().Width(width - indent).Render(valStr)
+			}
+			lines = append(lines, fmt.Sprintf("  %s %s", key, valStr))
 		}
-		key := d.sty.Tool.NameNested.Render(k + ":")
-		keyWidth := lipgloss.Width(key)
-		// Wrap long values to the available width so all content is
-		// accessible without horizontal truncation.
-		indent := 2 + keyWidth + 1 // "  " + key + " "
-		if indent < width {
-			valStr = lipgloss.NewStyle().Width(width - indent).Render(valStr)
-		}
-		lines = append(lines, fmt.Sprintf("  %s %s", key, valStr))
 	}
 	return strings.Join(lines, "\n")
 }
