@@ -15,10 +15,14 @@ import (
 
 // Compile-time interface checks.
 var (
-	_ list.Item = (*toolDetailHeaderItem)(nil)
-	_ list.Item = (*toolDetailSectionItem)(nil)
-	_ list.Item = (*toolDetailParamItem)(nil)
-	_ list.Item = (*toolDetailOutputItem)(nil)
+	_ list.Item         = (*toolDetailHeaderItem)(nil)
+	_ list.Item         = (*toolDetailSectionItem)(nil)
+	_ list.Item         = (*toolDetailParamItem)(nil)
+	_ list.Item         = (*toolDetailOutputItem)(nil)
+	_ Expandable        = (*toolDetailParamItem)(nil)
+	_ Expandable        = (*toolDetailOutputItem)(nil)
+	_ list.MouseClickable = (*toolDetailParamItem)(nil)
+	_ list.MouseClickable = (*toolDetailOutputItem)(nil)
 )
 
 // detailRenderConfigurable groups the optional methods on a tool item that
@@ -412,14 +416,11 @@ func (o *toolDetailOutputItem) renderOutput(width int) string {
 
 	wasCompact := cfg.IsCompact()
 	cfg.SetCompact(false)
-
-	if o.expanded {
-		cfg.SetExpandedContent(true)
-		cfg.SetNoTruncate(true)
-	} else {
-		cfg.SetExpandedContent(false)
-		cfg.SetNoTruncate(false)
-	}
+	cfg.SetExpandedContent(o.expanded)
+	// Always use NoTruncate in the drill-in so diff lines wrap instead
+	// of being clipped with "…". Height truncation is controlled
+	// separately by the expanded flag.
+	cfg.SetNoTruncate(true)
 
 	output := o.source.RawRender(width)
 
