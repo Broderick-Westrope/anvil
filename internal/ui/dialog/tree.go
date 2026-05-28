@@ -42,6 +42,7 @@ type Tree struct {
 	leafMessageID      string
 	needsInitialScroll bool
 	filtering          bool
+	preFilterSelectedID string
 
 	keyMap struct {
 		Select     key.Binding
@@ -326,6 +327,9 @@ func (t *Tree) handleNavKey(msg tea.KeyPressMsg) Action {
 
 	case key.Matches(msg, t.keyMap.OpenFilter):
 		t.filtering = true
+		if item := t.selectedTreeItem(); item != nil {
+			t.preFilterSelectedID = item.node.msg.ID
+		}
 		t.input.Focus()
 
 	case key.Matches(msg, t.keyMap.GoTop):
@@ -389,6 +393,9 @@ func (t *Tree) handleFilterKey(msg tea.KeyPressMsg) Action {
 		t.input.Blur()
 		t.input.SetValue("")
 		t.list.SetFilter("")
+		if t.preFilterSelectedID != "" {
+			t.selectByMessageID(t.preFilterSelectedID)
+		}
 
 	case key.Matches(msg, t.keyMap.Select):
 		if item := t.selectedTreeItem(); item != nil {
