@@ -273,6 +273,7 @@ type Options struct {
 	Progress                  *bool    `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
 	DisableNotifications      bool     `json:"disable_notifications,omitempty" jsonschema:"description=Disable desktop notifications,default=false"`
 	DisabledSkills            []string `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=anvil-config"`
+	ExpandedTools             []string `json:"expanded_tools,omitempty" jsonschema:"description=Glob patterns for tools that should render expanded instead of compact,example=bash,example=mcp_*"`
 }
 
 type MCPs map[string]MCPConfig
