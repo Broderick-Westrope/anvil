@@ -687,13 +687,9 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 		}
 
 		var codeLine string
-		if noTruncate {
-			codeLine = sty.Tool.ContentCodeLine.Render(ln)
-		} else {
-			codeLine = sty.Tool.ContentCodeLine.
-				Width(codeWidth).
-				Render(ln)
-		}
+		codeLine = sty.Tool.ContentCodeLine.
+			Width(codeWidth).
+			Render(ln)
 
 		out = append(out, lipgloss.JoinHorizontal(lipgloss.Left, lineNum, codeLine))
 	}

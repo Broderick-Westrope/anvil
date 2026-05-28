@@ -135,7 +135,7 @@ func (d *ToolDetailItem) renderInput(width int) string {
 				block := toolOutputCodeContent(
 					d.sty, filePath, val, 0, width, true, true,
 				)
-				lines = append(lines, block)
+				lines = append(lines, block, "")
 			} else {
 				// Single-line string: inline key-value.
 				keyWidth := lipgloss.Width(key)
