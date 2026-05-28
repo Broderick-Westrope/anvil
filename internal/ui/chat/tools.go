@@ -374,7 +374,9 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 // Render renders the tool message item at the given width.
 func (t *baseToolMessageItem) Render(width int) string {
 	var prefix string
-	if t.isCompact {
+	if t.isCompact && t.focused {
+		prefix = t.sty.Messages.ToolCallFocused.Render()
+	} else if t.isCompact {
 		prefix = t.sty.Messages.ToolCallCompact.Render()
 	} else if t.focused {
 		prefix = t.sty.Messages.ToolCallFocused.Render()

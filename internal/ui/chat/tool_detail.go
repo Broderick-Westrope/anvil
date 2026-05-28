@@ -15,14 +15,17 @@ import (
 
 // Compile-time interface checks.
 var (
-	_ list.Item          = (*toolDetailHeaderItem)(nil)
-	_ list.Item          = (*toolDetailSectionItem)(nil)
-	_ list.Item          = (*toolDetailParamItem)(nil)
-	_ list.Item          = (*toolDetailOutputItem)(nil)
-	_ Expandable         = (*toolDetailParamItem)(nil)
-	_ Expandable         = (*toolDetailOutputItem)(nil)
+	_ list.Item           = (*toolDetailHeaderItem)(nil)
+	_ list.Item           = (*toolDetailSectionItem)(nil)
+	_ list.Item           = (*toolDetailParamItem)(nil)
+	_ list.Item           = (*toolDetailOutputItem)(nil)
+	_ Expandable          = (*toolDetailParamItem)(nil)
+	_ Expandable          = (*toolDetailOutputItem)(nil)
 	_ list.MouseClickable = (*toolDetailParamItem)(nil)
 	_ list.MouseClickable = (*toolDetailOutputItem)(nil)
+	_ list.Focusable      = (*toolDetailHeaderItem)(nil)
+	_ list.Focusable      = (*toolDetailSectionItem)(nil)
+	_ list.Focusable      = (*toolDetailStaticItem)(nil)
 	_ list.Focusable      = (*toolDetailParamItem)(nil)
 	_ list.Focusable      = (*toolDetailOutputItem)(nil)
 )
@@ -152,8 +155,10 @@ func sectionHeader(sty *styles.Styles, label string, width int) string {
 type toolDetailHeaderItem struct {
 	sty          *styles.Styles
 	source       ToolMessageItem
+	focused      bool
 	cachedRender string
 	cachedWidth  int
+	cachedFocus  bool
 	lastStatus   ToolStatus
 }
 
@@ -170,7 +175,7 @@ func (h *toolDetailHeaderItem) RawRender(width int) string {
 // Render implements list.Item.
 func (h *toolDetailHeaderItem) Render(width int) string {
 	status := h.source.Status()
-	if h.cachedWidth == width && h.lastStatus == status {
+	if h.cachedWidth == width && h.lastStatus == status && h.cachedFocus == h.focused {
 		return h.cachedRender
 	}
 
@@ -179,11 +184,27 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
 	rendered := fmt.Sprintf("%s %s", icon, name)
 
+	var prefix string
+	if h.focused {
+		prefix = h.sty.Messages.ToolCallFocused.Render()
+	} else {
+		prefix = h.sty.Messages.ToolCallBlurred.Render()
+	}
+	lines := strings.Split(rendered, "\n")
+	for i, ln := range lines {
+		lines[i] = prefix + ln
+	}
+	rendered = strings.Join(lines, "\n")
+
 	h.cachedRender = rendered
 	h.cachedWidth = width
+	h.cachedFocus = h.focused
 	h.lastStatus = status
 	return rendered
 }
+
+// SetFocused implements list.Focusable.
+func (h *toolDetailHeaderItem) SetFocused(v bool) { h.focused = v }
 
 // --- toolDetailSectionItem ---
 
@@ -192,8 +213,10 @@ type toolDetailSectionItem struct {
 	sty          *styles.Styles
 	label        string
 	toolCallID   string
+	focused      bool
 	cachedRender string
 	cachedWidth  int
+	cachedFocus  bool
 }
 
 // ID implements MessageItem.
@@ -208,14 +231,31 @@ func (s *toolDetailSectionItem) RawRender(width int) string {
 
 // Render implements list.Item.
 func (s *toolDetailSectionItem) Render(width int) string {
-	if s.cachedWidth == width {
+	if s.cachedWidth == width && s.cachedFocus == s.focused {
 		return s.cachedRender
 	}
 	rendered := sectionHeader(s.sty, s.label, width)
+
+	var prefix string
+	if s.focused {
+		prefix = s.sty.Messages.ToolCallFocused.Render()
+	} else {
+		prefix = s.sty.Messages.ToolCallBlurred.Render()
+	}
+	lines := strings.Split(rendered, "\n")
+	for i, ln := range lines {
+		lines[i] = prefix + ln
+	}
+	rendered = strings.Join(lines, "\n")
+
 	s.cachedRender = rendered
 	s.cachedWidth = width
+	s.cachedFocus = s.focused
 	return rendered
 }
+
+// SetFocused implements list.Focusable.
+func (s *toolDetailSectionItem) SetFocused(v bool) { s.focused = v }
 
 // --- toolDetailStaticItem ---
 
@@ -226,8 +266,10 @@ type toolDetailStaticItem struct {
 	content      string
 	styleFunc    func(*styles.Styles) lipgloss.Style
 	toolCallID   string
+	focused      bool
 	cachedRender string
 	cachedWidth  int
+	cachedFocus  bool
 }
 
 // ID implements MessageItem.
@@ -242,14 +284,31 @@ func (s *toolDetailStaticItem) RawRender(width int) string {
 
 // Render implements list.Item.
 func (s *toolDetailStaticItem) Render(width int) string {
-	if s.cachedWidth == width {
+	if s.cachedWidth == width && s.cachedFocus == s.focused {
 		return s.cachedRender
 	}
 	rendered := s.styleFunc(s.sty).Render(s.content)
+
+	var prefix string
+	if s.focused {
+		prefix = s.sty.Messages.ToolCallFocused.Render()
+	} else {
+		prefix = s.sty.Messages.ToolCallBlurred.Render()
+	}
+	lines := strings.Split(rendered, "\n")
+	for i, ln := range lines {
+		lines[i] = prefix + ln
+	}
+	rendered = strings.Join(lines, "\n")
+
 	s.cachedRender = rendered
 	s.cachedWidth = width
+	s.cachedFocus = s.focused
 	return rendered
 }
+
+// SetFocused implements list.Focusable.
+func (s *toolDetailStaticItem) SetFocused(v bool) { s.focused = v }
 
 // --- toolDetailParamItem ---
 
@@ -262,10 +321,12 @@ type toolDetailParamItem struct {
 	filePath   string
 	toolCallID string
 	expanded   bool
+	focused    bool
 
 	cachedRender string
 	cachedWidth  int
 	cachedExpand bool
+	cachedFocus  bool
 }
 
 // ID implements MessageItem.
@@ -290,7 +351,7 @@ func (p *toolDetailParamItem) isMultiLine() (string, bool) {
 
 // Render implements list.Item.
 func (p *toolDetailParamItem) Render(width int) string {
-	if p.cachedWidth == width && p.cachedExpand == p.expanded && p.cachedRender != "" {
+	if p.cachedWidth == width && p.cachedExpand == p.expanded && p.cachedFocus == p.focused && p.cachedRender != "" {
 		return p.cachedRender
 	}
 
@@ -331,9 +392,22 @@ func (p *toolDetailParamItem) Render(width int) string {
 		rendered = fmt.Sprintf("  %s %s", key, valStr)
 	}
 
+	var prefix string
+	if p.focused {
+		prefix = p.sty.Messages.ToolCallFocused.Render()
+	} else {
+		prefix = p.sty.Messages.ToolCallBlurred.Render()
+	}
+	lines := strings.Split(rendered, "\n")
+	for i, ln := range lines {
+		lines[i] = prefix + ln
+	}
+	rendered = strings.Join(lines, "\n")
+
 	p.cachedRender = rendered
 	p.cachedWidth = width
 	p.cachedExpand = p.expanded
+	p.cachedFocus = p.focused
 	return rendered
 }
 
@@ -354,7 +428,7 @@ func (p *toolDetailParamItem) HandleMouseClick(_ ansi.MouseButton, _, _ int) boo
 }
 
 // SetFocused implements list.Focusable.
-func (p *toolDetailParamItem) SetFocused(_ bool) {}
+func (p *toolDetailParamItem) SetFocused(v bool) { p.focused = v }
 
 // --- toolDetailOutputItem ---
 
@@ -365,9 +439,11 @@ type toolDetailOutputItem struct {
 	source ToolMessageItem
 
 	expanded      bool
+	focused       bool
 	cachedRender  string
 	cachedWidth   int
 	cachedExpand  bool
+	cachedFocus   bool
 	lastStatus    ToolStatus
 	lastToolCall  message.ToolCall
 	lastResultVer uint64
@@ -391,6 +467,7 @@ func (o *toolDetailOutputItem) Render(width int) string {
 
 	if o.cachedWidth == width &&
 		o.cachedExpand == o.expanded &&
+		o.cachedFocus == o.focused &&
 		o.lastStatus == status &&
 		o.lastToolCall.Finished == tc.Finished &&
 		o.lastToolCall.Input == tc.Input &&
@@ -401,9 +478,22 @@ func (o *toolDetailOutputItem) Render(width int) string {
 
 	rendered := o.renderOutput(width)
 
+	var prefix string
+	if o.focused {
+		prefix = o.sty.Messages.ToolCallFocused.Render()
+	} else {
+		prefix = o.sty.Messages.ToolCallBlurred.Render()
+	}
+	lines := strings.Split(rendered, "\n")
+	for i, ln := range lines {
+		lines[i] = prefix + ln
+	}
+	rendered = strings.Join(lines, "\n")
+
 	o.cachedRender = rendered
 	o.cachedWidth = width
 	o.cachedExpand = o.expanded
+	o.cachedFocus = o.focused
 	o.lastStatus = status
 	o.lastToolCall = tc
 	o.lastResultVer = resultVer
@@ -467,4 +557,4 @@ func (o *toolDetailOutputItem) HandleMouseClick(_ ansi.MouseButton, _, _ int) bo
 }
 
 // SetFocused implements list.Focusable.
-func (o *toolDetailOutputItem) SetFocused(_ bool) {}
+func (o *toolDetailOutputItem) SetFocused(v bool) { o.focused = v }
