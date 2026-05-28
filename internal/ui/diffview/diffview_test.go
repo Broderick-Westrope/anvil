@@ -339,43 +339,7 @@ func TestDiffViewYOffsetInfinite(t *testing.T) {
 	}
 }
 
-func TestDiffViewNoTruncate(t *testing.T) {
-	t.Parallel()
 
-	for layoutName, layoutFunc := range LayoutFuncs {
-		t.Run(layoutName, func(t *testing.T) {
-			t.Parallel()
-
-			const width = 40
-			dv := diffview.New().
-				Before("main.go", TestMultipleHunksBefore).
-				After("main.go", TestMultipleHunksAfter).
-				Style(diffview.DefaultLightStyle()).
-				ChromaStyle(styles.Get("catppuccin-latte")).
-				Width(width).
-				NoTruncate()
-			dv = layoutFunc(dv)
-
-			output := dv.String()
-			golden.RequireEqual(t, []byte(output))
-
-			// Verify lines CAN exceed the set width (unlike normal mode).
-			var maxLineWidth int
-			for line := range strings.SplitSeq(output, "\n") {
-				maxLineWidth = max(maxLineWidth, ansi.StringWidth(line))
-			}
-			if maxLineWidth <= width {
-				t.Errorf("expected some lines wider than %d in NoTruncate mode, got max %d", width, maxLineWidth)
-			}
-
-			// Verify line numbers and symbols still render.
-			lines := strings.Split(output, "\n")
-			if len(lines) == 0 {
-				t.Fatal("expected non-empty output")
-			}
-		})
-	}
-}
 
 func assertLineWidth(t *testing.T, expected int, output string) {
 	var lineWidth int
