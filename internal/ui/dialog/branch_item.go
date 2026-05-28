@@ -1,9 +1,12 @@
 package dialog
 
 import (
+	"time"
+
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/dustin/go-humanize"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -61,7 +64,8 @@ func (b *BranchItem) Render(width int) string {
 		style = s.ItemFocused
 	}
 	innerWidth := max(0, width-style.GetHorizontalFrameSize())
-	return renderItem(s, textContent, "", b.focused, innerWidth, b.cache, &b.m)
+	info := humanize.Time(time.Unix(b.msg.CreatedAt, 0))
+	return renderItem(s, textContent, info, b.focused, innerWidth, b.cache, &b.m)
 }
 
 // Finished implements [list.Item]. BranchItems are static.

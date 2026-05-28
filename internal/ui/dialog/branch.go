@@ -2,6 +2,7 @@ package dialog
 
 import (
 	"context"
+	"slices"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
@@ -36,13 +37,15 @@ func NewBranch(com *common.Common, leafMessageID string) (*Branch, error) {
 		return nil, err
 	}
 
-	// Filter to only user messages.
+	// Filter to only user messages, then reverse so the latest
+	// message appears first and is pre-selected.
 	var userMsgs []message.Message
 	for _, msg := range branchPath {
 		if msg.MessageType == message.MessageTypeMessage && msg.Role == message.User {
 			userMsgs = append(userMsgs, msg)
 		}
 	}
+	slices.Reverse(userMsgs)
 
 	b := &Branch{
 		com: com,
