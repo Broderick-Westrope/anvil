@@ -1,6 +1,7 @@
 package common
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -40,11 +41,13 @@ func TestFormatTokensAndCostPrefixesEstimatedUsage(t *testing.T) {
 
 	sty := styles.TokyoNight()
 
-	actual := ansi.Strip(formatTokensAndCost(&sty, 120, 1000, 0, true))
+	rendered := formatTokensAndCost(&sty, 120, 1000, 0, true)
+	actual := ansi.Strip(rendered)
 
 	require.Contains(t, actual, "~12%")
 	require.Contains(t, actual, "(120)")
 	require.Contains(t, actual, "$0.00")
+	require.True(t, strings.Contains(rendered, sty.ModelInfo.TokenPercentage.Render("~12%")))
 }
 
 func TestFormatTokensAndCostOmitsEstimatedPrefix(t *testing.T) {
