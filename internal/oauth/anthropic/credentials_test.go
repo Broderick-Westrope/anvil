@@ -80,6 +80,31 @@ func TestParseCredentials_Invalid(t *testing.T) {
 	})
 }
 
+func TestParseCredentials_MillisecondExpiry(t *testing.T) {
+	t.Parallel()
+
+	// Claude CLI (Node.js) stores expiresAt in milliseconds.
+	expirySeconds := time.Now().Add(2 * time.Hour).Unix()
+	expiryMillis := expirySeconds * 1000
+
+	data, err := json.Marshal(map[string]any{
+		"claudeAiOauth": map[string]any{
+			"accessToken":  "ms-access",
+			"refreshToken": "ms-refresh",
+			"expiresAt":    expiryMillis,
+		},
+	})
+	require.NoError(t, err)
+
+	tok, err := parseCredentials(data)
+	require.NoError(t, err)
+	require.NotNil(t, tok)
+	require.Equal(t, "ms-access", tok.AccessToken)
+	// ExpiresAt should be normalized to seconds.
+	require.InDelta(t, expirySeconds, tok.ExpiresAt, 1)
+	require.False(t, NeedsRefresh(tok), "token 2 hours from now should not need refresh")
+}
+
 func TestNeedsRefresh(t *testing.T) {
 	t.Parallel()
 
