@@ -1222,6 +1222,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newChat.SetFollow(toolItem.Status() == chat.ToolStatusRunning)
 		newChat.Focus()
 		newChat.SetMessages(detailItems...)
+		newChat.ScrollToBottom()
+		newChat.SelectLast()
 		m.drillStack = append(m.drillStack, drillInEntry{
 			chat:     newChat,
 			label:    msg.Label,
@@ -2854,18 +2856,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Chat.Expand):
-				// Tool drill-in takes priority over toggle-expand.
-				if driller, ok := m.activeChat().SelectedItem().(chat.ToolDrillInHandler); ok {
-					if toolItem := driller.ToolDrillIn(); toolItem != nil {
-						cmds = append(cmds, func() tea.Msg {
-							return util.ToolDrillInMsg{
-								ToolItem: toolItem,
-								Label:    driller.ToolDrillInLabel(),
-							}
-						})
-						break
-					}
-				}
 				m.activeChat().ToggleExpandedSelectedItem()
 			case key.Matches(msg, m.keyMap.Chat.Up):
 				if cmd := m.activeChat().ScrollByAndAnimate(-1); cmd != nil {

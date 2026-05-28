@@ -22,6 +22,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -374,11 +375,7 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 // Render renders the tool message item at the given width.
 func (t *baseToolMessageItem) Render(width int) string {
 	var prefix string
-	if t.isCompact && t.focused {
-		prefix = t.sty.Messages.ToolCallFocused.Render()
-	} else if t.isCompact {
-		prefix = t.sty.Messages.ToolCallCompact.Render()
-	} else if t.focused {
+	if t.focused {
 		prefix = t.sty.Messages.ToolCallFocused.Render()
 	} else {
 		prefix = t.sty.Messages.ToolCallBlurred.Render()
@@ -492,9 +489,20 @@ func (t *baseToolMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) b
 
 // HandleKeyEvent implements KeyEventHandler.
 func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	if k := key.String(); k == "c" || k == "y" {
+	switch k := key.String(); k {
+	case "c", "y":
 		text := t.formatToolForCopy()
 		return true, common.CopyToClipboard(text, "Tool content copied to clipboard")
+	case "right":
+		// Drill into the tool detail view, matching the agent → pattern.
+		if toolItem := t.ToolDrillIn(); toolItem != nil {
+			return true, func() tea.Msg {
+				return util.ToolDrillInMsg{
+					ToolItem: toolItem,
+					Label:    t.ToolDrillInLabel(),
+				}
+			}
+		}
 	}
 	return false, nil
 }
