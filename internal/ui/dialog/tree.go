@@ -1,7 +1,9 @@
 package dialog
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -117,6 +119,13 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		} else {
 			t.nodeMap[parentID].children = append(t.nodeMap[parentID].children, node)
 		}
+	}
+
+	// Sort roots and children by creation time so the tree order is
+	// deterministic (map iteration order in Go is random).
+	sortNodes(t.roots)
+	for _, node := range t.nodeMap {
+		sortNodes(node.children)
 	}
 
 	// Collapse assistant→assistant single-child chains so each assistant
@@ -403,6 +412,14 @@ func messageTextContent(msg message.Message) string {
 		}
 	}
 	return ""
+}
+
+// sortNodes sorts a slice of tree nodes by message creation time so the
+// tree display order is deterministic.
+func sortNodes(nodes []*treeNode) {
+	slices.SortFunc(nodes, func(a, b *treeNode) int {
+		return cmp.Compare(a.msg.CreatedAt, b.msg.CreatedAt)
+	})
 }
 
 
