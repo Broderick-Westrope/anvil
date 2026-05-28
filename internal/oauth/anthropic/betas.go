@@ -14,6 +14,7 @@ var defaultBetas = []string{
 	"context-management-2025-06-27",
 	"advisor-tool-2026-03-01",
 	"cache-diagnosis-2026-04-07",
+	"thinking-token-count-2026-05-13",
 	"extended-cache-ttl-2025-04-11",
 }
 

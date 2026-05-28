@@ -9,7 +9,7 @@ const (
 	// BillingSalt is a fixed salt used in billing header computation.
 	BillingSalt = "59cf53e54c78"
 	// CLIVersion is the pinned Claude CLI version reported in billing headers.
-	CLIVersion = "2.1.143"
+	CLIVersion = "2.1.153"
 	// Entrypoint identifies this client as a CLI integration.
 	Entrypoint = "cli"
 )

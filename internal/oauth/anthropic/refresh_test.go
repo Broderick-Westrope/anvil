@@ -20,6 +20,7 @@ func TestRefreshViaEndpoint_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodPost, r.Method)
 		require.Equal(t, "application/x-www-form-urlencoded", r.Header.Get("Content-Type"))
+		require.Equal(t, "claude-cli/"+CLIVersion+" (external, sdk-cli)", r.Header.Get("User-Agent"))
 
 		require.NoError(t, r.ParseForm())
 		require.Equal(t, "refresh_token", r.FormValue("grant_type"))

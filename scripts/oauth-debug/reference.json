@@ -1,7 +1,7 @@
 {
   "_description": "Known-good Anthropic OAuth request protocol as implemented by Anvil. Compare mitmproxy captures against this file to detect protocol drift.",
   "_last_verified": "2026-05-18",
-  "_source": "Captured from Claude Code CLI v2.1.143 via mitmproxy.",
+  "_source": "Captured from Claude Code CLI v2.1.153 via mitmproxy.",
 
   "endpoints": {
     "api": "https://api.anthropic.com/v1/messages",
@@ -43,6 +43,7 @@
       "context-management-2025-06-27",
       "advisor-tool-2026-03-01",
       "cache-diagnosis-2026-04-07",
+      "thinking-token-count-2026-05-13",
       "extended-cache-ttl-2025-04-11"
     ],
     "non_haiku": [
@@ -79,7 +80,7 @@
   },
 
   "anvil_constants": {
-    "cli_version": "2.1.143",
+    "cli_version": "2.1.153",
     "billing_salt": "59cf53e54c78",
     "billing_entrypoint": "cli"
   },
