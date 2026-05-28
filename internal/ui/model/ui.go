@@ -346,6 +346,12 @@ type drillInEntry struct {
 	chat      *Chat            // Chat instance for this level
 	label     string           // breadcrumb label, e.g. "Explorer: Search auth"
 	session   *session.Session // cached session for sidebar stats
+	toolView  *ToolDetailView  // non-nil when this entry is a tool drill-in
+}
+
+// ToolDetailView tracks the source tool item for a tool drill-in.
+type ToolDetailView struct {
+	sourceItem chat.ToolMessageItem
 }
 
 // New creates a new instance of the [UI] model.
@@ -1190,6 +1196,32 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tickElapsedTime())
 		}
 
+	case util.ToolDrillInMsg:
+		toolItem, ok := msg.ToolItem.(chat.ToolMessageItem)
+		if !ok {
+			break
+		}
+		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem)
+		newChat := NewChat(m.com)
+		// Follow when the tool is still running so streaming output
+		// auto-scrolls; otherwise start at the top.
+		newChat.SetFollow(toolItem.Status() == chat.ToolStatusRunning)
+		newChat.Focus()
+		newChat.SetMessages(detailItems...)
+		newChat.ScrollToBottom()
+		newChat.SelectLast()
+		m.drillStack = append(m.drillStack, drillInEntry{
+			chat:     newChat,
+			label:    msg.Label,
+			toolView: &ToolDetailView{sourceItem: toolItem},
+		})
+		// Disable the editor while viewing a tool detail.
+		m.textarea.Blur()
+		m.focus = uiFocusMain
+		// Recalculate layout so editor height becomes 0 and main area
+		// expands. This also correctly sizes the new chat.
+		m.updateLayoutAndSize()
+
 	case drillInSessionLoadedMsg:
 		// Find the matching entry and populate it.
 		for i := range m.drillStack {
@@ -1256,6 +1288,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// expandedToolPatterns returns the expanded_tools glob patterns from
+// config, or nil when the config is unavailable.
+func (m *UI) expandedToolPatterns() []string {
+	cfg := m.com.Config()
+	if cfg == nil || cfg.Options == nil {
+		return nil
+	}
+	return cfg.Options.ExpandedTools
+}
+
 // setSessionMessages sets the messages for the current session in the chat
 func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	var cmds []tea.Cmd
@@ -1275,15 +1317,15 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 		switch msg.Role {
 		case message.User:
 			m.lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
 		}
 	}
 
@@ -1342,7 +1384,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// Extract nested tool items.
 		var nestedTools []chat.ToolMessageItem
 		for _, nestedMsg := range nestedMsgPtrs {
-			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap)
+			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.expandedToolPatterns())
 			for _, nestedItem := range nestedItems {
 				if nestedToolItem, ok := nestedItem.(chat.ToolMessageItem); ok {
 					// Mark nested tools as simple (compact) rendering.
@@ -1416,7 +1458,7 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	switch msg.Role {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
 				if cmd := animatable.StartAnimation(); cmd != nil {
@@ -1432,7 +1474,7 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			}
 		}
 	case message.Assistant:
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
 				if cmd := animatable.StartAnimation(); cmd != nil {
@@ -1555,7 +1597,7 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			}
 		}
 		if existingToolItem == nil {
-			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false))
+			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.expandedToolPatterns()))
 		}
 	}
 
@@ -1656,11 +1698,6 @@ func invalidateRunningAgentsInChat(c *Chat) {
 func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.Cmd {
 	var cmds []tea.Cmd
 
-	// Only process messages with tool calls or results.
-	if len(event.Payload.ToolCalls()) == 0 && len(event.Payload.ToolResults()) == 0 {
-		return nil
-	}
-
 	// Check if this is an agent tool session and parse it.
 	childSessionID := event.Payload.SessionID
 	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
@@ -1681,11 +1718,24 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	}
 
 	// Set the child session ID and mark that messages have arrived so the
-	// collapsed stats view and drill-in navigation can activate.
+	// collapsed stats view and drill-in navigation can activate. This runs
+	// for every child message (including text-only ones) so that agents
+	// which never make tool calls still transition out of the pending
+	// state and support drill-in.
 	if da, ok := agentItem.(chat.DrillableAgent); ok {
 		da.SetChildSessionID(childSessionID)
 		da.SetStartedAt(time.Now())
 		da.SetHasChildMessages(true)
+	}
+
+	// Nothing more to do when the message has no tool calls or results.
+	if len(event.Payload.ToolCalls()) == 0 && len(event.Payload.ToolResults()) == 0 {
+		// Start the elapsed-time tick if this is the first child message.
+		if !m.elapsedTickRunning {
+			m.elapsedTickRunning = true
+			cmds = append(cmds, tickElapsedTime())
+		}
+		return tea.Sequence(cmds...)
 	}
 
 	// Get existing nested tools.
@@ -1703,7 +1753,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		}
 		if !found {
 			// Create a new nested tool item.
-			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false)
+			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false, m.expandedToolPatterns())
 			if simplifiable, ok := nestedItem.(chat.Compactable); ok {
 				simplifiable.SetCompact(true)
 			}
@@ -1859,9 +1909,9 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 		switch msg.Role {
 		case message.User:
 			lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(
 					m.com.Styles, msg, m.com.Config(),
@@ -1870,7 +1920,7 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
 		}
 	}
 

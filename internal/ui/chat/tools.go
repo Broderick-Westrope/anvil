@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2/tree"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/diff"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
@@ -21,6 +22,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -98,6 +100,7 @@ type ToolRenderOpts struct {
 	Compact         bool
 	IsSpinning      bool
 	Status          ToolStatus
+	NoTruncate      bool
 }
 
 // IsPending returns true if the tool call is still pending (not finished and
@@ -158,6 +161,8 @@ type baseToolMessageItem struct {
 	sty             *styles.Styles
 	anim            *anim.Anim
 	expandedContent bool
+	noTruncate      bool
+	resultVersion   uint64
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -219,6 +224,7 @@ func NewToolMessageItem(
 	toolCall message.ToolCall,
 	result *message.ToolResult,
 	canceled bool,
+	expandedPatterns []string,
 ) ToolMessageItem {
 	var item ToolMessageItem
 	switch toolCall.Name {
@@ -273,6 +279,18 @@ func NewToolMessageItem(
 			item = NewGenericToolMessageItem(sty, toolCall, result, canceled)
 		}
 	}
+	// Default most tools to compact rendering. Todos and agent-like tools
+	// are excluded because they manage their own display.
+	switch toolCall.Name {
+	case tools.TodosToolName, agent.TaskToolName, tools.AgenticFetchToolName:
+		// Keep current (expanded) behavior.
+	default:
+		compact := !config.IsToolExpanded(expandedPatterns, toolCall.Name)
+		if compactable, ok := item.(Compactable); ok {
+			compactable.SetCompact(compact)
+		}
+	}
+
 	item.SetMessageID(messageID)
 	return item
 }
@@ -285,6 +303,23 @@ func (t *baseToolMessageItem) SetCompact(compact bool) {
 	t.isCompact = compact
 	t.clearCache()
 	t.Bump()
+}
+
+// SetNoTruncate enables or disables line-level truncation for rendering.
+func (t *baseToolMessageItem) SetNoTruncate(v bool) {
+	t.noTruncate = v
+	t.clearCache()
+}
+
+// IsCompact reports whether this tool is currently in compact rendering mode.
+func (t *baseToolMessageItem) IsCompact() bool {
+	return t.isCompact
+}
+
+// ResultVersion returns a counter that increments each time the result is set.
+// Used for cache invalidation in tool detail items.
+func (t *baseToolMessageItem) ResultVersion() uint64 {
+	return t.resultVersion
 }
 
 // ID returns the unique identifier for this tool message item.
@@ -338,6 +373,7 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 			Compact:         t.isCompact,
 			IsSpinning:      t.isSpinning(),
 			Status:          t.computeStatus(),
+			NoTruncate:      t.noTruncate,
 		})
 
 		// Prepend hook indicator if hooks ran for this tool call.
@@ -376,9 +412,7 @@ func (t *baseToolMessageItem) Render(width int) string {
 		}
 	}
 	var prefix string
-	if t.isCompact {
-		prefix = t.sty.Messages.ToolCallCompact.Render()
-	} else if t.focused {
+	if t.focused {
 		prefix = t.sty.Messages.ToolCallFocused.Render()
 	} else {
 		prefix = t.sty.Messages.ToolCallBlurred.Render()
@@ -409,6 +443,7 @@ func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
 // SetResult sets the tool result associated with this message item.
 func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.result = res
+	t.resultVersion++
 	t.clearCache()
 	t.Bump()
 }
@@ -476,6 +511,22 @@ func (t *baseToolMessageItem) ToggleExpanded() bool {
 	return t.expandedContent
 }
 
+// SetExpandedContent explicitly sets the expanded content state.
+func (t *baseToolMessageItem) SetExpandedContent(expanded bool) {
+	t.expandedContent = expanded
+	t.clearCache()
+}
+
+// ToolDrillIn returns this item as a ToolMessageItem for drill-in navigation.
+func (t *baseToolMessageItem) ToolDrillIn() ToolMessageItem {
+	return t
+}
+
+// ToolDrillInLabel returns the tool display name for the breadcrumb.
+func (t *baseToolMessageItem) ToolDrillInLabel() string {
+	return prettifyToolName(t.toolCall.Name)
+}
+
 // Finished implements list.Item. A tool call is freezable once the
 // tool call itself is marked finished AND a result has been recorded
 // (or it has been canceled). Tools that override the spinning logic
@@ -498,9 +549,20 @@ func (t *baseToolMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) b
 
 // HandleKeyEvent implements KeyEventHandler.
 func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	if k := key.String(); k == "c" || k == "y" {
+	switch k := key.String(); k {
+	case "c", "y":
 		text := t.formatToolForCopy()
 		return true, common.CopyToClipboard(text, "Tool content copied to clipboard")
+	case "right":
+		// Drill into the tool detail view, matching the agent → pattern.
+		if toolItem := t.ToolDrillIn(); toolItem != nil {
+			return true, func() tea.Msg {
+				return util.ToolDrillInMsg{
+					ToolItem: toolItem,
+					Label:    t.ToolDrillInLabel(),
+				}
+			}
+		}
 	}
 	return false, nil
 }
@@ -633,7 +695,7 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, nested
 }
 
 // toolOutputPlainContent renders plain text with optional expansion support.
-func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded bool) string {
+func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded, noTruncate bool) string {
 	content = stringext.NormalizeSpace(content)
 	lines := strings.Split(content, "\n")
 
@@ -648,10 +710,14 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 			break
 		}
 		ln = " " + ln
-		if lipgloss.Width(ln) > width {
+		if !noTruncate && lipgloss.Width(ln) > width {
 			ln = ansi.Truncate(ln, width, "…")
 		}
-		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
+		if noTruncate {
+			out = append(out, sty.Tool.ContentLine.Render(ln))
+		} else {
+			out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
+		}
 	}
 
 	wasTruncated := len(lines) > responseContextHeight
@@ -666,7 +732,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 }
 
 // toolOutputCodeContent renders code with syntax highlighting and line numbers.
-func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, width int, expanded bool) string {
+func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, width int, expanded, noTruncate bool) string {
 	content = stringext.NormalizeSpace(content)
 
 	lines := strings.Split(content, "\n")
@@ -698,9 +764,12 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 		lineNum := sty.Tool.ContentLineNumber.Render(fmt.Sprintf(numFmt, i+1+offset))
 
 		// Truncate accounting for padding that will be added.
-		ln = ansi.Truncate(ln, codeWidth-sty.Tool.ContentCodeLine.GetHorizontalPadding(), "…")
+		if !noTruncate {
+			ln = ansi.Truncate(ln, codeWidth-sty.Tool.ContentCodeLine.GetHorizontalPadding(), "…")
+		}
 
-		codeLine := sty.Tool.ContentCodeLine.
+		var codeLine string
+		codeLine = sty.Tool.ContentCodeLine.
 			Width(codeWidth).
 			Render(ln)
 
@@ -709,9 +778,10 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 
 	// Add truncation message if needed.
 	if len(lines) > maxLines && !expanded {
-		out = append(out, sty.Tool.ContentCodeTruncation.
-			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
+		out = append(
+			out, sty.Tool.ContentCodeTruncation.
+				Width(width).
+				Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
 		)
 	}
 
@@ -870,7 +940,8 @@ func renderHookLine(sty *styles.Styles, hi hooks.HookInfo, rawName, detail strin
 		arrowStyle = sty.Tool.HookDeniedLabel
 	}
 
-	return fmt.Sprintf("%s %s%s%s %s %s",
+	return fmt.Sprintf(
+		"%s %s%s%s %s %s",
 		labelStyle.Render("Hook"),
 		name,
 		namePad,
@@ -941,13 +1012,17 @@ func formatSize(bytes int) string {
 }
 
 // toolOutputDiffContent renders a diff between old and new content.
-func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent string, width int, expanded bool) string {
+func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent string, width int, expanded, noTruncate bool) string {
 	bodyWidth := width - toolBodyLeftPaddingTotal
 
 	formatter := common.DiffFormatter(sty).
 		Before(file, oldContent).
 		After(file, newContent).
 		Width(bodyWidth)
+
+	if noTruncate {
+		formatter = formatter.NoTruncate()
+	}
 
 	// Use split view for wide terminals.
 	if width > maxTextWidth {
@@ -991,13 +1066,17 @@ func formatNonZero(value int) string {
 }
 
 // toolOutputMultiEditDiffContent renders a diff with optional failed edits note.
-func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.MultiEditResponseMetadata, totalEdits, width int, expanded bool) string {
+func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.MultiEditResponseMetadata, totalEdits, width int, expanded, noTruncate bool) string {
 	bodyWidth := width - toolBodyLeftPaddingTotal
 
 	formatter := common.DiffFormatter(sty).
 		Before(file, meta.OldContent).
 		After(file, meta.NewContent).
 		Width(bodyWidth)
+
+	if noTruncate {
+		formatter = formatter.NoTruncate()
+	}
 
 	// Use split view for wide terminals.
 	if width > maxTextWidth {
@@ -1050,7 +1129,7 @@ func roundedEnumerator(lPadding, width int) tree.Enumerator {
 }
 
 // toolOutputMarkdownContent renders markdown content with optional truncation.
-func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded bool) string {
+func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded, noTruncate bool) string {
 	content = stringext.NormalizeSpace(content)
 
 	renderer := common.QuietMarkdownRenderer(sty, width)
@@ -1059,7 +1138,7 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 	rendered, err := renderer.Render(content)
 	mu.Unlock()
 	if err != nil {
-		return toolOutputPlainContent(sty, content, width, expanded)
+		return toolOutputPlainContent(sty, content, width, expanded, noTruncate)
 	}
 
 	lines := strings.Split(rendered, "\n")
@@ -1077,9 +1156,10 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 	}
 
 	if len(lines) > maxLines && !expanded {
-		out = append(out, sty.Tool.ContentTruncation.
-			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
+		out = append(
+			out, sty.Tool.ContentTruncation.
+				Width(width).
+				Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
 		)
 	}
 
@@ -1667,3 +1747,4 @@ func prettifyToolName(name string) string {
 		return humanizedToolName(name)
 	}
 }
+

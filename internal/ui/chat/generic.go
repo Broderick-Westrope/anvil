@@ -67,6 +67,6 @@ func (g *GenericToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 		return joinToolParts(header, body)
 	}
 
-	body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: width}, opts.ExpandedContent)
+	body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: width}, opts.ExpandedContent, opts.NoTruncate)
 	return joinToolParts(header, body)
 }

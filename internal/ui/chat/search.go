@@ -63,7 +63,7 @@ func (g *GlobToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 	return joinToolParts(header, body)
 }
 
@@ -127,7 +127,7 @@ func (g *GrepToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 	return joinToolParts(header, body)
 }
 
@@ -186,7 +186,7 @@ func (l *LSToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *To
 	}
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 	return joinToolParts(header, body)
 }
 
@@ -247,6 +247,6 @@ func (s *SourcegraphToolRenderContext) RenderTool(sty *styles.Styles, width int,
 	}
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 	return joinToolParts(header, body)
 }

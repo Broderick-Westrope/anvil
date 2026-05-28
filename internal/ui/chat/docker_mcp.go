@@ -136,7 +136,7 @@ func (d *DockerMCPToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 
 	// Handle text content.
 	if opts.Result.Content != "" {
-		body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: width}, opts.ExpandedContent)
+		body := renderToolResultTextContent(sty, opts.Result.Content, toolResultContentWidths{Body: bodyWidth, Diff: width}, opts.ExpandedContent, opts.NoTruncate)
 		parts = append(parts, body)
 	}
 
@@ -167,7 +167,7 @@ func (d *DockerMCPToolRenderContext) renderMCPServers(sty *styles.Styles, opts *
 
 	var result FindMCPResponse
 	if err := json.Unmarshal([]byte(opts.Result.Content), &result); err != nil {
-		return toolOutputPlainContent(sty, opts.Result.Content, width-toolBodyLeftPaddingTotal, opts.ExpandedContent)
+		return toolOutputPlainContent(sty, opts.Result.Content, width-toolBodyLeftPaddingTotal, opts.ExpandedContent, opts.NoTruncate)
 	}
 
 	if len(result.Servers) == 0 {

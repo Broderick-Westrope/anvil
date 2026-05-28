@@ -24,6 +24,14 @@ type TodosToolMessageItem struct {
 
 var _ ToolMessageItem = (*TodosToolMessageItem)(nil)
 
+// ToolDrillIn shadows baseToolMessageItem — todos do not support tool
+// drill-in.
+func (t *TodosToolMessageItem) ToolDrillIn() ToolMessageItem { return nil }
+
+// ToolDrillInLabel shadows baseToolMessageItem — todos do not support tool
+// drill-in.
+func (t *TodosToolMessageItem) ToolDrillInLabel() string { return "" }
+
 // NewTodosToolMessageItem creates a new [TodosToolMessageItem].
 func NewTodosToolMessageItem(
 	sty *styles.Styles,

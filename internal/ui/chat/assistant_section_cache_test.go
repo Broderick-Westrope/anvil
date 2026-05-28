@@ -371,9 +371,32 @@ func TestAssistantSectionCache_ByteIdenticalToFreshRender(t *testing.T) {
 		cached.SetMessage(s.msg)
 		freshMsg := s.msg.Clone()
 		fresh := NewAssistantMessageItem(&sty, &freshMsg).(*AssistantMessageItem)
-		require.Equal(t, fresh.RawRender(width), cached.RawRender(width),
+
+		cachedOut := cached.RawRender(width)
+		freshOut := fresh.RawRender(width)
+
+		// When the item is spinning, the output ends with a
+		// time-dependent animation frame (birth offsets differ between
+		// independently-constructed items). Strip the animation suffix
+		// so we compare only the deterministic thinking-box content.
+		if cached.isSpinning() {
+			cachedOut = stripAnimSuffix(cachedOut)
+			freshOut = stripAnimSuffix(freshOut)
+		}
+
+		require.Equal(t, freshOut, cachedOut,
 			"step %q: cached path must match fresh render byte-for-byte", s.name)
 	}
+}
+
+// stripAnimSuffix removes the trailing animation line from a
+// RawRender output. When spinning, RawRender appends "\n\n<anim>"
+// after the thinking box; we strip from the last "\n\n" onward.
+func stripAnimSuffix(s string) string {
+	if i := strings.LastIndex(s, "\n\n"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // TestAssistantSectionCache_PrefixCacheInvalidatesOnCompositionOnlyChange
