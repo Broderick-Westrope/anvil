@@ -9,3 +9,4 @@
 - `buildSlashACItems` has O(n²) complexity: it calls `ActiveSkillByName` (linear scan) per skill state. Fix by adding a `Description` field to `SkillState` at discovery time, or exposing a map-based lookup from the coordinator. Low priority — only runs on AC open/reload with typical counts under 100.
 - Currently when anvil is run for the first time in a folder it offers to initialise the project. I don't want it to do this offer. I want initialisation to still be available via the command palette, but I normally decline this proactive offer so we might as well remove it, simplifying the UX and code.
 - The "home screen" (ie. where you end up when starting a new session) is not to my taste. I'd like to explore what it could look like instead.
+- the branch modal should have the latest message first, a timestamp of when the message was sent, and pre-select the latest message
