@@ -112,6 +112,14 @@ var (
 			ChromaStyle(styles.Get("catppuccin-macchiato"))
 	}
 
+	NoTruncateFunc = func(dv *diffview.DiffView) *diffview.DiffView {
+		return dv.
+			Before("main.go", TestMultipleHunksBefore).
+			After("main.go", TestMultipleHunksAfter).
+			Width(40).
+			NoTruncate()
+	}
+
 	LayoutFuncs = TestFuncs{
 		"Unified": UnifiedFunc,
 		"Split":   SplitFunc,
@@ -125,6 +133,7 @@ var (
 		"SmallWidth":         SmallWidthFunc,
 		"LargeWidth":         LargeWidthFunc,
 		"NoSyntaxHighlight":  NoSyntaxHighlightFunc,
+		"NoTruncate":         NoTruncateFunc,
 	}
 	ThemeFuncs = TestFuncs{
 		"LightMode": LightModeFunc,
@@ -329,6 +338,8 @@ func TestDiffViewYOffsetInfinite(t *testing.T) {
 		})
 	}
 }
+
+
 
 func assertLineWidth(t *testing.T, expected int, output string) {
 	var lineWidth int

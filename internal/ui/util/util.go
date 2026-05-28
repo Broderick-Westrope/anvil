@@ -77,6 +77,12 @@ type (
 		SessionID string
 		Label     string
 	}
+
+	// ToolDrillInMsg is sent when drilling into a tool's detail view.
+	ToolDrillInMsg struct {
+		ToolItem any // chat.ToolMessageItem
+		Label    string
+	}
 )
 
 // IsEmpty checks if the [InfoMsg] is empty.

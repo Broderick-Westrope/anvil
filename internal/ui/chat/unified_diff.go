@@ -130,11 +130,11 @@ func parseUnifiedDiff(content string) []parsedDiffFile {
 	return result
 }
 
-func toolOutputDiffContentFromUnified(sty *styles.Styles, content string, width int, expanded bool) string {
+func toolOutputDiffContentFromUnified(sty *styles.Styles, content string, width int, expanded, noTruncate bool) string {
 	files := parseUnifiedDiff(content)
 	if len(files) == 0 {
 		bodyWidth := width - toolBodyLeftPaddingTotal
-		return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.diff", content, 0, bodyWidth, expanded))
+		return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.diff", content, 0, bodyWidth, expanded, noTruncate))
 	}
 	bodyWidth := width - toolBodyLeftPaddingTotal
 	var blocks []string

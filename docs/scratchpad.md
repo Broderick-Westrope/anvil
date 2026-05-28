@@ -17,4 +17,4 @@
 - perhaps skill loading shouldnt require explicit read perms?
 - better perm system altogether? what could it look like to have something innovative for perms?
 - `anvil_info` is missing `[plugins]`, `[agents]`, and `[commands]` sections. Plugins and agents data lives on the coordinator already; commands only exist in the UI layer and would need threading through. Low priority — completeness, no known pain point.
-- the branch modal should have the latest message first, a timestamp of when the message was sent, and pre-select the latest message
+- I would like some feature akin to Stripe blueprints or Claude workflows built in. Perhaps just the support built in and the workflows themselves can exist in plugins, projects, etc like commands/skills/agents do.
