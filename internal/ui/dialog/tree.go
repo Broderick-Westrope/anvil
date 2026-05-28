@@ -45,19 +45,17 @@ type Tree struct {
 	preFilterSelectedID string
 
 	keyMap struct {
-		Select     key.Binding
+		Select         key.Binding
 		Next           key.Binding
 		Previous       key.Binding
 		FilterNext     key.Binding
 		FilterPrevious key.Binding
-		Expand     key.Binding
-		Collapse   key.Binding
-		Close      key.Binding
-		GoTop      key.Binding
-		GoBottom   key.Binding
-		GoLeaf     key.Binding
-		GoParent   key.Binding
-		OpenFilter key.Binding
+		Left           key.Binding
+		Right          key.Binding
+		Close          key.Binding
+		GoTop          key.Binding
+		GoBottom       key.Binding
+		OpenFilter     key.Binding
 	}
 }
 
@@ -258,13 +256,13 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		key.WithKeys("up", "ctrl+p", "k"),
 		key.WithHelp("↑/k", "previous"),
 	)
-	t.keyMap.Expand = key.NewBinding(
-		key.WithKeys("right", "l"),
-		key.WithHelp("→/l", "expand"),
-	)
-	t.keyMap.Collapse = key.NewBinding(
+	t.keyMap.Left = key.NewBinding(
 		key.WithKeys("left", "h"),
-		key.WithHelp("←/h", "collapse"),
+		key.WithHelp("←/h", "collapse/parent"),
+	)
+	t.keyMap.Right = key.NewBinding(
+		key.WithKeys("right", "l"),
+		key.WithHelp("→/l", "expand/child"),
 	)
 	t.keyMap.GoTop = key.NewBinding(
 		key.WithKeys("g"),
@@ -273,14 +271,6 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 	t.keyMap.GoBottom = key.NewBinding(
 		key.WithKeys("G"),
 		key.WithHelp("G", "go to bottom"),
-	)
-	t.keyMap.GoLeaf = key.NewBinding(
-		key.WithKeys("."),
-		key.WithHelp(".", "go to leaf"),
-	)
-	t.keyMap.GoParent = key.NewBinding(
-		key.WithKeys("p"),
-		key.WithHelp("p", "go to parent"),
 	)
 	t.keyMap.OpenFilter = key.NewBinding(
 		key.WithKeys("/"),
@@ -342,27 +332,25 @@ func (t *Tree) handleNavKey(msg tea.KeyPressMsg) Action {
 		t.list.SelectLast()
 		t.list.ScrollToSelected()
 
-	case key.Matches(msg, t.keyMap.GoLeaf):
-		t.selectByMessageID(t.leafMessageID)
-
-	case key.Matches(msg, t.keyMap.GoParent):
+	case key.Matches(msg, t.keyMap.Left):
 		if item := t.selectedTreeItem(); item != nil {
-			t.selectVisibleParent(item.node.msg.ID)
-		}
-
-	case key.Matches(msg, t.keyMap.Collapse):
-		if item := t.selectedTreeItem(); item != nil {
-			if item.isCollapsible && t.expanded[item.node.msg.ID] {
-				t.expanded[item.node.msg.ID] = false
+			id := item.node.msg.ID
+			if item.isCollapsible && t.expanded[id] {
+				t.expanded[id] = false
 				t.list.SetItems(t.rebuildItems()...)
+			} else {
+				t.selectVisibleParent(id)
 			}
 		}
 
-	case key.Matches(msg, t.keyMap.Expand):
+	case key.Matches(msg, t.keyMap.Right):
 		if item := t.selectedTreeItem(); item != nil {
-			if item.isCollapsible && !t.expanded[item.node.msg.ID] {
-				t.expanded[item.node.msg.ID] = true
+			id := item.node.msg.ID
+			if item.isCollapsible && !t.expanded[id] {
+				t.expanded[id] = true
 				t.list.SetItems(t.rebuildItems()...)
+			} else {
+				t.selectNextBranchPointTowardLeaf(id)
 			}
 		}
 
@@ -466,6 +454,37 @@ func (t *Tree) selectVisibleParent(messageID string) {
 			t.selectByMessageID(cur)
 			return
 		}
+	}
+}
+
+// selectNextBranchPointTowardLeaf walks the active path from the given
+// node toward the leaf, stopping at the next visible node that is a
+// branch point (has >1 children) or the leaf itself.
+func (t *Tree) selectNextBranchPointTowardLeaf(messageID string) {
+	node, ok := t.nodeMap[messageID]
+	if !ok {
+		return
+	}
+	// Walk children on the active path.
+	cur := node
+	for {
+		// Find the child on the active path.
+		var next *treeNode
+		for _, child := range cur.children {
+			if child.isOnActivePath {
+				next = child
+				break
+			}
+		}
+		if next == nil {
+			return
+		}
+		// Stop at branch points or the leaf.
+		if len(next.children) > 1 || next.msg.ID == t.leafMessageID {
+			t.selectByMessageID(next.msg.ID)
+			return
+		}
+		cur = next
 	}
 }
 
