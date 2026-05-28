@@ -40,6 +40,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
+	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
@@ -2243,7 +2244,14 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 			return util.ReportError(err)
 		}
 
-		modelMsg := fmt.Sprintf("%s model changed to %s", msg.ModelType, msg.Model.Model)
+		var (
+			modelType = stringext.Capitalize(string(msg.ModelType))
+			modelName = msg.Model.Model
+		)
+		if catwalkModel := cfg.GetModel(msg.Model.Provider, msg.Model.Model); catwalkModel != nil && catwalkModel.Name != "" {
+			modelName = catwalkModel.Name
+		}
+		modelMsg := fmt.Sprintf("%s model changed to %s", modelType, modelName)
 
 		return util.NewInfoMsg(modelMsg)
 	})
