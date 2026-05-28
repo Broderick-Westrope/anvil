@@ -116,7 +116,7 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("ctrl+o", "open editor"),
 	)
 	km.Editor.Newline = key.NewBinding(
-		key.WithKeys("shift+enter", "ctrl+j"),
+		key.WithKeys("shift+enter", "alt+enter", "ctrl+j"),
 		// "ctrl+j" is a common keybinding for newline in many editors. If
 		// the terminal supports "shift+enter", we substitute the help tex
 		// to reflect that.

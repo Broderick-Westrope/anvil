@@ -3946,9 +3946,10 @@ func (m *UI) tryExecuteBuiltinCommand(value string) tea.Cmd {
 // closeSlashAC hides the slash autocomplete and optionally clears the
 // textarea.
 func (m *UI) closeSlashAC(clearText bool) {
+	wasOpen := m.slashACOpen
 	m.slashACOpen = false
 	m.slashAC.Hide()
-	if clearText {
+	if clearText && wasOpen {
 		m.textarea.SetValue("")
 	}
 }
