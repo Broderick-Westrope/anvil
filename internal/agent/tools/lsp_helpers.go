@@ -1,0 +1,101 @@
+package tools
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/Broderick-Westrope/anvil/internal/lsp"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
+)
+
+// resolvedSymbol holds the result of resolving a symbol name to an LSP position.
+type resolvedSymbol struct {
+	client *lsp.Client
+	path   string
+	line   int
+	char   int
+}
+
+// resolveSymbol greps for a symbol name, finds the first match with a valid
+// LSP client, and returns the resolved position ready for an LSP request.
+func resolveSymbol(ctx context.Context, lspManager *lsp.Manager, symbol, workingDir string) (*resolvedSymbol, error) {
+	matches, _, err := searchFiles(ctx, regexp.QuoteMeta(symbol), workingDir, "", 100)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for symbol: %w", err)
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("symbol '%s' not found in grep results", symbol)
+	}
+
+	for _, match := range matches {
+		absPath, err := filepath.Abs(match.path)
+		if err != nil {
+			continue
+		}
+
+		client := findLSPClient(lspManager, absPath)
+		if client == nil {
+			continue
+		}
+
+		return &resolvedSymbol{
+			client: client,
+			path:   absPath,
+			line:   match.lineNum,
+			char:   match.charNum + getSymbolOffset(symbol),
+		}, nil
+	}
+
+	return nil, fmt.Errorf("no LSP client handles any file matching '%s'", symbol)
+}
+
+// findLSPClient returns the first LSP client that handles the given file path.
+func findLSPClient(lspManager *lsp.Manager, filePath string) *lsp.Client {
+	for c := range lspManager.Clients().Seq() {
+		if c.HandlesFile(filePath) {
+			return c
+		}
+	}
+	return nil
+}
+
+// collectAffectedFiles extracts all unique file paths from a WorkspaceEdit.
+func collectAffectedFiles(edit *protocol.WorkspaceEdit) []string {
+	seen := make(map[string]struct{})
+	var files []string
+
+	for uri := range edit.Changes {
+		path, err := uri.Path()
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[path]; !ok {
+			seen[path] = struct{}{}
+			files = append(files, path)
+		}
+	}
+
+	for _, change := range edit.DocumentChanges {
+		if tde := change.TextDocumentEdit; tde != nil {
+			path, err := tde.TextDocument.URI.Path()
+			if err != nil {
+				continue
+			}
+			if _, ok := seen[path]; !ok {
+				seen[path] = struct{}{}
+				files = append(files, path)
+			}
+		}
+	}
+
+	return files
+}
+
+// isNoIdentifierError checks if an error indicates the grep match was not
+// actually an identifier (e.g., matched inside a comment or string).
+func isNoIdentifierError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no identifier found")
+}

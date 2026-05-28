@@ -746,7 +746,7 @@ func TestConfig_setupDefaultAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	// regardless of what is in DisabledTools.
 	cfg := &Config{
 		Options: &Options{
-			DisabledTools: []string{"glob", "grep", "ls", "sourcegraph", "view"},
+			DisabledTools: []string{"glob", "grep", "ls", "lsp_definition", "lsp_symbols", "sourcegraph", "view"},
 		},
 	}
 

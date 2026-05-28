@@ -864,7 +864,15 @@ func (c *coordinator) buildToolsWithState(
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
 	if len(c.cfg.Config().LSP) > 0 || c.cfg.Config().Options.AutoLSP == nil || *c.cfg.Config().Options.AutoLSP {
-		candidateTools = append(candidateTools, tools.NewDiagnosticsTool(c.lspManager), tools.NewReferencesTool(c.lspManager), tools.NewLSPRestartTool(c.lspManager))
+		candidateTools = append(candidateTools,
+			tools.NewDiagnosticsTool(c.lspManager),
+			tools.NewReferencesTool(c.lspManager),
+			tools.NewLSPRestartTool(c.lspManager),
+			tools.NewSymbolsTool(c.lspManager),
+			tools.NewDefinitionTool(c.lspManager),
+			tools.NewRenameTool(c.lspManager, c.permissions, c.history, c.filetracker),
+			tools.NewReplaceSymbolTool(c.lspManager, c.permissions, c.history, c.filetracker),
+		)
 	}
 
 	if len(c.cfg.Config().MCP) > 0 {
