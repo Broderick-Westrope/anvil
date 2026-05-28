@@ -240,6 +240,7 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 	t.input = textinput.New()
 	t.input.SetVirtualCursor(false)
 	t.input.Placeholder = "/ to filter..."
+	t.input.Prompt = " > "
 	t.input.SetStyles(com.Styles.TextInput)
 	t.input.Blur()
 
@@ -275,6 +276,12 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 	t.keyMap.OpenFilter = key.NewBinding(
 		key.WithKeys("/"),
 		key.WithHelp("/", "filter"),
+	)
+	t.keyMap.FilterPrevious = key.NewBinding(
+		key.WithKeys("up", "ctrl+p"),
+	)
+	t.keyMap.FilterNext = key.NewBinding(
+		key.WithKeys("down", "ctrl+n"),
 	)
 	t.keyMap.Close = CloseKey
 
@@ -322,6 +329,13 @@ func (t *Tree) handleNavKey(msg tea.KeyPressMsg) Action {
 		if item := t.selectedTreeItem(); item != nil {
 			t.preFilterSelectedID = item.node.msg.ID
 		}
+		t.input.SetValue("")
+		t.list.SetFilter("")
+		t.setItemsFiltered(false)
+		t.input.Prompt = ">> "
+		sty := t.input.Styles()
+		sty.Focused.Prompt = sty.Focused.Prompt.Bold(true)
+		t.input.SetStyles(sty)
 		t.input.Focus()
 
 	case key.Matches(msg, t.keyMap.GoTop):
@@ -381,44 +395,35 @@ func (t *Tree) handleFilterKey(msg tea.KeyPressMsg) Action {
 	case key.Matches(msg, t.keyMap.Close):
 		t.filtering = false
 		t.input.Blur()
+		t.input.Prompt = " > "
+		t.input.SetStyles(t.com.Styles.TextInput)
 		t.input.SetValue("")
 		t.list.SetFilter("")
+		t.setItemsFiltered(false)
 		if t.preFilterSelectedID != "" {
 			t.selectByMessageID(t.preFilterSelectedID)
 		}
 
 	case key.Matches(msg, t.keyMap.Select):
-		if item := t.selectedTreeItem(); item != nil {
-			return ActionNavigateTree{
-				MessageID:       item.node.msg.ID,
-				ParentMessageID: item.node.msg.ParentMessageID,
-				Role:            item.node.msg.Role,
-				Content:         messageTextContent(item.node.msg),
-			}
-		}
+		// Submit the search: exit filter mode but keep the filtered
+		// results so the user can navigate them.
+		t.filtering = false
+		t.input.Prompt = " > "
+		t.input.SetStyles(t.com.Styles.TextInput)
+		t.input.Blur()
 
 	case key.Matches(msg, t.keyMap.FilterPrevious):
-		t.list.Focus()
-		if t.list.IsSelectedFirst() {
-			t.list.SelectLast()
-		} else {
-			t.list.SelectPrev()
-		}
-		t.list.ScrollToSelected()
+		// Swallow arrow keys in filter mode — navigation happens
+		// after submitting the search with Enter.
 
 	case key.Matches(msg, t.keyMap.FilterNext):
-		t.list.Focus()
-		if t.list.IsSelectedLast() {
-			t.list.SelectFirst()
-		} else {
-			t.list.SelectNext()
-		}
-		t.list.ScrollToSelected()
+		// Same as above.
 
 	default:
 		var cmd tea.Cmd
 		t.input, cmd = t.input.Update(msg)
 		t.list.SetFilter(t.input.Value())
+		t.setItemsFiltered(t.input.Value() != "")
 		t.list.ScrollToTop()
 		t.list.SetSelected(0)
 		return ActionCmd{cmd}
@@ -584,6 +589,19 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 	}
 	walk(t.roots)
 	return items
+}
+
+// setItemsFiltered marks all source items as filtered or unfiltered,
+// which controls whether indentation and expand/collapse indicators
+// are rendered.
+func (t *Tree) setItemsFiltered(filtered bool) {
+	for _, item := range t.list.Items() {
+		if ti, ok := item.(*TreeItem); ok && ti.filtered != filtered {
+			ti.filtered = filtered
+			ti.cache = nil
+			ti.Bump()
+		}
+	}
 }
 
 // messageTextContent returns the first text content from a message, with

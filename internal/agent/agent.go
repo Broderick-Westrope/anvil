@@ -866,7 +866,6 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	// Update session usage. The leaf already points to the compaction
 	// message (advanced atomically by Create() above).
 	usage := resp.Response.Usage
-	currentSession.SummaryMessageID = compactionMsg.ID
 	currentSession.CompletionTokens = summaryCompletionTokens(usage, compactionMsg)
 	currentSession.PromptTokens = 0
 	currentSession.EstimatedUsage = usageIsZero(usage)

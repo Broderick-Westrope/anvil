@@ -4466,7 +4466,7 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 	// user can re-submit from that point. The ParentMessageID is passed
 	// directly from the dialog to avoid an extra DB fetch.
 	targetLeafID := msg.MessageID
-	if msg.Role == message.User {
+	if msg.Role == message.User && msg.ParentMessageID != "" {
 		targetLeafID = msg.ParentMessageID
 	}
 

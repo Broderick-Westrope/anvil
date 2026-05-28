@@ -23,6 +23,7 @@ type TreeItem struct {
 	isExpanded     bool
 	isLeaf         bool
 	isOnActivePath bool
+	filtered       bool
 	t              *styles.Styles
 	m              fuzzy.Match
 	focused        bool
@@ -97,18 +98,19 @@ func (ti *TreeItem) Render(width int) string {
 		marker = "  "
 	}
 
-	// Indentation (only present at branch points).
-	indent := strings.Repeat("  ", ti.depth)
-
-	// Expand/collapse indicator.
-	var connector string
-	switch {
-	case ti.isCollapsible && ti.isExpanded:
-		connector = "▼ "
-	case ti.isCollapsible && !ti.isExpanded:
-		connector = "▶ "
-	default:
-		connector = "  "
+	// Indentation and expand/collapse indicator are hidden when
+	// the list is showing filtered results (flat list).
+	var indent, connector string
+	if !ti.filtered {
+		indent = strings.Repeat("  ", ti.depth)
+		switch {
+		case ti.isCollapsible && ti.isExpanded:
+			connector = "▼ "
+		case ti.isCollapsible && !ti.isExpanded:
+			connector = "▶ "
+		default:
+			connector = "  "
+		}
 	}
 
 	// Role indicator (colored — primary for user, secondary for assistant).
