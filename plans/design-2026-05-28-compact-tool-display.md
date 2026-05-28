@@ -16,7 +16,9 @@ minimal by default but deeply observable on demand.
 In scope:
 
 - Compact rendering for all tool types (bash, edit, view, grep, glob, ls,
-  fetch, agent, todos, diagnostics, references, MCP, etc.)
+  fetch, agent, diagnostics, references, MCP, etc.)
+- Todos excluded from compact — always rendered inline as today (they are a
+  persistent status display, not transient tool output)
 - Stack-based drill-in navigation (reusing the existing subagent drill-in
   pattern)
 - Drill-in view showing full tool input, output, and metadata as a single
@@ -30,6 +32,7 @@ Out of scope:
 - Modal/overlay approach (decided against — stack navigation is sufficient)
 - Changes to tool execution or the tool protocol itself
 - Changes to subagent rendering (already compact)
+- Changes to todos rendering (remains as-is)
 - New tool types or renderers
 
 **Constraints:**
@@ -46,6 +49,7 @@ Out of scope:
 **Success Criteria:**
 
 - [ ] All tools render as a single compact line by default in the chat view
+      (except todos, which render inline as today)
 - [ ] Compact line shows: icon + tool name + key parameter + brief result
       metadata (e.g., `✓ Bash "go test ./..." (exit 0)`)
 - [ ] Tools are compact while running (spinner + tool name), not expanded
@@ -72,8 +76,10 @@ Out of scope:
   useful for diffs, effectively recreating stack navigation with a border.
   Stack navigation is consistent with the existing subagent pattern and
   provides full width for content.
-- **All tools compact by default**: Simplest mental model — "everything is
-  one line, click to expand." No special-casing by tool type.
+- **All tools compact by default (except todos)**: Simplest mental model —
+  "everything is one line, click to expand." Todos are the sole exception
+  because they are a persistent status display the user actively references
+  during a session, not transient tool output.
 - **Compact while running**: Showing streaming output then collapsing would
   cause jarring layout shifts. Compact + drill-in for live output matches
   the subagent pattern.
