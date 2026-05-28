@@ -1715,6 +1715,9 @@ func toolDrillInKeyParam(toolCall message.ToolCall) string {
 	name := toolCall.Name
 	switch {
 	case strings.Contains(name, "bash"):
+		if desc := getString("description"); desc != "" {
+			return desc
+		}
 		cmd := getString("command")
 		if cmd != "" {
 			cmd = ansi.Truncate(cmd, 40, "…")

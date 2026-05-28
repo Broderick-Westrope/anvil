@@ -61,9 +61,14 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	// Regular bash command.
-	cmd := strings.ReplaceAll(params.Command, "\n", " ")
-	cmd = strings.ReplaceAll(cmd, "\t", "    ")
-	toolParams := []string{cmd}
+	// Prefer the description over the raw command for the summary line
+	// since it is a concise human-readable label.
+	mainParam := params.Description
+	if mainParam == "" {
+		mainParam = strings.ReplaceAll(params.Command, "\n", " ")
+		mainParam = strings.ReplaceAll(mainParam, "\t", "    ")
+	}
+	toolParams := []string{mainParam}
 	if params.RunInBackground {
 		toolParams = append(toolParams, "background", "true")
 	}
