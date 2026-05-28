@@ -130,6 +130,13 @@ func (d *ToolDetailItem) renderInput(width int) string {
 			valStr = string(b)
 		}
 		key := d.sty.Tool.NameNested.Render(k + ":")
+		keyWidth := lipgloss.Width(key)
+		// Wrap long values to the available width so all content is
+		// accessible without horizontal truncation.
+		indent := 2 + keyWidth + 1 // "  " + key + " "
+		if indent < width {
+			valStr = lipgloss.NewStyle().Width(width - indent).Render(valStr)
+		}
 		lines = append(lines, fmt.Sprintf("  %s %s", key, valStr))
 	}
 	return strings.Join(lines, "\n")
@@ -161,8 +168,17 @@ func (d *ToolDetailItem) renderOutput(width int) string {
 		compactable.SetCompact(false)
 	}
 
+	// Enable NoTruncate so individual lines are not clipped.
+	if nt, ok := d.sourceItem.(interface{ SetNoTruncate(bool) }); ok {
+		nt.SetNoTruncate(true)
+	}
+
 	output := d.sourceItem.RawRender(width)
 
+	// Restore NoTruncate.
+	if nt, ok := d.sourceItem.(interface{ SetNoTruncate(bool) }); ok {
+		nt.SetNoTruncate(false)
+	}
 	if compactable, ok := d.sourceItem.(Compactable); ok {
 		compactable.SetCompact(d.sourceWasCompact)
 	}

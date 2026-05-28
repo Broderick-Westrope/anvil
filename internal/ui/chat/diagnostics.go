@@ -62,6 +62,6 @@ func (d *DiagnosticsToolRenderContext) RenderTool(sty *styles.Styles, width int,
 	}
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 	return joinToolParts(header, body)
 }

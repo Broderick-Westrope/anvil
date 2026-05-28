@@ -99,6 +99,7 @@ type ToolRenderOpts struct {
 	Compact         bool
 	IsSpinning      bool
 	Status          ToolStatus
+	NoTruncate      bool
 }
 
 // IsPending returns true if the tool call is still pending (not finished and
@@ -158,6 +159,7 @@ type baseToolMessageItem struct {
 	sty             *styles.Styles
 	anim            *anim.Anim
 	expandedContent bool
+	noTruncate      bool
 	resultVersion   uint64
 }
 
@@ -295,6 +297,12 @@ func (t *baseToolMessageItem) SetCompact(compact bool) {
 	t.clearCache()
 }
 
+// SetNoTruncate enables or disables line-level truncation for rendering.
+func (t *baseToolMessageItem) SetNoTruncate(v bool) {
+	t.noTruncate = v
+	t.clearCache()
+}
+
 // IsCompact reports whether this tool is currently in compact rendering mode.
 func (t *baseToolMessageItem) IsCompact() bool {
 	return t.isCompact
@@ -345,6 +353,7 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 			Compact:         t.isCompact,
 			IsSpinning:      t.isSpinning(),
 			Status:          t.computeStatus(),
+			NoTruncate:      t.noTruncate,
 		})
 
 		// Prepend hook indicator if hooks ran for this tool call.
@@ -604,7 +613,7 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, nested
 }
 
 // toolOutputPlainContent renders plain text with optional expansion support.
-func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded bool) string {
+func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded, noTruncate bool) string {
 	content = stringext.NormalizeSpace(content)
 	lines := strings.Split(content, "\n")
 
@@ -619,10 +628,14 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 			break
 		}
 		ln = " " + ln
-		if lipgloss.Width(ln) > width {
+		if !noTruncate && lipgloss.Width(ln) > width {
 			ln = ansi.Truncate(ln, width, "…")
 		}
-		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
+		if noTruncate {
+			out = append(out, sty.Tool.ContentLine.Render(ln))
+		} else {
+			out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
+		}
 	}
 
 	wasTruncated := len(lines) > responseContextHeight
@@ -637,7 +650,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 }
 
 // toolOutputCodeContent renders code with syntax highlighting and line numbers.
-func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, width int, expanded bool) string {
+func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, width int, expanded, noTruncate bool) string {
 	content = stringext.NormalizeSpace(content)
 
 	lines := strings.Split(content, "\n")
@@ -669,11 +682,18 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 		lineNum := sty.Tool.ContentLineNumber.Render(fmt.Sprintf(numFmt, i+1+offset))
 
 		// Truncate accounting for padding that will be added.
-		ln = ansi.Truncate(ln, codeWidth-sty.Tool.ContentCodeLine.GetHorizontalPadding(), "…")
+		if !noTruncate {
+			ln = ansi.Truncate(ln, codeWidth-sty.Tool.ContentCodeLine.GetHorizontalPadding(), "…")
+		}
 
-		codeLine := sty.Tool.ContentCodeLine.
-			Width(codeWidth).
-			Render(ln)
+		var codeLine string
+		if noTruncate {
+			codeLine = sty.Tool.ContentCodeLine.Render(ln)
+		} else {
+			codeLine = sty.Tool.ContentCodeLine.
+				Width(codeWidth).
+				Render(ln)
+		}
 
 		out = append(out, lipgloss.JoinHorizontal(lipgloss.Left, lineNum, codeLine))
 	}
@@ -1023,13 +1043,13 @@ func roundedEnumerator(lPadding, width int) tree.Enumerator {
 }
 
 // toolOutputMarkdownContent renders markdown content with optional truncation.
-func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded bool) string {
+func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded, noTruncate bool) string {
 	content = stringext.NormalizeSpace(content)
 
 	renderer := common.QuietMarkdownRenderer(sty, width)
 	rendered, err := renderer.Render(content)
 	if err != nil {
-		return toolOutputPlainContent(sty, content, width, expanded)
+		return toolOutputPlainContent(sty, content, width, expanded, noTruncate)
 	}
 
 	lines := strings.Split(rendered, "\n")

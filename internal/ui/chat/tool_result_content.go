@@ -45,15 +45,15 @@ func renderToolResultTextContent(sty *styles.Styles, content string, widths tool
 	if err := json.Unmarshal([]byte(content), &result); err == nil {
 		prettyResult, err := json.MarshalIndent(result, "", "  ")
 		if err == nil {
-			return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.json", string(prettyResult), 0, widths.Body, expanded))
+			return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.json", string(prettyResult), 0, widths.Body, expanded, false))
 		}
-		return sty.Tool.Body.Render(toolOutputPlainContent(sty, content, widths.Body, expanded))
+		return sty.Tool.Body.Render(toolOutputPlainContent(sty, content, widths.Body, expanded, false))
 	}
 	if diffdetect.IsUnifiedDiff(content) {
-		return toolOutputDiffContentFromUnified(sty, content, widths.Diff, expanded)
+		return toolOutputDiffContentFromUnified(sty, content, widths.Diff, expanded, false)
 	}
 	if looksLikeMarkdown(content) {
-		return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.md", content, 0, widths.Body, expanded))
+		return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.md", content, 0, widths.Body, expanded, false))
 	}
-	return sty.Tool.Body.Render(toolOutputPlainContent(sty, content, widths.Body, expanded))
+	return sty.Tool.Body.Render(toolOutputPlainContent(sty, content, widths.Body, expanded, false))
 }

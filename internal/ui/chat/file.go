@@ -92,7 +92,7 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	// Render code content with syntax highlighting.
-	body := toolOutputCodeContent(sty, params.FilePath, content, params.Offset, width, opts.ExpandedContent)
+	body := toolOutputCodeContent(sty, params.FilePath, content, params.Offset, width, opts.ExpandedContent, opts.NoTruncate)
 	return joinToolParts(header, body)
 }
 
@@ -146,7 +146,7 @@ func (w *WriteToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	// Render code content with syntax highlighting.
-	body := toolOutputCodeContent(sty, params.FilePath, params.Content, 0, width, opts.ExpandedContent)
+	body := toolOutputCodeContent(sty, params.FilePath, params.Content, 0, width, opts.ExpandedContent, opts.NoTruncate)
 	return joinToolParts(header, body)
 }
 
@@ -204,7 +204,7 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	var meta tools.EditResponseMetadata
 	if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err != nil {
 		bodyWidth := width - toolBodyLeftPaddingTotal
-		body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+		body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 		return joinToolParts(header, body)
 	}
 
@@ -272,7 +272,7 @@ func (m *MultiEditToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	var meta tools.MultiEditResponseMetadata
 	if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err != nil {
 		bodyWidth := width - toolBodyLeftPaddingTotal
-		body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+		body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 		return joinToolParts(header, body)
 	}
 
@@ -338,6 +338,6 @@ func (d *DownloadToolRenderContext) RenderTool(sty *styles.Styles, width int, op
 	}
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 	return joinToolParts(header, body)
 }
