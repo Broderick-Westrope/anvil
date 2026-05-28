@@ -20,6 +20,7 @@ const SkillPickerID = "skillpicker"
 // SkillPickerItem wraps a skill to implement the ListItem interface for
 // the filterable list.
 type SkillPickerItem struct {
+	*list.Versioned
 	skill   *skills.Skill
 	t       *styles.Styles
 	focused bool
@@ -27,7 +28,13 @@ type SkillPickerItem struct {
 	m       fuzzy.Match
 }
 
-var _ ListItem = &SkillPickerItem{}
+var _ ListItem = &SkillPickerItem{Versioned: list.NewVersioned()}
+
+// Finished implements list.Item. Skill picker items are render-stable
+// outside of explicit SetFocused / SetMatch.
+func (s *SkillPickerItem) Finished() bool {
+	return true
+}
 
 // Filter returns the filterable text for the skill.
 func (s *SkillPickerItem) Filter() string {
@@ -137,8 +144,9 @@ func NewSkillPicker(com *common.Common, activeSkills []*skills.Skill) *SkillPick
 	items := make([]list.FilterableItem, 0, len(activeSkills))
 	for _, skill := range activeSkills {
 		items = append(items, &SkillPickerItem{
-			skill: skill,
-			t:     com.Styles,
+			Versioned: list.NewVersioned(),
+			skill:     skill,
+			t:         com.Styles,
 		})
 	}
 	sp.list.SetItems(items...)

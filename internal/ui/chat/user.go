@@ -9,11 +9,13 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 )
 
 // UserMessageItem represents a user message in the chat UI.
 type UserMessageItem struct {
+	*list.Versioned
 	*highlightableMessageItem
 	*cachedMessageItem
 	*focusableMessageItem
@@ -25,14 +27,22 @@ type UserMessageItem struct {
 
 // NewUserMessageItem creates a new UserMessageItem.
 func NewUserMessageItem(sty *styles.Styles, message *message.Message, attachments *attachments.Renderer) MessageItem {
+	v := list.NewVersioned()
 	return &UserMessageItem{
-		highlightableMessageItem: defaultHighlighter(sty),
+		Versioned:                v,
+		highlightableMessageItem: defaultHighlighter(sty, v),
 		cachedMessageItem:        &cachedMessageItem{},
-		focusableMessageItem:     &focusableMessageItem{},
+		focusableMessageItem:     newFocusableMessageItem(v),
 		attachments:              attachments,
 		message:                  message,
 		sty:                      sty,
 	}
+}
+
+// Finished implements list.Item. User messages are immutable once
+// submitted, so the entry is always safe to freeze.
+func (m *UserMessageItem) Finished() bool {
+	return true
 }
 
 // RawRender implements [MessageItem].
