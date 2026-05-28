@@ -32,13 +32,14 @@ type treeNode struct {
 
 // Tree is a dialog that displays an ASCII tree of all session messages.
 type Tree struct {
-	com           *common.Common
-	input         textinput.Model
-	list          *list.FilterableList
-	roots         []*treeNode
-	nodeMap       map[string]*treeNode
-	expanded      map[string]bool
-	leafMessageID string
+	com                *common.Common
+	input              textinput.Model
+	list               *list.FilterableList
+	roots              []*treeNode
+	nodeMap            map[string]*treeNode
+	expanded           map[string]bool
+	leafMessageID      string
+	needsInitialScroll bool
 
 	keyMap struct {
 		Select   key.Binding
@@ -221,10 +222,10 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 	for i, item := range items {
 		if ti, ok := item.(*TreeItem); ok && ti.isLeaf {
 			t.list.SetSelected(i)
-			t.list.ScrollToSelected()
 			break
 		}
 	}
+	t.needsInitialScroll = true
 
 	// Set up text input for filtering.
 	t.input = textinput.New()
@@ -345,6 +346,10 @@ func (t *Tree) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		sty.Dialog.View.GetVerticalFrameSize()
 	t.input.SetWidth(max(0, innerWidth-sty.Dialog.InputPrompt.GetHorizontalFrameSize()-1))
 	t.list.SetSize(innerWidth, height-heightOffset)
+	if t.needsInitialScroll {
+		t.needsInitialScroll = false
+		t.list.ScrollToSelected()
+	}
 
 	rc := NewRenderContext(sty, width)
 	rc.Title = "Session Tree"
