@@ -172,6 +172,12 @@ func (d *ToolDetailItem) renderOutput(width int) string {
 		}
 	}
 
+	// Strip the first line (tool header/summary) since the metadata
+	// section already shows this information.
+	if i := strings.Index(output, "\n"); i >= 0 {
+		output = output[i+1:]
+	}
+
 	return header + "\n" + output
 }
 
