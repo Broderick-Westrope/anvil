@@ -490,13 +490,28 @@ outer:
 				if shouldWrite() {
 					ls := dv.style.EqualLine
 					content, leadingEllipsis := getContent(l.Content, ls)
+					wrapped := []string{content}
+					if dv.noTruncate {
+						wrapped = dv.wrapContent(content, dv.codeWidth)
+					}
 					if dv.lineNumbers {
 						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
 						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
 					}
 					b.WriteString(fullContentStyle.Render(
-						ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content),
+						ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + wrapped[0]),
 					))
+					for k := 1; k < len(wrapped); k++ {
+						b.WriteRune('\n')
+						printedLines++
+						if dv.lineNumbers {
+							b.WriteString(ls.LineNumber.Render(pad(" ", dv.beforeNumDigits)))
+							b.WriteString(ls.LineNumber.Render(pad(" ", dv.afterNumDigits)))
+						}
+						b.WriteString(fullContentStyle.Render(
+							ls.Code.Width(dv.fullCodeWidth).Render("  " + wrapped[k]),
+						))
+					}
 				}
 				beforeLine++
 				afterLine++
@@ -504,28 +519,60 @@ outer:
 				if shouldWrite() {
 					ls := dv.style.InsertLine
 					content, leadingEllipsis := getContent(l.Content, ls)
+					wrapped := []string{content}
+					if dv.noTruncate {
+						wrapped = dv.wrapContent(content, dv.codeWidth)
+					}
 					if dv.lineNumbers {
 						b.WriteString(ls.LineNumber.Render(pad(" ", dv.beforeNumDigits)))
 						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
 					}
 					b.WriteString(fullContentStyle.Render(
 						ls.Symbol.Render(ternary(leadingEllipsis, "+…", "+ ")) +
-							ls.Code.Width(dv.codeWidth).Render(content),
+							ls.Code.Width(dv.codeWidth).Render(wrapped[0]),
 					))
+					for k := 1; k < len(wrapped); k++ {
+						b.WriteRune('\n')
+						printedLines++
+						if dv.lineNumbers {
+							b.WriteString(ls.LineNumber.Render(pad(" ", dv.beforeNumDigits)))
+							b.WriteString(ls.LineNumber.Render(pad(" ", dv.afterNumDigits)))
+						}
+						b.WriteString(fullContentStyle.Render(
+							ls.Symbol.Render("  ") +
+								ls.Code.Width(dv.codeWidth).Render(wrapped[k]),
+						))
+					}
 				}
 				afterLine++
 			case udiff.Delete:
 				if shouldWrite() {
 					ls := dv.style.DeleteLine
 					content, leadingEllipsis := getContent(l.Content, ls)
+					wrapped := []string{content}
+					if dv.noTruncate {
+						wrapped = dv.wrapContent(content, dv.codeWidth)
+					}
 					if dv.lineNumbers {
 						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
 						b.WriteString(ls.LineNumber.Render(pad(" ", dv.afterNumDigits)))
 					}
 					b.WriteString(fullContentStyle.Render(
 						ls.Symbol.Render(ternary(leadingEllipsis, "-…", "- ")) +
-							ls.Code.Width(dv.codeWidth).Render(content),
+							ls.Code.Width(dv.codeWidth).Render(wrapped[0]),
 					))
+					for k := 1; k < len(wrapped); k++ {
+						b.WriteRune('\n')
+						printedLines++
+						if dv.lineNumbers {
+							b.WriteString(ls.LineNumber.Render(pad(" ", dv.beforeNumDigits)))
+							b.WriteString(ls.LineNumber.Render(pad(" ", dv.afterNumDigits)))
+						}
+						b.WriteString(fullContentStyle.Render(
+							ls.Symbol.Render("  ") +
+								ls.Code.Width(dv.codeWidth).Render(wrapped[k]),
+						))
+					}
 				}
 				beforeLine++
 			}
@@ -629,6 +676,174 @@ outer:
 				break outer
 			}
 
+			// When noTruncate is true, manually wrap long lines and
+			// zip before/after panels so they stay side by side.
+			if dv.noTruncate {
+				afterExtraCol := btoi(dv.extraColOnAfter)
+
+				// Build before panel visual lines.
+				var beforeVis []string
+				switch {
+				case l.before == nil:
+					ls := dv.style.MissingLine
+					row := ""
+					if dv.lineNumbers {
+						row += ls.LineNumber.Render(pad(" ", dv.beforeNumDigits))
+					}
+					row += beforeFullContentStyle.Render(ls.Code.Width(dv.fullCodeWidth).Render("  "))
+					beforeVis = []string{row}
+				case l.before.Kind == udiff.Equal:
+					ls := dv.style.EqualLine
+					content, leadingEllipsis := getContent(l.before.Content, ls)
+					wrapped := dv.wrapContent(content, dv.codeWidth)
+					row := ""
+					if dv.lineNumbers {
+						row += ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits))
+					}
+					row += beforeFullContentStyle.Render(
+						ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + wrapped[0]),
+					)
+					beforeVis = append(beforeVis, row)
+					for k := 1; k < len(wrapped); k++ {
+						row = ""
+						if dv.lineNumbers {
+							row += ls.LineNumber.Render(pad(" ", dv.beforeNumDigits))
+						}
+						row += beforeFullContentStyle.Render(
+							ls.Code.Width(dv.fullCodeWidth).Render("  " + wrapped[k]),
+						)
+						beforeVis = append(beforeVis, row)
+					}
+					beforeLine++
+				case l.before.Kind == udiff.Delete:
+					ls := dv.style.DeleteLine
+					content, leadingEllipsis := getContent(l.before.Content, ls)
+					wrapped := dv.wrapContent(content, dv.codeWidth)
+					row := ""
+					if dv.lineNumbers {
+						row += ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits))
+					}
+					row += beforeFullContentStyle.Render(
+						ls.Symbol.Render(ternary(leadingEllipsis, "-…", "- ")) +
+							ls.Code.Width(dv.codeWidth).Render(wrapped[0]),
+					)
+					beforeVis = append(beforeVis, row)
+					for k := 1; k < len(wrapped); k++ {
+						row = ""
+						if dv.lineNumbers {
+							row += ls.LineNumber.Render(pad(" ", dv.beforeNumDigits))
+						}
+						row += beforeFullContentStyle.Render(
+							ls.Symbol.Render("  ") +
+								ls.Code.Width(dv.codeWidth).Render(wrapped[k]),
+						)
+						beforeVis = append(beforeVis, row)
+					}
+					beforeLine++
+				}
+
+				// Build after panel visual lines.
+				var afterVis []string
+				switch {
+				case l.after == nil:
+					ls := dv.style.MissingLine
+					row := ""
+					if dv.lineNumbers {
+						row += ls.LineNumber.Render(pad(" ", dv.afterNumDigits))
+					}
+					row += afterFullContentStyle.Render(
+						ls.Code.Width(dv.fullCodeWidth + afterExtraCol).Render("  "),
+					)
+					afterVis = []string{row}
+				case l.after.Kind == udiff.Equal:
+					ls := dv.style.EqualLine
+					content, leadingEllipsis := getContent(l.after.Content, ls)
+					wrapped := dv.wrapContent(content, dv.codeWidth+afterExtraCol)
+					row := ""
+					if dv.lineNumbers {
+						row += ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits))
+					}
+					row += afterFullContentStyle.Render(
+						ls.Code.Width(dv.fullCodeWidth + afterExtraCol).Render(ternary(leadingEllipsis, " …", "  ") + wrapped[0]),
+					)
+					afterVis = append(afterVis, row)
+					for k := 1; k < len(wrapped); k++ {
+						row = ""
+						if dv.lineNumbers {
+							row += ls.LineNumber.Render(pad(" ", dv.afterNumDigits))
+						}
+						row += afterFullContentStyle.Render(
+							ls.Code.Width(dv.fullCodeWidth + afterExtraCol).Render("  " + wrapped[k]),
+						)
+						afterVis = append(afterVis, row)
+					}
+					afterLine++
+				case l.after.Kind == udiff.Insert:
+					ls := dv.style.InsertLine
+					content, leadingEllipsis := getContent(l.after.Content, ls)
+					wrapped := dv.wrapContent(content, dv.codeWidth+afterExtraCol)
+					row := ""
+					if dv.lineNumbers {
+						row += ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits))
+					}
+					row += afterFullContentStyle.Render(
+						ls.Symbol.Render(ternary(leadingEllipsis, "+…", "+ ")) +
+							ls.Code.Width(dv.codeWidth+afterExtraCol).Render(wrapped[0]),
+					)
+					afterVis = append(afterVis, row)
+					for k := 1; k < len(wrapped); k++ {
+						row = ""
+						if dv.lineNumbers {
+							row += ls.LineNumber.Render(pad(" ", dv.afterNumDigits))
+						}
+						row += afterFullContentStyle.Render(
+							ls.Symbol.Render("  ") +
+								ls.Code.Width(dv.codeWidth+afterExtraCol).Render(wrapped[k]),
+						)
+						afterVis = append(afterVis, row)
+					}
+					afterLine++
+				}
+
+				// Pad shorter panel with filler rows.
+				maxH := max(len(beforeVis), len(afterVis))
+				if len(beforeVis) < maxH {
+					ls := dv.style.MissingLine
+					filler := ""
+					if dv.lineNumbers {
+						filler += ls.LineNumber.Render(pad(" ", dv.beforeNumDigits))
+					}
+					filler += beforeFullContentStyle.Render(ls.Code.Width(dv.fullCodeWidth).Render("  "))
+					for len(beforeVis) < maxH {
+						beforeVis = append(beforeVis, filler)
+					}
+				}
+				if len(afterVis) < maxH {
+					ls := dv.style.MissingLine
+					filler := ""
+					if dv.lineNumbers {
+						filler += ls.LineNumber.Render(pad(" ", dv.afterNumDigits))
+					}
+					filler += afterFullContentStyle.Render(
+						ls.Code.Width(dv.fullCodeWidth + afterExtraCol).Render("  "),
+					)
+					for len(afterVis) < maxH {
+						afterVis = append(afterVis, filler)
+					}
+				}
+
+				// Zip and write visual rows.
+				for k := range maxH {
+					if shouldWrite() {
+						b.WriteString(beforeVis[k])
+						b.WriteString(afterVis[k])
+						b.WriteRune('\n')
+					}
+					printedLines++
+				}
+				continue
+			}
+
 			switch {
 			case l.before == nil:
 				if shouldWrite() {
@@ -686,7 +901,7 @@ outer:
 						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
 					}
 					b.WriteString(afterFullContentStyle.Render(
-						ls.Code.Width(dv.fullCodeWidth+btoi(dv.extraColOnAfter)).Render(ternary(leadingEllipsis, " …", "  ") + content),
+						ls.Code.Width(dv.fullCodeWidth + btoi(dv.extraColOnAfter)).Render(ternary(leadingEllipsis, " …", "  ") + content),
 					))
 				}
 				afterLine++
@@ -831,4 +1046,26 @@ func processChromaValue(value string) string {
 	value = strings.TrimRight(value, "\n")
 	value = ansiext.Escape(value)
 	return value
+}
+
+// wrapContent splits content that exceeds width into multiple visual lines.
+// Each line is at most width graphemes wide. Returns the lines as a slice.
+// If content fits in one line, returns a single-element slice.
+func (dv *DiffView) wrapContent(content string, width int) []string {
+	if width <= 0 {
+		return []string{content}
+	}
+	var lines []string
+	for ansi.StringWidth(content) > width {
+		line := ansi.Truncate(content, width, "")
+		lines = append(lines, line)
+		remaining := ansi.GraphemeWidth.Cut(content, width, ansi.StringWidth(content))
+		if remaining == content {
+			// Safety: prevent infinite loop if Cut doesn't advance.
+			break
+		}
+		content = remaining
+	}
+	lines = append(lines, content)
+	return lines
 }
