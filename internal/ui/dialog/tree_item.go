@@ -45,7 +45,7 @@ func NewTreeItem(
 		node:           node,
 		label:          label,
 		depth:          depth,
-		isCollapsible:    isCollapsible,
+		isCollapsible:  isCollapsible,
 		isExpanded:     isExpanded,
 		isLeaf:         isLeaf,
 		isOnActivePath: isOnActivePath,
