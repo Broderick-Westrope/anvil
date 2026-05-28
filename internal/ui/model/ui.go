@@ -831,7 +831,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			topEntry := m.drillStack[len(m.drillStack)-1]
 			if topEntry.toolView != nil {
 				// Tool drill-in: updates flow through the parent session.
-				// The ToolDetailItem holds a reference to the same
+				// The tool detail items hold a reference to the same
 				// ToolMessageItem in the parent chat, so updating the
 				// parent automatically refreshes the detail view.
 				parentSessionID := m.session.ID
@@ -1215,13 +1215,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok {
 			break
 		}
-		detailItem := chat.NewToolDetailItem(m.com.Styles, toolItem)
+		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem)
 		newChat := NewChat(m.com)
 		// Follow when the tool is still running so streaming output
 		// auto-scrolls; otherwise start at the top.
 		newChat.SetFollow(toolItem.Status() == chat.ToolStatusRunning)
 		newChat.Focus()
-		newChat.SetMessages(detailItem)
+		newChat.SetMessages(detailItems...)
 		m.drillStack = append(m.drillStack, drillInEntry{
 			chat:     newChat,
 			label:    msg.Label,

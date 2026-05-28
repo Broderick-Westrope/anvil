@@ -309,7 +309,7 @@ func (t *baseToolMessageItem) IsCompact() bool {
 }
 
 // ResultVersion returns a counter that increments each time the result is set.
-// Used for cache invalidation in ToolDetailItem.
+// Used for cache invalidation in tool detail items.
 func (t *baseToolMessageItem) ResultVersion() uint64 {
 	return t.resultVersion
 }
