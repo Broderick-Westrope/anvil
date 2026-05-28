@@ -15,14 +15,16 @@ import (
 
 // Compile-time interface checks.
 var (
-	_ list.Item         = (*toolDetailHeaderItem)(nil)
-	_ list.Item         = (*toolDetailSectionItem)(nil)
-	_ list.Item         = (*toolDetailParamItem)(nil)
-	_ list.Item         = (*toolDetailOutputItem)(nil)
-	_ Expandable        = (*toolDetailParamItem)(nil)
-	_ Expandable        = (*toolDetailOutputItem)(nil)
+	_ list.Item          = (*toolDetailHeaderItem)(nil)
+	_ list.Item          = (*toolDetailSectionItem)(nil)
+	_ list.Item          = (*toolDetailParamItem)(nil)
+	_ list.Item          = (*toolDetailOutputItem)(nil)
+	_ Expandable         = (*toolDetailParamItem)(nil)
+	_ Expandable         = (*toolDetailOutputItem)(nil)
 	_ list.MouseClickable = (*toolDetailParamItem)(nil)
 	_ list.MouseClickable = (*toolDetailOutputItem)(nil)
+	_ list.Focusable      = (*toolDetailParamItem)(nil)
+	_ list.Focusable      = (*toolDetailOutputItem)(nil)
 )
 
 // detailRenderConfigurable groups the optional methods on a tool item that
@@ -351,6 +353,9 @@ func (p *toolDetailParamItem) HandleMouseClick(_ ansi.MouseButton, _, _ int) boo
 	return multi
 }
 
+// SetFocused implements list.Focusable.
+func (p *toolDetailParamItem) SetFocused(_ bool) {}
+
 // --- toolDetailOutputItem ---
 
 // toolDetailOutputItem renders the tool output. Collapsed shows the
@@ -460,3 +465,6 @@ func (o *toolDetailOutputItem) ToggleExpanded() bool {
 func (o *toolDetailOutputItem) HandleMouseClick(_ ansi.MouseButton, _, _ int) bool {
 	return true
 }
+
+// SetFocused implements list.Focusable.
+func (o *toolDetailOutputItem) SetFocused(_ bool) {}
