@@ -46,7 +46,7 @@ func newTestService(t *testing.T, opts ...ServiceOption) (Service, string) {
 	sess, err := sessions.Create(t.Context(), "test")
 	require.NoError(t, err)
 
-	svc := NewService(q, opts...)
+	svc := NewService(q, append([]ServiceOption{WithConn(conn)}, opts...)...)
 	return svc, sess.ID
 }
 
@@ -500,7 +500,7 @@ func TestFlush_WaitsForInFlightWrite(t *testing.T) {
 		started: make(chan struct{}),
 	}
 	// Short debounce so the timer fires quickly.
-	svc := NewService(slow, WithDebounce(10*time.Millisecond))
+	svc := NewService(slow, WithConn(conn), WithDebounce(10*time.Millisecond))
 
 	msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
 	require.NoError(t, err)
@@ -563,7 +563,7 @@ func TestFlushAll_WaitsForInFlightWrite(t *testing.T) {
 		release: make(chan struct{}),
 		started: make(chan struct{}),
 	}
-	svc := NewService(slow, WithDebounce(10*time.Millisecond))
+	svc := NewService(slow, WithConn(conn), WithDebounce(10*time.Millisecond))
 
 	msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
 	require.NoError(t, err)
@@ -654,7 +654,7 @@ func TestUpdate_StructuralFlushUsesMustDeliver(t *testing.T) {
 			// Replace the default broker with a tiny buffer + short
 			// must-deliver timeout so we can fully saturate from a
 			// single sender and observe drops without long waits.
-			svc := NewService(q, WithDebounce(time.Hour))
+			svc := NewService(q, WithConn(conn), WithDebounce(time.Hour))
 			impl := svc.(*service)
 			impl.Shutdown()
 			impl.Broker = pubsub.NewBrokerWithOptions[Message](1)

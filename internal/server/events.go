@@ -130,7 +130,7 @@ func sessionToProto(s session.Session) proto.Session {
 		ID:               s.ID,
 		ParentSessionID:  s.ParentSessionID,
 		Title:            s.Title,
-		SummaryMessageID: s.SummaryMessageID,
+		LeafMessageID:    s.LeafMessageID,
 		MessageCount:     s.MessageCount,
 		PromptTokens:     s.PromptTokens,
 		CompletionTokens: s.CompletionTokens,
@@ -154,13 +154,15 @@ func fileToProto(f history.File) proto.File {
 
 func messageToProto(m message.Message) proto.Message {
 	msg := proto.Message{
-		ID:        m.ID,
-		SessionID: m.SessionID,
-		Role:      proto.MessageRole(m.Role),
-		Model:     m.Model,
-		Provider:  m.Provider,
-		CreatedAt: m.CreatedAt,
-		UpdatedAt: m.UpdatedAt,
+		ID:              m.ID,
+		SessionID:       m.SessionID,
+		Role:            proto.MessageRole(m.Role),
+		Model:           m.Model,
+		Provider:        m.Provider,
+		ParentMessageID: m.ParentMessageID,
+		MessageType:     string(m.MessageType),
+		CreatedAt:       m.CreatedAt,
+		UpdatedAt:       m.UpdatedAt,
 	}
 
 	for _, p := range m.Parts {
@@ -199,6 +201,31 @@ func messageToProto(m message.Message) proto.Message {
 			msg.Parts = append(msg.Parts, proto.ImageURLContent{URL: v.URL, Detail: v.Detail})
 		case message.BinaryContent:
 			msg.Parts = append(msg.Parts, proto.BinaryContent{Path: v.Path, MIMEType: v.MIMEType, Data: v.Data})
+		case message.CompactionContent:
+			msg.Parts = append(msg.Parts, proto.CompactionContent{
+				Summary:          v.Summary,
+				FirstKeptEntryID: v.FirstKeptEntryID,
+				TokensBefore:     v.TokensBefore,
+			})
+		case message.BranchSummaryContent:
+			msg.Parts = append(msg.Parts, proto.BranchSummaryContent{
+				Summary: v.Summary,
+				FromID:  v.FromID,
+			})
+		case message.LabelContent:
+			msg.Parts = append(msg.Parts, proto.LabelContent{
+				TargetID: v.TargetID,
+				Label:    v.Label,
+			})
+		case message.ModelChangeContent:
+			msg.Parts = append(msg.Parts, proto.ModelChangeContent{
+				Provider: v.Provider,
+				ModelID:  v.ModelID,
+			})
+		case message.ThinkingLevelChangeContent:
+			msg.Parts = append(msg.Parts, proto.ThinkingLevelChangeContent{
+				ThinkingLevel: v.ThinkingLevel,
+			})
 		}
 	}
 

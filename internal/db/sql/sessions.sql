@@ -7,7 +7,6 @@ INSERT INTO sessions (
     prompt_tokens,
     completion_tokens,
     cost,
-    summary_message_id,
     updated_at,
     created_at
 ) VALUES (
@@ -18,7 +17,6 @@ INSERT INTO sessions (
     ?,
     ?,
     ?,
-    null,
     strftime('%s', 'now'),
     strftime('%s', 'now')
 ) RETURNING *;
@@ -46,7 +44,6 @@ SET
     title = ?,
     prompt_tokens = ?,
     completion_tokens = ?,
-    summary_message_id = ?,
     cost = ?,
     todos = ?
 WHERE id = ?
@@ -62,7 +59,6 @@ SET
     updated_at = strftime('%s', 'now')
 WHERE id = ?;
 
-
 -- name: RenameSession :exec
 UPDATE sessions
 SET
@@ -72,3 +68,8 @@ WHERE id = ?;
 -- name: DeleteSession :exec
 DELETE FROM sessions
 WHERE id = ?;
+
+-- name: UpdateSessionLeaf :exec
+UPDATE sessions
+SET leaf_message_id = @leaf_id
+WHERE id = @id;

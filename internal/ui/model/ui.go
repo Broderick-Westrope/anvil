@@ -191,6 +191,14 @@ type (
 	// tickElapsedTimeMsg is sent once per second to refresh elapsed-time
 	// displays for running subagent sessions.
 	tickElapsedTimeMsg struct{}
+
+	// checkAgentIdleMsg is sent as a polling message to wait for the agent
+	// to finish cancelling before navigating to a new branch position.
+	checkAgentIdleMsg struct {
+		nav       dialog.ActionNavigateTree
+		sessionID string // The session being cancelled.
+		attempt   int
+	}
 )
 
 // UI represents the main user interface model.
@@ -410,8 +418,10 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.slashAC = autocomplete.New(nil, 10)
 	ui.slashAC.SetStyles(autocomplete.Styles{
 		Normal:         com.Styles.SlashAutocomplete.Normal,
+		BuiltinName:    com.Styles.SlashAutocomplete.BuiltinName,
 		CommandName:    com.Styles.SlashAutocomplete.CommandName,
 		SkillName:      com.Styles.SlashAutocomplete.SkillName,
+		BuiltinFocused: com.Styles.SlashAutocomplete.BuiltinFocused,
 		CommandFocused: com.Styles.SlashAutocomplete.CommandFocused,
 		SkillFocused:   com.Styles.SlashAutocomplete.SkillFocused,
 		Description:    com.Styles.SlashAutocomplete.Description,
@@ -680,7 +690,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = msg.session
 		m.sessionFiles = msg.files
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
-		msgs, err := m.com.Workspace.ListMessages(context.Background(), m.session.ID)
+		var msgs []message.Message
+		var err error
+		if m.session.LeafMessageID != "" {
+			msgs, err = m.com.Workspace.GetBranchPath(context.Background(), m.session.LeafMessageID)
+		} else {
+			msgs, err = m.com.Workspace.ListMessages(context.Background(), m.session.ID)
+		}
 		if err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
@@ -1099,6 +1115,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case creditsUpdatedMsg:
 		m.hyperCredits = &msg.credits
+	case checkAgentIdleMsg:
+		if cmd := m.handleCheckAgentIdle(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case navigateTreeDoneMsg:
+		if cmd := m.handleNavigateTreeDone(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case tickElapsedTimeMsg:
 		shouldContinue := m.hasRunningSubagents() || (m.isDrilledIn() && m.isViewedSubagentRunning())
 		if shouldContinue {
@@ -2039,10 +2063,33 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 
 		currentModel := cfg.Models[config.SelectedModelTypeLarge]
+		oldEffort := currentModel.ReasoningEffort
 		currentModel.ReasoningEffort = msg.Effort
 		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeLarge, currentModel); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
+		}
+
+		// Write a thinking_level_change metadata entry if the effort actually changed.
+		// Skip when the agent is busy to avoid racing the leaf pointer.
+		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort && !m.isAgentBusy() {
+			ws := m.com.Workspace
+			sid := m.session.ID
+			leafID := m.session.LeafMessageID
+			effort := msg.Effort
+			cmds = append(cmds, func() tea.Msg {
+				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
+					ParentMessageID: leafID,
+					MessageType:     message.MessageTypeThinkingLevelChange,
+					Parts: []message.ContentPart{
+						message.ThinkingLevelChangeContent{ThinkingLevel: effort},
+					},
+				})
+				if err != nil {
+					slog.Error("Failed to write thinking_level_change entry", "error", err)
+				}
+				return nil
+			})
 		}
 
 		cmds = append(cmds, func() tea.Msg {
@@ -2113,6 +2160,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		cmds = append(cmds, m.runMCPPrompt(msg.ClientID, msg.PromptID, msg.Args))
+	case dialog.ActionNavigateTree:
+		m.dialog.CloseFrontDialog()
+		if cmd := m.handleNavigateTree(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
 	case dialog.ActionReloadPlugins:
 		m.dialog.CloseDialog(dialog.CommandsID)
 		cmds = append(cmds, m.reloadPlugins())
@@ -2187,6 +2240,8 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		return util.ReportWarn("Agent is busy, please wait...")
 	}
 
+	oldAgentModel := m.com.Workspace.AgentModel()
+
 	cfg := m.com.Config()
 	if cfg == nil {
 		return util.ReportError(errors.New("configuration not found"))
@@ -2235,6 +2290,31 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 			smallModel := m.com.Workspace.GetDefaultSmallModel(providerID)
 			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeSmall, smallModel); err != nil {
 				cmds = append(cmds, util.ReportError(err))
+			}
+		}
+
+		// Write a model_change metadata entry if the large model actually changed.
+		// Skip when the agent is busy to avoid racing the leaf pointer.
+		if msg.ModelType == config.SelectedModelTypeLarge && m.session != nil && m.session.LeafMessageID != "" && !m.isAgentBusy() {
+			if oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model {
+				ws := m.com.Workspace
+				sid := m.session.ID
+				leafID := m.session.LeafMessageID
+				provider := msg.Model.Provider
+				modelID := msg.Model.Model
+				cmds = append(cmds, func() tea.Msg {
+					err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
+						ParentMessageID: leafID,
+						MessageType:     message.MessageTypeModelChange,
+						Parts: []message.ContentPart{
+							message.ModelChangeContent{Provider: provider, ModelID: modelID},
+						},
+					})
+					if err != nil {
+						slog.Error("Failed to write model_change entry", "error", err)
+					}
+					return nil
+				})
 			}
 		}
 	}
@@ -2438,6 +2518,20 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 								Instructions: skill.Instructions,
 								Source:       skill.Source,
 							})
+						}
+						return nil
+					}
+					if selected.Type == autocomplete.BuiltinItem {
+						// Builtins execute immediately on selection —
+						// no argument step needed. Use the ID field
+						// (always "builtin:<name>") for dispatch rather
+						// than DisplayName to avoid silent failures if
+						// display names ever diverge from execution keys.
+						builtinName := strings.TrimPrefix(selected.ID, "builtin:")
+						m.closeSlashAC(true)
+						cmd := m.tryExecuteBuiltinCommand("/" + builtinName)
+						if cmd != nil {
+							return cmd
 						}
 						return nil
 					}
@@ -3680,6 +3774,19 @@ func (m *UI) closeCompletions() {
 // custom commands and active skills.
 func (m *UI) buildSlashACItems() []autocomplete.Item {
 	var items []autocomplete.Item
+
+	// Builtin slash commands are added first so they take precedence
+	// over user-defined commands and skills with the same name.
+	for _, b := range m.builtinCommands() {
+		items = append(items, autocomplete.Item{
+			Name:        b.name,
+			DisplayName: b.name,
+			Description: b.desc,
+			Type:        autocomplete.BuiltinItem,
+			ID:          "builtin:" + b.name,
+		})
+	}
+
 	for _, cmd := range m.customCommands {
 		// Use DisplayName if set (collision-resolved), otherwise fall back
 		// to ItemName() which strips the source prefix (e.g., "greet" not
@@ -3724,6 +3831,13 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		return nil
 	}
 
+	// Builtin slash commands are checked before user-defined commands.
+	// If a user has a custom command with the same name as a builtin,
+	// the builtin wins.
+	if cmd := m.tryExecuteBuiltinCommand(value); cmd != nil {
+		return cmd
+	}
+
 	for _, cmd := range m.customCommands {
 		argName := cmd.ItemName()
 		if cmd.DisplayName != "" {
@@ -3766,6 +3880,65 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		}
 
 		return m.sendMessage(content)
+	}
+	return nil
+}
+
+// builtinDef defines a single builtin slash command. This is the single
+// source of truth consumed by both buildSlashACItems (display) and
+// tryExecuteBuiltinCommand (dispatch).
+type builtinDef struct {
+	name   string
+	desc   string
+	action func() tea.Cmd
+}
+
+// builtinCommands returns the list of builtin slash commands. The slice
+// is rebuilt on each call because actions capture the receiver.
+func (m *UI) builtinCommands() []builtinDef {
+	return []builtinDef{
+		{"new", "Start a new session", func() tea.Cmd {
+			if !m.hasSession() {
+				return util.ReportInfo("Already on the landing page")
+			}
+			return m.newSession()
+		}},
+		{"sessions", "Switch between sessions", m.openSessionsDialog},
+		{"tree", "View session tree", func() tea.Cmd {
+			return m.openDialog(dialog.TreeID)
+		}},
+		{"branch", "Branch from a message", func() tea.Cmd {
+			return m.openDialog(dialog.BranchID)
+		}},
+	}
+}
+
+// noopCmd is a sentinel command that signals a builtin matched but produced
+// no side-effect command. It prevents callers from falling through to the
+// message-sending path.
+var noopCmd tea.Cmd = func() tea.Msg { return nil }
+
+// tryExecuteBuiltinCommand checks if value matches a builtin slash command
+// (e.g. "/sessions", "/tree", "/branch"). Returns a non-nil tea.Cmd when
+// matched (even if the action itself has no cmd), nil otherwise. Builtins
+// don't accept arguments — only exact "/name" matches.
+func (m *UI) tryExecuteBuiltinCommand(value string) tea.Cmd {
+	name, ok := strings.CutPrefix(value, "/")
+	if !ok {
+		return nil
+	}
+
+	for _, b := range m.builtinCommands() {
+		if name != b.name {
+			continue
+		}
+		if cmd := b.action(); cmd != nil {
+			return cmd
+		}
+		// Action matched but returned nil (e.g. openSessionsDialog
+		// mutates state directly). Return a noop so the caller knows
+		// the command was handled.
+		return noopCmd
 	}
 	return nil
 }
@@ -4012,8 +4185,10 @@ func (m *UI) refreshStyles() {
 	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
 	m.slashAC.SetStyles(autocomplete.Styles{
 		Normal:         t.SlashAutocomplete.Normal,
+		BuiltinName:    t.SlashAutocomplete.BuiltinName,
 		CommandName:    t.SlashAutocomplete.CommandName,
 		SkillName:      t.SlashAutocomplete.SkillName,
+		BuiltinFocused: t.SlashAutocomplete.BuiltinFocused,
 		CommandFocused: t.SlashAutocomplete.CommandFocused,
 		SkillFocused:   t.SlashAutocomplete.SkillFocused,
 		Description:    t.SlashAutocomplete.Description,
@@ -4153,13 +4328,23 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openSkillPickerDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.TreeID:
+		if cmd := m.openTreeDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case dialog.BranchID:
+		if cmd := m.openBranchDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.QuitID:
 		if cmd := m.openQuitDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	default:
-		// Unknown dialog
-		break
+		// Unknown or not-yet-implemented dialog — show an info toast
+		// so command palette entries merged before their modals exist
+		// give user feedback instead of silently doing nothing.
+		return util.ReportInfo(fmt.Sprintf("Not yet implemented: %s", id))
 	}
 	return tea.Batch(cmds...)
 }
@@ -4188,6 +4373,183 @@ func (m *UI) openSkillPickerDialog() tea.Cmd {
 	sp := dialog.NewSkillPicker(m.com, activeSkills)
 	m.dialog.OpenDialog(sp)
 	return nil
+}
+
+// openTreeDialog opens the session tree dialog.
+func (m *UI) openTreeDialog() tea.Cmd {
+	if !m.hasSession() {
+		return util.ReportInfo("No active session")
+	}
+	if m.dialog.ContainsDialog(dialog.TreeID) {
+		m.dialog.BringToFront(dialog.TreeID)
+		return nil
+	}
+
+	d, err := dialog.NewTree(m.com, m.session.ID, m.session.LeafMessageID)
+	if err != nil {
+		return util.ReportError(err)
+	}
+	m.dialog.OpenDialog(d)
+	return nil
+}
+
+// openBranchDialog opens the branch picker dialog.
+func (m *UI) openBranchDialog() tea.Cmd {
+	if !m.hasSession() {
+		return util.ReportInfo("No active session")
+	}
+	if m.session.LeafMessageID == "" {
+		return util.ReportInfo("No messages to branch from")
+	}
+	if m.dialog.ContainsDialog(dialog.BranchID) {
+		m.dialog.BringToFront(dialog.BranchID)
+		return nil
+	}
+
+	d, err := dialog.NewBranch(m.com, m.session.LeafMessageID)
+	if err != nil {
+		return util.ReportError(err)
+	}
+	m.dialog.OpenDialog(d)
+	return nil
+}
+
+// handleNavigateTree handles navigation to a tree/branch node. If the agent
+// is busy, it cancels and polls until idle before proceeding.
+func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
+	if m.hasSession() && m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
+		sessionID := m.session.ID
+		m.com.Workspace.AgentCancel(sessionID)
+		return tea.Batch(
+			util.ReportInfo("Cancelling..."),
+			m.pollAgentIdle(msg, sessionID, 0),
+		)
+	}
+	return m.navigateToTreeNode(msg)
+}
+
+// maxIdlePolls is the maximum number of polls before giving up on cancel.
+const maxIdlePolls = 25 // 25 * 200ms = 5s
+
+// pollAgentIdle returns a command that waits 200ms then sends a
+// checkAgentIdleMsg to poll whether the agent has stopped.
+func (m *UI) pollAgentIdle(nav dialog.ActionNavigateTree, sessionID string, attempt int) tea.Cmd {
+	return tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg {
+		return checkAgentIdleMsg{nav: nav, sessionID: sessionID, attempt: attempt}
+	})
+}
+
+// handleCheckAgentIdle checks if the agent is idle and either proceeds
+// with navigation or schedules another poll. Uses the original session
+// ID from the cancel request so a session switch during polling doesn't
+// cause a mismatch.
+func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
+	if !m.hasSession() || m.session.ID != msg.sessionID {
+		return nil
+	}
+	if !m.com.Workspace.AgentIsSessionBusy(msg.sessionID) {
+		return m.navigateToTreeNode(msg.nav)
+	}
+	if msg.attempt >= maxIdlePolls {
+		return util.ReportError(fmt.Errorf("timed out waiting for agent to stop"))
+	}
+	return m.pollAgentIdle(msg.nav, msg.sessionID, msg.attempt+1)
+}
+
+// navigateToTreeNode moves the session leaf pointer and reloads the chat.
+func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
+	if m.session == nil {
+		return nil
+	}
+
+	// Determine target leaf. For user messages, move to the parent so the
+	// user can re-submit from that point. The ParentMessageID is passed
+	// directly from the dialog to avoid an extra DB fetch.
+	targetLeafID := msg.MessageID
+	if msg.Role == message.User && msg.ParentMessageID != "" {
+		targetLeafID = msg.ParentMessageID
+	}
+
+	ws := m.com.Workspace
+	sessionID := m.session.ID
+	content := msg.Content
+	role := msg.Role
+
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		// Move the leaf pointer.
+		if err := ws.MoveLeaf(ctx, sessionID, targetLeafID); err != nil {
+			return util.ReportError(err)()
+		}
+
+		// Reload the session and branch path in the command (not in
+		// Update) to avoid doing IO in the Bubble Tea update loop.
+		sess, err := ws.GetSession(ctx, sessionID)
+		if err != nil {
+			return util.ReportError(err)()
+		}
+
+		var msgs []message.Message
+		if targetLeafID != "" {
+			msgs, err = ws.GetBranchPath(ctx, targetLeafID)
+			if err != nil {
+				return util.ReportError(err)()
+			}
+		}
+
+		return navigateTreeDoneMsg{
+			session:  &sess,
+			leafID:   targetLeafID,
+			messages: msgs,
+			content:  content,
+			role:     role,
+		}
+	}
+}
+
+// navigateTreeDoneMsg is sent after the leaf pointer has been moved,
+// the session reloaded, and the branch path fetched. All IO happens
+// inside the command; Update only mutates state.
+type navigateTreeDoneMsg struct {
+	session  *session.Session
+	leafID   string
+	messages []message.Message
+	content  string
+	role     message.MessageRole
+}
+
+// handleNavigateTreeDone rebuilds the chat view after the leaf pointer has
+// been moved, and optionally pre-fills the editor for user messages.
+func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
+	var cmds []tea.Cmd
+
+	m.session = msg.session
+	m.clearDrillStack()
+
+	if cmd := m.setSessionMessages(msg.messages); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	if len(msg.messages) == 0 {
+		m.lastUserMessageTime = 0
+	}
+
+	// Pre-fill editor for user messages.
+	if msg.role == message.User && msg.content != "" {
+		prevHeight := m.textarea.Height()
+		m.textarea.SetValue(msg.content)
+		m.textarea.MoveToEnd()
+		if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	m.focus = uiFocusEditor
+	cmds = append(cmds, m.textarea.Focus())
+	m.updateLayoutAndSize()
+
+	return tea.Batch(cmds...)
 }
 
 // openQuitDialog opens the quit confirmation dialog.

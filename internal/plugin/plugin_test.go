@@ -203,9 +203,9 @@ func TestValidatePluginName(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		input   string
-		wantOK  bool
+		name   string
+		input  string
+		wantOK bool
 	}{
 		{name: "empty string", input: "", wantOK: true},
 		{name: "valid hyphenated name", input: "valid-name", wantOK: true},

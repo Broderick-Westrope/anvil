@@ -224,13 +224,28 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		fantasy.WithUserAgent(userAgent),
 	)
 
+	// sessionLock protects currentSession and currentLeaf from concurrent
+	// access across agent callbacks (e.g. parallel OnToolResult calls).
 	sessionLock := sync.Mutex{}
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
+	currentLeaf := currentSession.LeafMessageID
 
-	msgs, err := a.getSessionMessages(ctx, currentSession)
+	// getLeaf and setLeaf provide thread-safe access to currentLeaf.
+	getLeaf := func() string {
+		sessionLock.Lock()
+		defer sessionLock.Unlock()
+		return currentLeaf
+	}
+	setLeaf := func(id string) {
+		sessionLock.Lock()
+		defer sessionLock.Unlock()
+		currentLeaf = id
+	}
+
+	msgs, _, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session messages: %w", err)
 	}
@@ -251,12 +266,19 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		// message from the failed PrepareStep) so the prompt is only
 		// sent once via the Prompt field.
 		msgs = a.cleanupFailedAttemptMessages(ctx, msgs)
+		// Refresh currentLeaf after cleanup — the deleted messages may
+		// have advanced the leaf, so it could point to a now-deleted
+		// message. Use the last remaining message in the branch path.
+		if len(msgs) > 0 {
+			currentLeaf = msgs[len(msgs)-1].ID
+		}
 	} else {
 		// Add the user message to the session.
-		_, err = a.createUserMessage(ctx, call)
+		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
 		if err != nil {
 			return nil, err
 		}
+		currentLeaf = userMsg.ID
 	}
 
 	// Add the session to the context.
@@ -313,10 +335,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			queuedCalls, _ := a.messageQueue.Get(call.SessionID)
 			a.messageQueue.Del(call.SessionID)
 			for _, queued := range queuedCalls {
-				userMessage, createErr := a.createUserMessage(callContext, queued)
+				userMessage, createErr := a.createUserMessage(callContext, queued, getLeaf())
 				if createErr != nil {
 					return callContext, prepared, createErr
 				}
+				setLeaf(userMessage.ID)
 				prepared.Messages = append(prepared.Messages, userMessage.ToAIMessage()...)
 			}
 
@@ -352,14 +375,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 			var assistantMsg message.Message
 			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
-				Role:     message.Assistant,
-				Parts:    []message.ContentPart{},
-				Model:    largeModel.ModelCfg.Model,
-				Provider: largeModel.ModelCfg.Provider,
+				Role:            message.Assistant,
+				Parts:           []message.ContentPart{},
+				Model:           largeModel.ModelCfg.Model,
+				Provider:        largeModel.ModelCfg.Provider,
+				ParentMessageID: getLeaf(),
 			})
 			if err != nil {
 				return callContext, prepared, err
 			}
+			setLeaf(assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
@@ -435,15 +460,25 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
-			// Use parent ctx instead of genCtx to ensure the message is created
-			// even if the request is canceled mid-stream
-			_, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
+			// Hold sessionLock across the entire read→create→update
+			// sequence. OnToolResult may be called from parallel
+			// tool-execution goroutines; without the lock two goroutines
+			// could read the same leaf and create sibling messages
+			// (an unintended fork).
+			sessionLock.Lock()
+			defer sessionLock.Unlock()
+			toolMsg, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
 				},
+				ParentMessageID: currentLeaf,
 			})
-			return createMsgErr
+			if createMsgErr != nil {
+				return createMsgErr
+			}
+			currentLeaf = toolMsg.ID
+			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
 			finishReason := message.FinishReasonUnknown
@@ -566,15 +601,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Content:    content,
 				IsError:    true,
 			}
-			_, createErr = a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
+			errToolMsg, createErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
 				},
+				ParentMessageID: getLeaf(),
 			})
 			if createErr != nil {
 				return nil, createErr
 			}
+			setLeaf(errToolMsg.ID)
 		}
 		var fantasyErr *fantasy.Error
 		var providerErr *fantasy.ProviderError
@@ -618,6 +655,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		updateErr := a.messages.Update(ctx, *currentAssistant)
 		if updateErr != nil {
 			return nil, updateErr
+		}
+		// Ensure the session's leaf pointer is synced and published so
+		// the UI reflects the current position (e.g. branch dialog).
+		// message.Create already advanced the DB leaf, but no session
+		// pubsub event was fired because OnStepFinish never ran.
+		if moveErr := a.sessions.MoveLeaf(ctx, call.SessionID, getLeaf()); moveErr != nil {
+			slog.Warn("Failed to sync session leaf after error", "err", moveErr)
 		}
 		return nil, err
 	}
@@ -680,7 +724,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
-	msgs, err := a.getSessionMessages(ctx, currentSession)
+	msgs, rawPath, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return err
 	}
@@ -705,11 +749,25 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		fantasy.WithSystemPrompt(string(summaryPrompt)),
 		fantasy.WithUserAgent(userAgent),
 	)
-	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
-		Role:             message.Assistant,
-		Model:            largeModel.Model.Model(),
-		Provider:         largeModel.Model.Provider(),
-		IsSummaryMessage: true,
+
+	// Determine the firstKeptEntryId using the raw branch path (which
+	// has real message IDs, not synthetic entries from context filtering).
+	firstKeptEntryID := message.ComputeFirstKeptEntryID(rawPath, 20000)
+
+	// Estimate total tokens before compaction using the raw path.
+	totalTokensBefore := 0
+	for _, m := range rawPath {
+		totalTokensBefore += message.EstimateMessageTokens(m)
+	}
+
+	// Create a compaction message as a placeholder (MessageType =
+	// compaction), parented to the current leaf.
+	compactionMsg, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
+		Role:            message.Assistant,
+		Model:           largeModel.Model.Model(),
+		Provider:        largeModel.Model.Provider(),
+		ParentMessageID: currentSession.LeafMessageID,
+		MessageType:     message.MessageTypeCompaction,
 	})
 	if err != nil {
 		return err
@@ -732,42 +790,61 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			return callContext, prepared, nil
 		},
 		OnReasoningDelta: func(id string, text string) error {
-			summaryMessage.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			compactionMsg.AppendReasoningContent(text)
+			return a.messages.Update(genCtx, compactionMsg)
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
 			// Handle anthropic signature.
 			if anthropicData, ok := reasoning.ProviderMetadata["anthropic"]; ok {
 				if signature, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok && signature.Signature != "" {
-					summaryMessage.AppendReasoningSignature(signature.Signature)
+					compactionMsg.AppendReasoningSignature(signature.Signature)
 				}
 			}
-			summaryMessage.FinishThinking()
-			return a.messages.Update(genCtx, summaryMessage)
+			compactionMsg.FinishThinking()
+			return a.messages.Update(genCtx, compactionMsg)
 		},
 		OnTextDelta: func(id, text string) error {
-			summaryMessage.AppendContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			compactionMsg.AppendContent(text)
+			return a.messages.Update(genCtx, compactionMsg)
 		},
 	})
 	if err != nil {
 		isCancelErr := errors.Is(err, context.Canceled)
 		if isCancelErr {
-			// User cancelled summarize we need to remove the summary message.
-			deleteErr := a.messages.Delete(ctx, summaryMessage.ID)
-			return deleteErr
+			// User cancelled — restore the leaf to its pre-compaction
+			// position first, then remove the compaction placeholder.
+			// This order ensures the leaf never points to a deleted
+			// message if the second operation fails.
+			if moveErr := a.sessions.MoveLeaf(ctx, sessionID, compactionMsg.ParentMessageID); moveErr != nil {
+				return moveErr
+			}
+			return a.messages.Delete(ctx, compactionMsg.ID)
 		}
-		// Mark the summary message as finished with an error so the UI
-		// stops spinning.
-		summaryMessage.AddFinish(message.FinishReasonError, "Summarization Error", err.Error())
-		if updateErr := a.messages.Update(ctx, summaryMessage); updateErr != nil {
+		// Mark the compaction message as finished with an error so the
+		// UI stops spinning.
+		compactionMsg.AddFinish(message.FinishReasonError, "Summarization Error", err.Error())
+		if updateErr := a.messages.Update(ctx, compactionMsg); updateErr != nil {
 			return updateErr
 		}
 		return err
 	}
 
-	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
-	err = a.messages.Update(genCtx, summaryMessage)
+	// Populate the CompactionContent part with the generated summary.
+	summaryText := compactionMsg.Content().Text
+	compactionMsg.Parts = []message.ContentPart{
+		message.CompactionContent{
+			Summary:          summaryText,
+			FirstKeptEntryID: firstKeptEntryID,
+			TokensBefore:     totalTokensBefore,
+		},
+	}
+	compactionMsg.AddFinish(message.FinishReasonEndTurn, "", "")
+	// Use parent ctx (not genCtx) so the CompactionContent update
+	// survives even if the user cancels between LLM completion and
+	// this write. Without this, the compaction message would retain
+	// its streaming TextContent instead of the final CompactionContent,
+	// silently losing all compacted history.
+	err = a.messages.Update(ctx, compactionMsg)
 	if err != nil {
 		return err
 	}
@@ -786,10 +863,10 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, openrouterCost, false)
 
-	// Just in case, get just the last usage info.
+	// Update session usage. The leaf already points to the compaction
+	// message (advanced atomically by Create() above).
 	usage := resp.Response.Usage
-	currentSession.SummaryMessageID = summaryMessage.ID
-	currentSession.CompletionTokens = summaryCompletionTokens(usage, summaryMessage)
+	currentSession.CompletionTokens = summaryCompletionTokens(usage, compactionMsg)
 	currentSession.PromptTokens = 0
 	currentSession.EstimatedUsage = usageIsZero(usage)
 	_, err = a.sessions.Save(genCtx, currentSession)
@@ -835,7 +912,9 @@ func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
 // strips any trailing empty assistant message (created by PrepareStep)
 // and the preceding user message (which will be re-sent via the Prompt
 // field). Removed assistant messages are also deleted from the DB so
-// they don't appear as stale error bubbles on session reopen.
+// they don't appear as stale error bubbles on session reopen. After
+// deletion, the session's leaf pointer is restored to the last
+// remaining message to prevent dangling references.
 func (a *sessionAgent) cleanupFailedAttemptMessages(ctx context.Context, msgs []message.Message) []message.Message {
 	before := len(msgs)
 	msgs, removedIDs := trimFailedAttemptMessages(msgs)
@@ -845,6 +924,17 @@ func (a *sessionAgent) cleanupFailedAttemptMessages(ctx context.Context, msgs []
 	for _, id := range removedIDs {
 		if err := a.messages.Delete(ctx, id); err != nil {
 			slog.Warn("Failed to delete stale assistant message from failed attempt", "id", id, "error", err)
+		}
+	}
+	// Restore the leaf pointer to the last remaining message. The
+	// deleted messages may have advanced the leaf via Create(), so it
+	// could point to a now-deleted message.
+	if len(removedIDs) > 0 && len(msgs) > 0 {
+		lastMsg := msgs[len(msgs)-1]
+		if lastMsg.SessionID != "" {
+			if err := a.sessions.MoveLeaf(ctx, lastMsg.SessionID, lastMsg.ID); err != nil {
+				slog.Warn("Failed to restore leaf after cleanup", "error", err)
+			}
 		}
 	}
 	return msgs
@@ -880,7 +970,7 @@ func trimFailedAttemptMessages(msgs []message.Message) ([]message.Message, []str
 	return msgs, removedIDs
 }
 
-func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall) (message.Message, error) {
+func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall, parentMessageID string) (message.Message, error) {
 	parts := []message.ContentPart{message.TextContent{Text: call.Prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
@@ -888,8 +978,9 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	}
 	parts = append(parts, attachmentParts...)
 	msg, err := a.messages.Create(ctx, call.SessionID, message.CreateMessageParams{
-		Role:  message.User,
-		Parts: parts,
+		Role:            message.User,
+		Parts:           parts,
+		ParentMessageID: parentMessageID,
 	})
 	if err != nil {
 		return message.Message{}, fmt.Errorf("failed to create user message: %w", err)
@@ -1053,26 +1144,20 @@ func syntheticToolResultsForOrphanedCalls(m message.Message, knownToolResultIDs 
 	}, true
 }
 
-func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.Session) ([]message.Message, error) {
-	msgs, err := a.messages.List(ctx, session.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list messages: %w", err)
+func (a *sessionAgent) getSessionMessages(ctx context.Context, sess session.Session) (filtered, raw []message.Message, err error) {
+	if sess.LeafMessageID == "" {
+		return nil, nil, nil
 	}
 
-	if session.SummaryMessageID != "" {
-		summaryMsgIndex := -1
-		for i, msg := range msgs {
-			if msg.ID == session.SummaryMessageID {
-				summaryMsgIndex = i
-				break
-			}
-		}
-		if summaryMsgIndex != -1 {
-			msgs = msgs[summaryMsgIndex:]
-			msgs[0].Role = message.User
-		}
+	raw, err = a.messages.GetBranchPath(ctx, sess.LeafMessageID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get branch path: %w", err)
 	}
-	return msgs, nil
+	if len(raw) == 0 {
+		return nil, nil, nil
+	}
+
+	return message.FilterBranchPathForContext(raw), raw, nil
 }
 
 // generateTitle generates a session titled based on the initial prompt.

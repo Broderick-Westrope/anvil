@@ -8,6 +8,14 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
+// Dialog ID constants for tree and branch dialogs.
+const (
+	// TreeID is the identifier for the session tree dialog.
+	TreeID = "tree"
+	// BranchID is the identifier for the branch picker dialog.
+	BranchID = "branch"
+)
+
 // Dialog sizing constants.
 const (
 	// defaultDialogMaxWidth is the maximum width for standard dialogs.

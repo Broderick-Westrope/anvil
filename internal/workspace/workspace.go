@@ -73,6 +73,10 @@ type Workspace interface {
 	ListMessages(ctx context.Context, sessionID string) ([]message.Message, error)
 	ListUserMessages(ctx context.Context, sessionID string) ([]message.Message, error)
 	ListAllUserMessages(ctx context.Context) ([]message.Message, error)
+	GetBranchPath(ctx context.Context, leafMessageID string) ([]message.Message, error)
+	GetAllSessionMessages(ctx context.Context, sessionID string) ([]message.Message, error)
+	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
+	WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error
 
 	// Agent
 	AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error

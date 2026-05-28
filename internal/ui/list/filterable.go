@@ -66,6 +66,11 @@ func (f *FilterableList) PrependItems(items ...FilterableItem) {
 	f.List.SetItems(itms...)
 }
 
+// Items returns the unfiltered source items.
+func (f *FilterableList) Items() []FilterableItem {
+	return f.items
+}
+
 // SetFilter sets the filter query and updates the list items.
 func (f *FilterableList) SetFilter(q string) {
 	f.query = q

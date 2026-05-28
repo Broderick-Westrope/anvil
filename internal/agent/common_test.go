@@ -72,7 +72,7 @@ func testEnv(t *testing.T) fakeEnv {
 
 	q := db.New(conn)
 	sessions := session.NewService(q, conn)
-	messages := message.NewService(q)
+	messages := message.NewService(q, message.WithConn(conn))
 
 	permissions := permission.NewPermissionService(workingDir, true, []string{})
 	history := history.NewService(q, conn)
