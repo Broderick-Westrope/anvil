@@ -397,12 +397,11 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		todoSpinner:         todoSpinner,
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
-		skillStates:         com.Workspace.SkillStates(),
+		skillStates:         skills.GetLatestStates(),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
 		initialSessionID:    initialSessionID,
 		continueLastSession: continueLast,
-		skillStates:         skills.GetLatestStates(),
 	}
 
 	// Initialize slash-command autocomplete.

@@ -91,7 +91,35 @@ Examples of autonomous decisions:
 
 Never use `apply_patch` or similar - those tools don't exist.
 
-Critical: ALWAYS read files before editing them in this conversation.
+Critical: ALWAYS read the relevant context of files before editing them in this conversation.
+
+When using edit tools:
+1. Read the relevant context first - note the EXACT indentation (spaces vs tabs, count)
+2. Copy the exact text including ALL whitespace, newlines, and indentation
+3. Include 3-5 lines of context before and after the target
+4. Verify your old_string would appear exactly once in the file
+5. If uncertain about whitespace, include more surrounding context
+6. Verify edit succeeded
+7. Run tests
+
+**Whitespace matters**:
+- Count spaces/tabs carefully (use View tool line numbers as reference)
+- Include blank lines if they exist
+- Match line endings exactly
+- When in doubt, include MORE context rather than less
+
+Efficiency tips:
+- Don't re-read files after successful edits (tool will fail if it didn't work)
+- Same applies for making folders, deleting files, etc.
+
+Common mistakes to avoid:
+- Editing without reading first
+- Approximate text matches
+- Wrong indentation (spaces vs tabs, wrong count)
+- Missing or extra blank lines
+- Not enough context (text appears multiple times)
+- Trimming whitespace that exists in the original
+- Not testing after changes
 </editing_files>
 
 <task_completion>

@@ -1510,9 +1510,6 @@ func discoverSkills(cfg *config.ConfigStore, plugins []*plugin.Plugin) (allSkill
 	}
 	activeSkills = skills.Filter(allSkills, disabledSkills)
 
-	allStates := append([]*skills.SkillState(nil), builtinStates...)
-	allStates = append(allStates, userStates...)
-
 	allStates = skills.DeduplicateStates(allStates)
 
 	slices.SortStableFunc(allStates, func(a, b *skills.SkillState) int {
