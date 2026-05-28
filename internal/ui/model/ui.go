@@ -194,8 +194,9 @@ type (
 	// checkAgentIdleMsg is sent as a polling message to wait for the agent
 	// to finish cancelling before navigating to a new branch position.
 	checkAgentIdleMsg struct {
-		nav     dialog.ActionNavigateTree
-		attempt int
+		nav       dialog.ActionNavigateTree
+		sessionID string // The session being cancelled.
+		attempt   int
 	}
 )
 
@@ -4389,10 +4390,11 @@ func (m *UI) openBranchDialog() tea.Cmd {
 // is busy, it cancels and polls until idle before proceeding.
 func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
 	if m.hasSession() && m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
-		m.com.Workspace.AgentCancel(m.session.ID)
+		sessionID := m.session.ID
+		m.com.Workspace.AgentCancel(sessionID)
 		return tea.Batch(
 			util.ReportInfo("Cancelling..."),
-			m.pollAgentIdle(msg, 0),
+			m.pollAgentIdle(msg, sessionID, 0),
 		)
 	}
 	return m.navigateToTreeNode(msg)
@@ -4403,25 +4405,27 @@ const maxIdlePolls = 25 // 25 * 200ms = 5s
 
 // pollAgentIdle returns a command that waits 200ms then sends a
 // checkAgentIdleMsg to poll whether the agent has stopped.
-func (m *UI) pollAgentIdle(nav dialog.ActionNavigateTree, attempt int) tea.Cmd {
+func (m *UI) pollAgentIdle(nav dialog.ActionNavigateTree, sessionID string, attempt int) tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg {
-		return checkAgentIdleMsg{nav: nav, attempt: attempt}
+		return checkAgentIdleMsg{nav: nav, sessionID: sessionID, attempt: attempt}
 	})
 }
 
 // handleCheckAgentIdle checks if the agent is idle and either proceeds
-// with navigation or schedules another poll.
+// with navigation or schedules another poll. Uses the original session
+// ID from the cancel request so a session switch during polling doesn't
+// cause a mismatch.
 func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
-	if !m.hasSession() {
+	if !m.hasSession() || m.session.ID != msg.sessionID {
 		return nil
 	}
-	if !m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
+	if !m.com.Workspace.AgentIsSessionBusy(msg.sessionID) {
 		return m.navigateToTreeNode(msg.nav)
 	}
 	if msg.attempt >= maxIdlePolls {
 		return util.ReportError(fmt.Errorf("timed out waiting for agent to stop"))
 	}
-	return m.pollAgentIdle(msg.nav, msg.attempt+1)
+	return m.pollAgentIdle(msg.nav, msg.sessionID, msg.attempt+1)
 }
 
 // navigateToTreeNode moves the session leaf pointer and reloads the chat.
