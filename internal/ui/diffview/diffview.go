@@ -1049,56 +1049,44 @@ func processChromaValue(value string) string {
 }
 
 // wrapContent splits content that exceeds width into multiple visual lines
-// using word-aware wrapping. Continuation lines have leading whitespace
-// stripped and inherit the ANSI style active at the end of the previous
-// line so syntax highlighting is preserved across wraps.
+// with word-aware breaking. It uses ansi.Truncate and ansi.GraphemeWidth.Cut
+// to split the string, which properly close and reopen ANSI escape sequences
+// at each split point so syntax highlighting is preserved on every line.
+// Continuation lines have leading whitespace stripped.
 func (dv *DiffView) wrapContent(content string, width int) []string {
 	if width <= 0 || ansi.StringWidth(content) <= width {
 		return []string{content}
 	}
-	// Use ansi.Wordwrap for word-aware, ANSI-safe wrapping. Common code
-	// break characters are used as additional breakpoints.
-	wrapped := ansi.Wordwrap(content, width, " \t,.;:(){}[]")
-	lines := strings.Split(wrapped, "\n")
-	// Strip leading whitespace from continuation lines and carry forward
-	// the active ANSI style so syntax highlighting is not lost.
-	var activeStyle string
-	for i, line := range lines {
-		if i > 0 {
-			line = strings.TrimLeft(line, " \t")
-			if activeStyle != "" {
-				line = activeStyle + line
-			}
-		}
-		activeStyle = lastANSIStyle(line)
-		lines[i] = line
-	}
-	return lines
-}
 
-// lastANSIStyle returns the last SGR (Select Graphic Rendition) escape
-// sequence found in s, or "" if none. This is used to carry forward the
-// active text color/style across wrapped lines.
-func lastANSIStyle(s string) string {
-	var last string
-	for i := 0; i < len(s); i++ {
-		if s[i] != '\x1b' || i+1 >= len(s) || s[i+1] != '[' {
-			continue
-		}
-		// Found ESC[, scan for the terminating letter.
-		j := i + 2
-		for j < len(s) && ((s[j] >= '0' && s[j] <= '9') || s[j] == ';') {
-			j++
-		}
-		if j < len(s) && s[j] == 'm' {
-			seq := s[i : j+1]
-			if seq == "\x1b[0m" || seq == "\x1b[m" {
-				last = "" // Reset clears active style.
-			} else {
-				last = seq
+	var lines []string
+	for ansi.StringWidth(content) > width {
+		// Find the last word boundary within width by examining the
+		// stripped (plain text) version.
+		plain := ansi.Strip(content)
+		breakAt := width
+		for i := width; i > 0; i-- {
+			if i < len(plain) && (plain[i] == ' ' || plain[i] == '\t' ||
+				plain[i] == ',' || plain[i] == ';' || plain[i] == '(' ||
+				plain[i] == ')' || plain[i] == '{' || plain[i] == '}' ||
+				plain[i] == '[' || plain[i] == ']' || plain[i] == '.') {
+				breakAt = i
+				break
 			}
-			i = j
 		}
+		// If no word boundary found in the first half, hard-break at width.
+		if breakAt < width/2 {
+			breakAt = width
+		}
+
+		line := ansi.Truncate(content, breakAt, "")
+		lines = append(lines, line)
+		remaining := ansi.GraphemeWidth.Cut(content, breakAt, ansi.StringWidth(content))
+		if remaining == content {
+			break
+		}
+		// Strip leading whitespace from continuation.
+		content = strings.TrimLeft(remaining, " \t")
 	}
-	return last
+	lines = append(lines, content)
+	return lines
 }
