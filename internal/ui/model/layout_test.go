@@ -120,6 +120,75 @@ func TestHandleTextareaHeightChange_FollowModeStaysAtBottom(t *testing.T) {
 	}
 }
 
+func TestSetSize_FollowModeAnchorsToBottom(t *testing.T) {
+	t.Parallel()
+
+	u := newTestUI()
+
+	msgs := make([]chat.MessageItem, 0, 60)
+	for i := range 60 {
+		msgs = append(msgs, testMessageItem{
+			id:   "m-" + strconv.Itoa(i),
+			text: "message " + strconv.Itoa(i),
+		})
+	}
+	u.chat.SetMessages(msgs...)
+	u.updateLayoutAndSize()
+
+	// Enter follow mode.
+	u.chat.ScrollToBottom()
+	if !u.chat.Follow() {
+		t.Fatal("expected follow mode to be enabled")
+	}
+	if !u.chat.AtBottom() {
+		t.Fatal("expected chat to start at bottom")
+	}
+
+	// Shrink the viewport height. Follow mode must keep the chat at
+	// the bottom even though AtBottom would return false for the new
+	// smaller viewport before the re-anchor.
+	u.chat.SetSize(u.chat.list.Width(), u.chat.list.Height()-10)
+
+	if !u.chat.Follow() {
+		t.Fatal("expected follow mode to remain enabled after SetSize")
+	}
+	if !u.chat.AtBottom() {
+		t.Fatal("expected chat to remain at bottom after SetSize in follow mode")
+	}
+}
+
+func TestSetSize_NoFollowDoesNotAnchor(t *testing.T) {
+	t.Parallel()
+
+	u := newTestUI()
+
+	msgs := make([]chat.MessageItem, 0, 60)
+	for i := range 60 {
+		msgs = append(msgs, testMessageItem{
+			id:   "m-" + strconv.Itoa(i),
+			text: "message " + strconv.Itoa(i),
+		})
+	}
+	u.chat.SetMessages(msgs...)
+	u.updateLayoutAndSize()
+
+	// Scroll to top to disable follow.
+	u.chat.ScrollToTop()
+	if u.chat.Follow() {
+		t.Fatal("expected follow mode to be disabled after ScrollToTop")
+	}
+
+	// Resize should NOT snap to bottom when follow is off.
+	u.chat.SetSize(u.chat.list.Width(), u.chat.list.Height()-5)
+
+	if u.chat.Follow() {
+		t.Fatal("expected follow mode to remain disabled after SetSize")
+	}
+	if u.chat.AtBottom() {
+		t.Fatal("expected chat NOT to be at bottom after SetSize without follow mode")
+	}
+}
+
 func TestAutoExpandPillsIfReasonable(t *testing.T) {
 	t.Parallel()
 

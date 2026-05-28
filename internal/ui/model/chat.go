@@ -208,8 +208,10 @@ func drawCachedBuffer(scr uv.Screen, area uv.Rectangle, buf uv.ScreenBuffer) {
 // SetSize sets the size of the chat view port.
 func (m *Chat) SetSize(width, height int) {
 	m.list.SetSize(width, height)
-	// Anchor to bottom if we were at the bottom.
-	if m.AtBottom() {
+	// Anchor to bottom when in follow mode. Using follow rather than
+	// AtBottom avoids losing the anchor after width changes invalidate
+	// cached item heights or when content grows between updates.
+	if m.follow {
 		m.ScrollToBottom()
 	}
 }
