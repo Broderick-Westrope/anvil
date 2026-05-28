@@ -33,10 +33,6 @@ func NewCallHierarchyTool(lspManager *lsp.Manager) fantasy.AgentTool {
 			if params.Direction != "incoming" && params.Direction != "outgoing" {
 				return fantasy.NewTextErrorResponse("direction must be 'incoming' or 'outgoing'"), nil
 			}
-			if lspManager.Clients().Len() == 0 {
-				return fantasy.NewTextErrorResponse("no LSP clients available"), nil
-			}
-
 			workingDir := cmp.Or(params.Path, ".")
 			resolved, err := resolveSymbol(ctx, lspManager, params.Symbol, workingDir)
 			if err != nil {

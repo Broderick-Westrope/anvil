@@ -46,9 +46,7 @@ func NewReplaceSymbolTool(
 				return fantasy.NewTextErrorResponse("replacement is required"), nil
 			}
 
-			if lspManager.Clients().Len() == 0 {
-				return fantasy.NewTextErrorResponse("no LSP clients available"), nil
-			}
+			lspManager.Start(ctx, params.FilePath)
 
 			client := findLSPClient(lspManager, params.FilePath)
 			if client == nil {

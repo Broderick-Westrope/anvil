@@ -45,10 +45,6 @@ func NewRenameTool(
 			if params.NewName == "" {
 				return fantasy.NewTextErrorResponse("new_name is required"), nil
 			}
-			if lspManager.Clients().Len() == 0 {
-				return fantasy.NewTextErrorResponse("no LSP clients available"), nil
-			}
-
 			workingDir := cmp.Or(params.Path, ".")
 			resolved, err := resolveSymbol(ctx, lspManager, params.Symbol, workingDir)
 			if err != nil {
