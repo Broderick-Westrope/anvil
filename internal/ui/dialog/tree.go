@@ -214,9 +214,17 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		t.expanded[id] = true
 	}
 
-	// Build the filterable list.
-	t.list = list.NewFilterableList(t.rebuildItems()...)
+	// Build the filterable list and pre-select the current leaf.
+	items := t.rebuildItems()
+	t.list = list.NewFilterableList(items...)
 	t.list.Focus()
+	for i, item := range items {
+		if ti, ok := item.(*TreeItem); ok && ti.isLeaf {
+			t.list.SetSelected(i)
+			t.list.ScrollToSelected()
+			break
+		}
+	}
 
 	// Set up text input for filtering.
 	t.input = textinput.New()
