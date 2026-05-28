@@ -576,6 +576,21 @@ func toolParamList(sty *styles.Styles, params []string, width int) string {
 
 	mainParam := params[0]
 
+	// Left-truncate the main param early if it looks like a file path so
+	// the filename is always visible and there is room for kv pairs.
+	if strings.Contains(mainParam, "/") {
+		maxPathWidth := width
+		if len(params) > 1 {
+			// Reserve space for kv pairs by capping the path to 2/3 of
+			// the available width.
+			maxPathWidth = width * 2 / 3
+		}
+		if maxPathWidth > 0 && ansi.StringWidth(mainParam) > maxPathWidth {
+			n := ansi.StringWidth(mainParam) - maxPathWidth + 1
+			mainParam = ansi.TruncateLeft(mainParam, n, "…")
+		}
+	}
+
 	// Build key=value pairs from remaining params (consecutive key, value pairs).
 	var kvPairs []string
 	for i := 1; i+1 < len(params); i += 2 {
@@ -594,22 +609,6 @@ func toolParamList(sty *styles.Styles, params []string, width int) string {
 	}
 
 	if width >= 0 && ansi.StringWidth(output) > width {
-		// Left-truncate the main param if it looks like a file path so
-		// the filename stays visible. The kv pairs suffix (if any) is
-		// then appended and the whole string right-truncated if still
-		// too long.
-		if strings.Contains(mainParam, "/") && ansi.StringWidth(mainParam) > width {
-			n := ansi.StringWidth(mainParam) - width + 1
-			mainParam = ansi.TruncateLeft(mainParam, n, "…")
-			// Re-assemble with truncated path.
-			output = mainParam
-			if len(kvPairs) > 0 {
-				partsStr := strings.Join(kvPairs, ", ")
-				if remaining := width - lipgloss.Width(partsStr) - 3; remaining >= minSpaceForMainParam {
-					output = fmt.Sprintf("%s (%s)", mainParam, partsStr)
-				}
-			}
-		}
 		output = ansi.Truncate(output, width, "…")
 	}
 	return sty.Tool.ParamMain.Render(output)
