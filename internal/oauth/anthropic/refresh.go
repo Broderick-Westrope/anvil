@@ -58,6 +58,7 @@ func refreshViaEndpoint(ctx context.Context, refreshToken string) (*oauth.Token,
 		return nil, fmt.Errorf("creating refresh request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "claude-cli/"+CLIVersion+" (external, sdk-cli)")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
