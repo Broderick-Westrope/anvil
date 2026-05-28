@@ -140,8 +140,23 @@ func (d *ToolDetailItem) renderInput(width int) string {
 func (d *ToolDetailItem) renderOutput(width int) string {
 	header := d.sectionHeader("Output", width)
 
-	// Temporarily set compact=false on the source item to get the full
-	// expanded rendering, then restore the original state.
+	// Temporarily set compact=false and expandedContent=true on the source
+	// item to get the full untruncated rendering, then restore original state.
+	needToggleBack := false
+	if expandable, ok := d.sourceItem.(Expandable); ok {
+		// ToggleExpanded returns the new state. If it's now true,
+		// we expanded it and need to toggle back after rendering.
+		// If it was already expanded (returns false after toggle),
+		// toggle it back to expanded before rendering.
+		isNowExpanded := expandable.ToggleExpanded()
+		if !isNowExpanded {
+			// Was expanded, we collapsed it. Toggle back to expanded.
+			expandable.ToggleExpanded()
+		} else {
+			// Was collapsed, we expanded it. Remember to toggle back.
+			needToggleBack = true
+		}
+	}
 	if compactable, ok := d.sourceItem.(Compactable); ok {
 		compactable.SetCompact(false)
 	}
@@ -150,6 +165,11 @@ func (d *ToolDetailItem) renderOutput(width int) string {
 
 	if compactable, ok := d.sourceItem.(Compactable); ok {
 		compactable.SetCompact(d.sourceWasCompact)
+	}
+	if needToggleBack {
+		if expandable, ok := d.sourceItem.(Expandable); ok {
+			expandable.ToggleExpanded()
+		}
 	}
 
 	return header + "\n" + output
