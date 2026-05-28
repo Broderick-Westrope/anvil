@@ -1050,8 +1050,8 @@ func processChromaValue(value string) string {
 
 // wrapContent splits content that exceeds width into multiple visual lines
 // using word-aware wrapping. Continuation lines have leading whitespace
-// stripped so they start with content. If content fits in one line, returns
-// a single-element slice.
+// stripped and inherit the ANSI style active at the end of the previous
+// line so syntax highlighting is preserved across wraps.
 func (dv *DiffView) wrapContent(content string, width int) []string {
 	if width <= 0 || ansi.StringWidth(content) <= width {
 		return []string{content}
@@ -1060,10 +1060,45 @@ func (dv *DiffView) wrapContent(content string, width int) []string {
 	// break characters are used as additional breakpoints.
 	wrapped := ansi.Wordwrap(content, width, " \t,.;:(){}[]")
 	lines := strings.Split(wrapped, "\n")
-	// Strip leading whitespace from continuation lines so they start
-	// flush with content rather than indented.
-	for i := 1; i < len(lines); i++ {
-		lines[i] = strings.TrimLeft(lines[i], " \t")
+	// Strip leading whitespace from continuation lines and carry forward
+	// the active ANSI style so syntax highlighting is not lost.
+	var activeStyle string
+	for i, line := range lines {
+		if i > 0 {
+			line = strings.TrimLeft(line, " \t")
+			if activeStyle != "" {
+				line = activeStyle + line
+			}
+		}
+		activeStyle = lastANSIStyle(line)
+		lines[i] = line
 	}
 	return lines
+}
+
+// lastANSIStyle returns the last SGR (Select Graphic Rendition) escape
+// sequence found in s, or "" if none. This is used to carry forward the
+// active text color/style across wrapped lines.
+func lastANSIStyle(s string) string {
+	var last string
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\x1b' || i+1 >= len(s) || s[i+1] != '[' {
+			continue
+		}
+		// Found ESC[, scan for the terminating letter.
+		j := i + 2
+		for j < len(s) && ((s[j] >= '0' && s[j] <= '9') || s[j] == ';') {
+			j++
+		}
+		if j < len(s) && s[j] == 'm' {
+			seq := s[i : j+1]
+			if seq == "\x1b[0m" || seq == "\x1b[m" {
+				last = "" // Reset clears active style.
+			} else {
+				last = seq
+			}
+			i = j
+		}
+	}
+	return last
 }
