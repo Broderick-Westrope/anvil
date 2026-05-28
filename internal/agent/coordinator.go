@@ -473,7 +473,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 	switch providerCfg.Type {
 	case openai.Name, azure.Name:
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
-		if !hasReasoningEffort && shouldSetEffort {
+if !hasReasoningEffort && shouldSetEffort {
 			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
 		}
 		if openai.IsResponsesModel(model.CatwalkCfg.ID) {
@@ -497,7 +497,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			_, hasThink  = mergedOptions["thinking"]
 		)
 		switch {
-		case !hasEffort && shouldSetEffort:
+case !hasEffort && shouldSetEffort:
 			mergedOptions["effort"] = model.ModelCfg.ReasoningEffort
 		case !hasThink && model.ModelCfg.Think:
 			mergedOptions["thinking"] = map[string]any{"budget_tokens": 2000}
@@ -554,7 +554,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		extraBody := make(map[string]any)
 
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
-		if !hasReasoningEffort && shouldSetEffort {
+if !hasReasoningEffort && shouldSetEffort {
 			switch providerCfg.ID {
 			case string(catwalk.InferenceProviderIoNet):
 				extraBody["reasoning"] = map[string]string{"effort": model.ModelCfg.ReasoningEffort}
