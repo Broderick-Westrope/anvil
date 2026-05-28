@@ -18,6 +18,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -53,11 +54,12 @@ func (s *ClientSession) Close() error {
 }
 
 var (
-	sessions = csync.NewMap[string, *ClientSession]()
-	states   = csync.NewMap[string, ClientInfo]()
-	broker   = pubsub.NewBroker[Event]()
-	initOnce sync.Once
-	initDone = make(chan struct{})
+	sessions  = csync.NewMap[string, *ClientSession]()
+	states    = csync.NewMap[string, ClientInfo]()
+	broker    = pubsub.NewBroker[Event]()
+	initOnce  sync.Once
+	initDone  = make(chan struct{})
+	dbQueries db.Querier // Set during Initialize, used for OAuth token storage.
 )
 
 // State represents the current state of an MCP client
@@ -163,7 +165,8 @@ func Close(ctx context.Context) error {
 }
 
 // Initialize initializes MCP clients based on the provided configuration.
-func Initialize(ctx context.Context, permissions permission.Service, cfg *config.ConfigStore) {
+func Initialize(ctx context.Context, permissions permission.Service, cfg *config.ConfigStore, queries db.Querier) {
+	dbQueries = queries
 	slog.Info("Initializing MCP clients")
 	var wg sync.WaitGroup
 	// Initialize states for all configured MCPs
@@ -194,7 +197,7 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 				}
 			}()
 
-			if err := initClient(ctx, cfg, name, m, cfg.Resolver()); err != nil {
+			if err := initClient(ctx, cfg, name, m, cfg.Resolver(), queries); err != nil {
 				slog.Debug("Failed to initialize MCP client", "name", name, "error", err)
 			}
 		}(name, m)
@@ -215,7 +218,7 @@ func WaitForInit(ctx context.Context) error {
 }
 
 // InitializeSingle initializes a single MCP client by name.
-func InitializeSingle(ctx context.Context, name string, cfg *config.ConfigStore) error {
+func InitializeSingle(ctx context.Context, name string, cfg *config.ConfigStore, queries db.Querier) error {
 	m, exists := cfg.Config().MCP[name]
 	if !exists {
 		return fmt.Errorf("mcp '%s' not found in configuration", name)
@@ -227,16 +230,16 @@ func InitializeSingle(ctx context.Context, name string, cfg *config.ConfigStore)
 		return nil
 	}
 
-	return initClient(ctx, cfg, name, m, cfg.Resolver())
+	return initClient(ctx, cfg, name, m, cfg.Resolver(), queries)
 }
 
 // initClient initializes a single MCP client with the given configuration.
-func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m config.MCPConfig, resolver config.VariableResolver) error {
+func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m config.MCPConfig, resolver config.VariableResolver, queries db.Querier) error {
 	// Set initial starting state.
 	updateState(name, StateStarting, nil, nil, Counts{})
 
 	// createSession handles its own timeout internally.
-	session, err := createSession(ctx, name, m, resolver)
+	session, err := createSession(ctx, name, m, resolver, queries)
 	if err != nil {
 		return err
 	}
@@ -294,6 +297,13 @@ func DisableSingle(cfg *config.ConfigStore, name string) error {
 }
 
 func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string) (*ClientSession, error) {
+	// Wait for Initialize to finish so dbQueries is safe to read.
+	select {
+	case <-initDone:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	sess, ok := sessions.Get(name)
 	if !ok {
 		return nil, fmt.Errorf("mcp '%s' not available", name)
@@ -311,7 +321,7 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 	}
 	updateState(name, StateError, maybeTimeoutErr(err, timeout), nil, state.Counts)
 
-	sess, err = createSession(ctx, name, m, cfg.Resolver())
+	sess, err = createSession(ctx, name, m, cfg.Resolver(), dbQueries)
 	if err != nil {
 		return nil, err
 	}
@@ -348,12 +358,12 @@ func updateState(name string, state State, err error, client *ClientSession, cou
 	})
 }
 
-func createSession(ctx context.Context, name string, m config.MCPConfig, resolver config.VariableResolver) (*ClientSession, error) {
+func createSession(ctx context.Context, name string, m config.MCPConfig, resolver config.VariableResolver, queries db.Querier) (*ClientSession, error) {
 	timeout := mcpTimeout(m)
 	mcpCtx, cancel := context.WithCancel(ctx)
 	cancelTimer := time.AfterFunc(timeout, cancel)
 
-	transport, err := createTransport(mcpCtx, m, resolver)
+	transport, err := createTransport(mcpCtx, name, m, resolver, queries)
 	if err != nil {
 		updateState(name, StateError, err, nil, Counts{})
 		slog.Error("Error creating MCP client", "error", err, "name", name)
@@ -437,7 +447,7 @@ func maybeTimeoutErr(err error, timeout time.Duration) error {
 	return err
 }
 
-func createTransport(ctx context.Context, m config.MCPConfig, resolver config.VariableResolver) (mcp.Transport, error) {
+func createTransport(ctx context.Context, name string, m config.MCPConfig, resolver config.VariableResolver, queries db.Querier) (mcp.Transport, error) {
 	switch m.Type {
 	case config.MCPStdio:
 		command, err := resolver.ResolveValue(m.Command)
@@ -477,10 +487,14 @@ func createTransport(ctx context.Context, m config.MCPConfig, resolver config.Va
 				headers: headers,
 			},
 		}
-		return &mcp.StreamableClientTransport{
+		transport := &mcp.StreamableClientTransport{
 			Endpoint:   url,
 			HTTPClient: client,
-		}, nil
+		}
+		if m.Auth == config.MCPAuthOAuth && queries != nil {
+			transport.OAuthHandler = NewStoredTokenHandler(name, queries)
+		}
+		return transport, nil
 	case config.MCPSSE:
 		url, err := m.ResolvedURL(resolver)
 		if err != nil {
@@ -493,10 +507,18 @@ func createTransport(ctx context.Context, m config.MCPConfig, resolver config.Va
 		if err != nil {
 			return nil, err
 		}
+		var rt http.RoundTripper
+		if m.Auth == config.MCPAuthOAuth && queries != nil {
+			rt = &oauthRoundTripper{
+				serverName: name,
+				queries:    queries,
+				headers:    headers,
+			}
+		} else {
+			rt = &headerRoundTripper{headers: headers}
+		}
 		client := &http.Client{
-			Transport: &headerRoundTripper{
-				headers: headers,
-			},
+			Transport: rt,
 		}
 		return &mcp.SSEClientTransport{
 			Endpoint:   url,
@@ -512,6 +534,7 @@ type headerRoundTripper struct {
 }
 
 func (rt headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
 	for k, v := range rt.headers {
 		req.Header.Set(k, v)
 	}

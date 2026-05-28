@@ -77,6 +77,10 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		return nil, fmt.Errorf("invalid hook configuration: %w", err)
 	}
 
+	if err := cfg.ValidateMCPAuth(); err != nil {
+		return nil, fmt.Errorf("invalid MCP auth configuration: %w", err)
+	}
+
 	if !isInsideWorktree() {
 		const depth = 2
 		const items = 100
@@ -294,7 +298,8 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 							"Skipping Anthropic provider — no OAuth credentials or "+
 								"API key found. Run `claude /login` to authenticate, "+
 								"or set ANTHROPIC_API_KEY.",
-							"provider", p.ID)
+							"provider", p.ID,
+						)
 						c.Providers.Del(string(p.ID))
 					}
 					continue
@@ -1042,6 +1047,47 @@ func (c *Config) ValidateHooks() error {
 			if _, err := regexp.Compile(h.Matcher); err != nil {
 				return fmt.Errorf("hook %s[%d]: invalid matcher regex %q: %w", event, i, h.Matcher, err)
 			}
+		}
+	}
+	return nil
+}
+
+// ValidateMCPAuth checks that every MCP server's auth configuration is
+// consistent: unknown auth types are rejected, OAuth is only allowed on
+// HTTP/SSE transports, and OAuth fields don't coexist with an explicit
+// Authorization header.
+func (c *Config) ValidateMCPAuth() error {
+	for name, m := range c.MCP {
+		switch m.Auth {
+		case MCPAuthNone:
+			// No auth — but OAuth-specific fields without auth are an
+			// error so the user doesn't accidentally misconfigure.
+			if m.ClientID != "" || m.ClientSecret != "" {
+				return fmt.Errorf("mcp %q: clientId/clientSecret require auth: \"oauth\"", name)
+			}
+
+		case MCPAuthOAuth:
+			// OAuth is only valid for HTTP/SSE transports.
+			if m.Type == MCPStdio {
+				return fmt.Errorf("mcp %q: auth \"oauth\" is not supported for stdio servers", name)
+			}
+
+			if m.URL == "" {
+				return fmt.Errorf("mcp %q: auth \"oauth\" requires a non-empty url", name)
+			}
+
+			// Reject an explicit Authorization header alongside OAuth
+			// — they would conflict at runtime.
+			for k := range m.Headers {
+				if strings.EqualFold(k, "Authorization") {
+					return fmt.Errorf(
+						"mcp %q: auth \"oauth\" cannot be combined with an Authorization header", name,
+					)
+				}
+			}
+
+		default:
+			return fmt.Errorf("mcp %q: unknown auth type %q", name, m.Auth)
 		}
 	}
 	return nil

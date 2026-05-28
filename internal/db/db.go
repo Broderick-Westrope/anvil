@@ -36,6 +36,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteFileStmt, err = db.PrepareContext(ctx, deleteFile); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteFile: %w", err)
 	}
+	if q.deleteMCPOAuthClientStmt, err = db.PrepareContext(ctx, deleteMCPOAuthClient); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteMCPOAuthClient: %w", err)
+	}
+	if q.deleteMCPOAuthTokenStmt, err = db.PrepareContext(ctx, deleteMCPOAuthToken); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteMCPOAuthToken: %w", err)
+	}
 	if q.deleteMessageStmt, err = db.PrepareContext(ctx, deleteMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteMessage: %w", err)
 	}
@@ -71,6 +77,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getLastSessionStmt, err = db.PrepareContext(ctx, getLastSession); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLastSession: %w", err)
+	}
+	if q.getMCPOAuthClientStmt, err = db.PrepareContext(ctx, getMCPOAuthClient); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMCPOAuthClient: %w", err)
+	}
+	if q.getMCPOAuthTokenStmt, err = db.PrepareContext(ctx, getMCPOAuthToken); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMCPOAuthToken: %w", err)
 	}
 	if q.getMessageStmt, err = db.PrepareContext(ctx, getMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMessage: %w", err)
@@ -147,6 +159,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateSessionTitleAndUsageStmt, err = db.PrepareContext(ctx, updateSessionTitleAndUsage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSessionTitleAndUsage: %w", err)
 	}
+	if q.upsertMCPOAuthClientStmt, err = db.PrepareContext(ctx, upsertMCPOAuthClient); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertMCPOAuthClient: %w", err)
+	}
+	if q.upsertMCPOAuthTokenStmt, err = db.PrepareContext(ctx, upsertMCPOAuthToken); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertMCPOAuthToken: %w", err)
+	}
 	return &q, nil
 }
 
@@ -170,6 +188,16 @@ func (q *Queries) Close() error {
 	if q.deleteFileStmt != nil {
 		if cerr := q.deleteFileStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteFileStmt: %w", cerr)
+		}
+	}
+	if q.deleteMCPOAuthClientStmt != nil {
+		if cerr := q.deleteMCPOAuthClientStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteMCPOAuthClientStmt: %w", cerr)
+		}
+	}
+	if q.deleteMCPOAuthTokenStmt != nil {
+		if cerr := q.deleteMCPOAuthTokenStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteMCPOAuthTokenStmt: %w", cerr)
 		}
 	}
 	if q.deleteMessageStmt != nil {
@@ -230,6 +258,16 @@ func (q *Queries) Close() error {
 	if q.getLastSessionStmt != nil {
 		if cerr := q.getLastSessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getLastSessionStmt: %w", cerr)
+		}
+	}
+	if q.getMCPOAuthClientStmt != nil {
+		if cerr := q.getMCPOAuthClientStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMCPOAuthClientStmt: %w", cerr)
+		}
+	}
+	if q.getMCPOAuthTokenStmt != nil {
+		if cerr := q.getMCPOAuthTokenStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMCPOAuthTokenStmt: %w", cerr)
 		}
 	}
 	if q.getMessageStmt != nil {
@@ -357,6 +395,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateSessionTitleAndUsageStmt: %w", cerr)
 		}
 	}
+	if q.upsertMCPOAuthClientStmt != nil {
+		if cerr := q.upsertMCPOAuthClientStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertMCPOAuthClientStmt: %w", cerr)
+		}
+	}
+	if q.upsertMCPOAuthTokenStmt != nil {
+		if cerr := q.upsertMCPOAuthTokenStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertMCPOAuthTokenStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -400,6 +448,8 @@ type Queries struct {
 	createMessageStmt              *sql.Stmt
 	createSessionStmt              *sql.Stmt
 	deleteFileStmt                 *sql.Stmt
+	deleteMCPOAuthClientStmt       *sql.Stmt
+	deleteMCPOAuthTokenStmt        *sql.Stmt
 	deleteMessageStmt              *sql.Stmt
 	deleteSessionStmt              *sql.Stmt
 	deleteSessionFilesStmt         *sql.Stmt
@@ -412,6 +462,8 @@ type Queries struct {
 	getFileReadStmt                *sql.Stmt
 	getHourDayHeatmapStmt          *sql.Stmt
 	getLastSessionStmt             *sql.Stmt
+	getMCPOAuthClientStmt          *sql.Stmt
+	getMCPOAuthTokenStmt           *sql.Stmt
 	getMessageStmt                 *sql.Stmt
 	getMessageChildrenStmt         *sql.Stmt
 	getRecentActivityStmt          *sql.Stmt
@@ -437,6 +489,8 @@ type Queries struct {
 	updateSessionStmt              *sql.Stmt
 	updateSessionLeafStmt          *sql.Stmt
 	updateSessionTitleAndUsageStmt *sql.Stmt
+	upsertMCPOAuthClientStmt       *sql.Stmt
+	upsertMCPOAuthTokenStmt        *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -447,6 +501,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createMessageStmt:              q.createMessageStmt,
 		createSessionStmt:              q.createSessionStmt,
 		deleteFileStmt:                 q.deleteFileStmt,
+		deleteMCPOAuthClientStmt:       q.deleteMCPOAuthClientStmt,
+		deleteMCPOAuthTokenStmt:        q.deleteMCPOAuthTokenStmt,
 		deleteMessageStmt:              q.deleteMessageStmt,
 		deleteSessionStmt:              q.deleteSessionStmt,
 		deleteSessionFilesStmt:         q.deleteSessionFilesStmt,
@@ -459,6 +515,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getFileReadStmt:                q.getFileReadStmt,
 		getHourDayHeatmapStmt:          q.getHourDayHeatmapStmt,
 		getLastSessionStmt:             q.getLastSessionStmt,
+		getMCPOAuthClientStmt:          q.getMCPOAuthClientStmt,
+		getMCPOAuthTokenStmt:           q.getMCPOAuthTokenStmt,
 		getMessageStmt:                 q.getMessageStmt,
 		getMessageChildrenStmt:         q.getMessageChildrenStmt,
 		getRecentActivityStmt:          q.getRecentActivityStmt,
@@ -484,5 +542,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		updateSessionStmt:              q.updateSessionStmt,
 		updateSessionLeafStmt:          q.updateSessionLeafStmt,
 		updateSessionTitleAndUsageStmt: q.updateSessionTitleAndUsageStmt,
+		upsertMCPOAuthClientStmt:       q.upsertMCPOAuthClientStmt,
+		upsertMCPOAuthTokenStmt:        q.upsertMCPOAuthTokenStmt,
 	}
 }

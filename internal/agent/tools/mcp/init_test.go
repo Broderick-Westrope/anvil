@@ -70,7 +70,7 @@ func TestCreateTransport_URLResolution(t *testing.T) {
 			Type: config.MCPHttp,
 			URL:  "https://$MCP_HOST/api",
 		}
-		tr, err := createTransport(t.Context(), m, shell)
+		tr, err := createTransport(t.Context(), "", m, shell, nil)
 		require.NoError(t, err)
 		require.NotNil(t, tr)
 		sct, ok := tr.(*mcp.StreamableClientTransport)
@@ -84,7 +84,7 @@ func TestCreateTransport_URLResolution(t *testing.T) {
 			Type: config.MCPSSE,
 			URL:  "https://$(echo mcp.example.com)/events",
 		}
-		tr, err := createTransport(t.Context(), m, shell)
+		tr, err := createTransport(t.Context(), "", m, shell, nil)
 		require.NoError(t, err)
 		sse, ok := tr.(*mcp.SSEClientTransport)
 		require.True(t, ok, "expected SSEClientTransport, got %T", tr)
@@ -101,7 +101,7 @@ func TestCreateTransport_URLResolution(t *testing.T) {
 			Type: config.MCPHttp,
 			URL:  "https://$(false)/api",
 		}
-		tr, err := createTransport(t.Context(), m, shellResolverWithPath(t, nil))
+		tr, err := createTransport(t.Context(), "", m, shellResolverWithPath(t, nil), nil)
 		require.Error(t, err)
 		require.Nil(t, tr)
 		require.Contains(t, err.Error(), "url:")
@@ -120,7 +120,7 @@ func TestCreateTransport_URLResolution(t *testing.T) {
 			Type: config.MCPHttp,
 			URL:  "https://$MCP_MISSING_HOST/api",
 		}
-		tr, err := createTransport(t.Context(), m, shell)
+		tr, err := createTransport(t.Context(), "", m, shell, nil)
 		require.NoError(t, err)
 		sct, ok := tr.(*mcp.StreamableClientTransport)
 		require.True(t, ok)
@@ -133,7 +133,7 @@ func TestCreateTransport_URLResolution(t *testing.T) {
 			Type: config.MCPSSE,
 			URL:  "https://$(false)/events",
 		}
-		tr, err := createTransport(t.Context(), m, shell)
+		tr, err := createTransport(t.Context(), "", m, shell, nil)
 		require.Error(t, err)
 		require.Nil(t, tr)
 		require.Contains(t, err.Error(), "url:")
@@ -149,7 +149,7 @@ func TestCreateTransport_URLResolution(t *testing.T) {
 			Type: config.MCPHttp,
 			URL:  "${MCP_EMPTY:-}",
 		}
-		tr, err := createTransport(t.Context(), m, shell)
+		tr, err := createTransport(t.Context(), "", m, shell, nil)
 		require.Error(t, err)
 		require.Nil(t, tr)
 		require.Contains(t, err.Error(), "non-empty 'url'")
@@ -161,7 +161,7 @@ func TestCreateTransport_URLResolution(t *testing.T) {
 		// expansion, no error on unset vars.
 		tmpl := "https://$MCP_MISSING_HOST/api"
 		m := config.MCPConfig{Type: config.MCPHttp, URL: tmpl}
-		tr, err := createTransport(t.Context(), m, config.IdentityResolver())
+		tr, err := createTransport(t.Context(), "", m, config.IdentityResolver(), nil)
 		require.NoError(t, err)
 		sct, ok := tr.(*mcp.StreamableClientTransport)
 		require.True(t, ok)
@@ -192,7 +192,7 @@ func TestCreateTransport_StdioResolution(t *testing.T) {
 				"REFERENCE": "$MY_TOKEN",
 			},
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.NoError(t, err)
 		require.NotNil(t, tr)
 
@@ -218,7 +218,7 @@ func TestCreateTransport_StdioResolution(t *testing.T) {
 			Command: "forgejo-mcp",
 			Env:     map[string]string{"TOKEN": "$(false)"},
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.Error(t, err)
 		require.Nil(t, tr)
 		require.Contains(t, err.Error(), "env TOKEN")
@@ -237,7 +237,7 @@ func TestCreateTransport_StdioResolution(t *testing.T) {
 			Command: "forgejo-mcp",
 			Env:     map[string]string{"FORGEJO_ACCESS_TOKEN": "$(exit 5)"},
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.Error(t, err)
 		require.Nil(t, tr)
 		require.Contains(t, err.Error(), "env FORGEJO_ACCESS_TOKEN")
@@ -258,7 +258,7 @@ func TestCreateTransport_StdioResolution(t *testing.T) {
 			Command: "forgejo-mcp",
 			Env:     map[string]string{"FORGEJO_ACCESS_TOKEN": "$FORGEJO_TOKEN_UNSET"},
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.NoError(t, err)
 		ct, ok := tr.(*mcp.CommandTransport)
 		require.True(t, ok)
@@ -273,7 +273,7 @@ func TestCreateTransport_StdioResolution(t *testing.T) {
 			Command: "forgejo-mcp",
 			Args:    []string{"--token", "$(false)"},
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.Error(t, err)
 		require.Nil(t, tr)
 		require.Contains(t, err.Error(), "arg 1")
@@ -286,7 +286,7 @@ func TestCreateTransport_StdioResolution(t *testing.T) {
 			Type:    config.MCPStdio,
 			Command: "$(false)",
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.Error(t, err)
 		require.Nil(t, tr)
 		require.Contains(t, err.Error(), "invalid mcp command")
@@ -301,7 +301,7 @@ func TestCreateTransport_StdioResolution(t *testing.T) {
 			Args:    []string{"--token", "$MCP_MISSING"},
 			Env:     map[string]string{"TOKEN": "$(vault read -f token)"},
 		}
-		tr, err := createTransport(t.Context(), m, config.IdentityResolver())
+		tr, err := createTransport(t.Context(), "", m, config.IdentityResolver(), nil)
 		require.NoError(t, err)
 		ct, ok := tr.(*mcp.CommandTransport)
 		require.True(t, ok)
@@ -329,7 +329,7 @@ func TestCreateTransport_HeadersResolution(t *testing.T) {
 				"X-Static":      "kept",
 			},
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.NoError(t, err)
 
 		sct, ok := tr.(*mcp.StreamableClientTransport)
@@ -350,7 +350,7 @@ func TestCreateTransport_HeadersResolution(t *testing.T) {
 			URL:     "https://mcp.example.com/api",
 			Headers: map[string]string{"Authorization": "$(false)"},
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.Error(t, err)
 		require.Nil(t, tr)
 		require.Contains(t, err.Error(), "header Authorization")
@@ -368,7 +368,7 @@ func TestCreateTransport_HeadersResolution(t *testing.T) {
 			URL:     "https://mcp.example.com/events",
 			Headers: map[string]string{"Authorization": "$(false)"},
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.Error(t, err)
 		require.Nil(t, tr)
 		require.Contains(t, err.Error(), "header Authorization")
@@ -388,7 +388,7 @@ func TestCreateTransport_HeadersResolution(t *testing.T) {
 			URL:     "https://mcp.example.com/events",
 			Headers: map[string]string{"Authorization": "$MISSING_TOKEN"},
 		}
-		tr, err := createTransport(t.Context(), m, r)
+		tr, err := createTransport(t.Context(), "", m, r, nil)
 		require.NoError(t, err)
 		sse, ok := tr.(*mcp.SSEClientTransport)
 		require.True(t, ok)
@@ -396,6 +396,94 @@ func TestCreateTransport_HeadersResolution(t *testing.T) {
 		require.True(t, ok)
 		require.NotContains(t, rt.headers, "Authorization")
 	})
+}
+
+// TestCreateTransport_HTTPWithOAuth verifies that when config has
+// Auth: MCPAuthOAuth and a non-nil querier, the returned
+// StreamableClientTransport has OAuthHandler set.
+func TestCreateTransport_HTTPWithOAuth(t *testing.T) {
+	t.Parallel()
+
+	queries := setupTestDB(t)
+	shell := config.NewShellVariableResolver(env.NewFromMap(map[string]string{}))
+
+	m := config.MCPConfig{
+		Type: config.MCPHttp,
+		URL:  "https://mcp.example.com/api",
+		Auth: config.MCPAuthOAuth,
+	}
+	tr, err := createTransport(t.Context(), "oauth-http", m, shell, queries)
+	require.NoError(t, err)
+
+	sct, ok := tr.(*mcp.StreamableClientTransport)
+	require.True(t, ok, "expected StreamableClientTransport, got %T", tr)
+	require.NotNil(t, sct.OAuthHandler, "OAuthHandler must be set for OAuth config")
+	_, ok = sct.OAuthHandler.(*StoredTokenHandler)
+	require.True(t, ok, "expected *StoredTokenHandler, got %T", sct.OAuthHandler)
+}
+
+// TestCreateTransport_HTTPWithOAuth_NilQueries verifies that when
+// queries is nil, OAuthHandler is not set even if Auth is MCPAuthOAuth.
+func TestCreateTransport_HTTPWithOAuth_NilQueries(t *testing.T) {
+	t.Parallel()
+
+	shell := config.NewShellVariableResolver(env.NewFromMap(map[string]string{}))
+
+	m := config.MCPConfig{
+		Type: config.MCPHttp,
+		URL:  "https://mcp.example.com/api",
+		Auth: config.MCPAuthOAuth,
+	}
+	tr, err := createTransport(t.Context(), "oauth-http-nil", m, shell, nil)
+	require.NoError(t, err)
+
+	sct, ok := tr.(*mcp.StreamableClientTransport)
+	require.True(t, ok, "expected StreamableClientTransport, got %T", tr)
+	require.Nil(t, sct.OAuthHandler, "OAuthHandler must be nil when queries is nil")
+}
+
+// TestCreateTransport_SSEWithOAuth verifies that when config has
+// Auth: MCPAuthOAuth and a non-nil querier, the SSE transport uses
+// oauthRoundTripper instead of headerRoundTripper.
+func TestCreateTransport_SSEWithOAuth(t *testing.T) {
+	t.Parallel()
+
+	queries := setupTestDB(t)
+	shell := config.NewShellVariableResolver(env.NewFromMap(map[string]string{}))
+
+	m := config.MCPConfig{
+		Type: config.MCPSSE,
+		URL:  "https://mcp.example.com/events",
+		Auth: config.MCPAuthOAuth,
+	}
+	tr, err := createTransport(t.Context(), "oauth-sse", m, shell, queries)
+	require.NoError(t, err)
+
+	sse, ok := tr.(*mcp.SSEClientTransport)
+	require.True(t, ok, "expected SSEClientTransport, got %T", tr)
+	_, ok = sse.HTTPClient.Transport.(*oauthRoundTripper)
+	require.True(t, ok, "expected *oauthRoundTripper, got %T", sse.HTTPClient.Transport)
+}
+
+// TestCreateTransport_SSEWithOAuth_NilQueries verifies that when
+// queries is nil, the SSE transport falls back to headerRoundTripper.
+func TestCreateTransport_SSEWithOAuth_NilQueries(t *testing.T) {
+	t.Parallel()
+
+	shell := config.NewShellVariableResolver(env.NewFromMap(map[string]string{}))
+
+	m := config.MCPConfig{
+		Type: config.MCPSSE,
+		URL:  "https://mcp.example.com/events",
+		Auth: config.MCPAuthOAuth,
+	}
+	tr, err := createTransport(t.Context(), "oauth-sse-nil", m, shell, nil)
+	require.NoError(t, err)
+
+	sse, ok := tr.(*mcp.SSEClientTransport)
+	require.True(t, ok, "expected SSEClientTransport, got %T", tr)
+	_, ok = sse.HTTPClient.Transport.(*headerRoundTripper)
+	require.True(t, ok, "expected *headerRoundTripper, got %T", sse.HTTPClient.Transport)
 }
 
 // TestCreateSession_ResolutionFailureUpdatesState pins the user-visible
@@ -511,7 +599,7 @@ func TestCreateSession_ResolutionFailureUpdatesState(t *testing.T) {
 			states.Del(tc.mcpName)
 			t.Cleanup(func() { states.Del(tc.mcpName) })
 
-			sess, err := createSession(t.Context(), tc.mcpName, tc.cfg, r)
+			sess, err := createSession(t.Context(), tc.mcpName, tc.cfg, r, nil)
 			require.Error(t, err)
 			require.Nil(t, sess)
 			require.Contains(t, err.Error(), tc.wantErrContains)

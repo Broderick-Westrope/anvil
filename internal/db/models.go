@@ -18,6 +18,29 @@ type File struct {
 	UpdatedAt int64  `json:"updated_at"`
 }
 
+type McpOauthClient struct {
+	ServerName   string         `json:"server_name"`
+	ServerUrl    string         `json:"server_url"`
+	ClientID     string         `json:"client_id"`
+	ClientSecret sql.NullString `json:"client_secret"`
+	CreatedAt    int64          `json:"created_at"`
+}
+
+type McpOauthToken struct {
+	ServerName    string         `json:"server_name"`
+	ServerUrl     string         `json:"server_url"`
+	AccessToken   string         `json:"access_token"`
+	RefreshToken  sql.NullString `json:"refresh_token"`
+	TokenType     string         `json:"token_type"`
+	Expiry        sql.NullInt64  `json:"expiry"`
+	Scopes        sql.NullString `json:"scopes"`
+	TokenEndpoint sql.NullString `json:"token_endpoint"`
+	ClientID      string         `json:"client_id"`
+	ClientSecret  sql.NullString `json:"client_secret"`
+	CreatedAt     int64          `json:"created_at"`
+	UpdatedAt     int64          `json:"updated_at"`
+}
+
 type Message struct {
 	ID              string         `json:"id"`
 	SessionID       string         `json:"session_id"`

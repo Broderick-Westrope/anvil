@@ -14,6 +14,8 @@ type Querier interface {
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	DeleteFile(ctx context.Context, id string) error
+	DeleteMCPOAuthClient(ctx context.Context, serverName string) error
+	DeleteMCPOAuthToken(ctx context.Context, serverName string) error
 	DeleteMessage(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionFiles(ctx context.Context, sessionID string) error
@@ -26,6 +28,8 @@ type Querier interface {
 	GetFileRead(ctx context.Context, arg GetFileReadParams) (ReadFile, error)
 	GetHourDayHeatmap(ctx context.Context) ([]GetHourDayHeatmapRow, error)
 	GetLastSession(ctx context.Context) (Session, error)
+	GetMCPOAuthClient(ctx context.Context, serverName string) (McpOauthClient, error)
+	GetMCPOAuthToken(ctx context.Context, serverName string) (McpOauthToken, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
 	GetMessageChildren(ctx context.Context, parentID sql.NullString) ([]Message, error)
 	GetRecentActivity(ctx context.Context) ([]GetRecentActivityRow, error)
@@ -51,6 +55,8 @@ type Querier interface {
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
 	UpdateSessionLeaf(ctx context.Context, arg UpdateSessionLeafParams) error
 	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
+	UpsertMCPOAuthClient(ctx context.Context, arg UpsertMCPOAuthClientParams) error
+	UpsertMCPOAuthToken(ctx context.Context, arg UpsertMCPOAuthTokenParams) error
 }
 
 var _ Querier = (*Queries)(nil)

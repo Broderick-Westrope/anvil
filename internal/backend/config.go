@@ -129,7 +129,7 @@ func (b *Backend) EnableDockerMCP(ctx context.Context, workspaceID string) error
 		return err
 	}
 
-	if err := mcptools.InitializeSingle(ctx, config.DockerMCPName, ws.Cfg); err != nil {
+	if err := mcptools.InitializeSingle(ctx, config.DockerMCPName, ws.Cfg, nil); err != nil {
 		disableErr := mcptools.DisableSingle(ws.Cfg, config.DockerMCPName)
 		delete(ws.Cfg.Config().MCP, config.DockerMCPName)
 		return fmt.Errorf("failed to start docker MCP: %w", errors.Join(err, disableErr))

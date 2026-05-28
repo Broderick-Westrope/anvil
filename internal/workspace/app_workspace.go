@@ -403,7 +403,7 @@ func (w *AppWorkspace) EnableDockerMCP(ctx context.Context) error {
 		return err
 	}
 
-	if err := mcptools.InitializeSingle(ctx, config.DockerMCPName, w.store); err != nil {
+	if err := mcptools.InitializeSingle(ctx, config.DockerMCPName, w.store, nil); err != nil {
 		disableErr := mcptools.DisableSingle(w.store, config.DockerMCPName)
 		delete(w.store.Config().MCP, config.DockerMCPName)
 		return fmt.Errorf("failed to start docker MCP: %w", errors.Join(err, disableErr))

@@ -196,6 +196,16 @@ const (
 	MCPHttp  MCPType = "http"
 )
 
+// MCPAuthType identifies the authentication method for an MCP server.
+type MCPAuthType string
+
+const (
+	// MCPAuthNone means no authentication (the default).
+	MCPAuthNone MCPAuthType = ""
+	// MCPAuthOAuth enables OAuth 2.0 authentication for HTTP/SSE servers.
+	MCPAuthOAuth MCPAuthType = "oauth"
+)
+
 type MCPConfig struct {
 	Command       string            `json:"command,omitempty" jsonschema:"description=Command to execute for stdio MCP servers,example=npx"`
 	Env           map[string]string `json:"env,omitempty" jsonschema:"description=Environment variables to set for the MCP server"`
@@ -214,6 +224,13 @@ type MCPConfig struct {
 	// omitted from the outgoing request rather than sent as
 	// "Header:". See PLAN.md Phase 2 design decision #18.
 	Headers map[string]string `json:"headers,omitempty" jsonschema:"description=HTTP headers for HTTP/SSE MCP servers"`
+
+	// Auth selects the authentication method. Only "oauth" is
+	// supported and only for HTTP/SSE servers.
+	Auth         MCPAuthType `json:"auth,omitempty" jsonschema:"description=Authentication method for HTTP/SSE MCP servers,enum=oauth"`
+	ClientID     string      `json:"clientId,omitempty" jsonschema:"description=OAuth client ID for pre-registered clients"`
+	ClientSecret string      `json:"clientSecret,omitempty" jsonschema:"description=OAuth client secret (supports shell expansion via $VAR or $(cmd))"`
+	Scopes       []string    `json:"scopes,omitempty" jsonschema:"description=OAuth scopes to request during authorization"`
 }
 
 type LSPConfig struct {
@@ -376,6 +393,20 @@ func (m MCPConfig) ResolvedURL(r VariableResolver) (string, error) {
 	v, err := r.ResolveValue(m.URL)
 	if err != nil {
 		return "", fmt.Errorf("url: %w", err)
+	}
+	return v, nil
+}
+
+// ResolvedClientSecret returns m.ClientSecret expanded through the
+// given resolver. An empty ClientSecret short-circuits without
+// calling the resolver. See ResolvedURL for the expansion contract.
+func (m MCPConfig) ResolvedClientSecret(r VariableResolver) (string, error) {
+	if m.ClientSecret == "" {
+		return "", nil
+	}
+	v, err := r.ResolveValue(m.ClientSecret)
+	if err != nil {
+		return "", fmt.Errorf("clientSecret: %w", err)
 	}
 	return v, nil
 }

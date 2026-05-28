@@ -685,6 +685,10 @@ func (s *ConfigStore) ReloadFromDisk(ctx context.Context) error {
 		return fmt.Errorf("invalid hook configuration on reload: %w", err)
 	}
 
+	if err := cfg.ValidateMCPAuth(); err != nil {
+		return fmt.Errorf("invalid MCP auth configuration on reload: %w", err)
+	}
+
 	// Preserve runtime overrides
 	overrides := s.overrides
 
