@@ -462,6 +462,12 @@ func (t *baseToolMessageItem) ToggleExpanded() bool {
 	return t.expandedContent
 }
 
+// SetExpandedContent explicitly sets the expanded content state.
+func (t *baseToolMessageItem) SetExpandedContent(expanded bool) {
+	t.expandedContent = expanded
+	t.clearCache()
+}
+
 // ToolDrillIn returns this item as a ToolMessageItem for drill-in navigation.
 func (t *baseToolMessageItem) ToolDrillIn() ToolMessageItem {
 	return t

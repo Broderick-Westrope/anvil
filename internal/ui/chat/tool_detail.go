@@ -17,30 +17,22 @@ var _ list.Item = (*ToolDetailItem)(nil)
 // ToolDetailItem renders a full detail view for a tool call, shown when
 // the user drills into a compact tool item.
 type ToolDetailItem struct {
-	sty              *styles.Styles
-	sourceItem       ToolMessageItem
-	sourceWasCompact bool
-	cachedRender     string
-	cachedWidth      int
-	lastStatus       ToolStatus
-	lastToolCall     message.ToolCall
-	lastResultVer    uint64
+	sty           *styles.Styles
+	sourceItem    ToolMessageItem
+	cachedRender  string
+	cachedWidth   int
+	lastStatus    ToolStatus
+	lastToolCall  message.ToolCall
+	lastResultVer uint64
 }
 
 // NewToolDetailItem creates a new ToolDetailItem backed by the given
 // source tool item.
 func NewToolDetailItem(sty *styles.Styles, source ToolMessageItem) *ToolDetailItem {
-	// Track whether the source was compact so we can restore it after
-	// rendering the full output.
-	var wasCompact bool
-	if c, ok := source.(interface{ IsCompact() bool }); ok {
-		wasCompact = c.IsCompact()
-	}
 	return &ToolDetailItem{
-		sty:              sty,
-		sourceItem:       source,
-		sourceWasCompact: wasCompact,
-		lastStatus:       ToolStatus(-1),
+		sty:        sty,
+		sourceItem: source,
+		lastStatus: ToolStatus(-1),
 	}
 }
 
@@ -160,58 +152,49 @@ func (d *ToolDetailItem) renderInput(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// detailRenderConfigurable groups the optional methods on a tool item that
+// the drill-in detail view needs to configure before rendering. Implemented
+// by baseToolMessageItem via embedding.
+type detailRenderConfigurable interface {
+	SetCompact(bool)
+	SetExpandedContent(bool)
+	SetNoTruncate(bool)
+	IsCompact() bool
+}
+
 // renderOutput renders the output section by temporarily un-compacting the
 // source item and capturing its render.
 func (d *ToolDetailItem) renderOutput(width int) string {
 	header := d.sectionHeader("Output", width)
 
-	// Temporarily set compact=false and expandedContent=true on the source
-	// item to get the full untruncated rendering, then restore original state.
-	needToggleBack := false
-	if expandable, ok := d.sourceItem.(Expandable); ok {
-		// ToggleExpanded returns the new state. If it's now true,
-		// we expanded it and need to toggle back after rendering.
-		// If it was already expanded (returns false after toggle),
-		// toggle it back to expanded before rendering.
-		isNowExpanded := expandable.ToggleExpanded()
-		if !isNowExpanded {
-			// Was expanded, we collapsed it. Toggle back to expanded.
-			expandable.ToggleExpanded()
-		} else {
-			// Was collapsed, we expanded it. Remember to toggle back.
-			needToggleBack = true
+	// Configure the source item for full expanded, non-truncated rendering,
+	// then restore original state after capturing the output.
+	if cfg, ok := d.sourceItem.(detailRenderConfigurable); ok {
+		wasCompact := cfg.IsCompact()
+		cfg.SetCompact(false)
+		cfg.SetExpandedContent(true)
+		cfg.SetNoTruncate(true)
+
+		output := d.sourceItem.RawRender(width)
+
+		cfg.SetNoTruncate(false)
+		cfg.SetExpandedContent(false)
+		cfg.SetCompact(wasCompact)
+
+		// Strip the first line (tool header/summary) since the metadata
+		// section already shows this information.
+		if i := strings.Index(output, "\n"); i >= 0 {
+			output = output[i+1:]
 		}
-	}
-	if compactable, ok := d.sourceItem.(Compactable); ok {
-		compactable.SetCompact(false)
+
+		return header + "\n" + output
 	}
 
-	// Enable NoTruncate so individual lines are not clipped.
-	if nt, ok := d.sourceItem.(interface{ SetNoTruncate(bool) }); ok {
-		nt.SetNoTruncate(true)
-	}
-
+	// Fallback for items that don't implement the configurable interface.
 	output := d.sourceItem.RawRender(width)
-
-	// Restore NoTruncate.
-	if nt, ok := d.sourceItem.(interface{ SetNoTruncate(bool) }); ok {
-		nt.SetNoTruncate(false)
-	}
-	if compactable, ok := d.sourceItem.(Compactable); ok {
-		compactable.SetCompact(d.sourceWasCompact)
-	}
-	if needToggleBack {
-		if expandable, ok := d.sourceItem.(Expandable); ok {
-			expandable.ToggleExpanded()
-		}
-	}
-
-	// Strip the first line (tool header/summary) since the metadata
-	// section already shows this information.
 	if i := strings.Index(output, "\n"); i >= 0 {
 		output = output[i+1:]
 	}
-
 	return header + "\n" + output
 }
 
