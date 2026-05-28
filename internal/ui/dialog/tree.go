@@ -46,8 +46,10 @@ type Tree struct {
 
 	keyMap struct {
 		Select     key.Binding
-		Next       key.Binding
-		Previous   key.Binding
+		Next           key.Binding
+		Previous       key.Binding
+		FilterNext     key.Binding
+		FilterPrevious key.Binding
 		Expand     key.Binding
 		Collapse   key.Binding
 		Close      key.Binding
@@ -407,7 +409,7 @@ func (t *Tree) handleFilterKey(msg tea.KeyPressMsg) Action {
 			}
 		}
 
-	case key.Matches(msg, t.keyMap.Previous):
+	case key.Matches(msg, t.keyMap.FilterPrevious):
 		t.list.Focus()
 		if t.list.IsSelectedFirst() {
 			t.list.SelectLast()
@@ -416,7 +418,7 @@ func (t *Tree) handleFilterKey(msg tea.KeyPressMsg) Action {
 		}
 		t.list.ScrollToSelected()
 
-	case key.Matches(msg, t.keyMap.Next):
+	case key.Matches(msg, t.keyMap.FilterNext):
 		t.list.Focus()
 		if t.list.IsSelectedLast() {
 			t.list.SelectFirst()
