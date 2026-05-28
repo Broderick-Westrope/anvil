@@ -247,6 +247,13 @@ func (a *AgentToolMessageItem) DrillInLabel() string {
 	return agentBreadcrumbLabel(params.SubagentType, params.Description)
 }
 
+// ToolDrillIn shadows baseToolMessageItem — agents use session drill-in, not
+// tool drill-in.
+func (a *AgentToolMessageItem) ToolDrillIn() ToolMessageItem { return nil }
+
+// ToolDrillInLabel shadows baseToolMessageItem — agents use session drill-in.
+func (a *AgentToolMessageItem) ToolDrillInLabel() string { return "" }
+
 // HandleKeyEvent implements [KeyEventHandler]. It handles the → key for
 // drill-in navigation when a child session is available, and delegates other
 // keys to the base handler.
@@ -508,6 +515,14 @@ func (a *AgenticFetchToolMessageItem) DrillInLabel() string {
 	prompt := ansi.Truncate(params.Prompt, 40, "…")
 	return "Fetch: " + prompt
 }
+
+// ToolDrillIn shadows baseToolMessageItem — agentic fetch uses session
+// drill-in, not tool drill-in.
+func (a *AgenticFetchToolMessageItem) ToolDrillIn() ToolMessageItem { return nil }
+
+// ToolDrillInLabel shadows baseToolMessageItem — agentic fetch uses session
+// drill-in.
+func (a *AgenticFetchToolMessageItem) ToolDrillInLabel() string { return "" }
 
 // HandleKeyEvent implements [KeyEventHandler]. It handles the → key for
 // drill-in navigation when a child session is available, and delegates other
