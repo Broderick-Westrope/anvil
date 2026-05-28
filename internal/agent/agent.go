@@ -642,6 +642,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if updateErr != nil {
 			return nil, updateErr
 		}
+		// Ensure the session's leaf pointer is synced and published so
+		// the UI reflects the current position (e.g. branch dialog).
+		// message.Create already advanced the DB leaf, but no session
+		// pubsub event was fired because OnStepFinish never ran.
+		if moveErr := a.sessions.MoveLeaf(ctx, call.SessionID, getLeaf()); moveErr != nil {
+			slog.Warn("Failed to sync session leaf after error", "err", moveErr)
+		}
 		return nil, err
 	}
 

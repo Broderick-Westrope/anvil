@@ -97,36 +97,31 @@ func (s *service) Create(ctx context.Context, sessionID string, params CreateMes
 		MessageType:     msgType,
 	}
 
-	// When a ParentMessageID is provided, atomically create the message
-	// and advance the session's leaf pointer within a transaction.
+	// Atomically create the message and advance the session's leaf
+	// pointer within a transaction. This ensures the leaf always
+	// tracks the latest message, including root messages (the first
+	// message in a session which has no parent).
 	var dbMessage db.Message
-	if params.ParentMessageID != "" {
-		tx, txErr := s.conn.BeginTx(ctx, nil)
-		if txErr != nil {
-			return Message{}, fmt.Errorf("beginning transaction: %w", txErr)
-		}
-		defer tx.Rollback() //nolint:errcheck
+	tx, txErr := s.conn.BeginTx(ctx, nil)
+	if txErr != nil {
+		return Message{}, fmt.Errorf("beginning transaction: %w", txErr)
+	}
+	defer tx.Rollback() //nolint:errcheck
 
-		qtx := s.q.WithTx(tx)
-		dbMessage, err = qtx.CreateMessage(ctx, createParams)
-		if err != nil {
-			return Message{}, err
-		}
-		err = qtx.UpdateSessionLeaf(ctx, db.UpdateSessionLeafParams{
-			ID:     sessionID,
-			LeafID: sql.NullString{String: dbMessage.ID, Valid: true},
-		})
-		if err != nil {
-			return Message{}, fmt.Errorf("advancing leaf: %w", err)
-		}
-		if err = tx.Commit(); err != nil {
-			return Message{}, fmt.Errorf("committing transaction: %w", err)
-		}
-	} else {
-		dbMessage, err = s.q.CreateMessage(ctx, createParams)
-		if err != nil {
-			return Message{}, err
-		}
+	qtx := s.q.WithTx(tx)
+	dbMessage, err = qtx.CreateMessage(ctx, createParams)
+	if err != nil {
+		return Message{}, err
+	}
+	err = qtx.UpdateSessionLeaf(ctx, db.UpdateSessionLeafParams{
+		ID:     sessionID,
+		LeafID: sql.NullString{String: dbMessage.ID, Valid: true},
+	})
+	if err != nil {
+		return Message{}, fmt.Errorf("advancing leaf: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return Message{}, fmt.Errorf("committing transaction: %w", err)
 	}
 
 	message, err := s.fromDBItem(dbMessage)

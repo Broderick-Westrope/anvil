@@ -95,6 +95,15 @@ type (
 		Instructions string
 		Source       string
 	}
+	// ActionNavigateTree is dispatched when a tree or branch dialog
+	// selects a message to navigate to. The receiver uses Role and
+	// Content to decide whether to pre-fill the editor.
+	ActionNavigateTree struct {
+		MessageID       string
+		ParentMessageID string
+		Role            message.MessageRole
+		Content         string
+	}
 )
 
 // Messages for API key input dialog.
