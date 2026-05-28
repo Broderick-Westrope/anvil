@@ -599,7 +599,23 @@ func toolParamList(sty *styles.Styles, params []string, width int) string {
 		}
 	}
 
-	if width >= 0 {
+	if width >= 0 && ansi.StringWidth(output) > width {
+		// Left-truncate the main param if it looks like a file path so
+		// the filename stays visible. The kv pairs suffix (if any) is
+		// then appended and the whole string right-truncated if still
+		// too long.
+		if isLikelyPath(mainParam) && ansi.StringWidth(mainParam) > width {
+			n := ansi.StringWidth(mainParam) - width + 1
+			mainParam = ansi.TruncateLeft(mainParam, n, "…")
+			// Re-assemble with truncated path.
+			output = mainParam
+			if len(kvPairs) > 0 {
+				partsStr := strings.Join(kvPairs, ", ")
+				if remaining := width - lipgloss.Width(partsStr) - 3; remaining >= minSpaceForMainParam {
+					output = fmt.Sprintf("%s (%s)", mainParam, partsStr)
+				}
+			}
+		}
 		output = ansi.Truncate(output, width, "…")
 	}
 	return sty.Tool.ParamMain.Render(output)
