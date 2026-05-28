@@ -425,7 +425,7 @@ func requireNoBump(t *testing.T, name string, item versionedItem, mutate func())
 func TestBaseToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 	t.Parallel()
 
-	sty := styles.CharmtonePantera()
+	sty := styles.TokyoNight()
 	tc := message.ToolCall{ID: "tc-spin", Name: "bash", Input: "{}", Finished: false}
 	item := NewToolMessageItem(&sty, "msg", tc, nil, false)
 	v := item.(versionedItem)
@@ -470,7 +470,7 @@ func TestBaseToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 func TestAgentToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 	t.Parallel()
 
-	sty := styles.CharmtonePantera()
+	sty := styles.TokyoNight()
 	parentTC := message.ToolCall{ID: "agent-parent", Name: "agent", Input: `{}`, Finished: false}
 	parent := NewAgentToolMessageItem(&sty, parentTC, nil, false)
 
@@ -515,7 +515,7 @@ func TestAgentToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 func TestAgenticFetchToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 	t.Parallel()
 
-	sty := styles.CharmtonePantera()
+	sty := styles.TokyoNight()
 	parentTC := message.ToolCall{ID: "fetch-parent", Name: "agentic_fetch", Input: `{}`, Finished: false}
 	parent := NewAgenticFetchToolMessageItem(&sty, parentTC, nil, false)
 
