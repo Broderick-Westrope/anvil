@@ -91,10 +91,7 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Release(cfg.Options.DataDirectory) //nolint:errcheck
 
-	queries, err := db.Prepare(ctx, conn)
-	if err != nil {
-		return fmt.Errorf("failed to prepare database queries: %w", err)
-	}
+	queries := db.New(conn)
 
 	// Check existing auth (unless --force).
 	if !force {
@@ -108,8 +105,12 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Resolve client credentials.
+	// Resolve client credentials. Pre-registered clients (clientId in
+	// config) are used directly. DCR clients are always re-registered
+	// because the ephemeral callback port changes between invocations
+	// and the redirect URI must match what was registered.
 	var clientID, clientSecret string
+	authStyle := oauth2.AuthStyleAutoDetect
 	needDCR := true
 	if mcpCfg.ClientID != "" {
 		clientID = mcpCfg.ClientID
@@ -119,15 +120,6 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 		}
 		clientSecret = resolved
 		needDCR = false
-	} else {
-		storedClient, err := queries.GetMCPOAuthClient(ctx, serverName)
-		if err == nil {
-			clientID = storedClient.ClientID
-			if storedClient.ClientSecret.Valid {
-				clientSecret = storedClient.ClientSecret.String
-			}
-			needDCR = false
-		}
 	}
 
 	// OAuth metadata discovery.
@@ -162,6 +154,7 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 		}
 		clientID = regResp.ClientID
 		clientSecret = regResp.ClientSecret
+		authStyle = authMethodToStyle(regResp.TokenEndpointAuthMethod)
 
 		// Persist DCR credentials.
 		if err := queries.UpsertMCPOAuthClient(ctx, db.UpsertMCPOAuthClientParams{
@@ -199,12 +192,18 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not determine authorization or token endpoint")
 	}
 
+	// Select auth style from ASM metadata when not set by DCR.
+	if authStyle == oauth2.AuthStyleAutoDetect && asm != nil {
+		authStyle = selectTokenAuthMethod(asm.TokenEndpointAuthMethodsSupported)
+	}
+
 	oauthCfg := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		Endpoint: oauth2.Endpoint{
-			AuthURL:  authEndpoint,
-			TokenURL: tokenEndpoint,
+			AuthURL:   authEndpoint,
+			TokenURL:  tokenEndpoint,
+			AuthStyle: authStyle,
 		},
 		RedirectURL: redirectURI,
 		Scopes:      scopes,
@@ -433,4 +432,30 @@ func generateState() (string, error) {
 		return "", fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// selectTokenAuthMethod picks the best token endpoint auth method from
+// the server's supported list, matching the go-sdk's preference order.
+func selectTokenAuthMethod(supported []string) oauth2.AuthStyle {
+	for _, method := range []string{"client_secret_post", "client_secret_basic"} {
+		for _, s := range supported {
+			if s == method {
+				return authMethodToStyle(method)
+			}
+		}
+	}
+	return oauth2.AuthStyleAutoDetect
+}
+
+// authMethodToStyle maps an OAuth token_endpoint_auth_method string to
+// the corresponding oauth2.AuthStyle.
+func authMethodToStyle(method string) oauth2.AuthStyle {
+	switch method {
+	case "client_secret_post", "none":
+		return oauth2.AuthStyleInParams
+	case "client_secret_basic":
+		return oauth2.AuthStyleInHeader
+	default:
+		return oauth2.AuthStyleInHeader
+	}
 }
