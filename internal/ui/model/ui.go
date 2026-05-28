@@ -4377,7 +4377,7 @@ func (m *UI) openBranchDialog() tea.Cmd {
 		return nil
 	}
 
-	d, err := dialog.NewBranch(m.com, m.session.ID, m.session.LeafMessageID)
+	d, err := dialog.NewBranch(m.com, m.session.LeafMessageID)
 	if err != nil {
 		return util.ReportError(err)
 	}
@@ -4458,9 +4458,12 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 			return util.ReportError(err)()
 		}
 
-		msgs, err := ws.GetBranchPath(ctx, targetLeafID)
-		if err != nil {
-			return util.ReportError(err)()
+		var msgs []message.Message
+		if targetLeafID != "" {
+			msgs, err = ws.GetBranchPath(ctx, targetLeafID)
+			if err != nil {
+				return util.ReportError(err)()
+			}
 		}
 
 		return navigateTreeDoneMsg{
@@ -4494,6 +4497,10 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 
 	if cmd := m.setSessionMessages(msg.messages); cmd != nil {
 		cmds = append(cmds, cmd)
+	}
+
+	if len(msg.messages) == 0 {
+		m.lastUserMessageTime = 0
 	}
 
 	// Pre-fill editor for user messages.

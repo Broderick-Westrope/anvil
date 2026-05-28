@@ -30,7 +30,7 @@ type Branch struct {
 }
 
 // NewBranch creates a new Branch dialog for the given session's branch path.
-func NewBranch(com *common.Common, sessionID string, leafMessageID string) (*Branch, error) {
+func NewBranch(com *common.Common, leafMessageID string) (*Branch, error) {
 	branchPath, err := com.Workspace.GetBranchPath(context.TODO(), leafMessageID)
 	if err != nil {
 		return nil, err
