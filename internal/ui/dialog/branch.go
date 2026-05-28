@@ -59,6 +59,7 @@ func NewBranch(com *common.Common, leafMessageID string) (*Branch, error) {
 
 	b.list = list.NewFilterableList(items...)
 	b.list.Focus()
+	b.list.SetSelected(0)
 
 	b.input = textinput.New()
 	b.input.SetVirtualCursor(false)
