@@ -1698,11 +1698,6 @@ func invalidateRunningAgentsInChat(c *Chat) {
 func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.Cmd {
 	var cmds []tea.Cmd
 
-	// Only process messages with tool calls or results.
-	if len(event.Payload.ToolCalls()) == 0 && len(event.Payload.ToolResults()) == 0 {
-		return nil
-	}
-
 	// Check if this is an agent tool session and parse it.
 	childSessionID := event.Payload.SessionID
 	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
@@ -1723,11 +1718,24 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	}
 
 	// Set the child session ID and mark that messages have arrived so the
-	// collapsed stats view and drill-in navigation can activate.
+	// collapsed stats view and drill-in navigation can activate. This runs
+	// for every child message (including text-only ones) so that agents
+	// which never make tool calls still transition out of the pending
+	// state and support drill-in.
 	if da, ok := agentItem.(chat.DrillableAgent); ok {
 		da.SetChildSessionID(childSessionID)
 		da.SetStartedAt(time.Now())
 		da.SetHasChildMessages(true)
+	}
+
+	// Nothing more to do when the message has no tool calls or results.
+	if len(event.Payload.ToolCalls()) == 0 && len(event.Payload.ToolResults()) == 0 {
+		// Start the elapsed-time tick if this is the first child message.
+		if !m.elapsedTickRunning {
+			m.elapsedTickRunning = true
+			cmds = append(cmds, tickElapsedTime())
+		}
+		return tea.Sequence(cmds...)
 	}
 
 	// Get existing nested tools.
