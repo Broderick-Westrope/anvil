@@ -748,6 +748,7 @@ func allToolNames() []string {
 		"lsp_restart",
 		"lsp_symbols",
 		"lsp_definition",
+		"lsp_call_hierarchy",
 		"lsp_rename",
 		"lsp_replace_symbol",
 		"fetch",
@@ -776,6 +777,7 @@ func readOnlyTools() []string {
 		"lsp_references",
 		"lsp_definition",
 		"lsp_symbols",
+		"lsp_call_hierarchy",
 		"sourcegraph",
 	}
 }

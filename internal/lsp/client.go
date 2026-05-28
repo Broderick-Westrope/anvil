@@ -710,3 +710,31 @@ func (c *Client) Definition(ctx context.Context, filepath string, line, characte
 
 	return c.client.RequestDefinition(ctx, filepath, line-1, character-1) //nolint:wrapcheck
 }
+
+// PrepareCallHierarchy prepares a call hierarchy item at the given position.
+func (c *Client) PrepareCallHierarchy(ctx context.Context, filepath string, line, character int) ([]protocol.CallHierarchyItem, error) {
+	if err := c.OpenFileOnDemand(ctx, filepath); err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	return c.client.PrepareCallHierarchy(ctx, filepath, line-1, character-1) //nolint:wrapcheck
+}
+
+// IncomingCalls returns all callers of the given call hierarchy item.
+func (c *Client) IncomingCalls(ctx context.Context, item protocol.CallHierarchyItem) ([]protocol.CallHierarchyIncomingCall, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	return c.client.IncomingCalls(ctx, item) //nolint:wrapcheck
+}
+
+// OutgoingCalls returns all callees of the given call hierarchy item.
+func (c *Client) OutgoingCalls(ctx context.Context, item protocol.CallHierarchyItem) ([]protocol.CallHierarchyOutgoingCall, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	return c.client.OutgoingCalls(ctx, item) //nolint:wrapcheck
+}
