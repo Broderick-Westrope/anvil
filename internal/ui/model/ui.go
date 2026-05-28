@@ -4434,7 +4434,7 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 	// user can re-submit from that point. The ParentMessageID is passed
 	// directly from the dialog to avoid an extra DB fetch.
 	targetLeafID := msg.MessageID
-	if msg.Role == message.User && msg.ParentMessageID != "" {
+	if msg.Role == message.User {
 		targetLeafID = msg.ParentMessageID
 	}
 
@@ -4451,28 +4451,37 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 			return util.ReportError(err)()
 		}
 
-		// Reload the session to get the updated leaf.
+		// Reload the session and branch path in the command (not in
+		// Update) to avoid doing IO in the Bubble Tea update loop.
 		sess, err := ws.GetSession(ctx, sessionID)
 		if err != nil {
 			return util.ReportError(err)()
 		}
 
+		msgs, err := ws.GetBranchPath(ctx, targetLeafID)
+		if err != nil {
+			return util.ReportError(err)()
+		}
+
 		return navigateTreeDoneMsg{
-			session: &sess,
-			leafID:  targetLeafID,
-			content: content,
-			role:    role,
+			session:  &sess,
+			leafID:   targetLeafID,
+			messages: msgs,
+			content:  content,
+			role:     role,
 		}
 	}
 }
 
-// navigateTreeDoneMsg is sent after the leaf pointer has been moved and
-// the session reloaded. The UI handles this to rebuild the chat view.
+// navigateTreeDoneMsg is sent after the leaf pointer has been moved,
+// the session reloaded, and the branch path fetched. All IO happens
+// inside the command; Update only mutates state.
 type navigateTreeDoneMsg struct {
-	session *session.Session
-	leafID  string
-	content string
-	role    message.MessageRole
+	session  *session.Session
+	leafID   string
+	messages []message.Message
+	content  string
+	role     message.MessageRole
 }
 
 // handleNavigateTreeDone rebuilds the chat view after the leaf pointer has
@@ -4483,13 +4492,7 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.session = msg.session
 	m.clearDrillStack()
 
-	// Reload the branch path for the new leaf.
-	msgs, err := m.com.Workspace.GetBranchPath(context.Background(), msg.leafID)
-	if err != nil {
-		return util.ReportError(err)
-	}
-
-	if cmd := m.setSessionMessages(msgs); cmd != nil {
+	if cmd := m.setSessionMessages(msg.messages); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 
