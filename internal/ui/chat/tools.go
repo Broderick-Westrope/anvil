@@ -934,13 +934,17 @@ func formatSize(bytes int) string {
 }
 
 // toolOutputDiffContent renders a diff between old and new content.
-func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent string, width int, expanded bool) string {
+func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent string, width int, expanded, noTruncate bool) string {
 	bodyWidth := width - toolBodyLeftPaddingTotal
 
 	formatter := common.DiffFormatter(sty).
 		Before(file, oldContent).
 		After(file, newContent).
 		Width(bodyWidth)
+
+	if noTruncate {
+		formatter = formatter.NoTruncate()
+	}
 
 	// Use split view for wide terminals.
 	if width > maxTextWidth {
@@ -984,13 +988,17 @@ func formatNonZero(value int) string {
 }
 
 // toolOutputMultiEditDiffContent renders a diff with optional failed edits note.
-func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.MultiEditResponseMetadata, totalEdits, width int, expanded bool) string {
+func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.MultiEditResponseMetadata, totalEdits, width int, expanded, noTruncate bool) string {
 	bodyWidth := width - toolBodyLeftPaddingTotal
 
 	formatter := common.DiffFormatter(sty).
 		Before(file, meta.OldContent).
 		After(file, meta.NewContent).
 		Width(bodyWidth)
+
+	if noTruncate {
+		formatter = formatter.NoTruncate()
+	}
 
 	// Use split view for wide terminals.
 	if width > maxTextWidth {

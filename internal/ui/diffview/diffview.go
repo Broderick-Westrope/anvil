@@ -46,6 +46,7 @@ type DiffView struct {
 	xOffset         int
 	yOffset         int
 	infiniteYScroll bool
+	noTruncate      bool
 	style           Style
 	tabWidth        int
 	chromaStyle     *chroma.Style
@@ -94,6 +95,12 @@ func (dv *DiffView) Unified() *DiffView {
 // Split sets the layout of the DiffView to split (side-by-side).
 func (dv *DiffView) Split() *DiffView {
 	dv.layout = layoutSplit
+	return dv
+}
+
+// NoTruncate disables line-level truncation so content is not clipped.
+func (dv *DiffView) NoTruncate() *DiffView {
+	dv.noTruncate = true
 	return dv
 }
 
@@ -420,7 +427,9 @@ func (dv *DiffView) renderUnified() string {
 		content = strings.TrimSuffix(in, "\n")
 		content = dv.hightlightCode(content, ls.Code.GetBackground())
 		content = ansi.GraphemeWidth.Cut(content, dv.xOffset, len(content))
-		content = ansi.Truncate(content, dv.codeWidth, "…")
+		if !dv.noTruncate {
+			content = ansi.Truncate(content, dv.codeWidth, "…")
+		}
 		leadingEllipsis = dv.xOffset > 0 && strings.TrimSpace(content) != ""
 		return content, leadingEllipsis
 	}
@@ -544,7 +553,9 @@ func (dv *DiffView) renderSplit() string {
 		content = strings.TrimSuffix(in, "\n")
 		content = dv.hightlightCode(content, ls.Code.GetBackground())
 		content = ansi.GraphemeWidth.Cut(content, dv.xOffset, len(content))
-		content = ansi.Truncate(content, dv.codeWidth, "…")
+		if !dv.noTruncate {
+			content = ansi.Truncate(content, dv.codeWidth, "…")
+		}
 		leadingEllipsis = dv.xOffset > 0 && strings.TrimSpace(content) != ""
 		return content, leadingEllipsis
 	}
