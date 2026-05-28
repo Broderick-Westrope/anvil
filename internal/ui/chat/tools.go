@@ -604,7 +604,7 @@ func toolParamList(sty *styles.Styles, params []string, width int) string {
 		// the filename stays visible. The kv pairs suffix (if any) is
 		// then appended and the whole string right-truncated if still
 		// too long.
-		if isLikelyPath(mainParam) && ansi.StringWidth(mainParam) > width {
+		if strings.Contains(mainParam, "/") && ansi.StringWidth(mainParam) > width {
 			n := ansi.StringWidth(mainParam) - width + 1
 			mainParam = ansi.TruncateLeft(mainParam, n, "…")
 			// Re-assemble with truncated path.
