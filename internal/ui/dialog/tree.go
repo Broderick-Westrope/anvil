@@ -440,8 +440,9 @@ func (t *Tree) selectByMessageID(messageID string) {
 }
 
 // selectVisibleParent walks up the original message chain from the
-// given message ID to find the nearest visible ancestor in the
-// flattened list, and selects it.
+// given message ID to find the nearest visible ancestor that is a
+// branch point (has >1 children in the visible tree), and selects it.
+// If no branch ancestor exists, selects the root.
 func (t *Tree) selectVisibleParent(messageID string) {
 	cur := messageID
 	for {
@@ -450,37 +451,44 @@ func (t *Tree) selectVisibleParent(messageID string) {
 			return
 		}
 		cur = orig.ParentMessageID
-		if _, ok := t.nodeMap[cur]; ok {
-			t.selectByMessageID(cur)
-			return
+		if node, ok := t.nodeMap[cur]; ok {
+			if len(node.children) > 1 {
+				t.selectByMessageID(cur)
+				return
+			}
 		}
 	}
 }
 
-// selectNextBranchPointTowardLeaf walks the active path from the given
-// node toward the leaf, stopping at the next visible node that is a
-// branch point (has >1 children) or the leaf itself.
+// selectNextBranchPointTowardLeaf walks from the given node toward
+// the leaf along the active path, stopping at the next visible node
+// that is a branch point (has >1 children) or the leaf itself. If the
+// current node is a branch point, it first descends into the
+// active-path child before looking for the next branch point.
 func (t *Tree) selectNextBranchPointTowardLeaf(messageID string) {
 	node, ok := t.nodeMap[messageID]
 	if !ok {
 		return
 	}
-	// Walk children on the active path.
 	cur := node
 	for {
-		// Find the child on the active path.
 		var next *treeNode
 		for _, child := range cur.children {
-			if child.isOnActivePath {
+			if child.isOnActivePath || child.msg.ID == t.leafMessageID {
 				next = child
 				break
 			}
 		}
 		if next == nil {
-			return
+			// No active-path child found. If the current node has
+			// children at all, pick the first one as a best effort.
+			if len(cur.children) > 0 {
+				next = cur.children[0]
+			} else {
+				return
+			}
 		}
-		// Stop at branch points or the leaf.
-		if len(next.children) > 1 || next.msg.ID == t.leafMessageID {
+		if len(next.children) > 1 || next.msg.ID == t.leafMessageID || len(next.children) == 0 {
 			t.selectByMessageID(next.msg.ID)
 			return
 		}
