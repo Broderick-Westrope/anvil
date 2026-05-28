@@ -1048,24 +1048,22 @@ func processChromaValue(value string) string {
 	return value
 }
 
-// wrapContent splits content that exceeds width into multiple visual lines.
-// Each line is at most width graphemes wide. Returns the lines as a slice.
-// If content fits in one line, returns a single-element slice.
+// wrapContent splits content that exceeds width into multiple visual lines
+// using word-aware wrapping. Continuation lines have leading whitespace
+// stripped so they start with content. If content fits in one line, returns
+// a single-element slice.
 func (dv *DiffView) wrapContent(content string, width int) []string {
-	if width <= 0 {
+	if width <= 0 || ansi.StringWidth(content) <= width {
 		return []string{content}
 	}
-	var lines []string
-	for ansi.StringWidth(content) > width {
-		line := ansi.Truncate(content, width, "")
-		lines = append(lines, line)
-		remaining := ansi.GraphemeWidth.Cut(content, width, ansi.StringWidth(content))
-		if remaining == content {
-			// Safety: prevent infinite loop if Cut doesn't advance.
-			break
-		}
-		content = remaining
+	// Use ansi.Wordwrap for word-aware, ANSI-safe wrapping. Common code
+	// break characters are used as additional breakpoints.
+	wrapped := ansi.Wordwrap(content, width, " \t,.;:(){}[]")
+	lines := strings.Split(wrapped, "\n")
+	// Strip leading whitespace from continuation lines so they start
+	// flush with content rather than indented.
+	for i := 1; i < len(lines); i++ {
+		lines[i] = strings.TrimLeft(lines[i], " \t")
 	}
-	lines = append(lines, content)
 	return lines
 }
