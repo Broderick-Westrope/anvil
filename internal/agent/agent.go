@@ -466,6 +466,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			// could read the same leaf and create sibling messages
 			// (an unintended fork).
 			sessionLock.Lock()
+			defer sessionLock.Unlock()
 			toolMsg, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
@@ -474,11 +475,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				ParentMessageID: currentLeaf,
 			})
 			if createMsgErr != nil {
-				sessionLock.Unlock()
 				return createMsgErr
 			}
 			currentLeaf = toolMsg.ID
-			sessionLock.Unlock()
 			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
@@ -812,19 +811,14 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	if err != nil {
 		isCancelErr := errors.Is(err, context.Canceled)
 		if isCancelErr {
-			// User cancelled — remove the compaction placeholder and
-			// restore the leaf to its pre-compaction position. Create()
-			// already advanced the leaf to compactionMsg.ID, so we must
-			// move it back to prevent a dangling pointer.
-			deleteErr := a.messages.Delete(ctx, compactionMsg.ID)
-			if deleteErr != nil {
-				return deleteErr
+			// User cancelled — restore the leaf to its pre-compaction
+			// position first, then remove the compaction placeholder.
+			// This order ensures the leaf never points to a deleted
+			// message if the second operation fails.
+			if moveErr := a.sessions.MoveLeaf(ctx, sessionID, compactionMsg.ParentMessageID); moveErr != nil {
+				return moveErr
 			}
-			// Restore leaf to the compaction message's parent — this is
-			// the actual pre-compaction leaf recorded atomically by
-			// Create(), rather than the potentially stale snapshot in
-			// currentSession.LeafMessageID.
-			return a.sessions.MoveLeaf(ctx, sessionID, compactionMsg.ParentMessageID)
+			return a.messages.Delete(ctx, compactionMsg.ID)
 		}
 		// Mark the compaction message as finished with an error so the
 		// UI stops spinning.
