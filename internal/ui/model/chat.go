@@ -507,6 +507,11 @@ func (m *Chat) MessageItem(id string) chat.MessageItem {
 	return item
 }
 
+// SelectedItem returns the currently selected list item, or nil if none.
+func (m *Chat) SelectedItem() list.Item {
+	return m.list.SelectedItem()
+}
+
 // ToggleExpandedSelectedItem expands the selected message item if it is expandable.
 func (m *Chat) ToggleExpandedSelectedItem() {
 	if expandable, ok := m.list.SelectedItem().(chat.Expandable); ok {
@@ -626,6 +631,19 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 				return util.DrillInMsg{
 					SessionID: sessionID,
 					Label:     driller.DrillInLabel(),
+				}
+			}
+			return true, cmd
+		}
+	}
+
+	// Check for tool drill-in (detail view for non-agent tools).
+	if driller, ok := selectedItem.(chat.ToolDrillInHandler); ok {
+		if toolItem := driller.ToolDrillIn(); toolItem != nil {
+			cmd := func() tea.Msg {
+				return util.ToolDrillInMsg{
+					ToolItem: toolItem,
+					Label:    driller.ToolDrillInLabel(),
 				}
 			}
 			return true, cmd
