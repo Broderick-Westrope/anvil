@@ -40,6 +40,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
+	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
@@ -315,6 +316,7 @@ type UI struct {
 
 	// pills state
 	pillsExpanded      bool
+	pillsAutoExpanded  bool
 	focusedPillSection pillSection
 	promptQueue        int
 	pillsView          string
@@ -405,7 +407,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		todoSpinner:         todoSpinner,
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
-		skillStates:         com.Workspace.SkillStates(),
+		skillStates:         skills.GetLatestStates(),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
 		initialSessionID:    initialSessionID,
@@ -471,6 +473,8 @@ func (m *UI) Init() tea.Cmd {
 	cmds = append(cmds, m.loadCustomCommands())
 	// load prompt history async
 	cmds = append(cmds, m.loadPromptHistory())
+	// load initial LSP state
+	m.lspStates = app.GetLSPStates()
 	// load initial session if specified
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
@@ -700,6 +704,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.setSessionMessages(msgs); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		if cmd := m.autoExpandPillsIfReasonable(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if hasInProgressTodo(m.session.Todos) {
 			// only start spinner if there is an in-progress todo
 			if m.isAgentBusy() {
@@ -806,6 +813,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.todoSpinner.Tick)
 				m.updateLayoutAndSize()
 			}
+			m.autoExpandPillsIfReasonable()
 		}
 	case pubsub.Event[message.Message]:
 		// Check if this is a child session message for an agent tool.
@@ -2316,7 +2324,14 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 			return util.ReportError(err)
 		}
 
-		modelMsg := fmt.Sprintf("%s model changed to %s", msg.ModelType, msg.Model.Model)
+		var (
+			modelType = stringext.Capitalize(string(msg.ModelType))
+			modelName = msg.Model.Model
+		)
+		if catwalkModel := cfg.GetModel(msg.Model.Provider, msg.Model.Model); catwalkModel != nil && catwalkModel.Name != "" {
+			modelName = catwalkModel.Name
+		}
+		modelMsg := fmt.Sprintf("%s model changed to %s", modelType, modelName)
 
 		return util.NewInfoMsg(modelMsg)
 	})
@@ -2419,6 +2434,16 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				return true
 			}
 			cmds = append(cmds, tea.Suspend)
+			return true
+		case key.Matches(msg, m.keyMap.ToggleYolo):
+			yolo := !m.com.Workspace.PermissionSkipRequests()
+			m.com.Workspace.PermissionSetSkipRequests(yolo)
+			m.setEditorPrompt(yolo)
+			status := "disabled"
+			if yolo {
+				status = "enabled"
+			}
+			cmds = append(cmds, util.ReportInfo("Yolo mode "+status))
 			return true
 		}
 		return false
@@ -3229,6 +3254,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 			commands,
 			k.Models,
 			k.Sessions,
+			k.ToggleYolo,
 		)
 		if hasSession {
 			mainBinds = append(mainBinds, k.Chat.NewSession)
@@ -3290,6 +3316,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 					commands,
 					k.Models,
 					k.Sessions,
+					k.ToggleYolo,
 				},
 			)
 			editorBinds := []key.Binding{
@@ -4724,6 +4751,7 @@ func (m *UI) newSession() tea.Cmd {
 	m.chat.ClearMessages()
 	m.attachments.Reset()
 	m.pillsExpanded = false
+	m.pillsAutoExpanded = false
 	m.promptQueue = 0
 	m.pillsView = ""
 	m.historyReset()

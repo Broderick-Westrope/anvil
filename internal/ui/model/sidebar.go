@@ -56,9 +56,10 @@ func (m *UI) modelInfo(width int) string {
 	var modelContext *common.ModelContextInfo
 	if model != nil && activeSession != nil {
 		modelContext = &common.ModelContextInfo{
-			ContextUsed:  activeSession.CompletionTokens + activeSession.PromptTokens,
-			Cost:         activeSession.Cost,
-			ModelContext: model.CatwalkCfg.ContextWindow,
+			ContextUsed:    activeSession.CompletionTokens + activeSession.PromptTokens,
+			Cost:           activeSession.Cost,
+			ModelContext:   model.CatwalkCfg.ContextWindow,
+			EstimatedUsage: activeSession.EstimatedUsage,
 		}
 	}
 	var modelName string

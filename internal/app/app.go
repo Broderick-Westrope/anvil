@@ -79,7 +79,7 @@ type App struct {
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
 	sessions := session.NewService(q, conn)
-	messages := message.NewService(q, conn)
+	messages := message.NewService(q, message.WithConn(conn))
 	files := history.NewService(q, conn)
 	cfg := store.Config()
 	skipPermissionsRequests := store.Overrides().SkipPermissionRequests
@@ -140,7 +140,10 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		client.SetDiagnosticsCallback(updateLSPDiagnostics)
 		updateLSPState(name, client.GetServerState(), nil, client, 0)
 	})
-	go app.LSPManager.TrackConfigured()
+
+	// TrackConfigured must run after SetCallback so the callback is already
+	// installed when configured-but-not-yet-started LSPs are announced.
+	go app.LSPManager.TrackConfigured(ctx)
 
 	return app, nil
 }
@@ -584,12 +587,22 @@ func (app *App) Shutdown() {
 		app.AgentCoordinator.CancelAll()
 	}
 
-	// Now run remaining cleanup tasks in parallel.
-	var wg sync.WaitGroup
-
 	// Shared shutdown context for all timeout-bounded cleanup.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// Drain any debounced message updates before the DB-close cleanup
+	// runs in the parallel block below. message.Service buffers
+	// streaming deltas (see internal/message/message.go) and we must
+	// land them while the connection is still open.
+	if app.Messages != nil {
+		if err := app.Messages.FlushAll(shutdownCtx); err != nil {
+			slog.Error("Failed to flush pending message updates on shutdown", "error", err)
+		}
+	}
+
+	// Now run remaining cleanup tasks in parallel.
+	var wg sync.WaitGroup
 
 	// Send exit event
 	wg.Go(func() {

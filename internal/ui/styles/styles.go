@@ -186,18 +186,19 @@ type Styles struct {
 
 	// ModelInfo (model name, provider, reasoning, token/cost summary)
 	ModelInfo struct {
-		Icon             lipgloss.Style // Model icon (◇)
-		Name             lipgloss.Style // Model name text
-		Provider         lipgloss.Style // "via <provider>" text
-		ProviderFallback lipgloss.Style // Provider on its own second line
-		Reasoning        lipgloss.Style // Reasoning effort text
-		TokenCount       lipgloss.Style // "(42K)" token count
-		TokenPercentage  lipgloss.Style // "42%" percent of context window
-		Cost             lipgloss.Style // "$0.42" cost readout
-		HypercreditIcon  lipgloss.Style // Hypercredit icon (◆)
-		HypercreditText  lipgloss.Style // Remaining Hypercredits text
-		Stats            lipgloss.Style // "3 turns · 12 tools" sidebar stats line
-		Elapsed          lipgloss.Style // Elapsed time display for subagent sessions
+		Icon                 lipgloss.Style // Model icon (◇)
+		Name                 lipgloss.Style // Model name text
+		Provider             lipgloss.Style // "via <provider>" text
+		ProviderFallback     lipgloss.Style // Provider on its own second line
+		Reasoning            lipgloss.Style // Reasoning effort text
+		TokenCount           lipgloss.Style // "(42K)" token count
+		TokenPercentage      lipgloss.Style // "42%" percent of context window
+		EstimatedUsagePrefix lipgloss.Style // "~" prefix for estimated usage
+		Cost                 lipgloss.Style // "$0.42" cost readout
+		HypercreditIcon      lipgloss.Style // Hypercredit icon (◆)
+		HypercreditText      lipgloss.Style // Remaining Hypercredits text
+		Stats                lipgloss.Style // "3 turns · 12 tools" sidebar stats line
+		Elapsed              lipgloss.Style // Elapsed time display for subagent sessions
 	}
 
 	// Resource styles the LSP/MCP/skills sidebar lists: their heading,
@@ -296,6 +297,10 @@ type Styles struct {
 		// Error styles
 		ErrorTag     lipgloss.Style // ERROR tag
 		ErrorMessage lipgloss.Style // Error message text
+
+		// Warning styles (used for permission denied)
+		WarnTag     lipgloss.Style // WARN tag
+		WarnMessage lipgloss.Style // Warning message text
 
 		// Diff styles
 		DiffTruncation lipgloss.Style // Diff truncation message with padding

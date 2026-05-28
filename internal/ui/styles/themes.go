@@ -37,6 +37,7 @@ func TokyoNight() Styles {
 		error:             tn(0xdb, 0x4b, 0x4b), // red1      #db4b4b
 		warningSubtle:     tn(0xe0, 0xaf, 0x68), // yellow    #e0af68
 		warning:           tn(0xff, 0x9e, 0x64), // orange    #ff9e64
+		denied:            tn(0xff, 0x9e, 0x64), // orange    #ff9e64
 		busy:              tn(0xe0, 0xaf, 0x68), // yellow    #e0af68
 		info:              tn(0x7a, 0xa2, 0xf7), // blue      #7aa2f7
 		infoMoreSubtle:    tn(0x2a, 0xc3, 0xde), // blue1     #2ac3de

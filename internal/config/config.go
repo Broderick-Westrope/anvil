@@ -746,6 +746,11 @@ func allToolNames() []string {
 		"lsp_diagnostics",
 		"lsp_references",
 		"lsp_restart",
+		"lsp_symbols",
+		"lsp_definition",
+		"lsp_call_hierarchy",
+		"lsp_rename",
+		"lsp_replace_symbol",
 		"fetch",
 		"agentic_fetch",
 		"glob",
@@ -770,6 +775,9 @@ func readOnlyTools() []string {
 		"view",
 		"lsp_diagnostics",
 		"lsp_references",
+		"lsp_definition",
+		"lsp_symbols",
+		"lsp_call_hierarchy",
 		"sourcegraph",
 	}
 }

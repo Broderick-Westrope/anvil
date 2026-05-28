@@ -405,7 +405,11 @@ func TestGetProviderOptionsReasoningEffort(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			model := Model{
-				CatwalkCfg: catwalk.Model{ID: "claude-opus-4-7"},
+				CatwalkCfg: catwalk.Model{
+					ID:              "claude-opus-4-7",
+					CanReason:       true,
+					ReasoningLevels: []string{"max"},
+				},
 				ModelCfg: config.SelectedModel{
 					Provider:        "test",
 					ReasoningEffort: "max",

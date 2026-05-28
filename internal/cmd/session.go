@@ -127,7 +127,7 @@ func sessionSetup(cmd *cobra.Command) (context.Context, *sessionServices, func()
 	queries := db.New(conn)
 	svc := &sessionServices{
 		sessions: session.NewService(queries, conn),
-		messages: message.NewService(queries, conn),
+		messages: message.NewService(queries, message.WithConn(conn)),
 		cfg:      cfg,
 	}
 	return ctx, svc, func() { conn.Close() }, nil
