@@ -34,9 +34,10 @@ const (
 	// This is used to create a staggered entrance effect.
 	maxBirthOffset = time.Second
 
-	// Number of frames to prerender for the animation. After this number
-	// of frames, the animation will loop. This only applies when color
-	// cycling is disabled.
+	// Minimum number of frames to prerender for the animation. After
+	// this many frames the animation loops. When color cycling is
+	// enabled, the actual frame count may be higher (width * 2) but
+	// never lower than this value.
 	prerenderedFrames = 10
 
 	// Default number of cycling chars.
@@ -169,12 +170,17 @@ func New(opts Settings) *Anim {
 		// Render the label
 		a.renderLabel(opts.Label)
 
-		// Pre-generate gradient.
+		// Determine frame count and pre-generate gradient.
 		var ramp []color.Color
 		numFrames := prerenderedFrames
 		if opts.CycleColors {
-			ramp = makeGradientRamp(a.width*3, opts.GradColorA, opts.GradColorB, opts.GradColorA, opts.GradColorB)
-			numFrames = a.width * 2
+			numFrames = max(a.width*2, prerenderedFrames)
+			// The cycling loop accesses ramp[j+offset] where j < width
+			// and offset < numFrames, so the ramp needs at least
+			// width+numFrames entries. The width*3 alternative preserves
+			// gradient richness at larger sizes.
+			rampSize := max(a.width*3, a.width+numFrames)
+			ramp = makeGradientRamp(rampSize, opts.GradColorA, opts.GradColorB, opts.GradColorA, opts.GradColorB)
 		} else {
 			ramp = makeGradientRamp(a.width, opts.GradColorA, opts.GradColorB)
 		}
