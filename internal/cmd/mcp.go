@@ -132,15 +132,28 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("OAuth metadata discovery failed: %w", err)
 	}
 
-	// Start ephemeral callback server (needed for DCR redirect URI and
-	// the auth code flow).
-	listener, port, resultCh, err := startCallbackServer(ctx)
+	// Start ephemeral callback server. If a fixed redirectUri is
+	// configured (for pre-registered clients like Slack), listen on
+	// that exact host:port. Otherwise pick a random port.
+	var listenAddr string
+	redirectURI := mcpCfg.RedirectURI
+	if redirectURI != "" {
+		parsed, parseErr := url.Parse(redirectURI)
+		if parseErr != nil {
+			return fmt.Errorf("invalid redirectUri: %w", parseErr)
+		}
+		listenAddr = parsed.Host
+	}
+	listener, resultCh, err := startCallbackServer(ctx, listenAddr)
 	if err != nil {
 		return fmt.Errorf("failed to start callback server: %w", err)
 	}
 	defer listener.Close()
 
-	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+	if redirectURI == "" {
+		port := listener.Addr().(*net.TCPAddr).Port
+		redirectURI = fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+	}
 
 	// DCR if needed.
 	if needDCR && asm != nil && asm.RegistrationEndpoint != "" {
@@ -299,13 +312,18 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 // startCallbackServer starts an ephemeral HTTP server on a random port
 // that listens for the OAuth callback. It returns the listener, the
 // port, and a channel that receives the callback result.
-func startCallbackServer(ctx context.Context) (net.Listener, int, <-chan callbackResult, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+// startCallbackServer starts an ephemeral HTTP server that listens for
+// the OAuth callback. If addr is empty, it listens on a random port on
+// 127.0.0.1. Otherwise it listens on the given addr (e.g. "localhost:3118").
+func startCallbackServer(ctx context.Context, addr string) (net.Listener, <-chan callbackResult, error) {
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, 0, nil, fmt.Errorf("failed to start callback listener: %w", err)
+		return nil, nil, fmt.Errorf("failed to start callback listener on %s: %w", addr, err)
 	}
 
-	port := listener.Addr().(*net.TCPAddr).Port
 	ch := make(chan callbackResult, 1)
 
 	mux := http.NewServeMux()
@@ -342,7 +360,7 @@ func startCallbackServer(ctx context.Context) (net.Listener, int, <-chan callbac
 		_ = srv.Close()
 	}()
 
-	return listener, port, ch, nil
+	return listener, ch, nil
 }
 
 // discoverOAuthMetadata performs RFC 9728 / RFC 8414 metadata discovery

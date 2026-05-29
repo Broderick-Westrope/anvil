@@ -231,6 +231,7 @@ type MCPConfig struct {
 	ClientID     string      `json:"clientId,omitempty" jsonschema:"description=OAuth client ID for pre-registered clients"`
 	ClientSecret string      `json:"clientSecret,omitempty" jsonschema:"description=OAuth client secret (supports shell expansion via $VAR or $(cmd))"`
 	Scopes       []string    `json:"scopes,omitempty" jsonschema:"description=OAuth scopes to request during authorization"`
+	RedirectURI  string      `json:"redirectUri,omitempty" jsonschema:"description=Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"` 
 }
 
 type LSPConfig struct {
