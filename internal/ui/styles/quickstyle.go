@@ -693,11 +693,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Section.Title = subtle
 	s.Section.Line = base.Foreground(o.separator)
 
-	// Initialize
-	s.Initialize.Header = base
-	s.Initialize.Content = muted
-	s.Initialize.Accent = base.Foreground(o.successMostSubtle)
-
 	// ResourceGroup (LSP/MCP/skills sidebar lists).
 	s.Resource.Heading = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 	s.Resource.Name = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)

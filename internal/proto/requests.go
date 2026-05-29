@@ -47,11 +47,6 @@ type ImportCopilotResponse struct {
 	Success bool `json:"success"`
 }
 
-// ProjectNeedsInitResponse represents whether a project needs initialization.
-type ProjectNeedsInitResponse struct {
-	NeedsInit bool `json:"needs_init"`
-}
-
 // ProjectInitPromptResponse represents the project initialization prompt.
 type ProjectInitPromptResponse struct {
 	Prompt string `json:"prompt"`

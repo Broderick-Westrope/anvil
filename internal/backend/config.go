@@ -88,25 +88,6 @@ func (b *Backend) RefreshOAuthToken(ctx context.Context, workspaceID string, sco
 	return ws.Cfg.RefreshOAuthToken(ctx, scope, providerID)
 }
 
-// ProjectNeedsInitialization checks whether the project in this
-// workspace needs initialization.
-func (b *Backend) ProjectNeedsInitialization(workspaceID string) (bool, error) {
-	ws, err := b.GetWorkspace(workspaceID)
-	if err != nil {
-		return false, err
-	}
-	return config.ProjectNeedsInitialization(ws.Cfg)
-}
-
-// MarkProjectInitialized marks the project as initialized.
-func (b *Backend) MarkProjectInitialized(workspaceID string) error {
-	ws, err := b.GetWorkspace(workspaceID)
-	if err != nil {
-		return err
-	}
-	return config.MarkProjectInitialized(ws.Cfg)
-}
-
 // InitializePrompt builds the initialization prompt for the workspace.
 func (b *Backend) InitializePrompt(workspaceID string) (string, error) {
 	ws, err := b.GetWorkspace(workspaceID)

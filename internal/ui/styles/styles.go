@@ -155,13 +155,6 @@ type Styles struct {
 		Line  lipgloss.Style
 	}
 
-	// Initialize
-	Initialize struct {
-		Header  lipgloss.Style
-		Content lipgloss.Style
-		Accent  lipgloss.Style
-	}
-
 	// LSP
 	LSP struct {
 		ErrorDiagnostic   lipgloss.Style

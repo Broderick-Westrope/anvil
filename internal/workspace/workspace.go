@@ -129,8 +129,6 @@ type Workspace interface {
 	RefreshOAuthToken(ctx context.Context, scope config.Scope, providerID string) error
 
 	// Project lifecycle
-	ProjectNeedsInitialization() (bool, error)
-	MarkProjectInitialized() error
 	InitializePrompt() (string, error)
 
 	// Plugins.

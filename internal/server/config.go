@@ -201,44 +201,6 @@ func (c *controllerV1) handlePostWorkspaceConfigRefreshOAuth(w http.ResponseWrit
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleGetWorkspaceProjectNeedsInit reports whether a project needs initialization.
-//
-//	@Summary		Check if project needs initialization
-//	@Tags			project
-//	@Produce		json
-//	@Param			id	path		string							true	"Workspace ID"
-//	@Success		200	{object}	proto.ProjectNeedsInitResponse
-//	@Failure		404	{object}	proto.Error
-//	@Failure		500	{object}	proto.Error
-//	@Router			/workspaces/{id}/project/needs-init [get]
-func (c *controllerV1) handleGetWorkspaceProjectNeedsInit(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	needs, err := c.backend.ProjectNeedsInitialization(id)
-	if err != nil {
-		c.handleError(w, r, err)
-		return
-	}
-	jsonEncode(w, proto.ProjectNeedsInitResponse{NeedsInit: needs})
-}
-
-// handlePostWorkspaceProjectInit marks the project as initialized.
-//
-//	@Summary		Mark project as initialized
-//	@Tags			project
-//	@Param			id	path	string	true	"Workspace ID"
-//	@Success		200
-//	@Failure		404	{object}	proto.Error
-//	@Failure		500	{object}	proto.Error
-//	@Router			/workspaces/{id}/project/init [post]
-func (c *controllerV1) handlePostWorkspaceProjectInit(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := c.backend.MarkProjectInitialized(id); err != nil {
-		c.handleError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
 // handleGetWorkspaceProjectInitPrompt returns the project initialization prompt.
 //
 //	@Summary		Get project initialization prompt

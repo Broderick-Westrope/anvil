@@ -131,40 +131,6 @@ func (c *Client) RefreshOAuthToken(ctx context.Context, id string, scope config.
 	return nil
 }
 
-// ProjectNeedsInitialization checks if the project needs
-// initialization.
-func (c *Client) ProjectNeedsInitialization(ctx context.Context, id string) (bool, error) {
-	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/project/needs-init", id), nil, nil)
-	if err != nil {
-		return false, fmt.Errorf("failed to check project init: %w", err)
-	}
-	defer rsp.Body.Close()
-	if rsp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("failed to check project init: status code %d", rsp.StatusCode)
-	}
-	var result struct {
-		NeedsInit bool `json:"needs_init"`
-	}
-	if err := json.NewDecoder(rsp.Body).Decode(&result); err != nil {
-		return false, fmt.Errorf("failed to decode project init response: %w", err)
-	}
-	return result.NeedsInit, nil
-}
-
-// MarkProjectInitialized marks the project as initialized on the
-// server.
-func (c *Client) MarkProjectInitialized(ctx context.Context, id string) error {
-	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/project/init", id), nil, nil, nil)
-	if err != nil {
-		return fmt.Errorf("failed to mark project initialized: %w", err)
-	}
-	defer rsp.Body.Close()
-	if rsp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to mark project initialized: status code %d", rsp.StatusCode)
-	}
-	return nil
-}
-
 // GetInitializePrompt retrieves the initialization prompt from the
 // server.
 func (c *Client) GetInitializePrompt(ctx context.Context, id string) (string, error) {

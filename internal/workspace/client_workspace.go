@@ -461,14 +461,6 @@ func (w *ClientWorkspace) RefreshOAuthToken(ctx context.Context, scope config.Sc
 
 // -- Project lifecycle --
 
-func (w *ClientWorkspace) ProjectNeedsInitialization() (bool, error) {
-	return w.client.ProjectNeedsInitialization(context.Background(), w.workspaceID())
-}
-
-func (w *ClientWorkspace) MarkProjectInitialized() error {
-	return w.client.MarkProjectInitialized(context.Background(), w.workspaceID())
-}
-
 func (w *ClientWorkspace) InitializePrompt() (string, error) {
 	return w.client.GetInitializePrompt(context.Background(), w.workspaceID())
 }

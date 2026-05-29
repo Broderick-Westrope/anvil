@@ -317,14 +317,6 @@ func (w *AppWorkspace) RefreshOAuthToken(ctx context.Context, scope config.Scope
 
 // -- Project lifecycle --
 
-func (w *AppWorkspace) ProjectNeedsInitialization() (bool, error) {
-	return config.ProjectNeedsInitialization(w.store)
-}
-
-func (w *AppWorkspace) MarkProjectInitialized() error {
-	return config.MarkProjectInitialized(w.store)
-}
-
 func (w *AppWorkspace) InitializePrompt() (string, error) {
 	return agent.InitializePrompt(w.store)
 }

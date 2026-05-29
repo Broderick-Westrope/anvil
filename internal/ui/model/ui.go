@@ -107,7 +107,6 @@ type uiState uint8
 // Possible uiState values.
 const (
 	uiOnboarding uiState = iota
-	uiInitialize
 	uiLanding
 	uiChat
 )
@@ -280,11 +279,6 @@ type UI struct {
 	// currently scheduled so we avoid scheduling duplicate ticks.
 	elapsedTickRunning bool
 
-	// onboarding state
-	onboarding struct {
-		yesInitializeSelected bool
-	}
-
 	// lsp
 	lspStates map[string]app.LSPClientInfo
 
@@ -443,15 +437,10 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	// Initialize compact mode from config
 	ui.forceCompactMode = com.Config().Options.TUI.CompactMode
 
-	// set onboarding state defaults
-	ui.onboarding.yesInitializeSelected = true
-
 	desiredState := uiLanding
 	desiredFocus := uiFocusEditor
 	if !com.Config().IsConfigured() {
 		desiredState = uiOnboarding
-	} else if n, _ := com.Workspace.ProjectNeedsInitialization(); n {
-		desiredState = uiInitialize
 	}
 
 	// set initial state
@@ -2526,9 +2515,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 	switch m.state {
 	case uiOnboarding:
 		return tea.Batch(cmds...)
-	case uiInitialize:
-		cmds = append(cmds, m.updateInitializeView(msg)...)
-		return tea.Batch(cmds...)
 	case uiChat, uiLanding:
 		switch m.focus {
 		case uiFocusEditor:
@@ -3005,12 +2991,6 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		// NOTE: Onboarding flow will be rendered as dialogs below, but
 		// positioned at the bottom left of the screen.
 
-	case uiInitialize:
-		m.drawHeader(scr, layout.header)
-
-		main := uv.NewStyledString(m.initializeView())
-		main.Draw(scr, layout.main)
-
 	case uiLanding:
 		m.drawHeader(scr, layout.header)
 		main := uv.NewStyledString(m.landingView())
@@ -3192,8 +3172,6 @@ func (m *UI) ShortHelp() []key.Binding {
 	}
 
 	switch m.state {
-	case uiInitialize:
-		binds = append(binds, k.Quit)
 	case uiChat:
 		// Show cancel binding if agent is busy.
 		if m.isAgentBusy() {
@@ -3273,11 +3251,6 @@ func (m *UI) FullHelp() [][]key.Binding {
 	}
 
 	switch m.state {
-	case uiInitialize:
-		binds = append(binds,
-			[]key.Binding{
-				k.Quit,
-			})
 	case uiChat:
 		// Show cancel binding if agent is busy.
 		if m.isAgentBusy() {
@@ -3557,7 +3530,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 
 	// Handle different app states
 	switch m.state {
-	case uiOnboarding, uiInitialize:
+	case uiOnboarding:
 		// Layout
 		//
 		// header
@@ -4255,6 +4228,20 @@ func (m *UI) refreshStyles() {
 	m.chat.InvalidateRenderCaches()
 	for _, entry := range m.drillStack {
 		entry.chat.InvalidateRenderCaches()
+	}
+}
+
+// initializeProject sends the project initialization prompt into the current session.
+func (m *UI) initializeProject() tea.Cmd {
+	return func() tea.Msg {
+		initPrompt, err := m.com.Workspace.InitializePrompt()
+		if err != nil {
+			return util.InfoMsg{
+				Type: util.InfoTypeError,
+				Msg:  fmt.Sprintf("Failed to initialize project: %v", err),
+			}
+		}
+		return sendMessageMsg{Content: initPrompt}
 	}
 }
 
