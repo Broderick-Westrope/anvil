@@ -140,12 +140,30 @@ definitions:
     additionalProperties:
       $ref: '#/definitions/config.LSPConfig'
     type: object
+  config.MCPAuthType:
+    enum:
+    - ""
+    - oauth
+    type: string
+    x-enum-varnames:
+    - MCPAuthNone
+    - MCPAuthOAuth
   config.MCPConfig:
     properties:
       args:
         items:
           type: string
         type: array
+      auth:
+        allOf:
+        - $ref: '#/definitions/config.MCPAuthType'
+        description: |-
+          Auth selects the authentication method. Only "oauth" is
+          supported and only for HTTP/SSE servers.
+      clientId:
+        type: string
+      clientSecret:
+        type: string
       command:
         type: string
       disabled:
@@ -173,6 +191,12 @@ definitions:
           omitted from the outgoing request rather than sent as
           "Header:". See PLAN.md Phase 2 design decision #18.
         type: object
+      redirectUri:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
       timeout:
         type: integer
       type:
@@ -384,6 +408,10 @@ definitions:
           type: string
         type: array
       disabled_tools:
+        items:
+          type: string
+        type: array
+      expanded_tools:
         items:
           type: string
         type: array
@@ -716,11 +744,6 @@ definitions:
     properties:
       prompt:
         type: string
-    type: object
-  proto.ProjectNeedsInitResponse:
-    properties:
-      needs_init:
-        type: boolean
     type: object
   proto.ServerControl:
     properties:
@@ -2098,28 +2121,6 @@ paths:
       summary: Set skip permissions
       tags:
       - permissions
-  /workspaces/{id}/project/init:
-    post:
-      parameters:
-      - description: Workspace ID
-        in: path
-        name: id
-        required: true
-        type: string
-      responses:
-        "200":
-          description: OK
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/proto.Error'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/proto.Error'
-      summary: Mark project as initialized
-      tags:
-      - project
   /workspaces/{id}/project/init-prompt:
     get:
       parameters:
@@ -2144,32 +2145,6 @@ paths:
           schema:
             $ref: '#/definitions/proto.Error'
       summary: Get project initialization prompt
-      tags:
-      - project
-  /workspaces/{id}/project/needs-init:
-    get:
-      parameters:
-      - description: Workspace ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/proto.ProjectNeedsInitResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/proto.Error'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/proto.Error'
-      summary: Check if project needs initialization
       tags:
       - project
   /workspaces/{id}/providers:

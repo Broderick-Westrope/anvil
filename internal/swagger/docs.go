@@ -1986,40 +1986,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/workspaces/{id}/project/init": {
-            "post": {
-                "tags": [
-                    "project"
-                ],
-                "summary": "Mark project as initialized",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/proto.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/proto.Error"
-                        }
-                    }
-                }
-            }
-        },
         "/workspaces/{id}/project/init-prompt": {
             "get": {
                 "produces": [
@@ -2043,46 +2009,6 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/proto.ProjectInitPromptResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/proto.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/proto.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/workspaces/{id}/project/needs-init": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "project"
-                ],
-                "summary": "Check if project needs initialization",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/proto.ProjectNeedsInitResponse"
                         }
                     },
                     "404": {
@@ -2784,6 +2710,17 @@ const docTemplate = `{
                 "$ref": "#/definitions/config.LSPConfig"
             }
         },
+        "config.MCPAuthType": {
+            "type": "string",
+            "enum": [
+                "",
+                "oauth"
+            ],
+            "x-enum-varnames": [
+                "MCPAuthNone",
+                "MCPAuthOAuth"
+            ]
+        },
         "config.MCPConfig": {
             "type": "object",
             "properties": {
@@ -2792,6 +2729,20 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "auth": {
+                    "description": "Auth selects the authentication method. Only \"oauth\" is\nsupported and only for HTTP/SSE servers.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/config.MCPAuthType"
+                        }
+                    ]
+                },
+                "clientId": {
+                    "type": "string"
+                },
+                "clientSecret": {
+                    "type": "string"
                 },
                 "command": {
                     "type": "string"
@@ -2821,6 +2772,15 @@ const docTemplate = `{
                     "description": "Headers are HTTP headers for HTTP/SSE MCP servers. Values run\nthrough shell expansion at MCP startup, so $VAR and $(cmd)\nwork. A header whose value resolves to the empty string (unset\nbare $VAR under lenient nounset, $(echo), or literal \"\") is\nomitted from the outgoing request rather than sent as\n\"Header:\". See PLAN.md Phase 2 design decision #18.",
                     "type": "object",
                     "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "redirectUri": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
                         "type": "string"
                     }
                 },
@@ -3106,6 +3066,12 @@ const docTemplate = `{
                     }
                 },
                 "disabled_tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "expanded_tools": {
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -3599,14 +3565,6 @@ const docTemplate = `{
             "properties": {
                 "prompt": {
                     "type": "string"
-                }
-            }
-        },
-        "proto.ProjectNeedsInitResponse": {
-            "type": "object",
-            "properties": {
-                "needs_init": {
-                    "type": "boolean"
                 }
             }
         },
