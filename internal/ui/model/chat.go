@@ -19,8 +19,8 @@ import (
 
 // Constants for multi-click detection.
 const (
-	doubleClickThreshold = 400 * time.Millisecond // 0.4s is typical double-click threshold
-	clickTolerance       = 2                      // x,y tolerance for double/tripple click
+	doubleClickThreshold = 200 * time.Millisecond
+	clickTolerance       = 2 // x,y tolerance for double/tripple click
 )
 
 // DelayedClickMsg is sent after the double-click threshold to trigger a
