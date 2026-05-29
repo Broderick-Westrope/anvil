@@ -530,6 +530,8 @@ func authMethodToStyle(method string) oauth2.AuthStyle {
 		return oauth2.AuthStyleInParams
 	case "client_secret_basic":
 		return oauth2.AuthStyleInHeader
+	case "":
+		return oauth2.AuthStyleInParams
 	default:
 		return oauth2.AuthStyleInHeader
 	}
