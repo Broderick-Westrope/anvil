@@ -169,7 +169,7 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to persist client credentials: %w", err)
 		}
 	} else if needDCR {
-		return fmt.Errorf("no client credentials available and authorization server does not support dynamic client registration")
+		return fmt.Errorf("server does not support dynamic client registration; set clientId in your MCP config")
 	}
 
 	// Determine scopes.
@@ -411,13 +411,14 @@ func discoverOAuthMetadata(ctx context.Context, serverURL string, httpClient *ht
 		asm = nil
 	}
 
-	// Fall back to predefined endpoints if ASM is nil.
+	// Fall back to predefined endpoints if ASM is nil. Do not set
+	// RegistrationEndpoint — if the server didn't advertise metadata,
+	// it almost certainly doesn't support DCR.
 	if asm == nil {
 		asm = &oauthex.AuthServerMeta{
 			Issuer:                        issuer,
 			AuthorizationEndpoint:         issuer + "/authorize",
 			TokenEndpoint:                 issuer + "/token",
-			RegistrationEndpoint:          issuer + "/register",
 			CodeChallengeMethodsSupported: []string{"S256"},
 		}
 	}
