@@ -45,8 +45,6 @@ Thumbs.db
 # Nix/direnv
 .direnv/
 
-**/.anvil/**
-
 /anvil
 /tmp/
 
