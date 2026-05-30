@@ -188,7 +188,7 @@ func TestToolDetailParamItem_ToggleExpanded(t *testing.T) {
 	t.Run("single line value does not toggle", func(t *testing.T) {
 		t.Parallel()
 		sty := styles.TokyoNight()
-		p := &toolDetailParamItem{
+		p := &toolDetailParamItem{Versioned: list.NewVersioned(),
 			sty:   &sty,
 			key:   "file_path",
 			value: "/tmp/test.go",
@@ -200,7 +200,7 @@ func TestToolDetailParamItem_ToggleExpanded(t *testing.T) {
 	t.Run("multi-line value toggles", func(t *testing.T) {
 		t.Parallel()
 		sty := styles.TokyoNight()
-		p := &toolDetailParamItem{
+		p := &toolDetailParamItem{Versioned: list.NewVersioned(),
 			sty:   &sty,
 			key:   "content",
 			value: "line1\nline2\nline3",
@@ -215,7 +215,7 @@ func TestToolDetailParamItem_ToggleExpanded(t *testing.T) {
 	t.Run("non-string value does not toggle", func(t *testing.T) {
 		t.Parallel()
 		sty := styles.TokyoNight()
-		p := &toolDetailParamItem{
+		p := &toolDetailParamItem{Versioned: list.NewVersioned(),
 			sty:   &sty,
 			key:   "limit",
 			value: float64(20),
@@ -229,7 +229,7 @@ func TestToolDetailOutputItem_ToggleExpanded(t *testing.T) {
 	t.Parallel()
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "bash", `{"command":"echo hi"}`, &message.ToolResult{Content: "hi"}, ToolStatusSuccess)
-	o := &toolDetailOutputItem{
+	o := &toolDetailOutputItem{Versioned: list.NewVersioned(),
 		sty:    &sty,
 		source: source,
 	}
@@ -360,7 +360,7 @@ func TestToolDetailParamItem_IsMultiLine(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := &toolDetailParamItem{sty: &sty, key: "k", value: tt.value}
+			p := &toolDetailParamItem{Versioned: list.NewVersioned(), sty: &sty, key: "k", value: tt.value}
 			gotStr, gotOK := p.isMultiLine()
 			require.Equal(t, tt.wantStr, gotStr)
 			require.Equal(t, tt.wantOK, gotOK)

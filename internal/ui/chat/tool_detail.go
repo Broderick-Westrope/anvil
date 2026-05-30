@@ -208,7 +208,13 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 }
 
 // SetFocused implements list.Focusable.
-func (h *toolDetailHeaderItem) SetFocused(v bool) { h.focused = v }
+func (h *toolDetailHeaderItem) SetFocused(v bool) {
+	if h.focused == v {
+		return
+	}
+	h.focused = v
+	h.Bump()
+}
 
 // --- toolDetailSectionItem ---
 
@@ -263,7 +269,13 @@ func (s *toolDetailSectionItem) Render(width int) string {
 }
 
 // SetFocused implements list.Focusable.
-func (s *toolDetailSectionItem) SetFocused(v bool) { s.focused = v }
+func (s *toolDetailSectionItem) SetFocused(v bool) {
+	if s.focused == v {
+		return
+	}
+	s.focused = v
+	s.Bump()
+}
 
 // --- toolDetailStaticItem ---
 
@@ -320,7 +332,13 @@ func (s *toolDetailStaticItem) Render(width int) string {
 }
 
 // SetFocused implements list.Focusable.
-func (s *toolDetailStaticItem) SetFocused(v bool) { s.focused = v }
+func (s *toolDetailStaticItem) SetFocused(v bool) {
+	if s.focused == v {
+		return
+	}
+	s.focused = v
+	s.Bump()
+}
 
 // --- toolDetailParamItem ---
 
@@ -434,6 +452,7 @@ func (p *toolDetailParamItem) ToggleExpanded() bool {
 	}
 	p.expanded = !p.expanded
 	p.cachedRender = ""
+	p.Bump()
 	return p.expanded
 }
 
@@ -444,7 +463,13 @@ func (p *toolDetailParamItem) HandleMouseClick(_ ansi.MouseButton, _, _ int) boo
 }
 
 // SetFocused implements list.Focusable.
-func (p *toolDetailParamItem) SetFocused(v bool) { p.focused = v }
+func (p *toolDetailParamItem) SetFocused(v bool) {
+	if p.focused == v {
+		return
+	}
+	p.focused = v
+	p.Bump()
+}
 
 // --- toolDetailOutputItem ---
 
@@ -568,6 +593,7 @@ func (o *toolDetailOutputItem) sourceResultVersion() uint64 {
 func (o *toolDetailOutputItem) ToggleExpanded() bool {
 	o.expanded = !o.expanded
 	o.cachedRender = ""
+	o.Bump()
 	return o.expanded
 }
 
@@ -577,4 +603,10 @@ func (o *toolDetailOutputItem) HandleMouseClick(_ ansi.MouseButton, _, _ int) bo
 }
 
 // SetFocused implements list.Focusable.
-func (o *toolDetailOutputItem) SetFocused(v bool) { o.focused = v }
+func (o *toolDetailOutputItem) SetFocused(v bool) {
+	if o.focused == v {
+		return
+	}
+	o.focused = v
+	o.Bump()
+}
