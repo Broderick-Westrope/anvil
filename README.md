@@ -3,9 +3,6 @@
 > [!NOTE]
 > Anvil began as a fork of [Crush by Charmbracelet, Inc.](https://github.com/charmbracelet/crush/), with the intention of building upon their great work. Anvil is highly opinionated and experimental. If you're thinking of forking, I encourage you to fork Crush and cherry-pick anything from Anvil which is of interest.
 
-<p align="center">Your new coding bestie, now available in your favourite terminal.<br />Your tools, your code, and your workflows, wired into your LLM of choice.</p>
-<p align="center">终端里的编程新搭档，<br />无缝接入你的工具、代码与工作流，全面兼容主流 LLM 模型。</p>
-
 <!-- TODO: Add a demo of Anvil once stable. -->
 <!-- <p align="center"><img width="800" alt="Anvil Demo" src="https://github.com/user-attachments/assets/58280caf-851b-470a-b6f7-d5c4ea8a1968" /></p> -->
 
@@ -699,7 +696,7 @@ Installing an extra tool might be needed on Unix-like environments.
 
 ## Contributing
 
-Feel free to create GitHub issues for bug reports, but please no feature requests at this time. This is a personal tool which I've kept opensource for the sake of helping others learn. If you're thinking of forking or want new features, I encourage you to fork Crush and cherry-pick anything from Anvil which is of interest, then add what you want on top.
+Feel free to create GitHub issues for bug reports, but please no feature requests at this time. Perhaps it will be a comunity project one day, but at this time it is a personal tool which I've kept opensource for the sake of helping others learn. If you're thinking of forking or want new features, I encourage you to fork Crush and cherry-pick anything from Anvil which is of interest, then add what you want on top.
 
 ## License
 
@@ -707,9 +704,4 @@ Feel free to create GitHub issues for bug reports, but please no feature request
 
 ---
 
-Part of [Charm](https://charm.land).
-
-<a href="https://charm.land/"><img alt="The Charm logo" width="400" src="https://stuff.charm.sh/charm-banner-softy.jpg" /></a>
-
-<!--prettier-ignore-->
-Charm热爱开源 • Charm loves open source
+Not part of Charm, but I still love open source :)
