@@ -38,9 +38,17 @@ Before delegating non-trivial work, the human spends 15 minutes on 5 questions:
 
 Output: a short artifact (`## Pre-Impl: [feature]`) that the agent can compare its plan against.
 
-**Blueprint integration**: This could be an **interactive phase** between grilling and planning. The blueprint pauses and prompts: "Take 15 minutes to think through this. Write your notes, then continue." The agent could even assist by pre-populating Q2 (what exists already) from its own codebase exploration during grilling.
+**Blueprint integration**: An **interactive phase** between grilling and planning. Critically, the human must answer all 5 questions **independently, without seeing the agent's analysis first**. This is about exercising human judgment, not reviewing agent judgment. Seeing the agent's answers first causes anchoring and defeats the purpose.
 
-**Open question**: Is this something the blueprint should enforce, or is it a human discipline that the blueprint shouldn't gate on? Forcing a 15-minute pause in a pipeline might feel patronizing. But the research is clear that skipping it degrades quality.
+The phase works as follows:
+1. Grilling completes → spec written to disk
+2. Blueprint pauses: "Spec is at `plans/design-*.md`. Complete your pre-impl thinking before continuing. When ready, provide your notes."
+3. Human reads the spec, thinks through all 5 questions, writes notes
+4. Human provides notes to the agent
+5. Agent does its own codebase exploration and **compares** — surfacing gaps between the human's understanding and what it found, without replacing the human's thinking
+6. Merged output (human notes + agent findings) feeds into planning
+
+The comparison step is where the agent adds value: "You identified 3 risks; here's one more I found" is useful. Pre-populating answers for the human to rubber-stamp is the failure mode.
 
 **3. Mandatory Post-Mortem**
 
@@ -52,13 +60,9 @@ Run the `post-mortem` skill after every non-trivial task. Currently opt-in, rare
 
 **4. Module Audit Before Planning**
 
-Before starting new work in a module, audit it for inconsistencies, dead code, and tech debt. This gives the agent deep understanding AND feeds into the plan's Patterns & Constraints.
+Before starting new work in a module, audit it for inconsistencies, dead code, and tech debt.
 
-**Blueprint integration**: Could be a phase between grilling and planning:
-```
-[A] Audit affected modules for debt/inconsistency
-```
-The audit findings become input to the planning phase.
+**Blueprint integration**: Folded into the pre-impl comparison step. After the human provides their pre-impl notes, the agent does its own codebase exploration (which includes module audit concerns). This avoids a separate phase and integrates naturally with the comparison. The agent surfaces debt/inconsistencies it found as part of the gap analysis against the human's notes.
 
 **5. Review Finding Verification ("Audit the Findings")**
 

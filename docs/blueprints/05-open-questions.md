@@ -78,73 +78,49 @@ blueprints/
 
 ## 3. Invocation Syntax
 
-### Namespace prefix (`/bp:`)
+Two leading candidates:
+
+### `/feature` (plain, no namespace)
 
 ```
-/bp:feature "add OAuth"
-/bp:review
-/bp:migrate "upgrade React"
+/feature "add OAuth"
+/fix-issue 123
 ```
 
-**Pro**: Clear namespace. Won't collide with commands or skills.
-**Con**: Another prefix to remember. `bp` is terse.
+**Pro**: Minimal typing. Skills and commands both use plain `/` already (distinguished by styling in Anvil autocomplete).
+**Con**: Namespace collision risk with commands. No visual signal that this is a multi-phase pipeline.
 
-### Same as commands (`/ce:`)
-
-```
-/ce:feature "add OAuth"   # blueprint (type: blueprint in frontmatter)
-/ce:review                # command (type: command, implicitly)
-```
-
-**Pro**: User doesn't need to know whether something is a command or blueprint.
-**Con**: No way to tell from the invocation whether you're triggering a simple command or a multi-hour pipeline.
-
-### Explicit keyword
+### `/bp.feature` (dot-separated namespace)
 
 ```
-/workflow feature "add OAuth"
-/blueprint fix-issue 123
+/bp.feature "add OAuth"
+/bp.fix-issue 123
 ```
 
-**Pro**: Very explicit.
-**Con**: Verbose.
+**Pro**: Clear namespace. `.` is easier to press than `:`. Distinct from commands (`/ce:commit`) and skills.
+**Con**: New convention (dot vs colon). Another prefix.
+
+### Eliminated
+
+- `/bp:feature` — `:` is harder to press than `.`.
+- `/ce:feature` — conflates blueprints with commands; no way to tell from invocation whether it's a simple command or multi-hour pipeline.
+- `/blueprint feature` — too verbose.
 
 ### Current Lean
 
-Same namespace as commands, with the `type: blueprint` frontmatter distinguishing them internally. The user doesn't need to care about the distinction at invocation time — the UI/output makes it clear when a blueprint is running (phase tracking, progress display).
+Undecided between `/feature` and `/bp.feature`. Both viable. The autocomplete styling in Anvil could differentiate blueprints from commands/skills regardless of prefix choice.
 
 ---
 
-## 4. Agent-Invoked Triggers: Suggest or Silently Activate?
+## 4. Agent-Invoked Triggers
 
-When the orchestrator recognizes a task that matches a blueprint, should it:
+**Decision**: Blueprints are **primarily user-invoked** (like commands, not like skills).
 
-### Option A: Suggest
+Agent-invoked blueprints are not ruled out but need a strong argument. If implemented, they would require:
+- A dedicated tool (not skill-style trigger matching) so they can be **permissioned separately**
+- The tool would need user confirmation before launching a multi-phase pipeline
 
-> "This looks like a multi-phase feature. Want me to run the implement-feature blueprint, or just dive in?"
-
-**Pro**: User stays in control. No surprise multi-hour pipeline.
-**Con**: Adds a confirmation step. Slows down obvious cases.
-
-### Option B: Silently Activate
-
-Blueprint activates when trigger matches, like skills do today.
-
-**Pro**: Seamless. Skills already work this way.
-**Con**: A 5-word prompt could trigger a 10-phase pipeline. Surprising.
-
-### Option C: Activate with Announcement
-
-> "Running the implement-feature blueprint. Phase 1/7: Design..."
-
-No confirmation, but the user can Ctrl+C.
-
-**Pro**: Fast, transparent.
-**Con**: User might not notice before the first subagent fires.
-
-### Current Lean
-
-**Suggest for agent-invoked, silently activate for user-invoked.** If you typed `/bp:feature`, you know what you're getting. If the agent detects a blueprint match from a free-form prompt, it should ask first.
+Rationale: a 5-word free-form prompt silently triggering a 12-phase pipeline is surprising and unwanted. User-invoked is the safe default. Agent-invoked can be explored later if a clear use case emerges.
 
 ---
 

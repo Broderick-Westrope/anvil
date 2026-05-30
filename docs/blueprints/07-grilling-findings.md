@@ -30,20 +30,19 @@ The full pipeline, incorporating quality research:
       - Produces design spec
       GATE: user approves spec
 
-2.  Pre-impl thinking (optional)       [interactive — human pause]
-      - 15-min structured thinking
-      - Status TBD: enforced phase or human discipline?
+2.  Pre-impl thinking                  [interactive — human pause]
+      - Blueprint pauses. Human thinks through 5 questions independently.
+      - Human provides notes. Agent compares against its own codebase findings.
+      - Merged output feeds into planning.
+      - Critical: human must NOT see agent's analysis before writing their own.
 
-3.  Module audit                       [agentic]
-      - Audit affected modules for debt/inconsistency
-      - Feeds into plan's Patterns & Constraints
-
-4.  Plan                               [agentic]
+3.  Plan                               [agentic]
       - writing-plans skill with Patterns & Constraints section
+      - Uses merged pre-impl output as input
       - Skippable by user for trivial work
       GATE: user approves plan
 
-5.  Execute (per task group):           [agentic + deterministic]
+4.  Execute (per task group):           [agentic + deterministic]
       - Implement task group
       - Preflight checks                [deterministic gate]
       - Commit (even if checks failed)  [deterministic]
@@ -52,34 +51,34 @@ The full pipeline, incorporating quality research:
       - Commit fix                      [deterministic]
       Commits tell a story — separate fix commits, not squashed.
 
-6.  Dual-model review                  [parallel agentic]
+5.  Dual-model review                  [parallel agentic]
       - Sonnet + Opus in parallel
       - Deduplicate findings
 
-7.  Verify findings                    [agentic — verifier agent]
+6.  Verify findings                    [agentic — verifier agent]
       - Audit each finding against codebase
       - Mark as verified / unverified / dismissed
       - Only verified findings proceed
 
-8.  Fix verified findings              [agentic]
+7.  Fix verified findings              [agentic]
       - Address issues
       - Preflight → commit
 
-9.  Draft PR                           [deterministic]
+8.  Draft PR                           [deterministic]
 
-10. Human review with agent assist     [interactive — open-ended]
+9.  Human review with agent assist     [interactive — open-ended]
       - Blueprint exits to conversational mode
       - User reviews in VS Code (GitHub PR extension)
       - Agent answers questions, makes small fixes
 
-11. Mark PR ready                      [deterministic — user says "done"]
+10. Mark PR ready                      [deterministic — user says "done"]
 
-12. Watch CI (optional)                [deterministic + agentic retry]
+11. Watch CI (optional)                [deterministic + agentic retry]
       - gh pr checks --watch
       - On failure: diagnose → fix → push → re-watch
       - Bounded retry
 
-13. Post-mortem (mandatory)            [agentic]
+12. Post-mortem (mandatory)            [agentic]
       - Runs automatically after shipping
 ```
 
