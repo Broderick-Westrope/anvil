@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -540,6 +541,53 @@ func TestAgenticFetchToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 	requireNoBump(t, "Animate[finished,nested ID]", parent, func() {
 		parent.Animate(anim.StepMsg{ID: childTC.ID})
 	})
+}
+
+// TestToolDetailItems_MutatorsBumpVersion enumerates the mutators
+// on detail items returned by BuildToolDetailItems and asserts each
+// one advances Version().
+func TestToolDetailItems_MutatorsBumpVersion(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "bash",
+		`{"command":"echo hello\necho world","description":"run echo"}`,
+		&message.ToolResult{Content: "ok"}, ToolStatusSuccess)
+	items := BuildToolDetailItems(&sty, source)
+
+	for _, item := range items {
+		v, ok := item.(versionedItem)
+		if !ok {
+			continue
+		}
+
+		// All Focusable detail items must bump on SetFocused(true).
+		if f, ok := item.(list.Focusable); ok {
+			requireBump(t, fmt.Sprintf("SetFocused(%T)", item), v, func() {
+				f.SetFocused(true)
+			})
+			// Change guard: calling with the same value must not bump.
+			requireNoBump(t, fmt.Sprintf("SetFocused[same](%T)", item), v, func() {
+				f.SetFocused(true)
+			})
+		}
+
+		// Multi-line toolDetailParamItem must bump on ToggleExpanded.
+		if p, ok := item.(*toolDetailParamItem); ok {
+			if _, multi := p.isMultiLine(); multi {
+				requireBump(t, "ToggleExpanded(*toolDetailParamItem)", v, func() {
+					item.(Expandable).ToggleExpanded()
+				})
+			}
+		}
+
+		// toolDetailOutputItem must bump on ToggleExpanded.
+		if _, ok := item.(*toolDetailOutputItem); ok {
+			requireBump(t, "ToggleExpanded(*toolDetailOutputItem)", v, func() {
+				item.(Expandable).ToggleExpanded()
+			})
+		}
+	}
 }
 
 // TestBaseToolMessageItem_FinishedTransition covers §4.5.1 for

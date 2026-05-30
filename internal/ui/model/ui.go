@@ -2489,11 +2489,42 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	if key.Matches(msg, m.keyMap.Quit) && !m.dialog.ContainsDialog(dialog.QuitID) {
-		// Always handle quit keys first
+		if m.state == uiChat || m.state == uiLanding {
+			// Priority 1: Close popup.
+			if m.slashACOpen {
+				m.closeSlashAC(true)
+				return tea.Batch(cmds...)
+			}
+			if m.completionsOpen {
+				m.closeCompletions()
+				return tea.Batch(cmds...)
+			}
+			// Priority 2: Exit attachment delete mode.
+			if m.attachments.IsDeleting() {
+				m.attachments.ExitDeleteMode()
+				return tea.Batch(cmds...)
+			}
+			// Priority 3: Clear text + attachments.
+			if m.textarea.Value() != "" || m.attachments.HasContent() {
+				m.textarea.SetValue("")
+				m.attachments.Reset()
+				return tea.Batch(cmds...)
+			}
+			// Priority 4: Cancel streaming agent (immediate, bypasses
+			// two-phase Esc behavior).
+			if m.isAgentBusy() && m.hasSession() {
+				m.isCanceling = false
+				m.com.Workspace.AgentCancel(m.session.ID)
+				m.todoIsSpinning = false
+				m.renderPills()
+				return tea.Batch(cmds...)
+			}
+		}
+		// Priority 5: Open quit dialog (empty input in chat/landing,
+		// or any other state like onboarding/initialize).
 		if cmd := m.openQuitDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-
 		return tea.Batch(cmds...)
 	}
 
@@ -3230,7 +3261,7 @@ func (m *UI) ShortHelp() []key.Binding {
 
 	binds = append(
 		binds,
-		k.Quit,
+		m.quitBinding(),
 		k.Help,
 	)
 
@@ -3243,7 +3274,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 	k := &m.keyMap
 	help := k.Help
 	help.SetHelp("ctrl+g", "less")
-	hasAttachments := len(m.attachments.List()) > 0 || len(m.attachments.SkillList()) > 0
+	hasAttachments := m.attachments.HasContent()
 	hasSession := m.hasSession()
 	commands := k.Commands
 	if m.focus == uiFocusEditor && m.textarea.Value() == "" {
@@ -3368,11 +3399,25 @@ func (m *UI) FullHelp() [][]key.Binding {
 		binds,
 		[]key.Binding{
 			help,
-			k.Quit,
+			m.quitBinding(),
 		},
 	)
 
 	return binds
+}
+
+// quitBinding returns the Quit key binding with context-aware help text.
+func (m *UI) quitBinding() key.Binding {
+	quit := m.keyMap.Quit
+	if m.state == uiChat || m.state == uiLanding {
+		switch {
+		case m.textarea.Value() != "" || m.attachments.HasContent():
+			quit.SetHelp("ctrl+c", "clear")
+		case m.isAgentBusy():
+			quit.SetHelp("ctrl+c", "cancel")
+		}
+	}
+	return quit
 }
 
 func (m *UI) currentModelSupportsImages() bool {

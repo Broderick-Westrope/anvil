@@ -7,6 +7,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/stretchr/testify/require"
 )
@@ -184,4 +185,57 @@ func TestAssistantMessageItemRender_PrefixCacheNoCacheLeak(t *testing.T) {
 	// Hit each cached entry again and confirm stability.
 	require.Equal(t, out80, item.Render(80))
 	require.Equal(t, out120, item.Render(120))
+}
+
+// TestBaseToolMessageItemRender_PrefixCacheCompactFocusKey verifies the
+// 4-state compact×focused matrix produces distinct cache keys so no
+// combination leaks into another's cached output.
+func TestBaseToolMessageItemRender_PrefixCacheCompactFocusKey(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	tc := message.ToolCall{ID: "tc-cache", Name: "bash", Input: `{"command":"echo hello"}`, Finished: true}
+	item := NewToolMessageItem(&sty, "msg", tc, &message.ToolResult{ToolCallID: "tc-cache", Content: "hello\nworld\ndone"}, false, nil)
+
+	// NewToolMessageItem defaults most tools to compact; start
+	// non-compact so the 4-state matrix exercises both directions.
+	item.(Compactable).SetCompact(false)
+
+	const width = 60
+
+	// 1. Unfocused + non-compact.
+	unfocusedNormal := item.Render(width)
+
+	// 2. Focused + non-compact (must differ from unfocused+non-compact).
+	item.(list.Focusable).SetFocused(true)
+	focusedNormal := item.Render(width)
+	require.NotEqual(t, unfocusedNormal, focusedNormal,
+		"focused+non-compact must differ from unfocused+non-compact")
+
+	// 3. Focused + compact (must differ from focused+non-compact).
+	item.(Compactable).SetCompact(true)
+	focusedCompact := item.Render(width)
+	require.NotEqual(t, focusedNormal, focusedCompact,
+		"focused+compact must differ from focused+non-compact")
+
+	// 4. Unfocused + compact (must differ from focused+compact).
+	item.(list.Focusable).SetFocused(false)
+	unfocusedCompact := item.Render(width)
+	require.NotEqual(t, focusedCompact, unfocusedCompact,
+		"unfocused+compact must differ from focused+compact")
+
+	// All 4 renders must be distinct.
+	all := map[string]string{
+		"unfocused+normal":  unfocusedNormal,
+		"focused+normal":    focusedNormal,
+		"focused+compact":   focusedCompact,
+		"unfocused+compact": unfocusedCompact,
+	}
+	seen := make(map[string]string)
+	for label, rendered := range all {
+		if prev, dup := seen[rendered]; dup {
+			t.Fatalf("renders %q and %q are identical but must be distinct", prev, label)
+		}
+		seen[rendered] = label
+	}
 }
