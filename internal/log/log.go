@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Broderick-Westrope/anvil/internal/event"
 	"github.com/charmbracelet/x/term"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -68,8 +67,6 @@ func Initialized() bool {
 // written to the system temp directory so it is always writable.
 func RecoverPanic(name string, cleanup func()) {
 	if r := recover(); r != nil {
-		event.Error(r, "panic", true, "name", name)
-
 		stack := debug.Stack()
 
 		// Always print to stderr so the user can find it even if the

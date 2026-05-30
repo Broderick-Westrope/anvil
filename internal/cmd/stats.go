@@ -16,7 +16,6 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
-	"github.com/Broderick-Westrope/anvil/internal/event"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
@@ -131,12 +130,6 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	if dataDir == "" {
 		dataDir = cfg.Config().Options.DataDirectory
 	}
-	if shouldEnableMetrics(cfg.Config()) {
-		event.Init()
-	}
-
-	event.StatsViewed()
-
 	conn, err := db.Connect(ctx, dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)

@@ -13,7 +13,6 @@ import (
 	"charm.land/log/v2"
 	"github.com/Broderick-Westrope/anvil/internal/client"
 	"github.com/Broderick-Westrope/anvil/internal/config"
-	"github.com/Broderick-Westrope/anvil/internal/event"
 	"github.com/Broderick-Westrope/anvil/internal/format"
 	"github.com/Broderick-Westrope/anvil/internal/proto"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -85,23 +84,12 @@ anvil run --continue "Follow up on your last response"
 			return fmt.Errorf("no prompt provided")
 		}
 
-		event.SetNonInteractive(true)
-
-		switch {
-		case sessionID != "":
-			event.SetContinueBySessionID(true)
-		case useLast:
-			event.SetContinueLastSession(true)
-		}
-
 		if useClientServer() {
 			c, ws, cleanup, err := connectToServer(cmd)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
-
-			event.AppInitialized()
 
 			if sessionID != "" {
 				sess, err := resolveSessionByID(ctx, c, ws.ID, sessionID)
@@ -127,8 +115,6 @@ anvil run --continue "Follow up on your last response"
 			return err
 		}
 		defer cleanup()
-
-		event.AppInitialized()
 
 		if !ws.Config().IsConfigured() {
 			return fmt.Errorf("no providers configured - please run 'anvil' to set up a provider interactively")

@@ -18,7 +18,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
-	"github.com/Broderick-Westrope/anvil/internal/event"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
@@ -115,10 +114,6 @@ func sessionSetup(cmd *cobra.Command) (context.Context, *sessionServices, func()
 	if dataDir == "" {
 		dataDir = cfg.Config().Options.DataDirectory
 	}
-	if shouldEnableMetrics(cfg.Config()) {
-		event.Init()
-	}
-
 	conn, err := db.Connect(ctx, dataDir)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -134,15 +129,11 @@ func sessionSetup(cmd *cobra.Command) (context.Context, *sessionServices, func()
 }
 
 func runSessionList(cmd *cobra.Command, _ []string) error {
-	event.SetNonInteractive(true)
-
 	ctx, svc, cleanup, err := sessionSetup(cmd)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	event.SessionListed(sessionListJSON)
 
 	list, err := svc.sessions.List(ctx)
 	if err != nil {
@@ -258,15 +249,11 @@ func resolveSessionID(ctx context.Context, svc session.Service, id string) (sess
 }
 
 func runSessionShow(cmd *cobra.Command, args []string) error {
-	event.SetNonInteractive(true)
-
 	ctx, svc, cleanup, err := sessionSetup(cmd)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	event.SessionShown(sessionShowJSON)
 
 	sess, err := resolveSessionID(ctx, svc.sessions, args[0])
 	if err != nil {
@@ -286,15 +273,11 @@ func runSessionShow(cmd *cobra.Command, args []string) error {
 }
 
 func runSessionDelete(cmd *cobra.Command, args []string) error {
-	event.SetNonInteractive(true)
-
 	ctx, svc, cleanup, err := sessionSetup(cmd)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	event.SessionDeletedCommand(sessionDeleteJSON)
 
 	sess, err := resolveSessionID(ctx, svc.sessions, args[0])
 	if err != nil {
@@ -322,15 +305,11 @@ func runSessionDelete(cmd *cobra.Command, args []string) error {
 }
 
 func runSessionRename(cmd *cobra.Command, args []string) error {
-	event.SetNonInteractive(true)
-
 	ctx, svc, cleanup, err := sessionSetup(cmd)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	event.SessionRenamed(sessionRenameJSON)
 
 	sess, err := resolveSessionID(ctx, svc.sessions, args[0])
 	if err != nil {
@@ -359,15 +338,11 @@ func runSessionRename(cmd *cobra.Command, args []string) error {
 }
 
 func runSessionLast(cmd *cobra.Command, _ []string) error {
-	event.SetNonInteractive(true)
-
 	ctx, svc, cleanup, err := sessionSetup(cmd)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	event.SessionLastShown(sessionLastJSON)
 
 	list, err := svc.sessions.List(ctx)
 	if err != nil {

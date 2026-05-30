@@ -19,7 +19,7 @@ import (
 	"charm.land/fantasy/providers/vercel"
 	"github.com/Broderick-Westrope/anvil/internal/agent/hyper"
 	"github.com/Broderick-Westrope/anvil/internal/config"
-	"github.com/Broderick-Westrope/anvil/internal/event"
+	"github.com/Broderick-Westrope/anvil/internal/machineid"
 	"github.com/Broderick-Westrope/anvil/internal/log"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
 	"github.com/Broderick-Westrope/anvil/internal/oauth/copilot"
@@ -304,7 +304,7 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		switch providerCfg.ID {
 		case hyper.Name:
 			baseURL = hyper.BaseURL() + "/v1"
-			headers["x-anvil-id"] = event.GetID()
+			headers["x-anvil-id"] = machineid.Get()
 		case string(catwalk.InferenceProviderZAI):
 			if providerCfg.ExtraBody == nil {
 				providerCfg.ExtraBody = map[string]any{}

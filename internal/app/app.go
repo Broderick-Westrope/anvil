@@ -23,7 +23,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
-	"github.com/Broderick-Westrope/anvil/internal/event"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/format"
 	"github.com/Broderick-Westrope/anvil/internal/history"
@@ -603,11 +602,6 @@ func (app *App) Shutdown() {
 
 	// Now run remaining cleanup tasks in parallel.
 	var wg sync.WaitGroup
-
-	// Send exit event
-	wg.Go(func() {
-		event.AppExited()
-	})
 
 	// Kill all background shells.
 	wg.Go(func() {
