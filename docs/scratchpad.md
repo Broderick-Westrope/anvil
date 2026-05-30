@@ -16,3 +16,4 @@
 - better perm system altogether? what could it look like to have something innovative for perms?
 - `anvil_info` is missing `[plugins]`, `[agents]`, and `[commands]` sections. Plugins and agents data lives on the coordinator already; commands only exist in the UI layer and would need threading through. Low priority — completeness, no known pain point.
 - I would like some feature akin to Stripe blueprints or Claude workflows built in. Perhaps just the support built in and the workflows themselves can exist in plugins, projects, etc like commands/skills/agents do.
+- After migrating to a global DB, consider adding a retention policy for the `files` table (stores full file content, main driver of DB size). Options: `anvil sessions prune` command, auto-purge snapshots older than N days, or size-based limits. Not urgent — growth rate is the same regardless of DB location.
