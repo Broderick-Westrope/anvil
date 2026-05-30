@@ -46,7 +46,10 @@ type Attachments struct {
 
 func (m *Attachments) List() []message.Attachment   { return m.list }
 func (m *Attachments) SkillList() []SkillAttachment { return m.skills }
-func (m *Attachments) Reset()                       { m.list = nil; m.skills = nil }
+func (m *Attachments) IsDeleting() bool             { return m.deleting }
+func (m *Attachments) ExitDeleteMode()              { m.deleting = false }
+func (m *Attachments) HasContent() bool             { return len(m.list) > 0 || len(m.skills) > 0 }
+func (m *Attachments) Reset()                       { m.list = nil; m.skills = nil; m.deleting = false }
 
 func (m *Attachments) Update(msg tea.Msg) bool {
 	switch msg := msg.(type) {
