@@ -509,8 +509,6 @@ func startDetachedServer(cmd *cobra.Command) error {
 	return nil
 }
 
-
-
 func MaybePrependStdin(prompt string) (string, error) {
 	if term.IsTerminal(os.Stdin.Fd()) {
 		return prompt, nil
