@@ -398,13 +398,11 @@ func (t *baseToolMessageItem) Render(width int) string {
 	// frame-dependent) or while a highlight range is active.
 	useCache := !t.isSpinning() && !t.isHighlighted()
 	var key uint64
-	switch {
-	case t.isCompact:
-		key = 2
-	case t.focused:
-		key = 1
-	default:
-		key = 0
+	if t.isCompact {
+		key |= 2
+	}
+	if t.focused {
+		key |= 1
 	}
 	if useCache {
 		if cached, ok := t.getCachedPrefixedRender(width, key); ok {
@@ -1747,4 +1745,3 @@ func prettifyToolName(name string) string {
 		return humanizedToolName(name)
 	}
 }
-
