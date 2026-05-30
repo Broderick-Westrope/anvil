@@ -17,67 +17,62 @@ See [03-design.md](03-design.md) for the full format specification.
 
 ---
 
-## 2. Where Do Blueprints Live?
+## 2. Where Do Blueprints Live? ✅ RESOLVED
 
-Three candidate locations:
+**Decision**: Blueprints are a **separate entity** with their own directory, supported at global, project, and plugin levels.
 
-### Same directory as commands (`commands/`)
+Blueprints are not skills, not commands. They have distinct behavior (pipeline structure, state tracking, deterministic nodes) and deserve their own namespace. Mixing them into `commands/` or `skills/` would conflate fundamentally different primitives.
 
-```
-plugins/ce/commands/
-├─ commit.md        # command
-├─ review.md        # command
-├─ feature.md       # blueprint (distinguished by type: blueprint in frontmatter)
-└─ migrate.md       # blueprint
-```
+### Resolution Order
 
-**Pro**: Single namespace for user-invoked things. Consistent with "blueprints are enhanced commands."
-**Con**: Conflates simple commands with complex pipelines. No visual distinction.
-
-### Separate directory (`blueprints/` or `workflows/`)
+Same precedence as skills — project > personal > plugin:
 
 ```
-plugins/ce/
-├─ commands/
-│   ├─ commit.md
-│   └─ review.md
-├─ blueprints/
-│   ├─ feature.md
-│   ├─ migrate.md
-│   └─ fragments/
-│       └─ verify-and-ship.md
-└─ skills/
+.agents/blueprints/                    # project-level
+~/.config/anvil/blueprints/            # personal/global
+plugins/ce/blueprints/                 # plugin-provided
 ```
 
-**Pro**: Clear separation. `fragments/` subdirectory for reusable phase groups. Plugin manifest can declare `"blueprints": "plugins/ce/blueprints"`.
-**Con**: Another directory to discover and configure.
+### Directory Structure
 
-### Alongside plans (per-project)
-
-```
-project/
-├─ plans/
-│   ├─ impl-2026-05-30-oauth.md
-│   └─ blueprints/
-│       └─ deploy.md  # project-specific blueprint
-└─ .agents/
-    └─ blueprints/   # project-scoped blueprints
-```
-
-**Pro**: Project-specific blueprints live with the project.
-**Con**: Most blueprints are personal/universal, not project-specific.
-
-### Current Lean
-
-Separate directory in the plugin, with support for project-level overrides:
+Each blueprint is a directory containing `blueprint.yaml` and optional `references/`:
 
 ```
-~/.claude/blueprints/       # personal
-.agents/blueprints/          # project
-plugins/ce/blueprints/       # plugin-provided
+blueprints/
+├── implement-feature/
+│   ├── blueprint.yaml
+│   └── references/
+│       └── review-merge-rules.md
+├── fix-issue/
+│   ├── blueprint.yaml
+│   └── references/
+│       └── diagnosis-protocol.md
+├── migrate/
+│   └── blueprint.yaml
+└── fragments/
+    ├── verify-and-ship.yaml
+    └── preflight.yaml
 ```
 
-Same resolution order as skills: project > personal > plugin.
+### Plugin Manifest
+
+```json
+{
+  "name": "ce",
+  "skills": "plugins/ce/skills",
+  "commands": "anvil/commands",
+  "agents": "anvil/agents",
+  "blueprints": "plugins/ce/blueprints"
+}
+```
+
+### When to Use Each Level
+
+| Level | Use case | Example |
+|-------|----------|---------|
+| **Project** | Workflows specific to a repo's tech stack or conventions | `deploy-to-staging`, `run-e2e-suite` |
+| **Personal** | Your universal development workflows | `implement-feature`, `fix-issue`, `migrate` |
+| **Plugin** | Shared workflows distributed to teams | Plugin-provided defaults |
 
 ---
 

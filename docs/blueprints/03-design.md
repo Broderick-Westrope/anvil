@@ -442,32 +442,45 @@ Go/JavaScript scripts that orchestrate agents. Equivalent to Claude Code's workf
 
 **Recommendation**: Start with **A**, design for **B**. Skip **C**.
 
-## Directory Layout (Full Example)
+## Directory Layout
+
+Blueprints are a separate entity, supported at project, personal, and plugin levels:
 
 ```
-plugins/ce/
-├── blueprints/
-│   ├── implement-feature/
-│   │   ├── blueprint.yaml
-│   │   └── references/
-│   │       └── review-merge-rules.md
-│   ├── fix-issue/
-│   │   ├── blueprint.yaml
-│   │   └── references/
-│   │       └── diagnosis-protocol.md
-│   ├── migrate/
-│   │   ├── blueprint.yaml
-│   │   └── references/
-│   │       └── parallel-transform-rules.md
-│   └── fragments/
-│       ├── verify-and-ship.yaml
-│       └── preflight.yaml
-├── skills/          # Existing reusable skills
-├── commands/        # Existing commands
-└── agents/          # Existing agent definitions
+# Project-level (repo-specific workflows)
+.agents/blueprints/
+├── deploy-to-staging/
+│   └── blueprint.yaml
+└── run-e2e-suite/
+    └── blueprint.yaml
+
+# Personal/global (your universal workflows)
+~/.config/anvil/blueprints/
+├── implement-feature/
+│   ├── blueprint.yaml
+│   └── references/
+│       └── review-merge-rules.md
+├── fix-issue/
+│   ├── blueprint.yaml
+│   └── references/
+│       └── diagnosis-protocol.md
+├── migrate/
+│   └── blueprint.yaml
+└── fragments/
+    ├── verify-and-ship.yaml
+    └── preflight.yaml
+
+# Plugin-provided (shared via plugin distribution)
+plugins/ce/blueprints/
+├── implement-feature/
+│   └── ...
+└── fragments/
+    └── ...
 ```
 
-Plugin manifest (`anvil-plugin.json`) would add:
+Resolution order: **project > personal > plugin** (same as skills).
+
+Plugin manifest (`anvil-plugin.json`) declares the blueprints directory:
 ```json
 {
   "name": "ce",
