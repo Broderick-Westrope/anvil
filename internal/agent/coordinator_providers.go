@@ -159,7 +159,13 @@ func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers 
 	var httpClient *http.Client
 	switch providerID {
 	case string(catwalk.InferenceProviderCopilot):
-		opts = append(opts, openaicompat.WithUseResponsesAPI())
+		opts = append(
+			opts,
+			openaicompat.WithUseResponsesAPI(),
+			openaicompat.WithResponsesAPIFunc(func(modelID string) bool {
+				return copilotResponsesModels[modelID]
+			}),
+		)
 		httpClient = copilot.NewClient(isSubAgent, c.cfg.Config().Options.Debug)
 	}
 	if httpClient == nil && c.cfg.Config().Options.Debug {
