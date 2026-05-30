@@ -209,7 +209,7 @@ reviewed.
 > The following skill paths are loaded by default and DO NOT NEED to be added to `skills_paths`:
 > `.agents/skills`, `.anvil/skills`, `.claude/skills`, `.cursor/skills`
 
-Other options: `context_paths`, `progress`, `disable_notifications`, `disable_auto_summarize`, `disable_metrics`, `disable_provider_auto_update`, `disable_default_providers`, `data_directory`, `initialize_as`.
+Other options: `context_paths`, `progress`, `disable_notifications`, `disable_auto_summarize`, `disable_provider_auto_update`, `disable_default_providers`, `data_directory`, `initialize_as`.
 
 ## Hooks
 

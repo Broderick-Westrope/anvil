@@ -3,27 +3,40 @@
   "$id": "https://github.com/Broderick-Westrope/anvil/internal/config/config",
   "$ref": "#/$defs/Config",
   "$defs": {
-    "Attribution": {
+    "Agent": {
       "properties": {
-        "trailer_style": {
-          "type": "string",
-          "enum": [
-            "none",
-            "co-authored-by",
-            "assisted-by"
-          ],
-          "description": "Style of attribution trailer to add to commits",
-          "default": "assisted-by"
+        "id": {
+          "type": "string"
         },
-        "co_authored_by": {
-          "type": "boolean",
-          "description": "Deprecated: use trailer_style instead",
-          "deprecated": true
+        "name": {
+          "type": "string"
         },
-        "generated_with": {
-          "type": "boolean",
-          "description": "Add Generated with Anvil line to commit messages and issues and PRs",
-          "default": true
+        "description": {
+          "type": "string"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "variant": {
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "skills": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "append_prompt": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -99,6 +112,25 @@
           },
           "type": "object",
           "description": "User-defined shell commands that fire on hook events (e.g. PreToolUse)"
+        },
+        "agents": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Agent"
+          },
+          "type": "object"
+        },
+        "disabled_agents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "plugins": {
+          "items": {
+            "$ref": "#/$defs/PluginConfig"
+          },
+          "type": "array",
+          "description": "External plugin directories"
         }
       },
       "additionalProperties": false,
@@ -290,6 +322,32 @@
           },
           "type": "object",
           "description": "HTTP headers for HTTP/SSE MCP servers"
+        },
+        "auth": {
+          "type": "string",
+          "enum": [
+            "oauth"
+          ],
+          "description": "Authentication method for HTTP/SSE MCP servers"
+        },
+        "clientId": {
+          "type": "string",
+          "description": "OAuth client ID for pre-registered clients"
+        },
+        "clientSecret": {
+          "type": "string",
+          "description": "OAuth client secret (supports shell expansion via $VAR or $(cmd))"
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "OAuth scopes to request during authorization"
+        },
+        "redirectUri": {
+          "type": "string",
+          "description": "Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"
         }
       },
       "additionalProperties": false,
@@ -460,15 +518,6 @@
           "description": "Ignore all default/embedded providers. When enabled, providers must be fully specified in the config file with base_url, models, and api_key - no merging with defaults occurs",
           "default": false
         },
-        "attribution": {
-          "$ref": "#/$defs/Attribution",
-          "description": "Attribution settings for generated content"
-        },
-        "disable_metrics": {
-          "type": "boolean",
-          "description": "Disable sending metrics",
-          "default": false
-        },
         "initialize_as": {
           "type": "string",
           "description": "Name of the context file to create/update during project initialization",
@@ -504,6 +553,17 @@
           },
           "type": "array",
           "description": "List of skill names to disable and hide from the agent"
+        },
+        "expanded_tools": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "bash",
+              "mcp_*"
+            ]
+          },
+          "type": "array",
+          "description": "Glob patterns for tools that should render expanded instead of compact"
         }
       },
       "additionalProperties": false,
@@ -525,6 +585,19 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "PluginConfig": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the plugin directory"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path"
+      ]
     },
     "ProviderConfig": {
       "properties": {
@@ -628,6 +701,10 @@
           "examples": [
             "openai"
           ]
+        },
+        "variant": {
+          "type": "string",
+          "description": "Optional model variant passthrough (e.g. thinking budget)"
         },
         "reasoning_effort": {
           "type": "string",
