@@ -151,7 +151,7 @@ func quickStyle(o quickStyleOpts) Styles {
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          " ",
 				Suffix:          " ",
-				Color:           hex(o.warningSubtle),
+				Color:           hex(o.onPrimary),
 				BackgroundColor: hex(o.primary),
 				Bold:            new(true),
 			},
