@@ -1,6 +1,6 @@
 # Remove Charm Telemetry Implementation Plan
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 
 ## Specification
 
