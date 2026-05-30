@@ -57,17 +57,13 @@ Same output for same input. No LLM. Runs as bash, MCP tool call, or assertion.
 - name: run-tests
   type: deterministic
   bash: go test ./...
-```
 
-```yaml
 - name: fetch-ticket
   type: deterministic
   mcp: linear__get_issue
   params: { id: "{{ args.ticket-id }}", includeRelations: true }
   output: ticket
-```
 
-```yaml
 - name: check-state
   type: deterministic
   assert: "{{ ticket.state }} not in ['Done', 'Cancelled']"
@@ -84,11 +80,13 @@ LLM reasons, generates, interprets. Runs as a subagent with scoped tools and con
   type: agentic
   skill: writing-plans
   input: "{{ spec_path }}"
-  tools: [view, ls, grep, glob, write, task]  # restricted: no edit, no bash
+  tools: [view, ls, grep, glob, write, task]
   output: plan_path
 ```
 
-Key property: **tool restriction per phase**. Planning phases get read-only tools. Implementation phases get write tools. This enforces what `<HARD-GATE>` tries to achieve with instructions.
+Key property: **tool restriction per phase**. Planning phases get read-only tools. Implementation phases get write tools.
+
+For phases that need custom instructions not covered by an existing skill, use a **reference file** (see [File Format](#file-format) below).
 
 ### 3. Interactive
 
@@ -99,28 +97,25 @@ Requires human input. Pauses the pipeline until the user responds.
   type: interactive
   prompt: "Plan written to {{ plan_path }}. Review and approve to proceed."
   options: [approve, revise, abort]
-  on-revise: goto plan  # jump back to planning phase
+  on-revise: goto plan
   on-abort: halt
 ```
 
-This formalizes the "ask the user" pattern that brainstorming and grilling use. Today it's ad-hoc prose; in a blueprint it's a declared pause point.
-
 ### 4. Gate
 
-Deterministic checkpoint between phases. If it fails, either retry with an agentic fix node or halt.
+Deterministic checkpoint between phases. If it fails, optionally retry with an agentic fix node, then halt.
 
 ```yaml
 - name: tests-pass
   type: gate
   bash: go test ./...
-  on-fail:
-    retry:
-      skill: systematic-debugging
-      max: 2
-    then: halt
+  critical: true
+  retry:
+    skill: systematic-debugging
+    max: 2
 ```
 
-Gates are the biggest gap in the current system. Today, verification is prose ("run tests, if they fail, fix them"). A gate is structural — the pipeline cannot advance until it passes. The LLM cannot rationalize away a non-zero exit code.
+Gates are the biggest gap in the current system. A gate is structural — the pipeline cannot advance until it passes. The LLM cannot rationalize away a non-zero exit code.
 
 ### 5. Parallel Group
 
@@ -134,163 +129,351 @@ Multiple agentic or deterministic nodes that run concurrently.
       input: "{{ diff }}"
     - agent: code-reviewer-opus
       input: "{{ diff }}"
-  merge: deduplicate  # built-in merge strategy from /ce:review
+  merge: deduplicate
   output: review_findings
 ```
 
-This captures the dual-model review pattern. Currently it's described in the `/ce:review` command prose; in a blueprint it's a declared parallel group with a named merge strategy.
-
 ## File Format
 
-Blueprints are Markdown with YAML frontmatter, consistent with skills and commands. Phases are `##` sections with YAML properties in code blocks.
+### Separation of Concerns
 
-```markdown
----
-name: implement-feature
-type: blueprint
-description: End-to-end feature implementation from idea to merged PR
-argument-hint: "<feature-description> [--spec=path] [--plan=path]"
-invocation: user  # "user", "agent", or "both"
----
+A blueprint's content serves two different purposes:
 
-# Implement Feature
+1. **Pipeline structure** — phase sequence, node types, tool restrictions, retry counts, input/output bindings, gate commands. This is *structured data*.
+2. **Agent instructions** — what an agentic node should actually do, context, constraints, judgment calls. This is *prose*.
 
-## Phase 1: Design
-<!-- type: interactive -->
-<!-- skill: brainstorming -->
-<!-- gate: user-approval -->
-<!-- output: spec_path -->
-<!-- skip-if: args.spec -->
+These should live in different formats. The pipeline structure is a **YAML file**. The agent instructions are either **existing skills** (referenced by name) or **blueprint-local reference files** (Markdown, loaded on demand).
 
-## Phase 2: Plan
-<!-- type: agentic -->
-<!-- skill: writing-plans -->
-<!-- input: {{ spec_path }} -->
-<!-- gate: user-approval -->
-<!-- output: plan_path -->
-<!-- skip-if: args.plan -->
+### Blueprint Directory Structure
 
-...
+Following the [Agent Skills Specification](https://agentskills.io/specification) progressive disclosure model:
+
+```
+blueprints/
+└── implement-feature/
+    ├── blueprint.yaml        # Pipeline structure (always loaded)
+    └── references/           # Prose instructions (loaded per-phase, on demand)
+        ├── design-review.md
+        └── scope-check.md
 ```
 
-**Open question**: Should phase properties be YAML code blocks, HTML comments, or a dedicated syntax? HTML comments keep the Markdown readable as documentation. YAML blocks are more explicit and parseable. See [Open Questions](05-open-questions.md).
+**`blueprint.yaml`** — The pipeline topology. Defines phases, their types, connections, gates, tool restrictions, and retry policies. Readable as a "lay of the land" for the entire workflow. References skills, commands, agents, and local reference files.
+
+**`references/`** — Markdown files containing instructions for phases that need custom prose not covered by an existing skill. These are *not* reusable skills — they're specific to this blueprint. Loaded only when their phase activates, following the progressive disclosure model.
+
+### Why This Split Works
+
+| Content | Lives in | Loaded when |
+|---------|----------|-------------|
+| Phase sequence, gates, retries | `blueprint.yaml` | Blueprint activates |
+| Reusable agent instructions | Existing skills (e.g., `writing-plans`) | Phase activates, skill triggered |
+| Blueprint-specific instructions | `references/*.md` | Phase activates, reference loaded |
+| Agent identities | Existing agents (e.g., `code-reviewer-opus`) | Phase dispatches agent |
+
+A phase can get its instructions from three sources:
+1. **An existing skill**: `skill: writing-plans` — the skill's SKILL.md provides the instructions.
+2. **A local reference**: `reference: references/design-review.md` — blueprint-specific prose.
+3. **Inline** (short): `prompt: "Summarize the changes in 2-3 sentences"` — for trivial instructions.
+
+### Example: `blueprint.yaml`
+
+```yaml
+name: implement-feature
+description: End-to-end feature implementation from idea to merged PR
+argument-hint: "<feature-description> [--spec=path] [--plan=path]"
+invocation: user
+
+phases:
+  - name: design
+    type: interactive
+    skill: brainstorming
+    output: spec_path
+    gate: user-approval
+    skip-if: args.spec
+
+  - name: plan
+    type: agentic
+    skill: writing-plans
+    input: "{{ spec_path }}"
+    tools: [view, ls, grep, glob, write, task]
+    output: plan_path
+    gate: user-approval
+    skip-if: args.plan
+
+  - name: scaffold-tests
+    type: agentic
+    skill: scaffolding-plan-tests
+    input: "{{ plan_path }}"
+    condition: plan has TDD-compatible tasks
+    output: test_paths
+
+  - name: setup
+    type: deterministic
+    bash: |
+      git worktree add -b feature/{{ plan_name }} ../wt-{{ plan_name }}
+    output: worktree_path
+
+  - name: implement
+    type: agentic
+    skill: executing-plans
+    input: "{{ plan_path }}"
+    retry:
+      on: task-failure
+      max: 2
+
+  - name: build
+    type: gate
+    bash: go build ./...
+    critical: true
+    retry: { max: 2 }
+
+  - name: tests
+    type: gate
+    bash: go test ./...
+    critical: true
+    retry: { max: 2, skill: systematic-debugging }
+
+  - name: lint
+    type: gate
+    bash: task lint:fix
+    critical: false
+
+  - name: review
+    type: parallel
+    nodes:
+      - agent: code-reviewer-sonnet
+        input: "{{ diff }}"
+      - agent: code-reviewer-opus
+        input: "{{ diff }}"
+    merge: deduplicate
+    reference: references/review-merge-rules.md
+    output: review_findings
+
+  - name: fix-findings
+    type: agentic
+    condition: review has critical issues
+    input: "{{ review_findings }}"
+    retry:
+      on: review-still-has-issues
+      max: 2
+
+  - name: ship
+    type: interactive
+    prompt: "Ready to create PR for {{ plan_name }}?"
+    skill: finishing-a-development-branch
+```
+
+### Example: `references/review-merge-rules.md`
+
+```markdown
+# Review Merge Rules
+
+When merging findings from parallel reviewers:
+
+## Matching Findings
+
+Two findings match when they reference the same file and line (or overlapping
+range) AND describe the same underlying issue.
+
+## Merge Rules
+
+| Scenario | Action |
+|----------|--------|
+| Both found same issue | Single entry, [Sonnet + Opus], high confidence |
+| Only one found it | Single entry, [Sonnet] or [Opus] |
+| Disagree on severity | Use higher severity, note disagreement |
+| Contradict each other | Include both perspectives, user decides |
+
+## Verdict Logic
+
+| Sonnet | Opus | Merged |
+|--------|------|--------|
+| APPROVE | APPROVE | APPROVE |
+| APPROVE | REQUEST CHANGES | REQUEST CHANGES |
+| REQUEST CHANGES | APPROVE | REQUEST CHANGES |
+| REQUEST CHANGES | REQUEST CHANGES | REQUEST CHANGES |
+```
+
+This reference is loaded only when the `review` phase runs. It provides the merge instructions that the orchestrator follows when combining parallel review outputs. It's not a reusable skill — it's specific to blueprints that use dual-model review with this merge strategy.
+
+### Contrast With Skills
+
+| Property | Skill (`SKILL.md`) | Blueprint reference (`references/*.md`) |
+|----------|--------------------|-----------------------------------------|
+| Reusable across blueprints/commands | Yes | No — scoped to one blueprint |
+| Has own frontmatter/metadata | Yes | No — just prose |
+| Discoverable via trigger matching | Yes | No — only loaded by its blueprint |
+| Progressive disclosure | Yes (metadata → instructions → resources) | Yes (loaded per-phase) |
+
+If you find yourself wanting to reuse a reference across multiple blueprints, promote it to a skill.
 
 ## Composition
 
-### Reusable Phase Groups
+### Reusable Phase Groups (Fragments)
 
-Several blueprints share verification and shipping steps. These can be extracted as reusable fragments:
+Several blueprints share verification and shipping steps. These can be extracted as reusable YAML fragments:
 
-```markdown
-# verify-and-ship (fragment)
+```yaml
+# fragments/verify-and-ship.yaml
+phases:
+  - name: build
+    type: gate
+    bash: go build ./...
+    critical: true
+    retry: { max: 2 }
 
-## Gate: Build
-<!-- type: gate -->
-<!-- bash: go build ./... -->
-<!-- on-fail: retry 2 -->
+  - name: tests
+    type: gate
+    bash: go test ./...
+    critical: true
+    retry: { max: 2, skill: systematic-debugging }
 
-## Gate: Tests
-<!-- type: gate -->
-<!-- bash: go test ./... -->
-<!-- on-fail: retry 2, skill: systematic-debugging -->
+  - name: lint
+    type: gate
+    bash: task lint:fix
+    critical: false
 
-## Gate: Lint
-<!-- type: gate -->
-<!-- bash: task lint:fix -->
+  - name: review
+    type: parallel
+    nodes:
+      - agent: code-reviewer-sonnet
+      - agent: code-reviewer-opus
+    merge: deduplicate
 
-## Dual Review
-<!-- type: parallel -->
-<!-- agents: [code-reviewer-sonnet, code-reviewer-opus] -->
-<!-- merge: deduplicate -->
-
-## Ship
-<!-- type: interactive -->
-<!-- prompt: Ready to create PR? -->
-<!-- skill: finishing-a-development-branch -->
+  - name: ship
+    type: interactive
+    skill: finishing-a-development-branch
 ```
 
-Blueprints import fragments:
+Blueprints include fragments:
 ```yaml
+name: implement-feature
+phases:
+  - name: design
+    # ...
+  - name: implement
+    # ...
 includes:
-  - verify-and-ship  # after implementation phases
+  - fragments/verify-and-ship
 ```
 
 ### Blueprint Hierarchy
 
 ```
-blueprint: implement-feature
-  phases: [design, plan, scaffold-tests?, setup-worktree, implement]
+implement-feature:
+  phases: [design, plan, scaffold-tests?, setup, implement]
   includes: [verify-and-ship]
 
-blueprint: fix-issue
-  phases: [fetch-issue, diagnose, plan-small, implement]
+fix-issue:
+  phases: [fetch-issue, diagnose, implement]
   includes: [verify-and-ship]
 
-blueprint: migrate
+migrate:
   phases: [discover-scope, plan-migration, implement-parallel]
   includes: [verify-and-ship]
 ```
 
-The `verify-and-ship` fragment is the common tail — gate checks, review, PR creation. Each blueprint defines its own head (how to get from input to implementation).
+The `verify-and-ship` fragment is the common tail. Each blueprint defines its own head.
+
+### Fragment vs. Skill
+
+| | Fragment | Skill |
+|-|----------|-------|
+| Format | YAML (phase definitions) | Markdown (instructions) |
+| Scope | Pipeline structure | Agent behavior |
+| Reuse | Across blueprints | Across everything |
+| Contains | Phase types, gates, retries | Prose instructions |
+
+Fragments compose *structure*. Skills compose *behavior*. A phase can reference both: the fragment provides the pipeline structure, the skill provides the agent instructions.
 
 ## State and Resumability
 
-### Phase State File
+### Phase State
 
-When a blueprint runs, it writes a state file alongside the plan:
+When a blueprint runs, state is tracked (mechanism TBD — could be a file, could be todos, could be Anvil-internal):
 
-```json
-{
-  "blueprint": "implement-feature",
-  "started": "2026-05-30T10:00:00Z",
-  "args": { "description": "add OAuth support" },
-  "phases": {
-    "design": { "status": "completed", "output": { "spec_path": "plans/design-2026-05-30-oauth.md" } },
-    "plan": { "status": "completed", "output": { "plan_path": "plans/impl-2026-05-30-oauth.md" } },
-    "implement": { "status": "in_progress", "progress": "task 3/5" },
-    "verify": { "status": "pending" },
-    "review": { "status": "pending" },
-    "ship": { "status": "pending" }
-  }
-}
+```yaml
+blueprint: implement-feature
+started: 2026-05-30T10:00:00Z
+args: { description: "add OAuth support" }
+phases:
+  design: { status: completed, output: { spec_path: "plans/design-2026-05-30-oauth.md" } }
+  plan: { status: completed, output: { plan_path: "plans/impl-2026-05-30-oauth.md" } }
+  implement: { status: in_progress, progress: "task 3/5" }
+  build: { status: pending }
+  tests: { status: pending }
+  review: { status: pending }
+  ship: { status: pending }
 ```
 
-On resume (new session or after compaction), the orchestrator reads the state file and picks up at the last incomplete phase.
+On resume, the orchestrator picks up at the last incomplete phase.
 
 ### Relationship to Todos
 
-The `todos` tool already tracks phase-like state. Blueprints could either:
-- **Use todos as the state backend**: Auto-populate todos from blueprint phases. Simple, already works.
-- **Use a dedicated state file**: More structured, allows output binding. But adds a new artifact.
-
-Recommendation: use todos for the user-visible progress, and a state file for the machine-readable output bindings.
+Use todos for user-visible progress, state file for machine-readable output bindings and resumption.
 
 ## Execution Engine Options
 
 Three points on the implementation spectrum:
 
-### Option A: Pure Markdown (No Anvil Changes)
+### Option A: LLM-Interpreted YAML (No Anvil Changes)
 
-Blueprint is a well-structured command that the LLM follows. Phase state tracked via todos. Output bindings via file paths referenced in prose.
+The orchestrator reads `blueprint.yaml`, loads it into context, and follows the structure as instructions. Phase state tracked via todos. Output bindings via file paths.
 
-- **Pro**: Works today. No code changes.
-- **Con**: Still instruction-based. LLM can skip phases or ignore gates. No real enforcement.
-- **When**: Prototyping, proving the pipeline structure has value before building infrastructure.
+- **Pro**: Works today. No code changes. YAML is readable enough for the LLM to follow.
+- **Con**: Still LLM-interpreted. Can skip phases or ignore gates. No real enforcement.
+- **When**: Proving the pipeline structure and phase decomposition have value.
 
-### Option B: Markdown + Anvil Phase Tracking
+### Option B: Anvil-Native Blueprint Runner
 
-Blueprint file declares phases; Anvil's coordinator parses them and tracks state. Deterministic nodes run as bash/MCP without LLM involvement. Tool scoping enforced at coordinator level.
+Anvil parses `blueprint.yaml`, runs deterministic nodes directly, dispatches agentic nodes as subagents, enforces gates, tracks state. The YAML becomes a real execution plan, not just instructions.
 
-- **Pro**: Real enforcement, real resumability, deterministic nodes are actually deterministic.
-- **Con**: Requires Anvil core changes (phase parser, state tracker, tool scoping per phase).
+- **Pro**: Real enforcement, real resumability. Deterministic nodes don't touch the LLM. Tool scoping enforced at coordinator level.
+- **Con**: Requires Anvil core changes (YAML parser, phase runner, state tracker, tool scoping per phase).
 - **When**: After proving value with Option A, when reliability matters.
 
-### Option C: Full Runtime (Claude Code's Approach)
+### Option C: Full Programmatic Runtime
 
-Go script that orchestrates agents programmatically. Equivalent to Claude Code's JavaScript workflow engine.
+Go/JavaScript scripts that orchestrate agents. Equivalent to Claude Code's workflow engine.
 
 - **Pro**: Maximum flexibility, true parallelism, language-level control flow.
-- **Con**: Significant engineering. Different paradigm from Markdown ecosystem. High maintenance burden.
-- **When**: Operating at Stripe scale (hundreds of parallel instances). Not the current need.
+- **Con**: Significant engineering. Different paradigm from declarative YAML. High maintenance.
+- **When**: Operating at Stripe scale. Not the current need.
 
-**Recommendation**: Start with **A** to prove the concept and find the right pipeline structures. Design for **B** as an Anvil feature once patterns stabilize. Skip **C** — it solves a scale problem you don't have.
+**Recommendation**: Start with **A**, design for **B**. Skip **C**.
+
+## Directory Layout (Full Example)
+
+```
+plugins/ce/
+├── blueprints/
+│   ├── implement-feature/
+│   │   ├── blueprint.yaml
+│   │   └── references/
+│   │       └── review-merge-rules.md
+│   ├── fix-issue/
+│   │   ├── blueprint.yaml
+│   │   └── references/
+│   │       └── diagnosis-protocol.md
+│   ├── migrate/
+│   │   ├── blueprint.yaml
+│   │   └── references/
+│   │       └── parallel-transform-rules.md
+│   └── fragments/
+│       ├── verify-and-ship.yaml
+│       └── preflight.yaml
+├── skills/          # Existing reusable skills
+├── commands/        # Existing commands
+└── agents/          # Existing agent definitions
+```
+
+Plugin manifest (`anvil-plugin.json`) would add:
+```json
+{
+  "name": "ce",
+  "skills": "plugins/ce/skills",
+  "commands": "anvil/commands",
+  "agents": "anvil/agents",
+  "blueprints": "plugins/ce/blueprints"
+}
+```

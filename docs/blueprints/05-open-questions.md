@@ -2,72 +2,18 @@
 
 Unresolved design decisions for blueprints. Each question includes current thinking and tradeoffs.
 
-## 1. File Format: How Should Phase Properties Be Expressed?
+## 1. File Format ✅ RESOLVED
 
-Blueprints should be Markdown (consistent with skills/commands). But how should phase properties be declared?
+**Decision**: Blueprints are **YAML files** (`blueprint.yaml`), not Markdown.
 
-### Option A: YAML Code Blocks in Sections
+The pipeline structure (phase sequence, node types, tool restrictions, gates, retries) is structured data — naturally YAML. Agent instructions live elsewhere:
+- **Existing skills** — referenced by name (e.g., `skill: writing-plans`)
+- **Local references** — blueprint-specific Markdown files in `references/` loaded on demand
+- **Inline prompts** — short strings for trivial instructions
 
-```markdown
-## Phase 2: Plan
+This follows the [Agent Skills Specification](https://agentskills.io/specification) progressive disclosure model: metadata always loaded, instructions loaded per-phase.
 
-```yaml
-type: agentic
-skill: writing-plans
-input: "{{ spec_path }}"
-tools: [view, ls, grep, glob, write, task]
-output: plan_path
-gate: user-approval
-```
-
-Additional instructions for the phase go here in prose.
-```
-
-**Pro**: Explicitly machine-parseable. Clear separation of properties vs. prose.
-**Con**: Noisy. Code fences within code fences are awkward.
-
-### Option B: YAML Frontmatter Per Section
-
-Not natively supported in Markdown. Would need a custom parser.
-
-### Option C: HTML Comments (Current Direction)
-
-```markdown
-## Phase 2: Plan
-<!-- type: agentic -->
-<!-- skill: writing-plans -->
-<!-- input: {{ spec_path }} -->
-<!-- output: plan_path -->
-
-Load the **writing-plans** skill with the spec file.
-```
-
-**Pro**: Clean Markdown. Readable as documentation without rendering artifacts. Already used in some skill files.
-**Con**: Invisible in rendered Markdown. Fragile to parse.
-
-### Option D: Structured Markdown (Tables or Definition Lists)
-
-```markdown
-## Phase 2: Plan
-
-| Property | Value |
-|----------|-------|
-| type | agentic |
-| skill | writing-plans |
-| input | {{ spec_path }} |
-| output | plan_path |
-
-Load the **writing-plans** skill with the spec file.
-```
-
-**Pro**: Visible and readable. Standard Markdown.
-**Con**: Verbose. Harder to parse than YAML.
-
-### Current Lean
-
-Option A for Option B (Anvil-level implementation) — YAML blocks are unambiguous and parseable. Option C for Option A (pure Markdown prototype) — comments are lightweight.
-
-For the prototype (Option A execution), the properties don't actually need to be machine-parsed. They're instructions for the LLM. So prose or comments both work. For Option B (Anvil implementation), they need to be parseable — YAML blocks are the clear choice.
+See [03-design.md](03-design.md) for the full format specification.
 
 ---
 
