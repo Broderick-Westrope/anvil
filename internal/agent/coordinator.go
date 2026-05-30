@@ -122,6 +122,10 @@ type coordinator struct {
 	activeSkills []*skills.Skill      // Post-filter: active skills only.
 	skillStates  []*skills.SkillState // Combined builtin + user states.
 	skillTracker *skills.Tracker
+
+	// plugins holds the discovered plugins so their skills paths can be
+	// included in the View tool's auto-approval list. Protected by orchestratorMu.
+	plugins []*plugin.Plugin
 }
 
 func NewCoordinator(
@@ -154,6 +158,7 @@ func NewCoordinator(
 		activeSkills: activeSkills,
 		skillStates:  skillStates,
 		skillTracker: skillTracker,
+		plugins:      plugins,
 		agents:       csync.NewMap[string, SessionAgent](),
 	}
 
@@ -473,7 +478,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 	switch providerCfg.Type {
 	case openai.Name, azure.Name:
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
-if !hasReasoningEffort && shouldSetEffort {
+		if !hasReasoningEffort && shouldSetEffort {
 			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
 		}
 		if openai.IsResponsesModel(model.CatwalkCfg.ID) {
@@ -497,7 +502,7 @@ if !hasReasoningEffort && shouldSetEffort {
 			_, hasThink  = mergedOptions["thinking"]
 		)
 		switch {
-case !hasEffort && shouldSetEffort:
+		case !hasEffort && shouldSetEffort:
 			mergedOptions["effort"] = model.ModelCfg.ReasoningEffort
 		case !hasThink && model.ModelCfg.Think:
 			mergedOptions["thinking"] = map[string]any{"budget_tokens": 2000}
@@ -554,7 +559,7 @@ case !hasEffort && shouldSetEffort:
 		extraBody := make(map[string]any)
 
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
-if !hasReasoningEffort && shouldSetEffort {
+		if !hasReasoningEffort && shouldSetEffort {
 			switch providerCfg.ID {
 			case string(catwalk.InferenceProviderIoNet):
 				extraBody["reasoning"] = map[string]string{"effort": model.ModelCfg.ReasoningEffort}
@@ -805,8 +810,9 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 	activeSkills := c.activeSkills
 	skillTracker := c.skillTracker
 	agentMDs := c.agentMDs
+	plugins := c.plugins
 	c.orchestratorMu.RUnlock()
-	return c.buildToolsWithState(ctx, agent, depth, allSkills, activeSkills, skillTracker, agentMDs)
+	return c.buildToolsWithState(ctx, agent, depth, allSkills, activeSkills, skillTracker, agentMDs, plugins)
 }
 
 func (c *coordinator) buildToolsWithState(
@@ -817,6 +823,7 @@ func (c *coordinator) buildToolsWithState(
 	activeSkills []*skills.Skill,
 	skillTracker *skills.Tracker,
 	agentMDs map[string]prompt.AgentMD,
+	plugins []*plugin.Plugin,
 ) ([]fantasy.AgentTool, error) {
 	isSubAgent := depth < 3
 
@@ -870,7 +877,7 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, c.cfg.WorkingDir(), c.cfg.Config().Options.SkillsPaths...),
+		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, c.cfg.WorkingDir(), mergeSkillsPaths(c.cfg.Config().Options.SkillsPaths, plugins)...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 	)
 
@@ -1425,7 +1432,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		return fmt.Errorf("building orchestrator system prompt: %w", err)
 	}
 
-	agentTools, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs)
+	agentTools, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs, plugins)
 	if err != nil {
 		return fmt.Errorf("rebuilding orchestrator tools: %w", err)
 	}
@@ -1441,6 +1448,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	c.skillTracker = newSkillTracker
 	c.agentConfigs = newAgentConfigs
 	c.agentMDs = newAgentMDs
+	c.plugins = plugins
 	// Clear lazy agent cache so sub-agents rebuild on next use.
 	c.agents.Reset(make(map[string]SessionAgent))
 	orch.SetSystemPrompt(systemPrompt)
@@ -1452,6 +1460,18 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		"agents", len(newAgentConfigs)-1, // exclude orchestrator
 		"plugins", len(plugins))
 	return nil
+}
+
+// mergeSkillsPaths returns a combined slice of user-configured skills paths
+// and each plugin's skills directory (when non-empty).
+func mergeSkillsPaths(userPaths []string, plugins []*plugin.Plugin) []string {
+	merged := slices.Clone(userPaths)
+	for _, p := range plugins {
+		if p.SkillsPath != "" {
+			merged = append(merged, p.SkillsPath)
+		}
+	}
+	return merged
 }
 
 // discoverSkills runs the skill discovery pipeline and returns both the

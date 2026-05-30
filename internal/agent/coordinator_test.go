@@ -14,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -486,4 +487,61 @@ func TestReloadPluginsPreservesStateOnFailure(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, []*skills.Skill{oldSkill}, coord.activeSkills)
 	require.Equal(t, []*skills.SkillState{{Name: "old-skill", State: skills.StateNormal}}, coord.skillStates)
+}
+
+func TestMergeSkillsPaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		userPaths []string
+		plugins   []*plugin.Plugin
+		want      []string
+	}{
+		{
+			name:      "nil plugins",
+			userPaths: []string{"/user/skills"},
+			plugins:   nil,
+			want:      []string{"/user/skills"},
+		},
+		{
+			name:      "empty user paths and no plugins",
+			userPaths: nil,
+			plugins:   nil,
+			want:      nil,
+		},
+		{
+			name:      "plugin with empty SkillsPath is skipped",
+			userPaths: []string{"/user/skills"},
+			plugins:   []*plugin.Plugin{{Name: "no-skills", SkillsPath: ""}},
+			want:      []string{"/user/skills"},
+		},
+		{
+			name:      "plugin skills paths appended",
+			userPaths: []string{"/user/skills"},
+			plugins: []*plugin.Plugin{
+				{Name: "p1", SkillsPath: "/plugins/p1/skills"},
+				{Name: "p2", SkillsPath: "/plugins/p2/skills"},
+			},
+			want: []string{"/user/skills", "/plugins/p1/skills", "/plugins/p2/skills"},
+		},
+		{
+			name:      "mixed plugins with and without skills",
+			userPaths: []string{"/a", "/b"},
+			plugins: []*plugin.Plugin{
+				{Name: "has-skills", SkillsPath: "/plugins/x/skills"},
+				{Name: "no-skills", SkillsPath: ""},
+				{Name: "also-has", SkillsPath: "/plugins/y/skills"},
+			},
+			want: []string{"/a", "/b", "/plugins/x/skills", "/plugins/y/skills"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := mergeSkillsPaths(tt.userPaths, tt.plugins)
+			require.Equal(t, tt.want, got)
+		})
+	}
 }
