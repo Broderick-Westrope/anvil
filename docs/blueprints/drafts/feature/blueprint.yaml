@@ -6,26 +6,25 @@ description: >
 argument-hint: "<feature-description> [--spec=path] [--plan=path]"
 invocation: user
 
+fragments:
+  preflight-and-commit:
+    source: fragments/preflight-and-commit.yaml
+
 steps:
   # ── Grill ───────────────────────────────────────────────────────────
   # Interactive, multi-turn. The agent explores the codebase, asks
-  # questions one-at-a-time, and builds shared understanding.
+  # questions one-at-a-time, builds shared understanding, and writes
+  # the design spec to disk.
 
   - name: grill
     type: interactive
     skill: grilling
-    output: spec_draft
-
-  - name: write-spec
-    type: agentic
-    input: "{{ spec_draft }}"
     output: spec_path
 
   - name: spec-review
     type: agentic
     agent: devils-advocate
     input: "{{ spec_path }}"
-    retry: { max: 3 }
 
   - name: approve-spec
     type: interactive
@@ -42,6 +41,14 @@ steps:
     type: interactive
     reference: references/pre-impl-thinking.md
     input: "{{ spec_path }}"
+    output: human_notes
+
+  - name: pre-impl-compare
+    type: agentic
+    reference: references/pre-impl-compare.md
+    input:
+      - "{{ spec_path }}"
+      - "{{ human_notes }}"
     output: pre_impl_notes
 
   # ── Plan ────────────────────────────────────────────────────────────
@@ -56,56 +63,50 @@ steps:
       - "{{ pre_impl_notes }}"
     tools: [view, ls, grep, glob, write, task]
     output: plan_path
+    skip-if: "{{ args.plan }}"
+
+  - name: approve-plan
+    type: interactive
+    prompt: |
+      Plan written to {{ plan_path }}. Review and approve to proceed.
     gate: user-approval
-    skip-if: user-requests
 
   # ── Execute ─────────────────────────────────────────────────────────
-  # Runs the plan. The executing-plans skill handles task grouping,
-  # subagent dispatch, and auto-recovery internally.
+  # Parse the plan into task groups, then loop: implement each group,
+  # run preflight checks, commit. Fix-up commits are separate.
 
-  - name: implement
+  - name: parse-groups
     type: agentic
-    skill: executing-plans
+    prompt: >
+      Read the plan at {{ plan_path }}. Extract the task groups
+      (sections under ## headings). Output a structured list with
+      each group's name, tasks, and relevant file paths.
     input: "{{ plan_path }}"
+    output: task_groups
 
-  # Per task group: preflight, commit, fix if needed, commit fix.
-  # These steps repeat for each task group produced by executing-plans.
-  # Commits tell a story — fix-up commits are separate, not squashed.
-
-  - name: preflight
-    type: gate
-    skill: preflight-checks
-    repeat: per-task-group
-    critical: false
-
-  - name: commit
-    type: deterministic
-    repeat: per-task-group
-    bash: git add -A && git commit -m "{{ task_group_message }}"
-
-  - name: fix-preflight
+  - name: implement-group
     type: agentic
-    repeat: per-task-group
-    condition: preflight failed
-    skill: systematic-debugging
-    retry: { max: 2 }
+    loop:
+      over: "{{ task_groups }}"
+      as: group
+    agent: fixer
+    input: "{{ group }}"
 
-  - name: preflight-rerun
-    type: gate
-    repeat: per-task-group
-    condition: fixes were made
-    skill: preflight-checks
-    critical: true
-
-  - name: commit-fix
-    type: deterministic
-    repeat: per-task-group
-    condition: fixes were made
-    bash: git add -A && git commit -m "fix: {{ preflight_fix_message }}"
+  - uses: preflight-and-commit
+    loop:
+      over: "{{ task_groups }}"
+      as: group
+    with:
+      commit_message: "{{ group.name }}"
 
   # ── Review ──────────────────────────────────────────────────────────
   # Dual-model code review. Sonnet for speed/breadth, Opus for
   # depth/nuance. Findings are deduplicated using merge rules.
+
+  - name: generate-diff
+    type: deterministic
+    bash: git diff main...HEAD
+    output: diff
 
   - name: review
     type: parallel
@@ -124,36 +125,51 @@ steps:
   - name: verify-findings
     type: agentic
     agent: verifier
-    input: "{{ review_findings }}"
     reference: references/finding-verification.md
+    input: "{{ review_findings }}"
     output: verified_findings
 
   # ── Fix Verified Findings ───────────────────────────────────────────
 
   - name: fix-findings
     type: agentic
-    condition: verified_findings has items marked verified
+    condition: "{{ verified_findings.verified_count }} > 0"
+    prompt: >
+      Fix the verified issues listed below. Address each one, keeping
+      changes focused and minimal.
     input: "{{ verified_findings }}"
 
-  - name: fix-preflight
+  - name: fix-review-preflight
     type: gate
-    condition: verified_findings has items marked verified
+    condition: "{{ verified_findings.verified_count }} > 0"
     skill: preflight-checks
     critical: true
 
-  - name: fix-commit
+  - name: fix-review-commit
     type: deterministic
-    condition: verified_findings has items marked verified
+    condition: "{{ verified_findings.verified_count }} > 0"
     bash: git add -A && git commit -m "fix: address review findings"
 
   # ── Ship ────────────────────────────────────────────────────────────
+
+  - name: generate-pr-description
+    type: agentic
+    prompt: >
+      Generate a PR title and body for the changes on this branch.
+      Summarize what was implemented and why, referencing the spec
+      and plan. Output as YAML with keys: title, body.
+    input:
+      - "{{ spec_path }}"
+      - "{{ plan_path }}"
+      - "{{ diff }}"
+    output: pr_description
 
   - name: draft-pr
     type: deterministic
     bash: |
       gh pr create --draft \
-        --title "{{ pr_title }}" \
-        --body "{{ pr_body }}"
+        --title "{{ pr_description.title }}" \
+        --body "{{ pr_description.body }}"
     output: pr_url
 
   # ── Human Review ────────────────────────────────────────────────────
@@ -175,26 +191,13 @@ steps:
   # Optional. Watches PR checks and retries on failure.
 
   - name: watch-ci
-    type: deterministic
+    type: gate
     condition: user-requests
     bash: gh pr checks {{ pr_url }} --watch
-
-  - name: ci-fix
-    type: agentic
-    condition: ci failed
-    skill: systematic-debugging
-    input: "{{ ci_failure_output }}"
-    retry: { max: 3 }
-
-  - name: ci-push
-    type: deterministic
-    condition: ci fixes made
-    bash: git push
-
-  - name: ci-rewatch
-    type: deterministic
-    condition: ci fixes made
-    bash: gh pr checks {{ pr_url }} --watch
+    critical: true
+    retry:
+      max: 3
+      skill: ci-fix
 
   # ── Post-Mortem ─────────────────────────────────────────────────────
   # Always runs. Proportional to complexity.

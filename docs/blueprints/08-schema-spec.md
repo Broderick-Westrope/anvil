@@ -105,23 +105,31 @@ blueprint. Use `on-fail` to override:
 
 ### `agentic`
 
-Dispatches work to an LLM. The agent's behavior is defined by one of:
-a skill, an agent definition, a reference file, or an inline prompt.
+Dispatches work to an LLM. The agent's behavior is defined by a primary
+instruction source, optionally supplemented with a reference.
 
 ```yaml
 - name: plan
   type: agentic
 
-  # Exactly one of these is required to define agent behavior:
+  # At least one of these is required to define agent behavior:
   skill: string           # Name of an existing skill to load.
   agent: string           # Name of an existing agent to dispatch as subagent.
   reference: string       # Path to a blueprint-local reference file.
   prompt: string          # Inline prompt (for trivial instructions).
 
+  # `reference` can also be used alongside `skill` or `agent` to provide
+  # supplementary context. In that case, the skill/agent defines the
+  # primary behavior; the reference adds blueprint-specific instructions.
+
   input: string | list    # Optional. Context passed to the agent.
   output: string          # Optional. Captures the agent's result.
   tools: list             # Optional. Restrict available tools for this step.
                           # If omitted, agent gets the default toolset.
+
+  on-fail: halt | continue  # Optional. Default: halt. What to do if the
+                             # agentic step fails (API error, model refusal,
+                             # agent cannot complete the task).
 ```
 
 ### `interactive`
@@ -134,6 +142,8 @@ Pauses the blueprint and waits for human input. The agent may assist
   type: interactive
 
   prompt: string          # Optional. Message shown to the user when pausing.
+  skill: string           # Optional. Skill to load for the interactive
+                          # session (defines agent behavior while paused).
   reference: string       # Optional. Reference file with instructions for
                           # the interactive session.
 
@@ -452,11 +462,14 @@ A valid blueprint must satisfy:
 1. `name` is non-empty, lowercase, hyphens only.
 2. `steps` is non-empty.
 3. Every step has a unique `name` and a valid `type`.
+   `uses` entries do not have a `name` — fragment step names are
+   prefixed with the fragment name.
 4. Every `{{ reference }}` in templates corresponds to either a prior step's
    `output`, an `args.*` value, or a built-in.
-5. Agentic steps have exactly one of: `skill`, `agent`, `reference`, `prompt`.
+5. Agentic steps have at least one of: `skill`, `agent`, `reference`, `prompt`.
+   `reference` may appear alongside `skill` or `agent` as supplementary context.
 6. Gate steps have exactly one of: `bash`, `skill`.
 7. Parallel steps have a non-empty `nodes` list.
 8. `loop.over` references an output that is a list.
-9. Fragment files exist at one of the resolution paths.
+9. Fragment sources in `fragments` declarations resolve to existing files.
 10. No circular references in conditions or templates.

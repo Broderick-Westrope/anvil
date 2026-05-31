@@ -1,0 +1,30 @@
+inputs:
+  commit_message:
+    description: The commit message to use
+    required: true
+
+steps:
+  - name: preflight
+    type: gate
+    skill: preflight-checks
+    critical: false
+
+  - name: commit
+    type: deterministic
+    bash: git add -A && git commit -m "{{ inputs.commit_message }}"
+
+  - name: fix-preflight
+    type: agentic
+    condition: "{{ preflight.status }} == failed"
+    skill: systematic-debugging
+
+  - name: preflight-rerun
+    type: gate
+    condition: "{{ fix-preflight.status }} == completed"
+    skill: preflight-checks
+    critical: true
+
+  - name: commit-fix
+    type: deterministic
+    condition: "{{ fix-preflight.status }} == completed"
+    bash: git add -A && git commit -m "fix: {{ inputs.commit_message }}"
