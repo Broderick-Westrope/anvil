@@ -13,6 +13,7 @@ Working documents exploring blueprint/workflow architecture for Anvil, informed 
 | [Open Questions](05-open-questions.md) | Unresolved design decisions (4 of 10 resolved) |
 | [Quality Integration](06-quality-integration.md) | How quality research maps to blueprint phases |
 | [Grilling Findings](07-grilling-findings.md) | Decisions from the design grilling session |
+| [Schema Specification](08-schema-spec.md) | YAML schema contract for all blueprints |
 
 ## Draft Blueprint
 
