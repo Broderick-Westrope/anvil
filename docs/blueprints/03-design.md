@@ -1,5 +1,10 @@
 # Design Exploration
 
+> **Note**: The phase types and composition examples in this document were
+> written during early exploration. The canonical schema is
+> [08-schema-spec.md](08-schema-spec.md). Where examples here conflict
+> with the schema spec, the schema spec is authoritative.
+
 Blueprint concept, node types, invocation model, file format, and composition.
 
 ## What Is a Blueprint?

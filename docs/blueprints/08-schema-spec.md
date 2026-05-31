@@ -100,7 +100,7 @@ blueprint. Use `on-fail` to override:
 
 ```yaml
   on-fail: continue       # Ignore failure, proceed to next step.
-  on-fail: halt            # Default. Stop the blueprint.
+  on-fail: halt           # Default. Stop the blueprint.
 ```
 
 ### `agentic`
@@ -344,9 +344,13 @@ steps:
 ```
 
 A `uses` entry is NOT a step — it has no `name`, `type`, or other step
-properties. It expands to the fragment's steps, which each retain their
-own names (prefixed with the fragment name to avoid collisions, e.g.,
-`preflight-and-commit.preflight`).
+properties. It expands to the fragment's steps at that position.
+
+**Name scoping:** Inside a fragment, steps reference each other by local
+name (e.g., `{{ preflight.status }}`). From outside the fragment,
+steps are referenced with the fragment name as prefix (e.g.,
+`{{ preflight-and-commit.preflight.status }}`). This is analogous to
+function-local vs. module-qualified names.
 
 ### Fragments Inside Loops
 
@@ -394,37 +398,56 @@ migration, per task group in a plan). The schema handles this with the
 ```yaml
 - name: implement-group
   type: agentic
-  skill: executing-plans
   loop:
-    over: "{{ plan.task_groups }}"  # An output that is a list.
-    as: task_group                   # Variable name for the current item.
-  input: "{{ task_group }}"
+    over: "{{ task_groups }}"     # An output that is a list.
+    as: group                     # Variable name for the current item.
+  agent: fixer
+  input: "{{ group }}"
   output: group_result
 ```
 
-Steps following a looped step can also reference `loop` with the same
-`over` value to repeat in lockstep:
+Consecutive steps (and `uses` entries) with the same `loop.over` form
+a loop group and execute together per item:
 
 ```yaml
-- name: preflight
-  type: gate
-  skill: preflight-checks
+- name: implement-group
+  type: agentic
   loop:
-    over: "{{ plan.task_groups }}"
-    as: task_group
+    over: "{{ task_groups }}"
+    as: group
+  agent: fixer
+  input: "{{ group }}"
 
-- name: commit
-  type: deterministic
+- uses: preflight-and-commit
   loop:
-    over: "{{ plan.task_groups }}"
-    as: task_group
-  bash: git add -A && git commit -m "{{ task_group.message }}"
+    over: "{{ task_groups }}"
+    as: group
+  with:
+    commit_message: "{{ group.name }}"
 ```
 
-**Loop semantics:**
-- Each iteration executes the step fully before moving to the next.
+**Loop groups:**
+
+Consecutive steps (and `uses` entries) sharing the same `loop.over`
+value form a **loop group**. The engine iterates over the list once;
+for each item, all steps in the loop group execute in order before
+advancing to the next item.
+
+```
+# With task_groups = [A, B, C], the execution order is:
+#   implement-group(A) → preflight-and-commit(A)
+#   implement-group(B) → preflight-and-commit(B)
+#   implement-group(C) → preflight-and-commit(C)
+#
+# NOT:
+#   implement-group(A) → implement-group(B) → implement-group(C)
+#   preflight-and-commit(A) → preflight-and-commit(B) → ...
+```
+
+**Other loop semantics:**
 - If a looped gate fails, the retry logic runs within that iteration.
 - Outputs from looped steps are collected as a list.
+- A step without `loop` after a loop group ends the group.
 
 ---
 
@@ -444,14 +467,42 @@ state:
   pr_url: "https://github.com/..."
 ```
 
+### Structured Output
+
+Some steps need to produce structured data that subsequent steps access
+by property (e.g., `{{ pr_description.title }}`). By default, agentic
+output is free-form text. To enable property access, the step must
+instruct the agent to output JSON.
+
+When the engine detects property access on an output (e.g.,
+`{{ output_name.key }}`), it attempts to parse the output as JSON.
+If parsing fails, the step that references the property fails with
+a clear error.
+
+Blueprint authors should use `prompt` or `reference` instructions that
+explicitly request JSON output when structured access is needed:
+
+```yaml
+- name: generate-pr-description
+  type: agentic
+  prompt: >
+    Generate a PR title and body. Output as JSON:
+    {"title": "...", "body": "..."}
+  output: pr_description
+
+# Now {{ pr_description.title }} resolves via JSON parsing.
+```
+
+For interactive steps with a `skill`, the output is whatever the skill
+produces during the session (e.g., a file path written to disk), not
+the user's text. The skill determines what the output value is.
+
 ### Resumability
 
 When a blueprint is interrupted (session end, crash, context compaction),
 the engine can resume from the last completed step by reading the persisted
-state. The mechanism for persistence is engine-dependent:
-- **Option A (LLM-interpreted)**: State tracked via todos tool.
-- **Option B (Anvil-native)**: State serialized to a `.blueprint-state.json`
-  file alongside the plan.
+state. State is serialized to a `.blueprint-state.json` file alongside
+the plan.
 
 ---
 
