@@ -9,13 +9,28 @@ invocation: user
 steps:
   # ── Grill ───────────────────────────────────────────────────────────
   # Interactive, multi-turn. The agent explores the codebase, asks
-  # questions one-at-a-time, and produces a design spec. May skip
-  # devil's advocate review for simple work (agent's discretion).
+  # questions one-at-a-time, and builds shared understanding.
 
   - name: grill
     type: interactive
     skill: grilling
+    output: spec_draft
+
+  - name: write-spec
+    type: agentic
+    input: "{{ spec_draft }}"
     output: spec_path
+
+  - name: spec-review
+    type: agentic
+    agent: devils-advocate
+    input: "{{ spec_path }}"
+    retry: { max: 3 }
+
+  - name: approve-spec
+    type: interactive
+    prompt: |
+      Spec written to {{ spec_path }}. Review and approve to proceed.
     gate: user-approval
 
   # ── Pre-Implementation Thinking ─────────────────────────────────────
