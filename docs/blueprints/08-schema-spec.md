@@ -21,9 +21,9 @@ invocation: user          # "user" (default). Reserved for future: "agent", "bot
 
 steps: []                 # Required. Ordered list of steps.
 
-includes: []              # Optional. Fragment files to append to steps.
-                          # Resolved relative to the blueprint's directory or
-                          # the shared fragments/ directory.
+fragments: {}             # Optional. Named fragment declarations.
+                          # Each key is a local name; value has a `source`
+                          # path. Steps reference fragments via `uses`.
 ```
 
 ---
@@ -248,13 +248,41 @@ A `skip-if` evaluates to true if the referenced value is non-empty.
 
 ## Fragments
 
-A fragment is a YAML file containing a list of steps. Blueprints include
-fragments to reuse common step sequences.
+A fragment is a reusable sequence of steps defined in a separate YAML file.
+Inspired by GitHub Actions' `uses` pattern, fragments are declared at the
+top level and referenced inline by steps — expanding at that position in
+the pipeline, not appended at the end.
 
-### Fragment File
+### Declaring Fragments
+
+Fragments are declared in the top-level `fragments` block. Each entry gives
+the fragment a local name and specifies its source.
+
+```yaml
+fragments:
+  preflight-and-commit:
+    source: fragments/preflight-and-commit.yaml
+  verify-and-ship:
+    source: fragments/verify-and-ship.yaml
+```
+
+**Source resolution order:**
+1. Relative to the blueprint's directory
+2. Relative to the `fragments/` directory at the same level
+3. Personal fragments (`~/.config/anvil/blueprints/fragments/`)
+4. Plugin fragments
+
+### Fragment File Format
+
+A fragment defines `inputs` (data it expects) and `steps` (what it does).
 
 ```yaml
 # fragments/preflight-and-commit.yaml
+inputs:
+  commit_message:
+    description: The commit message to use
+    required: true
+
 steps:
   - name: preflight
     type: gate
@@ -263,25 +291,87 @@ steps:
 
   - name: commit
     type: deterministic
-    bash: git add -A && git commit -m "{{ commit_message }}"
+    bash: git add -A && git commit -m "{{ inputs.commit_message }}"
+
+  - name: fix-preflight
+    type: agentic
+    condition: "{{ preflight.status }} == failed"
+    skill: systematic-debugging
+    retry: { max: 2 }
+
+  - name: preflight-rerun
+    type: gate
+    condition: "{{ fix-preflight.status }} == completed"
+    skill: preflight-checks
+    critical: true
+
+  - name: commit-fix
+    type: deterministic
+    condition: "{{ fix-preflight.status }} == completed"
+    bash: git add -A && git commit -m "fix: {{ inputs.commit_message }}"
 ```
 
-### Including Fragments
+### Using Fragments
+
+A step with `uses` references a declared fragment by name. The fragment's
+steps expand inline at that position. `with` passes inputs.
 
 ```yaml
-includes:
-  - fragments/preflight-and-commit
+steps:
+  - name: implement-group
+    type: agentic
+    agent: fixer
+    input: "{{ group }}"
+
+  - uses: preflight-and-commit
+    with:
+      commit_message: "{{ group.message }}"
+
+  # Steps continue here after the fragment's steps
+  - name: review
+    type: parallel
+    # ...
 ```
 
-Included steps are appended after the blueprint's own steps. If a fragment
-step name collides with an existing step, the blueprint step takes precedence
-(fragment step is skipped).
+A `uses` entry is NOT a step — it has no `name`, `type`, or other step
+properties. It expands to the fragment's steps, which each retain their
+own names (prefixed with the fragment name to avoid collisions, e.g.,
+`preflight-and-commit.preflight`).
 
-**Fragment resolution order:**
-1. Relative to the blueprint's directory
-2. Relative to the `fragments/` directory at the same level
-3. Personal fragments (`~/.config/anvil/blueprints/fragments/`)
-4. Plugin fragments
+### Fragments Inside Loops
+
+Fragments can appear inside loops. The fragment expands per iteration:
+
+```yaml
+- name: implement-group
+  type: agentic
+  loop:
+    over: "{{ task_groups }}"
+    as: group
+  agent: fixer
+  input: "{{ group }}"
+
+- uses: preflight-and-commit
+  loop:
+    over: "{{ task_groups }}"
+    as: group
+  with:
+    commit_message: "{{ group.message }}"
+```
+
+### Fragment vs. Skill
+
+| | Fragment | Skill |
+|-|----------|-------|
+| **Format** | YAML (step sequences) | Markdown (instructions) |
+| **Scope** | Pipeline structure | Agent behavior |
+| **Reuse** | Across blueprints | Across everything |
+| **Contains** | Steps, gates, retries | Prose instructions |
+| **Referenced by** | `uses:` in blueprint | `skill:` in step |
+
+Fragments compose *structure*. Skills compose *behavior*. A fragment's
+steps can reference skills — the fragment defines the pipeline shape,
+the skill defines what the agent does within a step.
 
 ---
 

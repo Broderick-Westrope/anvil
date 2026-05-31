@@ -412,35 +412,36 @@ On resume, the orchestrator picks up at the last incomplete phase.
 
 Use todos for user-visible progress, state file for machine-readable output bindings and resumption.
 
-## Execution Engine Options
+## Execution Engine
 
-Three points on the implementation spectrum:
+The blueprint engine is **deterministic infrastructure**. It handles
+orchestration, state management, loops, gates, parallel dispatch, and
+conditions mechanically — without LLM involvement. The LLM is only
+invoked inside `agentic` and `interactive` steps.
 
-### Option A: LLM-Interpreted YAML (No Anvil Changes)
+This means the engine is an **Anvil-native blueprint runner** (Go code)
+that:
+- Parses `blueprint.yaml` at invocation time
+- Executes `deterministic` steps directly (bash commands, git operations)
+- Dispatches `agentic` steps as subagents with scoped tools and context
+- Evaluates `gate` steps and enforces pass/fail with bounded retries
+- Dispatches `parallel` nodes concurrently without LLM coordination
+- Iterates `loop` steps mechanically over list outputs
+- Expands `uses` fragments inline
+- Evaluates `condition` and `skip-if` expressions
+- Tracks state for resumability
+- Pauses at `interactive` steps and resumes on user input
 
-The orchestrator reads `blueprint.yaml`, loads it into context, and follows the structure as instructions. Phase state tracked via todos. Output bindings via file paths.
+The LLM never decides *what step runs next*. It only does work *within*
+agentic steps. The engine is the orchestrator, not the LLM.
 
-- **Pro**: Works today. No code changes. YAML is readable enough for the LLM to follow.
-- **Con**: Still LLM-interpreted. Can skip phases or ignore gates. No real enforcement.
-- **When**: Proving the pipeline structure and phase decomposition have value.
+### Prototyping
 
-### Option B: Anvil-Native Blueprint Runner
-
-Anvil parses `blueprint.yaml`, runs deterministic nodes directly, dispatches agentic nodes as subagents, enforces gates, tracks state. The YAML becomes a real execution plan, not just instructions.
-
-- **Pro**: Real enforcement, real resumability. Deterministic nodes don't touch the LLM. Tool scoping enforced at coordinator level.
-- **Con**: Requires Anvil core changes (YAML parser, phase runner, state tracker, tool scoping per phase).
-- **When**: After proving value with Option A, when reliability matters.
-
-### Option C: Full Programmatic Runtime
-
-Go/JavaScript scripts that orchestrate agents. Equivalent to Claude Code's workflow engine.
-
-- **Pro**: Maximum flexibility, true parallelism, language-level control flow.
-- **Con**: Significant engineering. Different paradigm from declarative YAML. High maintenance.
-- **When**: Operating at Stripe scale. Not the current need.
-
-**Recommendation**: Start with **A**, design for **B**. Skip **C**.
+Before the engine exists, pipeline designs can be validated by having the
+LLM follow `blueprint.yaml` as structured instructions. This is useful
+for proving which pipeline structures work, but is not the target
+execution model — it cannot enforce gates, guarantee deterministic steps,
+or manage state reliably.
 
 ## Directory Layout
 
