@@ -1,0 +1,186 @@
+name: feature
+description: >
+  End-to-end feature implementation: grill requirements, think before coding,
+  plan, execute with preflight gates, dual-model review with finding verification,
+  human-assisted PR review, and post-mortem.
+argument-hint: "<feature-description> [--spec=path] [--plan=path]"
+invocation: user
+
+phases:
+  # ── Phase 1: Grill ──────────────────────────────────────────────────
+  # Interactive, multi-turn. The agent explores the codebase, asks
+  # questions one-at-a-time, and produces a design spec. May skip
+  # devil's advocate review for simple work (agent's discretion).
+  - name: grill
+    type: interactive
+    skill: grilling
+    output: spec_path
+    gate: user-approval
+
+  # ── Phase 2: Pre-Implementation Thinking ─────────────────────────────
+  # The human thinks independently BEFORE seeing agent analysis.
+  # Blueprint pauses and presents the 5-question framework.
+  # Once the human provides notes, the agent compares against its own
+  # codebase exploration and surfaces gaps. Merged output feeds planning.
+  - name: pre-impl-thinking
+    type: interactive
+    reference: references/pre-impl-thinking.md
+    input: "{{ spec_path }}"
+    output: pre_impl_notes
+
+  # ── Phase 3: Plan ───────────────────────────────────────────────────
+  # Produces an implementation plan with tasks grouped by subsystem.
+  # Uses merged pre-impl output (human notes + agent comparison) to
+  # populate Patterns & Constraints section.
+  - name: plan
+    type: agentic
+    skill: writing-plans
+    input:
+      - "{{ spec_path }}"
+      - "{{ pre_impl_notes }}"
+    tools: [view, ls, grep, glob, write, task]
+    output: plan_path
+    gate: user-approval
+    skip-if: user-requests
+
+  # ── Phase 4: Execute ────────────────────────────────────────────────
+  # Runs the plan. Per task group:
+  #   implement → preflight → commit → fix if needed → preflight → commit fix
+  # Commits tell a story. Fix-up commits are separate, not squashed.
+  - name: execute
+    type: agentic
+    skill: executing-plans
+    input: "{{ plan_path }}"
+    sub-phases:
+      - name: implement-group
+        type: agentic
+        repeat: per-task-group
+
+      - name: preflight
+        type: gate
+        skill: preflight-checks
+        critical: false
+
+      - name: commit
+        type: deterministic
+        bash: git add -A && git commit -m "{{ task_group_message }}"
+
+      - name: fix-preflight
+        type: agentic
+        condition: preflight failed
+        retry:
+          max: 2
+          skill: systematic-debugging
+
+      - name: preflight-rerun
+        type: gate
+        skill: preflight-checks
+        condition: fixes were made
+        critical: true
+
+      - name: commit-fix
+        type: deterministic
+        condition: fixes were made
+        bash: git add -A && git commit -m "fix: {{ preflight_fix_message }}"
+
+  # ── Phase 5: Review ────────────────────────────────────────────────
+  # Dual-model code review. Sonnet for speed/breadth, Opus for
+  # depth/nuance. Findings are deduplicated using merge rules.
+  - name: review
+    type: parallel
+    nodes:
+      - agent: code-reviewer-sonnet
+        input: "{{ diff }}"
+      - agent: code-reviewer-opus
+        input: "{{ diff }}"
+    reference: references/review-merge-rules.md
+    output: review_findings
+
+  # ── Phase 6: Verify Findings ───────────────────────────────────────
+  # The verifier audits each review finding against the actual codebase.
+  # Prevents wasting time on hallucinated or outdated concerns.
+  # Only verified findings proceed to the fix phase.
+  - name: verify-findings
+    type: agentic
+    agent: verifier
+    input: "{{ review_findings }}"
+    reference: references/finding-verification.md
+    output: verified_findings
+
+  # ── Phase 7: Fix Verified Findings ─────────────────────────────────
+  # Address verified issues, then preflight and commit.
+  - name: fix-findings
+    type: agentic
+    condition: verified_findings has items marked verified
+    input: "{{ verified_findings }}"
+    sub-phases:
+      - name: fix
+        type: agentic
+
+      - name: preflight
+        type: gate
+        skill: preflight-checks
+        critical: true
+
+      - name: commit
+        type: deterministic
+        bash: git add -A && git commit -m "fix: address review findings"
+
+  # ── Phase 8: Draft PR ──────────────────────────────────────────────
+  - name: draft-pr
+    type: deterministic
+    bash: |
+      gh pr create --draft \
+        --title "{{ pr_title }}" \
+        --body "{{ pr_body }}"
+    output: pr_url
+
+  # ── Phase 9: Human Review ──────────────────────────────────────────
+  # Blueprint exits to conversational mode. The user reviews the code
+  # in VS Code (GitHub PR extension). Agent stays available to answer
+  # questions and make small fixes.
+  - name: human-review
+    type: interactive
+    prompt: |
+      Draft PR is up at {{ pr_url }}.
+      Review in VS Code — I'm here for questions or small fixes.
+      When you're done, say "ready" to continue.
+
+  # ── Phase 10: Mark PR Ready ───────────────────────────────────────
+  - name: mark-ready
+    type: deterministic
+    bash: gh pr ready {{ pr_url }}
+
+  # ── Phase 11: Watch CI ─────────────────────────────────────────────
+  # Optional. Watches PR checks and retries on failure.
+  - name: watch-ci
+    type: deterministic
+    condition: user-requests
+    bash: gh pr checks {{ pr_url }} --watch
+    retry:
+      on: check-failure
+      max: 3
+      sub-phases:
+        - name: diagnose
+          type: agentic
+          skill: systematic-debugging
+          input: "{{ ci_failure_output }}"
+
+        - name: fix
+          type: agentic
+
+        - name: preflight
+          type: gate
+          skill: preflight-checks
+          critical: true
+
+        - name: push
+          type: deterministic
+          bash: git push
+
+  # ── Phase 12: Post-Mortem ──────────────────────────────────────────
+  # Always runs. Proportional to complexity — a one-line fix gets a
+  # one-line post-mortem.
+  - name: post-mortem
+    type: agentic
+    skill: post-mortem
