@@ -6,32 +6,33 @@ description: >
 argument-hint: "<feature-description> [--spec=path] [--plan=path]"
 invocation: user
 
-phases:
-  # ── Phase 1: Grill ──────────────────────────────────────────────────
+steps:
+  # ── Grill ───────────────────────────────────────────────────────────
   # Interactive, multi-turn. The agent explores the codebase, asks
   # questions one-at-a-time, and produces a design spec. May skip
   # devil's advocate review for simple work (agent's discretion).
+
   - name: grill
     type: interactive
     skill: grilling
     output: spec_path
     gate: user-approval
 
-  # ── Phase 2: Pre-Implementation Thinking ─────────────────────────────
+  # ── Pre-Implementation Thinking ─────────────────────────────────────
   # The human thinks independently BEFORE seeing agent analysis.
-  # Blueprint pauses and presents the 5-question framework.
   # Once the human provides notes, the agent compares against its own
   # codebase exploration and surfaces gaps. Merged output feeds planning.
+
   - name: pre-impl-thinking
     type: interactive
     reference: references/pre-impl-thinking.md
     input: "{{ spec_path }}"
     output: pre_impl_notes
 
-  # ── Phase 3: Plan ───────────────────────────────────────────────────
+  # ── Plan ────────────────────────────────────────────────────────────
   # Produces an implementation plan with tasks grouped by subsystem.
-  # Uses merged pre-impl output (human notes + agent comparison) to
-  # populate Patterns & Constraints section.
+  # Uses merged pre-impl output to populate Patterns & Constraints.
+
   - name: plan
     type: agentic
     skill: writing-plans
@@ -43,49 +44,54 @@ phases:
     gate: user-approval
     skip-if: user-requests
 
-  # ── Phase 4: Execute ────────────────────────────────────────────────
-  # Runs the plan. Per task group:
-  #   implement → preflight → commit → fix if needed → preflight → commit fix
-  # Commits tell a story. Fix-up commits are separate, not squashed.
-  - name: execute
+  # ── Execute ─────────────────────────────────────────────────────────
+  # Runs the plan. The executing-plans skill handles task grouping,
+  # subagent dispatch, and auto-recovery internally.
+
+  - name: implement
     type: agentic
     skill: executing-plans
     input: "{{ plan_path }}"
-    sub-phases:
-      - name: implement-group
-        type: agentic
-        repeat: per-task-group
 
-      - name: preflight
-        type: gate
-        skill: preflight-checks
-        critical: false
+  # Per task group: preflight, commit, fix if needed, commit fix.
+  # These steps repeat for each task group produced by executing-plans.
+  # Commits tell a story — fix-up commits are separate, not squashed.
 
-      - name: commit
-        type: deterministic
-        bash: git add -A && git commit -m "{{ task_group_message }}"
+  - name: preflight
+    type: gate
+    skill: preflight-checks
+    repeat: per-task-group
+    critical: false
 
-      - name: fix-preflight
-        type: agentic
-        condition: preflight failed
-        retry:
-          max: 2
-          skill: systematic-debugging
+  - name: commit
+    type: deterministic
+    repeat: per-task-group
+    bash: git add -A && git commit -m "{{ task_group_message }}"
 
-      - name: preflight-rerun
-        type: gate
-        skill: preflight-checks
-        condition: fixes were made
-        critical: true
+  - name: fix-preflight
+    type: agentic
+    repeat: per-task-group
+    condition: preflight failed
+    skill: systematic-debugging
+    retry: { max: 2 }
 
-      - name: commit-fix
-        type: deterministic
-        condition: fixes were made
-        bash: git add -A && git commit -m "fix: {{ preflight_fix_message }}"
+  - name: preflight-rerun
+    type: gate
+    repeat: per-task-group
+    condition: fixes were made
+    skill: preflight-checks
+    critical: true
 
-  # ── Phase 5: Review ────────────────────────────────────────────────
+  - name: commit-fix
+    type: deterministic
+    repeat: per-task-group
+    condition: fixes were made
+    bash: git add -A && git commit -m "fix: {{ preflight_fix_message }}"
+
+  # ── Review ──────────────────────────────────────────────────────────
   # Dual-model code review. Sonnet for speed/breadth, Opus for
   # depth/nuance. Findings are deduplicated using merge rules.
+
   - name: review
     type: parallel
     nodes:
@@ -96,10 +102,10 @@ phases:
     reference: references/review-merge-rules.md
     output: review_findings
 
-  # ── Phase 6: Verify Findings ───────────────────────────────────────
+  # ── Verify Findings ─────────────────────────────────────────────────
   # The verifier audits each review finding against the actual codebase.
-  # Prevents wasting time on hallucinated or outdated concerns.
-  # Only verified findings proceed to the fix phase.
+  # Only verified findings proceed to the fix step.
+
   - name: verify-findings
     type: agentic
     agent: verifier
@@ -107,26 +113,26 @@ phases:
     reference: references/finding-verification.md
     output: verified_findings
 
-  # ── Phase 7: Fix Verified Findings ─────────────────────────────────
-  # Address verified issues, then preflight and commit.
+  # ── Fix Verified Findings ───────────────────────────────────────────
+
   - name: fix-findings
     type: agentic
     condition: verified_findings has items marked verified
     input: "{{ verified_findings }}"
-    sub-phases:
-      - name: fix
-        type: agentic
 
-      - name: preflight
-        type: gate
-        skill: preflight-checks
-        critical: true
+  - name: fix-preflight
+    type: gate
+    condition: verified_findings has items marked verified
+    skill: preflight-checks
+    critical: true
 
-      - name: commit
-        type: deterministic
-        bash: git add -A && git commit -m "fix: address review findings"
+  - name: fix-commit
+    type: deterministic
+    condition: verified_findings has items marked verified
+    bash: git add -A && git commit -m "fix: address review findings"
 
-  # ── Phase 8: Draft PR ──────────────────────────────────────────────
+  # ── Ship ────────────────────────────────────────────────────────────
+
   - name: draft-pr
     type: deterministic
     bash: |
@@ -135,10 +141,10 @@ phases:
         --body "{{ pr_body }}"
     output: pr_url
 
-  # ── Phase 9: Human Review ──────────────────────────────────────────
-  # Blueprint exits to conversational mode. The user reviews the code
-  # in VS Code (GitHub PR extension). Agent stays available to answer
-  # questions and make small fixes.
+  # ── Human Review ────────────────────────────────────────────────────
+  # Blueprint exits to conversational mode. The user reviews in VS Code
+  # (GitHub PR extension). Agent stays available for questions and fixes.
+
   - name: human-review
     type: interactive
     prompt: |
@@ -146,41 +152,38 @@ phases:
       Review in VS Code — I'm here for questions or small fixes.
       When you're done, say "ready" to continue.
 
-  # ── Phase 10: Mark PR Ready ───────────────────────────────────────
   - name: mark-ready
     type: deterministic
     bash: gh pr ready {{ pr_url }}
 
-  # ── Phase 11: Watch CI ─────────────────────────────────────────────
+  # ── Watch CI ────────────────────────────────────────────────────────
   # Optional. Watches PR checks and retries on failure.
+
   - name: watch-ci
     type: deterministic
     condition: user-requests
     bash: gh pr checks {{ pr_url }} --watch
-    retry:
-      on: check-failure
-      max: 3
-      sub-phases:
-        - name: diagnose
-          type: agentic
-          skill: systematic-debugging
-          input: "{{ ci_failure_output }}"
 
-        - name: fix
-          type: agentic
+  - name: ci-fix
+    type: agentic
+    condition: ci failed
+    skill: systematic-debugging
+    input: "{{ ci_failure_output }}"
+    retry: { max: 3 }
 
-        - name: preflight
-          type: gate
-          skill: preflight-checks
-          critical: true
+  - name: ci-push
+    type: deterministic
+    condition: ci fixes made
+    bash: git push
 
-        - name: push
-          type: deterministic
-          bash: git push
+  - name: ci-rewatch
+    type: deterministic
+    condition: ci fixes made
+    bash: gh pr checks {{ pr_url }} --watch
 
-  # ── Phase 12: Post-Mortem ──────────────────────────────────────────
-  # Always runs. Proportional to complexity — a one-line fix gets a
-  # one-line post-mortem.
+  # ── Post-Mortem ─────────────────────────────────────────────────────
+  # Always runs. Proportional to complexity.
+
   - name: post-mortem
     type: agentic
     skill: post-mortem
