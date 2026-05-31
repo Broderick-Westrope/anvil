@@ -1,41 +1,57 @@
-# Anvil Blueprints — Design Exploration
+# Anvil Blueprints
 
-Working documents exploring blueprint/workflow architecture for Anvil, informed by Stripe Minions, Claude Code Workflows, and the deterministic-agentic spectrum.
+A declared pipeline system for Anvil. Blueprints are deterministic
+infrastructure that orchestrates agentic steps — the engine handles
+sequencing, loops, gates, parallel dispatch, and state; the LLM only
+runs inside agentic and interactive steps.
 
 ## Documents
 
 | Document | Purpose |
 |----------|---------|
-| [Research Summary](01-research-summary.md) | Key concepts from Stripe Minions, Claude Workflows, Deepset spectrum |
-| [Current State Analysis](02-current-state.md) | What Anvil + claude-essentials already provide |
-| [Design Exploration](03-design.md) | Blueprint concept, YAML format, phase types, composition |
-| [Blueprint Examples](04-examples.md) | Concrete blueprints mapped to existing workflows |
-| [Open Questions](05-open-questions.md) | Unresolved design decisions (4 of 10 resolved) |
+| [Research Summary](01-research-summary.md) | Why blueprints: Stripe Minions, Claude Workflows, Deepset spectrum |
+| [Current State & Gaps](02-current-state.md) | What Anvil has today and what blueprints add |
+| [Future Blueprints](04-future-blueprints.md) | Sketch ideas for review, fix-issue, migration blueprints |
+| [Open Questions](05-open-questions.md) | Unresolved design decisions |
 | [Quality Integration](06-quality-integration.md) | How quality research maps to blueprint phases |
-| [Grilling Findings](07-grilling-findings.md) | Decisions from the design grilling session |
-| [Schema Specification](08-schema-spec.md) | YAML schema contract for all blueprints |
-| [Review Findings](09-review-findings.md) | Devil's advocate review — round 1 |
-| [Review Round 2](10-review-round2.md) | Devil's advocate review — round 2 |
+| [Decisions](07-grilling-findings.md) | All design decisions with rationale |
+| [Schema Specification](08-schema-spec.md) | Canonical YAML schema for all blueprints |
 
 ## Draft Blueprint
 
-| File | Purpose |
-|------|---------|
-| [drafts/feature/blueprint.yaml](drafts/feature/blueprint.yaml) | The primary blueprint — 12-phase feature implementation pipeline |
-| [drafts/feature/references/pre-impl-thinking.md](drafts/feature/references/pre-impl-thinking.md) | Human-first thinking framework (5 questions, agent compares after) |
-| [drafts/feature/references/review-merge-rules.md](drafts/feature/references/review-merge-rules.md) | Dual-model review deduplication and verdict logic |
-| [drafts/feature/references/finding-verification.md](drafts/feature/references/finding-verification.md) | Verifier agent protocol for fact-checking review findings |
+```
+drafts/
+├── feature/
+│   ├── blueprint.yaml                    # 12-step feature implementation pipeline
+│   └── references/
+│       ├── pre-impl-thinking.md          # Human-first 5-question framework
+│       ├── pre-impl-compare.md           # Agent comparison after human thinks
+│       ├── review-merge-rules.md         # Dual-model review dedup + verdict
+│       └── finding-verification.md       # Verifier agent protocol
+└── fragments/
+    └── preflight-and-commit.yaml         # Reusable preflight → commit → fix loop
+```
 
-## Key Decisions Made
+## Resolved Decisions
 
-- **File format**: YAML (`blueprint.yaml`), not Markdown. References for prose. Skills for reusable behavior.
-- **Location**: Separate `blueprints/` directory at project, personal, and plugin levels.
-- **Scope**: One primary blueprint (feature implementation pipeline) to start.
-- **Invocation**: User-invoked primarily. Agent-invoked deferred (would need own permissionable tool).
-- **Pre-impl thinking**: Human-first. Agent compares after, never pre-populates.
-- **Verifier**: New agent type distinct from reviewer and devil's advocate.
-- **Post-mortem**: Always runs, proportional to complexity.
+| Decision | Resolution |
+|----------|------------|
+| **File format** | YAML (`blueprint.yaml`). References for prose. Skills for reusable behavior. |
+| **Location** | Separate `blueprints/` directory at project (`.agents/`), personal (`~/.config/anvil/`), and plugin levels. Resolution: project > personal > plugin. |
+| **Invocation** | User-invoked primarily (like commands). Agent-invoked deferred — would need own permissionable tool. |
+| **Execution engine** | Deterministic Go runtime in Anvil. Engine runs deterministic/gate/parallel steps directly. LLM only invoked inside agentic/interactive steps. |
+| **Fragments** | GitHub Actions-style `uses:` with `with:` inputs. Declared at top level, expanded inline. |
+| **Loops** | Consecutive steps with same `loop.over` form a loop group — per-item, all steps before next item. |
+| **Gate failure** | `critical: true` halts; `critical: false` asks user. |
+| **Structured output** | Agent outputs JSON when property access is needed. Engine parses on `{{ output.key }}`. |
+| **Scope** | One primary blueprint (feature implementation) to start. |
+| **Pre-impl thinking** | Human-first. Agent compares after, never pre-populates. |
+| **Verifier** | New agent type — fact-checks review findings against codebase. Distinct from reviewer and devil's advocate. |
+| **Commit cadence** | Preflight + commit per task group. Fix-up commits separate. |
+| **Post-mortem** | Always runs. Proportional to complexity. |
+| **Fragment scoping** | Local names inside fragments; prefixed names from outside. |
 
 ## Status
 
-Draft blueprint written. Ready for review and iteration.
+Schema spec and draft blueprint written. Two rounds of adversarial review
+completed and incorporated. Ready for implementation planning.
