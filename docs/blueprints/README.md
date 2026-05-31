@@ -9,13 +9,13 @@ runs inside agentic and interactive steps.
 
 | Document | Purpose |
 |----------|---------|
-| [Research Summary](01-research-summary.md) | Why blueprints: Stripe Minions, Claude Workflows, Deepset spectrum |
-| [Current State & Gaps](02-current-state.md) | What Anvil has today and what blueprints add |
-| [Future Blueprints](04-future-blueprints.md) | Sketch ideas for review, fix-issue, migration blueprints |
-| [Open Questions](05-open-questions.md) | Unresolved design decisions |
-| [Quality Integration](06-quality-integration.md) | How quality research maps to blueprint phases |
-| [Decisions](07-grilling-findings.md) | All design decisions with rationale |
-| [Schema Specification](08-schema-spec.md) | Canonical YAML schema for all blueprints |
+| [Research Summary](research-summary.md) | Why blueprints: Stripe Minions, Claude Workflows, Deepset spectrum |
+| [Current State & Gaps](current-state.md) | What Anvil has today and what blueprints add |
+| [Future Blueprints](future-blueprints.md) | Sketch ideas for review, fix-issue, migration blueprints |
+| [Open Questions](open-questions.md) | Unresolved design decisions |
+| [Quality Integration](quality-integration.md) | How quality research maps to blueprint phases |
+| [Decisions](decisions.md) | All design decisions with rationale |
+| [Schema Specification](schema-spec.md) | Canonical YAML schema for all blueprints |
 
 ## Draft Blueprint
 
