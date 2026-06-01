@@ -71,7 +71,7 @@ Currently, all call sites pass `cfg.Options.DataDirectory` (resolves to `.anvil/
 | `backend/backend.go:104` (backend mode) | `db.Connect(ctx, cfg.Options.DataDirectory)` | `db.ConnectGlobal(ctx)` |
 | Stats command | `db.Connect(ctx, cfg.Options.DataDirectory)` | `db.ConnectGlobal(ctx)` |
 
-**`DataDirectory` still exists** — it continues to control where `logs/`, workspace `anvil.json`, `.gitignore`, and the project-local `.anvil/` directory live. It just no longer contains the database.
+**`DataDirectory` rename:** Since `DataDirectory` no longer contains the database, rename it to `ProjectDirectory` (`project_directory` in JSON) to clarify its role. Update the `defaultDataDirectory` constant to `defaultProjectDirectory`. The comment should reflect that it controls `logs/`, workspace `anvil.json`, `.gitignore`, and the project-local `.anvil/` directory — not the database.
 
 **`--there` startup sequence:** When `--session` and `--there` are both provided, the startup opens the global DB early (before `ResolveCwd`), queries the session's `working_dir`, and injects it as the effective cwd. The global DB path is deterministic so no config loading is needed for this early open. Sequence: parse flags → open global DB → look up `working_dir` → set cwd → proceed with normal `setupLocalWorkspace` (config, LSP, MCP init, etc.).
 
