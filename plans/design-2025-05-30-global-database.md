@@ -104,10 +104,19 @@ Each successfully migrated project DB gets a row inserted *after* all its data i
 On startup:
 1. Open/create the global DB, run goose migrations.
 2. **Synchronous:** Check current project's `.anvil/anvil.db`. If it exists and `migrations_completed` has no row for its path: run goose on the source DB (to bring it to current schema), copy all rows with `INSERT OR IGNORE`, populate `working_dir` on sessions from the project path, insert into `migrations_completed`.
-3. **Background goroutine:** Iterate `projects.json` entries. For each, do the same check-and-migrate. This runs concurrently with normal operation.
+3. **Background goroutine:** Iterate `projects.json` entries. For each, do the same check-and-migrate. This runs concurrently with normal operation. See **Background Migration Performance** below for contention mitigations.
 4. `projects.Register()` still runs at startup to maintain the registry (used for migration discovery and potentially other features).
 
 Source DBs at older schema versions (missing columns like `todos`, `leaf_message_id`, `provider`, `parent_message_id`, `message_type`) are handled by running goose on each source DB before reading, bringing it up to the current schema.
+
+### Background Migration Performance
+
+The background goroutine migrating other projects' DBs competes for the global DB write lock with the active session. For users with many large-history projects, the first post-upgrade startup could cause noticeable write latency. The following mitigations apply to the background goroutine only (step 3 above) — the synchronous current-project migration (step 2) runs before active use and doesn't need them.
+
+- **Batched inserts:** Each project's data is copied in transactions of ~500 rows, yielding the write lock between batches. This prevents a single large project from holding the lock for hundreds of milliseconds.
+- **Sequential project migration:** Projects are migrated one at a time, not in parallel. Multiple concurrent migrations would multiply write lock contention.
+- **Backpressure:** A short sleep (~50ms) is inserted between projects to avoid starving the active session's writes.
+- **`--skip-migration` flag:** Escape hatch that disables background migration entirely. The current project's synchronous migration (step 2) still runs. Useful if a user has hundreds of projects and wants to defer the bulk migration to an idle moment (e.g. `anvil --skip-migration=false` later).
 
 ## Query Scoping Changes
 
