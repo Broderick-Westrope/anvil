@@ -126,19 +126,25 @@ The background goroutine migrating other projects' DBs competes for the global D
 - **Backpressure:** A short sleep (~50ms) is inserted between projects to avoid starving the active session's writes.
 - **`--skip-migration` flag:** Escape hatch that disables background migration entirely. The current project's synchronous migration (step 2) still runs. Useful if a user has hundreds of projects and wants to defer the bulk migration to an idle moment (e.g. `anvil --skip-migration=false` later).
 
-## Query Scoping Changes
+## Query Changes
 
-The following queries implicitly relied on per-project DB scoping and must be updated:
+Most file and message queries already filter by `session_id` and work correctly in a global DB without changes. The queries below are the exceptions — they either lack session scoping entirely, have a subtly unscoped subquery, or need the new `working_dir` column.
 
-| Query | File | Change needed |
-|---|---|---|
-| `ListLatestSessionFiles` | `files.sql:47-56` | Inner subquery must add `WHERE session_id = ?` to avoid cross-session version interference. Pass `session_id` twice. |
-| `ListFilesByPath` | `files.sql:19-23` | Used by `history/file.go:67` to determine next version number. Add `AND session_id = ?` to prevent cross-project version counter interference. |
-| `GetLastSession` | `sessions.sql:29-33` | Add `WHERE working_dir = ?` to return the last session for the current project. |
-| `ListSessions` | `sessions.sql:35-39` | Replace with two queries: `ListSessionsByWorkingDir` (filtered) and `ListAllSessions` (unfiltered). |
-| `CreateSession` | `sessions.sql:1-22` | Add `working_dir` parameter. |
-| `ListNewFiles` | `files.sql:58-62` | Remove — dead code, `is_new` column doesn't exist in schema. |
-| Stats queries | `stats.sql` (all) | No filter needed — global totals are the desired behavior. Update stats CLI output to remove per-project label. |
+**Subquery bug — `ListLatestSessionFiles`** (`files.sql:47-56`): The outer query filters by `session_id`, but the inner subquery (`SELECT path, MAX(version) FROM files GROUP BY path`) scans all sessions. If another session has a higher version of the same file path, the JOIN fails to match the current session's row — silently dropping files from the result. Fix: add `WHERE session_id = ?` to the inner subquery (pass `session_id` twice).
+
+**Missing session scope — `ListFilesByPath`** (`files.sql:19-23`): No `session_id` filter. Used by `history/file.go:67` (`CreateVersion`) to determine the next version number for a path. In a global DB, two sessions editing the same path would share version counters, producing non-contiguous versions. Fix: add `AND session_id = ?`. Rename to `ListSessionFilesByPath` to reflect the narrower scope.
+
+**Session discovery — new `working_dir` filters:**
+
+| Query | Change |
+|---|---|
+| `GetLastSession` (`sessions.sql:29-33`) | Add `WHERE working_dir = ?`. Rename to `GetLastSessionByWorkingDir`. |
+| `ListSessions` (`sessions.sql:35-39`) | Replace with `ListSessionsByWorkingDir` (filtered by `working_dir`) and `ListAllSessions` (unfiltered). |
+| `CreateSession` (`sessions.sql:1-22`) | Add `working_dir` parameter. |
+
+**Dead code removal — `ListNewFiles`** (`files.sql:58-62`): References non-existent `is_new` column. Remove.
+
+**Stats queries** (`stats.sql`): No filter needed — global totals are the desired behavior. Update stats CLI output to remove the per-project label.
 
 ## `read_files` Path Fix
 
