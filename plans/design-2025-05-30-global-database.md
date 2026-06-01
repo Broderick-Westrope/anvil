@@ -130,21 +130,32 @@ The background goroutine migrating other projects' DBs competes for the global D
 
 Most file and message queries already filter by `session_id` and work correctly in a global DB without changes. The queries below are the exceptions — they either lack session scoping entirely, have a subtly unscoped subquery, or need the new `working_dir` column.
 
-**Subquery bug — `ListLatestSessionFiles`** (`files.sql:47-56`): The outer query filters by `session_id`, but the inner subquery (`SELECT path, MAX(version) FROM files GROUP BY path`) scans all sessions. If another session has a higher version of the same file path, the JOIN fails to match the current session's row — silently dropping files from the result. Fix: add `WHERE session_id = ?` to the inner subquery (pass `session_id` twice).
+**Missing session scope — `ListFilesByPath`** (`files.sql:19-23`): No `session_id` filter. Single caller: `history/file.go:67` (`CreateVersion`), which uses it to determine the next version number for a path. The schema confirms versions are per-session — `UNIQUE(path, session_id, version)` in the initial migration (`20250424200609_initial.sql:33`). In a global DB, two sessions editing the same path would share version counters, producing non-contiguous versions within each session. Fix: add `AND session_id = ?`. Rename to `ListSessionFilesByPath` to reflect the narrower scope.
 
-**Missing session scope — `ListFilesByPath`** (`files.sql:19-23`): No `session_id` filter. Used by `history/file.go:67` (`CreateVersion`) to determine the next version number for a path. In a global DB, two sessions editing the same path would share version counters, producing non-contiguous versions. Fix: add `AND session_id = ?`. Rename to `ListSessionFilesByPath` to reflect the narrower scope.
+**Dead code removal — `ListLatestSessionFiles`** (`files.sql:47-56`): Defined on the `history.Service` interface (`history/file.go:39`) and implemented (`history/file.go:168`), but never called. Has two bugs (unscoped inner subquery, independent `MAX(version)`/`MAX(created_at)` computation) that would need fixing for a global DB. Rather than fix dead code, remove the query, interface method, and implementation. Can be re-added with the correct implementation if a use case arises.
+
+**Dead code removal — `ListNewFiles`** (`files.sql:58-62`): References non-existent `is_new` column — would fail at runtime if called. Zero Go callers outside generated code. Remove.
 
 **Session discovery — new `working_dir` filters:**
+
+The `--continue` flag is broken across all three code paths without `working_dir` filtering:
+- Local mode (`app/app.go:196`): `GetLastSession` returns the most recent session across all projects.
+- Client-server mode (`cmd/run.go:473-484`): `ListSessions` picks the newest, unfiltered.
+- TUI mode (`ui/model/ui.go:491-498`): `ListSessions` takes `sessions[0]`, unfiltered.
+
+The session picker dialog (`ui/dialog/sessions.go:64`) also shows all sessions with no project distinction.
+
+Hash-prefix resolution (`cmd/root.go:540`, `cmd/run.go:498`) uses `ListSessions` for matching a user-provided ID. These callers arguably want global scope since the user explicitly provides an ID — they should use `ListAllSessions`.
 
 | Query | Change |
 |---|---|
 | `GetLastSession` (`sessions.sql:29-33`) | Add `WHERE working_dir = ?`. Rename to `GetLastSessionByWorkingDir`. |
-| `ListSessions` (`sessions.sql:35-39`) | Replace with `ListSessionsByWorkingDir` (filtered by `working_dir`) and `ListAllSessions` (unfiltered). |
-| `CreateSession` (`sessions.sql:1-22`) | Add `working_dir` parameter. |
+| `ListSessions` (`sessions.sql:35-39`) | Replace with `ListSessionsByWorkingDir` (filtered by `working_dir`) and `ListAllSessions` (unfiltered). `--continue` and the session picker default use the filtered variant. Hash-prefix resolution uses the unfiltered variant. |
+| `CreateSession` (`sessions.sql:1-22`) | Add `working_dir` parameter. Callers have access to `working_dir` via `Workspace.WorkingDir()` (`workspace/workspace.go:119`) but don't pass it through yet — `session.service.Create` and `CreateTaskSession`/`CreateTitleSession` all need the parameter threaded down. |
 
-**Dead code removal — `ListNewFiles`** (`files.sql:58-62`): References non-existent `is_new` column. Remove.
+**Dead code removal — `ListNewFiles`** (`files.sql:58-62`): References non-existent `is_new` column — would fail at runtime if called. Zero Go callers outside generated code. Remove.
 
-**Stats queries** (`stats.sql`): No filter needed — global totals are the desired behavior. Update stats CLI output to remove the per-project label.
+**Stats queries** (`stats.sql`): No filter needed — global totals are the desired behavior. Sole caller is `gatherStats` in `cmd/stats.go:174`. Update stats CLI output to remove the per-project label.
 
 ## `read_files` Path Fix
 
