@@ -82,7 +82,15 @@ Currently, all call sites pass `cfg.Options.DataDirectory` (resolves to `.anvil/
 ALTER TABLE sessions ADD COLUMN working_dir TEXT NOT NULL DEFAULT '';
 ```
 
-`NOT NULL DEFAULT ''` for migration compatibility. Migrated rows get `working_dir` populated from `projects.json`'s `Path` field for that project DB. The `working_dir` value should be stored after `filepath.EvalSymlinks` to normalize symlinks (e.g. `/var` vs `/private/var` on macOS).
+`NOT NULL DEFAULT ''` for migration compatibility — SQLite requires a default when adding a `NOT NULL` column via `ALTER TABLE`. The default never fires in practice: `CreateSession` always provides `working_dir`, and migrated rows are immediately overwritten with the real path from `projects.json`. The global DB's `CREATE TABLE` adds a `CHECK` constraint to enforce this at the schema level:
+
+```sql
+working_dir TEXT NOT NULL CHECK(working_dir != '')
+```
+
+SQLite doesn't support adding `CHECK` via `ALTER TABLE`, but since the global DB is created fresh this goes in the `CREATE TABLE` directly. Old project DBs (migration sources only, never written to again) don't get the constraint.
+
+The `working_dir` value should be stored after `filepath.EvalSymlinks` to normalize symlinks (e.g. `/var` vs `/private/var` on macOS).
 
 **Index for `working_dir` filtering:**
 ```sql
