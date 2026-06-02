@@ -194,13 +194,16 @@ func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourceP
 
 	// Copy read_files, converting relative paths to absolute by
 	// prepending workingDir. Paths already absolute (starting with
-	// '/') are copied as-is.
+	// '/' on Unix or a drive letter like 'C:\' on Windows) are
+	// copied as-is.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO main.read_files (session_id, path, read_at)
 		SELECT
 			session_id,
 			CASE
 				WHEN path LIKE '/%' THEN path
+				WHEN path LIKE '_:\%' THEN path
+				WHEN path LIKE '_:/%' THEN path
 				ELSE ? || '/' || path
 			END,
 			read_at
@@ -499,6 +502,8 @@ func copyReadFilesBatched(ctx context.Context, conn *sql.Conn, workingDir string
 				session_id,
 				CASE
 					WHEN path LIKE '/%' THEN path
+					WHEN path LIKE '_:\%' THEN path
+					WHEN path LIKE '_:/%' THEN path
 					ELSE ? || '/' || path
 				END,
 				read_at

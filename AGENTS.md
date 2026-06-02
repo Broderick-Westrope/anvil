@@ -71,8 +71,12 @@ internal/
 - **Context files**: Anvil reads AGENTS.md, ANVIL.md, CLAUDE.md, GEMINI.md
   (and `.local` variants) from the working directory for project-specific
   instructions.
-- **Persistence**: SQLite + sqlc. All queries live in `internal/db/sql/`,
-  generated code in `internal/db/`. Migrations in `internal/db/migrations/`.
+- **Persistence**: SQLite + sqlc. A single global database at
+  `~/.local/share/anvil/anvil.db` stores all sessions, messages, files,
+  and OAuth tokens. All queries live in `internal/db/sql/`, generated
+  code in `internal/db/`. Migrations in `internal/db/migrations/`.
+  Per-project databases are migrated to the global DB on first startup
+  (`internal/db/migrate.go`).
 - **Pub/sub**: `internal/pubsub` for decoupled communication between agent,
   UI, and services.
 - **Hooks**: User-defined shell commands in `anvil.json` that fire before
