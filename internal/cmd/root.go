@@ -125,7 +125,7 @@ anvil --continue --there
 				return err
 			}
 			if _, statErr := os.Stat(sess.WorkingDir); os.IsNotExist(statErr) {
-				return fmt.Errorf("session's working directory no longer exists: %s", sess.WorkingDir)
+				return fmt.Errorf("session's working directory no longer exists: %s\nUse --cwd to specify a different directory, or omit --there to resume in the current directory", sess.WorkingDir)
 			}
 			if err := os.Chdir(sess.WorkingDir); err != nil {
 				return fmt.Errorf("failed to change to session working directory: %v", err)

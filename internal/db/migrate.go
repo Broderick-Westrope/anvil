@@ -408,6 +408,12 @@ type execer interface {
 // newest-wins conflict resolution. This two-step approach is needed
 // because INSERT...SELECT...ON CONFLICT is not reliably supported
 // across attached databases in all SQLite drivers.
+//
+// NOTE: If two Anvil processes migrate the same project concurrently,
+// the INSERT OR IGNORE + UPDATE sequence is not atomic across processes.
+// This is accepted behavior — migrations_completed prevents full
+// re-migration, and the worst case is a slightly stale token that will
+// be refreshed on next use.
 func copyOAuthTokens(ctx context.Context, e execer) error {
 	// Insert any tokens that don't exist yet.
 	if _, err := e.ExecContext(ctx, `
