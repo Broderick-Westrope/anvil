@@ -85,14 +85,14 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 	}
 
 	// Open the project DB.
-	if err := os.MkdirAll(cfg.Options.DataDirectory, 0o700); err != nil {
+	if err := os.MkdirAll(cfg.Options.ProjectDirectory, 0o700); err != nil {
 		return fmt.Errorf("failed to create data directory: %w", err)
 	}
-	conn, err := db.Connect(ctx, cfg.Options.DataDirectory)
+	conn, err := db.ConnectGlobal(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
-	defer db.Release(cfg.Options.DataDirectory) //nolint:errcheck
+	defer db.ReleaseGlobal() //nolint:errcheck
 
 	queries := db.New(conn)
 

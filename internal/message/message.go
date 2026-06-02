@@ -51,7 +51,7 @@ type Service interface {
 	Get(ctx context.Context, id string) (Message, error)
 	List(ctx context.Context, sessionID string) ([]Message, error)
 	ListUserMessages(ctx context.Context, sessionID string) ([]Message, error)
-	ListAllUserMessages(ctx context.Context) ([]Message, error)
+	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
 	Delete(ctx context.Context, id string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	GetBranchPath(ctx context.Context, leafMessageID string) ([]Message, error)
@@ -524,8 +524,8 @@ func (s *service) ListUserMessages(ctx context.Context, sessionID string) ([]Mes
 	return messages, nil
 }
 
-func (s *service) ListAllUserMessages(ctx context.Context) ([]Message, error) {
-	dbMessages, err := s.q.ListAllUserMessages(ctx)
+func (s *service) ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error) {
+	dbMessages, err := s.q.ListUserMessagesByWorkingDir(ctx, workingDir)
 	if err != nil {
 		return nil, err
 	}

@@ -54,7 +54,10 @@ func init() {
 	rootCmd.Flags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
 	rootCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
 	rootCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
+	rootCmd.Flags().Bool("there", false, "Resume session in its original working directory")
+	rootCmd.PersistentFlags().Bool("skip-migration", false, "Skip background migration of other project databases")
 	rootCmd.MarkFlagsMutuallyExclusive("session", "continue")
+	rootCmd.MarkFlagsMutuallyExclusive("there", "cwd")
 
 	rootCmd.AddCommand(
 		runCmd,
@@ -99,10 +102,37 @@ anvil --session {session-id}
 
 # Continue the most recent session
 anvil --continue
+
+# Resume a session in its original working directory
+anvil --session {session-id} --there
+anvil --continue --there
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sessionID, _ := cmd.Flags().GetString("session")
 		continueLast, _ := cmd.Flags().GetBool("continue")
+		there, _ := cmd.Flags().GetBool("there")
+
+		// Validate --there requires --session or --continue.
+		if there && sessionID == "" && !continueLast {
+			return errors.New("--there requires --session or --continue")
+		}
+
+		// --there: open global DB early, look up session's working_dir,
+		// and change to it before the normal workspace setup.
+		if there {
+			sess, err := resolveThereSession(cmd.Context(), sessionID, continueLast)
+			if err != nil {
+				return err
+			}
+			if _, statErr := os.Stat(sess.WorkingDir); os.IsNotExist(statErr) {
+				return fmt.Errorf("session's working directory no longer exists: %s", sess.WorkingDir)
+			}
+			if err := os.Chdir(sess.WorkingDir); err != nil {
+				return fmt.Errorf("failed to change to session working directory: %v", err)
+			}
+			sessionID = sess.ID
+			continueLast = false
+		}
 
 		ws, cleanup, err := setupWorkspaceWithProgressBar(cmd)
 		if err != nil {
@@ -110,7 +140,7 @@ anvil --continue
 		}
 		defer cleanup()
 
-		if sessionID != "" {
+		if sessionID != "" && !there {
 			sess, err := resolveWorkspaceSessionID(cmd.Context(), ws, sessionID)
 			if err != nil {
 				return err
@@ -258,27 +288,42 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 	cfg := store.Config()
 	store.Overrides().SkipPermissionRequests = yolo
 
-	if err := os.MkdirAll(cfg.Options.DataDirectory, 0o700); err != nil {
-		return nil, nil, fmt.Errorf("failed to create data directory: %q %w", cfg.Options.DataDirectory, err)
+	if err := os.MkdirAll(cfg.Options.ProjectDirectory, 0o700); err != nil {
+		return nil, nil, fmt.Errorf("failed to create data directory: %q %w", cfg.Options.ProjectDirectory, err)
 	}
 
-	gitIgnorePath := filepath.Join(cfg.Options.DataDirectory, ".gitignore")
+	gitIgnorePath := filepath.Join(cfg.Options.ProjectDirectory, ".gitignore")
 	if _, err := os.Stat(gitIgnorePath); os.IsNotExist(err) {
 		if err := os.WriteFile(gitIgnorePath, []byte("*\n"), 0o644); err != nil {
 			return nil, nil, fmt.Errorf("failed to create .gitignore file: %q %w", gitIgnorePath, err)
 		}
 	}
 
-	if err := projects.Register(cwd, cfg.Options.DataDirectory); err != nil {
+	if err := projects.Register(cwd, cfg.Options.ProjectDirectory); err != nil {
 		slog.Warn("Failed to register project", "error", err)
 	}
 
-	conn, err := db.Connect(ctx, cfg.Options.DataDirectory)
+	conn, err := db.ConnectGlobal(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	logFile := filepath.Join(cfg.Options.DataDirectory, "logs", "anvil.log")
+	// Synchronously migrate the current project's per-project database.
+	if err := db.MigrateCurrentProject(ctx, conn, cfg.Options.ProjectDirectory); err != nil {
+		slog.Warn("Failed to migrate current project", "error", err)
+	}
+
+	// Start background migration of other project databases.
+	skipMigration, _ := cmd.PersistentFlags().GetBool("skip-migration")
+	if !skipMigration {
+		go func() {
+			if err := db.MigrateAllProjects(ctx, conn, cfg.Options.ProjectDirectory); err != nil {
+				slog.Warn("Failed to migrate other projects", "error", err)
+			}
+		}()
+	}
+
+	logFile := filepath.Join(cfg.Options.ProjectDirectory, "logs", "anvil.log")
 	anvillog.Setup(logFile, debug)
 
 	appInstance, err := app.New(ctx, conn, store)
@@ -369,7 +414,7 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 	}
 
 	if ws.Config != nil {
-		logFile := filepath.Join(ws.Config.Options.DataDirectory, "logs", "anvil.log")
+		logFile := filepath.Join(ws.Config.Options.ProjectDirectory, "logs", "anvil.log")
 		anvillog.Setup(logFile, debug)
 	}
 
@@ -528,6 +573,57 @@ func MaybePrependStdin(prompt string) (string, error) {
 	return string(bts) + "\n\n" + prompt, nil
 }
 
+// resolveThereSession opens the global database early and resolves the
+// session for the --there flag. For --continue --there it returns the
+// globally most-recent session (unfiltered). For --session --there it
+// resolves the specific session by ID or hash prefix.
+func resolveThereSession(ctx context.Context, sessionID string, continueLast bool) (session.Session, error) {
+	conn, err := db.ConnectGlobal(ctx)
+	if err != nil {
+		return session.Session{}, err
+	}
+	defer func() { _ = db.ReleaseGlobal() }()
+
+	q := db.New(conn)
+	sessSvc := session.NewService(q, conn)
+
+	if continueLast {
+		sess, err := sessSvc.GetLastGlobal(ctx)
+		if err != nil {
+			return session.Session{}, fmt.Errorf("no sessions found to continue")
+		}
+		return sess, nil
+	}
+
+	// --session --there: resolve by UUID or hash prefix.
+	sess, err := sessSvc.Get(ctx, sessionID)
+	if err == nil {
+		return sess, nil
+	}
+
+	allSessions, err := sessSvc.List(ctx, "")
+	if err != nil {
+		return session.Session{}, fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	var matches []session.Session
+	for _, s := range allSessions {
+		hash := session.HashID(s.ID)
+		if hash == sessionID || strings.HasPrefix(hash, sessionID) {
+			matches = append(matches, s)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return session.Session{}, fmt.Errorf("session not found: %s", sessionID)
+	case 1:
+		return matches[0], nil
+	default:
+		return session.Session{}, fmt.Errorf("session ID %q is ambiguous (%d matches)", sessionID, len(matches))
+	}
+}
+
 // resolveWorkspaceSessionID resolves a session ID that may be a full
 // UUID, full hash, or hash prefix. Works against the Workspace
 // interface so both local and client/server paths get hash prefix
@@ -537,7 +633,7 @@ func resolveWorkspaceSessionID(ctx context.Context, ws workspace.Workspace, id s
 		return sess, nil
 	}
 
-	sessions, err := ws.ListSessions(ctx)
+	sessions, err := ws.ListSessions(ctx, "")
 	if err != nil {
 		return session.Session{}, err
 	}

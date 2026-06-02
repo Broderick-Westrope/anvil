@@ -15,7 +15,8 @@ func (b *Backend) CreateSession(ctx context.Context, workspaceID, title string) 
 		return session.Session{}, err
 	}
 
-	return ws.Sessions.Create(ctx, title)
+	workingDir := ws.Cfg.WorkingDir()
+	return ws.Sessions.Create(ctx, title, workingDir)
 }
 
 // GetSession retrieves a session by workspace and session ID.
@@ -29,13 +30,13 @@ func (b *Backend) GetSession(ctx context.Context, workspaceID, sessionID string)
 }
 
 // ListSessions returns all sessions in the given workspace.
-func (b *Backend) ListSessions(ctx context.Context, workspaceID string) ([]session.Session, error) {
+func (b *Backend) ListSessions(ctx context.Context, workspaceID, workingDir string) ([]session.Session, error) {
 	ws, err := b.GetWorkspace(workspaceID)
 	if err != nil {
 		return nil, err
 	}
 
-	return ws.Sessions.List(ctx)
+	return ws.Sessions.List(ctx, workingDir)
 }
 
 // GetAgentSession returns session metadata with the agent's busy
@@ -121,12 +122,12 @@ func (b *Backend) ListUserMessages(ctx context.Context, workspaceID, sessionID s
 	return ws.Messages.ListUserMessages(ctx, sessionID)
 }
 
-// ListAllUserMessages returns all user-role messages across sessions.
-func (b *Backend) ListAllUserMessages(ctx context.Context, workspaceID string) ([]message.Message, error) {
+// ListUserMessagesByWorkingDir returns user-role messages filtered by working directory.
+func (b *Backend) ListUserMessagesByWorkingDir(ctx context.Context, workspaceID, workingDir string) ([]message.Message, error) {
 	ws, err := b.GetWorkspace(workspaceID)
 	if err != nil {
 		return nil, err
 	}
 
-	return ws.Messages.ListAllUserMessages(ctx)
+	return ws.Messages.ListUserMessagesByWorkingDir(ctx, workingDir)
 }

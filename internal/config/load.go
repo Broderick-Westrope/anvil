@@ -47,7 +47,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		config:         cfg,
 		workingDir:     workingDir,
 		globalDataPath: GlobalConfigData(),
-		workspacePath:  filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName)),
+		workspacePath:  filepath.Join(cfg.Options.ProjectDirectory, fmt.Sprintf("%s.json", appName)),
 		loadedPaths:    loadedPaths,
 	}
 
@@ -63,7 +63,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		merged, mergeErr := loadFromBytes(append([][]byte{mustMarshalConfig(cfg)}, wsData))
 		if mergeErr == nil {
 			// Preserve defaults that setDefaults already applied.
-			dataDir := cfg.Options.DataDirectory
+			dataDir := cfg.Options.ProjectDirectory
 			*cfg = *merged
 			cfg.setDefaults(workingDir, dataDir)
 			store.config = cfg
@@ -445,15 +445,15 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 		c.Options.TUI = &TUIOptions{}
 	}
 	if dataDir != "" {
-		c.Options.DataDirectory = dataDir
-	} else if c.Options.DataDirectory == "" {
-		if path, ok := fsext.LookupClosestBounded(workingDir, projectBoundary(workingDir), defaultDataDirectory); ok {
-			c.Options.DataDirectory = path
+		c.Options.ProjectDirectory = dataDir
+	} else if c.Options.ProjectDirectory == "" {
+		if path, ok := fsext.LookupClosestBounded(workingDir, projectBoundary(workingDir), defaultProjectDirectory); ok {
+			c.Options.ProjectDirectory = path
 		} else {
-			c.Options.DataDirectory = filepath.Join(workingDir, defaultDataDirectory)
+			c.Options.ProjectDirectory = filepath.Join(workingDir, defaultProjectDirectory)
 		}
 	}
-	c.Options.DataDirectory = filepath.Clean(filepathext.SmartJoin(workingDir, c.Options.DataDirectory))
+	c.Options.ProjectDirectory = filepath.Clean(filepathext.SmartJoin(workingDir, c.Options.ProjectDirectory))
 	if c.Providers == nil {
 		c.Providers = csync.NewMap[string, ProviderConfig]()
 	}
@@ -900,13 +900,20 @@ func GlobalConfigData() string {
 	return filepath.Join(home.Dir(), ".local", "share", appName, fmt.Sprintf("%s.json", appName))
 }
 
+// GlobalDataDir returns the directory where global application data
+// (e.g. the global database) is stored. It is the parent directory
+// of the path returned by [GlobalConfigData].
+func GlobalDataDir() string {
+	return filepath.Dir(GlobalConfigData())
+}
+
 // GlobalWorkspaceDir returns the path to the global server workspace
 // directory. This directory acts as a meta-workspace for the server
 // process, giving it a real workingDir so that config loading, scoped
 // writes, and provider resolution behave identically to project
 // workspaces.
 func GlobalWorkspaceDir() string {
-	return filepath.Dir(GlobalConfigData())
+	return GlobalDataDir()
 }
 
 func assignIfNil[T any](ptr **T, val T) {

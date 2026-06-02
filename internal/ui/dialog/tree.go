@@ -32,16 +32,16 @@ type treeNode struct {
 
 // Tree is a dialog that displays an ASCII tree of all session messages.
 type Tree struct {
-	com                *common.Common
-	input              textinput.Model
-	list               *list.FilterableList
-	roots              []*treeNode
-	nodeMap            map[string]*treeNode
-	allByID            map[string]message.Message
-	expanded           map[string]bool
-	leafMessageID      string
-	needsInitialScroll bool
-	filtering          bool
+	com                 *common.Common
+	input               textinput.Model
+	list                *list.FilterableList
+	roots               []*treeNode
+	nodeMap             map[string]*treeNode
+	allByID             map[string]message.Message
+	expanded            map[string]bool
+	leafMessageID       string
+	needsInitialScroll  bool
+	filtering           bool
 	preFilterSelectedID string
 
 	keyMap struct {
@@ -622,5 +622,3 @@ func sortNodes(nodes []*treeNode) {
 		return cmp.Compare(a.msg.CreatedAt, b.msg.CreatedAt)
 	})
 }
-
-

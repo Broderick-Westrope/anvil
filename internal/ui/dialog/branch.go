@@ -170,5 +170,3 @@ func (b *Branch) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	DrawCenterCursor(scr, area, view, cur)
 	return cur
 }
-
-

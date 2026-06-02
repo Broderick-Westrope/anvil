@@ -180,7 +180,7 @@ func TestConfig_setDefaults(t *testing.T) {
 		require.NotNil(t, cfg.Models)
 		require.NotNil(t, cfg.LSP)
 		require.NotNil(t, cfg.MCP)
-		require.Equal(t, filepath.Join(workingDir, ".anvil"), cfg.Options.DataDirectory)
+		require.Equal(t, filepath.Join(workingDir, ".anvil"), cfg.Options.ProjectDirectory)
 		require.Equal(t, "AGENTS.md", cfg.Options.InitializeAs)
 		for _, path := range defaultContextPaths {
 			require.Contains(t, cfg.Options.ContextPaths, path)
@@ -188,12 +188,12 @@ func TestConfig_setDefaults(t *testing.T) {
 	})
 
 	t.Run("resolves relative configured data directory from working directory", func(t *testing.T) {
-		cfg := &Config{Options: &Options{DataDirectory: "."}}
+		cfg := &Config{Options: &Options{ProjectDirectory: "."}}
 		workingDir := filepath.Join(t.TempDir(), "worktree")
 
 		cfg.setDefaults(workingDir, "")
 
-		require.Equal(t, workingDir, cfg.Options.DataDirectory)
+		require.Equal(t, workingDir, cfg.Options.ProjectDirectory)
 	})
 
 	t.Run("resolves relative flag data directory from working directory", func(t *testing.T) {
@@ -202,18 +202,18 @@ func TestConfig_setDefaults(t *testing.T) {
 
 		cfg.setDefaults(workingDir, "./state")
 
-		require.Equal(t, filepath.Join(workingDir, "state"), cfg.Options.DataDirectory)
+		require.Equal(t, filepath.Join(workingDir, "state"), cfg.Options.ProjectDirectory)
 	})
 
 	t.Run("preserves absolute configured data directory", func(t *testing.T) {
 		// Use a platform-appropriate absolute path so the test runs
 		// the same way on POSIX and Windows.
 		absDir := filepath.Join(t.TempDir(), "data")
-		cfg := &Config{Options: &Options{DataDirectory: absDir}}
+		cfg := &Config{Options: &Options{ProjectDirectory: absDir}}
 
 		cfg.setDefaults(filepath.Join(t.TempDir(), "worktree"), "")
 
-		require.Equal(t, absDir, cfg.Options.DataDirectory)
+		require.Equal(t, absDir, cfg.Options.ProjectDirectory)
 	})
 
 	t.Run("workspace merge re-entry keeps an absolute data directory", func(t *testing.T) {
@@ -224,15 +224,15 @@ func TestConfig_setDefaults(t *testing.T) {
 		cfg := &Config{}
 		cfg.setDefaults(workingDir, "")
 
-		// Workspace JSON sets data_directory to a relative value; the
+		// Workspace JSON sets project_directory to a relative value; the
 		// merge replaces the struct, then setDefaults runs again.
-		cfg.Options.DataDirectory = "./state"
+		cfg.Options.ProjectDirectory = "./state"
 		cfg.setDefaults(workingDir, "")
 
-		require.True(t, filepath.IsAbs(cfg.Options.DataDirectory),
+		require.True(t, filepath.IsAbs(cfg.Options.ProjectDirectory),
 			"data directory must remain absolute after re-merge, got %q",
-			cfg.Options.DataDirectory)
-		require.Equal(t, filepath.Join(workingDir, "state"), cfg.Options.DataDirectory)
+			cfg.Options.ProjectDirectory)
+		require.Equal(t, filepath.Join(workingDir, "state"), cfg.Options.ProjectDirectory)
 	})
 
 	t.Run("does not adopt .anvil from a parent project", func(t *testing.T) {
@@ -240,7 +240,7 @@ func TestConfig_setDefaults(t *testing.T) {
 
 		// .anvil in the parent: it should not be reused by the child
 		// because there is no git context joining them.
-		require.NoError(t, os.Mkdir(filepath.Join(parent, defaultDataDirectory), 0o755))
+		require.NoError(t, os.Mkdir(filepath.Join(parent, defaultProjectDirectory), 0o755))
 
 		child := filepath.Join(parent, "child")
 		require.NoError(t, os.Mkdir(child, 0o755))
@@ -249,8 +249,8 @@ func TestConfig_setDefaults(t *testing.T) {
 		cfg.setDefaults(child, "")
 
 		require.Equal(t,
-			filepath.Clean(filepath.Join(child, defaultDataDirectory)),
-			filepath.Clean(cfg.Options.DataDirectory),
+			filepath.Clean(filepath.Join(child, defaultProjectDirectory)),
+			filepath.Clean(cfg.Options.ProjectDirectory),
 		)
 	})
 
@@ -262,7 +262,7 @@ func TestConfig_setDefaults(t *testing.T) {
 		parent := t.TempDir()
 
 		// Stray .anvil above the worktree root.
-		require.NoError(t, os.Mkdir(filepath.Join(parent, defaultDataDirectory), 0o755))
+		require.NoError(t, os.Mkdir(filepath.Join(parent, defaultProjectDirectory), 0o755))
 
 		worktree := filepath.Join(parent, "worktree")
 		require.NoError(t, os.Mkdir(worktree, 0o755))
@@ -283,18 +283,18 @@ func TestConfig_setDefaults(t *testing.T) {
 		// Resolve symlinks because TempDir on macOS sits under /var
 		// which is a symlink to /private/var. The data directory has
 		// not been created yet, so resolve its parent and join.
-		gotDir, gotName := filepath.Split(cfg.Options.DataDirectory)
+		gotDir, gotName := filepath.Split(cfg.Options.ProjectDirectory)
 		gotEvalDir, err := filepath.EvalSymlinks(filepath.Clean(gotDir))
 		require.NoError(t, err)
 		gotEval := filepath.Join(gotEvalDir, gotName)
 
-		strayEval, err := filepath.EvalSymlinks(filepath.Join(parent, defaultDataDirectory))
+		strayEval, err := filepath.EvalSymlinks(filepath.Join(parent, defaultProjectDirectory))
 		require.NoError(t, err)
 		require.NotEqual(t, strayEval, gotEval, "must not adopt parent .anvil")
 
 		subEval, err := filepath.EvalSymlinks(sub)
 		require.NoError(t, err)
-		require.Equal(t, filepath.Join(subEval, defaultDataDirectory), gotEval)
+		require.Equal(t, filepath.Join(subEval, defaultProjectDirectory), gotEval)
 	})
 }
 

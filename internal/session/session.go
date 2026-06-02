@@ -54,6 +54,7 @@ type Session struct {
 	PromptTokens     int64
 	CompletionTokens int64
 	LeafMessageID    string
+	WorkingDir       string
 	EstimatedUsage   bool
 	SummaryMessageID string
 	Cost             float64
@@ -64,12 +65,13 @@ type Session struct {
 
 type Service interface {
 	pubsub.Subscriber[Session]
-	Create(ctx context.Context, title string) (Session, error)
+	Create(ctx context.Context, title, workingDir string) (Session, error)
 	CreateTitleSession(ctx context.Context, parentSessionID string) (Session, error)
 	CreateTaskSession(ctx context.Context, toolCallID, parentSessionID, title string) (Session, error)
 	Get(ctx context.Context, id string) (Session, error)
-	GetLast(ctx context.Context) (Session, error)
-	List(ctx context.Context) ([]Session, error)
+	GetLast(ctx context.Context, workingDir string) (Session, error)
+	GetLastGlobal(ctx context.Context) (Session, error)
+	List(ctx context.Context, workingDir string) ([]Session, error)
 	Save(ctx context.Context, session Session) (Session, error)
 	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error
 	Rename(ctx context.Context, id string, title string) error
@@ -94,10 +96,11 @@ type service struct {
 	estimatedUsage   map[string]bool
 }
 
-func (s *service) Create(ctx context.Context, title string) (Session, error) {
+func (s *service) Create(ctx context.Context, title, workingDir string) (Session, error) {
 	dbSession, err := s.q.CreateSession(ctx, db.CreateSessionParams{
-		ID:    uuid.New().String(),
-		Title: title,
+		ID:         uuid.New().String(),
+		Title:      title,
+		WorkingDir: workingDir,
 	})
 	if err != nil {
 		return Session{}, err
@@ -108,10 +111,16 @@ func (s *service) Create(ctx context.Context, title string) (Session, error) {
 }
 
 func (s *service) CreateTaskSession(ctx context.Context, toolCallID, parentSessionID, title string) (Session, error) {
+	// Inherit working_dir from the parent session.
+	parent, err := s.q.GetSessionByID(ctx, parentSessionID)
+	if err != nil {
+		return Session{}, fmt.Errorf("looking up parent session: %w", err)
+	}
 	dbSession, err := s.q.CreateSession(ctx, db.CreateSessionParams{
 		ID:              toolCallID,
 		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
 		Title:           title,
+		WorkingDir:      parent.WorkingDir,
 	})
 	if err != nil {
 		return Session{}, err
@@ -122,10 +131,16 @@ func (s *service) CreateTaskSession(ctx context.Context, toolCallID, parentSessi
 }
 
 func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string) (Session, error) {
+	// Inherit working_dir from the parent session.
+	parent, err := s.q.GetSessionByID(ctx, parentSessionID)
+	if err != nil {
+		return Session{}, fmt.Errorf("looking up parent session: %w", err)
+	}
 	dbSession, err := s.q.CreateSession(ctx, db.CreateSessionParams{
 		ID:              "title-" + parentSessionID,
 		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
 		Title:           "Generate a title",
+		WorkingDir:      parent.WorkingDir,
 	})
 	if err != nil {
 		return Session{}, err
@@ -177,8 +192,8 @@ func (s *service) Get(ctx context.Context, id string) (Session, error) {
 	return session, nil
 }
 
-func (s *service) GetLast(ctx context.Context) (Session, error) {
-	dbSession, err := s.q.GetLastSession(ctx)
+func (s *service) GetLast(ctx context.Context, workingDir string) (Session, error) {
+	dbSession, err := s.q.GetLastSessionByWorkingDir(ctx, workingDir)
 	if err != nil {
 		return Session{}, err
 	}
@@ -254,8 +269,24 @@ func (s *service) Rename(ctx context.Context, id string, title string) error {
 	})
 }
 
-func (s *service) List(ctx context.Context) ([]Session, error) {
-	dbSessions, err := s.q.ListSessions(ctx)
+func (s *service) GetLastGlobal(ctx context.Context) (Session, error) {
+	dbSession, err := s.q.GetLastGlobalSession(ctx)
+	if err != nil {
+		return Session{}, err
+	}
+	session := s.fromDBItem(dbSession)
+	s.applyEstimatedUsageState(&session)
+	return session, nil
+}
+
+func (s *service) List(ctx context.Context, workingDir string) ([]Session, error) {
+	var dbSessions []db.Session
+	var err error
+	if workingDir != "" {
+		dbSessions, err = s.q.ListSessionsByWorkingDir(ctx, workingDir)
+	} else {
+		dbSessions, err = s.q.ListAllSessions(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -302,6 +333,7 @@ func (s *service) fromDBItem(item db.Session) Session {
 		PromptTokens:     item.PromptTokens,
 		CompletionTokens: item.CompletionTokens,
 		LeafMessageID:    item.LeafMessageID.String,
+		WorkingDir:       item.WorkingDir,
 		Cost:             item.Cost,
 		Todos:            todos,
 		CreatedAt:        item.CreatedAt,

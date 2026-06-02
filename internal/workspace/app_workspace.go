@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -45,15 +46,20 @@ func NewAppWorkspace(a *app.App, store *config.ConfigStore) *AppWorkspace {
 // -- Sessions --
 
 func (w *AppWorkspace) CreateSession(ctx context.Context, title string) (session.Session, error) {
-	return w.app.Sessions.Create(ctx, title)
+	workingDir := w.WorkingDir()
+	resolved, err := filepath.EvalSymlinks(workingDir)
+	if err == nil {
+		workingDir = resolved
+	}
+	return w.app.Sessions.Create(ctx, title, workingDir)
 }
 
 func (w *AppWorkspace) GetSession(ctx context.Context, sessionID string) (session.Session, error) {
 	return w.app.Sessions.Get(ctx, sessionID)
 }
 
-func (w *AppWorkspace) ListSessions(ctx context.Context) ([]session.Session, error) {
-	return w.app.Sessions.List(ctx)
+func (w *AppWorkspace) ListSessions(ctx context.Context, workingDir string) ([]session.Session, error) {
+	return w.app.Sessions.List(ctx, workingDir)
 }
 
 func (w *AppWorkspace) SaveSession(ctx context.Context, sess session.Session) (session.Session, error) {
@@ -88,8 +94,8 @@ func (w *AppWorkspace) ListUserMessages(ctx context.Context, sessionID string) (
 	return w.app.Messages.ListUserMessages(ctx, sessionID)
 }
 
-func (w *AppWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Message, error) {
-	return w.app.Messages.ListAllUserMessages(ctx)
+func (w *AppWorkspace) ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]message.Message, error) {
+	return w.app.Messages.ListUserMessagesByWorkingDir(ctx, workingDir)
 }
 
 func (w *AppWorkspace) GetBranchPath(ctx context.Context, leafMessageID string) ([]message.Message, error) {

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -128,9 +127,9 @@ func runStats(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to initialize config: %w", err)
 	}
 	if dataDir == "" {
-		dataDir = cfg.Config().Options.DataDirectory
+		dataDir = cfg.Config().Options.ProjectDirectory
 	}
-	conn, err := db.Connect(ctx, dataDir)
+	conn, err := db.ConnectGlobal(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -150,14 +149,9 @@ func runStats(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to get current user: %w", err)
 	}
 	username := currentUser.Username
-	project, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
-	}
-	project = strings.Replace(project, currentUser.HomeDir, "~", 1)
 
 	htmlPath := filepath.Join(dataDir, "stats/index.html")
-	if err := generateHTML(stats, project, username, htmlPath); err != nil {
+	if err := generateHTML(stats, username, htmlPath); err != nil {
 		return fmt.Errorf("failed to generate HTML: %w", err)
 	}
 
@@ -336,7 +330,7 @@ func nullFloat64ToInt64(n sql.NullFloat64) int64 {
 	return 0
 }
 
-func generateHTML(stats *Stats, projName, username, path string) error {
+func generateHTML(stats *Stats, username, path string) error {
 	statsJSON, err := json.Marshal(stats)
 	if err != nil {
 		return err
@@ -365,7 +359,7 @@ func generateHTML(stats *Stats, projName, username, path string) error {
 		Heartbit:    template.HTML(heartbitSVG),
 		Footer:      template.HTML(footerSVG),
 		GeneratedAt: stats.GeneratedAt.Format("2006-01-02"),
-		ProjectName: projName,
+		ProjectName: "Usage Statistics",
 		Username:    username,
 	}
 

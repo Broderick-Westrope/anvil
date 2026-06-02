@@ -471,8 +471,12 @@ func (c *Client) CreateSession(ctx context.Context, id string, title string) (*p
 }
 
 // ListSessions lists all sessions in a workspace as proto types.
-func (c *Client) ListSessions(ctx context.Context, id string) ([]proto.Session, error) {
-	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/sessions", id), nil, nil)
+func (c *Client) ListSessions(ctx context.Context, id, workingDir string) ([]proto.Session, error) {
+	var query url.Values
+	if workingDir != "" {
+		query = url.Values{"working_dir": []string{workingDir}}
+	}
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/sessions", id), query, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sessions: %w", err)
 	}
@@ -601,9 +605,13 @@ func (c *Client) ListUserMessages(ctx context.Context, id string, sessionID stri
 	return msgs, nil
 }
 
-// ListAllUserMessages retrieves all user-role messages across sessions as proto types.
-func (c *Client) ListAllUserMessages(ctx context.Context, id string) ([]proto.Message, error) {
-	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/messages/user", id), nil, nil)
+// ListUserMessagesByWorkingDir retrieves user-role messages filtered by working directory.
+func (c *Client) ListUserMessagesByWorkingDir(ctx context.Context, id, workingDir string) ([]proto.Message, error) {
+	var query url.Values
+	if workingDir != "" {
+		query = url.Values{"working_dir": []string{workingDir}}
+	}
+	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/messages/user", id), query, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all user messages: %w", err)
 	}

@@ -55,6 +55,11 @@ type Message struct {
 	MessageType     string         `json:"message_type"`
 }
 
+type MigrationsCompleted struct {
+	SourcePath string `json:"source_path"`
+	MigratedAt int64  `json:"migrated_at"`
+}
+
 type ReadFile struct {
 	SessionID string `json:"session_id"`
 	Path      string `json:"path"`
@@ -73,4 +78,5 @@ type Session struct {
 	CreatedAt        int64          `json:"created_at"`
 	Todos            sql.NullString `json:"todos"`
 	LeafMessageID    sql.NullString `json:"leaf_message_id"`
+	WorkingDir       string         `json:"working_dir"`
 }

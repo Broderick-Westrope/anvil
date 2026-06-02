@@ -827,7 +827,7 @@ func (c *coordinator) buildToolsWithState(
 ) ([]fantasy.AgentTool, error) {
 	isSubAgent := depth < 3
 
-	logFile := filepath.Join(c.cfg.Config().Options.DataDirectory, "logs", "anvil.log")
+	logFile := filepath.Join(c.cfg.Config().Options.ProjectDirectory, "logs", "anvil.log")
 
 	// Build hook runner if PreToolUse hooks are configured.
 	var hookRunner *hooks.Runner

@@ -214,7 +214,7 @@ func runNonInteractive(
 
 	defer stopSpinner()
 
-	sess, err := resolveSession(ctx, c, ws.ID, continueSessionID, useLast)
+	sess, err := resolveSession(ctx, c, ws.ID, ws.Path, continueSessionID, useLast)
 	if err != nil {
 		return fmt.Errorf("failed to resolve session: %w", err)
 	}
@@ -458,7 +458,7 @@ func validateModelMatches(matches []modelMatch, modelID, label string) (modelMat
 // If continueSessionID is set it fetches that session; if useLast is set it
 // returns the most recently updated top-level session; otherwise it creates a
 // new one.
-func resolveSession(ctx context.Context, c *client.Client, wsID, continueSessionID string, useLast bool) (*proto.Session, error) {
+func resolveSession(ctx context.Context, c *client.Client, wsID, workingDir, continueSessionID string, useLast bool) (*proto.Session, error) {
 	switch {
 	case continueSessionID != "":
 		sess, err := c.GetSession(ctx, wsID, continueSessionID)
@@ -471,7 +471,7 @@ func resolveSession(ctx context.Context, c *client.Client, wsID, continueSession
 		return sess, nil
 
 	case useLast:
-		sessions, err := c.ListSessions(ctx, wsID)
+		sessions, err := c.ListSessions(ctx, wsID, workingDir)
 		if err != nil || len(sessions) == 0 {
 			return nil, fmt.Errorf("no sessions found to continue")
 		}
@@ -495,7 +495,7 @@ func resolveSessionByID(ctx context.Context, c *client.Client, wsID, id string) 
 		return sess, nil
 	}
 
-	sessions, err := c.ListSessions(ctx, wsID)
+	sessions, err := c.ListSessions(ctx, wsID, "")
 	if err != nil {
 		return nil, err
 	}

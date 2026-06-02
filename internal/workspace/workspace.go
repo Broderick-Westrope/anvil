@@ -63,7 +63,7 @@ type Workspace interface {
 	// Sessions
 	CreateSession(ctx context.Context, title string) (session.Session, error)
 	GetSession(ctx context.Context, sessionID string) (session.Session, error)
-	ListSessions(ctx context.Context) ([]session.Session, error)
+	ListSessions(ctx context.Context, workingDir string) ([]session.Session, error)
 	SaveSession(ctx context.Context, sess session.Session) (session.Session, error)
 	DeleteSession(ctx context.Context, sessionID string) error
 	CreateAgentToolSessionID(messageID, toolCallID string) string
@@ -72,7 +72,7 @@ type Workspace interface {
 	// Messages
 	ListMessages(ctx context.Context, sessionID string) ([]message.Message, error)
 	ListUserMessages(ctx context.Context, sessionID string) ([]message.Message, error)
-	ListAllUserMessages(ctx context.Context) ([]message.Message, error)
+	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]message.Message, error)
 	GetBranchPath(ctx context.Context, leafMessageID string) ([]message.Message, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]message.Message, error)
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error

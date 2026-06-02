@@ -298,7 +298,8 @@ func (c *controllerV1) handleGetWorkspaceLSPDiagnostics(w http.ResponseWriter, r
 //	@Router			/workspaces/{id}/sessions [get]
 func (c *controllerV1) handleGetWorkspaceSessions(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	sessions, err := c.backend.ListSessions(r.Context(), id)
+	workingDir := r.URL.Query().Get("working_dir")
+	sessions, err := c.backend.ListSessions(r.Context(), id, workingDir)
 	if err != nil {
 		c.handleError(w, r, err)
 		return
@@ -493,7 +494,8 @@ func (c *controllerV1) handleGetWorkspaceSessionUserMessages(w http.ResponseWrit
 //	@Router			/workspaces/{id}/messages/user [get]
 func (c *controllerV1) handleGetWorkspaceAllUserMessages(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	messages, err := c.backend.ListAllUserMessages(r.Context(), id)
+	workingDir := r.URL.Query().Get("working_dir")
+	messages, err := c.backend.ListUserMessagesByWorkingDir(r.Context(), id, workingDir)
 	if err != nil {
 		c.handleError(w, r, err)
 		return

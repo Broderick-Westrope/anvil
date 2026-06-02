@@ -94,7 +94,7 @@ func TestRunSubAgent(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)
 
-		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -120,7 +120,7 @@ func TestRunSubAgent(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)
 
-		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		agent := &mockSessionAgent{
@@ -155,7 +155,7 @@ func TestRunSubAgent(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)
 
-		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		agent := newMockAgent(providerID, 4096, nil)
@@ -179,7 +179,7 @@ func TestRunSubAgent(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)
 
-		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		// Agent references a provider that doesn't exist in config.
@@ -201,7 +201,7 @@ func TestRunSubAgent(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)
 
-		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		agent := newMockAgent(providerID, 4096, func(_ context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -226,7 +226,7 @@ func TestRunSubAgent(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)
 
-		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		var setupCalledWith string
@@ -253,7 +253,7 @@ func TestRunSubAgent(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)
 
-		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		agent := newMockAgent(providerID, 4096, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -293,7 +293,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		require.NoError(t, err)
 		coord := &coordinator{cfg: cfg, sessions: env.sessions}
 
-		parent, err := env.sessions.Create(t.Context(), "Parent")
+		parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		child, err := env.sessions.CreateTaskSession(t.Context(), "tool-1", parent.ID, "Child")
@@ -318,7 +318,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		require.NoError(t, err)
 		coord := &coordinator{cfg: cfg, sessions: env.sessions}
 
-		parent, err := env.sessions.Create(t.Context(), "Parent")
+		parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		child1, err := env.sessions.CreateTaskSession(t.Context(), "tool-1", parent.ID, "Child1")
@@ -349,7 +349,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		require.NoError(t, err)
 		coord := &coordinator{cfg: cfg, sessions: env.sessions}
 
-		parent, err := env.sessions.Create(t.Context(), "Parent")
+		parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 
 		err = coord.updateParentSessionCost(t.Context(), "non-existent", parent.ID)
@@ -363,7 +363,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		require.NoError(t, err)
 		coord := &coordinator{cfg: cfg, sessions: env.sessions}
 
-		parent, err := env.sessions.Create(t.Context(), "Parent")
+		parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 		child, err := env.sessions.CreateTaskSession(t.Context(), "tool-1", parent.ID, "Child")
 		require.NoError(t, err)
@@ -379,7 +379,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		require.NoError(t, err)
 		coord := &coordinator{cfg: cfg, sessions: env.sessions}
 
-		parent, err := env.sessions.Create(t.Context(), "Parent")
+		parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
 		child, err := env.sessions.CreateTaskSession(t.Context(), "tool-1", parent.ID, "Child")
 		require.NoError(t, err)

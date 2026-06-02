@@ -196,7 +196,7 @@ func TestAnvilInfo_Options(t *testing.T) {
 	cfg := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 		Options: &config.Options{
-			DataDirectory:        "/Users/user/project/.anvil",
+			ProjectDirectory:     "/Users/user/project/.anvil",
 			Debug:                true,
 			DisableAutoSummarize: true,
 		},
@@ -206,7 +206,7 @@ func TestAnvilInfo_Options(t *testing.T) {
 	require.Contains(t, output, "[options]")
 	require.Contains(t, output, "auto_lsp = true")
 	require.Contains(t, output, "auto_summarize = false")
-	require.Contains(t, output, "data_directory = /Users/user/project/.anvil")
+	require.Contains(t, output, "project_directory = /Users/user/project/.anvil")
 	require.Contains(t, output, "debug = true")
 }
 

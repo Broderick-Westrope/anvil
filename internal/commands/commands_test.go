@@ -247,7 +247,7 @@ func TestLoadAllCommands_IncludesPluginCommands(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(pluginCommands, "plugcmd.md"), []byte("plugin body"), 0o644))
 
 	cfg := &config.Config{
-		Options: &config.Options{DataDirectory: dataDir},
+		Options: &config.Options{ProjectDirectory: dataDir},
 		Plugins: []config.PluginConfig{{Path: pluginDir}},
 	}
 
@@ -271,7 +271,7 @@ func TestLoadAllCommands_CommandCollisionsGetDisplayNames(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(pluginCommands, "same.md"), []byte("plugin body"), 0o644))
 
 	cfg := &config.Config{
-		Options: &config.Options{DataDirectory: dataDir},
+		Options: &config.Options{ProjectDirectory: dataDir},
 		Plugins: []config.PluginConfig{{Path: pluginDir}},
 	}
 

@@ -34,8 +34,9 @@ func setupTest(t *testing.T) *testEnv {
 func (e *testEnv) createSession(t *testing.T, sessionID string) {
 	t.Helper()
 	_, err := e.q.CreateSession(e.ctx, db.CreateSessionParams{
-		ID:    sessionID,
-		Title: "Test Session",
+		ID:         sessionID,
+		Title:      "Test Session",
+		WorkingDir: "/tmp/test",
 	})
 	require.NoError(t, err)
 }

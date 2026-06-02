@@ -97,11 +97,11 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 
 	cfg.Overrides().SkipPermissionRequests = args.YOLO
 
-	if err := createDotAnvilDir(cfg.Config().Options.DataDirectory); err != nil {
+	if err := createDotAnvilDir(cfg.Config().Options.ProjectDirectory); err != nil {
 		return nil, proto.Workspace{}, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	conn, err := db.Connect(b.ctx, cfg.Config().Options.DataDirectory)
+	conn, err := db.ConnectGlobal(b.ctx)
 	if err != nil {
 		return nil, proto.Workspace{}, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -135,7 +135,7 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 	result := proto.Workspace{
 		ID:      id,
 		Path:    args.Path,
-		DataDir: cfg.Config().Options.DataDirectory,
+		DataDir: cfg.Config().Options.ProjectDirectory,
 		Debug:   cfg.Config().Options.Debug,
 		YOLO:    cfg.Overrides().SkipPermissionRequests,
 		Config:  cfg.Config(),
@@ -197,7 +197,7 @@ func workspaceToProto(ws *Workspace) proto.Workspace {
 		ID:      ws.ID,
 		Path:    ws.Path,
 		YOLO:    ws.Cfg.Overrides().SkipPermissionRequests,
-		DataDir: cfg.Options.DataDirectory,
+		DataDir: cfg.Options.ProjectDirectory,
 		Debug:   cfg.Options.Debug,
 		Config:  cfg,
 	}

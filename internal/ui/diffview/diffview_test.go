@@ -339,8 +339,6 @@ func TestDiffViewYOffsetInfinite(t *testing.T) {
 	}
 }
 
-
-
 func assertLineWidth(t *testing.T, expected int, output string) {
 	var lineWidth int
 	for line := range strings.SplitSeq(output, "\n") {
