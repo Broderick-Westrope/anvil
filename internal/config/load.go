@@ -441,6 +441,11 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	if c.Options == nil {
 		c.Options = &Options{}
 	}
+	// Migrate deprecated data_directory to project_directory.
+	if c.Options.ProjectDirectory == "" && c.Options.DeprecatedDataDirectory != "" {
+		c.Options.ProjectDirectory = c.Options.DeprecatedDataDirectory
+		c.Options.DeprecatedDataDirectory = ""
+	}
 	if c.Options.TUI == nil {
 		c.Options.TUI = &TUIOptions{}
 	}

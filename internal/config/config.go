@@ -282,6 +282,7 @@ type Options struct {
 	// resolved against the working directory; absolute paths are used
 	// verbatim. After defaulting the stored value is always absolute.
 	ProjectDirectory          string   `json:"project_directory,omitempty" jsonschema:"description=Directory for per-project state (logs\\, workspace config\\, .gitignore). Relative paths are resolved against the working directory; absolute paths are used as-is.,default=.anvil,example=.anvil"`
+	DeprecatedDataDirectory   string   `json:"data_directory,omitempty" jsonschema:"-"`
 	DisabledTools             []string `json:"disabled_tools,omitempty" jsonschema:"description=List of built-in tools to disable and hide from the agent,example=bash,example=sourcegraph"`
 	DisableProviderAutoUpdate bool     `json:"disable_provider_auto_update,omitempty" jsonschema:"description=Disable providers auto-update,default=false"`
 	DisableDefaultProviders   bool     `json:"disable_default_providers,omitempty" jsonschema:"description=Ignore all default/embedded providers. When enabled\\, providers must be fully specified in the config file with base_url\\, models\\, and api_key - no merging with defaults occurs,default=false"`

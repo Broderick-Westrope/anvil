@@ -78,7 +78,10 @@ func MigrateProjectDB(ctx context.Context, globalDB *sql.DB, sourcePath, working
 		return fmt.Errorf("failed to attach source DB: %w", err)
 	}
 	defer func() {
-		if _, detachErr := conn.ExecContext(ctx, `DETACH DATABASE source`); detachErr != nil {
+		// Use context.Background() so DETACH runs even if the parent
+		// context is canceled. Otherwise the connection returns to the
+		// pool with the source DB still attached.
+		if _, detachErr := conn.ExecContext(context.Background(), `DETACH DATABASE source`); detachErr != nil {
 			slog.Error("Failed to detach source DB", "error", detachErr)
 		}
 	}()
@@ -193,9 +196,8 @@ func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourceP
 	}
 
 	// Copy read_files, converting relative paths to absolute by
-	// prepending workingDir. Paths already absolute (starting with
-	// '/' on Unix or a drive letter like 'C:\' on Windows) are
-	// copied as-is.
+	// prepending workingDir. Paths already absolute (Unix '/',
+	// Windows drive letter 'C:\', or UNC '\\') are copied as-is.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO main.read_files (session_id, path, read_at)
 		SELECT
@@ -204,6 +206,7 @@ func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourceP
 				WHEN path LIKE '/%' THEN path
 				WHEN path LIKE '_:\%' THEN path
 				WHEN path LIKE '_:/%' THEN path
+				WHEN path LIKE '\\%' THEN path
 				ELSE ? || '/' || path
 			END,
 			read_at
@@ -504,6 +507,7 @@ func copyReadFilesBatched(ctx context.Context, conn *sql.Conn, workingDir string
 					WHEN path LIKE '/%' THEN path
 					WHEN path LIKE '_:\%' THEN path
 					WHEN path LIKE '_:/%' THEN path
+					WHEN path LIKE '\\%' THEN path
 					ELSE ? || '/' || path
 				END,
 				read_at
