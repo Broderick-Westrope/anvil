@@ -221,7 +221,7 @@ func (m *UI) switchPillSection(dir int) tea.Cmd {
 
 // pillsAreaHeight calculates the total height needed for the pills area.
 func (m *UI) pillsAreaHeight() int {
-	if !m.hasSession() {
+	if !m.hasSession() || m.isDrilledIn() {
 		return 0
 	}
 	hasIncomplete := hasIncompleteTodos(m.session.Todos)
