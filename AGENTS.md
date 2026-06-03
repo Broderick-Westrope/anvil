@@ -76,7 +76,7 @@ internal/
   and OAuth tokens. All queries live in `internal/db/sql/`, generated
   code in `internal/db/`. Migrations in `internal/db/migrations/`.
   Per-project databases are migrated to the global DB on first startup
-  (`internal/db/migrate.go`).
+  (`internal/migrate/`).
 - **Pub/sub**: `internal/pubsub` for decoupled communication between agent,
   UI, and services.
 - **Hooks**: User-defined shell commands in `anvil.json` that fire before
