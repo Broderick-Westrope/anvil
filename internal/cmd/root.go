@@ -57,8 +57,10 @@ func init() {
 	rootCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
 	rootCmd.Flags().Bool("there", false, "Resume session in its original working directory")
 	rootCmd.PersistentFlags().Bool("skip-migration", false, "Skip background migration of other project databases")
+	rootCmd.PersistentFlags().Bool("force-migration", false, "Clear all migration markers and re-migrate project databases")
 	rootCmd.MarkFlagsMutuallyExclusive("session", "continue")
 	rootCmd.MarkFlagsMutuallyExclusive("there", "cwd")
+	rootCmd.MarkFlagsMutuallyExclusive("skip-migration", "force-migration")
 
 	rootCmd.AddCommand(
 		runCmd,
@@ -307,6 +309,19 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 	conn, err := db.ConnectGlobal(ctx)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// --force-migration: clear all migration markers so every project
+	// is re-migrated. Safe because all copy operations use INSERT OR
+	// IGNORE and session counts are overwritten from source.
+	forceMigration, _ := cmd.PersistentFlags().GetBool("force-migration")
+	if forceMigration {
+		count, resetErr := migrate.ResetAllMigrations(ctx, conn)
+		if resetErr != nil {
+			slog.Warn("Failed to reset migration markers", "error", resetErr)
+		} else if count > 0 {
+			slog.Info("Reset migration markers for forced re-migration", "count", count)
+		}
 	}
 
 	// Synchronously migrate the current project's per-project database.

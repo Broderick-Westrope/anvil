@@ -112,6 +112,37 @@ func IsMigrated(ctx context.Context, globalDB *sql.DB, sourcePath string) (bool,
 	return count > 0, nil
 }
 
+// ResetMigration removes the completion marker for the given source
+// path, causing the next startup to re-run the migration. This is safe
+// because all data copy operations use INSERT OR IGNORE, so re-runs
+// skip existing rows without creating duplicates.
+func ResetMigration(ctx context.Context, globalDB *sql.DB, sourcePath string) error {
+	_, err := globalDB.ExecContext(ctx,
+		`DELETE FROM migrations_completed WHERE source_path = ?`,
+		sourcePath,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to reset migration for %q: %w", sourcePath, err)
+	}
+	return nil
+}
+
+// ResetAllMigrations removes all completion markers, causing the next
+// startup to re-run every project migration.
+func ResetAllMigrations(ctx context.Context, globalDB *sql.DB) (int64, error) {
+	result, err := globalDB.ExecContext(ctx,
+		`DELETE FROM migrations_completed`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to reset all migrations: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get affected rows: %w", err)
+	}
+	return count, nil
+}
+
 // sessionTriggerNames lists the triggers that interfere with bulk
 // migration of sessions and messages. These are saved from
 // sqlite_master before dropping and restored after copying.
@@ -233,7 +264,18 @@ func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourceP
 
 // migrateBatched performs the migration in batches, yielding the write
 // lock between transactions to avoid starving active sessions.
+//
+// Partial failure safety: if this function fails midway, the
+// migrations_completed marker is NOT written (it is the last step).
+// On the next startup IsMigrated returns false and the migration
+// re-runs from the beginning. All INSERT operations use INSERT OR
+// IGNORE, so rows already present are skipped without error or
+// duplication. The session count overwrite (step 3) is idempotent.
+// This means re-runs are always safe, just slower than a fresh run
+// because already-migrated rows are re-scanned before being skipped.
 func migrateBatched(ctx context.Context, conn *sql.Conn, workingDir, sourcePath string, batchSize int) error {
+	slog.Info("Starting batched migration", "source", sourcePath, "working_dir", workingDir)
+
 	// Copy sessions with message_count=0 so trigger-based increments
 	// during message insertion start from zero.
 	if _, err := conn.ExecContext(ctx, `
@@ -249,6 +291,7 @@ func migrateBatched(ctx context.Context, conn *sql.Conn, workingDir, sourcePath 
 	`, workingDir); err != nil {
 		return fmt.Errorf("failed to copy sessions: %w", err)
 	}
+	slog.Info("Batched migration: sessions copied", "source", sourcePath)
 
 	// Copy messages in batches. Triggers fire and increment
 	// message_count from 0.
@@ -265,6 +308,7 @@ func migrateBatched(ctx context.Context, conn *sql.Conn, workingDir, sourcePath 
 	`, batchSize, "messages"); err != nil {
 		return err
 	}
+	slog.Info("Batched migration: messages copied", "source", sourcePath)
 
 	// Overwrite message_count and updated_at with source values to
 	// correct trigger artifacts. The update_sessions_updated_at
@@ -297,6 +341,7 @@ func migrateBatched(ctx context.Context, conn *sql.Conn, workingDir, sourcePath 
 	if err := restoreTriggers(ctx, conn, updatedAtTrigger); err != nil {
 		return err
 	}
+	slog.Info("Batched migration: session counts corrected", "source", sourcePath)
 
 	// Copy files in batches.
 	if err := copyInBatches(ctx, conn, `
@@ -310,12 +355,14 @@ func migrateBatched(ctx context.Context, conn *sql.Conn, workingDir, sourcePath 
 	`, batchSize, "files"); err != nil {
 		return err
 	}
+	slog.Info("Batched migration: files copied", "source", sourcePath)
 
 	// Copy read_files in batches with relative→absolute path
 	// conversion.
 	if err := copyReadFilesBatched(ctx, conn, workingDir, batchSize); err != nil {
 		return err
 	}
+	slog.Info("Batched migration: read_files copied", "source", sourcePath)
 
 	// Copy OAuth tables (typically small, single transaction is fine).
 	if err := copyOAuthTokens(ctx, conn); err != nil {
@@ -325,6 +372,7 @@ func migrateBatched(ctx context.Context, conn *sql.Conn, workingDir, sourcePath 
 	if err := copyOAuthClients(ctx, conn); err != nil {
 		return err
 	}
+	slog.Info("Batched migration: OAuth data copied", "source", sourcePath)
 
 	// Mark migration as completed.
 	if _, err := conn.ExecContext(ctx,

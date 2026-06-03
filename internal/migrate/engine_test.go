@@ -449,3 +449,140 @@ func TestMigrateCurrentProjectSkipsMissing(t *testing.T) {
 	err = migrate.CurrentProject(ctx, globalDB, "/nonexistent/.anvil")
 	require.NoError(t, err, "should not error for missing source DB")
 }
+
+// TestMigrateBatchedPartialFailureRerun verifies that re-running a
+// batched migration after a simulated partial failure produces
+// correct results. This exercises the INSERT OR IGNORE safety net:
+// already-copied rows are skipped, remaining rows are picked up,
+// and session counts are corrected by the final overwrite step.
+func TestMigrateBatchedPartialFailureRerun(t *testing.T) {
+	t.Parallel()
+
+	globalDB, sourcePath, workingDir := setupTestDBs(t)
+	ctx := context.Background()
+
+	// Simulate a "partial migration" by manually inserting only
+	// sess-1 (with wrong message_count) and its first message into
+	// the global DB, as if batched mode crashed after copying some
+	// sessions and messages but before completing.
+	_, err := globalDB.ExecContext(ctx, `
+		INSERT INTO sessions
+			(id, title, message_count, prompt_tokens, completion_tokens,
+			 cost, updated_at, created_at, working_dir)
+		VALUES ('sess-1', 'Session One', 999, 100, 50, 0.01, 1000000, 900000, ?)
+	`, workingDir)
+	require.NoError(t, err)
+
+	_, err = globalDB.ExecContext(ctx, `
+		INSERT INTO messages (id, session_id, role, parts, created_at, updated_at, message_type)
+		VALUES ('msg-1', 'sess-1', 'user', '["hello"]', 900001, 900001, 'message')
+	`)
+	require.NoError(t, err)
+
+	// Now run the full batched migration. It should:
+	// - Skip sess-1 (INSERT OR IGNORE), insert sess-2
+	// - Skip msg-1 (INSERT OR IGNORE), insert msg-2..msg-4
+	// - Overwrite message_count from source (fixing the 999 → 3)
+	// - Copy files, read_files, OAuth
+	err = migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 100)
+	require.NoError(t, err)
+
+	// Verify session count — both sessions should exist.
+	var sessionCount int
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sessions`).Scan(&sessionCount)
+	require.NoError(t, err)
+	require.Equal(t, 2, sessionCount)
+
+	// Verify message_count was corrected from 999 → 3.
+	var msgCount int64
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT message_count FROM sessions WHERE id = 'sess-1'`).Scan(&msgCount)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), msgCount)
+
+	// Verify all 4 messages are present.
+	var totalMsgs int
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages`).Scan(&totalMsgs)
+	require.NoError(t, err)
+	require.Equal(t, 4, totalMsgs)
+
+	// Verify files were copied.
+	var fileCount int
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM files`).Scan(&fileCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, fileCount)
+
+	// Verify migration is now marked complete.
+	migrated, err := migrate.IsMigrated(ctx, globalDB, sourcePath)
+	require.NoError(t, err)
+	require.True(t, migrated)
+}
+
+func TestResetMigration(t *testing.T) {
+	t.Parallel()
+
+	globalDB, sourcePath, workingDir := setupTestDBs(t)
+	ctx := context.Background()
+
+	// Migrate once.
+	err := migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
+	require.NoError(t, err)
+
+	migrated, err := migrate.IsMigrated(ctx, globalDB, sourcePath)
+	require.NoError(t, err)
+	require.True(t, migrated)
+
+	// Reset the migration marker.
+	err = migrate.ResetMigration(ctx, globalDB, sourcePath)
+	require.NoError(t, err)
+
+	// Should no longer be marked as migrated.
+	migrated, err = migrate.IsMigrated(ctx, globalDB, sourcePath)
+	require.NoError(t, err)
+	require.False(t, migrated)
+
+	// Re-run should succeed (INSERT OR IGNORE skips existing data).
+	err = migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
+	require.NoError(t, err)
+
+	// Verify data integrity after re-run — no duplicates.
+	var count int
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sessions`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+
+	var msgCount int64
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT message_count FROM sessions WHERE id = 'sess-1'`).Scan(&msgCount)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), msgCount)
+}
+
+func TestResetAllMigrations(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	globalDir := t.TempDir()
+	globalDB, err := db.Connect(ctx, globalDir)
+	require.NoError(t, err)
+
+	// Insert two fake migration markers.
+	_, err = globalDB.ExecContext(ctx,
+		`INSERT INTO migrations_completed (source_path) VALUES ('/a/anvil.db'), ('/b/anvil.db')`)
+	require.NoError(t, err)
+
+	count, err := migrate.ResetAllMigrations(ctx, globalDB)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count)
+
+	// Both should be cleared.
+	migratedA, _ := migrate.IsMigrated(ctx, globalDB, "/a/anvil.db")
+	migratedB, _ := migrate.IsMigrated(ctx, globalDB, "/b/anvil.db")
+	require.False(t, migratedA)
+	require.False(t, migratedB)
+}
