@@ -3,6 +3,7 @@ INSERT INTO sessions (
     id,
     parent_session_id,
     title,
+    title_is_custom,
     working_dir,
     message_count,
     prompt_tokens,
@@ -11,6 +12,7 @@ INSERT INTO sessions (
     updated_at,
     created_at
 ) VALUES (
+    ?,
     ?,
     ?,
     ?,
@@ -58,6 +60,7 @@ ORDER BY updated_at DESC;
 UPDATE sessions
 SET
     title = ?,
+    title_is_custom = ?,
     prompt_tokens = ?,
     completion_tokens = ?,
     cost = ?,
@@ -69,6 +72,7 @@ RETURNING *;
 UPDATE sessions
 SET
     title = ?,
+    title_is_custom = ?,
     prompt_tokens = prompt_tokens + ?,
     completion_tokens = completion_tokens + ?,
     cost = cost + ?,
@@ -78,7 +82,8 @@ WHERE id = ?;
 -- name: RenameSession :exec
 UPDATE sessions
 SET
-    title = ?
+    title = ?,
+    title_is_custom = ?
 WHERE id = ?;
 
 -- name: DeleteSession :exec

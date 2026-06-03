@@ -15,6 +15,7 @@ INSERT INTO sessions (
     id,
     parent_session_id,
     title,
+    title_is_custom,
     working_dir,
     message_count,
     prompt_tokens,
@@ -31,15 +32,17 @@ INSERT INTO sessions (
     ?,
     ?,
     ?,
+    ?,
     strftime('%s', 'now'),
     strftime('%s', 'now')
-) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir
+) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
 `
 
 type CreateSessionParams struct {
 	ID               string         `json:"id"`
 	ParentSessionID  sql.NullString `json:"parent_session_id"`
 	Title            string         `json:"title"`
+	TitleIsCustom    int64          `json:"title_is_custom"`
 	WorkingDir       string         `json:"working_dir"`
 	MessageCount     int64          `json:"message_count"`
 	PromptTokens     int64          `json:"prompt_tokens"`
@@ -52,6 +55,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.ID,
 		arg.ParentSessionID,
 		arg.Title,
+		arg.TitleIsCustom,
 		arg.WorkingDir,
 		arg.MessageCount,
 		arg.PromptTokens,
@@ -72,6 +76,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.Todos,
 		&i.LeafMessageID,
 		&i.WorkingDir,
+		&i.TitleIsCustom,
 	)
 	return i, err
 }
@@ -87,7 +92,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 }
 
 const getLastGlobalSession = `-- name: GetLastGlobalSession :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
 FROM sessions
 WHERE parent_session_id IS NULL
 ORDER BY updated_at DESC
@@ -110,12 +115,13 @@ func (q *Queries) GetLastGlobalSession(ctx context.Context) (Session, error) {
 		&i.Todos,
 		&i.LeafMessageID,
 		&i.WorkingDir,
+		&i.TitleIsCustom,
 	)
 	return i, err
 }
 
 const getLastSessionByWorkingDir = `-- name: GetLastSessionByWorkingDir :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
 FROM sessions
 WHERE working_dir = ? AND parent_session_id IS NULL
 ORDER BY updated_at DESC
@@ -138,12 +144,13 @@ func (q *Queries) GetLastSessionByWorkingDir(ctx context.Context, workingDir str
 		&i.Todos,
 		&i.LeafMessageID,
 		&i.WorkingDir,
+		&i.TitleIsCustom,
 	)
 	return i, err
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
 FROM sessions
 WHERE id = ? LIMIT 1
 `
@@ -164,12 +171,13 @@ func (q *Queries) GetSessionByID(ctx context.Context, id string) (Session, error
 		&i.Todos,
 		&i.LeafMessageID,
 		&i.WorkingDir,
+		&i.TitleIsCustom,
 	)
 	return i, err
 }
 
 const listAllSessions = `-- name: ListAllSessions :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
 FROM sessions
 WHERE parent_session_id IS NULL
 ORDER BY updated_at DESC
@@ -197,6 +205,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.Todos,
 			&i.LeafMessageID,
 			&i.WorkingDir,
+			&i.TitleIsCustom,
 		); err != nil {
 			return nil, err
 		}
@@ -212,7 +221,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 }
 
 const listSessionsByWorkingDir = `-- name: ListSessionsByWorkingDir :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
 FROM sessions
 WHERE parent_session_id IS NULL AND working_dir = ?
 ORDER BY updated_at DESC
@@ -240,6 +249,7 @@ func (q *Queries) ListSessionsByWorkingDir(ctx context.Context, workingDir strin
 			&i.Todos,
 			&i.LeafMessageID,
 			&i.WorkingDir,
+			&i.TitleIsCustom,
 		); err != nil {
 			return nil, err
 		}
@@ -257,17 +267,19 @@ func (q *Queries) ListSessionsByWorkingDir(ctx context.Context, workingDir strin
 const renameSession = `-- name: RenameSession :exec
 UPDATE sessions
 SET
-    title = ?
+    title = ?,
+    title_is_custom = ?
 WHERE id = ?
 `
 
 type RenameSessionParams struct {
-	Title string `json:"title"`
-	ID    string `json:"id"`
+	Title         string `json:"title"`
+	TitleIsCustom int64  `json:"title_is_custom"`
+	ID            string `json:"id"`
 }
 
 func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) error {
-	_, err := q.exec(ctx, q.renameSessionStmt, renameSession, arg.Title, arg.ID)
+	_, err := q.exec(ctx, q.renameSessionStmt, renameSession, arg.Title, arg.TitleIsCustom, arg.ID)
 	return err
 }
 
@@ -275,16 +287,18 @@ const updateSession = `-- name: UpdateSession :one
 UPDATE sessions
 SET
     title = ?,
+    title_is_custom = ?,
     prompt_tokens = ?,
     completion_tokens = ?,
     cost = ?,
     todos = ?
 WHERE id = ?
-RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir
+RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
 `
 
 type UpdateSessionParams struct {
 	Title            string         `json:"title"`
+	TitleIsCustom    int64          `json:"title_is_custom"`
 	PromptTokens     int64          `json:"prompt_tokens"`
 	CompletionTokens int64          `json:"completion_tokens"`
 	Cost             float64        `json:"cost"`
@@ -295,6 +309,7 @@ type UpdateSessionParams struct {
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error) {
 	row := q.queryRow(ctx, q.updateSessionStmt, updateSession,
 		arg.Title,
+		arg.TitleIsCustom,
 		arg.PromptTokens,
 		arg.CompletionTokens,
 		arg.Cost,
@@ -315,6 +330,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 		&i.Todos,
 		&i.LeafMessageID,
 		&i.WorkingDir,
+		&i.TitleIsCustom,
 	)
 	return i, err
 }
@@ -339,6 +355,7 @@ const updateSessionTitleAndUsage = `-- name: UpdateSessionTitleAndUsage :exec
 UPDATE sessions
 SET
     title = ?,
+    title_is_custom = ?,
     prompt_tokens = prompt_tokens + ?,
     completion_tokens = completion_tokens + ?,
     cost = cost + ?,
@@ -348,6 +365,7 @@ WHERE id = ?
 
 type UpdateSessionTitleAndUsageParams struct {
 	Title            string  `json:"title"`
+	TitleIsCustom    int64   `json:"title_is_custom"`
 	PromptTokens     int64   `json:"prompt_tokens"`
 	CompletionTokens int64   `json:"completion_tokens"`
 	Cost             float64 `json:"cost"`
@@ -357,6 +375,7 @@ type UpdateSessionTitleAndUsageParams struct {
 func (q *Queries) UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error {
 	_, err := q.exec(ctx, q.updateSessionTitleAndUsageStmt, updateSessionTitleAndUsage,
 		arg.Title,
+		arg.TitleIsCustom,
 		arg.PromptTokens,
 		arg.CompletionTokens,
 		arg.Cost,

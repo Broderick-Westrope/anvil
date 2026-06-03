@@ -1214,7 +1214,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 			// Welp, the large model didn't work either. Use the default
 			// session name and return.
 			slog.Error("Error generating title with large model", "err", err)
-			saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName)
+			saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName, false)
 			if saveErr != nil {
 				slog.Error("Failed to save session title", "error", saveErr)
 			}
@@ -1226,7 +1226,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 		// Actually, we didn't get a response so we can't. Use the default
 		// session name and return.
 		slog.Error("Response is nil; can't generate title")
-		saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName)
+		saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName, false)
 		if saveErr != nil {
 			slog.Error("Failed to save session title", "error", saveErr)
 		}
@@ -1278,7 +1278,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 
 	// Atomically update only title and usage fields to avoid overriding other
 	// concurrent session updates.
-	saveErr := a.sessions.UpdateTitleAndUsage(ctx, sessionID, title, promptTokens, completionTokens, cost)
+	saveErr := a.sessions.UpdateTitleAndUsage(ctx, sessionID, title, false, promptTokens, completionTokens, cost)
 	if saveErr != nil {
 		slog.Error("Failed to save session title and usage", "error", saveErr)
 		return
