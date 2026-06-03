@@ -1,4 +1,4 @@
-package db
+package migrate_test
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/db"
+	"github.com/Broderick-Westrope/anvil/internal/migrate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,41 +19,40 @@ func setupTestDBs(t *testing.T) (globalDB *sql.DB, sourcePath string, workingDir
 	t.Helper()
 
 	globalDir := t.TempDir()
-	globalDB, err := Connect(context.Background(), globalDir)
+	globalDB, err := db.Connect(context.Background(), globalDir)
 	require.NoError(t, err)
 
 	workingDir = t.TempDir()
 
 	// Resolve symlinks so tests can match the path stored after
-	// MigrateProjectDB calls filepath.EvalSymlinks (macOS /var →
+	// ProjectDB calls filepath.EvalSymlinks (macOS /var →
 	// /private/var).
 	workingDir, err = filepath.EvalSymlinks(workingDir)
 	require.NoError(t, err)
 
 	sourceDir := filepath.Join(workingDir, ".anvil")
 	require.NoError(t, os.MkdirAll(sourceDir, 0o755))
-	sourceDB, err := Connect(context.Background(), sourceDir)
+	sourceDB, err := db.Connect(context.Background(), sourceDir)
 	require.NoError(t, err)
 	sourcePath = filepath.Join(sourceDir, "anvil.db")
 
 	// Seed source DB with test data.
 	seedSourceDB(t, sourceDB, workingDir)
 
-	// Release source from pool — MigrateProjectDB opens it
-	// independently.
-	require.NoError(t, Release(sourceDir))
+	// Release source from pool — ProjectDB opens it independently.
+	require.NoError(t, db.Release(sourceDir))
 
 	return globalDB, sourcePath, workingDir
 }
 
 // seedSourceDB inserts test sessions, messages, files, read_files,
 // and OAuth data into the source database.
-func seedSourceDB(t *testing.T, db *sql.DB, workingDir string) {
+func seedSourceDB(t *testing.T, database *sql.DB, workingDir string) {
 	t.Helper()
 	ctx := context.Background()
 
 	// Insert sessions.
-	_, err := db.ExecContext(ctx, `
+	_, err := database.ExecContext(ctx, `
 		INSERT INTO sessions (id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, working_dir)
 		VALUES
 			('sess-1', 'Session One', 3, 100, 50, 0.01, 1000000, 900000, ?),
@@ -61,12 +62,12 @@ func seedSourceDB(t *testing.T, db *sql.DB, workingDir string) {
 
 	// Disable triggers temporarily to seed messages without
 	// incrementing message_count.
-	_, err = db.ExecContext(ctx, `DROP TRIGGER IF EXISTS update_session_message_count_on_insert`)
+	_, err = database.ExecContext(ctx, `DROP TRIGGER IF EXISTS update_session_message_count_on_insert`)
 	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `DROP TRIGGER IF EXISTS update_sessions_updated_at`)
+	_, err = database.ExecContext(ctx, `DROP TRIGGER IF EXISTS update_sessions_updated_at`)
 	require.NoError(t, err)
 
-	_, err = db.ExecContext(ctx, `
+	_, err = database.ExecContext(ctx, `
 		INSERT INTO messages (id, session_id, role, parts, created_at, updated_at, message_type)
 		VALUES
 			('msg-1', 'sess-1', 'user', '["hello"]', 900001, 900001, 'message'),
@@ -77,7 +78,7 @@ func seedSourceDB(t *testing.T, db *sql.DB, workingDir string) {
 	require.NoError(t, err)
 
 	// Re-create triggers.
-	_, err = db.ExecContext(ctx, `
+	_, err = database.ExecContext(ctx, `
 		CREATE TRIGGER IF NOT EXISTS update_session_message_count_on_insert
 		AFTER INSERT ON messages
 		BEGIN
@@ -86,7 +87,7 @@ func seedSourceDB(t *testing.T, db *sql.DB, workingDir string) {
 		END
 	`)
 	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `
+	_, err = database.ExecContext(ctx, `
 		CREATE TRIGGER IF NOT EXISTS update_sessions_updated_at
 		AFTER UPDATE ON sessions
 		BEGIN
@@ -97,7 +98,7 @@ func seedSourceDB(t *testing.T, db *sql.DB, workingDir string) {
 	require.NoError(t, err)
 
 	// Insert files.
-	_, err = db.ExecContext(ctx, `
+	_, err = database.ExecContext(ctx, `
 		INSERT INTO files (id, session_id, path, content, version, created_at, updated_at)
 		VALUES
 			('file-1', 'sess-1', '/tmp/foo.go', 'package foo', 1, 900001, 900001)
@@ -105,7 +106,7 @@ func seedSourceDB(t *testing.T, db *sql.DB, workingDir string) {
 	require.NoError(t, err)
 
 	// Insert read_files with a relative path and an absolute path.
-	_, err = db.ExecContext(ctx, `
+	_, err = database.ExecContext(ctx, `
 		INSERT INTO read_files (session_id, path, read_at)
 		VALUES
 			('sess-1', 'src/main.go', 900001),
@@ -114,7 +115,7 @@ func seedSourceDB(t *testing.T, db *sql.DB, workingDir string) {
 	require.NoError(t, err)
 
 	// Insert OAuth tokens.
-	_, err = db.ExecContext(ctx, `
+	_, err = database.ExecContext(ctx, `
 		INSERT INTO mcp_oauth_tokens
 			(server_name, server_url, access_token, token_type, client_id, created_at, updated_at)
 		VALUES
@@ -123,7 +124,7 @@ func seedSourceDB(t *testing.T, db *sql.DB, workingDir string) {
 	require.NoError(t, err)
 
 	// Insert OAuth clients.
-	_, err = db.ExecContext(ctx, `
+	_, err = database.ExecContext(ctx, `
 		INSERT INTO mcp_oauth_clients
 			(server_name, server_url, client_id, created_at)
 		VALUES
@@ -138,7 +139,7 @@ func TestMigrateSynchronous(t *testing.T) {
 	globalDB, sourcePath, workingDir := setupTestDBs(t)
 	ctx := context.Background()
 
-	err := MigrateProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
+	err := migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
 	require.NoError(t, err)
 
 	// Verify sessions were copied with correct working_dir.
@@ -194,7 +195,7 @@ func TestMigrateBatched(t *testing.T) {
 	globalDB, sourcePath, workingDir := setupTestDBs(t)
 	ctx := context.Background()
 
-	err := MigrateProjectDB(ctx, globalDB, sourcePath, workingDir, 100)
+	err := migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 100)
 	require.NoError(t, err)
 
 	// Verify message_count matches source (overwritten after trigger
@@ -226,10 +227,10 @@ func TestMigrateInsertOrIgnoreSkipsDuplicates(t *testing.T) {
 	ctx := context.Background()
 
 	// Run migration twice — second run should not error.
-	err := MigrateProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
+	err := migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
 	require.NoError(t, err)
 
-	err = MigrateProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
+	err = migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
 	require.NoError(t, err)
 
 	// Verify no duplicate sessions.
@@ -246,7 +247,7 @@ func TestMigrateOAuthNewestWins(t *testing.T) {
 	globalDir := t.TempDir()
 
 	ctx := context.Background()
-	globalDB, err := Connect(ctx, globalDir)
+	globalDB, err := db.Connect(ctx, globalDir)
 	require.NoError(t, err)
 
 	// Pre-insert an older token into globalDB.
@@ -261,7 +262,7 @@ func TestMigrateOAuthNewestWins(t *testing.T) {
 	workingDir := t.TempDir()
 	sourceDir := filepath.Join(workingDir, ".anvil")
 	require.NoError(t, os.MkdirAll(sourceDir, 0o755))
-	sourceDB, err := Connect(ctx, sourceDir)
+	sourceDB, err := db.Connect(ctx, sourceDir)
 	require.NoError(t, err)
 
 	_, err = sourceDB.ExecContext(ctx, `
@@ -272,9 +273,9 @@ func TestMigrateOAuthNewestWins(t *testing.T) {
 	require.NoError(t, err)
 
 	sourcePath := filepath.Join(sourceDir, "anvil.db")
-	require.NoError(t, Release(sourceDir))
+	require.NoError(t, db.Release(sourceDir))
 
-	err = MigrateProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
+	err = migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
 	require.NoError(t, err)
 
 	// The newer token should win.
@@ -289,7 +290,7 @@ func TestMigrateOAuthNewestWins(t *testing.T) {
 	workingDir2 := t.TempDir()
 	sourceDir2 := filepath.Join(workingDir2, ".anvil")
 	require.NoError(t, os.MkdirAll(sourceDir2, 0o755))
-	sourceDB2, err := Connect(ctx, sourceDir2)
+	sourceDB2, err := db.Connect(ctx, sourceDir2)
 	require.NoError(t, err)
 
 	_, err = sourceDB2.ExecContext(ctx, `
@@ -300,9 +301,9 @@ func TestMigrateOAuthNewestWins(t *testing.T) {
 	require.NoError(t, err)
 
 	sourcePath2 := filepath.Join(sourceDir2, "anvil.db")
-	require.NoError(t, Release(sourceDir2))
+	require.NoError(t, db.Release(sourceDir2))
 
-	err = MigrateProjectDB(ctx, globalDB, sourcePath2, workingDir2, 0)
+	err = migrate.ProjectDB(ctx, globalDB, sourcePath2, workingDir2, 0)
 	require.NoError(t, err)
 
 	// The newer token should still be there.
@@ -319,7 +320,7 @@ func TestMigrateReadFilesPathConversion(t *testing.T) {
 	globalDB, sourcePath, workingDir := setupTestDBs(t)
 	ctx := context.Background()
 
-	err := MigrateProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
+	err := migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
 	require.NoError(t, err)
 
 	// Check relative path was converted to absolute.
@@ -345,15 +346,15 @@ func TestMigrateIsMigrated(t *testing.T) {
 	ctx := context.Background()
 
 	// Before migration.
-	migrated, err := IsMigrated(ctx, globalDB, sourcePath)
+	migrated, err := migrate.IsMigrated(ctx, globalDB, sourcePath)
 	require.NoError(t, err)
 	require.False(t, migrated)
 
 	// After migration.
-	err = MigrateProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
+	err = migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
 	require.NoError(t, err)
 
-	migrated, err = IsMigrated(ctx, globalDB, sourcePath)
+	migrated, err = migrate.IsMigrated(ctx, globalDB, sourcePath)
 	require.NoError(t, err)
 	require.True(t, migrated)
 }
@@ -363,15 +364,15 @@ func TestMigrateMissingSourceSkipped(t *testing.T) {
 
 	globalDir := t.TempDir()
 	ctx := context.Background()
-	globalDB, err := Connect(ctx, globalDir)
+	globalDB, err := db.Connect(ctx, globalDir)
 	require.NoError(t, err)
 
 	// Source path does not exist.
-	err = MigrateProjectDB(ctx, globalDB, "/nonexistent/anvil.db", "/nonexistent", 0)
+	err = migrate.ProjectDB(ctx, globalDB, "/nonexistent/anvil.db", "/nonexistent", 0)
 	require.NoError(t, err, "missing source DB should be skipped gracefully")
 
 	// Verify no migration_completed row was inserted.
-	migrated, err := IsMigrated(ctx, globalDB, "/nonexistent/anvil.db")
+	migrated, err := migrate.IsMigrated(ctx, globalDB, "/nonexistent/anvil.db")
 	require.NoError(t, err)
 	require.False(t, migrated)
 }
@@ -384,7 +385,7 @@ func TestMigrateEvalSymlinksNormalization(t *testing.T) {
 
 	// Use workingDir as-is (EvalSymlinks resolves it). Verify the
 	// stored working_dir matches the resolved path.
-	err := MigrateProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
+	err := migrate.ProjectDB(ctx, globalDB, sourcePath, workingDir, 0)
 	require.NoError(t, err)
 
 	resolved, err := filepath.EvalSymlinks(workingDir)
@@ -403,14 +404,14 @@ func TestMigrateCurrentProject(t *testing.T) {
 	ctx := context.Background()
 
 	globalDir := t.TempDir()
-	globalDB, err := Connect(ctx, globalDir)
+	globalDB, err := db.Connect(ctx, globalDir)
 	require.NoError(t, err)
 
 	// Create a project directory with a source DB.
 	workingDir := t.TempDir()
 	projectDir := filepath.Join(workingDir, ".anvil")
 	require.NoError(t, os.MkdirAll(projectDir, 0o755))
-	sourceDB, err := Connect(ctx, projectDir)
+	sourceDB, err := db.Connect(ctx, projectDir)
 	require.NoError(t, err)
 
 	_, err = sourceDB.ExecContext(ctx, `
@@ -418,9 +419,9 @@ func TestMigrateCurrentProject(t *testing.T) {
 		VALUES ('sess-startup', 'Startup Test', 0, 0, 0, 0.0, 100, 100, ?)
 	`, workingDir)
 	require.NoError(t, err)
-	require.NoError(t, Release(projectDir))
+	require.NoError(t, db.Release(projectDir))
 
-	err = MigrateCurrentProject(ctx, globalDB, projectDir)
+	err = migrate.CurrentProject(ctx, globalDB, projectDir)
 	require.NoError(t, err)
 
 	// Verify the session is in the global DB.
@@ -431,7 +432,7 @@ func TestMigrateCurrentProject(t *testing.T) {
 	require.Equal(t, "Startup Test", title)
 
 	// Second call should be a no-op.
-	err = MigrateCurrentProject(ctx, globalDB, projectDir)
+	err = migrate.CurrentProject(ctx, globalDB, projectDir)
 	require.NoError(t, err)
 }
 
@@ -441,10 +442,10 @@ func TestMigrateCurrentProjectSkipsMissing(t *testing.T) {
 	ctx := context.Background()
 
 	globalDir := t.TempDir()
-	globalDB, err := Connect(ctx, globalDir)
+	globalDB, err := db.Connect(ctx, globalDir)
 	require.NoError(t, err)
 
 	// Non-existent project directory.
-	err = MigrateCurrentProject(ctx, globalDB, "/nonexistent/.anvil")
+	err = migrate.CurrentProject(ctx, globalDB, "/nonexistent/.anvil")
 	require.NoError(t, err, "should not error for missing source DB")
 }

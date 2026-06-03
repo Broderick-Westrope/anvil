@@ -1,4 +1,4 @@
-package db
+package migrate
 
 import (
 	"context"
@@ -11,11 +11,11 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/projects"
 )
 
-// MigrateCurrentProject performs a synchronous (single-transaction)
-// migration of the current project's .anvil/anvil.db into the global
-// database. It is intended to run at startup before the session begins
-// so the current project's data is immediately available.
-func MigrateCurrentProject(ctx context.Context, globalDB *sql.DB, projectDir string) error {
+// CurrentProject performs a synchronous (single-transaction) migration
+// of the current project's .anvil/anvil.db into the global database.
+// It is intended to run at startup before the session begins so the
+// current project's data is immediately available.
+func CurrentProject(ctx context.Context, globalDB *sql.DB, projectDir string) error {
 	sourcePath := filepath.Join(projectDir, "anvil.db")
 
 	migrated, err := IsMigrated(ctx, globalDB, sourcePath)
@@ -29,21 +29,21 @@ func MigrateCurrentProject(ctx context.Context, globalDB *sql.DB, projectDir str
 	// workingDir is the parent of the .anvil directory.
 	workingDir := filepath.Dir(projectDir)
 
-	if err := MigrateProjectDB(ctx, globalDB, sourcePath, workingDir, 0); err != nil {
+	if err := ProjectDB(ctx, globalDB, sourcePath, workingDir, 0); err != nil {
 		return fmt.Errorf("failed to migrate current project: %w", err)
 	}
 
 	return nil
 }
 
-// MigrateAllProjects iterates all projects registered in
-// projects.json and migrates each one into the global database using
-// batched mode (batchSize=500). skipCurrent is the project directory
-// that was already migrated synchronously and should be skipped.
-// Projects are migrated sequentially with a 50ms sleep between them
-// to avoid starving active session writes. The function respects
-// context cancellation.
-func MigrateAllProjects(ctx context.Context, globalDB *sql.DB, skipCurrent string) error {
+// AllProjects iterates all projects registered in projects.json and
+// migrates each one into the global database using batched mode
+// (batchSize=500). skipCurrent is the project directory that was
+// already migrated synchronously and should be skipped. Projects are
+// migrated sequentially with a 50ms sleep between them to avoid
+// starving active session writes. The function respects context
+// cancellation.
+func AllProjects(ctx context.Context, globalDB *sql.DB, skipCurrent string) error {
 	projectList, err := projects.List()
 	if err != nil {
 		return fmt.Errorf("failed to load projects list: %w", err)
@@ -71,7 +71,7 @@ func MigrateAllProjects(ctx context.Context, globalDB *sql.DB, skipCurrent strin
 			continue
 		}
 
-		if err := MigrateProjectDB(ctx, globalDB, sourcePath, p.Path, 500); err != nil {
+		if err := ProjectDB(ctx, globalDB, sourcePath, p.Path, 500); err != nil {
 			slog.Error("Failed to migrate project",
 				"project", p.Path, "error", err)
 			continue

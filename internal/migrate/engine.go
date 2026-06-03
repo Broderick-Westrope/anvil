@@ -1,4 +1,10 @@
-package db
+// Package migrate handles one-time data migration from per-project
+// SQLite databases into the global database. It is separate from
+// internal/db (which owns connections, sqlc queries, and schema
+// migrations) because data migration is application-level
+// orchestration with business logic (OAuth conflict resolution,
+// path normalization) and external dependencies (project discovery).
+package migrate
 
 import (
 	"context"
@@ -9,10 +15,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pressly/goose/v3"
+	"github.com/Broderick-Westrope/anvil/internal/db"
 )
 
-// MigrateProjectDB migrates a single project's SQLite database into the
+// ProjectDB migrates a single project's SQLite database into the
 // global database. sourcePath is the absolute path to the source
 // anvil.db file. workingDir is the project's working directory (used
 // to populate sessions.working_dir and to convert read_files relative
@@ -33,7 +39,7 @@ import (
 // ATTACH/query/DETACH sequence — this is required because
 // MaxOpenConns(1) does not guarantee the same underlying connection
 // across separate Exec calls on *sql.DB.
-func MigrateProjectDB(ctx context.Context, globalDB *sql.DB, sourcePath, workingDir string, batchSize int) error {
+func ProjectDB(ctx context.Context, globalDB *sql.DB, sourcePath, workingDir string, batchSize int) error {
 	if globalDB == nil {
 		return fmt.Errorf("globalDB is nil")
 	}
@@ -55,7 +61,7 @@ func MigrateProjectDB(ctx context.Context, globalDB *sql.DB, sourcePath, working
 	}
 
 	// Run goose on source DB to bring it to current schema.
-	sourceDB, err := openAndMigrateSource(ctx, sourcePath)
+	sourceDB, err := db.OpenAndMigrateSource(ctx, sourcePath)
 	if err != nil {
 		return fmt.Errorf("failed to open source DB: %w", err)
 	}
@@ -104,34 +110,6 @@ func IsMigrated(ctx context.Context, globalDB *sql.DB, sourcePath string) (bool,
 		return false, fmt.Errorf("failed to check migration status: %w", err)
 	}
 	return count > 0, nil
-}
-
-// openAndMigrateSource opens a source project DB and runs goose
-// migrations to bring it to the current schema.
-func openAndMigrateSource(ctx context.Context, sourcePath string) (*sql.DB, error) {
-	sourceDB, err := openDB(sourcePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open source database: %w", err)
-	}
-
-	sourceDB.SetMaxOpenConns(1)
-
-	if err := sourceDB.PingContext(ctx); err != nil {
-		sourceDB.Close()
-		return nil, fmt.Errorf("failed to ping source database: %w", err)
-	}
-
-	if err := initGoose(); err != nil {
-		sourceDB.Close()
-		return nil, fmt.Errorf("failed to initialize goose: %w", err)
-	}
-
-	if err := goose.Up(sourceDB, "migrations"); err != nil {
-		sourceDB.Close()
-		return nil, fmt.Errorf("failed to apply migrations to source: %w", err)
-	}
-
-	return sourceDB, nil
 }
 
 // migrateSynchronous performs the migration in a single transaction

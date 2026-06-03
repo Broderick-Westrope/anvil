@@ -26,6 +26,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	anvillog "github.com/Broderick-Westrope/anvil/internal/log"
+	"github.com/Broderick-Westrope/anvil/internal/migrate"
 	"github.com/Broderick-Westrope/anvil/internal/projects"
 	"github.com/Broderick-Westrope/anvil/internal/proto"
 	"github.com/Broderick-Westrope/anvil/internal/server"
@@ -309,7 +310,7 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 	}
 
 	// Synchronously migrate the current project's per-project database.
-	if err := db.MigrateCurrentProject(ctx, conn, cfg.Options.ProjectDirectory); err != nil {
+	if err := migrate.CurrentProject(ctx, conn, cfg.Options.ProjectDirectory); err != nil {
 		slog.Warn("Failed to migrate current project", "error", err)
 	}
 
@@ -317,7 +318,7 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 	skipMigration, _ := cmd.PersistentFlags().GetBool("skip-migration")
 	if !skipMigration {
 		go func() {
-			if err := db.MigrateAllProjects(ctx, conn, cfg.Options.ProjectDirectory); err != nil {
+			if err := migrate.AllProjects(ctx, conn, cfg.Options.ProjectDirectory); err != nil {
 				slog.Warn("Failed to migrate other projects", "error", err)
 			}
 		}()

@@ -184,6 +184,37 @@ func ResetPool() {
 	}
 }
 
+// OpenAndMigrateSource opens a SQLite database at the given path, runs
+// goose migrations to bring it to the current schema, and returns it.
+// The caller is responsible for closing the returned DB. This is
+// intended for opening per-project databases during data migration into
+// the global database.
+func OpenAndMigrateSource(ctx context.Context, sourcePath string) (*sql.DB, error) {
+	sourceDB, err := openDB(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open source database: %w", err)
+	}
+
+	sourceDB.SetMaxOpenConns(1)
+
+	if err := sourceDB.PingContext(ctx); err != nil {
+		sourceDB.Close()
+		return nil, fmt.Errorf("failed to ping source database: %w", err)
+	}
+
+	if err := initGoose(); err != nil {
+		sourceDB.Close()
+		return nil, fmt.Errorf("failed to initialize goose: %w", err)
+	}
+
+	if err := goose.Up(sourceDB, "migrations"); err != nil {
+		sourceDB.Close()
+		return nil, fmt.Errorf("failed to apply migrations to source: %w", err)
+	}
+
+	return sourceDB, nil
+}
+
 func initGoose() error {
 	gooseInitOnce.Do(func() {
 		goose.SetBaseFS(FS)
