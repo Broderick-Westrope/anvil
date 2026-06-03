@@ -218,6 +218,9 @@ func (a *Arguments) HandleMsg(msg tea.Msg) Action {
 				case ActionRunMCPPrompt:
 					action.Args = args
 					return action
+				case ActionRenameSession:
+					action.Title = args["title"]
+					return action
 				}
 			}
 			a.focusInput(a.focused + 1)
