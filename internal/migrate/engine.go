@@ -112,9 +112,25 @@ func IsMigrated(ctx context.Context, globalDB *sql.DB, sourcePath string) (bool,
 	return count > 0, nil
 }
 
+// sessionTriggerNames lists the triggers that interfere with bulk
+// migration of sessions and messages. These are saved from
+// sqlite_master before dropping and restored after copying.
+var sessionTriggerNames = []string{
+	"update_session_message_count_on_insert",
+	"update_session_message_count_on_delete",
+	"update_sessions_updated_at",
+}
+
 // migrateSynchronous performs the migration in a single transaction
 // with triggers dropped to avoid message_count/updated_at corruption.
 func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourcePath string) error {
+	// Capture existing trigger DDL from sqlite_master before the
+	// transaction so we can restore them exactly after copying.
+	saved, err := saveTriggers(ctx, conn, sessionTriggerNames)
+	if err != nil {
+		return fmt.Errorf("failed to save triggers: %w", err)
+	}
+
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -123,15 +139,8 @@ func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourceP
 
 	// Drop triggers to prevent message_count inflation and
 	// updated_at clobbering during bulk insert.
-	triggers := []string{
-		"update_session_message_count_on_insert",
-		"update_session_message_count_on_delete",
-		"update_sessions_updated_at",
-	}
-	for _, t := range triggers {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s", t)); err != nil {
-			return fmt.Errorf("failed to drop trigger %s: %w", t, err)
-		}
+	if err := dropTriggers(ctx, tx, saved); err != nil {
+		return err
 	}
 
 	// Copy sessions with working_dir.
@@ -206,31 +215,9 @@ func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourceP
 		return err
 	}
 
-	// Re-create triggers.
-	triggerDDL := []string{
-		`CREATE TRIGGER IF NOT EXISTS update_session_message_count_on_insert
-		AFTER INSERT ON messages
-		BEGIN
-			UPDATE sessions SET message_count = message_count + 1
-			WHERE id = new.session_id;
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS update_session_message_count_on_delete
-		AFTER DELETE ON messages
-		BEGIN
-			UPDATE sessions SET message_count = message_count - 1
-			WHERE id = old.session_id;
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS update_sessions_updated_at
-		AFTER UPDATE ON sessions
-		BEGIN
-			UPDATE sessions SET updated_at = strftime('%s', 'now')
-			WHERE id = new.id;
-		END`,
-	}
-	for _, ddl := range triggerDDL {
-		if _, err := tx.ExecContext(ctx, ddl); err != nil {
-			return fmt.Errorf("failed to recreate trigger: %w", err)
-		}
+	// Restore triggers from their saved DDL.
+	if err := restoreTriggers(ctx, tx, saved); err != nil {
+		return err
 	}
 
 	// Mark migration as completed.
@@ -283,9 +270,12 @@ func migrateBatched(ctx context.Context, conn *sql.Conn, workingDir, sourcePath 
 	// correct trigger artifacts. The update_sessions_updated_at
 	// trigger must be temporarily dropped to prevent it from
 	// clobbering the source updated_at value.
-	if _, err := conn.ExecContext(ctx,
-		`DROP TRIGGER IF EXISTS update_sessions_updated_at`); err != nil {
-		return fmt.Errorf("failed to drop sessions trigger: %w", err)
+	updatedAtTrigger, err := saveTriggers(ctx, conn, []string{"update_sessions_updated_at"})
+	if err != nil {
+		return fmt.Errorf("failed to save sessions trigger: %w", err)
+	}
+	if err := dropTriggers(ctx, conn, updatedAtTrigger); err != nil {
+		return err
 	}
 
 	if _, err := conn.ExecContext(ctx, `
@@ -304,15 +294,8 @@ func migrateBatched(ctx context.Context, conn *sql.Conn, workingDir, sourcePath 
 		return fmt.Errorf("failed to overwrite session counts: %w", err)
 	}
 
-	if _, err := conn.ExecContext(ctx, `
-		CREATE TRIGGER IF NOT EXISTS update_sessions_updated_at
-		AFTER UPDATE ON sessions
-		BEGIN
-			UPDATE sessions SET updated_at = strftime('%s', 'now')
-			WHERE id = new.id;
-		END
-	`); err != nil {
-		return fmt.Errorf("failed to recreate sessions trigger: %w", err)
+	if err := restoreTriggers(ctx, conn, updatedAtTrigger); err != nil {
+		return err
 	}
 
 	// Copy files in batches.
@@ -385,6 +368,54 @@ func copyInBatches(ctx context.Context, conn *sql.Conn, query string, batchSize 
 // execer abstracts over *sql.Tx and *sql.Conn for query execution.
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// savedTrigger holds a trigger's name and the DDL needed to recreate
+// it, as read from sqlite_master.
+type savedTrigger struct {
+	Name string
+	SQL  string
+}
+
+// saveTriggers reads the CREATE TRIGGER DDL for the named triggers
+// from sqlite_master. Triggers that don't exist are silently skipped.
+func saveTriggers(ctx context.Context, conn *sql.Conn, names []string) ([]savedTrigger, error) {
+	var saved []savedTrigger
+	for _, name := range names {
+		var ddl string
+		err := conn.QueryRowContext(ctx,
+			`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?`,
+			name,
+		).Scan(&ddl)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read trigger %q from sqlite_master: %w", name, err)
+		}
+		saved = append(saved, savedTrigger{Name: name, SQL: ddl})
+	}
+	return saved, nil
+}
+
+// dropTriggers drops the given triggers by name.
+func dropTriggers(ctx context.Context, e execer, triggers []savedTrigger) error {
+	for _, t := range triggers {
+		if _, err := e.ExecContext(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s", t.Name)); err != nil {
+			return fmt.Errorf("failed to drop trigger %s: %w", t.Name, err)
+		}
+	}
+	return nil
+}
+
+// restoreTriggers recreates triggers from their saved DDL.
+func restoreTriggers(ctx context.Context, e execer, triggers []savedTrigger) error {
+	for _, t := range triggers {
+		if _, err := e.ExecContext(ctx, t.SQL); err != nil {
+			return fmt.Errorf("failed to recreate trigger %s: %w", t.Name, err)
+		}
+	}
+	return nil
 }
 
 // copyOAuthTokens copies mcp_oauth_tokens from source to main using
