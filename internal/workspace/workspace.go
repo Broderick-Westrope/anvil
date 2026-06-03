@@ -89,6 +89,7 @@ type Workspace interface {
 	AgentQueuedPromptsList(sessionID string) []string
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
+	AgentRegenerateTitle(ctx context.Context, sessionID string) error
 	UpdateAgentModel(ctx context.Context) error
 	InitOrchestratorAgent(ctx context.Context) error
 	GetDefaultSmallModel(providerID string) config.SelectedModel

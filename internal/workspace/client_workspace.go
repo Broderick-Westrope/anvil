@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -225,6 +226,10 @@ func (w *ClientWorkspace) AgentClearQueue(sessionID string) {
 
 func (w *ClientWorkspace) AgentSummarize(ctx context.Context, sessionID string) error {
 	return w.client.AgentSummarizeSession(ctx, w.workspaceID(), sessionID)
+}
+
+func (w *ClientWorkspace) AgentRegenerateTitle(_ context.Context, _ string) error {
+	return errors.New("title regeneration is not supported in remote mode")
 }
 
 func (w *ClientWorkspace) UpdateAgentModel(ctx context.Context) error {

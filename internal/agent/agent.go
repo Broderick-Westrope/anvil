@@ -250,15 +250,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		return nil, fmt.Errorf("failed to get session messages: %w", err)
 	}
 
-	var wg sync.WaitGroup
-	// Generate title if first message.
-	if len(msgs) == 0 {
-		titleCtx := ctx // Copy to avoid race with ctx reassignment below.
-		wg.Go(func() {
-			a.generateTitle(titleCtx, call.SessionID, call.Prompt)
-		})
-	}
-	defer wg.Wait()
+	// Capture before any messages are added so we can auto-regenerate the
+	// title after the first assistant response completes.
+	isFirstMessage := len(msgs) == 0
 
 	if call.skipCreateMessage {
 		// On retry the user message already exists in the DB and
@@ -675,6 +669,23 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
 			existing = append(existing, call)
 			a.messageQueue.Set(call.SessionID, existing)
+		}
+	}
+
+	// Auto-regenerate title after the first assistant response. The
+	// assistant reply is already persisted at this point so we load
+	// fresh messages from the DB.
+	if isFirstMessage {
+		sess, sessErr := a.sessions.Get(ctx, call.SessionID)
+		if sessErr != nil {
+			slog.Error("Failed to load session for title regeneration", "error", sessErr)
+		} else if !sess.TitleIsCustom {
+			titleMsgs, titleErr := a.messages.List(ctx, call.SessionID)
+			if titleErr != nil {
+				slog.Error("Failed to load messages for title regeneration", "error", titleErr)
+			} else {
+				go a.generateTitle(ctx, call.SessionID, titleMsgs, false)
+			}
 		}
 	}
 
@@ -1156,8 +1167,45 @@ func (a *sessionAgent) getSessionMessages(ctx context.Context, sess session.Sess
 }
 
 // generateTitle generates a session titled based on the initial prompt.
-func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, userPrompt string) {
-	if userPrompt == "" {
+// maxTitleConversationChars is the maximum number of characters from the
+// conversation to include in the title generation prompt.
+const maxTitleConversationChars = 4000
+
+// formatConversationForTitle serialises messages as "role: content" lines,
+// including only user and assistant text messages. The result is truncated
+// to maxTitleConversationChars.
+func formatConversationForTitle(msgs []message.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		if m.Role != message.User && m.Role != message.Assistant {
+			continue
+		}
+		text := strings.TrimSpace(m.Content().Text)
+		if text == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "%s: %s\n", m.Role, text)
+		if b.Len() >= maxTitleConversationChars {
+			break
+		}
+	}
+	result := b.String()
+	if len(result) > maxTitleConversationChars {
+		result = result[:maxTitleConversationChars]
+	}
+	return result
+}
+
+// generateTitle generates a session title from the full conversation
+// context. If titleIsCustom is true the write is skipped to avoid
+// overwriting a manually set title.
+func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs []message.Message, titleIsCustom bool) {
+	if titleIsCustom {
+		return
+	}
+
+	conversationText := formatConversationForTitle(msgs)
+	if conversationText == "" {
 		return
 	}
 
@@ -1180,7 +1228,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 	}
 
 	streamCall := fantasy.AgentStreamCall{
-		Prompt: fmt.Sprintf("Generate a concise title for the following content:\n\n%s\n <think>\n\n</think>", userPrompt),
+		Prompt: fmt.Sprintf("Generate a concise title for the following conversation:\n\n%s\n <think>\n\n</think>", conversationText),
 		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = opts.Messages
 			if systemPromptPrefix != "" {
