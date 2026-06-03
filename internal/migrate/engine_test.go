@@ -21,6 +21,7 @@ func setupTestDBs(t *testing.T) (globalDB *sql.DB, sourcePath string, workingDir
 	globalDir := t.TempDir()
 	globalDB, err := db.Connect(context.Background(), globalDir)
 	require.NoError(t, err)
+	t.Cleanup(func() { db.Release(globalDir) })
 
 	workingDir = t.TempDir()
 
@@ -249,6 +250,7 @@ func TestMigrateOAuthNewestWins(t *testing.T) {
 	ctx := context.Background()
 	globalDB, err := db.Connect(ctx, globalDir)
 	require.NoError(t, err)
+	t.Cleanup(func() { db.Release(globalDir) })
 
 	// Pre-insert an older token into globalDB.
 	_, err = globalDB.ExecContext(ctx, `
@@ -406,6 +408,7 @@ func TestMigrateCurrentProject(t *testing.T) {
 	globalDir := t.TempDir()
 	globalDB, err := db.Connect(ctx, globalDir)
 	require.NoError(t, err)
+	t.Cleanup(func() { db.Release(globalDir) })
 
 	// Create a project directory with a source DB.
 	workingDir := t.TempDir()
@@ -444,6 +447,7 @@ func TestMigrateCurrentProjectSkipsMissing(t *testing.T) {
 	globalDir := t.TempDir()
 	globalDB, err := db.Connect(ctx, globalDir)
 	require.NoError(t, err)
+	t.Cleanup(func() { db.Release(globalDir) })
 
 	// Non-existent project directory.
 	err = migrate.CurrentProject(ctx, globalDB, "/nonexistent/.anvil")
@@ -570,6 +574,7 @@ func TestResetAllMigrations(t *testing.T) {
 	globalDir := t.TempDir()
 	globalDB, err := db.Connect(ctx, globalDir)
 	require.NoError(t, err)
+	t.Cleanup(func() { db.Release(globalDir) })
 
 	// Insert two fake migration markers.
 	_, err = globalDB.ExecContext(ctx,
