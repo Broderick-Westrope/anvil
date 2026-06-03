@@ -342,3 +342,60 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 		assert.True(t, result, "Repeated request should be auto-approved due to persistent permission")
 	})
 }
+
+func TestRevokeAutoApproveSession(t *testing.T) {
+	t.Parallel()
+
+	t.Run("revokes auto-approve for a session", func(t *testing.T) {
+		t.Parallel()
+		service := NewPermissionService("/tmp", false, nil)
+
+		service.AutoApproveSession("sess-1")
+
+		// Session should be auto-approved.
+		granted, err := service.Request(t.Context(), CreatePermissionRequest{
+			SessionID:   "sess-1",
+			ToolName:    "bash",
+			Action:      "execute",
+			Description: "auto-approved command",
+			Path:        "/tmp",
+		})
+		require.NoError(t, err)
+		require.True(t, granted)
+
+		service.RevokeAutoApproveSession("sess-1")
+
+		// After revocation the session should no longer be auto-approved.
+		// We need a subscriber to resolve the request now.
+		events := service.Subscribe(t.Context())
+		var (
+			wg     sync.WaitGroup
+			result bool
+			reqErr error
+		)
+		wg.Go(func() {
+			result, reqErr = service.Request(t.Context(), CreatePermissionRequest{
+				SessionID:   "sess-1",
+				ToolName:    "bash",
+				Action:      "execute",
+				Description: "should require approval",
+				Path:        "/tmp",
+			})
+		})
+
+		event := <-events
+		service.Deny(event.Payload)
+		wg.Wait()
+
+		require.NoError(t, reqErr)
+		require.False(t, result, "revoked session should no longer be auto-approved")
+	})
+
+	t.Run("revoking nonexistent session does not panic", func(t *testing.T) {
+		t.Parallel()
+		service := NewPermissionService("/tmp", false, nil)
+		require.NotPanics(t, func() {
+			service.RevokeAutoApproveSession("nonexistent")
+		})
+	})
+}

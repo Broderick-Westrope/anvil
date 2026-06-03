@@ -486,6 +486,69 @@ func TestCreateTransport_SSEWithOAuth_NilQueries(t *testing.T) {
 	require.True(t, ok, "expected *headerRoundTripper, got %T", sse.HTTPClient.Transport)
 }
 
+// TestGetOrRenewClient_ClosesOldSessionOnReconnect verifies that when a ping
+// fails in getOrRenewClient, the stale ClientSession is closed (cancelling
+// its context) before it is replaced. This prevents goroutine and context
+// leaks.
+//
+// This test cannot be parallel: it temporarily replaces the package-level
+// initDone channel and mutates the sessions/states maps.
+func TestGetOrRenewClient_ClosesOldSessionOnReconnect(t *testing.T) {
+	defer goleak.VerifyNone(
+		t,
+		// config.Load fetches provider data over HTTP; the resulting
+		// HTTP/2 read-loop goroutines outlive the test.
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+	)
+
+	const name = "test-close-on-reconnect"
+
+	// Create an in-memory MCP server/client pair.
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	server := mcp.NewServer(&mcp.Implementation{Name: "test-server"}, nil)
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	require.NoError(t, err)
+
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+	client := mcp.NewClient(&mcp.Implementation{Name: "anvil-test"}, nil)
+	clientSession, err := client.Connect(clientCtx, clientTransport, nil)
+	require.NoError(t, err)
+
+	sess := &ClientSession{clientSession, clientCancel}
+
+	// Swap initDone to a pre-closed channel so getOrRenewClient proceeds.
+	oldInitDone := initDone
+	initDone = make(chan struct{})
+	close(initDone)
+	defer func() { initDone = oldInitDone }()
+
+	sessions.Set(name, sess)
+	t.Cleanup(func() { sessions.Del(name) })
+
+	states.Set(name, ClientInfo{Name: name, State: StateConnected})
+	t.Cleanup(func() { states.Del(name) })
+
+	// Close the server session so the next ping from the client fails.
+	require.NoError(t, serverSession.Close())
+
+	// Verify the client context is still alive before the call.
+	require.NoError(t, clientCtx.Err())
+
+	// Load a minimal ConfigStore. The empty MCP map returns a zero-value
+	// MCPConfig for our name, which gives a default timeout and causes
+	// createSession to fail (unsupported type ""). That is fine — we only
+	// care that Close() was called on the old session.
+	cfg, err := config.Load(t.TempDir(), t.TempDir(), false)
+	require.NoError(t, err)
+
+	_, err = getOrRenewClient(t.Context(), cfg, name)
+	// createSession fails because there is no valid transport config.
+	require.Error(t, err)
+
+	// The old client context must be cancelled, proving Close() was called.
+	require.ErrorIs(t, clientCtx.Err(), context.Canceled)
+}
+
 // TestCreateSession_ResolutionFailureUpdatesState pins the user-visible
 // half of the regression fix: when any of command/args/env/headers/url
 // fails to resolve, createSession must publish StateError to the state

@@ -14,10 +14,15 @@ import (
 )
 
 const (
-	// MaxBackgroundJobs is the maximum number of concurrent background jobs allowed
+	// MaxBackgroundJobs is the maximum number of concurrent background jobs allowed.
 	MaxBackgroundJobs = 50
-	// CompletedJobRetentionMinutes is how long to keep completed jobs before auto-cleanup (8 hours)
-	CompletedJobRetentionMinutes = 8 * 60
+	// CompletedJobRetentionMinutes is how long to keep completed jobs
+	// before auto-cleanup (30 minutes).
+	CompletedJobRetentionMinutes = 30
+	// MaxBufferSize is the maximum size in bytes for a syncBuffer
+	// (10 MB). Writes that would exceed this cap cause the buffer to be
+	// reset and only the tail of the new data is retained.
+	MaxBufferSize = 10 * 1024 * 1024
 	// KillGracePeriod bounds how long Kill waits for a cancelled shell's
 	// goroutine to exit. With the process-group exec handler in place,
 	// the goroutine should unwind almost immediately on cancellation;
@@ -33,16 +38,40 @@ type syncBuffer struct {
 	mu  sync.RWMutex
 }
 
+const truncationMarker = "[output truncated — exceeded 10MB buffer cap]\n"
+
 func (sb *syncBuffer) Write(p []byte) (n int, err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
-	return sb.buf.Write(p)
+
+	if sb.buf.Len()+len(p) <= MaxBufferSize {
+		return sb.buf.Write(p)
+	}
+
+	// Cap exceeded — reset and keep only the tail. Report all bytes
+	// as consumed so callers (the shell interpreter) never retry.
+	inputLen := len(p)
+	sb.buf.Reset()
+	sb.buf.WriteString(truncationMarker)
+
+	available := MaxBufferSize - len(truncationMarker)
+	if len(p) > available {
+		p = p[len(p)-available:]
+	}
+	sb.buf.Write(p)
+	return inputLen, nil
 }
 
+// WriteString delegates to Write so the buffer cap is enforced.
 func (sb *syncBuffer) WriteString(s string) (n int, err error) {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	return sb.buf.WriteString(s)
+	return sb.Write([]byte(s))
+}
+
+// Len returns the current size of the buffer.
+func (sb *syncBuffer) Len() int {
+	sb.mu.RLock()
+	defer sb.mu.RUnlock()
+	return sb.buf.Len()
 }
 
 func (sb *syncBuffer) String() string {
@@ -173,7 +202,8 @@ func (m *BackgroundShellManager) Kill(id string) error {
 	case <-shell.done:
 		return nil
 	case <-time.After(KillGracePeriod):
-		slog.Warn("Background shell did not exit within grace period; abandoning",
+		slog.Warn(
+			"Background shell did not exit within grace period; abandoning",
 			"id", id,
 			"command", shell.Command,
 			"grace_period", KillGracePeriod,
@@ -218,9 +248,26 @@ func (m *BackgroundShellManager) Cleanup() int {
 	return len(toRemove)
 }
 
+// CleanupCompleted removes all completed jobs regardless of age.
+func (m *BackgroundShellManager) CleanupCompleted() int {
+	var toRemove []string
+	for shell := range m.shells.Seq() {
+		if shell.completedAt.Load() > 0 {
+			toRemove = append(toRemove, shell.ID)
+		}
+	}
+
+	for _, id := range toRemove {
+		m.Remove(id)
+	}
+
+	return len(toRemove)
+}
+
 // KillAll terminates all background shells. The provided context bounds how
 // long the function waits for each shell to exit.
 func (m *BackgroundShellManager) KillAll(ctx context.Context) {
+	m.CleanupCompleted()
 	shells := slices.Collect(m.shells.Seq())
 	m.shells.Reset(map[string]*BackgroundShell{})
 

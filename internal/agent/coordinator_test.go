@@ -55,8 +55,9 @@ func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCf
 	require.NoError(t, err)
 	cfg.Config().Providers.Set(providerID, providerCfg)
 	return &coordinator{
-		cfg:      cfg,
-		sessions: env.sessions,
+		cfg:         cfg,
+		sessions:    env.sessions,
+		permissions: env.permissions,
 	}
 }
 

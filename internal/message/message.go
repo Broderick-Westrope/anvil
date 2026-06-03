@@ -341,6 +341,14 @@ func (s *service) FlushAll(ctx context.Context) error {
 	return firstErr
 }
 
+// PendingCount returns the number of entries in the pending map.
+// Exported for testing only.
+func (s *service) PendingCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.pending)
+}
+
 // flushOne drains a single message ID. When syncCaller is true the
 // caller is willing to wait through a concurrent in-flight flush so
 // that, on return, lastFlushed equals latest at the moment of return.
@@ -400,6 +408,15 @@ func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) erro
 		if err == nil {
 			p.lastFlushed = snap
 			p.hasFlushed = true
+			// Prune terminal entries that are no longer dirty.
+			// A concurrent Update may have re-dirtied the entry during
+			// the SQL write; in that case, leave it for the next flush.
+			if isTerminal && !p.dirty {
+				if p.timer != nil {
+					p.timer.Stop()
+				}
+				delete(s.pending, id)
+			}
 		} else {
 			// Restore dirty so the next caller retries.
 			p.dirty = true
