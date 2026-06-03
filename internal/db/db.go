@@ -75,8 +75,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getHourDayHeatmapStmt, err = db.PrepareContext(ctx, getHourDayHeatmap); err != nil {
 		return nil, fmt.Errorf("error preparing query GetHourDayHeatmap: %w", err)
 	}
-	if q.getLastSessionStmt, err = db.PrepareContext(ctx, getLastSession); err != nil {
-		return nil, fmt.Errorf("error preparing query GetLastSession: %w", err)
+	if q.getLastGlobalSessionStmt, err = db.PrepareContext(ctx, getLastGlobalSession); err != nil {
+		return nil, fmt.Errorf("error preparing query GetLastGlobalSession: %w", err)
+	}
+	if q.getLastSessionByWorkingDirStmt, err = db.PrepareContext(ctx, getLastSessionByWorkingDir); err != nil {
+		return nil, fmt.Errorf("error preparing query GetLastSessionByWorkingDir: %w", err)
 	}
 	if q.getMCPOAuthClientStmt, err = db.PrepareContext(ctx, getMCPOAuthClient); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMCPOAuthClient: %w", err)
@@ -114,32 +117,29 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getUsageByModelStmt, err = db.PrepareContext(ctx, getUsageByModel); err != nil {
 		return nil, fmt.Errorf("error preparing query GetUsageByModel: %w", err)
 	}
-	if q.listAllUserMessagesStmt, err = db.PrepareContext(ctx, listAllUserMessages); err != nil {
-		return nil, fmt.Errorf("error preparing query ListAllUserMessages: %w", err)
-	}
-	if q.listFilesByPathStmt, err = db.PrepareContext(ctx, listFilesByPath); err != nil {
-		return nil, fmt.Errorf("error preparing query ListFilesByPath: %w", err)
+	if q.listAllSessionsStmt, err = db.PrepareContext(ctx, listAllSessions); err != nil {
+		return nil, fmt.Errorf("error preparing query ListAllSessions: %w", err)
 	}
 	if q.listFilesBySessionStmt, err = db.PrepareContext(ctx, listFilesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListFilesBySession: %w", err)
 	}
-	if q.listLatestSessionFilesStmt, err = db.PrepareContext(ctx, listLatestSessionFiles); err != nil {
-		return nil, fmt.Errorf("error preparing query ListLatestSessionFiles: %w", err)
-	}
 	if q.listMessagesBySessionStmt, err = db.PrepareContext(ctx, listMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListMessagesBySession: %w", err)
 	}
-	if q.listNewFilesStmt, err = db.PrepareContext(ctx, listNewFiles); err != nil {
-		return nil, fmt.Errorf("error preparing query ListNewFiles: %w", err)
+	if q.listSessionFilesByPathStmt, err = db.PrepareContext(ctx, listSessionFilesByPath); err != nil {
+		return nil, fmt.Errorf("error preparing query ListSessionFilesByPath: %w", err)
 	}
 	if q.listSessionReadFilesStmt, err = db.PrepareContext(ctx, listSessionReadFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionReadFiles: %w", err)
 	}
-	if q.listSessionsStmt, err = db.PrepareContext(ctx, listSessions); err != nil {
-		return nil, fmt.Errorf("error preparing query ListSessions: %w", err)
+	if q.listSessionsByWorkingDirStmt, err = db.PrepareContext(ctx, listSessionsByWorkingDir); err != nil {
+		return nil, fmt.Errorf("error preparing query ListSessionsByWorkingDir: %w", err)
 	}
 	if q.listUserMessagesBySessionStmt, err = db.PrepareContext(ctx, listUserMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListUserMessagesBySession: %w", err)
+	}
+	if q.listUserMessagesByWorkingDirStmt, err = db.PrepareContext(ctx, listUserMessagesByWorkingDir); err != nil {
+		return nil, fmt.Errorf("error preparing query ListUserMessagesByWorkingDir: %w", err)
 	}
 	if q.recordFileReadStmt, err = db.PrepareContext(ctx, recordFileRead); err != nil {
 		return nil, fmt.Errorf("error preparing query RecordFileRead: %w", err)
@@ -255,9 +255,14 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getHourDayHeatmapStmt: %w", cerr)
 		}
 	}
-	if q.getLastSessionStmt != nil {
-		if cerr := q.getLastSessionStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getLastSessionStmt: %w", cerr)
+	if q.getLastGlobalSessionStmt != nil {
+		if cerr := q.getLastGlobalSessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getLastGlobalSessionStmt: %w", cerr)
+		}
+	}
+	if q.getLastSessionByWorkingDirStmt != nil {
+		if cerr := q.getLastSessionByWorkingDirStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getLastSessionByWorkingDirStmt: %w", cerr)
 		}
 	}
 	if q.getMCPOAuthClientStmt != nil {
@@ -320,14 +325,9 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getUsageByModelStmt: %w", cerr)
 		}
 	}
-	if q.listAllUserMessagesStmt != nil {
-		if cerr := q.listAllUserMessagesStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing listAllUserMessagesStmt: %w", cerr)
-		}
-	}
-	if q.listFilesByPathStmt != nil {
-		if cerr := q.listFilesByPathStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing listFilesByPathStmt: %w", cerr)
+	if q.listAllSessionsStmt != nil {
+		if cerr := q.listAllSessionsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listAllSessionsStmt: %w", cerr)
 		}
 	}
 	if q.listFilesBySessionStmt != nil {
@@ -335,19 +335,14 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listFilesBySessionStmt: %w", cerr)
 		}
 	}
-	if q.listLatestSessionFilesStmt != nil {
-		if cerr := q.listLatestSessionFilesStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing listLatestSessionFilesStmt: %w", cerr)
-		}
-	}
 	if q.listMessagesBySessionStmt != nil {
 		if cerr := q.listMessagesBySessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listMessagesBySessionStmt: %w", cerr)
 		}
 	}
-	if q.listNewFilesStmt != nil {
-		if cerr := q.listNewFilesStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing listNewFilesStmt: %w", cerr)
+	if q.listSessionFilesByPathStmt != nil {
+		if cerr := q.listSessionFilesByPathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listSessionFilesByPathStmt: %w", cerr)
 		}
 	}
 	if q.listSessionReadFilesStmt != nil {
@@ -355,14 +350,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listSessionReadFilesStmt: %w", cerr)
 		}
 	}
-	if q.listSessionsStmt != nil {
-		if cerr := q.listSessionsStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing listSessionsStmt: %w", cerr)
+	if q.listSessionsByWorkingDirStmt != nil {
+		if cerr := q.listSessionsByWorkingDirStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listSessionsByWorkingDirStmt: %w", cerr)
 		}
 	}
 	if q.listUserMessagesBySessionStmt != nil {
 		if cerr := q.listUserMessagesBySessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listUserMessagesBySessionStmt: %w", cerr)
+		}
+	}
+	if q.listUserMessagesByWorkingDirStmt != nil {
+		if cerr := q.listUserMessagesByWorkingDirStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listUserMessagesByWorkingDirStmt: %w", cerr)
 		}
 	}
 	if q.recordFileReadStmt != nil {
@@ -442,107 +442,107 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                             DBTX
-	tx                             *sql.Tx
-	createFileStmt                 *sql.Stmt
-	createMessageStmt              *sql.Stmt
-	createSessionStmt              *sql.Stmt
-	deleteFileStmt                 *sql.Stmt
-	deleteMCPOAuthClientStmt       *sql.Stmt
-	deleteMCPOAuthTokenStmt        *sql.Stmt
-	deleteMessageStmt              *sql.Stmt
-	deleteSessionStmt              *sql.Stmt
-	deleteSessionFilesStmt         *sql.Stmt
-	deleteSessionMessagesStmt      *sql.Stmt
-	getAllSessionMessagesStmt      *sql.Stmt
-	getAverageResponseTimeStmt     *sql.Stmt
-	getBranchPathStmt              *sql.Stmt
-	getFileStmt                    *sql.Stmt
-	getFileByPathAndSessionStmt    *sql.Stmt
-	getFileReadStmt                *sql.Stmt
-	getHourDayHeatmapStmt          *sql.Stmt
-	getLastSessionStmt             *sql.Stmt
-	getMCPOAuthClientStmt          *sql.Stmt
-	getMCPOAuthTokenStmt           *sql.Stmt
-	getMessageStmt                 *sql.Stmt
-	getMessageChildrenStmt         *sql.Stmt
-	getRecentActivityStmt          *sql.Stmt
-	getSessionByIDStmt             *sql.Stmt
-	getToolUsageStmt               *sql.Stmt
-	getTotalStatsStmt              *sql.Stmt
-	getUsageByDayStmt              *sql.Stmt
-	getUsageByDayOfWeekStmt        *sql.Stmt
-	getUsageByHourStmt             *sql.Stmt
-	getUsageByModelStmt            *sql.Stmt
-	listAllUserMessagesStmt        *sql.Stmt
-	listFilesByPathStmt            *sql.Stmt
-	listFilesBySessionStmt         *sql.Stmt
-	listLatestSessionFilesStmt     *sql.Stmt
-	listMessagesBySessionStmt      *sql.Stmt
-	listNewFilesStmt               *sql.Stmt
-	listSessionReadFilesStmt       *sql.Stmt
-	listSessionsStmt               *sql.Stmt
-	listUserMessagesBySessionStmt  *sql.Stmt
-	recordFileReadStmt             *sql.Stmt
-	renameSessionStmt              *sql.Stmt
-	updateMessageStmt              *sql.Stmt
-	updateSessionStmt              *sql.Stmt
-	updateSessionLeafStmt          *sql.Stmt
-	updateSessionTitleAndUsageStmt *sql.Stmt
-	upsertMCPOAuthClientStmt       *sql.Stmt
-	upsertMCPOAuthTokenStmt        *sql.Stmt
+	db                               DBTX
+	tx                               *sql.Tx
+	createFileStmt                   *sql.Stmt
+	createMessageStmt                *sql.Stmt
+	createSessionStmt                *sql.Stmt
+	deleteFileStmt                   *sql.Stmt
+	deleteMCPOAuthClientStmt         *sql.Stmt
+	deleteMCPOAuthTokenStmt          *sql.Stmt
+	deleteMessageStmt                *sql.Stmt
+	deleteSessionStmt                *sql.Stmt
+	deleteSessionFilesStmt           *sql.Stmt
+	deleteSessionMessagesStmt        *sql.Stmt
+	getAllSessionMessagesStmt        *sql.Stmt
+	getAverageResponseTimeStmt       *sql.Stmt
+	getBranchPathStmt                *sql.Stmt
+	getFileStmt                      *sql.Stmt
+	getFileByPathAndSessionStmt      *sql.Stmt
+	getFileReadStmt                  *sql.Stmt
+	getHourDayHeatmapStmt            *sql.Stmt
+	getLastGlobalSessionStmt         *sql.Stmt
+	getLastSessionByWorkingDirStmt   *sql.Stmt
+	getMCPOAuthClientStmt            *sql.Stmt
+	getMCPOAuthTokenStmt             *sql.Stmt
+	getMessageStmt                   *sql.Stmt
+	getMessageChildrenStmt           *sql.Stmt
+	getRecentActivityStmt            *sql.Stmt
+	getSessionByIDStmt               *sql.Stmt
+	getToolUsageStmt                 *sql.Stmt
+	getTotalStatsStmt                *sql.Stmt
+	getUsageByDayStmt                *sql.Stmt
+	getUsageByDayOfWeekStmt          *sql.Stmt
+	getUsageByHourStmt               *sql.Stmt
+	getUsageByModelStmt              *sql.Stmt
+	listAllSessionsStmt              *sql.Stmt
+	listFilesBySessionStmt           *sql.Stmt
+	listMessagesBySessionStmt        *sql.Stmt
+	listSessionFilesByPathStmt       *sql.Stmt
+	listSessionReadFilesStmt         *sql.Stmt
+	listSessionsByWorkingDirStmt     *sql.Stmt
+	listUserMessagesBySessionStmt    *sql.Stmt
+	listUserMessagesByWorkingDirStmt *sql.Stmt
+	recordFileReadStmt               *sql.Stmt
+	renameSessionStmt                *sql.Stmt
+	updateMessageStmt                *sql.Stmt
+	updateSessionStmt                *sql.Stmt
+	updateSessionLeafStmt            *sql.Stmt
+	updateSessionTitleAndUsageStmt   *sql.Stmt
+	upsertMCPOAuthClientStmt         *sql.Stmt
+	upsertMCPOAuthTokenStmt          *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                             tx,
-		tx:                             tx,
-		createFileStmt:                 q.createFileStmt,
-		createMessageStmt:              q.createMessageStmt,
-		createSessionStmt:              q.createSessionStmt,
-		deleteFileStmt:                 q.deleteFileStmt,
-		deleteMCPOAuthClientStmt:       q.deleteMCPOAuthClientStmt,
-		deleteMCPOAuthTokenStmt:        q.deleteMCPOAuthTokenStmt,
-		deleteMessageStmt:              q.deleteMessageStmt,
-		deleteSessionStmt:              q.deleteSessionStmt,
-		deleteSessionFilesStmt:         q.deleteSessionFilesStmt,
-		deleteSessionMessagesStmt:      q.deleteSessionMessagesStmt,
-		getAllSessionMessagesStmt:      q.getAllSessionMessagesStmt,
-		getAverageResponseTimeStmt:     q.getAverageResponseTimeStmt,
-		getBranchPathStmt:              q.getBranchPathStmt,
-		getFileStmt:                    q.getFileStmt,
-		getFileByPathAndSessionStmt:    q.getFileByPathAndSessionStmt,
-		getFileReadStmt:                q.getFileReadStmt,
-		getHourDayHeatmapStmt:          q.getHourDayHeatmapStmt,
-		getLastSessionStmt:             q.getLastSessionStmt,
-		getMCPOAuthClientStmt:          q.getMCPOAuthClientStmt,
-		getMCPOAuthTokenStmt:           q.getMCPOAuthTokenStmt,
-		getMessageStmt:                 q.getMessageStmt,
-		getMessageChildrenStmt:         q.getMessageChildrenStmt,
-		getRecentActivityStmt:          q.getRecentActivityStmt,
-		getSessionByIDStmt:             q.getSessionByIDStmt,
-		getToolUsageStmt:               q.getToolUsageStmt,
-		getTotalStatsStmt:              q.getTotalStatsStmt,
-		getUsageByDayStmt:              q.getUsageByDayStmt,
-		getUsageByDayOfWeekStmt:        q.getUsageByDayOfWeekStmt,
-		getUsageByHourStmt:             q.getUsageByHourStmt,
-		getUsageByModelStmt:            q.getUsageByModelStmt,
-		listAllUserMessagesStmt:        q.listAllUserMessagesStmt,
-		listFilesByPathStmt:            q.listFilesByPathStmt,
-		listFilesBySessionStmt:         q.listFilesBySessionStmt,
-		listLatestSessionFilesStmt:     q.listLatestSessionFilesStmt,
-		listMessagesBySessionStmt:      q.listMessagesBySessionStmt,
-		listNewFilesStmt:               q.listNewFilesStmt,
-		listSessionReadFilesStmt:       q.listSessionReadFilesStmt,
-		listSessionsStmt:               q.listSessionsStmt,
-		listUserMessagesBySessionStmt:  q.listUserMessagesBySessionStmt,
-		recordFileReadStmt:             q.recordFileReadStmt,
-		renameSessionStmt:              q.renameSessionStmt,
-		updateMessageStmt:              q.updateMessageStmt,
-		updateSessionStmt:              q.updateSessionStmt,
-		updateSessionLeafStmt:          q.updateSessionLeafStmt,
-		updateSessionTitleAndUsageStmt: q.updateSessionTitleAndUsageStmt,
-		upsertMCPOAuthClientStmt:       q.upsertMCPOAuthClientStmt,
-		upsertMCPOAuthTokenStmt:        q.upsertMCPOAuthTokenStmt,
+		db:                               tx,
+		tx:                               tx,
+		createFileStmt:                   q.createFileStmt,
+		createMessageStmt:                q.createMessageStmt,
+		createSessionStmt:                q.createSessionStmt,
+		deleteFileStmt:                   q.deleteFileStmt,
+		deleteMCPOAuthClientStmt:         q.deleteMCPOAuthClientStmt,
+		deleteMCPOAuthTokenStmt:          q.deleteMCPOAuthTokenStmt,
+		deleteMessageStmt:                q.deleteMessageStmt,
+		deleteSessionStmt:                q.deleteSessionStmt,
+		deleteSessionFilesStmt:           q.deleteSessionFilesStmt,
+		deleteSessionMessagesStmt:        q.deleteSessionMessagesStmt,
+		getAllSessionMessagesStmt:        q.getAllSessionMessagesStmt,
+		getAverageResponseTimeStmt:       q.getAverageResponseTimeStmt,
+		getBranchPathStmt:                q.getBranchPathStmt,
+		getFileStmt:                      q.getFileStmt,
+		getFileByPathAndSessionStmt:      q.getFileByPathAndSessionStmt,
+		getFileReadStmt:                  q.getFileReadStmt,
+		getHourDayHeatmapStmt:            q.getHourDayHeatmapStmt,
+		getLastGlobalSessionStmt:         q.getLastGlobalSessionStmt,
+		getLastSessionByWorkingDirStmt:   q.getLastSessionByWorkingDirStmt,
+		getMCPOAuthClientStmt:            q.getMCPOAuthClientStmt,
+		getMCPOAuthTokenStmt:             q.getMCPOAuthTokenStmt,
+		getMessageStmt:                   q.getMessageStmt,
+		getMessageChildrenStmt:           q.getMessageChildrenStmt,
+		getRecentActivityStmt:            q.getRecentActivityStmt,
+		getSessionByIDStmt:               q.getSessionByIDStmt,
+		getToolUsageStmt:                 q.getToolUsageStmt,
+		getTotalStatsStmt:                q.getTotalStatsStmt,
+		getUsageByDayStmt:                q.getUsageByDayStmt,
+		getUsageByDayOfWeekStmt:          q.getUsageByDayOfWeekStmt,
+		getUsageByHourStmt:               q.getUsageByHourStmt,
+		getUsageByModelStmt:              q.getUsageByModelStmt,
+		listAllSessionsStmt:              q.listAllSessionsStmt,
+		listFilesBySessionStmt:           q.listFilesBySessionStmt,
+		listMessagesBySessionStmt:        q.listMessagesBySessionStmt,
+		listSessionFilesByPathStmt:       q.listSessionFilesByPathStmt,
+		listSessionReadFilesStmt:         q.listSessionReadFilesStmt,
+		listSessionsByWorkingDirStmt:     q.listSessionsByWorkingDirStmt,
+		listUserMessagesBySessionStmt:    q.listUserMessagesBySessionStmt,
+		listUserMessagesByWorkingDirStmt: q.listUserMessagesByWorkingDirStmt,
+		recordFileReadStmt:               q.recordFileReadStmt,
+		renameSessionStmt:                q.renameSessionStmt,
+		updateMessageStmt:                q.updateMessageStmt,
+		updateSessionStmt:                q.updateSessionStmt,
+		updateSessionLeafStmt:            q.updateSessionLeafStmt,
+		updateSessionTitleAndUsageStmt:   q.updateSessionTitleAndUsageStmt,
+		upsertMCPOAuthClientStmt:         q.upsertMCPOAuthClientStmt,
+		upsertMCPOAuthTokenStmt:          q.upsertMCPOAuthTokenStmt,
 	}
 }

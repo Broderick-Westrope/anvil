@@ -43,7 +43,7 @@ func newTestService(t *testing.T, opts ...ServiceOption) (Service, string) {
 
 	q := db.New(conn)
 	sessions := session.NewService(q, conn)
-	sess, err := sessions.Create(t.Context(), "test")
+	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
 	require.NoError(t, err)
 
 	svc := NewService(q, append([]ServiceOption{WithConn(conn)}, opts...)...)
@@ -491,7 +491,7 @@ func TestFlush_WaitsForInFlightWrite(t *testing.T) {
 
 	q := db.New(conn)
 	sessions := session.NewService(q, conn)
-	sess, err := sessions.Create(t.Context(), "test")
+	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
 	require.NoError(t, err)
 
 	slow := &slowUpdateQuerier{
@@ -555,7 +555,7 @@ func TestFlushAll_WaitsForInFlightWrite(t *testing.T) {
 
 	q := db.New(conn)
 	sessions := session.NewService(q, conn)
-	sess, err := sessions.Create(t.Context(), "test")
+	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
 	require.NoError(t, err)
 
 	slow := &slowUpdateQuerier{
@@ -648,7 +648,7 @@ func TestUpdate_StructuralFlushUsesMustDeliver(t *testing.T) {
 
 			q := db.New(conn)
 			sessions := session.NewService(q, conn)
-			sess, err := sessions.Create(t.Context(), "test")
+			sess, err := sessions.Create(t.Context(), "test", t.TempDir())
 			require.NoError(t, err)
 
 			// Replace the default broker with a tiny buffer + short

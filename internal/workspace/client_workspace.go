@@ -96,8 +96,8 @@ func (w *ClientWorkspace) GetSession(ctx context.Context, sessionID string) (ses
 	return protoToSession(*sess), nil
 }
 
-func (w *ClientWorkspace) ListSessions(ctx context.Context) ([]session.Session, error) {
-	protoSessions, err := w.client.ListSessions(ctx, w.workspaceID())
+func (w *ClientWorkspace) ListSessions(ctx context.Context, workingDir string) ([]session.Session, error) {
+	protoSessions, err := w.client.ListSessions(ctx, w.workspaceID(), workingDir)
 	if err != nil {
 		return nil, err
 	}
@@ -150,8 +150,8 @@ func (w *ClientWorkspace) ListUserMessages(ctx context.Context, sessionID string
 	return protoToMessages(msgs), nil
 }
 
-func (w *ClientWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Message, error) {
-	msgs, err := w.client.ListAllUserMessages(ctx, w.workspaceID())
+func (w *ClientWorkspace) ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]message.Message, error) {
+	msgs, err := w.client.ListUserMessagesByWorkingDir(ctx, w.workspaceID(), workingDir)
 	if err != nil {
 		return nil, err
 	}

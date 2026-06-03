@@ -55,7 +55,7 @@ var logsCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load configuration: %v", err)
 		}
-		logsFile := filepath.Join(cfg.Config().Options.DataDirectory, "logs", "anvil.log")
+		logsFile := filepath.Join(cfg.Config().Options.ProjectDirectory, "logs", "anvil.log")
 		_, err = os.Stat(logsFile)
 		if os.IsNotExist(err) {
 			log.Warn("Looks like you are not in an anvil project. No logs found.")

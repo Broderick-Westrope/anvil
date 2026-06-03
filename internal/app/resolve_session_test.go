@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
@@ -22,7 +23,7 @@ func (m *mockSessionService) Subscribe(context.Context) <-chan pubsub.Event[sess
 	return make(chan pubsub.Event[session.Session])
 }
 
-func (m *mockSessionService) Create(_ context.Context, title string) (session.Session, error) {
+func (m *mockSessionService) Create(_ context.Context, title, _ string) (session.Session, error) {
 	s := session.Session{ID: "new-session-id", Title: title}
 	m.created = append(m.created, s)
 	return s, nil
@@ -45,14 +46,21 @@ func (m *mockSessionService) Get(_ context.Context, id string) (session.Session,
 	return session.Session{}, sql.ErrNoRows
 }
 
-func (m *mockSessionService) GetLast(_ context.Context) (session.Session, error) {
+func (m *mockSessionService) GetLast(_ context.Context, _ string) (session.Session, error) {
 	if len(m.sessions) > 0 {
 		return m.sessions[0], nil
 	}
 	return session.Session{}, sql.ErrNoRows
 }
 
-func (m *mockSessionService) List(context.Context) ([]session.Session, error) {
+func (m *mockSessionService) GetLastGlobal(_ context.Context) (session.Session, error) {
+	if len(m.sessions) > 0 {
+		return m.sessions[0], nil
+	}
+	return session.Session{}, sql.ErrNoRows
+}
+
+func (m *mockSessionService) List(_ context.Context, _ string) ([]session.Session, error) {
 	return m.sessions, nil
 }
 
@@ -93,13 +101,16 @@ func (m *mockSessionService) IsAgentToolSession(sessionID string) bool {
 	return ok
 }
 
-func newTestApp(sessions session.Service) *App {
-	return &App{Sessions: sessions}
+func newTestApp(t *testing.T, sessions session.Service) *App {
+	t.Helper()
+	store, err := config.Init(t.TempDir(), "", false)
+	require.NoError(t, err)
+	return &App{Sessions: sessions, config: store}
 }
 
 func TestResolveSession_NewSession(t *testing.T) {
 	mock := &mockSessionService{}
-	app := newTestApp(mock)
+	app := newTestApp(t, mock)
 
 	sess, err := app.resolveSession(t.Context(), "", false)
 	require.NoError(t, err)
@@ -113,7 +124,7 @@ func TestResolveSession_ContinueByID(t *testing.T) {
 			{ID: "existing-id", Title: "Old session"},
 		},
 	}
-	app := newTestApp(mock)
+	app := newTestApp(t, mock)
 
 	sess, err := app.resolveSession(t.Context(), "existing-id", false)
 	require.NoError(t, err)
@@ -124,7 +135,7 @@ func TestResolveSession_ContinueByID(t *testing.T) {
 
 func TestResolveSession_ContinueByID_NotFound(t *testing.T) {
 	mock := &mockSessionService{}
-	app := newTestApp(mock)
+	app := newTestApp(t, mock)
 
 	_, err := app.resolveSession(t.Context(), "nonexistent", false)
 	require.Error(t, err)
@@ -137,7 +148,7 @@ func TestResolveSession_ContinueByID_ChildSession(t *testing.T) {
 			{ID: "child-id", ParentSessionID: "parent-id", Title: "Child session"},
 		},
 	}
-	app := newTestApp(mock)
+	app := newTestApp(t, mock)
 
 	_, err := app.resolveSession(t.Context(), "child-id", false)
 	require.Error(t, err)
@@ -146,7 +157,7 @@ func TestResolveSession_ContinueByID_ChildSession(t *testing.T) {
 
 func TestResolveSession_ContinueByID_AgentToolSession(t *testing.T) {
 	mock := &mockSessionService{}
-	app := newTestApp(mock)
+	app := newTestApp(t, mock)
 
 	_, err := app.resolveSession(t.Context(), "msg123$$tool456", false)
 	require.Error(t, err)
@@ -160,7 +171,7 @@ func TestResolveSession_Last(t *testing.T) {
 			{ID: "older", Title: "Older session"},
 		},
 	}
-	app := newTestApp(mock)
+	app := newTestApp(t, mock)
 
 	sess, err := app.resolveSession(t.Context(), "", true)
 	require.NoError(t, err)
@@ -170,7 +181,7 @@ func TestResolveSession_Last(t *testing.T) {
 
 func TestResolveSession_Last_NoSessions(t *testing.T) {
 	mock := &mockSessionService{}
-	app := newTestApp(mock)
+	app := newTestApp(t, mock)
 
 	_, err := app.resolveSession(t.Context(), "", true)
 	require.Error(t, err)

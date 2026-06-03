@@ -114,10 +114,9 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Release the shared database connection on shutdown. The pool
 	// closes the underlying *sql.DB when the last reference is released.
-	dataDir := cfg.Options.DataDirectory
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
-		func(context.Context) error { return db.Release(dataDir) },
+		func(context.Context) error { return db.ReleaseGlobal() },
 		func(ctx context.Context) error { return mcp.Close(ctx) },
 	)
 
@@ -193,14 +192,16 @@ func (app *App) resolveSession(ctx context.Context, continueSessionID string, us
 		return sess, nil
 
 	case useLast:
-		sess, err := app.Sessions.GetLast(ctx)
+		workingDir := app.config.WorkingDir()
+		sess, err := app.Sessions.GetLast(ctx, workingDir)
 		if err != nil {
 			return session.Session{}, fmt.Errorf("no sessions found to continue")
 		}
 		return sess, nil
 
 	default:
-		return app.Sessions.Create(ctx, agent.DefaultSessionName)
+		workingDir := app.config.WorkingDir()
+		return app.Sessions.Create(ctx, agent.DefaultSessionName, workingDir)
 	}
 }
 

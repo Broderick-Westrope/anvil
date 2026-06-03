@@ -21,7 +21,7 @@ type Service interface {
 	// Returns zero time if never read.
 	LastReadTime(ctx context.Context, sessionID, path string) time.Time
 
-	// ListReadFiles returns the paths of all files read in a session.
+	// ListReadFiles returns the absolute paths of all files read in a session.
 	ListReadFiles(ctx context.Context, sessionID string) ([]string, error)
 }
 
@@ -38,7 +38,7 @@ func NewService(q *db.Queries) Service {
 func (s *service) RecordRead(ctx context.Context, sessionID, path string) {
 	if err := s.q.RecordFileRead(ctx, db.RecordFileReadParams{
 		SessionID: sessionID,
-		Path:      relpath(path),
+		Path:      abspath(path),
 	}); err != nil {
 		slog.Error("Error recording file read", "error", err, "file", path)
 	}
@@ -49,7 +49,7 @@ func (s *service) RecordRead(ctx context.Context, sessionID, path string) {
 func (s *service) LastReadTime(ctx context.Context, sessionID, path string) time.Time {
 	readFile, err := s.q.GetFileRead(ctx, db.GetFileReadParams{
 		SessionID: sessionID,
-		Path:      relpath(path),
+		Path:      abspath(path),
 	})
 	if err != nil {
 		return time.Time{}
@@ -58,36 +58,30 @@ func (s *service) LastReadTime(ctx context.Context, sessionID, path string) time
 	return time.Unix(readFile.ReadAt, 0)
 }
 
-func relpath(path string) string {
+// abspath returns the cleaned absolute form of path.
+func abspath(path string) string {
 	path = filepath.Clean(path)
-	basepath, err := os.Getwd()
-	if err != nil {
-		slog.Warn("Error getting basepath", "error", err)
+	if filepath.IsAbs(path) {
 		return path
 	}
-	relpath, err := filepath.Rel(basepath, path)
+	wd, err := os.Getwd()
 	if err != nil {
-		slog.Warn("Error getting relpath", "error", err)
+		slog.Warn("Error getting working directory", "error", err)
 		return path
 	}
-	return relpath
+	return filepath.Join(wd, path)
 }
 
-// ListReadFiles returns the paths of all files read in a session.
+// ListReadFiles returns the absolute paths of all files read in a session.
 func (s *service) ListReadFiles(ctx context.Context, sessionID string) ([]string, error) {
 	readFiles, err := s.q.ListSessionReadFiles(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("listing read files: %w", err)
 	}
 
-	basepath, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("getting working directory: %w", err)
-	}
-
 	paths := make([]string, 0, len(readFiles))
 	for _, rf := range readFiles {
-		paths = append(paths, filepath.Join(basepath, rf.Path))
+		paths = append(paths, rf.Path)
 	}
 	return paths, nil
 }

@@ -17,7 +17,6 @@ import (
 // and returns a db.Querier for use in tests.
 func setupTestDB(t *testing.T) db.Querier {
 	t.Helper()
-	t.Cleanup(db.ResetPool)
 
 	dataDir := t.TempDir()
 	conn, err := db.Connect(context.Background(), dataDir)

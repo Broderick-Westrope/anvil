@@ -38,6 +38,7 @@ var sessionCmd = &cobra.Command{
 
 var (
 	sessionListJSON   bool
+	sessionListAll    bool
 	sessionShowJSON   bool
 	sessionLastJSON   bool
 	sessionDeleteJSON bool
@@ -47,8 +48,8 @@ var (
 var sessionListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List all sessions",
-	Long:    "List all sessions. Use --json for machine-readable output.",
+	Short:   "List sessions for the current directory",
+	Long:    "List sessions for the current directory. Use --all for all sessions. Use --json for machine-readable output.",
 	RunE:    runSessionList,
 }
 
@@ -86,6 +87,7 @@ var sessionRenameCmd = &cobra.Command{
 
 func init() {
 	sessionListCmd.Flags().BoolVar(&sessionListJSON, "json", false, "output in JSON format")
+	sessionListCmd.Flags().BoolVar(&sessionListAll, "all", false, "list sessions from all projects")
 	sessionShowCmd.Flags().BoolVar(&sessionShowJSON, "json", false, "output in JSON format")
 	sessionLastCmd.Flags().BoolVar(&sessionLastJSON, "json", false, "output in JSON format")
 	sessionDeleteCmd.Flags().BoolVar(&sessionDeleteJSON, "json", false, "output in JSON format")
@@ -112,9 +114,9 @@ func sessionSetup(cmd *cobra.Command) (context.Context, *sessionServices, func()
 		return nil, nil, nil, fmt.Errorf("failed to initialize config: %w", err)
 	}
 	if dataDir == "" {
-		dataDir = cfg.Config().Options.DataDirectory
+		dataDir = cfg.Config().Options.ProjectDirectory
 	}
-	conn, err := db.Connect(ctx, dataDir)
+	conn, err := db.ConnectGlobal(ctx)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -135,7 +137,15 @@ func runSessionList(cmd *cobra.Command, _ []string) error {
 	}
 	defer cleanup()
 
-	list, err := svc.sessions.List(ctx)
+	workingDir := ""
+	if !sessionListAll {
+		workingDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+	}
+
+	list, err := svc.sessions.List(ctx, workingDir)
 	if err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}
@@ -212,7 +222,7 @@ func resolveSessionID(ctx context.Context, svc session.Service, id string) (sess
 	}
 
 	// List all sessions and check for hash matches
-	sessions, err := svc.List(ctx)
+	sessions, err := svc.List(ctx, "")
 	if err != nil {
 		return session.Session{}, err
 	}
@@ -344,16 +354,15 @@ func runSessionLast(cmd *cobra.Command, _ []string) error {
 	}
 	defer cleanup()
 
-	list, err := svc.sessions.List(ctx)
+	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to list sessions: %w", err)
+		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	if len(list) == 0 {
+	sess, err := svc.sessions.GetLast(ctx, cwd)
+	if err != nil {
 		return fmt.Errorf("no sessions found")
 	}
-
-	sess := list[0]
 
 	msgs, err := svc.messages.List(ctx, sess.ID)
 	if err != nil {

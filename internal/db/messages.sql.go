@@ -263,48 +263,6 @@ func (q *Queries) GetMessageChildren(ctx context.Context, parentID sql.NullStrin
 	return items, nil
 }
 
-const listAllUserMessages = `-- name: ListAllUserMessages :many
-SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
-FROM messages
-WHERE role = 'user'
-ORDER BY created_at DESC
-`
-
-func (q *Queries) ListAllUserMessages(ctx context.Context) ([]Message, error) {
-	rows, err := q.query(ctx, q.listAllUserMessagesStmt, listAllUserMessages)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Message{}
-	for rows.Next() {
-		var i Message
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.Role,
-			&i.Parts,
-			&i.Model,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.FinishedAt,
-			&i.Provider,
-			&i.ParentMessageID,
-			&i.MessageType,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listMessagesBySession = `-- name: ListMessagesBySession :many
 SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
@@ -356,6 +314,49 @@ ORDER BY created_at DESC
 
 func (q *Queries) ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error) {
 	rows, err := q.query(ctx, q.listUserMessagesBySessionStmt, listUserMessagesBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Role,
+			&i.Parts,
+			&i.Model,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+			&i.Provider,
+			&i.ParentMessageID,
+			&i.MessageType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserMessagesByWorkingDir = `-- name: ListUserMessagesByWorkingDir :many
+SELECT m.id, m.session_id, m.role, m.parts, m.model, m.created_at, m.updated_at, m.finished_at, m.provider, m.parent_message_id, m.message_type
+FROM messages m
+JOIN sessions s ON m.session_id = s.id
+WHERE m.role = 'user' AND s.working_dir = ?
+ORDER BY m.created_at DESC
+`
+
+func (q *Queries) ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error) {
+	rows, err := q.query(ctx, q.listUserMessagesByWorkingDirStmt, listUserMessagesByWorkingDir, workingDir)
 	if err != nil {
 		return nil, err
 	}

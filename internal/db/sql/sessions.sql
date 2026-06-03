@@ -3,6 +3,7 @@ INSERT INTO sessions (
     id,
     parent_session_id,
     title,
+    working_dir,
     message_count,
     prompt_tokens,
     completion_tokens,
@@ -10,6 +11,7 @@ INSERT INTO sessions (
     updated_at,
     created_at
 ) VALUES (
+    ?,
     ?,
     ?,
     ?,
@@ -26,16 +28,30 @@ SELECT *
 FROM sessions
 WHERE id = ? LIMIT 1;
 
--- name: GetLastSession :one
+-- name: GetLastSessionByWorkingDir :one
 SELECT *
 FROM sessions
+WHERE working_dir = ? AND parent_session_id IS NULL
 ORDER BY updated_at DESC
 LIMIT 1;
 
--- name: ListSessions :many
+-- name: GetLastGlobalSession :one
 SELECT *
 FROM sessions
-WHERE parent_session_id is NULL
+WHERE parent_session_id IS NULL
+ORDER BY updated_at DESC
+LIMIT 1;
+
+-- name: ListSessionsByWorkingDir :many
+SELECT *
+FROM sessions
+WHERE parent_session_id IS NULL AND working_dir = ?
+ORDER BY updated_at DESC;
+
+-- name: ListAllSessions :many
+SELECT *
+FROM sessions
+WHERE parent_session_id IS NULL
 ORDER BY updated_at DESC;
 
 -- name: UpdateSession :one

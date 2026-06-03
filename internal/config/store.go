@@ -660,19 +660,19 @@ func (s *ConfigStore) ReloadFromDisk(ctx context.Context) error {
 	// Apply defaults (using existing data directory if set)
 	var dataDir string
 	if s.config != nil && s.config.Options != nil {
-		dataDir = s.config.Options.DataDirectory
+		dataDir = s.config.Options.ProjectDirectory
 	}
 	cfg.setDefaults(s.workingDir, dataDir)
 
 	// Merge workspace config if present
-	workspacePath := filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName))
+	workspacePath := filepath.Join(cfg.Options.ProjectDirectory, fmt.Sprintf("%s.json", appName))
 	if wsData, err := os.ReadFile(workspacePath); err == nil && len(wsData) > 0 {
 		if !json.Valid(wsData) {
 			return fmt.Errorf("invalid JSON in config file %s", workspacePath)
 		}
 		merged, mergeErr := loadFromBytes(append([][]byte{mustMarshalConfig(cfg)}, wsData))
 		if mergeErr == nil {
-			dataDir := cfg.Options.DataDirectory
+			dataDir := cfg.Options.ProjectDirectory
 			*cfg = *merged
 			cfg.setDefaults(s.workingDir, dataDir)
 			loadedPaths = append(loadedPaths, workspacePath)

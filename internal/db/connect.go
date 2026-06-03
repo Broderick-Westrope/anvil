@@ -6,10 +6,12 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/pressly/goose/v3"
 )
 
@@ -61,7 +63,43 @@ func Connect(ctx context.Context, dataDir string) (*sql.DB, error) {
 	}
 
 	dbPath := filepath.Join(dataDir, "anvil.db")
+	return connectToPath(ctx, dbPath)
+}
 
+// Release decrements the reference count for the database at the given
+// data directory. When the count reaches zero the underlying connection
+// is closed and removed from the pool.
+func Release(dataDir string) error {
+	dbPath := filepath.Join(dataDir, "anvil.db")
+	return releaseByPath(dbPath)
+}
+
+// ConnectGlobal opens a SQLite database connection for the global data
+// directory and runs migrations. It behaves like [Connect] but derives
+// the database path from [config.GlobalDataDir]. The parent directory
+// is created if it does not exist. Callers must pair each ConnectGlobal
+// with a [ReleaseGlobal] when they no longer need the connection.
+func ConnectGlobal(ctx context.Context) (*sql.DB, error) {
+	dir := config.GlobalDataDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("failed to create global data directory: %w", err)
+	}
+
+	dbPath := filepath.Join(dir, "anvil.db")
+	return connectToPath(ctx, dbPath)
+}
+
+// ReleaseGlobal decrements the reference count for the global database.
+// When the count reaches zero the underlying connection is closed and
+// removed from the pool.
+func ReleaseGlobal() error {
+	dbPath := filepath.Join(config.GlobalDataDir(), "anvil.db")
+	return releaseByPath(dbPath)
+}
+
+// connectToPath is the shared implementation for opening a pooled
+// SQLite connection at the given database file path.
+func connectToPath(ctx context.Context, dbPath string) (*sql.DB, error) {
 	// Resolve to an absolute path so that different relative paths to
 	// the same file share a single connection.
 	absPath, err := filepath.Abs(dbPath)
@@ -110,11 +148,9 @@ func Connect(ctx context.Context, dataDir string) (*sql.DB, error) {
 	return conn, nil
 }
 
-// Release decrements the reference count for the database at the given
-// data directory. When the count reaches zero the underlying connection
-// is closed and removed from the pool.
-func Release(dataDir string) error {
-	dbPath := filepath.Join(dataDir, "anvil.db")
+// releaseByPath is the shared implementation for releasing a pooled
+// connection identified by its database file path.
+func releaseByPath(dbPath string) error {
 	absPath, err := filepath.Abs(dbPath)
 	if err != nil {
 		absPath = dbPath
@@ -146,6 +182,37 @@ func ResetPool() {
 		entry.db.Close()
 		delete(pool, path)
 	}
+}
+
+// OpenAndMigrateSource opens a SQLite database at the given path, runs
+// goose migrations to bring it to the current schema, and returns it.
+// The caller is responsible for closing the returned DB. This is
+// intended for opening per-project databases during data migration into
+// the global database.
+func OpenAndMigrateSource(ctx context.Context, sourcePath string) (*sql.DB, error) {
+	sourceDB, err := openDB(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open source database: %w", err)
+	}
+
+	sourceDB.SetMaxOpenConns(1)
+
+	if err := sourceDB.PingContext(ctx); err != nil {
+		sourceDB.Close()
+		return nil, fmt.Errorf("failed to ping source database: %w", err)
+	}
+
+	if err := initGoose(); err != nil {
+		sourceDB.Close()
+		return nil, fmt.Errorf("failed to initialize goose: %w", err)
+	}
+
+	if err := goose.Up(sourceDB, "migrations"); err != nil {
+		sourceDB.Close()
+		return nil, fmt.Errorf("failed to apply migrations to source: %w", err)
+	}
+
+	return sourceDB, nil
 }
 
 func initGoose() error {

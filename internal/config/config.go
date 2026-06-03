@@ -22,9 +22,9 @@ import (
 )
 
 const (
-	appName              = "anvil"
-	defaultDataDirectory = ".anvil"
-	defaultInitializeAs  = "AGENTS.md"
+	appName                 = "anvil"
+	defaultProjectDirectory = ".anvil"
+	defaultInitializeAs     = "AGENTS.md"
 )
 
 var defaultContextPaths = []string{
@@ -231,7 +231,7 @@ type MCPConfig struct {
 	ClientID     string      `json:"clientId,omitempty" jsonschema:"description=OAuth client ID for pre-registered clients"`
 	ClientSecret string      `json:"clientSecret,omitempty" jsonschema:"description=OAuth client secret (supports shell expansion via $VAR or $(cmd))"`
 	Scopes       []string    `json:"scopes,omitempty" jsonschema:"description=OAuth scopes to request during authorization"`
-	RedirectURI  string      `json:"redirectUri,omitempty" jsonschema:"description=Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"` 
+	RedirectURI  string      `json:"redirectUri,omitempty" jsonschema:"description=Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"`
 }
 
 type LSPConfig struct {
@@ -277,11 +277,12 @@ type Options struct {
 	Debug                bool        `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
 	DebugLSP             bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
-	// DataDirectory is where Anvil keeps per-project state such as
-	// the SQLite database and workspace overrides. Relative paths are
+	// ProjectDirectory is where Anvil keeps per-project state such as
+	// logs, workspace config, and .gitignore. Relative paths are
 	// resolved against the working directory; absolute paths are used
 	// verbatim. After defaulting the stored value is always absolute.
-	DataDirectory             string   `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data. Relative paths are resolved against the working directory; absolute paths are used as-is.,default=.anvil,example=.anvil"`
+	ProjectDirectory          string   `json:"project_directory,omitempty" jsonschema:"description=Directory for per-project state (logs\\, workspace config\\, .gitignore). Relative paths are resolved against the working directory; absolute paths are used as-is.,default=.anvil,example=.anvil"`
+	DeprecatedDataDirectory   string   `json:"data_directory,omitempty" jsonschema:"-"`
 	DisabledTools             []string `json:"disabled_tools,omitempty" jsonschema:"description=List of built-in tools to disable and hide from the agent,example=bash,example=sourcegraph"`
 	DisableProviderAutoUpdate bool     `json:"disable_provider_auto_update,omitempty" jsonschema:"description=Disable providers auto-update,default=false"`
 	DisableDefaultProviders   bool     `json:"disable_default_providers,omitempty" jsonschema:"description=Ignore all default/embedded providers. When enabled\\, providers must be fully specified in the config file with base_url\\, models\\, and api_key - no merging with defaults occurs,default=false"`

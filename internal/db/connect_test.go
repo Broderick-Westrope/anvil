@@ -52,3 +52,65 @@ func TestRelease_NoopForUnknownDataDir(t *testing.T) {
 
 	require.NoError(t, Release("/nonexistent/path"), "releasing unknown data dir should not error")
 }
+
+func TestConnectGlobal_OpensAndReleasesConnection(t *testing.T) {
+	t.Cleanup(ResetPool)
+
+	globalDir := t.TempDir()
+	t.Setenv("ANVIL_GLOBAL_DATA", globalDir)
+
+	conn, err := ConnectGlobal(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+
+	// Connection should be usable.
+	require.NoError(t, conn.PingContext(context.Background()))
+
+	// Releasing should close it.
+	require.NoError(t, ReleaseGlobal())
+	require.Error(t, conn.PingContext(context.Background()), "connection should be closed after release")
+}
+
+func TestConnectGlobal_SharesPoolWithConnect(t *testing.T) {
+	t.Cleanup(ResetPool)
+
+	globalDir := t.TempDir()
+	t.Setenv("ANVIL_GLOBAL_DATA", globalDir)
+
+	// Open via ConnectGlobal.
+	conn1, err := ConnectGlobal(context.Background())
+	require.NoError(t, err)
+
+	// Open the same path via Connect.
+	conn2, err := Connect(context.Background(), globalDir)
+	require.NoError(t, err)
+
+	require.Same(t, conn1, conn2, "ConnectGlobal and Connect should share the same pooled connection")
+
+	require.NoError(t, Release(globalDir))
+	require.NoError(t, ReleaseGlobal())
+}
+
+func TestConnectGlobal_CreatesDirectoryIfMissing(t *testing.T) {
+	t.Cleanup(ResetPool)
+
+	// Point ANVIL_GLOBAL_DATA at a subdirectory that does not exist.
+	base := t.TempDir()
+	nested := base + "/deep/nested/dir"
+	t.Setenv("ANVIL_GLOBAL_DATA", nested)
+
+	conn, err := ConnectGlobal(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+
+	require.NoError(t, ReleaseGlobal())
+}
+
+func TestReleaseGlobal_NoopWhenNotConnected(t *testing.T) {
+	t.Cleanup(ResetPool)
+
+	globalDir := t.TempDir()
+	t.Setenv("ANVIL_GLOBAL_DATA", globalDir)
+
+	require.NoError(t, ReleaseGlobal(), "releasing without prior connect should not error")
+}

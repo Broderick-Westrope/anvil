@@ -209,7 +209,7 @@ func buildCommandSources(cfg *config.Config) []commandSource {
 			source: "",
 		},
 		{
-			path:   filepath.Join(cfg.Options.DataDirectory, "commands"),
+			path:   filepath.Join(cfg.Options.ProjectDirectory, "commands"),
 			prefix: projectCommandPrefix,
 			source: "project",
 		},

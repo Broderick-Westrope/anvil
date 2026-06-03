@@ -36,6 +36,7 @@ type Session struct {
 	input              textinput.Model
 	selectedSessionInx int
 	sessions           []session.Session
+	showAll            bool
 
 	sessionsMode sessionsMode
 
@@ -50,6 +51,7 @@ type Session struct {
 		CancelRename  key.Binding
 		ConfirmDelete key.Binding
 		CancelDelete  key.Binding
+		ToggleAll     key.Binding
 		Close         key.Binding
 	}
 }
@@ -61,7 +63,7 @@ func NewSessions(com *common.Common, selectedSessionID string) (*Session, error)
 	s := new(Session)
 	s.sessionsMode = sessionsModeNormal
 	s.com = com
-	sessions, err := com.Workspace.ListSessions(context.TODO())
+	sessions, err := com.Workspace.ListSessions(context.TODO(), com.Workspace.WorkingDir())
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +131,10 @@ func NewSessions(com *common.Common, selectedSessionID string) (*Session, error)
 		key.WithHelp("n", "cancel"),
 	)
 	s.keyMap.Close = CloseKey
+	s.keyMap.ToggleAll = key.NewBinding(
+		key.WithKeys("ctrl+a"),
+		key.WithHelp("ctrl+a", "all projects"),
+	)
 
 	return s, nil
 }
@@ -177,6 +183,9 @@ func (s *Session) HandleMsg(msg tea.Msg) Action {
 			switch {
 			case key.Matches(msg, s.keyMap.Close):
 				return ActionClose{}
+			case key.Matches(msg, s.keyMap.ToggleAll):
+				s.showAll = !s.showAll
+				s.reloadSessions()
 			case key.Matches(msg, s.keyMap.Rename):
 				s.sessionsMode = sessionsModeUpdating
 				s.list.SetItems(sessionItems(s.com.Styles, sessionsModeUpdating, s.sessions...)...)
@@ -253,7 +262,11 @@ func (s *Session) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	var cur *tea.Cursor
 	rc := NewRenderContext(t, width)
-	rc.Title = "Sessions"
+	if s.showAll {
+		rc.Title = "Sessions (all)"
+	} else {
+		rc.Title = "Sessions"
+	}
 	switch s.sessionsMode {
 	case sessionsModeDeleting:
 		rc.TitleStyle = t.Dialog.Sessions.DeletingTitle
@@ -413,6 +426,23 @@ func (s *Session) isCurrentSessionBusy() bool {
 	return s.com.Workspace.AgentIsSessionBusy(sessionItem.ID())
 }
 
+// reloadSessions fetches sessions based on the showAll toggle and
+// rebuilds the list.
+func (s *Session) reloadSessions() {
+	var workingDir string
+	if !s.showAll {
+		workingDir = s.com.Workspace.WorkingDir()
+	}
+	sessions, err := s.com.Workspace.ListSessions(context.TODO(), workingDir)
+	if err != nil {
+		return
+	}
+	s.sessions = sessions
+	s.list.SetItems(sessionItems(s.com.Styles, sessionsModeNormal, s.sessions...)...)
+	s.list.SelectFirst()
+	s.list.ScrollToSelected()
+}
+
 // ShortHelp implements [help.KeyMap].
 func (s *Session) ShortHelp() []key.Binding {
 	switch s.sessionsMode {
@@ -431,6 +461,7 @@ func (s *Session) ShortHelp() []key.Binding {
 			s.keyMap.UpDown,
 			s.keyMap.Rename,
 			s.keyMap.Delete,
+			s.keyMap.ToggleAll,
 			s.keyMap.Select,
 			s.keyMap.Close,
 		}
@@ -444,6 +475,7 @@ func (s *Session) FullHelp() [][]key.Binding {
 		s.keyMap.UpDown,
 		s.keyMap.Rename,
 		s.keyMap.Delete,
+		s.keyMap.ToggleAll,
 		s.keyMap.Select,
 		s.keyMap.Close,
 	}

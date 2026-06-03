@@ -490,7 +490,7 @@ func (m *UI) loadInitialSession() tea.Cmd {
 		return m.loadSession(m.initialSessionID)
 	case m.continueLastSession:
 		return func() tea.Msg {
-			sessions, err := m.com.Workspace.ListSessions(context.Background())
+			sessions, err := m.com.Workspace.ListSessions(context.Background(), m.com.Workspace.WorkingDir())
 			if err != nil || len(sessions) == 0 {
 				return nil
 			}

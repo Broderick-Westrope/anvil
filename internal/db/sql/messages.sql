@@ -48,11 +48,12 @@ FROM messages
 WHERE session_id = ? AND role = 'user'
 ORDER BY created_at DESC;
 
--- name: ListAllUserMessages :many
-SELECT *
-FROM messages
-WHERE role = 'user'
-ORDER BY created_at DESC;
+-- name: ListUserMessagesByWorkingDir :many
+SELECT m.*
+FROM messages m
+JOIN sessions s ON m.session_id = s.id
+WHERE m.role = 'user' AND s.working_dir = ?
+ORDER BY m.created_at DESC;
 
 -- name: GetBranchPath :many
 WITH RECURSIVE branch AS (
