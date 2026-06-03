@@ -88,19 +88,33 @@ Out:
 - The enabled set is derived OUTSIDE `PrepareStep`, before the agent run
   begins, by scanning the raw branch path from `getSessionMessages` (which
   returns both filtered and raw message lists). This derived set is stored
-  in a closure variable captured by `PrepareStep` — following the same
-  pattern as `getLeaf`/`setLeaf` closures in `agent.go`.
-- `PrepareStep` uses the closure variable to filter: before copying tools, it
+  in a `LazyMCPState` struct injected into the context via a context key —
+  both `PrepareStep` and the `enable_mcp` tool read/write from this same
+  context value.
+- `PrepareStep` uses the context state to filter: before copying tools, it
   excludes tools belonging to lazy MCPs that are not in the enabled set.
-- When the agent's own `enable_mcp` tool call completes, the closure variable
-  is updated immediately (via the tool's Run callback), so the next
-  `PrepareStep` in the same turn sees the change.
+- The initial `fantasy.WithTools` call at agent construction (`agent.go:223`)
+  must also be filtered — otherwise lazy tools leak into the first LLM call.
+- When the agent's own `enable_mcp` tool call completes, it updates the
+  `LazyMCPState` in context immediately, so the next `PrepareStep` in the
+  same turn sees the change.
 - `enable_mcp` does NOT call `SetTools`. It only produces a tool-call message
-  in the tree and updates the closure variable. The filtering in
-  `PrepareStep` handles the rest.
+  in the tree and updates the context state. The filtering in `PrepareStep`
+  handles the rest.
 - The derivation processes both enable events (agent `enable_mcp` tool calls)
   and disable events (human toggle synthetic messages) in chronological
   order. The last event for a given MCP wins.
+
+*MCP instructions filtering:*
+- MCP servers can inject instructions into the system prompt via
+  `InitializeResult().Instructions` (`agent.go:201-209`). These instruction
+  blocks can be large (e.g. Datadog's is ~30 lines).
+- For lazy MCPs that are not enabled, their instructions must also be excluded
+  from the system prompt. Otherwise, the context-saving benefit of hiding
+  tool descriptions is undermined by instruction bloat.
+- The same `LazyMCPState` used for tool filtering drives instruction
+  filtering: skip instructions for servers where `IsLazy() &&
+  !state.IsEnabled(name)`.
 
 *Human toggle modal:*
 - When a human toggles a lazy MCP in the palette modal, a synthetic system
