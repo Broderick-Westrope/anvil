@@ -171,6 +171,14 @@ Out:
   silently ignored during derivation (its tools no longer exist in
   `allTools`). No error — the MCP is simply gone.
 
+*UI state indicator:*
+- MCPs are shown throughout the UI with a colored dot representing their
+  connection state (connected, disconnected, etc.). Lazy MCPs that are
+  connected but not yet enabled in the current branch should display a
+  distinct state — visually differentiated from both "connected" (active) and
+  "disconnected" (error). This communicates that the server is healthy and
+  ready, but its tools are not currently in the context.
+
 *Input validation:*
 - `enable_mcp` requires an exact match on the server name as configured in
   `anvil.json`. No fuzzy matching or case-insensitive lookup. The tool
