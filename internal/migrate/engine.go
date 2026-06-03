@@ -401,7 +401,7 @@ func saveTriggers(ctx context.Context, conn *sql.Conn, names []string) ([]savedT
 // dropTriggers drops the given triggers by name.
 func dropTriggers(ctx context.Context, e execer, triggers []savedTrigger) error {
 	for _, t := range triggers {
-		if _, err := e.ExecContext(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s", t.Name)); err != nil {
+		if _, err := e.ExecContext(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS "%s"`, t.Name)); err != nil {
 			return fmt.Errorf("failed to drop trigger %s: %w", t.Name, err)
 		}
 	}
@@ -411,6 +411,11 @@ func dropTriggers(ctx context.Context, e execer, triggers []savedTrigger) error 
 // restoreTriggers recreates triggers from their saved DDL.
 func restoreTriggers(ctx context.Context, e execer, triggers []savedTrigger) error {
 	for _, t := range triggers {
+		// sqlite_master strips IF NOT EXISTS from stored DDL, so
+		// drop before recreating as a defensive guard.
+		if _, err := e.ExecContext(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS "%s"`, t.Name)); err != nil {
+			return fmt.Errorf("failed to drop trigger %s before restore: %w", t.Name, err)
+		}
 		if _, err := e.ExecContext(ctx, t.SQL); err != nil {
 			return fmt.Errorf("failed to recreate trigger %s: %w", t.Name, err)
 		}
