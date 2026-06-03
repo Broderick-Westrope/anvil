@@ -10,6 +10,7 @@
 
 - **Multi-Agent Orchestration:** an orchestrator delegates to specialist agents (designer, fixer, explorer, oracle, reviewer, and more) that run in parallel, each with a focused system prompt and toolset (inspired by [oh-my-opencode-slim](https://github.com/alvinunreal/oh-my-opencode-slim) and [Amp](https://ampcode.com/))
 - **Session Branching:** fork conversations into a tree so you can explore multiple approaches without losing context (inspired by [Pi](https://pi.dev/))
+- **Global Sessions:** all sessions, messages, and files are stored in a single global database so history persists across projects and is accessible from anywhere
 - **Minimal by Default, Observable When Needed:** tool calls, subagent runs, and other activity are collapsed into scannable one-line summaries; drill into any item to see full input, output, and reasoning without leaving the conversation
 - **No Telemetry:** all Charm PostHog telemetry has been removed — Anvil phones home to nobody
 - **MCP OAuth:** connect to OAuth-protected MCP servers (including Anthropic's) with automatic token management and refresh
@@ -101,16 +102,21 @@ Configuration itself is stored as a JSON object:
 }
 ```
 
-As an additional note, Anvil also stores ephemeral data, such as application
-state, in one additional location:
+As an additional note, Anvil also stores persistent data in one additional
+location:
 
 ```bash
 # Unix
-$HOME/.local/share/anvil/anvil.json
+$HOME/.local/share/anvil/anvil.json   # application state
+$HOME/.local/share/anvil/anvil.db     # sessions, messages, files, OAuth tokens
 
 # Windows
 %LOCALAPPDATA%\anvil\anvil.json
+%LOCALAPPDATA%\anvil\anvil.db
 ```
+
+If you previously used Anvil with per-project databases (stored in `.anvil/`),
+they are automatically migrated into the global database on first startup.
 
 > [!TIP]
 > You can override the user and data config locations by setting:
