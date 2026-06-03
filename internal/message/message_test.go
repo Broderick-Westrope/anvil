@@ -693,3 +693,29 @@ func TestUpdate_StructuralFlushUsesMustDeliver(t *testing.T) {
 		})
 	}
 }
+
+func TestPendingState_PrunedAfterFinish(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t, WithDebounce(0))
+	impl := svc.(*service)
+
+	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+	require.NoError(t, err)
+
+	// Non-terminal update creates a pending entry.
+	msg.AppendContent("streaming")
+	require.NoError(t, svc.Update(t.Context(), msg))
+	require.Equal(t, 1, impl.PendingCount())
+
+	// Terminal update prunes the entry.
+	msg.AddFinish(FinishReasonEndTurn, "", "")
+	require.NoError(t, svc.Update(t.Context(), msg))
+	require.Equal(t, 0, impl.PendingCount())
+
+	// A subsequent Update for the same ID creates a fresh pendingState.
+	msg.Parts = nil
+	msg.AppendContent("restarted")
+	require.NoError(t, svc.Update(t.Context(), msg))
+	require.Equal(t, 1, impl.PendingCount())
+}

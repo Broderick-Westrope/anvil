@@ -710,7 +710,8 @@ func (c *coordinator) buildPromptWithState(
 	if agentName == config.AgentOrchestrator {
 		// Build agents block and delegation workflow from parsed .md files.
 		agentsBlock, delegationWorkflow := buildOrchestratorBlocksFromState(agentMDs, agentConfigs)
-		opts = append(opts,
+		opts = append(
+			opts,
 			prompt.WithAgentsBlock(agentsBlock),
 			prompt.WithDelegationWorkflow(delegationWorkflow),
 			prompt.WithAppendPrompt(agentCfg.AppendPrompt),
@@ -723,7 +724,8 @@ func (c *coordinator) buildPromptWithState(
 	if md, ok := agentMDs[agentName]; ok {
 		agentBody = md.Body
 	}
-	opts = append(opts,
+	opts = append(
+		opts,
 		prompt.WithAgentBody(agentBody),
 		prompt.WithAppendPrompt(agentCfg.AppendPrompt),
 	)
@@ -861,7 +863,8 @@ func (c *coordinator) buildToolsWithState(
 	if err != nil {
 		return nil, err
 	}
-	candidateTools = append(candidateTools,
+	candidateTools = append(
+		candidateTools,
 		agenticFetch,
 		tools.NewBashTool(c.permissions, c.cfg.WorkingDir()),
 		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker),
@@ -883,7 +886,8 @@ func (c *coordinator) buildToolsWithState(
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
 	if len(c.cfg.Config().LSP) > 0 || c.cfg.Config().Options.AutoLSP == nil || *c.cfg.Config().Options.AutoLSP {
-		candidateTools = append(candidateTools,
+		candidateTools = append(
+			candidateTools,
 			tools.NewDiagnosticsTool(c.lspManager),
 			tools.NewReferencesTool(c.lspManager),
 			tools.NewLSPRestartTool(c.lspManager),
@@ -1271,6 +1275,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("create session: %w", err)
 	}
+	defer c.permissions.RevokeAutoApproveSession(session.ID)
 
 	// Call session setup function if provided
 	if params.SessionSetup != nil {
@@ -1573,7 +1578,8 @@ func logTurnSkillUsage(
 		}
 	}
 
-	slog.Info("Skill turn summary",
+	slog.Info(
+		"Skill turn summary",
 		"component", "skills",
 		"session_id", sessionID,
 		"prompt_len", len(prompt),
@@ -1617,7 +1623,8 @@ func logDiscoveryStats(
 
 	xml := skills.ToPromptXML(activeSkills)
 
-	slog.Info("Skill discovery complete",
+	slog.Info(
+		"Skill discovery complete",
 		"component", "skills",
 		"builtin_ok", len(builtin),
 		"builtin_errors", countErrors(builtinStates),

@@ -69,6 +69,7 @@ type Service interface {
 	Deny(permission PermissionRequest)
 	Request(ctx context.Context, opts CreatePermissionRequest) (bool, error)
 	AutoApproveSession(sessionID string)
+	RevokeAutoApproveSession(sessionID string)
 	SetSkipRequests(skip bool)
 	SkipRequests() bool
 	SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[PermissionNotification]
@@ -261,6 +262,14 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 func (s *permissionService) AutoApproveSession(sessionID string) {
 	s.autoApproveSessionsMu.Lock()
 	s.autoApproveSessions[sessionID] = true
+	s.autoApproveSessionsMu.Unlock()
+}
+
+// RevokeAutoApproveSession removes the auto-approve entry for the
+// given session, allowing it to go through normal permission checks.
+func (s *permissionService) RevokeAutoApproveSession(sessionID string) {
+	s.autoApproveSessionsMu.Lock()
+	delete(s.autoApproveSessions, sessionID)
 	s.autoApproveSessionsMu.Unlock()
 }
 

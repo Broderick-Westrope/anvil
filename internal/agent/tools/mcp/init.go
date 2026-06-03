@@ -319,6 +319,9 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 	if err == nil {
 		return sess, nil
 	}
+	// Ping failed — close the stale session before replacing it.
+	// Ignore the error: the session is already known to be unhealthy.
+	_ = sess.Close()
 	updateState(name, StateError, maybeTimeoutErr(err, timeout), nil, state.Counts)
 
 	sess, err = createSession(ctx, name, m, cfg.Resolver(), dbQueries)

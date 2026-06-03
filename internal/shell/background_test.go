@@ -334,6 +334,95 @@ func TestBackgroundShellManager_KillAll_Timeout(t *testing.T) {
 	require.Less(t, elapsed, 2*time.Second)
 }
 
+func TestSyncBuffer_Cap(t *testing.T) {
+	t.Parallel()
+
+	var sb syncBuffer
+
+	// Write multiple chunks that together exceed MaxBufferSize.
+	chunk := make([]byte, MaxBufferSize/2+1)
+	for i := range chunk {
+		chunk[i] = 'A'
+	}
+
+	sb.Write(chunk)
+	sb.Write(chunk)
+
+	require.LessOrEqual(t, sb.Len(), MaxBufferSize)
+	require.Contains(t, sb.String(), truncationMarker)
+}
+
+func TestSyncBuffer_CapSingleLargeWrite(t *testing.T) {
+	t.Parallel()
+
+	var sb syncBuffer
+
+	// Single write larger than MaxBufferSize.
+	data := make([]byte, MaxBufferSize+1024)
+	for i := range data {
+		data[i] = 'B'
+	}
+
+	// io.Writer contract: n must equal len(p) even when truncating.
+	n, err := sb.Write(data)
+	require.NoError(t, err)
+	require.Equal(t, len(data), n)
+
+	require.LessOrEqual(t, sb.Len(), MaxBufferSize)
+	require.Contains(t, sb.String(), truncationMarker)
+
+	// Only the tail should be retained after the marker.
+	content := sb.String()
+	afterMarker := content[len(truncationMarker):]
+	for _, b := range []byte(afterMarker) {
+		require.Equal(t, byte('B'), b)
+	}
+}
+
+func TestSyncBuffer_WriteStringDelegatesToWrite(t *testing.T) {
+	t.Parallel()
+
+	var sb syncBuffer
+
+	// WriteString with data exceeding MaxBufferSize must also be capped.
+	data := strings.Repeat("C", MaxBufferSize+512)
+	sb.WriteString(data)
+
+	require.LessOrEqual(t, sb.Len(), MaxBufferSize)
+	require.Contains(t, sb.String(), truncationMarker)
+}
+
+func TestCleanupCompleted(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	manager := newBackgroundShellManager()
+
+	// Start a long-running job.
+	running, err := manager.Start(t.Context(), workingDir, nil, "sleep 60", "")
+	require.NoError(t, err)
+
+	// Start a job that completes quickly.
+	completed, err := manager.Start(t.Context(), workingDir, nil, "echo done", "")
+	require.NoError(t, err)
+
+	completed.Wait()
+
+	removed := manager.CleanupCompleted()
+	require.Equal(t, 1, removed)
+
+	// The completed job should be gone.
+	_, ok := manager.Get(completed.ID)
+	require.False(t, ok)
+
+	// The running job should still be present.
+	_, ok = manager.Get(running.ID)
+	require.True(t, ok)
+
+	// Clean up.
+	manager.Kill(running.ID)
+}
+
 func TestBackgroundShell_WaitContext_Completed(t *testing.T) {
 	t.Parallel()
 
