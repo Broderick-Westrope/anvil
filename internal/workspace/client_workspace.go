@@ -117,6 +117,17 @@ func (w *ClientWorkspace) SaveSession(ctx context.Context, sess session.Session)
 	return protoToSession(*saved), nil
 }
 
+func (w *ClientWorkspace) RenameSession(ctx context.Context, sessionID string, title string, titleIsCustom bool) error {
+	sess, err := w.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	sess.Title = title
+	sess.TitleIsCustom = titleIsCustom
+	_, err = w.SaveSession(ctx, sess)
+	return err
+}
+
 func (w *ClientWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
 	return w.client.DeleteSession(ctx, w.workspaceID(), sessionID)
 }

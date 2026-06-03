@@ -2027,10 +2027,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		if m.session != nil {
-			m.session.Title = msg.Title
-			m.session.TitleIsCustom = true
+			sessionID := m.session.ID
+			title := msg.Title
 			cmds = append(cmds, func() tea.Msg {
-				_, err := m.com.Workspace.SaveSession(context.TODO(), *m.session)
+				err := m.com.Workspace.RenameSession(context.Background(), sessionID, title, true)
 				if err != nil {
 					return util.ReportError(err)()
 				}

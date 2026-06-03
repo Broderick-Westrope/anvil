@@ -1198,7 +1198,25 @@ func (c *coordinator) RegenerateTitle(ctx context.Context, sessionID string) err
 	}
 
 	orch := c.getOrchestrator()
-	orch.(*sessionAgent).generateTitle(ctx, sessionID, msgs, false)
+	sa, ok := orch.(*sessionAgent)
+	if !ok {
+		return errors.New("orchestrator is not a *sessionAgent")
+	}
+
+	providerCfg, ok := c.cfg.Config().Providers.Get(orch.Model().ModelCfg.Provider)
+	if !ok {
+		return errModelProviderNotConfigured
+	}
+
+	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
+		slog.Error("Failed to refresh OAuth2 token before title regeneration. Proceeding with existing token.", "error", err)
+	}
+
+	regen := func() {
+		sa.generateTitle(ctx, sessionID, msgs)
+	}
+
+	regen()
 	return nil
 }
 

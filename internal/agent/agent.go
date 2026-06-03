@@ -674,8 +674,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	// Auto-regenerate title after the first assistant response. The
 	// assistant reply is already persisted at this point so we load
-	// fresh messages from the DB.
-	if isFirstMessage {
+	// fresh messages from the DB. Skip for non-interactive (task)
+	// sub-sessions.
+	if isFirstMessage && !call.NonInteractive {
 		sess, sessErr := a.sessions.Get(ctx, call.SessionID)
 		if sessErr != nil {
 			slog.Error("Failed to load session for title regeneration", "error", sessErr)
@@ -684,7 +685,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if titleErr != nil {
 				slog.Error("Failed to load messages for title regeneration", "error", titleErr)
 			} else {
-				go a.generateTitle(ctx, call.SessionID, titleMsgs, false)
+				go a.generateTitle(context.WithoutCancel(ctx), call.SessionID, titleMsgs)
 			}
 		}
 	}
@@ -1191,19 +1192,25 @@ func formatConversationForTitle(msgs []message.Message) string {
 	}
 	result := b.String()
 	if len(result) > maxTitleConversationChars {
-		result = result[:maxTitleConversationChars]
+		// Truncate to rune boundary to avoid splitting multi-byte characters.
+		runes := []rune(result)
+		truncated := make([]rune, 0, len(runes))
+		size := 0
+		for _, r := range runes {
+			size += len(string(r))
+			if size > maxTitleConversationChars {
+				break
+			}
+			truncated = append(truncated, r)
+		}
+		result = string(truncated)
 	}
 	return result
 }
 
 // generateTitle generates a session title from the full conversation
-// context. If titleIsCustom is true the write is skipped to avoid
-// overwriting a manually set title.
-func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs []message.Message, titleIsCustom bool) {
-	if titleIsCustom {
-		return
-	}
-
+// context. Callers must pre-check TitleIsCustom before calling.
+func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs []message.Message) {
 	conversationText := formatConversationForTitle(msgs)
 	if conversationText == "" {
 		return

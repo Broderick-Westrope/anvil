@@ -66,6 +66,10 @@ func (w *AppWorkspace) SaveSession(ctx context.Context, sess session.Session) (s
 	return w.app.Sessions.Save(ctx, sess)
 }
 
+func (w *AppWorkspace) RenameSession(ctx context.Context, sessionID string, title string, titleIsCustom bool) error {
+	return w.app.Sessions.Rename(ctx, sessionID, title, titleIsCustom)
+}
+
 func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
 	return w.app.Sessions.Delete(ctx, sessionID)
 }
