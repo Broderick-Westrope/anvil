@@ -70,6 +70,7 @@ const (
 	StateStarting
 	StateConnected
 	StateError
+	StateIdle
 )
 
 func (s State) String() string {
@@ -82,6 +83,8 @@ func (s State) String() string {
 		return "connected"
 	case StateError:
 		return "error"
+	case StateIdle:
+		return "idle"
 	default:
 		return "unknown"
 	}
@@ -113,7 +116,7 @@ type Counts struct {
 	Resources int
 }
 
-// ClientInfo holds information about an MCP client's state
+// ClientInfo holds information about an MCP client's state.
 type ClientInfo struct {
 	Name        string
 	State       State
@@ -121,6 +124,7 @@ type ClientInfo struct {
 	Client      *ClientSession
 	Counts      Counts
 	ConnectedAt time.Time
+	IsLazy      bool `json:"is_lazy"`
 }
 
 // SubscribeEvents returns a channel for MCP events

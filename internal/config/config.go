@@ -232,6 +232,17 @@ type MCPConfig struct {
 	ClientSecret string      `json:"clientSecret,omitempty" jsonschema:"description=OAuth client secret (supports shell expansion via $VAR or $(cmd))"`
 	Scopes       []string    `json:"scopes,omitempty" jsonschema:"description=OAuth scopes to request during authorization"`
 	RedirectURI  string      `json:"redirectUri,omitempty" jsonschema:"description=Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"`
+
+	// LazyDescription enables lazy initialization for this MCP server.
+	// When set, the server is not started until one of its tools is
+	// invoked. The description is surfaced to the LLM so it can decide
+	// when to call the server's tools.
+	LazyDescription string `json:"lazy_description,omitempty" jsonschema:"description=Human-readable description enabling lazy MCP startup"`
+}
+
+// IsLazy reports whether the MCP server is configured for lazy initialization.
+func (m MCPConfig) IsLazy() bool {
+	return m.LazyDescription != ""
 }
 
 type LSPConfig struct {

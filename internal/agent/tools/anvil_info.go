@@ -247,6 +247,8 @@ func writeMCP(b *strings.Builder, states map[string]mcp.ClientInfo, cfg *config.
 				} else {
 					fmt.Fprintf(b, "%s = error\n", e.name)
 				}
+			case mcp.StateIdle:
+				fmt.Fprintf(b, "%s = idle (lazy, connected but not enabled)\n", e.name)
 			default:
 				fmt.Fprintf(b, "%s = %s\n", e.name, e.state)
 			}

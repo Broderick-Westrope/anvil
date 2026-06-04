@@ -647,6 +647,7 @@ const (
 	labelType               partType = "label"
 	modelChangeType         partType = "model_change"
 	thinkingLevelChangeType partType = "thinking_level_change"
+	mcpToggleType           partType = "mcp_toggle"
 )
 
 type partWrapper struct {
@@ -685,6 +686,8 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 			typ = modelChangeType
 		case ThinkingLevelChangeContent:
 			typ = thinkingLevelChangeType
+		case MCPToggleContent:
+			typ = mcpToggleType
 		default:
 			return nil, fmt.Errorf("unknown part type: %T", part)
 		}
@@ -785,6 +788,12 @@ func unmarshalParts(data []byte) ([]ContentPart, error) {
 			parts = append(parts, part)
 		case thinkingLevelChangeType:
 			part := ThinkingLevelChangeContent{}
+			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
+		case mcpToggleType:
+			part := MCPToggleContent{}
 			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
 				return nil, err
 			}

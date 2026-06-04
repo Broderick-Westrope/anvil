@@ -52,6 +52,7 @@ const (
 	MessageTypeLabel               MessageType = "label"
 	MessageTypeModelChange         MessageType = "model_change"
 	MessageTypeThinkingLevelChange MessageType = "thinking_level_change"
+	MessageTypeMCPToggle           MessageType = "mcp_toggle"
 )
 
 type ContentPart interface {
@@ -180,6 +181,14 @@ type ThinkingLevelChangeContent struct {
 }
 
 func (ThinkingLevelChangeContent) isPart() {}
+
+// MCPToggleContent stores metadata for an MCP server toggle entry.
+type MCPToggleContent struct {
+	ServerName string `json:"server_name"`
+	Enabled    bool   `json:"enabled"`
+}
+
+func (MCPToggleContent) isPart() {}
 
 type Message struct {
 	ID              string
