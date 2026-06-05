@@ -233,14 +233,15 @@ type MCPConfig struct {
 	Scopes       []string    `json:"scopes,omitempty" jsonschema:"description=OAuth scopes to request during authorization"`
 	RedirectURI  string      `json:"redirectUri,omitempty" jsonschema:"description=Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"`
 
-	// LazyDescription enables lazy initialization for this MCP server.
-	// When set, the server is not started until one of its tools is
-	// invoked. The description is surfaced to the LLM so it can decide
-	// when to call the server's tools.
-	LazyDescription string `json:"lazy_description,omitempty" jsonschema:"description=Human-readable description enabling lazy MCP startup"`
+	// LazyDescription makes this MCP server's tools lazy-loaded. The
+	// server still connects eagerly at startup, but its tools and
+	// instructions are excluded from the LLM context until explicitly
+	// enabled by the agent or human. The value is surfaced to the LLM
+	// so it can decide when to enable the server.
+	LazyDescription string `json:"lazy_description,omitempty" jsonschema:"description=Short description shown to the LLM; when set the server's tools are hidden until explicitly enabled"`
 }
 
-// IsLazy reports whether the MCP server is configured for lazy initialization.
+// IsLazy reports whether the MCP server's tools are lazy-loaded.
 func (m MCPConfig) IsLazy() bool {
 	return m.LazyDescription != ""
 }
