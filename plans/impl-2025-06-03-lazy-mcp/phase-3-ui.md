@@ -1,6 +1,6 @@
 # Phase 3: UI (parallel with Phase 2)
 
-> StateIdle icon rendering, MCP palette modal for human toggle.
+> `StateLazy` icon rendering, MCP palette modal for human toggle.
 
 ## Context Loading
 
@@ -18,46 +18,48 @@ read internal/message/content.go
 
 ## Tasks
 
-### Task 1: Add `StateIdle` icon and rendering
+### Task 1: Add `StateLazy` icon and rendering
 
 **Context:** `internal/ui/styles/`, `internal/ui/model/`
 
 **Files:**
-- Modify: `internal/ui/styles/quickstyle.go` (add `IdleIcon` style)
+- Modify: `internal/ui/styles/quickstyle.go` (add `LazyIcon` style)
 - Modify: `internal/ui/model/mcp.go` (`mcpList` render switch)
 - Test: golden-file snapshot test using `catwalk`
 
 **Steps:**
 
-1. [ ] Add an `IdleIcon` style at `quickstyle.go:700` alongside the existing
+1. [ ] Add a `LazyIcon` style at `quickstyle.go:700` alongside the existing
    `OfflineIcon`, `BusyIcon`, `ErrorIcon`, `OnlineIcon`, `DisabledIcon`.
    Use a desaturated/dimmer color distinct from connected teal (`#41a6b5`).
    A muted grey-teal or the `fgSubtle` palette token would work. The icon
    glyph is `"●"` like all other state dots
-2. [ ] Add `StateIdle` case in the `mcpList` switch at `mcp.go:72`:
-   - Icon: `t.Resource.IdleIcon`
-   - Text: show tool count + "idle" label (e.g. "42 tools · idle")
+2. [ ] Update the `StateLazy` case in the `mcpList` switch at `mcp.go` (already
+   added in Phase 1 as a placeholder using `OfflineIcon`) to use the new
+   `t.Resource.LazyIcon`:
+   - Icon: `t.Resource.LazyIcon`
+   - Text: show tool count + "lazy" label (e.g. "42 tools · lazy")
    - This communicates the server is healthy, tools are available, but not
      currently in the agent's context
 3. [ ] The `mcpList` function receives `m.mcpStates` (a
    `map[string]mcp.ClientInfo`). `ClientInfo` now has `IsLazy bool` (added
    in Phase 1, Task 3). In `mcpList`, when the state is `StateConnected`
    and `info.IsLazy` is true, check whether the MCP is in the current
-   branch's enabled set. If not enabled, render as `StateIdle` instead of
+   branch's enabled set. If not enabled, render as `StateLazy` instead of
    `StateConnected`. The enabled set needs to be accessible to the UI —
    either passed as a parameter to `mcpList` or stored on the model. The
    simplest approach: store the current branch's enabled lazy MCP set on
    the UI model (updated when the agent reports state changes or when the
    human toggles)
-4. [ ] Add a golden-file snapshot test for the idle icon rendering using
-   `catwalk`. Test both the idle state and the transition to connected
+4. [ ] Add a golden-file snapshot test for the lazy icon rendering using
+   `catwalk`. Test both the lazy state and the transition to connected
    when enabled. Run `go test ./internal/ui/... -update` to generate
    initial golden files
 
 **Verify:**
 ```bash
 go build ./internal/ui/...
-go test ./internal/ui/... -run TestMCPIdle
+go test ./internal/ui/... -run TestMCPLazy
 ```
 
 ### Task 2: Add MCP palette modal for human toggle
@@ -77,7 +79,7 @@ go test ./internal/ui/... -run TestMCPIdle
    palette following the same pattern
 2. [ ] Create `internal/ui/model/mcp_palette.go` with a Bubble Tea component
    that:
-   - Lists all lazy MCPs with their current state (idle/enabled)
+   - Lists all lazy MCPs with their current state (lazy/enabled)
    - Shows the `lazy_description` alongside each entry
    - Allows toggling individual MCPs on/off with Enter or Space
    - Supports keyboard navigation (j/k or arrow keys)
@@ -91,7 +93,7 @@ go test ./internal/ui/... -run TestMCPIdle
    adding it as a subcommand of the existing palette (Ctrl+P → "MCP") or
    a dedicated binding
 5. [ ] When a toggle message is inserted, immediately update the UI model's
-   enabled lazy MCP set so the state dot transitions (idle ↔ connected)
+   enabled lazy MCP set so the state dot transitions (lazy ↔ connected)
    without waiting for the next agent turn
 6. [ ] The synthetic message should render as a minimal status line in the
    conversation view (similar to model change messages, not a full chat

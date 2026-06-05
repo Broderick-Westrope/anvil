@@ -192,18 +192,18 @@ Out:
   - `StateConnected` → teal (`#41a6b5`, `OnlineIcon`)
   - `StateError` → red (`#f7768e`, `ErrorIcon`)
   - `StateDisabled` → muted blue-grey (`#a9b1d6`, `DisabledIcon`)
-- A new state is needed: `StateIdle` (or similar) for lazy MCPs that are
-  connected but not enabled on the current branch. This requires:
+- A new state is needed: `StateLazy` for lazy MCPs that are connected but
+  not enabled on the current branch. This requires:
   - New constant in `mcp.State` iota (`internal/agent/tools/mcp/init.go:66`)
   - New constant in `proto.MCPState` iota (`internal/proto/mcp.go:11`)
   - New icon style in the theme (`internal/ui/styles/quickstyle.go:700`)
   - New case in the `mcpList` render switch (`internal/ui/model/mcp.go:72`)
-- The idle dot should be visually distinct from connected (teal) — a dimmer
+- The lazy dot should be visually distinct from connected (teal) — a dimmer
   or desaturated variant that communicates "healthy but not active". The text
-  should show "idle" or "lazy" alongside the tool count so the human knows
-  what's available to enable.
-- The idle state is a UI-level concept layered on top of `StateConnected`.
-  The MCP server itself is still connected — the idle state is derived by
+  should show "lazy" alongside the tool count so the human knows what's
+  available to enable.
+- The lazy state is a UI-level concept layered on top of `StateConnected`.
+  The MCP server itself is still connected — the lazy state is derived by
   checking whether the MCP has `lazy_description` set AND is not in the
   current branch's enabled set. The `MCPGetStates()` workspace method
   (`internal/workspace/workspace.go:144`) or the UI's `handleStateChanged`
