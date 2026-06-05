@@ -70,7 +70,7 @@ const (
 	StateStarting
 	StateConnected
 	StateError
-	StateIdle
+	StateLazy
 )
 
 func (s State) String() string {
@@ -83,8 +83,8 @@ func (s State) String() string {
 		return "connected"
 	case StateError:
 		return "error"
-	case StateIdle:
-		return "idle"
+	case StateLazy:
+		return "lazy"
 	default:
 		return "unknown"
 	}

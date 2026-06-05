@@ -17,7 +17,7 @@ func TestState_String(t *testing.T) {
 		{StateStarting, "starting"},
 		{StateConnected, "connected"},
 		{StateError, "error"},
-		{StateIdle, "idle"},
+		{StateLazy, "lazy"},
 		{State(99), "unknown"},
 	}
 	for _, tt := range tests {

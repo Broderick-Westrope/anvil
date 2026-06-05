@@ -17,7 +17,7 @@ func TestMCPState_String(t *testing.T) {
 		{MCPStateStarting, "starting"},
 		{MCPStateConnected, "connected"},
 		{MCPStateError, "error"},
-		{MCPStateIdle, "idle"},
+		{MCPStateLazy, "lazy"},
 		{MCPState(99), "unknown"},
 	}
 	for _, tt := range tests {
@@ -25,11 +25,11 @@ func TestMCPState_String(t *testing.T) {
 	}
 }
 
-func TestMCPState_UnmarshalText_Idle(t *testing.T) {
+func TestMCPState_UnmarshalText_Lazy(t *testing.T) {
 	t.Parallel()
 
 	var s MCPState
-	err := s.UnmarshalText([]byte("idle"))
+	err := s.UnmarshalText([]byte("lazy"))
 	require.NoError(t, err)
-	require.Equal(t, MCPStateIdle, s)
+	require.Equal(t, MCPStateLazy, s)
 }
