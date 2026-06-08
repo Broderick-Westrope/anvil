@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"log/slog"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
@@ -24,7 +25,11 @@ func deriveLazyMCPState(messages []message.Message) map[string]bool {
 					continue
 				}
 				var params tools.EnableMCPParams
-				if err := json.Unmarshal([]byte(p.Input), &params); err == nil && params.ServerName != "" {
+				if err := json.Unmarshal([]byte(p.Input), &params); err != nil {
+					slog.Debug("Failed to parse enable_mcp input", "error", err, "input", p.Input)
+					continue
+				}
+				if params.ServerName != "" {
 					enabled[params.ServerName] = true
 				}
 			case message.MCPToggleContent:

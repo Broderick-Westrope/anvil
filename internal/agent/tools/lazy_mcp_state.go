@@ -17,7 +17,7 @@ type LazyMCPState struct {
 }
 
 // NewLazyMCPState creates a new LazyMCPState with the given initial set
-// of enabled servers. If initial is nil an empty map is used.
+// of enabled servers. If initial is nil, an empty map is used.
 func NewLazyMCPState(initial map[string]bool) *LazyMCPState {
 	m := make(map[string]bool)
 	if initial != nil {

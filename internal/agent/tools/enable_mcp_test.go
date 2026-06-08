@@ -19,7 +19,7 @@ func TestEnableMCP_SuccessfulEnable(t *testing.T) {
 	state := NewLazyMCPState(nil)
 	ctx := WithLazyMCPState(context.Background(), state)
 
-	resp, err := runEnableMCP(t, tool, ctx, `{"server_name":"datadog"}`)
+	resp, err := runEnableMCP(t, ctx, tool, `{"server_name":"datadog"}`)
 	require.NoError(t, err)
 	require.False(t, resp.IsError)
 	require.Contains(t, resp.Content, "Enabled datadog MCP")
@@ -38,7 +38,7 @@ func TestEnableMCP_AlreadyEnabled(t *testing.T) {
 	state := NewLazyMCPState(map[string]bool{"datadog": true})
 	ctx := WithLazyMCPState(context.Background(), state)
 
-	resp, err := runEnableMCP(t, tool, ctx, `{"server_name":"datadog"}`)
+	resp, err := runEnableMCP(t, ctx, tool, `{"server_name":"datadog"}`)
 	require.NoError(t, err)
 	require.False(t, resp.IsError)
 	require.Contains(t, resp.Content, "already enabled")
@@ -56,7 +56,7 @@ func TestEnableMCP_InvalidServerName(t *testing.T) {
 	state := NewLazyMCPState(nil)
 	ctx := WithLazyMCPState(context.Background(), state)
 
-	resp, err := runEnableMCP(t, tool, ctx, `{"server_name":"unknown"}`)
+	resp, err := runEnableMCP(t, ctx, tool, `{"server_name":"unknown"}`)
 	require.NoError(t, err)
 	require.True(t, resp.IsError)
 	require.Contains(t, resp.Content, "unknown server")
@@ -75,7 +75,7 @@ func TestEnableMCP_NoLazyState(t *testing.T) {
 	// Context without LazyMCPState.
 	ctx := context.Background()
 
-	resp, err := runEnableMCP(t, tool, ctx, `{"server_name":"datadog"}`)
+	resp, err := runEnableMCP(t, ctx, tool, `{"server_name":"datadog"}`)
 	require.NoError(t, err)
 	require.True(t, resp.IsError)
 	require.Contains(t, resp.Content, "lazy MCP state not initialized")
@@ -139,7 +139,7 @@ func TestLazyMCPState_ContextRoundTrip(t *testing.T) {
 
 // runEnableMCP is a helper that invokes the enable_mcp tool with the
 // given JSON input.
-func runEnableMCP(t *testing.T, tool fantasy.AgentTool, ctx context.Context, input string) (fantasy.ToolResponse, error) {
+func runEnableMCP(t *testing.T, ctx context.Context, tool fantasy.AgentTool, input string) (fantasy.ToolResponse, error) {
 	t.Helper()
 	return tool.Run(ctx, fantasy.ToolCall{
 		Name:  EnableMCPToolName,

@@ -5,7 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
-	"sort"
+	"slices"
 	"strings"
 
 	"charm.land/fantasy"
@@ -44,8 +44,8 @@ func NewEnableMCPTool(lazyMCPs map[string]string) fantasy.AgentTool {
 	for name, desc := range lazyMCPs {
 		entries = append(entries, lazyMCPEntry{Name: name, Description: desc})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name < entries[j].Name
+	slices.SortFunc(entries, func(a, b lazyMCPEntry) int {
+		return strings.Compare(a.Name, b.Name)
 	})
 
 	description := renderTemplate(enableMCPDescriptionTpl, enableMCPDescriptionData{
@@ -66,7 +66,7 @@ func NewEnableMCPTool(lazyMCPs map[string]string) fantasy.AgentTool {
 				for name := range lazyMCPs {
 					available = append(available, name)
 				}
-				sort.Strings(available)
+				slices.Sort(available)
 				return fantasy.NewTextErrorResponse(
 					fmt.Sprintf("unknown server %q, available servers: %s",
 						params.ServerName, strings.Join(available, ", ")),
