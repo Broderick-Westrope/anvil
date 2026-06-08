@@ -1464,7 +1464,6 @@ func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
 	a.lazyMCPToolMap.Reset(m)
 }
 
-
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
 	a.systemPrompt.Set(systemPrompt)
 }

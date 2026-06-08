@@ -231,8 +231,8 @@ func TestFilterLazyMCPTools_FiltersDisabledLazy(t *testing.T) {
 	result := filterLazyMCPTools(allTools, lazyMap, state)
 	require.Len(t, result, 3)
 	names := make([]string, len(result))
-	for i, t := range result {
-		names[i] = t.Info().Name
+	for i, tool := range result {
+		names[i] = tool.Info().Name
 	}
 	require.Contains(t, names, "bash")
 	require.Contains(t, names, "mcp_github_pr")
