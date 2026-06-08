@@ -36,7 +36,6 @@ func (m *mockSessionAgent) SetModels(large, small Model)              {}
 func (m *mockSessionAgent) SetProviderConfig(_ config.ProviderConfig) {}
 func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)        {}
 func (m *mockSessionAgent) SetLazyMCPToolMap(_ map[string]string)     {}
-func (m *mockSessionAgent) LazyMCPToolMap() map[string]string         { return nil }
 func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string)       {}
 func (m *mockSessionAgent) Cancel(sessionID string) {
 	m.cancelled = append(m.cancelled, sessionID)

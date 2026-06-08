@@ -95,7 +95,6 @@ type SessionAgent interface {
 	SetProviderConfig(cfg config.ProviderConfig)
 	SetTools(tools []fantasy.AgentTool)
 	SetLazyMCPToolMap(m map[string]string)
-	LazyMCPToolMap() map[string]string
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
 	CancelAll()
@@ -1465,9 +1464,6 @@ func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
 	a.lazyMCPToolMap.Reset(m)
 }
 
-func (a *sessionAgent) LazyMCPToolMap() map[string]string {
-	return a.lazyMCPToolMap.Copy()
-}
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
 	a.systemPrompt.Set(systemPrompt)
