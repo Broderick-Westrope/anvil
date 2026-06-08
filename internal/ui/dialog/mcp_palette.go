@@ -172,6 +172,19 @@ func (mp *MCPPalette) ID() string {
 	return MCPPaletteID
 }
 
+// SetEntryEnabled updates the enabled state of a named entry in the list
+// and bumps its version so the render cache is invalidated.
+func (mp *MCPPalette) SetEntryEnabled(name string, enabled bool) {
+	for _, item := range mp.list.Items() {
+		if pi, ok := item.(*MCPPaletteItem); ok && pi.entry.Name == name {
+			pi.entry.Enabled = enabled
+			pi.cache = nil
+			pi.Bump()
+			return
+		}
+	}
+}
+
 // HandleMsg implements Dialog.
 func (mp *MCPPalette) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {

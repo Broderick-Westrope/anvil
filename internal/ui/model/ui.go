@@ -2223,8 +2223,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			Source:       msg.Source,
 		})
 	case dialog.ActionToggleLazyMCP:
-		m.dialog.CloseFrontDialog()
 		m.enabledLazyMCPs[msg.ServerName] = msg.Enabled
+		// Update the open dialog's item state so the label refreshes.
+		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
+			if palette, ok := dia.(*dialog.MCPPalette); ok {
+				palette.SetEntryEnabled(msg.ServerName, msg.Enabled)
+			}
+		}
 		if m.session != nil && m.session.LeafMessageID != "" {
 			ws := m.com.Workspace
 			sid := m.session.ID
