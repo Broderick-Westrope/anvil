@@ -702,6 +702,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Resource.ErrorIcon = s.Resource.OfflineIcon.Foreground(o.destructive)
 	s.Resource.OnlineIcon = s.Resource.OfflineIcon.Foreground(o.successMostSubtle)
 	s.Resource.DisabledIcon = lipgloss.NewStyle().Foreground(o.fgMoreSubtle).SetString("●")
+	s.Resource.LazyIcon = s.Resource.OfflineIcon.Foreground(o.info)
 	s.Resource.AdditionalText = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 	s.Resource.CapabilityCount = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 	s.Resource.RowTitleBase = lipgloss.NewStyle().Foreground(o.fgBase)

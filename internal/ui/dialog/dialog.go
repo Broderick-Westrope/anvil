@@ -14,6 +14,8 @@ const (
 	TreeID = "tree"
 	// BranchID is the identifier for the branch picker dialog.
 	BranchID = "branch"
+	// MCPPaletteID is the identifier for the MCP palette dialog.
+	MCPPaletteID = "mcp_palette"
 )
 
 // Dialog sizing constants.

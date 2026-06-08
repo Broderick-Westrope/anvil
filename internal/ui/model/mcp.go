@@ -86,7 +86,8 @@ func mcpList(t *styles.Styles, mcps []mcp.ClientInfo, width, maxItems int) strin
 			icon = t.Resource.DisabledIcon.String()
 			description = t.Resource.StatusText.Render("disabled")
 		case mcp.StateLazy:
-			icon = t.Resource.OfflineIcon.String()
+			icon = t.Resource.LazyIcon.String()
+			extraContent = mcpCounts(t, m.Counts)
 			description = t.Resource.StatusText.Render("lazy")
 		default:
 			icon = t.Resource.OfflineIcon.String()
