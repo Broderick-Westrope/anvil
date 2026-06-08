@@ -124,7 +124,6 @@ func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 
 	mp.list = list.NewFilterableList()
 	mp.list.Focus()
-	mp.list.SetSelected(0)
 
 	mp.input = textinput.New()
 	mp.input.SetVirtualCursor(false)
@@ -163,6 +162,7 @@ func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 	}
 	mp.list.SetItems(items...)
 	mp.list.SetFilter("")
+	mp.list.SetSelected(0)
 
 	return mp
 }

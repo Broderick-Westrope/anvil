@@ -118,7 +118,6 @@ func NewSkillPicker(com *common.Common, activeSkills []*skills.Skill) *SkillPick
 
 	sp.list = list.NewFilterableList()
 	sp.list.Focus()
-	sp.list.SetSelected(0)
 
 	sp.input = textinput.New()
 	sp.input.SetVirtualCursor(false)
@@ -156,6 +155,8 @@ func NewSkillPicker(com *common.Common, activeSkills []*skills.Skill) *SkillPick
 		})
 	}
 	sp.list.SetItems(items...)
+	sp.list.SetFilter("")
+	sp.list.SetSelected(0)
 
 	return sp
 }
