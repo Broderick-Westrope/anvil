@@ -241,7 +241,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	var instructions strings.Builder
 
 	for name, server := range mcp.GetStates() {
-		if server.State != mcp.StateConnected {
+		if server.State != mcp.StateConnected && server.State != mcp.StateLazy {
 			continue
 		}
 		if lazyServers[name] && !lazyState.IsEnabled(name) {

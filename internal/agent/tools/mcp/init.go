@@ -268,7 +268,11 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 	updatePrompts(name, prompts)
 	sessions.Set(name, session)
 
-	updateState(name, StateConnected, nil, session, Counts{
+	state := StateConnected
+	if m.IsLazy() {
+		state = StateLazy
+	}
+	updateState(name, state, nil, session, Counts{
 		Tools:   toolCount,
 		Prompts: len(prompts),
 	})
@@ -333,7 +337,11 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 		return nil, err
 	}
 
-	updateState(name, StateConnected, nil, sess, state.Counts)
+	reconnState := StateConnected
+	if m.IsLazy() {
+		reconnState = StateLazy
+	}
+	updateState(name, reconnState, nil, sess, state.Counts)
 	sessions.Set(name, sess)
 	return sess, nil
 }
