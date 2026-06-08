@@ -17,8 +17,13 @@ func (m *UI) mcpInfo(width, maxItems int, isSection bool) string {
 	var mcps []mcp.ClientInfo
 	t := m.com.Styles
 
-	for _, mcp := range m.com.Config().MCP.Sorted() {
-		if state, ok := m.mcpStates[mcp.Name]; ok {
+	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
+		if state, ok := m.mcpStates[mcpCfg.Name]; ok {
+			// Overlay branch-scoped enabled state: if a lazy MCP
+			// is enabled on this branch, render it as connected.
+			if state.State == mcp.StateLazy && m.enabledLazyMCPs[mcpCfg.Name] {
+				state.State = mcp.StateConnected
+			}
 			mcps = append(mcps, state)
 		}
 	}
