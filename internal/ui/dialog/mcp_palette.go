@@ -17,10 +17,10 @@ import (
 // MCPPaletteEntry holds data for each row in the MCP palette.
 type MCPPaletteEntry struct {
 	Name        string
-	Description string // lazy_description from config
+	Description string // Lazy description from config.
 	IsLazy      bool
-	Enabled     bool      // whether currently enabled on this branch
-	State       mcp.State // current connection state
+	Enabled     bool      // Whether currently enabled on this branch.
+	State       mcp.State // Current connection state.
 	Counts      mcp.Counts
 }
 
@@ -128,7 +128,7 @@ func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 
 	mp.keyMap.Select = key.NewBinding(
 		key.WithKeys("enter", " "),
-		key.WithHelp("enter", "toggle"),
+		key.WithHelp("enter/space", "toggle"),
 	)
 	mp.keyMap.UpDown = key.NewBinding(
 		key.WithKeys("up", "down"),

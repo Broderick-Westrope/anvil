@@ -701,6 +701,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.setSessionMessages(msgs); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		m.deriveEnabledLazyMCPs(msgs)
 		if cmd := m.autoExpandPillsIfReasonable(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -2243,6 +2244,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				}
 				return nil
 			})
+		} else {
+			slog.Debug("MCP toggle not persisted: no active session or leaf message",
+				"server", msg.ServerName, "enabled", msg.Enabled)
 		}
 	default:
 		cmds = append(cmds, util.CmdHandler(msg))
@@ -4496,6 +4500,9 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 	// Build entries from config + current state.
 	var entries []dialog.MCPPaletteEntry
 	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
+		if !mcpCfg.MCP.IsLazy() {
+			continue
+		}
 		state, ok := m.mcpStates[mcpCfg.Name]
 		if !ok {
 			continue
@@ -4503,7 +4510,7 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 		entries = append(entries, dialog.MCPPaletteEntry{
 			Name:        mcpCfg.Name,
 			Description: mcpCfg.MCP.LazyDescription,
-			IsLazy:      mcpCfg.MCP.IsLazy(),
+			IsLazy:      true,
 			Enabled:     m.enabledLazyMCPs[mcpCfg.Name],
 			State:       state.State,
 			Counts:      state.Counts,
@@ -4513,6 +4520,20 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 	d := dialog.NewMCPPalette(m.com, entries)
 	m.dialog.OpenDialog(d)
 	return nil
+}
+
+// deriveEnabledLazyMCPs scans branch-path messages for MCPToggleContent
+// entries and rebuilds the enabledLazyMCPs map. Last event per server wins.
+func (m *UI) deriveEnabledLazyMCPs(msgs []message.Message) {
+	enabled := make(map[string]bool)
+	for _, msg := range msgs {
+		for _, part := range msg.Parts {
+			if toggle, ok := part.(message.MCPToggleContent); ok {
+				enabled[toggle.ServerName] = toggle.Enabled
+			}
+		}
+	}
+	m.enabledLazyMCPs = enabled
 }
 
 // openTreeDialog opens the session tree dialog.
