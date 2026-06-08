@@ -48,16 +48,22 @@ func (s *SkillPickerItem) ID() string {
 
 // SetFocused sets the focused state of the item.
 func (s *SkillPickerItem) SetFocused(focused bool) {
-	if s.focused != focused {
-		s.cache = nil
+	if s.focused == focused {
+		return
 	}
+	s.cache = nil
 	s.focused = focused
+	s.Bump()
 }
 
 // SetMatch sets the fuzzy match for the item.
 func (s *SkillPickerItem) SetMatch(m fuzzy.Match) {
+	if sameFuzzyMatch(s.m, m) {
+		return
+	}
 	s.cache = nil
 	s.m = m
+	s.Bump()
 }
 
 // sourceLabel returns a human-readable label for the skill source.

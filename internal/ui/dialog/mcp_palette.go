@@ -55,16 +55,22 @@ func (i *MCPPaletteItem) ID() string {
 
 // SetFocused sets the focused state of the item.
 func (i *MCPPaletteItem) SetFocused(focused bool) {
-	if i.focused != focused {
-		i.cache = nil
+	if i.focused == focused {
+		return
 	}
+	i.cache = nil
 	i.focused = focused
+	i.Bump()
 }
 
 // SetMatch sets the fuzzy match for the item.
 func (i *MCPPaletteItem) SetMatch(m fuzzy.Match) {
+	if sameFuzzyMatch(i.m, m) {
+		return
+	}
 	i.cache = nil
 	i.m = m
+	i.Bump()
 }
 
 // infoLabel returns a human-readable label for the item's right-side info.
@@ -156,6 +162,7 @@ func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 		})
 	}
 	mp.list.SetItems(items...)
+	mp.list.SetFilter("")
 
 	return mp
 }
