@@ -99,6 +99,7 @@ func (i *MCPPaletteItem) Render(width int) string {
 }
 
 // MCPPalette is a dialog that shows available MCP servers for toggling.
+// MCPPalette is a dialog that shows available MCP servers for toggling.
 type MCPPalette struct {
 	com    *common.Common
 	keyMap struct {
@@ -107,15 +108,18 @@ type MCPPalette struct {
 		UpDown,
 		Next,
 		Previous,
+		OpenFilter,
 		Close key.Binding
 	}
-	help  help.Model
-	input textinput.Model
-	list  *list.FilterableList
+	help      help.Model
+	input     textinput.Model
+	list      *list.FilterableList
+	filtering bool
 }
 
 var _ Dialog = (*MCPPalette)(nil)
 
+// NewMCPPalette creates a new MCP palette dialog.
 // NewMCPPalette creates a new MCP palette dialog.
 func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 	mp := &MCPPalette{
@@ -131,9 +135,9 @@ func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 
 	mp.input = textinput.New()
 	mp.input.SetVirtualCursor(false)
-	mp.input.Placeholder = "Type to filter MCP servers"
+	mp.input.Placeholder = "/ to filter..."
 	mp.input.SetStyles(com.Styles.TextInput)
-	mp.input.Focus()
+	mp.input.Blur()
 
 	mp.keyMap.Select = key.NewBinding(
 		key.WithKeys("enter", " "),
@@ -154,6 +158,10 @@ func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 	mp.keyMap.Previous = key.NewBinding(
 		key.WithKeys("up", "ctrl+p"),
 		key.WithHelp("↑", "previous item"),
+	)
+	mp.keyMap.OpenFilter = key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/", "filter"),
 	)
 	closeKey := CloseKey
 	closeKey.SetHelp("esc", "cancel")
@@ -207,65 +215,101 @@ func (mp *MCPPalette) SetEntryState(name string, state mcp.State, counts mcp.Cou
 }
 
 // HandleMsg implements Dialog.
+// HandleMsg implements Dialog. It delegates to handleNavKey in the default
+// navigation mode and handleFilterKey when the filter input is active.
 func (mp *MCPPalette) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		switch {
-		case key.Matches(msg, mp.keyMap.Close):
-			return ActionClose{}
-		case key.Matches(msg, mp.keyMap.Previous):
-			mp.list.Focus()
-			if mp.list.IsSelectedFirst() {
-				mp.list.SelectLast()
-			} else {
-				mp.list.SelectPrev()
-			}
-			mp.list.ScrollToSelected()
-		case key.Matches(msg, mp.keyMap.Next):
-			mp.list.Focus()
-			if mp.list.IsSelectedLast() {
-				mp.list.SelectFirst()
-			} else {
-				mp.list.SelectNext()
-			}
-			mp.list.ScrollToSelected()
-		case key.Matches(msg, mp.keyMap.Select):
-			if selected := mp.list.SelectedItem(); selected != nil {
-				if item, ok := selected.(*MCPPaletteItem); ok && item != nil {
-					switch item.entry.State {
-					case mcp.StateDisabled:
-						return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
-					case mcp.StateConnected, mcp.StateLazy:
-						return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: false}
-					}
-				}
-			}
-		case key.Matches(msg, mp.keyMap.LazyToggle):
-			if selected := mp.list.SelectedItem(); selected != nil {
-				if item, ok := selected.(*MCPPaletteItem); ok && item != nil && item.entry.IsLazy {
-					if item.entry.State != mcp.StateDisabled {
-						return ActionToggleLazyMCP{
-							ServerName: item.entry.Name,
-							Enabled:    !item.entry.Enabled,
-						}
-					}
-				}
-			}
-		default:
-			var cmd tea.Cmd
-			mp.input, cmd = mp.input.Update(msg)
-			value := mp.input.Value()
-			mp.list.SetFilter(value)
-			mp.list.ScrollToTop()
-			mp.list.SetSelected(0)
-			return ActionCmd{cmd}
+		if mp.filtering {
+			return mp.handleFilterKey(msg)
 		}
+		return mp.handleNavKey(msg)
+	}
+	return nil
+}
+
+// handleNavKey processes keys in navigation mode.
+func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, mp.keyMap.Close):
+		return ActionClose{}
+	case key.Matches(msg, mp.keyMap.Previous):
+		mp.list.Focus()
+		if mp.list.IsSelectedFirst() {
+			mp.list.SelectLast()
+		} else {
+			mp.list.SelectPrev()
+		}
+		mp.list.ScrollToSelected()
+	case key.Matches(msg, mp.keyMap.Next):
+		mp.list.Focus()
+		if mp.list.IsSelectedLast() {
+			mp.list.SelectFirst()
+		} else {
+			mp.list.SelectNext()
+		}
+		mp.list.ScrollToSelected()
+	case key.Matches(msg, mp.keyMap.Select):
+		if selected := mp.list.SelectedItem(); selected != nil {
+			if item, ok := selected.(*MCPPaletteItem); ok && item != nil {
+				switch item.entry.State {
+				case mcp.StateDisabled:
+					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
+				case mcp.StateConnected, mcp.StateLazy:
+					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: false}
+				}
+			}
+		}
+	case key.Matches(msg, mp.keyMap.LazyToggle):
+		if selected := mp.list.SelectedItem(); selected != nil {
+			if item, ok := selected.(*MCPPaletteItem); ok && item != nil && item.entry.IsLazy {
+				if item.entry.State != mcp.StateDisabled {
+					return ActionToggleLazyMCP{
+						ServerName: item.entry.Name,
+						Enabled:    !item.entry.Enabled,
+					}
+				}
+			}
+		}
+	case key.Matches(msg, mp.keyMap.OpenFilter):
+		mp.filtering = true
+		mp.input.SetValue("")
+		mp.list.SetFilter("")
+		mp.input.Focus()
+	}
+	return nil
+}
+
+// handleFilterKey processes keys in filter mode.
+func (mp *MCPPalette) handleFilterKey(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, mp.keyMap.Close):
+		mp.filtering = false
+		mp.input.Blur()
+		mp.input.SetValue("")
+		mp.list.SetFilter("")
+		mp.list.SetSelected(0)
+	case key.Matches(msg, mp.keyMap.Select):
+		// Submit the filter: exit filter mode but keep the results.
+		mp.filtering = false
+		mp.input.Blur()
+	default:
+		var cmd tea.Cmd
+		mp.input, cmd = mp.input.Update(msg)
+		mp.list.SetFilter(mp.input.Value())
+		mp.list.ScrollToTop()
+		mp.list.SetSelected(0)
+		return ActionCmd{cmd}
 	}
 	return nil
 }
 
 // Cursor returns the cursor position relative to the dialog.
+// Cursor returns the cursor position relative to the dialog.
 func (mp *MCPPalette) Cursor() *tea.Cursor {
+	if !mp.filtering {
+		return nil
+	}
 	return InputCursor(mp.com.Styles, mp.input.Cursor())
 }
 
@@ -302,19 +346,22 @@ func (mp *MCPPalette) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 }
 
 // ShortHelp implements help.KeyMap.
+// ShortHelp implements help.KeyMap.
 func (mp *MCPPalette) ShortHelp() []key.Binding {
 	return []key.Binding{
 		mp.keyMap.UpDown,
 		mp.keyMap.Select,
 		mp.keyMap.LazyToggle,
+		mp.keyMap.OpenFilter,
 		mp.keyMap.Close,
 	}
 }
 
 // FullHelp implements help.KeyMap.
+// FullHelp implements help.KeyMap.
 func (mp *MCPPalette) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{mp.keyMap.Select, mp.keyMap.LazyToggle, mp.keyMap.Next, mp.keyMap.Previous},
+		{mp.keyMap.Select, mp.keyMap.LazyToggle, mp.keyMap.OpenFilter, mp.keyMap.Next, mp.keyMap.Previous},
 		{mp.keyMap.Close},
 	}
 }
