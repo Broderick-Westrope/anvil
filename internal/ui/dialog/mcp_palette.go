@@ -75,6 +75,9 @@ func (i *MCPPaletteItem) SetMatch(m fuzzy.Match) {
 
 // infoLabel returns a human-readable label for the item's right-side info.
 func (i *MCPPaletteItem) infoLabel() string {
+	if i.entry.State == mcp.StateDisabled {
+		return "disabled"
+	}
 	if i.entry.IsLazy && i.entry.Enabled {
 		return "✓ enabled"
 	}
@@ -100,6 +103,7 @@ type MCPPalette struct {
 	com    *common.Common
 	keyMap struct {
 		Select,
+		LazyToggle,
 		UpDown,
 		Next,
 		Previous,
@@ -134,6 +138,10 @@ func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 	mp.keyMap.Select = key.NewBinding(
 		key.WithKeys("enter", " "),
 		key.WithHelp("enter/space", "toggle"),
+	)
+	mp.keyMap.LazyToggle = key.NewBinding(
+		key.WithKeys("l"),
+		key.WithHelp("l", "toggle lazy"),
 	)
 	mp.keyMap.UpDown = key.NewBinding(
 		key.WithKeys("up", "down"),
@@ -185,6 +193,19 @@ func (mp *MCPPalette) SetEntryEnabled(name string, enabled bool) {
 	}
 }
 
+// SetEntryState updates the connection state of a named entry.
+func (mp *MCPPalette) SetEntryState(name string, state mcp.State, counts mcp.Counts) {
+	for _, item := range mp.list.Items() {
+		if pi, ok := item.(*MCPPaletteItem); ok && pi.entry.Name == name {
+			pi.entry.State = state
+			pi.entry.Counts = counts
+			pi.cache = nil
+			pi.Bump()
+			return
+		}
+	}
+}
+
 // HandleMsg implements Dialog.
 func (mp *MCPPalette) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
@@ -211,7 +232,18 @@ func (mp *MCPPalette) HandleMsg(msg tea.Msg) Action {
 		case key.Matches(msg, mp.keyMap.Select):
 			if selected := mp.list.SelectedItem(); selected != nil {
 				if item, ok := selected.(*MCPPaletteItem); ok && item != nil {
-					if item.entry.IsLazy {
+					switch item.entry.State {
+					case mcp.StateDisabled:
+						return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
+					case mcp.StateConnected, mcp.StateLazy:
+						return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: false}
+					}
+				}
+			}
+		case key.Matches(msg, mp.keyMap.LazyToggle):
+			if selected := mp.list.SelectedItem(); selected != nil {
+				if item, ok := selected.(*MCPPaletteItem); ok && item != nil && item.entry.IsLazy {
+					if item.entry.State != mcp.StateDisabled {
 						return ActionToggleLazyMCP{
 							ServerName: item.entry.Name,
 							Enabled:    !item.entry.Enabled,
@@ -274,6 +306,7 @@ func (mp *MCPPalette) ShortHelp() []key.Binding {
 	return []key.Binding{
 		mp.keyMap.UpDown,
 		mp.keyMap.Select,
+		mp.keyMap.LazyToggle,
 		mp.keyMap.Close,
 	}
 }
@@ -281,7 +314,7 @@ func (mp *MCPPalette) ShortHelp() []key.Binding {
 // FullHelp implements help.KeyMap.
 func (mp *MCPPalette) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{mp.keyMap.Select, mp.keyMap.Next, mp.keyMap.Previous},
+		{mp.keyMap.Select, mp.keyMap.LazyToggle, mp.keyMap.Next, mp.keyMap.Previous},
 		{mp.keyMap.Close},
 	}
 }

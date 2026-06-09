@@ -759,6 +759,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, util.ReportError(msg.Err))
 	case mcpStateChangedMsg:
 		m.mcpStates = msg.states
+		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
+			if palette, ok := dia.(*dialog.MCPPalette); ok {
+				for name, state := range msg.states {
+					palette.SetEntryState(name, state.State, state.Counts)
+				}
+			}
+		}
 	case mcpPromptsLoadedMsg:
 		m.mcpPrompts = msg.Prompts
 		dia := m.dialog.Dialog(dialog.CommandsID)
@@ -2253,6 +2260,22 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			slog.Debug("MCP toggle not persisted: no active session or leaf message",
 				"server", msg.ServerName, "enabled", msg.Enabled)
 		}
+	case dialog.ActionHardToggleMCP:
+		ws := m.com.Workspace
+		name := msg.ServerName
+		enable := msg.Enable
+		cmds = append(cmds, func() tea.Msg {
+			var err error
+			if enable {
+				err = ws.EnableMCP(context.Background(), name)
+			} else {
+				err = ws.DisableMCP(name)
+			}
+			if err != nil {
+				slog.Error("Failed to toggle MCP", "name", name, "enable", enable, "error", err)
+			}
+			return nil
+		})
 	default:
 		cmds = append(cmds, util.CmdHandler(msg))
 	}
@@ -4505,9 +4528,6 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 	// Build entries from config + current state.
 	var entries []dialog.MCPPaletteEntry
 	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
-		if !mcpCfg.MCP.IsLazy() {
-			continue
-		}
 		state, ok := m.mcpStates[mcpCfg.Name]
 		if !ok {
 			continue
@@ -4515,7 +4535,7 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 		entries = append(entries, dialog.MCPPaletteEntry{
 			Name:        mcpCfg.Name,
 			Description: mcpCfg.MCP.LazyDescription,
-			IsLazy:      true,
+			IsLazy:      mcpCfg.MCP.IsLazy(),
 			Enabled:     m.enabledLazyMCPs[mcpCfg.Name],
 			State:       state.State,
 			Counts:      state.Counts,

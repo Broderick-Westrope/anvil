@@ -149,6 +149,8 @@ type Workspace interface {
 	GetMCPPrompt(clientID, promptID string, args map[string]string) (string, error)
 	EnableDockerMCP(ctx context.Context) error
 	DisableDockerMCP() error
+	EnableMCP(ctx context.Context, name string) error
+	DisableMCP(name string) error
 
 	// Events
 	Subscribe(program *tea.Program)
