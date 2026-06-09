@@ -94,6 +94,7 @@ type SessionAgent interface {
 	SetModels(large Model, small Model)
 	SetProviderConfig(cfg config.ProviderConfig)
 	SetTools(tools []fantasy.AgentTool)
+	SetLazyMCPToolMap(m map[string]string)
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
 	CancelAll()
@@ -119,6 +120,7 @@ type sessionAgent struct {
 	systemPromptPrefix *csync.Value[string]
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
+	lazyMCPToolMap     *csync.Map[string, string]
 
 	depth                int
 	isSubAgent           bool
@@ -163,6 +165,7 @@ func NewSessionAgent(
 		messages:             opts.Messages,
 		disableAutoSummarize: opts.DisableAutoSummarize,
 		tools:                csync.NewSliceFrom(opts.Tools),
+		lazyMCPToolMap:       csync.NewMap[string, string](),
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
@@ -192,14 +195,56 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	// Copy mutable fields under lock to avoid races with SetTools/SetModels.
 	agentTools := a.tools.Copy()
+	lazyMCPToolMap := a.lazyMCPToolMap.Copy()
 	largeModel := a.largeModel.Get()
 	systemPrompt := a.systemPrompt.Get()
 	promptPrefix := a.systemPromptPrefix.Get()
 	providerCfg := a.providerConfig.Get()
+
+	// sessionLock protects currentSession and currentLeaf from concurrent
+	// access across agent callbacks (e.g. parallel OnToolResult calls).
+	sessionLock := sync.Mutex{}
+	currentSession, err := a.sessions.Get(ctx, call.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+	currentLeaf := currentSession.LeafMessageID
+
+	// getLeaf and setLeaf provide thread-safe access to currentLeaf.
+	getLeaf := func() string {
+		sessionLock.Lock()
+		defer sessionLock.Unlock()
+		return currentLeaf
+	}
+	setLeaf := func(id string) {
+		sessionLock.Lock()
+		defer sessionLock.Unlock()
+		currentLeaf = id
+	}
+
+	msgs, raw, err := a.getSessionMessages(ctx, currentSession)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session messages: %w", err)
+	}
+
+	// Derive the lazy MCP state from conversation history and inject
+	// into the context so tool handlers can query it.
+	initialEnabled := deriveLazyMCPState(raw)
+	lazyState := tools.NewLazyMCPState(initialEnabled)
+	ctx = tools.WithLazyMCPState(ctx, lazyState)
+
+	// Filter lazy MCP tools from the initial tool set.
+	agentTools = filterLazyMCPTools(agentTools, lazyMCPToolMap, lazyState)
+
+	// Build MCP instructions, skipping lazy servers not yet enabled.
+	lazyServers := lazyServerNames(lazyMCPToolMap)
 	var instructions strings.Builder
 
-	for _, server := range mcp.GetStates() {
-		if server.State != mcp.StateConnected {
+	for name, server := range mcp.GetStates() {
+		if server.State != mcp.StateConnected && server.State != mcp.StateLazy {
+			continue
+		}
+		if lazyServers[name] && !lazyState.IsEnabled(name) {
 			continue
 		}
 		if s := server.Client.InitializeResult().Instructions; s != "" {
@@ -223,32 +268,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		fantasy.WithTools(agentTools...),
 		fantasy.WithUserAgent(userAgent),
 	)
-
-	// sessionLock protects currentSession and currentLeaf from concurrent
-	// access across agent callbacks (e.g. parallel OnToolResult calls).
-	sessionLock := sync.Mutex{}
-	currentSession, err := a.sessions.Get(ctx, call.SessionID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get session: %w", err)
-	}
-	currentLeaf := currentSession.LeafMessageID
-
-	// getLeaf and setLeaf provide thread-safe access to currentLeaf.
-	getLeaf := func() string {
-		sessionLock.Lock()
-		defer sessionLock.Unlock()
-		return currentLeaf
-	}
-	setLeaf := func(id string) {
-		sessionLock.Lock()
-		defer sessionLock.Unlock()
-		currentLeaf = id
-	}
-
-	msgs, _, err := a.getSessionMessages(ctx, currentSession)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get session messages: %w", err)
-	}
 
 	var wg sync.WaitGroup
 	// Generate title if first message.
@@ -326,8 +345,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				prepared.Messages[i].ProviderOptions = nil
 			}
 
-			// Use latest tools (updated by SetTools when MCP tools change).
-			prepared.Tools = a.tools.Copy()
+			// Use latest tools (updated by SetTools when MCP tools change),
+			// filtering out lazy MCP tools that haven't been enabled.
+			prepared.Tools = filterLazyMCPTools(a.tools.Copy(), lazyMCPToolMap, lazyState)
 
 			queuedCalls, _ := a.messageQueue.Get(call.SessionID)
 			a.messageQueue.Del(call.SessionID)
@@ -1438,6 +1458,10 @@ func (a *sessionAgent) SetProviderConfig(cfg config.ProviderConfig) {
 
 func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 	a.tools.SetSlice(tools)
+}
+
+func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
+	a.lazyMCPToolMap.Reset(m)
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {

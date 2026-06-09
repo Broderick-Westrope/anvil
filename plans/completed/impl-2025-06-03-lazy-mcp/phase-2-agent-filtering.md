@@ -55,7 +55,8 @@ read internal/message/content.go
      reads/writes per-Run state via context
    - `Run` function:
      - Validate `ServerName` exists in `lazyMCPs` map (exact match)
-     - Check MCP connection state via `mcp.States()` — if `StateError`,
+     - Check MCP connection state via `mcp.States()` — if `StateLazy`,
+       that's expected (server is connected but lazy). If `StateError`,
        return error with message. If `StateStarting`, return "still starting,
        retry shortly"
      - Get `LazyMCPState` from context via `GetLazyMCPState(ctx)`. Call
@@ -70,6 +71,7 @@ read internal/message/content.go
    - Invalid server name returns error
    - Failed MCP (StateError) returns connection error
    - Starting MCP (StateStarting) returns retry message
+   - Lazy MCP (StateLazy) enables successfully
    - Context without LazyMCPState handles gracefully
 
 **Verify:**

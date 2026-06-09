@@ -70,6 +70,7 @@ const (
 	StateStarting
 	StateConnected
 	StateError
+	StateLazy
 )
 
 func (s State) String() string {
@@ -82,6 +83,8 @@ func (s State) String() string {
 		return "connected"
 	case StateError:
 		return "error"
+	case StateLazy:
+		return "lazy"
 	default:
 		return "unknown"
 	}
@@ -113,7 +116,7 @@ type Counts struct {
 	Resources int
 }
 
-// ClientInfo holds information about an MCP client's state
+// ClientInfo holds information about an MCP client's state.
 type ClientInfo struct {
 	Name        string
 	State       State
@@ -121,6 +124,7 @@ type ClientInfo struct {
 	Client      *ClientSession
 	Counts      Counts
 	ConnectedAt time.Time
+	IsLazy      bool `json:"is_lazy"`
 }
 
 // SubscribeEvents returns a channel for MCP events
@@ -264,7 +268,11 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 	updatePrompts(name, prompts)
 	sessions.Set(name, session)
 
-	updateState(name, StateConnected, nil, session, Counts{
+	state := StateConnected
+	if m.IsLazy() {
+		state = StateLazy
+	}
+	updateState(name, state, nil, session, Counts{
 		Tools:   toolCount,
 		Prompts: len(prompts),
 	})
@@ -322,14 +330,20 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 	// Ping failed — close the stale session before replacing it.
 	// Ignore the error: the session is already known to be unhealthy.
 	_ = sess.Close()
-	updateState(name, StateError, maybeTimeoutErr(err, timeout), nil, state.Counts)
+	sessions.Del(name)
 
 	sess, err = createSession(ctx, name, m, cfg.Resolver(), dbQueries)
 	if err != nil {
+		// Only transition to error if reconnection actually fails.
+		updateState(name, StateError, maybeTimeoutErr(err, timeout), nil, state.Counts)
 		return nil, err
 	}
 
-	updateState(name, StateConnected, nil, sess, state.Counts)
+	reconnState := StateConnected
+	if m.IsLazy() {
+		reconnState = StateLazy
+	}
+	updateState(name, reconnState, nil, sess, state.Counts)
 	sessions.Set(name, sess)
 	return sess, nil
 }

@@ -95,6 +95,16 @@ type (
 		Instructions string
 		Source       string
 	}
+	// ActionToggleLazyMCP is dispatched when a lazy MCP is toggled.
+	ActionToggleLazyMCP struct {
+		ServerName string
+		Enabled    bool
+	}
+	// ActionHardToggleMCP is dispatched to enable or disable an MCP server.
+	ActionHardToggleMCP struct {
+		ServerName string
+		Enable     bool
+	}
 	// ActionNavigateTree is dispatched when a tree or branch dialog
 	// selects a message to navigate to. The receiver uses Role and
 	// Content to decide whether to pre-fill the editor.

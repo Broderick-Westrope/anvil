@@ -205,6 +205,7 @@ type Styles struct {
 		BusyIcon        lipgloss.Style // Busy/starting status icon
 		ErrorIcon       lipgloss.Style // Error status icon
 		OnlineIcon      lipgloss.Style // Online/ready status icon
+		LazyIcon        lipgloss.Style // Lazy/connected but not enabled status icon
 		AdditionalText  lipgloss.Style // "None" and "…and N more" text
 		CapabilityCount lipgloss.Style // "N tools" / "N prompts" / "N resources"
 		RowTitleBase    lipgloss.Style // Base style applied over row titles in common.Status

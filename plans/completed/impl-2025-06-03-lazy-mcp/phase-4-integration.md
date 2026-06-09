@@ -100,8 +100,8 @@ findings addressed: (1) onEnable callback cannot be wired per-Run — switched t
 context-value pattern with LazyMCPState. (2) MCP instructions still injected for
 lazy servers — added filtering step in agent.go:201-209. (3) fantasy.WithTools
 passes unfiltered tools — added filtering at agent.go:194. Additional fixes:
-MCPToggleContent JSON deserialization case specified, StateIdle placed at end of
+MCPToggleContent JSON deserialization case specified, StateLazy placed at end of
 iota to avoid shifting StateError, tool→MCP mapping uses existing mcpName field,
-UI idle state derivation uses ClientInfo.IsLazy extension, Task 8 made concrete
-with palette pattern reference. Round 2: restructured into 4 phases for
-independent reviewability. -->
+UI lazy state derivation uses ClientInfo.IsLazy extension. Round 2: restructured
+into 4 phases for independent reviewability. Round 3: renamed StateIdle to
+StateLazy for consistency with enable/disable vocabulary. -->

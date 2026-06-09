@@ -536,6 +536,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 
 	commands = append(commands,
 		NewCommandItem(c.com.Styles, "browse_skills", "Browse Skills", "", ActionOpenDialog{SkillPickerID}),
+		NewCommandItem(c.com.Styles, "mcp_servers", "MCP Servers", "", ActionOpenDialog{MCPPaletteID}),
 		NewCommandItem(c.com.Styles, "reload_plugins", "Reload Plugins", "", ActionReloadPlugins{}),
 		NewCommandItem(c.com.Styles, "quit", "Quit", "ctrl+c", tea.QuitMsg{}).WithAliases("exit"),
 	)

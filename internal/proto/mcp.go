@@ -15,6 +15,7 @@ const (
 	MCPStateStarting
 	MCPStateConnected
 	MCPStateError
+	MCPStateLazy
 )
 
 // MarshalText implements the [encoding.TextMarshaler] interface.
@@ -33,6 +34,8 @@ func (s *MCPState) UnmarshalText(data []byte) error {
 		*s = MCPStateConnected
 	case "error":
 		*s = MCPStateError
+	case "lazy":
+		*s = MCPStateLazy
 	default:
 		return fmt.Errorf("unknown mcp state: %s", data)
 	}
@@ -50,6 +53,8 @@ func (s MCPState) String() string {
 		return "connected"
 	case MCPStateError:
 		return "error"
+	case MCPStateLazy:
+		return "lazy"
 	default:
 		return "unknown"
 	}
@@ -133,6 +138,7 @@ type MCPClientInfo struct {
 	PromptCount   int       `json:"prompt_count,omitempty"`
 	ResourceCount int       `json:"resource_count,omitempty"`
 	ConnectedAt   time.Time `json:"connected_at"`
+	IsLazy        bool      `json:"is_lazy"`
 }
 
 // MarshalJSON implements the [json.Marshaler] interface.
