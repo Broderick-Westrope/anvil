@@ -221,6 +221,32 @@ which do expand.
 }
 ```
 
+#### Lazy Loading
+
+MCP servers with many tools (Datadog, Slack, Linear) can consume 50k+ tokens
+of context. Add `lazy_description` to defer their tools until needed:
+
+```json
+{
+  "mcp": {
+    "datadog": {
+      "type": "http",
+      "url": "https://mcp.datadoghq.com/...",
+      "auth": "oauth",
+      "lazy_description": "Datadog monitoring, observability, and APM."
+    }
+  }
+}
+```
+
+Lazy servers connect at startup but their tool schemas stay out of the LLM
+context. The agent sees an `enable_mcp` tool listing available lazy servers
+and calls it when needed. You can also toggle servers manually via the MCP
+palette (Ctrl+P → "MCP Servers").
+
+Enabled state is branch-scoped — it persists for the current conversation
+branch and survives restarts.
+
 ### Hooks
 
 Anvil has preliminary support for hooks. For details, see
