@@ -14,6 +14,7 @@
 - **Minimal by Default, Observable When Needed:** tool calls, subagent runs, and other activity are collapsed into scannable one-line summaries; drill into any item to see full input, output, and reasoning without leaving the conversation
 - **No Telemetry:** all Charm PostHog telemetry has been removed — Anvil phones home to nobody
 - **MCP OAuth:** connect to OAuth-protected MCP servers (including Anthropic's) with automatic token management and refresh
+- **Lazy MCP Loading:** defer heavy MCP tool schemas from the LLM context until needed — the agent or human enables them on demand, saving 50k+ tokens per server
 - **Plugins:** bundle skills, slash commands, and custom agents into a single installable package with manifest-based discovery and auto-approved file access
 - **Quality of Life:** autocomplete for commands, skills, and builtins; Ctrl+C clears the entire input; Alt+Enter newline in Ghostty; paste no longer clobbers existing prompt text
 
