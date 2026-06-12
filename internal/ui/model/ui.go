@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -856,8 +857,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case pubsub.CreatedEvent:
 			cmds = append(cmds, m.appendSessionMessage(msg.Payload))
+			m.applyLazyMCPMessageParts(msg.Payload)
 		case pubsub.UpdatedEvent:
 			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
+			m.applyLazyMCPMessageParts(msg.Payload)
 		case pubsub.DeletedEvent:
 			m.chat.RemoveMessage(msg.Payload.ID)
 		}
@@ -4547,18 +4550,49 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 	return nil
 }
 
-// deriveEnabledLazyMCPs scans branch-path messages for MCPToggleContent
-// entries and rebuilds the enabledLazyMCPs map. Last event per server wins.
+// deriveEnabledLazyMCPs scans branch-path messages for lazy MCP state
+// changes and rebuilds the enabledLazyMCPs map. Last event per server
+// wins. This mirrors the agent-side derivation in
+// internal/agent/lazy_mcp.go.
 func (m *UI) deriveEnabledLazyMCPs(msgs []message.Message) {
-	enabled := make(map[string]bool)
+	m.enabledLazyMCPs = make(map[string]bool)
 	for _, msg := range msgs {
-		for _, part := range msg.Parts {
-			if toggle, ok := part.(message.MCPToggleContent); ok {
-				enabled[toggle.ServerName] = toggle.Enabled
+		m.applyLazyMCPMessageParts(msg)
+	}
+}
+
+// applyLazyMCPMessageParts scans a message's parts for lazy MCP state
+// changes (enable_mcp tool calls and MCPToggleContent entries) and
+// applies them to the enabledLazyMCPs map and any open MCP palette.
+func (m *UI) applyLazyMCPMessageParts(msg message.Message) {
+	for _, part := range msg.Parts {
+		var name string
+		var enabled bool
+		switch p := part.(type) {
+		case message.ToolCall:
+			if p.Name != agenttools.EnableMCPToolName || !p.Finished {
+				continue
+			}
+			var params agenttools.EnableMCPParams
+			if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
+				continue
+			}
+			name, enabled = params.ServerName, true
+		case message.MCPToggleContent:
+			name, enabled = p.ServerName, p.Enabled
+		default:
+			continue
+		}
+		m.enabledLazyMCPs[name] = enabled
+		if m.dialog == nil {
+			continue
+		}
+		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
+			if palette, ok := dia.(*dialog.MCPPalette); ok {
+				palette.SetEntryEnabled(name, enabled)
 			}
 		}
 	}
-	m.enabledLazyMCPs = enabled
 }
 
 // openTreeDialog opens the session tree dialog.

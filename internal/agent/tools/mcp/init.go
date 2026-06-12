@@ -221,8 +221,13 @@ func WaitForInit(ctx context.Context) error {
 	}
 }
 
-// InitializeSingle initializes a single MCP client by name.
+// InitializeSingle initializes a single MCP client by name. If queries
+// is nil, the queries provided to Initialize are used so that OAuth
+// tokens remain available when re-enabling a client at runtime.
 func InitializeSingle(ctx context.Context, name string, cfg *config.ConfigStore, queries db.Querier) error {
+	if queries == nil {
+		queries = dbQueries
+	}
 	m, exists := cfg.Config().MCP[name]
 	if !exists {
 		return fmt.Errorf("mcp '%s' not found in configuration", name)
