@@ -108,10 +108,10 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	valueResolver := NewShellVariableResolver(env)
 	store.resolver = valueResolver
 
-	// Disable auto-reload during initial load to prevent nested calls from
-	// config-modifying operations inside configureProviders.
-	store.autoReloadDisabled = true
-	defer func() { store.autoReloadDisabled = false }()
+	// Hold reloadMu during initial load to prevent configureProviders
+	// from triggering auto-reload via RemoveConfigField.
+	store.reloadMu.Lock()
+	defer store.reloadMu.Unlock()
 
 	if err := cfg.configureProviders(store, env, valueResolver, store.knownProviders); err != nil {
 		return nil, fmt.Errorf("failed to configure providers: %w", err)
@@ -479,7 +479,7 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	c.applyLSPDefaults()
 
 	// Add the default context paths if they are not already present
-	c.Options.ContextPaths = append(defaultContextPaths, c.Options.ContextPaths...)
+	c.Options.ContextPaths = append(slices.Clone(defaultContextPaths), c.Options.ContextPaths...)
 	slices.Sort(c.Options.ContextPaths)
 	c.Options.ContextPaths = slices.Compact(c.Options.ContextPaths)
 
