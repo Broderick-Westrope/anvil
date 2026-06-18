@@ -116,6 +116,109 @@ func TestToAIMessage_ASCIIButInvalidBase64(t *testing.T) {
 	require.Equal(t, mediaLoadFailedPlaceholder, textContent.Text)
 }
 
+func TestToAIMessage_AssistantReasoningBeforeText(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role: Assistant,
+		Parts: []ContentPart{
+			ReasoningContent{
+				Thinking:  "Let me think about this...",
+				Signature: "sig123",
+			},
+			TextContent{Text: "Here is my response"},
+			ToolCall{ID: "call_1", Name: "bash", Input: `{"command":"ls"}`},
+		},
+	}
+
+	messages := msg.ToAIMessage()
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Content, 3)
+
+	_, ok := messages[0].Content[0].(fantasy.ReasoningPart)
+	require.True(t, ok, "first part should be ReasoningPart")
+	_, ok = messages[0].Content[1].(fantasy.TextPart)
+	require.True(t, ok, "second part should be TextPart")
+	_, ok = messages[0].Content[2].(fantasy.ToolCallPart)
+	require.True(t, ok, "third part should be ToolCallPart")
+}
+
+func TestAppendReasoningContent_PreservesAllFields(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role: Assistant,
+		Parts: []ContentPart{
+			ReasoningContent{
+				Thinking:         "initial",
+				Signature:        "sig",
+				ThoughtSignature: "tsig",
+				ToolID:           "tid",
+				StartedAt:        100,
+				FinishedAt:       200,
+			},
+		},
+	}
+
+	msg.AppendReasoningContent(" more")
+	rc := msg.ReasoningContent()
+	require.Equal(t, "initial more", rc.Thinking)
+	require.Equal(t, "sig", rc.Signature)
+	require.Equal(t, "tsig", rc.ThoughtSignature)
+	require.Equal(t, "tid", rc.ToolID)
+	require.Equal(t, int64(100), rc.StartedAt)
+	require.Equal(t, int64(200), rc.FinishedAt)
+}
+
+func TestAppendReasoningSignature_PreservesAllFields(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role: Assistant,
+		Parts: []ContentPart{
+			ReasoningContent{
+				Thinking:         "thought",
+				Signature:        "sig",
+				ThoughtSignature: "tsig",
+				ToolID:           "tid",
+				StartedAt:        100,
+			},
+		},
+	}
+
+	msg.AppendReasoningSignature("more")
+	rc := msg.ReasoningContent()
+	require.Equal(t, "thought", rc.Thinking)
+	require.Equal(t, "sigmore", rc.Signature)
+	require.Equal(t, "tsig", rc.ThoughtSignature)
+	require.Equal(t, "tid", rc.ToolID)
+}
+
+func TestFinishThinking_PreservesAllFields(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role: Assistant,
+		Parts: []ContentPart{
+			ReasoningContent{
+				Thinking:         "thought",
+				Signature:        "sig",
+				ThoughtSignature: "tsig",
+				ToolID:           "tid",
+				StartedAt:        100,
+			},
+		},
+	}
+
+	msg.FinishThinking()
+	rc := msg.ReasoningContent()
+	require.Equal(t, "thought", rc.Thinking)
+	require.Equal(t, "sig", rc.Signature)
+	require.Equal(t, "tsig", rc.ThoughtSignature)
+	require.Equal(t, "tid", rc.ToolID)
+	require.NotZero(t, rc.FinishedAt)
+}
+
 func BenchmarkPromptWithTextAttachments(b *testing.B) {
 	cases := []struct {
 		name        string
