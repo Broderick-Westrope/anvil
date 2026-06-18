@@ -108,10 +108,10 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	valueResolver := NewShellVariableResolver(env)
 	store.resolver = valueResolver
 
-	// Disable auto-reload during initial load to prevent nested calls from
-	// config-modifying operations inside configureProviders.
-	store.autoReloadDisabled = true
-	defer func() { store.autoReloadDisabled = false }()
+	// Hold reloadMu during initial load to prevent configureProviders
+	// from triggering auto-reload via RemoveConfigField.
+	store.reloadMu.Lock()
+	defer store.reloadMu.Unlock()
 
 	if err := cfg.configureProviders(store, env, valueResolver, store.knownProviders); err != nil {
 		return nil, fmt.Errorf("failed to configure providers: %w", err)
@@ -479,7 +479,7 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	c.applyLSPDefaults()
 
 	// Add the default context paths if they are not already present
-	c.Options.ContextPaths = append(defaultContextPaths, c.Options.ContextPaths...)
+	c.Options.ContextPaths = append(slices.Clone(defaultContextPaths), c.Options.ContextPaths...)
 	slices.Sort(c.Options.ContextPaths)
 	c.Options.ContextPaths = slices.Compact(c.Options.ContextPaths)
 
@@ -559,8 +559,11 @@ func (c *Config) defaultModelSelection(knownProviders []catwalk.Provider) (large
 		}
 		defaultLargeModel := c.GetModel(string(p.ID), p.DefaultLargeModelID)
 		if defaultLargeModel == nil {
-			err = fmt.Errorf("default large model %s not found for provider %s", p.DefaultLargeModelID, p.ID)
-			return largeModel, smallModel, err
+			slog.Warn("Default large model %s not found for provider %s", p.DefaultLargeModelID, p.ID)
+			if len(providerConfig.Models) == 0 {
+				return largeModel, smallModel, fmt.Errorf("default large model %s not found for provider %s", p.DefaultLargeModelID, p.ID)
+			}
+			defaultLargeModel = &providerConfig.Models[0]
 		}
 		largeModel = SelectedModel{
 			Provider:        string(p.ID),
@@ -571,8 +574,11 @@ func (c *Config) defaultModelSelection(knownProviders []catwalk.Provider) (large
 
 		defaultSmallModel := c.GetModel(string(p.ID), p.DefaultSmallModelID)
 		if defaultSmallModel == nil {
-			err = fmt.Errorf("default small model %s not found for provider %s", p.DefaultSmallModelID, p.ID)
-			return largeModel, smallModel, err
+			slog.Warn("Default small model %s not found for provider %s", p.DefaultSmallModelID, p.ID)
+			if len(providerConfig.Models) == 0 {
+				return largeModel, smallModel, fmt.Errorf("default small model %s not found for provider %s", p.DefaultSmallModelID, p.ID)
+			}
+			defaultSmallModel = &providerConfig.Models[0]
 		}
 		smallModel = SelectedModel{
 			Provider:        string(p.ID),
@@ -1011,15 +1017,37 @@ func GlobalSkillsDirs() []string {
 	return paths
 }
 
+// projectSkillSubdirs lists the conventional subdirectories where
+// project-level skills are discovered. Shared across working-dir and
+// git-root lookups to prevent drift when a new convention is added.
+var projectSkillSubdirs = []string{
+	".agents/skills",
+	".anvil/skills",
+	".claude/skills",
+	".cursor/skills",
+}
+
 // ProjectSkillsDir returns the default project directories for which Anvil
-// will look for skills.
+// will look for skills. In addition to the working directory, it also
+// checks the git working tree root so that monorepo-level skills are
+// discovered when the user is inside a subdirectory.
+// Working-directory paths come first so local skills take precedence
+// over monorepo-level ones.
 func ProjectSkillsDir(workingDir string) []string {
-	return []string{
-		filepath.Join(workingDir, ".agents/skills"),
-		filepath.Join(workingDir, ".anvil/skills"),
-		filepath.Join(workingDir, ".claude/skills"),
-		filepath.Join(workingDir, ".cursor/skills"),
+	dirs := make([]string, 0, len(projectSkillSubdirs)*2)
+	for _, sub := range projectSkillSubdirs {
+		dirs = append(dirs, filepath.Join(workingDir, sub))
 	}
+
+	// When the working directory is inside a git repository, also look at
+	// the repository root so monorepo-level .agents/skills are found.
+	if root := worktreeRoot(workingDir); root != "" && root != workingDir {
+		for _, sub := range projectSkillSubdirs {
+			dirs = append(dirs, filepath.Join(root, sub))
+		}
+	}
+
+	return dirs
 }
 
 func isAppleTerminal() bool { return os.Getenv("TERM_PROGRAM") == "Apple_Terminal" }

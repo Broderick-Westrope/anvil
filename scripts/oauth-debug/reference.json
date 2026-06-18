@@ -1,7 +1,7 @@
 {
   "_description": "Known-good Anthropic OAuth request protocol as implemented by Anvil. Compare mitmproxy captures against this file to detect protocol drift.",
-  "_last_verified": "2026-05-18",
-  "_source": "Captured from Claude Code CLI v2.1.153 via mitmproxy.",
+  "_last_verified": "2026-06-19",
+  "_source": "Captured from Claude Code CLI v2.1.181 via mitmproxy.",
 
   "endpoints": {
     "api": "https://api.anthropic.com/v1/messages",
@@ -52,7 +52,10 @@
     "model_4_6_and_4_7": [
       "effort-2025-11-24"
     ],
-    "_note": "Flags are comma-separated in the anthropic-beta header. Order does not matter. oauth-2025-04-20 is present on OAuth requests but absent from API key requests."
+    "informational": [
+      "advanced-tool-use-2025-11-20"
+    ],
+    "_note": "Flags are comma-separated in the anthropic-beta header. Order does not matter. oauth-2025-04-20 is present on OAuth requests but absent from API key requests. Informational flags are known but not required — Anvil does not need to send them."
   },
 
   "system_message_injection": {
@@ -62,9 +65,8 @@
       "hash_input": "SHA-256 of system prompt text + salt + CLI version."
     },
     "identity_prefix": {
-      "text": "You are Claude Code, Anthropic's official CLI for Claude.",
-      "position": "Second system message (after billing header).",
-      "_note": "Not observed in v2.1.143 capture — may be conditionally included or moved."
+      "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+      "position": "Second system message (after billing header)."
     }
   },
 

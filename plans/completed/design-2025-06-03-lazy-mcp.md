@@ -88,19 +88,33 @@ Out:
 - The enabled set is derived OUTSIDE `PrepareStep`, before the agent run
   begins, by scanning the raw branch path from `getSessionMessages` (which
   returns both filtered and raw message lists). This derived set is stored
-  in a closure variable captured by `PrepareStep` — following the same
-  pattern as `getLeaf`/`setLeaf` closures in `agent.go`.
-- `PrepareStep` uses the closure variable to filter: before copying tools, it
+  in a `LazyMCPState` struct injected into the context via a context key —
+  both `PrepareStep` and the `enable_mcp` tool read/write from this same
+  context value.
+- `PrepareStep` uses the context state to filter: before copying tools, it
   excludes tools belonging to lazy MCPs that are not in the enabled set.
-- When the agent's own `enable_mcp` tool call completes, the closure variable
-  is updated immediately (via the tool's Run callback), so the next
-  `PrepareStep` in the same turn sees the change.
+- The initial `fantasy.WithTools` call at agent construction (`agent.go:223`)
+  must also be filtered — otherwise lazy tools leak into the first LLM call.
+- When the agent's own `enable_mcp` tool call completes, it updates the
+  `LazyMCPState` in context immediately, so the next `PrepareStep` in the
+  same turn sees the change.
 - `enable_mcp` does NOT call `SetTools`. It only produces a tool-call message
-  in the tree and updates the closure variable. The filtering in
-  `PrepareStep` handles the rest.
+  in the tree and updates the context state. The filtering in `PrepareStep`
+  handles the rest.
 - The derivation processes both enable events (agent `enable_mcp` tool calls)
   and disable events (human toggle synthetic messages) in chronological
   order. The last event for a given MCP wins.
+
+*MCP instructions filtering:*
+- MCP servers can inject instructions into the system prompt via
+  `InitializeResult().Instructions` (`agent.go:201-209`). These instruction
+  blocks can be large (e.g. Datadog's is ~30 lines).
+- For lazy MCPs that are not enabled, their instructions must also be excluded
+  from the system prompt. Otherwise, the context-saving benefit of hiding
+  tool descriptions is undermined by instruction bloat.
+- The same `LazyMCPState` used for tool filtering drives instruction
+  filtering: skip instructions for servers where `IsLazy() &&
+  !state.IsEnabled(name)`.
 
 *Human toggle modal:*
 - When a human toggles a lazy MCP in the palette modal, a synthetic system
@@ -172,12 +186,29 @@ Out:
   `allTools`). No error — the MCP is simply gone.
 
 *UI state indicator:*
-- MCPs are shown throughout the UI with a colored dot representing their
-  connection state (connected, disconnected, etc.). Lazy MCPs that are
-  connected but not yet enabled in the current branch should display a
-  distinct state — visually differentiated from both "connected" (active) and
-  "disconnected" (error). This communicates that the server is healthy and
-  ready, but its tools are not currently in the context.
+- MCP state is represented by a colored `●` dot in the sidebar and MCP list
+  (`internal/ui/model/mcp.go:72-90`). The current states and colors are:
+  - `StateStarting` → yellow (`#e0af68`, `BusyIcon`)
+  - `StateConnected` → teal (`#41a6b5`, `OnlineIcon`)
+  - `StateError` → red (`#f7768e`, `ErrorIcon`)
+  - `StateDisabled` → muted blue-grey (`#a9b1d6`, `DisabledIcon`)
+- A new state is needed: `StateLazy` for lazy MCPs that are connected but
+  not enabled on the current branch. This requires:
+  - New constant in `mcp.State` iota (`internal/agent/tools/mcp/init.go:66`)
+  - New constant in `proto.MCPState` iota (`internal/proto/mcp.go:11`)
+  - New icon style in the theme (`internal/ui/styles/quickstyle.go:700`)
+  - New case in the `mcpList` render switch (`internal/ui/model/mcp.go:72`)
+- The lazy dot should be visually distinct from connected (teal) — a dimmer
+  or desaturated variant that communicates "healthy but not active". The text
+  should show "lazy" alongside the tool count so the human knows what's
+  available to enable.
+- The lazy state is a UI-level concept layered on top of `StateConnected`.
+  The MCP server itself is still connected — the lazy state is derived by
+  checking whether the MCP has `lazy_description` set AND is not in the
+  current branch's enabled set. The `MCPGetStates()` workspace method
+  (`internal/workspace/workspace.go:144`) or the UI's `handleStateChanged`
+  (`internal/ui/model/ui.go:5138`) will need to incorporate the branch's
+  lazy MCP enabled state when computing the effective display state.
 
 *Input validation:*
 - `enable_mcp` requires an exact match on the server name as configured in

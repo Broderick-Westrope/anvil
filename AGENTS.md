@@ -26,9 +26,12 @@ internal/
     agent.go                       SessionAgent: runs LLM conversations per session
     coordinator.go                 Coordinator: manages named agents ("coder", "task")
     hooked_tool.go                 Decorator that runs PreToolUse hooks before tool execution
+    lazy_mcp.go                    Lazy MCP state derivation and tool filtering
     prompts.go                     Loads Go-template system prompts
     templates/                     System prompt templates (coder.md.tpl, task.md.tpl, etc.)
     tools/                         All built-in tools (bash, edit, view, grep, glob, etc.)
+      enable_mcp.go                enable_mcp tool for agent-side lazy MCP activation
+      lazy_mcp_state.go            Thread-safe enabled set for lazy MCPs (per-Run)
       mcp/                         MCP client integration
   hooks/                           Hook engine: runs user shell commands on hook events
     hooks.go                       Decision types, aggregation logic, event constants
@@ -85,6 +88,15 @@ internal/
   `hookedTool` decorator in `internal/agent/hooked_tool.go` wraps tools at
   the coordinator level. Hooks run before permission checks. See
   `HOOKS.md` for the user-facing protocol.
+- **Lazy MCPs**: MCP servers with `lazy_description` set in `anvil.json`
+  connect eagerly but have their tools excluded from the LLM context until
+  explicitly enabled. The `enable_mcp` built-in tool lets the agent activate
+  them; humans toggle via the MCP palette dialog (Ctrl+P → "MCP Servers").
+  Enabled state is branch-scoped — derived from message history
+  (`deriveLazyMCPState` in `internal/agent/lazy_mcp.go`) so it persists
+  across restarts and survives compaction. `PrepareStep` filters the tool
+  list on every turn. The `LazyMCPState` type in
+  `internal/agent/tools/lazy_mcp_state.go` holds the per-Run enabled set.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 

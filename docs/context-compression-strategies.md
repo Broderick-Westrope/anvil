@@ -409,6 +409,45 @@ The savings scale with the number of tools. For small toolsets (<10), the
 overhead of the meta-tool round-trip may not be worth it. For 20+ tools,
 lazy loading is almost always net positive.
 
+### Anvil's Implementation
+
+Anvil implements lazy tool loading for MCP servers via the `lazy_description`
+config field. The approach combines elements of the Tool Search Meta-Tool
+and Middleware-Based Filtering patterns above:
+
+1. **Configuration**: Set `lazy_description` on an MCP server in
+   `anvil.json`. The presence of this field makes the server lazy; its value
+   is the one-line description shown to the agent.
+2. **Eager connect, lazy context**: All servers connect at startup. Only the
+   tool descriptions are withheld from the LLM context window.
+3. **`enable_mcp` tool**: A built-in tool whose description lists available
+   lazy servers. The agent calls it when it needs a server's capabilities.
+   This adds one round-trip, then all tools from that server appear on the
+   next turn.
+4. **Human toggle**: The MCP palette dialog (Ctrl+P → "MCP Servers") lets
+   users enable/disable servers and toggle lazy MCPs via keyboard shortcuts.
+5. **Branch-scoped state**: Enabled state is derived from message history
+   (both `enable_mcp` tool calls and `MCPToggleContent` metadata messages).
+   It persists across restarts and survives compaction.
+6. **Per-turn filtering**: `PrepareStep` filters the tool list every turn
+   based on the current branch's enabled set.
+
+```json
+{
+  "mcp": {
+    "datadog": {
+      "type": "http",
+      "url": "https://mcp.datadoghq.com/...",
+      "lazy_description": "Datadog monitoring, observability, and APM."
+    }
+  }
+}
+```
+
+Key files: `internal/agent/lazy_mcp.go` (state derivation and filtering),
+`internal/agent/tools/enable_mcp.go` (agent-side tool),
+`internal/ui/dialog/mcp_palette.go` (human-side dialog).
+
 ### Pairing with Prompt Caching
 
 Lazy loading composes well with prompt caching:

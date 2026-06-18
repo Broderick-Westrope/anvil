@@ -668,11 +668,12 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 	})
 
 	wg.Go(func() error {
-		agentTools, buildErr := c.buildTools(ctx, agentCfg, depth)
+		agentTools, lazyMap, buildErr := c.buildTools(ctx, agentCfg, depth)
 		if buildErr != nil {
 			return buildErr
 		}
 		result.SetTools(agentTools)
+		result.SetLazyMCPToolMap(lazyMap)
 		return nil
 	})
 
@@ -807,7 +808,7 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 // At depth ≤ 1 the task delegation tool is excluded.
 // AllowedTools is applied via ParseFilterList; AllowedMCP is applied per server.
 // It snapshots coordinator fields under RLock to avoid races with ReloadPlugins.
-func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int) ([]fantasy.AgentTool, error) {
+func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int) ([]fantasy.AgentTool, map[string]string, error) {
 	c.orchestratorMu.RLock()
 	allSkills := c.allSkills
 	activeSkills := c.activeSkills
@@ -827,7 +828,7 @@ func (c *coordinator) buildToolsWithState(
 	skillTracker *skills.Tracker,
 	agentMDs map[string]prompt.AgentMD,
 	plugins []*plugin.Plugin,
-) ([]fantasy.AgentTool, error) {
+) ([]fantasy.AgentTool, map[string]string, error) {
 	isSubAgent := depth < 3
 
 	logFile := filepath.Join(c.cfg.Config().Options.ProjectDirectory, "logs", "anvil.log")
@@ -853,7 +854,7 @@ func (c *coordinator) buildToolsWithState(
 		if hasDelegates {
 			taskTool, err := c.taskTool(ctx, callerName, depth)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			candidateTools = append(candidateTools, taskTool)
 		}
@@ -862,7 +863,7 @@ func (c *coordinator) buildToolsWithState(
 	// Add the agentic_fetch tool to the candidate set; filtering via AllowedTools applies below.
 	agenticFetch, err := c.agenticFetchTool(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	candidateTools = append(
 		candidateTools,
@@ -949,28 +950,50 @@ func (c *coordinator) buildToolsWithState(
 		}
 	}
 
+	cfg := c.cfg.Config()
+	lazyMCPToolMap := make(map[string]string)
 	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
+		allowed := false
 		if agent.AllowedMCP == nil {
 			// No MCP restrictions.
-			filteredTools = append(filteredTools, tool)
-			continue
-		}
-		if len(agent.AllowedMCP) == 0 {
+			allowed = true
+		} else if len(agent.AllowedMCP) == 0 {
 			// No MCPs allowed.
 			slog.Debug("No MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
+		} else {
+			for mcp, mcpTools := range agent.AllowedMCP {
+				if mcp != tool.MCP() {
+					continue
+				}
+				if len(mcpTools) == 0 || slices.Contains(mcpTools, tool.MCPToolName()) {
+					allowed = true
+					break
+				}
+				slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
+			}
+		}
+		if !allowed {
 			continue
 		}
+		filteredTools = append(filteredTools, tool)
 
-		for mcp, mcpTools := range agent.AllowedMCP {
-			if mcp != tool.MCP() {
-				continue
-			}
-			if len(mcpTools) == 0 || slices.Contains(mcpTools, tool.MCPToolName()) {
-				filteredTools = append(filteredTools, tool)
-				break
-			}
-			slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
+		// Record lazy MCP tool mapping for filtering at run time.
+		if mcpCfg, ok := cfg.MCP[tool.MCP()]; ok && mcpCfg.IsLazy() {
+			lazyMCPToolMap[tool.Name()] = tool.MCP()
 		}
+	}
+
+	// Collect lazy MCPs with their descriptions and apply AllowedMCP
+	// filtering so the enable_mcp tool only exposes permitted servers.
+	lazyMCPs := make(map[string]string)
+	for name, mcpCfg := range cfg.MCP {
+		if mcpCfg.IsLazy() {
+			lazyMCPs[name] = mcpCfg.LazyDescription
+		}
+	}
+	lazyMCPs = filterAllowedLazyMCPs(lazyMCPs, agent.AllowedMCP)
+	if len(lazyMCPs) > 0 {
+		filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs))
 	}
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
@@ -982,7 +1005,7 @@ func (c *coordinator) buildToolsWithState(
 	// sub-agent tool itself is still wrapped from the orchestrator's side.
 	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent)
 
-	return filteredTools, nil
+	return filteredTools, lazyMCPToolMap, nil
 }
 
 // buildAgentModels resolves the large and small models for an agent.
@@ -1140,11 +1163,12 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		orch.SetProviderConfig(largeProviderCfg)
 	}
 
-	agentTools, err := c.buildTools(ctx, orchestratorCfg, 3)
+	agentTools, lazyMap, err := c.buildTools(ctx, orchestratorCfg, 3)
 	if err != nil {
 		return err
 	}
 	orch.SetTools(agentTools)
+	orch.SetLazyMCPToolMap(lazyMap)
 
 	// Invalidate lazily-built agents so they rebuild with new model config.
 	c.agents.Reset(make(map[string]SessionAgent))
@@ -1473,7 +1497,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		return fmt.Errorf("building orchestrator system prompt: %w", err)
 	}
 
-	agentTools, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs, plugins)
+	agentTools, lazyMap, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs, plugins)
 	if err != nil {
 		return fmt.Errorf("rebuilding orchestrator tools: %w", err)
 	}
@@ -1494,6 +1518,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	c.agents.Reset(make(map[string]SessionAgent))
 	orch.SetSystemPrompt(systemPrompt)
 	orch.SetTools(agentTools)
+	orch.SetLazyMCPToolMap(lazyMap)
 	c.orchestratorMu.Unlock()
 
 	slog.Info("Plugin reload complete",

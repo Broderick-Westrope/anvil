@@ -91,7 +91,7 @@ func FilterBranchPathForContext(path []Message) []Message {
 // regular messages, it returns a pointer to the original.
 func FilterMetadataMessage(msg Message) *Message {
 	switch msg.MessageType {
-	case MessageTypeLabel, MessageTypeModelChange, MessageTypeThinkingLevelChange:
+	case MessageTypeLabel, MessageTypeModelChange, MessageTypeThinkingLevelChange, MessageTypeMCPToggle:
 		return nil
 	case MessageTypeCompaction:
 		// Older compactions on the path are skipped — only the most

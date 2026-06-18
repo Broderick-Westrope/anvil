@@ -9,7 +9,7 @@
 #   ./capture.sh                      # Uses default model (haiku) and prompt ("hi")
 #   ./capture.sh --model sonnet       # Capture with a specific model
 #   ./capture.sh --prompt "explain x" # Capture with a specific prompt
-#   ./capture.sh --force-oauth         # Unset ANTHROPIC_API_KEY to use OAuth
+#   ./capture.sh --allow-api-key        # Allow ANTHROPIC_API_KEY (default: unset for OAuth)
 #   ./capture.sh --port 8888          # Use a different proxy port
 #
 # Output:
@@ -24,7 +24,7 @@ MODEL="haiku"
 PROMPT="hi"
 PORT=8080
 OUTFILE="${SCRIPT_DIR}/capture.json"
-FORCE_OAUTH=false
+ALLOW_API_KEY=false
 
 # Parse arguments.
 while [[ $# -gt 0 ]]; do
@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
         --prompt)      PROMPT="$2";  shift 2 ;;
         --port)        PORT="$2";    shift 2 ;;
         --outfile)     OUTFILE="$2"; shift 2 ;;
-        --force-oauth) FORCE_OAUTH=true; shift ;;
+        --allow-api-key) ALLOW_API_KEY=true; shift ;;
         -h|--help)
             sed -n '2,/^$/s/^# //p' "$0"
             exit 0
@@ -88,8 +88,8 @@ PROXY_ENV=(
     NODE_TLS_REJECT_UNAUTHORIZED=0
 )
 
-if [[ "${FORCE_OAUTH}" == "true" ]]; then
-    echo "    --force-oauth: unsetting ANTHROPIC_API_KEY to use OAuth credentials"
+if [[ "${ALLOW_API_KEY}" == "false" ]]; then
+    echo "    Unsetting ANTHROPIC_API_KEY to use OAuth credentials (pass --allow-api-key to override)"
     PROXY_ENV+=(ANTHROPIC_API_KEY= ANTHROPIC_AUTH_TOKEN=)
 fi
 

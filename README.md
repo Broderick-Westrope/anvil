@@ -14,6 +14,7 @@
 - **Minimal by Default, Observable When Needed:** tool calls, subagent runs, and other activity are collapsed into scannable one-line summaries; drill into any item to see full input, output, and reasoning without leaving the conversation
 - **No Telemetry:** all Charm PostHog telemetry has been removed — Anvil phones home to nobody
 - **MCP OAuth:** connect to OAuth-protected MCP servers (including Anthropic's) with automatic token management and refresh
+- **Lazy MCP Loading:** defer heavy MCP tool schemas from the LLM context until needed — the agent or human enables them on demand, saving 50k+ tokens per server
 - **Plugins:** bundle skills, slash commands, and custom agents into a single installable package with manifest-based discovery and auto-approved file access
 - **Quality of Life:** autocomplete for commands, skills, and builtins; Ctrl+C clears the entire input; Alt+Enter newline in Ghostty; paste no longer clobbers existing prompt text
 
@@ -220,6 +221,32 @@ which do expand.
   }
 }
 ```
+
+#### Lazy Loading
+
+MCP servers with many tools (Datadog, Slack, Linear) can consume 50k+ tokens
+of context. Add `lazy_description` to defer their tools until needed:
+
+```json
+{
+  "mcp": {
+    "datadog": {
+      "type": "http",
+      "url": "https://mcp.datadoghq.com/...",
+      "auth": "oauth",
+      "lazy_description": "Datadog monitoring, observability, and APM."
+    }
+  }
+}
+```
+
+Lazy servers connect at startup but their tool schemas stay out of the LLM
+context. The agent sees an `enable_mcp` tool listing available lazy servers
+and calls it when needed. You can also toggle servers manually via the MCP
+palette (Ctrl+P → "MCP Servers").
+
+Enabled state is branch-scoped — it persists for the current conversation
+branch and survives restarts.
 
 ### Hooks
 

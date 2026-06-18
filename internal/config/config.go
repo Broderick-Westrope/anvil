@@ -232,6 +232,18 @@ type MCPConfig struct {
 	ClientSecret string      `json:"clientSecret,omitempty" jsonschema:"description=OAuth client secret (supports shell expansion via $VAR or $(cmd))"`
 	Scopes       []string    `json:"scopes,omitempty" jsonschema:"description=OAuth scopes to request during authorization"`
 	RedirectURI  string      `json:"redirectUri,omitempty" jsonschema:"description=Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"`
+
+	// LazyDescription makes this MCP server's tools lazy-loaded. The
+	// server still connects eagerly at startup, but its tools and
+	// instructions are excluded from the LLM context until explicitly
+	// enabled by the agent or human. The value is surfaced to the LLM
+	// so it can decide when to enable the server.
+	LazyDescription string `json:"lazy_description,omitempty" jsonschema:"description=Short description shown to the LLM; when set the server's tools are hidden until explicitly enabled"`
+}
+
+// IsLazy reports whether the MCP server's tools are lazy-loaded.
+func (m MCPConfig) IsLazy() bool {
+	return m.LazyDescription != ""
 }
 
 type LSPConfig struct {
@@ -636,12 +648,23 @@ type PluginConfig struct {
 // is owned by hooks.Runner so a JSON round-trip, merge, or reload can't
 // silently drop compiled state.
 type HookConfig struct {
+	// Friendly display name shown in the TUI. Falls back to Command when empty.
+	Name string `json:"name,omitempty" jsonschema:"description=Friendly display name shown in the TUI for this hook"`
 	// Regex pattern tested against the tool name. Empty means match all.
 	Matcher string `json:"matcher,omitempty" jsonschema:"description=Regex pattern tested against the tool name. Empty means match all tools."`
 	// Shell command to execute.
 	Command string `json:"command" jsonschema:"required,description=Shell command to execute when the hook fires"`
 	// Timeout in seconds. Default 30.
 	Timeout int `json:"timeout,omitempty" jsonschema:"description=Timeout in seconds for the hook command,default=30"`
+}
+
+// DisplayName returns the hook name for display purposes. It returns Name
+// when set, otherwise falls back to Command.
+func (h *HookConfig) DisplayName() string {
+	if h.Name != "" {
+		return h.Name
+	}
+	return h.Command
 }
 
 // TimeoutDuration returns the hook timeout as a time.Duration, defaulting

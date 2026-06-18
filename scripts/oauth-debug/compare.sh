@@ -119,7 +119,8 @@ ref_beta_flags = reference.get("beta_flags", {})
 ref_always = set(ref_beta_flags.get("always", []))
 ref_non_haiku = set(ref_beta_flags.get("non_haiku", []))
 ref_model_specific = set(ref_beta_flags.get("model_4_6_and_4_7", []))
-ref_all_known = ref_always | ref_non_haiku | ref_model_specific
+ref_informational = set(ref_beta_flags.get("informational", []))
+ref_all_known = ref_always | ref_non_haiku | ref_model_specific | ref_informational
 
 for b in ref_always:
     if b not in cap_betas:
@@ -133,7 +134,7 @@ for b in sorted(unknown_betas):
 system_msgs = cap.get("body", {}).get("system_messages", [])
 if system_msgs:
     has_billing = any("x-anthropic-billing-header" in s for s in system_msgs)
-    has_identity = any("You are Claude Code" in s for s in system_msgs)
+    has_identity = any("You are a Claude agent" in s for s in system_msgs)
     if not has_billing:
         issues.append("SYSTEM MESSAGE MISSING: billing header (x-anthropic-billing-header)")
     if not has_identity:

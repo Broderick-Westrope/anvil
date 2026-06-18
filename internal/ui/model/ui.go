@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -283,7 +284,8 @@ type UI struct {
 	lspStates map[string]app.LSPClientInfo
 
 	// mcp
-	mcpStates map[string]mcp.ClientInfo
+	mcpStates       map[string]mcp.ClientInfo
+	enabledLazyMCPs map[string]bool
 
 	// skills
 	skillStates []*skills.SkillState
@@ -407,6 +409,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		todoSpinner:         todoSpinner,
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
+		enabledLazyMCPs:     make(map[string]bool),
 		skillStates:         skills.GetLatestStates(),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
@@ -699,6 +702,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.setSessionMessages(msgs); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		m.deriveEnabledLazyMCPs(msgs)
 		if cmd := m.autoExpandPillsIfReasonable(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -756,6 +760,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, util.ReportError(msg.Err))
 	case mcpStateChangedMsg:
 		m.mcpStates = msg.states
+		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
+			if palette, ok := dia.(*dialog.MCPPalette); ok {
+				for name, state := range msg.states {
+					palette.SetEntryState(name, state.State, state.Counts)
+				}
+			}
+		}
 	case mcpPromptsLoadedMsg:
 		m.mcpPrompts = msg.Prompts
 		dia := m.dialog.Dialog(dialog.CommandsID)
@@ -846,8 +857,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case pubsub.CreatedEvent:
 			cmds = append(cmds, m.appendSessionMessage(msg.Payload))
+			m.applyLazyMCPMessageParts(msg.Payload)
 		case pubsub.UpdatedEvent:
 			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
+			m.applyLazyMCPMessageParts(msg.Payload)
 		case pubsub.DeletedEvent:
 			m.chat.RemoveMessage(msg.Payload.ID)
 		}
@@ -2260,6 +2273,53 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			Instructions: msg.Instructions,
 			Source:       msg.Source,
 		})
+	case dialog.ActionToggleLazyMCP:
+		m.enabledLazyMCPs[msg.ServerName] = msg.Enabled
+		// Update the open dialog's item state so the label refreshes.
+		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
+			if palette, ok := dia.(*dialog.MCPPalette); ok {
+				palette.SetEntryEnabled(msg.ServerName, msg.Enabled)
+			}
+		}
+		if m.session != nil && m.session.LeafMessageID != "" {
+			ws := m.com.Workspace
+			sid := m.session.ID
+			leafID := m.session.LeafMessageID
+			serverName := msg.ServerName
+			enabled := msg.Enabled
+			cmds = append(cmds, func() tea.Msg {
+				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
+					ParentMessageID: leafID,
+					MessageType:     message.MessageTypeMCPToggle,
+					Parts: []message.ContentPart{
+						message.MCPToggleContent{ServerName: serverName, Enabled: enabled},
+					},
+				})
+				if err != nil {
+					slog.Error("Failed to write mcp_toggle entry", "error", err)
+				}
+				return nil
+			})
+		} else {
+			slog.Debug("MCP toggle not persisted: no active session or leaf message",
+				"server", msg.ServerName, "enabled", msg.Enabled)
+		}
+	case dialog.ActionHardToggleMCP:
+		ws := m.com.Workspace
+		name := msg.ServerName
+		enable := msg.Enable
+		cmds = append(cmds, func() tea.Msg {
+			var err error
+			if enable {
+				err = ws.EnableMCP(context.Background(), name)
+			} else {
+				err = ws.DisableMCP(name)
+			}
+			if err != nil {
+				slog.Error("Failed to toggle MCP", "name", name, "enable", enable, "error", err)
+			}
+			return nil
+		})
 	default:
 		cmds = append(cmds, util.CmdHandler(msg))
 	}
@@ -2455,7 +2515,7 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 		return nil
 	}
 
-	m.dialog.OpenDialog(dlg)
+	m.dialog.OpenDialogWithGrace(dlg)
 	return cmd
 }
 
@@ -4459,6 +4519,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openBranchDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.MCPPaletteID:
+		if cmd := m.openMCPPaletteDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.QuitID:
 		if cmd := m.openQuitDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -4496,6 +4560,80 @@ func (m *UI) openSkillPickerDialog() tea.Cmd {
 	sp := dialog.NewSkillPicker(m.com, activeSkills)
 	m.dialog.OpenDialog(sp)
 	return nil
+}
+
+// openMCPPaletteDialog opens the MCP palette dialog.
+func (m *UI) openMCPPaletteDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.MCPPaletteID) {
+		m.dialog.BringToFront(dialog.MCPPaletteID)
+		return nil
+	}
+
+	// Build entries from config + current state.
+	var entries []dialog.MCPPaletteEntry
+	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
+		state, ok := m.mcpStates[mcpCfg.Name]
+		if !ok {
+			continue
+		}
+		entries = append(entries, dialog.MCPPaletteEntry{
+			Name:        mcpCfg.Name,
+			Description: mcpCfg.MCP.LazyDescription,
+			IsLazy:      mcpCfg.MCP.IsLazy(),
+			Enabled:     m.enabledLazyMCPs[mcpCfg.Name],
+			State:       state.State,
+			Counts:      state.Counts,
+		})
+	}
+
+	d := dialog.NewMCPPalette(m.com, entries)
+	m.dialog.OpenDialog(d)
+	return nil
+}
+
+// deriveEnabledLazyMCPs scans branch-path messages for lazy MCP state
+// changes and rebuilds the enabledLazyMCPs map. Last event per server
+// wins. This mirrors the agent-side derivation in
+// internal/agent/lazy_mcp.go.
+func (m *UI) deriveEnabledLazyMCPs(msgs []message.Message) {
+	m.enabledLazyMCPs = make(map[string]bool)
+	for _, msg := range msgs {
+		m.applyLazyMCPMessageParts(msg)
+	}
+}
+
+// applyLazyMCPMessageParts scans a message's parts for lazy MCP state
+// changes (enable_mcp tool calls and MCPToggleContent entries) and
+// applies them to the enabledLazyMCPs map and any open MCP palette.
+func (m *UI) applyLazyMCPMessageParts(msg message.Message) {
+	for _, part := range msg.Parts {
+		var name string
+		var enabled bool
+		switch p := part.(type) {
+		case message.ToolCall:
+			if p.Name != agenttools.EnableMCPToolName || !p.Finished {
+				continue
+			}
+			var params agenttools.EnableMCPParams
+			if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
+				continue
+			}
+			name, enabled = params.ServerName, true
+		case message.MCPToggleContent:
+			name, enabled = p.ServerName, p.Enabled
+		default:
+			continue
+		}
+		m.enabledLazyMCPs[name] = enabled
+		if m.dialog == nil {
+			continue
+		}
+		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
+			if palette, ok := dia.(*dialog.MCPPalette); ok {
+				palette.SetEntryEnabled(name, enabled)
+			}
+		}
+	}
 }
 
 // openTreeDialog opens the session tree dialog.
@@ -4800,7 +4938,7 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 	}
 
 	permDialog := dialog.NewPermissions(m.com, perm, opts...)
-	m.dialog.OpenDialog(permDialog)
+	m.dialog.OpenDialogWithGrace(permDialog)
 	return nil
 }
 

@@ -173,7 +173,7 @@ through all components that need access to app state or styles.
   status, pills, session, onboarding, keys, etc.)
 - `chat/` — Chat message item types and tool renderers
 - `dialog/` — Dialog implementations (models, sessions, commands,
-  permissions, API key, OAuth, filepicker, reasoning, quit)
+  permissions, API key, OAuth, filepicker, reasoning, MCP palette, quit)
 - `list/` — Generic lazy-rendered scrollable list with viewport tracking
 - `common/` — Shared `Common` struct, layout helpers, markdown rendering,
   diff rendering, scrollbar
