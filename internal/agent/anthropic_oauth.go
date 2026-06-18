@@ -13,7 +13,7 @@ import (
 const (
 	// AnthropicIdentityPrefix is the identity declaration injected as a
 	// system message for Anthropic OAuth sessions.
-	AnthropicIdentityPrefix = "You are Claude Code, Anthropic's official CLI for Claude."
+	AnthropicIdentityPrefix = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
 
 	// SystemModeEnvVar is the environment variable that controls how the
 	// system prompt is delivered when using Anthropic OAuth.
