@@ -1236,11 +1236,7 @@ func (c *coordinator) RegenerateTitle(ctx context.Context, sessionID string) err
 		slog.Error("Failed to refresh OAuth2 token before title regeneration. Proceeding with existing token.", "error", err)
 	}
 
-	regen := func() {
-		sa.generateTitle(ctx, sessionID, msgs)
-	}
-
-	regen()
+	sa.generateTitle(ctx, sessionID, msgs)
 	return nil
 }
 

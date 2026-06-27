@@ -29,10 +29,11 @@ const (
 
 // Argument represents a command argument with its metadata.
 type Argument struct {
-	ID          string
-	Title       string
-	Description string
-	Required    bool
+	ID           string
+	Title        string
+	Description  string
+	DefaultValue string
+	Required     bool
 }
 
 // MCPPrompt represents a custom command loaded from an MCP server.

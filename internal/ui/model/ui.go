@@ -2027,12 +2027,16 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if msg.Title == "" {
 			// Open the Arguments dialog to collect the new title.
 			m.dialog.CloseFrontDialog()
+			var currentTitle string
+			if m.session != nil {
+				currentTitle = m.session.Title
+			}
 			argsDialog := dialog.NewArguments(
 				m.com,
 				"Rename Session",
 				"",
 				[]commands.Argument{
-					{ID: "title", Title: "New Title", Required: true},
+					{ID: "title", Title: "New Title", DefaultValue: currentTitle, Required: true},
 				},
 				msg,
 			)
@@ -2053,6 +2057,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.dialog.CloseFrontDialog()
 	case dialog.ActionRegenerateTitle:
 		if m.session == nil {
+			break
+		}
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before regenerating title..."))
 			break
 		}
 		sessionID := m.session.ID

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
@@ -1187,12 +1188,11 @@ func (a *sessionAgent) getSessionMessages(ctx context.Context, sess session.Sess
 	return message.FilterBranchPathForContext(raw), raw, nil
 }
 
-// generateTitle generates a session titled based on the initial prompt.
 // maxTitleConversationChars is the maximum number of characters from the
 // conversation to include in the title generation prompt.
 const maxTitleConversationChars = 4000
 
-// formatConversationForTitle serialises messages as "role: content" lines,
+// formatConversationForTitle serializes messages as "role: content" lines,
 // including only user and assistant text messages. The result is truncated
 // to maxTitleConversationChars.
 func formatConversationForTitle(msgs []message.Message) string {
@@ -1217,7 +1217,7 @@ func formatConversationForTitle(msgs []message.Message) string {
 		truncated := make([]rune, 0, len(runes))
 		size := 0
 		for _, r := range runes {
-			size += len(string(r))
+			size += utf8.RuneLen(r)
 			if size > maxTitleConversationChars {
 				break
 			}

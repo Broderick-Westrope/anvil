@@ -106,6 +106,10 @@ func NewArguments(com *common.Common, title, description string, arguments []com
 			input.Blur()
 		}
 
+		if arg.DefaultValue != "" {
+			input.SetValue(arg.DefaultValue)
+		}
+
 		a.inputs[i] = input
 	}
 	s := spinner.New()
