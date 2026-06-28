@@ -86,6 +86,13 @@ type (
 	ActionEnableDockerMCP struct{}
 	// ActionDisableDockerMCP is a message to disable Docker MCP.
 	ActionDisableDockerMCP struct{}
+	// ActionRenameSession is a message to rename the current session.
+	ActionRenameSession struct {
+		Title string
+	}
+	// ActionRegenerateTitle is a message to regenerate the current session
+	// title.
+	ActionRegenerateTitle struct{}
 	// ActionReloadPlugins is dispatched to re-discover all plugin content.
 	ActionReloadPlugins struct{}
 	// ActionAttachSkill is dispatched when a skill is selected from the

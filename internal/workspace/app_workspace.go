@@ -66,6 +66,10 @@ func (w *AppWorkspace) SaveSession(ctx context.Context, sess session.Session) (s
 	return w.app.Sessions.Save(ctx, sess)
 }
 
+func (w *AppWorkspace) RenameSession(ctx context.Context, sessionID string, title string, titleIsCustom bool) error {
+	return w.app.Sessions.Rename(ctx, sessionID, title, titleIsCustom)
+}
+
 func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
 	return w.app.Sessions.Delete(ctx, sessionID)
 }
@@ -188,6 +192,13 @@ func (w *AppWorkspace) AgentSummarize(ctx context.Context, sessionID string) err
 		return errors.New("agent coordinator not initialized")
 	}
 	return w.app.AgentCoordinator.Summarize(ctx, sessionID)
+}
+
+func (w *AppWorkspace) AgentRegenerateTitle(ctx context.Context, sessionID string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.RegenerateTitle(ctx, sessionID)
 }
 
 func (w *AppWorkspace) UpdateAgentModel(ctx context.Context) error {

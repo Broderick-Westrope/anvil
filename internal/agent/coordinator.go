@@ -80,6 +80,7 @@ type Coordinator interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
+	RegenerateTitle(ctx context.Context, sessionID string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	ReloadPlugins(ctx context.Context) error
@@ -1206,6 +1207,37 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 	}
 
 	return err
+}
+
+// RegenerateTitle loads the conversation for the given session and
+// regenerates the title using the full context. It always sets
+// titleIsCustom to false.
+func (c *coordinator) RegenerateTitle(ctx context.Context, sessionID string) error {
+	msgs, err := c.messages.List(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("loading messages for title regeneration: %w", err)
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	orch := c.getOrchestrator()
+	sa, ok := orch.(*sessionAgent)
+	if !ok {
+		return errors.New("orchestrator is not a *sessionAgent")
+	}
+
+	providerCfg, ok := c.cfg.Config().Providers.Get(orch.Model().ModelCfg.Provider)
+	if !ok {
+		return errModelProviderNotConfigured
+	}
+
+	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
+		slog.Error("Failed to refresh OAuth2 token before title regeneration. Proceeding with existing token.", "error", err)
+	}
+
+	sa.generateTitle(ctx, sessionID, msgs)
+	return nil
 }
 
 // refreshTokenIfExpired proactively refreshes the OAuth token if it is

@@ -390,6 +390,7 @@ func (s *Session) confirmRenameSession() Action {
 	}
 	session := sessionItem.Session
 	session.Title = newTitle
+	session.TitleIsCustom = true
 	s.updateSession(session)
 	return ActionCmd{s.updateSessionCmd(session)}
 }

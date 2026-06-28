@@ -2023,6 +2023,55 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return nil
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionRenameSession:
+		if msg.Title == "" {
+			// Open the Arguments dialog to collect the new title.
+			m.dialog.CloseFrontDialog()
+			var currentTitle string
+			if m.session != nil {
+				currentTitle = m.session.Title
+			}
+			argsDialog := dialog.NewArguments(
+				m.com,
+				"Rename Session",
+				"",
+				[]commands.Argument{
+					{ID: "title", Title: "New Title", DefaultValue: currentTitle, Required: true},
+				},
+				msg,
+			)
+			m.dialog.OpenDialog(argsDialog)
+			break
+		}
+		if m.session != nil {
+			sessionID := m.session.ID
+			title := msg.Title
+			cmds = append(cmds, func() tea.Msg {
+				err := m.com.Workspace.RenameSession(context.Background(), sessionID, title, true)
+				if err != nil {
+					return util.ReportError(err)()
+				}
+				return nil
+			})
+		}
+		m.dialog.CloseFrontDialog()
+	case dialog.ActionRegenerateTitle:
+		if m.session == nil {
+			break
+		}
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before regenerating title..."))
+			break
+		}
+		sessionID := m.session.ID
+		cmds = append(cmds, func() tea.Msg {
+			err := m.com.Workspace.AgentRegenerateTitle(context.Background(), sessionID)
+			if err != nil {
+				return util.ReportError(err)()
+			}
+			return nil
+		})
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleHelp:
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)

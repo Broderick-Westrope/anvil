@@ -327,7 +327,7 @@ func runSessionRename(cmd *cobra.Command, args []string) error {
 	}
 
 	newTitle := strings.Join(args[1:], " ")
-	if err := svc.sessions.Rename(ctx, sess.ID, newTitle); err != nil {
+	if err := svc.sessions.Rename(ctx, sess.ID, newTitle, true); err != nil {
 		return fmt.Errorf("failed to rename session: %w", err)
 	}
 

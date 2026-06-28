@@ -106,6 +106,10 @@ func NewArguments(com *common.Common, title, description string, arguments []com
 			input.Blur()
 		}
 
+		if arg.DefaultValue != "" {
+			input.SetValue(arg.DefaultValue)
+		}
+
 		a.inputs[i] = input
 	}
 	s := spinner.New()
@@ -217,6 +221,9 @@ func (a *Arguments) HandleMsg(msg tea.Msg) Action {
 					return action
 				case ActionRunMCPPrompt:
 					action.Args = args
+					return action
+				case ActionRenameSession:
+					action.Title = args["title"]
 					return action
 				}
 			}

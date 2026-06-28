@@ -50,6 +50,7 @@ type Session struct {
 	ID               string
 	ParentSessionID  string
 	Title            string
+	TitleIsCustom    bool
 	MessageCount     int64
 	PromptTokens     int64
 	CompletionTokens int64
@@ -73,8 +74,8 @@ type Service interface {
 	GetLastGlobal(ctx context.Context) (Session, error)
 	List(ctx context.Context, workingDir string) ([]Session, error)
 	Save(ctx context.Context, session Session) (Session, error)
-	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error
-	Rename(ctx context.Context, id string, title string) error
+	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, titleIsCustom bool, promptTokens, completionTokens int64, cost float64) error
+	Rename(ctx context.Context, id string, title string, titleIsCustom bool) error
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
 	Delete(ctx context.Context, id string) error
 
@@ -211,6 +212,7 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 	dbSession, err := s.q.UpdateSession(ctx, db.UpdateSessionParams{
 		ID:               session.ID,
 		Title:            session.Title,
+		TitleIsCustom:    boolToInt64(session.TitleIsCustom),
 		PromptTokens:     session.PromptTokens,
 		CompletionTokens: session.CompletionTokens,
 		Cost:             session.Cost,
@@ -232,14 +234,24 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 
 // UpdateTitleAndUsage updates only the title and usage fields atomically.
 // This is safer than fetching, modifying, and saving the entire session.
-func (s *service) UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error {
-	return s.q.UpdateSessionTitleAndUsage(ctx, db.UpdateSessionTitleAndUsageParams{
+func (s *service) UpdateTitleAndUsage(ctx context.Context, sessionID, title string, titleIsCustom bool, promptTokens, completionTokens int64, cost float64) error {
+	err := s.q.UpdateSessionTitleAndUsage(ctx, db.UpdateSessionTitleAndUsageParams{
 		ID:               sessionID,
 		Title:            title,
+		TitleIsCustom:    boolToInt64(titleIsCustom),
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		Cost:             cost,
 	})
+	if err != nil {
+		return err
+	}
+	session, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	s.Publish(pubsub.UpdatedEvent, session)
+	return nil
 }
 
 // MoveLeaf updates the leaf_message_id for a session and publishes an
@@ -262,11 +274,21 @@ func (s *service) MoveLeaf(ctx context.Context, sessionID, leafMessageID string)
 
 // Rename updates only the title of a session without touching updated_at or
 // usage fields.
-func (s *service) Rename(ctx context.Context, id string, title string) error {
-	return s.q.RenameSession(ctx, db.RenameSessionParams{
-		ID:    id,
-		Title: title,
+func (s *service) Rename(ctx context.Context, id string, title string, titleIsCustom bool) error {
+	err := s.q.RenameSession(ctx, db.RenameSessionParams{
+		ID:            id,
+		Title:         title,
+		TitleIsCustom: boolToInt64(titleIsCustom),
 	})
+	if err != nil {
+		return err
+	}
+	session, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.Publish(pubsub.UpdatedEvent, session)
+	return nil
 }
 
 func (s *service) GetLastGlobal(ctx context.Context) (Session, error) {
@@ -329,6 +351,7 @@ func (s *service) fromDBItem(item db.Session) Session {
 		ID:               item.ID,
 		ParentSessionID:  item.ParentSessionID.String,
 		Title:            item.Title,
+		TitleIsCustom:    item.TitleIsCustom != 0,
 		MessageCount:     item.MessageCount,
 		PromptTokens:     item.PromptTokens,
 		CompletionTokens: item.CompletionTokens,
@@ -339,6 +362,13 @@ func (s *service) fromDBItem(item db.Session) Session {
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
+}
+
+func boolToInt64(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func marshalTodos(todos []Todo) (string, error) {

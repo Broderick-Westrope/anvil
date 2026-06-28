@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -116,6 +117,17 @@ func (w *ClientWorkspace) SaveSession(ctx context.Context, sess session.Session)
 	return protoToSession(*saved), nil
 }
 
+func (w *ClientWorkspace) RenameSession(ctx context.Context, sessionID string, title string, titleIsCustom bool) error {
+	sess, err := w.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	sess.Title = title
+	sess.TitleIsCustom = titleIsCustom
+	_, err = w.SaveSession(ctx, sess)
+	return err
+}
+
 func (w *ClientWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
 	return w.client.DeleteSession(ctx, w.workspaceID(), sessionID)
 }
@@ -225,6 +237,10 @@ func (w *ClientWorkspace) AgentClearQueue(sessionID string) {
 
 func (w *ClientWorkspace) AgentSummarize(ctx context.Context, sessionID string) error {
 	return w.client.AgentSummarizeSession(ctx, w.workspaceID(), sessionID)
+}
+
+func (w *ClientWorkspace) AgentRegenerateTitle(_ context.Context, _ string) error {
+	return errors.New("title regeneration is not supported in remote mode")
 }
 
 func (w *ClientWorkspace) UpdateAgentModel(ctx context.Context) error {

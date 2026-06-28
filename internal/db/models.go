@@ -79,4 +79,5 @@ type Session struct {
 	Todos            sql.NullString `json:"todos"`
 	LeafMessageID    sql.NullString `json:"leaf_message_id"`
 	WorkingDir       string         `json:"working_dir"`
+	TitleIsCustom    int64          `json:"title_is_custom"`
 }
