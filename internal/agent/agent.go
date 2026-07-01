@@ -539,10 +539,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				if cw == 0 {
 					return false
 				}
-				tokens := currentSession.CompletionTokens + currentSession.PromptTokens
+				tokens := currentSession.PromptTokens
 				remaining := cw - tokens
 				var threshold int64
-				if cw > largeContextWindowThreshold {
+				if cw >= largeContextWindowThreshold {
 					threshold = largeContextWindowBuffer
 				} else {
 					threshold = int64(float64(cw) * smallContextWindowRatio)
