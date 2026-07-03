@@ -53,6 +53,7 @@ type (
 	ActionToggleYoloMode              struct{}
 	ActionToggleNotifications         struct{}
 	ActionToggleTransparentBackground struct{}
+	ActionToggleAnthropicAuthMode     struct{}
 	ActionInitializeProject           struct{}
 	ActionSummarize                   struct {
 		SessionID string

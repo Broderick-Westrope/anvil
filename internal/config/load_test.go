@@ -11,6 +11,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/env"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2184,4 +2185,93 @@ func TestConfig_configureProviders_UnsetAzureEndpointSkipsProvider(t *testing.T)
 	require.Equal(t, 0, cfg.Providers.Len(), "azure provider with unset endpoint must be skipped")
 	_, exists := cfg.Providers.Get("azure")
 	require.False(t, exists)
+}
+
+func TestConfigureAnthropicAuth(t *testing.T) {
+	t.Parallel()
+
+	makeToken := func() *oauth.Token {
+		return &oauth.Token{
+			AccessToken:  "test-access-token",
+			RefreshToken: "test-refresh-token",
+			ExpiresIn:    3600,
+		}
+	}
+
+	noCredentials := func() (*oauth.Token, error) {
+		return nil, nil
+	}
+
+	withCredentials := func() (*oauth.Token, error) {
+		return makeToken(), nil
+	}
+
+	t.Run("api-key mode clears OAuth token", func(t *testing.T) {
+		t.Parallel()
+		prepared := &ProviderConfig{
+			OAuthToken: makeToken(),
+			APIKey:     "sk-test",
+		}
+		configureAnthropicAuthWith(prepared, AuthModeAPIKey, noCredentials)
+		require.Nil(t, prepared.OAuthToken)
+		require.Equal(t, "sk-test", prepared.APIKey)
+	})
+
+	t.Run("oauth mode with existing token sets up Anthropic", func(t *testing.T) {
+		t.Parallel()
+		prepared := &ProviderConfig{
+			OAuthToken: makeToken(),
+		}
+		configureAnthropicAuthWith(prepared, AuthModeOAuth, noCredentials)
+		require.NotNil(t, prepared.OAuthToken)
+		require.Equal(t, "Bearer test-access-token", prepared.APIKey)
+		require.NotEmpty(t, prepared.ExtraHeaders)
+	})
+
+	t.Run("oauth mode auto-detects credentials", func(t *testing.T) {
+		t.Parallel()
+		prepared := &ProviderConfig{}
+		configureAnthropicAuthWith(prepared, AuthModeOAuth, withCredentials)
+		require.NotNil(t, prepared.OAuthToken)
+		require.Equal(t, "Bearer test-access-token", prepared.APIKey)
+		require.NotEmpty(t, prepared.ExtraHeaders)
+	})
+
+	t.Run("oauth mode without credentials leaves provider unchanged", func(t *testing.T) {
+		t.Parallel()
+		prepared := &ProviderConfig{}
+		configureAnthropicAuthWith(prepared, AuthModeOAuth, noCredentials)
+		require.Nil(t, prepared.OAuthToken)
+	})
+
+	t.Run("auto mode with existing token sets up Anthropic", func(t *testing.T) {
+		t.Parallel()
+		prepared := &ProviderConfig{
+			OAuthToken: makeToken(),
+		}
+		configureAnthropicAuthWith(prepared, AuthModeAuto, noCredentials)
+		require.NotNil(t, prepared.OAuthToken)
+		require.Equal(t, "Bearer test-access-token", prepared.APIKey)
+		require.NotEmpty(t, prepared.ExtraHeaders)
+	})
+
+	t.Run("auto mode auto-detects credentials when no token", func(t *testing.T) {
+		t.Parallel()
+		prepared := &ProviderConfig{
+			APIKey: "sk-test",
+		}
+		configureAnthropicAuthWith(prepared, AuthModeAuto, withCredentials)
+		require.NotNil(t, prepared.OAuthToken)
+		require.Equal(t, "Bearer test-access-token", prepared.APIKey)
+	})
+
+	t.Run("auto mode without credentials leaves provider unchanged", func(t *testing.T) {
+		t.Parallel()
+		prepared := &ProviderConfig{
+			APIKey: "sk-test",
+		}
+		configureAnthropicAuthWith(prepared, AuthModeAuto, noCredentials)
+		require.Nil(t, prepared.OAuthToken)
+		require.Equal(t, "sk-test", prepared.APIKey)
+	})
 }

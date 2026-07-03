@@ -100,6 +100,10 @@ type ProviderConfig struct {
 	BaseURL string `json:"base_url,omitempty" jsonschema:"description=Base URL for the provider's API,format=uri,example=https://api.openai.com/v1"`
 	// The provider type, e.g. "openai", "anthropic", etc. if empty it defaults to openai.
 	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,enum=openai,enum=openai-compat,enum=anthropic,enum=gemini,enum=azure,enum=vertexai,default=openai"`
+	// Authentication mode: "oauth", "api-key", or "" (auto-detect,
+	// default). When empty, OAuth is preferred over API key for
+	// providers that support it (e.g. Anthropic).
+	AuthMode AuthMode `json:"auth_mode,omitempty" jsonschema:"description=Authentication mode: oauth or api-key. When empty the provider auto-detects (preferring OAuth),enum=oauth,enum=api-key"`
 	// The provider's API key.
 	APIKey string `json:"api_key,omitempty" jsonschema:"description=API key for authentication with the provider,example=$OPENAI_API_KEY"`
 	// The original API key template before resolution (for re-resolution on auth errors).
@@ -187,6 +191,18 @@ func (c *ProviderConfig) SetupAnthropic() {
 	}
 	maps.Copy(c.ExtraHeaders, anthropicoauth.Headers())
 }
+
+// AuthMode controls how a provider authenticates requests.
+type AuthMode string
+
+const (
+	// AuthModeAuto auto-detects, preferring OAuth when available.
+	AuthModeAuto AuthMode = ""
+	// AuthModeOAuth forces OAuth authentication.
+	AuthModeOAuth AuthMode = "oauth"
+	// AuthModeAPIKey forces API key authentication.
+	AuthModeAPIKey AuthMode = "api-key"
+)
 
 type MCPType string
 

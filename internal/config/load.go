@@ -24,6 +24,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/filepathext"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/home"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
 	powernapConfig "github.com/charmbracelet/x/powernap/pkg/config"
 	"github.com/qjebbs/go-jsons"
@@ -254,6 +255,7 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			BaseURL:            p.APIEndpoint,
 			APIKey:             p.APIKey,
 			APIKeyTemplate:     p.APIKey, // Store original template for re-resolution
+			AuthMode:           config.AuthMode,
 			OAuthToken:         config.OAuthToken,
 			Type:               p.Type,
 			Disable:            config.Disable,
@@ -265,44 +267,57 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 		}
 
 		switch {
-		case p.ID == catwalk.InferenceProviderAnthropic && config.OAuthToken != nil:
-			prepared.SetupAnthropic()
 		case p.ID == catwalk.InferenceProviderCopilot && config.OAuthToken != nil:
 			prepared.SetupGitHubCopilot()
-		case p.ID == catwalk.InferenceProviderAnthropic && config.OAuthToken == nil:
-			// Always try OAuth first — subscription auth is free vs
-			// per-token API key billing. Falls back to API key if no
-			// OAuth credentials are found.
-			token, err := anthropicoauth.ReadCredentials()
-			if err != nil {
-				slog.Warn("Failed to read Anthropic OAuth credentials", "error", err)
-			} else if token != nil {
-				slog.Info("Auto-detected Anthropic OAuth credentials from Claude CLI")
-				prepared.OAuthToken = token
-				prepared.SetupAnthropic()
-			}
+		case p.ID == catwalk.InferenceProviderAnthropic:
+			configureAnthropicAuth(&prepared, config.AuthMode)
 		}
 
 		switch p.ID {
 		// Handle specific providers that require additional configuration
 		case catwalk.InferenceProviderAnthropic:
-			// Allow the provider when an OAuth token is present (either
-			// from config or auto-detected above). Without OAuth, fall
-			// back to the plain API key check so ANTHROPIC_API_KEY still
-			// works as before.
-			if prepared.OAuthToken == nil {
-				v, err := resolver.ResolveValue(p.APIKey)
-				if v == "" || err != nil {
+			switch config.AuthMode {
+			case AuthModeOAuth:
+				if prepared.OAuthToken == nil {
 					if configExists {
 						slog.Warn(
-							"Skipping Anthropic provider — no OAuth credentials or "+
-								"API key found. Run `claude /login` to authenticate, "+
-								"or set ANTHROPIC_API_KEY.",
+							"Skipping Anthropic provider — auth_mode is \"oauth\" "+
+								"but no OAuth credentials found. Run `claude /login` "+
+								"to authenticate.",
 							"provider", p.ID,
 						)
 						c.Providers.Del(string(p.ID))
 					}
 					continue
+				}
+			case AuthModeAPIKey:
+				v, err := resolver.ResolveValue(p.APIKey)
+				if v == "" || err != nil {
+					if configExists {
+						slog.Warn(
+							"Skipping Anthropic provider — auth_mode is \"api-key\" "+
+								"but no API key found. Set ANTHROPIC_API_KEY.",
+							"provider", p.ID,
+						)
+						c.Providers.Del(string(p.ID))
+					}
+					continue
+				}
+			default:
+				if prepared.OAuthToken == nil {
+					v, err := resolver.ResolveValue(p.APIKey)
+					if v == "" || err != nil {
+						if configExists {
+							slog.Warn(
+								"Skipping Anthropic provider — no OAuth credentials or "+
+									"API key found. Run `claude /login` to authenticate, "+
+									"or set ANTHROPIC_API_KEY.",
+								"provider", p.ID,
+							)
+							c.Providers.Del(string(p.ID))
+						}
+						continue
+					}
 				}
 			}
 		case catwalk.InferenceProviderVertexAI:
@@ -435,6 +450,68 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 	}
 
 	return nil
+}
+
+// configureAnthropicAuth sets up Anthropic authentication on prepared based
+// on the auth_mode setting:
+//
+//   - "api-key": skip OAuth entirely; require $ANTHROPIC_API_KEY.
+//   - "oauth": require OAuth credentials (config or Claude CLI); fail if
+//     none are found rather than falling back to API key.
+//   - "" (auto): try OAuth first (subscription auth is free vs per-token
+//     billing), fall back to API key.
+//
+// configureAnthropicAuth sets up Anthropic authentication on prepared based
+// on the auth_mode setting:
+//
+//   - "api-key": skip OAuth entirely; require $ANTHROPIC_API_KEY.
+//   - "oauth": require OAuth credentials (config or Claude CLI); fail if
+//     none are found rather than falling back to API key.
+//   - "" (auto): try OAuth first (subscription auth is free vs per-token
+//     billing), fall back to API key.
+func configureAnthropicAuth(prepared *ProviderConfig, mode AuthMode) {
+	configureAnthropicAuthWith(prepared, mode, anthropicoauth.ReadCredentials)
+}
+
+// configureAnthropicAuthWith is the implementation of
+// configureAnthropicAuth that accepts a credential reader for
+// testability.
+func configureAnthropicAuthWith(prepared *ProviderConfig, mode AuthMode, readCreds func() (*oauth.Token, error)) {
+	switch mode {
+	case AuthModeAPIKey:
+		slog.Info("Anthropic auth_mode is api-key, skipping OAuth")
+		prepared.OAuthToken = nil
+	case AuthModeOAuth:
+		if prepared.OAuthToken != nil {
+			prepared.SetupAnthropic()
+			return
+		}
+		token, err := readCreds()
+		if err != nil {
+			slog.Warn("Failed to read Anthropic OAuth credentials", "error", err)
+			return
+		}
+		if token != nil {
+			slog.Info("Auto-detected Anthropic OAuth credentials from Claude CLI")
+			prepared.OAuthToken = token
+			prepared.SetupAnthropic()
+		}
+	default:
+		if prepared.OAuthToken != nil {
+			prepared.SetupAnthropic()
+			return
+		}
+		token, err := readCreds()
+		if err != nil {
+			slog.Warn("Failed to read Anthropic OAuth credentials", "error", err)
+			return
+		}
+		if token != nil {
+			slog.Info("Auto-detected Anthropic OAuth credentials from Claude CLI")
+			prepared.OAuthToken = token
+			prepared.SetupAnthropic()
+		}
+	}
 }
 
 func (c *Config) setDefaults(workingDir, dataDir string) {
