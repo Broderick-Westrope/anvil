@@ -2132,31 +2132,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleAnthropicAuthMode:
-		cmds = append(cmds, func() tea.Msg {
-			cfg := m.com.Config()
-			if cfg == nil {
-				return util.ReportError(errors.New("configuration not found"))()
-			}
-			anthropicCfg, ok := cfg.Providers.Get("anthropic")
-			if !ok {
-				return util.ReportError(errors.New("Anthropic provider not configured"))()
-			}
-			var newMode config.AuthMode
-			if anthropicCfg.AuthMode == config.AuthModeAPIKey {
-				newMode = config.AuthModeOAuth
-			} else {
-				newMode = config.AuthModeAPIKey
-			}
-			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "providers.anthropic.auth_mode", string(newMode)); err != nil {
-				return util.ReportError(err)()
-			}
-			m.com.Workspace.UpdateAgentModel(context.TODO())
-			label := "API key"
-			if newMode == config.AuthModeOAuth {
-				label = "OAuth"
-			}
-			return util.NewInfoMsg("Anthropic auth mode switched to " + label)
-		})
+		cmds = append(cmds, m.toggleAnthropicAuthMode)
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionQuit:
 		cmds = append(cmds, tea.Quit)
@@ -5389,6 +5365,37 @@ func (m *UI) copyChatHighlight() tea.Cmd {
 			return nil
 		},
 	)
+}
+
+// toggleAnthropicAuthMode toggles the Anthropic provider between OAuth
+// and API key authentication, persists the change, and reloads the
+// agent model so the new credentials take effect immediately.
+func (m *UI) toggleAnthropicAuthMode() tea.Msg {
+	cfg := m.com.Config()
+	if cfg == nil {
+		return util.ReportError(errors.New("configuration not found"))()
+	}
+	anthropicCfg, ok := cfg.Providers.Get("anthropic")
+	if !ok {
+		return util.ReportError(errors.New("Anthropic provider not configured"))()
+	}
+	var newMode config.AuthMode
+	if anthropicCfg.AuthMode == config.AuthModeAPIKey {
+		newMode = config.AuthModeOAuth
+	} else {
+		newMode = config.AuthModeAPIKey
+	}
+	if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "providers.anthropic.auth_mode", string(newMode)); err != nil {
+		return util.ReportError(err)()
+	}
+	if err := m.com.Workspace.UpdateAgentModel(context.TODO()); err != nil {
+		return util.ReportError(err)()
+	}
+	label := "API key"
+	if newMode == config.AuthModeOAuth {
+		label = "OAuth"
+	}
+	return util.NewInfoMsg("Anthropic auth mode switched to " + label)
 }
 
 func (m *UI) enableDockerMCP() tea.Msg {
