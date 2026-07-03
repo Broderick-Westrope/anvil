@@ -469,7 +469,7 @@ func configureAnthropicAuth(prepared *ProviderConfig, mode AuthMode) {
 // testability.
 func configureAnthropicAuthWith(prepared *ProviderConfig, mode AuthMode, readCreds func() (*oauth.Token, error)) {
 	if mode == AuthModeAPIKey {
-		slog.Info("Anthropic auth_mode is api-key, skipping OAuth")
+		slog.Debug("Anthropic auth_mode is api-key, skipping OAuth")
 		prepared.OAuthToken = nil
 		return
 	}
