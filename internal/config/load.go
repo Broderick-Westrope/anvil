@@ -468,40 +468,29 @@ func configureAnthropicAuth(prepared *ProviderConfig, mode AuthMode) {
 // configureAnthropicAuth that accepts a credential reader for
 // testability.
 func configureAnthropicAuthWith(prepared *ProviderConfig, mode AuthMode, readCreds func() (*oauth.Token, error)) {
-	switch mode {
-	case AuthModeAPIKey:
+	if mode == AuthModeAPIKey {
 		slog.Info("Anthropic auth_mode is api-key, skipping OAuth")
 		prepared.OAuthToken = nil
-	case AuthModeOAuth:
-		if prepared.OAuthToken != nil {
-			prepared.SetupAnthropic()
-			return
-		}
-		token, err := readCreds()
-		if err != nil {
-			slog.Warn("Failed to read Anthropic OAuth credentials", "error", err)
-			return
-		}
-		if token != nil {
-			slog.Info("Auto-detected Anthropic OAuth credentials from Claude CLI")
-			prepared.OAuthToken = token
-			prepared.SetupAnthropic()
-		}
-	default:
-		if prepared.OAuthToken != nil {
-			prepared.SetupAnthropic()
-			return
-		}
-		token, err := readCreds()
-		if err != nil {
-			slog.Warn("Failed to read Anthropic OAuth credentials", "error", err)
-			return
-		}
-		if token != nil {
-			slog.Info("Auto-detected Anthropic OAuth credentials from Claude CLI")
-			prepared.OAuthToken = token
-			prepared.SetupAnthropic()
-		}
+		return
+	}
+
+	// AuthModeOAuth and AuthModeAuto both try OAuth here. The difference
+	// between them is enforced by the validation block in
+	// configureProviders: oauth skips the provider when no credentials
+	// are found, while auto falls back to the API key check.
+	if prepared.OAuthToken != nil {
+		prepared.SetupAnthropic()
+		return
+	}
+	token, err := readCreds()
+	if err != nil {
+		slog.Warn("Failed to read Anthropic OAuth credentials", "error", err)
+		return
+	}
+	if token != nil {
+		slog.Info("Auto-detected Anthropic OAuth credentials from Claude CLI")
+		prepared.OAuthToken = token
+		prepared.SetupAnthropic()
 	}
 }
 
