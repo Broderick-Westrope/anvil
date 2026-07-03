@@ -537,12 +537,14 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_transparent", transparentLabel, "", ActionToggleTransparentBackground{}))
 
 	// Add Anthropic auth mode toggle when the Anthropic provider is configured.
-	if anthropicCfg, ok := cfg.Providers.Get("anthropic"); ok {
-		authLabel := "Anthropic: Switch to API Key"
-		if anthropicCfg.AuthMode == config.AuthModeAPIKey {
-			authLabel = "Anthropic: Switch to OAuth"
+	if cfg != nil {
+		if anthropicCfg, ok := cfg.Providers.Get("anthropic"); ok {
+			authLabel := "Anthropic: Switch to API Key"
+			if anthropicCfg.AuthMode == config.AuthModeAPIKey {
+				authLabel = "Anthropic: Switch to OAuth"
+			}
+			commands = append(commands, NewCommandItem(c.com.Styles, "toggle_anthropic_auth", authLabel, "", ActionToggleAnthropicAuthMode{}))
 		}
-		commands = append(commands, NewCommandItem(c.com.Styles, "toggle_anthropic_auth", authLabel, "", ActionToggleAnthropicAuthMode{}))
 	}
 
 	commands = append(commands,
