@@ -460,15 +460,6 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 //     none are found rather than falling back to API key.
 //   - "" (auto): try OAuth first (subscription auth is free vs per-token
 //     billing), fall back to API key.
-//
-// configureAnthropicAuth sets up Anthropic authentication on prepared based
-// on the auth_mode setting:
-//
-//   - "api-key": skip OAuth entirely; require $ANTHROPIC_API_KEY.
-//   - "oauth": require OAuth credentials (config or Claude CLI); fail if
-//     none are found rather than falling back to API key.
-//   - "" (auto): try OAuth first (subscription auth is free vs per-token
-//     billing), fall back to API key.
 func configureAnthropicAuth(prepared *ProviderConfig, mode AuthMode) {
 	configureAnthropicAuthWith(prepared, mode, anthropicoauth.ReadCredentials)
 }
