@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -2242,6 +2243,29 @@ func TestConfigureAnthropicAuth(t *testing.T) {
 		prepared := &ProviderConfig{}
 		configureAnthropicAuthWith(prepared, AuthModeOAuth, noCredentials)
 		require.Nil(t, prepared.OAuthToken)
+	})
+
+	t.Run("oauth mode with credential read error leaves provider unchanged", func(t *testing.T) {
+		t.Parallel()
+		prepared := &ProviderConfig{}
+		errCredentials := func() (*oauth.Token, error) {
+			return nil, errors.New("keychain unavailable")
+		}
+		configureAnthropicAuthWith(prepared, AuthModeOAuth, errCredentials)
+		require.Nil(t, prepared.OAuthToken)
+	})
+
+	t.Run("auto mode with credential read error leaves provider unchanged", func(t *testing.T) {
+		t.Parallel()
+		prepared := &ProviderConfig{
+			APIKey: "sk-test",
+		}
+		errCredentials := func() (*oauth.Token, error) {
+			return nil, errors.New("keychain unavailable")
+		}
+		configureAnthropicAuthWith(prepared, AuthModeAuto, errCredentials)
+		require.Nil(t, prepared.OAuthToken)
+		require.Equal(t, "sk-test", prepared.APIKey)
 	})
 
 	t.Run("auto mode with existing token sets up Anthropic", func(t *testing.T) {
