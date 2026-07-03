@@ -5367,9 +5367,12 @@ func (m *UI) copyChatHighlight() tea.Cmd {
 	)
 }
 
-// toggleAnthropicAuthMode toggles the Anthropic provider between OAuth
-// and API key authentication, persists the change, and reloads the
-// agent model so the new credentials take effect immediately.
+// toggleAnthropicAuthMode cycles the Anthropic provider auth mode
+// through auto → api-key → oauth → auto, persists the change, and
+// reloads the agent model so the new credentials take effect
+// immediately. If the provider is dropped during reload (credentials
+// for the new mode are missing) a warning is reported instead of a
+// success message.
 func (m *UI) toggleAnthropicAuthMode() tea.Msg {
 	cfg := m.com.Config()
 	if cfg == nil {
@@ -5379,21 +5382,35 @@ func (m *UI) toggleAnthropicAuthMode() tea.Msg {
 	if !ok {
 		return util.ReportError(errors.New("Anthropic provider not configured"))()
 	}
+
 	var newMode config.AuthMode
-	if anthropicCfg.AuthMode == config.AuthModeAPIKey {
+	var label string
+	switch anthropicCfg.AuthMode {
+	case config.AuthModeAPIKey:
 		newMode = config.AuthModeOAuth
-	} else {
+		label = "OAuth"
+	case config.AuthModeOAuth:
+		newMode = config.AuthModeAuto
+		label = "auto"
+	default:
 		newMode = config.AuthModeAPIKey
+		label = "API key"
 	}
+
 	if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "providers.anthropic.auth_mode", string(newMode)); err != nil {
 		return util.ReportError(err)()
 	}
 	if err := m.com.Workspace.UpdateAgentModel(context.TODO()); err != nil {
 		return util.ReportError(err)()
 	}
-	label := "API key"
-	if newMode == config.AuthModeOAuth {
-		label = "OAuth"
+
+	// SetConfigField auto-reloads config, which re-runs provider
+	// validation and may drop the provider when credentials for the
+	// new mode are missing. Surface that instead of a success toast.
+	if cfg := m.com.Config(); cfg != nil {
+		if _, ok := cfg.Providers.Get("anthropic"); !ok {
+			return util.ReportWarn("Anthropic auth mode set to " + label + ", but no matching credentials were found — provider is unavailable")()
+		}
 	}
 	return util.NewInfoMsg("Anthropic auth mode switched to " + label)
 }
