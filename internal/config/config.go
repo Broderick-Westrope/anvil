@@ -180,7 +180,9 @@ func (c *ProviderConfig) SetupGitHubCopilot() {
 	maps.Copy(c.ExtraHeaders, copilot.Headers())
 }
 
-// SetupAnthropic configures Anthropic OAuth headers and flat-rate billing.
+// SetupAnthropic configures the Bearer API key and OAuth headers for an
+// Anthropic provider authenticated via OAuth. No-op when there is no
+// OAuth token.
 func (c *ProviderConfig) SetupAnthropic() {
 	if c.OAuthToken == nil {
 		return
