@@ -35,7 +35,8 @@ In scope:
      to returning the whole current buffer and resync the cursor.
 2. **Bounded `wait`** — new optional `timeout_seconds` param on `job_output`,
    meaningful ONLY when `wait=true` (ignored when `wait=false`; a plain poll
-   never blocks). Default 60, max 600; `0`/absent means the default. The
+   never blocks). Default 60, max 600; `0`/absent means the default, and
+   values above 600 are clamped to 600 (no tool error). The
    wait is a three-way race: job completion, `timeout_seconds` elapsing, or
    the tool call's `context.Context` cancellation — whichever comes first
    returns accumulated new output (`Status: running` if not done).
@@ -86,7 +87,12 @@ Out of scope:
 - Response format stays `Status: <running|completed>\n\n<output>`; when a
   poll yields nothing new on a running job, output is `(no new output)` —
   deliberately distinct from `BashNoOutput` ("no output") so the model can
-  tell "never printed anything" from "nothing new since last read".
+  tell "never printed anything" from "nothing new since last read". A
+  first read on a job that has printed nothing yet (cursor at 0, buffers
+  empty) returns `BashNoOutput`, since nothing has been consumed.
+- The cursor is per-shell, not per-session: two agents polling the same
+  shell steal from each other's incremental window (mitigated by
+  `full=true`); note this in `job_output.md`.
 - Exit-code reporting: a nonzero exit code is appended on EVERY read that
   observes `done=true` (incremental or `full`), even if that read has no
   new output. No "report exactly once" tracking — `Status: completed` plus
