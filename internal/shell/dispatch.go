@@ -198,7 +198,27 @@ func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args 
 	argv = append(argv, scriptPath)
 	argv = append(argv, args[1:]...)
 
-	return runExternal(ctx, interpreter, argv)
+	hc := interp.HandlerCtx(ctx)
+	cmd := exec.CommandContext(ctx, interpreter, argv[1:]...)
+	cmd.Dir = hc.Dir
+	cmd.Env = execEnvList(hc.Env)
+	cmd.Stdin = hc.Stdin
+	cmd.Stdout = hc.Stdout
+	cmd.Stderr = hc.Stderr
+	isolateProcess(cmd)
+
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code := exitErr.ExitCode()
+			if code < 0 {
+				code = 1
+			}
+			return interp.ExitStatus(uint8(code))
+		}
+		return err
+	}
+	return nil
 }
 
 // resolveInterpreter tries the literal shebang path first, then falls back
@@ -381,7 +401,7 @@ func runShellSource(ctx context.Context, path string, args []string, blockFuncs 
 		interp.Interactive(false),
 		interp.Env(hc.Env),
 		interp.Dir(hc.Dir),
-		interp.ExecHandlers(standardHandlers(blockFuncs)...),
+		execHandlerOption(blockFuncs),
 	}
 	if len(args) > 1 {
 		// Params with a leading "--" avoids any of args[1:] being
