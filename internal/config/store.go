@@ -516,7 +516,9 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 	}
 
 	var foundProvider *catwalk.Provider
-	for _, p := range s.knownProviders {
+	// KnownProviders takes metaMu; a bare s.knownProviders read here
+	// would race the setMeta republish during a concurrent reload.
+	for _, p := range s.KnownProviders() {
 		if string(p.ID) == providerID {
 			foundProvider = &p
 			break
