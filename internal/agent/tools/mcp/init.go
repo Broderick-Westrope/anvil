@@ -354,6 +354,11 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 	timeout := mcpTimeout(m)
 
 	// Fast path: reuse a healthy session without taking the renewal lock.
+	// NOTE: A concurrent locked renewal may close this session between the
+	// ping succeeding and the caller using it. That is a deliberate tradeoff
+	// inherited from upstream: the window is narrow, the caller's tool call
+	// fails transiently at worst, and skipping the lock on every healthy
+	// call avoids contention under parallel tool use.
 	if sess, ok := sessions.Get(name); ok {
 		if err := pingSession(ctx, sess, timeout); err == nil {
 			return sess, nil
@@ -394,7 +399,6 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 
 	newSess, err := newSession(ctx, name, m, cfg.Resolver(), dbQueries)
 	if err != nil {
-		updateState(name, StateError, maybeTimeoutErr(err, timeout), nil, state.Counts)
 		return nil, err
 	}
 
