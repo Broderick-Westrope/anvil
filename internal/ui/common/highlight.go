@@ -5,7 +5,7 @@ import (
 	"image/color"
 
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
-	"github.com/alecthomas/chroma/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/xchroma"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
 )
@@ -14,15 +14,15 @@ import (
 // on the file name and background color. It returns the highlighted code as a
 // string.
 func SyntaxHighlight(st *styles.Styles, source, fileName string, bg color.Color) (string, error) {
-	// Determine the language lexer to use
-	l := lexers.Match(fileName)
+	// Determine the language lexer to use. The filename match is memoized
+	// (and already coalesced) since it is expensive and stable per name.
+	l := xchroma.MatchLexer(fileName)
 	if l == nil {
 		l = lexers.Analyse(source)
 	}
 	if l == nil {
 		l = lexers.Fallback
 	}
-	l = chroma.Coalesce(l)
 
 	// Get the formatter
 	f := formatters.Get("terminal16m")
