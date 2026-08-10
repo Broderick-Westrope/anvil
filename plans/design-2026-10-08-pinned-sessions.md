@@ -24,6 +24,11 @@ In scope:
   pinned sessions with title, note, working dir, and age. Selecting an entry
   launches Anvil with that session in its original working dir (`--there`
   semantics). The picker supports unpinning entries.
+- Toggleable session preview in the picker (telescope-style split): off by
+  default each invocation, toggled with a keybind. When on, a right-hand
+  pane shows a short metadata header (working dir, age, message count)
+  above the tail of the session transcript, scrollable back through loaded
+  history. See "Picker preview" under Design Decisions.
 - Pinned sessions sort to the top of the existing in-TUI session switcher
   dialog for the current project (display only).
 - Quit-time settle prompt: on clean quit while a pinned session is active,
@@ -76,6 +81,13 @@ Out of scope (v1):
 - [ ] Selecting a pinned session from the picker resumes it in its original
       working directory.
 - [ ] The picker supports unpinning an entry without resuming it.
+- [ ] Preview pane toggles on/off in the picker; when on, it shows a
+      metadata header and the scrollable transcript tail of the highlighted
+      session, updating as the cursor moves without noticeable lag.
+- [ ] Preview handles empty sessions (no messages / null `LeafMessageID`)
+      gracefully, never renders raw binary/base64 or unbounded tool
+      payloads, and the picker remains usable below the split's minimum
+      width (defined fallback behavior).
 - [ ] Pinned sessions appear at the top of the in-TUI session switcher for
       the current project.
 - [ ] The settle prompt fires on ALL clean quit paths (ctrl+c quit dialog,
@@ -131,6 +143,37 @@ Out of scope (v1):
   conventions for scripts and non-TTY) and an interactive picker
   (`anvil sessions pinned` or `--pinned` on a TTY) that supports
   resume-on-select and unpin.
+- **Picker preview — transcript tail with metadata header, plain-text:**
+  answers "where did this leave off?" which title + single-line note cannot
+  (the note stays single-line precisely because the preview carries the
+  depth). Off by default since the table is wide on its own; toggled
+  as-needed; toggle state does not persist across invocations. Metadata
+  card alone was declined (doesn't answer "where was I?"); full chat
+  rendering was declined (dependency weight, render cost).
+  - **Branch-aware tail:** messages form a tree; the preview shows the
+    current-conversation path ending at `sessions.LeafMessageID` (as
+    `GetBranchPath` in `internal/db/sql/messages.sql` does), NOT a naive
+    `ORDER BY created_at` over all branches. A new bounded query
+    (`GetBranchPathTail(leaf_id, limit)` — recursive CTE from leaf with
+    depth limit) is in scope; scrolling back loads earlier pages via the
+    same query. Empty/null `LeafMessageID` renders the metadata header
+    with a "no messages" placeholder.
+  - **Per-part rendering rules:** text parts shown (per-message render
+    cap so one giant message can't blow the pane); tool calls AND tool
+    results collapsed to one line each; binary/image parts rendered as a
+    placeholder (never base64); reasoning omitted; metadata messages
+    (compaction, labels, model changes, etc.) filtered via the existing
+    `FilterMetadataMessage` (`internal/message/tree.go`). A message with
+    no renderable parts renders no role header. The header's message
+    count uses `sessions.MessageCount` (may exceed visible transcript;
+    accepted).
+  - **Async + cached:** tail loads run as `tea.Cmd`s on cursor change
+    with stale-result discard (fast scrolling stays smooth); results are
+    cached per session for the picker's lifetime (bounded, since tails
+    are page-limited).
+  - **Narrow terminals:** below a minimum width (~100 cols) the split is
+    unavailable; the toggle instead shows the preview full-width in place
+    of the table (any key back).
 - **Concurrent instances (accepted risk):** two processes can hold the same
   session via the global DB. Pin state is re-read from the DB at quit time
   before prompting, so a pin already settled elsewhere doesn't re-prompt;
@@ -163,6 +206,10 @@ Out of scope (v1):
   working-dir validation (lines ~111–135).
 - `internal/cmd/session.go` — existing sessions CLI command (title
   truncation/flatten patterns); picker lives here.
+- `internal/message/` — message model; part types (`internal/message/content.go`)
+  and `FilterMetadataMessage` (`internal/message/tree.go`) for the preview.
+- `internal/db/sql/messages.sql` — `GetBranchPath` pattern; new
+  `GetBranchPathTail` query goes here.
 - `internal/ui/model/ui.go` — quit paths (ctrl+c dialog, typed
   `exit`/`quit`) and `QuitMsg` handling.
 - `internal/ui/dialog/commands.go` — command palette quit path; where the
