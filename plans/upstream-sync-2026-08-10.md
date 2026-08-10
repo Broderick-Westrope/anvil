@@ -40,7 +40,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 |---|---|---|---|---|
 | 1 | Agent & tool correctness | 15 | **done** | 12 picked, 3 deferred/skipped |
 | 2 | Config, auth & race fixes | 9 | **done** | 8 picked, 1 deferred to batch 3 |
-| 3 | Provider fixes | 11 | pending | |
+| 3 | Provider fixes | 11 | **partial** | 5 picked, 6 blocked on dep bump |
 | 4 | Performance | 12 | pending | |
 | 5 | UI fixes | 15 | pending | |
 | 6 | MCP fixes | 5 | pending | |
@@ -53,7 +53,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 13 | Tool call expansion UI | 2 | pending | optional |
 | 14 | Attachment chip remove button | 4 | pending | optional |
 | 15 | Misc features | 5 | pending | optional |
-| 16 | Dep bump (fantasy/catwalk) | 1 | pending | do last, single deliberate bump |
+| 16 | Dep bump (fantasy/catwalk) | 1 | **promoted** | must run before the rest of batch 3 |
 
 ---
 
@@ -172,6 +172,8 @@ update. Worth revisiting if we adopt the rest of upstream's config-locking chain
 
 ## Batch 3 — Provider fixes
 
+**Status: partial.** 5 cherry-picked, 6 blocked on the dependency bump.
+
 Also reconsider `63dc1f01` (deferred from batch 2) alongside `64bbbebc`; both concern OAuth
 refresh and the auth-complete signal.
 
@@ -188,6 +190,33 @@ d0dc9fc9 feat: prepare for gpt-5.6 (#3270)
 8db57337 feat: recover cleanly from mid-stream provider connection resets
 4be77c56 feat: log provider warnings from fantasy step results
 ```
+
+### Blocked on the dep bump
+
+We are on `catwalk v0.44.28` / `fantasy v0.31.1`; upstream is on `catwalk v0.48.4` /
+`fantasy v0.39.0`. These need symbols that do not exist in our pinned versions:
+
+| Commit | Missing symbol |
+|---|---|
+| `3ac7f1c4` | `catwalk.InferenceProviderBaseten` |
+| `aca40878` | `catwalk.InferenceProviderBaseten` |
+| `d341d84b` | `catwalk.InferenceProviderAlibabaUS` (also needs `ebf6e826`, batch 7) |
+| `d0dc9fc9` | go.mod/go.sum only — it *is* a dep bump |
+| `64bbbebc` | `fantasy.OnAuthRefresh` |
+| `8db57337` | `fantasy.IsTransportError`, `fantasy.NewTransportError` |
+
+Batch 16 is therefore promoted: run the bump, then replay these six, then `63dc1f01`.
+
+### Adaptations worth remembering
+
+- **`8ccf6945`** — upstream keeps `copilotResponsesModels` in `coordinator.go`; ours lives in
+  `coordinator_providers.go`. Git offered to insert a whole duplicate map into `coordinator.go`;
+  the correct resolution was to drop the block and add only the three new model IDs to the
+  existing map. Watch for this whenever upstream touches those two maps.
+- **`a882695e`** — took only the OpenCodeGo/Zen case. The same conflict hunk also carried Baseten
+  and Alibaba-US branches from commits we cannot apply yet.
+- **`8db57337`** — the code change is version-independent, but `go.mod`/`go.sum` conflicted; we
+  keep our pins and let batch 16 move versions. Blocked regardless (see table).
 
 ## Batch 4 — Performance
 
