@@ -485,6 +485,38 @@ f6a841ec feat(dialog): track last closed dialog in open with grace
 
 ---
 
+## Review round (after batches 1–3 + main merge)
+
+A three-reviewer pass (2026-08-10) found and fixed:
+
+- **Auth-signal double-close panic** — taking `64bbbebc` while deferring `63dc1f01` shipped a bug
+  whose fix lived in the deferred commit: `SignalAuthComplete` panicked on a second signal with no
+  intervening waiter, reachable via `SetProviderAPIKey`. Fixed with `63dc1f01`'s exact shape and
+  pinned by `internal/config/auth_signal_test.go`. **Lesson: when deferring a commit, check whether
+  it repairs one already taken.**
+- **Publish-then-mutate race** — `reloadFromDiskLocked` wrote `cfg.Models` (a plain map) after
+  `setConfig` published the config. Model resolution now happens before publish, which also
+  removed the setup-failure rollback.
+- **`dispatchShebang`** — the second call site of the batch-1 cancellation bug: it SIGKILLed only
+  the direct child (orphaning grandchildren under Setsid) and never surfaced `ctx.Err()`. Now
+  routes through `processGroupExecHandler`; regression tests in
+  `internal/shell/dispatch_shebang_cancel_test.go`.
+- **Non-atomic / unserialised config writes** — `RemoveConfigField` (now via `atomicWrite`),
+  `SetPermissionRule` (now via `atomicWriteFile`), and a bare `s.knownProviders` read in
+  `SetProviderAPIKey` (now via the guarded accessor).
+- **`scopeb_race_test.go` was silently weakened** — `crush.json` fixture + `CRUSH_GLOBAL_*` env
+  vars meant it loaded an empty config; exactly the fixture-name trap this doc warns about, in a
+  test that shipped with batch 2.
+- Branding sweep (11 comments across 8 files), stale `mu`/`Overrides` docs, dead
+  `sessionID+"-summarize"` lookup in `Cancel`.
+
+Still open (accepted): `applyToken`/`refreshOAuthTokenLocked` mutate the live config's
+`Providers` csync.Map rather than cloning — thread-safe but bends the copy-on-write invariant;
+revisit if provider state ever moves out of `csync.Map`. Commit message of `9042e486` retains the
+upstream `/etc/crush/crush.json` title; code was fixed in `f80fcc35`.
+
+---
+
 ## Explicitly skipped
 
 | Group | ~Count | Reason |
