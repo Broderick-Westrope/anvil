@@ -133,9 +133,9 @@ type Anim struct {
 
 	// gen identifies the currently armed tick chain. Start() bumps it and
 	// stamps every emitted StepMsg with the new value; Animate() drops ticks
-	// whose Gen does not match (unless Gen is the zero wildcard). Re-arming
-	// therefore supersedes any in-flight chain instead of running a second
-	// one concurrently, and Stop() bumps it to kill a chain outright.
+	// whose Gen does not match the current value. Re-arming therefore
+	// supersedes any in-flight chain instead of running a second one
+	// concurrently, and Stop() bumps it to kill a chain outright.
 	gen atomic.Int64
 }
 
@@ -371,7 +371,9 @@ func (a *Anim) Start() tea.Cmd {
 
 // Stop kills any in-flight tick chain without starting a new one. It bumps
 // the generation so outstanding StepMsgs no longer match; the next one to
-// arrive is dropped and the chain terminates.
+// arrive is dropped and the chain terminates. No production caller yet
+// (upstream parity): the session-reload fix gates on isAgentBusy instead of
+// stopping spinners explicitly.
 func (a *Anim) Stop() {
 	a.gen.Add(1)
 }
