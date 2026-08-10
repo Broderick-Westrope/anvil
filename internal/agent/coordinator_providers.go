@@ -23,7 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/machineid"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
 	"github.com/Broderick-Westrope/anvil/internal/oauth/copilot"
-	openaisdk "github.com/charmbracelet/openai-go/option"
+	openaisdk "github.com/openai/openai-go/v3/option"
 )
 
 // Copilot models that use the Responses API instead of Chat Completions.
