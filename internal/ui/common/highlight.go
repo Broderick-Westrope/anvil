@@ -8,7 +8,6 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
-	chromastyles "github.com/alecthomas/chroma/v2/styles"
 )
 
 // SyntaxHighlight applies syntax highlighting to the given source code based
@@ -31,19 +30,9 @@ func SyntaxHighlight(st *styles.Styles, source, fileName string, bg color.Color)
 		f = formatters.Fallback
 	}
 
-	style := chroma.MustNewStyle("anvil", st.ChromaTheme())
-
-	// Modify the style to use the provided background
-	s, err := style.Builder().Transform(
-		func(t chroma.StyleEntry) chroma.StyleEntry {
-			r, g, b, _ := bg.RGBA()
-			t.Background = chroma.NewColour(uint8(r>>8), uint8(g>>8), uint8(b>>8))
-			return t
-		},
-	).Build()
-	if err != nil {
-		s = chromastyles.Fallback
-	}
+	// Memoized: building the style per call is expensive and only depends
+	// on the theme and background.
+	s := ChromaStyle(st, bg)
 
 	// Tokenize and format
 	it, err := l.Tokenise(nil, source)
