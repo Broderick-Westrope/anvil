@@ -25,6 +25,9 @@
 | Config | Local `config.Service`. Upstream is migrating to a Bash `crushrc` DSL — skip entirely. |
 | Telemetry | Local telemetry was removed. Skip herdr and PostHog-adjacent commits. |
 | Elapsed timer | Local `internal/ui/chat/agent.go` already has elapsed-time handling; verify before picking `dc160997`. |
+| Session trees | `sessions.CreateTaskSession` validates that the parent session exists, and `sessions.Rename` takes a 4th `titleIsCustom` arg. Upstream tests that pass a missing parent, or `Rename` calls with 3 args, need adapting. |
+| Parallel tool execution | `OnToolResult` runs on parallel goroutines under `sessionLock`. Any upstream state shared between `OnToolCall` and `OnToolResult` needs its own mutex; upstream is single-threaded here. |
+| Provider switch shape | `getProviderOptions` in `coordinator.go` lacks upstream's Alibaba-Singapore and Fireworks branches until batches 3 and 7 land. Drop those hunks when they show up in unrelated commits. |
 
 ## Batch progress
 
@@ -32,7 +35,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 
 | # | Batch | Commits | Status | Notes |
 |---|---|---|---|---|
-| 1 | Agent & tool correctness | 15 | pending | |
+| 1 | Agent & tool correctness | 15 | **done** | 12 picked, 3 deferred/skipped |
 | 2 | Config, auth & race fixes | 9 | pending | |
 | 3 | Provider fixes | 11 | pending | |
 | 4 | Performance | 12 | pending | |
@@ -53,6 +56,8 @@ Status: `pending` / `in progress` / `done` / `skipped`
 
 ## Batch 1 — Agent & tool correctness
 
+**Status: done.** 12 cherry-picked, 3 not applied.
+
 ```
 1cfa9a15 fix(subagents): fixed subagents returning empty responses (#3125)
 d3af321b fix(shell): isolate child processes from Crush's session (#3097)
@@ -70,6 +75,39 @@ ae9257b9 fix(agent): serialize in-process run dispatch to prevent concurrent tur
 fbf59341 fix(agent): close dispatch completion-boundary cancel race
 b5cd46c2 fix(errors): properly supress context cancelation error
 ```
+
+### Not applied
+
+| Commit | Disposition | Reason |
+|---|---|---|
+| `a9e3a57f` | deferred to batch 8 | Depends on bang mode (`shell.PersistFunc`, `message.ShellCommand`), which doesn't exist locally yet. |
+| `ae9257b9` | skipped | Rewrites `Run` dispatch around `call.Accepted`, `canceledBySeq`, `sessionMu`, `notify.RunComplete`, `persistCanceledTurn` — all client/server infrastructure we don't have. |
+| `b5cd46c2` | already fixed | Local `sendMessage` already returns early on `errors.Is(err, context.Canceled)`. |
+
+### Adaptations worth remembering
+
+- **`46c1799a`** — the deferred fallback rename needed the local 4-arg `sessions.Rename(..., false)`.
+- **`21a457d5`** — added a dedicated `sanitizedMu`, because `sanitizedToolCalls` is written in
+  `OnToolCall` and read in `OnToolResult`, which run on parallel goroutines in this fork.
+- **`f75435a2`** — kept `effectiveReasoningEffort` but dropped the Alibaba-Singapore and Fireworks
+  provider branches; those belong to batches 3 and 7.
+- **`fbf59341`** — took `csync.Map.CompareAndDelete` and the `activeCancel` pointer-identity
+  wrapper, dropped the accept/dispatch bookkeeping. Also converted the three explicit mid-run
+  `activeRequests.Del` calls to `CompareAndDelete` so they only release our own registration.
+- **`d3af321b` fallout** — the pre-existing `exec_unix_test.go` (from cherry-pick `f32dcffc`)
+  referenced a package-level `killTimeout` that this commit turned into a parameter. Renamed the
+  references to `defaultKillTimeout`.
+- **`d3af321b` fallout, behavioural** — `Setsid` detaches the child from the controlling terminal,
+  so `sh` translates our process-group signal into a normal exit (128+SIGHUP) instead of dying
+  signalled. `exitStatusFromError` only consulted `ctx.Err()` on the signalled path, so
+  cancellation stopped being visible to `IsInterrupt`, which the bash tool and agent loop depend
+  on. Fixed by checking `ctx.Err()` first, in follow-up commit `a54395f8`.
+
+### Known pre-existing failure
+
+`go test -race ./internal/agent/` fails at the sync base commit (`929ddad7`) and still does:
+`generateTitle` is started with `go`, outlives the test, then logs a VCR cassette mismatch after
+completion. Not introduced by this sync, so left alone. Plain `go test ./...` is green.
 
 ## Batch 2 — Config, auth & race fixes
 
@@ -165,6 +203,9 @@ ebf6e826 chore: add alibaba us (#3249)
 ```
 
 ## Batch 8 — Bang mode (optional)
+
+Also pick `a9e3a57f` (deferred from batch 1) after `99a5fad5`, since it depends on
+`shell.PersistFunc` and `message.ShellCommand`.
 
 ```
 99a5fad5 feat: add bang mode for direct shell command execution (#3013)
