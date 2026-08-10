@@ -55,7 +55,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 3 | Provider fixes | 11 | **done** | 9 picked, 1 N/A, 1 folded into dep bump |
 | 4 | Performance | 12 | **done** | 9 picked, 2 deferred to batch 8, 2 skipped |
 | 5 | UI fixes | 15 | **done** | 14 picked (1 partial), 1 skipped, +1 vendored prereq |
-| 6 | MCP fixes | 5 | pending | |
+| 6 | MCP fixes | 5 | **done** | 4 picked, 1 N/A; deferred `63dc1f01` remainder also landed |
 | 7 | Model auto-discovery + enrichers | 10 | pending | optional |
 | 8 | Bang mode | 20 | pending | optional |
 | 9 | Question tool | 18 | pending | optional |
@@ -144,7 +144,7 @@ d4dc84e9 fix(config): prevent startup deadlock when configured model ID is inval
 
 | Commit | Disposition | Reason |
 |---|---|---|
-| `63dc1f01` | deferred to batch 3 | Bundles three things: model pinning across reloads, borrowing a peer's rotated refresh token, and `WaitForTokenChange`/`SignalAuthComplete`. The auth-signal half is the counterpart to `64bbbebc` (OnAuthRefresh, batch 3), and the conflict also drags in `EnabledChannels` from the skipped channels feature plus a `login.go` shape we don't share. Adapt it together with `64bbbebc`. |
+| `63dc1f01` | **landed in batch 6** (`3995eab0`) | Bundles three things: model pinning across reloads, borrowing a peer's rotated refresh token, and `WaitForTokenChange`/`SignalAuthComplete`. The auth-signal half went in with `64bbbebc` (batch 3) and was hardened in the batches-1-3 review round; the remaining two pieces were applied at the end of batch 6 — see that batch's notes. |
 
 ### Prerequisites vendored
 
@@ -454,6 +454,10 @@ A three-reviewer pass (2026-08-10, Sonnet + Opus + Convention) audited the batch
 
 ## Batch 6 — MCP fixes
 
+**Status: done.** 4 cherry-picked, 1 not applicable. The batch-2 deferred
+remainder of `63dc1f01` (model pinning + peer-token borrowing) also landed
+here.
+
 ```
 132a8c89 fix(mcp): clear tools and close the session on MCP error; reap stdio process groups
 8246dff5 fix(mcp): wait for MCP init before building the tool list
@@ -461,6 +465,56 @@ A three-reviewer pass (2026-08-10, Sonnet + Opus + Convention) audited the batch
 bb3d4495 fix: reduce default and suggested mcp timeout (#3509)
 bdad0f11 feat(mcp): don't hold callback port open permanently (#3481)
 ```
+
+### Not applied
+
+| Commit | Disposition | Reason |
+|---|---|---|
+| `bdad0f11` | not applicable | Patches `internal/oauth/mcp/handler.go`, part of upstream's skipped MCP OAuth feature. The fork's callback server (`internal/cmd/mcp.go:startCallbackServer`) is command-scoped: it binds only for the duration of the interactive login and closes on return — exactly the behavior this commit retrofits upstream. |
+
+### Local commit mapping
+
+| Upstream | Local commit | Adapted? |
+|---|---|---|
+| `132a8c89` | `9b889931` | yes — noted in commit body |
+| `8246dff5` | `f8ed0830` | yes — noted in commit body |
+| `009ce621` | `e941d0ec` | yes — noted in commit body |
+| `bb3d4495` | `977cfbef` | yes — noted in commit body |
+| `63dc1f01` | `3995eab0` | yes — noted in commit body |
+
+### Adaptations worth remembering
+
+- **`132a8c89`** — `getOrRenewClient` keeps the fork's lazy reconnect state (`StateLazy` for
+  lazy servers) around the new `registerSessionTools` re-registration. `process_unix_test.go`
+  needed the fork's 5-arg `createTransport(ctx, name, m, resolver, queries)` signature (name +
+  `db.Querier` from local MCP OAuth). Branding: `crush-test` client names, `crush_info`
+  comments.
+- **`8246dff5`** — the `WaitForInit` gate lands in the fork's single `Run` (upstream splits it
+  into `run`/`RunAccepted` for client/server) and in `buildAgent`'s tool goroutine, which here
+  also sets the lazy-MCP tool map. The stricter `WaitForInit` doc comment merged as-is.
+- **`009ce621`** — `Initialize` keeps the fork's `db.Querier` parameter with `ArmInit()` called
+  both inside it and synchronously in `app.New`. The `newSession` seam carries the fork's 5-arg
+  signature (upstream test stubs updated to match, `db` import added). The fork's old
+  `<-initDone` wait at the top of `getOrRenewClient` was **dropped**: it would deadlock the new
+  never-armed tests, and its purpose (dbQueries ordering) is guaranteed anyway — sessions only
+  exist after `Initialize` has set `dbQueries`, and `csync.Map` provides the memory barrier.
+  Upstream's herdr hunks in `app.go` were dropped (skipped feature).
+- **`bb3d4495`** — the OAuth check maps to the fork's `m.Auth == config.MCPAuthOAuth` (upstream
+  has a boolean `OAuth` field). The conflict hunk dragged in four upstream MCP-OAuth helpers
+  (`hasUsableToken`, `isOAuthInitErr`, `clearOAuthToken`, `clearMCPData`) — dropped, they belong
+  to the skipped feature. README hunk dropped (our docs don't carry the `mcp add` examples).
+  The `cmp` import became unused and was removed.
+- **`63dc1f01` (deferred remainder)** — `RuntimeOverrides` keeps the fork's `YoloLevel` and
+  gains only `Models`; upstream's `SkipPermissionRequests` and the skipped channels feature's
+  `EnabledChannels` were dropped. The exchange-retry passes the whole `*oauth.Token` (fork's
+  `exchange` signature from the `de679203` adaptation). `login.go` routes through the fork's
+  `client.SetProviderAPIKey`. The refresh tail now uses the fork's Anthropic-aware `applyToken`
+  instead of the previous inline switch — identical behavior, one seam. **Fixture trap, sixth
+  instance**: `model_pin_test.go` and the new `refresh_singleflight_test.go` fixtures used
+  `crush.json` + `CRUSH_GLOBAL_*`; before the rename, `TestModelSelectionSurvivesPeerWrite`
+  failed against the real environment's model — the rare case where the trap failed loudly
+  instead of passing weakly.
+
 
 ## Batch 7 — Model auto-discovery + enrichers (optional)
 
