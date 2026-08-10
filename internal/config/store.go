@@ -75,6 +75,14 @@ type ConfigStore struct {
 	mu      sync.Mutex // serialises config file writes
 	writeMu sync.Mutex // serialises in-memory config production (mutators + reload)
 
+	// metaMu guards the store metadata that a reload republishes
+	// (resolver, knownProviders, overrides, loadedPaths). It is
+	// deliberately separate from writeMu: writeMu is held for the whole
+	// reload, and pluginsChangedHook runs inside that window and calls
+	// back into readers like Resolver(). Guarding metadata with writeMu
+	// would make those reads re-enter the held lock and deadlock.
+	metaMu sync.RWMutex
+
 	pluginsChangedHook func(context.Context) error
 }
 
@@ -107,6 +115,26 @@ func (s *ConfigStore) setConfig(cfg *Config) {
 	s.config = cfg
 }
 
+// setMeta republishes the store metadata that a reload rebuilds. It is
+// guarded by metaMu rather than writeMu so readers (Resolver, LoadedPaths,
+// ...) can run while a reload holds writeMu, which is what lets
+// pluginsChangedHook call back into the store without deadlocking.
+func (s *ConfigStore) setMeta(
+	loadedPaths []string,
+	resolver VariableResolver,
+	providers []catwalk.Provider,
+	overrides RuntimeOverrides,
+	workspacePath string,
+) {
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+	s.loadedPaths = loadedPaths
+	s.resolver = resolver
+	s.knownProviders = providers
+	s.overrides = overrides
+	s.workspacePath = workspacePath
+}
+
 // WorkingDir returns the current working directory.
 func (s *ConfigStore) WorkingDir() string {
 	return s.workingDir
@@ -114,19 +142,26 @@ func (s *ConfigStore) WorkingDir() string {
 
 // Resolver returns the variable resolver.
 func (s *ConfigStore) Resolver() VariableResolver {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 	return s.resolver
 }
 
 // Resolve resolves a variable reference using the configured resolver.
 func (s *ConfigStore) Resolve(key string) (string, error) {
-	if s.resolver == nil {
+	s.metaMu.RLock()
+	r := s.resolver
+	s.metaMu.RUnlock()
+	if r == nil {
 		return "", fmt.Errorf("no variable resolver configured")
 	}
-	return s.resolver.ResolveValue(key)
+	return r.ResolveValue(key)
 }
 
 // KnownProviders returns the list of known providers.
 func (s *ConfigStore) KnownProviders() []catwalk.Provider {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 	return s.knownProviders
 }
 
@@ -138,11 +173,15 @@ func (s *ConfigStore) SetupAgents() {
 
 // Overrides returns the runtime overrides for this store.
 func (s *ConfigStore) Overrides() *RuntimeOverrides {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 	return &s.overrides
 }
 
 // LoadedPaths returns the config file paths that were successfully loaded.
 func (s *ConfigStore) LoadedPaths() []string {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 	return slices.Clone(s.loadedPaths)
 }
 
@@ -873,11 +912,7 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 
 	// Update store state BEFORE running model/agent setup (so they see new config)
 	s.setConfig(cfg)
-	s.loadedPaths = loadedPaths
-	s.resolver = resolver
-	s.knownProviders = providers
-	s.overrides = overrides
-	s.workspacePath = workspacePath
+	s.setMeta(loadedPaths, resolver, providers, overrides, workspacePath)
 
 	// Mirror startup flow: setup models and agents against NEW config
 	var setupErr error
@@ -900,11 +935,7 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	// Rollback on setup failure
 	if setupErr != nil {
 		s.setConfig(oldConfig)
-		s.loadedPaths = oldLoadedPaths
-		s.resolver = oldResolver
-		s.knownProviders = oldKnownProviders
-		s.overrides = oldOverrides
-		s.workspacePath = oldWorkspacePath
+		s.setMeta(oldLoadedPaths, oldResolver, oldKnownProviders, oldOverrides, oldWorkspacePath)
 		return setupErr
 	}
 
@@ -916,12 +947,8 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 			// Rollback: the config store is already updated but the
 			// coordinator failed to reload plugin state. Restore the
 			// previous config so the store and coordinator stay in sync.
-			s.config = oldConfig
-			s.loadedPaths = oldLoadedPaths
-			s.resolver = oldResolver
-			s.knownProviders = oldKnownProviders
-			s.overrides = oldOverrides
-			s.workspacePath = oldWorkspacePath
+			s.setConfig(oldConfig)
+			s.setMeta(oldLoadedPaths, oldResolver, oldKnownProviders, oldOverrides, oldWorkspacePath)
 			return fmt.Errorf("plugins changed hook failed: %w", err)
 		}
 	}
