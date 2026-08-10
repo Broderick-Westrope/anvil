@@ -353,7 +353,11 @@ func (s *ConfigStore) mutateInMemory(mutate func(*Config)) {
 func (s *ConfigStore) update(scope Scope, mutate func(*Config) map[string]any) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	return s.updateLocked(scope, mutate)
+}
 
+// updateLocked is the lock-free core of update. Caller must hold writeMu.
+func (s *ConfigStore) updateLocked(scope Scope, mutate func(*Config) map[string]any) error {
 	nc := s.Config().cloneForWrite()
 	fields := mutate(nc)
 	s.setConfig(nc)
@@ -427,23 +431,30 @@ func (s *ConfigStore) RemoveConfigField(scope Scope, key string) error {
 // UpdateAgentModel).
 func (s *ConfigStore) UpdatePreferredModel(scope Scope, modelType SelectedModelType, model SelectedModel) error {
 	return s.update(scope, func(c *Config) map[string]any {
-		if c.Models == nil {
-			c.Models = make(map[SelectedModelType]SelectedModel)
-		}
-		c.Models[modelType] = model
-
-		fields := map[string]any{
-			fmt.Sprintf("models.%s", modelType): model,
-		}
-		if updated, changed := nextRecentModels(c, modelType, model); changed {
-			if c.RecentModels == nil {
-				c.RecentModels = make(map[SelectedModelType][]SelectedModel)
-			}
-			c.RecentModels[modelType] = updated
-			fields[fmt.Sprintf("recent_models.%s", modelType)] = updated
-		}
-		return fields
+		return s.updatePreferredModelFields(c, modelType, model)
 	})
+}
+
+// updatePreferredModelFields builds the fields map for persisting a preferred
+// model change. Shared between UpdatePreferredModel and direct updateLocked
+// callers (e.g. Load).
+func (s *ConfigStore) updatePreferredModelFields(c *Config, modelType SelectedModelType, model SelectedModel) map[string]any {
+	if c.Models == nil {
+		c.Models = make(map[SelectedModelType]SelectedModel)
+	}
+	c.Models[modelType] = model
+
+	fields := map[string]any{
+		fmt.Sprintf("models.%s", modelType): model,
+	}
+	if updated, changed := nextRecentModels(c, modelType, model); changed {
+		if c.RecentModels == nil {
+			c.RecentModels = make(map[SelectedModelType][]SelectedModel)
+		}
+		c.RecentModels[modelType] = updated
+		fields[fmt.Sprintf("recent_models.%s", modelType)] = updated
+	}
+	return fields
 }
 
 // SetCompactMode sets the compact mode setting and persists it.
@@ -1023,14 +1034,17 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	s.setConfig(cfg)
 	s.setMeta(loadedPaths, resolver, providers, overrides, workspacePath)
 
-	// Mirror startup flow: setup models and agents against NEW config
+	// Mirror startup flow: setup models and agents against NEW config.
 	var setupErr error
 	if !cfg.IsConfigured() {
 		slog.Warn("No providers configured after reload")
 	} else {
-		if err := configureSelectedModels(s, providers, false); err != nil {
-			setupErr = fmt.Errorf("failed to configure selected models during reload: %w", err)
+		resolved, resolveErr := resolveSelectedModels(cfg, providers)
+		if resolveErr != nil {
+			setupErr = fmt.Errorf("failed to configure selected models during reload: %w", resolveErr)
 		} else {
+			cfg.Models[SelectedModelTypeLarge] = resolved.Large
+			cfg.Models[SelectedModelTypeSmall] = resolved.Small
 			s.SetupAgents()
 			// NOTE: After SetupAgents, the config only has the
 			// orchestrator agent. Non-orchestrator agents come from
