@@ -1101,6 +1101,24 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		return fmt.Errorf("failed to configure providers during reload: %w", err)
 	}
 
+	// Resolve selected models against the new config BEFORE publishing
+	// it. cfg.Models is a plain map, not a csync.Map: writing it after
+	// setConfig would race concurrent Config() readers walking the same
+	// map (fatal concurrent map read/write). Resolving first also means
+	// a resolution failure returns before anything is published, so no
+	// rollback is needed for it.
+	configured := cfg.IsConfigured()
+	if !configured {
+		slog.Warn("No providers configured after reload")
+	} else {
+		resolved, resolveErr := resolveSelectedModels(cfg, providers)
+		if resolveErr != nil {
+			return fmt.Errorf("failed to configure selected models during reload: %w", resolveErr)
+		}
+		cfg.Models[SelectedModelTypeLarge] = resolved.Large
+		cfg.Models[SelectedModelTypeSmall] = resolved.Small
+	}
+
 	// Save current state for potential rollback
 	oldConfig := s.Config()
 	oldLoadedPaths := s.loadedPaths
@@ -1109,36 +1127,18 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	oldOverrides := s.overrides
 	oldWorkspacePath := s.workspacePath
 
-	// Update store state BEFORE running model/agent setup (so they see new config)
+	// Publish the fully-built config, then run agent setup against it.
 	s.setConfig(cfg)
 	s.setMeta(loadedPaths, resolver, providers, overrides, workspacePath)
 
-	// Mirror startup flow: setup models and agents against NEW config.
-	var setupErr error
-	if !cfg.IsConfigured() {
-		slog.Warn("No providers configured after reload")
-	} else {
-		resolved, resolveErr := resolveSelectedModels(cfg, providers)
-		if resolveErr != nil {
-			setupErr = fmt.Errorf("failed to configure selected models during reload: %w", resolveErr)
-		} else {
-			cfg.Models[SelectedModelTypeLarge] = resolved.Large
-			cfg.Models[SelectedModelTypeSmall] = resolved.Small
-			s.SetupAgents()
-			// NOTE: After SetupAgents, the config only has the
-			// orchestrator agent. Non-orchestrator agents come from
-			// SetupAgentsWithDefaults (called by the coordinator).
-			// The coordinator.ReloadPlugins method re-applies .md
-			// defaults. Callers must trigger ReloadPlugins after
-			// config changes that affect the plugins key.
-		}
-	}
-
-	// Rollback on setup failure
-	if setupErr != nil {
-		s.setConfig(oldConfig)
-		s.setMeta(oldLoadedPaths, oldResolver, oldKnownProviders, oldOverrides, oldWorkspacePath)
-		return setupErr
+	if configured {
+		s.SetupAgents()
+		// NOTE: After SetupAgents, the config only has the
+		// orchestrator agent. Non-orchestrator agents come from
+		// SetupAgentsWithDefaults (called by the coordinator).
+		// The coordinator.ReloadPlugins method re-applies .md
+		// defaults. Callers must trigger ReloadPlugins after
+		// config changes that affect the plugins key.
 	}
 
 	// Rebuild staleness tracking
