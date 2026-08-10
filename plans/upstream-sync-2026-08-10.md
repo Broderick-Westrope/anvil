@@ -15,6 +15,7 @@ after each reviewed batch group lands, using
 | Tag | Commit | Covers |
 |---|---|---|
 | `review/2026-08-10-sync-batches-1-3` | `b1b2f638` | Batches 1–3, dep bumps, granular-permissions merge, review-round fixes |
+| `review/2026-08-10-sync-batches-4-5` | `e377df59` | Batches 4–5 (performance + UI fixes), both review rounds |
 
 ## Rules
 
