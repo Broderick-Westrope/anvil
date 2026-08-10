@@ -285,18 +285,17 @@ func (p *Permissions) HandleMsg(msg tea.Msg) Action {
 
 		// Default state.
 		return p.handleDefaultMsg(msg)
-	case tea.MouseWheelMsg:
+	case common.CoalescedWheelMsg:
 		if p.hasDiffView() {
-			switch msg.Button {
-			case tea.MouseWheelLeft:
+			if msg.DeltaX < 0 {
 				p.scrollLeft()
-			case tea.MouseWheelRight:
+			} else if msg.DeltaX > 0 {
 				p.scrollRight()
-			default:
-				p.viewport, _ = p.viewport.Update(msg)
+			} else {
+				p.viewport, _ = p.viewport.Update(tea.MouseWheelMsg(msg.Mouse))
 			}
 		} else {
-			p.viewport, _ = p.viewport.Update(msg)
+			p.viewport, _ = p.viewport.Update(tea.MouseWheelMsg(msg.Mouse))
 		}
 	default:
 		// Pass unhandled keys to viewport for non-diff content scrolling.

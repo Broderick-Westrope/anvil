@@ -31,6 +31,39 @@ type DelayedClickMsg struct {
 	X, Y    int
 }
 
+// resizeSettleDuration is how long after the last resize event the chat
+// waits before it starts warming the message cache it skipped mid-drag.
+const resizeSettleDuration = 120 * time.Millisecond
+
+// warmBatchSize is how many messages the chat renders into the width cache
+// per warming step. Kept small so no single step blocks the UI thread for
+// more than a frame or so, even on slow-to-render items.
+const warmBatchSize = 25
+
+// chatWarmMsg drives one incremental cache-warming step. The first one is
+// delayed until the resize settles; the rest fire immediately, one per
+// batch, so warming spreads across frames instead of blocking.
+//
+// The message carries the *Chat that started warming so the Update
+// handler steps that chat, not whichever chat is active when the message
+// arrives — drilling in or out of a session mid-warm must not strand the
+// original chat with a cold cache.
+type chatWarmMsg struct {
+	chat *Chat // the chat whose cache is being warmed
+	seq  int   // guards against stale timers from superseded resizes
+}
+
+// chatWarmCmd schedules the next warming step after delay (zero fires as
+// soon as the runtime delivers it).
+func chatWarmCmd(chat *Chat, seq int, delay time.Duration) tea.Cmd {
+	if delay <= 0 {
+		return func() tea.Msg { return chatWarmMsg{chat: chat, seq: seq} }
+	}
+	return tea.Tick(delay, func(_ time.Time) tea.Msg {
+		return chatWarmMsg{chat: chat, seq: seq}
+	})
+}
+
 // Chat represents the chat UI model that handles chat interactions and
 // messages.
 type Chat struct {
@@ -71,6 +104,11 @@ type Chat struct {
 	// (docs/notes/2026-05-12-chat-rendering-perf.md §4.8). Bounded to one
 	// entry; invalidated implicitly by string inequality on the next Draw.
 	drawCache *chatDrawCache
+
+	// resizeSettleSeq guards stale settle/warm timers from superseded
+	// resizes; warmNext tracks warming progress through the message list.
+	resizeSettleSeq int
+	warmNext        int
 }
 
 // chatDrawCache holds the pre-decoded form of the last list.Render output.
@@ -205,13 +243,49 @@ func drawCachedBuffer(scr uv.Screen, area uv.Rectangle, buf uv.ScreenBuffer) {
 	buf.Draw(scr, area)
 }
 
+// BeginResize starts (or restarts) the post-resize cache warming cycle.
+// Rendering every message at the new width in one frame would block the
+// UI thread, so warming is deferred until the resize settles and then
+// spread across frames in WarmStep batches. Bumping the sequence number
+// invalidates any warming still in flight from a superseded resize.
+//
+// NOTE: Upstream (4d901d1b) also sets a resizing flag here that Chat.Draw
+// uses to suppress the O(N) TotalHeight scan behind the chat scrollbar.
+// The scrollbar is not in this fork (tracked as sync batch 12); if it is
+// picked, that suppression must come back with it.
+func (m *Chat) BeginResize() tea.Cmd {
+	m.resizeSettleSeq++
+	m.warmNext = 0
+	return chatWarmCmd(m, m.resizeSettleSeq, resizeSettleDuration)
+}
+
+// WarmStep renders the next batch of messages into the width cache and
+// returns a command to continue warming plus whether warming finished.
+// Once done, height lookups over the warmed list (e.g. TotalHeight) are
+// cheap again. A stale seq — from a resize that has since been superseded
+// — is a no-op returning (nil, false).
+func (m *Chat) WarmStep(seq int) (cmd tea.Cmd, done bool) {
+	if seq != m.resizeSettleSeq {
+		return nil, false
+	}
+	m.warmNext = m.list.Prewarm(m.warmNext, warmBatchSize)
+	if m.warmNext >= m.list.Len() {
+		return nil, true
+	}
+	return chatWarmCmd(m, seq, 0), false
+}
+
 // SetSize sets the size of the chat view port.
 func (m *Chat) SetSize(width, height int) {
+	// Capture whether we should stay pinned to the bottom *before* the size
+	// change. A width change rewraps every item, so the list's line offsets
+	// (offsetIdx/offsetLine) become stale and AtBottom() can no longer be
+	// trusted afterward. follow short-circuits the AtBottom() walk in the
+	// common streaming case.
+	wasFollowing := m.follow || m.AtBottom()
 	m.list.SetSize(width, height)
-	// Anchor to bottom when in follow mode. Using follow rather than
-	// AtBottom avoids losing the anchor after width changes invalidate
-	// cached item heights or when content grows between updates.
-	if m.follow {
+	// Re-anchor to bottom if we were pinned there before the resize.
+	if wasFollowing {
 		m.ScrollToBottom()
 	}
 }
@@ -406,7 +480,13 @@ func (m *Chat) ScrollToTop() {
 // ScrollBy scrolls the chat view by the given number of line deltas.
 func (m *Chat) ScrollBy(lines int) {
 	m.list.ScrollBy(lines)
-	m.follow = lines > 0 && m.AtBottom() // Disable follow mode if user scrolls up
+	if lines < 0 {
+		// Scrolling up always disables follow mode.
+		m.follow = false
+	} else if m.AtBottom() {
+		// Scrolling down re-enables follow when we reach the bottom.
+		m.follow = true
+	}
 }
 
 // ScrollToSelected scrolls the chat view to the selected item.
@@ -628,10 +708,11 @@ func (m *Chat) SelectedItem() list.Item {
 // ToggleExpandedSelectedItem expands the selected message item if it is expandable.
 func (m *Chat) ToggleExpandedSelectedItem() {
 	if expandable, ok := m.list.SelectedItem().(chat.Expandable); ok {
+		wasFollowing := m.follow
 		if !expandable.ToggleExpanded() {
 			m.ScrollToIndex(m.list.Selected())
 		}
-		if m.AtBottom() {
+		if wasFollowing {
 			m.ScrollToBottom()
 		}
 	}
@@ -771,13 +852,14 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 		// toggling expansion for clicks outside the clickable area.
 		if handled {
 			if expandable, ok := selectedItem.(chat.Expandable); ok {
+				wasFollowing := m.follow
 				if !expandable.ToggleExpanded() {
 					m.ScrollToIndex(m.list.Selected())
 				}
+				if wasFollowing {
+					m.ScrollToBottom()
+				}
 			}
-		}
-		if m.AtBottom() {
-			m.ScrollToBottom()
 		}
 		return handled, nil
 	}

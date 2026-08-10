@@ -5,6 +5,17 @@
 **Started**: 2026-08-10
 **Branch**: `upstream-cherry-picking`
 
+## Review checkpoints
+
+Reviewed-and-merged work is tagged so the next review only diffs new
+material: `git diff <latest tag>...HEAD`. Tag the merge commit on `main`
+after each reviewed batch group lands, using
+`review/<date>-sync-<scope>`, and add it here.
+
+| Tag | Commit | Covers |
+|---|---|---|
+| `review/2026-08-10-sync-batches-1-3` | `b1b2f638` | Batches 1–3, dep bumps, granular-permissions merge, review-round fixes |
+
 ## Rules
 
 - Cherry-picks are **sequential**, one batch at a time. Never parallel.
@@ -41,8 +52,8 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 1 | Agent & tool correctness | 15 | **done** | 12 picked, 3 deferred/skipped |
 | 2 | Config, auth & race fixes | 9 | **done** | 8 picked, 1 deferred to batch 3 |
 | 3 | Provider fixes | 11 | **done** | 9 picked, 1 N/A, 1 folded into dep bump |
-| 4 | Performance | 12 | pending | |
-| 5 | UI fixes | 15 | pending | |
+| 4 | Performance | 12 | **done** | 9 picked, 2 deferred to batch 8, 2 skipped |
+| 5 | UI fixes | 15 | **done** | 14 picked (1 partial), 1 skipped, +1 vendored prereq |
 | 6 | MCP fixes | 5 | pending | |
 | 7 | Model auto-discovery + enrichers | 10 | pending | optional |
 | 8 | Bang mode | 20 | pending | optional |
@@ -271,6 +282,8 @@ them, so a regression can be bisected to one dependency.
 
 ## Batch 4 — Performance
 
+**Status: done.** 9 cherry-picked, 2 deferred, 2 skipped.
+
 ```
 3295a085 fix: cache streaming thinking renders to avoid CPU burn during long reasoning traces
 884391f9 fix: stop long thinking blocks from re-rendering the entire document every frame (#3454)
@@ -287,7 +300,56 @@ f5b996bf perf(config): make model selection and config reload fast
 cc971bd6 perf(lsp): filter servers before searching $PATH (#3370)
 ```
 
+### Not applied
+
+| Commit | Disposition | Reason |
+|---|---|---|
+| `e4175c52` | deferred to batch 8 | Rewrites `internal/ui/chat/shell.go`, which is bang-mode UI and does not exist locally. |
+| `1b4ef73f` | deferred to batch 8 | Depends on bang mode's `RemapANSI16`; the `StripCursorControl` half only has meaning alongside it. |
+| `bd232eab` | skipped | Doubly entangled: bang-mode state everywhere, and upstream's boolean yolo (`PermissionSkipRequests`/`toggleYoloMode`) vs our granular `YoloLevel`/`cycleYoloLevel` from main's permission system. The motivation — workspace probes being expensive — is a client/server (TCP) concern; our `AppWorkspace` probes are in-process method calls. |
+| `d1626158` | skipped | Follow-up to `bd232eab` (fixes its `workspace_cache.go`); moot without it. |
+
+### Adaptations worth remembering
+
+Local commit mapping for the adapted picks (the review round noted that
+`202b3b66`/`3ea4c5c0` lack adaptation notes in their commit bodies; the
+mapping lives here instead of rewriting history):
+
+| Upstream | Local commit | Adapted? |
+|---|---|---|
+| `3295a085` | `202b3b66` | yes — innerWidth + label/italics rewoven |
+| `884391f9` | `3ea4c5c0` | yes — same renderThinking reweave |
+| `4d901d1b` | `73f3f0bc` | yes — noted in commit body |
+| `173b2be6` | `9f090fb0` | yes — noted in commit body |
+| `f5b996bf` | `85dcb4dd` | yes — noted in commit body |
+
+- **`3295a085`/`884391f9`** — local `renderThinking` computes `innerWidth` (ThinkingBox frame) and
+  prefixes a styled "Thinking:" label with per-line italics; upstream has neither. Merged by
+  passing `innerWidth` to the prefix cache and re-adding the label/italic pass around upstream's
+  `tailLines` bounded-scan slicing. Upstream's `CHARM-1785` ticket references were replaced with
+  the upstream commit SHA in a follow-up.
+- **`1bfc53f6`** — the memoized style is registered as `chroma.MustNewStyle("anvil", ...)`
+  (upstream says "crush").
+- **`4d901d1b`** — took the incremental cache warming, dropped every scrollbar hunk (chat
+  scrollbar is batch 12; `Chat.Draw`/`SetSize` keep our drawCache and follow-anchor logic). The
+  review round then deleted the `resizing` flag (its only consumer was the dropped scrollbar
+  gate) and made `chatWarmMsg` carry its owning `*Chat` so drill-in/out cannot strand a warm
+  chain. If batch 12 is ever picked it must re-add the `resizing` flag and the `!m.resizing`
+  Draw-side suppression, and `list.Overflows` (kept, tested, currently caller-less) is ready for
+  it.
+- **`173b2be6`** — fork is single-theme, so instead of porting the theme-key machinery the
+  redundant `applyTheme(styles.TokyoNight())` on model selection was deleted outright — same win
+  (no transcript re-render on model switch), no new state.
+- **`f5b996bf`** — store.go changes were superseded by `b10f890f` (its upstream successor, picked
+  in batch 2); resolved every store conflict to HEAD. Took the genuinely new pieces: memoized
+  powernap LSP defaults, per-directory worktree-root cache, shell expansion fast path, and the
+  model-selection benchmark (whose fixture needed the usual `anvil.json`/`ANVIL_GLOBAL_*` rename
+  — third instance of that trap).
+
 ## Batch 5 — UI fixes
+
+**Status: done.** 14 cherry-picked (one only partially applicable), 1 skipped,
+1 prerequisite vendored (`30f9c6ed`).
 
 ```
 ac4bd9c1 feat(scrolling): move to delta coalescing filter (#3135)
@@ -306,6 +368,88 @@ cfad8143 fix(dialog): add clear alias to summarize (#3464)
 1134a5dd fix(dialog): raise permission-guard quiet period to survive natural typing pauses (#3393)
 b109e35f refactor(ui): route all agent-model rebuilds through one helper
 ```
+
+### Not applied
+
+| Commit | Disposition | Reason |
+|---|---|---|
+| `b109e35f` | skipped | Follow-up to `bd232eab`/`d1626158` (skipped, batch 4). Everything it touches — `updateAgentModelCmd`, `agentModelChangedCmd`, `workspace_cache.go`, `session_busy_test.go` — is the client/server workspace-cache machinery this fork doesn't have; our `UpdateAgentModel` sites are in-process calls with no memoized ready/model cache to invalidate. |
+| `74e725b3` (most hunks) | partial | Only the `AssistantInfoItem` "in `<duration>`" hunk applied. The anim `Suffix`/`SuffixColor` machinery, the tool-spinner suffix removal, and `WorkingTimerColor` all extend upstream's elapsed-timer feature (`dc160997`, batch 15), which this fork replaced with the stats-line elapsed display in `chat/agent.go`. Re-evaluate the dropped hunks if `dc160997` is ever picked. |
+| `9c61c7d0` (one hunk) | partial | The `generateTitle` hunk edits a `userPrompt`-based fallback introduced by bang mode's `03bfdc66` (batch 8), which we haven't picked — our `generateTitle(ctx, sessionID, msgs)` has no `userPrompt`. Only the grep/view tool hunks applied. Batch 8 should re-check this hunk after `03bfdc66`. |
+
+### Prerequisite vendored
+
+- **`30f9c6ed` (chore(ui): make spinner deterministic for testing)** — cherry-picked ahead of
+  `80ce5834`, whose `anim_test.go` asserts on the non-wrapping `framesSinceStart` counter this
+  commit introduces. Applied cleanly; also swaps wall-clock+rand birth offsets for a
+  settings-hash-seeded deterministic schedule.
+
+### Local commit mapping
+
+| Upstream | Local commit | Adapted? |
+|---|---|---|
+| `ac4bd9c1` | `619b500e` | yes — noted in commit body |
+| `72069811` | `8ef77209` | no |
+| `3a99992e` | `1c763b4c` | imports only |
+| `9c61c7d0` | `9e75acf3` | yes — noted in commit body |
+| `13501672` | `cc5d43eb` | no |
+| `6437f0d7` | `42d9cb4b` | yes — noted in commit body |
+| `6d272018` | `748b3172` | yes — noted in commit body |
+| `0d4c2bbc` | `13509bdf` | no |
+| `30f9c6ed` | `1d123182` | no (vendored prereq) |
+| `80ce5834` | `7378154d` | yes — noted in commit body |
+| `74e725b3` | `a0e5452a` | yes — one hunk only |
+| `c880f929` | `4944aaa2` | no |
+| `1ef42ef8` | `aaf0d020` | imports only |
+| `cfad8143` | `9d05dab0` | no |
+| `1134a5dd` | `3790b7e4` | no |
+
+### Adaptations worth remembering
+
+- **`ac4bd9c1`** — chat wheel handling had to use `activeChat()` (fork's drill-in stack) where
+  upstream uses `m.chat`, and the permissions dialog kept the fork's granular key-state routing
+  (pattern/forever/deny-reason) around the new `common.CoalescedWheelMsg` case. The old
+  `MouseEventFilter` global is gone; `internal/cmd/root.go` now wires `ui.NewFilter().Filter`.
+  `MouseScrollThreshold` scrolling is replaced by the coalesced `DeltaY` line count.
+- **`6437f0d7`** — dropped the `showScrollbar()` return (batch-12 seam; local `ScrollBy` stays
+  void) and kept the fork's `HandleDelayedClick` `(bool, tea.Cmd)` signature. The substance —
+  scroll-up always unfollows, scroll-down refollows at bottom, and `wasFollowing` captured before
+  `ToggleExpanded` — applied as-is.
+- **`6d272018`** — upstream's `SetSize` hunk arrived entangled with the scrollbar `Overflows`
+  column reservation; dropped that, kept the `wasFollowing := m.follow || m.AtBottom()` capture.
+  This *widens* our previous deliberate follow-only anchor (batch-4 note): the old rationale was
+  that `AtBottom()` can't be trusted *after* a width change, which the capture-before-resize
+  ordering satisfies, so follow-mode users and at-bottom-but-unfollowed users both stay pinned.
+- **`80ce5834`** — dropped upstream's `suffix`/`suffixColor` `Anim` fields (they belong to the
+  unpicked `dc160997`) and the `session_busy_test.go` additions (client/server
+  `countingWorkspace` harness). The anim generation gate (`gen`, `Stop()`, `StepMsg.Gen`) and the
+  `isAgentBusy()` gate in `setSessionMessages` applied cleanly; `anim_test.go` came over intact
+  once `30f9c6ed` supplied `framesSinceStart`.
+- **`1ef42ef8`** — `pill_border_test.go` needed only the module-path rewrite; the fork already
+  had a compatible `newTestUI()` helper in `layout_test.go`. Removes `Pills.Blurred` from the
+  styles struct — anything downstream still referencing it would break loudly, and nothing did.
+  Behavioural note: `todoPill` lost its per-section `focused` parameter, so the current task
+  name in the collapsed pill is now hidden whenever the panel is expanded at all (previously
+  only when the todos section was focused). Intentional upstream simplification — the full
+  list below shows the same information — but it is a visible change.
+
+### Review round (batch 5)
+
+A three-reviewer pass (2026-08-10, Sonnet + Opus + Convention) audited the batch:
+
+- **Fixed**: `CHARM-1678` ticket ref in `pill_border_test.go` (a fifth instance of the
+  upstream-reference trap — this time a ticket, not a fixture); missing `t.Parallel()` and
+  `t.Fatalf` assertions in the same file (converted to testify `require`); the anim `gen`
+  comment's false "zero wildcard" claim (wrong upstream too — no such logic exists); the
+  `view.go` truncation comment (byte-slice-then-`ToValidUTF8`-heal, not a rune-boundary walk);
+  `Stop()` annotated as having no production caller (upstream parity — test-only upstream too).
+- **Accepted as-is (upstream parity)**: dialogs collapse coalesced multi-tick wheel events to a
+  single viewport line (`permissions.go`, `arguments.go` — upstream does the same);
+  `renderPills` runs every Draw frame (cheap; a dirty flag would diverge from upstream for
+  little gain).
+- **Rejected**: documenting `int(msg.DeltaY)` truncation in `ui.go` — the block comment
+  directly above it already states the integer-delta contract.
+
 
 ## Batch 6 — MCP fixes
 

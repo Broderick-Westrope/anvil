@@ -64,10 +64,6 @@ import (
 	xstrings "github.com/charmbracelet/x/exp/strings"
 )
 
-// MouseScrollThreshold defines how many lines to scroll the chat when a mouse
-// wheel event occurs.
-const MouseScrollThreshold = 5
-
 // Compact mode breakpoints.
 const (
 	compactModeWidthBreakpoint  = 120
@@ -813,11 +809,23 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.session != nil && msg.Payload.ID == m.session.ID {
 			prevHasInProgress := hasInProgressTodo(m.session.Todos)
+			prevPillsHeight := m.pillsAreaHeight()
 			m.session = &msg.Payload
 			if !prevHasInProgress && hasInProgressTodo(m.session.Todos) {
 				m.todoIsSpinning = true
 				cmds = append(cmds, m.todoSpinner.Tick)
+			}
+			// The pills panel reserves vertical space that the chat area
+			// must yield. Recompute the layout whenever that footprint
+			// changes (todos appearing, the list growing, etc.) so the
+			// box renders on first paint rather than waiting for a toggle.
+			// When the footprint is unchanged we still re-render the pill
+			// content so status changes (e.g. the in-progress spinner)
+			// show up.
+			if m.pillsAreaHeight() != prevPillsHeight {
 				m.updateLayoutAndSize()
+			} else {
+				m.renderPills()
 			}
 			m.autoExpandPillsIfReasonable()
 		}
@@ -926,6 +934,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// Suppress the chat's full-height scan during the resize so a drag
+		// only reflows visible items; it settles (and recomputes) shortly
+		// after the last resize event.
+		if m.state == uiChat {
+			// Use the active (possibly drilled-in) chat, not the root.
+			cmds = append(cmds, m.activeChat().BeginResize())
+		}
 		m.updateLayoutAndSize()
 		if m.state == uiChat && m.activeChat().Follow() {
 			if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
@@ -1032,40 +1047,36 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}))
 			}
 		}
-	case tea.MouseWheelMsg:
+	case common.CoalescedWheelMsg:
 		// Pass mouse events to dialogs first if any are open.
 		if m.dialog.HasDialogs() {
 			m.dialog.Update(msg)
 			return m, tea.Batch(cmds...)
 		}
 
-		// Otherwise handle mouse wheel for chat.
+		// Otherwise handle mouse wheel for chat. Use the coalesced delta
+		// directly as the line count. Terminals like Ghostty send DeltaY=3
+		// per physical wheel tick (matching their native scrollback), while
+		// others send DeltaY=1.
 		switch m.state {
 		case uiChat:
-			switch msg.Button {
-			case tea.MouseWheelUp:
-				if cmd := m.activeChat().ScrollByAndAnimate(-MouseScrollThreshold); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				if !m.activeChat().SelectedItemInView() {
+			lines := int(msg.DeltaY)
+			if lines == 0 {
+				break
+			}
+			if cmd := m.activeChat().ScrollByAndAnimate(lines); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if !m.activeChat().SelectedItemInView() {
+				if lines < 0 {
 					m.activeChat().SelectPrev()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+				} else if m.activeChat().AtBottom() {
+					m.activeChat().SelectLast()
+				} else {
+					m.activeChat().SelectNext()
 				}
-			case tea.MouseWheelDown:
-				if cmd := m.activeChat().ScrollByAndAnimate(MouseScrollThreshold); cmd != nil {
+				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
-				}
-				if !m.activeChat().SelectedItemInView() {
-					if m.activeChat().AtBottom() {
-						m.activeChat().SelectLast()
-					} else {
-						m.activeChat().SelectNext()
-					}
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
 				}
 			}
 		}
@@ -1086,6 +1097,19 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, cmd)
 				}
 			}
+		}
+	case chatWarmMsg:
+		// A resize has settled; warm the message cache one batch at a
+		// time so height recomputes never block the UI thread. Step the
+		// chat that started warming (carried in the message), not
+		// activeChat(): drilling in or out mid-warm must not strand the
+		// original chat with a cold cache.
+		cmd, done := msg.chat.WarmStep(msg.seq)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		} else if done && m.state == uiChat && msg.chat == m.activeChat() {
+			// Heights are cached now, so the final layout pass is cheap.
+			m.updateLayoutAndSize()
 		}
 	case spinner.TickMsg:
 		if m.dialog.HasDialogs() {
@@ -1334,12 +1358,19 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	// Load nested tool calls for agent/agentic_fetch tools.
 	m.loadNestedToolCalls(items)
 
-	// If the user switches between sessions while the agent is working we want
-	// to make sure the animations are shown.
-	for _, item := range items {
-		if animatable, ok := item.(chat.Animatable); ok {
-			if cmd := animatable.StartAnimation(); cmd != nil {
-				cmds = append(cmds, cmd)
+	// If the user switches between sessions while the agent is working we
+	// want to make sure the animations are shown. Gate on the agent actually
+	// being busy: a session that was killed mid-generation can persist an
+	// assistant message with no Finish part, which still reports isSpinning()
+	// even though nothing is running. Starting animations for it here would
+	// leave a ghost "working" spinner (and a second one alongside any tool
+	// spinner) after the session is reloaded.
+	if m.isAgentBusy() {
+		for _, item := range items {
+			if animatable, ok := item.(chat.Animatable); ok {
+				if cmd := animatable.StartAnimation(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 		}
 	}
@@ -1555,7 +1586,13 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 
 	if existingItem != nil {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
-			assistantItem.SetMessage(&msg)
+			// SetMessage returns a StartAnimation Cmd when the message
+			// transitions back to spinning (e.g. its streamed content was
+			// reset for a retry). Propagate it so the spinner re-arms
+			// instead of freezing.
+			if cmd := assistantItem.SetMessage(&msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	}
 
@@ -2456,11 +2493,10 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, msg.ModelType, msg.Model); err != nil {
 		cmds = append(cmds, util.ReportError(err))
 	} else {
-		if msg.ModelType == config.SelectedModelTypeLarge {
-			// Swap the theme live based on the newly selected large
-			// model's provider.
-			m.applyTheme(styles.TokyoNight())
-		}
+		// Unlike upstream, no theme swap happens here on large-model
+		// selection: this fork ships a single theme, so re-applying it
+		// would only invalidate the markdown cache and re-render the
+		// whole transcript for no visible change (upstream 173b2be6).
 		if _, ok := cfg.Models[config.SelectedModelTypeSmall]; !ok {
 			// Ensure small model is set is unset.
 			smallModel := m.com.Workspace.GetDefaultSmallModel(providerID)
@@ -3145,6 +3181,13 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	if m.layout != layout {
 		m.layout = layout
 		m.updateSize()
+	} else if m.state == uiChat && m.hasSession() {
+		// Re-render pills on every draw so the box appears even when
+		// the layout footprint hasn't changed (e.g. todos arrived
+		// while the panel was collapsed). updateSize already calls
+		// renderPills, but only when the layout actually differs;
+		// this catches the steady-state case.
+		m.renderPills()
 	}
 
 	// Clear the screen first
@@ -4365,50 +4408,6 @@ func (m *UI) renderEditorView(width int) string {
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
 func (m *UI) cacheSidebarLogo(width int) {
 	m.sidebarLogo = renderLogo(m.com.Styles, true, width)
-}
-
-// applyTheme replaces the active styles with the given theme, drops the
-// shared markdown renderer cache, and refreshes every component that
-// caches style data.
-func (m *UI) applyTheme(s styles.Styles) {
-	*m.com.Styles = s
-	common.InvalidateMarkdownRendererCache()
-	m.refreshStyles()
-}
-
-// refreshStyles pushes the current *m.com.Styles into every subcomponent
-// that copies or pre-renders style-dependent values at construction time.
-func (m *UI) refreshStyles() {
-	t := m.com.Styles
-	m.header.refresh()
-	if m.layout.sidebar.Dx() > 0 {
-		m.cacheSidebarLogo(m.layout.sidebar.Dx())
-	}
-	m.textarea.SetStyles(t.Editor.Textarea)
-	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
-	m.slashAC.SetStyles(autocomplete.Styles{
-		Normal:         t.SlashAutocomplete.Normal,
-		BuiltinName:    t.SlashAutocomplete.BuiltinName,
-		CommandName:    t.SlashAutocomplete.CommandName,
-		SkillName:      t.SlashAutocomplete.SkillName,
-		BuiltinFocused: t.SlashAutocomplete.BuiltinFocused,
-		CommandFocused: t.SlashAutocomplete.CommandFocused,
-		SkillFocused:   t.SlashAutocomplete.SkillFocused,
-		Description:    t.SlashAutocomplete.Description,
-	})
-	m.attachments.Renderer().SetStyles(
-		t.Attachments.Normal,
-		t.Attachments.Deleting,
-		t.Attachments.Image,
-		t.Attachments.Text,
-		t.Attachments.Skill,
-	)
-	m.todoSpinner.Style = t.Pills.TodoSpinner
-	m.status.help.Styles = t.Help
-	m.chat.InvalidateRenderCaches()
-	for _, entry := range m.drillStack {
-		entry.chat.InvalidateRenderCaches()
-	}
 }
 
 // initializeProject sends the project initialization prompt into the current session.

@@ -784,7 +784,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Messages.AssistantInfoModel = muted
 	s.Messages.AssistantInfoProvider = subtle
 	s.Messages.AssistantInfoDuration = subtle
-	s.Messages.AssistantCanceled = lipgloss.NewStyle().Foreground(o.fgBase).Italic(true)
+	s.Messages.AssistantCanceled = lipgloss.NewStyle().Foreground(o.fgSubtle).Italic(true)
 
 	// Thinking section styles
 	s.Messages.ThinkingBox = lipgloss.NewStyle().
@@ -928,7 +928,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	// Pills styles
 	s.Pills.Base = base.Padding(0, 1)
 	s.Pills.Focused = base.Padding(0, 1).BorderStyle(lipgloss.RoundedBorder()).BorderForeground(o.bgMostVisible)
-	s.Pills.Blurred = base.Padding(0, 1).BorderStyle(lipgloss.HiddenBorder())
 	s.Pills.QueueItemPrefix = lipgloss.NewStyle().Foreground(o.fgMoreSubtle).SetString("  •")
 	s.Pills.QueueItemText = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.Pills.QueueLabel = lipgloss.NewStyle().Foreground(o.fgBase)
