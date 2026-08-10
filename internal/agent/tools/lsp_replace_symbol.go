@@ -85,12 +85,13 @@ func NewReplaceSymbolTool(
 					SessionID:   sessionID,
 					ToolName:    ReplaceSymbolToolName,
 					Description: fmt.Sprintf("Replace symbol '%s' in %s", params.Symbol, params.FilePath),
+					Input:       params.FilePath,
 				})
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("permission request failed: %w", err)
 				}
-				if !granted {
-					return fantasy.NewTextErrorResponse("edit denied by user"), nil
+				if !granted.Granted {
+					return NewPermissionDeniedResponse(granted.Reason), nil
 				}
 			}
 

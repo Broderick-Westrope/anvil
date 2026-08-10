@@ -7,12 +7,15 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/permission/segment"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -28,6 +31,7 @@ type PermissionAction string
 const (
 	PermissionAllow           PermissionAction = "allow"
 	PermissionAllowForSession PermissionAction = "allow_session"
+	PermissionAllowForever    PermissionAction = "allow_forever"
 	PermissionDeny            PermissionAction = "deny"
 )
 
@@ -61,7 +65,19 @@ type Permissions struct {
 	fullscreen   bool // true when dialog is fullscreen
 
 	permission     permission.PermissionRequest
-	selectedOption int // 0: Allow, 1: Allow for session, 2: Deny
+	selectedOption int // 0: Allow, 1: Session, 2: Forever, 3: Deny
+
+	// Forever sub-choice state.
+	foreverExpanded bool         // Whether the forever scope picker is showing.
+	foreverScope    config.Scope // Selected scope for forever grants.
+
+	// Deny reason state.
+	denyReasonVisible bool   // Whether the deny reason input is showing.
+	denyReasonInput   string // The deny reason text.
+
+	// Pattern editing state.
+	patternInput   textinput.Model // Editable glob pattern for session/forever grants.
+	patternFocused bool            // Whether the pattern field has keyboard focus.
 
 	viewport      viewport.Model
 	viewportDirty bool // true when viewport content needs to be re-rendered
@@ -85,8 +101,10 @@ type permissionsKeyMap struct {
 	Select           key.Binding
 	Allow            key.Binding
 	AllowSession     key.Binding
+	AllowForever     key.Binding
 	Deny             key.Binding
 	Close            key.Binding
+	EditPattern      key.Binding
 	ToggleDiffMode   key.Binding
 	ToggleFullscreen key.Binding
 	ScrollUp         key.Binding
@@ -123,18 +141,26 @@ func defaultPermissionsKeyMap() permissionsKeyMap {
 			key.WithKeys("s", "S", "ctrl+s"),
 			key.WithHelp("s", "allow session"),
 		),
+		AllowForever: key.NewBinding(
+			key.WithKeys("f", "F"),
+			key.WithHelp("f", "allow forever"),
+		),
 		Deny: key.NewBinding(
 			key.WithKeys("d", "D"),
 			key.WithHelp("d", "deny"),
 		),
 		Close: CloseKey,
+		EditPattern: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit pattern"),
+		),
 		ToggleDiffMode: key.NewBinding(
 			key.WithKeys("t"),
 			key.WithHelp("t", "toggle diff view"),
 		),
 		ToggleFullscreen: key.NewBinding(
-			key.WithKeys("f"),
-			key.WithHelp("f", "toggle fullscreen"),
+			key.WithKeys("ctrl+f"),
+			key.WithHelp("ctrl+f", "toggle fullscreen"),
 		),
 		ScrollUp: key.NewBinding(
 			key.WithKeys("shift+up", "K"),
@@ -205,6 +231,20 @@ func NewPermissions(com *common.Common, perm permission.PermissionRequest, opts 
 		keyMap:         km,
 	}
 
+	p.patternInput = textinput.New()
+	p.patternInput.SetVirtualCursor(false)
+	p.patternInput.Placeholder = "Edit pattern (glob)"
+	p.patternInput.SetStyles(com.Styles.TextInput)
+	if len(perm.InputSegments) > 0 {
+		patterns := make([]string, 0, len(perm.InputSegments))
+		for _, seg := range perm.InputSegments {
+			patterns = append(patterns, segment.Generalize(seg))
+		}
+		p.patternInput.SetValue(strings.Join(patterns, " && "))
+	} else {
+		p.patternInput.SetValue(perm.Input)
+	}
+
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -228,50 +268,23 @@ func (*Permissions) ID() string {
 func (p *Permissions) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		switch {
-		case key.Matches(msg, p.keyMap.Close):
-			// Escape denies the permission request.
-			return p.respond(PermissionDeny)
-		case key.Matches(msg, p.keyMap.Right), key.Matches(msg, p.keyMap.Tab):
-			p.selectedOption = (p.selectedOption + 1) % 3
-		case key.Matches(msg, p.keyMap.Left):
-			// Add 2 instead of subtracting 1 to avoid negative modulo.
-			p.selectedOption = (p.selectedOption + 2) % 3
-		case key.Matches(msg, p.keyMap.Select):
-			return p.selectCurrentOption()
-		case key.Matches(msg, p.keyMap.Allow):
-			return p.respond(PermissionAllow)
-		case key.Matches(msg, p.keyMap.AllowSession):
-			return p.respond(PermissionAllowForSession)
-		case key.Matches(msg, p.keyMap.Deny):
-			return p.respond(PermissionDeny)
-		case key.Matches(msg, p.keyMap.ToggleDiffMode):
-			if p.hasDiffView() {
-				newMode := !p.isSplitMode()
-				p.diffSplitMode = &newMode
-				p.viewportDirty = true
-			}
-		case key.Matches(msg, p.keyMap.ToggleFullscreen):
-			if p.hasDiffView() {
-				p.fullscreen = !p.fullscreen
-			}
-		case key.Matches(msg, p.keyMap.ScrollDown):
-			p.viewport, _ = p.viewport.Update(msg)
-		case key.Matches(msg, p.keyMap.ScrollUp):
-			p.viewport, _ = p.viewport.Update(msg)
-		case key.Matches(msg, p.keyMap.ScrollLeft):
-			if p.hasDiffView() {
-				p.scrollLeft()
-			} else {
-				p.viewport, _ = p.viewport.Update(msg)
-			}
-		case key.Matches(msg, p.keyMap.ScrollRight):
-			if p.hasDiffView() {
-				p.scrollRight()
-			} else {
-				p.viewport, _ = p.viewport.Update(msg)
-			}
+		// Pattern input focused: forward keys to text input.
+		if p.patternFocused {
+			return p.handlePatternMsg(msg)
 		}
+
+		// Forever-expanded state: choose project or user scope.
+		if p.foreverExpanded {
+			return p.handleForeverMsg(msg)
+		}
+
+		// Deny-reason state: text input for denial reason.
+		if p.denyReasonVisible {
+			return p.handleDenyReasonMsg(msg)
+		}
+
+		// Default state.
+		return p.handleDefaultMsg(msg)
 	case tea.MouseWheelMsg:
 		if p.hasDiffView() {
 			switch msg.Button {
@@ -296,14 +309,142 @@ func (p *Permissions) HandleMsg(msg tea.Msg) Action {
 	return nil
 }
 
+func (p *Permissions) handleDefaultMsg(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, p.keyMap.Close):
+		// Escape denies: the agent is blocked awaiting a decision, so
+		// dismissing the dialog must resolve the request, and deny is
+		// the only safe resolution. This intentionally differs from
+		// the sub-states (forever scope, deny reason) where Escape
+		// backs out to this state instead.
+		return p.respond(PermissionDeny)
+	case key.Matches(msg, p.keyMap.Right), key.Matches(msg, p.keyMap.Tab):
+		p.selectedOption = (p.selectedOption + 1) % 4
+	case key.Matches(msg, p.keyMap.Left):
+		// Add 3 instead of subtracting 1 to avoid negative modulo.
+		p.selectedOption = (p.selectedOption + 3) % 4
+	case key.Matches(msg, p.keyMap.Select):
+		return p.selectCurrentOption()
+	case key.Matches(msg, p.keyMap.Allow):
+		return p.respond(PermissionAllow)
+	case key.Matches(msg, p.keyMap.AllowSession):
+		return p.respond(PermissionAllowForSession)
+	case key.Matches(msg, p.keyMap.AllowForever):
+		p.foreverExpanded = true
+		p.selectedOption = 0
+	case key.Matches(msg, p.keyMap.Deny):
+		p.denyReasonVisible = true
+		p.denyReasonInput = ""
+	case msg.Text == "e" || msg.Text == "E":
+		p.patternFocused = true
+		p.patternInput.Focus()
+		p.patternInput.CursorEnd()
+	case key.Matches(msg, p.keyMap.ToggleDiffMode):
+		if p.hasDiffView() {
+			newMode := !p.isSplitMode()
+			p.diffSplitMode = &newMode
+			p.viewportDirty = true
+		}
+	case key.Matches(msg, p.keyMap.ToggleFullscreen):
+		if p.hasDiffView() {
+			p.fullscreen = !p.fullscreen
+		}
+	case key.Matches(msg, p.keyMap.ScrollDown):
+		p.viewport, _ = p.viewport.Update(msg)
+	case key.Matches(msg, p.keyMap.ScrollUp):
+		p.viewport, _ = p.viewport.Update(msg)
+	case key.Matches(msg, p.keyMap.ScrollLeft):
+		if p.hasDiffView() {
+			p.scrollLeft()
+		} else {
+			p.viewport, _ = p.viewport.Update(msg)
+		}
+	case key.Matches(msg, p.keyMap.ScrollRight):
+		if p.hasDiffView() {
+			p.scrollRight()
+		} else {
+			p.viewport, _ = p.viewport.Update(msg)
+		}
+	}
+	return nil
+}
+
+func (p *Permissions) handleForeverMsg(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, p.keyMap.Close):
+		// Return to default state.
+		p.foreverExpanded = false
+		p.selectedOption = 2
+	case key.Matches(msg, p.keyMap.Right), key.Matches(msg, p.keyMap.Tab):
+		p.selectedOption = (p.selectedOption + 1) % 2
+	case key.Matches(msg, p.keyMap.Left):
+		p.selectedOption = (p.selectedOption + 1) % 2
+	case key.Matches(msg, p.keyMap.Select):
+		if p.selectedOption == 0 {
+			p.foreverScope = config.ScopeWorkspace
+		} else {
+			p.foreverScope = config.ScopeGlobal
+		}
+		return p.respond(PermissionAllowForever)
+	case msg.Text == "p" || msg.Text == "P":
+		p.foreverScope = config.ScopeWorkspace
+		return p.respond(PermissionAllowForever)
+	case msg.Text == "u" || msg.Text == "U":
+		p.foreverScope = config.ScopeGlobal
+		return p.respond(PermissionAllowForever)
+	}
+	return nil
+}
+
+func (p *Permissions) handlePatternMsg(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, p.keyMap.Close), msg.Code == tea.KeyEnter:
+		// Unfocus pattern input, return to button navigation.
+		p.patternFocused = false
+		p.patternInput.Blur()
+	default:
+		// Forward to text input.
+		p.patternInput, _ = p.patternInput.Update(msg)
+	}
+	return nil
+}
+
+func (p *Permissions) handleDenyReasonMsg(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, p.keyMap.Close):
+		// Return to default state without denying.
+		p.denyReasonVisible = false
+		p.denyReasonInput = ""
+		p.selectedOption = 3
+	case msg.Code == tea.KeyEnter:
+		return p.respond(PermissionDeny)
+	case msg.Code == tea.KeyBackspace:
+		if len(p.denyReasonInput) > 0 {
+			runes := []rune(p.denyReasonInput)
+			p.denyReasonInput = string(runes[:len(runes)-1])
+		}
+	default:
+		if msg.Text != "" {
+			p.denyReasonInput += msg.Text
+		}
+	}
+	return nil
+}
+
 func (p *Permissions) selectCurrentOption() tea.Msg {
 	switch p.selectedOption {
 	case 0:
 		return p.respond(PermissionAllow)
 	case 1:
 		return p.respond(PermissionAllowForSession)
+	case 2:
+		p.foreverExpanded = true
+		p.selectedOption = 0
+		return nil
 	default:
-		return p.respond(PermissionDeny)
+		p.denyReasonVisible = true
+		p.denyReasonInput = ""
+		return nil
 	}
 }
 
@@ -311,6 +452,9 @@ func (p *Permissions) respond(action PermissionAction) tea.Msg {
 	return ActionPermissionResponse{
 		Permission: p.permission,
 		Action:     action,
+		Pattern:    p.patternInput.Value(),
+		Scope:      p.foreverScope,
+		Reason:     p.denyReasonInput,
 	}
 }
 
@@ -385,7 +529,11 @@ func (p *Permissions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	// For non-diff views, shrink dialog to fit content if it's smaller than max.
 	var availableHeight int
 	if !p.hasDiffView() && !forceFullscreen {
-		fixedHeight := headerHeight + buttonsHeight + helpHeight + frameHeight
+		patternHeight := lipgloss.Height(p.renderPatternInput(contentWidth))
+		if patternHeight > 0 {
+			patternHeight += 1 // Account for the blank line separator.
+		}
+		fixedHeight := headerHeight + buttonsHeight + helpHeight + frameHeight + patternHeight
 		neededHeight := fixedHeight + contentHeight
 		if neededHeight < maxHeight {
 			availableHeight = contentHeight
@@ -394,7 +542,11 @@ func (p *Permissions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		}
 		availableHeight = max(availableHeight, 3)
 	} else {
-		availableHeight = maxHeight - headerHeight - buttonsHeight - helpHeight - frameHeight
+		patternHeight := lipgloss.Height(p.renderPatternInput(contentWidth))
+		if patternHeight > 0 {
+			patternHeight += 1 // Account for the blank line separator.
+		}
+		availableHeight = maxHeight - headerHeight - buttonsHeight - helpHeight - frameHeight - patternHeight
 	}
 
 	// Determine if scrollbar is needed.
@@ -429,7 +581,11 @@ func (p *Permissions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		content = lipgloss.JoinHorizontal(lipgloss.Top, content, scrollbar)
 	}
 
+	patternLine := p.renderPatternInput(contentWidth)
 	parts := []string{header}
+	if patternLine != "" {
+		parts = append(parts, "", patternLine)
+	}
 	if content != "" {
 		parts = append(parts, "", content)
 	}
@@ -729,11 +885,39 @@ func (p *Permissions) renderContentPanel(content string, width int) string {
 	return panelStyle.Width(width).Render(content)
 }
 
+// renderPatternInput renders the editable pattern field.
+func (p *Permissions) renderPatternInput(width int) string {
+	// Only show pattern field if there's an input to edit.
+	if p.permission.Input == "" {
+		return ""
+	}
+	t := p.com.Styles
+	label := t.Dialog.Permissions.KeyText.Render("Pattern")
+
+	p.patternInput.SetWidth(width - lipgloss.Width(label) - 1)
+	inputView := p.patternInput.View()
+
+	return lipgloss.JoinHorizontal(lipgloss.Left, label, " ", inputView)
+}
+
 func (p *Permissions) renderButtons(contentWidth int) string {
-	buttons := []common.ButtonOpts{
-		{Text: "Allow", UnderlineIndex: 0, Selected: p.selectedOption == 0},
-		{Text: "Allow for Session", UnderlineIndex: 10, Selected: p.selectedOption == 1},
-		{Text: "Deny", UnderlineIndex: 0, Selected: p.selectedOption == 2},
+	if p.denyReasonVisible {
+		return p.renderDenyReasonInput(contentWidth)
+	}
+
+	var buttons []common.ButtonOpts
+	if p.foreverExpanded {
+		buttons = []common.ButtonOpts{
+			{Text: "Project", UnderlineIndex: 0, Selected: p.selectedOption == 0},
+			{Text: "User", UnderlineIndex: 0, Selected: p.selectedOption == 1},
+		}
+	} else {
+		buttons = []common.ButtonOpts{
+			{Text: "Allow", UnderlineIndex: 0, Selected: p.selectedOption == 0},
+			{Text: "Session", UnderlineIndex: 0, Selected: p.selectedOption == 1},
+			{Text: "Forever", UnderlineIndex: 0, Selected: p.selectedOption == 2},
+			{Text: "Deny", UnderlineIndex: 0, Selected: p.selectedOption == 3},
+		}
 	}
 
 	content := common.ButtonGroup(p.com.Styles, buttons, "  ")
@@ -753,6 +937,39 @@ func (p *Permissions) renderButtons(contentWidth int) string {
 		Render(content)
 }
 
+// renderDenyReasonInput renders the deny reason text input prompt.
+func (p *Permissions) renderDenyReasonInput(contentWidth int) string {
+	t := p.com.Styles
+	label := t.Dialog.Permissions.KeyText.Render("Reason:")
+	hint := t.Dialog.Permissions.ValueText.Render("  (Enter to confirm, Escape to skip)")
+
+	// Render the input field with an underline cursor.
+	inputWidth := contentWidth - lipgloss.Width(label) - lipgloss.Width(hint) - 2
+	if inputWidth < 10 {
+		inputWidth = 10
+	}
+	inputText := p.denyReasonInput
+	if len([]rune(inputText)) > inputWidth {
+		runes := []rune(inputText)
+		inputText = string(runes[len(runes)-inputWidth:])
+	}
+
+	// Pad to fill the input field width.
+	padding := inputWidth - len([]rune(inputText))
+	if padding < 0 {
+		padding = 0
+	}
+	cursor := inputText + strings.Repeat("_", padding)
+
+	inputStyle := t.Dialog.Permissions.ValueText
+	content := lipgloss.JoinHorizontal(lipgloss.Left, label, " ", inputStyle.Render(cursor), hint)
+
+	return lipgloss.NewStyle().
+		Width(contentWidth).
+		Align(lipgloss.Left).
+		Render(content)
+}
+
 func (p *Permissions) canScroll() bool {
 	if p.hasDiffView() {
 		// Diff views can always scroll.
@@ -768,6 +985,10 @@ func (p *Permissions) ShortHelp() []key.Binding {
 		p.keyMap.Choose,
 		p.keyMap.Select,
 		p.keyMap.Close,
+	}
+
+	if p.permission.Input != "" {
+		bindings = append(bindings, p.keyMap.EditPattern)
 	}
 
 	if p.canScroll() {

@@ -33,7 +33,7 @@ type fileSnapshot struct {
 // disk. They are applied on top of the loaded Config and survive only for
 // the lifetime of the process (or workspace).
 type RuntimeOverrides struct {
-	SkipPermissionRequests bool
+	YoloLevel YoloLevel
 }
 
 // ConfigStore is the single entry point for all config access. It owns the
@@ -47,6 +47,7 @@ type ConfigStore struct {
 	config             *Config
 	workingDir         string
 	resolver           VariableResolver
+	globalConfigPath   string   // ~/.config/anvil/anvil.json (user-maintained)
 	globalDataPath     string   // ~/.local/share/anvil/anvil.json
 	workspacePath      string   // .anvil/anvil.json
 	loadedPaths        []string // config files that were successfully loaded
@@ -55,8 +56,8 @@ type ConfigStore struct {
 	trackedConfigPaths []string                // unique, normalized config file paths
 	snapshots          map[string]fileSnapshot // path -> snapshot at last capture
 
-	mu                sync.Mutex // serialises config file writes
-	reloadMu          sync.Mutex // serialises ReloadFromDisk calls
+	mu                 sync.Mutex // serialises SetPermissionRule writes (other writers do not take it)
+	reloadMu           sync.Mutex // serialises ReloadFromDisk calls
 	pluginsChangedHook func(context.Context) error
 }
 
@@ -472,6 +473,16 @@ func NewTestStore(cfg *Config, loadedPaths ...string) *ConfigStore {
 	return &ConfigStore{
 		config:      cfg,
 		loadedPaths: loadedPaths,
+	}
+}
+
+// NewTestStoreWithDataPath creates a ConfigStore for testing that
+// writes global-scope config (including permission rules, when no
+// user config path is set) to the given app data file path.
+func NewTestStoreWithDataPath(cfg *Config, globalDataPath string) *ConfigStore {
+	return &ConfigStore{
+		config:         cfg,
+		globalDataPath: globalDataPath,
 	}
 }
 

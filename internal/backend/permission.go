@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/proto"
 )
@@ -30,30 +31,30 @@ func (b *Backend) GrantPermission(workspaceID string, req proto.PermissionGrant)
 	case proto.PermissionAllowForSession:
 		ws.Permissions.GrantPersistent(perm)
 	case proto.PermissionDeny:
-		ws.Permissions.Deny(perm)
+		ws.Permissions.Deny(perm, "")
 	default:
 		return ErrInvalidPermissionAction
 	}
 	return nil
 }
 
-// SetPermissionsSkip sets whether permission prompts are skipped.
-func (b *Backend) SetPermissionsSkip(workspaceID string, skip bool) error {
+// SetPermissionsYoloLevel sets the yolo level for permission handling.
+func (b *Backend) SetPermissionsYoloLevel(workspaceID string, level config.YoloLevel) error {
 	ws, err := b.GetWorkspace(workspaceID)
 	if err != nil {
 		return err
 	}
 
-	ws.Permissions.SetSkipRequests(skip)
+	ws.Permissions.SetYoloLevel(level)
 	return nil
 }
 
-// GetPermissionsSkip returns whether permission prompts are skipped.
-func (b *Backend) GetPermissionsSkip(workspaceID string) (bool, error) {
+// GetPermissionsYoloLevel returns the current yolo level.
+func (b *Backend) GetPermissionsYoloLevel(workspaceID string) (config.YoloLevel, error) {
 	ws, err := b.GetWorkspace(workspaceID)
 	if err != nil {
-		return false, err
+		return config.YoloOff, err
 	}
 
-	return ws.Permissions.SkipRequests(), nil
+	return ws.Permissions.YoloLevel(), nil
 }

@@ -13,14 +13,17 @@ import (
 // Workspace represents a running app.App workspace with its associated
 // resources and state.
 type Workspace struct {
-	ID      string         `json:"id"`
-	Path    string         `json:"path"`
-	YOLO    bool           `json:"yolo,omitempty"`
-	Debug   bool           `json:"debug,omitempty"`
-	DataDir string         `json:"data_dir,omitempty"`
-	Version string         `json:"version,omitempty"`
-	Config  *config.Config `json:"config,omitempty"`
-	Env     []string       `json:"env,omitempty"`
+	ID   string `json:"id"`
+	Path string `json:"path"`
+	// YOLO is the legacy boolean field for backward compatibility with
+	// older servers/clients. Prefer YoloLevel for granular control.
+	YOLO      bool           `json:"yolo,omitempty"`
+	YoloLevel int            `json:"yolo_level,omitempty"`
+	Debug     bool           `json:"debug,omitempty"`
+	DataDir   string         `json:"data_dir,omitempty"`
+	Version   string         `json:"version,omitempty"`
+	Config    *config.Config `json:"config,omitempty"`
+	Env       []string       `json:"env,omitempty"`
 }
 
 // Error represents an error response.
@@ -85,9 +88,9 @@ type PermissionGrant struct {
 	Action     PermissionAction  `json:"action"`
 }
 
-// PermissionSkipRequest represents a request to skip permission prompts.
-type PermissionSkipRequest struct {
-	Skip bool `json:"skip"`
+// PermissionYoloRequest represents a request to set the yolo permission level.
+type PermissionYoloRequest struct {
+	YoloLevel int `json:"yolo_level"`
 }
 
 // LSPEventType represents the type of LSP event.
@@ -131,7 +134,7 @@ func (e LSPEvent) MarshalJSON() ([]byte, error) {
 			}
 			return ""
 		}(),
-		Alias: (Alias)(e),
+		Alias: Alias(e),
 	})
 }
 
@@ -142,7 +145,7 @@ func (e *LSPEvent) UnmarshalJSON(data []byte) error {
 		Error string `json:"error,omitempty"`
 		Alias
 	}{
-		Alias: (Alias)(*e),
+		Alias: Alias(*e),
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
@@ -176,7 +179,7 @@ func (i LSPClientInfo) MarshalJSON() ([]byte, error) {
 			}
 			return ""
 		}(),
-		Alias: (Alias)(i),
+		Alias: Alias(i),
 	})
 }
 
@@ -187,7 +190,7 @@ func (i *LSPClientInfo) UnmarshalJSON(data []byte) error {
 		Error string `json:"error,omitempty"`
 		Alias
 	}{
-		Alias: (Alias)(*i),
+		Alias: Alias(*i),
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err

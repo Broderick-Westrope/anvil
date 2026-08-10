@@ -98,9 +98,11 @@ type Workspace interface {
 	// Permissions
 	PermissionGrant(perm permission.PermissionRequest)
 	PermissionGrantPersistent(perm permission.PermissionRequest)
-	PermissionDeny(perm permission.PermissionRequest)
-	PermissionSkipRequests() bool
-	PermissionSetSkipRequests(skip bool)
+	PermissionGrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error
+	PermissionGrantForever(toolPattern, inputPattern string, action config.PermissionAction, scope config.Scope) error
+	PermissionDeny(perm permission.PermissionRequest, reason string)
+	PermissionYoloLevel() config.YoloLevel
+	PermissionSetYoloLevel(level config.YoloLevel)
 
 	// FileTracker
 	FileTrackerRecordRead(ctx context.Context, sessionID, path string)

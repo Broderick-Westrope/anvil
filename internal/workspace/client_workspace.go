@@ -293,7 +293,21 @@ func (w *ClientWorkspace) PermissionGrantPersistent(perm permission.PermissionRe
 	})
 }
 
-func (w *ClientWorkspace) PermissionDeny(perm permission.PermissionRequest) {
+func (w *ClientWorkspace) PermissionGrantSession(sessionID, toolPattern, inputPattern string, _ config.PermissionAction) error {
+	// TODO: implement for remote workspaces.
+	slog.Warn("Session permission grants are not yet supported in remote workspaces; grant dropped",
+		"session_id", sessionID,
+		"tool_pattern", toolPattern,
+		"input_pattern", inputPattern,
+	)
+	return fmt.Errorf("session grants not supported in remote workspaces")
+}
+
+func (w *ClientWorkspace) PermissionGrantForever(_ string, _ string, _ config.PermissionAction, _ config.Scope) error {
+	return fmt.Errorf("forever grants not supported in remote workspaces")
+}
+
+func (w *ClientWorkspace) PermissionDeny(perm permission.PermissionRequest, reason string) {
 	_ = w.client.GrantPermission(context.Background(), w.workspaceID(), proto.PermissionGrant{
 		Permission: proto.PermissionRequest{
 			ID:          perm.ID,
@@ -309,16 +323,16 @@ func (w *ClientWorkspace) PermissionDeny(perm permission.PermissionRequest) {
 	})
 }
 
-func (w *ClientWorkspace) PermissionSkipRequests() bool {
-	skip, err := w.client.GetPermissionsSkipRequests(context.Background(), w.workspaceID())
+func (w *ClientWorkspace) PermissionYoloLevel() config.YoloLevel {
+	level, err := w.client.GetPermissionsYoloLevel(context.Background(), w.workspaceID())
 	if err != nil {
-		return false
+		return config.YoloOff
 	}
-	return skip
+	return level
 }
 
-func (w *ClientWorkspace) PermissionSetSkipRequests(skip bool) {
-	_ = w.client.SetPermissionsSkipRequests(context.Background(), w.workspaceID(), skip)
+func (w *ClientWorkspace) PermissionSetYoloLevel(level config.YoloLevel) {
+	_ = w.client.SetPermissionsYoloLevel(context.Background(), w.workspaceID(), level)
 }
 
 // -- FileTracker --

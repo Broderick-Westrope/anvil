@@ -432,7 +432,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 
 	status := NewStatus(com, ui)
 
-	ui.setEditorPrompt(com.Workspace.PermissionSkipRequests())
+	ui.setEditorPrompt(com.Workspace.PermissionYoloLevel() != config.YoloOff)
 	ui.randomizePlaceholders()
 	ui.textarea.Placeholder = ui.readyPlaceholder
 	ui.status = status
@@ -1279,7 +1279,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.textarea.Placeholder = m.readyPlaceholder
 		}
-		if m.com.Workspace.PermissionSkipRequests() {
+		if m.com.Workspace.PermissionYoloLevel() != config.YoloOff {
 			m.textarea.Placeholder = "Yolo mode!"
 		}
 	}
@@ -1981,9 +1981,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	// Command dialog messages.
 	case dialog.ActionToggleYoloMode:
-		yolo := !m.com.Workspace.PermissionSkipRequests()
-		m.com.Workspace.PermissionSetSkipRequests(yolo)
-		m.setEditorPrompt(yolo)
+		m.cycleYoloLevel()
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleNotifications:
 		cfg := m.com.Config()
@@ -2207,9 +2205,36 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		case dialog.PermissionAllow:
 			m.com.Workspace.PermissionGrant(msg.Permission)
 		case dialog.PermissionAllowForSession:
-			m.com.Workspace.PermissionGrantPersistent(msg.Permission)
+			var sessionErr error
+			for _, part := range splitPatterns(msg.Pattern) {
+				if err := m.com.Workspace.PermissionGrantSession(msg.Permission.SessionID, msg.Permission.ToolName, part, config.PermissionAllow); err != nil && sessionErr == nil {
+					sessionErr = err
+				}
+			}
+			if sessionErr != nil {
+				// The user's intent to allow the current request is
+				// unambiguous; only storing the session rule failed.
+				err := fmt.Errorf("session rule not saved (allowed once): %w", sessionErr)
+				cmds = append(cmds, func() tea.Msg { return util.NewErrorMsg(err) })
+			}
+			m.com.Workspace.PermissionGrant(msg.Permission)
+		case dialog.PermissionAllowForever:
+			var grantErr error
+			for _, part := range splitPatterns(msg.Pattern) {
+				if err := m.com.Workspace.PermissionGrantForever(msg.Permission.ToolName, part, config.PermissionAllow, msg.Scope); err != nil && grantErr == nil {
+					grantErr = err
+				}
+			}
+			if grantErr != nil {
+				// The user's intent to allow the current request is
+				// unambiguous; only persisting the rule failed. Allow
+				// once and make the reduced effect explicit.
+				err := fmt.Errorf("permission rule not saved (allowed once): %w", grantErr)
+				cmds = append(cmds, func() tea.Msg { return util.NewErrorMsg(err) })
+			}
+			m.com.Workspace.PermissionGrant(msg.Permission)
 		case dialog.PermissionDeny:
-			m.com.Workspace.PermissionDeny(msg.Permission)
+			m.com.Workspace.PermissionDeny(msg.Permission, msg.Reason)
 		}
 
 	case dialog.ActionFilePickerSelected:
@@ -2587,12 +2612,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			cmds = append(cmds, tea.Suspend)
 			return true
 		case key.Matches(msg, m.keyMap.ToggleYolo):
-			yolo := !m.com.Workspace.PermissionSkipRequests()
-			m.com.Workspace.PermissionSetSkipRequests(yolo)
-			m.setEditorPrompt(yolo)
+			next := m.cycleYoloLevel()
 			status := "disabled"
-			if yolo {
-				status = "enabled"
+			if next != config.YoloOff {
+				status = "enabled (" + next.String() + ")"
 			}
 			cmds = append(cmds, util.ReportInfo("Yolo mode "+status))
 			return true
@@ -5439,4 +5462,35 @@ func renderLogo(t *styles.Styles, compact bool, width int) string {
 		Width:        width,
 		RandomColor:  true,
 	})
+}
+
+// splitPatterns splits a pattern-field value into individual permission
+// patterns joined by " && ", trimming whitespace and dropping empties.
+func splitPatterns(s string) []string {
+	parts := strings.Split(s, " && ")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// cycleYoloLevel advances the workspace yolo level through the
+// Off → Standard → Full → Off cycle, updates the editor prompt, and
+// returns the new level.
+func (m *UI) cycleYoloLevel() config.YoloLevel {
+	var next config.YoloLevel
+	switch m.com.Workspace.PermissionYoloLevel() {
+	case config.YoloOff:
+		next = config.YoloStandard
+	case config.YoloStandard:
+		next = config.YoloFull
+	default:
+		next = config.YoloOff
+	}
+	m.com.Workspace.PermissionSetYoloLevel(next)
+	m.setEditorPrompt(next != config.YoloOff)
+	return next
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -16,13 +17,13 @@ type mockPermissionService struct {
 	*pubsub.Broker[permission.PermissionRequest]
 }
 
-func (m *mockPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (bool, error) {
-	return true, nil
+func (m *mockPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error) {
+	return permission.RequestResult{Granted: true}, nil
 }
 
 func (m *mockPermissionService) Grant(req permission.PermissionRequest) {}
 
-func (m *mockPermissionService) Deny(req permission.PermissionRequest) {}
+func (m *mockPermissionService) Deny(req permission.PermissionRequest, reason string) {}
 
 func (m *mockPermissionService) GrantPersistent(req permission.PermissionRequest) {}
 
@@ -30,14 +31,22 @@ func (m *mockPermissionService) AutoApproveSession(sessionID string) {}
 
 func (m *mockPermissionService) RevokeAutoApproveSession(sessionID string) {}
 
-func (m *mockPermissionService) SetSkipRequests(skip bool) {}
+func (m *mockPermissionService) SetYoloLevel(level config.YoloLevel) {}
 
-func (m *mockPermissionService) SkipRequests() bool {
-	return false
+func (m *mockPermissionService) YoloLevel() config.YoloLevel {
+	return config.YoloOff
 }
 
 func (m *mockPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
+}
+
+func (m *mockPermissionService) GrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {
+	return nil
+}
+
+func (m *mockPermissionService) GrantForever(toolPattern string, inputPattern string, action config.PermissionAction, scope config.Scope) error {
+	return nil
 }
 
 type mockHistoryService struct {

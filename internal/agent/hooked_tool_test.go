@@ -58,7 +58,7 @@ func TestHookedTool_AllowStampsHookApproval(t *testing.T) {
 	require.True(t, inner.called, "inner tool should have run")
 
 	// The inner tool's permission service can now treat call-1 as pre-approved.
-	svc := permission.NewPermissionService(t.TempDir(), false, nil)
+	svc := permission.NewPermissionService(t.TempDir(), config.YoloOff, nil, nil)
 	granted, err := svc.Request(inner.gotCtx, permission.CreatePermissionRequest{
 		SessionID:  "s1",
 		ToolCallID: "call-1",
@@ -67,7 +67,7 @@ func TestHookedTool_AllowStampsHookApproval(t *testing.T) {
 		Path:       t.TempDir(),
 	})
 	require.NoError(t, err)
-	require.True(t, granted, "hook allow should bypass the permission prompt")
+	require.True(t, granted.Granted, "hook allow should bypass the permission prompt")
 }
 
 func TestHookedTool_SilentDoesNotStampApproval(t *testing.T) {
@@ -85,7 +85,7 @@ func TestHookedTool_SilentDoesNotStampApproval(t *testing.T) {
 	// and must fall through to the normal flow. We verify by checking that
 	// the context does not look pre-approved for this call ID: sending a
 	// request that no subscriber resolves will block until cancelled.
-	svc := permission.NewPermissionService(t.TempDir(), false, nil)
+	svc := permission.NewPermissionService(t.TempDir(), config.YoloOff, nil, nil)
 	ctx, cancel := context.WithCancel(inner.gotCtx)
 	cancel()
 	granted, err := svc.Request(ctx, permission.CreatePermissionRequest{
@@ -96,7 +96,7 @@ func TestHookedTool_SilentDoesNotStampApproval(t *testing.T) {
 		Path:       t.TempDir(),
 	})
 	require.Error(t, err, "no approval stamped => request should reach the prompt path")
-	require.False(t, granted)
+	require.False(t, granted.Granted)
 }
 
 func TestHookedTool_DenySkipsInnerTool(t *testing.T) {

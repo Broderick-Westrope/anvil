@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -212,13 +213,13 @@ type mockViewPermissionService struct {
 	*pubsub.Broker[permission.PermissionRequest]
 }
 
-func (m *mockViewPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (bool, error) {
-	return true, nil
+func (m *mockViewPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error) {
+	return permission.RequestResult{Granted: true}, nil
 }
 
 func (m *mockViewPermissionService) Grant(req permission.PermissionRequest) {}
 
-func (m *mockViewPermissionService) Deny(req permission.PermissionRequest) {}
+func (m *mockViewPermissionService) Deny(req permission.PermissionRequest, reason string) {}
 
 func (m *mockViewPermissionService) GrantPersistent(req permission.PermissionRequest) {}
 
@@ -226,14 +227,22 @@ func (m *mockViewPermissionService) AutoApproveSession(sessionID string) {}
 
 func (m *mockViewPermissionService) RevokeAutoApproveSession(sessionID string) {}
 
-func (m *mockViewPermissionService) SetSkipRequests(skip bool) {}
+func (m *mockViewPermissionService) SetYoloLevel(level config.YoloLevel) {}
 
-func (m *mockViewPermissionService) SkipRequests() bool {
-	return false
+func (m *mockViewPermissionService) YoloLevel() config.YoloLevel {
+	return config.YoloOff
 }
 
 func (m *mockViewPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
+}
+
+func (m *mockViewPermissionService) GrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {
+	return nil
+}
+
+func (m *mockViewPermissionService) GrantForever(toolPattern string, inputPattern string, action config.PermissionAction, scope config.Scope) error {
+	return nil
 }
 
 type mockFileTracker struct{}

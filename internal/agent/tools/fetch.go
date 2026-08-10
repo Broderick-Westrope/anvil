@@ -86,13 +86,14 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 					Action:      "fetch",
 					Description: fmt.Sprintf("Fetch content from URL: %s", params.URL),
 					Params:      FetchPermissionsParams(params),
+					Input:       params.URL,
 				},
 			)
 			if err != nil {
 				return fantasy.ToolResponse{}, err
 			}
-			if !p {
-				return NewPermissionDeniedResponse(), nil
+			if !p.Granted {
+				return NewPermissionDeniedResponse(p.Reason), nil
 			}
 
 			// maxFetchTimeoutSeconds is the maximum allowed timeout for fetch requests (2 minutes)

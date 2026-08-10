@@ -95,7 +95,13 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 		return nil, proto.Workspace{}, fmt.Errorf("failed to initialize config: %w", err)
 	}
 
-	cfg.Overrides().SkipPermissionRequests = args.YOLO
+	// Prefer the granular YoloLevel field; fall back to legacy YOLO bool
+	// for backward compatibility with older clients.
+	if args.YoloLevel > 0 {
+		cfg.Overrides().YoloLevel = config.YoloLevel(args.YoloLevel)
+	} else if args.YOLO {
+		cfg.Overrides().YoloLevel = config.YoloStandard
+	}
 
 	if err := createDotAnvilDir(cfg.Config().Options.ProjectDirectory); err != nil {
 		return nil, proto.Workspace{}, fmt.Errorf("failed to create data directory: %w", err)
@@ -133,13 +139,14 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 	}
 
 	result := proto.Workspace{
-		ID:      id,
-		Path:    args.Path,
-		DataDir: cfg.Config().Options.ProjectDirectory,
-		Debug:   cfg.Config().Options.Debug,
-		YOLO:    cfg.Overrides().SkipPermissionRequests,
-		Config:  cfg.Config(),
-		Env:     args.Env,
+		ID:        id,
+		Path:      args.Path,
+		DataDir:   cfg.Config().Options.ProjectDirectory,
+		Debug:     cfg.Config().Options.Debug,
+		YOLO:      cfg.Overrides().YoloLevel != config.YoloOff,
+		YoloLevel: int(cfg.Overrides().YoloLevel),
+		Config:    cfg.Config(),
+		Env:       args.Env,
 	}
 
 	return ws, result, nil
@@ -194,11 +201,12 @@ func (b *Backend) Shutdown() {
 func workspaceToProto(ws *Workspace) proto.Workspace {
 	cfg := ws.Cfg.Config()
 	return proto.Workspace{
-		ID:      ws.ID,
-		Path:    ws.Path,
-		YOLO:    ws.Cfg.Overrides().SkipPermissionRequests,
-		DataDir: cfg.Options.ProjectDirectory,
-		Debug:   cfg.Options.Debug,
-		Config:  cfg,
+		ID:        ws.ID,
+		Path:      ws.Path,
+		YOLO:      ws.Cfg.Overrides().YoloLevel != config.YoloOff,
+		YoloLevel: int(ws.Cfg.Overrides().YoloLevel),
+		DataDir:   cfg.Options.ProjectDirectory,
+		Debug:     cfg.Options.Debug,
+		Config:    cfg,
 	}
 }
