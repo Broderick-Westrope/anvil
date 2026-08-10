@@ -64,10 +64,6 @@ import (
 	xstrings "github.com/charmbracelet/x/exp/strings"
 )
 
-// MouseScrollThreshold defines how many lines to scroll the chat when a mouse
-// wheel event occurs.
-const MouseScrollThreshold = 5
-
 // Compact mode breakpoints.
 const (
 	compactModeWidthBreakpoint  = 120
@@ -1039,40 +1035,36 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}))
 			}
 		}
-	case tea.MouseWheelMsg:
+	case common.CoalescedWheelMsg:
 		// Pass mouse events to dialogs first if any are open.
 		if m.dialog.HasDialogs() {
 			m.dialog.Update(msg)
 			return m, tea.Batch(cmds...)
 		}
 
-		// Otherwise handle mouse wheel for chat.
+		// Otherwise handle mouse wheel for chat. Use the coalesced delta
+		// directly as the line count. Terminals like Ghostty send DeltaY=3
+		// per physical wheel tick (matching their native scrollback), while
+		// others send DeltaY=1.
 		switch m.state {
 		case uiChat:
-			switch msg.Button {
-			case tea.MouseWheelUp:
-				if cmd := m.activeChat().ScrollByAndAnimate(-MouseScrollThreshold); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				if !m.activeChat().SelectedItemInView() {
+			lines := int(msg.DeltaY)
+			if lines == 0 {
+				break
+			}
+			if cmd := m.activeChat().ScrollByAndAnimate(lines); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if !m.activeChat().SelectedItemInView() {
+				if lines < 0 {
 					m.activeChat().SelectPrev()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+				} else if m.activeChat().AtBottom() {
+					m.activeChat().SelectLast()
+				} else {
+					m.activeChat().SelectNext()
 				}
-			case tea.MouseWheelDown:
-				if cmd := m.activeChat().ScrollByAndAnimate(MouseScrollThreshold); cmd != nil {
+				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
-				}
-				if !m.activeChat().SelectedItemInView() {
-					if m.activeChat().AtBottom() {
-						m.activeChat().SelectLast()
-					} else {
-						m.activeChat().SelectNext()
-					}
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
 				}
 			}
 		}
