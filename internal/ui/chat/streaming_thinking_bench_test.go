@@ -11,7 +11,8 @@ import (
 
 // buildThinkingBlock generates a realistic long thinking block with
 // paragraphs, lists, and code fences — the kind of content that
-// triggers the CHARM-1785 perf bug.
+// triggers the every-frame full re-render the prefix cache fixes
+// (upstream 884391f9).
 func buildThinkingBlock(paragraphs int) string {
 	var b strings.Builder
 	for i := range paragraphs {
@@ -27,9 +28,10 @@ func buildThinkingBlock(paragraphs int) string {
 }
 
 // BenchmarkStreamingThinking benchmarks the streaming render path for
-// a long thinking block. Before CHARM-1785, every tick did a full
-// glamour re-render of the entire accumulated text because
-// prefixHasOpenHazard rejected any document containing a list marker.
+// a long thinking block. Before the prefix cache (upstream 884391f9),
+// every tick did a full glamour re-render of the entire accumulated
+// text because prefixHasOpenHazard rejected any document containing a
+// list marker.
 // After the fix, the stable-prefix cache seeds and each tick only
 // re-renders the trailing delta.
 func BenchmarkStreamingThinking(b *testing.B) {

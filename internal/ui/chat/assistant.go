@@ -102,7 +102,7 @@ func fnv64(s string) uint64 {
 
 // countLines returns the number of lines in s (i.e. the number of
 // newline-separated segments). Equivalent to len(strings.Split(s,
-// "\n")) but allocates nothing. See CHARM-1785.
+// "\n")) but allocates nothing (upstream 884391f9).
 func countLines(s string) int {
 	if s == "" {
 		return 1
@@ -120,7 +120,7 @@ func countLines(s string) int {
 // (earlier) lines. totalLines is the pre-computed line count of s
 // (from countLines). It finds the cut point with a bounded backward
 // scan so the cost is O(n) in the number of kept lines, not O(L)
-// in the total document length. See CHARM-1785.
+// in the total document length (upstream 884391f9).
 func tailLines(s string, n, totalLines int) (tail string, hidden int) {
 	if n <= 0 {
 		return "", totalLines
@@ -177,7 +177,7 @@ type AssistantMessageItem struct {
 	// tick. thinkingHashSample holds a short prefix of the hashed
 	// text so we can detect divergence (e.g. a user retry that
 	// rewrites the thinking from scratch) without re-hashing the
-	// whole thing. See CHARM-1785.
+	// whole thing (upstream 884391f9).
 	thinkingHash       uint64
 	thinkingHashLen    int
 	thinkingHashSample string
@@ -416,7 +416,7 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 // The source hash is computed incrementally: during streaming the
 // thinking text only grows by appending, so we continue the FNV-64a
 // hash from the saved state rather than re-hashing the entire
-// accumulated text. See CHARM-1785.
+// accumulated text (upstream 884391f9).
 func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
 	thinking := a.message.ReasoningContent().Thinking
 	srcHash := a.thinkingHashIncremental(thinking)
@@ -557,7 +557,7 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	// WITHOUT splitting the entire rendered document. Splitting a
 	// 1200-line render just to keep the last 10 lines is O(n) per
 	// tick; tailLines finds the cut point with a bounded backward
-	// scan. See CHARM-1785.
+	// scan (upstream 884391f9).
 	var lines []string
 	var totalLines int
 
