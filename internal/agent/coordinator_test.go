@@ -11,6 +11,7 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
+	"charm.land/fantasy/providers/openaicompat"
 	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
@@ -648,4 +649,36 @@ func TestMergeSkillsPaths(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
+	t.Parallel()
+
+	model := Model{
+		CatwalkCfg: catwalk.Model{
+			ID:              "glm-5.2",
+			CanReason:       true,
+			ReasoningLevels: []string{"high", "max"},
+		},
+		ModelCfg: config.SelectedModel{
+			Provider: "zai",
+		},
+	}
+	providerCfg := config.ProviderConfig{
+		ID:   string(catwalk.InferenceProviderZAI),
+		Type: openaicompat.Name,
+	}
+
+	opts := getProviderOptions(model, providerCfg)
+
+	raw, ok := opts[openaicompat.Name]
+	require.True(t, ok)
+	parsed, ok := raw.(*openaicompat.ProviderOptions)
+	require.True(t, ok)
+	require.NotNil(t, parsed.ReasoningEffort)
+	assert.Equal(t, "high", string(*parsed.ReasoningEffort))
+
+	thinking, ok := parsed.ExtraBody["thinking"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "enabled", thinking["type"])
 }
