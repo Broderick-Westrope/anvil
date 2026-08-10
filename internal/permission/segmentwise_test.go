@@ -30,6 +30,8 @@ const adversarialRules = `{
 		"sort *": "allow",
 		"uniq *": "allow",
 		"find *": "allow",
+		"env *": "allow",
+		"xargs *": "allow",
 		"pwd *": "allow",
 		"rm *": "deny"
 	}
@@ -80,16 +82,27 @@ func TestSegmentwiseAdversarial(t *testing.T) {
 		{"amend inside chain", "git add -A && git commit --amend -m x", config.PermissionAsk},
 		{"no-verify inside chain", "git add -A && git commit --no-verify -m x", config.PermissionAsk},
 
-		// Redirections stay visible; broad "cmd *" still matches, but
-		// the write target is part of the evaluated segment.
-		{"output redirect matches broad rule", "ls > /tmp/out.txt", config.PermissionAllow},
-		{"stderr merge matches broad rule", "go test ./... 2>&1", config.PermissionAllow},
+		// File-writing redirections are evaluated on their own, so a
+		// broad "cmd *" allow never implies permission to write to an
+		// arbitrary path.
+		{"output redirect needs its own grant", "ls > /tmp/out.txt", config.PermissionAsk},
+		{"append redirect needs its own grant", "echo x >> ~/.zshrc", config.PermissionAsk},
+		{"redirect behind a subshell needs its own grant", "(ls) > /etc/passwd", config.PermissionAsk},
+		{"stderr merge is not a write", "go test ./... 2>&1", config.PermissionAllow},
+		{"input redirect is not a write", "cat < /etc/hosts", config.PermissionAllow},
 
-		// xargs/find can smuggle commands as arguments; they only run
-		// if the user explicitly allowed the wrapper. xargs is not in
-		// the allow list here, find is (documented trade-off).
-		{"xargs not allowed", "cat files.txt | xargs rm", config.PermissionAsk},
-		{"find exec rides on find allow", `find . -exec rm {} \;`, config.PermissionAllow},
+		// Wrapper commands cannot launder a denied payload: the wrapped
+		// command is evaluated in its own right.
+		{"env cannot launder deny", "env rm -rf /", config.PermissionDeny},
+		{"env with assignment cannot launder deny", "env FOO=bar rm -rf /", config.PermissionDeny},
+		{"env with flag cannot launder deny", "env -i rm -rf /", config.PermissionDeny},
+		{"xargs cannot launder deny", "cat files.txt | xargs rm", config.PermissionDeny},
+		{"env still allows an allowed payload", "env FOO=bar go test ./...", config.PermissionAllow},
+
+		// find -exec runs its body, so the body is evaluated too.
+		{"find exec body is evaluated", `find . -exec rm {} \;`, config.PermissionDeny},
+		{"find execdir body is evaluated", `find . -execdir sh -c 'x' \;`, config.PermissionAsk},
+		{"plain find is unaffected", `find . -name '*.go'`, config.PermissionAllow},
 
 		// Parse failures fall back to the whole string → ask.
 		{"unparsable command", "if then fi (", config.PermissionAsk},

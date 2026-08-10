@@ -52,14 +52,99 @@ func TestSplit(t *testing.T) {
 			want:    nil,
 		},
 		{
-			name:    "redirect kept visible",
+			name:    "fd duplication stays inline",
 			command: "go test ./... 2>&1",
 			want:    []string{"go test ./... 2>&1"},
 		},
 		{
-			name:    "output redirect kept visible",
+			name:    "input redirect stays inline",
+			command: "cat < /etc/passwd",
+			want:    []string{"cat </etc/passwd"},
+		},
+		{
+			name:    "output redirect is its own segment",
 			command: "ls > /etc/passwd",
-			want:    []string{"ls >/etc/passwd"},
+			want:    []string{"ls", "> /etc/passwd"},
+		},
+		{
+			name:    "append redirect is its own segment",
+			command: "printf x >> ~/.ssh/authorized_keys",
+			want:    []string{"printf x", ">> ~/.ssh/authorized_keys"},
+		},
+		{
+			name:    "numbered write redirect keeps its fd",
+			command: "ls 2> /tmp/err",
+			want:    []string{"ls", "2> /tmp/err"},
+		},
+		{
+			name:    "clobber redirect is a write",
+			command: "ls >| /etc/passwd",
+			want:    []string{"ls", ">| /etc/passwd"},
+		},
+		{
+			name:    "all-streams redirect is a write",
+			command: "ls &> /etc/passwd",
+			want:    []string{"ls", "&> /etc/passwd"},
+		},
+		{
+			name:    "dup-out to a file is a write",
+			command: "ls >& /etc/passwd",
+			want:    []string{"ls", ">& /etc/passwd"},
+		},
+		{
+			name:    "multiple writes each get a segment",
+			command: "ls > /tmp/a > /tmp/b",
+			want:    []string{"ls", "> /tmp/a", "> /tmp/b"},
+		},
+		{
+			name:    "write hidden behind a subshell is surfaced",
+			command: "(ls) > /etc/passwd",
+			want:    []string{"> /etc/passwd", "ls"},
+		},
+		{
+			name:    "wrapper target is its own segment",
+			command: "env rm -rf /tmp/x",
+			want:    []string{"env rm -rf /tmp/x", "rm -rf /tmp/x"},
+		},
+		{
+			name:    "wrapper skips assignments",
+			command: "env FOO=bar go test ./...",
+			want:    []string{"env FOO=bar go test ./...", "go test ./..."},
+		},
+		{
+			name:    "wrapper skips flags",
+			command: "env -i rm -rf /",
+			want:    []string{"env -i rm -rf /", "rm -rf /"},
+		},
+		{
+			name:    "wrapper skips numeric operands",
+			command: "timeout 5 rm -rf /",
+			want:    []string{"timeout 5 rm -rf /", "rm -rf /"},
+		},
+		{
+			name:    "nested wrappers resolve to the innermost target",
+			command: "sudo env bash -c 'rm -rf ~'",
+			want:    []string{"sudo env bash -c 'rm -rf ~'", "bash -c 'rm -rf ~'"},
+		},
+		{
+			name:    "xargs target is its own segment",
+			command: "cat files.txt | xargs rm",
+			want:    []string{"cat files.txt", "xargs rm", "rm"},
+		},
+		{
+			name:    "find exec body is its own segment",
+			command: `find . -name '*.go' -exec rm {} \;`,
+			want:    []string{`find . -name '*.go' -exec rm {} \;`, "rm {}"},
+		},
+		{
+			name:    "find execdir body is its own segment",
+			command: `find . -execdir sh -c 'echo hi' \;`,
+			want:    []string{`find . -execdir sh -c 'echo hi' \;`, "sh -c 'echo hi'"},
+		},
+		{
+			name:    "find exec terminated by plus",
+			command: "find . -exec rm {} +",
+			want:    []string{"find . -exec rm {} +", "rm {}"},
 		},
 		{
 			name:    "command substitution",
@@ -80,6 +165,16 @@ func TestSplit(t *testing.T) {
 			name:    "complex real-world",
 			command: "cd /foo && GOFLAGS=-count=1 go test ./internal/... 2>&1 | tail -20",
 			want:    []string{"cd /foo", "go test ./internal/... 2>&1", "tail -20"},
+		},
+		{
+			name:    "process substitution traversed",
+			command: "diff <(ls) <(ls /tmp)",
+			want:    []string{"diff <(ls) <(ls /tmp)", "ls", "ls /tmp"},
+		},
+		{
+			name:    "loop body traversed",
+			command: "while true; do rm -rf /; done",
+			want:    []string{"true", "rm -rf /"},
 		},
 		{
 			name:    "parse error fallback",
@@ -159,6 +254,21 @@ func TestGeneralize(t *testing.T) {
 			segment: "",
 			want:    "",
 		},
+		{
+			name:    "write redirect is not generalized",
+			segment: "> /tmp/out.txt",
+			want:    "> /tmp/out.txt",
+		},
+		{
+			name:    "append redirect is not generalized",
+			segment: ">> ~/.zshrc",
+			want:    ">> ~/.zshrc",
+		},
+		{
+			name:    "numbered redirect is not generalized",
+			segment: "2> /tmp/err",
+			want:    "2> /tmp/err",
+		},
 	}
 
 	for _, tt := range tests {
@@ -181,6 +291,9 @@ func TestGeneralizeMatchesSourceSegment(t *testing.T) {
 		"git rev-parse HEAD",
 		"npm run build",
 		"git status",
+		"> /tmp/out.txt",
+		">> /tmp/out.txt",
+		"2> /tmp/err",
 	}
 
 	for _, seg := range segments {
