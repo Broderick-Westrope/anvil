@@ -17,6 +17,7 @@ after each reviewed batch group lands, using
 | `review/2026-08-10-sync-batches-1-3` | `b1b2f638` | Batches 1–3, dep bumps, granular-permissions merge, review-round fixes |
 | `review/2026-08-10-sync-batches-4-5` | `e377df59` | Batches 4–5 (performance + UI fixes), both review rounds |
 | `review/2026-08-10-sync-batch-6` | `8bbb61d5` | Batch 6 (MCP fixes) + `63dc1f01` remainder, review-round fixes |
+| `review/2026-08-10-sync-batch-7` | `e3936449` | Batch 7 (model auto-discovery + enrichers) + `d341d84b` closure, review-round fixes |
 
 ## Rules
 
