@@ -12,6 +12,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -318,6 +319,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	var currentAssistant *message.Message
 	var stepMessages []fantasy.Message
 	var shouldSummarize bool
+	sanitizedToolCalls := make(map[string]bool)
+	// OnToolCall writes this map while OnToolResult reads it, and tool
+	// execution may run in parallel goroutines, so guard both sides.
+	var sanitizedMu sync.Mutex
 	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
 	var maxOutputTokens *int64
 	if call.MaxOutputTokens > 0 {
@@ -458,10 +463,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
+			input, wasSanitized := sanitizeToolInput(tc.ToolName, tc.ToolCallID, tc.Input)
+			if wasSanitized {
+				sanitizedMu.Lock()
+				sanitizedToolCalls[tc.ToolCallID] = true
+				sanitizedMu.Unlock()
+			}
 			toolCall := message.ToolCall{
 				ID:               tc.ToolCallID,
 				Name:             tc.ToolName,
-				Input:            tc.Input,
+				Input:            input,
 				ProviderExecuted: false,
 				Finished:         true,
 			}
@@ -472,6 +483,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
+			sanitizedMu.Lock()
+			wasSanitized := sanitizedToolCalls[result.ToolCallID]
+			sanitizedMu.Unlock()
+			if wasSanitized {
+				toolResult.Content = "Tool call failed: arguments were not valid JSON. Please check your tool call format and try again."
+				toolResult.IsError = true
+			}
 			// Hold sessionLock across the entire read→create→update
 			// sequence. OnToolResult may be called from parallel
 			// tool-execution goroutines; without the lock two goroutines
@@ -1697,4 +1715,20 @@ func providerRetryLogFields(err *fantasy.ProviderError, delay time.Duration) []a
 		fields = append(fields, "message", err.Message)
 	}
 	return fields
+}
+
+// sanitizeToolInput validates tool call JSON from the provider.
+// Malformed input is replaced with an empty object to prevent
+// stuck conversations from truncated or malformed model output.
+// The second return value indicates whether sanitization occurred.
+func sanitizeToolInput(toolName, toolCallID, input string) (string, bool) {
+	if !json.Valid([]byte(input)) {
+		slog.Warn("Malformed tool call JSON from provider, replacing with empty object",
+			"tool", toolName,
+			"id", toolCallID,
+			"input_len", len(input),
+		)
+		return "{}", true
+	}
+	return input, false
 }
