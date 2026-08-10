@@ -586,6 +586,24 @@ ebf6e826 chore: add alibaba us (#3249)
   `Think || reasoningEffort != ""` fix. catwalk v0.51.6 already ships
   `InferenceProviderAlibabaUS`; the go.mod bump and README env-table row don't apply.
 
+### Review round (batch 7)
+
+A three-reviewer pass (2026-08-10, Sonnet + Opus + Convention) audited the batch;
+Opus confirmed the hand-applied Alibaba change is byte-identical to upstream net state.
+
+- **Fixed**: three "as Crush configures it" comments in enricher tests (seventh branding
+  instance); stale `schema.json` (missing `discover_models` — regenerated via `task schema`);
+  `discoverCancel` now deferred (was called 35 lines after `WithTimeout`); enricher errors now
+  Debug-logged instead of discarded; `TestIsKnownCustomProvider` covers llamacpp (upstream
+  omits it); `t.Parallel()` added to `discover_test.go` (upstream lacks it; the rest of the
+  package has it); README auto-discovery wording + LM Studio example type.
+- **Rejected**: a claimed llamacpp discovery/enricher path mismatch — the code is
+  byte-identical to upstream and llama-server serves `/models` and `/v1/models` as aliases,
+  so both calls succeed with the README's documented base URL; gating Alibaba's empty
+  `extra_body` write — upstream parity for no behavioral gain.
+- **Noted (upstream parity, no action)**: `doRequest` swallows resolver errors (misleading log
+  only); lmstudio's `SupportsImages` overwrites user-set values unconditionally.
+
 ## Batch 8 — Bang mode
 
 Also pick `a9e3a57f` (deferred from batch 1) after `99a5fad5`, since it depends on
