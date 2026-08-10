@@ -313,7 +313,7 @@
         "timeout": {
           "type": "integer",
           "description": "Timeout in seconds for MCP server connections",
-          "default": 15,
+          "default": 10,
           "examples": [
             30,
             60,
@@ -714,6 +714,11 @@
           "type": "boolean",
           "description": "Flat-rate mode for this provider"
         },
+        "discover_models": {
+          "type": "boolean",
+          "description": "Auto-discover models from /v1/models endpoint. When true with existing models they are merged (yours win)",
+          "default": true
+        },
         "models": {
           "items": {
             "$ref": "#/$defs/Model"
@@ -860,6 +865,16 @@
         "expires_at"
       ]
     },
+    "ToolGlob": {
+      "properties": {
+        "timeout": {
+          "type": "integer",
+          "description": "Timeout for the glob tool call"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ToolGrep": {
       "properties": {
         "timeout": {
@@ -899,6 +914,9 @@
         },
         "grep": {
           "$ref": "#/$defs/ToolGrep"
+        },
+        "glob": {
+          "$ref": "#/$defs/ToolGlob"
         }
       },
       "additionalProperties": false,

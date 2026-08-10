@@ -16,6 +16,7 @@ after each reviewed batch group lands, using
 |---|---|---|
 | `review/2026-08-10-sync-batches-1-3` | `b1b2f638` | Batches 1–3, dep bumps, granular-permissions merge, review-round fixes |
 | `review/2026-08-10-sync-batches-4-5` | `e377df59` | Batches 4–5 (performance + UI fixes), both review rounds |
+| `review/2026-08-10-sync-batch-6` | `8bbb61d5` | Batch 6 (MCP fixes) + `63dc1f01` remainder, review-round fixes |
 
 ## Rules
 
@@ -56,15 +57,15 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 4 | Performance | 12 | **done** | 9 picked, 2 deferred to batch 8, 2 skipped |
 | 5 | UI fixes | 15 | **done** | 14 picked (1 partial), 1 skipped, +1 vendored prereq |
 | 6 | MCP fixes | 5 | **done** | 4 picked, 1 N/A; deferred `63dc1f01` remainder also landed |
-| 7 | Model auto-discovery + enrichers | 10 | pending | optional |
-| 8 | Bang mode | 20 | pending | optional |
-| 9 | Question tool | 18 | pending | optional |
-| 10 | Dialog responsive sizing | 19 | pending | optional |
-| 11 | Scrollable sidebar | 12 | pending | optional |
-| 12 | Chat scrollbar | 2 | pending | optional |
-| 13 | Tool call expansion UI | 2 | pending | optional |
-| 14 | Attachment chip remove button | 4 | pending | optional |
-| 15 | Misc features | 5 | pending | optional |
+| 7 | Model auto-discovery + enrichers | 10 | **done** | all 10 picked (Alibaba pair squashed); closes the `d341d84b` deferral |
+| 8 | Bang mode | 20 | pending | approved |
+| 9 | Question tool | 18 | pending | approved |
+| 10 | Dialog responsive sizing | 19 | pending | approved |
+| 11 | Scrollable sidebar | 12 | pending | approved |
+| 12 | Chat scrollbar | 2 | **skipped** | visual-only indicator; Scroll* signature ripple through the twice-reverted seam |
+| 13 | Tool call expansion UI | 2 | pending | approved |
+| 14 | Attachment chip remove button | 4 | pending | approved |
+| 15 | Misc features | 5 | pending | approved |
 | 16 | Dep bump (fantasy/catwalk) | 1 | **done** | ran after batch 3's first pass; unblocked 5 commits |
 
 ---
@@ -254,7 +255,7 @@ them, so a regression can be bisected to one dependency.
 
 | Commit | Disposition | Reason |
 |---|---|---|
-| `d341d84b` | not applicable | Edits Alibaba branches in `getProviderOptions`. Our fork has no Alibaba handling at all (`grep -r Alibaba internal/` is empty); it arrives with `ebf6e826`, batch 7. Re-evaluate there. |
+| `d341d84b` | **landed in batch 7** (`909078e8`) | Edits Alibaba branches in `getProviderOptions`. At the time the fork had no Alibaba handling; applied by hand together with `ebf6e826` in batch 7 — see that batch's notes. |
 | `d0dc9fc9` | absorbed | go.mod/go.sum only; covered by the bump above. |
 
 ### Adaptations worth remembering
@@ -533,7 +534,10 @@ fully clean) audited the batch:
   a `newerDiskToken` expired-result warning — the doc comment already states it.
 
 
-## Batch 7 — Model auto-discovery + enrichers (optional)
+## Batch 7 — Model auto-discovery + enrichers
+
+**Status: done.** All 10 picked; `ebf6e826` + `d341d84b` were applied by hand as one
+squashed commit, closing the `d341d84b` "not applicable" deferral from batch 3.
 
 ```
 73031584 feat: auto-discover models from openai-compat providers
@@ -548,7 +552,59 @@ d1489a60 feat: wire LM Studio vision capabilities to SupportsImages (#3280)
 ebf6e826 chore: add alibaba us (#3249)
 ```
 
-## Batch 8 — Bang mode (optional)
+### Local commit mapping
+
+| Upstream | Local commit | Adapted? |
+|---|---|---|
+| `73031584` | `56b2234d` | yes — noted in commit body |
+| `0f279057` | `34b54320` | no |
+| `9299ad47` | `2373290c` | no |
+| `89b680d2` | `e795a14c` | no |
+| `3c4e6547` | `49a0b05a` | no |
+| `c1a48226` | `8aba4980` | yes — README rebrand/merge |
+| `cfdca358` | `4232210e` | no |
+| `d1489a60` | `b965d4df` | no |
+| `9886d223` | `d5b5f1f7` | yes — Fireworks case only |
+| `ebf6e826` + `d341d84b` | `909078e8` | yes — hand-applied net state |
+
+### Adaptations worth remembering
+
+- **`73031584`** — the coordinator hunks land in the fork's split
+  `coordinator.go`/`coordinator_providers.go` (`getProviderOptions` and the `buildProvider`
+  switch live in different files here). `configureProviders` gained upstream's `ctx` parameter;
+  the fork-only deadlock-regression test call site needed the same update. The
+  `AutoDiscoverModels` doc comment needed the Crush→Anvil rebrand.
+- **`0f279057` is red in isolation** — its `TestIsKnownCustomProvider` asserts on the ollama,
+  omlx, and lmstudio enrichers that only self-register (via `init()`) in the next three
+  commits. Upstream was equally red at that commit. Green again from `3c4e6547` onward.
+- **`9886d223`** — took only the Fireworks case; the `AlibabaSingapore` branch in the conflict
+  hunk belonged to unpicked Alibaba support, handled next.
+- **`ebf6e826` + `d341d84b` (squashed, closes batch-3 deferral)** — the fork never picked the
+  original AlibabaSingapore branches (dropped from `f75435a2`/`a882695e`), so the upstream net
+  state was applied by hand: the anthropic-type `reasoning_effort`/`thinking` routing and the
+  openai-compat `enable_thinking` branch, both Singapore+US, with `d341d84b`'s
+  `Think || reasoningEffort != ""` fix. catwalk v0.51.6 already ships
+  `InferenceProviderAlibabaUS`; the go.mod bump and README env-table row don't apply.
+
+### Review round (batch 7)
+
+A three-reviewer pass (2026-08-10, Sonnet + Opus + Convention) audited the batch;
+Opus confirmed the hand-applied Alibaba change is byte-identical to upstream net state.
+
+- **Fixed**: three "as Crush configures it" comments in enricher tests (seventh branding
+  instance); stale `schema.json` (missing `discover_models` — regenerated via `task schema`);
+  `discoverCancel` now deferred (was called 35 lines after `WithTimeout`); enricher errors now
+  Debug-logged instead of discarded; `TestIsKnownCustomProvider` covers llamacpp (upstream
+  omits it); `t.Parallel()` added to `discover_test.go` (upstream lacks it; the rest of the
+  package has it); README auto-discovery wording + LM Studio example type.
+- **Rejected**: a claimed llamacpp discovery/enricher path mismatch — the code is
+  byte-identical to upstream and llama-server serves `/models` and `/v1/models` as aliases,
+  so both calls succeed with the README's documented base URL; gating Alibaba's empty
+  `extra_body` write — upstream parity for no behavioral gain.
+- **Noted (upstream parity, no action)**: `doRequest` swallows resolver errors (misleading log
+  only); lmstudio's `SupportsImages` overwrites user-set values unconditionally.
+
+## Batch 8 — Bang mode
 
 Also pick `a9e3a57f` (deferred from batch 1) after `99a5fad5`, since it depends on
 `shell.PersistFunc` and `message.ShellCommand`.
@@ -643,7 +699,16 @@ c3b32034 fix(ui): scroll sidebar details below the logo
 efbe3083 refactor(ui): move sidebar scroll state mutation out of draw function
 ```
 
-## Batch 12 — Chat scrollbar (optional)
+## Batch 12 — Chat scrollbar (skipped)
+
+**Status: skipped** (user decision, 2026-08-10). Audit confirmed the scrollbar is
+a visual position indicator only — no drag or click interaction; the only
+functionality is a `tui.scrollbar` config option and a 2s auto-hide. Cost: every
+`Chat.Scroll*` method changes signature to return `tea.Cmd` (hide-timer
+plumbing), rippling through every `ui.go` call site — the exact seam whose
+scrollbar hunks batches 4 and 5 deliberately reverted. If ever revisited,
+batch 4's notes list what must be restored (`resizing` flag, `!m.resizing`
+Draw suppression, `list.Overflows` width reservation).
 
 ```
 b72f9aab feat(ui): add scrollbar to chat view (#3018)
