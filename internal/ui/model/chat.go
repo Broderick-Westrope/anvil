@@ -43,18 +43,24 @@ const warmBatchSize = 25
 // chatWarmMsg drives one incremental cache-warming step. The first one is
 // delayed until the resize settles; the rest fire immediately, one per
 // batch, so warming spreads across frames instead of blocking.
+//
+// The message carries the *Chat that started warming so the Update
+// handler steps that chat, not whichever chat is active when the message
+// arrives — drilling in or out of a session mid-warm must not strand the
+// original chat with a cold cache.
 type chatWarmMsg struct {
-	seq int // guards against stale timers from superseded resizes
+	chat *Chat // the chat whose cache is being warmed
+	seq  int   // guards against stale timers from superseded resizes
 }
 
 // chatWarmCmd schedules the next warming step after delay (zero fires as
 // soon as the runtime delivers it).
-func chatWarmCmd(seq int, delay time.Duration) tea.Cmd {
+func chatWarmCmd(chat *Chat, seq int, delay time.Duration) tea.Cmd {
 	if delay <= 0 {
-		return func() tea.Msg { return chatWarmMsg{seq: seq} }
+		return func() tea.Msg { return chatWarmMsg{chat: chat, seq: seq} }
 	}
 	return tea.Tick(delay, func(_ time.Time) tea.Msg {
-		return chatWarmMsg{seq: seq}
+		return chatWarmMsg{chat: chat, seq: seq}
 	})
 }
 
@@ -250,7 +256,7 @@ func drawCachedBuffer(scr uv.Screen, area uv.Rectangle, buf uv.ScreenBuffer) {
 func (m *Chat) BeginResize() tea.Cmd {
 	m.resizeSettleSeq++
 	m.warmNext = 0
-	return chatWarmCmd(m.resizeSettleSeq, resizeSettleDuration)
+	return chatWarmCmd(m, m.resizeSettleSeq, resizeSettleDuration)
 }
 
 // WarmStep renders the next batch of messages into the width cache and
@@ -266,7 +272,7 @@ func (m *Chat) WarmStep(seq int) (cmd tea.Cmd, done bool) {
 	if m.warmNext >= m.list.Len() {
 		return nil, true
 	}
-	return chatWarmCmd(seq, 0), false
+	return chatWarmCmd(m, seq, 0), false
 }
 
 // SetSize sets the size of the chat view port.

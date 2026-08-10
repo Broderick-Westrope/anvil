@@ -1095,17 +1095,17 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case chatWarmMsg:
-		// A resize has settled; warm the message cache one batch at a time
-		// so the scrollbar recompute never blocks the UI thread.
-		if m.state == uiChat {
-			cmd, done := m.activeChat().WarmStep(msg.seq)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			} else if done {
-				// Heights are cached now, so the final layout pass (scrollbar
-				// reservation) is cheap.
-				m.updateLayoutAndSize()
-			}
+		// A resize has settled; warm the message cache one batch at a
+		// time so height recomputes never block the UI thread. Step the
+		// chat that started warming (carried in the message), not
+		// activeChat(): drilling in or out mid-warm must not strand the
+		// original chat with a cold cache.
+		cmd, done := msg.chat.WarmStep(msg.seq)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		} else if done && m.state == uiChat && msg.chat == m.activeChat() {
+			// Heights are cached now, so the final layout pass is cheap.
+			m.updateLayoutAndSize()
 		}
 	case spinner.TickMsg:
 		if m.dialog.HasDialogs() {
