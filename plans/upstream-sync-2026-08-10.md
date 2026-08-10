@@ -515,6 +515,23 @@ bdad0f11 feat(mcp): don't hold callback port open permanently (#3481)
   failed against the real environment's model — the rare case where the trap failed loudly
   instead of passing weakly.
 
+### Review round (batch 6)
+
+A three-reviewer pass (2026-08-10, Sonnet + Opus + Convention; Convention found the batch
+fully clean) audited the batch:
+
+- **Fixed**: dead `initDone` swap in `TestGetOrRenewClient_ClosesOldSessionOnReconnect` (leftover
+  after the `009ce621` adaptation dropped the wait it enabled); `DisableSingle` now clears
+  resources alongside tools and prompts (upstream has the same asymmetry at the pick point,
+  subsumed later by its `teardown` refactor); the redundant second `StateError` transition on
+  `newSession` failure (a merge leftover from the fork's old only-on-failure flow — upstream
+  returns directly, and the extra call published a duplicate event with stale counts); documented
+  the intentional fast-path race (a concurrent locked renewal can close a just-pinged session);
+  clarified `ArmInit`'s defensive self-arm and `Overrides()`'s Models mutation contract.
+- **Rejected**: eager resource listing in `initClient` — resources are deliberately lazy
+  (populated via `ListResources`/`RefreshResources`), matching upstream at the pick point;
+  a `newerDiskToken` expired-result warning — the doc comment already states it.
+
 
 ## Batch 7 — Model auto-discovery + enrichers (optional)
 
