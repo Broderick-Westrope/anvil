@@ -311,17 +311,32 @@ cc971bd6 perf(lsp): filter servers before searching $PATH (#3370)
 
 ### Adaptations worth remembering
 
+Local commit mapping for the adapted picks (the review round noted that
+`202b3b66`/`3ea4c5c0` lack adaptation notes in their commit bodies; the
+mapping lives here instead of rewriting history):
+
+| Upstream | Local commit | Adapted? |
+|---|---|---|
+| `3295a085` | `202b3b66` | yes — innerWidth + label/italics rewoven |
+| `884391f9` | `3ea4c5c0` | yes — same renderThinking reweave |
+| `4d901d1b` | `73f3f0bc` | yes — noted in commit body |
+| `173b2be6` | `9f090fb0` | yes — noted in commit body |
+| `f5b996bf` | `85dcb4dd` | yes — noted in commit body |
+
 - **`3295a085`/`884391f9`** — local `renderThinking` computes `innerWidth` (ThinkingBox frame) and
   prefixes a styled "Thinking:" label with per-line italics; upstream has neither. Merged by
   passing `innerWidth` to the prefix cache and re-adding the label/italic pass around upstream's
-  `tailLines` bounded-scan slicing.
+  `tailLines` bounded-scan slicing. Upstream's `CHARM-1785` ticket references were replaced with
+  the upstream commit SHA in a follow-up.
 - **`1bfc53f6`** — the memoized style is registered as `chroma.MustNewStyle("anvil", ...)`
   (upstream says "crush").
-- **`4d901d1b`** — took resize suppression + incremental cache warming, dropped every scrollbar
-  hunk (chat scrollbar is batch 12; `Chat.Draw`/`SetSize` keep our drawCache and follow-anchor
-  logic). Wired `BeginResize`/`WarmStep` through `activeChat()` rather than upstream's `m.chat` so
-  drilled-in session views warm the right list. If batch 12 is ever picked, its Draw-side
-  scrollbar suppression (`!m.resizing`) must be re-added.
+- **`4d901d1b`** — took the incremental cache warming, dropped every scrollbar hunk (chat
+  scrollbar is batch 12; `Chat.Draw`/`SetSize` keep our drawCache and follow-anchor logic). The
+  review round then deleted the `resizing` flag (its only consumer was the dropped scrollbar
+  gate) and made `chatWarmMsg` carry its owning `*Chat` so drill-in/out cannot strand a warm
+  chain. If batch 12 is ever picked it must re-add the `resizing` flag and the `!m.resizing`
+  Draw-side suppression, and `list.Overflows` (kept, tested, currently caller-less) is ready for
+  it.
 - **`173b2be6`** — fork is single-theme, so instead of porting the theme-key machinery the
   redundant `applyTheme(styles.TokyoNight())` on model selection was deleted outright — same win
   (no transcript re-render on model switch), no new state.

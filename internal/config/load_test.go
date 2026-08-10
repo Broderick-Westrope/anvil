@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,28 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// resetLSPDefaults clears the memoized powernap catalog so tests can
+// force a rebuild. Mirrors resetProviderState in provider_test.go; the
+// catalog is embedded and immutable, so production never needs this.
+func resetLSPDefaults() {
+	powernapDefaultsOnce = sync.Once{}
+	powernapDefaults = nil
+}
+
+// TestLSPDefaultsManager_Memoized pins the memoization contract: repeat
+// calls return the same instance, and resetLSPDefaults forces a rebuild.
+func TestLSPDefaultsManager_Memoized(t *testing.T) {
+	resetLSPDefaults()
+	t.Cleanup(resetLSPDefaults)
+
+	first := lspDefaultsManager()
+	require.NotNil(t, first)
+	require.Same(t, first, lspDefaultsManager())
+
+	resetLSPDefaults()
+	require.NotSame(t, first, lspDefaultsManager())
+}
 
 func TestMain(m *testing.M) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))

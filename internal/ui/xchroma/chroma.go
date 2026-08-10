@@ -16,6 +16,11 @@ import (
 // calls per lookup). The result for a given filename is stable, so we
 // memoize it. This dominated resize cost in large, code-heavy sessions
 // where every diff and code view re-matched on each frame.
+//
+// The cache has no eviction: it grows with the number of DISTINCT
+// filenames highlighted in one process, which a session bounds to at
+// most a few hundred small entries. Revisit if lookups ever become
+// keyed on unbounded input.
 var (
 	lexerCacheMu sync.RWMutex
 	lexerCache   = map[string]chroma.Lexer{}
