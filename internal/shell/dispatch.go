@@ -168,11 +168,14 @@ func isBinary(probe []byte) bool {
 }
 
 // dispatchShebang parses probe's shebang line and execs the resolved
-// interpreter via [runExternal], inheriting the parent runner's cwd,
-// env, and stdio. argv is built per kernel shebang convention: the
-// interpreter's own args, then the script path, then the caller's
-// trailing args. Cancellation handling (process group + SIGINT-then-
-// SIGKILL) is shared with the bare-command path through runExternal.
+// interpreter through the shared process-group exec handler, inheriting
+// the parent runner's cwd, env, and stdio. argv is built per kernel
+// shebang convention: the interpreter's own args, then the script path,
+// then the caller's trailing args. Routing through
+// processGroupExecHandler shares cancellation semantics with the
+// bare-command path: the whole process group is signalled (SIGINT then
+// SIGKILL) so grandchildren are not orphaned, and a cancelled run
+// surfaces ctx.Err() so IsInterrupt recognises it.
 func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args []string) error {
 	sb, err := parseShebang(probe)
 	if err != nil {
@@ -198,27 +201,7 @@ func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args 
 	argv = append(argv, scriptPath)
 	argv = append(argv, args[1:]...)
 
-	hc := interp.HandlerCtx(ctx)
-	cmd := exec.CommandContext(ctx, interpreter, argv[1:]...)
-	cmd.Dir = hc.Dir
-	cmd.Env = execEnvList(hc.Env)
-	cmd.Stdin = hc.Stdin
-	cmd.Stdout = hc.Stdout
-	cmd.Stderr = hc.Stderr
-	isolateProcess(cmd)
-
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			code := exitErr.ExitCode()
-			if code < 0 {
-				code = 1
-			}
-			return interp.ExitStatus(uint8(code))
-		}
-		return err
-	}
-	return nil
+	return processGroupExecHandler(defaultKillTimeout)(ctx, argv)
 }
 
 // resolveInterpreter tries the literal shebang path first, then falls back
