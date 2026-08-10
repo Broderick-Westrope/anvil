@@ -3,7 +3,6 @@
 package mcp
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -690,7 +689,15 @@ func (rt headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 func mcpTimeout(m config.MCPConfig) time.Duration {
-	return time.Duration(cmp.Or(m.Timeout, 15)) * time.Second
+	if m.Timeout > 0 {
+		return time.Duration(m.Timeout) * time.Second
+	}
+	// OAuth flows require user interaction in a browser, so use a
+	// generous default to avoid timing out mid-auth.
+	if m.Auth == config.MCPAuthOAuth {
+		return 30 * time.Second
+	}
+	return 10 * time.Second
 }
 
 func stdioCheck(old *exec.Cmd) error {
