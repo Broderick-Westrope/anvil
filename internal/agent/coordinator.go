@@ -342,6 +342,15 @@ func discoverAgentMDs(builtinFS fs.FS, plugins []*plugin.Plugin) (map[string]pro
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	// Wait for MCP initialization to complete before building the tool list.
+	// Without this, slow-to-start MCP servers (e.g. stdio Python via uv) may
+	// not have registered their tools yet when buildTools reads the registry,
+	// so their tools silently never appear in the LLM tool palette — even
+	// though anvil_info reports them as connected.
+	if err := toolsmcp.WaitForInit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to wait for MCP initialization: %w", err)
+	}
+
 	// refresh models before each run
 	if err := c.UpdateModels(ctx); err != nil {
 		return nil, fmt.Errorf("failed to update models: %w", err)
@@ -717,6 +726,13 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 	})
 
 	wg.Go(func() error {
+		// Wait for MCP servers to finish registering their tools before
+		// building the initial tool list. This ensures the first tool set
+		// (used if anything reads it before Run rebuilds) includes all
+		// MCP tools, not just fast-to-init ones.
+		if err := toolsmcp.WaitForInit(ctx); err != nil {
+			return err
+		}
 		agentTools, lazyMap, buildErr := c.buildTools(ctx, agentCfg, depth)
 		if buildErr != nil {
 			return buildErr
