@@ -123,13 +123,21 @@ func TestRunSubAgent(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)
 
+		// Unlike upstream, CreateTaskSession requires the parent session to
+		// exist, so we can't start from a missing parent. Instead, delete the
+		// parent while the sub-agent runs: output is already produced by the
+		// time updateParentSessionCost fails to look the parent up.
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
+		require.NoError(t, err)
+
 		agent := newMockAgent(providerID, 4096, func(_ context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+			require.NoError(t, env.sessions.Delete(t.Context(), parentSession.ID))
 			return agentResultWithText("output before cost failure"), nil
 		})
 
 		resp, err := coord.runSubAgent(t.Context(), subAgentParams{
 			Agent:          agent,
-			SessionID:      "missing-parent-session",
+			SessionID:      parentSession.ID,
 			AgentMessageID: "msg-1",
 			ToolCallID:     "call-1",
 			Prompt:         "test",
