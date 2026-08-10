@@ -337,9 +337,10 @@ func DisableSingle(cfg *config.ConfigStore, name string) error {
 		closeSession(name, session)
 	}
 
-	// Clear tools and prompts for this MCP.
+	// Clear tools, prompts, and resources for this MCP.
 	updateTools(cfg, name, nil)
 	updatePrompts(name, nil)
+	updateResources(name, nil)
 
 	// Update state to disabled.
 	updateState(name, StateDisabled, nil, nil, Counts{})
