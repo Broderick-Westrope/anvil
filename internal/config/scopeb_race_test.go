@@ -7,21 +7,20 @@ import (
 	"testing"
 )
 
-// TestScopeB_InPlaceMutationRace probes whether the store's in-place field
-// mutators (e.g. SetCompactMode) race with concurrent Config() readers that
-// walk the same field. This is the "Scope B" race left open after the
-// pointer-swap fix. Run with -race.
 // TestScopeB_InPlaceMutationRace verifies that the store's typed field
 // mutators (e.g. SetCompactMode) no longer race concurrent Config()
 // readers walking the same field. Copy-on-write publishing means the
 // mutator swaps in a fresh Config rather than writing through the live
 // pointer, so a reader always sees an immutable snapshot. Run with -race.
+//
+// No t.Parallel: t.Setenv panics when combined with it, and the env
+// redirect is required to keep Load away from the real user config.
 func TestScopeB_InPlaceMutationRace(t *testing.T) {
 	dir := t.TempDir()
-	configPath := filepath.Join(dir, "crush.json")
+	configPath := filepath.Join(dir, "anvil.json")
 
-	t.Setenv("CRUSH_GLOBAL_CONFIG", dir)
-	t.Setenv("CRUSH_GLOBAL_DATA", dir)
+	t.Setenv("ANVIL_GLOBAL_CONFIG", dir)
+	t.Setenv("ANVIL_GLOBAL_DATA", dir)
 	resetProviderState()
 	t.Cleanup(resetProviderState)
 
