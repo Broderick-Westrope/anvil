@@ -309,7 +309,7 @@ func TestCachePathFor(t *testing.T) {
 }
 
 // TestCacheStore_ReplacesFileInsteadOfRewritingIt guards the property that
-// several Crush instances depend on: the provider cache is swapped into place
+// several Anvil instances depend on: the provider cache is swapped into place
 // as a finished file, never truncated and refilled underneath a reader that is
 // already reading it. A reader that loses that race cannot parse the catalog
 // and silently falls back to the bundled copy.

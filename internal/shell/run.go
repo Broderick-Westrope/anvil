@@ -101,14 +101,14 @@ func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writ
 }
 
 // execHandlerOption returns an interp.RunnerOption that installs the
-// standard Crush middleware chain (builtins, script dispatch, block list)
+// standard Anvil middleware chain (builtins, script dispatch, block list)
 // on top of a process-group-isolated base exec handler.
 //
 // We use interp.ExecHandler (singular) with a manually-built chain rather
 // than interp.ExecHandlers because the latter always appends
 // interp.DefaultExecHandler as the final handler, which lacks process group
 // isolation. Without isolation, shells like zsh that set up job control
-// when sourcing framework files can send SIGINT/SIGTERM to Crush's process
+// when sourcing framework files can send SIGINT/SIGTERM to Anvil's process
 // group and crash the parent.
 func execHandlerOption(blockFuncs []BlockFunc) interp.RunnerOption {
 	base := processGroupExecHandler(defaultKillTimeout)

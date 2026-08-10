@@ -38,7 +38,7 @@ func TestRun_CtxCancel_KillsProcessTree(t *testing.T) {
 	scriptPath := filepath.Join(dir, "run.sh")
 
 	// /bin/sh runs as our external command; the inner `sleep` is its
-	// grandchild relative to the Crush process. Pre-fix, killing sh
+	// grandchild relative to the Anvil process. Pre-fix, killing sh
 	// would leave that sleep orphaned. Use 600 so a leaked process is
 	// obviously a leak rather than racing the test's deadline.
 	script := fmt.Sprintf("sleep 600 & echo $! > %q\nwait\n", pidfile)
