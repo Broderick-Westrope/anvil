@@ -141,7 +141,7 @@ func TestLookupConfigs_BoundedByProject(t *testing.T) {
 		require.NotEmpty(t, got)
 		// The system-wide config must be first so it has the lowest
 		// priority when configs are merged.
-		require.Equal(t, "/etc/crush/crush.json", got[0])
+		require.Equal(t, "/etc/anvil/anvil.json", got[0])
 	})
 }
 
@@ -1881,7 +1881,7 @@ func TestConfig_configureSelectedModels(t *testing.T) {
 		store := &ConfigStore{config: cfg, globalDataPath: globalPath}
 		env := env.NewFromMap(map[string]string{})
 		resolver := NewShellVariableResolver(env)
-		err := cfg.configureProviders(context.Background(), store, env, resolver, knownProviders)
+		err := cfg.configureProviders(store, env, resolver, knownProviders)
 		require.NoError(t, err)
 
 		// Simulate the Load path: resolve (pure), then persist fallbacks
