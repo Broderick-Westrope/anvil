@@ -40,7 +40,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 |---|---|---|---|---|
 | 1 | Agent & tool correctness | 15 | **done** | 12 picked, 3 deferred/skipped |
 | 2 | Config, auth & race fixes | 9 | **done** | 8 picked, 1 deferred to batch 3 |
-| 3 | Provider fixes | 11 | **partial** | 5 picked, 6 blocked on dep bump |
+| 3 | Provider fixes | 11 | **done** | 9 picked, 1 N/A, 1 folded into dep bump |
 | 4 | Performance | 12 | pending | |
 | 5 | UI fixes | 15 | pending | |
 | 6 | MCP fixes | 5 | pending | |
@@ -53,7 +53,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 13 | Tool call expansion UI | 2 | pending | optional |
 | 14 | Attachment chip remove button | 4 | pending | optional |
 | 15 | Misc features | 5 | pending | optional |
-| 16 | Dep bump (fantasy/catwalk) | 1 | **promoted** | must run before the rest of batch 3 |
+| 16 | Dep bump (fantasy/catwalk) | 1 | **done** | ran after batch 3's first pass; unblocked 5 commits |
 
 ---
 
@@ -172,7 +172,9 @@ update. Worth revisiting if we adopt the rest of upstream's config-locking chain
 
 ## Batch 3 — Provider fixes
 
-**Status: partial.** 5 cherry-picked, 6 blocked on the dependency bump.
+**Status: done.** 9 cherry-picked, 1 not applicable, 1 absorbed by the dep bump.
+
+The dependency bump (batch 16) was promoted and run mid-batch; see below.
 
 Also reconsider `63dc1f01` (deferred from batch 2) alongside `64bbbebc`; both concern OAuth
 refresh and the auth-complete signal.
@@ -217,6 +219,55 @@ Batch 16 is therefore promoted: run the bump, then replay these six, then `63dc1
   and Alibaba-US branches from commits we cannot apply yet.
 - **`8db57337`** — the code change is version-independent, but `go.mod`/`go.sum` conflicted; we
   keep our pins and let batch 16 move versions. Blocked regardless (see table).
+
+### The dependency bump
+
+Six commits needed symbols absent from our pins, so batch 16 was promoted and run here:
+
+- `catwalk v0.44.28` -> `v0.51.6` (adds `InferenceProviderBaseten`, `InferenceProviderAlibabaUS`,
+  `InferenceProviderFireworks`)
+- `fantasy v0.31.1` -> `v0.40.0` (adds `OnAuthRefresh`, `ModelProvider`, `IsTransportError`,
+  `NewTransportError`)
+
+The fantasy bump forced a second change: fantasy now uses `github.com/openai/openai-go/v3`, while
+we still imported the `github.com/charmbracelet/openai-go` fork, and the two `option.RequestOption`
+types are not interchangeable. Swapping the import in `coordinator_providers.go` folds in the
+intent of upstream `14483cac` ("switch back to upstream openai sdk"), so that commit needs no
+separate pick. `d0dc9fc9` ("prepare for gpt-5.6") is likewise pure go.mod/go.sum and is subsumed.
+
+Both bumps were committed separately (`fc87244f`, `565e439a`) with a full `go test ./...` between
+them, so a regression can be bisected to one dependency.
+
+### Not applied
+
+| Commit | Disposition | Reason |
+|---|---|---|
+| `d341d84b` | not applicable | Edits Alibaba branches in `getProviderOptions`. Our fork has no Alibaba handling at all (`grep -r Alibaba internal/` is empty); it arrives with `ebf6e826`, batch 7. Re-evaluate there. |
+| `d0dc9fc9` | absorbed | go.mod/go.sum only; covered by the bump above. |
+
+### Adaptations worth remembering
+
+- **`8ccf6945`** — upstream keeps `copilotResponsesModels` in `coordinator.go`; ours lives in
+  `coordinator_providers.go`. Git offered to insert a whole duplicate map into `coordinator.go`;
+  the correct resolution was to drop the block and add only the three new model IDs to the
+  existing map. Watch for this whenever upstream touches those two maps.
+- **`a882695e`** — took only the OpenCodeGo/Zen case; the same hunk carried Baseten and
+  Alibaba-US branches that did not apply at the time.
+- **`3ac7f1c4` + `aca40878`** — applied by hand as a single squashed change after the bump. Both
+  touch the same three lines and their conflict hunks were tangled with batch-7 content
+  (Fireworks, Alibaba, the auto-discovery `default:` branch), so replaying them as cherry-picks
+  produced more conflict than signal.
+- **`64bbbebc`** — only the auth-refresh mechanism was taken. `internal/config/store.go`
+  (`WaitForTokenChange` / `SignalAuthComplete`), `internal/oauth/token.go` (`TokenExchangeError`),
+  `hyper/device.go`, and `app_workspace.go` applied cleanly. `agent.go` and `coordinator.go` were
+  reverted and hand-edited, because upstream's version is interleaved with client/server plumbing
+  (`RunID`, `OnComplete`, `Accepted`, `acceptSeq`, `notify.RunComplete`) and a different
+  skill-tracking shape. Added: the `OnAuthRefresh` field on `SessionAgentCall`, `OnAuthRefresh` +
+  `ModelProvider` on the stream call, `makeAuthRefreshCallback`, and wiring at both `Run` sites.
+  Upstream's two debug `slog.Info` calls ("ModelProvider called", "Agent stream returned error")
+  were left out as clear debugging leftovers.
+- **`8db57337`** — code applied cleanly once the dep bump landed; only go.mod/go.sum conflicted
+  and we keep our own pins.
 
 ## Batch 4 — Performance
 
