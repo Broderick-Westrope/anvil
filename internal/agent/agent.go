@@ -89,6 +89,13 @@ type SessionAgentCall struct {
 	// message (and any empty assistant message) from history so the
 	// prompt is sent exactly once.
 	skipCreateMessage bool
+
+	// OnAuthRefresh, when non-nil, is called by fantasy when a stream
+	// fails with an authentication error (HTTP 401). The callback should
+	// refresh credentials and return nil on success, in which case
+	// fantasy retries the stream transparently. Returning an error
+	// surfaces the original auth error without retry.
+	OnAuthRefresh func(ctx context.Context, err *fantasy.ProviderError) error
 }
 
 type SessionAgent interface {
@@ -483,6 +490,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if updateErr := a.messages.Update(genCtx, *currentAssistant); updateErr != nil {
 				slog.Error("Failed to reset message on retry", "error", updateErr)
 			}
+		},
+		OnAuthRefresh: call.OnAuthRefresh,
+		// ModelProvider is re-read on each attempt so a stream retried
+		// after OnAuthRefresh picks up the model rebuilt against the
+		// refreshed credentials rather than the stale one.
+		ModelProvider: func() fantasy.LanguageModel {
+			return a.largeModel.Get().Model
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
 			input, wasSanitized := sanitizeToolInput(tc.ToolName, tc.ToolCallID, tc.Input)
