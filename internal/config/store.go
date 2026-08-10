@@ -400,25 +400,20 @@ func (s *ConfigStore) OverridePreferredModel(modelType SelectedModelType, model 
 // RemoveConfigField removes a key from the config file for the given scope.
 // After a successful write, it automatically reloads config to keep in-memory
 // state fresh.
+//
+// The read-modify-write goes through atomicWrite so it is serialised (via
+// mu) against concurrent writers like SetConfigFields, and readers never
+// observe a torn file. Removing a key from a missing file is a no-op write
+// of the empty object rather than an error, making removal idempotent.
 func (s *ConfigStore) RemoveConfigField(scope Scope, key string) error {
-	path, err := s.configPath(scope)
-	if err != nil {
-		return fmt.Errorf("%s: %w", key, err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	newValue, err := sjson.Delete(string(data), key)
-	if err != nil {
-		return fmt.Errorf("failed to delete config field %s: %w", key, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("failed to create config directory %q: %w", path, err)
-	}
-	if err := os.WriteFile(path, []byte(newValue), 0o600); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+	if err := s.atomicWrite(scope, func(data []byte) ([]byte, error) {
+		newValue, err := sjson.Delete(string(data), key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to delete config field %s: %w", key, err)
+		}
+		return []byte(newValue), nil
+	}); err != nil {
+		return err
 	}
 
 	// Auto-reload to keep in-memory state fresh after config edits.
