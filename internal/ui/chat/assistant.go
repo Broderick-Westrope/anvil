@@ -448,10 +448,13 @@ func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
 func (a *AssistantMessageItem) thinkingHashIncremental(thinking string) uint64 {
 	// Detect divergence: if the saved sample no longer matches the
 	// start of the current text, the content was rewritten (retry)
-	// and we must re-hash from scratch.
-	sampleLen := min(len(thinking), 64)
+	// and we must re-hash from scratch. Compare against the sample's
+	// own length: while the text is still shorter than the 64-byte
+	// sample cap, the sample from the previous tick is shorter than
+	// min(len(thinking), 64), and slicing to the latter would make the
+	// guard fail on every append and full-rehash each tick.
 	if a.thinkingHashLen > 0 && len(thinking) >= a.thinkingHashLen &&
-		thinking[:sampleLen] == a.thinkingHashSample {
+		thinking[:len(a.thinkingHashSample)] == a.thinkingHashSample {
 		// Fast path: continue hashing from saved state.
 		h := a.thinkingHash
 		for i := a.thinkingHashLen; i < len(thinking); i++ {
@@ -460,13 +463,18 @@ func (a *AssistantMessageItem) thinkingHashIncremental(thinking string) uint64 {
 		}
 		a.thinkingHash = h
 		a.thinkingHashLen = len(thinking)
+		// Grow the sample toward the 64-byte cap as the text grows, so
+		// divergence detection strengthens beyond the first few bytes.
+		if len(a.thinkingHashSample) < 64 {
+			a.thinkingHashSample = thinking[:min(len(thinking), 64)]
+		}
 		return h
 	}
 	// Full re-hash (first call, or text diverged/shrank).
 	h := fnv64(thinking)
 	a.thinkingHash = h
 	a.thinkingHashLen = len(thinking)
-	a.thinkingHashSample = thinking[:sampleLen]
+	a.thinkingHashSample = thinking[:min(len(thinking), 64)]
 	return h
 }
 

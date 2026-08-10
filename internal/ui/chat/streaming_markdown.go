@@ -205,21 +205,23 @@ func (s *streamingMarkdown) isSafeBoundaryIncremental(content string, p int) boo
 		return false
 	}
 
+	// Both the list hazard (2b) and the open-construct check (3) need
+	// the last non-blank line before the boundary. Compute the backward
+	// scan once; it walks the full prefix and this is the per-delta hot
+	// path.
+	lastLine := lastNonBlankLine(content[:p])
+
 	// (2b) List hazard: if a list marker exists anywhere in the
 	// full prefix (base OR delta), the last non-blank line before
 	// the boundary must not be an indented continuation paragraph.
 	hasListMarker := s.baseHasListMarker || chunkHasListMarker(delta)
-	if hasListMarker {
-		lastLine := lastNonBlankLine(content[:p])
-		if lastLine != "" && !isListItemMarker(strings.TrimLeft(lastLine, " \t")) {
-			if len(lastLine) > 0 && (lastLine[0] == ' ' || lastLine[0] == '\t') {
-				return false
-			}
+	if hasListMarker && lastLine != "" && !isListItemMarker(strings.TrimLeft(lastLine, " \t")) {
+		if lastLine[0] == ' ' || lastLine[0] == '\t' {
+			return false
 		}
 	}
 
 	// (3) Last non-blank line must not open a construct.
-	lastLine := lastNonBlankLine(content[:p])
 	if lastLine != "" && lineOpensConstruct(lastLine) {
 		return false
 	}
