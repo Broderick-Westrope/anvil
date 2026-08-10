@@ -12,6 +12,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -88,6 +89,13 @@ type SessionAgentCall struct {
 	// message (and any empty assistant message) from history so the
 	// prompt is sent exactly once.
 	skipCreateMessage bool
+
+	// OnAuthRefresh, when non-nil, is called by fantasy when a stream
+	// fails with an authentication error (HTTP 401). The callback should
+	// refresh credentials and return nil on success, in which case
+	// fantasy retries the stream transparently. Returning an error
+	// surfaces the original auth error without retry.
+	OnAuthRefresh func(ctx context.Context, err *fantasy.ProviderError) error
 }
 
 type SessionAgent interface {
@@ -115,6 +123,15 @@ type Model struct {
 	FlatRate   bool
 }
 
+// activeCancel wraps a context.CancelFunc with a unique pointer identity.
+// The pointer is used for compare-and-delete in the dispatch completion path:
+// when a finishing run's deferred cleanup fires, it must only remove its own
+// entry — not a newer run's entry that was installed in the window between
+// the explicit Del and the function return.
+type activeCancel struct {
+	cancel context.CancelFunc
+}
+
 type sessionAgent struct {
 	largeModel         *csync.Value[Model]
 	smallModel         *csync.Value[Model]
@@ -133,7 +150,7 @@ type sessionAgent struct {
 	providerConfig       *csync.Value[config.ProviderConfig]
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
-	activeRequests *csync.Map[string, context.CancelFunc]
+	activeRequests *csync.Map[string, *activeCancel]
 }
 
 type SessionAgentOptions struct {
@@ -171,7 +188,7 @@ func NewSessionAgent(
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
-		activeRequests:       csync.NewMap[string, context.CancelFunc](),
+		activeRequests:       csync.NewMap[string, *activeCancel](),
 	}
 }
 
@@ -299,10 +316,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
 
 	genCtx, cancel := context.WithCancel(ctx)
-	a.activeRequests.Set(call.SessionID, cancel)
+	ac := &activeCancel{cancel: cancel}
+	a.activeRequests.Set(call.SessionID, ac)
 
 	defer cancel()
-	defer a.activeRequests.Del(call.SessionID)
+	// Conditional cleanup: only remove our entry if it hasn't been replaced
+	// by a newer run. Without this guard, the deferred Del fires after a
+	// concurrent run registers in the completion window, silently wiping
+	// the new run's cancel and breaking cancellation.
+	defer a.activeRequests.CompareAndDelete(call.SessionID, ac)
 	// Drain any debounced message updates before returning. message.Service
 	// already flushes synchronously on terminal updates, but a defer here
 	// guarantees the contract at every Run exit (success, error, panic
@@ -318,6 +340,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	var currentAssistant *message.Message
 	var stepMessages []fantasy.Message
 	var shouldSummarize bool
+	sanitizedToolCalls := make(map[string]bool)
+	// OnToolCall writes this map while OnToolResult reads it, and tool
+	// execution may run in parallel goroutines, so guard both sides.
+	var sanitizedMu sync.Mutex
 	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
 	var maxOutputTokens *int64
 	if call.MaxOutputTokens > 0 {
@@ -456,12 +482,33 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
+			// Reset streamed content so the retried response doesn't
+			// concatenate with partial content from the failed attempt.
+			// On the final attempt (no more retries), any partial content
+			// stays in the message as useful context beneath the error.
+			currentAssistant.ResetStreamedContent()
+			if updateErr := a.messages.Update(genCtx, *currentAssistant); updateErr != nil {
+				slog.Error("Failed to reset message on retry", "error", updateErr)
+			}
+		},
+		OnAuthRefresh: call.OnAuthRefresh,
+		// ModelProvider is re-read on each attempt so a stream retried
+		// after OnAuthRefresh picks up the model rebuilt against the
+		// refreshed credentials rather than the stale one.
+		ModelProvider: func() fantasy.LanguageModel {
+			return a.largeModel.Get().Model
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
+			input, wasSanitized := sanitizeToolInput(tc.ToolName, tc.ToolCallID, tc.Input)
+			if wasSanitized {
+				sanitizedMu.Lock()
+				sanitizedToolCalls[tc.ToolCallID] = true
+				sanitizedMu.Unlock()
+			}
 			toolCall := message.ToolCall{
 				ID:               tc.ToolCallID,
 				Name:             tc.ToolName,
-				Input:            tc.Input,
+				Input:            input,
 				ProviderExecuted: false,
 				Finished:         true,
 			}
@@ -472,6 +519,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
+			sanitizedMu.Lock()
+			wasSanitized := sanitizedToolCalls[result.ToolCallID]
+			sanitizedMu.Unlock()
+			if wasSanitized {
+				toolResult.Content = "Tool call failed: arguments were not valid JSON. Please check your tool call format and try again."
+				toolResult.IsError = true
+			}
 			// Hold sessionLock across the entire read→create→update
 			// sequence. OnToolResult may be called from parallel
 			// tool-execution goroutines; without the lock two goroutines
@@ -493,6 +547,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
+			for _, w := range stepResult.Warnings {
+				slog.Warn("Provider warning", "type", w.Type, "message", w.Message)
+			}
 			finishReason := message.FinishReasonUnknown
 			switch stepResult.FinishReason {
 			case fantasy.FinishReasonLength:
@@ -657,6 +714,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 		} else if errors.As(err, &fantasyErr) {
 			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), defaultTitle), fantasyErr.Message)
+		} else if fantasy.IsTransportError(err) {
+			wrapped := fantasy.NewTransportError(err)
+			currentAssistant.AddFinish(message.FinishReasonError, stringext.Capitalize(wrapped.Title), wrapped.Message)
 		} else {
 			currentAssistant.AddFinish(message.FinishReasonError, defaultTitle, err.Error())
 		}
@@ -677,7 +737,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	}
 
 	if shouldSummarize {
-		a.activeRequests.Del(call.SessionID)
+		a.activeRequests.CompareAndDelete(call.SessionID, ac)
 		if summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
 			return nil, summarizeErr
 		}
@@ -715,7 +775,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// TUI handlers poll IsSessionBusy() and only re-evaluate when a
 	// tea.Msg arrives, so the cleanup must precede the notify or
 	// subscribers see stale busy state at the moment of receipt.
-	a.activeRequests.Del(call.SessionID)
+	a.activeRequests.CompareAndDelete(call.SessionID, ac)
 	cancel()
 
 	// Send notification that agent has finished its turn (skip for
@@ -764,8 +824,9 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	aiMsgs, _ := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages)
 
 	genCtx, cancel := context.WithCancel(ctx)
-	a.activeRequests.Set(sessionID, cancel)
-	defer a.activeRequests.Del(sessionID)
+	ac := &activeCancel{cancel: cancel}
+	a.activeRequests.Set(sessionID, ac)
+	defer a.activeRequests.CompareAndDelete(sessionID, ac)
 	defer cancel()
 	defer func() {
 		if flushErr := a.messages.FlushAll(ctx); flushErr != nil {
@@ -904,7 +965,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	// Release the active request before processing queued messages so that
 	// Run() does not see the session as busy.
-	a.activeRequests.Del(sessionID)
+	a.activeRequests.CompareAndDelete(sessionID, ac)
 	cancel()
 
 	// Process any messages that were queued while summarizing.
@@ -1236,15 +1297,23 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 		return
 	}
 
+	// Ensure the session always gets a title even if every path below
+	// fails or the context is cancelled before we finish.
+	var titleSaved bool
+	defer func() {
+		if !titleSaved {
+			fallbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := a.sessions.Rename(fallbackCtx, sessionID, DefaultSessionName, false); err != nil {
+				slog.Error("Failed to save fallback session title", "error", err)
+			}
+		}
+	}()
+
 	smallModel := a.smallModel.Get()
 	largeModel := a.largeModel.Get()
 	systemPromptPrefix := a.systemPromptPrefix.Get()
 	providerCfg := a.providerConfig.Get()
-
-	var maxOutputTokens int64 = 40
-	if smallModel.CatwalkCfg.CanReason {
-		maxOutputTokens = smallModel.CatwalkCfg.DefaultMaxTokens
-	}
 
 	newAgent := func(m fantasy.LanguageModel, p []byte, tok int64) fantasy.Agent {
 		return fantasy.NewAgent(m,
@@ -1270,41 +1339,40 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 		},
 	}
 
-	// Use the small model to generate the title.
-	model := smallModel
-	agent := newAgent(model.Model, titlePrompt, maxOutputTokens)
-	resp, err := agent.Stream(ctx, streamCall)
-	if err == nil {
-		// We successfully generated a title with the small model.
-		slog.Debug("Generated title with small model")
-	} else {
-		// It didn't work. Let's try with the big model.
-		slog.Error("Error generating title with small model; trying big model", "err", err)
-		model = largeModel
-		agent = newAgent(model.Model, titlePrompt, maxOutputTokens)
-		resp, err = agent.Stream(ctx, streamCall)
-		if err == nil {
-			slog.Debug("Generated title with large model")
-		} else {
-			// Welp, the large model didn't work either. Use the default
-			// session name and return.
-			slog.Error("Error generating title with large model", "err", err)
-			saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName, false)
-			if saveErr != nil {
-				slog.Error("Failed to save session title", "error", saveErr)
-			}
-			return
-		}
+	type modelAttempt struct {
+		name  string
+		model Model
+	}
+	attempts := []modelAttempt{
+		{"small", smallModel},
+		{"large", largeModel},
 	}
 
-	if resp == nil {
-		// Actually, we didn't get a response so we can't. Use the default
-		// session name and return.
-		slog.Error("Response is nil; can't generate title")
-		saveErr := a.sessions.Rename(ctx, sessionID, DefaultSessionName, false)
-		if saveErr != nil {
-			slog.Error("Failed to save session title", "error", saveErr)
+	var resp *fantasy.AgentResult
+	var err error
+	var model Model
+	var success bool
+	for _, attempt := range attempts {
+		tok := int64(40)
+		if attempt.model.CatwalkCfg.CanReason {
+			tok = attempt.model.CatwalkCfg.DefaultMaxTokens
 		}
+		agent := newAgent(attempt.model.Model, titlePrompt, tok)
+		resp, err = agent.Stream(ctx, streamCall)
+		if err == nil && resp.Response.FinishReason != fantasy.FinishReasonLength {
+			model = attempt.model
+			slog.Debug("Generated title with " + attempt.name + " model")
+			success = true
+			break
+		}
+		if err != nil {
+			slog.Error("Error generating title with "+attempt.name+" model; trying next", "err", err)
+		} else {
+			slog.Error("Title generation hit token limit with " + attempt.name + " model; trying next")
+		}
+	}
+	if !success {
+		// The deferred fallback will save the default session name.
 		return
 	}
 
@@ -1358,6 +1426,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 		slog.Error("Failed to save session title and usage", "error", saveErr)
 		return
 	}
+	titleSaved = true
 }
 
 func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float64 {
@@ -1423,15 +1492,11 @@ func (a *sessionAgent) Cancel(sessionID string) {
 	// remain in activeRequests so IsBusy() returns true until the goroutine
 	// fully completes (including error handling that may access the DB).
 	// The defer in processRequest will clean up the entry.
-	if cancel, ok := a.activeRequests.Get(sessionID); ok && cancel != nil {
+	// Summarize registers under the same plain sessionID key, so this
+	// single lookup also cancels an in-flight summarize.
+	if ac, ok := a.activeRequests.Get(sessionID); ok && ac != nil {
 		slog.Debug("Request cancellation initiated", "session_id", sessionID)
-		cancel()
-	}
-
-	// Also check for summarize requests.
-	if cancel, ok := a.activeRequests.Get(sessionID + "-summarize"); ok && cancel != nil {
-		slog.Debug("Summarize cancellation initiated", "session_id", sessionID)
-		cancel()
+		ac.cancel()
 	}
 
 	if a.QueuedPrompts(sessionID) > 0 {
@@ -1468,8 +1533,8 @@ func (a *sessionAgent) CancelAll() {
 
 func (a *sessionAgent) IsBusy() bool {
 	var busy bool
-	for cancelFunc := range a.activeRequests.Seq() {
-		if cancelFunc != nil {
+	for ac := range a.activeRequests.Seq() {
+		if ac != nil {
 			busy = true
 			break
 		}
@@ -1599,6 +1664,8 @@ func (a *sessionAgent) workaroundProviderMediaLimitations(messages []fantasy.Mes
 		return messages
 	}
 
+	supportsImages := largeModel.CatwalkCfg.SupportsImages
+
 	convertedMessages := make([]fantasy.Message, 0, len(messages))
 
 	for _, msg := range messages {
@@ -1618,6 +1685,21 @@ func (a *sessionAgent) workaroundProviderMediaLimitations(messages []fantasy.Mes
 			}
 
 			if media, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentMedia](toolResult.Output); ok {
+				if !supportsImages {
+					// Model cannot process images. Replace with a text
+					// placeholder and skip creating a synthetic user
+					// message with FilePart, which would brick the
+					// session on text-only models.
+					textParts = append(textParts, fantasy.ToolResultPart{
+						ToolCallID: toolResult.ToolCallID,
+						Output: fantasy.ToolResultOutputContentText{
+							Text: "[Image/media content not supported by this model]",
+						},
+						ProviderOptions: toolResult.ProviderOptions,
+					})
+					continue
+				}
+
 				decoded, err := base64.StdEncoding.DecodeString(media.Data)
 				if err != nil {
 					slog.Warn("Failed to decode media data", "error", err)
@@ -1689,4 +1771,20 @@ func providerRetryLogFields(err *fantasy.ProviderError, delay time.Duration) []a
 		fields = append(fields, "message", err.Message)
 	}
 	return fields
+}
+
+// sanitizeToolInput validates tool call JSON from the provider.
+// Malformed input is replaced with an empty object to prevent
+// stuck conversations from truncated or malformed model output.
+// The second return value indicates whether sanitization occurred.
+func sanitizeToolInput(toolName, toolCallID, input string) (string, bool) {
+	if !json.Valid([]byte(input)) {
+		slog.Warn("Malformed tool call JSON from provider, replacing with empty object",
+			"tool", toolName,
+			"id", toolCallID,
+			"input_len", len(input),
+		)
+		return "{}", true
+	}
+	return input, false
 }

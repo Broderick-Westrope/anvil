@@ -321,7 +321,11 @@ func (w *AppWorkspace) SetCompactMode(scope config.Scope, enabled bool) error {
 }
 
 func (w *AppWorkspace) SetProviderAPIKey(scope config.Scope, providerID string, apiKey any) error {
-	return w.store.SetProviderAPIKey(scope, providerID, apiKey)
+	if err := w.store.SetProviderAPIKey(scope, providerID, apiKey); err != nil {
+		return err
+	}
+	w.store.SignalAuthComplete(providerID)
+	return nil
 }
 
 func (w *AppWorkspace) SetConfigField(scope config.Scope, key string, value any) error {
@@ -422,13 +426,13 @@ func (w *AppWorkspace) EnableDockerMCP(ctx context.Context) error {
 
 	if err := mcptools.InitializeSingle(ctx, config.DockerMCPName, w.store, nil); err != nil {
 		disableErr := mcptools.DisableSingle(w.store, config.DockerMCPName)
-		delete(w.store.Config().MCP, config.DockerMCPName)
+		w.store.RemoveDockerMCPInMemory()
 		return fmt.Errorf("failed to start docker MCP: %w", errors.Join(err, disableErr))
 	}
 
 	if err := w.store.PersistDockerMCPConfig(mcpConfig); err != nil {
 		disableErr := mcptools.DisableSingle(w.store, config.DockerMCPName)
-		delete(w.store.Config().MCP, config.DockerMCPName)
+		w.store.RemoveDockerMCPInMemory()
 		return fmt.Errorf("docker MCP started but failed to persist configuration: %w", errors.Join(err, disableErr))
 	}
 

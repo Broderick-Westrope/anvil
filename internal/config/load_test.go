@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
@@ -128,6 +130,18 @@ func TestLookupConfigs_BoundedByProject(t *testing.T) {
 		// even when no project file exists.
 		require.Contains(t, got, GlobalConfig())
 		require.Contains(t, got, GlobalConfigData())
+	})
+
+	t.Run("system config is loaded first", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("system config not supported on Windows")
+		}
+
+		got := lookupConfigs(t.TempDir())
+		require.NotEmpty(t, got)
+		// The system-wide config must be first so it has the lowest
+		// priority when configs are merged.
+		require.Equal(t, "/etc/anvil/anvil.json", got[0])
 	})
 }
 
@@ -1666,14 +1680,17 @@ func TestConfig_configureSelectedModels(t *testing.T) {
 		err := cfg.configureProviders(store, env, resolver, knownProviders)
 		require.NoError(t, err)
 
-		err = configureSelectedModels(store, knownProviders, false)
-		require.NoError(t, err)
+		resolved, resolveErr := resolveSelectedModels(cfg, knownProviders)
+		require.NoError(t, resolveErr)
+		cfg.Models[SelectedModelTypeLarge] = resolved.Large
+		cfg.Models[SelectedModelTypeSmall] = resolved.Small
 
 		// In-memory falls back to default.
+		require.True(t, resolved.LargeFallback)
 		require.Equal(t, "openai", cfg.Models[SelectedModelTypeLarge].Provider)
 		require.Equal(t, "large-model", cfg.Models[SelectedModelTypeLarge].Model)
 
-		// Disk remains unchanged in reload mode.
+		// Disk remains unchanged (resolveSelectedModels never persists).
 		data, readErr := os.ReadFile(globalPath)
 		require.NoError(t, readErr)
 		require.Contains(t, string(data), `"provider":"ghost"`)
@@ -1716,8 +1733,10 @@ func TestConfig_configureSelectedModels(t *testing.T) {
 		err := cfg.configureProviders(testStore(cfg), env, resolver, knownProviders)
 		require.NoError(t, err)
 
-		err = configureSelectedModels(testStore(cfg), knownProviders, true)
-		require.NoError(t, err)
+		resolved, resolveErr := resolveSelectedModels(cfg, knownProviders)
+		require.NoError(t, resolveErr)
+		cfg.Models[SelectedModelTypeLarge] = resolved.Large
+		cfg.Models[SelectedModelTypeSmall] = resolved.Small
 		large := cfg.Models[SelectedModelTypeLarge]
 		small := cfg.Models[SelectedModelTypeSmall]
 		require.Equal(t, "larger-model", large.Model)
@@ -1778,8 +1797,10 @@ func TestConfig_configureSelectedModels(t *testing.T) {
 		err := cfg.configureProviders(testStore(cfg), env, resolver, knownProviders)
 		require.NoError(t, err)
 
-		err = configureSelectedModels(testStore(cfg), knownProviders, true)
-		require.NoError(t, err)
+		resolved, resolveErr := resolveSelectedModels(cfg, knownProviders)
+		require.NoError(t, resolveErr)
+		cfg.Models[SelectedModelTypeLarge] = resolved.Large
+		cfg.Models[SelectedModelTypeSmall] = resolved.Small
 		large := cfg.Models[SelectedModelTypeLarge]
 		small := cfg.Models[SelectedModelTypeSmall]
 		require.Equal(t, "large-model", large.Model)
@@ -1823,12 +1844,90 @@ func TestConfig_configureSelectedModels(t *testing.T) {
 		err := cfg.configureProviders(testStore(cfg), env, resolver, knownProviders)
 		require.NoError(t, err)
 
-		err = configureSelectedModels(testStore(cfg), knownProviders, true)
-		require.NoError(t, err)
+		resolved, resolveErr := resolveSelectedModels(cfg, knownProviders)
+		require.NoError(t, resolveErr)
+		cfg.Models[SelectedModelTypeLarge] = resolved.Large
+		cfg.Models[SelectedModelTypeSmall] = resolved.Small
 		large := cfg.Models[SelectedModelTypeLarge]
 		require.Equal(t, "large-model", large.Model)
 		require.Equal(t, "openai", large.Provider)
 		require.Equal(t, int64(100), large.MaxTokens)
+	})
+	t.Run("resolve and persist fallback under writeMu does not deadlock", func(t *testing.T) {
+		dir := t.TempDir()
+		globalPath := filepath.Join(dir, "anvil.json")
+		require.NoError(t, os.WriteFile(globalPath, []byte(`{}`), 0o600))
+
+		knownProviders := []catwalk.Provider{
+			{
+				ID:                  "openai",
+				APIKey:              "abc",
+				DefaultLargeModelID: "large-model",
+				DefaultSmallModelID: "small-model",
+				Models: []catwalk.Model{
+					{ID: "large-model", DefaultMaxTokens: 1000},
+					{ID: "small-model", DefaultMaxTokens: 500},
+				},
+			},
+		}
+
+		cfg := &Config{
+			Models: map[SelectedModelType]SelectedModel{
+				SelectedModelTypeLarge: {Provider: "openai", Model: "this-model-does-not-exist"},
+				SelectedModelTypeSmall: {Provider: "openai", Model: "also-does-not-exist"},
+			},
+		}
+		cfg.setDefaults(dir, "")
+		store := &ConfigStore{config: cfg, globalDataPath: globalPath}
+		env := env.NewFromMap(map[string]string{})
+		resolver := NewShellVariableResolver(env)
+		err := cfg.configureProviders(store, env, resolver, knownProviders)
+		require.NoError(t, err)
+
+		// Simulate the Load path: resolve (pure), then persist fallbacks
+		// under writeMu using updateLocked. Before the refactor, the
+		// combined configureSelectedModels(persist=true) self-deadlocked
+		// because UpdatePreferredModel re-acquired writeMu.
+		done := make(chan error, 1)
+		go func() {
+			resolved, resolveErr := resolveSelectedModels(cfg, knownProviders)
+			if resolveErr != nil {
+				done <- resolveErr
+				return
+			}
+			cfg.Models[SelectedModelTypeLarge] = resolved.Large
+			cfg.Models[SelectedModelTypeSmall] = resolved.Small
+
+			store.writeMu.Lock()
+			defer store.writeMu.Unlock()
+			if resolved.LargeFallback {
+				if err := store.updateLocked(ScopeGlobal, func(c *Config) map[string]any {
+					return store.updatePreferredModelFields(c, SelectedModelTypeLarge, resolved.Large)
+				}); err != nil {
+					done <- err
+					return
+				}
+			}
+			if resolved.SmallFallback {
+				if err := store.updateLocked(ScopeGlobal, func(c *Config) map[string]any {
+					return store.updatePreferredModelFields(c, SelectedModelTypeSmall, resolved.Small)
+				}); err != nil {
+					done <- err
+					return
+				}
+			}
+			done <- nil
+		}()
+
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+			// Should have fallen back to defaults.
+			require.Equal(t, "large-model", cfg.Models[SelectedModelTypeLarge].Model)
+			require.Equal(t, "small-model", cfg.Models[SelectedModelTypeSmall].Model)
+		case <-time.After(5 * time.Second):
+			t.Fatal("resolve + persist deadlocked under writeMu")
+		}
 	})
 }
 

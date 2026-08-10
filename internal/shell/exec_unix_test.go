@@ -29,7 +29,7 @@ import (
 // parent. Without the fix, the kernel reparents the grandchild to PID 1
 // when the parent is killed and the grandchild keeps running. We probe
 // for liveness with kill(pid, 0) (ESRCH means gone) on a deadline that
-// includes killTimeout plus a small wall-clock fudge for the reaper.
+// includes defaultKillTimeout plus a small wall-clock fudge for the reaper.
 func TestRun_CtxCancel_KillsProcessTree(t *testing.T) {
 	t.Parallel()
 
@@ -38,7 +38,7 @@ func TestRun_CtxCancel_KillsProcessTree(t *testing.T) {
 	scriptPath := filepath.Join(dir, "run.sh")
 
 	// /bin/sh runs as our external command; the inner `sleep` is its
-	// grandchild relative to the Crush process. Pre-fix, killing sh
+	// grandchild relative to the Anvil process. Pre-fix, killing sh
 	// would leave that sleep orphaned. Use 600 so a leaked process is
 	// obviously a leak rather than racing the test's deadline.
 	script := fmt.Sprintf("sleep 600 & echo $! > %q\nwait\n", pidfile)
@@ -71,18 +71,18 @@ func TestRun_CtxCancel_KillsProcessTree(t *testing.T) {
 		if err != nil && !IsInterrupt(err) {
 			t.Fatalf("Run returned unexpected error: %v", err)
 		}
-	case <-time.After(killTimeout + 5*time.Second):
+	case <-time.After(defaultKillTimeout + 5*time.Second):
 		t.Fatal("Run did not return after ctx cancel")
 	}
 
-	deadline := time.Now().Add(killTimeout + 3*time.Second)
+	deadline := time.Now().Add(defaultKillTimeout + 3*time.Second)
 	for time.Now().Before(deadline) {
 		if err := unix.Kill(pid, 0); errors.Is(err, unix.ESRCH) {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("grandchild pid %d still alive %v after cancel; the process group fix did not reach it", pid, killTimeout+3*time.Second)
+	t.Fatalf("grandchild pid %d still alive %v after cancel; the process group fix did not reach it", pid, defaultKillTimeout+3*time.Second)
 }
 
 // TestRun_CtxCancel_ReturnsContextErr verifies that a cancelled external
@@ -113,7 +113,7 @@ func TestRun_CtxCancel_ReturnsContextErr(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected context.Canceled, got %v", err)
 		}
-	case <-time.After(killTimeout + 3*time.Second):
+	case <-time.After(defaultKillTimeout + 3*time.Second):
 		t.Fatal("Run did not return after ctx cancel")
 	}
 }

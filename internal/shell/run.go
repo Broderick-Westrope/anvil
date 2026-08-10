@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/moreinterp/coreutils"
@@ -95,8 +96,27 @@ func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writ
 		interp.Interactive(false),
 		interp.Env(expand.ListEnviron(env...)),
 		interp.Dir(cwd),
-		interp.ExecHandlers(standardHandlers(blockFuncs)...),
+		execHandlerOption(blockFuncs),
 	)
+}
+
+// execHandlerOption returns an interp.RunnerOption that installs the
+// standard Anvil middleware chain (builtins, script dispatch, block list)
+// on top of a process-group-isolated base exec handler.
+//
+// We use interp.ExecHandler (singular) with a manually-built chain rather
+// than interp.ExecHandlers because the latter always appends
+// interp.DefaultExecHandler as the final handler, which lacks process group
+// isolation. Without isolation, shells like zsh that set up job control
+// when sourcing framework files can send SIGINT/SIGTERM to Anvil's process
+// group and crash the parent.
+func execHandlerOption(blockFuncs []BlockFunc) interp.RunnerOption {
+	base := processGroupExecHandler(defaultKillTimeout)
+	handler := base
+	for _, mw := range slices.Backward(standardHandlers(blockFuncs)) {
+		handler = mw(handler)
+	}
+	return interp.ExecHandler(handler) //nolint:staticcheck // ExecHandlers always appends DefaultExecHandler which lacks process isolation.
 }
 
 // nonInteractiveEnvVars are forced on every shell execution to prevent
@@ -147,10 +167,10 @@ func withNonInteractiveEnv(env []string) []string {
 //     that deny rules see the already-resolved argv of anything the
 //     script exec's rather than the outer path-prefixed wrapper;
 //  3. block list;
-//  4. optional Go coreutils (only when useGoCoreUtils is on);
-//  5. process-group exec (terminal handler). This replaces mvdan's
-//     DefaultExecHandler so every external command gets its own process
-//     group and is killed as a tree on ctx cancellation.
+//  4. optional Go coreutils (only when useGoCoreUtils is on).
+//
+// The terminal exec handler is NOT included here — [execHandlerOption] wraps
+// these middlewares over a process-group-isolated base handler.
 func standardHandlers(blockFuncs []BlockFunc) []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	handlers := []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc{
 		builtinHandler(),
@@ -160,7 +180,6 @@ func standardHandlers(blockFuncs []BlockFunc) []func(next interp.ExecHandlerFunc
 	if useGoCoreUtils {
 		handlers = append(handlers, coreutils.ExecHandler)
 	}
-	handlers = append(handlers, processGroupExecHandler())
 	return handlers
 }
 

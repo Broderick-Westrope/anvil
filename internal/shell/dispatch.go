@@ -168,11 +168,14 @@ func isBinary(probe []byte) bool {
 }
 
 // dispatchShebang parses probe's shebang line and execs the resolved
-// interpreter via [runExternal], inheriting the parent runner's cwd,
-// env, and stdio. argv is built per kernel shebang convention: the
-// interpreter's own args, then the script path, then the caller's
-// trailing args. Cancellation handling (process group + SIGINT-then-
-// SIGKILL) is shared with the bare-command path through runExternal.
+// interpreter through the shared process-group exec handler, inheriting
+// the parent runner's cwd, env, and stdio. argv is built per kernel
+// shebang convention: the interpreter's own args, then the script path,
+// then the caller's trailing args. Routing through
+// processGroupExecHandler shares cancellation semantics with the
+// bare-command path: the whole process group is signalled (SIGINT then
+// SIGKILL) so grandchildren are not orphaned, and a cancelled run
+// surfaces ctx.Err() so IsInterrupt recognises it.
 func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args []string) error {
 	sb, err := parseShebang(probe)
 	if err != nil {
@@ -198,7 +201,7 @@ func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args 
 	argv = append(argv, scriptPath)
 	argv = append(argv, args[1:]...)
 
-	return runExternal(ctx, interpreter, argv)
+	return processGroupExecHandler(defaultKillTimeout)(ctx, argv)
 }
 
 // resolveInterpreter tries the literal shebang path first, then falls back
@@ -381,7 +384,7 @@ func runShellSource(ctx context.Context, path string, args []string, blockFuncs 
 		interp.Interactive(false),
 		interp.Env(hc.Env),
 		interp.Dir(hc.Dir),
-		interp.ExecHandlers(standardHandlers(blockFuncs)...),
+		execHandlerOption(blockFuncs),
 	}
 	if len(args) > 1 {
 		// Params with a leading "--" avoids any of args[1:] being

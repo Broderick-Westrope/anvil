@@ -23,7 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/machineid"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
 	"github.com/Broderick-Westrope/anvil/internal/oauth/copilot"
-	openaisdk "github.com/charmbracelet/openai-go/option"
+	openaisdk "github.com/openai/openai-go/v3/option"
 )
 
 // Copilot models that use the Responses API instead of Chat Completions.
@@ -35,6 +35,9 @@ var copilotResponsesModels = map[string]bool{
 	"gpt-5.4-mini":  true,
 	"gpt-5.5":       true,
 	"gpt-5-mini":    true,
+	"gpt-5.6-luna":  true,
+	"gpt-5.6-terra": true,
+	"gpt-5.6-sol":   true,
 }
 
 // OpenCode models that use Anthropic Messages API instead of Chat Completions.

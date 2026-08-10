@@ -392,6 +392,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 			FrequencyPenalty:  freqPenalty,
 			PresencePenalty:   presPenalty,
 			skipCreateMessage: messageCreated,
+			OnAuthRefresh:     c.makeAuthRefreshCallback(providerCfg),
 		})
 		// Safe to set unconditionally: isUnauthorized only matches
 		// 401 ProviderErrors which occur after createUserMessage.
@@ -423,6 +424,27 @@ func (c *coordinator) getOrchestrator() SessionAgent {
 	c.orchestratorMu.RLock()
 	defer c.orchestratorMu.RUnlock()
 	return c.orchestrator
+}
+
+// effectiveReasoningEffort returns the reasoning effort to apply for
+// provider calls. It prefers the user-selected effort when valid,
+// otherwise the model default when valid, and finally falls back to the
+// first configured reasoning level.
+func effectiveReasoningEffort(model Model) string {
+	if !model.CatwalkCfg.CanReason {
+		return ""
+	}
+
+	if effort := model.ModelCfg.ReasoningEffort; effort != "" && slices.Contains(model.CatwalkCfg.ReasoningLevels, effort) {
+		return effort
+	}
+	if effort := model.CatwalkCfg.DefaultReasoningEffort; effort != "" && slices.Contains(model.CatwalkCfg.ReasoningLevels, effort) {
+		return effort
+	}
+	if len(model.CatwalkCfg.ReasoningLevels) > 0 {
+		return model.CatwalkCfg.ReasoningLevels[0]
+	}
+	return ""
 }
 
 func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
@@ -473,14 +495,16 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		return options
 	}
 
+	reasoningEffort := effectiveReasoningEffort(model)
 	shouldSetEffort := model.CatwalkCfg.CanReason &&
-		slices.Contains(model.CatwalkCfg.ReasoningLevels, model.ModelCfg.ReasoningEffort)
+		reasoningEffort != "" &&
+		slices.Contains(model.CatwalkCfg.ReasoningLevels, reasoningEffort)
 
 	switch providerCfg.Type {
 	case openai.Name, azure.Name:
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
 		if !hasReasoningEffort && shouldSetEffort {
-			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
+			mergedOptions["reasoning_effort"] = reasoningEffort
 		}
 		if openai.IsResponsesModel(model.CatwalkCfg.ID) {
 			if openai.IsResponsesReasoningModel(model.CatwalkCfg.ID) {
@@ -504,7 +528,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		)
 		switch {
 		case !hasEffort && shouldSetEffort:
-			mergedOptions["effort"] = model.ModelCfg.ReasoningEffort
+			mergedOptions["effort"] = reasoningEffort
 		case !hasThink && model.ModelCfg.Think:
 			mergedOptions["thinking"] = map[string]any{"budget_tokens": 2000}
 		}
@@ -518,7 +542,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		if !hasReasoning && shouldSetEffort {
 			mergedOptions["reasoning"] = map[string]any{
 				"enabled": true,
-				"effort":  model.ModelCfg.ReasoningEffort,
+				"effort":  reasoningEffort,
 			}
 		}
 		parsed, err := openrouter.ParseOptions(mergedOptions)
@@ -530,7 +554,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		if !hasReasoning && shouldSetEffort {
 			mergedOptions["reasoning"] = map[string]any{
 				"enabled": true,
-				"effort":  model.ModelCfg.ReasoningEffort,
+				"effort":  reasoningEffort,
 			}
 		}
 		parsed, err := vercel.ParseOptions(mergedOptions)
@@ -547,7 +571,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 				}
 			} else {
 				mergedOptions["thinking_config"] = map[string]any{
-					"thinking_level":   model.ModelCfg.ReasoningEffort,
+					"thinking_level":   reasoningEffort,
 					"include_thoughts": true,
 				}
 			}
@@ -563,9 +587,16 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		if !hasReasoningEffort && shouldSetEffort {
 			switch providerCfg.ID {
 			case string(catwalk.InferenceProviderIoNet):
-				extraBody["reasoning"] = map[string]string{"effort": model.ModelCfg.ReasoningEffort}
+				extraBody["reasoning"] = map[string]string{"effort": reasoningEffort}
+			case string(catwalk.InferenceProviderOpenCodeGo), string(catwalk.InferenceProviderOpenCodeZen):
+				// MiniMax models use the "thinking" parameter instead of
+				// "reasoning_effort". Other models on these providers still
+				// use the standard field.
+				if !strings.HasPrefix(strings.ToLower(model.CatwalkCfg.ID), "minimax") {
+					mergedOptions["reasoning_effort"] = reasoningEffort
+				}
 			default:
-				mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
+				mergedOptions["reasoning_effort"] = reasoningEffort
 			}
 		}
 
@@ -585,13 +616,31 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 				}
 			}
 		case string(catwalk.InferenceProviderZAI), string(catwalk.InferenceProviderDeepSeek):
-			if model.ModelCfg.Think || model.ModelCfg.ReasoningEffort != "" {
+			if model.ModelCfg.Think || reasoningEffort != "" {
 				extraBody["thinking"] = map[string]any{
 					"type": "enabled",
 				}
 			} else {
 				extraBody["thinking"] = map[string]any{
 					"type": "disabled",
+				}
+			}
+
+		case string(catwalk.InferenceProviderBaseten):
+			extraBody["chat_template_args"] = map[string]any{
+				"enable_thinking": model.ModelCfg.Think || reasoningEffort != "" && reasoningEffort != "none",
+			}
+
+		case string(catwalk.InferenceProviderOpenCodeGo), string(catwalk.InferenceProviderOpenCodeZen):
+			// MiniMax M3 uses the "thinking" parameter to control reasoning.
+			// "reasoning_split" must be true so thinking content is returned
+			// in the "reasoning_content" field instead of inline in "content".
+			if strings.HasPrefix(strings.ToLower(model.CatwalkCfg.ID), "minimax") {
+				if model.CatwalkCfg.CanReason && (model.ModelCfg.Think || reasoningEffort != "") {
+					extraBody["thinking"] = map[string]any{"type": "adaptive"}
+					extraBody["reasoning_split"] = true
+				} else {
+					extraBody["thinking"] = map[string]any{"type": "disabled"}
 				}
 			}
 		}
@@ -877,7 +926,7 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), nil),
-		tools.NewGlobTool(c.cfg.WorkingDir()),
+		tools.NewGlobTool(c.cfg.WorkingDir(), c.cfg.Config().Tools.Glob),
 		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Config().Tools.Grep),
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
@@ -1281,6 +1330,22 @@ func (c *coordinator) isUnauthorized(err error) bool {
 	return errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized
 }
 
+// makeAuthRefreshCallback returns an OnAuthRefresh callback for fantasy that
+// delegates to the coordinator's existing credential refresh logic. Returns
+// nil if no refresh mechanism is configured for the provider.
+//
+// Refreshing inside fantasy's retry loop, rather than re-invoking the whole
+// agent run, is what keeps a 401 from producing a duplicate assistant
+// message.
+func (c *coordinator) makeAuthRefreshCallback(providerCfg config.ProviderConfig) func(context.Context, *fantasy.ProviderError) error {
+	if providerCfg.OAuthToken == nil && !strings.Contains(providerCfg.APIKeyTemplate, "$") {
+		return nil
+	}
+	return func(ctx context.Context, _ *fantasy.ProviderError) error {
+		return c.retryAfterUnauthorized(ctx, providerCfg)
+	}
+}
+
 func (c *coordinator) refreshOAuth2Token(ctx context.Context, providerCfg config.ProviderConfig) error {
 	if err := c.cfg.RefreshOAuthToken(ctx, config.ScopeGlobal, providerCfg.ID); err != nil {
 		slog.Error("Failed to refresh OAuth token after 401 error", "provider", providerCfg.ID, "error", err)
@@ -1362,17 +1427,34 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		FrequencyPenalty: model.ModelCfg.FrequencyPenalty,
 		PresencePenalty:  model.ModelCfg.PresencePenalty,
 		NonInteractive:   true,
+		OnAuthRefresh:    c.makeAuthRefreshCallback(providerCfg),
 	})
 	if err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to generate response: %s", err)), nil
 	}
 
-	// Update parent session cost
+	// Update parent session cost on a best-effort basis. A failure here must
+	// not discard the sub-agent output that was already produced.
 	if err := c.updateParentSessionCost(ctx, session.ID, params.SessionID); err != nil {
-		return fantasy.ToolResponse{}, err
+		slog.Warn("Failed to update parent session cost",
+			"child_session", session.ID,
+			"parent_session", params.SessionID,
+			"error", err,
+		)
 	}
 
-	return fantasy.NewTextResponse(result.Response.Content.Text()), nil
+	output := subAgentOutput(result)
+	if output == "" {
+		return fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output."), nil
+	}
+	return fantasy.NewTextResponse(output), nil
+}
+
+func subAgentOutput(result *fantasy.AgentResult) string {
+	if result == nil {
+		return ""
+	}
+	return result.Response.Content.Text()
 }
 
 // updateParentSessionCost accumulates the cost from a child session to its parent session.

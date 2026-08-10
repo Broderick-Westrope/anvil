@@ -70,7 +70,9 @@ func (s *ConfigStore) SetPermissionRule(scope Scope, toolPattern string, inputPa
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	if err := os.WriteFile(path, out, 0o600); err != nil {
+	// Rename-into-place so a concurrent reader (including our own
+	// autoReload below) never observes a partially-written file.
+	if err := atomicWriteFile(path, out, 0o600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
