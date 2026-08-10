@@ -277,11 +277,15 @@ func (m *Chat) WarmStep(seq int) (cmd tea.Cmd, done bool) {
 
 // SetSize sets the size of the chat view port.
 func (m *Chat) SetSize(width, height int) {
+	// Capture whether we should stay pinned to the bottom *before* the size
+	// change. A width change rewraps every item, so the list's line offsets
+	// (offsetIdx/offsetLine) become stale and AtBottom() can no longer be
+	// trusted afterward. follow short-circuits the AtBottom() walk in the
+	// common streaming case.
+	wasFollowing := m.follow || m.AtBottom()
 	m.list.SetSize(width, height)
-	// Anchor to bottom when in follow mode. Using follow rather than
-	// AtBottom avoids losing the anchor after width changes invalidate
-	// cached item heights or when content grows between updates.
-	if m.follow {
+	// Re-anchor to bottom if we were pinned there before the resize.
+	if wasFollowing {
 		m.ScrollToBottom()
 	}
 }
