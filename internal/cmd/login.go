@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -134,10 +133,7 @@ func loginHyper(c *client.Client, wsID string, force bool) error {
 		return fmt.Errorf("access token is not active")
 	}
 
-	if err := cmp.Or(
-		c.SetConfigField(ctx, wsID, config.ScopeGlobal, "providers.hyper.api_key", token.AccessToken),
-		c.SetConfigField(ctx, wsID, config.ScopeGlobal, "providers.hyper.oauth", token),
-	); err != nil {
+	if err := c.SetProviderAPIKey(ctx, wsID, config.ScopeGlobal, "hyper", token); err != nil {
 		return err
 	}
 
@@ -205,10 +201,7 @@ func loginCopilot(c *client.Client, wsID string, force bool) error {
 		token = t
 	}
 
-	if err := cmp.Or(
-		c.SetConfigField(loginCtx, wsID, config.ScopeGlobal, "providers.copilot.api_key", token.AccessToken),
-		c.SetConfigField(loginCtx, wsID, config.ScopeGlobal, "providers.copilot.oauth", token),
-	); err != nil {
+	if err := c.SetProviderAPIKey(loginCtx, wsID, config.ScopeGlobal, "copilot", token); err != nil {
 		return err
 	}
 
