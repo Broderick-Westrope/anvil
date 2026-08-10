@@ -80,6 +80,9 @@ var (
 // until it completes. Call this synchronously before launching Initialize in a
 // goroutine; otherwise WaitForInit could observe the not-yet-started state and
 // return early, letting the tool list be read before MCP tools register.
+// Initialize also arms itself defensively for callers that invoke it without
+// going through app startup; that in-goroutine call cannot provide the
+// synchronous guarantee described above.
 func ArmInit() {
 	initMu.Lock()
 	initStarted = true

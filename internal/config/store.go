@@ -223,9 +223,11 @@ func (s *ConfigStore) SetupAgents() {
 //
 // metaMu only guards the read of the field itself; the returned pointer
 // escapes the lock, and callers (e.g. YoloLevel setup at startup) write
-// through it unsynchronised. That is tolerable because overrides are
-// written during single-threaded startup and read-only afterwards — do
-// not write through this pointer once the app is serving.
+// through it unsynchronised. That is tolerable for YoloLevel because it is
+// written during single-threaded startup and read-only afterwards — do not
+// write through this pointer once the app is serving. Models is different:
+// it is mutated at runtime by pinPreferredModelLocked under writeMu and must
+// only be touched through methods that hold writeMu, never via this pointer.
 func (s *ConfigStore) Overrides() *RuntimeOverrides {
 	s.metaMu.RLock()
 	defer s.metaMu.RUnlock()
