@@ -637,9 +637,10 @@ To add specific models to the configuration, configure as such:
 
 ### Local Models
 
-Local models can also be configured via OpenAI-compatible API. Here are two common examples:
-
-#### Ollama
+Anvil can auto-discover models from local providers. Add a custom provider
+with `type` set to `llamacpp`, `omlx`, `lmstudio`, `litellm`, or `ollama`
+and leave out the models list. Anvil will populate the model list
+automatically.
 
 ```json
 {
@@ -647,7 +648,41 @@ Local models can also be configured via OpenAI-compatible API. Here are two comm
     "ollama": {
       "name": "Ollama",
       "base_url": "http://localhost:11434/v1/",
-      "type": "openai-compat",
+      "type": "ollama"
+    }
+  }
+}
+```
+
+For llama.cpp (`llama-server`), point at the server's base URL:
+
+```json
+{
+  "providers": {
+    "llamacpp": {
+      "name": "llama.cpp",
+      "base_url": "http://localhost:2222",
+      "type": "llamacpp"
+    }
+  }
+}
+```
+
+#### Manual Model Configuration
+
+You can still list models explicitly. User-defined models always take
+precedence over discovered ones, and any fields you set won't be overwritten
+by auto-discovery. Auto discovery will run if the model list is empty for any
+`openai-compat` provider or if you pass `"discover_models": true` it will merge
+ the found models with your hand configured ones.
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "name": "Ollama",
+      "base_url": "http://localhost:11434/v1/",
+      "type": "ollama",
       "models": [
         {
           "name": "Qwen 3 30B",
