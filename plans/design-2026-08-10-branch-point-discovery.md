@@ -192,6 +192,19 @@ Out (noted as future exploration if A+C prove insufficient):
 - QMD-style hybrid search (BM25 + embeddings + reranker) rejected as
   overkill: a branch path is tens of messages and fits in one prompt;
   borrow the ideas (lexical + semantic + rerank), skip the infra.
+- Token matcher is hand-rolled (~60–80 lines), not a library. The
+  blocking requirement is matched character ranges in the original
+  string for highlighting, which no candidate provides for
+  substring-AND semantics: bleve/v2 has BM25 + `IncludeLocations` but
+  drags ~30 deps, tokenizes rather than substring-matches, and its
+  wildcard queries don't emit locations reliably; bluge is
+  unmaintained (last release 2022); lithammer/fuzzysearch is
+  char-level fuzzy like sahilm/fuzzy with no positions; small BM25
+  libs return scores only. Implementation: `strings.Fields` on the
+  query, case-folded substring search per term (all must match),
+  score by minimal-window term proximity + recency tiebreak. Case
+  folding must be rune-safe — naive `ToLower` can shift byte offsets
+  for some Unicode.
 - Assistant-reply context included in the ask prompt because decisions
   often crystallise in the assistant's response, not the user's message
   ("where I decided X" recall). User messages remain the only anchors.
