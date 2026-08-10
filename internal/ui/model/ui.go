@@ -4386,50 +4386,6 @@ func (m *UI) cacheSidebarLogo(width int) {
 	m.sidebarLogo = renderLogo(m.com.Styles, true, width)
 }
 
-// applyTheme replaces the active styles with the given theme, drops the
-// shared markdown renderer cache, and refreshes every component that
-// caches style data.
-func (m *UI) applyTheme(s styles.Styles) {
-	*m.com.Styles = s
-	common.InvalidateMarkdownRendererCache()
-	m.refreshStyles()
-}
-
-// refreshStyles pushes the current *m.com.Styles into every subcomponent
-// that copies or pre-renders style-dependent values at construction time.
-func (m *UI) refreshStyles() {
-	t := m.com.Styles
-	m.header.refresh()
-	if m.layout.sidebar.Dx() > 0 {
-		m.cacheSidebarLogo(m.layout.sidebar.Dx())
-	}
-	m.textarea.SetStyles(t.Editor.Textarea)
-	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
-	m.slashAC.SetStyles(autocomplete.Styles{
-		Normal:         t.SlashAutocomplete.Normal,
-		BuiltinName:    t.SlashAutocomplete.BuiltinName,
-		CommandName:    t.SlashAutocomplete.CommandName,
-		SkillName:      t.SlashAutocomplete.SkillName,
-		BuiltinFocused: t.SlashAutocomplete.BuiltinFocused,
-		CommandFocused: t.SlashAutocomplete.CommandFocused,
-		SkillFocused:   t.SlashAutocomplete.SkillFocused,
-		Description:    t.SlashAutocomplete.Description,
-	})
-	m.attachments.Renderer().SetStyles(
-		t.Attachments.Normal,
-		t.Attachments.Deleting,
-		t.Attachments.Image,
-		t.Attachments.Text,
-		t.Attachments.Skill,
-	)
-	m.todoSpinner.Style = t.Pills.TodoSpinner
-	m.status.help.Styles = t.Help
-	m.chat.InvalidateRenderCaches()
-	for _, entry := range m.drillStack {
-		entry.chat.InvalidateRenderCaches()
-	}
-}
-
 // initializeProject sends the project initialization prompt into the current session.
 func (m *UI) initializeProject() tea.Cmd {
 	return func() tea.Msg {

@@ -208,6 +208,10 @@ func (l *List) Prewarm(from, batch int) int {
 // common case) it renders only a viewport's worth of items rather than
 // all of them — much cheaper than TotalHeight when only the boolean is
 // needed (e.g. deciding whether a scrollbar is required).
+//
+// No production caller yet: its consumer is the chat scrollbar (upstream
+// b72f9aab, tracked as sync batch 12). Kept because it is small, tested,
+// and the scrollbar pick needs it.
 func (l *List) Overflows(height int) bool {
 	total := 0
 	for idx := len(l.items) - 1; idx >= 0; idx-- {

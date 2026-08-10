@@ -25,6 +25,14 @@ var (
 // ChromaStyle returns the chroma style for the given theme, memoized. When
 // bg is non-nil the style's background is overridden with it (also
 // memoized per color). The cache resets whenever the active theme changes.
+//
+// NOTE: "theme changes" is detected by POINTER inequality on st. This
+// fork's historical re-theming path mutated the styles in place
+// (`*m.com.Styles = s`), which does not change the pointer, so an
+// in-place theme swap would silently serve stale chroma styles from this
+// memo. Safe today only because the fork ships a single theme and has no
+// live re-theming path. If theming ever returns, allocate a fresh Styles
+// per theme or add an explicit invalidation hook here.
 func ChromaStyle(st *styles.Styles, bg color.Color) *chroma.Style {
 	chromaStyleMu.Lock()
 	defer chromaStyleMu.Unlock()

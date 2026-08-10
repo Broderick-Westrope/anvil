@@ -99,11 +99,8 @@ type Chat struct {
 	// entry; invalidated implicitly by string inequality on the next Draw.
 	drawCache *chatDrawCache
 
-	// resizing suppresses the O(N) total-height scan while a resize is in
-	// flight (and during the incremental warm afterward), so a drag only
-	// reflows the visible items. resizeSettleSeq guards stale settle/warm
-	// timers; warmNext tracks warming progress through the message list.
-	resizing        bool
+	// resizeSettleSeq guards stale settle/warm timers from superseded
+	// resizes; warmNext tracks warming progress through the message list.
 	resizeSettleSeq int
 	warmNext        int
 }
@@ -240,29 +237,33 @@ func drawCachedBuffer(scr uv.Screen, area uv.Rectangle, buf uv.ScreenBuffer) {
 	buf.Draw(scr, area)
 }
 
-// BeginResize marks the chat as actively resizing so the next draws skip
-// the full-height scan (and the scrollbar), reflowing only the visible
-// items. It returns a command that, once resizing settles, starts warming
-// the cache so the scrollbar can recompute without blocking.
+// BeginResize starts (or restarts) the post-resize cache warming cycle.
+// Rendering every message at the new width in one frame would block the
+// UI thread, so warming is deferred until the resize settles and then
+// spread across frames in WarmStep batches. Bumping the sequence number
+// invalidates any warming still in flight from a superseded resize.
+//
+// NOTE: Upstream (4d901d1b) also sets a resizing flag here that Chat.Draw
+// uses to suppress the O(N) TotalHeight scan behind the chat scrollbar.
+// The scrollbar is not in this fork (tracked as sync batch 12); if it is
+// picked, that suppression must come back with it.
 func (m *Chat) BeginResize() tea.Cmd {
-	m.resizing = true
 	m.resizeSettleSeq++
 	m.warmNext = 0
 	return chatWarmCmd(m.resizeSettleSeq, resizeSettleDuration)
 }
 
 // WarmStep renders the next batch of messages into the width cache and
-// returns a command to continue warming plus whether warming finished. On
-// completion the resize suppression is cleared so the next draw recomputes
-// the (now instant) total height and scrollbar. A stale seq — from a resize
-// that has since been superseded — is a no-op returning (nil, false).
+// returns a command to continue warming plus whether warming finished.
+// Once done, height lookups over the warmed list (e.g. TotalHeight) are
+// cheap again. A stale seq — from a resize that has since been superseded
+// — is a no-op returning (nil, false).
 func (m *Chat) WarmStep(seq int) (cmd tea.Cmd, done bool) {
 	if seq != m.resizeSettleSeq {
 		return nil, false
 	}
 	m.warmNext = m.list.Prewarm(m.warmNext, warmBatchSize)
 	if m.warmNext >= m.list.Len() {
-		m.resizing = false
 		return nil, true
 	}
 	return chatWarmCmd(seq, 0), false
