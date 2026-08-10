@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/Broderick-Westrope/anvil/internal/session"
 )
 
@@ -32,10 +34,12 @@ func queuePillHasBorder(view string) bool {
 	return false
 }
 
-// TestQueuePillAlwaysHasBorder guards CHARM-1678: the queued-prompts pill must
-// render with its rounded border regardless of panel expansion or which pill
-// section is nominally focused.
+// TestQueuePillAlwaysHasBorder guards upstream 1ef42ef8: the queued-prompts
+// pill must render with its rounded border regardless of panel expansion or
+// which pill section is nominally focused.
 func TestQueuePillAlwaysHasBorder(t *testing.T) {
+	t.Parallel()
+
 	incompleteTodos := []session.Todo{{Content: "a", Status: session.TodoStatusPending}}
 
 	cases := []struct {
@@ -53,6 +57,8 @@ func TestQueuePillAlwaysHasBorder(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			u := newTestUI()
 			u.session = &session.Session{ID: "s1", Todos: tc.todos}
 			u.promptQueue = tc.queue
@@ -61,12 +67,10 @@ func TestQueuePillAlwaysHasBorder(t *testing.T) {
 			u.updateLayoutAndSize()
 			u.renderPills()
 
-			if !hasRoundedBorder(u.pillsView) {
-				t.Fatalf("expected a rounded border somewhere in pills view:\n%s", u.pillsView)
-			}
-			if !queuePillHasBorder(u.pillsView) {
-				t.Fatalf("expected the queue pill to have a border:\n%s", u.pillsView)
-			}
+			require.True(t, hasRoundedBorder(u.pillsView),
+				"expected a rounded border somewhere in pills view:\n%s", u.pillsView)
+			require.True(t, queuePillHasBorder(u.pillsView),
+				"expected the queue pill to have a border:\n%s", u.pillsView)
 		})
 	}
 }
@@ -75,6 +79,8 @@ func TestQueuePillAlwaysHasBorder(t *testing.T) {
 // (pointing at a section with no content) resolves to the section that still
 // has content, so the expanded list stays populated.
 func TestEffectiveFocusedSectionFallsThrough(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name     string
 		stored   pillSection
@@ -89,13 +95,13 @@ func TestEffectiveFocusedSectionFallsThrough(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			u := newTestUI()
 			u.session = &session.Session{ID: "s1", Todos: tc.todos}
 			u.promptQueue = tc.queue
 			u.focusedPillSection = tc.stored
-			if got := u.effectiveFocusedSection(); got != tc.expected {
-				t.Fatalf("effectiveFocusedSection() = %d, want %d", got, tc.expected)
-			}
+			require.Equal(t, tc.expected, u.effectiveFocusedSection())
 		})
 	}
 }
