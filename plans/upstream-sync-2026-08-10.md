@@ -28,6 +28,9 @@
 | Session trees | `sessions.CreateTaskSession` validates that the parent session exists, and `sessions.Rename` takes a 4th `titleIsCustom` arg. Upstream tests that pass a missing parent, or `Rename` calls with 3 args, need adapting. |
 | Parallel tool execution | `OnToolResult` runs on parallel goroutines under `sessionLock`. Any upstream state shared between `OnToolCall` and `OnToolResult` needs its own mutex; upstream is single-threaded here. |
 | Provider switch shape | `getProviderOptions` in `coordinator.go` lacks upstream's Alibaba-Singapore and Fireworks branches until batches 3 and 7 land. Drop those hunks when they show up in unrelated commits. |
+| Anthropic OAuth | Fork-only provider. Upstream's `applyToken` / `exchange` only handle Copilot and Hyper; every touch of those needs the `catwalk.InferenceProviderAnthropic` case re-added, and `anthropicoauth.RefreshToken` takes the whole `*oauth.Token`, not just the refresh string. |
+| Config prerequisites | Upstream's config work assumes `internal/lock` (flock), `atomicWriteFile`, `cloneForWrite`, and `setConfig`, none of which we had. `internal/lock` and `atomicwrite.go` are now vendored; see batch 2 notes. |
+| Test fixture names | Upstream tests write `crush.json` fixtures. Our loader only discovers `anvil.json`, so a fixture keeping the upstream name silently loads an empty config instead of failing loudly. |
 
 ## Batch progress
 
@@ -36,7 +39,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | # | Batch | Commits | Status | Notes |
 |---|---|---|---|---|
 | 1 | Agent & tool correctness | 15 | **done** | 12 picked, 3 deferred/skipped |
-| 2 | Config, auth & race fixes | 9 | pending | |
+| 2 | Config, auth & race fixes | 9 | **done** | 8 picked, 1 deferred to batch 3 |
 | 3 | Provider fixes | 11 | pending | |
 | 4 | Performance | 12 | pending | |
 | 5 | UI fixes | 15 | pending | |
@@ -111,6 +114,8 @@ completion. Not introduced by this sync, so left alone. Plain `go test ./...` is
 
 ## Batch 2 — Config, auth & race fixes
 
+**Status: done.** 8 cherry-picked, 1 deferred.
+
 ```
 b10f890f fix(config): make concurrent config access race-free via copy-on-write
 55b2f0d1 fix(config): prevent data race when reading config during reload (#3362)
@@ -123,7 +128,52 @@ d4dc84e9 fix(config): prevent startup deadlock when configured model ID is inval
 461976d0 fix(commands): scope logout command to oauth providers
 ```
 
+### Not applied
+
+| Commit | Disposition | Reason |
+|---|---|---|
+| `63dc1f01` | deferred to batch 3 | Bundles three things: model pinning across reloads, borrowing a peer's rotated refresh token, and `WaitForTokenChange`/`SignalAuthComplete`. The auth-signal half is the counterpart to `64bbbebc` (OnAuthRefresh, batch 3), and the conflict also drags in `EnabledChannels` from the skipped channels feature plus a `login.go` shape we don't share. Adapt it together with `64bbbebc`. |
+
+### Prerequisites vendored
+
+Upstream's config work sits on commits we never picked, so two pieces were brought in by hand:
+
+- **`internal/lock`** — copied from `upstream/main` (4 files, no external deps). Cross-process
+  advisory flock; `de679203` needs it for the per-provider refresh lock.
+- **`internal/config/atomicwrite.go`** — taken at `4dd4442a^`, so the later cherry-pick of
+  `4dd4442a` applied cleanly on top and added the Windows rename retry.
+
+`ConfigStore.atomicWrite` is a local reimplementation: upstream's takes a cross-process
+`lockConfig` flock, ours serialises on the existing in-process `mu`. Atomic rename means a reader
+never sees a torn file, but two Anvil *processes* writing the same config file can still lose an
+update. Worth revisiting if we adopt the rest of upstream's config-locking chain.
+
+### Adaptations worth remembering
+
+- **`b10f890f`** — kept our `pluginsChangedHook` and `Options.ProjectDirectory` (upstream renamed
+  it `DataDirectory`); dropped `internal/agent/agenttest/coordinator.go`, an upstream-only test
+  helper we don't have.
+- **`55b2f0d1` — caused a deadlock, fixed.** Upstream turns `writeMu` into an `RWMutex` and has
+  the metadata readers (`Resolver`, `KnownProviders`, `Overrides`, `LoadedPaths`) take `RLock`.
+  `writeMu` is held for the whole reload, and our fork-only `pluginsChangedHook` runs *inside*
+  that window and calls back into those readers — `RLock` while the same goroutine holds `Lock`
+  deadlocks. Introduced a separate `metaMu` for that metadata plus a `setMeta` helper, and pinned
+  the behaviour with `internal/config/reload_hook_deadlock_test.go`. Upstream has no such hook, so
+  nothing upstream would ever catch this.
+- **`de679203`** — restored the Anthropic cases in `applyToken` and the refresh switch, and
+  changed `exchange` to take the whole `*oauth.Token` rather than just the refresh string, because
+  `anthropicoauth.RefreshToken` compares the current access token against the credentials file to
+  detect a peer refresh. Dropped the unused `configLockDeadline` const (no `lockConfig` here).
+- **`de679203` test fixture** — `refresh_singleflight_test.go` wrote its fixture as `crush.json`.
+  Our loader only discovers `anvil.json`, so the post-refresh reload loaded an empty config and
+  dropped the provider, failing the assertion for a reason unrelated to the fix. Renamed.
+- **`213ad794`** — system config path rebranded to `/etc/anvil/anvil.json` (`f80fcc35`), and the
+  test's `configureProviders` call had an extra upstream `ctx` argument our signature doesn't take.
+
 ## Batch 3 — Provider fixes
+
+Also reconsider `63dc1f01` (deferred from batch 2) alongside `64bbbebc`; both concern OAuth
+refresh and the auth-complete signal.
 
 ```
 604a7e30 fix(providers): swap the provider cache instead of rewriting it
