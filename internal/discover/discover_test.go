@@ -218,7 +218,6 @@ func TestDiscoverModels_NoAuthWhenNoAPIKey(t *testing.T) {
 func TestStripV1Suffix(t *testing.T) {
 	t.Parallel()
 
-	t.Parallel()
 	tests := []struct {
 		input string
 		want  string
