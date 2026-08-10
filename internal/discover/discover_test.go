@@ -11,6 +11,8 @@ import (
 )
 
 func TestDiscoverModels(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/models", r.URL.Path)
 		require.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
@@ -40,6 +42,8 @@ func TestDiscoverModels(t *testing.T) {
 }
 
 func TestDiscoverModels_ExistingModelsWin(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -74,6 +78,8 @@ func TestDiscoverModels_ExistingModelsWin(t *testing.T) {
 }
 
 func TestDiscoverModels_HTTPError(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -91,6 +97,8 @@ func TestDiscoverModels_HTTPError(t *testing.T) {
 }
 
 func TestDiscoverModels_ExtraHeaders(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "custom-value", r.Header.Get("X-Custom"))
 		w.Header().Set("Content-Type", "application/json")
@@ -128,6 +136,8 @@ func (e *envResolver) ResolveValue(val string) (string, error) {
 }
 
 func TestDiscoverModels_ResolvesShellVariables(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer resolved-key", r.Header.Get("Authorization"))
 		require.Equal(t, "resolved-header", r.Header.Get("X-Custom"))
@@ -156,6 +166,8 @@ func TestDiscoverModels_ResolvesShellVariables(t *testing.T) {
 }
 
 func TestDiscoverModels_SkipsEmptyExtraHeaders(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
 		require.Empty(t, r.Header.Get("X-Empty"))
@@ -183,6 +195,8 @@ func TestDiscoverModels_SkipsEmptyExtraHeaders(t *testing.T) {
 }
 
 func TestDiscoverModels_NoAuthWhenNoAPIKey(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Empty(t, r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
@@ -202,6 +216,8 @@ func TestDiscoverModels_NoAuthWhenNoAPIKey(t *testing.T) {
 }
 
 func TestStripV1Suffix(t *testing.T) {
+	t.Parallel()
+
 	t.Parallel()
 	tests := []struct {
 		input string
