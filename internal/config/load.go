@@ -425,6 +425,7 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 	var wg sync.WaitGroup
 
 	discoverCtx, discoverCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer discoverCancel()
 	for id, pc := range c.Providers.Seq2() {
 		if knownProviderNames[id] {
 			continue
@@ -450,7 +451,11 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 			models, err := discover.DiscoverModels(discoverCtx, cfg, resolver)
 			if err == nil && len(models) > 0 {
 				if enricher := discover.GetEnricher(string(providerType)); enricher != nil {
-					models, _ = enricher.EnrichModels(discoverCtx, cfg, resolver, models)
+					var enrichErr error
+					models, enrichErr = enricher.EnrichModels(discoverCtx, cfg, resolver, models)
+					if enrichErr != nil {
+						slog.Debug("Model enrichment failed", "provider", id, "error", enrichErr)
+					}
 				}
 			}
 			mu.Lock()
@@ -459,7 +464,6 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 		})
 	}
 	wg.Wait()
-	discoverCancel()
 
 	// Validate the custom providers.
 	for id, providerConfig := range c.Providers.Seq2() {
