@@ -32,6 +32,10 @@ Outside Herdr the reporter is a guaranteed no-op.
   serialized through one goroutine, coalesced to the latest state, with at
   most one child process in flight; failures are logged and swallowed
   (CLI stderr logged at debug level for diagnosability).
+- Every `herdr` invocation runs with a per-invocation timeout (5s) after
+  which the child is killed — a hung report must not wedge the sender
+  goroutine and freeze the pane at a stale state. The shutdown drain also
+  kills any in-flight hung report.
 - Reports use `--source custom:anvil --agent anvil` with a strictly
   increasing `--seq`.
 
@@ -68,7 +72,17 @@ inferred from event transitions. Events (permission created/resolved, run
 started/ended, session switched) are only *triggers* to recompute. This
 makes cross-channel event-ordering races (agent pubsub vs
 `SubscribeNotifications`, `internal/permission/permission.go:376`)
-harmless: the last recomputation always reflects true current state.
+harmless — provided the snapshot settles before the recompute. One known
+counterexample: the permission service publishes its resolution
+notification *before* clearing the active request
+(`internal/permission/permission.go:154-176`), so a recompute triggered
+by that notification can observe the pre-resolution `blocked` snapshot.
+Mitigation: every trigger schedules a **trailing debounced recompute
+(~100ms)** in addition to the immediate one, so the settled state is
+always re-observed. (Reordering publish-after-clear in `permission.go`
+was considered; the debounce is chosen because it also covers any other
+publish-before-settle source without auditing each one, and suppresses
+the queued-permission flicker below.)
 
 Pane state is an **aggregate across all sessions in the process**, not the
 displayed session — Anvil keeps background sessions running after a
@@ -83,9 +97,13 @@ permission requests:
 
 Notes:
 
-- Resolving one of several parallel permission requests keeps `blocked`
-  until none remain; denying a permission that ends the run yields `idle`.
-  Both fall out of recomputation naturally.
+- The permission service serializes requests (`requestMu`,
+  `internal/permission/permission.go:144-147`): at most one pending
+  request is observable at a time, and concurrent (e.g. sub-agent)
+  requests queue invisibly behind it. Resolving one request while others
+  are queued would flicker `blocked → working → blocked` as the next
+  surfaces; the trailing debounce absorbs this. Denying a permission that
+  ends the run yields `idle` via recomputation.
 - Provider/auth errors end the run → recompute → `idle`. Hook denials
   don't end the run → recompute → still `working`.
 - Non-permission dialogs (session list, model picker) and `tea.Suspend`
@@ -100,11 +118,18 @@ Notes:
   recomputed state) including `--agent-session-id` when a displayed
   session exists (flag omitted before any session exists), so an idle
   Anvil registers as the pane's agent right away.
-- **Seq:** derived from a monotonic epoch-milliseconds base so it remains
-  strictly increasing across Anvil restarts in the same pane (Herdr
-  ignores stale seq from the same source; whether it resets seq on
+- **Seq:** `seq = max(prev+1, epochMillis)`, assigned at send time (after
+  coalescing, not at recompute time) — strictly increasing within a
+  process even for sub-millisecond sends, and larger than any previous
+  Anvil instance's values after a restart in the same pane (Herdr ignores
+  stale seq from the same source; whether it resets seq on
   `release-agent` is unverified, so surviving restarts must not depend on
   it). Verify Herdr's actual seq scoping during implementation.
+- **Frozen environment:** the values of `HERDR_PANE_ID` and
+  `HERDR_SOCKET_PATH` are captured at activation and passed to each
+  `herdr` invocation via an explicit env slice on the child process,
+  consistent with the one-time binary resolution — later mutations of the
+  process environment cannot redirect reports.
 - **On clean shutdown:** cancel/drain the coalescing sender first, then
   send `release-agent` synchronously with a short timeout — guaranteeing
   no in-flight state report lands after the release and re-registers a
@@ -215,3 +240,7 @@ Notes:
    `release-agent`.
 3. Exact pending-permission snapshot API available to the TUI process
    (count + tool name of newest request).
+4. Concrete run-start/end trigger source: the app event fan-in
+   (`internal/app/app.go:479-487`) has no explicit run-lifecycle stream
+   and `agentNotifications` publishes only conditionally — determine
+   whether message-finish events suffice or a new pubsub event is needed.
