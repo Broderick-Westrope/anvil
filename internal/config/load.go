@@ -833,6 +833,7 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 func lookupConfigs(cwd string) []string {
 	// prepend default config paths
 	configPaths := []string{
+		systemConfigPath,
 		GlobalConfig(),
 		GlobalConfigData(),
 	}
