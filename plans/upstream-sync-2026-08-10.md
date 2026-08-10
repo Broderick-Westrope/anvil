@@ -52,7 +52,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 1 | Agent & tool correctness | 15 | **done** | 12 picked, 3 deferred/skipped |
 | 2 | Config, auth & race fixes | 9 | **done** | 8 picked, 1 deferred to batch 3 |
 | 3 | Provider fixes | 11 | **done** | 9 picked, 1 N/A, 1 folded into dep bump |
-| 4 | Performance | 12 | pending | |
+| 4 | Performance | 12 | **done** | 9 picked, 2 deferred to batch 8, 2 skipped |
 | 5 | UI fixes | 15 | pending | |
 | 6 | MCP fixes | 5 | pending | |
 | 7 | Model auto-discovery + enrichers | 10 | pending | optional |
@@ -282,6 +282,8 @@ them, so a regression can be bisected to one dependency.
 
 ## Batch 4 — Performance
 
+**Status: done.** 9 cherry-picked, 2 deferred, 2 skipped.
+
 ```
 3295a085 fix: cache streaming thinking renders to avoid CPU burn during long reasoning traces
 884391f9 fix: stop long thinking blocks from re-rendering the entire document every frame (#3454)
@@ -297,6 +299,37 @@ f5b996bf perf(config): make model selection and config reload fast
 81cb9d99 feat(ui): optimize model ui rendering
 cc971bd6 perf(lsp): filter servers before searching $PATH (#3370)
 ```
+
+### Not applied
+
+| Commit | Disposition | Reason |
+|---|---|---|
+| `e4175c52` | deferred to batch 8 | Rewrites `internal/ui/chat/shell.go`, which is bang-mode UI and does not exist locally. |
+| `1b4ef73f` | deferred to batch 8 | Depends on bang mode's `RemapANSI16`; the `StripCursorControl` half only has meaning alongside it. |
+| `bd232eab` | skipped | Doubly entangled: bang-mode state everywhere, and upstream's boolean yolo (`PermissionSkipRequests`/`toggleYoloMode`) vs our granular `YoloLevel`/`cycleYoloLevel` from main's permission system. The motivation — workspace probes being expensive — is a client/server (TCP) concern; our `AppWorkspace` probes are in-process method calls. |
+| `d1626158` | skipped | Follow-up to `bd232eab` (fixes its `workspace_cache.go`); moot without it. |
+
+### Adaptations worth remembering
+
+- **`3295a085`/`884391f9`** — local `renderThinking` computes `innerWidth` (ThinkingBox frame) and
+  prefixes a styled "Thinking:" label with per-line italics; upstream has neither. Merged by
+  passing `innerWidth` to the prefix cache and re-adding the label/italic pass around upstream's
+  `tailLines` bounded-scan slicing.
+- **`1bfc53f6`** — the memoized style is registered as `chroma.MustNewStyle("anvil", ...)`
+  (upstream says "crush").
+- **`4d901d1b`** — took resize suppression + incremental cache warming, dropped every scrollbar
+  hunk (chat scrollbar is batch 12; `Chat.Draw`/`SetSize` keep our drawCache and follow-anchor
+  logic). Wired `BeginResize`/`WarmStep` through `activeChat()` rather than upstream's `m.chat` so
+  drilled-in session views warm the right list. If batch 12 is ever picked, its Draw-side
+  scrollbar suppression (`!m.resizing`) must be re-added.
+- **`173b2be6`** — fork is single-theme, so instead of porting the theme-key machinery the
+  redundant `applyTheme(styles.TokyoNight())` on model selection was deleted outright — same win
+  (no transcript re-render on model switch), no new state.
+- **`f5b996bf`** — store.go changes were superseded by `b10f890f` (its upstream successor, picked
+  in batch 2); resolved every store conflict to HEAD. Took the genuinely new pieces: memoized
+  powernap LSP defaults, per-directory worktree-root cache, shell expansion fast path, and the
+  model-selection benchmark (whose fixture needed the usual `anvil.json`/`ANVIL_GLOBAL_*` rename
+  — third instance of that trap).
 
 ## Batch 5 — UI fixes
 
