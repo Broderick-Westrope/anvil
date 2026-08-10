@@ -632,6 +632,7 @@ func (a *Agent) UnmarshalJSON(data []byte) error {
 type Tools struct {
 	Ls   ToolLs   `json:"ls,omitzero"`
 	Grep ToolGrep `json:"grep,omitzero"`
+	Glob ToolGlob `json:"glob,omitzero"`
 }
 
 type ToolLs struct {
@@ -651,6 +652,15 @@ type ToolGrep struct {
 // GetTimeout returns the user-defined timeout or the default.
 func (t ToolGrep) GetTimeout() time.Duration {
 	return ptrValOr(t.Timeout, 5*time.Second)
+}
+
+type ToolGlob struct {
+	Timeout *time.Duration `json:"timeout,omitempty" jsonschema:"description=Timeout for the glob tool call,default=30s,example=10s"`
+}
+
+// GetTimeout returns the user-defined timeout or the default.
+func (t ToolGlob) GetTimeout() time.Duration {
+	return ptrValOr(t.Timeout, 30*time.Second)
 }
 
 // PluginConfig defines an external plugin directory that provides skills,
