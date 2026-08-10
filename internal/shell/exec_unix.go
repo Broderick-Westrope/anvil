@@ -90,12 +90,18 @@ func exitStatusFromError(ctx context.Context, stderr io.Writer, err error) error
 	if err == nil {
 		return nil
 	}
+	// A cancelled context means the command was interrupted, no matter how
+	// the child reported it. Under Setsid the child loses its controlling
+	// terminal, so shells may translate our group signal into a normal exit
+	// (e.g. 128+SIGHUP) rather than dying signalled. Checking ctx first keeps
+	// cancellation observable through IsInterrupt, which the bash tool and
+	// agent loop rely on.
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	switch err := err.(type) {
 	case *exec.ExitError:
 		if status, ok := err.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
 			return interp.ExitStatus(128 + uint8(status.Signal()))
 		}
 		return interp.ExitStatus(uint8(err.ExitCode()))
