@@ -5,6 +5,17 @@
 **Started**: 2026-08-10
 **Branch**: `upstream-cherry-picking`
 
+## Review checkpoints
+
+Reviewed-and-merged work is tagged so the next review only diffs new
+material: `git diff <latest tag>...HEAD`. Tag the merge commit on `main`
+after each reviewed batch group lands, using
+`review/<date>-sync-<scope>`, and add it here.
+
+| Tag | Commit | Covers |
+|---|---|---|
+| `review/2026-08-10-sync-batches-1-3` | `b1b2f638` | Batches 1–3, dep bumps, granular-permissions merge, review-round fixes |
+
 ## Rules
 
 - Cherry-picks are **sequential**, one batch at a time. Never parallel.
