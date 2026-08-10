@@ -672,9 +672,9 @@ For llama.cpp (`llama-server`), point at the server's base URL:
 
 You can still list models explicitly. User-defined models always take
 precedence over discovered ones, and any fields you set won't be overwritten
-by auto-discovery. Auto discovery will run if the model list is empty for any
-`openai-compat` provider or if you pass `"discover_models": true` it will merge
- the found models with your hand configured ones.
+by auto-discovery. Auto-discovery runs when the model list is empty for any
+custom provider, and passing `"discover_models": true` merges the discovered
+models with your hand-configured ones.
 
 ```json
 {
@@ -704,7 +704,7 @@ by auto-discovery. Auto discovery will run if the model list is empty for any
     "lmstudio": {
       "name": "LM Studio",
       "base_url": "http://localhost:1234/v1/",
-      "type": "openai-compat",
+      "type": "lmstudio",
       "models": [
         {
           "name": "Qwen 3 30B",
