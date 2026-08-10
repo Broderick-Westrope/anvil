@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission/match"
+	"github.com/invopop/jsonschema"
+	orderedmap "github.com/pb33f/ordered-map/v2"
 )
 
 // PermissionAction represents what happens when a permission rule matches.
@@ -56,6 +58,47 @@ type Permissions struct {
 	// Kept for backward-compatible JSON parsing; migrated at load time.
 	AllowedTools []string         `json:"allowed_tools,omitempty"`
 	Rules        []PermissionRule `json:"-"`
+}
+
+// JSONSchema describes the permissions object for schema generation.
+// The rules format uses arbitrary tool-name globs as keys, which the
+// reflector cannot derive from the struct, so it is spelled out here.
+func (Permissions) JSONSchema() *jsonschema.Schema {
+	action := &jsonschema.Schema{
+		Type:        "string",
+		Enum:        []any{"allow", "ask", "deny"},
+		Description: "Action to take: allow silently, ask the user, or deny outright",
+	}
+
+	subRules := &jsonschema.Schema{
+		Type:                 "object",
+		Description:          "Per-input rules keyed by a glob matching the tool input (bash command, file path, URL). Evaluated in order; last match wins.",
+		AdditionalProperties: action,
+	}
+
+	ruleValue := &jsonschema.Schema{
+		OneOf:       []*jsonschema.Schema{action, subRules},
+		Description: "Either an action for every input, or an object of per-input glob rules",
+	}
+
+	return &jsonschema.Schema{
+		Type: "object",
+		Description: "Permission rules keyed by a glob matching tool names " +
+			"(e.g. \"bash\", \"mcp_linear_*\", \"{edit,write}\"). Rules are " +
+			"evaluated in order and the last match wins. The deprecated " +
+			"allowed_tools list is still accepted but cannot be combined " +
+			"with rules.",
+		Properties: func() *orderedmap.OrderedMap[string, *jsonschema.Schema] {
+			props := orderedmap.New[string, *jsonschema.Schema]()
+			props.Set("allowed_tools", &jsonschema.Schema{
+				Type:        "array",
+				Items:       &jsonschema.Schema{Type: "string"},
+				Description: "Deprecated: list of tools that don't require permission prompts. Use permission rules instead.",
+			})
+			return props
+		}(),
+		AdditionalProperties: ruleValue,
+	}
 }
 
 // UnmarshalJSON implements [json.Unmarshaler]. It handles two formats:

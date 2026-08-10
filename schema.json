@@ -352,6 +352,10 @@
         "redirectUri": {
           "type": "string",
           "description": "Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"
+        },
+        "lazy_description": {
+          "type": "string",
+          "description": "Short description shown to the LLM; when set the server's tools are hidden until explicitly enabled"
         }
       },
       "additionalProperties": false,
@@ -495,7 +499,7 @@
         },
         "project_directory": {
           "type": "string",
-          "description": "Directory for storing application data. Relative paths are resolved against the working directory; absolute paths are used as-is.",
+          "description": "Directory for per-project state (logs, workspace config, .gitignore). Relative paths are resolved against the working directory; absolute paths are used as-is.",
           "default": ".anvil",
           "examples": [
             ".anvil"
@@ -577,18 +581,41 @@
       "properties": {
         "allowed_tools": {
           "items": {
-            "type": "string",
-            "examples": [
-              "bash",
-              "view"
-            ]
+            "type": "string"
           },
           "type": "array",
-          "description": "List of tools that don't require permission prompts"
+          "description": "Deprecated: list of tools that don't require permission prompts. Use permission rules instead."
         }
       },
-      "additionalProperties": false,
-      "type": "object"
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "allow",
+              "ask",
+              "deny"
+            ],
+            "description": "Action to take: allow silently, ask the user, or deny outright"
+          },
+          {
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "allow",
+                "ask",
+                "deny"
+              ],
+              "description": "Action to take: allow silently, ask the user, or deny outright"
+            },
+            "type": "object",
+            "description": "Per-input rules keyed by a glob matching the tool input (bash command, file path, URL). Evaluated in order; last match wins."
+          }
+        ],
+        "description": "Either an action for every input, or an object of per-input glob rules"
+      },
+      "type": "object",
+      "description": "Permission rules keyed by a glob matching tool names (e.g. \"bash\", \"mcp_linear_*\", \"{edit,write}\"). Rules are evaluated in order and the last match wins. The deprecated allowed_tools list is still accepted but cannot be combined with rules."
     },
     "PluginConfig": {
       "properties": {
@@ -639,6 +666,14 @@
           ],
           "description": "Provider type that determines the API format",
           "default": "openai"
+        },
+        "auth_mode": {
+          "type": "string",
+          "enum": [
+            "oauth",
+            "api-key"
+          ],
+          "description": "Authentication mode: oauth or api-key. When empty the provider auto-detects (preferring OAuth)"
         },
         "api_key": {
           "type": "string",

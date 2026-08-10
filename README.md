@@ -264,29 +264,101 @@ control but don't want Anvil to consider when providing context.
 The `.anvilignore` file uses the same syntax as `.gitignore` and can be placed
 in the root of your project or in subdirectories.
 
-### Allowing Tools
+### Tool Permissions
 
-By default, Anvil will ask you for permission before running tool calls. If
-you'd like, you can allow tools to be executed without prompting you for
-permissions. Use this with care.
+By default, Anvil asks you for permission before running tool calls. You can
+define rules that automatically allow, ask, or deny instead.
+
+Rules are keyed by a glob matching the tool name, and the value is either an
+action (`allow`, `ask`, `deny`) or an object of per-input rules. Rules are
+evaluated **in order, and the last match wins** — so put broad rules first and
+narrow exceptions after.
 
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
   "permissions": {
-    "allowed_tools": [
-      "view",
-      "ls",
-      "grep",
-      "edit",
-      "mcp_context7_get-library-doc"
-    ]
+    "view": "allow",
+    "ls": "allow",
+    "grep": "allow",
+    "{edit,write}": "allow",
+    "mcp_context7_*": "allow",
+    "bash": {
+      "*": "ask",
+      "git status *": "allow",
+      "git diff *": "allow",
+      "go test *": "allow",
+      "rm *": "deny"
+    }
   }
 }
 ```
 
-You can also skip all permission prompts entirely by running Anvil with the
-`--yolo` flag. Be very, very careful with this feature.
+The input a rule matches against depends on the tool: the full command for
+`bash`, the file path for `edit`/`write`/`view`/`ls`, the URL for
+`fetch`/`download`. MCP tools match on tool name only.
+
+Patterns support `*` (any characters, including `/`), `?` (one character),
+`[abc]` (character class), and `{a,b}` (brace expansion). A trailing `" *"`
+also matches the bare command, so `git status *` covers plain `git status`.
+
+#### Chained Commands
+
+Bash commands are split into their individual commands before evaluation, and
+**every** part must be allowed for the command to run without prompting:
+
+```
+go test ./... 2>&1 | tail -20    needs "go test *" and "tail *"
+git log --oneline && rm -rf /    denied, because of the "rm *" deny rule
+```
+
+This means rules compose, and a dangerous command can't ride along with an
+allowed one.
+
+Three things become segments of their own, because each executes or writes
+something the command name alone doesn't reveal:
+
+```
+echo hi > ~/.zshrc               needs "echo *" and "> ~/.zshrc"
+env FOO=bar rm -rf /             needs "env *" and "rm -rf /"
+find . -exec rm {} \;            needs "find *" and "rm {}"
+```
+
+Redirections that can write to a file (`>`, `>>`, `>|`, `&>`, and `>&` to a
+path) split off as a segment like `> /tmp/out.txt`, so allowing `echo *`
+never also grants a write to an arbitrary path. Redirections that cannot
+write a file stay part of the command: fd duplication such as `2>&1`,
+heredocs, and `<` reads.
+
+Commands that run another command given in their arguments — `env`, `sudo`,
+`xargs`, `timeout`, `nice`, `nohup`, `command`, `exec` and friends — also
+contribute the inner command as a segment, as does the body of a
+`find -exec` or `-ok` clause. Allowing the wrapper doesn't implicitly allow
+everything it can launch.
+
+Because segments combine worst-outcome-first, splitting these out can only
+make a command stricter, never more permissive.
+
+#### Granting at the Prompt
+
+When Anvil asks for permission you can allow it once, for the session, or
+forever. Session and forever grants use the editable pattern shown in the
+dialog (press `e` to edit it), so you can widen `git push origin main` to
+`git push *` before granting. Redirection segments are never widened, so
+approving a write to one path doesn't grant writes everywhere. Forever grants
+are written to your config — either the project config (`.anvil/anvil.json`)
+or your user config.
+
+#### Yolo Mode
+
+Running with `--yolo` turns every `ask` into `allow` while still honouring
+`deny` rules. `--yolo=full` bypasses permissions entirely, including `deny`.
+Be very, very careful with these.
+
+> [!NOTE]
+> The older `permissions.allowed_tools` list is deprecated. It still works
+> (each entry becomes an `allow` rule) but logs a warning, and it cannot be
+> combined with the rule format above.
 
 ### Disabling Built-In Tools
 

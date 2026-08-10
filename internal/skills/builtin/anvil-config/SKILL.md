@@ -327,10 +327,51 @@ When multiple hooks match, their decisions are aggregated:
 ```json
 {
   "permissions": {
-    "allowed_tools": ["view", "ls", "grep", "edit"]
+    "view": "allow",
+    "{edit,write}": "allow",
+    "mcp_linear_*": "allow",
+    "bash": {
+      "*": "ask",
+      "git status *": "allow",
+      "go test *": "allow",
+      "rm *": "deny"
+    }
   }
 }
 ```
+
+Rules are keyed by a glob matching the tool name. The value is either an
+action (`allow`, `ask`, `deny`) or an object of per-input rules. Rules are
+evaluated in order and **the last match wins**, so broad rules go first and
+narrow exceptions after.
+
+The matched input per tool: full command (`bash`), file path
+(`edit`/`write`/`view`/`ls`), URL (`fetch`/`download`). MCP tools match on
+tool name only.
+
+Patterns support `*` (any characters, crosses `/`), `?`, `[abc]`, and
+`{a,b}` brace expansion. A trailing `" *"` also matches the bare command, so
+`git status *` matches plain `git status`.
+
+Bash commands are split into individually-evaluated segments and every
+segment must be allowed, so `git log && rm -rf /` is denied by a `rm *` deny
+rule. Three things become segments of their own:
+
+- Each simple command in a chain, pipe, subshell, or substitution.
+- File-writing redirections: `echo hi > ~/.zshrc` needs both `echo *` and
+  `> ~/.zshrc`. Non-writing redirections (`2>&1`, heredocs, `<`) stay inline.
+- The inner command of a wrapper (`env`, `sudo`, `xargs`, `timeout`, `nice`,
+  `nohup`, `command`, `exec`) and the body of a `find -exec`/`-ok` clause, so
+  `find . -exec rm {} \;` needs both `find *` and `rm {}`.
+
+A tool rule whose sub-rules all miss falls through to earlier matches — add a
+`"*"` sub-rule to make a tool's rules exhaustive.
+
+`--yolo` promotes `ask` to `allow` but honours `deny`; `--yolo=full` bypasses
+everything.
+
+`permissions.allowed_tools` is deprecated (each entry becomes an `allow`
+rule) and cannot be combined with the rule format.
 
 ## Environment Variables
 

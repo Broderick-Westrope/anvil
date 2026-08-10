@@ -95,8 +95,11 @@ cat README.md | anvil run "make this more glamorous" > GLAMOROUS_README.md
 # Run with debug logging in a specific directory
 anvil --debug --cwd /path/to/project
 
-# Run in yolo mode (auto-accept all permissions; use with care)
+# Run in yolo mode (auto-accept prompts, still honouring deny rules)
 anvil --yolo
+
+# Run in full yolo mode (bypass all permissions, including deny; use with care)
+anvil --yolo=full
 
 # Run with custom data directory
 anvil --data-dir /path/to/custom/.anvil
