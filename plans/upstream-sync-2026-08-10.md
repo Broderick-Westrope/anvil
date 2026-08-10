@@ -428,6 +428,27 @@ b109e35f refactor(ui): route all agent-model rebuilds through one helper
 - **`1ef42ef8`** — `pill_border_test.go` needed only the module-path rewrite; the fork already
   had a compatible `newTestUI()` helper in `layout_test.go`. Removes `Pills.Blurred` from the
   styles struct — anything downstream still referencing it would break loudly, and nothing did.
+  Behavioural note: `todoPill` lost its per-section `focused` parameter, so the current task
+  name in the collapsed pill is now hidden whenever the panel is expanded at all (previously
+  only when the todos section was focused). Intentional upstream simplification — the full
+  list below shows the same information — but it is a visible change.
+
+### Review round (batch 5)
+
+A three-reviewer pass (2026-08-10, Sonnet + Opus + Convention) audited the batch:
+
+- **Fixed**: `CHARM-1678` ticket ref in `pill_border_test.go` (a fifth instance of the
+  upstream-reference trap — this time a ticket, not a fixture); missing `t.Parallel()` and
+  `t.Fatalf` assertions in the same file (converted to testify `require`); the anim `gen`
+  comment's false "zero wildcard" claim (wrong upstream too — no such logic exists); the
+  `view.go` truncation comment (byte-slice-then-`ToValidUTF8`-heal, not a rune-boundary walk);
+  `Stop()` annotated as having no production caller (upstream parity — test-only upstream too).
+- **Accepted as-is (upstream parity)**: dialogs collapse coalesced multi-tick wheel events to a
+  single viewport line (`permissions.go`, `arguments.go` — upstream does the same);
+  `renderPills` runs every Draw frame (cheap; a dirty flag would diverge from upstream for
+  little gain).
+- **Rejected**: documenting `int(msg.DeltaY)` truncation in `ui.go` — the block comment
+  directly above it already states the integer-delta contract.
 
 
 ## Batch 6 — MCP fixes
