@@ -52,19 +52,22 @@ type RuntimeOverrides struct {
 // pure-data Config, runtime state (working directory, resolver, known
 // providers), and persistence to both global and workspace config files.
 //
-// mu serialises all config file mutations (SetConfigFields,
-// RemoveConfigField, RefreshOAuthToken) to prevent both in-process
-// goroutine races and, together with the shared lock.File, cross-process
-// races on the config file.
+// mu serialises config file mutations that go through atomicWrite
+// (SetConfigFields, RemoveConfigField) plus SetPermissionRule, preventing
+// in-process writers from clobbering each other's read-modify-write
+// cycles. Unlike upstream there is no cross-process flock here: atomic
+// rename keeps readers from seeing a torn file, but two Anvil processes
+// writing the same file can still lose an update.
 //
 // writeMu serialises every operation that produces a new in-memory Config:
 // the typed copy-on-write mutators (SetCompactMode, UpdatePreferredModel,
 // ...) and ReloadFromDisk. Typed mutators take Lock; autoReload takes
-// TryLock so a write triggered re-entrantly during a reload (e.g.
-// configureProviders calling RemoveConfigField) skips the nested reload
-// instead of deadlocking. This is what lets published Configs be treated
-// as immutable: a mutator clones, mutates the clone, and swaps it in under
-// writeMu rather than mutating the live Config in place.
+// TryLock so a write triggered re-entrantly during a reload would skip
+// the nested reload instead of deadlocking (defensive: no reload path
+// currently writes config fields). This is what lets published Configs
+// be treated as immutable: a mutator clones, mutates the clone, and
+// swaps it in under writeMu rather than mutating the live Config in
+// place.
 type ConfigStore struct {
 	config             *Config
 	workingDir         string
@@ -204,6 +207,12 @@ func (s *ConfigStore) SetupAgents() {
 }
 
 // Overrides returns the runtime overrides for this store.
+//
+// metaMu only guards the read of the field itself; the returned pointer
+// escapes the lock, and callers (e.g. YoloLevel setup at startup) write
+// through it unsynchronised. That is tolerable because overrides are
+// written during single-threaded startup and read-only afterwards — do
+// not write through this pointer once the app is serving.
 func (s *ConfigStore) Overrides() *RuntimeOverrides {
 	s.metaMu.RLock()
 	defer s.metaMu.RUnlock()

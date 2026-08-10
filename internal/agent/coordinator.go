@@ -426,9 +426,10 @@ func (c *coordinator) getOrchestrator() SessionAgent {
 	return c.orchestrator
 }
 
-// effectiveReasoningEffort returns the reasoning effort to apply for provider calls.
-// It prefers the user-selected effort when valid, otherwise the model default when
-// valid, and finally falls back to the first configured reasoning level.
+// effectiveReasoningEffort returns the reasoning effort to apply for
+// provider calls. It prefers the user-selected effort when valid,
+// otherwise the model default when valid, and finally falls back to the
+// first configured reasoning level.
 func effectiveReasoningEffort(model Model) string {
 	if !model.CatwalkCfg.CanReason {
 		return ""

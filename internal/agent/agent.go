@@ -1492,14 +1492,10 @@ func (a *sessionAgent) Cancel(sessionID string) {
 	// remain in activeRequests so IsBusy() returns true until the goroutine
 	// fully completes (including error handling that may access the DB).
 	// The defer in processRequest will clean up the entry.
+	// Summarize registers under the same plain sessionID key, so this
+	// single lookup also cancels an in-flight summarize.
 	if ac, ok := a.activeRequests.Get(sessionID); ok && ac != nil {
 		slog.Debug("Request cancellation initiated", "session_id", sessionID)
-		ac.cancel()
-	}
-
-	// Also check for summarize requests.
-	if ac, ok := a.activeRequests.Get(sessionID + "-summarize"); ok && ac != nil {
-		slog.Debug("Summarize cancellation initiated", "session_id", sessionID)
 		ac.cancel()
 	}
 
