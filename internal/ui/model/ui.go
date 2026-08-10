@@ -926,6 +926,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// Suppress the chat's full-height scan during the resize so a drag
+		// only reflows visible items; it settles (and recomputes) shortly
+		// after the last resize event.
+		if m.state == uiChat {
+			// Use the active (possibly drilled-in) chat, not the root.
+			cmds = append(cmds, m.activeChat().BeginResize())
+		}
 		m.updateLayoutAndSize()
 		if m.state == uiChat && m.activeChat().Follow() {
 			if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
@@ -1085,6 +1092,19 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+			}
+		}
+	case chatWarmMsg:
+		// A resize has settled; warm the message cache one batch at a time
+		// so the scrollbar recompute never blocks the UI thread.
+		if m.state == uiChat {
+			cmd, done := m.activeChat().WarmStep(msg.seq)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			} else if done {
+				// Heights are cached now, so the final layout pass (scrollbar
+				// reservation) is cheap.
+				m.updateLayoutAndSize()
 			}
 		}
 	case spinner.TickMsg:

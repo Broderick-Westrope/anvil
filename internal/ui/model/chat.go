@@ -31,6 +31,33 @@ type DelayedClickMsg struct {
 	X, Y    int
 }
 
+// resizeSettleDuration is how long after the last resize event the chat
+// waits before it starts warming the message cache it skipped mid-drag.
+const resizeSettleDuration = 120 * time.Millisecond
+
+// warmBatchSize is how many messages the chat renders into the width cache
+// per warming step. Kept small so no single step blocks the UI thread for
+// more than a frame or so, even on slow-to-render items.
+const warmBatchSize = 25
+
+// chatWarmMsg drives one incremental cache-warming step. The first one is
+// delayed until the resize settles; the rest fire immediately, one per
+// batch, so warming spreads across frames instead of blocking.
+type chatWarmMsg struct {
+	seq int // guards against stale timers from superseded resizes
+}
+
+// chatWarmCmd schedules the next warming step after delay (zero fires as
+// soon as the runtime delivers it).
+func chatWarmCmd(seq int, delay time.Duration) tea.Cmd {
+	if delay <= 0 {
+		return func() tea.Msg { return chatWarmMsg{seq: seq} }
+	}
+	return tea.Tick(delay, func(_ time.Time) tea.Msg {
+		return chatWarmMsg{seq: seq}
+	})
+}
+
 // Chat represents the chat UI model that handles chat interactions and
 // messages.
 type Chat struct {
@@ -71,6 +98,14 @@ type Chat struct {
 	// (docs/notes/2026-05-12-chat-rendering-perf.md §4.8). Bounded to one
 	// entry; invalidated implicitly by string inequality on the next Draw.
 	drawCache *chatDrawCache
+
+	// resizing suppresses the O(N) total-height scan while a resize is in
+	// flight (and during the incremental warm afterward), so a drag only
+	// reflows the visible items. resizeSettleSeq guards stale settle/warm
+	// timers; warmNext tracks warming progress through the message list.
+	resizing        bool
+	resizeSettleSeq int
+	warmNext        int
 }
 
 // chatDrawCache holds the pre-decoded form of the last list.Render output.
@@ -203,6 +238,34 @@ func drawCachedBuffer(scr uv.Screen, area uv.Rectangle, buf uv.ScreenBuffer) {
 		}
 	}
 	buf.Draw(scr, area)
+}
+
+// BeginResize marks the chat as actively resizing so the next draws skip
+// the full-height scan (and the scrollbar), reflowing only the visible
+// items. It returns a command that, once resizing settles, starts warming
+// the cache so the scrollbar can recompute without blocking.
+func (m *Chat) BeginResize() tea.Cmd {
+	m.resizing = true
+	m.resizeSettleSeq++
+	m.warmNext = 0
+	return chatWarmCmd(m.resizeSettleSeq, resizeSettleDuration)
+}
+
+// WarmStep renders the next batch of messages into the width cache and
+// returns a command to continue warming plus whether warming finished. On
+// completion the resize suppression is cleared so the next draw recomputes
+// the (now instant) total height and scrollbar. A stale seq — from a resize
+// that has since been superseded — is a no-op returning (nil, false).
+func (m *Chat) WarmStep(seq int) (cmd tea.Cmd, done bool) {
+	if seq != m.resizeSettleSeq {
+		return nil, false
+	}
+	m.warmNext = m.list.Prewarm(m.warmNext, warmBatchSize)
+	if m.warmNext >= m.list.Len() {
+		m.resizing = false
+		return nil, true
+	}
+	return chatWarmCmd(seq, 0), false
 }
 
 // SetSize sets the size of the chat view port.
