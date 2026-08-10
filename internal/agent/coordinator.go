@@ -624,6 +624,11 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 				}
 			}
 
+		case string(catwalk.InferenceProviderBaseten):
+			extraBody["chat_template_args"] = map[string]any{
+				"enable_thinking": model.ModelCfg.Think || reasoningEffort != "" && reasoningEffort != "none",
+			}
+
 		case string(catwalk.InferenceProviderOpenCodeGo), string(catwalk.InferenceProviderOpenCodeZen):
 			// MiniMax M3 uses the "thinking" parameter to control reasoning.
 			// "reasoning_split" must be true so thinking content is returned
