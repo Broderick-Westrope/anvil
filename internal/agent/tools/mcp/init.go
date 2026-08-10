@@ -3,7 +3,6 @@
 package mcp
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -60,7 +59,48 @@ var (
 	initOnce  sync.Once
 	initDone  = make(chan struct{})
 	dbQueries db.Querier // Set during Initialize, used for OAuth token storage.
+
+	// initStarted records whether Initialize has been armed. WaitForInit only
+	// blocks once initialization is expected; coordinators built outside app
+	// startup never arm it and so must not wait forever.
+	initMu      sync.Mutex
+	initStarted bool
+
+	// renewMus serializes lazy session renewals per server so concurrent tool
+	// calls cannot race to rebuild the same session.
+	renewMusMu sync.Mutex
+	renewMus   = map[string]*sync.Mutex{}
+
+	// newSession creates a client session. It is a seam so tests can exercise
+	// renewal concurrency without spawning a real transport.
+	newSession = createSession
 )
+
+// ArmInit marks that MCP initialization is expected so WaitForInit blocks
+// until it completes. Call this synchronously before launching Initialize in a
+// goroutine; otherwise WaitForInit could observe the not-yet-started state and
+// return early, letting the tool list be read before MCP tools register.
+// Initialize also arms itself defensively for callers that invoke it without
+// going through app startup; that in-goroutine call cannot provide the
+// synchronous guarantee described above.
+func ArmInit() {
+	initMu.Lock()
+	initStarted = true
+	initMu.Unlock()
+}
+
+// renewLock returns the per-server mutex used to serialize session renewals,
+// creating it on first use.
+func renewLock(name string) *sync.Mutex {
+	renewMusMu.Lock()
+	defer renewMusMu.Unlock()
+	mu, ok := renewMus[name]
+	if !ok {
+		mu = &sync.Mutex{}
+		renewMus[name] = mu
+	}
+	return mu
+}
 
 // State represents the current state of an MCP client
 type State int
@@ -170,6 +210,7 @@ func Close(ctx context.Context) error {
 
 // Initialize initializes MCP clients based on the provided configuration.
 func Initialize(ctx context.Context, permissions permission.Service, cfg *config.ConfigStore, queries db.Querier) {
+	ArmInit()
 	dbQueries = queries
 	slog.Info("Initializing MCP clients")
 	var wg sync.WaitGroup
@@ -210,9 +251,18 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 	initOnce.Do(func() { close(initDone) })
 }
 
-// WaitForInit blocks until MCP initialization is complete.
-// If Initialize was never called, this returns immediately.
+// WaitForInit blocks until MCP initialization is complete, i.e. until
+// Initialize has finished and closed initDone. If initialization was never
+// armed (ArmInit was not called, e.g. a coordinator built outside app
+// startup), there is nothing to wait for and this returns nil immediately
+// rather than blocking until ctx is cancelled.
 func WaitForInit(ctx context.Context) error {
+	initMu.Lock()
+	started := initStarted
+	initMu.Unlock()
+	if !started {
+		return nil
+	}
 	select {
 	case <-initDone:
 		return nil
@@ -253,11 +303,11 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 		return err
 	}
 
-	tools, err := getTools(ctx, session)
+	toolCount, err := registerSessionTools(ctx, cfg, name, session)
 	if err != nil {
 		slog.Error("Error listing tools", "error", err)
 		updateState(name, StateError, err, nil, Counts{})
-		session.Close()
+		closeSession(name, session)
 		return err
 	}
 
@@ -265,11 +315,10 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 	if err != nil {
 		slog.Error("Error listing prompts", "error", err)
 		updateState(name, StateError, err, nil, Counts{})
-		session.Close()
+		closeSession(name, session)
 		return err
 	}
 
-	toolCount := updateTools(cfg, name, tools)
 	updatePrompts(name, prompts)
 	sessions.Set(name, session)
 
@@ -287,20 +336,14 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 
 // DisableSingle disables and closes a single MCP client by name.
 func DisableSingle(cfg *config.ConfigStore, name string) error {
-	session, ok := sessions.Get(name)
-	if ok {
-		if err := session.Close(); err != nil &&
-			!errors.Is(err, io.EOF) &&
-			!errors.Is(err, context.Canceled) &&
-			err.Error() != "signal: killed" {
-			slog.Warn("Error closing MCP session", "name", name, "error", err)
-		}
-		sessions.Del(name)
+	if session, ok := sessions.Take(name); ok {
+		closeSession(name, session)
 	}
 
-	// Clear tools and prompts for this MCP.
+	// Clear tools, prompts, and resources for this MCP.
 	updateTools(cfg, name, nil)
 	updatePrompts(name, nil)
+	updateResources(name, nil)
 
 	// Update state to disabled.
 	updateState(name, StateDisabled, nil, nil, Counts{})
@@ -310,47 +353,115 @@ func DisableSingle(cfg *config.ConfigStore, name string) error {
 }
 
 func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string) (*ClientSession, error) {
-	// Wait for Initialize to finish so dbQueries is safe to read.
-	select {
-	case <-initDone:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	m := cfg.Config().MCP[name]
+	timeout := mcpTimeout(m)
+
+	// Fast path: reuse a healthy session without taking the renewal lock.
+	// NOTE: A concurrent locked renewal may close this session between the
+	// ping succeeding and the caller using it. That is a deliberate tradeoff
+	// inherited from upstream: the window is narrow, the caller's tool call
+	// fails transiently at worst, and skipping the lock on every healthy
+	// call avoids contention under parallel tool use.
+	if sess, ok := sessions.Get(name); ok {
+		if err := pingSession(ctx, sess, timeout); err == nil {
+			return sess, nil
+		}
 	}
 
+	// Serialize renewals per server. Two concurrent tool calls can both
+	// observe a dead session and race to rebuild it: one may close the
+	// session the other just registered, or overwrite and leak a live
+	// replacement. Under this lock only the first arrival rebuilds; later
+	// arrivals re-check and reuse the healthy result.
+	mu := renewLock(name)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Under the lock the map is stable: any in-flight renewal has finished and
+	// either re-registered its session or failed and left none. A renewal
+	// removes the session transiently (StateError takes it before rebuilding),
+	// so this check must happen here rather than before the lock — otherwise a
+	// caller arriving mid-renewal sees no session and wrongly reports the
+	// server unavailable.
 	sess, ok := sessions.Get(name)
 	if !ok {
 		return nil, fmt.Errorf("mcp '%s' not available", name)
 	}
 
-	m := cfg.Config().MCP[name]
-	state, _ := states.Get(name)
-
-	timeout := mcpTimeout(m)
-	pingCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	err := sess.Ping(pingCtx, nil)
-	if err == nil {
+	// A concurrent goroutine may have already renewed the session while we
+	// waited for the lock. Reuse it if it is now healthy.
+	pingErr := pingSession(ctx, sess, timeout)
+	if pingErr == nil {
 		return sess, nil
 	}
-	// Ping failed — close the stale session before replacing it.
-	// Ignore the error: the session is already known to be unhealthy.
-	_ = sess.Close()
-	sessions.Del(name)
 
-	sess, err = createSession(ctx, name, m, cfg.Resolver(), dbQueries)
+	state, _ := states.Get(name)
+	// StateError closes the dead session and clears its tools, prompts, and
+	// resources from the registry.
+	updateState(name, StateError, maybeTimeoutErr(pingErr, timeout), nil, state.Counts)
+
+	newSess, err := newSession(ctx, name, m, cfg.Resolver(), dbQueries)
 	if err != nil {
-		// Only transition to error if reconnection actually fails.
-		updateState(name, StateError, maybeTimeoutErr(err, timeout), nil, state.Counts)
 		return nil, err
 	}
+
+	// StateError cleared this server's tools, prompts, and resources from the
+	// registry. Re-list and re-register them all on the fresh session and
+	// recompute the counts from what actually registered; otherwise the agent
+	// reconnects but the registries stay empty (the next tool call fails with
+	// "tool not found") while the reported counts still advertise capabilities
+	// that are no longer there.
+	var counts Counts
+	counts.Tools, err = registerSessionTools(ctx, cfg, name, newSess)
+	if err != nil {
+		updateState(name, StateError, err, nil, Counts{})
+		closeSession(name, newSess)
+		return nil, err
+	}
+
+	prompts, err := getPrompts(ctx, newSess)
+	if err != nil {
+		updateState(name, StateError, err, nil, Counts{})
+		closeSession(name, newSess)
+		return nil, err
+	}
+	updatePrompts(name, prompts)
+	counts.Prompts = len(prompts)
+
+	resources, err := getResources(ctx, newSess)
+	if err != nil {
+		updateState(name, StateError, err, nil, Counts{})
+		closeSession(name, newSess)
+		return nil, err
+	}
+	counts.Resources = updateResources(name, resources)
 
 	reconnState := StateConnected
 	if m.IsLazy() {
 		reconnState = StateLazy
 	}
-	updateState(name, reconnState, nil, sess, state.Counts)
-	sessions.Set(name, sess)
-	return sess, nil
+	sessions.Set(name, newSess)
+	updateState(name, reconnState, nil, newSess, counts)
+	return newSess, nil
+}
+
+// pingSession pings a session with the server's configured timeout.
+func pingSession(ctx context.Context, s *ClientSession, timeout time.Duration) error {
+	pingCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return s.Ping(pingCtx, nil)
+}
+
+// closeSession closes an MCP session, logging only unexpected errors. EOF,
+// context cancellation, and a killed child are the ordinary result of tearing
+// a session down and are not worth surfacing.
+func closeSession(name string, s *ClientSession) {
+	if err := s.Close(); err != nil &&
+		!errors.Is(err, io.EOF) &&
+		!errors.Is(err, context.Canceled) &&
+		err.Error() != "signal: killed" {
+		slog.Warn("Error closing MCP session", "name", name, "error", err)
+	}
 }
 
 // updateState updates the state of an MCP client and publishes an event
@@ -366,7 +477,23 @@ func updateState(name string, state State, err error, client *ClientSession, cou
 	case StateConnected:
 		info.ConnectedAt = time.Now()
 	case StateError:
-		sessions.Del(name)
+		// A session that has errored is dead to us. Atomically remove it and
+		// close it so the child process and its stdio pipes are released — the
+		// bare map delete this used to do leaked both. Clearing the tool
+		// registry keeps the agent from advertising tools it can no longer
+		// call: without it, anvil_info / the MCP palette and the tool list
+		// handed to the LLM diverge, so a server still reads "connected, N
+		// tools" while every call fails with "tool not found".
+		if old, ok := sessions.Take(name); ok {
+			closeSession(name, old)
+		}
+		// Drop every registry entry for the dead server. Leaving prompts or
+		// resources behind lets a disconnected server keep advertising
+		// capabilities the agent can no longer fulfil, the same divergence the
+		// tool clear prevents.
+		allTools.Del(name)
+		allPrompts.Del(name)
+		allResources.Del(name)
 	}
 	states.Set(name, info)
 
@@ -489,6 +616,12 @@ func createTransport(ctx context.Context, name string, m config.MCPConfig, resol
 		}
 		cmd := exec.CommandContext(ctx, home.Long(command), args...)
 		cmd.Env = append(os.Environ(), envs...)
+		// Run the child in its own process group and kill the whole group when
+		// the session context is cancelled. A stdio server often spawns its own
+		// children (signal-mcp launches signal-cli); os/exec's default
+		// cancellation kills only the direct child, orphaning the rest with
+		// PPID 1 — production accumulated 15+ such zombies over two days.
+		configureStdioProcess(cmd)
 		return &mcp.CommandTransport{
 			Command: cmd,
 		}, nil
@@ -564,7 +697,15 @@ func (rt headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 func mcpTimeout(m config.MCPConfig) time.Duration {
-	return time.Duration(cmp.Or(m.Timeout, 15)) * time.Second
+	if m.Timeout > 0 {
+		return time.Duration(m.Timeout) * time.Second
+	}
+	// OAuth flows require user interaction in a browser, so use a
+	// generous default to avoid timing out mid-auth.
+	if m.Auth == config.MCPAuthOAuth {
+		return 30 * time.Second
+	}
+	return 10 * time.Second
 }
 
 func stdioCheck(old *exec.Cmd) error {

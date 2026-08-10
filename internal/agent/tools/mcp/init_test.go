@@ -491,8 +491,8 @@ func TestCreateTransport_SSEWithOAuth_NilQueries(t *testing.T) {
 // its context) before it is replaced. This prevents goroutine and context
 // leaks.
 //
-// This test cannot be parallel: it temporarily replaces the package-level
-// initDone channel and mutates the sessions/states maps.
+// This test cannot be parallel: it mutates the package-level sessions and
+// states maps.
 func TestGetOrRenewClient_ClosesOldSessionOnReconnect(t *testing.T) {
 	defer goleak.VerifyNone(
 		t,
@@ -515,12 +515,6 @@ func TestGetOrRenewClient_ClosesOldSessionOnReconnect(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := &ClientSession{clientSession, clientCancel}
-
-	// Swap initDone to a pre-closed channel so getOrRenewClient proceeds.
-	oldInitDone := initDone
-	initDone = make(chan struct{})
-	close(initDone)
-	defer func() { initDone = oldInitDone }()
 
 	sessions.Set(name, sess)
 	t.Cleanup(func() { sessions.Del(name) })
