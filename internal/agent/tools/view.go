@@ -143,13 +143,14 @@ func NewViewTool(
 						Action:      "read",
 						Description: fmt.Sprintf("Read file outside working directory: %s", absFilePath),
 						Params:      ViewPermissionsParams(params),
+						Input:       absFilePath,
 					},
 				)
 				if permReqErr != nil {
 					return fantasy.ToolResponse{}, permReqErr
 				}
-				if !granted {
-					return NewPermissionDeniedResponse(), nil
+				if !granted.Granted {
+					return NewPermissionDeniedResponse(granted.Reason), nil
 				}
 			}
 

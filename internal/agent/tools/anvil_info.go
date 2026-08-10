@@ -358,21 +358,25 @@ func writePermissions(b *strings.Builder, cfg *config.ConfigStore) {
 	c := cfg.Config()
 	overrides := cfg.Overrides()
 
-	if c.Permissions == nil {
-		if !overrides.SkipPermissionRequests {
-			return
-		}
-	} else if !overrides.SkipPermissionRequests && len(c.Permissions.AllowedTools) == 0 {
+	hasRules := c.Permissions != nil && len(c.Permissions.Rules) > 0
+	yolo := overrides.YoloLevel != config.YoloOff
+
+	if !hasRules && !yolo {
 		return
 	}
+
 	b.WriteString("[permissions]\n")
-	if overrides.SkipPermissionRequests {
-		b.WriteString("mode = yolo\n")
+	if yolo {
+		fmt.Fprintf(b, "mode = yolo (%s)\n", overrides.YoloLevel)
 	}
-	if c.Permissions != nil && len(c.Permissions.AllowedTools) > 0 {
-		sorted := slices.Clone(c.Permissions.AllowedTools)
-		slices.Sort(sorted)
-		fmt.Fprintf(b, "allowed_tools = %s\n", strings.Join(sorted, ", "))
+	if hasRules {
+		for _, rule := range c.Permissions.Rules {
+			if len(rule.SubRules) > 0 {
+				fmt.Fprintf(b, "%s = [%d sub-rules]\n", rule.ToolPattern, len(rule.SubRules))
+			} else {
+				fmt.Fprintf(b, "%s = %s\n", rule.ToolPattern, rule.Action)
+			}
+		}
 	}
 	b.WriteString("\n")
 }

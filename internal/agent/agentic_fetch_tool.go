@@ -90,13 +90,14 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 					Action:      "fetch",
 					Description: description,
 					Params:      tools.AgenticFetchPermissionsParams(params),
+					Input:       params.URL,
 				},
 			)
 			if err != nil {
 				return fantasy.ToolResponse{}, err
 			}
-			if !p {
-				return tools.NewPermissionDeniedResponse(), nil
+			if !p.Granted {
+				return tools.NewPermissionDeniedResponse(p.Reason), nil
 			}
 
 			tmpDir, err := os.MkdirTemp(c.cfg.Config().Options.ProjectDirectory, "anvil-fetch-*")
@@ -185,7 +186,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				SystemPromptPrefix:   smallProviderCfg.SystemPromptPrefix,
 				SystemPrompt:         systemPrompt,
 				DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
-				IsYolo:               c.permissions.SkipRequests(),
+				IsYolo:               c.permissions.YoloLevel() != config.YoloOff,
 				Sessions:             c.sessions,
 				Messages:             c.messages,
 				Tools:                fetchTools,

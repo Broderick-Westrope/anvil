@@ -223,16 +223,24 @@ func (w *AppWorkspace) PermissionGrantPersistent(perm permission.PermissionReque
 	w.app.Permissions.GrantPersistent(perm)
 }
 
-func (w *AppWorkspace) PermissionDeny(perm permission.PermissionRequest) {
-	w.app.Permissions.Deny(perm)
+func (w *AppWorkspace) PermissionGrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {
+	return w.app.Permissions.GrantSession(sessionID, toolPattern, inputPattern, action)
 }
 
-func (w *AppWorkspace) PermissionSkipRequests() bool {
-	return w.app.Permissions.SkipRequests()
+func (w *AppWorkspace) PermissionGrantForever(toolPattern, inputPattern string, action config.PermissionAction, scope config.Scope) error {
+	return w.app.Permissions.GrantForever(toolPattern, inputPattern, action, scope)
 }
 
-func (w *AppWorkspace) PermissionSetSkipRequests(skip bool) {
-	w.app.Permissions.SetSkipRequests(skip)
+func (w *AppWorkspace) PermissionDeny(perm permission.PermissionRequest, reason string) {
+	w.app.Permissions.Deny(perm, reason)
+}
+
+func (w *AppWorkspace) PermissionYoloLevel() config.YoloLevel {
+	return w.app.Permissions.YoloLevel()
+}
+
+func (w *AppWorkspace) PermissionSetYoloLevel(level config.YoloLevel) {
+	w.app.Permissions.SetYoloLevel(level)
 }
 
 // -- FileTracker --

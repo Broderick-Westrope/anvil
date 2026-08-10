@@ -45,11 +45,12 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	cfg.setDefaults(workingDir, dataDir)
 
 	store := &ConfigStore{
-		config:         cfg,
-		workingDir:     workingDir,
-		globalDataPath: GlobalConfigData(),
-		workspacePath:  filepath.Join(cfg.Options.ProjectDirectory, fmt.Sprintf("%s.json", appName)),
-		loadedPaths:    loadedPaths,
+		config:           cfg,
+		workingDir:       workingDir,
+		globalConfigPath: GlobalConfig(),
+		globalDataPath:   GlobalConfigData(),
+		workspacePath:    filepath.Join(cfg.Options.ProjectDirectory, fmt.Sprintf("%s.json", appName)),
+		loadedPaths:      loadedPaths,
 	}
 
 	if debug {
@@ -80,6 +81,14 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 
 	if err := cfg.ValidateMCPAuth(); err != nil {
 		return nil, fmt.Errorf("invalid MCP auth configuration: %w", err)
+	}
+
+	// Migrate deprecated allowed_tools to permission rules.
+	if cfg.Permissions != nil && len(cfg.Permissions.AllowedTools) > 0 {
+		slog.Warn("Deprecated 'permissions.allowed_tools' found, migrating to permission rules; update your anvil.json to use the new format",
+			"allowed_tools", cfg.Permissions.AllowedTools,
+		)
+		cfg.Permissions.Rules = MigrateAllowedTools(cfg.Permissions.AllowedTools)
 	}
 
 	if !isInsideWorktree() {

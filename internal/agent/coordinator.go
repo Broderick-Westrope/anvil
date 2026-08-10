@@ -685,7 +685,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		Depth:                depth,
 		IsSubAgent:           isSubAgent,
 		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
-		IsYolo:               c.permissions.SkipRequests(),
+		IsYolo:               c.permissions.YoloLevel() != config.YoloOff,
 		Sessions:             c.sessions,
 		Messages:             c.messages,
 		Tools:                nil,

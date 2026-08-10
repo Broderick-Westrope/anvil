@@ -111,13 +111,14 @@ func NewLsTool(permissions permission.Service, workingDir string, lsConfig confi
 						Action:      "list",
 						Description: fmt.Sprintf("List directory outside working directory: %s", absSearchPath),
 						Params:      LSPermissionsParams(params),
+						Input:       absSearchPath,
 					},
 				)
 				if err != nil {
 					return fantasy.ToolResponse{}, err
 				}
-				if !granted {
-					return NewPermissionDeniedResponse(), nil
+				if !granted.Granted {
+					return NewPermissionDeniedResponse(granted.Reason), nil
 				}
 			}
 

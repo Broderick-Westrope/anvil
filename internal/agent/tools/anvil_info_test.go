@@ -157,24 +157,28 @@ func TestAnvilInfo_YoloMode(t *testing.T) {
 		Providers:   csync.NewMap[string, config.ProviderConfig](),
 		Permissions: &config.Permissions{},
 	})
-	cfg.Overrides().SkipPermissionRequests = true
+	cfg.Overrides().YoloLevel = config.YoloStandard
 
 	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
 	require.Contains(t, output, "[permissions]")
-	require.Contains(t, output, "mode = yolo")
+	require.Contains(t, output, "mode = yolo (standard)")
 }
 
 func TestAnvilInfo_AllowedTools(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.NewTestStore(&config.Config{
-		Providers:   csync.NewMap[string, config.ProviderConfig](),
-		Permissions: &config.Permissions{AllowedTools: []string{"edit:write", "bash"}},
+		Providers: csync.NewMap[string, config.ProviderConfig](),
+		Permissions: &config.Permissions{Rules: []config.PermissionRule{
+			{ToolPattern: "bash", Action: config.PermissionAllow},
+			{ToolPattern: "edit", Action: config.PermissionAllow},
+		}},
 	})
 
 	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
 	require.Contains(t, output, "[permissions]")
-	require.Contains(t, output, "allowed_tools = bash, edit:write")
+	require.Contains(t, output, "bash = allow")
+	require.Contains(t, output, "edit = allow")
 }
 
 func TestAnvilInfo_DisabledTools(t *testing.T) {
@@ -261,10 +265,13 @@ func TestAnvilInfo_DeterministicOrdering(t *testing.T) {
 		Providers: providers,
 		Options:   &config.Options{DisabledTools: []string{"z-tool", "a-tool"}},
 		Permissions: &config.Permissions{
-			AllowedTools: []string{"z-perm", "a-perm"},
+			Rules: []config.PermissionRule{
+				{ToolPattern: "z-perm", Action: config.PermissionAllow},
+				{ToolPattern: "a-perm", Action: config.PermissionAllow},
+			},
 		},
 	})
-	cfg.Overrides().SkipPermissionRequests = true
+	cfg.Overrides().YoloLevel = config.YoloStandard
 
 	// Test MCP ordering via writeMCP directly.
 	var mcpBuf strings.Builder
@@ -283,7 +290,13 @@ func TestAnvilInfo_DeterministicOrdering(t *testing.T) {
 	require.Less(t, middleIdx, zebraIdx)
 
 	require.Contains(t, output, "disabled = a-tool, z-tool")
-	require.Contains(t, output, "allowed_tools = a-perm, z-perm")
+	require.Contains(t, output, "z-perm = allow")
+	require.Contains(t, output, "a-perm = allow")
+
+	// Verify insertion order is preserved (z-perm before a-perm).
+	zIdx := strings.Index(output, "z-perm = allow")
+	aIdx := strings.Index(output, "a-perm = allow")
+	require.Less(t, zIdx, aIdx, "permission rules should preserve insertion order")
 }
 
 func TestAnvilInfo_EmptySectionsOmitted(t *testing.T) {

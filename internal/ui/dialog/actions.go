@@ -66,6 +66,9 @@ type (
 	ActionPermissionResponse struct {
 		Permission permission.PermissionRequest
 		Action     PermissionAction
+		Pattern    string       // Edited pattern for session/forever grants.
+		Scope      config.Scope // Project or user scope (for forever grants).
+		Reason     string       // Denial reason text.
 	}
 	// ActionRunCustomCommand is a message to run a custom command.
 	ActionRunCustomCommand struct {

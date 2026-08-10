@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Broderick-Westrope/anvil/internal/backend"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/proto"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 )
@@ -894,7 +895,7 @@ func (c *controllerV1) handlePostWorkspacePermissionsGrant(w http.ResponseWriter
 //	@Tags			permissions
 //	@Accept			json
 //	@Param			id		path	string						true	"Workspace ID"
-//	@Param			request	body	proto.PermissionSkipRequest	true	"Permission skip request"
+//	@Param			request	body	proto.PermissionYoloRequest	true	"Permission yolo level request"
 //	@Success		200
 //	@Failure		400	{object}	proto.Error
 //	@Failure		404	{object}	proto.Error
@@ -903,14 +904,20 @@ func (c *controllerV1) handlePostWorkspacePermissionsGrant(w http.ResponseWriter
 func (c *controllerV1) handlePostWorkspacePermissionsSkip(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req proto.PermissionSkipRequest
+	var req proto.PermissionYoloRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.server.logError(r, "Failed to decode request", "error", err)
 		jsonError(w, http.StatusBadRequest, "failed to decode request")
 		return
 	}
 
-	if err := c.backend.SetPermissionsSkip(id, req.Skip); err != nil {
+	level := config.YoloLevel(req.YoloLevel)
+	if level < config.YoloOff || level > config.YoloFull {
+		jsonError(w, http.StatusBadRequest, fmt.Sprintf("invalid yolo level: %d (must be 0-2)", req.YoloLevel))
+		return
+	}
+
+	if err := c.backend.SetPermissionsYoloLevel(id, level); err != nil {
 		c.handleError(w, r, err)
 		return
 	}
@@ -922,18 +929,18 @@ func (c *controllerV1) handlePostWorkspacePermissionsSkip(w http.ResponseWriter,
 //	@Tags			permissions
 //	@Produce		json
 //	@Param			id	path		string						true	"Workspace ID"
-//	@Success		200	{object}	proto.PermissionSkipRequest
+//	@Success		200	{object}	proto.PermissionYoloRequest
 //	@Failure		404	{object}	proto.Error
 //	@Failure		500	{object}	proto.Error
 //	@Router			/workspaces/{id}/permissions/skip [get]
 func (c *controllerV1) handleGetWorkspacePermissionsSkip(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	skip, err := c.backend.GetPermissionsSkip(id)
+	level, err := c.backend.GetPermissionsYoloLevel(id)
 	if err != nil {
 		c.handleError(w, r, err)
 		return
 	}
-	jsonEncode(w, proto.PermissionSkipRequest{Skip: skip})
+	jsonEncode(w, proto.PermissionYoloRequest{YoloLevel: int(level)})
 }
 
 // handleError maps backend errors to HTTP status codes and writes the

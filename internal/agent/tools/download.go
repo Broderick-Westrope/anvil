@@ -95,13 +95,14 @@ func NewDownloadTool(permissions permission.Service, workingDir string, client *
 					Action:      "download",
 					Description: fmt.Sprintf("Download file from URL: %s to %s", params.URL, filePath),
 					Params:      DownloadPermissionsParams(params),
+					Input:       params.URL,
 				},
 			)
 			if err != nil {
 				return fantasy.ToolResponse{}, err
 			}
-			if !p {
-				return NewPermissionDeniedResponse(), nil
+			if !p.Granted {
+				return NewPermissionDeniedResponse(p.Reason), nil
 			}
 
 			// Handle timeout with context

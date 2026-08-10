@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
@@ -18,13 +19,13 @@ type mockBashPermissionService struct {
 	*pubsub.Broker[permission.PermissionRequest]
 }
 
-func (m *mockBashPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (bool, error) {
-	return true, nil
+func (m *mockBashPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error) {
+	return permission.RequestResult{Granted: true}, nil
 }
 
 func (m *mockBashPermissionService) Grant(req permission.PermissionRequest) {}
 
-func (m *mockBashPermissionService) Deny(req permission.PermissionRequest) {}
+func (m *mockBashPermissionService) Deny(req permission.PermissionRequest, reason string) {}
 
 func (m *mockBashPermissionService) GrantPersistent(req permission.PermissionRequest) {}
 
@@ -32,14 +33,22 @@ func (m *mockBashPermissionService) AutoApproveSession(sessionID string) {}
 
 func (m *mockBashPermissionService) RevokeAutoApproveSession(sessionID string) {}
 
-func (m *mockBashPermissionService) SetSkipRequests(skip bool) {}
+func (m *mockBashPermissionService) SetYoloLevel(level config.YoloLevel) {}
 
-func (m *mockBashPermissionService) SkipRequests() bool {
-	return false
+func (m *mockBashPermissionService) YoloLevel() config.YoloLevel {
+	return config.YoloOff
 }
 
 func (m *mockBashPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
+}
+
+func (m *mockBashPermissionService) GrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {
+	return nil
+}
+
+func (m *mockBashPermissionService) GrantForever(toolPattern string, inputPattern string, action config.PermissionAction, scope config.Scope) error {
+	return nil
 }
 
 func TestBashTool_DefaultAutoBackgroundThreshold(t *testing.T) {
@@ -85,17 +94,19 @@ func TestBashTool_CustomAutoBackgroundThreshold(t *testing.T) {
 type recordingPermissionService struct {
 	*pubsub.Broker[permission.PermissionRequest]
 	requestCount int
+	lastRequest  permission.CreatePermissionRequest
 	allow        bool
 }
 
-func (m *recordingPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (bool, error) {
+func (m *recordingPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error) {
 	m.requestCount++
-	return m.allow, nil
+	m.lastRequest = req
+	return permission.RequestResult{Granted: m.allow}, nil
 }
 
 func (m *recordingPermissionService) Grant(req permission.PermissionRequest) {}
 
-func (m *recordingPermissionService) Deny(req permission.PermissionRequest) {}
+func (m *recordingPermissionService) Deny(req permission.PermissionRequest, reason string) {}
 
 func (m *recordingPermissionService) GrantPersistent(req permission.PermissionRequest) {}
 
@@ -103,14 +114,22 @@ func (m *recordingPermissionService) AutoApproveSession(sessionID string) {}
 
 func (m *recordingPermissionService) RevokeAutoApproveSession(sessionID string) {}
 
-func (m *recordingPermissionService) SetSkipRequests(skip bool) {}
+func (m *recordingPermissionService) SetYoloLevel(level config.YoloLevel) {}
 
-func (m *recordingPermissionService) SkipRequests() bool {
-	return false
+func (m *recordingPermissionService) YoloLevel() config.YoloLevel {
+	return config.YoloOff
 }
 
 func (m *recordingPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
+}
+
+func (m *recordingPermissionService) GrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {
+	return nil
+}
+
+func (m *recordingPermissionService) GrantForever(toolPattern string, inputPattern string, action config.PermissionAction, scope config.Scope) error {
+	return nil
 }
 
 func newBashToolForTest(workingDir string) fantasy.AgentTool {
@@ -151,6 +170,20 @@ func TestBashTool_ChainedCommandsRequirePermission(t *testing.T) {
 	require.Equal(t, 0, perms.requestCount, "plain ls should not trigger permission request")
 }
 
+func TestBashTool_PermissionRequestIncludesInputSegments(t *testing.T) {
+	workingDir := t.TempDir()
+	tool, perms := newBashToolWithRecordingPerms(workingDir, true)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	runBashTool(t, tool, ctx, BashParams{
+		Description: "chained git status",
+		Command:     "git status && ls -la",
+	})
+
+	require.Equal(t, 1, perms.requestCount)
+	require.Equal(t, []string{"git status", "ls -la"}, perms.lastRequest.InputSegments)
+}
+
 func TestBashTool_ChainedCommandsDenied(t *testing.T) {
 	workingDir := t.TempDir()
 	tool, perms := newBashToolWithRecordingPerms(workingDir, false)
@@ -162,7 +195,7 @@ func TestBashTool_ChainedCommandsDenied(t *testing.T) {
 	})
 
 	require.Equal(t, 1, perms.requestCount)
-	require.Contains(t, resp.Content, "User denied permission")
+	require.Contains(t, resp.Content, "Permission denied")
 }
 
 func runBashTool(t *testing.T, tool fantasy.AgentTool, ctx context.Context, params BashParams) fantasy.ToolResponse {

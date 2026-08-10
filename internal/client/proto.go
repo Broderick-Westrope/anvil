@@ -504,34 +504,34 @@ func (c *Client) GrantPermission(ctx context.Context, id string, req proto.Permi
 	return nil
 }
 
-// SetPermissionsSkipRequests sets the skip-requests flag for a workspace.
-func (c *Client) SetPermissionsSkipRequests(ctx context.Context, id string, skip bool) error {
-	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/permissions/skip", id), nil, jsonBody(proto.PermissionSkipRequest{Skip: skip}), http.Header{"Content-Type": []string{"application/json"}})
+// SetPermissionsYoloLevel sets the yolo level for a workspace.
+func (c *Client) SetPermissionsYoloLevel(ctx context.Context, id string, level config.YoloLevel) error {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/permissions/skip", id), nil, jsonBody(proto.PermissionYoloRequest{YoloLevel: int(level)}), http.Header{"Content-Type": []string{"application/json"}})
 	if err != nil {
-		return fmt.Errorf("failed to set permissions skip requests: %w", err)
+		return fmt.Errorf("failed to set permissions yolo level: %w", err)
 	}
 	defer rsp.Body.Close()
 	if rsp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to set permissions skip requests: status code %d", rsp.StatusCode)
+		return fmt.Errorf("failed to set permissions yolo level: status code %d", rsp.StatusCode)
 	}
 	return nil
 }
 
-// GetPermissionsSkipRequests retrieves the skip-requests flag for a workspace.
-func (c *Client) GetPermissionsSkipRequests(ctx context.Context, id string) (bool, error) {
+// GetPermissionsYoloLevel retrieves the yolo level for a workspace.
+func (c *Client) GetPermissionsYoloLevel(ctx context.Context, id string) (config.YoloLevel, error) {
 	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/permissions/skip", id), nil, nil)
 	if err != nil {
-		return false, fmt.Errorf("failed to get permissions skip requests: %w", err)
+		return config.YoloOff, fmt.Errorf("failed to get permissions yolo level: %w", err)
 	}
 	defer rsp.Body.Close()
 	if rsp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("failed to get permissions skip requests: status code %d", rsp.StatusCode)
+		return config.YoloOff, fmt.Errorf("failed to get permissions yolo level: status code %d", rsp.StatusCode)
 	}
-	var skip proto.PermissionSkipRequest
-	if err := json.NewDecoder(rsp.Body).Decode(&skip); err != nil {
-		return false, fmt.Errorf("failed to decode permissions skip requests: %w", err)
+	var req proto.PermissionYoloRequest
+	if err := json.NewDecoder(rsp.Body).Decode(&req); err != nil {
+		return config.YoloOff, fmt.Errorf("failed to decode permissions yolo level: %w", err)
 	}
-	return skip.Skip, nil
+	return config.YoloLevel(req.YoloLevel), nil
 }
 
 // GetConfig retrieves the workspace-specific configuration.

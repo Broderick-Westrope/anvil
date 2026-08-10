@@ -118,13 +118,14 @@ func NewWriteTool(
 						OldContent: oldContent,
 						NewContent: params.Content,
 					},
+					Input: filePath,
 				},
 			)
 			if err != nil {
 				return fantasy.ToolResponse{}, err
 			}
-			if !p {
-				resp := NewPermissionDeniedResponse()
+			if !p.Granted {
+				resp := NewPermissionDeniedResponse(p.Reason)
 				resp = fantasy.WithResponseMetadata(resp, WriteResponseMetadata{
 					Diff:      diff,
 					Additions: additions,

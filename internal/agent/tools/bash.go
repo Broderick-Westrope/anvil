@@ -17,6 +17,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/permission/segment"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
@@ -220,20 +221,22 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 			if !isSafeReadOnly {
 				p, err := permissions.Request(ctx,
 					permission.CreatePermissionRequest{
-						SessionID:   sessionID,
-						Path:        execWorkingDir,
-						ToolCallID:  call.ID,
-						ToolName:    BashToolName,
-						Action:      "execute",
-						Description: fmt.Sprintf("Execute command: %s", params.Command),
-						Params:      BashPermissionsParams(params),
+						SessionID:     sessionID,
+						Path:          execWorkingDir,
+						ToolCallID:    call.ID,
+						ToolName:      BashToolName,
+						Action:        "execute",
+						Description:   fmt.Sprintf("Execute command: %s", params.Command),
+						Params:        BashPermissionsParams(params),
+						Input:         params.Command,
+						InputSegments: segment.Split(params.Command),
 					},
 				)
 				if err != nil {
 					return fantasy.ToolResponse{}, err
 				}
-				if !p {
-					return NewPermissionDeniedResponse(), nil
+				if !p.Granted {
+					return NewPermissionDeniedResponse(p.Reason), nil
 				}
 			}
 

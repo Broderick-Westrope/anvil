@@ -111,6 +111,9 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 	normalizedName := strings.ToLower(params.Name)
 	if !slices.Contains(whitelistDockerTools, normalizedName) {
 		permissionDescription := fmt.Sprintf("execute %s with the following parameters:", m.Info().Name)
+		// Input is intentionally left empty: MCP tool parameters are
+		// arbitrary JSON with no single matchable value, so MCP tools
+		// support tool-name-pattern matching only (e.g. "mcp_linear_*").
 		p, err := m.permissions.Request(ctx,
 			permission.CreatePermissionRequest{
 				SessionID:   sessionID,
@@ -125,8 +128,8 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 		if err != nil {
 			return fantasy.ToolResponse{}, err
 		}
-		if !p {
-			return NewPermissionDeniedResponse(), nil
+		if !p.Granted {
+			return NewPermissionDeniedResponse(p.Reason), nil
 		}
 	}
 

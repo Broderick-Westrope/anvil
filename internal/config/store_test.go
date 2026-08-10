@@ -116,13 +116,13 @@ func TestConfigStore_RuntimeOverrides_Independent(t *testing.T) {
 	store1 := &ConfigStore{config: &Config{}}
 	store2 := &ConfigStore{config: &Config{}}
 
-	require.False(t, store1.Overrides().SkipPermissionRequests)
-	require.False(t, store2.Overrides().SkipPermissionRequests)
+	require.Equal(t, YoloOff, store1.Overrides().YoloLevel)
+	require.Equal(t, YoloOff, store2.Overrides().YoloLevel)
 
-	store1.Overrides().SkipPermissionRequests = true
+	store1.Overrides().YoloLevel = YoloStandard
 
-	require.True(t, store1.Overrides().SkipPermissionRequests)
-	require.False(t, store2.Overrides().SkipPermissionRequests)
+	require.Equal(t, YoloStandard, store1.Overrides().YoloLevel)
+	require.Equal(t, YoloOff, store2.Overrides().YoloLevel)
 }
 
 func TestConfigStore_RuntimeOverrides_MutableViaPointer(t *testing.T) {
@@ -131,10 +131,10 @@ func TestConfigStore_RuntimeOverrides_MutableViaPointer(t *testing.T) {
 	store := &ConfigStore{config: &Config{}}
 	overrides := store.Overrides()
 
-	require.False(t, overrides.SkipPermissionRequests)
+	require.Equal(t, YoloOff, overrides.YoloLevel)
 
-	overrides.SkipPermissionRequests = true
-	require.True(t, store.Overrides().SkipPermissionRequests)
+	overrides.YoloLevel = YoloStandard
+	require.Equal(t, YoloStandard, store.Overrides().YoloLevel)
 }
 
 func TestGlobalWorkspaceDir(t *testing.T) {

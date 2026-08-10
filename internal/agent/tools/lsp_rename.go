@@ -66,12 +66,13 @@ func NewRenameTool(
 					SessionID:   sessionID,
 					ToolName:    RenameToolName,
 					Description: fmt.Sprintf("Rename '%s' to '%s'", params.Symbol, params.NewName),
+					Input:       resolved.path,
 				})
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("permission request failed: %w", err)
 				}
-				if !granted {
-					return fantasy.NewTextErrorResponse("rename denied by user"), nil
+				if !granted.Granted {
+					return NewPermissionDeniedResponse(granted.Reason), nil
 				}
 			}
 

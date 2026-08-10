@@ -52,7 +52,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Debug")
 	rootCmd.PersistentFlags().StringVarP(&clientHost, "host", "H", server.DefaultHost(), "Connect to a specific anvil server host (for advanced users)")
 	rootCmd.Flags().BoolP("help", "h", false, "Help")
-	rootCmd.Flags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
+	rootCmd.Flags().StringP("yolo", "y", "", "Permission bypass level: --yolo (standard) or --yolo=full")
+	rootCmd.Flags().Lookup("yolo").NoOptDefVal = "true"
 	rootCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
 	rootCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
 	rootCmd.Flags().Bool("there", false, "Resume session in its original working directory")
@@ -94,8 +95,11 @@ cat README.md | anvil run "make this more glamorous" > GLAMOROUS_README.md
 # Run with debug logging in a specific directory
 anvil --debug --cwd /path/to/project
 
-# Run in yolo mode (auto-accept all permissions; use with care)
+# Run in yolo mode (auto-accept prompts, still honouring deny rules)
 anvil --yolo
+
+# Run in full yolo mode (bypass all permissions, including deny; use with care)
+anvil --yolo=full
 
 # Run with custom data directory
 anvil --data-dir /path/to/custom/.anvil
@@ -274,7 +278,7 @@ func setupWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
 // AppWorkspace.
 func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
 	debug, _ := cmd.Flags().GetBool("debug")
-	yolo, _ := cmd.Flags().GetBool("yolo")
+	yoloStr, _ := cmd.Flags().GetString("yolo")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	ctx := cmd.Context()
 
@@ -289,7 +293,11 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 	}
 
 	cfg := store.Config()
-	store.Overrides().SkipPermissionRequests = yolo
+	yoloLevel, err := config.ParseYoloLevel(yoloStr)
+	if err != nil {
+		return nil, nil, err
+	}
+	store.Overrides().YoloLevel = yoloLevel
 
 	if err := os.MkdirAll(cfg.Options.ProjectDirectory, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("failed to create data directory: %q %w", cfg.Options.ProjectDirectory, err)
@@ -386,11 +394,16 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 	}
 
 	debug, _ := cmd.Flags().GetBool("debug")
-	yolo, _ := cmd.Flags().GetBool("yolo")
+	yoloStr, _ := cmd.Flags().GetString("yolo")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	ctx := cmd.Context()
 
 	cwd, err := ResolveCwd(cmd)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	yoloLevel, err := config.ParseYoloLevel(yoloStr)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -401,12 +414,13 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 	}
 
 	wsReq := proto.Workspace{
-		Path:    cwd,
-		DataDir: dataDir,
-		Debug:   debug,
-		YOLO:    yolo,
-		Version: version.Version,
-		Env:     os.Environ(),
+		Path:      cwd,
+		DataDir:   dataDir,
+		Debug:     debug,
+		YOLO:      yoloLevel != config.YoloOff,
+		YoloLevel: int(yoloLevel),
+		Version:   version.Version,
+		Env:       os.Environ(),
 	}
 
 	ws, err := c.CreateWorkspace(ctx, wsReq)
