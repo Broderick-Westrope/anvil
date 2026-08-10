@@ -126,10 +126,12 @@ Notes:
   `release-agent` is unverified, so surviving restarts must not depend on
   it). Verify Herdr's actual seq scoping during implementation.
 - **Frozen environment:** the values of `HERDR_PANE_ID` and
-  `HERDR_SOCKET_PATH` are captured at activation and passed to each
-  `herdr` invocation via an explicit env slice on the child process,
-  consistent with the one-time binary resolution — later mutations of the
-  process environment cannot redirect reports.
+  `HERDR_SOCKET_PATH` are captured at activation and each `herdr`
+  invocation inherits the parent environment with those two variables
+  overridden to the frozen values (not an exclusive env slice — the CLI
+  may need `HOME`/`PATH`/XDG for its own resolution), consistent with the
+  one-time binary resolution — later mutations of the process environment
+  cannot redirect reports.
 - **On clean shutdown:** cancel/drain the coalescing sender first, then
   send `release-agent` synchronously with a short timeout — guaranteeing
   no in-flight state report lands after the release and re-registers a
