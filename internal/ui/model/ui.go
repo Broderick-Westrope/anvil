@@ -3059,7 +3059,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 				m.updateLayoutAndSize()
 			case key.Matches(msg, m.keyMap.Chat.FocusSidebar):
-				if m.state == uiChat && !m.isCompact && m.hasSession() && m.sidebarScrollable {
+				if m.state == uiChat && !m.isCompact && m.hasSession() {
 					m.focus = uiFocusSidebar
 					m.activeChat().Blur()
 				}

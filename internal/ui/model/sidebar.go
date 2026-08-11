@@ -242,11 +242,13 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 	width := area.Dx()
 	height := area.Dy()
 
-	title := t.Sidebar.SessionTitle.Width(width).MaxHeight(2).Render(m.session.Title)
-	cwd := common.PrettyPath(t, m.com.Workspace.WorkingDir(), width)
+	contentWidth := max(width-1, 1)
+
+	title := t.Sidebar.SessionTitle.Width(contentWidth).MaxHeight(2).Render(m.session.Title)
+	cwd := common.PrettyPath(t, m.com.Workspace.WorkingDir(), contentWidth)
 	sidebarLogo := m.sidebarLogo
 	if height < logoHeightBreakpoint {
-		sidebarLogo = logo.SmallRender(m.com.Styles, width, logo.Opts{
+		sidebarLogo = logo.SmallRender(m.com.Styles, contentWidth, logo.Opts{
 			RandomColor: true,
 		})
 	}
@@ -256,7 +258,7 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 		"",
 		cwd,
 		"",
-		m.modelInfo(width),
+		m.modelInfo(contentWidth),
 		"",
 	}
 
@@ -288,10 +290,10 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 
 	maxFiles, maxLSPs, maxMCPs, maxSkills := getDynamicHeightLimits(maxAvailableHeight, filesCount, lspsCount, mcpsCount, skillsCount)
 
-	lspSection := m.lspInfo(width, maxLSPs, true)
-	mcpSection := m.mcpInfo(width, maxMCPs, true)
-	skillsSection := m.skillsInfo(width, maxSkills, true)
-	filesSection := m.filesInfo(m.com.Workspace.WorkingDir(), width, maxFiles, true)
+	lspSection := m.lspInfo(contentWidth, maxLSPs, true)
+	mcpSection := m.mcpInfo(contentWidth, maxMCPs, true)
+	skillsSection := m.skillsInfo(contentWidth, maxSkills, true)
+	filesSection := m.filesInfo(m.com.Workspace.WorkingDir(), contentWidth, maxFiles, true)
 
 	// Build the full sidebar content.
 	fullContent := lipgloss.JoinVertical(
@@ -327,12 +329,6 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 	// Determine scrollbar visibility: always visible when focused, otherwise
 	// auto-hide.
 	scrollbarVisible := totalLines > height && (m.sidebarScrollbarVisible || m.focus == uiFocusSidebar)
-
-	// Always reserve 1 column for the scrollbar.
-	contentWidth := width - 1
-	if contentWidth < 1 {
-		contentWidth = 1
-	}
 
 	uv.NewStyledString(
 		lipgloss.NewStyle().
