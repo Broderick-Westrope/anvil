@@ -162,7 +162,7 @@ func (m *UI) sidebarMaxOffset() int {
 	return m.sidebarMaxOffsetVal
 }
 
-// drawSidebar renders the chat sidebar with a fixed header and a
+// drawSidebar renders the chat sidebar with a fixed logo and a
 // virtual-scrolling content area with an auto-hiding scrollbar. While the
 // sidebar is focused, the scrollbar stays visible.
 func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
@@ -186,27 +186,11 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 			RandomColor: true,
 		})
 	}
-	blocks := []string{
-		sidebarLogo,
-		title,
-		"",
-		cwd,
-		"",
-		m.modelInfo(contentWidth),
-		"",
-	}
-
-	sidebarHeader := lipgloss.JoinVertical(
-		lipgloss.Left,
-		blocks...,
-	)
-
-	// Split the sidebar into a fixed header and a scrollable content area.
-	var headerRect, contentRect image.Rectangle
+	var logoRect, contentRect image.Rectangle
 	layout.Vertical(
-		layout.Len(lipgloss.Height(sidebarHeader)),
+		layout.Len(lipgloss.Height(sidebarLogo)),
 		layout.Fill(1),
-	).Split(area).Assign(&headerRect, &contentRect)
+	).Split(area).Assign(&logoRect, &contentRect)
 
 	contentHeight := contentRect.Dy()
 
@@ -219,6 +203,12 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 	// Build the scrollable content.
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
+		title,
+		"",
+		cwd,
+		"",
+		m.modelInfo(contentWidth),
+		"",
 		filesSection,
 		"",
 		lspSection,
@@ -256,13 +246,13 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 	// auto-hide.
 	scrollbarVisible := totalLines > contentHeight && (m.sidebarScrollbarVisible || m.focus == uiFocusSidebar)
 
-	// Draw the fixed header.
+	// Draw the fixed logo.
 	uv.NewStyledString(
 		lipgloss.NewStyle().
 			MaxWidth(contentWidth).
-			MaxHeight(lipgloss.Height(sidebarHeader)).
-			Render(sidebarHeader),
-	).Draw(scr, headerRect)
+			MaxHeight(lipgloss.Height(sidebarLogo)).
+			Render(sidebarLogo),
+	).Draw(scr, logoRect)
 
 	// Draw the visible content in the scrollable area.
 	uv.NewStyledString(
