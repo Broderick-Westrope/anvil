@@ -62,12 +62,16 @@ var ddgAnomalyMarkers = []string{
 	"Unfortunately, bots use DuckDuckGo too",
 }
 
+// ddgLiteEndpoint is a package var so tests can point the search at a
+// local httptest server.
+var ddgLiteEndpoint = "https://lite.duckduckgo.com/lite/?q="
+
 func searchDuckDuckGo(ctx context.Context, client *http.Client, query string, maxResults int) ([]SearchResult, error) {
 	if maxResults <= 0 {
 		maxResults = 10
 	}
 
-	searchURL := "https://lite.duckduckgo.com/lite/?q=" + url.QueryEscape(query)
+	searchURL := ddgLiteEndpoint + url.QueryEscape(query)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
