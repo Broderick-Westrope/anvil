@@ -21,6 +21,7 @@ type CommandItem struct {
 	m           fuzzy.Match
 	cache       map[int]string
 	focused     bool
+	hideInfo    bool
 }
 
 var _ ListItem = &CommandItem{Versioned: list.NewVersioned()}
@@ -103,6 +104,24 @@ func (c *CommandItem) Shortcut() string {
 	return c.shortcut
 }
 
+// InfoText implements infoColumnItem; the command shortcut is its info.
+func (c *CommandItem) InfoText() string {
+	return c.shortcut
+}
+
+// SetHideInfo controls whether the shortcut hint column is shown. The
+// dialog hides it uniformly when it would crowd the command names.
+func (c *CommandItem) SetHideInfo(v bool) {
+	if c.hideInfo == v {
+		return
+	}
+	c.cache = nil
+	c.hideInfo = v
+	if c.Versioned != nil {
+		c.Bump()
+	}
+}
+
 // Render implements ListItem.
 func (c *CommandItem) Render(width int) string {
 	styles := ListItemStyles{
@@ -114,6 +133,9 @@ func (c *CommandItem) Render(width int) string {
 	info := c.shortcut
 	if c.description != "" {
 		info = c.description
+	}
+	if c.hideInfo {
+		info = ""
 	}
 	return renderItem(styles, c.title, info, c.focused, width, c.cache, &c.m)
 }
