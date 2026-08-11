@@ -62,7 +62,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 8 | Bang mode | 20 | **skipped** | user decision; retires 4 dependent deferrals (see batch 8 notes) |
 | 9 | Question tool | 18 | **skipped** | user decision — not needed now; revisit later if wanted (see batch 9 notes) |
 | 10 | Dialog responsive sizing | 19 | **done** | all 19 picked; notifications-dialog hunks dropped throughout |
-| 11 | Scrollable sidebar | 12 | pending | approved |
+| 11 | Scrollable sidebar | 12 | **done** | all 12 picked; +1 repair commit for a masked conflict-marker leak |
 | 12 | Chat scrollbar | 2 | **skipped** | visual-only indicator; Scroll* signature ripple through the twice-reverted seam |
 | 13 | Tool call expansion UI | 2 | pending | approved |
 | 14 | Attachment chip remove button | 4 | pending | approved |
@@ -738,7 +738,31 @@ e456a902 refactor(dialog): dedupe scrollbar joins and tame the permission Draw
 2c6424c1 fix(dialog): center permission buttons in fullscreen
 ```
 
-## Batch 11 — Scrollable sidebar (optional)
+## Batch 11 — Scrollable sidebar
+
+**Status: done.** All 12 picked, plus one repair commit (`9d84bece`).
+
+### Adaptations worth remembering
+
+- **Conflict-marker leak (repaired)** — during the chained picks, `79eedf79` was committed with
+  an unresolved conflict marker in ui.go and a reference to `scrollbarHideDuration` (defined
+  upstream with the skipped chat scrollbar). Root cause: the automation gated commits on
+  `go build | head`, which returns head's exit code, masking the build failure. Fixed in
+  `9d84bece` (marker resolved keeping `activeChat()`, constant defined locally for the sidebar
+  auto-hide). **Lesson: never pipe the build command that gates a commit.**
+- **Every focus transition uses `activeChat()`** — upstream's `m.chat.Blur()/Focus()` calls in
+  the sidebar focus/mouse/draw paths were converted (drill-in stack).
+- **`f8d855d5`** — dropped `scrollbarHideMsg`/`scrollbarHideCmd` (batch-12 chat scrollbar) and
+  the `Initialize` keymap (bang-mode leftover); `FocusSidebar` coexists with the fork's
+  `PillLeft` drill-back binding.
+- **`4244f520`** — dropped the `ScrollSelectedShellHorizontal` DeltaX routing (bang-mode shell
+  message).
+- **`04799876`** — dropped the `activeInline` branch (question tool, skipped batch 9).
+- **`885fe4d3`** — kept the fork's `chat` import (drill-in stats/elapsed sidebar extras)
+  alongside upstream's mcp/config/layout additions; the pick deletes the fork-side
+  `getDynamicHeightLimits` in favor of scrolling the full content.
+- **`5b7d7f71` / `5d9d37bc`** — kept the fork's Anvil SparkField logo and `RandomColor` opts
+  (upstream hunks carried Crush/HYPERCRUSH branding and the `Hyper` flag).
 
 ```
 f8d855d5 feat(ui): add scrollable sidebar with focus-based navigation
