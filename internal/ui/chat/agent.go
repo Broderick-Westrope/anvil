@@ -331,9 +331,9 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 			// Spawned state: static ellipsis in the pending colour.
 			icon = sty.Tool.IconPending.Render(styles.SpinnerIcon)
 		}
-		header = toolHeaderWithIcon(sty, icon, displayName, width, opts.Compact)
+		header = toolHeaderWithIcon(sty, icon, displayName, width, opts)
 	} else {
-		header = toolHeader(sty, opts.Status, displayName, width, opts.Compact)
+		header = toolHeader(sty, opts.Status, displayName, width, opts)
 	}
 
 	if opts.Compact {
@@ -630,9 +630,9 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 			// Spawned state: static ellipsis in the pending colour.
 			icon = sty.Tool.IconPending.Render(styles.SpinnerIcon)
 		}
-		header = toolHeaderWithIcon(sty, icon, "Agentic Fetch", width, opts.Compact, toolParams...)
+		header = toolHeaderWithIcon(sty, icon, "Agentic Fetch", width, opts, toolParams...)
 	} else {
-		header = toolHeader(sty, opts.Status, "Agentic Fetch", width, opts.Compact, toolParams...)
+		header = toolHeader(sty, opts.Status, "Agentic Fetch", width, opts, toolParams...)
 	}
 
 	if opts.Compact {

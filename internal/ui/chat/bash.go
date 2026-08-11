@@ -73,7 +73,7 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		toolParams = append(toolParams, "background", "true")
 	}
 
-	header := toolHeader(sty, opts.Status, "Bash", width, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, "Bash", width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}
