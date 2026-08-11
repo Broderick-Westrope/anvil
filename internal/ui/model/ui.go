@@ -1076,6 +1076,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sidebarOffset = max(0, min(m.sidebarOffset+lines, m.sidebarMaxOffset()))
 					m.sidebarScrollbarSeq++
 					m.sidebarScrollbarVisible = true
+					cmds = append(cmds, sidebarScrollbarHideCmd(m.sidebarScrollbarSeq))
 				}
 				break
 			}
@@ -1587,9 +1588,11 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 	case m.focus != uiFocusEditor && image.Pt(msg.X, msg.Y).In(m.layout.editor):
 		m.focus = uiFocusEditor
 		cmd = m.textarea.Focus()
+		m.sidebarScrollbarVisible = false
 		m.activeChat().Blur()
 	case m.focus != uiFocusMain && image.Pt(msg.X, msg.Y).In(m.layout.main):
 		m.focus = uiFocusMain
+		m.sidebarScrollbarVisible = false
 		m.textarea.Blur()
 		m.activeChat().Focus()
 	}
@@ -3057,6 +3060,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					break
 				}
 				m.focus = uiFocusEditor
+				m.sidebarScrollbarVisible = false
 				cmds = append(cmds, m.textarea.Focus())
 				m.activeChat().Blur()
 			case m.isDrilledIn() && key.Matches(msg, m.keyMap.Chat.PillLeft):
@@ -3176,9 +3180,15 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.sidebarScrollbarSeq++
 			case key.Matches(msg, m.keyMap.Chat.FocusChat):
 				m.focus = uiFocusMain
+<<<<<<< HEAD
 				m.activeChat().Focus()
+=======
+				m.sidebarScrollbarVisible = false
+				m.chat.Focus()
+>>>>>>> 04799876 (feat(ui): scroll sidebar with mouse wheel when focused)
 			case key.Matches(msg, m.keyMap.Tab):
 				m.focus = uiFocusEditor
+				m.sidebarScrollbarVisible = false
 				cmds = append(cmds, m.textarea.Focus())
 				m.activeChat().Blur()
 			default:
