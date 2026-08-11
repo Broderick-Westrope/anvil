@@ -3,11 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"time"
-
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"charm.land/fantasy"
 

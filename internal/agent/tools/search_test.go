@@ -37,6 +37,7 @@ func loadAnomalyPage(t *testing.T) string {
 // TestSearchRateLimitedOn202 verifies the 202 anomaly-challenge
 // interstitial is reported as throttling, not parsed into an empty
 // result set.
+// Not parallel: mutates the package-level ddgLiteEndpoint.
 func TestSearchRateLimitedOn202(t *testing.T) {
 	serveSearchStub(t, http.StatusAccepted, loadAnomalyPage(t))
 	_, err := searchDuckDuckGo(context.Background(), http.DefaultClient, "anything", 10)
@@ -48,6 +49,7 @@ func TestSearchRateLimitedOn202(t *testing.T) {
 // TestSearchRateLimitedOnAnomalyPage verifies the captcha modal is
 // detected by content as well: DuckDuckGo also serves the same page
 // with HTTP 200 once a client is flagged.
+// Not parallel: mutates the package-level ddgLiteEndpoint.
 func TestSearchRateLimitedOnAnomalyPage(t *testing.T) {
 	serveSearchStub(t, http.StatusOK, loadAnomalyPage(t))
 	_, err := searchDuckDuckGo(context.Background(), http.DefaultClient, "anything", 10)
@@ -58,6 +60,7 @@ func TestSearchRateLimitedOnAnomalyPage(t *testing.T) {
 
 // TestSearchParsesNormalResults guards against false positives: a
 // genuine results page still parses.
+// Not parallel: mutates the package-level ddgLiteEndpoint.
 func TestSearchParsesNormalResults(t *testing.T) {
 	page := `<html><body><table>
 <tr><td><a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpost">Example Post</a></td></tr>

@@ -363,8 +363,7 @@ func (m *OAuth) innerDialogContent() string {
 
 	case OAuthStateSaving:
 		return lipgloss.NewStyle().
-			Margin(1, 1).
-			Width(m.width - 2).
+			Width(innerWidth).
 			Align(lipgloss.Center).
 			Render(
 				successStyle.Render(m.spinner.View()) +

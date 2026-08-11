@@ -613,7 +613,7 @@ func (c *Config) applyEnv(resolver VariableResolver) {
 	for _, k := range keys {
 		resolved, err := resolver.ResolveValue(c.Env[k])
 		if err != nil {
-			slog.Warn("Skipping env var due to resolution failure.", "key", k, "value", c.Env[k], "error", err)
+			slog.Warn("Skipping env var due to resolution failure", "key", k, "value", c.Env[k], "error", err)
 			continue
 		}
 		os.Setenv(k, resolved)
