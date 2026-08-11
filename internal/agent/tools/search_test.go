@@ -72,5 +72,3 @@ func TestSearchParsesNormalResults(t *testing.T) {
 		t.Fatalf("unexpected results: %+v", results)
 	}
 }
-
-

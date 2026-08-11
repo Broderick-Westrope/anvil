@@ -353,6 +353,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
 		Files:            files,
 		Messages:         history,
+		Headers:          sessionHeaders(call.SessionID),
 		ProviderOptions:  call.ProviderOptions,
 		MaxOutputTokens:  maxOutputTokens,
 		TopP:             call.TopP,
@@ -867,6 +868,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:          summaryPromptText,
 		Messages:        aiMsgs,
+		Headers:         sessionHeaders(sessionID),
 		ProviderOptions: opts,
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = options.Messages
@@ -1057,6 +1059,19 @@ func trimFailedAttemptMessages(msgs []message.Message) ([]message.Message, []str
 		break
 	}
 	return msgs, removedIDs
+}
+
+// sessionHeaders returns the HTTP headers we use for cache affinity on
+// every LLM request for a given session.
+//
+// The session hash is used instead of the raw UUID so the header
+// value is deterministic and opaque.
+func sessionHeaders(sessionID string) map[string]string {
+	hash := session.HashID(sessionID)
+	return map[string]string{
+		"x-session-id":       hash,
+		"x-session-affinity": hash,
+	}
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall, parentMessageID string) (message.Message, error) {
