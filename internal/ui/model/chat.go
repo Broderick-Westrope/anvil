@@ -36,6 +36,10 @@ type sidebarScrollbarHideMsg struct {
 	seq int
 }
 
+// scrollbarHideDuration is how long the sidebar scrollbar stays visible
+// after the last scroll before auto-hiding.
+const scrollbarHideDuration = 2 * time.Second
+
 // resizeSettleDuration is how long after the last resize event the chat
 // waits before it starts warming the message cache it skipped mid-drag.
 const resizeSettleDuration = 120 * time.Millisecond

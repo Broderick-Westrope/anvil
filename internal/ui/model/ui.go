@@ -3180,12 +3180,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.sidebarScrollbarSeq++
 			case key.Matches(msg, m.keyMap.Chat.FocusChat):
 				m.focus = uiFocusMain
-<<<<<<< HEAD
-				m.activeChat().Focus()
-=======
 				m.sidebarScrollbarVisible = false
-				m.chat.Focus()
->>>>>>> 04799876 (feat(ui): scroll sidebar with mouse wheel when focused)
+				m.activeChat().Focus()
 			case key.Matches(msg, m.keyMap.Tab):
 				m.focus = uiFocusEditor
 				m.sidebarScrollbarVisible = false
