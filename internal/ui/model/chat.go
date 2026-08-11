@@ -31,6 +31,11 @@ type DelayedClickMsg struct {
 	X, Y    int
 }
 
+// sidebarScrollbarHideMsg is sent to hide the sidebar scrollbar after timeout.
+type sidebarScrollbarHideMsg struct {
+	seq int
+}
+
 // resizeSettleDuration is how long after the last resize event the chat
 // waits before it starts warming the message cache it skipped mid-drag.
 const resizeSettleDuration = 120 * time.Millisecond

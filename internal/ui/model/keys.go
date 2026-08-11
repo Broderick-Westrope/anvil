@@ -47,6 +47,10 @@ type KeyMap struct {
 		Copy           key.Binding
 		ClearHighlight key.Binding
 		Expand         key.Binding
+		ScrollLeft     key.Binding
+		ScrollRight    key.Binding
+		FocusSidebar   key.Binding
+		FocusChat      key.Binding
 	}
 
 	// Global key maps
@@ -242,6 +246,22 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.Expand = key.NewBinding(
 		key.WithKeys("space"),
 		key.WithHelp("space", "expand/collapse"),
+	)
+	km.Chat.ScrollLeft = key.NewBinding(
+		key.WithKeys("shift+left", "H"),
+		key.WithHelp("shift+←/H", "scroll left"),
+	)
+	km.Chat.ScrollRight = key.NewBinding(
+		key.WithKeys("shift+right", "L"),
+		key.WithHelp("shift+→/L", "scroll right"),
+	)
+	km.Chat.FocusSidebar = key.NewBinding(
+		key.WithKeys("l", "right"),
+		key.WithHelp("l/→", "focus sidebar"),
+	)
+	km.Chat.FocusChat = key.NewBinding(
+		key.WithKeys("h", "left"),
+		key.WithHelp("h/←", "focus chat"),
 	)
 
 	return km
