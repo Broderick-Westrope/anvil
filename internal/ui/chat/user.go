@@ -130,7 +130,9 @@ func (m *UserMessageItem) renderAttachments(width int) string {
 			MimeType: at.MIMEType,
 		})
 	}
-	return m.attachments.Render(attachments, nil, false, width)
+	// This message is already posted, so the attachment can't be removed;
+	// don't render the remove button.
+	return m.attachments.Render(attachments, nil, false, false, width)
 }
 
 // HandleKeyEvent implements KeyEventHandler.

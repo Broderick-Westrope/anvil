@@ -126,7 +126,7 @@ func (t *TodosToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	toolParams := []string{headerText}
-	header := toolHeader(sty, opts.Status, "To-Do", width, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, "To-Do", width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}

@@ -31,6 +31,15 @@ type DelayedClickMsg struct {
 	X, Y    int
 }
 
+// sidebarScrollbarHideMsg is sent to hide the sidebar scrollbar after timeout.
+type sidebarScrollbarHideMsg struct {
+	seq int
+}
+
+// scrollbarHideDuration is how long the sidebar scrollbar stays visible
+// after the last scroll before auto-hiding.
+const scrollbarHideDuration = 2 * time.Second
+
 // resizeSettleDuration is how long after the last resize event the chat
 // waits before it starts warming the message cache it skipped mid-drag.
 const resizeSettleDuration = 120 * time.Millisecond
@@ -61,6 +70,14 @@ func chatWarmCmd(chat *Chat, seq int, delay time.Duration) tea.Cmd {
 	}
 	return tea.Tick(delay, func(_ time.Time) tea.Msg {
 		return chatWarmMsg{chat: chat, seq: seq}
+	})
+}
+
+// sidebarScrollbarHideCmd returns a command that sends a sidebarScrollbarHideMsg
+// after the timeout.
+func sidebarScrollbarHideCmd(seq int) tea.Cmd {
+	return tea.Tick(scrollbarHideDuration, func(_ time.Time) tea.Msg {
+		return sidebarScrollbarHideMsg{seq: seq}
 	})
 }
 

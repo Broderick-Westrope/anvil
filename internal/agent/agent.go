@@ -353,6 +353,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
 		Files:            files,
 		Messages:         history,
+		Headers:          sessionHeaders(call.SessionID),
 		ProviderOptions:  call.ProviderOptions,
 		MaxOutputTokens:  maxOutputTokens,
 		TopP:             call.TopP,
@@ -558,6 +559,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				finishReason = message.FinishReasonEndTurn
 			case fantasy.FinishReasonToolCalls:
 				finishReason = message.FinishReasonToolUse
+			case fantasy.FinishReasonContentFilter:
+				// Provider safety classifier stopped the model
+				// (Anthropic stop_reason=refusal, OpenAI content_filter).
+				// The TUI owns the display copy; we only persist the
+				// reason so the UI can show a REFUSED banner.
+				finishReason = message.FinishReasonContentFilter
+				slog.Warn("Provider content filter stopped the model",
+					"session_id", call.SessionID,
+					"finish_reason", string(stepResult.FinishReason),
+				)
 			}
 			// If a tool result halted the turn (e.g. a hook halt or a
 			// permission denial), the step ends on FinishReasonToolCalls but
@@ -615,7 +626,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			},
 		},
 	})
-
 	if err != nil {
 		isHyper := largeModel.ModelCfg.Provider == hyper.Name
 		isCancelErr := errors.Is(err, context.Canceled)
@@ -867,6 +877,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:          summaryPromptText,
 		Messages:        aiMsgs,
+		Headers:         sessionHeaders(sessionID),
 		ProviderOptions: opts,
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = options.Messages
@@ -1057,6 +1068,19 @@ func trimFailedAttemptMessages(msgs []message.Message) ([]message.Message, []str
 		break
 	}
 	return msgs, removedIDs
+}
+
+// sessionHeaders returns the HTTP headers we use for cache affinity on
+// every LLM request for a given session.
+//
+// The session hash is used instead of the raw UUID so the header
+// value is deterministic and opaque.
+func sessionHeaders(sessionID string) map[string]string {
+	hash := session.HashID(sessionID)
+	return map[string]string{
+		"x-session-id":       hash,
+		"x-session-affinity": hash,
+	}
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall, parentMessageID string) (message.Message, error) {

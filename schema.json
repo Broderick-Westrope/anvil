@@ -113,6 +113,13 @@
           "type": "object",
           "description": "User-defined shell commands that fire on hook events (e.g. PreToolUse)"
         },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Environment variables to set on startup"
+        },
         "agents": {
           "additionalProperties": {
             "$ref": "#/$defs/Agent"

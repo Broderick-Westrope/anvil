@@ -49,7 +49,7 @@ func (g *GlobToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		toolParams = append(toolParams, "path", params.Path)
 	}
 
-	header := toolHeader(sty, opts.Status, "Glob", width, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, "Glob", width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}
@@ -113,7 +113,7 @@ func (g *GrepToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		toolParams = append(toolParams, "literal", "true")
 	}
 
-	header := toolHeader(sty, opts.Status, "Grep", width, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, "Grep", width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}
@@ -172,7 +172,7 @@ func (l *LSToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *To
 	}
 	path = fsext.PrettyPath(path)
 
-	header := toolHeader(sty, opts.Status, "List", width, opts.Compact, path)
+	header := toolHeader(sty, opts.Status, "List", width, opts, path)
 	if opts.Compact {
 		return header
 	}
@@ -233,7 +233,7 @@ func (s *SourcegraphToolRenderContext) RenderTool(sty *styles.Styles, width int,
 		toolParams = append(toolParams, "context", formatNonZero(params.ContextWindow))
 	}
 
-	header := toolHeader(sty, opts.Status, "Sourcegraph", width, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, "Sourcegraph", width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}

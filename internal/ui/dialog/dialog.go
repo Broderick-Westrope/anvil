@@ -79,6 +79,13 @@ type Overlay struct {
 	// dialog was opened via OpenDialogWithGrace.
 	graceOpenedAt    time.Time
 	graceLastInputAt time.Time
+
+	// Track recently closed dialog IDs so that reopening the same
+	// dialog type can skip the grace period. This prevents rapid
+	// successive dialogs (e.g. multiple permission prompts) from
+	// each eating a keystroke.
+	lastClosedID string
+	lastClosedAt time.Time
 }
 
 // NewOverlay creates a new [Overlay] instance.
@@ -116,9 +123,21 @@ func (d *Overlay) OpenDialog(dialog Dialog) {
 // comes first. Use this for dialogs that open asynchronously (e.g.
 // permission prompts) where in-flight keystrokes from a previously
 // focused component could act on the dialog before the user sees it.
+//
+// If the same dialog ID was just closed (within reopenGraceWindow),
+// the grace period is skipped — the user is already focused on this
+// dialog type and rapid successive prompts should not eat keystrokes.
 func (d *Overlay) OpenDialogWithGrace(dialog Dialog) {
 	now := time.Now()
 	d.dialogs = append(d.dialogs, dialog)
+
+	// Skip grace when reopening the same dialog type immediately.
+	if dialog.ID() == d.lastClosedID && now.Sub(d.lastClosedAt) < reopenGraceWindow {
+		d.graceOpenedAt = time.Time{}
+		d.graceLastInputAt = time.Time{}
+		return
+	}
+
 	d.graceOpenedAt = now
 	d.graceLastInputAt = now
 }
@@ -156,7 +175,15 @@ func (d *Overlay) CloseFrontDialog() {
 	d.removeDialog(len(d.dialogs) - 1)
 }
 
+// reopenGraceWindow is how long after closing a dialog we consider
+// a reopen of the same dialog ID to be "immediate" and skip grace.
+const reopenGraceWindow = 500 * time.Millisecond
+
 func (d *Overlay) removeDialog(idx int) {
+	if idx == len(d.dialogs)-1 {
+		d.lastClosedID = d.dialogs[idx].ID()
+		d.lastClosedAt = time.Now()
+	}
 	d.dialogs = append(d.dialogs[:idx], d.dialogs[idx+1:]...)
 	// Clear grace state when the front dialog changes.
 	if idx == len(d.dialogs) {
@@ -236,9 +263,13 @@ func (d *Overlay) StopLoading() {
 }
 
 // DrawCenterCursor draws the given string view centered in the screen area and
-// adjusts the cursor position accordingly.
+// adjusts the cursor position accordingly. Content larger than the area is
+// clamped to fit.
 func DrawCenterCursor(scr uv.Screen, area uv.Rectangle, view string, cur *tea.Cursor) {
 	width, height := lipgloss.Size(view)
+	// Clamp to available area so oversized dialogs don't draw outside bounds.
+	width = min(width, area.Dx())
+	height = min(height, area.Dy())
 	center := common.CenterRect(area, width, height)
 	if cur != nil {
 		cur.X += center.Min.X
@@ -258,9 +289,12 @@ func DrawOnboarding(scr uv.Screen, area uv.Rectangle, view string) {
 }
 
 // DrawOnboardingCursor draws the given string view positioned at the bottom
-// left area of the screen.
+// left area of the screen. Content larger than the area is clamped to fit.
 func DrawOnboardingCursor(scr uv.Screen, area uv.Rectangle, view string, cur *tea.Cursor) {
 	width, height := lipgloss.Size(view)
+	// Clamp to available area so oversized dialogs don't draw outside bounds.
+	width = min(width, area.Dx())
+	height = min(height, area.Dy())
 	bottomLeft := common.BottomLeftRect(area, width, height)
 	if cur != nil {
 		cur.X += bottomLeft.Min.X

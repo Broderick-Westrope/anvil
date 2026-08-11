@@ -51,7 +51,7 @@ func (f *FetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		toolParams = append(toolParams, "timeout", formatTimeout(params.Timeout))
 	}
 
-	header := toolHeader(sty, opts.Status, "Fetch", width, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, "Fetch", width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}
@@ -118,7 +118,7 @@ func (w *WebFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, op
 	}
 
 	toolParams := []string{params.URL}
-	header := toolHeader(sty, opts.Status, "Fetch", width, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, "Fetch", width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}
@@ -171,7 +171,7 @@ func (w *WebSearchToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	}
 
 	toolParams := []string{params.Query}
-	header := toolHeader(sty, opts.Status, "Search", width, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, "Search", width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}

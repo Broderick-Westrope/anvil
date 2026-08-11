@@ -17,6 +17,7 @@ after each reviewed batch group lands, using
 | `review/2026-08-10-sync-batches-1-3` | `b1b2f638` | Batches 1–3, dep bumps, granular-permissions merge, review-round fixes |
 | `review/2026-08-10-sync-batches-4-5` | `e377df59` | Batches 4–5 (performance + UI fixes), both review rounds |
 | `review/2026-08-10-sync-batch-6` | `8bbb61d5` | Batch 6 (MCP fixes) + `63dc1f01` remainder, review-round fixes |
+| `review/2026-08-10-sync-batch-7` | `e3936449` | Batch 7 (model auto-discovery + enrichers) + `d341d84b` closure, review-round fixes |
 
 ## Rules
 
@@ -58,14 +59,14 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 5 | UI fixes | 15 | **done** | 14 picked (1 partial), 1 skipped, +1 vendored prereq |
 | 6 | MCP fixes | 5 | **done** | 4 picked, 1 N/A; deferred `63dc1f01` remainder also landed |
 | 7 | Model auto-discovery + enrichers | 10 | **done** | all 10 picked (Alibaba pair squashed); closes the `d341d84b` deferral |
-| 8 | Bang mode | 20 | pending | approved |
-| 9 | Question tool | 18 | pending | approved |
-| 10 | Dialog responsive sizing | 19 | pending | approved |
-| 11 | Scrollable sidebar | 12 | pending | approved |
+| 8 | Bang mode | 20 | **skipped** | user decision; retires 4 dependent deferrals (see batch 8 notes) |
+| 9 | Question tool | 18 | **skipped** | user decision — not needed now; revisit later if wanted (see batch 9 notes) |
+| 10 | Dialog responsive sizing | 19 | **done** | all 19 picked; notifications-dialog hunks dropped throughout |
+| 11 | Scrollable sidebar | 12 | **done** | all 12 picked; +1 repair commit for a masked conflict-marker leak |
 | 12 | Chat scrollbar | 2 | **skipped** | visual-only indicator; Scroll* signature ripple through the twice-reverted seam |
-| 13 | Tool call expansion UI | 2 | pending | approved |
-| 14 | Attachment chip remove button | 4 | pending | approved |
-| 15 | Misc features | 5 | pending | approved |
+| 13 | Tool call expansion UI | 2 | **done** | both picked |
+| 14 | Attachment chip remove button | 4 | **done** | all 4 picked; skill-aware Render merge |
+| 15 | Misc features | 26 | **done** | 16 picked (2 partial/hand-applied), 8 skipped/N-A, 2 already fixed |
 | 16 | Dep bump (fantasy/catwalk) | 1 | **done** | ran after batch 3's first pass; unblocked 5 commits |
 
 ---
@@ -604,10 +605,28 @@ Opus confirmed the hand-applied Alibaba change is byte-identical to upstream net
 - **Noted (upstream parity, no action)**: `doRequest` swallows resolver errors (misleading log
   only); lmstudio's `SupportsImages` overwrites user-set values unconditionally.
 
-## Batch 8 — Bang mode
+## Batch 8 — Bang mode (skipped)
 
-Also pick `a9e3a57f` (deferred from batch 1) after `99a5fad5`, since it depends on
-`shell.PersistFunc` and `message.ShellCommand`.
+**Status: skipped** (user decision, 2026-08-11 — "I won't ever use bang mode").
+
+An attempt at the base commit `99a5fad5` confirmed the projected cost: 32 files
+including message/proto part-type plumbing (`ShellCommand` content part), the
+client/server surfaces (`internal/server`, `internal/client`, `internal/proto`,
+`internal/backend`), workspace interface methods, and theme overrides for the
+deleted multi-theme system. The pick was aborted cleanly before commit.
+
+Skipping this batch also **permanently retires four deferrals** that only exist
+to fix bang mode itself:
+
+| Commit | Was deferred from | Why it dies with bang mode |
+|---|---|---|
+| `a9e3a57f` | batch 1 | Depends on `shell.PersistFunc` / `message.ShellCommand` |
+| `e4175c52` | batch 4 | Rewrites `internal/ui/chat/shell.go` (bang-mode UI) |
+| `1b4ef73f` | batch 4 | Depends on bang mode's `RemapANSI16` |
+| `9c61c7d0` (title hunk) | batch 5 | Edits the `userPrompt` fallback introduced by `03bfdc66` |
+
+If shell execution from the prompt is ever wanted, implement it natively
+against the fork's `internal/shell` package rather than porting this chain.
 
 ```
 99a5fad5 feat: add bang mode for direct shell command execution (#3013)
@@ -632,10 +651,26 @@ d20e29ae fix(bangmode): sync bang mode with external editor
 cb129202 fix(bangmode): don't add extra ! when browsing history
 ```
 
-## Batch 9 — Question tool (optional)
+## Batch 9 — Question tool (skipped)
 
-Skip `75e7195f` (client/server integration). `492460a8` (coordinator struct refactor) is a
-prerequisite and touches local coordinator code — expect conflicts.
+**Status: skipped** (user decision, 2026-08-11 — not needed at the moment;
+revisit if the value is ever wanted).
+
+What it is: the agent can ask structured questions mid-run (yes/no,
+single/multi-select, free text) rendered as an interactive dialog instead of
+plain text.
+
+Why the port is heavy: the base commit `c2a6f765` is ~3,300 insertions across
+29 files, threaded through `internal/workspace` (client/server surfaces) with
+an `internal/question` service, and its 17 follow-ups all land in that adapted
+foundation. The `492460a8` coordinator-struct prereq is partially moot (the
+fork's coordinator is already a struct) but its `agenttest` scaffolding is not.
+
+If revisited: the dialog UI files (`internal/ui/dialog/question_*.go`) are
+largely portable as-is; the plumbing (question service, workspace methods,
+tool wiring) is the part that would be cheaper to reimplement natively against
+the fork's in-process architecture. Skip `75e7195f` regardless (client/server
+integration).
 
 ```
 492460a8 refactor: make the coordinator use a struct
@@ -658,7 +693,28 @@ a5a5c6c5 feat(question): tweak the confirmation tab
 1937ac54 fix: match question tool cursor color to main editor
 ```
 
-## Batch 10 — Dialog responsive sizing (optional)
+## Batch 10 — Dialog responsive sizing
+
+**Status: done.** All 19 picked.
+
+### Adaptations worth remembering
+
+- **Notifications dialog does not exist here** — the fork deleted it, so its hunks were
+  dropped from `e271cecb`, `bbf654fb`, `a69ace5e`, and `f3592bd8` (recurring `git rm` of the
+  resurrected file during each pick).
+- **`31550cb4`** — dropped the `OAuthStateSaving` case (upstream's model-fetching OAuth flow;
+  fork doesn't have that state).
+- **`686a3f46`** — the fork's `CommandItem` renders `WithDescription` text in the info slot;
+  the new `hideInfo` gate clears whichever info is effective (description or shortcut), not
+  just the shortcut as upstream does.
+- **`e456a902`** — the fork's pattern-input height (granular permissions) joins the
+  fixed-chrome budget passed to upstream's new `contentViewportHeight` helper; behavior is
+  identical to the fork's previous two-branch sizing.
+- **`2c6424c1`** — the `fullscreen` alignment parameter threads through the fork's
+  `renderButtons`, which keeps the granular four-button set (Allow/Session/Forever/Deny)
+  plus the forever-scope and deny-reason states; upstream has three buttons.
+- **`a69ace5e`** — upstream's hint-truncation rewrite made the fork's `x/ansi` import in
+  `dialog/common.go` unnecessary; removed.
 
 ```
 3e2bd1cc fix(dialog): make OAuth dialog width responsive to terminal size
@@ -682,7 +738,31 @@ e456a902 refactor(dialog): dedupe scrollbar joins and tame the permission Draw
 2c6424c1 fix(dialog): center permission buttons in fullscreen
 ```
 
-## Batch 11 — Scrollable sidebar (optional)
+## Batch 11 — Scrollable sidebar
+
+**Status: done.** All 12 picked, plus one repair commit (`9d84bece`).
+
+### Adaptations worth remembering
+
+- **Conflict-marker leak (repaired)** — during the chained picks, `79eedf79` was committed with
+  an unresolved conflict marker in ui.go and a reference to `scrollbarHideDuration` (defined
+  upstream with the skipped chat scrollbar). Root cause: the automation gated commits on
+  `go build | head`, which returns head's exit code, masking the build failure. Fixed in
+  `9d84bece` (marker resolved keeping `activeChat()`, constant defined locally for the sidebar
+  auto-hide). **Lesson: never pipe the build command that gates a commit.**
+- **Every focus transition uses `activeChat()`** — upstream's `m.chat.Blur()/Focus()` calls in
+  the sidebar focus/mouse/draw paths were converted (drill-in stack).
+- **`f8d855d5`** — dropped `scrollbarHideMsg`/`scrollbarHideCmd` (batch-12 chat scrollbar) and
+  the `Initialize` keymap (bang-mode leftover); `FocusSidebar` coexists with the fork's
+  `PillLeft` drill-back binding.
+- **`4244f520`** — dropped the `ScrollSelectedShellHorizontal` DeltaX routing (bang-mode shell
+  message).
+- **`04799876`** — dropped the `activeInline` branch (question tool, skipped batch 9).
+- **`885fe4d3`** — kept the fork's `chat` import (drill-in stats/elapsed sidebar extras)
+  alongside upstream's mcp/config/layout additions; the pick deletes the fork-side
+  `getDynamicHeightLimits` in favor of scrolling the full content.
+- **`5b7d7f71` / `5d9d37bc`** — kept the fork's Anvil SparkField logo and `RandomColor` opts
+  (upstream hunks carried Crush/HYPERCRUSH branding and the `Hyper` flag).
 
 ```
 f8d855d5 feat(ui): add scrollable sidebar with focus-based navigation
@@ -715,16 +795,41 @@ b72f9aab feat(ui): add scrollbar to chat view (#3018)
 ff12fa01 fix(scrollbar): only show on human scroll
 ```
 
-## Batch 13 — Tool call expansion UI (optional)
+## Batch 13 — Tool call expansion UI
+
+**Status: done.** Both picked.
+
+### Adaptations worth remembering
+
+- **`db8add71`** — the fork's `toolHeaderWithIcon` helper (agent icon rendering; upstream
+  doesn't have it) gained the same `*ToolRenderOpts` parameter as `toolHeader` so expanded
+  params wrap through both paths. Renderer call sites keep the fork's width variables.
+- **`cbb6daaa`** — the fork's Agent/AgenticFetch renderers show display names and stats, not
+  the prompt, so upstream's prompt-guard hunks were dropped there; bash keeps the
+  description-preferring summary and shows the raw command with preserved newlines when
+  expanded.
 
 ```
 db8add71 feat(ui): allow expanding toolcall names
 cbb6daaa feat(ui): preserve newlines in expanded tool content (#3239)
 ```
 
-## Batch 14 — Attachment chip remove button (optional)
+## Batch 14 — Attachment chip remove button
 
-Touches `attachments.NewRenderer` — remember the 5-arg local signature.
+**Status: done.** All 4 picked.
+
+### Adaptations worth remembering
+
+- **The `NewRenderer` signature is now 6-arg** (`removeStyle` added after `skillStyle`), and
+  `Renderer.Render` is 5-arg: `(fileAtts, skillAtts, deleting, showRemove, width)`. Upstream's
+  remove button, bounds hit-testing, and delete-mode numeral slot merged into the fork's
+  two-chip-list (files + skills) rendering; skill chips keep the fork's numeral-first deleting
+  layout. `SkillIcon` keeps the fork's ⚡ (upstream switched to ▲).
+- **Tests merged, not replaced** — fork's skill/dedup tests plus upstream's remove-button tests
+  (retargeted to `styles.TokyoNight()` and nil skill lists). `attachments_mouse_test.go`'s
+  workspace stub builds on the fork's `testWorkspace` with a `PermissionYoloLevel` stub, and
+  the inline-editor test was dropped (question tool, skipped batch 9).
+- **`1be84086`** — the `activeInline` click guard was dropped (question tool).
 
 ```
 f604d989 feat(ui): clickable ✕ remove button on attachment chips
@@ -733,7 +838,51 @@ f604d989 feat(ui): clickable ✕ remove button on attachment chips
 1be84086 Review fixes: attachment remove button (hidden clicks, mouse button, chip spacing)
 ```
 
-## Batch 15 — Misc features (optional)
+## Batch 15 — Misc features
+
+**Status: done.** 16 picked, 8 skipped/not-applicable, 2 already fixed locally.
+
+### Not applied
+
+| Commit | Disposition | Reason |
+|---|---|---|
+| `dc160997` | skipped | Elapsed timer — fork has its own stats-line elapsed display in `chat/agent.go` (see batch-5 notes on `74e725b3`). |
+| `3446255d` | not applicable | `--all`/`--crawl-dir` crawl per-project `.crush/crush.db` files; the fork migrated to a single global database. |
+| `e34e707c` | not applicable | Only adds an `event.FilePickerOpened()` telemetry call; telemetry was removed from the fork. |
+| `677046d2` | skipped | illumos build support — no illumos user; 4 conflicts (incl. deleted notifications dialog) for zero local value. |
+| `1c074540` | skipped | Charm-branded OAuth landing page (charm.svg, heartbit assets) plumbed through the skipped upstream MCP OAuth handler. |
+| `3a71bdf3` | already fixed | Fork already runs title generation as `go a.generateTitle(context.WithoutCancel(ctx), ...)` — the exact detached-goroutine fix. |
+| `9e3ed61c` | skipped | Bedrock AWS SSO re-auth: 115-line coordinator rework + workspace/proto/server plumbing + 306-line dialog for a provider flow this fork doesn't use. Revisit if Bedrock+SSO is ever needed. |
+| `810168b0` | partial | Env-config doc section taken (rebranded); the `aws_auth_refresh` half documents the skipped `9e3ed61c`. |
+
+### Adaptations worth remembering
+
+- **`6b6fab5e` (edit-tool refactor)** — upstream's refactored `edit.go`/`multiedit.go` taken
+  wholesale, then the fork's granular-permission divergences re-applied (`Input` field on
+  permission requests, `RequestResult.Granted`/`Reason`); `multiedit_test.go` keeps the fork's
+  `mockPermissionService` under upstream's new tests.
+- **`b679ba1e` broke the VCR cassettes** — the new `edit.md` description changes the tools
+  array in every recorded LLM request, failing all 13 `TestOrchestratorAgent` cassettes with
+  "requested interaction not found". Fixed by patching the recorded request bodies **at the
+  JSON level** (tools[edit].description swapped, content_length adjusted); raw-text and
+  yaml.Marshal patching both failed on YAML folding/quoting subtleties. The matcher's JSON
+  DeepEqual fallback makes JSON-level patching equivalent to re-recording. **Lesson: any pick
+  that changes a tool .md description invalidates the cassettes.**
+- **`12e96776`** — upstream's `clipboard.WriteText` is from the skipped
+  `golang.design/x/clipboard` migration; mapped to the fork's atotto `clipboard.WriteAll`.
+- **`b75d6bc2`** — introduces `OAuthStateSaving`, the state whose view case batch 10's
+  `31550cb4` pick dropped; the save flow now owns it end-to-end. Upstream's unused coordinator
+  `oauth` import dropped.
+- **`7810d038`** — the `Env` field joins the fork's larger Config struct (agents/plugins)
+  rather than replacing it; schema regenerated.
+- **`155072b3`** — applied by hand; the fork's `run.go` carries the bg-detection in a
+  different shape than upstream's app/run split.
+- **`ebd845c0`** — `sessionHeaders` merged around the fork's retry-cleanup code and 3-arg
+  `createUserMessage`; fixed upstream's comment typo in passing.
+- **`5e1cd7ef`** — `refusal_render_test.go` retargeted to the fork's module path and single
+  TokyoNight theme.
+- **`2a230d01`** — palette-selection fix taken; `question_editor.go` hunk (skipped batch 9)
+  and go.mod bump dropped.
 
 ```
 dc160997 feat: elapsed seconds timer (#3223)          # verify against local impl first

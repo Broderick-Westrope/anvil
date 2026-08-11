@@ -62,10 +62,14 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 
 	// Regular bash command.
 	// Prefer the description over the raw command for the summary line
-	// since it is a concise human-readable label.
+	// since it is a concise human-readable label. When expanded, show the
+	// raw command with newlines preserved.
 	mainParam := params.Description
-	if mainParam == "" {
-		mainParam = strings.ReplaceAll(params.Command, "\n", " ")
+	if mainParam == "" || opts.ExpandedContent {
+		mainParam = params.Command
+		if !opts.ExpandedContent {
+			mainParam = strings.ReplaceAll(mainParam, "\n", " ")
+		}
 		mainParam = strings.ReplaceAll(mainParam, "\t", "    ")
 	}
 	toolParams := []string{mainParam}
@@ -73,7 +77,7 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		toolParams = append(toolParams, "background", "true")
 	}
 
-	header := toolHeader(sty, opts.Status, "Bash", width, opts.Compact, toolParams...)
+	header := toolHeader(sty, opts.Status, "Bash", width, opts, toolParams...)
 	if opts.Compact {
 		return header
 	}

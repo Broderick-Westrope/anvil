@@ -41,9 +41,10 @@ const (
 	TodoPendingIcon    string = "•"
 	TodoInProgressIcon string = "→"
 
-	ImageIcon string = "■"
-	TextIcon  string = "≡"
-	SkillIcon string = "⚡"
+	ImageIcon  string = "■"
+	TextIcon   string = "≡"
+	SkillIcon  string = "⚡"
+	RemoveIcon string = "✕"
 
 	ScrollbarThumb string = "┃"
 	ScrollbarTrack string = "│"
@@ -436,6 +437,7 @@ type Styles struct {
 
 		Quit struct {
 			Content lipgloss.Style // Wrapper for the quit dialog's inner content
+			Hint    lipgloss.Style // Style for quit hint
 			Frame   lipgloss.Style // Outer rounded border framing the quit dialog
 		}
 
@@ -524,6 +526,7 @@ type Styles struct {
 		Image    lipgloss.Style
 		Text     lipgloss.Style
 		Skill    lipgloss.Style
+		Remove   lipgloss.Style
 		Deleting lipgloss.Style
 	}
 

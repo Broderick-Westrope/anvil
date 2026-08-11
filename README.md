@@ -718,6 +718,26 @@ models with your hand-configured ones.
 }
 ```
 
+### Environment Variables
+
+The top-level `env` field sets environment variables at startup, before
+providers are configured. This is useful for variables that affect provider
+setup without needing to wrap the `anvil` command in a shell script or
+export them in your shell profile:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
+  "env": {
+    "AWS_PROFILE": "my-sso-profile"
+  }
+}
+```
+
+Values support the same `$VAR` and `$(command)` expansion as other config
+fields, so you can reference existing environment variables or shell out for
+a value.
+
 ## Logging
 
 Sometimes you need to look at logs. Luckily, Anvil logs all sorts of

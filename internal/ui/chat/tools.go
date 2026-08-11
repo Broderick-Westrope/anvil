@@ -634,9 +634,9 @@ func toolIcon(sty *styles.Styles, status ToolStatus) string {
 	}
 }
 
-// toolParamList formats parameters as "main (key=value, ...)" with truncation.
 // toolParamList formats tool parameters as "main (key=value, ...)" with truncation.
-func toolParamList(sty *styles.Styles, params []string, width int) string {
+// When opts.ExpandedContent is true, the output wraps instead of truncating.
+func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRenderOpts) string {
 	// minSpaceForMainParam is the min space required for the main param
 	// if this is less that the value set we will only show the main param nothing else
 	const minSpaceForMainParam = 30
@@ -663,23 +663,27 @@ func toolParamList(sty *styles.Styles, params []string, width int) string {
 		}
 	}
 
-	if width >= 0 {
+	if width >= 0 && (opts == nil || !opts.ExpandedContent) {
 		output = ansi.Truncate(output, width, "…")
+	} else if opts != nil && opts.ExpandedContent && width > 0 && lipgloss.Width(output) > width {
+		output = ansi.Hardwrap(output, width, false)
 	}
 	return sty.Tool.ParamMain.Render(output)
 }
 
 // toolHeader builds the tool header line: "● ToolName params..."
-func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, nested bool, params ...string) string {
+// When opts.ExpandedContent is true, long parameters wrap instead of truncating.
+func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, opts *ToolRenderOpts, params ...string) string {
 	icon := toolIcon(sty, status)
-	return toolHeaderWithIcon(sty, icon, name, width, nested, params...)
+	return toolHeaderWithIcon(sty, icon, name, width, opts, params...)
 }
 
 // toolHeaderWithIcon builds the tool header line using a pre-rendered icon
 // string. It is identical to toolHeader but accepts a custom icon instead of
 // deriving one from status. Use this when the caller needs to supply a dynamic
 // icon (e.g. an animated shimmer or a state-specific glyph).
-func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, nested bool, params ...string) string {
+func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *ToolRenderOpts, params ...string) string {
+	nested := opts != nil && opts.Compact
 	nameStyle := sty.Tool.NameNormal
 	if nested {
 		nameStyle = sty.Tool.NameNested
@@ -688,7 +692,18 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, nested
 	prefix := fmt.Sprintf("%s %s ", icon, toolName)
 	prefixWidth := lipgloss.Width(prefix)
 	remainingWidth := width - prefixWidth
-	paramsStr := toolParamList(sty, params, remainingWidth)
+	paramsStr := toolParamList(sty, params, remainingWidth, opts)
+
+	// When expanded, toolParamList may return multiple lines. Indent
+	// continuation lines to align with the first line's param text.
+	if strings.Contains(paramsStr, "\n") {
+		lines := strings.Split(paramsStr, "\n")
+		indent := strings.Repeat(" ", prefixWidth)
+		for i := 1; i < len(lines); i++ {
+			lines[i] = indent + lines[i]
+		}
+		return prefix + strings.Join(lines, "\n")
+	}
 	return prefix + paramsStr
 }
 

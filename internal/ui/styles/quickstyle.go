@@ -809,8 +809,10 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Dialog.TitleGradFromColor = o.primary
 	s.Dialog.TitleGradToColor = o.secondary
 
-	// Dialog.ListItem (commands, reasoning, models)
-	s.Dialog.ListItem.InfoBlurred = lipgloss.NewStyle().Foreground(o.fgBase)
+	// Dialog.ListItem (commands, reasoning, models). The info column holds
+	// secondary hints like keybind shortcuts, so mute it when blurred and
+	// keep it readable on the focused row.
+	s.Dialog.ListItem.InfoBlurred = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 	s.Dialog.ListItem.InfoFocused = lipgloss.NewStyle().Foreground(o.fgBase)
 
 	// Dialog.Models
@@ -823,6 +825,7 @@ func quickStyle(o quickStyleOpts) Styles {
 
 	// Dialog.Quit
 	s.Dialog.Quit.Content = lipgloss.NewStyle().Foreground(o.fgBase)
+	s.Dialog.Quit.Hint = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 	s.Dialog.Quit.Frame = lipgloss.NewStyle().BorderForeground(o.primary).Border(lipgloss.RoundedBorder()).Padding(1, 2)
 	s.Dialog.View = base.Border(lipgloss.RoundedBorder()).BorderForeground(o.primary)
 	s.Dialog.PrimaryText = base.Padding(0, 1).Foreground(o.primary)
@@ -922,8 +925,14 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Attachments.Image = attachmentIconStyle.SetString(ImageIcon)
 	s.Attachments.Text = attachmentIconStyle.SetString(TextIcon)
 	s.Attachments.Skill = attachmentIconStyle.Background(o.secondary).SetString(SkillIcon)
-	s.Attachments.Normal = base.Padding(0, 1).MarginRight(1).Background(o.bgMostVisible).Foreground(o.fgBase)
-	s.Attachments.Deleting = base.Padding(0, 1).Bold(true).Background(o.destructive).Foreground(o.fgBase)
+	s.Attachments.Normal = base.Padding(0, 1).Background(o.bgMostVisible).Foreground(o.fgBase)
+	// Remove and Deleting share the same slot on the right side of a chip
+	// and must keep the same geometry so toggling delete-mode doesn't
+	// shift the chips. Padding(0, 1) puts a colored cell on each side of the
+	// glyph so it isn't flush against the box edge, while MarginRight(1)
+	// keeps a transparent gap between adjacent chips.
+	s.Attachments.Remove = base.Padding(0, 1).MarginRight(1).Background(o.bgLessVisible).Foreground(o.fgSubtle).SetString(RemoveIcon)
+	s.Attachments.Deleting = base.Padding(0, 1).MarginRight(1).Bold(true).Background(o.destructive).Foreground(o.fgBase)
 
 	// Pills styles
 	s.Pills.Base = base.Padding(0, 1)
