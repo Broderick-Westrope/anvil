@@ -396,6 +396,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 			com.Styles.Attachments.Image,
 			com.Styles.Attachments.Text,
 			com.Styles.Attachments.Skill,
+			com.Styles.Attachments.Remove,
 		),
 		attachments.Keymap{
 			DeleteMode: keyMap.Editor.AttachmentDeleteMode,
@@ -983,6 +984,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if cmd := m.handleClickFocus(msg); cmd != nil {
 			cmds = append(cmds, cmd)
+		}
+
+		// Check if the click landed on an attachment's remove button.
+		// The attachment chips are rendered on the first row of the
+		// editor layout area, above the textarea.
+		if len(m.attachments.List()) > 0 && msg.Y == m.layout.editor.Min.Y {
+			relX := msg.X - m.layout.editor.Min.X
+			if m.attachments.HandleClick(relX) {
+				return m, tea.Batch(cmds...)
+			}
 		}
 
 		switch m.state {

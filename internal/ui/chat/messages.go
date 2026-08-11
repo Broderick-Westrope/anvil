@@ -392,6 +392,7 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 			sty.Attachments.Image,
 			sty.Attachments.Text,
 			sty.Attachments.Skill,
+			sty.Attachments.Remove,
 		)
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:
