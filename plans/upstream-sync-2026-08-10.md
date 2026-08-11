@@ -61,7 +61,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 7 | Model auto-discovery + enrichers | 10 | **done** | all 10 picked (Alibaba pair squashed); closes the `d341d84b` deferral |
 | 8 | Bang mode | 20 | **skipped** | user decision; retires 4 dependent deferrals (see batch 8 notes) |
 | 9 | Question tool | 18 | **skipped** | user decision — not needed now; revisit later if wanted (see batch 9 notes) |
-| 10 | Dialog responsive sizing | 19 | pending | approved |
+| 10 | Dialog responsive sizing | 19 | **done** | all 19 picked; notifications-dialog hunks dropped throughout |
 | 11 | Scrollable sidebar | 12 | pending | approved |
 | 12 | Chat scrollbar | 2 | **skipped** | visual-only indicator; Scroll* signature ripple through the twice-reverted seam |
 | 13 | Tool call expansion UI | 2 | pending | approved |
@@ -693,7 +693,28 @@ a5a5c6c5 feat(question): tweak the confirmation tab
 1937ac54 fix: match question tool cursor color to main editor
 ```
 
-## Batch 10 — Dialog responsive sizing (optional)
+## Batch 10 — Dialog responsive sizing
+
+**Status: done.** All 19 picked.
+
+### Adaptations worth remembering
+
+- **Notifications dialog does not exist here** — the fork deleted it, so its hunks were
+  dropped from `e271cecb`, `bbf654fb`, `a69ace5e`, and `f3592bd8` (recurring `git rm` of the
+  resurrected file during each pick).
+- **`31550cb4`** — dropped the `OAuthStateSaving` case (upstream's model-fetching OAuth flow;
+  fork doesn't have that state).
+- **`686a3f46`** — the fork's `CommandItem` renders `WithDescription` text in the info slot;
+  the new `hideInfo` gate clears whichever info is effective (description or shortcut), not
+  just the shortcut as upstream does.
+- **`e456a902`** — the fork's pattern-input height (granular permissions) joins the
+  fixed-chrome budget passed to upstream's new `contentViewportHeight` helper; behavior is
+  identical to the fork's previous two-branch sizing.
+- **`2c6424c1`** — the `fullscreen` alignment parameter threads through the fork's
+  `renderButtons`, which keeps the granular four-button set (Allow/Session/Forever/Deny)
+  plus the forever-scope and deny-reason states; upstream has three buttons.
+- **`a69ace5e`** — upstream's hint-truncation rewrite made the fork's `x/ansi` import in
+  `dialog/common.go` unnecessary; removed.
 
 ```
 3e2bd1cc fix(dialog): make OAuth dialog width responsive to terminal size
