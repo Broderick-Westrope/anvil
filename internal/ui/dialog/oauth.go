@@ -89,7 +89,7 @@ func newOAuth(
 	m.model = model
 	m.modelType = modelType
 	m.oAuthProvider = oAuthProvider
-	m.width = 60
+	m.width = 0 // Set dynamically in Draw().
 	m.State = OAuthStateInitializing
 
 	m.spinner = spinner.New(
@@ -183,8 +183,10 @@ func (m *OAuth) HandleMsg(msg tea.Msg) Action {
 func (m *OAuth) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	var (
 		t           = m.com.Styles
-		dialogStyle = t.Dialog.View.Width(m.width)
+		dialogWidth = max(0, min(60, area.Dx()-t.Dialog.View.GetHorizontalBorderSize()))
+		dialogStyle = t.Dialog.View.Width(dialogWidth)
 	)
+	m.width = dialogWidth
 	if m.isOnboarding {
 		view := m.dialogContent()
 		DrawOnboarding(scr, area, view)
