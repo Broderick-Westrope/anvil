@@ -60,7 +60,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 6 | MCP fixes | 5 | **done** | 4 picked, 1 N/A; deferred `63dc1f01` remainder also landed |
 | 7 | Model auto-discovery + enrichers | 10 | **done** | all 10 picked (Alibaba pair squashed); closes the `d341d84b` deferral |
 | 8 | Bang mode | 20 | **skipped** | user decision; retires 4 dependent deferrals (see batch 8 notes) |
-| 9 | Question tool | 18 | pending | approved |
+| 9 | Question tool | 18 | **skipped** | user decision — not needed now; revisit later if wanted (see batch 9 notes) |
 | 10 | Dialog responsive sizing | 19 | pending | approved |
 | 11 | Scrollable sidebar | 12 | pending | approved |
 | 12 | Chat scrollbar | 2 | **skipped** | visual-only indicator; Scroll* signature ripple through the twice-reverted seam |
@@ -651,10 +651,26 @@ d20e29ae fix(bangmode): sync bang mode with external editor
 cb129202 fix(bangmode): don't add extra ! when browsing history
 ```
 
-## Batch 9 — Question tool (optional)
+## Batch 9 — Question tool (skipped)
 
-Skip `75e7195f` (client/server integration). `492460a8` (coordinator struct refactor) is a
-prerequisite and touches local coordinator code — expect conflicts.
+**Status: skipped** (user decision, 2026-08-11 — not needed at the moment;
+revisit if the value is ever wanted).
+
+What it is: the agent can ask structured questions mid-run (yes/no,
+single/multi-select, free text) rendered as an interactive dialog instead of
+plain text.
+
+Why the port is heavy: the base commit `c2a6f765` is ~3,300 insertions across
+29 files, threaded through `internal/workspace` (client/server surfaces) with
+an `internal/question` service, and its 17 follow-ups all land in that adapted
+foundation. The `492460a8` coordinator-struct prereq is partially moot (the
+fork's coordinator is already a struct) but its `agenttest` scaffolding is not.
+
+If revisited: the dialog UI files (`internal/ui/dialog/question_*.go`) are
+largely portable as-is; the plumbing (question service, workspace methods,
+tool wiring) is the part that would be cheaper to reimplement natively against
+the fork's in-process architecture. Skip `75e7195f` regardless (client/server
+integration).
 
 ```
 492460a8 refactor: make the coordinator use a struct
