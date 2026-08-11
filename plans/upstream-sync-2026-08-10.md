@@ -64,8 +64,8 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 10 | Dialog responsive sizing | 19 | **done** | all 19 picked; notifications-dialog hunks dropped throughout |
 | 11 | Scrollable sidebar | 12 | **done** | all 12 picked; +1 repair commit for a masked conflict-marker leak |
 | 12 | Chat scrollbar | 2 | **skipped** | visual-only indicator; Scroll* signature ripple through the twice-reverted seam |
-| 13 | Tool call expansion UI | 2 | pending | approved |
-| 14 | Attachment chip remove button | 4 | pending | approved |
+| 13 | Tool call expansion UI | 2 | **done** | both picked |
+| 14 | Attachment chip remove button | 4 | **done** | all 4 picked; skill-aware Render merge |
 | 15 | Misc features | 5 | pending | approved |
 | 16 | Dep bump (fantasy/catwalk) | 1 | **done** | ran after batch 3's first pass; unblocked 5 commits |
 
@@ -795,16 +795,41 @@ b72f9aab feat(ui): add scrollbar to chat view (#3018)
 ff12fa01 fix(scrollbar): only show on human scroll
 ```
 
-## Batch 13 — Tool call expansion UI (optional)
+## Batch 13 — Tool call expansion UI
+
+**Status: done.** Both picked.
+
+### Adaptations worth remembering
+
+- **`db8add71`** — the fork's `toolHeaderWithIcon` helper (agent icon rendering; upstream
+  doesn't have it) gained the same `*ToolRenderOpts` parameter as `toolHeader` so expanded
+  params wrap through both paths. Renderer call sites keep the fork's width variables.
+- **`cbb6daaa`** — the fork's Agent/AgenticFetch renderers show display names and stats, not
+  the prompt, so upstream's prompt-guard hunks were dropped there; bash keeps the
+  description-preferring summary and shows the raw command with preserved newlines when
+  expanded.
 
 ```
 db8add71 feat(ui): allow expanding toolcall names
 cbb6daaa feat(ui): preserve newlines in expanded tool content (#3239)
 ```
 
-## Batch 14 — Attachment chip remove button (optional)
+## Batch 14 — Attachment chip remove button
 
-Touches `attachments.NewRenderer` — remember the 5-arg local signature.
+**Status: done.** All 4 picked.
+
+### Adaptations worth remembering
+
+- **The `NewRenderer` signature is now 6-arg** (`removeStyle` added after `skillStyle`), and
+  `Renderer.Render` is 5-arg: `(fileAtts, skillAtts, deleting, showRemove, width)`. Upstream's
+  remove button, bounds hit-testing, and delete-mode numeral slot merged into the fork's
+  two-chip-list (files + skills) rendering; skill chips keep the fork's numeral-first deleting
+  layout. `SkillIcon` keeps the fork's ⚡ (upstream switched to ▲).
+- **Tests merged, not replaced** — fork's skill/dedup tests plus upstream's remove-button tests
+  (retargeted to `styles.TokyoNight()` and nil skill lists). `attachments_mouse_test.go`'s
+  workspace stub builds on the fork's `testWorkspace` with a `PermissionYoloLevel` stub, and
+  the inline-editor test was dropped (question tool, skipped batch 9).
+- **`1be84086`** — the `activeInline` click guard was dropped (question tool).
 
 ```
 f604d989 feat(ui): clickable ✕ remove button on attachment chips
