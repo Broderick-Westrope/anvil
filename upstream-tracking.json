@@ -1,8 +1,8 @@
 {
   "last_checked_commit": {
-    "hash": "afea814e4b13359745b71c81aab2498c39a247f5",
-    "author": "Christian Rocha",
-    "date": "2026-06-14T14:15:21-04:00",
-    "message": "v0.77.0"
+    "hash": "feb63006e9452be370721c22a0c2a3be008fd475",
+    "author": "Amolith",
+    "date": "2026-08-10T10:08:00-07:00",
+    "message": "telemetry: differentiate invocation types (#3533)"
   }
 }
