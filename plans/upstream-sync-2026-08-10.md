@@ -59,7 +59,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 5 | UI fixes | 15 | **done** | 14 picked (1 partial), 1 skipped, +1 vendored prereq |
 | 6 | MCP fixes | 5 | **done** | 4 picked, 1 N/A; deferred `63dc1f01` remainder also landed |
 | 7 | Model auto-discovery + enrichers | 10 | **done** | all 10 picked (Alibaba pair squashed); closes the `d341d84b` deferral |
-| 8 | Bang mode | 20 | pending | approved |
+| 8 | Bang mode | 20 | **skipped** | user decision; retires 4 dependent deferrals (see batch 8 notes) |
 | 9 | Question tool | 18 | pending | approved |
 | 10 | Dialog responsive sizing | 19 | pending | approved |
 | 11 | Scrollable sidebar | 12 | pending | approved |
@@ -605,10 +605,28 @@ Opus confirmed the hand-applied Alibaba change is byte-identical to upstream net
 - **Noted (upstream parity, no action)**: `doRequest` swallows resolver errors (misleading log
   only); lmstudio's `SupportsImages` overwrites user-set values unconditionally.
 
-## Batch 8 — Bang mode
+## Batch 8 — Bang mode (skipped)
 
-Also pick `a9e3a57f` (deferred from batch 1) after `99a5fad5`, since it depends on
-`shell.PersistFunc` and `message.ShellCommand`.
+**Status: skipped** (user decision, 2026-08-11 — "I won't ever use bang mode").
+
+An attempt at the base commit `99a5fad5` confirmed the projected cost: 32 files
+including message/proto part-type plumbing (`ShellCommand` content part), the
+client/server surfaces (`internal/server`, `internal/client`, `internal/proto`,
+`internal/backend`), workspace interface methods, and theme overrides for the
+deleted multi-theme system. The pick was aborted cleanly before commit.
+
+Skipping this batch also **permanently retires four deferrals** that only exist
+to fix bang mode itself:
+
+| Commit | Was deferred from | Why it dies with bang mode |
+|---|---|---|
+| `a9e3a57f` | batch 1 | Depends on `shell.PersistFunc` / `message.ShellCommand` |
+| `e4175c52` | batch 4 | Rewrites `internal/ui/chat/shell.go` (bang-mode UI) |
+| `1b4ef73f` | batch 4 | Depends on bang mode's `RemapANSI16` |
+| `9c61c7d0` (title hunk) | batch 5 | Edits the `userPrompt` fallback introduced by `03bfdc66` |
+
+If shell execution from the prompt is ever wanted, implement it natively
+against the fork's `internal/shell` package rather than porting this chain.
 
 ```
 99a5fad5 feat: add bang mode for direct shell command execution (#3013)
