@@ -66,7 +66,7 @@ Status: `pending` / `in progress` / `done` / `skipped`
 | 12 | Chat scrollbar | 2 | **skipped** | visual-only indicator; Scroll* signature ripple through the twice-reverted seam |
 | 13 | Tool call expansion UI | 2 | **done** | both picked |
 | 14 | Attachment chip remove button | 4 | **done** | all 4 picked; skill-aware Render merge |
-| 15 | Misc features | 5 | pending | approved |
+| 15 | Misc features | 26 | **done** | 16 picked (2 partial/hand-applied), 8 skipped/N-A, 2 already fixed |
 | 16 | Dep bump (fantasy/catwalk) | 1 | **done** | ran after batch 3's first pass; unblocked 5 commits |
 
 ---
@@ -838,7 +838,51 @@ f604d989 feat(ui): clickable ✕ remove button on attachment chips
 1be84086 Review fixes: attachment remove button (hidden clicks, mouse button, chip spacing)
 ```
 
-## Batch 15 — Misc features (optional)
+## Batch 15 — Misc features
+
+**Status: done.** 16 picked, 8 skipped/not-applicable, 2 already fixed locally.
+
+### Not applied
+
+| Commit | Disposition | Reason |
+|---|---|---|
+| `dc160997` | skipped | Elapsed timer — fork has its own stats-line elapsed display in `chat/agent.go` (see batch-5 notes on `74e725b3`). |
+| `3446255d` | not applicable | `--all`/`--crawl-dir` crawl per-project `.crush/crush.db` files; the fork migrated to a single global database. |
+| `e34e707c` | not applicable | Only adds an `event.FilePickerOpened()` telemetry call; telemetry was removed from the fork. |
+| `677046d2` | skipped | illumos build support — no illumos user; 4 conflicts (incl. deleted notifications dialog) for zero local value. |
+| `1c074540` | skipped | Charm-branded OAuth landing page (charm.svg, heartbit assets) plumbed through the skipped upstream MCP OAuth handler. |
+| `3a71bdf3` | already fixed | Fork already runs title generation as `go a.generateTitle(context.WithoutCancel(ctx), ...)` — the exact detached-goroutine fix. |
+| `9e3ed61c` | skipped | Bedrock AWS SSO re-auth: 115-line coordinator rework + workspace/proto/server plumbing + 306-line dialog for a provider flow this fork doesn't use. Revisit if Bedrock+SSO is ever needed. |
+| `810168b0` | partial | Env-config doc section taken (rebranded); the `aws_auth_refresh` half documents the skipped `9e3ed61c`. |
+
+### Adaptations worth remembering
+
+- **`6b6fab5e` (edit-tool refactor)** — upstream's refactored `edit.go`/`multiedit.go` taken
+  wholesale, then the fork's granular-permission divergences re-applied (`Input` field on
+  permission requests, `RequestResult.Granted`/`Reason`); `multiedit_test.go` keeps the fork's
+  `mockPermissionService` under upstream's new tests.
+- **`b679ba1e` broke the VCR cassettes** — the new `edit.md` description changes the tools
+  array in every recorded LLM request, failing all 13 `TestOrchestratorAgent` cassettes with
+  "requested interaction not found". Fixed by patching the recorded request bodies **at the
+  JSON level** (tools[edit].description swapped, content_length adjusted); raw-text and
+  yaml.Marshal patching both failed on YAML folding/quoting subtleties. The matcher's JSON
+  DeepEqual fallback makes JSON-level patching equivalent to re-recording. **Lesson: any pick
+  that changes a tool .md description invalidates the cassettes.**
+- **`12e96776`** — upstream's `clipboard.WriteText` is from the skipped
+  `golang.design/x/clipboard` migration; mapped to the fork's atotto `clipboard.WriteAll`.
+- **`b75d6bc2`** — introduces `OAuthStateSaving`, the state whose view case batch 10's
+  `31550cb4` pick dropped; the save flow now owns it end-to-end. Upstream's unused coordinator
+  `oauth` import dropped.
+- **`7810d038`** — the `Env` field joins the fork's larger Config struct (agents/plugins)
+  rather than replacing it; schema regenerated.
+- **`155072b3`** — applied by hand; the fork's `run.go` carries the bg-detection in a
+  different shape than upstream's app/run split.
+- **`ebd845c0`** — `sessionHeaders` merged around the fork's retry-cleanup code and 3-arg
+  `createUserMessage`; fixed upstream's comment typo in passing.
+- **`5e1cd7ef`** — `refusal_render_test.go` retargeted to the fork's module path and single
+  TokyoNight theme.
+- **`2a230d01`** — palette-selection fix taken; `question_editor.go` hunk (skipped batch 9)
+  and go.mod bump dropped.
 
 ```
 dc160997 feat: elapsed seconds timer (#3223)          # verify against local impl first
