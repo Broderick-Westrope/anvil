@@ -125,6 +125,15 @@ anvil run --continue "Follow up on your last response"
 		}
 
 		appWs := ws.(*workspace.AppWorkspace)
+
+		if sessionID != "" {
+			sess, err := resolveSessionID(ctx, appWs.App().Sessions, sessionID)
+			if err != nil {
+				return err
+			}
+			sessionID = sess.ID
+		}
+
 		return appWs.App().RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, quiet || verbose, sessionID, useLast)
 	},
 }
