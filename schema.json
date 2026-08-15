@@ -549,6 +549,11 @@
           "description": "Automatically setup LSPs based on root markers",
           "default": true
         },
+        "lsp_idle_timeout": {
+          "type": "integer",
+          "description": "Minutes of inactivity before an idle LSP server is stopped and its memory reclaimed. It restarts on next use. 0 disables idle shutdown",
+          "default": 15
+        },
         "progress": {
           "type": "boolean",
           "description": "Show indeterminate progress updates during long operations",
