@@ -153,6 +153,53 @@ like you would. LSPs can be added manually like so:
 }
 ```
 
+#### Shared gopls daemon
+
+When gopls is auto-detected (no `lsp.gopls` entry in your config), Anvil
+starts it with `-remote=auto`. This is gopls's built-in daemon mode: each
+Anvil session spawns a small forwarder process, and they all share a single
+gopls daemon. Running several sessions in the same repo costs roughly one
+gopls worth of memory instead of one per session. The daemon exits on its
+own about a minute after the last session disconnects.
+
+If you configure `lsp.gopls` yourself, your args are used verbatim and no
+daemon flag is added. That's also the opt-out: a minimal explicit config
+gets you a private per-session gopls.
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
+  "lsp": {
+    "gopls": { "command": "gopls" }
+  }
+}
+```
+
+One tradeoff to know about: with a shared daemon, a gopls crash affects
+every connected session at once. The `lsp_restart` tool recovers by
+respawning the forwarder, which respawns the daemon.
+
+#### Idle shutdown
+
+LSP servers that haven't been used for a while are stopped to reclaim
+memory. This applies to every LSP server, not just gopls. A stopped server
+restarts transparently the next time a tool needs it.
+
+The timeout is configurable via `lsp_idle_timeout` (minutes, default `15`;
+`0` disables idle shutdown):
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
+  "options": {
+    "lsp_idle_timeout": 30
+  }
+}
+```
+
+Known limitation: after an idle shutdown, project-wide `lsp_diagnostics`
+only repopulates as files are re-opened by subsequent tool use.
+
 ### MCPs
 
 Anvil also supports Model Context Protocol (MCP) servers through three transport

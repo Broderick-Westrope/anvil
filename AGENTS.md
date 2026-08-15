@@ -42,7 +42,7 @@ internal/
   db/                              SQLite via sqlc, with migrations
     sql/                           Raw SQL queries (consumed by sqlc)
     migrations/                    Schema migrations
-  lsp/                             LSP client manager, auto-discovery, on-demand startup
+  lsp/                             LSP client manager, auto-discovery, on-demand startup, idle reaping
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
@@ -97,6 +97,13 @@ internal/
   across restarts and survives compaction. `PrepareStep` filters the tool
   list on every turn. The `LazyMCPState` type in
   `internal/agent/tools/lazy_mcp_state.go` holds the per-Run enabled set.
+- **LSP memory management**: auto-configured gopls runs with `-remote=auto`
+  so concurrent Anvil processes share one gopls daemon
+  (`applyGoplsDaemonDefaults` in `internal/lsp/manager.go`); user-configured
+  gopls is left verbatim. All LSP clients are stopped after
+  `lsp_idle_timeout` minutes of inactivity (default 15, `0` disables) and
+  restart on demand. Any code path that reads a client must call
+  `Manager.Touch(name)` so active clients are never reaped.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
