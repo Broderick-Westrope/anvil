@@ -2,7 +2,7 @@ package dialog
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -428,8 +428,15 @@ func (s *Session) isCurrentSessionBusy() bool {
 // sortPinnedFirst stable-sorts sessions so pinned ones come first while
 // preserving the existing recency order within each group.
 func sortPinnedFirst(sessions []session.Session) {
-	sort.SliceStable(sessions, func(i, j int) bool {
-		return sessions[i].Pinned && !sessions[j].Pinned
+	slices.SortStableFunc(sessions, func(a, b session.Session) int {
+		switch {
+		case a.Pinned == b.Pinned:
+			return 0
+		case a.Pinned:
+			return -1
+		default:
+			return 1
+		}
 	})
 }
 

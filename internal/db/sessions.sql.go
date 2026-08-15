@@ -346,7 +346,7 @@ UPDATE sessions
 SET
     pinned = ?1,
     pin_note = ?2
-WHERE id = ?3
+WHERE id = ?3 AND (pinned != ?1 OR pin_note != ?2)
 `
 
 type SetSessionPinParams struct {

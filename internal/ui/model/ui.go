@@ -237,6 +237,11 @@ type UI struct {
 	// already been answered, so quit paths do not re-intercept.
 	pinSettled bool
 
+	// pinSettling tracks whether a quit-time pin settle write is in
+	// flight. While true, quit requests are ignored so a plain quit
+	// cannot race the write.
+	pinSettling bool
+
 	header *header
 
 	// sendProgressBar instructs the TUI to send progress bar updates to the
@@ -1214,9 +1219,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.invalidateRunningAgentCaches()
 	case pinSettleFailedMsg:
 		// A failed settle write must not quit silently: clear the settled
-		// flag so the next quit attempt re-prompts, and surface the error
-		// so the user never believes an unpin or note change succeeded.
+		// and settling flags so the user regains control and the next
+		// quit attempt re-prompts, and surface the error so the user
+		// never believes an unpin or note change succeeded.
 		m.pinSettled = false
+		m.pinSettling = false
 		cmds = append(cmds, util.ReportError(msg.err))
 	case util.InfoMsg:
 		if msg.Type == util.InfoTypeError {
@@ -2233,6 +2240,11 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.toggleAnthropicAuthMode)
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionQuit:
+		// A settle write is in flight: ignore the quit request so a
+		// plain quit cannot race the write.
+		if m.pinSettling {
+			break
+		}
 		// Choke point B: backstop for quit paths that emit tea.QuitMsg
 		// directly (e.g. the command palette quit item). If the active
 		// session is pinned and the settle prompt has not been answered,
@@ -2240,7 +2252,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		// settle prompt is not stacked under it, then open the pinned
 		// quit dialog.
 		if !m.pinSettled && m.session != nil {
-			sess, err := m.com.Workspace.GetSession(context.Background(), m.session.ID)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			sess, err := m.com.Workspace.GetSession(ctx, m.session.ID)
+			cancel()
+			if err != nil {
+				slog.Warn("Failed to read pin state at quit", "error", err)
+			}
 			if err == nil && sess.Pinned {
 				m.dialog.CloseDialog(dialog.CommandsID)
 				m.dialog.CloseDialog(dialog.QuitID)
@@ -2252,8 +2269,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionQuitSettled:
 		// The user answered the settle prompt. Mark it settled so choke
 		// point B does not re-intercept, then persist (if needed) and
-		// quit via a command.
+		// quit via a command. While the write is in flight, pinSettling
+		// blocks quit requests from racing it.
 		m.pinSettled = true
+		if msg.Unpin || msg.NoteChanged {
+			m.pinSettling = true
+		}
 		m.dialog.CloseDialog(dialog.QuitID)
 		cmds = append(cmds, m.settlePinAndQuitCmd(msg))
 	case dialog.ActionEnableDockerMCP:
@@ -5012,7 +5033,9 @@ func (m *UI) openPinDialog() tea.Cmd {
 
 	// Fetch the session fresh: the pin state may have changed in another
 	// process since it was loaded.
-	sess, err := m.com.Workspace.GetSession(context.Background(), m.session.ID)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	sess, err := m.com.Workspace.GetSession(ctx, m.session.ID)
 	if err != nil {
 		return util.ReportError(err)
 	}
@@ -5028,7 +5051,14 @@ func (m *UI) setSessionPinCmd(msg dialog.ActionSetSessionPin) tea.Cmd {
 		if err != nil {
 			return util.NewErrorMsg(err)
 		}
-		return nil
+		switch {
+		case !msg.Pinned:
+			return util.NewInfoMsg("Session unpinned")
+		case msg.WasPinned:
+			return util.NewInfoMsg("Pin note updated")
+		default:
+			return util.NewInfoMsg("Session pinned")
+		}
 	}
 }
 
@@ -5036,6 +5066,12 @@ func (m *UI) setSessionPinCmd(msg dialog.ActionSetSessionPin) tea.Cmd {
 // session is pinned (choke point A: pin state is re-read from the DB at
 // prompt time), the pinned settle variant opens instead.
 func (m *UI) openQuitDialog() tea.Cmd {
+	// A settle write is in flight: ignore the quit request so a plain
+	// quit cannot race the write.
+	if m.pinSettling {
+		return nil
+	}
+
 	if m.dialog.ContainsDialog(dialog.QuitID) {
 		// Bring to front
 		m.dialog.BringToFront(dialog.QuitID)
@@ -5043,7 +5079,12 @@ func (m *UI) openQuitDialog() tea.Cmd {
 	}
 
 	if !m.pinSettled && m.session != nil {
-		sess, err := m.com.Workspace.GetSession(context.Background(), m.session.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		sess, err := m.com.Workspace.GetSession(ctx, m.session.ID)
+		cancel()
+		if err != nil {
+			slog.Warn("Failed to read pin state at quit", "error", err)
+		}
 		if err == nil && sess.Pinned {
 			m.dialog.OpenDialog(dialog.NewQuitPinned(m.com, sess))
 			return nil

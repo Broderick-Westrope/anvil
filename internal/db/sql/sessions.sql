@@ -100,7 +100,7 @@ UPDATE sessions
 SET
     pinned = @pinned,
     pin_note = @pin_note
-WHERE id = @id;
+WHERE id = @id AND (pinned != @pinned OR pin_note != @pin_note);
 
 -- name: ListPinnedSessions :many
 SELECT *

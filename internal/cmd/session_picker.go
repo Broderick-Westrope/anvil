@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -151,28 +152,20 @@ func (p *pickerItem) SetFocused(focused bool) {
 
 // SetMatch implements list.MatchSettable.
 func (p *pickerItem) SetMatch(m fuzzy.Match) {
-	if sameFuzzyMatchCmd(p.m, m) {
+	if sameFuzzyMatch(p.m, m) {
 		return
 	}
 	p.m = m
 	p.Bump()
 }
 
-// sameFuzzyMatchCmd reports whether two fuzzy.Match values are observably
+// sameFuzzyMatch reports whether two fuzzy.Match values are observably
 // equal; fuzzy.Match contains a slice so it is not comparable with ==.
-func sameFuzzyMatchCmd(a, b fuzzy.Match) bool {
-	if a.Str != b.Str || a.Index != b.Index || a.Score != b.Score {
-		return false
-	}
-	if len(a.MatchedIndexes) != len(b.MatchedIndexes) {
-		return false
-	}
-	for i := range a.MatchedIndexes {
-		if a.MatchedIndexes[i] != b.MatchedIndexes[i] {
-			return false
-		}
-	}
-	return true
+func sameFuzzyMatch(a, b fuzzy.Match) bool {
+	return a.Str == b.Str &&
+		a.Index == b.Index &&
+		a.Score == b.Score &&
+		slices.Equal(a.MatchedIndexes, b.MatchedIndexes)
 }
 
 // Render renders a single picker row: title, dim note, dim abbreviated
@@ -325,8 +318,10 @@ func (m *pickerModel) selectedItem() *pickerItem {
 }
 
 // removeSession drops a session from the underlying item set and
-// re-applies the current filter.
+// re-applies the current filter, keeping the cursor near its previous
+// position.
 func (m *pickerModel) removeSession(id string) {
+	previous := m.list.Selected()
 	items := m.list.Items()
 	kept := make([]list.FilterableItem, 0, len(items))
 	for _, it := range items {
@@ -337,7 +332,7 @@ func (m *pickerModel) removeSession(id string) {
 	}
 	m.list.SetItems(kept...)
 	m.list.SetFilter(m.input.Value())
-	m.list.SetSelected(0)
+	m.list.SetSelected(max(min(previous, m.list.Len()-1), 0))
 }
 
 // Update implements tea.Model.
@@ -616,10 +611,16 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.togglePreview()
 
 	case "pgup", "ctrl+u":
+		if !m.preview.visible && !m.preview.fullscreen {
+			return m, nil
+		}
 		m.previewScroll(-m.previewPageStride())
 		return m, m.previewFetchOlderCmd()
 
 	case "pgdown", "ctrl+d":
+		if !m.preview.visible && !m.preview.fullscreen {
+			return m, nil
+		}
 		m.previewScroll(m.previewPageStride())
 		return m, nil
 
@@ -661,7 +662,7 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, m.previewLoadCmd())
 }
 
-// chromeHeight is the number of non-list lines in the picker view:
+// pickerChromeHeight is the number of non-list lines in the picker view:
 // filter input, status line, and help line.
 const pickerChromeHeight = 3
 

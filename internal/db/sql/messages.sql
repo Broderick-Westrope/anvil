@@ -100,5 +100,3 @@ WITH RECURSIVE branch AS (
 SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at,
        provider, parent_message_id, message_type
 FROM branch ORDER BY depth DESC;
-
-

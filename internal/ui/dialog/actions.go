@@ -106,10 +106,14 @@ type (
 	}
 	// ActionSetSessionPin is emitted by the pin dialog to persist a pin
 	// change for a session. Pinned false unpins (the note is cleared).
+	// WasPinned records whether the session was already pinned when the
+	// dialog opened, so success feedback can distinguish a fresh pin
+	// from a note update.
 	ActionSetSessionPin struct {
 		SessionID string
 		Pinned    bool
 		Note      string
+		WasPinned bool
 	}
 	// ActionRegenerateTitle is a message to regenerate the current session
 	// title.

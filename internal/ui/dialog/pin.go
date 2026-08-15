@@ -137,10 +137,17 @@ func (p *Pin) HandleMsg(msg tea.Msg) Action {
 		case key.Matches(keyMsg, p.keyMap.Close):
 			return ActionClose{}
 		case key.Matches(keyMsg, p.keyMap.Confirm):
+			note := strings.TrimSpace(p.input.Value())
+			// Skip the write entirely when nothing changed: an
+			// idempotent re-pin with the same note is a no-op.
+			if p.sess.Pinned && note == p.sess.PinNote {
+				return ActionClose{}
+			}
 			return ActionSetSessionPin{
 				SessionID: p.sess.ID,
 				Pinned:    true,
-				Note:      strings.TrimSpace(p.input.Value()),
+				Note:      note,
+				WasPinned: p.sess.Pinned,
 			}
 		default:
 			var cmd tea.Cmd

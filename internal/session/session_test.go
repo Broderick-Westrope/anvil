@@ -354,6 +354,43 @@ func TestSetPinDoesNotChangeUpdatedAt(t *testing.T) {
 	require.Equal(t, before.UpdatedAt, after.UpdatedAt)
 }
 
+func TestSetPinIdenticalValuesDoesNotChangeUpdatedAt(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	sessions := NewService(db.New(conn), conn)
+
+	created, err := sessions.Create(t.Context(), "test", "/home/user/project")
+	require.NoError(t, err)
+
+	// Pin, then backdate updated_at. Changing pin columns in the same
+	// statement keeps the guarded trigger from overwriting the backdated
+	// value.
+	_, err = conn.ExecContext(t.Context(),
+		"UPDATE sessions SET updated_at = 12345, pinned = 1, pin_note = 'same note' WHERE id = ?", created.ID)
+	require.NoError(t, err)
+
+	before, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(12345), before.UpdatedAt)
+
+	// An idempotent re-pin with identical values must match no row and
+	// therefore never fire the updated_at trigger.
+	require.NoError(t, sessions.SetPin(t.Context(), created.ID, true, "same note"))
+
+	after, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.True(t, after.Pinned)
+	require.Equal(t, "same note", after.PinNote)
+	require.Equal(t, before.UpdatedAt, after.UpdatedAt)
+}
+
 func TestListPinnedExcludesUnpinnedAndChildSessions(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Cleanup(func() {
