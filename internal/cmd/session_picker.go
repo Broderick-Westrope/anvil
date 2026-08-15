@@ -486,8 +486,12 @@ func (m *pickerModel) currentPreviewEntry() (*previewEntry, string) {
 	return m.preview.cache[pi.sess.ID], pi.sess.ID
 }
 
-// togglePreview flips the preview pane. Narrow terminals (<100 cols) get
-// a full-width preview instead of a split.
+// pickerSplitMinWidth is the minimum terminal width for the split
+// preview layout; narrower terminals get a full-width preview.
+const pickerSplitMinWidth = 100
+
+// togglePreview flips the preview pane. Narrow terminals get a
+// full-width preview instead of a split.
 func (m *pickerModel) togglePreview() tea.Cmd {
 	if m.preview.visible || m.preview.fullscreen {
 		m.preview.visible = false
@@ -495,7 +499,7 @@ func (m *pickerModel) togglePreview() tea.Cmd {
 		m.resize()
 		return nil
 	}
-	if m.width < 100 {
+	if m.width < pickerSplitMinWidth {
 		m.preview.fullscreen = true
 	} else {
 		m.preview.visible = true
@@ -668,6 +672,15 @@ const pickerChromeHeight = 3
 
 // resize recomputes component sizes from the current terminal size.
 func (m *pickerModel) resize() {
+	// Re-evaluate the preview layout: a live resize can cross the
+	// split-width threshold while the preview is open.
+	if m.preview.visible && m.width < pickerSplitMinWidth {
+		m.preview.visible = false
+		m.preview.fullscreen = true
+	} else if m.preview.fullscreen && m.width >= pickerSplitMinWidth {
+		m.preview.fullscreen = false
+		m.preview.visible = true
+	}
 	listHeight := max(m.height-pickerChromeHeight, 1)
 	m.list.SetSize(m.listWidth(), listHeight)
 	m.input.SetWidth(max(m.width-2, 10))
