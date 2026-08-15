@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -334,6 +335,7 @@ func (s *Manager) idleCandidates(cutoff time.Time) []string {
 			candidates = append(candidates, name)
 		}
 	}
+	slices.Sort(candidates)
 	return candidates
 }
 
@@ -359,7 +361,8 @@ func (s *Manager) reapOne(ctx context.Context, name string, cutoff time.Time) {
 	if !ok {
 		return
 	}
-	if last, ok := s.lastUsed.Get(name); ok && !last.Before(cutoff) {
+	last, ok := s.lastUsed.Get(name)
+	if !ok || !last.Before(cutoff) {
 		return
 	}
 	if err := s.closeClient(ctx, client); err != nil &&
@@ -380,7 +383,9 @@ func (s *Manager) reapOne(ctx context.Context, name string, cutoff time.Time) {
 
 // StartIdleReaper periodically stops LSP clients that have not been
 // used within the configured idle timeout. Blocks until ctx is
-// done; run it in a goroutine. No-op if idle shutdown is disabled.
+// done; run it in a goroutine. No-op if idle shutdown is disabled
+// at startup; disabling it at runtime stops future sweeps, but
+// re-enabling after that requires a restart.
 func (s *Manager) StartIdleReaper(ctx context.Context) {
 	if s.idleTimeout() <= 0 {
 		return
@@ -392,6 +397,9 @@ func (s *Manager) StartIdleReaper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if s.idleTimeout() <= 0 {
+				return
+			}
 			s.reapIdle(ctx)
 		}
 	}
@@ -443,8 +451,10 @@ func (s *Manager) buildConfig(name string, server *powernapconfig.ServerConfig) 
 // instance. Only applies when the user has not configured gopls
 // themselves; user-provided args are always respected verbatim.
 func applyGoplsDaemonDefaults(manager *powernapconfig.Manager, cfg *config.ConfigStore) {
-	if _, userConfigured := cfg.Config().LSP["gopls"]; userConfigured {
-		return
+	for name, clientConfig := range cfg.Config().LSP {
+		if name == "gopls" || clientConfig.Command == "gopls" {
+			return
+		}
 	}
 	server, ok := manager.GetServer("gopls")
 	if ok && len(server.Args) == 0 {

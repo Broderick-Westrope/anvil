@@ -74,6 +74,24 @@ func TestApplyGoplsDaemonDefaults(t *testing.T) {
 		require.Empty(t, server.Args)
 	})
 
+	t.Run("user gopls under another name left untouched", func(t *testing.T) {
+		t.Parallel()
+
+		manager := powernapconfig.NewManager()
+		manager.LoadDefaults()
+		cfg := config.NewTestStore(&config.Config{
+			LSP: config.LSPs{
+				"mygo": {Command: "gopls"},
+			},
+		})
+
+		applyGoplsDaemonDefaults(manager, cfg)
+
+		server, ok := manager.GetServer("gopls")
+		require.True(t, ok)
+		require.Empty(t, server.Args)
+	})
+
 	t.Run("pre-existing args left untouched", func(t *testing.T) {
 		t.Parallel()
 
@@ -182,6 +200,7 @@ func TestIdleTimeout(t *testing.T) {
 	}{
 		{name: "nil defaults to 15 minutes", val: nil, want: defaultIdleTimeout},
 		{name: "zero disables", val: ptr(0), want: 0},
+		{name: "negative disables", val: ptr(-1), want: 0},
 		{name: "thirty minutes", val: ptr(30), want: 30 * time.Minute},
 	}
 
@@ -314,4 +333,31 @@ func TestReapIdleStopsStaleClients(t *testing.T) {
 	require.Equal(t, StateReady, touched.GetServerState())
 	_, ok = manager.clients.Get("touched")
 	require.True(t, ok)
+}
+
+func TestStartIdleReaperExitsOnContextCancel(t *testing.T) {
+	t.Parallel()
+
+	manager := &Manager{
+		clients:  csync.NewMap[string, *Client](),
+		lastUsed: csync.NewMap[string, time.Time](),
+		cfg: config.NewTestStore(&config.Config{
+			Options: &config.Options{LSPIdleTimeout: ptr(1)},
+		}),
+		now: time.Now,
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		manager.StartIdleReaper(ctx)
+		close(done)
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartIdleReaper did not exit after context cancellation")
+	}
 }
