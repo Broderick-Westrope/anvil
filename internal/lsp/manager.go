@@ -61,6 +61,8 @@ func NewManager(cfg *config.ConfigStore) *Manager {
 		})
 	}
 
+	applyGoplsDaemonDefaults(manager, cfg)
+
 	return &Manager{
 		clients:     csync.NewMap[string, *Client](),
 		unavailable: csync.NewMap[string, time.Time](),
@@ -313,6 +315,20 @@ func (s *Manager) buildConfig(name string, server *powernapconfig.ServerConfig) 
 		cfg.Timeout = userCfg.Timeout
 	}
 	return cfg
+}
+
+// applyGoplsDaemonDefaults enables gopls's shared daemon mode
+// (-remote=auto) so concurrent Anvil sessions share one gopls
+// instance. Only applies when the user has not configured gopls
+// themselves; user-provided args are always respected verbatim.
+func applyGoplsDaemonDefaults(manager *powernapconfig.Manager, cfg *config.ConfigStore) {
+	if _, userConfigured := cfg.Config().LSP["gopls"]; userConfigured {
+		return
+	}
+	server, ok := manager.GetServer("gopls")
+	if ok && len(server.Args) == 0 {
+		server.Args = []string{"-remote=auto"}
+	}
 }
 
 func resolveServerName(manager *powernapconfig.Manager, name string) string {

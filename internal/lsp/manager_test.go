@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	powernapconfig "github.com/charmbracelet/x/powernap/pkg/config"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,59 @@ func TestUnavailableBackoff(t *testing.T) {
 	manager.markUnavailable("gopls")
 	manager.clearUnavailable("gopls")
 	require.False(t, manager.recentlyUnavailable("gopls"))
+}
+
+func TestApplyGoplsDaemonDefaults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default manager gets remote auto", func(t *testing.T) {
+		t.Parallel()
+
+		manager := powernapconfig.NewManager()
+		manager.LoadDefaults()
+		cfg := config.NewTestStore(&config.Config{})
+
+		applyGoplsDaemonDefaults(manager, cfg)
+
+		server, ok := manager.GetServer("gopls")
+		require.True(t, ok)
+		require.Equal(t, []string{"-remote=auto"}, server.Args)
+	})
+
+	t.Run("user-configured gopls left untouched", func(t *testing.T) {
+		t.Parallel()
+
+		manager := powernapconfig.NewManager()
+		manager.LoadDefaults()
+		cfg := config.NewTestStore(&config.Config{
+			LSP: config.LSPs{
+				"gopls": {Command: "gopls"},
+			},
+		})
+
+		applyGoplsDaemonDefaults(manager, cfg)
+
+		server, ok := manager.GetServer("gopls")
+		require.True(t, ok)
+		require.Empty(t, server.Args)
+	})
+
+	t.Run("pre-existing args left untouched", func(t *testing.T) {
+		t.Parallel()
+
+		manager := powernapconfig.NewManager()
+		manager.AddServer("gopls", &powernapconfig.ServerConfig{
+			Command: "gopls",
+			Args:    []string{"-logfile=auto"},
+		})
+		cfg := config.NewTestStore(&config.Config{})
+
+		applyGoplsDaemonDefaults(manager, cfg)
+
+		server, ok := manager.GetServer("gopls")
+		require.True(t, ok)
+		require.Equal(t, []string{"-logfile=auto"}, server.Args)
+	})
 }
 
 func TestCanAutoStartFiltersBeforeLookingUpCommand(t *testing.T) {
