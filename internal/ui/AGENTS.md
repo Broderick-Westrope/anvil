@@ -16,6 +16,9 @@
   - `ansi.StringWidth`
   - `ansi.Strip`
   - `ansi.Truncate`
+- To see the TUI actually render — reproducing a visual bug, checking a
+  dialog, verifying keybindings — use the `tui-manual-testing` skill
+  rather than guessing or asking the user to look.
 
 ## Architecture
 
