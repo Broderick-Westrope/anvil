@@ -2,6 +2,7 @@ package dialog
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -69,6 +70,7 @@ func NewSessions(com *common.Common, selectedSessionID string) (*Session, error)
 	}
 
 	s.sessions = sessions
+	sortPinnedFirst(s.sessions)
 	for i, sess := range sessions {
 		if sess.ID == selectedSessionID {
 			s.selectedSessionInx = i
@@ -268,7 +270,11 @@ func (s *Session) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		rc.TitleGradientFromColor = t.Dialog.Sessions.DeletingTitleGradientFromColor
 		rc.TitleGradientToColor = t.Dialog.Sessions.DeletingTitleGradientToColor
 		rc.ViewStyle = t.Dialog.Sessions.DeletingView
-		rc.AddPart(t.Dialog.Sessions.DeletingMessage.Render("Delete this session?"))
+		deleteMsg := "Delete this session?"
+		if item := s.selectedSessionItem(); item != nil && item.Session.Pinned {
+			deleteMsg = "This session is pinned. Delete anyway?"
+		}
+		rc.AddPart(t.Dialog.Sessions.DeletingMessage.Render(deleteMsg))
 	case sessionsModeUpdating:
 		rc.TitleStyle = t.Dialog.Sessions.RenamingingTitle
 		rc.TitleGradientFromColor = t.Dialog.Sessions.RenamingTitleGradientFromColor
@@ -419,6 +425,14 @@ func (s *Session) isCurrentSessionBusy() bool {
 	return s.com.Workspace.AgentIsSessionBusy(sessionItem.ID())
 }
 
+// sortPinnedFirst stable-sorts sessions so pinned ones come first while
+// preserving the existing recency order within each group.
+func sortPinnedFirst(sessions []session.Session) {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].Pinned && !sessions[j].Pinned
+	})
+}
+
 // reloadSessions fetches sessions based on the showAll toggle and
 // rebuilds the list.
 func (s *Session) reloadSessions() {
@@ -431,6 +445,7 @@ func (s *Session) reloadSessions() {
 		return
 	}
 	s.sessions = sessions
+	sortPinnedFirst(s.sessions)
 	s.list.SetItems(sessionItems(s.com.Styles, sessionsModeNormal, s.sessions...)...)
 	s.list.SelectFirst()
 	s.list.ScrollToSelected()

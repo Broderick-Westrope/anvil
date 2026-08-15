@@ -45,6 +45,7 @@ const (
 	TextIcon   string = "≡"
 	SkillIcon  string = "⚡"
 	RemoveIcon string = "✕"
+	PinIcon    string = "●"
 
 	ScrollbarThumb string = "┃"
 	ScrollbarTrack string = "│"
