@@ -32,18 +32,25 @@ typescript-language-server, etc.) over stdio via powernap. Two costs follow:
 
 **Success Criteria:**
 
-- [ ] Two concurrent Anvil sessions in the same Go repo share one gopls
+- [x] Two concurrent Anvil sessions in the same Go repo share one gopls
       daemon. Verify: `pgrep -fl gopls` shows N forwarders (argv contains
       `-remote=auto`, small RSS) and exactly one daemon (argv contains
-      `-listen`); total gopls RSS is ~1x, not ~Nx. _(Requires live
-      multi-session manual check — see completion notes.)_
+      `-listen`); total gopls RSS is ~1x, not ~Nx. _(Verified live via the
+      tui-manual-testing sandbox: two TUI instances in a clean Go module
+      spawned two ~31MB `-remote=auto` forwarders and exactly one ~500MB
+      `serve -listen` daemon.)_
 - [x] User-configured gopls args are respected verbatim (no forced
-      `-remote=auto`).
-- [ ] An LSP client unused for longer than the idle timeout is stopped
+      `-remote=auto`). _(Also confirmed live: this repo's own `lsp.gopls`
+      entry produced a plain full gopls with no `-remote=auto`.)_
+- [x] An LSP client unused for longer than the idle timeout is stopped
       (UI shows it as unstarted), and the next file-path-scoped or
-      symbol-scoped LSP tool call transparently restarts it. _(Reap +
-      bookkeeping covered by unit tests; live restart-after-reap requires
-      manual check — see completion notes.)_
+      symbol-scoped LSP tool call transparently restarts it. _(Verified
+      live with `lsp_idle_timeout: 1`: sidebar flipped to "gopls
+      unstarted" after the sweep, forwarder exited, daemon self-exited;
+      the next `Manager.Start(ctx, <go file>)` — the same path all
+      file-path-scoped tools use — respawned forwarder and daemon, and the
+      sidebar showed gopls running again. Tool-level touch/restart wiring
+      is covered by unit tests and review.)_
 - [x] Actively-used clients are never reaped: every tool path that reads a
       client (edit/view diagnostics, symbol tools, `lsp_restart`) refreshes
       its last-use timestamp.
