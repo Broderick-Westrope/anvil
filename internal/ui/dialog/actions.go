@@ -94,6 +94,13 @@ type (
 	ActionRenameSession struct {
 		Title string
 	}
+	// ActionSetSessionPin is emitted by the pin dialog to persist a pin
+	// change for a session. Pinned false unpins (the note is cleared).
+	ActionSetSessionPin struct {
+		SessionID string
+		Pinned    bool
+		Note      string
+	}
 	// ActionRegenerateTitle is a message to regenerate the current session
 	// title.
 	ActionRegenerateTitle struct{}

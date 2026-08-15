@@ -2140,6 +2140,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			})
 		}
 		m.dialog.CloseFrontDialog()
+	case dialog.ActionSetSessionPin:
+		m.dialog.CloseDialog(dialog.PinID)
+		cmds = append(cmds, m.setSessionPinCmd(msg))
 	case dialog.ActionRegenerateTitle:
 		if m.session == nil {
 			break
@@ -4675,6 +4678,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openQuitDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.PinID:
+		if cmd := m.openPinDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	default:
 		// Unknown or not-yet-implemented dialog — show an info toast
 		// so command palette entries merged before their modals exist
@@ -4959,6 +4966,38 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.updateLayoutAndSize()
 
 	return tea.Batch(cmds...)
+}
+
+// openPinDialog opens the pin management dialog for the active session.
+func (m *UI) openPinDialog() tea.Cmd {
+	if m.session == nil {
+		return nil
+	}
+	if m.dialog.ContainsDialog(dialog.PinID) {
+		m.dialog.BringToFront(dialog.PinID)
+		return nil
+	}
+
+	// Fetch the session fresh: the pin state may have changed in another
+	// process since it was loaded.
+	sess, err := m.com.Workspace.GetSession(context.Background(), m.session.ID)
+	if err != nil {
+		return util.ReportError(err)
+	}
+
+	m.dialog.OpenDialog(dialog.NewPin(m.com, sess))
+	return nil
+}
+
+// setSessionPinCmd persists a pin change requested by the pin dialog.
+func (m *UI) setSessionPinCmd(msg dialog.ActionSetSessionPin) tea.Cmd {
+	return func() tea.Msg {
+		err := m.com.Workspace.SetSessionPin(context.Background(), msg.SessionID, msg.Pinned, msg.Note)
+		if err != nil {
+			return util.NewErrorMsg(err)
+		}
+		return nil
+	}
 }
 
 // openQuitDialog opens the quit confirmation dialog.
