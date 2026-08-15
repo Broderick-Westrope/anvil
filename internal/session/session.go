@@ -60,8 +60,27 @@ type Session struct {
 	SummaryMessageID string
 	Cost             float64
 	Todos            []Todo
+	Pinned           bool
+	PinNote          string
 	CreatedAt        int64
 	UpdatedAt        int64
+}
+
+// MaxPinNoteLen is the maximum length of a pin note in runes.
+const MaxPinNoteLen = 200
+
+// sanitizePinNote flattens newlines to spaces, trims space, and caps the
+// note at MaxPinNoteLen runes.
+func sanitizePinNote(note string) string {
+	note = strings.ReplaceAll(note, "\r\n", " ")
+	note = strings.ReplaceAll(note, "\n", " ")
+	note = strings.ReplaceAll(note, "\r", " ")
+	note = strings.TrimSpace(note)
+	runes := []rune(note)
+	if len(runes) > MaxPinNoteLen {
+		note = string(runes[:MaxPinNoteLen])
+	}
+	return note
 }
 
 type Service interface {
@@ -76,6 +95,8 @@ type Service interface {
 	Save(ctx context.Context, session Session) (Session, error)
 	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, titleIsCustom bool, promptTokens, completionTokens int64, cost float64) error
 	Rename(ctx context.Context, id string, title string, titleIsCustom bool) error
+	SetPin(ctx context.Context, id string, pinned bool, note string) error
+	ListPinned(ctx context.Context) ([]Session, error)
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
 	Delete(ctx context.Context, id string) error
 
@@ -291,6 +312,46 @@ func (s *service) Rename(ctx context.Context, id string, title string, titleIsCu
 	return nil
 }
 
+// SetPin updates only the pin state and note of a session without touching
+// updated_at or usage fields. The note is sanitized to a single line capped
+// at MaxPinNoteLen runes; when unpinning, the note is cleared.
+func (s *service) SetPin(ctx context.Context, id string, pinned bool, note string) error {
+	if pinned {
+		note = sanitizePinNote(note)
+	} else {
+		note = ""
+	}
+	err := s.q.SetSessionPin(ctx, db.SetSessionPinParams{
+		ID:      id,
+		Pinned:  boolToInt64(pinned),
+		PinNote: note,
+	})
+	if err != nil {
+		return err
+	}
+	session, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.Publish(pubsub.UpdatedEvent, session)
+	return nil
+}
+
+// ListPinned returns all pinned top-level sessions across working dirs,
+// newest first.
+func (s *service) ListPinned(ctx context.Context) ([]Session, error) {
+	dbSessions, err := s.q.ListPinnedSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sessions := make([]Session, len(dbSessions))
+	for i, dbSession := range dbSessions {
+		sessions[i] = s.fromDBItem(dbSession)
+		s.applyEstimatedUsageState(&sessions[i])
+	}
+	return sessions, nil
+}
+
 func (s *service) GetLastGlobal(ctx context.Context) (Session, error) {
 	dbSession, err := s.q.GetLastGlobalSession(ctx)
 	if err != nil {
@@ -359,6 +420,8 @@ func (s *service) fromDBItem(item db.Session) Session {
 		WorkingDir:       item.WorkingDir,
 		Cost:             item.Cost,
 		Todos:            todos,
+		Pinned:           item.Pinned != 0,
+		PinNote:          item.PinNote,
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
