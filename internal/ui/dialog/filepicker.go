@@ -217,21 +217,46 @@ func (f *FilePicker) HandleMsg(msg tea.Msg) Action {
 const (
 	filePickerMinWidth  = 70
 	filePickerMinHeight = 10
+
+	// filePickerMinPreviewHeight is the smallest image preview worth
+	// rendering; below this the preview is hidden so the file list and
+	// help remain usable.
+	filePickerMinPreviewHeight = 5
 )
+
+// filePickerHeights budgets the dialog's two flexible parts — the file
+// list and the image preview — against the total area height. The fixed
+// chrome around them is the dialog border, title, help line, and the gaps
+// between parts. The file list takes priority (capped at its usual 10
+// rows); the preview scales down into whatever remains and is hidden
+// entirely when the leftover space is too small to be useful.
+func filePickerHeights(areaHeight, borderV, previewFrameV int) (listHeight, previewHeight int) {
+	innerHeight := max(0, areaHeight-borderV)
+	// Title (1) + gap after title (1) + gap before help (1) + help (1).
+	const fixedChrome = 4
+	listHeight = max(0, min(filePickerMinHeight, innerHeight-fixedChrome))
+	// The extra -1 is the gap between the preview and the file list.
+	previewHeight = min(
+		filePickerMinHeight*2-previewFrameV,
+		innerHeight-fixedChrome-listHeight-1,
+	)
+	if previewHeight < filePickerMinPreviewHeight {
+		previewHeight = 0
+	}
+	return listHeight, previewHeight
+}
 
 // Draw renders the [FilePicker] dialog as a string.
 func (f *FilePicker) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	t := f.com.Styles
 	width := max(0, min(filePickerMinWidth, area.Dx()-t.Dialog.View.GetHorizontalBorderSize()))
-	height := max(0, min(10, area.Dy()-t.Dialog.View.GetVerticalBorderSize()))
 	innerWidth := width - t.Dialog.View.GetHorizontalFrameSize()
 
-	// Scale down image preview on small screens. Hide it entirely
-	// when the dialog is too short to show both preview and files.
-	imgPrevHeight := 0
-	if height > 5 {
-		imgPrevHeight = filePickerMinHeight*2 - t.Dialog.ImagePreview.GetVerticalFrameSize()
-	}
+	height, imgPrevHeight := filePickerHeights(
+		area.Dy(),
+		t.Dialog.View.GetVerticalFrameSize(),
+		t.Dialog.ImagePreview.GetVerticalFrameSize(),
+	)
 	imgPrevWidth := innerWidth - t.Dialog.ImagePreview.GetHorizontalFrameSize()
 	f.imgPrevWidth = imgPrevWidth
 	f.imgPrevHeight = imgPrevHeight
