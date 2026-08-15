@@ -128,6 +128,10 @@ func (w *ClientWorkspace) RenameSession(ctx context.Context, sessionID string, t
 	return err
 }
 
+func (w *ClientWorkspace) SetSessionPin(ctx context.Context, sessionID string, pinned bool, note string) error {
+	return w.client.SetSessionPin(ctx, w.workspaceID(), sessionID, pinned, note)
+}
+
 func (w *ClientWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
 	return w.client.DeleteSession(ctx, w.workspaceID(), sessionID)
 }
@@ -729,6 +733,8 @@ func protoToSession(s proto.Session) session.Session {
 		Cost:             s.Cost,
 		CreatedAt:        s.CreatedAt,
 		UpdatedAt:        s.UpdatedAt,
+		Pinned:           s.Pinned,
+		PinNote:          s.PinNote,
 	}
 }
 
@@ -852,6 +858,8 @@ func sessionToProto(s session.Session) proto.Session {
 		Cost:             s.Cost,
 		CreatedAt:        s.CreatedAt,
 		UpdatedAt:        s.UpdatedAt,
+		Pinned:           s.Pinned,
+		PinNote:          s.PinNote,
 	}
 }
 

@@ -101,6 +101,10 @@ definitions:
         description: Regex pattern tested against the tool name. Empty means match
           all.
         type: string
+      name:
+        description: Friendly display name shown in the TUI. Falls back to Command
+          when empty.
+        type: string
       timeout:
         description: Timeout in seconds. Default 30.
         type: integer
@@ -191,6 +195,14 @@ definitions:
           omitted from the outgoing request rather than sent as
           "Header:". See PLAN.md Phase 2 design decision #18.
         type: object
+      lazy_description:
+        description: |-
+          LazyDescription makes this MCP server's tools lazy-loaded. The
+          server still connects eagerly at startup, but its tools and
+          instructions are excluded from the LLM context until explicitly
+          enabled by the agent or human. The value is surfaced to the LLM
+          so it can decide when to enable the server.
+        type: string
       redirectUri:
         type: string
       scopes:
@@ -221,6 +233,9 @@ definitions:
   config.Permissions:
     properties:
       allowed_tools:
+        description: |-
+          AllowedTools is the deprecated flat list of tool names.
+          Kept for backward-compatible JSON parsing; migrated at load time.
         items:
           type: string
         type: array
@@ -294,6 +309,11 @@ definitions:
       transparent:
         type: boolean
     type: object
+  config.ToolGlob:
+    properties:
+      timeout:
+        $ref: '#/definitions/time.Duration'
+    type: object
   config.ToolGrep:
     properties:
       timeout:
@@ -308,6 +328,8 @@ definitions:
     type: object
   config.Tools:
     properties:
+      glob:
+        $ref: '#/definitions/config.ToolGlob'
       grep:
         $ref: '#/definitions/config.ToolGrep'
       ls:
@@ -334,6 +356,11 @@ definitions:
         items:
           type: string
         type: array
+      env:
+        additionalProperties:
+          type: string
+        description: Env is a map of environment variables set on startup.
+        type: object
       hooks:
         additionalProperties:
           items:
@@ -382,12 +409,7 @@ definitions:
         items:
           type: string
         type: array
-      project_directory:
-        description: |-
-          ProjectDirectory is where Anvil keeps per-project state such as
-          logs, workspace config, and .gitignore. Relative paths are
-          resolved against the working directory; absolute paths are used
-          verbatim. After defaulting the stored value is always absolute.
+      data_directory:
         type: string
       debug:
         type: boolean
@@ -417,6 +439,13 @@ definitions:
         type: string
       progress:
         type: boolean
+      project_directory:
+        description: |-
+          ProjectDirectory is where Anvil keeps per-project state such as
+          logs, workspace config, and .gitignore. Relative paths are
+          resolved against the working directory; absolute paths are used
+          verbatim. After defaulting the stored value is always absolute.
+        type: string
       skills_paths:
         items:
           type: string
@@ -512,6 +541,10 @@ definitions:
         type: integer
       parent_session_id:
         type: string
+      pin_note:
+        type: string
+      pinned:
+        type: boolean
       prompt_tokens:
         type: integer
       title:
@@ -635,6 +668,8 @@ definitions:
       connected_at:
         type: string
       error: {}
+      is_lazy:
+        type: boolean
       name:
         type: string
       prompt_count:
@@ -680,12 +715,14 @@ definitions:
     - 1
     - 2
     - 3
+    - 4
     type: integer
     x-enum-varnames:
     - MCPStateDisabled
     - MCPStateStarting
     - MCPStateConnected
     - MCPStateError
+    - MCPStateLazy
   proto.MessageRole:
     enum:
     - assistant
@@ -733,10 +770,10 @@ definitions:
       tool_name:
         type: string
     type: object
-  proto.PermissionSkipRequest:
+  proto.PermissionYoloRequest:
     properties:
-      skip:
-        type: boolean
+      yolo_level:
+        type: integer
     type: object
   proto.ProjectInitPromptResponse:
     properties:
@@ -764,12 +801,23 @@ definitions:
         type: integer
       parent_session_id:
         type: string
+      pin_note:
+        type: string
+      pinned:
+        type: boolean
       prompt_tokens:
         type: integer
       title:
         type: string
       updated_at:
         type: integer
+    type: object
+  proto.SetSessionPinRequest:
+    properties:
+      note:
+        type: string
+      pinned:
+        type: boolean
     type: object
   proto.VersionInfo:
     properties:
@@ -801,7 +849,12 @@ definitions:
       version:
         type: string
       yolo:
+        description: |-
+          YOLO is the legacy boolean field for backward compatibility with
+          older servers/clients. Prefer YoloLevel for granular control.
         type: boolean
+      yolo_level:
+        type: integer
     type: object
   time.Duration:
     enum:
@@ -2074,7 +2127,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/proto.PermissionSkipRequest'
+            $ref: '#/definitions/proto.PermissionYoloRequest'
         "404":
           description: Not Found
           schema:
@@ -2095,12 +2148,12 @@ paths:
         name: id
         required: true
         type: string
-      - description: Permission skip request
+      - description: Permission yolo level request
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/proto.PermissionSkipRequest'
+          $ref: '#/definitions/proto.PermissionYoloRequest'
       responses:
         "200":
           description: OK
@@ -2465,6 +2518,45 @@ paths:
           schema:
             $ref: '#/definitions/proto.Error'
       summary: Get user messages for session
+      tags:
+      - sessions
+  /workspaces/{id}/sessions/{sid}/pin:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Session ID
+        in: path
+        name: sid
+        required: true
+        type: string
+      - description: Pin state
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/proto.SetSessionPinRequest'
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/proto.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/proto.Error'
+      summary: Pin or unpin session
       tags:
       - sessions
 swagger: "2.0"

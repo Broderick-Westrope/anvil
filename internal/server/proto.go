@@ -441,6 +441,37 @@ func (c *controllerV1) handlePutWorkspaceSession(w http.ResponseWriter, r *http.
 	jsonEncode(w, sessionToProto(saved))
 }
 
+// handlePutWorkspaceSessionPin pins or unpins a session.
+//
+//	@Summary		Pin or unpin session
+//	@Tags			sessions
+//	@Accept			json
+//	@Param			id		path	string						true	"Workspace ID"
+//	@Param			sid		path	string						true	"Session ID"
+//	@Param			request	body	proto.SetSessionPinRequest	true	"Pin state"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/sessions/{sid}/pin [put]
+func (c *controllerV1) handlePutWorkspaceSessionPin(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+
+	var req proto.SetSessionPinRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+
+	if err := c.backend.SetSessionPin(r.Context(), id, sid, req.Pinned, req.Note); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // handleDeleteWorkspaceSession deletes a session.
 //
 //	@Summary		Delete session
