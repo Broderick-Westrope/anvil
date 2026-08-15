@@ -483,6 +483,11 @@ func (m *UI) Init() tea.Cmd {
 	cmds = append(cmds, m.loadPromptHistory())
 	// load initial LSP state
 	m.lspStates = app.GetLSPStates()
+	// Load initial MCP state. Like skills and LSPs, MCP clients that
+	// connect during startup publish their state-changed events before
+	// this model subscribes, so without a seed the sidebar and MCP
+	// palette report no servers until the next state change.
+	m.mcpStates = m.com.Workspace.MCPGetStates()
 	// load initial session if specified
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)

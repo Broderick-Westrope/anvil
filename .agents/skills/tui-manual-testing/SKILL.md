@@ -30,10 +30,12 @@ scripts/tui-test.sh
 
 This builds `/tmp/anvil-tui-test` and prepares `/tmp/anvil-tui-sandbox`,
 then prints the exact launch parameters. **Always launch through the
-sandbox.** A bare `go run .` would write test sessions into the user's
-real database at `~/.local/share/anvil/anvil.db` and read their real
-config, so any MCP servers, models, and history would leak into the test
-run and vice versa.
+sandbox with every printed env var.** A bare `go run .` would write test
+sessions into the user's real database at `~/.local/share/anvil/anvil.db`
+and read their real config. `ANVIL_GLOBAL_DATA` is what actually redirects
+the global database and `ScopeGlobal` config writes — the `--data-dir`
+flag alone only moves logs, so omitting the env var silently leaks
+session and config writes into the real `~/.local/share/anvil/`.
 
 Pass `--reset` to wipe the sandbox between runs when session state
 matters. Pass `--clean` when finished.
@@ -44,7 +46,7 @@ Use `create_session` with the values the script printed:
 
 - `command`: `/tmp/anvil-tui-test`
 - `args`: `["--cwd", "<repo root>", "--data-dir", "/tmp/anvil-tui-sandbox/data"]`
-- `env`: `{"ANVIL_GLOBAL_CONFIG": "/tmp/anvil-tui-sandbox/config", "TERM": "xterm-256color"}`
+- `env`: `{"ANVIL_GLOBAL_CONFIG": "/tmp/anvil-tui-sandbox/config", "ANVIL_GLOBAL_DATA": "/tmp/anvil-tui-sandbox/global-data", "TERM": "xterm-256color"}`
 - `cols`/`rows`: pick deliberately. Anvil's layout is responsive, so test
   the width the bug involves. 100x30 is a reasonable default; go to 60x20
   to exercise narrow-terminal paths and 200x50 for wide ones.

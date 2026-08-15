@@ -24,7 +24,7 @@ case "${1:-}" in
 	;;
 esac
 
-mkdir -p "$SANDBOX/config" "$SANDBOX/data"
+mkdir -p "$SANDBOX/config" "$SANDBOX/data" "$SANDBOX/global-data"
 if [ ! -f "$SANDBOX/config/anvil.json" ]; then
 	cat >"$SANDBOX/config/anvil.json" <<'JSON'
 {
@@ -40,5 +40,5 @@ cat <<EOF
 binary:  $BINARY
 cwd:     $REPO_ROOT
 args:    --cwd $REPO_ROOT --data-dir $SANDBOX/data
-env:     ANVIL_GLOBAL_CONFIG=$SANDBOX/config TERM=xterm-256color
+env:     ANVIL_GLOBAL_CONFIG=$SANDBOX/config ANVIL_GLOBAL_DATA=$SANDBOX/global-data TERM=xterm-256color
 EOF
