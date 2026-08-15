@@ -94,3 +94,16 @@ WHERE id = ?;
 UPDATE sessions
 SET leaf_message_id = @leaf_id
 WHERE id = @id;
+
+-- name: SetSessionPin :exec
+UPDATE sessions
+SET
+    pinned = @pinned,
+    pin_note = @pin_note
+WHERE id = @id;
+
+-- name: ListPinnedSessions :many
+SELECT *
+FROM sessions
+WHERE parent_session_id IS NULL AND pinned = 1
+ORDER BY updated_at DESC;

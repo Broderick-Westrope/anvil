@@ -23,6 +23,7 @@ type Querier interface {
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
 	GetAverageResponseTime(ctx context.Context) (int64, error)
 	GetBranchPath(ctx context.Context, leafID string) ([]GetBranchPathRow, error)
+	GetBranchPathTail(ctx context.Context, arg GetBranchPathTailParams) ([]GetBranchPathTailRow, error)
 	GetFile(ctx context.Context, id string) (File, error)
 	GetFileByPathAndSession(ctx context.Context, arg GetFileByPathAndSessionParams) (File, error)
 	GetFileRead(ctx context.Context, arg GetFileReadParams) (ReadFile, error)
@@ -44,6 +45,7 @@ type Querier interface {
 	ListAllSessions(ctx context.Context) ([]Session, error)
 	ListFilesBySession(ctx context.Context, sessionID string) ([]File, error)
 	ListMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
+	ListPinnedSessions(ctx context.Context) ([]Session, error)
 	ListSessionFilesByPath(ctx context.Context, arg ListSessionFilesByPathParams) ([]File, error)
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
@@ -51,6 +53,7 @@ type Querier interface {
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
 	RecordFileRead(ctx context.Context, arg RecordFileReadParams) error
 	RenameSession(ctx context.Context, arg RenameSessionParams) error
+	SetSessionPin(ctx context.Context, arg SetSessionPinParams) error
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
 	UpdateSessionLeaf(ctx context.Context, arg UpdateSessionLeafParams) error

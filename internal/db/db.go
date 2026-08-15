@@ -63,6 +63,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getBranchPathStmt, err = db.PrepareContext(ctx, getBranchPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBranchPath: %w", err)
 	}
+	if q.getBranchPathTailStmt, err = db.PrepareContext(ctx, getBranchPathTail); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBranchPathTail: %w", err)
+	}
 	if q.getFileStmt, err = db.PrepareContext(ctx, getFile); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFile: %w", err)
 	}
@@ -126,6 +129,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listMessagesBySessionStmt, err = db.PrepareContext(ctx, listMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListMessagesBySession: %w", err)
 	}
+	if q.listPinnedSessionsStmt, err = db.PrepareContext(ctx, listPinnedSessions); err != nil {
+		return nil, fmt.Errorf("error preparing query ListPinnedSessions: %w", err)
+	}
 	if q.listSessionFilesByPathStmt, err = db.PrepareContext(ctx, listSessionFilesByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionFilesByPath: %w", err)
 	}
@@ -146,6 +152,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.renameSessionStmt, err = db.PrepareContext(ctx, renameSession); err != nil {
 		return nil, fmt.Errorf("error preparing query RenameSession: %w", err)
+	}
+	if q.setSessionPinStmt, err = db.PrepareContext(ctx, setSessionPin); err != nil {
+		return nil, fmt.Errorf("error preparing query SetSessionPin: %w", err)
 	}
 	if q.updateMessageStmt, err = db.PrepareContext(ctx, updateMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateMessage: %w", err)
@@ -233,6 +242,11 @@ func (q *Queries) Close() error {
 	if q.getBranchPathStmt != nil {
 		if cerr := q.getBranchPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getBranchPathStmt: %w", cerr)
+		}
+	}
+	if q.getBranchPathTailStmt != nil {
+		if cerr := q.getBranchPathTailStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBranchPathTailStmt: %w", cerr)
 		}
 	}
 	if q.getFileStmt != nil {
@@ -340,6 +354,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listMessagesBySessionStmt: %w", cerr)
 		}
 	}
+	if q.listPinnedSessionsStmt != nil {
+		if cerr := q.listPinnedSessionsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listPinnedSessionsStmt: %w", cerr)
+		}
+	}
 	if q.listSessionFilesByPathStmt != nil {
 		if cerr := q.listSessionFilesByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listSessionFilesByPathStmt: %w", cerr)
@@ -373,6 +392,11 @@ func (q *Queries) Close() error {
 	if q.renameSessionStmt != nil {
 		if cerr := q.renameSessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing renameSessionStmt: %w", cerr)
+		}
+	}
+	if q.setSessionPinStmt != nil {
+		if cerr := q.setSessionPinStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setSessionPinStmt: %w", cerr)
 		}
 	}
 	if q.updateMessageStmt != nil {
@@ -457,6 +481,7 @@ type Queries struct {
 	getAllSessionMessagesStmt        *sql.Stmt
 	getAverageResponseTimeStmt       *sql.Stmt
 	getBranchPathStmt                *sql.Stmt
+	getBranchPathTailStmt            *sql.Stmt
 	getFileStmt                      *sql.Stmt
 	getFileByPathAndSessionStmt      *sql.Stmt
 	getFileReadStmt                  *sql.Stmt
@@ -478,6 +503,7 @@ type Queries struct {
 	listAllSessionsStmt              *sql.Stmt
 	listFilesBySessionStmt           *sql.Stmt
 	listMessagesBySessionStmt        *sql.Stmt
+	listPinnedSessionsStmt           *sql.Stmt
 	listSessionFilesByPathStmt       *sql.Stmt
 	listSessionReadFilesStmt         *sql.Stmt
 	listSessionsByWorkingDirStmt     *sql.Stmt
@@ -485,6 +511,7 @@ type Queries struct {
 	listUserMessagesByWorkingDirStmt *sql.Stmt
 	recordFileReadStmt               *sql.Stmt
 	renameSessionStmt                *sql.Stmt
+	setSessionPinStmt                *sql.Stmt
 	updateMessageStmt                *sql.Stmt
 	updateSessionStmt                *sql.Stmt
 	updateSessionLeafStmt            *sql.Stmt
@@ -510,6 +537,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getAllSessionMessagesStmt:        q.getAllSessionMessagesStmt,
 		getAverageResponseTimeStmt:       q.getAverageResponseTimeStmt,
 		getBranchPathStmt:                q.getBranchPathStmt,
+		getBranchPathTailStmt:            q.getBranchPathTailStmt,
 		getFileStmt:                      q.getFileStmt,
 		getFileByPathAndSessionStmt:      q.getFileByPathAndSessionStmt,
 		getFileReadStmt:                  q.getFileReadStmt,
@@ -531,6 +559,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listAllSessionsStmt:              q.listAllSessionsStmt,
 		listFilesBySessionStmt:           q.listFilesBySessionStmt,
 		listMessagesBySessionStmt:        q.listMessagesBySessionStmt,
+		listPinnedSessionsStmt:           q.listPinnedSessionsStmt,
 		listSessionFilesByPathStmt:       q.listSessionFilesByPathStmt,
 		listSessionReadFilesStmt:         q.listSessionReadFilesStmt,
 		listSessionsByWorkingDirStmt:     q.listSessionsByWorkingDirStmt,
@@ -538,6 +567,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listUserMessagesByWorkingDirStmt: q.listUserMessagesByWorkingDirStmt,
 		recordFileReadStmt:               q.recordFileReadStmt,
 		renameSessionStmt:                q.renameSessionStmt,
+		setSessionPinStmt:                q.setSessionPinStmt,
 		updateMessageStmt:                q.updateMessageStmt,
 		updateSessionStmt:                q.updateSessionStmt,
 		updateSessionLeafStmt:            q.updateSessionLeafStmt,
