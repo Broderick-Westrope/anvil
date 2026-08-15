@@ -1,6 +1,6 @@
 # Pinned Sessions Implementation Plan
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 >
 > Spec: `plans/design-2026-10-08-pinned-sessions.md`
 

@@ -1,6 +1,6 @@
 # Phase 2: TUI — Pin Action, Quit Settle, Switcher
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Part of `plans/impl-2026-08-15-pinned-sessions/` (see README.md).
 > Depends on: Phase 1 (merged — includes all workspace/proto plumbing).
 

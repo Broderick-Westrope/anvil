@@ -1,6 +1,6 @@
 # Phase 1: Foundation — Schema, Queries, Services
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Part of `plans/impl-2026-08-15-pinned-sessions/` (see README.md).
 > Depends on: nothing. Phases 2 and 3 depend on this.
 
