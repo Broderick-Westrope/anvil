@@ -26,6 +26,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
+	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +40,7 @@ var sessionCmd = &cobra.Command{
 var (
 	sessionListJSON   bool
 	sessionListAll    bool
+	sessionListPinned bool
 	sessionShowJSON   bool
 	sessionLastJSON   bool
 	sessionDeleteJSON bool
@@ -88,6 +90,7 @@ var sessionRenameCmd = &cobra.Command{
 func init() {
 	sessionListCmd.Flags().BoolVar(&sessionListJSON, "json", false, "output in JSON format")
 	sessionListCmd.Flags().BoolVar(&sessionListAll, "all", false, "list sessions from all projects")
+	sessionListCmd.Flags().BoolVar(&sessionListPinned, "pinned", false, "list pinned sessions from all projects")
 	sessionShowCmd.Flags().BoolVar(&sessionShowJSON, "json", false, "output in JSON format")
 	sessionLastCmd.Flags().BoolVar(&sessionLastJSON, "json", false, "output in JSON format")
 	sessionDeleteCmd.Flags().BoolVar(&sessionDeleteJSON, "json", false, "output in JSON format")
@@ -137,17 +140,25 @@ func runSessionList(cmd *cobra.Command, _ []string) error {
 	}
 	defer cleanup()
 
-	workingDir := ""
-	if !sessionListAll {
-		workingDir, err = os.Getwd()
+	var list []session.Session
+	if sessionListPinned {
+		// Pinned sessions are always cross-project.
+		list, err = svc.sessions.ListPinned(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to get current directory: %w", err)
+			return fmt.Errorf("failed to list pinned sessions: %w", err)
 		}
-	}
-
-	list, err := svc.sessions.List(ctx, workingDir)
-	if err != nil {
-		return fmt.Errorf("failed to list sessions: %w", err)
+	} else {
+		workingDir := ""
+		if !sessionListAll {
+			workingDir, err = os.Getwd()
+			if err != nil {
+				return fmt.Errorf("failed to get current directory: %w", err)
+			}
+		}
+		list, err = svc.sessions.List(ctx, workingDir)
+		if err != nil {
+			return fmt.Errorf("failed to list sessions: %w", err)
+		}
 	}
 
 	if sessionListJSON {
@@ -155,11 +166,14 @@ func runSessionList(cmd *cobra.Command, _ []string) error {
 		output := make([]sessionJSON, len(list))
 		for i, s := range list {
 			output[i] = sessionJSON{
-				ID:       session.HashID(s.ID),
-				UUID:     s.ID,
-				Title:    s.Title,
-				Created:  time.Unix(s.CreatedAt, 0).Format(time.RFC3339),
-				Modified: time.Unix(s.UpdatedAt, 0).Format(time.RFC3339),
+				ID:         session.HashID(s.ID),
+				UUID:       s.ID,
+				Title:      s.Title,
+				Created:    time.Unix(s.CreatedAt, 0).Format(time.RFC3339),
+				Modified:   time.Unix(s.UpdatedAt, 0).Format(time.RFC3339),
+				Pinned:     s.Pinned,
+				Note:       s.PinNote,
+				WorkingDir: s.WorkingDir,
 			}
 		}
 		enc := json.NewEncoder(out)
@@ -177,6 +191,11 @@ func runSessionList(cmd *cobra.Command, _ []string) error {
 	if tw, _, err := term.GetSize(os.Stdout.Fd()); err == nil && tw > 0 {
 		width = tw
 	}
+
+	if sessionListPinned {
+		return writePinnedSessionRows(w, list, width, hashStyle, dateStyle, usingPager)
+	}
+
 	// 7 (hash) + 1 (space) + 25 (RFC3339 date) + 1 (space) = 34 chars prefix.
 	titleWidth := max(width-34, 10)
 
@@ -197,12 +216,78 @@ func runSessionList(cmd *cobra.Command, _ []string) error {
 	return writeErr
 }
 
+// abbreviateHome replaces a leading $HOME in dir with "~".
+func abbreviateHome(dir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return dir
+	}
+	if dir == home {
+		return "~"
+	}
+	if strings.HasPrefix(dir, home+string(os.PathSeparator)) {
+		return "~" + dir[len(home):]
+	}
+	return dir
+}
+
+// writePinnedSessionRows writes one line per pinned session:
+// <hash7> <age> <workdir~abbrev> <title> — <note>.
+func writePinnedSessionRows(w io.Writer, list []session.Session, width int, hashStyle, dateStyle lipgloss.Style, usingPager bool) error {
+	dimStyle := lipgloss.NewStyle().Foreground(charmtone.Squid)
+	missingStyle := lipgloss.NewStyle().Foreground(charmtone.Coral)
+
+	const ageWidth = 14
+	const workdirWidth = 32
+
+	var writeErr error
+	for _, s := range list {
+		hash := session.HashID(s.ID)[:7]
+		age := humanize.Time(time.Unix(s.UpdatedAt, 0))
+		age = ansi.Truncate(age, ageWidth, "…")
+
+		workdir := abbreviateHome(s.WorkingDir)
+		workdir = ansi.Truncate(workdir, workdirWidth, "…")
+		if _, statErr := os.Stat(s.WorkingDir); os.IsNotExist(statErr) {
+			workdir += " " + missingStyle.Render("(missing)")
+		}
+
+		// Remaining width for title + note after prefix columns.
+		remaining := max(width-7-1-lipgloss.Width(age)-1-lipgloss.Width(workdir)-1, 20)
+		title := strings.ReplaceAll(s.Title, "\n", " ")
+		titleWidth := remaining
+		if s.PinNote != "" {
+			titleWidth = max(remaining/2, 10)
+		}
+		title = ansi.Truncate(title, titleWidth, "…")
+
+		parts := []string{hashStyle.Render(hash), dateStyle.Render(age), dimStyle.Render(workdir), title}
+		if s.PinNote != "" {
+			note := strings.ReplaceAll(s.PinNote, "\n", " ")
+			noteWidth := max(remaining-lipgloss.Width(title)-3, 10)
+			note = ansi.Truncate(note, noteWidth, "…")
+			parts = append(parts, dimStyle.Render("— "+note))
+		}
+		_, writeErr = fmt.Fprintln(w, strings.Join(parts, " "))
+		if writeErr != nil {
+			break
+		}
+	}
+	if writeErr != nil && usingPager && isBrokenPipe(writeErr) {
+		return nil
+	}
+	return writeErr
+}
+
 type sessionJSON struct {
-	ID       string `json:"id"`
-	UUID     string `json:"uuid"`
-	Title    string `json:"title"`
-	Created  string `json:"created"`
-	Modified string `json:"modified"`
+	ID         string `json:"id"`
+	UUID       string `json:"uuid"`
+	Title      string `json:"title"`
+	Created    string `json:"created"`
+	Modified   string `json:"modified"`
+	Pinned     bool   `json:"pinned,omitempty"`
+	Note       string `json:"note,omitempty"`
+	WorkingDir string `json:"working_dir,omitempty"`
 }
 
 type sessionMutationResult struct {
