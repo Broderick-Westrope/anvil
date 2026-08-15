@@ -57,6 +57,12 @@ func NewLSPRestartTool(lspManager *lsp.Manager) fantasy.AgentTool {
 						mu.Unlock()
 						return
 					}
+					// Refresh last-use so the freshly-restarted client
+					// is not reaped on the next idle sweep. A concurrent
+					// reap during restart is tolerated: both paths end in
+					// a stopped-or-running client, and the next use
+					// restarts it.
+					lspManager.Touch(name)
 					mu.Lock()
 					restarted = append(restarted, name)
 					mu.Unlock()

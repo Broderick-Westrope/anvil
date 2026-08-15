@@ -53,6 +53,7 @@ func openInLSPs(
 		if !client.HandlesFile(filepath) {
 			continue
 		}
+		manager.Touch(client.GetName())
 		_ = client.OpenFileOnDemand(ctx, filepath)
 	}
 }
@@ -98,6 +99,7 @@ func notifyLSPs(
 		// No specific file — refresh all open files for all clients.
 		var wg sync.WaitGroup
 		for client := range manager.Clients().Seq() {
+			manager.Touch(client.GetName())
 			wg.Go(func() {
 				client.RefreshOpenFiles(ctx)
 				if err := client.NotifyWorkspaceChange(ctx); err != nil {
@@ -117,6 +119,7 @@ func notifyLSPs(
 		if !client.HandlesFile(filepath) {
 			continue
 		}
+		manager.Touch(client.GetName())
 		_ = client.OpenFileOnDemand(ctx, filepath)
 		_ = client.NotifyChange(ctx, filepath)
 		wg.Go(func() {
