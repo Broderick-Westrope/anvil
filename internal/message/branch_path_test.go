@@ -155,3 +155,91 @@ func TestGetBranchPath_EmptyID(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, path)
 }
+
+func TestGetBranchPathTail_Limit(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t)
+	ctx := context.Background()
+
+	// Branch: root → a → b → c, plus a sibling branch off a.
+	root := createMsg(t, svc, sessionID, "root", "")
+	a := createMsg(t, svc, sessionID, "A", root.ID)
+	b := createMsg(t, svc, sessionID, "B", a.ID)
+	c := createMsg(t, svc, sessionID, "C", b.ID)
+	sibling := createMsg(t, svc, sessionID, "sibling", a.ID)
+	_ = createMsg(t, svc, sessionID, "sibling child", sibling.ID)
+
+	// limit=2 from leaf C returns exactly [B, C], oldest-first.
+	tail, err := svc.GetBranchPathTail(ctx, c.ID, 2)
+	require.NoError(t, err)
+	require.Equal(t, []string{b.ID, c.ID}, extractIDs(tail))
+}
+
+func TestGetBranchPathTail_Paging(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t)
+	ctx := context.Background()
+
+	root := createMsg(t, svc, sessionID, "root", "")
+	a := createMsg(t, svc, sessionID, "A", root.ID)
+	b := createMsg(t, svc, sessionID, "B", a.ID)
+	c := createMsg(t, svc, sessionID, "C", b.ID)
+
+	// First page from leaf C.
+	page1, err := svc.GetBranchPathTail(ctx, c.ID, 2)
+	require.NoError(t, err)
+	require.Equal(t, []string{b.ID, c.ID}, extractIDs(page1))
+
+	// Page back: the oldest returned message's parent is the next leaf.
+	page2, err := svc.GetBranchPathTail(ctx, page1[0].ParentMessageID, 2)
+	require.NoError(t, err)
+	require.Equal(t, []string{root.ID, a.ID}, extractIDs(page2))
+}
+
+func TestGetBranchPathTail_ExcludesSiblingBranches(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t)
+	ctx := context.Background()
+
+	root := createMsg(t, svc, sessionID, "root", "")
+	a := createMsg(t, svc, sessionID, "A", root.ID)
+	b := createMsg(t, svc, sessionID, "B", a.ID)
+	c := createMsg(t, svc, sessionID, "C", b.ID)
+	sibling := createMsg(t, svc, sessionID, "sibling", a.ID)
+	siblingChild := createMsg(t, svc, sessionID, "sibling child", sibling.ID)
+
+	// A generous limit walks the full branch; sibling messages must
+	// never appear.
+	tail, err := svc.GetBranchPathTail(ctx, c.ID, 100)
+	require.NoError(t, err)
+	require.Equal(t, []string{root.ID, a.ID, b.ID, c.ID}, extractIDs(tail))
+	require.NotContains(t, extractIDs(tail), sibling.ID)
+	require.NotContains(t, extractIDs(tail), siblingChild.ID)
+}
+
+func TestGetBranchPathTail_UnknownLeaf(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	// A non-existent leaf ID matches nothing in the CTE.
+	tail, err := svc.GetBranchPathTail(ctx, "does-not-exist", 5)
+	require.NoError(t, err)
+	require.Empty(t, tail)
+}
+
+func TestGetBranchPathTail_EmptyLeaf(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	// An empty leaf ID matches nothing in the CTE.
+	tail, err := svc.GetBranchPathTail(ctx, "", 5)
+	require.NoError(t, err)
+	require.Empty(t, tail)
+}
