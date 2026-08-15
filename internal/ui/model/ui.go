@@ -233,6 +233,10 @@ type UI struct {
 	// isCanceling tracks whether the user has pressed escape once to cancel.
 	isCanceling bool
 
+	// pinSettled tracks whether the pinned-session quit settle prompt has
+	// already been answered, so quit paths do not re-intercept.
+	pinSettled bool
+
 	header *header
 
 	// sendProgressBar instructs the TUI to send progress bar updates to the
@@ -1208,6 +1212,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.elapsedTickRunning = false
 		}
 		m.invalidateRunningAgentCaches()
+	case pinSettleFailedMsg:
+		// A failed settle write must not quit silently: clear the settled
+		// flag so the next quit attempt re-prompts, and surface the error
+		// so the user never believes an unpin or note change succeeded.
+		m.pinSettled = false
+		cmds = append(cmds, util.ReportError(msg.err))
 	case util.InfoMsg:
 		if msg.Type == util.InfoTypeError {
 			slog.Error("Error reported", "error", msg.Msg)
@@ -2223,7 +2233,29 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.toggleAnthropicAuthMode)
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionQuit:
+		// Choke point B: backstop for quit paths that emit tea.QuitMsg
+		// directly (e.g. the command palette quit item). If the active
+		// session is pinned and the settle prompt has not been answered,
+		// intercept the quit: close the emitting dialog first so the
+		// settle prompt is not stacked under it, then open the pinned
+		// quit dialog.
+		if !m.pinSettled && m.session != nil {
+			sess, err := m.com.Workspace.GetSession(context.Background(), m.session.ID)
+			if err == nil && sess.Pinned {
+				m.dialog.CloseDialog(dialog.CommandsID)
+				m.dialog.CloseDialog(dialog.QuitID)
+				m.dialog.OpenDialog(dialog.NewQuitPinned(m.com, sess))
+				break
+			}
+		}
 		cmds = append(cmds, tea.Quit)
+	case dialog.ActionQuitSettled:
+		// The user answered the settle prompt. Mark it settled so choke
+		// point B does not re-intercept, then persist (if needed) and
+		// quit via a command.
+		m.pinSettled = true
+		m.dialog.CloseDialog(dialog.QuitID)
+		cmds = append(cmds, m.settlePinAndQuitCmd(msg))
 	case dialog.ActionEnableDockerMCP:
 		m.dialog.CloseDialog(dialog.CommandsID)
 		cmds = append(cmds, m.enableDockerMCP)
@@ -5000,7 +5032,9 @@ func (m *UI) setSessionPinCmd(msg dialog.ActionSetSessionPin) tea.Cmd {
 	}
 }
 
-// openQuitDialog opens the quit confirmation dialog.
+// openQuitDialog opens the quit confirmation dialog. When the active
+// session is pinned (choke point A: pin state is re-read from the DB at
+// prompt time), the pinned settle variant opens instead.
 func (m *UI) openQuitDialog() tea.Cmd {
 	if m.dialog.ContainsDialog(dialog.QuitID) {
 		// Bring to front
@@ -5008,10 +5042,43 @@ func (m *UI) openQuitDialog() tea.Cmd {
 		return nil
 	}
 
+	if !m.pinSettled && m.session != nil {
+		sess, err := m.com.Workspace.GetSession(context.Background(), m.session.ID)
+		if err == nil && sess.Pinned {
+			m.dialog.OpenDialog(dialog.NewQuitPinned(m.com, sess))
+			return nil
+		}
+	}
+
 	quitDialog := dialog.NewQuit(m.com)
 	m.dialog.OpenDialog(quitDialog)
 	return nil
 }
+
+// settlePinAndQuitCmd persists the quit-time settle choice (if any) and
+// then quits. The write happens synchronously inside the command so the
+// emitted quit message cannot race the persist. Keep-pin with an
+// unchanged note performs no DB write. On a failed write the app must
+// not quit: a pinSettleFailedMsg resets the settled flag and surfaces
+// the error instead.
+func (m *UI) settlePinAndQuitCmd(msg dialog.ActionQuitSettled) tea.Cmd {
+	return func() tea.Msg {
+		if msg.Unpin || msg.NoteChanged {
+			note := msg.Note
+			if msg.Unpin {
+				note = ""
+			}
+			err := m.com.Workspace.SetSessionPin(context.Background(), msg.SessionID, !msg.Unpin, note)
+			if err != nil {
+				return pinSettleFailedMsg{err: err}
+			}
+		}
+		return tea.QuitMsg{}
+	}
+}
+
+// pinSettleFailedMsg reports a failed quit-time pin settle write.
+type pinSettleFailedMsg struct{ err error }
 
 // openModelsDialog opens the models dialog.
 func (m *UI) openModelsDialog() tea.Cmd {

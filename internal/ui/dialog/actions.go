@@ -24,6 +24,16 @@ type ActionClose struct{}
 // ActionQuit is a message to quit the application.
 type ActionQuit = tea.QuitMsg
 
+// ActionQuitSettled is emitted by the pinned-session quit dialog once the
+// user has made a settle choice. The UI persists the choice (if any) and
+// then quits without re-intercepting.
+type ActionQuitSettled struct {
+	SessionID   string
+	Unpin       bool
+	Note        string
+	NoteChanged bool
+}
+
 // ActionOpenDialog is a message to open a dialog.
 type ActionOpenDialog struct {
 	DialogID string
