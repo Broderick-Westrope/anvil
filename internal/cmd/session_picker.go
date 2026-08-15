@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/charmbracelet/x/ansi"
@@ -229,6 +230,41 @@ type pickerModel struct {
 	// resumeID holds the UUID of the session selected for resume; the
 	// exec handoff happens after Run() returns, never inside the program.
 	resumeID string
+
+	preview pickerPreview
+}
+
+// pickerPreview holds the transcript preview pane state. The pane is off
+// by default on every invocation and toggles with tab.
+type pickerPreview struct {
+	visible    bool
+	fullscreen bool
+	// seq is a monotonically increasing request sequence; results
+	// carrying a stale seq are discarded.
+	seq int
+	// cache holds loaded transcript state per session ID for the
+	// picker's lifetime.
+	cache map[string]*previewEntry
+}
+
+// previewEntry is the cached transcript state for one session.
+type previewEntry struct {
+	// msgs are the loaded messages, oldest-first.
+	msgs []message.Message
+	// lines are the rendered tail lines at width.
+	lines []string
+	width int
+	// offset is the index of the first visible line in the viewport.
+	offset int
+	// oldestParent is the ParentMessageID of the oldest loaded message;
+	// empty means there is no more history to fetch.
+	oldestParent string
+	// seq is the request sequence of the latest load issued for this
+	// entry; results with an older seq are discarded as stale.
+	seq       int
+	loading   bool
+	exhausted bool
+	loadErr   error
 }
 
 func newPickerModel(ctx context.Context, svc *sessionServices, sessions []session.Session) *pickerModel {
@@ -252,6 +288,9 @@ func newPickerModel(ctx context.Context, svc *sessionServices, sessions []sessio
 		styles: styles,
 		list:   l,
 		input:  input,
+		preview: pickerPreview{
+			cache: make(map[string]*previewEntry),
+		},
 	}
 }
 
@@ -322,10 +361,196 @@ func (m *pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case previewLoadedMsg:
+		m.handlePreviewLoaded(msg)
+		return m, nil
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// previewLoadedMsg carries an async transcript page load result.
+type previewLoadedMsg struct {
+	seq       int
+	sessionID string
+	msgs      []message.Message
+	prepend   bool
+	err       error
+}
+
+// previewLoadCmd fires an async transcript load for the highlighted
+// session when the preview is showing and the session isn't cached yet.
+func (m *pickerModel) previewLoadCmd() tea.Cmd {
+	if !m.preview.visible && !m.preview.fullscreen {
+		return nil
+	}
+	pi := m.selectedItem()
+	if pi == nil {
+		return nil
+	}
+	if _, ok := m.preview.cache[pi.sess.ID]; ok {
+		return nil
+	}
+
+	leaf := strings.TrimSpace(pi.sess.LeafMessageID)
+	if leaf == "" {
+		// Empty session: cache the placeholder synchronously.
+		m.preview.cache[pi.sess.ID] = &previewEntry{exhausted: true}
+		return nil
+	}
+
+	m.preview.seq++
+	seq := m.preview.seq
+	m.preview.cache[pi.sess.ID] = &previewEntry{loading: true, seq: seq}
+	sessionID := pi.sess.ID
+	return func() tea.Msg {
+		msgs, err := m.svc.messages.GetBranchPathTail(m.ctx, leaf, pickerPageSize)
+		return previewLoadedMsg{seq: seq, sessionID: sessionID, msgs: msgs, err: err}
+	}
+}
+
+// previewFetchOlderCmd fetches the previous transcript page when the
+// viewport is scrolled to the top of the loaded history.
+func (m *pickerModel) previewFetchOlderCmd() tea.Cmd {
+	entry, sessionID := m.currentPreviewEntry()
+	if entry == nil || entry.loading || entry.exhausted || entry.offset > 0 {
+		return nil
+	}
+	if entry.oldestParent == "" {
+		entry.exhausted = true
+		return nil
+	}
+	entry.loading = true
+	m.preview.seq++
+	seq := m.preview.seq
+	entry.seq = seq
+	leaf := entry.oldestParent
+	return func() tea.Msg {
+		msgs, err := m.svc.messages.GetBranchPathTail(m.ctx, leaf, pickerPageSize)
+		return previewLoadedMsg{seq: seq, sessionID: sessionID, msgs: msgs, prepend: true, err: err}
+	}
+}
+
+// handlePreviewLoaded applies an async load result, discarding stale
+// responses (the entry has a newer request seq).
+func (m *pickerModel) handlePreviewLoaded(msg previewLoadedMsg) {
+	entry, ok := m.preview.cache[msg.sessionID]
+	if !ok || msg.seq != entry.seq {
+		return
+	}
+	entry.loading = false
+	if msg.err != nil {
+		entry.loadErr = msg.err
+		return
+	}
+	entry.loadErr = nil
+
+	if msg.prepend {
+		if len(msg.msgs) == 0 {
+			entry.exhausted = true
+			return
+		}
+		prevLines := len(entry.lines)
+		entry.msgs = append(append([]message.Message{}, msg.msgs...), entry.msgs...)
+		entry.oldestParent = msg.msgs[0].ParentMessageID
+		if entry.oldestParent == "" {
+			entry.exhausted = true
+		}
+		entry.renderAt(entry.width)
+		// Preserve the scroll position across the prepend.
+		entry.offset += len(entry.lines) - prevLines
+		return
+	}
+
+	entry.msgs = msg.msgs
+	if len(msg.msgs) > 0 {
+		entry.oldestParent = msg.msgs[0].ParentMessageID
+		entry.exhausted = entry.oldestParent == ""
+	} else {
+		entry.exhausted = true
+	}
+	entry.renderAt(entry.width)
+	// Start at the bottom (latest messages).
+	entry.offset = -1
+}
+
+// renderAt (re-)renders the entry's tail lines at the given width.
+func (e *previewEntry) renderAt(width int) {
+	e.width = max(width, 10)
+	e.lines = renderTail(e.msgs, e.width)
+}
+
+// currentPreviewEntry returns the cache entry for the highlighted session.
+func (m *pickerModel) currentPreviewEntry() (*previewEntry, string) {
+	pi := m.selectedItem()
+	if pi == nil {
+		return nil, ""
+	}
+	return m.preview.cache[pi.sess.ID], pi.sess.ID
+}
+
+// togglePreview flips the preview pane. Narrow terminals (<100 cols) get
+// a full-width preview instead of a split.
+func (m *pickerModel) togglePreview() tea.Cmd {
+	if m.preview.visible || m.preview.fullscreen {
+		m.preview.visible = false
+		m.preview.fullscreen = false
+		m.resize()
+		return nil
+	}
+	if m.width < 100 {
+		m.preview.fullscreen = true
+	} else {
+		m.preview.visible = true
+	}
+	m.resize()
+	return m.previewLoadCmd()
+}
+
+// previewPageStride is the number of lines a pgup/pgdown scroll moves.
+func (m *pickerModel) previewPageStride() int {
+	return max(m.previewBodyHeight()/2, 1)
+}
+
+// previewBodyHeight returns the transcript viewport height inside the pane.
+func (m *pickerModel) previewBodyHeight() int {
+	paneHeight := max(m.height-pickerChromeHeight, 1)
+	if m.preview.fullscreen {
+		paneHeight = max(m.height, 1)
+	}
+	pi := m.selectedItem()
+	if pi == nil {
+		return paneHeight
+	}
+	headerLines := len(renderPreviewHeader(pi.sess, m.previewWidth())) + 1
+	return max(paneHeight-headerLines, 1)
+}
+
+// previewWidth returns the inner width of the preview pane.
+func (m *pickerModel) previewWidth() int {
+	if m.preview.fullscreen {
+		return max(m.width, 10)
+	}
+	return max(m.width-m.listWidth()-1, 10)
+}
+
+// previewScroll moves the transcript viewport by delta lines.
+func (m *pickerModel) previewScroll(delta int) {
+	if !m.preview.visible && !m.preview.fullscreen {
+		return
+	}
+	entry, _ := m.currentPreviewEntry()
+	if entry == nil {
+		return
+	}
+	bodyHeight := m.previewBodyHeight()
+	maxOffset := max(len(entry.lines)-bodyHeight, 0)
+	if entry.offset < 0 {
+		entry.offset = maxOffset
+	}
+	entry.offset = min(max(entry.offset+delta, 0), maxOffset)
 }
 
 func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -347,6 +572,22 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Full-width preview mode (narrow terminals): scroll keys page the
+	// transcript; any other key returns to the list.
+	if m.preview.fullscreen {
+		switch msg.String() {
+		case "pgup", "ctrl+u":
+			m.previewScroll(-m.previewPageStride())
+			return m, m.previewFetchOlderCmd()
+		case "pgdown", "ctrl+d":
+			m.previewScroll(m.previewPageStride())
+			return m, nil
+		}
+		m.preview.fullscreen = false
+		m.resize()
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "ctrl+c", "esc":
 		return m, tea.Quit
@@ -359,7 +600,7 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.list.ScrollToSelected()
 		m.status = ""
-		return m, nil
+		return m, m.previewLoadCmd()
 
 	case "down", "ctrl+n":
 		if m.list.IsSelectedLast() {
@@ -369,6 +610,17 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.list.ScrollToSelected()
 		m.status = ""
+		return m, m.previewLoadCmd()
+
+	case "tab":
+		return m, m.togglePreview()
+
+	case "pgup", "ctrl+u":
+		m.previewScroll(-m.previewPageStride())
+		return m, m.previewFetchOlderCmd()
+
+	case "pgdown", "ctrl+d":
+		m.previewScroll(m.previewPageStride())
 		return m, nil
 
 	case "enter":
@@ -406,7 +658,7 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.list.SetSelected(0)
 	m.list.ScrollToTop()
 	m.status = ""
-	return m, cmd
+	return m, tea.Batch(cmd, m.previewLoadCmd())
 }
 
 // chromeHeight is the number of non-list lines in the picker view:
@@ -422,7 +674,58 @@ func (m *pickerModel) resize() {
 
 // listWidth returns the width available to the list pane.
 func (m *pickerModel) listWidth() int {
+	if m.preview.visible {
+		return m.width * 45 / 100
+	}
 	return m.width
+}
+
+// renderPreviewPane renders the metadata header, separator, and the
+// visible transcript viewport slice for the highlighted session.
+func (m *pickerModel) renderPreviewPane(width, height int) string {
+	width = max(width, 10)
+	pi := m.selectedItem()
+	if pi == nil {
+		return m.styles.dim.Render("no selection")
+	}
+
+	header := renderPreviewHeader(pi.sess, width)
+	lines := make([]string, 0, height)
+	for _, h := range header {
+		lines = append(lines, m.styles.dim.Render(h))
+	}
+	lines = append(lines, m.styles.dim.Render(strings.Repeat("─", width)))
+
+	bodyHeight := max(height-len(lines), 1)
+	entry := m.preview.cache[pi.sess.ID]
+	switch {
+	case entry == nil || (entry.loading && len(entry.lines) == 0):
+		lines = append(lines, m.styles.dim.Render("loading…"))
+	case entry.loadErr != nil:
+		lines = append(lines, m.styles.errStatus.Render(ansi.Truncate("error: "+entry.loadErr.Error(), width, "…")))
+	default:
+		if entry.width != width || len(entry.lines) == 0 {
+			entry.renderAt(width)
+		}
+		body := entry.lines
+		maxOffset := max(len(body)-bodyHeight, 0)
+		offset := entry.offset
+		if offset < 0 || offset > maxOffset {
+			offset = maxOffset
+		}
+		for _, line := range body[offset:min(offset+bodyHeight, len(body))] {
+			if line == string(message.User) || line == string(message.Assistant) {
+				lines = append(lines, m.styles.dim.Render(line))
+				continue
+			}
+			lines = append(lines, ansi.Truncate(line, width, "…"))
+		}
+	}
+
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // View implements tea.Model.
@@ -433,11 +736,26 @@ func (m *pickerModel) View() tea.View {
 		return v
 	}
 
+	if m.preview.fullscreen {
+		v := tea.NewView(m.renderPreviewPane(m.width, max(m.height, 1)))
+		v.AltScreen = true
+		return v
+	}
+
 	var b strings.Builder
 	b.WriteString(m.styles.prompt.Render("> ") + m.input.View())
 	b.WriteString("\n")
 
-	b.WriteString(m.list.Render())
+	body := m.list.Render()
+	if m.preview.visible {
+		pane := m.renderPreviewPane(m.previewWidth(), max(m.height-pickerChromeHeight, 1))
+		body = lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.NewStyle().Width(m.listWidth()).Render(body),
+			" ",
+			pane,
+		)
+	}
+	b.WriteString(body)
 	b.WriteString("\n")
 
 	statusStyle := m.styles.status
@@ -448,7 +766,7 @@ func (m *pickerModel) View() tea.View {
 		b.WriteString(statusStyle.Render(ansi.Truncate(m.status, m.width, "…")))
 	}
 	b.WriteString("\n")
-	b.WriteString(m.styles.help.Render("↑/↓ move · enter resume · ctrl+x unpin · esc quit"))
+	b.WriteString(m.styles.help.Render("↑/↓ move · enter resume · tab preview · pgup/pgdn scroll · ctrl+x unpin · esc quit"))
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
