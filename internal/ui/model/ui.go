@@ -2243,6 +2243,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		// A settle write is in flight: ignore the quit request so a
 		// plain quit cannot race the write.
 		if m.pinSettling {
+			cmds = append(cmds, util.ReportInfo("Saving pin changes…"))
 			break
 		}
 		// Choke point B: backstop for quit paths that emit tea.QuitMsg
@@ -5047,7 +5048,9 @@ func (m *UI) openPinDialog() tea.Cmd {
 // setSessionPinCmd persists a pin change requested by the pin dialog.
 func (m *UI) setSessionPinCmd(msg dialog.ActionSetSessionPin) tea.Cmd {
 	return func() tea.Msg {
-		err := m.com.Workspace.SetSessionPin(context.Background(), msg.SessionID, msg.Pinned, msg.Note)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := m.com.Workspace.SetSessionPin(ctx, msg.SessionID, msg.Pinned, msg.Note)
 		if err != nil {
 			return util.NewErrorMsg(err)
 		}
@@ -5069,7 +5072,7 @@ func (m *UI) openQuitDialog() tea.Cmd {
 	// A settle write is in flight: ignore the quit request so a plain
 	// quit cannot race the write.
 	if m.pinSettling {
-		return nil
+		return util.ReportInfo("Saving pin changes…")
 	}
 
 	if m.dialog.ContainsDialog(dialog.QuitID) {
@@ -5101,7 +5104,8 @@ func (m *UI) openQuitDialog() tea.Cmd {
 // emitted quit message cannot race the persist. Keep-pin with an
 // unchanged note performs no DB write. On a failed write the app must
 // not quit: a pinSettleFailedMsg resets the settled flag and surfaces
-// the error instead.
+// the error instead. The write is bounded by a timeout so a hung
+// backend cannot leave pinSettling set forever and brick quitting.
 func (m *UI) settlePinAndQuitCmd(msg dialog.ActionQuitSettled) tea.Cmd {
 	return func() tea.Msg {
 		if msg.Unpin || msg.NoteChanged {
@@ -5109,7 +5113,9 @@ func (m *UI) settlePinAndQuitCmd(msg dialog.ActionQuitSettled) tea.Cmd {
 			if msg.Unpin {
 				note = ""
 			}
-			err := m.com.Workspace.SetSessionPin(context.Background(), msg.SessionID, !msg.Unpin, note)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err := m.com.Workspace.SetSessionPin(ctx, msg.SessionID, !msg.Unpin, note)
 			if err != nil {
 				return pinSettleFailedMsg{err: err}
 			}
