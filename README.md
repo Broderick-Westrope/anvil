@@ -107,9 +107,10 @@ anvil session list --pinned   # plain list; supports --json
 
 In the picker: type to filter, `enter` resumes the session in its original
 working directory (replacing the picker process), `tab` toggles a transcript
-preview of where the session left off, `ctrl+x` unpins without resuming, and
-`esc` quits. Sessions whose working directory no longer exists are marked and
-can't be resumed until you point them elsewhere with `--cwd`.
+preview of where the session left off, `ctrl+x` unpins without resuming
+(after a `y/n` confirmation), and `esc` quits. Sessions whose working
+directory no longer exists are marked and can't be resumed until you point
+them elsewhere with `--cwd`.
 
 Pinned sessions also sort to the top of the in-TUI session switcher with a
 `●` marker, and deleting one asks for extra confirmation.
