@@ -11,6 +11,7 @@
 - **Multi-Agent Orchestration:** an orchestrator delegates to specialist agents (designer, fixer, explorer, oracle, reviewer, and more) that run in parallel, each with a focused system prompt and toolset (inspired by [oh-my-opencode-slim](https://github.com/alvinunreal/oh-my-opencode-slim) and [Amp](https://ampcode.com/))
 - **Session Branching:** fork conversations into a tree so you can explore multiple approaches without losing context (inspired by [Pi](https://pi.dev/))
 - **Global Sessions:** all sessions, messages, and files are stored in a single global database so history persists across projects and is accessible from anywhere
+- **Pinned Sessions:** pin a session with a note before quitting, then recall and resume it from any directory with `anvil session pinned` — a cross-project picker with a transcript preview that resumes the session in its original working directory ([details](#pinned-sessions))
 - **Minimal by Default, Observable When Needed:** tool calls, subagent runs, and other activity are collapsed into scannable one-line summaries; drill into any item to see full input, output, and reasoning without leaving the conversation
 - **No Telemetry:** all Charm PostHog telemetry has been removed — Anvil phones home to nobody
 - **MCP OAuth:** connect to OAuth-protected MCP servers (including Anthropic's) with automatic token management and refresh
@@ -81,6 +82,37 @@ Anvil:
 - [GLM Coding Plan](https://z.ai/subscribe)
 - [Kimi Code](https://www.kimi.com/membership/pricing)
 - [MiniMax Coding Plan](https://platform.minimax.io/subscribe/coding-plan)
+
+## Pinned Sessions
+
+Sessions you plan to return to weeks later get lost. Pinning makes quitting
+consequence-free: pin the work with a note, quit, and recall it later from
+anywhere.
+
+**Pin from the TUI:** open the command palette (`ctrl+p`) and select **Pin
+Session**, optionally adding a note (e.g. "waiting on upstream fix").
+Re-invoking it on a pinned session lets you update the note or unpin.
+
+**Settle at quit:** quitting while the active session is pinned asks what to
+do with the pin — keep it (default, one keystroke), unpin, or edit the note.
+`Esc` cancels the quit. Crashes and `SIGKILL` never touch pins; only an
+explicit choice changes them.
+
+**Recall from anywhere:**
+
+```bash
+anvil session pinned          # interactive cross-project picker
+anvil session list --pinned   # plain list; supports --json
+```
+
+In the picker: type to filter, `enter` resumes the session in its original
+working directory (replacing the picker process), `tab` toggles a transcript
+preview of where the session left off, `ctrl+x` unpins without resuming, and
+`esc` quits. Sessions whose working directory no longer exists are marked and
+can't be resumed until you point them elsewhere with `--cwd`.
+
+Pinned sessions also sort to the top of the in-TUI session switcher with a
+`●` marker, and deleting one asks for extra confirmation.
 
 ## Configuration
 
