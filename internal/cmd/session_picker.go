@@ -36,8 +36,7 @@ func init() {
 func runSessionPinned(cmd *cobra.Command, _ []string) error {
 	// Non-TTY (either side): fall back to the plain list output.
 	if !term.IsTerminal(os.Stdout.Fd()) || !term.IsTerminal(os.Stdin.Fd()) {
-		sessionListPinned = true
-		return runSessionList(cmd, nil)
+		return runSessionListImpl(cmd, true)
 	}
 
 	ctx, svc, cleanup, err := sessionSetup(cmd)
@@ -636,7 +635,7 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if pi.missing {
 			m.status = fmt.Sprintf(
 				"working directory no longer exists — resume with: anvil --session %s --cwd <dir>",
-				session.HashID(pi.sess.ID)[:7],
+				session.HashID(pi.sess.ID),
 			)
 			m.statusErr = true
 			return m, nil

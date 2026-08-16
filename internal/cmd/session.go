@@ -134,6 +134,13 @@ func sessionSetup(cmd *cobra.Command) (context.Context, *sessionServices, func()
 }
 
 func runSessionList(cmd *cobra.Command, _ []string) error {
+	return runSessionListImpl(cmd, sessionListPinned)
+}
+
+// runSessionListImpl renders the session list. It is shared by
+// `session list` and the non-TTY fallback of `session pinned`, which
+// passes pinned explicitly instead of mutating the flag variable.
+func runSessionListImpl(cmd *cobra.Command, pinned bool) error {
 	ctx, svc, cleanup, err := sessionSetup(cmd)
 	if err != nil {
 		return err
@@ -141,7 +148,7 @@ func runSessionList(cmd *cobra.Command, _ []string) error {
 	defer cleanup()
 
 	var list []session.Session
-	if sessionListPinned {
+	if pinned {
 		// Pinned sessions are always cross-project.
 		list, err = svc.sessions.ListPinned(ctx)
 		if err != nil {
@@ -192,7 +199,7 @@ func runSessionList(cmd *cobra.Command, _ []string) error {
 		width = tw
 	}
 
-	if sessionListPinned {
+	if pinned {
 		return writePinnedSessionRows(w, list, width, hashStyle, dateStyle, usingPager)
 	}
 
