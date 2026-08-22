@@ -118,9 +118,15 @@ read internal/config/provider_empty_test.go
    `s.client.GetProviders`, and on success with a non-empty list calls
    `s.cache.Store(result)`. On `catwalk.ErrNotModified` do nothing. On any
    error, `slog.Warn("Background Catwalk refresh failed", "error", err)`.
-   Never touch `s.result`.
-3. [ ] Initialize `refreshDone` in `Init` (so the zero-value panic guard in
-   `Get` still covers misuse).
+   **On success with an empty list (`len(result) == 0`), log a warning and
+   return WITHOUT calling `cache.Store`** — otherwise an empty server
+   response would overwrite a good cache and force the next startup back
+   onto the slow first-run path (the sync path already guards this at
+   `catwalk.go:72`; mirror it). Never touch `s.result`.
+3. [ ] Initialize `refreshDone` in `Init`, and **close it on every path
+   through `Get` that does not spawn the background refresh** — including
+   the `!s.autoupdate` embedded branch and the first-run synchronous branch
+   — so `<-refreshDone` never hangs regardless of which branch ran.
 4. [ ] Known pre-existing data race (do not fix here, do not worsen): the
    `errs` slice in `Providers()` (`internal/config/provider.go:142`) is
    appended from two concurrent `wg.Go` goroutines without synchronization.
@@ -133,10 +139,20 @@ read internal/config/provider_empty_test.go
      result lands in the cache file. Assert both: `Get` returns cached, then
      `<-s.refreshDone`, then read the cache file and assert it contains the
      fetched list.
+   - Known assertion changes (enumerate and update deliberately):
+     - `TestCatwalkSync_GetEmptyResultFallbackToCached` (or equivalent):
+       with a seeded cache, the empty-result error no longer surfaces from
+       `Get` — it becomes a background-refresh log. Drop the error
+       assertion; assert cache file unchanged after `<-refreshDone`.
+     - Not-modified tests: add `<-s.refreshDone` before asserting client
+       call counts — with a seeded cache the fetch now happens in the
+       background, so `callCount` may be 0 immediately after `Get`.
    - Existing first-run tests (no cache file) should pass unchanged.
    - Add a test: background refresh error (client returns error) → `Get`
      returns cached, cache file unchanged, no panic.
    - Add a test: `ErrNotModified` from refresh → cache file unchanged.
+   - Add a test: refresh returns success with an empty list → cache file
+     unchanged (guards the cache-poisoning case).
 
 **Verify:**
 ```bash
@@ -157,9 +173,11 @@ go test ./internal/config/ -run 'TestCatwalk' -v
 1. [ ] Apply the identical restructure to `hyperSync.Get`
    (`internal/config/hyper.go:41`): cached non-empty (`cached.ID != ""` and
    `len(cached.Models) > 0`) → return cached + background `refresh`; cache
-   empty → synchronous fetch path unchanged. Same `refreshDone` channel and
-   `refresh(ctx, etag)` method (store only on success with
-   `len(result.Models) > 0`).
+   empty → synchronous fetch path unchanged. Same `refreshDone` channel
+   semantics (closed on every non-background path) and `refresh(ctx, etag)`
+   method — store only on success with `len(result.Models) > 0`; an empty
+   `result.Models` on success must NOT overwrite the cache (mirror the sync
+   path's guard at `hyper.go:72`).
 2. [ ] Fix a latent gap while restructuring: `hyperSync.Get` has no explicit
    general-error handler — after `DeadlineExceeded` and `ErrNotModified`, a
    plain error (connection refused, 500) falls through to the
@@ -170,7 +188,7 @@ go test ./internal/config/ -run 'TestCatwalk' -v
    synchronous path and `refresh`.
 3. [ ] Update `hyper_test.go` with the same assertion pattern as Task 1
    step 5 (cached returned immediately, refreshed data lands in cache file,
-   error/not-modified leave cache untouched).
+   error/not-modified/empty-success leave cache untouched).
 
 **Verify:**
 ```bash

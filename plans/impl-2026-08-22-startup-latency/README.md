@@ -77,3 +77,11 @@ marker path consistency between `CurrentProject` and `AllProjects` gets an
 explicit test. Reviewer verdict on structure: the three tracks are correctly
 decomposed and independently mergeable; they are parallel workstreams rather
 than sequential phases.
+
+Round 2 review (verdict: APPROVED) caught and the plan now incorporates:
+(7) `refresh()` must reject success-with-empty results to avoid poisoning a
+good cache and silently reverting to the slow first-run path; (8)
+`refreshDone` must be closed on every non-background path (embedded and
+first-run branches) so waiters never hang; (9) enumerated the existing tests
+whose assertions change semantics (empty-result-fallback error no longer
+surfaces from `Get`; call-count assertions need `<-refreshDone`).
