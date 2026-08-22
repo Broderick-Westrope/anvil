@@ -321,6 +321,7 @@ type Options struct {
 	DisableDefaultProviders   bool     `json:"disable_default_providers,omitempty" jsonschema:"description=Ignore all default/embedded providers. When enabled\\, providers must be fully specified in the config file with base_url\\, models\\, and api_key - no merging with defaults occurs,default=false"`
 	InitializeAs              string   `json:"initialize_as,omitempty" jsonschema:"description=Name of the context file to create/update during project initialization,default=AGENTS.md,example=AGENTS.md,example=ANVIL.md,example=CLAUDE.md,example=docs/LLMs.md"`
 	AutoLSP                   *bool    `json:"auto_lsp,omitempty" jsonschema:"description=Automatically setup LSPs based on root markers,default=true"`
+	LSPIdleTimeout            *int     `json:"lsp_idle_timeout,omitempty" jsonschema:"description=Minutes of inactivity before an idle LSP server is stopped and its memory reclaimed. It restarts on next use. 0 disables idle shutdown,default=15"`
 	Progress                  *bool    `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
 	DisableNotifications      bool     `json:"disable_notifications,omitempty" jsonschema:"description=Disable desktop notifications,default=false"`
 	DisabledSkills            []string `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=anvil-config"`

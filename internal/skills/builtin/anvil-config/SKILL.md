@@ -156,6 +156,20 @@ reviewed.
 - `command`, `args`, and `env` values are shell-expanded (see [Shell Expansion](#shell-expansion)).
 - Additional fields: `disabled`, `filetypes`, `root_markers`, `init_options`, `options`, `timeout`.
 
+### gopls Daemon Sharing
+
+When gopls is auto-configured (no `lsp.gopls` entry in `anvil.json`), Anvil starts it with `-remote=auto` so concurrent Anvil sessions share a single gopls daemon. If you configure `lsp.gopls` yourself, your `args` are used verbatim. To opt out of daemon sharing, provide a minimal explicit config:
+
+```json
+{
+  "lsp": {
+    "gopls": { "command": "gopls" }
+  }
+}
+```
+
+Note: because the daemon is shared, a gopls crash affects all connected sessions until the next restart.
+
 ## MCP Servers
 
 ```json
@@ -209,7 +223,9 @@ reviewed.
 > The following skill paths are loaded by default and DO NOT NEED to be added to `skills_paths`:
 > `.agents/skills`, `.anvil/skills`, `.claude/skills`, `.cursor/skills`
 
-Other options: `context_paths`, `progress`, `disable_notifications`, `disable_auto_summarize`, `disable_provider_auto_update`, `disable_default_providers`, `project_directory`, `initialize_as`.
+Other options: `context_paths`, `progress`, `disable_notifications`, `disable_auto_summarize`, `disable_provider_auto_update`, `disable_default_providers`, `project_directory`, `initialize_as`, `lsp_idle_timeout`.
+
+- `lsp_idle_timeout`: Minutes of inactivity before an idle LSP server is stopped and its memory reclaimed (default `15`, `0` disables). Stopped servers restart transparently on next use. Known limitation: after an idle shutdown, project-wide `lsp_diagnostics` repopulates only as files are re-opened by subsequent tool use.
 
 ## Hooks
 

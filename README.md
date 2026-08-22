@@ -16,6 +16,7 @@
 - **No Telemetry:** all Charm PostHog telemetry has been removed — Anvil phones home to nobody
 - **MCP OAuth:** connect to OAuth-protected MCP servers (including Anthropic's) with automatic token management and refresh
 - **Lazy MCP Loading:** defer heavy MCP tool schemas from the LLM context until needed — the agent or human enables them on demand, saving 50k+ tokens per server
+- **LSP Memory Management:** concurrent sessions in the same Go repo share a single gopls daemon instead of running one each, and any LSP server left idle is shut down and restarted on demand ([details](#shared-gopls-daemon))
 - **Granular Permissions:** pattern-based allow/ask/deny rules per tool and per input (e.g. allow `git status *` but deny `rm *`), with chained-command analysis so dangerous commands can't ride along with allowed ones, editable patterns at the prompt, and session or forever grants ([details](#tool-permissions))
 - **Smart Session Titles:** finding old sessions is easier thanks to titles generated from the first real exchange (not your opening prompt); rename or regenerate them from the command palette — manual titles are never overwritten
 - **Plugins:** bundle skills, slash commands, and custom agents into a single installable package with manifest-based discovery and auto-approved file access
@@ -185,6 +186,53 @@ like you would. LSPs can be added manually like so:
   }
 }
 ```
+
+#### Shared gopls daemon
+
+When gopls is auto-detected (no `lsp.gopls` entry in your config), Anvil
+starts it with `-remote=auto`. This is gopls's built-in daemon mode: each
+Anvil session spawns a small forwarder process, and they all share a single
+gopls daemon. Running several sessions in the same repo costs roughly one
+gopls worth of memory instead of one per session. The daemon exits on its
+own about a minute after the last session disconnects.
+
+If you configure `lsp.gopls` yourself, your args are used verbatim and no
+daemon flag is added. That's also the opt-out: a minimal explicit config
+gets you a private per-session gopls.
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
+  "lsp": {
+    "gopls": { "command": "gopls" }
+  }
+}
+```
+
+One tradeoff to know about: with a shared daemon, a gopls crash affects
+every connected session at once. The `lsp_restart` tool recovers by
+respawning the forwarder, which respawns the daemon.
+
+#### Idle shutdown
+
+LSP servers that haven't been used for a while are stopped to reclaim
+memory. This applies to every LSP server, not just gopls. A stopped server
+restarts transparently the next time a tool needs it.
+
+The timeout is configurable via `lsp_idle_timeout` (minutes, default `15`;
+`0` disables idle shutdown):
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
+  "options": {
+    "lsp_idle_timeout": 30
+  }
+}
+```
+
+Known limitation: after an idle shutdown, project-wide `lsp_diagnostics`
+only repopulates as files are re-opened by subsequent tool use.
 
 ### MCPs
 

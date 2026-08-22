@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,17 +22,23 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
-const unavailableRetryDelay = 30 * time.Second
+const (
+	unavailableRetryDelay = 30 * time.Second
+	defaultIdleTimeout    = 15 * time.Minute
+	idleSweepInterval     = time.Minute
+)
 
 // Manager handles lazy initialization of LSP clients based on file types.
 type Manager struct {
 	clients     *csync.Map[string, *Client]
 	unavailable *csync.Map[string, time.Time]
+	lastUsed    *csync.Map[string, time.Time]
 	cfg         *config.ConfigStore
 	manager     *powernapconfig.Manager
 	callback    func(name string, client *Client)
 	now         func() time.Time
 	lookPath    func(string) (string, error)
+	closeClient func(ctx context.Context, c *Client) error
 }
 
 // NewManager creates a new LSP manager service.
@@ -61,14 +68,18 @@ func NewManager(cfg *config.ConfigStore) *Manager {
 		})
 	}
 
+	applyGoplsDaemonDefaults(manager, cfg)
+
 	return &Manager{
 		clients:     csync.NewMap[string, *Client](),
 		unavailable: csync.NewMap[string, time.Time](),
+		lastUsed:    csync.NewMap[string, time.Time](),
 		cfg:         cfg,
 		manager:     manager,
 		callback:    func(string, *Client) {}, // default no-op callback
 		now:         time.Now,
 		lookPath:    exec.LookPath,
+		closeClient: func(ctx context.Context, c *Client) error { return c.Close(ctx) },
 	}
 }
 
@@ -168,6 +179,9 @@ func (s *Manager) startServer(ctx context.Context, name, filepath string, server
 	if client, ok := s.clients.Get(name); ok {
 		switch client.GetServerState() {
 		case StateReady, StateStarting, StateDisabled:
+			if handlesFiletype(server.Command, server.FileTypes, filepath) {
+				s.Touch(name)
+			}
 			s.callback(name, client)
 			// already done, return
 			return
@@ -186,6 +200,9 @@ func (s *Manager) startServer(ctx context.Context, name, filepath string, server
 	if client, ok := s.clients.Get(name); ok {
 		switch client.GetServerState() {
 		case StateReady, StateStarting, StateDisabled:
+			if handlesFiletype(server.Command, server.FileTypes, filepath) {
+				s.Touch(name)
+			}
 			s.callback(name, client)
 			return
 		}
@@ -243,6 +260,10 @@ func (s *Manager) startServer(ctx context.Context, name, filepath string, server
 		client.SetServerState(StateReady)
 	}
 
+	if handlesFiletype(server.Command, server.FileTypes, filepath) {
+		s.Touch(name)
+	}
+
 	slog.Debug("LSP client started", "name", name)
 }
 
@@ -272,6 +293,116 @@ func (s *Manager) canAutoStart(
 	}
 	s.clearUnavailable(name)
 	return true
+}
+
+// Touch records that the named LSP client was just used, deferring
+// idle shutdown. Call it whenever a client is read or handed out.
+func (s *Manager) Touch(name string) {
+	s.lastUsed.Set(name, s.now())
+}
+
+// idleTimeout returns the configured idle timeout, or 0 if idle
+// shutdown is disabled.
+func (s *Manager) idleTimeout() time.Duration {
+	opts := s.cfg.Config().Options
+	if opts == nil || opts.LSPIdleTimeout == nil {
+		return defaultIdleTimeout
+	}
+	if *opts.LSPIdleTimeout <= 0 {
+		return 0
+	}
+	return time.Duration(*opts.LSPIdleTimeout) * time.Minute
+}
+
+// idleCandidates returns the names of clients eligible for idle
+// shutdown: state Ready or Error, with a lastUsed entry older than
+// cutoff. Clients missing a lastUsed entry are seeded with now and
+// skipped. StateStarting clients are never candidates.
+func (s *Manager) idleCandidates(cutoff time.Time) []string {
+	var candidates []string
+	for name, client := range s.clients.Seq2() {
+		switch client.GetServerState() {
+		case StateReady, StateError:
+		default:
+			continue
+		}
+		last, ok := s.lastUsed.Get(name)
+		if !ok {
+			s.Touch(name)
+			continue
+		}
+		if last.Before(cutoff) {
+			candidates = append(candidates, name)
+		}
+	}
+	slices.Sort(candidates)
+	return candidates
+}
+
+// reapIdle stops idle clients in parallel (mirroring StopAll's
+// error filtering), re-checking lastUsed immediately before each
+// Close to narrow the touch/reap race. For each reaped client:
+// Close via s.closeClient, SetServerState(StateStopped), delete
+// from s.clients and s.lastUsed, then s.callback(name, nil) so the
+// UI shows the server as unstarted.
+func (s *Manager) reapIdle(ctx context.Context) {
+	cutoff := s.now().Add(-s.idleTimeout())
+	var wg sync.WaitGroup
+	for _, name := range s.idleCandidates(cutoff) {
+		wg.Go(func() {
+			s.reapOne(ctx, name, cutoff)
+		})
+	}
+	wg.Wait()
+}
+
+func (s *Manager) reapOne(ctx context.Context, name string, cutoff time.Time) {
+	client, ok := s.clients.Get(name)
+	if !ok {
+		return
+	}
+	last, ok := s.lastUsed.Get(name)
+	if !ok || !last.Before(cutoff) {
+		return
+	}
+	if err := s.closeClient(ctx, client); err != nil &&
+		!errors.Is(err, io.EOF) &&
+		!errors.Is(err, context.Canceled) &&
+		!errors.Is(err, jsonrpc2.ErrClosed) &&
+		err.Error() != "signal: killed" {
+		slog.Warn("Failed to stop idle LSP client", "name", name, "error", err)
+	}
+	client.SetServerState(StateStopped)
+	s.clients.Del(name)
+	s.lastUsed.Del(name)
+	if s.callback != nil {
+		s.callback(name, nil)
+	}
+	slog.Debug("Stopped idle LSP client", "name", name)
+}
+
+// StartIdleReaper periodically stops LSP clients that have not been
+// used within the configured idle timeout. Blocks until ctx is
+// done; run it in a goroutine. No-op if idle shutdown is disabled
+// at startup; disabling it at runtime stops future sweeps, but
+// re-enabling after that requires a restart.
+func (s *Manager) StartIdleReaper(ctx context.Context) {
+	if s.idleTimeout() <= 0 {
+		return
+	}
+	ticker := time.NewTicker(idleSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.idleTimeout() <= 0 {
+				return
+			}
+			s.reapIdle(ctx)
+		}
+	}
 }
 
 func (s *Manager) isUserConfigured(name string) bool {
@@ -313,6 +444,22 @@ func (s *Manager) buildConfig(name string, server *powernapconfig.ServerConfig) 
 		cfg.Timeout = userCfg.Timeout
 	}
 	return cfg
+}
+
+// applyGoplsDaemonDefaults enables gopls's shared daemon mode
+// (-remote=auto) so concurrent Anvil sessions share one gopls
+// instance. Only applies when the user has not configured gopls
+// themselves; user-provided args are always respected verbatim.
+func applyGoplsDaemonDefaults(manager *powernapconfig.Manager, cfg *config.ConfigStore) {
+	for name, clientConfig := range cfg.Config().LSP {
+		if name == "gopls" || clientConfig.Command == "gopls" {
+			return
+		}
+	}
+	server, ok := manager.GetServer("gopls")
+	if ok && len(server.Args) == 0 {
+		server.Args = []string{"-remote=auto"}
+	}
 }
 
 func resolveServerName(manager *powernapconfig.Manager, name string) string {
@@ -384,6 +531,7 @@ func (s *Manager) KillAll(context.Context) {
 			client.client.Kill()
 			client.SetServerState(StateStopped)
 			s.clients.Del(name)
+			s.lastUsed.Del(name)
 			slog.Debug("Killed LSP client", "name", name)
 		})
 	}
@@ -405,6 +553,7 @@ func (s *Manager) StopAll(ctx context.Context) {
 			}
 			client.SetServerState(StateStopped)
 			s.clients.Del(name)
+			s.lastUsed.Del(name)
 			slog.Debug("Stopped LSP client", "name", name)
 		})
 	}

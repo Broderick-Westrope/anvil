@@ -39,7 +39,6 @@ func NewReferencesTool(lspManager *lsp.Manager) fantasy.AgentTool {
 			}
 
 			workingDir := cmp.Or(params.Path, ".")
-			lspManager.Start(ctx, workingDir)
 
 			matches, _, err := searchFiles(ctx, regexp.QuoteMeta(params.Symbol), workingDir, "", 100)
 			if err != nil {
@@ -88,6 +87,8 @@ func find(ctx context.Context, lspManager *lsp.Manager, symbol string, match gre
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path: %s", err)
 	}
+
+	lspManager.Start(ctx, absPath)
 
 	client := findLSPClient(lspManager, absPath)
 	if client == nil {
