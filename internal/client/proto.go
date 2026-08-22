@@ -575,6 +575,20 @@ func (c *Client) SaveSession(ctx context.Context, id string, sess proto.Session)
 	return &saved, nil
 }
 
+// SetSessionPin pins or unpins a session in a workspace.
+func (c *Client) SetSessionPin(ctx context.Context, id string, sessionID string, pinned bool, note string) error {
+	req := proto.SetSessionPinRequest{Pinned: pinned, Note: note}
+	rsp, err := c.put(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s/pin", id, sessionID), nil, jsonBody(req), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return fmt.Errorf("failed to set session pin: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to set session pin: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
 // DeleteSession deletes a session from a workspace.
 func (c *Client) DeleteSession(ctx context.Context, id string, sessionID string) error {
 	rsp, err := c.delete(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s", id, sessionID), nil, nil)

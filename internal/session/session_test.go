@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
@@ -214,4 +215,211 @@ func TestCreateTitleSessionInheritsWorkingDir(t *testing.T) {
 	titleSession, err := sessions.CreateTitleSession(t.Context(), parent.ID)
 	require.NoError(t, err)
 	require.Equal(t, "/home/user/project", titleSession.WorkingDir)
+}
+
+func TestSetPinPersistsPinAndNote(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	sessions := NewService(db.New(conn), conn)
+
+	created, err := sessions.Create(t.Context(), "test", "/home/user/project")
+	require.NoError(t, err)
+
+	require.NoError(t, sessions.SetPin(t.Context(), created.ID, true, "important refactor"))
+
+	fetched, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.True(t, fetched.Pinned)
+	require.Equal(t, "important refactor", fetched.PinNote)
+}
+
+func TestSetPinSanitizesNote(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	sessions := NewService(db.New(conn), conn)
+
+	created, err := sessions.Create(t.Context(), "test", "/home/user/project")
+	require.NoError(t, err)
+
+	// A 250-char multi-line note: newlines flattened, capped at 200 runes.
+	note := strings.Repeat("a", 100) + "\n" + strings.Repeat("b", 100) + "\r\n" + strings.Repeat("c", 48)
+	require.NoError(t, sessions.SetPin(t.Context(), created.ID, true, note))
+
+	fetched, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.NotContains(t, fetched.PinNote, "\n")
+	require.NotContains(t, fetched.PinNote, "\r")
+	require.Len(t, []rune(fetched.PinNote), MaxPinNoteLen)
+}
+
+func TestUnpinClearsNote(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	sessions := NewService(db.New(conn), conn)
+
+	created, err := sessions.Create(t.Context(), "test", "/home/user/project")
+	require.NoError(t, err)
+
+	require.NoError(t, sessions.SetPin(t.Context(), created.ID, true, "keep this"))
+	require.NoError(t, sessions.SetPin(t.Context(), created.ID, false, "ignored"))
+
+	fetched, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.False(t, fetched.Pinned)
+	require.Empty(t, fetched.PinNote)
+}
+
+func TestPinSurvivesStaleSave(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	sessions := NewService(db.New(conn), conn)
+
+	created, err := sessions.Create(t.Context(), "test", "/home/user/project")
+	require.NoError(t, err)
+
+	// Fetch a stale copy before pinning.
+	stale, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, sessions.SetPin(t.Context(), created.ID, true, "do not lose"))
+
+	// Fetch-modify-save the stale copy — pin state must survive.
+	stale.Title = "renamed"
+	_, err = sessions.Save(t.Context(), stale)
+	require.NoError(t, err)
+
+	fetched, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.True(t, fetched.Pinned)
+	require.Equal(t, "do not lose", fetched.PinNote)
+}
+
+func TestSetPinDoesNotChangeUpdatedAt(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	sessions := NewService(db.New(conn), conn)
+
+	created, err := sessions.Create(t.Context(), "test", "/home/user/project")
+	require.NoError(t, err)
+
+	// Backdate updated_at. Changing a pin column in the same statement
+	// keeps the guarded trigger from overwriting the backdated value.
+	_, err = conn.ExecContext(t.Context(),
+		"UPDATE sessions SET updated_at = 12345, pin_note = 'seed' WHERE id = ?", created.ID)
+	require.NoError(t, err)
+
+	before, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(12345), before.UpdatedAt)
+
+	require.NoError(t, sessions.SetPin(t.Context(), created.ID, true, "pinned note"))
+
+	after, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.Equal(t, before.UpdatedAt, after.UpdatedAt)
+}
+
+func TestSetPinIdenticalValuesDoesNotChangeUpdatedAt(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	sessions := NewService(db.New(conn), conn)
+
+	created, err := sessions.Create(t.Context(), "test", "/home/user/project")
+	require.NoError(t, err)
+
+	// Pin, then backdate updated_at. Changing pin columns in the same
+	// statement keeps the guarded trigger from overwriting the backdated
+	// value.
+	_, err = conn.ExecContext(t.Context(),
+		"UPDATE sessions SET updated_at = 12345, pinned = 1, pin_note = 'same note' WHERE id = ?", created.ID)
+	require.NoError(t, err)
+
+	before, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(12345), before.UpdatedAt)
+
+	// An idempotent re-pin with identical values must match no row and
+	// therefore never fire the updated_at trigger.
+	require.NoError(t, sessions.SetPin(t.Context(), created.ID, true, "same note"))
+
+	after, err := sessions.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.True(t, after.Pinned)
+	require.Equal(t, "same note", after.PinNote)
+	require.Equal(t, before.UpdatedAt, after.UpdatedAt)
+}
+
+func TestListPinnedExcludesUnpinnedAndChildSessions(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	sessions := NewService(db.New(conn), conn)
+
+	pinnedA, err := sessions.Create(t.Context(), "pinned-a", "/home/user/a")
+	require.NoError(t, err)
+	pinnedB, err := sessions.Create(t.Context(), "pinned-b", "/home/user/b")
+	require.NoError(t, err)
+	_, err = sessions.Create(t.Context(), "unpinned", "/home/user/a")
+	require.NoError(t, err)
+	child, err := sessions.CreateTaskSession(t.Context(), "child-tool", pinnedA.ID, "child")
+	require.NoError(t, err)
+
+	require.NoError(t, sessions.SetPin(t.Context(), pinnedA.ID, true, "a"))
+	require.NoError(t, sessions.SetPin(t.Context(), pinnedB.ID, true, "b"))
+	require.NoError(t, sessions.SetPin(t.Context(), child.ID, true, "child"))
+
+	pinned, err := sessions.ListPinned(t.Context())
+	require.NoError(t, err)
+	require.Len(t, pinned, 2)
+	ids := []string{pinned[0].ID, pinned[1].ID}
+	require.Contains(t, ids, pinnedA.ID)
+	require.Contains(t, ids, pinnedB.ID)
 }

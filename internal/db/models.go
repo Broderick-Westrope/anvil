@@ -80,4 +80,6 @@ type Session struct {
 	LeafMessageID    sql.NullString `json:"leaf_message_id"`
 	WorkingDir       string         `json:"working_dir"`
 	TitleIsCustom    int64          `json:"title_is_custom"`
+	Pinned           int64          `json:"pinned"`
+	PinNote          string         `json:"pin_note"`
 }

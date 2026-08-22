@@ -196,6 +196,78 @@ func (q *Queries) GetBranchPath(ctx context.Context, leafID string) ([]GetBranch
 	return items, nil
 }
 
+const getBranchPathTail = `-- name: GetBranchPathTail :many
+WITH RECURSIVE branch AS (
+    SELECT m.id, m.session_id, m.role, m.parts, m.model, m.created_at, m.updated_at,
+           m.finished_at, m.provider, m.parent_message_id, m.message_type,
+           0 AS depth
+    FROM messages m WHERE m.id = ?1
+    UNION ALL
+    SELECT p.id, p.session_id, p.role, p.parts, p.model, p.created_at, p.updated_at,
+           p.finished_at, p.provider, p.parent_message_id, p.message_type,
+           b.depth + 1
+    FROM messages p JOIN branch b ON p.id = b.parent_message_id
+    WHERE b.depth + 1 < CAST(?2 AS INTEGER)
+)
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at,
+       provider, parent_message_id, message_type
+FROM branch ORDER BY depth DESC
+`
+
+type GetBranchPathTailParams struct {
+	LeafID   string `json:"leaf_id"`
+	MaxDepth int64  `json:"max_depth"`
+}
+
+type GetBranchPathTailRow struct {
+	ID              string         `json:"id"`
+	SessionID       string         `json:"session_id"`
+	Role            string         `json:"role"`
+	Parts           string         `json:"parts"`
+	Model           sql.NullString `json:"model"`
+	CreatedAt       int64          `json:"created_at"`
+	UpdatedAt       int64          `json:"updated_at"`
+	FinishedAt      sql.NullInt64  `json:"finished_at"`
+	Provider        sql.NullString `json:"provider"`
+	ParentMessageID sql.NullString `json:"parent_message_id"`
+	MessageType     string         `json:"message_type"`
+}
+
+func (q *Queries) GetBranchPathTail(ctx context.Context, arg GetBranchPathTailParams) ([]GetBranchPathTailRow, error) {
+	rows, err := q.query(ctx, q.getBranchPathTailStmt, getBranchPathTail, arg.LeafID, arg.MaxDepth)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetBranchPathTailRow{}
+	for rows.Next() {
+		var i GetBranchPathTailRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Role,
+			&i.Parts,
+			&i.Model,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+			&i.Provider,
+			&i.ParentMessageID,
+			&i.MessageType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMessage = `-- name: GetMessage :one
 SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
 FROM messages
