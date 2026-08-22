@@ -5734,6 +5734,8 @@ func renderLogo(t *styles.Styles, compact bool, width int) string {
 
 // splitPatterns splits a pattern-field value into individual permission
 // patterns joined by " && ", trimming whitespace and dropping empties.
+// An empty field yields a single empty pattern so callers still write a
+// tool-level rule (e.g. MCP tools, whose input is never pattern-matched).
 func splitPatterns(s string) []string {
 	parts := strings.Split(s, " && ")
 	out := make([]string, 0, len(parts))
@@ -5741,6 +5743,9 @@ func splitPatterns(s string) []string {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
+	}
+	if len(out) == 0 {
+		return []string{""}
 	}
 	return out
 }
