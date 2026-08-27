@@ -1918,7 +1918,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/proto.PermissionSkipRequest"
+                            "$ref": "#/definitions/proto.PermissionYoloRequest"
                         }
                     },
                     "404": {
@@ -1952,12 +1952,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Permission skip request",
+                        "description": "Permission yolo level request",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/proto.PermissionSkipRequest"
+                            "$ref": "#/definitions/proto.PermissionYoloRequest"
                         }
                     }
                 ],
@@ -2513,6 +2513,65 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/workspaces/{id}/sessions/{sid}/pin": {
+            "put": {
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Pin or unpin session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Pin state",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/proto.SetSessionPinRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/proto.Error"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -2652,6 +2711,10 @@ const docTemplate = `{
                     "description": "Regex pattern tested against the tool name. Empty means match all.",
                     "type": "string"
                 },
+                "name": {
+                    "description": "Friendly display name shown in the TUI. Falls back to Command when empty.",
+                    "type": "string"
+                },
                 "timeout": {
                     "description": "Timeout in seconds. Default 30.",
                     "type": "integer"
@@ -2775,6 +2838,10 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "lazy_description": {
+                    "description": "LazyDescription makes this MCP server's tools lazy-loaded. The\nserver still connects eagerly at startup, but its tools and\ninstructions are excluded from the LLM context until explicitly\nenabled by the agent or human. The value is surfaced to the LLM\nso it can decide when to enable the server.",
+                    "type": "string"
+                },
                 "redirectUri": {
                     "type": "string"
                 },
@@ -2818,6 +2885,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "allowed_tools": {
+                    "description": "AllowedTools is the deprecated flat list of tool names.\nKept for backward-compatible JSON parsing; migrated at load time.",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -2911,6 +2979,14 @@ const docTemplate = `{
                 }
             }
         },
+        "config.ToolGlob": {
+            "type": "object",
+            "properties": {
+                "timeout": {
+                    "$ref": "#/definitions/time.Duration"
+                }
+            }
+        },
         "config.ToolGrep": {
             "type": "object",
             "properties": {
@@ -2933,6 +3009,9 @@ const docTemplate = `{
         "config.Tools": {
             "type": "object",
             "properties": {
+                "glob": {
+                    "$ref": "#/definitions/config.ToolGlob"
+                },
                 "grep": {
                     "$ref": "#/definitions/config.ToolGrep"
                 },
@@ -2961,6 +3040,13 @@ const docTemplate = `{
                     "description": "DisabledAgents lists agent names to remove from the routing table and\norchestrator prompt at startup.",
                     "type": "array",
                     "items": {
+                        "type": "string"
+                    }
+                },
+                "env": {
+                    "description": "Env is a map of environment variables set on startup.",
+                    "type": "object",
+                    "additionalProperties": {
                         "type": "string"
                     }
                 },
@@ -3034,8 +3120,7 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
-                "project_directory": {
-                    "description": "ProjectDirectory is where Anvil keeps per-project state such as\nlogs, workspace config, and .gitignore. Relative paths are\nresolved against the working directory; absolute paths are used\nverbatim. After defaulting the stored value is always absolute.",
+                "data_directory": {
                     "type": "string"
                 },
                 "debug": {
@@ -3079,6 +3164,10 @@ const docTemplate = `{
                 },
                 "progress": {
                     "type": "boolean"
+                },
+                "project_directory": {
+                    "description": "ProjectDirectory is where Anvil keeps per-project state such as\nlogs, workspace config, and .gitignore. Relative paths are\nresolved against the working directory; absolute paths are used\nverbatim. After defaulting the stored value is always absolute.",
+                    "type": "string"
                 },
                 "skills_paths": {
                     "type": "array",
@@ -3217,6 +3306,12 @@ const docTemplate = `{
                 },
                 "parent_session_id": {
                     "type": "string"
+                },
+                "pin_note": {
+                    "type": "string"
+                },
+                "pinned": {
+                    "type": "boolean"
                 },
                 "prompt_tokens": {
                     "type": "integer"
@@ -3407,6 +3502,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "error": {},
+                "is_lazy": {
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -3474,13 +3572,15 @@ const docTemplate = `{
                 0,
                 1,
                 2,
-                3
+                3,
+                4
             ],
             "x-enum-varnames": [
                 "MCPStateDisabled",
                 "MCPStateStarting",
                 "MCPStateConnected",
-                "MCPStateError"
+                "MCPStateError",
+                "MCPStateLazy"
             ]
         },
         "proto.MessageRole": {
@@ -3549,11 +3649,11 @@ const docTemplate = `{
                 }
             }
         },
-        "proto.PermissionSkipRequest": {
+        "proto.PermissionYoloRequest": {
             "type": "object",
             "properties": {
-                "skip": {
-                    "type": "boolean"
+                "yolo_level": {
+                    "type": "integer"
                 }
             }
         },
@@ -3597,6 +3697,12 @@ const docTemplate = `{
                 "parent_session_id": {
                     "type": "string"
                 },
+                "pin_note": {
+                    "type": "string"
+                },
+                "pinned": {
+                    "type": "boolean"
+                },
                 "prompt_tokens": {
                     "type": "integer"
                 },
@@ -3605,6 +3711,17 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "integer"
+                }
+            }
+        },
+        "proto.SetSessionPinRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string"
+                },
+                "pinned": {
+                    "type": "boolean"
                 }
             }
         },
@@ -3653,7 +3770,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "yolo": {
+                    "description": "YOLO is the legacy boolean field for backward compatibility with\nolder servers/clients. Prefer YoloLevel for granular control.",
                     "type": "boolean"
+                },
+                "yolo_level": {
+                    "type": "integer"
                 }
             }
         },

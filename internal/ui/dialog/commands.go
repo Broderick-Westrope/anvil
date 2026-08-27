@@ -458,6 +458,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	if c.hasSession {
 		commands = append(commands, NewCommandItem(c.com.Styles, "summarize", "Summarize Session", "", ActionSummarize{SessionID: c.sessionID}))
 		commands = append(commands, NewCommandItem(c.com.Styles, "rename_session", "Rename Session", "", ActionRenameSession{}))
+		commands = append(commands, NewCommandItem(c.com.Styles, "pin_session", "Pin Session", "", ActionOpenDialog{PinID}))
 		commands = append(commands, NewCommandItem(c.com.Styles, "regenerate_title", "Regenerate Title", "", ActionRegenerateTitle{}))
 	}
 

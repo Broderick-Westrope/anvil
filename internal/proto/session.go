@@ -12,4 +12,13 @@ type Session struct {
 	Cost             float64 `json:"cost"`
 	CreatedAt        int64   `json:"created_at"`
 	UpdatedAt        int64   `json:"updated_at"`
+	Pinned           bool    `json:"pinned"`
+	PinNote          string  `json:"pin_note"`
+}
+
+// SetSessionPinRequest is the request body for pinning or unpinning a
+// session.
+type SetSessionPinRequest struct {
+	Pinned bool   `json:"pinned"`
+	Note   string `json:"note"`
 }

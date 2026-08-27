@@ -102,6 +102,16 @@ func (b *Backend) SaveSession(ctx context.Context, workspaceID string, sess sess
 	return ws.Sessions.Save(ctx, sess)
 }
 
+// SetSessionPin pins or unpins a session in the given workspace.
+func (b *Backend) SetSessionPin(ctx context.Context, workspaceID, sessionID string, pinned bool, note string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	return ws.Sessions.SetPin(ctx, sessionID, pinned, note)
+}
+
 // DeleteSession deletes a session from the given workspace.
 func (b *Backend) DeleteSession(ctx context.Context, workspaceID, sessionID string) error {
 	ws, err := b.GetWorkspace(workspaceID)

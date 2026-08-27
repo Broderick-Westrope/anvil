@@ -30,9 +30,17 @@ func TestSplitPatterns(t *testing.T) {
 			want:  []string{"ls{ *,}"},
 		},
 		{
-			name:  "empty string",
+			// Empty means no input pattern (e.g. MCP tools); a single
+			// empty pattern makes callers write a tool-level rule
+			// instead of silently skipping the grant.
+			name:  "empty string yields tool-level rule",
 			input: "",
-			want:  []string{},
+			want:  []string{""},
+		},
+		{
+			name:  "whitespace only yields tool-level rule",
+			input: "   ",
+			want:  []string{""},
 		},
 	}
 

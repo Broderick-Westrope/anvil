@@ -137,6 +137,8 @@ func sessionToProto(s session.Session) proto.Session {
 		Cost:             s.Cost,
 		CreatedAt:        s.CreatedAt,
 		UpdatedAt:        s.UpdatedAt,
+		Pinned:           s.Pinned,
+		PinNote:          s.PinNote,
 	}
 }
 

@@ -55,6 +55,7 @@ type Service interface {
 	Delete(ctx context.Context, id string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	GetBranchPath(ctx context.Context, leafMessageID string) ([]Message, error)
+	GetBranchPathTail(ctx context.Context, leafMessageID string, limit int64) ([]Message, error)
 	GetChildren(ctx context.Context, messageID string) ([]Message, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
 
@@ -558,6 +559,39 @@ func (s *service) ListUserMessagesByWorkingDir(ctx context.Context, workingDir s
 
 func (s *service) GetBranchPath(ctx context.Context, leafMessageID string) ([]Message, error) {
 	dbMessages, err := s.q.GetBranchPath(ctx, leafMessageID)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]Message, len(dbMessages))
+	for i, dbMessage := range dbMessages {
+		messages[i], err = s.fromDBItem(db.Message{
+			ID:              dbMessage.ID,
+			SessionID:       dbMessage.SessionID,
+			Role:            dbMessage.Role,
+			Parts:           dbMessage.Parts,
+			Model:           dbMessage.Model,
+			Provider:        dbMessage.Provider,
+			FinishedAt:      dbMessage.FinishedAt,
+			ParentMessageID: dbMessage.ParentMessageID,
+			MessageType:     dbMessage.MessageType,
+			CreatedAt:       dbMessage.CreatedAt,
+			UpdatedAt:       dbMessage.UpdatedAt,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return messages, nil
+}
+
+// GetBranchPathTail returns at most limit messages of the branch
+// ending at leafMessageID, oldest-first. To page back, pass the oldest
+// returned message's ParentMessageID as the next leaf.
+func (s *service) GetBranchPathTail(ctx context.Context, leafMessageID string, limit int64) ([]Message, error) {
+	dbMessages, err := s.q.GetBranchPathTail(ctx, db.GetBranchPathTailParams{
+		LeafID:   leafMessageID,
+		MaxDepth: limit,
+	})
 	if err != nil {
 		return nil, err
 	}

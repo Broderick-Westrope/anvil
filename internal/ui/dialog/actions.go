@@ -24,6 +24,16 @@ type ActionClose struct{}
 // ActionQuit is a message to quit the application.
 type ActionQuit = tea.QuitMsg
 
+// ActionQuitSettled is emitted by the pinned-session quit dialog once the
+// user has made a settle choice. The UI persists the choice (if any) and
+// then quits without re-intercepting.
+type ActionQuitSettled struct {
+	SessionID   string
+	Unpin       bool
+	Note        string
+	NoteChanged bool
+}
+
 // ActionOpenDialog is a message to open a dialog.
 type ActionOpenDialog struct {
 	DialogID string
@@ -93,6 +103,17 @@ type (
 	// ActionRenameSession is a message to rename the current session.
 	ActionRenameSession struct {
 		Title string
+	}
+	// ActionSetSessionPin is emitted by the pin dialog to persist a pin
+	// change for a session. Pinned false unpins (the note is cleared).
+	// WasPinned records whether the session was already pinned when the
+	// dialog opened, so success feedback can distinguish a fresh pin
+	// from a note update.
+	ActionSetSessionPin struct {
+		SessionID string
+		Pinned    bool
+		Note      string
+		WasPinned bool
 	}
 	// ActionRegenerateTitle is a message to regenerate the current session
 	// title.

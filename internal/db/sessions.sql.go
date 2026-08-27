@@ -35,7 +35,7 @@ INSERT INTO sessions (
     ?,
     strftime('%s', 'now'),
     strftime('%s', 'now')
-) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
+) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
 `
 
 type CreateSessionParams struct {
@@ -77,6 +77,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.LeafMessageID,
 		&i.WorkingDir,
 		&i.TitleIsCustom,
+		&i.Pinned,
+		&i.PinNote,
 	)
 	return i, err
 }
@@ -92,7 +94,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 }
 
 const getLastGlobalSession = `-- name: GetLastGlobalSession :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
 FROM sessions
 WHERE parent_session_id IS NULL
 ORDER BY updated_at DESC
@@ -116,12 +118,14 @@ func (q *Queries) GetLastGlobalSession(ctx context.Context) (Session, error) {
 		&i.LeafMessageID,
 		&i.WorkingDir,
 		&i.TitleIsCustom,
+		&i.Pinned,
+		&i.PinNote,
 	)
 	return i, err
 }
 
 const getLastSessionByWorkingDir = `-- name: GetLastSessionByWorkingDir :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
 FROM sessions
 WHERE working_dir = ? AND parent_session_id IS NULL
 ORDER BY updated_at DESC
@@ -145,12 +149,14 @@ func (q *Queries) GetLastSessionByWorkingDir(ctx context.Context, workingDir str
 		&i.LeafMessageID,
 		&i.WorkingDir,
 		&i.TitleIsCustom,
+		&i.Pinned,
+		&i.PinNote,
 	)
 	return i, err
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
 FROM sessions
 WHERE id = ? LIMIT 1
 `
@@ -172,12 +178,14 @@ func (q *Queries) GetSessionByID(ctx context.Context, id string) (Session, error
 		&i.LeafMessageID,
 		&i.WorkingDir,
 		&i.TitleIsCustom,
+		&i.Pinned,
+		&i.PinNote,
 	)
 	return i, err
 }
 
 const listAllSessions = `-- name: ListAllSessions :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
 FROM sessions
 WHERE parent_session_id IS NULL
 ORDER BY updated_at DESC
@@ -206,6 +214,54 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.LeafMessageID,
 			&i.WorkingDir,
 			&i.TitleIsCustom,
+			&i.Pinned,
+			&i.PinNote,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPinnedSessions = `-- name: ListPinnedSessions :many
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
+FROM sessions
+WHERE parent_session_id IS NULL AND pinned = 1
+ORDER BY updated_at DESC
+`
+
+func (q *Queries) ListPinnedSessions(ctx context.Context) ([]Session, error) {
+	rows, err := q.query(ctx, q.listPinnedSessionsStmt, listPinnedSessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentSessionID,
+			&i.Title,
+			&i.MessageCount,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.Cost,
+			&i.UpdatedAt,
+			&i.CreatedAt,
+			&i.Todos,
+			&i.LeafMessageID,
+			&i.WorkingDir,
+			&i.TitleIsCustom,
+			&i.Pinned,
+			&i.PinNote,
 		); err != nil {
 			return nil, err
 		}
@@ -221,7 +277,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 }
 
 const listSessionsByWorkingDir = `-- name: ListSessionsByWorkingDir :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
 FROM sessions
 WHERE parent_session_id IS NULL AND working_dir = ?
 ORDER BY updated_at DESC
@@ -250,6 +306,8 @@ func (q *Queries) ListSessionsByWorkingDir(ctx context.Context, workingDir strin
 			&i.LeafMessageID,
 			&i.WorkingDir,
 			&i.TitleIsCustom,
+			&i.Pinned,
+			&i.PinNote,
 		); err != nil {
 			return nil, err
 		}
@@ -283,6 +341,25 @@ func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) er
 	return err
 }
 
+const setSessionPin = `-- name: SetSessionPin :exec
+UPDATE sessions
+SET
+    pinned = ?1,
+    pin_note = ?2
+WHERE id = ?3 AND (pinned != ?1 OR pin_note != ?2)
+`
+
+type SetSessionPinParams struct {
+	Pinned  int64  `json:"pinned"`
+	PinNote string `json:"pin_note"`
+	ID      string `json:"id"`
+}
+
+func (q *Queries) SetSessionPin(ctx context.Context, arg SetSessionPinParams) error {
+	_, err := q.exec(ctx, q.setSessionPinStmt, setSessionPin, arg.Pinned, arg.PinNote, arg.ID)
+	return err
+}
+
 const updateSession = `-- name: UpdateSession :one
 UPDATE sessions
 SET
@@ -293,7 +370,7 @@ SET
     cost = ?,
     todos = ?
 WHERE id = ?
-RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom
+RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
 `
 
 type UpdateSessionParams struct {
@@ -331,6 +408,8 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 		&i.LeafMessageID,
 		&i.WorkingDir,
 		&i.TitleIsCustom,
+		&i.Pinned,
+		&i.PinNote,
 	)
 	return i, err
 }

@@ -76,6 +76,14 @@ func (m *mockSessionService) Rename(context.Context, string, string, bool) error
 	return nil
 }
 
+func (m *mockSessionService) SetPin(context.Context, string, bool, string) error {
+	return nil
+}
+
+func (m *mockSessionService) ListPinned(context.Context) ([]session.Session, error) {
+	return nil, nil
+}
+
 func (m *mockSessionService) Delete(context.Context, string) error {
 	return nil
 }

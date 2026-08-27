@@ -70,6 +70,10 @@ func (w *AppWorkspace) RenameSession(ctx context.Context, sessionID string, titl
 	return w.app.Sessions.Rename(ctx, sessionID, title, titleIsCustom)
 }
 
+func (w *AppWorkspace) SetSessionPin(ctx context.Context, sessionID string, pinned bool, note string) error {
+	return w.app.Sessions.SetPin(ctx, sessionID, pinned, note)
+}
+
 func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
 	return w.app.Sessions.Delete(ctx, sessionID)
 }

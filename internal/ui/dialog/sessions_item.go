@@ -129,6 +129,27 @@ func (s *SessionItem) Render(width int) string {
 	if s.hideInfo {
 		info = ""
 	}
+
+	// Prefix pinned items with a marker inside the title so it survives
+	// the truncation logic in renderItem. Fuzzy match indexes are byte
+	// offsets into the raw title, so shift them past the marker prefix.
+	// Pin state is fixed for an item's lifetime (items are rebuilt by
+	// sessionItems on reload), so the per-width cache stays valid.
+	title := s.Title
+	m := &s.m
+	if s.Session.Pinned {
+		marker := styles.PinIcon + " "
+		title = marker + title
+		if len(s.m.MatchedIndexes) > 0 {
+			shifted := s.m
+			shifted.MatchedIndexes = slices.Clone(s.m.MatchedIndexes)
+			for i := range shifted.MatchedIndexes {
+				shifted.MatchedIndexes[i] += len(marker)
+			}
+			m = &shifted
+		}
+	}
+
 	styles := ListItemStyles{
 		ItemBlurred:     s.t.Dialog.NormalItem,
 		ItemFocused:     s.t.Dialog.SelectedItem,
@@ -152,7 +173,7 @@ func (s *SessionItem) Render(width int) string {
 		}
 	}
 
-	return renderItem(styles, s.Title, info, s.focused, width, s.cache, &s.m)
+	return renderItem(styles, title, info, s.focused, width, s.cache, m)
 }
 
 type ListItemStyles struct {
