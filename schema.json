@@ -360,6 +360,10 @@
           "type": "string",
           "description": "Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"
         },
+        "clientName": {
+          "type": "string",
+          "description": "OAuth client name sent during dynamic client registration (default: Anvil MCP Client)"
+        },
         "lazy_description": {
           "type": "string",
           "description": "Short description shown to the LLM; when set the server's tools are hidden until explicitly enabled"

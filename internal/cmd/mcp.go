@@ -158,11 +158,15 @@ func runMCPAuth(cmd *cobra.Command, args []string) error {
 	// DCR if needed.
 	if needDCR && asm != nil && asm.RegistrationEndpoint != "" {
 		fmt.Println("Registering client with authorization server...")
+		clientName := mcpCfg.ClientName
+		if clientName == "" {
+			clientName = "Anvil MCP Client"
+		}
 		regMeta := &oauthex.ClientRegistrationMetadata{
 			RedirectURIs:  []string{redirectURI},
 			GrantTypes:    []string{"authorization_code"},
 			ResponseTypes: []string{"code"},
-			ClientName:    "Anvil MCP Client",
+			ClientName:    clientName,
 		}
 		regResp, regErr := oauthex.RegisterClient(ctx, asm.RegistrationEndpoint, regMeta, httpClient)
 		if regErr != nil {

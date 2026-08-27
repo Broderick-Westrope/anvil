@@ -258,6 +258,11 @@ type MCPConfig struct {
 	Scopes       []string    `json:"scopes,omitempty" jsonschema:"description=OAuth scopes to request during authorization"`
 	RedirectURI  string      `json:"redirectUri,omitempty" jsonschema:"description=Fixed OAuth redirect URI for pre-registered clients (e.g. http://localhost:3118/callback)"`
 
+	// ClientName is the client_name sent during OAuth dynamic client
+	// registration. Some servers (e.g. Figma) whitelist DCR by client
+	// name and reject unknown clients with 403.
+	ClientName string `json:"clientName,omitempty" jsonschema:"description=OAuth client name sent during dynamic client registration (default: Anvil MCP Client)"`
+
 	// LazyDescription makes this MCP server's tools lazy-loaded. The
 	// server still connects eagerly at startup, but its tools and
 	// instructions are excluded from the LLM context until explicitly
