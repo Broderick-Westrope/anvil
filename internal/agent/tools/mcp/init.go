@@ -89,6 +89,22 @@ func ArmInit() {
 	initMu.Unlock()
 }
 
+// ResetInitForTest resets the package-level MCP init state to the
+// pre-initialised condition. It is intended exclusively for use in tests that
+// need to call ArmInit() in isolation without carrying over state from
+// previous tests or from the test binary's init path. Call it via t.Cleanup
+// so that state is restored even if the test fails.
+//
+// This function is NOT safe to call concurrently with ArmInit, Initialize, or
+// WaitForInit.
+func ResetInitForTest() {
+	initMu.Lock()
+	initStarted = false
+	initOnce = sync.Once{}
+	initDone = make(chan struct{})
+	initMu.Unlock()
+}
+
 // renewLock returns the per-server mutex used to serialize session renewals,
 // creating it on first use.
 func renewLock(name string) *sync.Mutex {

@@ -29,12 +29,16 @@ type hyperSync struct {
 	client     hyperClient
 	autoupdate bool
 	init       atomic.Bool
+	// Closed when the background refresh finishes (success or failure). Test-only:
+	// tests wait on it; production ignores it.
+	refreshDone chan struct{}
 }
 
 func (s *hyperSync) Init(client hyperClient, path string, autoupdate bool) {
 	s.client = client
 	s.cache = newCache[catwalk.Provider](path)
 	s.autoupdate = autoupdate
+	s.refreshDone = make(chan struct{})
 	s.init.Store(true)
 }
 
@@ -48,12 +52,26 @@ func (s *hyperSync) Get(ctx context.Context) (catwalk.Provider, error) {
 		if !s.autoupdate {
 			slog.Info("Using embedded Hyper provider")
 			s.result = hyper.Embedded()
+			close(s.refreshDone)
 			return
 		}
 
 		cached, etag, cachedErr := s.cache.Get()
+		if cached.ID != "" && len(cached.Models) > 0 && cachedErr == nil {
+			// Cache hit: return cached immediately and refresh in background.
+			s.result = cached
+			go func() {
+				defer close(s.refreshDone)
+				s.refresh(context.Background(), etag)
+			}()
+			return
+		}
+
+		// First run: cache is empty or missing. Synchronous fetch.
+		defer close(s.refreshDone)
+
 		if cached.ID == "" || cachedErr != nil {
-			// if cached file is empty, default to embedded provider
+			// Default to embedded provider if cache is empty.
 			cached = hyper.Embedded()
 		}
 
@@ -69,6 +87,11 @@ func (s *hyperSync) Get(ctx context.Context) (catwalk.Provider, error) {
 			s.result = cached
 			return
 		}
+		if err != nil {
+			// On error, fall back to cached (which defaults to embedded if empty).
+			s.result = cached
+			return
+		}
 		if len(result.Models) == 0 {
 			slog.Warn("Hyper did not return any models")
 			s.result = cached
@@ -79,6 +102,33 @@ func (s *hyperSync) Get(ctx context.Context) (catwalk.Provider, error) {
 		throwErr = s.cache.Store(result)
 	})
 	return s.result, throwErr
+}
+
+// refresh fetches a fresh Hyper provider and stores it to the cache. It is
+// called from a background goroutine after a cache-hit startup. It never
+// touches s.result (the session continues with the cached provider), and on
+// any error it logs a warning and returns without modifying the cache.
+func (s *hyperSync) refresh(ctx context.Context, etag string) {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	result, err := s.client.Get(ctx, etag)
+	if errors.Is(err, catwalk.ErrNotModified) {
+		slog.Info("Hyper provider not modified (background refresh)")
+		return
+	}
+	if err != nil {
+		slog.Warn("Background Hyper refresh failed", "error", err)
+		return
+	}
+	if len(result.Models) == 0 {
+		slog.Warn("Background Hyper refresh returned no models; cache unchanged")
+		return
+	}
+
+	if err := s.cache.Store(result); err != nil {
+		slog.Warn("Background Hyper refresh: failed to store cache", "error", err)
+	}
 }
 
 var _ hyperClient = realHyperClient{}

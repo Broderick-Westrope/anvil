@@ -150,6 +150,10 @@ func TestProviders_Integration_WithCachedData(t *testing.T) {
 	hyperResult, err := testHyperSyncer.Get(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, "Cached Hyper", hyperResult.Name)
+
+	// Catwalk spawned a background refresh goroutine; wait for it to finish
+	// before the test exits to avoid goroutine leaks.
+	<-testCatwalkSyncer.refreshDone
 }
 
 func TestProviders_Integration_CatwalkFailsHyperSucceeds(t *testing.T) {

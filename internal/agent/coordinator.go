@@ -219,7 +219,10 @@ func NewCoordinator(
 	if !ok {
 		return nil, errOrchestratorAgentNotConfigured
 	}
-	orchestrator, err := c.buildAgent(ctx, config.AgentOrchestrator, orchestratorCfg, 3)
+	// Pass waitForMCP=false: coordinator.Run already waits for MCP init and
+	// rebuilds the tool list via UpdateModels before the first turn, so
+	// blocking here at startup is redundant and adds significant latency.
+	orchestrator, err := c.buildAgent(ctx, config.AgentOrchestrator, orchestratorCfg, 3, false)
 	if err != nil {
 		return nil, err
 	}
@@ -720,8 +723,11 @@ func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderO
 
 // buildAgent constructs a SessionAgent for the named agent at the given depth.
 // depth=3 is the top-level orchestrator; depth decreases with each delegation
-// level. isSubAgent is derived as depth < 3.
-func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg config.Agent, depth int) (SessionAgent, error) {
+// level. isSubAgent is derived as depth < 3. waitForMCP controls whether the
+// tool-building goroutine waits for MCP initialisation to complete before
+// building the tool list; pass false for the eager startup build (Run will
+// wait and rebuild) and true for lazily-built specialist agents.
+func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg config.Agent, depth int, waitForMCP bool) (SessionAgent, error) {
 	isSubAgent := depth < 3
 
 	large, small, err := c.buildAgentModels(ctx, agentCfg)
@@ -769,12 +775,15 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 	})
 
 	wg.Go(func() error {
-		// Wait for MCP servers to finish registering their tools before
-		// building the initial tool list. This ensures the first tool set
-		// (used if anything reads it before Run rebuilds) includes all
-		// MCP tools, not just fast-to-init ones.
-		if err := toolsmcp.WaitForInit(ctx); err != nil {
-			return err
+		// The eager startup build (waitForMCP=false) skips this wait:
+		// coordinator.Run waits for MCP init and rebuilds the tool list
+		// via UpdateModels before the first turn, so blocking TUI
+		// startup here is redundant. Lazily-built agents keep the wait
+		// so their first tool list is complete regardless of call order.
+		if waitForMCP {
+			if err := toolsmcp.WaitForInit(ctx); err != nil {
+				return err
+			}
 		}
 		agentTools, lazyMap, buildErr := c.buildTools(ctx, agentCfg, depth)
 		if buildErr != nil {
@@ -904,7 +913,11 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 		agentCfg.Model = modelOverride
 	}
 
-	built, err := c.buildAgent(ctx, agentName, agentCfg, depth)
+	// Lazily-built specialist agents pass waitForMCP=true: by the time a
+	// specialist is requested (via the task tool during a Run), MCP init has
+	// already completed, so the wait is instant in practice, but keeping it
+	// explicit makes correctness independent of that call-order assumption.
+	built, err := c.buildAgent(ctx, agentName, agentCfg, depth, true)
 	if err != nil {
 		return nil, err
 	}

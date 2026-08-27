@@ -9,6 +9,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/migrate"
+	"github.com/Broderick-Westrope/anvil/internal/projects"
 	"github.com/stretchr/testify/require"
 )
 
@@ -373,10 +374,149 @@ func TestMigrateMissingSourceSkipped(t *testing.T) {
 	err = migrate.ProjectDB(ctx, globalDB, "/nonexistent/anvil.db", "/nonexistent", 0)
 	require.NoError(t, err, "missing source DB should be skipped gracefully")
 
-	// Verify no migration_completed row was inserted.
+	// Verify a migration marker was inserted so subsequent startups
+	// skip this project without re-stat'ing it.
 	migrated, err := migrate.IsMigrated(ctx, globalDB, "/nonexistent/anvil.db")
 	require.NoError(t, err)
+	require.True(t, migrated)
+}
+
+func TestMigrateMissingSourceResetAndRemark(t *testing.T) {
+	t.Parallel()
+
+	globalDir := t.TempDir()
+	ctx := context.Background()
+	globalDB, err := db.Connect(ctx, globalDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Release(globalDir) })
+
+	const sourcePath = "/nonexistent/anvil.db"
+
+	// First call: marks the missing source.
+	err = migrate.ProjectDB(ctx, globalDB, sourcePath, "/nonexistent", 0)
+	require.NoError(t, err)
+
+	migrated, err := migrate.IsMigrated(ctx, globalDB, sourcePath)
+	require.NoError(t, err)
+	require.True(t, migrated)
+
+	// Simulate --force-migration clearing markers.
+	_, err = migrate.ResetAllMigrations(ctx, globalDB)
+	require.NoError(t, err)
+
+	migrated, err = migrate.IsMigrated(ctx, globalDB, sourcePath)
+	require.NoError(t, err)
 	require.False(t, migrated)
+
+	// Second call after reset: marker must be re-created.
+	err = migrate.ProjectDB(ctx, globalDB, sourcePath, "/nonexistent", 0)
+	require.NoError(t, err)
+
+	migrated, err = migrate.IsMigrated(ctx, globalDB, sourcePath)
+	require.NoError(t, err)
+	require.True(t, migrated)
+}
+
+// setupProjectsEnv redirects projects.List() to a temp directory by
+// setting ANVIL_GLOBAL_DATA, and returns a helper that registers a
+// project entry in the resulting projects.json. Must not be used with
+// t.Parallel() since it modifies a process-wide env var.
+func setupProjectsEnv(t *testing.T) (registerProject func(workingDir, dataDir string)) {
+	t.Helper()
+
+	anvilDataDir := filepath.Join(t.TempDir(), "anvil")
+	require.NoError(t, os.MkdirAll(anvilDataDir, 0o755))
+	// ANVIL_GLOBAL_DATA is the parent dir; GlobalConfigData() appends
+	// "anvil.json" to produce the full path.
+	t.Setenv("ANVIL_GLOBAL_DATA", anvilDataDir)
+
+	return func(workingDir, dataDir string) {
+		t.Helper()
+		require.NoError(t, projects.Register(workingDir, dataDir))
+	}
+}
+
+func TestAllProjectsMissingSourceSecondPassSkips(t *testing.T) {
+	// Not parallel: uses t.Setenv for ANVIL_GLOBAL_DATA.
+	registerProject := setupProjectsEnv(t)
+
+	ctx := context.Background()
+
+	globalDir := t.TempDir()
+	globalDB, err := db.Connect(ctx, globalDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Release(globalDir) })
+
+	// Create a project directory with no source DB.
+	workingDir := t.TempDir()
+	projectDataDir := filepath.Join(workingDir, ".anvil")
+	require.NoError(t, os.MkdirAll(projectDataDir, 0o755))
+	registerProject(workingDir, projectDataDir)
+
+	// First AllProjects pass: processes the project and marks it.
+	err = migrate.AllProjects(ctx, globalDB, "")
+	require.NoError(t, err)
+
+	var rowCount1 int
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM migrations_completed`).Scan(&rowCount1)
+	require.NoError(t, err)
+	require.Equal(t, 1, rowCount1, "first pass must insert exactly one marker")
+
+	// Second AllProjects pass: IsMigrated is true, so no inserts.
+	err = migrate.AllProjects(ctx, globalDB, "")
+	require.NoError(t, err)
+
+	var rowCount2 int
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM migrations_completed`).Scan(&rowCount2)
+	require.NoError(t, err)
+	require.Equal(t, rowCount1, rowCount2, "second pass must not insert additional markers")
+}
+
+func TestCurrentProjectThenAllProjectsMarkerConsistency(t *testing.T) {
+	// Not parallel: uses t.Setenv for ANVIL_GLOBAL_DATA.
+	registerProject := setupProjectsEnv(t)
+
+	ctx := context.Background()
+
+	globalDir := t.TempDir()
+	globalDB, err := db.Connect(ctx, globalDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Release(globalDir) })
+
+	// Create a project directory with no source DB.
+	workingDir := t.TempDir()
+	projectDataDir := filepath.Join(workingDir, ".anvil")
+	require.NoError(t, os.MkdirAll(projectDataDir, 0o755))
+	registerProject(workingDir, projectDataDir)
+
+	// CurrentProject processes the project and marks it via ProjectDB.
+	err = migrate.CurrentProject(ctx, globalDB, projectDataDir)
+	require.NoError(t, err)
+
+	// Verify marker is present before AllProjects runs.
+	sourcePath := filepath.Join(projectDataDir, "anvil.db")
+	migrated, err := migrate.IsMigrated(ctx, globalDB, sourcePath)
+	require.NoError(t, err)
+	require.True(t, migrated, "CurrentProject must mark missing-source project")
+
+	var rowBefore int
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM migrations_completed`).Scan(&rowBefore)
+	require.NoError(t, err)
+
+	// AllProjects should skip this project (marker path consistent
+	// with CurrentProject's derived sourcePath).
+	err = migrate.AllProjects(ctx, globalDB, "")
+	require.NoError(t, err)
+
+	var rowAfter int
+	err = globalDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM migrations_completed`).Scan(&rowAfter)
+	require.NoError(t, err)
+	require.Equal(t, rowBefore, rowAfter,
+		"AllProjects must not re-insert a marker already written by CurrentProject")
 }
 
 func TestMigrateEvalSymlinksNormalization(t *testing.T) {

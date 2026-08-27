@@ -532,6 +532,12 @@ func TestGetOrRenewClient_ClosesOldSessionOnReconnect(t *testing.T) {
 	// MCPConfig for our name, which gives a default timeout and causes
 	// createSession to fail (unsupported type ""). That is fine — we only
 	// care that Close() was called on the old session.
+	//
+	// Disable provider auto-update so config.Load takes the embedded
+	// provider path: with a warm on-disk cache, cache-first loading
+	// spawns a background refresh goroutine whose in-flight HTTP/2
+	// streams would trip goleak.
+	t.Setenv("ANVIL_DISABLE_PROVIDER_AUTO_UPDATE", "1")
 	cfg, err := config.Load(t.TempDir(), t.TempDir(), false)
 	require.NoError(t, err)
 

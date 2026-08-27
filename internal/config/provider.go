@@ -144,6 +144,8 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 		autoupdate := !cfg.Options.DisableProviderAutoUpdate
 		customProvidersOnly := cfg.Options.DisableDefaultProviders
 
+		// ctx bounds synchronous first-run fetches only; cached startups
+		// return before wg.Wait() blocks.
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 

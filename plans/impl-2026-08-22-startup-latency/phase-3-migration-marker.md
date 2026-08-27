@@ -1,6 +1,6 @@
 # Phase 3: Migration Marker for Missing Source DBs
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Parent: `plans/impl-2026-08-22-startup-latency/README.md`
 
 ## Specification

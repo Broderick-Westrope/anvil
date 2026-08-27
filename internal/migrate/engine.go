@@ -54,7 +54,18 @@ func ProjectDB(ctx context.Context, globalDB *sql.DB, sourcePath, workingDir str
 	// Check if source DB exists; skip gracefully if missing.
 	if _, err := os.Stat(sourcePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			slog.Info("Source DB does not exist, skipping migration", "path", sourcePath)
+			slog.Debug("Source DB does not exist, marking as migrated", "path", sourcePath)
+			// Record the marker so subsequent startups skip this
+			// project entirely instead of re-stat'ing it on every
+			// launch. If an older Anvil later creates this DB it will
+			// be skipped until --force-migration clears the markers;
+			// per-project DBs are legacy so this is accepted.
+			if _, err := globalDB.ExecContext(ctx,
+				`INSERT OR IGNORE INTO migrations_completed (source_path) VALUES (?)`,
+				sourcePath,
+			); err != nil {
+				return fmt.Errorf("failed to record missing-source migration: %w", err)
+			}
 			return nil
 		}
 		return fmt.Errorf("failed to stat source DB %q: %w", sourcePath, err)

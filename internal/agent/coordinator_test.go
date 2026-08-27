@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
@@ -13,6 +14,7 @@ import (
 	"charm.land/fantasy/providers/bedrock"
 	"charm.land/fantasy/providers/openaicompat"
 	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
+	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
@@ -681,4 +683,87 @@ func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
 	thinking, ok := parsed.ExtraBody["thinking"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "enabled", thinking["type"])
+}
+
+// TestNewCoordinatorDoesNotBlockOnMCPInit verifies that NewCoordinator returns
+// without waiting for MCP initialisation to complete. This is a deterministic
+// regression test: MCP init is armed (so WaitForInit would block) but
+// Initialize is never called (so initDone is never closed). NewCoordinator
+// must return within the safety timeout regardless, because the startup build
+// passes waitForMCP=false to buildAgent.
+//
+// Do NOT add t.Parallel() — this test mutates toolsmcp package-level state.
+func TestNewCoordinatorDoesNotBlockOnMCPInit(t *testing.T) {
+	const (
+		providerID = "openai-compat-test"
+		modelID    = "test-model"
+	)
+
+	// Reset toolsmcp package state before and after the test so that the armed
+	// channel does not bleed into subsequent tests.
+	toolsmcp.ResetInitForTest()
+	t.Cleanup(toolsmcp.ResetInitForTest)
+
+	// Arm MCP init without ever calling Initialize: WaitForInit will block on
+	// the initDone channel until the context is cancelled. A coordinator built
+	// with waitForMCP=true would hang here.
+	toolsmcp.ArmInit()
+
+	env := testEnv(t)
+
+	cfg, err := config.Init(env.workingDir, "", false)
+	require.NoError(t, err)
+
+	// Configure a minimal openai-compat provider with a model so that
+	// buildAgentModels succeeds without network calls.
+	providerCfg := config.ProviderConfig{
+		ID:   providerID,
+		Type: openaicompat.Name,
+		Models: []catwalk.Model{{
+			ID:               modelID,
+			ContextWindow:    10000,
+			DefaultMaxTokens: 1000,
+		}},
+	}
+	cfg.Config().Providers.Set(providerID, providerCfg)
+	cfg.Config().Models = map[config.SelectedModelType]config.SelectedModel{
+		config.SelectedModelTypeLarge: {Provider: providerID, Model: modelID},
+		config.SelectedModelTypeSmall: {Provider: providerID, Model: modelID},
+	}
+
+	// Use a context with a deadline beyond the safety timeout so that a
+	// blocked WaitForInit goroutine is eventually unblocked and cleaned up if
+	// the test times out.
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+
+	type coordinatorResult struct {
+		c   Coordinator
+		err error
+	}
+	done := make(chan coordinatorResult, 1)
+	go func() {
+		c, buildErr := NewCoordinator(
+			ctx,
+			cfg,
+			env.sessions,
+			env.messages,
+			env.permissions,
+			env.history,
+			*env.filetracker,
+			nil, // lspManager — unused during construction.
+			nil, // notify — unused during construction.
+		)
+		done <- coordinatorResult{c, buildErr}
+	}()
+
+	const safetyTimeout = 10 * time.Second
+	select {
+	case res := <-done:
+		// NewCoordinator returned before MCP init completed: the startup
+		// build correctly skips WaitForInit.
+		require.NoError(t, res.err, "NewCoordinator should succeed, not just return quickly with an error")
+	case <-time.After(safetyTimeout):
+		t.Fatal("NewCoordinator blocked for >10s while MCP init was pending — likely regressed to waiting for MCP init at startup")
+	}
 }
