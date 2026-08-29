@@ -54,6 +54,7 @@ type ToolMessageItem interface {
 	SetMessageID(id string)
 	SetStatus(status ToolStatus)
 	Status() ToolStatus
+	HasResult() bool
 }
 
 // Compactable is an interface for tool items that can render in a compacted mode.
@@ -471,6 +472,11 @@ func (t *baseToolMessageItem) SetStatus(status ToolStatus) {
 // Status returns the current tool status.
 func (t *baseToolMessageItem) Status() ToolStatus {
 	return t.status
+}
+
+// HasResult returns true if a tool result has been set.
+func (t *baseToolMessageItem) HasResult() bool {
+	return t.result != nil
 }
 
 // computeStatus computes the effective status considering the result.

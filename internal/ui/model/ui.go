@@ -1782,7 +1782,7 @@ func chatHasRunningAgent(c *Chat) bool {
 		if !ok {
 			continue
 		}
-		if tmi.Status() == chat.ToolStatusRunning && !tmi.ToolCall().Finished {
+		if tmi.Status() == chat.ToolStatusRunning && !tmi.HasResult() {
 			return true
 		}
 	}
@@ -1815,7 +1815,7 @@ func invalidateRunningAgentsInChat(c *Chat) {
 		if !ok {
 			continue
 		}
-		if tmi.Status() == chat.ToolStatusRunning && !tmi.ToolCall().Finished {
+		if tmi.Status() == chat.ToolStatusRunning && !tmi.HasResult() {
 			chat.ClearItemCaches([]chat.MessageItem{mi})
 		}
 	}

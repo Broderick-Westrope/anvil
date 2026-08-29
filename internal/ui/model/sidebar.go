@@ -153,7 +153,7 @@ func (m *UI) isViewedSubagentRunning() bool {
 	if !ok {
 		return false
 	}
-	return tmi.Status() == chat.ToolStatusRunning && !tmi.ToolCall().Finished
+	return tmi.Status() == chat.ToolStatusRunning && !tmi.HasResult()
 }
 
 // updateSidebarScrollState renders the sidebar content and computes scroll
