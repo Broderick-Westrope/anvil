@@ -208,7 +208,7 @@ func isOutsideWorkingDir(filePath, workingDir string) (bool, error) {
 // permission for the file's content was denied: no content is embedded and
 // the failed call does not count as a read.
 func writeGateErrorWithoutContent(filePath string) string {
-	return fmt.Sprintf("File %s has not been seen this session, or has changed on disk since it was last seen. Permission to read its content was denied, so it cannot be displayed. Read the file before overwriting it.", filePath)
+	return fmt.Sprintf("File %s has not been seen this session, or has changed on disk since it was last seen. Permission to read its content was denied, so the write cannot proceed. If you believe you should have access, ask the user or try the View tool.", filePath)
 }
 
 // writeGateError builds the error message returned when the write gate

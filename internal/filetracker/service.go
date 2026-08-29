@@ -54,7 +54,9 @@ func NewService(q *db.Queries) Service {
 
 // RecordRead records when a file was read, computing the content hash from
 // the file's current raw bytes on disk. If the file cannot be read, the read
-// is recorded with an empty hash.
+// is recorded with an empty hash, which downstream consumers treat the same
+// as never-seen; the next write-gate check on an existing file will block
+// once and re-record the real hash via its error-as-read path.
 func (s *service) RecordRead(ctx context.Context, sessionID, path string) {
 	hash := ""
 	if content, err := os.ReadFile(path); err == nil {
