@@ -315,6 +315,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// Add the session to the context.
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
 
+	// persistCtx survives cancellation and is used for persistence that must
+	// succeed even when the request is canceled (finish parts, error tool
+	// results, leaf sync). Using the plain parent ctx is not enough: for
+	// subagents the parent ctx is the root session's generation context,
+	// which is canceled by the same escape press — writes would fail, the
+	// child's messages would never be marked canceled, and drilled-in views
+	// would keep spinning forever.
+	persistCtx := context.WithoutCancel(ctx)
+
 	genCtx, cancel := context.WithCancel(ctx)
 	ac := &activeCancel{cancel: cancel}
 	a.activeRequests.Set(call.SessionID, ac)
@@ -330,7 +339,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// guarantees the contract at every Run exit (success, error, panic
 	// recovery upstream) without callers needing to know.
 	defer func() {
-		if flushErr := a.messages.FlushAll(ctx); flushErr != nil {
+		if flushErr := a.messages.FlushAll(persistCtx); flushErr != nil {
 			slog.Error("Failed to flush pending message updates after run", "error", flushErr)
 		}
 	}()
@@ -477,9 +486,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Finished:         false,
 			}
 			currentAssistant.AddToolCall(toolCall)
-			// Use parent ctx instead of genCtx to ensure the update succeeds
-			// even if the request is canceled mid-stream
-			return a.messages.Update(ctx, *currentAssistant)
+			// Use persistCtx so the update succeeds even if the request is
+			// canceled mid-stream.
+			return a.messages.Update(persistCtx, *currentAssistant)
 		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
@@ -514,9 +523,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Finished:         true,
 			}
 			currentAssistant.AddToolCall(toolCall)
-			// Use parent ctx instead of genCtx to ensure the update succeeds
-			// even if the request is canceled mid-stream
-			return a.messages.Update(ctx, *currentAssistant)
+			// Use persistCtx so the update succeeds even if the request is
+			// canceled mid-stream.
+			return a.messages.Update(persistCtx, *currentAssistant)
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
@@ -534,7 +543,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			// (an unintended fork).
 			sessionLock.Lock()
 			defer sessionLock.Unlock()
-			toolMsg, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
+			// Use persistCtx: a completed tool result must be recorded
+			// even when cancellation races the tool goroutine, or the
+			// error path would misrecord the success as a canceled call.
+			toolMsg, createMsgErr := a.messages.Create(persistCtx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
@@ -635,8 +647,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		// Ensure we finish thinking on error to close the reasoning state.
 		currentAssistant.FinishThinking()
 		toolCalls := currentAssistant.ToolCalls()
-		// INFO: we use the parent context here because the genCtx has been cancelled.
-		msgs, createErr := a.messages.List(ctx, currentAssistant.SessionID)
+		// Use persistCtx: genCtx has been canceled, and for subagents the
+		// parent ctx is canceled too.
+		msgs, createErr := a.messages.List(persistCtx, currentAssistant.SessionID)
 		if createErr != nil {
 			return nil, createErr
 		}
@@ -645,7 +658,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				tc.Finished = true
 				tc.Input = "{}"
 				currentAssistant.AddToolCall(tc)
-				updateErr := a.messages.Update(ctx, *currentAssistant)
+				updateErr := a.messages.Update(persistCtx, *currentAssistant)
 				if updateErr != nil {
 					return nil, updateErr
 				}
@@ -678,7 +691,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Content:    content,
 				IsError:    true,
 			}
-			errToolMsg, createErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
+			errToolMsg, createErr := a.messages.Create(persistCtx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
@@ -730,9 +743,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		} else {
 			currentAssistant.AddFinish(message.FinishReasonError, defaultTitle, err.Error())
 		}
-		// Note: we use the parent context here because the genCtx has been
-		// cancelled.
-		updateErr := a.messages.Update(ctx, *currentAssistant)
+		// Use persistCtx: genCtx has been canceled, and for subagents the
+		// parent ctx is canceled too.
+		updateErr := a.messages.Update(persistCtx, *currentAssistant)
 		if updateErr != nil {
 			return nil, updateErr
 		}
@@ -740,7 +753,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		// the UI reflects the current position (e.g. branch dialog).
 		// message.Create already advanced the DB leaf, but no session
 		// pubsub event was fired because OnStepFinish never ran.
-		if moveErr := a.sessions.MoveLeaf(ctx, call.SessionID, getLeaf()); moveErr != nil {
+		if moveErr := a.sessions.MoveLeaf(persistCtx, call.SessionID, getLeaf()); moveErr != nil {
 			slog.Warn("Failed to sync session leaf after error", "err", moveErr)
 		}
 		return nil, err
