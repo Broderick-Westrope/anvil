@@ -60,12 +60,15 @@ var (
 	ellipsisFrames = []string{".", "..", "...", ""}
 )
 
-// Internal ID management. Used during animating to ensure that frame messages
-// are received only by spinner components that sent them.
+// lastID is the shared monotonic counter behind nextID(). It serves two
+// purposes: auto-generating an Anim's id when Settings.ID is empty, and
+// assigning every Anim a unique instance token (see StepMsg.Instance).
+// Both must draw from the same counter via nextID() so instance values
+// stay globally unique and never collide with the zero wildcard.
 var lastID atomic.Int64
 
-func nextID() int {
-	return int(lastID.Add(1))
+func nextID() int64 {
+	return lastID.Add(1)
 }
 
 // Cache for expensive animation calculations
@@ -174,12 +177,12 @@ func New(opts Settings) *Anim {
 	// No fallback is applied so non-interactive callers can opt out
 	// of explicit coloring.
 
+	a.instance = nextID()
 	if opts.ID != "" {
 		a.id = opts.ID
 	} else {
-		a.id = fmt.Sprintf("%d", nextID())
+		a.id = fmt.Sprintf("%d", a.instance)
 	}
-	a.instance = lastID.Add(1)
 	a.cyclingCharWidth = opts.Size
 	a.labelColor = opts.LabelColor
 
