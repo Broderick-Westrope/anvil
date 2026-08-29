@@ -136,7 +136,7 @@ type sessionAgent struct {
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
 	lazyMCPToolMap     *csync.Map[string, string]
-	connectFn          tools.ConnectFn
+	connectFn          *csync.Value[tools.ConnectFn]
 
 	depth                int
 	isSubAgent           bool
@@ -182,6 +182,7 @@ func NewSessionAgent(
 		disableAutoSummarize: opts.DisableAutoSummarize,
 		tools:                csync.NewSliceFrom(opts.Tools),
 		lazyMCPToolMap:       csync.NewMap[string, string](),
+		connectFn:            csync.NewValue[tools.ConnectFn](nil),
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
@@ -253,7 +254,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// start (not session load) so browsing history never triggers
 	// connections. Failures are non-fatal: the server is downgraded
 	// to not-enabled for this run.
-	if a.connectFn != nil {
+	connectFn := a.connectFn.Get()
+	if connectFn != nil {
 		for name := range initialEnabled {
 			if !initialEnabled[name] {
 				continue
@@ -262,7 +264,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if !ok || info.State != mcp.StateDeferred {
 				continue
 			}
-			if _, err := a.connectFn(ctx, name); err != nil {
+			if _, err := connectFn(ctx, name); err != nil {
 				slog.Warn("Failed to reconnect replayed deferred MCP, disabling for this run",
 					"name", name, "error", err)
 				lazyState.Disable(name)
@@ -1615,7 +1617,7 @@ func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
 }
 
 func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
-	a.connectFn = fn
+	a.connectFn.Set(fn)
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
