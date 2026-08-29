@@ -1545,7 +1545,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 				if sess.CreatedAt > 0 {
 					da.SetStartedAt(time.Unix(sess.CreatedAt, 0))
 				}
-				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.ToolCall().Finished && sess.UpdatedAt > sess.CreatedAt {
+				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && sess.UpdatedAt > sess.CreatedAt {
 					da.SetFinishedAt(time.Unix(sess.UpdatedAt, 0))
 				}
 			}
@@ -1622,7 +1622,17 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 				continue
 			}
 			if toolMsgItem, ok := toolItem.(chat.ToolMessageItem); ok {
+				hadResult := toolMsgItem.HasResult()
 				toolMsgItem.SetResult(&tr)
+				// Record finish time for elapsed-time display on agent
+				// items. The result arriving is the execution-finished
+				// signal; ToolCall().Finished only means the input JSON
+				// finished streaming.
+				if !hadResult {
+					if da, ok := toolItem.(chat.DrillableAgent); ok {
+						da.SetFinishedAt(time.Now())
+					}
+				}
 				// Only auto-scroll if this chat is currently visible.
 				if c == m.activeChat() && c.Follow() {
 					if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
@@ -1716,12 +1726,6 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input {
 				toolItem.SetToolCall(tc)
 			}
-			// Record finish time for elapsed-time display on agent items.
-			if tc.Finished && !existingToolCall.Finished {
-				if da, ok := existingToolItem.(chat.DrillableAgent); ok {
-					da.SetFinishedAt(time.Now())
-				}
-			}
 		}
 		if existingToolItem == nil {
 			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.expandedToolPatterns()))
@@ -1782,6 +1786,9 @@ func chatHasRunningAgent(c *Chat) bool {
 		if !ok {
 			continue
 		}
+		// HasResult is the completion sentinel: SetResult never updates
+		// status, so Status() stays Running after completion. The Status
+		// check matters only for the cancellation path.
 		if tmi.Status() == chat.ToolStatusRunning && !tmi.HasResult() {
 			return true
 		}
@@ -1815,6 +1822,7 @@ func invalidateRunningAgentsInChat(c *Chat) {
 		if !ok {
 			continue
 		}
+		// See chatHasRunningAgent for why both checks are needed.
 		if tmi.Status() == chat.ToolStatusRunning && !tmi.HasResult() {
 			chat.ClearItemCaches([]chat.MessageItem{mi})
 		}
@@ -1983,7 +1991,7 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 		if s.CreatedAt > 0 {
 			da.SetStartedAt(time.Unix(s.CreatedAt, 0))
 		}
-		if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.ToolCall().Finished && s.UpdatedAt > s.CreatedAt {
+		if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && s.UpdatedAt > s.CreatedAt {
 			da.SetFinishedAt(time.Unix(s.UpdatedAt, 0))
 		}
 	}
