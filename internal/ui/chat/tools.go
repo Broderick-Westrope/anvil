@@ -469,15 +469,18 @@ func (t *baseToolMessageItem) SetStatus(status ToolStatus) {
 	t.Bump()
 }
 
-// Status returns the current tool status.
+// Status returns the effective tool status: Success or Error once a result
+// has been recorded, otherwise the raw status (Running, AwaitingPermission,
+// or Canceled). SetResult never updates the raw status field, so deriving
+// from the result here keeps callers from having to pair Status() with
+// HasResult().
 func (t *baseToolMessageItem) Status() ToolStatus {
-	return t.status
+	return t.computeStatus()
 }
 
-// HasResult returns true if the result is not nil. It is the
-// execution-finished signal for tool calls: SetResult never updates the
-// status field, so Status() alone cannot distinguish a running tool from a
-// completed one.
+// HasResult returns true if the result is not nil. The result arriving is
+// the execution-finished signal for tool calls; ToolCall().Finished only
+// means the input JSON finished streaming.
 func (t *baseToolMessageItem) HasResult() bool {
 	return t.result != nil
 }

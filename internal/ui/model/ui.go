@@ -1786,10 +1786,9 @@ func chatHasRunningAgent(c *Chat) bool {
 		if !ok {
 			continue
 		}
-		// HasResult is the completion sentinel: SetResult never updates
-		// status, so Status() stays Running after completion. The Status
-		// check matters only for the cancellation path.
-		if tmi.Status() == chat.ToolStatusRunning && !tmi.HasResult() {
+		// Status is result-aware: it reports Success/Error once a result
+		// arrives, so Running means the tool is genuinely still executing.
+		if tmi.Status() == chat.ToolStatusRunning {
 			return true
 		}
 	}
@@ -1822,8 +1821,7 @@ func invalidateRunningAgentsInChat(c *Chat) {
 		if !ok {
 			continue
 		}
-		// See chatHasRunningAgent for why both checks are needed.
-		if tmi.Status() == chat.ToolStatusRunning && !tmi.HasResult() {
+		if tmi.Status() == chat.ToolStatusRunning {
 			chat.ClearItemCaches([]chat.MessageItem{mi})
 		}
 	}
