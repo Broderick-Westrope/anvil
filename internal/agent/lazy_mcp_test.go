@@ -41,9 +41,10 @@ func TestDeriveLazyMCPState_SingleEnableMCP(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -66,9 +67,10 @@ func TestDeriveLazyMCPState_EnableThenToggleDisabled(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -98,9 +100,10 @@ func TestDeriveLazyMCPState_MultipleServersInterleaved(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -112,9 +115,10 @@ func TestDeriveLazyMCPState_MultipleServersInterleaved(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc2",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"github"}`,
+					ID:       "tc2",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"github"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -136,9 +140,10 @@ func TestDeriveLazyMCPState_MultipleServersInterleaved(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc3",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"sentry"}`,
+					ID:       "tc3",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"sentry"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -160,9 +165,10 @@ func TestDeriveLazyMCPState_NonExistentMCPs(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"nonexistent"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"nonexistent"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -182,9 +188,10 @@ func TestDeriveLazyMCPState_BadJSON(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{bad json`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{bad json`,
+					Finished: true,
 				},
 			},
 		},
@@ -202,9 +209,10 @@ func TestDeriveLazyMCPState_ErroredEnable(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -226,9 +234,10 @@ func TestDeriveLazyMCPState_MissingResult(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -265,9 +274,10 @@ func TestDeriveLazyMCPState_ErroredThenSuccessful(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -279,9 +289,10 @@ func TestDeriveLazyMCPState_ErroredThenSuccessful(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc2",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc2",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -433,8 +444,8 @@ func TestFilterLazyMCPTools_StaleSnapshotPassThrough(t *testing.T) {
 	allTools := []fantasy.AgentTool{
 		&mockAgentTool{name: "bash"},
 		&mockAgentTool{name: "mcp_datadog_query"}, // In stale map, datadog not enabled → filtered.
-		&mockAgentTool{name: "mcp_github_pr"},      // NOT in stale map → passes through.
-		&mockAgentTool{name: "mcp_github_issues"},  // NOT in stale map → passes through.
+		&mockAgentTool{name: "mcp_github_pr"},     // NOT in stale map → passes through.
+		&mockAgentTool{name: "mcp_github_issues"}, // NOT in stale map → passes through.
 	}
 
 	filtered := filterLazyMCPTools(allTools, staleMap, state)

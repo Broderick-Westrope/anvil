@@ -64,9 +64,10 @@ func TestLazyMCPIntegration_BranchScoping(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -103,9 +104,10 @@ func TestLazyMCPIntegration_HumanToggleOrdering(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -210,9 +212,10 @@ func TestLazyMCPIntegration_SubAgentIsolation(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
 		},
@@ -234,9 +237,10 @@ func TestLazyMCPIntegration_SubAgentIsolation(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc2",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"slack"}`,
+					ID:       "tc2",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"slack"}`,
+					Finished: true,
 				},
 			},
 		},

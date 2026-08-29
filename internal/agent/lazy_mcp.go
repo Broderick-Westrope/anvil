@@ -35,7 +35,7 @@ func deriveLazyMCPState(messages []message.Message) map[string]bool {
 		for _, part := range msg.Parts {
 			switch p := part.(type) {
 			case message.ToolCall:
-				if p.Name != tools.EnableMCPToolName {
+				if p.Name != tools.EnableMCPToolName || !p.Finished {
 					continue
 				}
 				var params tools.EnableMCPParams
