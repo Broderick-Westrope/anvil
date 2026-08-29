@@ -6,28 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	fang "charm.land/fang/v2"
 	"github.com/Broderick-Westrope/anvil/internal/app"
-	"github.com/Broderick-Westrope/anvil/internal/client"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	anvillog "github.com/Broderick-Westrope/anvil/internal/log"
 	"github.com/Broderick-Westrope/anvil/internal/migrate"
 	"github.com/Broderick-Westrope/anvil/internal/projects"
-	"github.com/Broderick-Westrope/anvil/internal/proto"
-	"github.com/Broderick-Westrope/anvil/internal/server"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	ui "github.com/Broderick-Westrope/anvil/internal/ui/model"
@@ -40,13 +31,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var clientHost string
-
 func init() {
 	rootCmd.PersistentFlags().StringP("cwd", "c", "", "Current working directory")
 	rootCmd.PersistentFlags().StringP("data-dir", "D", "", "Custom anvil data directory")
 	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Debug")
-	rootCmd.PersistentFlags().StringVarP(&clientHost, "host", "H", server.DefaultHost(), "Connect to a specific anvil server host (for advanced users)")
 	rootCmd.Flags().BoolP("help", "h", false, "Help")
 	rootCmd.Flags().StringP("yolo", "y", "", "Permission bypass level: --yolo (standard) or --yolo=full")
 	rootCmd.Flags().Lookup("yolo").NoOptDefVal = "true"
@@ -65,9 +53,7 @@ func init() {
 		projectsCmd,
 		updateProvidersCmd,
 		logsCmd,
-		logoutCmd,
 		schemaCmd,
-		loginCmd,
 		statsCmd,
 		sessionCmd,
 		mcpCmd,
@@ -204,13 +190,6 @@ func supportsProgressBar() bool {
 	return isWindowsTerminal || xstrings.ContainsAnyOf(strings.ToLower(termProg), "ghostty", "iterm2", "rio")
 }
 
-// useClientServer returns true when the client/server architecture is
-// enabled via the ANVIL_CLIENT_SERVER environment variable.
-func useClientServer() bool {
-	v, _ := strconv.ParseBool(os.Getenv("ANVIL_CLIENT_SERVER"))
-	return v
-}
-
 // setupWorkspaceWithProgressBar wraps setupWorkspace with an optional
 // terminal progress bar shown during initialization.
 func setupWorkspaceWithProgressBar(cmd *cobra.Command) (workspace.Workspace, func(), error) {
@@ -228,14 +207,9 @@ func setupWorkspaceWithProgressBar(cmd *cobra.Command) (workspace.Workspace, fun
 	return ws, cleanup, err
 }
 
-// setupWorkspace returns a Workspace and cleanup function. When
-// ANVIL_CLIENT_SERVER=1, it connects to a server process and returns a
-// ClientWorkspace. Otherwise it creates an in-process app.App and
-// returns an AppWorkspace.
+// setupWorkspace creates an in-process app.App and returns an
+// AppWorkspace.
 func setupWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
-	if useClientServer() {
-		return setupClientServerWorkspace(cmd)
-	}
 	return setupLocalWorkspace(cmd)
 }
 
@@ -325,228 +299,6 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 	ws := workspace.NewAppWorkspace(appInstance, store)
 	cleanup := func() { appInstance.Shutdown() }
 	return ws, cleanup, nil
-}
-
-// setupClientServerWorkspace connects to a server process and wraps the
-// result in a ClientWorkspace.
-func setupClientServerWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
-	c, protoWs, cleanupServer, err := connectToServer(cmd)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	clientWs := workspace.NewClientWorkspace(c, *protoWs)
-
-	if protoWs.Config.IsConfigured() {
-		if err := clientWs.InitOrchestratorAgent(cmd.Context()); err != nil {
-			slog.Error("Failed to initialize orchestrator agent", "error", err)
-		}
-	}
-
-	return clientWs, cleanupServer, nil
-}
-
-// connectToServer ensures the server is running, creates a client and
-// workspace, and returns a cleanup function that deletes the workspace.
-func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func(), error) {
-	hostURL, err := server.ParseHostURL(clientHost)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("invalid host URL: %v", err)
-	}
-
-	if err := ensureServer(cmd, hostURL); err != nil {
-		return nil, nil, nil, err
-	}
-
-	debug, _ := cmd.Flags().GetBool("debug")
-	yoloStr, _ := cmd.Flags().GetString("yolo")
-	dataDir, _ := cmd.Flags().GetString("data-dir")
-	ctx := cmd.Context()
-
-	cwd, err := ResolveCwd(cmd)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	yoloLevel, err := config.ParseYoloLevel(yoloStr)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	c, err := client.NewClient(cwd, hostURL.Scheme, hostURL.Host)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	wsReq := proto.Workspace{
-		Path:      cwd,
-		DataDir:   dataDir,
-		Debug:     debug,
-		YOLO:      yoloLevel != config.YoloOff,
-		YoloLevel: int(yoloLevel),
-		Version:   version.Version,
-		Env:       os.Environ(),
-	}
-
-	ws, err := c.CreateWorkspace(ctx, wsReq)
-	if err != nil {
-		// The server socket may exist before the HTTP handler is ready.
-		// Retry a few times with a short backoff.
-		for range 5 {
-			select {
-			case <-ctx.Done():
-				return nil, nil, nil, ctx.Err()
-			case <-time.After(200 * time.Millisecond):
-			}
-			ws, err = c.CreateWorkspace(ctx, wsReq)
-			if err == nil {
-				break
-			}
-		}
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to create workspace: %v", err)
-		}
-	}
-
-	if ws.Config != nil {
-		logFile := filepath.Join(ws.Config.Options.ProjectDirectory, "logs", "anvil.log")
-		anvillog.Setup(logFile, debug)
-	}
-
-	cleanup := func() { _ = c.DeleteWorkspace(context.Background(), ws.ID) }
-	return c, ws, cleanup, nil
-}
-
-// ensureServer auto-starts a detached server if the socket file does not
-// exist. When the socket exists, it verifies that the running server
-// version matches the client; on mismatch it shuts down the old server
-// and starts a fresh one.
-func ensureServer(cmd *cobra.Command, hostURL *url.URL) error {
-	switch hostURL.Scheme {
-	case "unix", "npipe":
-		needsStart := false
-		if _, err := os.Stat(hostURL.Host); err != nil && errors.Is(err, fs.ErrNotExist) {
-			needsStart = true
-		} else if err == nil {
-			if err := restartIfStale(cmd, hostURL); err != nil {
-				slog.Warn("Failed to check server version, restarting", "error", err)
-				needsStart = true
-			}
-		}
-
-		if needsStart {
-			if err := startDetachedServer(cmd); err != nil {
-				return err
-			}
-		}
-
-		var err error
-		for range 10 {
-			_, err = os.Stat(hostURL.Host)
-			if err == nil {
-				break
-			}
-			select {
-			case <-cmd.Context().Done():
-				return cmd.Context().Err()
-			case <-time.After(100 * time.Millisecond):
-			}
-		}
-		if err != nil {
-			return fmt.Errorf("failed to initialize anvil server: %v", err)
-		}
-	}
-
-	return nil
-}
-
-// restartIfStale checks whether the running server matches the current
-// client version. When they differ, it sends a shutdown command and
-// removes the stale socket so the caller can start a fresh server.
-func restartIfStale(cmd *cobra.Command, hostURL *url.URL) error {
-	c, err := client.NewClient("", hostURL.Scheme, hostURL.Host)
-	if err != nil {
-		return err
-	}
-	vi, err := c.VersionInfo(cmd.Context())
-	if err != nil {
-		return err
-	}
-	if vi.Version == version.Version {
-		return nil
-	}
-	slog.Info("Server version mismatch, restarting",
-		"server", vi.Version,
-		"client", version.Version,
-	)
-	_ = c.ShutdownServer(cmd.Context())
-	// Give the old process a moment to release the socket.
-	for range 20 {
-		if _, err := os.Stat(hostURL.Host); errors.Is(err, fs.ErrNotExist) {
-			break
-		}
-		select {
-		case <-cmd.Context().Done():
-			return cmd.Context().Err()
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-	// Force-remove if the socket is still lingering.
-	_ = os.Remove(hostURL.Host)
-	return nil
-}
-
-var safeNameRegexp = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
-
-func startDetachedServer(cmd *cobra.Command) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %v", err)
-	}
-
-	safeClientHost := safeNameRegexp.ReplaceAllString(clientHost, "_")
-	chDir := filepath.Join(config.GlobalCacheDir(), "server-"+safeClientHost)
-	if err := os.MkdirAll(chDir, 0o700); err != nil {
-		return fmt.Errorf("failed to create server working directory: %v", err)
-	}
-
-	cmdArgs := []string{"server"}
-	if clientHost != server.DefaultHost() {
-		cmdArgs = append(cmdArgs, "--host", clientHost)
-	}
-
-	// Use context.Background() so the parent's context cancellation does not
-	// kill the spawned server. detachProcess (Setsid on !windows,
-	// DETACHED_PROCESS on windows) is what truly detaches the child from
-	// this process's lifetime.
-	c := exec.CommandContext(context.Background(), exe, cmdArgs...)
-	stdoutPath := filepath.Join(chDir, "stdout.log")
-	stderrPath := filepath.Join(chDir, "stderr.log")
-	detachProcess(c)
-
-	stdout, err := os.Create(stdoutPath)
-	if err != nil {
-		return fmt.Errorf("failed to create stdout log file: %v", err)
-	}
-	defer stdout.Close()
-	c.Stdout = stdout
-
-	stderr, err := os.Create(stderrPath)
-	if err != nil {
-		return fmt.Errorf("failed to create stderr log file: %v", err)
-	}
-	defer stderr.Close()
-	c.Stderr = stderr
-
-	if err := c.Start(); err != nil {
-		return fmt.Errorf("failed to start anvil server: %v", err)
-	}
-
-	if err := c.Process.Release(); err != nil {
-		return fmt.Errorf("failed to detach anvil server process: %v", err)
-	}
-
-	return nil
 }
 
 func MaybePrependStdin(prompt string) (string, error) {
