@@ -94,9 +94,21 @@ func settingsHash(opts Settings) string {
 // older chain (mismatched Gen) are dropped instead of advancing the frame.
 // This is what keeps a single spinner from being driven by two concurrent
 // tick chains (which would render as a doubled, double-speed animation).
+//
+// Instance identifies the specific Anim value that emitted the tick. IDs
+// are not unique across Anim instances: the same tool-call ID backs one
+// item in the root chat's nested view and another item in each drill-in
+// chat, and the UI broadcasts every StepMsg to every chat. Without the
+// instance gate, a single tick is accepted by every same-ID instance and
+// each returns a fresh tick command, multiplying the chain per frame —
+// exponential message growth that freezes the UI when drilled into
+// subagent sessions. Instance 0 is a wildcard that matches any instance;
+// only hand-built messages (tests) use it, Step() always stamps the real
+// instance.
 type StepMsg struct {
-	ID  string
-	Gen int64
+	ID       string
+	Gen      int64
+	Instance int64
 }
 
 // Settings defines settings for the animation.
@@ -130,6 +142,13 @@ type Anim struct {
 	ellipsisFrames   *csync.Slice[string] // ellipsis animation frames
 	id               string
 
+	// instance uniquely identifies this Anim value. IDs can be shared by
+	// multiple live instances (the same tool call rendered in the root
+	// chat and in drill-in chats), so ticks are additionally stamped with
+	// the emitting instance and Animate() drops ticks from a different
+	// instance. See StepMsg.
+	instance int64
+
 	// gen identifies the currently armed tick chain. Start() bumps it and
 	// stamps every emitted StepMsg with the new value; Animate() drops ticks
 	// whose Gen does not match the current value. Re-arming therefore
@@ -160,6 +179,7 @@ func New(opts Settings) *Anim {
 	} else {
 		a.id = fmt.Sprintf("%d", nextID())
 	}
+	a.instance = lastID.Add(1)
 	a.cyclingCharWidth = opts.Size
 	a.labelColor = opts.LabelColor
 
@@ -382,6 +402,14 @@ func (a *Anim) Animate(msg StepMsg) tea.Cmd {
 	if msg.ID != a.id {
 		return nil
 	}
+	// Drop ticks emitted by a different Anim instance that shares this ID
+	// (e.g. the same tool call rendered in another drill-in chat). Without
+	// this gate each same-ID instance would adopt the foreign tick and
+	// schedule its own next step, multiplying tick chains every frame.
+	// Instance 0 is a wildcard used by hand-built messages in tests.
+	if msg.Instance != 0 && msg.Instance != a.instance {
+		return nil
+	}
 	// Drop ticks from a superseded chain.
 	if msg.Gen != a.gen.Load() {
 		return nil
@@ -446,7 +474,7 @@ func (a *Anim) Render() string {
 func (a *Anim) Step() tea.Cmd {
 	gen := a.gen.Load()
 	return tea.Tick(time.Second/time.Duration(fps), func(t time.Time) tea.Msg {
-		return StepMsg{ID: a.id, Gen: gen}
+		return StepMsg{ID: a.id, Gen: gen, Instance: a.instance}
 	})
 }
 

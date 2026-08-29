@@ -236,3 +236,36 @@ func TestAnimateWithoutStart(t *testing.T) {
 	next := a.Animate(msg)
 	require.NotNil(t, next, "matching gen-0 tick must advance a fresh Anim")
 }
+
+// TestDuplicateIDInstancesDoNotCrossAdvance covers the drill-in tick storm:
+// the same tool-call ID backs distinct Anim instances in the root chat and
+// in each drill-in chat, and the UI broadcasts every StepMsg to every chat.
+// A tick emitted by one instance must be dropped by the other — if both
+// accept it, both schedule a next step and tick chains multiply every
+// frame (exponential growth that freezes the UI).
+func TestDuplicateIDInstancesDoNotCrossAdvance(t *testing.T) {
+	t.Parallel()
+
+	root := New(Settings{ID: "tool-1", Size: 5})
+	drill := New(Settings{ID: "tool-1", Size: 5})
+
+	rootMsg := root.Start()().(StepMsg)
+	drillMsg := drill.Start()().(StepMsg)
+
+	// A foreign instance's tick must be dropped, not adopted.
+	require.Nil(t, drill.Animate(rootMsg), "drill instance must drop root's tick")
+	require.Nil(t, root.Animate(drillMsg), "root instance must drop drill's tick")
+	require.Equal(t, int64(0), root.framesSinceStart.Load())
+	require.Equal(t, int64(0), drill.framesSinceStart.Load())
+
+	// Each instance's own chain still advances and stays 1:1 — one tick in,
+	// at most one tick out across both instances.
+	for range 5 {
+		nextRoot := root.Animate(rootMsg)
+		require.NotNil(t, nextRoot, "own tick must advance the root instance")
+		require.Nil(t, drill.Animate(rootMsg), "root's tick must never fan out to drill")
+		rootMsg = nextRoot().(StepMsg)
+	}
+	require.Equal(t, int64(5), root.framesSinceStart.Load())
+	require.Equal(t, int64(0), drill.framesSinceStart.Load())
+}
