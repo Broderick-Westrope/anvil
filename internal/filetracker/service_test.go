@@ -103,6 +103,8 @@ func TestService_RecordRead_DifferentSessions(t *testing.T) {
 }
 
 func TestService_RecordRead_ComputesHashFromDisk(t *testing.T) {
+	t.Parallel()
+
 	env := setupTest(t)
 
 	sessionID := "hash-session-1"
@@ -119,6 +121,8 @@ func TestService_RecordRead_ComputesHashFromDisk(t *testing.T) {
 }
 
 func TestService_RecordRead_MissingFileRecordsEmptyHash(t *testing.T) {
+	t.Parallel()
+
 	env := setupTest(t)
 
 	sessionID := "hash-session-2"
@@ -132,6 +136,8 @@ func TestService_RecordRead_MissingFileRecordsEmptyHash(t *testing.T) {
 }
 
 func TestService_RecordReadWithHash_RoundTrip(t *testing.T) {
+	t.Parallel()
+
 	env := setupTest(t)
 
 	sessionID := "hash-session-3"
@@ -148,6 +154,8 @@ func TestService_RecordReadWithHash_RoundTrip(t *testing.T) {
 }
 
 func TestService_LastContentHash_NeverSeen(t *testing.T) {
+	t.Parallel()
+
 	env := setupTest(t)
 
 	hash := env.svc.LastContentHash(env.ctx, "nonexistent-session", "/nonexistent/path")

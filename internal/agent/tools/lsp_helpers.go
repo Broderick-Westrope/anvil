@@ -60,7 +60,7 @@ func resolveSymbol(ctx context.Context, lspManager *lsp.Manager, symbol, working
 // startup, and returns one candidate per file that a running client can
 // serve, sorted by path.
 func resolveSymbolCandidates(ctx context.Context, lspManager *lsp.Manager, symbol, workingDir string) ([]*resolvedSymbol, error) {
-	matches, _, err := searchFiles(ctx, regexp.QuoteMeta(symbol), workingDir, "", 100)
+	matches, _, err := searchFiles(ctx, `\b`+regexp.QuoteMeta(symbol)+`\b`, workingDir, "", 100)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search for symbol: %w", err)
 	}
@@ -78,6 +78,7 @@ func resolveSymbolCandidates(ctx context.Context, lspManager *lsp.Manager, symbo
 		if _, ok := seen[absPath]; ok {
 			continue
 		}
+		seen[absPath] = struct{}{}
 
 		lspManager.Start(ctx, absPath)
 
@@ -86,7 +87,6 @@ func resolveSymbolCandidates(ctx context.Context, lspManager *lsp.Manager, symbo
 			continue
 		}
 
-		seen[absPath] = struct{}{}
 		candidates = append(candidates, &resolvedSymbol{
 			client: client,
 			path:   absPath,

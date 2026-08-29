@@ -1013,7 +1013,7 @@ func (c *coordinator) buildToolsWithState(
 			tools.NewSymbolsTool(c.lspManager),
 			tools.NewDefinitionTool(c.lspManager),
 			tools.NewCallHierarchyTool(c.lspManager),
-			tools.NewRenameTool(c.lspManager, c.permissions, c.filetracker),
+			tools.NewRenameTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 		)
 	}
 

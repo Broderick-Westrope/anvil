@@ -225,7 +225,7 @@ func notFoundError(content, old string) error {
 // commitFileChange writes newContent to filePath and records the read (with
 // the hash of the written bytes) in the file tracker. Callers must convert
 // line endings before calling this function.
-func commitFileChange(edit editContext, sessionID, filePath, oldContent, newContent string) error {
+func commitFileChange(edit editContext, sessionID, filePath, newContent string) error {
 	if err := os.WriteFile(filePath, []byte(newContent), 0o644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
@@ -340,7 +340,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		writeContent, _ = fsext.ToWindowsLineEndings(writeContent)
 	}
 
-	if err := commitFileChange(edit, sessionID, filePath, oldContent, writeContent); err != nil {
+	if err := commitFileChange(edit, sessionID, filePath, writeContent); err != nil {
 		return fantasy.ToolResponse{}, err
 	}
 
@@ -414,7 +414,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 		writeContent, _ = fsext.ToWindowsLineEndings(writeContent)
 	}
 
-	if err := commitFileChange(edit, sessionID, filePath, oldContent, writeContent); err != nil {
+	if err := commitFileChange(edit, sessionID, filePath, writeContent); err != nil {
 		return fantasy.ToolResponse{}, err
 	}
 

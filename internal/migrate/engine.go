@@ -217,7 +217,7 @@ func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourceP
 	// prepending workingDir. Paths already absolute (Unix '/',
 	// Windows drive letter 'C:\', or UNC '\\') are copied as-is.
 	if _, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO main.read_files (session_id, path, read_at)
+		INSERT OR IGNORE INTO main.read_files (session_id, path, read_at, content_hash)
 		SELECT
 			session_id,
 			CASE
@@ -227,7 +227,8 @@ func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourceP
 				WHEN path LIKE '\\%' THEN path
 				ELSE ? || '/' || path
 			END,
-			read_at
+			read_at,
+			''
 		FROM source.read_files
 	`, workingDir); err != nil {
 		return fmt.Errorf("failed to copy read_files: %w", err)
@@ -548,7 +549,7 @@ func copyReadFilesBatched(ctx context.Context, conn *sql.Conn, workingDir string
 		}
 
 		result, err := conn.ExecContext(ctx, `
-			INSERT OR IGNORE INTO main.read_files (session_id, path, read_at)
+			INSERT OR IGNORE INTO main.read_files (session_id, path, read_at, content_hash)
 			SELECT
 				session_id,
 				CASE
@@ -558,7 +559,8 @@ func copyReadFilesBatched(ctx context.Context, conn *sql.Conn, workingDir string
 					WHEN path LIKE '\\%' THEN path
 					ELSE ? || '/' || path
 				END,
-				read_at
+				read_at,
+				''
 			FROM source.read_files
 			ORDER BY rowid
 			LIMIT ? OFFSET ?

@@ -310,7 +310,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 		writeContent, _ = fsext.ToWindowsLineEndings(writeContent)
 	}
 
-	if err := commitFileChange(edit, sessionID, params.FilePath, oldContent, writeContent); err != nil {
+	if err := commitFileChange(edit, sessionID, params.FilePath, writeContent); err != nil {
 		return fantasy.ToolResponse{}, err
 	}
 

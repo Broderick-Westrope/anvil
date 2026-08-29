@@ -16,7 +16,7 @@ import (
 
 type mockEditFileTracker struct {
 	reads  []string
-	hashes []string
+	hashes map[string]string
 }
 
 func (m *mockEditFileTracker) RecordRead(ctx context.Context, sessionID, path string) {
@@ -25,14 +25,14 @@ func (m *mockEditFileTracker) RecordRead(ctx context.Context, sessionID, path st
 
 func (m *mockEditFileTracker) RecordReadWithHash(ctx context.Context, sessionID, path, hash string) {
 	m.reads = append(m.reads, path)
-	m.hashes = append(m.hashes, hash)
+	if m.hashes == nil {
+		m.hashes = map[string]string{}
+	}
+	m.hashes[path] = hash
 }
 
 func (m *mockEditFileTracker) LastContentHash(ctx context.Context, sessionID, path string) string {
-	if len(m.hashes) == 0 {
-		return ""
-	}
-	return m.hashes[len(m.hashes)-1]
+	return m.hashes[path]
 }
 
 func (m *mockEditFileTracker) LastReadTime(ctx context.Context, sessionID, path string) time.Time {

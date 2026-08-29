@@ -33,6 +33,7 @@ func NewRenameTool(
 	lspManager *lsp.Manager,
 	permissions permission.Service,
 	filetracker filetracker.Service,
+	workingDir string,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		RenameToolName,
@@ -53,7 +54,7 @@ func NewRenameTool(
 					return *errResp, nil
 				}
 			} else {
-				candidates, err := resolveSymbolCandidates(ctx, lspManager, params.Symbol, ".")
+				candidates, err := resolveSymbolCandidates(ctx, lspManager, params.Symbol, workingDir)
 				if err != nil {
 					return fantasy.NewTextResponse(fmt.Sprintf("Symbol '%s' not found", params.Symbol)), nil
 				}
@@ -65,6 +66,9 @@ func NewRenameTool(
 
 			edit, err := resolved.client.Rename(ctx, resolved.path, resolved.line, resolved.char, params.NewName)
 			if err != nil {
+				if isNoIdentifierError(err) {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("The matched position for '%s' is not an identifier (it may be inside a comment or string). Retry with file_path set to the file containing the symbol.", params.Symbol)), nil
+				}
 				slog.Error("Failed to rename symbol", "error", err, "symbol", params.Symbol)
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("rename failed: %s", err)), nil
 			}
