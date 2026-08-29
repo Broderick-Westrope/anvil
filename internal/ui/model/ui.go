@@ -86,6 +86,11 @@ const TextareaMaxHeight = 15
 // account for the attachments row (top) and bottom margin.
 const editorHeightMargin = 2
 
+// drillInChatTopMargin is the number of rows at the top of the main area
+// consumed by the drill-in breadcrumb line plus its one-line margin. Draw,
+// updateSize, and activeChatArea must all agree on this offset.
+const drillInChatTopMargin = 2
+
 // TextareaMinHeight is the minimum height of the prompt textarea.
 const TextareaMinHeight = 3
 
@@ -672,6 +677,19 @@ func (m *UI) findParentMessageItem(id string) chat.MessageItem {
 	return nil
 }
 
+// activeChatArea returns the rectangle the active chat is drawn into. When
+// drilled into a subagent, the top of the main area is occupied by the
+// breadcrumb line plus a one-line margin (see Draw), so the chat starts two
+// rows lower. Mouse handling must translate coordinates against this same
+// origin or clicks land one item off.
+func (m *UI) activeChatArea() image.Rectangle {
+	area := m.layout.main
+	if m.isDrilledIn() {
+		area.Min.Y = min(area.Min.Y+drillInChatTopMargin, area.Max.Y)
+	}
+	return area
+}
+
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -1012,10 +1030,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch m.state {
 		case uiChat:
+			chatArea := m.activeChatArea()
 			x, y := msg.X, msg.Y
 			// Adjust for chat area position
-			x -= m.layout.main.Min.X
-			y -= m.layout.main.Min.Y
+			x -= chatArea.Min.X
+			y -= chatArea.Min.Y
 			if !image.Pt(msg.X, msg.Y).In(m.layout.sidebar) {
 				if handled, cmd := m.activeChat().HandleMouseDown(x, y); handled {
 					m.lastClickTime = time.Now()
@@ -1057,10 +1076,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			chatArea := m.activeChatArea()
 			x, y := msg.X, msg.Y
 			// Adjust for chat area position
-			x -= m.layout.main.Min.X
-			y -= m.layout.main.Min.Y
+			x -= chatArea.Min.X
+			y -= chatArea.Min.Y
 			m.activeChat().HandleMouseDrag(x, y)
 		}
 
@@ -1073,10 +1093,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch m.state {
 		case uiChat:
+			chatArea := m.activeChatArea()
 			x, y := msg.X, msg.Y
 			// Adjust for chat area position
-			x -= m.layout.main.Min.X
-			y -= m.layout.main.Min.Y
+			x -= chatArea.Min.X
+			y -= chatArea.Min.Y
 			if m.activeChat().HandleMouseUp(x, y) && m.activeChat().HasHighlight() {
 				cmds = append(cmds, tea.Tick(doubleClickThreshold, func(t time.Time) tea.Msg {
 					if time.Since(m.lastClickTime) >= doubleClickThreshold {
@@ -3367,22 +3388,19 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		}
 
 		if m.isDrilledIn() {
-			// Render breadcrumb bar at the top of the main area.
+			// Render the breadcrumb bar at the top of the main area.
+			// renderBreadcrumb truncates to a single line, so the bar
+			// occupies exactly drillInChatTopMargin-1 rows plus a
+			// one-line margin — the same offset activeChatArea uses for
+			// mouse-coordinate translation.
 			breadcrumb := m.renderBreadcrumb(layout.main.Dx())
-			bcHeight := max(lipgloss.Height(breadcrumb), 1)
 			bcArea := image.Rect(
 				layout.main.Min.X, layout.main.Min.Y,
-				layout.main.Max.X, layout.main.Min.Y+bcHeight,
+				layout.main.Max.X, layout.main.Min.Y+drillInChatTopMargin-1,
 			)
 			uv.NewStyledString(breadcrumb).Draw(scr, bcArea)
 
-			// Render the drill-in chat below the breadcrumb with a
-			// 1-line margin separating them.
-			chatArea := image.Rect(
-				layout.main.Min.X, layout.main.Min.Y+bcHeight+1,
-				layout.main.Max.X, layout.main.Max.Y,
-			)
-			m.activeChat().Draw(scr, chatArea)
+			m.activeChat().Draw(scr, m.activeChatArea())
 		} else {
 			m.activeChat().Draw(scr, layout.main)
 			if layout.pills.Dy() > 0 && m.pillsView != "" {
@@ -3873,11 +3891,11 @@ func (m *UI) updateSize() {
 	chatHeight := m.layout.main.Dy()
 	// Root chat always gets the full main area height.
 	m.chat.SetSize(chatWidth, chatHeight)
-	// Drill-in chats: the active one loses one row for the breadcrumb.
+	// Drill-in chats: the active one loses the breadcrumb rows.
 	for i, entry := range m.drillStack {
 		h := chatHeight
 		if i == len(m.drillStack)-1 {
-			h = max(0, chatHeight-2) // breadcrumb line + margin
+			h = max(0, chatHeight-drillInChatTopMargin)
 		}
 		entry.chat.SetSize(chatWidth, h)
 	}
