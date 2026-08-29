@@ -78,6 +78,12 @@ func (i *MCPPaletteItem) infoLabel() string {
 	if i.entry.State == mcp.StateDisabled {
 		return "disabled"
 	}
+	if i.entry.State == mcp.StateDeferred {
+		return "deferred"
+	}
+	if i.entry.State == mcp.StateStarting {
+		return "connecting..."
+	}
 	if i.entry.IsLazy && i.entry.Enabled {
 		return "✓ enabled"
 	}
@@ -253,17 +259,19 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 		if selected := mp.list.SelectedItem(); selected != nil {
 			if item, ok := selected.(*MCPPaletteItem); ok && item != nil {
 				switch item.entry.State {
-				case mcp.StateDisabled:
+				case mcp.StateDisabled, mcp.StateDeferred:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
 				case mcp.StateConnected, mcp.StateLazy:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: false}
+				case mcp.StateStarting:
+					// Already connecting — ignore.
 				}
 			}
 		}
 	case key.Matches(msg, mp.keyMap.LazyToggle):
 		if selected := mp.list.SelectedItem(); selected != nil {
 			if item, ok := selected.(*MCPPaletteItem); ok && item != nil && item.entry.IsLazy {
-				if item.entry.State != mcp.StateDisabled {
+				if item.entry.State != mcp.StateDisabled && item.entry.State != mcp.StateStarting {
 					return ActionToggleLazyMCP{
 						ServerName: item.entry.Name,
 						Enabled:    !item.entry.Enabled,
