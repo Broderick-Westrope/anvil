@@ -61,10 +61,12 @@ func newRefreshTestStore(t *testing.T, configPath string, exchange func(ctx cont
 		OAuthToken: expired,
 	})
 
+	// workingDir is intentionally left empty so autoReload is skipped
+	// after SetConfigFields writes the token to disk. The test measures
+	// in-memory singleflight behaviour, not the reload path.
 	return &ConfigStore{
 		config:         &Config{Providers: providers},
 		globalDataPath: configPath,
-		workingDir:     filepath.Dir(configPath),
 		exchangeToken:  exchange,
 	}
 }

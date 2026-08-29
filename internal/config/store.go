@@ -13,13 +13,10 @@ import (
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
-	hyperp "github.com/Broderick-Westrope/anvil/internal/agent/hyper"
 	"github.com/Broderick-Westrope/anvil/internal/env"
 	"github.com/Broderick-Westrope/anvil/internal/lock"
 	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
-	"github.com/Broderick-Westrope/anvil/internal/oauth/copilot"
-	"github.com/Broderick-Westrope/anvil/internal/oauth/hyper"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"golang.org/x/sync/singleflight"
@@ -546,8 +543,6 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 			providerConfig.APIKey = v.AccessToken
 			providerConfig.OAuthToken = v
 			switch providerID {
-			case string(catwalk.InferenceProviderCopilot):
-				providerConfig.SetupGitHubCopilot()
 			case string(catwalk.InferenceProviderAnthropic):
 				providerConfig.SetupAnthropic()
 			}
@@ -822,10 +817,6 @@ func (s *ConfigStore) exchange(ctx context.Context, providerID string, entryToke
 		return s.exchangeToken(ctx, providerID, entryToken.RefreshToken)
 	}
 	switch providerID {
-	case string(catwalk.InferenceProviderCopilot):
-		return copilot.RefreshToken(ctx, entryToken.RefreshToken)
-	case hyperp.Name:
-		return hyper.ExchangeToken(ctx, entryToken.RefreshToken)
 	case string(catwalk.InferenceProviderAnthropic):
 		return anthropicoauth.RefreshToken(ctx, entryToken)
 	default:
@@ -866,8 +857,6 @@ func (s *ConfigStore) applyToken(providerConfig ProviderConfig, token *oauth.Tok
 	providerConfig.OAuthToken = token
 	providerConfig.APIKey = token.AccessToken
 	switch providerID {
-	case string(catwalk.InferenceProviderCopilot):
-		providerConfig.SetupGitHubCopilot()
 	case string(catwalk.InferenceProviderAnthropic):
 		providerConfig.SetupAnthropic()
 	}
@@ -962,39 +951,6 @@ func NewTestStoreWithDataPath(cfg *Config, globalDataPath string) *ConfigStore {
 		config:         cfg,
 		globalDataPath: globalDataPath,
 	}
-}
-
-// ImportCopilot attempts to import a GitHub Copilot token from disk.
-func (s *ConfigStore) ImportCopilot() (*oauth.Token, bool) {
-	if s.HasConfigField(ScopeGlobal, "providers.copilot.api_key") || s.HasConfigField(ScopeGlobal, "providers.copilot.oauth") {
-		return nil, false
-	}
-
-	diskToken, hasDiskToken := copilot.RefreshTokenFromDisk()
-	if !hasDiskToken {
-		return nil, false
-	}
-
-	slog.Info("Found existing GitHub Copilot token on disk. Authenticating...")
-	token, err := copilot.RefreshToken(context.TODO(), diskToken)
-	if err != nil {
-		slog.Error("Unable to import GitHub Copilot token", "error", err)
-		return nil, false
-	}
-
-	if err := s.SetProviderAPIKey(ScopeGlobal, string(catwalk.InferenceProviderCopilot), token); err != nil {
-		return token, false
-	}
-
-	if err := s.SetConfigFields(ScopeGlobal, map[string]any{
-		"providers.copilot.api_key": token.AccessToken,
-		"providers.copilot.oauth":   token,
-	}); err != nil {
-		slog.Error("Unable to save GitHub Copilot token to disk", "error", err)
-	}
-
-	slog.Info("GitHub Copilot successfully imported")
-	return token, true
 }
 
 // StalenessResult contains the result of a staleness check.
