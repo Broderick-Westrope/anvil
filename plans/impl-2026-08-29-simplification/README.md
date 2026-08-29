@@ -38,3 +38,15 @@ and TUI rendering.
 - **3, 4, 5:** No code dependencies on 2 or each other. Phase 3 waits on
   phase 1 because `cmd/root.go` is edited by both (migration block and
   server wiring) — sequencing avoids conflicts in one file.
+
+## Review Notes
+
+Devils-advocate review (1 round) caught: (1) phase 4's tool-propagation
+gap — enable_mcp had no path to push newly registered tools into live
+agents; resolved with a coordinator-injected synchronous connect
+callback plus the documented stale-snapshot pass-through invariant,
+covering both TUI and `anvil run`. (2) Replay-reconnect trigger point
+was undefined; now pinned to Run start, non-fatal on failure. (3)
+`internal/projects` would be orphaned by phase 3; added to deletion
+list with its root.go Register call. (4) Phase 1's build-verify could
+false-pass; tightened to a per-file error listing.

@@ -75,8 +75,9 @@ read internal/workspace/workspace.go   # Workspace interface; client_workspace i
 
 **Verify:**
 ```bash
-go build ./... 2>&1 | head -30
-# Expected: failures ONLY in cmd/root.go and cmd/run.go (fixed in Task 2)
+go build ./... 2>&1 | grep -oE '^[^:]+\.go' | sort -u
+# Expected: ONLY cmd/root.go and cmd/run.go (fixed in Task 2); any other
+# file listed means a missed reference — fix before proceeding
 ```
 
 ### Task 2: Rewire cmd/root.go and cmd/run.go to local-only

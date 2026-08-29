@@ -56,8 +56,13 @@ grep -rn "GetUsageBy" internal/ --include='*.go'   # stats query consumers
   `internal/db/sql/stats.sql`
 - Delete: `internal/cmd/projects.go`, `internal/cmd/update_providers.go`
   (exact filenames per `ls internal/cmd/`)
+- Delete: `internal/projects/` (entire package) — its only remaining
+  consumer after command deletion is `root.go:278`
+  (`projects.Register(cwd, ...)`), which writes a registry nothing
+  reads once the `projects` command is gone; remove the call and the
+  `root.go:28` import
 - Modify: `internal/cmd/root.go` — remove the three AddCommand
-  registrations
+  registrations, the `projects.Register` call, and the import
 - Regenerate: run `sqlc generate` (check Taskfile for the exact task) so
   the generated `GetUsageBy*` querier methods disappear; delete any
   hand-written callers the grep found

@@ -89,35 +89,68 @@ go test ./internal/agent/tools/mcp/... 2>&1 | tail -3
 ### Task 2: Connect-on-enable with resilience
 
 **Context:** `enable_mcp.go`, `init.go` `InitializeSingle`,
-`app_workspace.go` `EnableMCP`
+`app_workspace.go` `EnableMCP`, `coordinator.go:1108-1120` (enable_mcp
+construction), `agent.go:210-260` (Run-start snapshots) and `:373-381`
+(PrepareStep)
+
+**Tool propagation mechanism (the critical piece):** the enable_mcp
+tool callback has no access to agent internals, and the existing
+EventStateChanged → TUI → UpdateModels path is async and TUI-only
+(breaks `anvil run`). The coordinator constructs the tool at
+`coordinator.go:1117` (`tools.NewEnableMCPTool(lazyMCPs)`), so inject a
+synchronous callback there:
+
+```go
+// coordinator.go — closes over c; runs connect + tool rebuild inline.
+connectFn := func(ctx context.Context, name string) (toolCount int, err error) {
+    if err := mcp.ConnectDeferred(ctx, name, cfg); err != nil { return 0, err }
+    // Rebuild and push tools to all live agents synchronously so the
+    // SAME run's next PrepareStep sees them.
+    return c.refreshMCPTools(ctx, name)
+}
+filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs, connectFn))
+```
+
+`refreshMCPTools` rebuilds via the existing buildTools path and calls
+`SetTools`/`SetLazyMCPToolMap` (agent.go:1616-1621) on live agents.
+Mid-run correctness: PrepareStep reads `a.tools.Copy()` live each step
+(agent.go:381) while `lazyMCPToolMap` is a Run-start snapshot
+(agent.go:216) — newly registered tools are absent from the stale
+snapshot, so `filterLazyMCPTools` passes them through unfiltered, which
+is correct because the server was just explicitly enabled. Document
+this invariant in a comment; add a test locking it in.
 
 **Files:**
-- Modify: `internal/agent/tools/enable_mcp.go` — when the target is
-  `StateDeferred`: call the connect path (`InitializeSingle` or an
-  extracted equivalent) with a connection timeout (30s suggested; align
-  with existing MCP timeouts), one automatic retry on transient failure
-  (timeout / connection refused — NOT auth errors), register tools,
-  and only then record the enable in `LazyMCPState` and return the real
-  tool count. On failure: return a tool error, leave `LazyMCPState`
-  untouched.
+- Modify: `internal/agent/tools/enable_mcp.go` — accept the connect
+  callback; when the target is `StateDeferred`: invoke it with a
+  connection timeout (30s suggested; align with existing MCP timeouts),
+  one automatic retry on transient failure (timeout / connection
+  refused — NOT auth errors), and only on success record the enable in
+  `LazyMCPState` and return the real tool count. On failure: return a
+  tool error, leave `LazyMCPState` untouched.
+- Modify: `internal/agent/tools/mcp/init.go` — add `ConnectDeferred`
+  (wraps `InitializeSingle` with the timeout/retry/classification)
+- Modify: `internal/agent/coordinator.go` — `connectFn` +
+  `refreshMCPTools`
 - Modify: `internal/workspace/app_workspace.go` `EnableMCP` — same
-  connect-with-timeout semantics for the palette path
-- Modify: `internal/agent/lazy_mcp.go` `filterLazyMCPTools` /
-  `lazyMCPToolMap` plumbing — tools registered mid-session must appear
-  in the next `PrepareStep` filter pass (verify how the map is built;
-  rebuild or append on registration)
-- Test: enable success registers tools and marks enabled; transient
+  `ConnectDeferred` semantics for the palette path
+- Test: enable success registers tools, marks enabled, and the same
+  run's next PrepareStep exposes them (fake connector); transient
   failure retries once; permanent failure leaves state clean and a
-  second enable succeeds (fake connector)
+  second enable succeeds; `anvil run`-style flow (no TUI event loop)
+  gets tools
 
 **Steps:**
 
-1. [ ] Extract/reuse a `connectDeferred(ctx, name) error` helper shared
-       by tool and palette paths
-2. [ ] Implement timeout + single-retry + error classification
-3. [ ] Wire tool registration into the lazy tool map so PrepareStep
-       exposes them
-4. [ ] Unit tests per the above
+1. [ ] Add `mcp.ConnectDeferred` with timeout + single-retry + error
+       classification (transient vs auth)
+2. [ ] Add `refreshMCPTools` to the coordinator; inject `connectFn`
+       into `NewEnableMCPTool`; update the palette's `EnableMCP` to use
+       `ConnectDeferred`
+3. [ ] Implement the deferred branch in `enable_mcp` (connect →
+       refresh → record enable → report count)
+4. [ ] Unit tests per the above, including the stale-snapshot
+       pass-through invariant and a no-TUI flow
 
 **Verify:**
 ```bash
@@ -138,8 +171,13 @@ go test ./internal/agent/... 2>&1 | grep -v '^ok' | head
   `MCPToggleContent` (palette) entries have no ToolResult and are
   always honoured (the palette records them only after successful
   connect). Replayed deferred servers are marked "enabled, awaiting
-  connection" — reconnect happens lazily on the next turn that needs
-  the tools, NOT at session load.
+  connection" — the reconnect trigger is `Run` start (agent.go:~250,
+  right after `deriveLazyMCPState`): for each replayed-enabled server
+  still in `StateDeferred`, call `ConnectDeferred` before the first
+  step, via the same coordinator callback. Failures downgrade the
+  server to not-enabled for this run and surface a warning — they must
+  not abort the run. Session *load* (browsing history) does NOT
+  connect; only an actual agent run does.
 - Test: replay with (a) successful enable, (b) errored enable, (c)
   palette toggle, (d) enable with missing result (treated as not
   enabled)
@@ -147,10 +185,10 @@ go test ./internal/agent/... 2>&1 | grep -v '^ok' | head
 **Steps:**
 
 1. [ ] Implement ToolCallID→result correlation in the replay walk
-2. [ ] Add the "enabled, awaiting connection" handling: PrepareStep (or
-       first tool use) triggers `connectDeferred` for replayed-enabled
-       deferred servers
-3. [ ] Unit tests for the four replay cases
+2. [ ] Add the Run-start reconnect for replayed-enabled deferred
+       servers (non-fatal on failure)
+3. [ ] Unit tests for the four replay cases plus the failed-reconnect
+       downgrade
 
 **Verify:**
 ```bash
