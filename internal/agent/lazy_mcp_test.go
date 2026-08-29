@@ -10,6 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// successResult returns a ToolResult marking the given callID as successful.
+func successResult(callID string) message.ToolResult {
+	return message.ToolResult{
+		ToolCallID: callID,
+		Content:    "Enabled foo MCP (3 tools available)",
+		IsError:    false,
+	}
+}
+
+// errorResult returns a ToolResult marking the given callID as failed.
+func errorResult(callID string) message.ToolResult {
+	return message.ToolResult{
+		ToolCallID: callID,
+		Content:    "Failed to connect MCP 'foo': connection refused",
+		IsError:    true,
+	}
+}
+
 func TestDeriveLazyMCPState_EmptyMessages(t *testing.T) {
 	t.Parallel()
 	result := deriveLazyMCPState(nil)
@@ -27,6 +45,12 @@ func TestDeriveLazyMCPState_SingleEnableMCP(t *testing.T) {
 					Name:  tools.EnableMCPToolName,
 					Input: `{"server_name":"datadog"}`,
 				},
+			},
+		},
+		{
+			Role: message.User,
+			Parts: []message.ContentPart{
+				successResult("tc1"),
 			},
 		},
 	}
@@ -47,6 +71,10 @@ func TestDeriveLazyMCPState_EnableThenToggleDisabled(t *testing.T) {
 					Input: `{"server_name":"datadog"}`,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
 		},
 		{
 			Role:        message.User,
@@ -77,6 +105,10 @@ func TestDeriveLazyMCPState_MultipleServersInterleaved(t *testing.T) {
 			},
 		},
 		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
+		},
+		{
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
@@ -85,6 +117,10 @@ func TestDeriveLazyMCPState_MultipleServersInterleaved(t *testing.T) {
 					Input: `{"server_name":"github"}`,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc2")},
 		},
 		{
 			Role:        message.User,
@@ -106,6 +142,10 @@ func TestDeriveLazyMCPState_MultipleServersInterleaved(t *testing.T) {
 				},
 			},
 		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc3")},
+		},
 	}
 	result := deriveLazyMCPState(msgs)
 	require.False(t, result["datadog"])
@@ -125,6 +165,10 @@ func TestDeriveLazyMCPState_NonExistentMCPs(t *testing.T) {
 					Input: `{"server_name":"nonexistent"}`,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
 		},
 	}
 	result := deriveLazyMCPState(msgs)
@@ -147,6 +191,107 @@ func TestDeriveLazyMCPState_BadJSON(t *testing.T) {
 	}
 	result := deriveLazyMCPState(msgs)
 	require.Empty(t, result)
+}
+
+// TestDeriveLazyMCPState_ErroredEnable verifies that a ToolCall with an
+// errored ToolResult is NOT counted as enabled.
+func TestDeriveLazyMCPState_ErroredEnable(t *testing.T) {
+	t.Parallel()
+	msgs := []message.Message{
+		{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:    "tc1",
+					Name:  tools.EnableMCPToolName,
+					Input: `{"server_name":"datadog"}`,
+				},
+			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{errorResult("tc1")},
+		},
+	}
+	result := deriveLazyMCPState(msgs)
+	require.Empty(t, result, "errored enable must not count as enabled")
+}
+
+// TestDeriveLazyMCPState_MissingResult verifies that a ToolCall with no
+// correlated ToolResult is NOT counted as enabled (e.g. interrupted run).
+func TestDeriveLazyMCPState_MissingResult(t *testing.T) {
+	t.Parallel()
+	msgs := []message.Message{
+		{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:    "tc1",
+					Name:  tools.EnableMCPToolName,
+					Input: `{"server_name":"datadog"}`,
+				},
+			},
+		},
+		// No ToolResult for tc1.
+	}
+	result := deriveLazyMCPState(msgs)
+	require.Empty(t, result, "missing result must not count as enabled")
+}
+
+// TestDeriveLazyMCPState_PaletteToggleAlwaysHonoured verifies that
+// MCPToggleContent entries are always honoured regardless of ToolResult
+// correlation.
+func TestDeriveLazyMCPState_PaletteToggleAlwaysHonoured(t *testing.T) {
+	t.Parallel()
+	msgs := []message.Message{
+		{
+			Role:        message.User,
+			MessageType: message.MessageTypeMCPToggle,
+			Parts: []message.ContentPart{
+				message.MCPToggleContent{ServerName: "datadog", Enabled: true},
+			},
+		},
+	}
+	result := deriveLazyMCPState(msgs)
+	require.True(t, result["datadog"])
+}
+
+// TestDeriveLazyMCPState_ErroredThenSuccessful verifies that a failed
+// enable followed by a successful enable results in enabled.
+func TestDeriveLazyMCPState_ErroredThenSuccessful(t *testing.T) {
+	t.Parallel()
+	msgs := []message.Message{
+		{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:    "tc1",
+					Name:  tools.EnableMCPToolName,
+					Input: `{"server_name":"datadog"}`,
+				},
+			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{errorResult("tc1")},
+		},
+		{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:    "tc2",
+					Name:  tools.EnableMCPToolName,
+					Input: `{"server_name":"datadog"}`,
+				},
+			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc2")},
+		},
+	}
+	result := deriveLazyMCPState(msgs)
+	require.True(t, result["datadog"])
 }
 
 func TestFilterAllowedLazyMCPs_NilAllowsAll(t *testing.T) {
@@ -288,8 +433,8 @@ func TestFilterLazyMCPTools_StaleSnapshotPassThrough(t *testing.T) {
 	allTools := []fantasy.AgentTool{
 		&mockAgentTool{name: "bash"},
 		&mockAgentTool{name: "mcp_datadog_query"}, // In stale map, datadog not enabled → filtered.
-		&mockAgentTool{name: "mcp_github_pr"},     // NOT in stale map → passes through.
-		&mockAgentTool{name: "mcp_github_issues"}, // NOT in stale map → passes through.
+		&mockAgentTool{name: "mcp_github_pr"},      // NOT in stale map → passes through.
+		&mockAgentTool{name: "mcp_github_issues"},  // NOT in stale map → passes through.
 	}
 
 	filtered := filterLazyMCPTools(allTools, staleMap, state)

@@ -100,6 +100,7 @@ type SessionAgent interface {
 	SetProviderConfig(cfg config.ProviderConfig)
 	SetTools(tools []fantasy.AgentTool)
 	SetLazyMCPToolMap(m map[string]string)
+	SetConnectFn(fn tools.ConnectFn)
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
 	CancelAll()
@@ -135,6 +136,7 @@ type sessionAgent struct {
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
 	lazyMCPToolMap     *csync.Map[string, string]
+	connectFn          tools.ConnectFn
 
 	depth                int
 	isSubAgent           bool
@@ -246,6 +248,27 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	initialEnabled := deriveLazyMCPState(raw)
 	lazyState := tools.NewLazyMCPState(initialEnabled)
 	ctx = tools.WithLazyMCPState(ctx, lazyState)
+
+	// Reconnect replayed-enabled deferred servers. This runs at Run
+	// start (not session load) so browsing history never triggers
+	// connections. Failures are non-fatal: the server is downgraded
+	// to not-enabled for this run.
+	if a.connectFn != nil {
+		for name := range initialEnabled {
+			if !initialEnabled[name] {
+				continue
+			}
+			info, ok := mcp.GetState(name)
+			if !ok || info.State != mcp.StateDeferred {
+				continue
+			}
+			if _, err := a.connectFn(ctx, name); err != nil {
+				slog.Warn("Failed to reconnect replayed deferred MCP, disabling for this run",
+					"name", name, "error", err)
+				lazyState.Disable(name)
+			}
+		}
+	}
 
 	// Filter lazy MCP tools from the initial tool set.
 	agentTools = filterLazyMCPTools(agentTools, lazyMCPToolMap, lazyState)
@@ -1589,6 +1612,10 @@ func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 
 func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
 	a.lazyMCPToolMap.Reset(m)
+}
+
+func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
+	a.connectFn = fn
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {

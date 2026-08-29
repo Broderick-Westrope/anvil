@@ -4732,13 +4732,60 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 }
 
 // deriveEnabledLazyMCPs scans branch-path messages for lazy MCP state
-// changes and rebuilds the enabledLazyMCPs map. Last event per server
-// wins. This mirrors the agent-side derivation in
+// changes and rebuilds the enabledLazyMCPs map. Only successful
+// enable_mcp calls (ToolResult with IsError == false, correlated by
+// ToolCallID) are counted. MCPToggleContent entries are always honoured.
+// Last event per server wins. This mirrors the agent-side derivation in
 // internal/agent/lazy_mcp.go.
 func (m *UI) deriveEnabledLazyMCPs(msgs []message.Message) {
 	m.enabledLazyMCPs = make(map[string]bool)
+
+	type event struct {
+		serverName string
+		callID     string
+		enabled    bool
+		isToggle   bool
+	}
+	var events []event
+	resultOK := make(map[string]bool)
+
 	for _, msg := range msgs {
-		m.applyLazyMCPMessageParts(msg)
+		for _, part := range msg.Parts {
+			switch p := part.(type) {
+			case message.ToolCall:
+				if p.Name != agenttools.EnableMCPToolName || !p.Finished {
+					continue
+				}
+				var params agenttools.EnableMCPParams
+				if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
+					continue
+				}
+				if p.ID != "" {
+					events = append(events, event{serverName: params.ServerName, callID: p.ID})
+				}
+			case message.ToolResult:
+				if p.ToolCallID != "" {
+					resultOK[p.ToolCallID] = !p.IsError
+				}
+			case message.MCPToggleContent:
+				events = append(events, event{
+					serverName: p.ServerName,
+					enabled:    p.Enabled,
+					isToggle:   true,
+				})
+			}
+		}
+	}
+
+	for _, e := range events {
+		if e.isToggle {
+			m.enabledLazyMCPs[e.serverName] = e.enabled
+		} else {
+			ok, found := resultOK[e.callID]
+			if found && ok {
+				m.enabledLazyMCPs[e.serverName] = true
+			}
+		}
 	}
 }
 

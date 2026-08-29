@@ -1297,6 +1297,15 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	orch.SetTools(agentTools)
 	orch.SetLazyMCPToolMap(lazyMap)
 
+	// Inject the connect callback so the agent can reconnect replayed
+	// deferred servers at Run start.
+	orch.SetConnectFn(func(ctx context.Context, name string) (int, error) {
+		if err := toolsmcp.ConnectDeferred(ctx, name, c.cfg); err != nil {
+			return 0, err
+		}
+		return c.refreshMCPTools(ctx, name)
+	})
+
 	// Invalidate lazily-built agents so they rebuild with new model config.
 	c.agents.Reset(make(map[string]SessionAgent))
 

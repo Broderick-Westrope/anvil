@@ -55,7 +55,8 @@ func TestLazyMCPIntegration_ToolFilteringEndToEnd(t *testing.T) {
 func TestLazyMCPIntegration_BranchScoping(t *testing.T) {
 	t.Parallel()
 
-	// Create a message history where MCP is enabled at message index 2.
+	// Create a message history where MCP is enabled at message index 2,
+	// with its successful result at index 3.
 	msgs := []message.Message{
 		{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "hello"}}},
 		{Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: "hi"}}},
@@ -69,6 +70,10 @@ func TestLazyMCPIntegration_BranchScoping(t *testing.T) {
 				},
 			},
 		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
+		},
 		{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "thanks"}}},
 	}
 
@@ -76,8 +81,12 @@ func TestLazyMCPIntegration_BranchScoping(t *testing.T) {
 	stateBefore := deriveLazyMCPState(msgs[:2])
 	require.Empty(t, stateBefore)
 
-	// Branch path including the enable (first 3 messages).
-	stateAfter := deriveLazyMCPState(msgs[:3])
+	// Branch path including the enable but not the result (first 3 messages).
+	stateNoResult := deriveLazyMCPState(msgs[:3])
+	require.Empty(t, stateNoResult, "enable without result must not count")
+
+	// Branch path including the enable and result (first 4 messages).
+	stateAfter := deriveLazyMCPState(msgs[:4])
 	require.True(t, stateAfter["datadog"])
 
 	// Full branch path.
@@ -100,6 +109,10 @@ func TestLazyMCPIntegration_HumanToggleOrdering(t *testing.T) {
 				},
 			},
 		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
+		},
 		// Human disables datadog via toggle.
 		{
 			Role:        message.User,
@@ -114,15 +127,15 @@ func TestLazyMCPIntegration_HumanToggleOrdering(t *testing.T) {
 		},
 	}
 
-	// After enable only.
-	state1 := deriveLazyMCPState(msgs[:1])
+	// After enable + result only.
+	state1 := deriveLazyMCPState(msgs[:2])
 	require.True(t, state1["datadog"])
 
-	// After enable + disable.
-	state2 := deriveLazyMCPState(msgs[:2])
+	// After enable + result + disable.
+	state2 := deriveLazyMCPState(msgs[:3])
 	require.False(t, state2["datadog"])
 
-	// After enable + disable + re-enable.
+	// After enable + result + disable + re-enable.
 	state3 := deriveLazyMCPState(msgs)
 	require.True(t, state3["datadog"])
 }
@@ -203,6 +216,10 @@ func TestLazyMCPIntegration_SubAgentIsolation(t *testing.T) {
 				},
 			},
 		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
+		},
 	}
 	parentState := deriveLazyMCPState(parentMsgs)
 	require.True(t, parentState["datadog"])
@@ -222,6 +239,10 @@ func TestLazyMCPIntegration_SubAgentIsolation(t *testing.T) {
 					Input: `{"server_name":"slack"}`,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc2")},
 		},
 	}
 	subState := deriveLazyMCPState(subAgentMsgs)

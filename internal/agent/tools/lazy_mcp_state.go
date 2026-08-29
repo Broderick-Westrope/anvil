@@ -45,6 +45,14 @@ func (s *LazyMCPState) IsEnabled(name string) bool {
 	return s.enabled[name]
 }
 
+// Disable marks the named server as not enabled. Used to downgrade a
+// replayed enable when reconnection fails at Run start.
+func (s *LazyMCPState) Disable(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.enabled, name)
+}
+
 // EnabledSet returns a copy of the enabled map.
 func (s *LazyMCPState) EnabledSet() map[string]bool {
 	s.mu.Lock()

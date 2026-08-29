@@ -19,9 +19,19 @@ func TestDeriveEnabledLazyMCPs_EnableMCPToolCall(t *testing.T) {
 		{
 			Parts: []message.ContentPart{
 				message.ToolCall{
+					ID:       "tc1",
 					Name:     "enable_mcp",
 					Input:    `{"server_name":"datadog"}`,
 					Finished: true,
+				},
+			},
+		},
+		{
+			Parts: []message.ContentPart{
+				message.ToolResult{
+					ToolCallID: "tc1",
+					Content:    "Enabled datadog MCP (5 tools available)",
+					IsError:    false,
 				},
 			},
 		},
@@ -38,9 +48,19 @@ func TestDeriveEnabledLazyMCPs_ToggleContentLastWins(t *testing.T) {
 		{
 			Parts: []message.ContentPart{
 				message.ToolCall{
+					ID:       "tc1",
 					Name:     "enable_mcp",
 					Input:    `{"server_name":"datadog"}`,
 					Finished: true,
+				},
+			},
+		},
+		{
+			Parts: []message.ContentPart{
+				message.ToolResult{
+					ToolCallID: "tc1",
+					Content:    "Enabled datadog MCP",
+					IsError:    false,
 				},
 			},
 		},
@@ -53,6 +73,35 @@ func TestDeriveEnabledLazyMCPs_ToggleContentLastWins(t *testing.T) {
 	})
 
 	require.False(t, ui.enabledLazyMCPs["datadog"])
+}
+
+func TestDeriveEnabledLazyMCPs_ErroredEnableNotCounted(t *testing.T) {
+	t.Parallel()
+
+	ui := newLazyMCPTestUI()
+	ui.deriveEnabledLazyMCPs([]message.Message{
+		{
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:       "tc1",
+					Name:     "enable_mcp",
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
+				},
+			},
+		},
+		{
+			Parts: []message.ContentPart{
+				message.ToolResult{
+					ToolCallID: "tc1",
+					Content:    "Failed to connect MCP 'datadog': timeout",
+					IsError:    true,
+				},
+			},
+		},
+	})
+
+	require.Empty(t, ui.enabledLazyMCPs, "errored enable must not count")
 }
 
 func TestApplyLazyMCPMessageParts_UnfinishedToolCallIgnored(t *testing.T) {
