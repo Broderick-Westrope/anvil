@@ -3241,10 +3241,12 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				break
 			}
 			switch {
-			case key.Matches(msg, m.keyMap.Chat.Up):
+			// The sidebar has no item selection, so plain and shifted arrows
+			// both scroll it.
+			case key.Matches(msg, m.keyMap.Chat.Up, m.keyMap.Chat.UpOneItem):
 				m.sidebarOffset = max(0, m.sidebarOffset-4)
 				m.sidebarScrollbarSeq++
-			case key.Matches(msg, m.keyMap.Chat.Down):
+			case key.Matches(msg, m.keyMap.Chat.Down, m.keyMap.Chat.DownOneItem):
 				maxOffset := m.sidebarMaxOffsetVal
 				if m.sidebarOffset < maxOffset {
 					m.sidebarOffset = min(m.sidebarOffset+4, maxOffset)
@@ -3563,9 +3565,13 @@ func (m *UI) ShortHelp() []key.Binding {
 				k.Editor.Newline,
 			)
 		case uiFocusSidebar:
+			// Plain arrows also scroll the sidebar; show them instead of
+			// the shifted chat-scroll binding.
+			sidebarScroll := k.Chat.UpDown
+			sidebarScroll.SetHelp("↑↓", "scroll")
 			binds = append(
 				binds,
-				k.Chat.UpDown,
+				sidebarScroll,
 				k.Chat.FocusChat,
 			)
 		case uiFocusMain:
@@ -3673,10 +3679,14 @@ func (m *UI) FullHelp() [][]key.Binding {
 				)
 			}
 		case uiFocusSidebar:
+			// Plain arrows also scroll the sidebar; show them instead of
+			// the shifted chat-scroll binding.
+			sidebarScroll := k.Chat.UpDown
+			sidebarScroll.SetHelp("↑↓", "scroll")
 			binds = append(
 				binds,
 				[]key.Binding{
-					k.Chat.UpDown,
+					sidebarScroll,
 				},
 				[]key.Binding{
 					k.Chat.FocusChat,

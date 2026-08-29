@@ -186,28 +186,28 @@ func DefaultKeyMap() KeyMap {
 	)
 
 	km.Chat.Down = key.NewBinding(
-		key.WithKeys("down", "ctrl+j", "j"),
-		key.WithHelp("↓", "down"),
+		key.WithKeys("shift+down", "ctrl+j", "j"),
+		key.WithHelp("shift+↓", "scroll down"),
 	)
 	km.Chat.Up = key.NewBinding(
-		key.WithKeys("up", "ctrl+k", "k"),
-		key.WithHelp("↑", "up"),
+		key.WithKeys("shift+up", "ctrl+k", "k"),
+		key.WithHelp("shift+↑", "scroll up"),
 	)
 	km.Chat.UpDown = key.NewBinding(
-		key.WithKeys("up", "down"),
-		key.WithHelp("↑↓", "scroll"),
+		key.WithKeys("shift+up", "shift+down"),
+		key.WithHelp("shift+↑↓", "scroll"),
 	)
 	km.Chat.UpOneItem = key.NewBinding(
-		key.WithKeys("shift+up", "K"),
-		key.WithHelp("shift+↑", "up one item"),
+		key.WithKeys("up", "K"),
+		key.WithHelp("↑", "up one item"),
 	)
 	km.Chat.DownOneItem = key.NewBinding(
-		key.WithKeys("shift+down", "J"),
-		key.WithHelp("shift+↓", "down one item"),
+		key.WithKeys("down", "J"),
+		key.WithHelp("↓", "down one item"),
 	)
 	km.Chat.UpDownOneItem = key.NewBinding(
-		key.WithKeys("shift+up", "shift+down"),
-		key.WithHelp("shift+↑↓", "scroll one item"),
+		key.WithKeys("up", "down"),
+		key.WithHelp("↑↓", "move one item"),
 	)
 	km.Chat.HalfPageDown = key.NewBinding(
 		key.WithKeys("d"),
@@ -246,12 +246,12 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("space", "expand/collapse"),
 	)
 	km.Chat.FocusSidebar = key.NewBinding(
-		key.WithKeys("l", "right"),
-		key.WithHelp("l/→", "focus sidebar"),
+		key.WithKeys("l", "shift+right"),
+		key.WithHelp("l/shift+→", "focus sidebar"),
 	)
 	km.Chat.FocusChat = key.NewBinding(
-		key.WithKeys("h", "left"),
-		key.WithHelp("h/←", "focus chat"),
+		key.WithKeys("h", "shift+left"),
+		key.WithHelp("h/shift+←", "focus chat"),
 	)
 
 	return km
