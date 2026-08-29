@@ -338,6 +338,11 @@ type UI struct {
 		index    int
 		draft    string
 	}
+
+	// canvas is the reusable screen buffer. It is reallocated only when the
+	// terminal dimensions change; screen.Clear resets every cell so stale
+	// frames cannot leak between reuses.
+	canvas uv.ScreenBuffer
 }
 
 // drillInEntry represents one level of drill-in navigation into a subagent
@@ -3420,17 +3425,12 @@ func (m *UI) View() tea.View {
 	v.ReportFocus = m.caps.ReportFocusEvents
 	v.WindowTitle = "anvil " + home.Short(m.com.Workspace.WorkingDir())
 
-	canvas := uv.NewScreenBuffer(m.width, m.height)
-	v.Cursor = m.Draw(canvas, canvas.Bounds())
-
-	content := strings.ReplaceAll(canvas.Render(), "\r\n", "\n") // normalize newlines
-	contentLines := strings.Split(content, "\n")
-	for i, line := range contentLines {
-		// Trim trailing spaces for concise rendering
-		contentLines[i] = strings.TrimRight(line, " ")
+	if m.canvas.RenderBuffer == nil || m.canvas.Bounds().Dx() != m.width || m.canvas.Bounds().Dy() != m.height {
+		m.canvas = uv.NewScreenBuffer(m.width, m.height)
 	}
+	v.Cursor = m.Draw(m.canvas, m.canvas.Bounds())
 
-	content = strings.Join(contentLines, "\n")
+	content := trimTrailingSpaces(m.canvas.Render())
 
 	v.Content = content
 	if m.progressBarEnabled && m.sendProgressBar && m.isAgentBusy() {
@@ -3440,6 +3440,49 @@ func (m *UI) View() tea.View {
 	}
 
 	return v
+}
+
+// trimTrailingSpaces normalises \r\n line endings to \n and strips trailing
+// space characters from every line in a single pass. It is equivalent to the
+// four-step pipeline: strings.ReplaceAll + Split + per-line TrimRight + Join,
+// but allocates only one strings.Builder instead of two intermediate slices.
+func trimTrailingSpaces(s string) string {
+	b := strings.Builder{}
+	b.Grow(len(s))
+
+	lineStart := 0
+	lastNonSpace := -1
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\r' && i+1 < len(s) && s[i+1] == '\n':
+			// Normalise \r\n → \n and strip trailing spaces on this line.
+			if lastNonSpace >= lineStart {
+				b.WriteString(s[lineStart : lastNonSpace+1])
+			}
+			b.WriteByte('\n')
+			i++ // consume the '\n' as well
+			lineStart = i + 1
+			lastNonSpace = -1
+		case c == '\n':
+			if lastNonSpace >= lineStart {
+				b.WriteString(s[lineStart : lastNonSpace+1])
+			}
+			b.WriteByte('\n')
+			lineStart = i + 1
+			lastNonSpace = -1
+		case c != ' ':
+			lastNonSpace = i
+		}
+	}
+
+	// Flush the last line (which may have no trailing newline).
+	if lineStart < len(s) && lastNonSpace >= lineStart {
+		b.WriteString(s[lineStart : lastNonSpace+1])
+	}
+
+	return b.String()
 }
 
 // ShortHelp implements [help.KeyMap].
