@@ -47,8 +47,8 @@ func setupTestDBs(t *testing.T) (globalDB *sql.DB, sourcePath string, workingDir
 	return globalDB, sourcePath, workingDir
 }
 
-// seedSourceDB inserts test sessions, messages, files, read_files,
-// and OAuth data into the source database.
+// seedSourceDB inserts test sessions, messages, read_files, and OAuth
+// data into the source database.
 func seedSourceDB(t *testing.T, database *sql.DB, workingDir string) {
 	t.Helper()
 	ctx := context.Background()
@@ -96,14 +96,6 @@ func seedSourceDB(t *testing.T, database *sql.DB, workingDir string) {
 			UPDATE sessions SET updated_at = strftime('%s', 'now')
 			WHERE id = new.id;
 		END
-	`)
-	require.NoError(t, err)
-
-	// Insert files.
-	_, err = database.ExecContext(ctx, `
-		INSERT INTO files (id, session_id, path, content, version, created_at, updated_at)
-		VALUES
-			('file-1', 'sess-1', '/tmp/foo.go', 'package foo', 1, 900001, 900001)
 	`)
 	require.NoError(t, err)
 
@@ -170,12 +162,6 @@ func TestMigrateSynchronous(t *testing.T) {
 		`SELECT COUNT(*) FROM messages`).Scan(&count)
 	require.NoError(t, err)
 	require.Equal(t, 4, count)
-
-	// Verify files were copied.
-	err = globalDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM files`).Scan(&count)
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
 
 	// Verify triggers were recreated by inserting a new message.
 	_, err = globalDB.ExecContext(ctx, `
@@ -651,13 +637,6 @@ func TestMigrateBatchedPartialFailureRerun(t *testing.T) {
 		`SELECT COUNT(*) FROM messages`).Scan(&totalMsgs)
 	require.NoError(t, err)
 	require.Equal(t, 4, totalMsgs)
-
-	// Verify files were copied.
-	var fileCount int
-	err = globalDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM files`).Scan(&fileCount)
-	require.NoError(t, err)
-	require.Equal(t, 1, fileCount)
 
 	// Verify migration is now marked complete.
 	migrated, err := migrate.IsMigrated(ctx, globalDB, sourcePath)

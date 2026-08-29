@@ -213,17 +213,6 @@ func migrateSynchronous(ctx context.Context, conn *sql.Conn, workingDir, sourceP
 		return fmt.Errorf("failed to copy messages: %w", err)
 	}
 
-	// Copy files.
-	if _, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO main.files
-			(id, session_id, path, content, version, created_at, updated_at)
-		SELECT
-			id, session_id, path, content, version, created_at, updated_at
-		FROM source.files
-	`); err != nil {
-		return fmt.Errorf("failed to copy files: %w", err)
-	}
-
 	// Copy read_files, converting relative paths to absolute by
 	// prepending workingDir. Paths already absolute (Unix '/',
 	// Windows drive letter 'C:\', or UNC '\\') are copied as-is.
@@ -353,20 +342,6 @@ func migrateBatched(ctx context.Context, conn *sql.Conn, workingDir, sourcePath 
 		return err
 	}
 	slog.Info("Batched migration: session counts corrected", "source", sourcePath)
-
-	// Copy files in batches.
-	if err := copyInBatches(ctx, conn, `
-		INSERT OR IGNORE INTO main.files
-			(id, session_id, path, content, version, created_at, updated_at)
-		SELECT
-			id, session_id, path, content, version, created_at, updated_at
-		FROM source.files
-		ORDER BY rowid
-		LIMIT ? OFFSET ?
-	`, batchSize, "files"); err != nil {
-		return err
-	}
-	slog.Info("Batched migration: files copied", "source", sourcePath)
 
 	// Copy read_files in batches with relative→absolute path
 	// conversion.
