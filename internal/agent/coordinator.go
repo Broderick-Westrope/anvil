@@ -1014,7 +1014,6 @@ func (c *coordinator) buildToolsWithState(
 			tools.NewDefinitionTool(c.lspManager),
 			tools.NewCallHierarchyTool(c.lspManager),
 			tools.NewRenameTool(c.lspManager, c.permissions, c.filetracker),
-			tools.NewReplaceSymbolTool(c.lspManager, c.permissions, c.filetracker),
 		)
 	}
 

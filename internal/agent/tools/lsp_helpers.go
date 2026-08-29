@@ -56,6 +56,25 @@ func resolveSymbol(ctx context.Context, lspManager *lsp.Manager, symbol, working
 	return nil, fmt.Errorf("no LSP client handles any file matching '%s'", symbol)
 }
 
+// findSymbolByName searches for a symbol by name in the document symbol tree.
+func findSymbolByName(symbols []protocol.DocumentSymbolResult, name string) protocol.DocumentSymbolResult {
+	for _, sym := range symbols {
+		if sym.GetName() == name {
+			return sym
+		}
+		if ds, ok := sym.(*protocol.DocumentSymbol); ok && len(ds.Children) > 0 {
+			children := make([]protocol.DocumentSymbolResult, len(ds.Children))
+			for i := range ds.Children {
+				children[i] = &ds.Children[i]
+			}
+			if found := findSymbolByName(children, name); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
+}
+
 // findLSPClient returns the first LSP client that handles the given file path.
 func findLSPClient(lspManager *lsp.Manager, filePath string) *lsp.Client {
 	if abs, err := filepath.Abs(filePath); err == nil {
