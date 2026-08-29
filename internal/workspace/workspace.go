@@ -12,7 +12,6 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/oauth"
@@ -109,9 +108,6 @@ type Workspace interface {
 	FileTrackerRecordRead(ctx context.Context, sessionID, path string)
 	FileTrackerLastReadTime(ctx context.Context, sessionID, path string) time.Time
 	FileTrackerListReadFiles(ctx context.Context, sessionID string) ([]string, error)
-
-	// History
-	ListSessionHistory(ctx context.Context, sessionID string) ([]history.File, error)
 
 	// LSP
 	LSPStart(ctx context.Context, path string)

@@ -50,7 +50,6 @@ internal/
   event/                           Telemetry (PostHog)
   pubsub/                          Internal pub/sub for cross-component messaging
   filetracker/                     Tracks files touched per session
-  history/                         Prompt history
 ```
 
 ### Key Dependency Roles

@@ -365,28 +365,6 @@ func (c *controllerV1) handleGetWorkspaceSession(w http.ResponseWriter, r *http.
 	jsonEncode(w, sessionToProto(sess))
 }
 
-// handleGetWorkspaceSessionHistory returns the history for a session.
-//
-//	@Summary		Get session history
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			id	path		string		true	"Workspace ID"
-//	@Param			sid	path		string		true	"Session ID"
-//	@Success		200	{array}		proto.File
-//	@Failure		404	{object}	proto.Error
-//	@Failure		500	{object}	proto.Error
-//	@Router			/workspaces/{id}/sessions/{sid}/history [get]
-func (c *controllerV1) handleGetWorkspaceSessionHistory(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	sid := r.PathValue("sid")
-	history, err := c.backend.ListSessionHistory(r.Context(), id, sid)
-	if err != nil {
-		c.handleError(w, r, err)
-		return
-	}
-	jsonEncode(w, history)
-}
-
 // handleGetWorkspaceSessionMessages returns all messages for a session.
 //
 //	@Summary		Get session messages

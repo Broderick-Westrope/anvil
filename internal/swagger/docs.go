@@ -2364,56 +2364,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/workspaces/{id}/sessions/{sid}/history": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Get session history",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Session ID",
-                        "name": "sid",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/proto.File"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/proto.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/proto.Error"
-                        }
-                    }
-                }
-            }
-        },
         "/workspaces/{id}/sessions/{sid}/messages": {
             "get": {
                 "produces": [
@@ -2804,6 +2754,10 @@ const docTemplate = `{
                 "clientId": {
                     "type": "string"
                 },
+                "clientName": {
+                    "description": "ClientName is the client_name sent during OAuth dynamic client\nregistration. Some servers (e.g. Figma) whitelist DCR by client\nname and reject unknown clients with 403.",
+                    "type": "string"
+                },
                 "clientSecret": {
                     "type": "string"
                 },
@@ -3162,6 +3116,9 @@ const docTemplate = `{
                 "initialize_as": {
                     "type": "string"
                 },
+                "lsp_idle_timeout": {
+                    "type": "integer"
+                },
                 "progress": {
                     "type": "boolean"
                 },
@@ -3420,32 +3377,6 @@ const docTemplate = `{
             "properties": {
                 "message": {
                     "type": "string"
-                }
-            }
-        },
-        "proto.File": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "integer"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "session_id": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "integer"
-                },
-                "version": {
-                    "type": "integer"
                 }
             }
         },

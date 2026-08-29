@@ -34,7 +34,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -175,10 +174,6 @@ type (
 		session   *session.Session
 	}
 
-	// sessionFilesUpdatesMsg is sent when the files for this session have been updated
-	sessionFilesUpdatesMsg struct {
-		sessionFiles []SessionFile
-	}
 	// creditsUpdatedMsg is sent when the remaining Hyper credits have been
 	// fetched from the API.
 	creditsUpdatedMsg struct {
@@ -200,9 +195,8 @@ type (
 
 // UI represents the main user interface model.
 type UI struct {
-	com          *common.Common
-	session      *session.Session
-	sessionFiles []SessionFile
+	com     *common.Common
+	session *session.Session
 
 	// keeps track of read files while we don't have a session id
 	sessionFileReads []string
@@ -711,7 +705,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setState(uiChat, m.focus)
 		m.session = msg.session
 		m.sidebarOffset = 0
-		m.sessionFiles = msg.files
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		var msgs []message.Message
 		var err error
@@ -743,14 +736,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.historyReset()
 		cmds = append(cmds, m.loadPromptHistory())
 		m.updateLayoutAndSize()
-
-	case sessionFilesUpdatesMsg:
-		m.sessionFiles = msg.sessionFiles
-		var paths []string
-		for _, f := range msg.sessionFiles {
-			paths = append(paths, f.LatestVersion.Path)
-		}
-		cmds = append(cmds, m.startLSPs(paths))
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
@@ -912,8 +897,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
-	case pubsub.Event[history.File]:
-		cmds = append(cmds, m.handleFileEvent(msg.Payload))
 	case pubsub.Event[app.LSPEvent]:
 		m.lspStates = app.GetLSPStates()
 	case pubsub.Event[skills.Event]:
@@ -5317,7 +5300,6 @@ func (m *UI) newSession() tea.Cmd {
 	m.clearDrillStack()
 	m.session = nil
 	m.sidebarOffset = 0
-	m.sessionFiles = nil
 	m.sessionFileReads = nil
 	m.setState(uiLanding, uiFocusEditor)
 	m.textarea.Focus()
@@ -5583,8 +5565,7 @@ func (m *UI) drawSessionDetails(scr uv.Screen, area uv.Rectangle) {
 	lspSection := m.lspInfo(sectionWidth, maxItemsPerSection, false)
 	mcpSection := m.mcpInfo(sectionWidth, maxItemsPerSection, false)
 	skillsSection := m.skillsInfo(sectionWidth, maxItemsPerSection, false)
-	filesSection := m.filesInfo(m.com.Workspace.WorkingDir(), sectionWidth, maxItemsPerSection, false)
-	sections := lipgloss.JoinHorizontal(lipgloss.Top, filesSection, " ", lspSection, " ", mcpSection, " ", skillsSection)
+	sections := lipgloss.JoinHorizontal(lipgloss.Top, lspSection, " ", mcpSection, " ", skillsSection)
 	uv.NewStyledString(
 		s.CompactDetails.View.
 			Width(area.Dx()).

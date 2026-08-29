@@ -188,10 +188,11 @@ func TestToolDetailParamItem_ToggleExpanded(t *testing.T) {
 	t.Run("single line value does not toggle", func(t *testing.T) {
 		t.Parallel()
 		sty := styles.TokyoNight()
-		p := &toolDetailParamItem{Versioned: list.NewVersioned(),
-			sty:   &sty,
-			key:   "file_path",
-			value: "/tmp/test.go",
+		p := &toolDetailParamItem{
+			Versioned: list.NewVersioned(),
+			sty:       &sty,
+			key:       "file_path",
+			value:     "/tmp/test.go",
 		}
 		expanded := p.ToggleExpanded()
 		require.False(t, expanded, "single-line param should not toggle")
@@ -200,10 +201,11 @@ func TestToolDetailParamItem_ToggleExpanded(t *testing.T) {
 	t.Run("multi-line value toggles", func(t *testing.T) {
 		t.Parallel()
 		sty := styles.TokyoNight()
-		p := &toolDetailParamItem{Versioned: list.NewVersioned(),
-			sty:   &sty,
-			key:   "content",
-			value: "line1\nline2\nline3",
+		p := &toolDetailParamItem{
+			Versioned: list.NewVersioned(),
+			sty:       &sty,
+			key:       "content",
+			value:     "line1\nline2\nline3",
 		}
 		require.False(t, p.expanded)
 		expanded := p.ToggleExpanded()
@@ -215,10 +217,11 @@ func TestToolDetailParamItem_ToggleExpanded(t *testing.T) {
 	t.Run("non-string value does not toggle", func(t *testing.T) {
 		t.Parallel()
 		sty := styles.TokyoNight()
-		p := &toolDetailParamItem{Versioned: list.NewVersioned(),
-			sty:   &sty,
-			key:   "limit",
-			value: float64(20),
+		p := &toolDetailParamItem{
+			Versioned: list.NewVersioned(),
+			sty:       &sty,
+			key:       "limit",
+			value:     float64(20),
 		}
 		expanded := p.ToggleExpanded()
 		require.False(t, expanded, "non-string param should not toggle")
@@ -229,9 +232,10 @@ func TestToolDetailOutputItem_ToggleExpanded(t *testing.T) {
 	t.Parallel()
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "bash", `{"command":"echo hi"}`, &message.ToolResult{Content: "hi"}, ToolStatusSuccess)
-	o := &toolDetailOutputItem{Versioned: list.NewVersioned(),
-		sty:    &sty,
-		source: source,
+	o := &toolDetailOutputItem{
+		Versioned: list.NewVersioned(),
+		sty:       &sty,
+		source:    source,
 	}
 	require.False(t, o.expanded)
 	expanded := o.ToggleExpanded()

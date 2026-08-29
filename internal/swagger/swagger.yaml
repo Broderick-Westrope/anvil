@@ -166,6 +166,12 @@ definitions:
           supported and only for HTTP/SSE servers.
       clientId:
         type: string
+      clientName:
+        description: |-
+          ClientName is the client_name sent during OAuth dynamic client
+          registration. Some servers (e.g. Figma) whitelist DCR by client
+          name and reject unknown clients with 403.
+        type: string
       clientSecret:
         type: string
       command:
@@ -437,6 +443,8 @@ definitions:
         type: array
       initialize_as:
         type: string
+      lsp_idle_timeout:
+        type: integer
       progress:
         type: boolean
       project_directory:
@@ -615,23 +623,6 @@ definitions:
     properties:
       message:
         type: string
-    type: object
-  proto.File:
-    properties:
-      content:
-        type: string
-      created_at:
-        type: integer
-      id:
-        type: string
-      path:
-        type: string
-      session_id:
-        type: string
-      updated_at:
-        type: integer
-      version:
-        type: integer
     type: object
   proto.FileTrackerReadRequest:
     properties:
@@ -2421,39 +2412,6 @@ paths:
       summary: List tracked files for session
       tags:
       - filetracker
-  /workspaces/{id}/sessions/{sid}/history:
-    get:
-      parameters:
-      - description: Workspace ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Session ID
-        in: path
-        name: sid
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/proto.File'
-            type: array
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/proto.Error'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/proto.Error'
-      summary: Get session history
-      tags:
-      - sessions
   /workspaces/{id}/sessions/{sid}/messages:
     get:
       parameters:

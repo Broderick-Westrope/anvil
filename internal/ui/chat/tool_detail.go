@@ -49,13 +49,15 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 	var items []MessageItem
 
 	// 1. Header.
-	items = append(items, &toolDetailHeaderItem{Versioned: list.NewVersioned(),
-		sty:    sty,
-		source: source,
+	items = append(items, &toolDetailHeaderItem{
+		Versioned: list.NewVersioned(),
+		sty:       sty,
+		source:    source,
 	})
 
 	// 2. Input section divider.
-	items = append(items, &toolDetailSectionItem{Versioned: list.NewVersioned(),
+	items = append(items, &toolDetailSectionItem{
+		Versioned:  list.NewVersioned(),
 		sty:        sty,
 		label:      "Input",
 		toolCallID: tc.ID,
@@ -65,7 +67,8 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 	items = append(items, buildParamItems(sty, tc)...)
 
 	// 4. Output section divider.
-	items = append(items, &toolDetailSectionItem{Versioned: list.NewVersioned(),
+	items = append(items, &toolDetailSectionItem{
+		Versioned:  list.NewVersioned(),
 		sty:        sty,
 		label:      "Output",
 		toolCallID: tc.ID,
@@ -73,7 +76,8 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 
 	// 5. Output item (or awaiting permission).
 	if status == ToolStatusAwaitingPermission {
-		items = append(items, &toolDetailStaticItem{Versioned: list.NewVersioned(),
+		items = append(items, &toolDetailStaticItem{
+			Versioned:  list.NewVersioned(),
 			sty:        sty,
 			id:         "tool-detail-output:" + tc.ID,
 			content:    "Awaiting permission...",
@@ -81,9 +85,10 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 			toolCallID: tc.ID,
 		})
 	} else {
-		items = append(items, &toolDetailOutputItem{Versioned: list.NewVersioned(),
-			sty:    sty,
-			source: source,
+		items = append(items, &toolDetailOutputItem{
+			Versioned: list.NewVersioned(),
+			sty:       sty,
+			source:    source,
 		})
 	}
 
@@ -94,7 +99,8 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 // toolDetailParamItem for each parameter, sorted by key.
 func buildParamItems(sty *styles.Styles, tc message.ToolCall) []MessageItem {
 	if tc.Input == "" {
-		return []MessageItem{&toolDetailStaticItem{Versioned: list.NewVersioned(),
+		return []MessageItem{&toolDetailStaticItem{
+			Versioned:  list.NewVersioned(),
 			sty:        sty,
 			id:         "tool-detail-param:no-input:" + tc.ID,
 			content:    "  (no input)",
@@ -105,7 +111,8 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall) []MessageItem {
 
 	var params map[string]any
 	if err := json.Unmarshal([]byte(tc.Input), &params); err != nil {
-		return []MessageItem{&toolDetailStaticItem{Versioned: list.NewVersioned(),
+		return []MessageItem{&toolDetailStaticItem{
+			Versioned:  list.NewVersioned(),
 			sty:        sty,
 			id:         "tool-detail-param:raw:" + tc.ID,
 			content:    "  " + tc.Input,
@@ -126,7 +133,8 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall) []MessageItem {
 	var items []MessageItem
 	for _, k := range keys {
 		v := params[k]
-		items = append(items, &toolDetailParamItem{Versioned: list.NewVersioned(),
+		items = append(items, &toolDetailParamItem{
+			Versioned:  list.NewVersioned(),
 			sty:        sty,
 			key:        k,
 			value:      v,

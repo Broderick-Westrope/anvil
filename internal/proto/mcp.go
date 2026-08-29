@@ -105,7 +105,7 @@ func (e MCPEvent) MarshalJSON() ([]byte, error) {
 			}
 			return ""
 		}(),
-		Alias: (Alias)(e),
+		Alias: Alias(e),
 	})
 }
 
@@ -116,7 +116,7 @@ func (e *MCPEvent) UnmarshalJSON(data []byte) error {
 		Error string `json:"error,omitempty"`
 		Alias
 	}{
-		Alias: (Alias)(*e),
+		Alias: Alias(*e),
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
@@ -154,7 +154,7 @@ func (i MCPClientInfo) MarshalJSON() ([]byte, error) {
 			}
 			return ""
 		}(),
-		Alias: (Alias)(i),
+		Alias: Alias(i),
 	})
 }
 
@@ -165,7 +165,7 @@ func (i *MCPClientInfo) UnmarshalJSON(data []byte) error {
 		Error string `json:"error,omitempty"`
 		Alias
 	}{
-		Alias: (Alias)(*i),
+		Alias: Alias(*i),
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err

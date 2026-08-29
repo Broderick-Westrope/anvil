@@ -8,7 +8,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/proto"
@@ -77,11 +76,6 @@ func wrapEvent(ev any) *pubsub.Payload {
 			Type:    e.Type,
 			Payload: sessionToProto(e.Payload),
 		})
-	case pubsub.Event[history.File]:
-		return envelope(pubsub.PayloadTypeFile, pubsub.Event[proto.File]{
-			Type:    e.Type,
-			Payload: fileToProto(e.Payload),
-		})
 	case pubsub.Event[notify.Notification]:
 		return envelope(pubsub.PayloadTypeAgentEvent, pubsub.Event[proto.AgentEvent]{
 			Type: e.Type,
@@ -139,18 +133,6 @@ func sessionToProto(s session.Session) proto.Session {
 		UpdatedAt:        s.UpdatedAt,
 		Pinned:           s.Pinned,
 		PinNote:          s.PinNote,
-	}
-}
-
-func fileToProto(f history.File) proto.File {
-	return proto.File{
-		ID:        f.ID,
-		SessionID: f.SessionID,
-		Path:      f.Path,
-		Content:   f.Content,
-		Version:   f.Version,
-		CreatedAt: f.CreatedAt,
-		UpdatedAt: f.UpdatedAt,
 	}
 }
 
