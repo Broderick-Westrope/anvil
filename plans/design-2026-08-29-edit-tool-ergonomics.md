@@ -35,44 +35,74 @@ In scope:
 
 1. **Remove the read gate from `edit` and `multiedit`.** Delete the
    `LastReadTime`-is-zero check and the mtime-vs-last-read staleness check in
-   `loadExistingFile` (internal/agent/tools/edit.go:291-304) and the
-   equivalent path used by multiedit. The unique-match requirement on
-   `old_string` remains the safety mechanism.
+   `loadExistingFile` (internal/agent/tools/edit.go) and the equivalent path
+   used by multiedit. Note `loadExistingFile` also serves the `deleteContent`
+   path (edit with empty `new_string`), which is ungated by the same change.
+   The unique-match requirement on `old_string` remains the safety mechanism.
 2. **Content-hash gate on `write`.** Replace the mtime comparison in
-   internal/agent/tools/write.go:74-79. The filetracker records a content
-   hash (e.g. SHA-256 of file bytes) whenever `view`, `edit`, `multiedit`, or
-   `write` successfully touches a file. `write` to an *existing* file blocks
-   when the current disk hash differs from the last recorded hash for this
-   session, or when the file was never seen. New-file creation is exempt. The
-   block error includes the current disk content (or a diff against the
-   proposed content, whichever is smaller — capped like tool diffs below) so
-   the failed call itself doubles as the read and recovery takes one turn.
-   This also fixes today's misleading "Last read: 0001-01-01" error for
-   never-read files.
+   internal/agent/tools/write.go:74-79. The filetracker's `RecordRead` is
+   extended to always record a content hash (SHA-256 of **raw disk bytes**,
+   exactly what `os.ReadFile` returns — never normalized/LF-converted
+   content). This means every caller of `RecordRead` — `view`, `edit`,
+   `multiedit`, `write`, and `lsp_rename` — records a fresh hash on success;
+   permission-denied and error paths record nothing.
+   `write` to an *existing* file blocks when the current disk hash differs
+   from the last recorded hash for this session, or when the file was never
+   seen. New-file creation is exempt. The block error includes the current
+   disk content or a diff against the proposed content (whichever is
+   smaller), capped at the same ~50-line limit as tool diffs. Recovery is
+   two turns (`error → view → retry`): the error path records no hash, but
+   its content lets the model understand the file's current state before
+   re-reading, avoiding blind retries. This also fixes today's misleading
+   "Last read: 0001-01-01" error for never-read files.
+   Note: `write` has no CRLF handling today (reads raw bytes, writes
+   `params.Content` verbatim) — a pre-existing issue. As part of this work,
+   `write` detects CRLF in the existing file and converts `params.Content`
+   to match before writing, mirroring the edit tools' round-tripping.
 3. **Diff feedback in tool output.** `edit`, `multiedit`, and `write`
    responses include a unified diff of the change, capped at ~50 lines with a
-   truncation note. The diff is already computed via `diff.GenerateDiff`;
-   it is currently discarded from the text response and shipped only as UI
-   metadata (which is preserved).
+   truncation note. The diff is already computed via `diff.GenerateDiff`, but
+   note: `write` captures the diff string into metadata, while `edit` and
+   `multiedit` discard the string return entirely (`_, additions, removals`)
+   — those call sites must capture it. UI metadata is preserved.
 4. **Remove the file history subsystem.** Delete `history.Service`
    (internal/history/), the `files` DB table (new migration), the
-   `pubsub.Event[history.File]` events and their consumers, the server
-   endpoints/client methods for session history
-   (`ListSessionHistory`, `/sessions/{sid}/filetracker/files` files listing
-   remains under filetracker but the history-backed session file listing
-   goes), and the sidebar "Modified Files" section
-   (internal/ui/model/session.go: `SessionFile`, `loadSessionFiles`,
-   `handleFileEvent`, `filesInfo`). Update all tool constructors that take
-   `history.Service` (edit, multiedit, write, lsp_rename) and their call
-   sites in the coordinator and tests.
+   `pubsub.Event[history.File]` events and all consumers, and the sidebar
+   "Modified Files" section. Known blast radius (non-exhaustive; follow the
+   compiler):
+   - internal/ui/model/session.go: `SessionFile`, `loadSessionFiles`,
+     `handleFileEvent`, `filesInfo`, and `loadSessionMsg.lspFilePaths` —
+     the last combines history files with filetracker read files to decide
+     which LSPs to start on session resume; rewrite it to use filetracker
+     read files only (all successful mutating paths already call
+     `RecordRead`, so coverage holds).
+   - internal/ui/model/ui.go:915: history pubsub event case.
+   - internal/server/server.go: `GET .../sessions/{sid}/history` endpoint;
+     internal/server/events.go: `fileToProto` and the `history.File` event
+     case; internal/proto: the `File` struct; internal/pubsub:
+     `PayloadTypeFile`.
+   - internal/workspace/workspace.go: `ListSessionHistory` on the interface;
+     both `AppWorkspace` and `ClientWorkspace` implementations, plus
+     `protoToFile`/`protoToFiles` and the history event case in
+     client_workspace.go; internal/client/proto.go client method;
+     internal/backend/session.go `ListSessionHistory`.
+   - Tool constructors that take `history.Service` (edit, multiedit, write,
+     lsp_rename) and their call sites in the coordinator,
+     agentic_fetch_tool.go, and tests.
+   The filetracker read-files endpoints remain.
 5. **Delete `lsp_replace_symbol`.** Remove the tool, its .md description,
    registration in the coordinator, and references in prompts/docs.
 6. **Harden `lsp_rename`.** Add an optional `file_path` parameter: when
-   given, resolve the symbol within that file (unambiguous). When omitted
-   and multiple workspace candidates match, return the candidate list
-   (file:line, symbol kind) as an error so the model disambiguates and
-   retries. The success response includes per-file edit counts
-   (`foo.go: 3 renames`) instead of bare file names.
+   given, resolve the symbol via `DocumentSymbols` on that file (the
+   accurate, file-scoped strategy — not grep-then-filter), falling back to a
+   position from the matched symbol's selection range. The existing `path`
+   directory-scope parameter is removed in favor of `file_path` (one scoping
+   mechanism, not two). When `file_path` is omitted and multiple workspace
+   candidates match, return the candidate list (file:line, symbol kind) as
+   an error so the model disambiguates and retries. The success response
+   includes per-file edit counts (`foo.go: 3 renames`) instead of bare file
+   names. `lsp_rename` continues to call `RecordRead` for affected files,
+   which now also refreshes their content hashes (see change 2).
 7. **Prompt and docs alignment.** Soften "NEVER edit a file you haven't
    read" in internal/agent/templates/orchestrator.md.tpl and
    specialist.md.tpl to guidance: read relevant context before editing;
@@ -100,7 +130,9 @@ Out of scope:
 - Preserve UI diff metadata (`EditResponseMetadata`, `WriteResponseMetadata`)
   — the TUI renders diffs from it today.
 - Preserve CRLF round-tripping (`fsext.ToUnixLineEndings` /
-  `ToWindowsLineEndings`) in all mutating paths.
+  `ToWindowsLineEndings`) in edit/multiedit, and add it to `write` (see
+  change 2). Content hashes always use raw disk bytes, so hashing is
+  line-ending-agnostic by construction.
 - Permission requests keep working unchanged (old/new content params still
   populated for the permission dialog).
 - DB change ships as a forward-only migration (drop `files` table); no data
@@ -117,8 +149,13 @@ Out of scope:
 - [ ] `edit`/`multiedit` succeed on files modified externally since last
       view, provided `old_string` uniquely matches current content.
 - [ ] `write` to an existing, never-seen file fails with an error containing
-      the current file content (capped), and a follow-up `write` after a
-      `view` succeeds.
+      the current file content or diff (capped at ~50 lines), and a follow-up
+      `write` after a `view` succeeds.
+- [ ] A file modified by `lsp_rename` does not trip the write gate on a
+      subsequent `write` (RecordRead refreshed its hash).
+- [ ] `write` to a CRLF file preserves CRLF line endings, and a CRLF file
+      does not spuriously trip the hash gate after being edited by Anvil's
+      own tools.
 - [ ] `write` to a file changed on disk since last seen fails on hash
       mismatch (not mtime), and formatter-style mtime-only touches with
       identical content do NOT trigger the gate.
@@ -130,7 +167,8 @@ Out of scope:
       per-file edit counts.
 - [ ] History package, files table, history pubsub events, and the sidebar
       Modified Files section are gone; the app builds and the TUI renders
-      without them.
+      without them; LSP auto-start on session resume works from filetracker
+      read files alone.
 - [ ] System prompts no longer state a hard read-before-edit law; they name
       the exact tools that satisfy the write gate.
 - [ ] `task lint` and `go test ./...` pass; golden files regenerated.
@@ -148,14 +186,14 @@ Out of scope:
   formatters/git operations were a real annoyance source; hashes are cheap
   at the file sizes involved. Alternative considered and declined:
   keep mtime — simpler but strictly worse signal.
-- **Error-as-read recovery on write block**: including current content in
-  the block error converts a two-turn recovery (error → view → retry) into
-  one turn (error → retry). Recording the hash at error time is NOT done —
-  the model must still issue a mutating/view call — to keep the gate's
-  semantics simple; the content in the error is informational.
-  (Implementation may choose to record the hash from the error response if
-  it proves clean; the spec requires only that recovery is possible in one
-  additional call.)
+- **Error-as-context recovery on write block**: including current content in
+  the block error means the model understands the file's state immediately;
+  the subsequent `view` → retry is mechanical rather than exploratory. The
+  error path deliberately records no hash — only successful tool calls
+  refresh the gate — keeping the gate's semantics simple and auditable.
+  Alternative considered and declined: recording the hash at error time for
+  true one-turn recovery — rejected because an error response silently
+  arming the gate is surprising behavior.
 - **Delete history rather than shrink it**: its only consumer is sidebar
   +/- stats the user explicitly does not read; git covers change inspection
   and undo. Keeping unused persistence of full file contents per version is
