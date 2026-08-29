@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/diff"
@@ -162,7 +161,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	edit.filetracker.RecordRead(edit.ctx, sessionID, filePath)
+	edit.filetracker.RecordReadWithHash(edit.ctx, sessionID, filePath, filetracker.HashContent([]byte(content)))
 
 	return fantasy.WithResponseMetadata(
 		fantasy.NewTextResponse("File created: "+filePath),
@@ -223,16 +222,39 @@ func notFoundError(content, old string) error {
 	return errors.New(msg)
 }
 
-// commitFileChange writes newContent to filePath and records the read in the
-// file tracker. Callers must convert line endings before calling this
-// function.
+// commitFileChange writes newContent to filePath and records the read (with
+// the hash of the written bytes) in the file tracker. Callers must convert
+// line endings before calling this function.
 func commitFileChange(edit editContext, sessionID, filePath, oldContent, newContent string) error {
 	if err := os.WriteFile(filePath, []byte(newContent), 0o644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 
-	edit.filetracker.RecordRead(edit.ctx, sessionID, filePath)
+	edit.filetracker.RecordReadWithHash(edit.ctx, sessionID, filePath, filetracker.HashContent([]byte(newContent)))
 	return nil
+}
+
+// truncateDiff caps a unified diff at maxLines lines, appending a note with
+// the number of omitted lines when truncated.
+func truncateDiff(diff string, maxLines int) string {
+	lines := strings.Split(diff, "\n")
+	if len(lines) <= maxLines {
+		return diff
+	}
+	return strings.Join(lines[:maxLines], "\n") +
+		fmt.Sprintf("\n... (diff truncated, %d more lines)", len(lines)-maxLines)
+}
+
+// maxDiffLines is the maximum number of diff lines included in mutating tool
+// responses before truncation.
+const maxDiffLines = 50
+
+// withDiff appends a truncated unified diff to a tool response message.
+func withDiff(message, diffText string) string {
+	if diffText == "" {
+		return message
+	}
+	return message + "\n\n" + truncateDiff(strings.TrimRight(diffText, "\n"), maxDiffLines)
 }
 
 func loadExistingFile(edit editContext, filePath, sessionError string) (sessionID, oldContent string, isCrlf bool, resp fantasy.ToolResponse, err error) {
@@ -251,21 +273,6 @@ func loadExistingFile(edit editContext, filePath, sessionError string) (sessionI
 	sessionID = GetSessionFromContext(edit.ctx)
 	if sessionID == "" {
 		return "", "", false, fantasy.ToolResponse{}, fmt.Errorf("%s", sessionError)
-	}
-
-	lastRead := edit.filetracker.LastReadTime(edit.ctx, sessionID, filePath)
-	if lastRead.IsZero() {
-		return "", "", false, fantasy.NewTextErrorResponse("you must read the file before editing it. Use the View tool first"), nil
-	}
-
-	modTime := fileInfo.ModTime().Truncate(time.Second)
-	if modTime.After(lastRead) {
-		return "", "", false, fantasy.NewTextErrorResponse(
-			fmt.Sprintf(
-				"file %s has been modified since it was last read (mod time: %s, last read: %s)",
-				filePath, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339),
-			),
-		), nil
 	}
 
 	content, err := os.ReadFile(filePath)
@@ -291,7 +298,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 
-	_, additions, removals := diff.GenerateDiff(
+	diffText, additions, removals := diff.GenerateDiff(
 		oldContent,
 		newContent,
 		strings.TrimPrefix(filePath, edit.workingDir),
@@ -338,7 +345,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 	}
 
 	return fantasy.WithResponseMetadata(
-		fantasy.NewTextResponse(withWhitespaceNote("Content deleted from file: "+filePath, whitespaceCorrected)),
+		fantasy.NewTextResponse(withDiff(withWhitespaceNote("Content deleted from file: "+filePath, whitespaceCorrected), diffText)),
 		EditResponseMetadata{
 			OldContent: oldContent,
 			NewContent: writeContent,
@@ -365,7 +372,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 		return fantasy.NewTextErrorResponse("new content is the same as old content. No changes made."), nil
 	}
 
-	_, additions, removals := diff.GenerateDiff(
+	diffText, additions, removals := diff.GenerateDiff(
 		oldContent,
 		result,
 		strings.TrimPrefix(filePath, edit.workingDir),
@@ -412,7 +419,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	}
 
 	return fantasy.WithResponseMetadata(
-		fantasy.NewTextResponse(withWhitespaceNote("Content replaced in file: "+filePath, whitespaceCorrected)),
+		fantasy.NewTextResponse(withDiff(withWhitespaceNote("Content replaced in file: "+filePath, whitespaceCorrected), diffText)),
 		EditResponseMetadata{
 			OldContent: oldContent,
 			NewContent: writeContent,

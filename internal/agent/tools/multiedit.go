@@ -216,7 +216,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	edit.filetracker.RecordRead(edit.ctx, sessionID, params.FilePath)
+	edit.filetracker.RecordReadWithHash(edit.ctx, sessionID, params.FilePath, filetracker.HashContent([]byte(currentContent)))
 
 	var message string
 	if len(failedEdits) > 0 {
@@ -266,7 +266,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	}
 
 	// Generate diff and check permissions
-	_, additions, removals := diff.GenerateDiff(oldContent, currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
+	diffText, additions, removals := diff.GenerateDiff(oldContent, currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
 
 	editsApplied := len(params.Edits) - len(failedEdits)
 	var description string
@@ -320,7 +320,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	} else {
 		message = fmt.Sprintf("Applied %d edits to file: %s", len(params.Edits), params.FilePath)
 	}
-	message = withWhitespaceNote(message, whitespaceCorrected)
+	message = withDiff(withWhitespaceNote(message, whitespaceCorrected), diffText)
 
 	return fantasy.WithResponseMetadata(
 		fantasy.NewTextResponse(message),

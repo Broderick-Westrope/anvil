@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,9 +15,8 @@ import (
 )
 
 type mockEditFileTracker struct {
-	lastRead time.Time
-	reads    []string
-	hashes   []string
+	reads  []string
+	hashes []string
 }
 
 func (m *mockEditFileTracker) RecordRead(ctx context.Context, sessionID, path string) {
@@ -35,7 +36,7 @@ func (m *mockEditFileTracker) LastContentHash(ctx context.Context, sessionID, pa
 }
 
 func (m *mockEditFileTracker) LastReadTime(ctx context.Context, sessionID, path string) time.Time {
-	return m.lastRead
+	return time.Time{}
 }
 
 func (m *mockEditFileTracker) ListReadFiles(ctx context.Context, sessionID string) ([]string, error) {
@@ -49,7 +50,7 @@ func TestReplaceContentPreservesCRLFAndMetadata(t *testing.T) {
 	filePath := filepath.Join(dir, "test.txt")
 	require.NoError(t, os.WriteFile(filePath, []byte("alpha\r\nbeta\r\n"), 0o644))
 
-	tracker := &mockEditFileTracker{lastRead: time.Now().Add(time.Second)}
+	tracker := &mockEditFileTracker{}
 	edit := editContext{
 		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
 		permissions: &mockPermissionService{},
@@ -60,7 +61,7 @@ func TestReplaceContentPreservesCRLFAndMetadata(t *testing.T) {
 	resp, err := replaceContent(edit, filePath, "beta", "BETA", false, fantasy.ToolCall{ID: "call"})
 	require.NoError(t, err)
 	require.False(t, resp.IsError)
-	require.Equal(t, "Content replaced in file: "+filePath, resp.Content)
+	require.Contains(t, resp.Content, "Content replaced in file: "+filePath)
 
 	content, err := os.ReadFile(filePath)
 	require.NoError(t, err)
@@ -73,6 +74,136 @@ func TestReplaceContentPreservesCRLFAndMetadata(t *testing.T) {
 	require.Equal(t, "alpha\r\nBETA\r\n", meta.NewContent)
 }
 
+func TestReplaceContentSucceedsWithoutPriorRead(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "test.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("alpha\nbeta\n"), 0o644))
+
+	// Tracker has never seen the file; the edit must still succeed.
+	edit := editContext{
+		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
+		permissions: &mockPermissionService{},
+		filetracker: &mockEditFileTracker{},
+		workingDir:  dir,
+	}
+
+	resp, err := replaceContent(edit, filePath, "beta", "BETA", false, fantasy.ToolCall{ID: "call"})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+
+	content, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	require.Equal(t, "alpha\nBETA\n", string(content))
+}
+
+func TestReplaceContentSucceedsAfterExternalModification(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "test.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("alpha\nbeta\n"), 0o644))
+
+	// Simulate an external modification after the last read by bumping the
+	// mtime into the future; the edit must still succeed because a unique
+	// old_string match against current content is the safety mechanism.
+	future := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(filePath, future, future))
+
+	edit := editContext{
+		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
+		permissions: &mockPermissionService{},
+		filetracker: &mockEditFileTracker{},
+		workingDir:  dir,
+	}
+
+	resp, err := replaceContent(edit, filePath, "beta", "BETA", false, fantasy.ToolCall{ID: "call"})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+
+	content, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	require.Equal(t, "alpha\nBETA\n", string(content))
+}
+
+func TestReplaceContentResponseIncludesDiff(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "test.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("alpha\nbeta\n"), 0o644))
+
+	edit := editContext{
+		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
+		permissions: &mockPermissionService{},
+		filetracker: &mockEditFileTracker{},
+		workingDir:  dir,
+	}
+
+	resp, err := replaceContent(edit, filePath, "beta", "BETA", false, fantasy.ToolCall{ID: "call"})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "-beta")
+	require.Contains(t, resp.Content, "+BETA")
+}
+
+func TestDeleteContentResponseIncludesDiff(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "test.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("alpha\nbeta\n"), 0o644))
+
+	edit := editContext{
+		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
+		permissions: &mockPermissionService{},
+		filetracker: &mockEditFileTracker{},
+		workingDir:  dir,
+	}
+
+	resp, err := deleteContent(edit, filePath, "beta\n", false, fantasy.ToolCall{ID: "call"})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "-beta")
+}
+
+func TestReplaceContentTruncatesLongDiff(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "test.txt")
+
+	var sb strings.Builder
+	for i := range 80 {
+		fmt.Fprintf(&sb, "line %d\n", i)
+	}
+	require.NoError(t, os.WriteFile(filePath, []byte(sb.String()), 0o644))
+
+	edit := editContext{
+		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
+		permissions: &mockPermissionService{},
+		filetracker: &mockEditFileTracker{},
+		workingDir:  dir,
+	}
+
+	resp, err := replaceContent(edit, filePath, sb.String(), "replaced\n", false, fantasy.ToolCall{ID: "call"})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "diff truncated")
+}
+
+func TestTruncateDiff(t *testing.T) {
+	t.Parallel()
+
+	short := "a\nb\nc"
+	require.Equal(t, short, truncateDiff(short, 5))
+
+	long := strings.Repeat("x\n", 10) + "y"
+	got := truncateDiff(long, 5)
+	require.Equal(t, "x\nx\nx\nx\nx\n... (diff truncated, 6 more lines)", got)
+}
+
 func TestDeleteContentRejectsMultipleMatchesWithoutReplaceAll(t *testing.T) {
 	t.Parallel()
 
@@ -83,7 +214,7 @@ func TestDeleteContentRejectsMultipleMatchesWithoutReplaceAll(t *testing.T) {
 	edit := editContext{
 		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
 		permissions: &mockPermissionService{},
-		filetracker: &mockEditFileTracker{lastRead: time.Now().Add(time.Second)},
+		filetracker: &mockEditFileTracker{},
 		workingDir:  dir,
 	}
 

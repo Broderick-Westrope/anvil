@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"charm.land/fantasy"
 
@@ -224,7 +223,7 @@ func TestProcessMultiEditExistingFilePartialFailure(t *testing.T) {
 	edit := editContext{
 		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
 		permissions: &mockPermissionService{},
-		filetracker: &mockEditFileTracker{lastRead: time.Now().Add(time.Second)},
+		filetracker: &mockEditFileTracker{},
 		workingDir:  dir,
 	}
 	params := MultiEditParams{
@@ -239,6 +238,8 @@ func TestProcessMultiEditExistingFilePartialFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, resp.IsError)
 	require.Contains(t, resp.Content, "Applied 1 of 2 edits")
+	require.Contains(t, resp.Content, "-two")
+	require.Contains(t, resp.Content, "+TWO")
 
 	content, err := os.ReadFile(filePath)
 	require.NoError(t, err)
