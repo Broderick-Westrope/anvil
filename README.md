@@ -3,8 +3,7 @@
 > [!NOTE]
 > Anvil began as a fork of [Crush by Charmbracelet, Inc.](https://github.com/charmbracelet/crush/), with the intention of building upon their great work. Anvil is highly opinionated and experimental. If you're thinking of forking, I encourage you to fork Crush and cherry-pick anything from Anvil which is of interest.
 
-<!-- TODO: Add a demo of Anvil once stable. -->
-<!-- <p align="center"><img width="800" alt="Anvil Demo" src="https://github.com/user-attachments/assets/58280caf-851b-470a-b6f7-d5c4ea8a1968" /></p> -->
+![Demo GIF](./assets/readme-demo.gif)
 
 ## Features of Anvil
 
