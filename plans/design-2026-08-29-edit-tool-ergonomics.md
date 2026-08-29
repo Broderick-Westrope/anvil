@@ -44,11 +44,14 @@ In scope:
    extended to always record a content hash (SHA-256 of **raw disk bytes**,
    exactly what `os.ReadFile` returns — never normalized/LF-converted
    content). This means every caller of `RecordRead` — `view`, `edit`,
-   `multiedit`, `write`, and `lsp_rename` — records a fresh hash on success;
-   permission-denied and error paths record nothing.
+   `multiedit`, and `lsp_rename` — records a fresh hash on success;
+   permission-denied and error paths record nothing. A corresponding
+   retrieval method (e.g. `LastContentHash`) is added to
+   `filetracker.Service` for the gate check.
    `write` to an *existing* file blocks when the current disk hash differs
    from the last recorded hash for this session, or when the file was never
-   seen. New-file creation is exempt. The block error includes the current
+   seen. New-file creation is exempt. `write` also records the hash on
+   success. The block error includes the current
    disk content or a diff against the proposed content (whichever is
    smaller), capped at the same ~50-line limit as tool diffs. Recovery is
    two turns (`error → view → retry`): the error path records no hash, but
@@ -58,7 +61,9 @@ In scope:
    Note: `write` has no CRLF handling today (reads raw bytes, writes
    `params.Content` verbatim) — a pre-existing issue. As part of this work,
    `write` detects CRLF in the existing file and converts `params.Content`
-   to match before writing, mirroring the edit tools' round-tripping.
+   to match before writing, mirroring the edit tools' round-tripping. The
+   existing identical-content short-circuit must compare after this CRLF
+   conversion, not before.
 3. **Diff feedback in tool output.** `edit`, `multiedit`, and `write`
    responses include a unified diff of the change, capped at ~50 lines with a
    truncation note. The diff is already computed via `diff.GenerateDiff`, but
@@ -99,7 +104,9 @@ In scope:
    directory-scope parameter is removed in favor of `file_path` (one scoping
    mechanism, not two). When `file_path` is omitted and multiple workspace
    candidates match, return the candidate list (file:line, symbol kind) as
-   an error so the model disambiguates and retries. The success response
+   an error so the model disambiguates and retries (workspace candidates
+   come from the existing grep-based `resolveSymbol` lookup, now returning
+   all matches instead of the first). The success response
    includes per-file edit counts (`foo.go: 3 renames`) instead of bare file
    names. `lsp_rename` continues to call `RecordRead` for affected files,
    which now also refreshes their content hashes (see change 2).
