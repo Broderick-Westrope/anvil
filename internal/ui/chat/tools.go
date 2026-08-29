@@ -158,6 +158,11 @@ type baseToolMessageItem struct {
 	// spinningFunc allows tools to override the default spinning logic.
 	// If nil, uses the default: !toolCall.Finished && !canceled.
 	spinningFunc SpinningFunc
+	// modelFunc optionally returns the resolved model for agent-like tools.
+	// Used by formatParametersForCopy as a fallback when the tool input has
+	// no explicit model override, keeping copied text consistent with the
+	// rendered header.
+	modelFunc func() string
 
 	sty             *styles.Styles
 	anim            *anim.Anim
@@ -1363,7 +1368,11 @@ func (t *baseToolMessageItem) formatParametersForCopy() string {
 	case agent.TaskToolName:
 		var params agent.TaskParams
 		if json.Unmarshal([]byte(t.toolCall.Input), &params) == nil {
-			name := agentDisplayName(params.SubagentType, params.Description, params.Model)
+			model := params.Model
+			if model == "" && t.modelFunc != nil {
+				model = t.modelFunc()
+			}
+			name := agentDisplayName(params.SubagentType, params.Description, model)
 			return fmt.Sprintf("**Agent:** %s\n**Task:** %s", name, params.Prompt)
 		}
 	}

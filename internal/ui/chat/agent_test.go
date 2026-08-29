@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -84,6 +85,84 @@ func TestAgentDisplayName(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestDrillableAgentStateSetModel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("SetModel records the model and clears the cache", func(t *testing.T) {
+		t.Parallel()
+
+		cleared := 0
+		state := &drillableAgentState{clearFunc: func() { cleared++ }}
+		state.SetModel("claude-opus-4-6")
+
+		require.Equal(t, "claude-opus-4-6", state.model)
+		require.Equal(t, 1, cleared)
+	})
+
+	t.Run("SetModel ignores empty and duplicate values", func(t *testing.T) {
+		t.Parallel()
+
+		cleared := 0
+		state := &drillableAgentState{clearFunc: func() { cleared++ }}
+		state.SetModel("")
+		state.SetModel("claude-opus-4-6")
+		state.SetModel("claude-opus-4-6")
+
+		require.Equal(t, "claude-opus-4-6", state.model)
+		require.Equal(t, 1, cleared)
+	})
+
+	t.Run("SetModel overwrites a changed value and clears the cache", func(t *testing.T) {
+		t.Parallel()
+
+		cleared := 0
+		state := &drillableAgentState{clearFunc: func() { cleared++ }}
+		state.SetModel("claude-opus-4-6")
+		state.SetModel("claude-sonnet-4-6")
+
+		require.Equal(t, "claude-sonnet-4-6", state.model)
+		require.Equal(t, 2, cleared)
+	})
+}
+
+func TestAgentToolRenderModelFallback(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+
+	t.Run("header falls back to observed model when no override", func(t *testing.T) {
+		t.Parallel()
+
+		tc := message.ToolCall{
+			ID:       "agent-1",
+			Name:     "task",
+			Input:    `{"subagent_type":"explorer","description":"Search auth"}`,
+			Finished: true,
+		}
+		item := NewAgentToolMessageItem(&sty, tc, &message.ToolResult{ToolCallID: "agent-1", Content: "done"}, false)
+		item.SetModel("claude-opus-4-6")
+
+		out := ansi.Strip(item.Render(120))
+		require.Contains(t, out, "Explorer (opus-4-6)")
+	})
+
+	t.Run("explicit override wins over observed model", func(t *testing.T) {
+		t.Parallel()
+
+		tc := message.ToolCall{
+			ID:       "agent-2",
+			Name:     "task",
+			Input:    `{"subagent_type":"explorer","model":"anthropic/claude-sonnet-4-6"}`,
+			Finished: true,
+		}
+		item := NewAgentToolMessageItem(&sty, tc, &message.ToolResult{ToolCallID: "agent-2", Content: "done"}, false)
+		item.SetModel("claude-opus-4-6")
+
+		out := ansi.Strip(item.Render(120))
+		require.Contains(t, out, "Explorer (sonnet-4-6)")
+	})
 }
 
 func TestDrillableAgentStateElapsed(t *testing.T) {

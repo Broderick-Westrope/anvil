@@ -1517,6 +1517,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 			for _, nm := range nestedMsgPtrs {
 				if nm.Role == message.Assistant {
 					da.IncrementTurns()
+					da.SetModel(nm.Model)
 				}
 				da.IncrementToolCalls(len(nm.ToolCalls()))
 			}
@@ -1936,6 +1937,15 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 	// Count assistant-role message creations as turns.
 	if event.Type == pubsub.CreatedEvent && event.Payload.Role == message.Assistant {
 		da.IncrementTurns()
+	}
+
+	// Record the model used by the child agent so the collapsed view can
+	// display it even when the task call had no explicit model override.
+	// Unlike IncrementTurns this is not gated on CreatedEvent: the call is
+	// idempotent, and running on updates also covers providers that only
+	// populate the model on a later message update.
+	if event.Payload.Role == message.Assistant {
+		da.SetModel(event.Payload.Model)
 	}
 
 	// Count tool calls with deduplication via CountedToolIDs to avoid

@@ -38,6 +38,7 @@ type DrillableAgent interface {
 	CountedToolIDs() map[string]bool
 	SetTokens(int64)
 	SetCost(float64)
+	SetModel(string)
 	SetStartedAt(time.Time)
 	SetFinishedAt(time.Time)
 	Stats() (turns int, toolCalls int)
@@ -58,6 +59,7 @@ type drillableAgentState struct {
 	toolCalls      int
 	tokens         int64
 	cost           float64
+	model          string          // model observed on child assistant messages.
 	countedToolIDs map[string]bool // track already-counted tool call IDs.
 
 	// Timestamps for elapsed time display. startedAt is set once when the
@@ -114,6 +116,17 @@ func (s *drillableAgentState) SetTokens(t int64) {
 // SetCost sets the cost and clears the render cache.
 func (s *drillableAgentState) SetCost(c float64) {
 	s.cost = c
+	s.clearFunc()
+}
+
+// SetModel records the model observed on a child assistant message so the
+// collapsed view can display it even when the task call had no explicit
+// model override.
+func (s *drillableAgentState) SetModel(m string) {
+	if m == "" || s.model == m {
+		return
+	}
+	s.model = m
 	s.clearFunc()
 }
 
@@ -192,6 +205,9 @@ func NewAgentToolMessageItem(
 	t := &AgentToolMessageItem{}
 	t.baseToolMessageItem = newBaseToolMessageItem(sty, toolCall, result, &AgentToolRenderContext{agent: t}, canceled)
 	t.drillableAgentState.clearFunc = t.baseToolMessageItem.clearCache
+	// Expose the observed child model to the copy path so copied text
+	// matches the rendered header when no explicit override was passed.
+	t.modelFunc = func() string { return t.model }
 	// For the agent tool we keep spinning until the tool call is finished.
 	t.spinningFunc = func(state SpinningState) bool {
 		return !state.HasResult() && !state.IsCanceled()
@@ -313,7 +329,16 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	var params agent.TaskParams
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
 
-	displayName := agentDisplayName(params.SubagentType, params.Description, params.Model)
+	// Prefer the explicit override from the task call; fall back to the
+	// model observed on child session messages so the model is always
+	// shown. The fallback stays empty until the first child assistant
+	// message arrives, so no model is shown while the agent is spawning.
+	model := params.Model
+	if model == "" {
+		model = r.agent.model
+	}
+
+	displayName := agentDisplayName(params.SubagentType, params.Description, model)
 
 	// Line 1: status icon + display name.
 	// While the tool is running, override the icon to reflect the two running
@@ -493,6 +518,9 @@ func NewAgenticFetchToolMessageItem(
 ) *AgenticFetchToolMessageItem {
 	t := &AgenticFetchToolMessageItem{}
 	t.baseToolMessageItem = newBaseToolMessageItem(sty, toolCall, result, &AgenticFetchToolRenderContext{fetch: t}, canceled)
+	// The embedded drillableAgentState.model field is populated by generic
+	// DrillableAgent callers but intentionally not displayed: agentic fetch
+	// renders a fixed "Agentic Fetch" title without a model identifier.
 	t.drillableAgentState.clearFunc = t.baseToolMessageItem.clearCache
 	// For the agentic fetch tool we keep spinning until the tool call is finished.
 	t.spinningFunc = func(state SpinningState) bool {
