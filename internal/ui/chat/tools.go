@@ -474,7 +474,10 @@ func (t *baseToolMessageItem) Status() ToolStatus {
 	return t.status
 }
 
-// HasResult returns true if a tool result has been set.
+// HasResult returns true if the result is not nil. It is the
+// execution-finished signal for tool calls: SetResult never updates the
+// status field, so Status() alone cannot distinguish a running tool from a
+// completed one.
 func (t *baseToolMessageItem) HasResult() bool {
 	return t.result != nil
 }
