@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"github.com/Broderick-Westrope/anvil/internal/agent/hyper"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -63,7 +62,7 @@ func FormatDuration(d time.Duration) string {
 // ModelInfo renders model information including name, provider, reasoning
 // settings, and optional context usage/cost. Any non-empty extraLines are
 // appended after the context block with two spaces of left padding.
-func ModelInfo(t *styles.Styles, modelName, providerName, reasoningInfo string, context *ModelContextInfo, width int, hyperCredits *int, extraLines ...string) string {
+func ModelInfo(t *styles.Styles, modelName, providerName, reasoningInfo string, context *ModelContextInfo, width int, extraLines ...string) string {
 	modelIcon := t.ModelInfo.Icon.Render(styles.ModelIcon)
 	modelName = t.ModelInfo.Name.Render(modelName)
 
@@ -107,13 +106,6 @@ func ModelInfo(t *styles.Styles, modelName, providerName, reasoningInfo string, 
 		if line != "" {
 			parts = append(parts, line)
 		}
-	}
-
-	if providerName == hyper.DisplayName && hyperCredits != nil {
-		hcInfo := t.ModelInfo.HypercreditIcon.Render(styles.HypercreditIcon)
-		hcInfo += " "
-		hcInfo += t.ModelInfo.HypercreditText.Render(fmt.Sprintf("%s Hypercredits", FormatCredits(*hyperCredits)))
-		parts = append(parts, "", hcInfo)
 	}
 
 	return lipgloss.NewStyle().Width(width).Render(

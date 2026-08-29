@@ -588,7 +588,7 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 
 // RefreshOAuthToken refreshes the OAuth token for the given provider.
 //
-// Providers like Hyper rotate refresh tokens: each exchange consumes the
+// Some OAuth providers rotate refresh tokens: each exchange consumes the
 // caller's refresh token, issues a new pair, and revokes the old one. If
 // two Anvil instances (or two goroutines) refresh concurrently with the
 // same stored refresh token, the second exchange reuses an already-revoked

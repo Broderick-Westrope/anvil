@@ -26,7 +26,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
-	"github.com/Broderick-Westrope/anvil/internal/agent/hyper"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
@@ -161,14 +160,6 @@ type (
 
 	// closeDialogMsg is sent to close the current dialog.
 	closeDialogMsg struct{}
-
-	// hyperRefreshDoneMsg is sent after a silent Hyper OAuth refresh
-	// finishes. It carries the original model-selection action so the
-	// selection can be resumed.
-	hyperRefreshDoneMsg struct {
-		action dialog.ActionSelectModel
-	}
-
 	// copyChatHighlightMsg is sent to copy the current chat highlight to clipboard.
 	copyChatHighlightMsg struct{}
 
@@ -184,12 +175,6 @@ type (
 	sessionFilesUpdatesMsg struct {
 		sessionFiles []SessionFile
 	}
-	// creditsUpdatedMsg is sent when the remaining Hyper credits have been
-	// fetched from the API.
-	creditsUpdatedMsg struct {
-		credits int
-	}
-
 	// tickElapsedTimeMsg is sent once per second to refresh elapsed-time
 	// displays for running subagent sessions.
 	tickElapsedTimeMsg struct{}
@@ -347,9 +332,6 @@ type UI struct {
 	// mouse highlighting related state
 	lastClickTime time.Time
 
-	// hyperCredits is the remaining Hyper credits, updated after each prompt.
-	hyperCredits *int
-
 	// Prompt history for up/down navigation through previous messages.
 	promptHistory struct {
 		messages []string
@@ -505,9 +487,6 @@ func (m *UI) Init() tea.Cmd {
 	// load initial session if specified
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
-	}
-	if m.com.IsHyper() {
-		cmds = append(cmds, m.fetchHyperCredits())
 	}
 	return tea.Batch(cmds...)
 }
@@ -1216,12 +1195,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetValue(msg.Text)
 		m.textarea.MoveToEnd()
 		cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
-	case hyperRefreshDoneMsg:
-		if cmd := m.handleSelectModel(msg.action); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	case creditsUpdatedMsg:
-		m.hyperCredits = &msg.credits
 	case checkAgentIdleMsg:
 		if cmd := m.handleCheckAgentIdle(msg); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -2528,51 +2501,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// refreshHyperAndRetrySelect returns a command that silently refreshes
-// the Hyper OAuth token and then re-runs the model selection. If the
-// refresh fails, the selection resumes with ReAuthenticate set so the
-// OAuth dialog opens.
-func (m *UI) refreshHyperAndRetrySelect(msg dialog.ActionSelectModel) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := m.com.Workspace.RefreshOAuthToken(ctx, config.ScopeGlobal, "hyper"); err != nil {
-			slog.Warn("Hyper OAuth refresh failed, requesting re-auth", "error", err)
-			msg.ReAuthenticate = true
-		}
-		return hyperRefreshDoneMsg{action: msg}
-	}
-}
-
-// fetchHyperCredits returns a command that asynchronously fetches the
-// remaining Hyper credits from the API.
-func (m *UI) fetchHyperCredits() tea.Cmd {
-	return func() tea.Msg {
-		cfg := m.com.Config()
-		if cfg == nil {
-			return nil
-		}
-		providerCfg, ok := cfg.Providers.Get(hyper.Name)
-		if !ok {
-			return nil
-		}
-		apiKey, err := m.com.Workspace.Resolver().ResolveValue(providerCfg.APIKey)
-		if err != nil || apiKey == "" {
-			return nil
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		credits, err := hyper.FetchCredits(ctx, apiKey)
-		if err != nil {
-			slog.Error("Failed to fetch Hyper credits", "error", err)
-			return nil
-		}
-		return creditsUpdatedMsg{credits: credits}
-	}
-}
-
-// handleSelectModel performs the model selection after any provider
-// pre-checks (such as a silent Hyper OAuth refresh) have completed.
+// handleSelectModel performs the model selection.
 func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	var cmds []tea.Cmd
 
@@ -2590,25 +2519,9 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 
 	var (
 		providerID   = msg.Model.Provider
-		isCopilot    = providerID == string(catwalk.InferenceProviderCopilot)
 		isConfigured = func() bool { _, ok := cfg.Providers.Get(providerID); return ok }
 		isOnboarding = m.state == uiOnboarding
 	)
-
-	// For Hyper, if the stored OAuth token is expired, try a silent
-	// refresh before deciding whether the provider is configured. Keeps
-	// users from hitting a 401 on their first message after the
-	// short-lived access token ages out.
-	if !msg.ReAuthenticate && providerID == "hyper" {
-		if pc, ok := cfg.Providers.Get(providerID); ok && pc.OAuthToken != nil && pc.OAuthToken.IsExpired() {
-			return m.refreshHyperAndRetrySelect(msg)
-		}
-	}
-
-	// Attempt to import GitHub Copilot tokens from VSCode if available.
-	if isCopilot && !isConfigured() && !msg.ReAuthenticate {
-		m.com.Workspace.ImportCopilot()
-	}
 
 	if !isConfigured() || msg.ReAuthenticate {
 		m.dialog.CloseDialog(dialog.ModelsID)
@@ -2686,8 +2599,6 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		if err := m.com.Workspace.InitOrchestratorAgent(context.TODO()); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		}
-	} else if m.com.IsHyper() {
-		cmds = append(cmds, m.fetchHyperCredits())
 	}
 
 	return tea.Batch(cmds...)
@@ -2701,14 +2612,7 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 		isOnboarding = m.state == uiOnboarding
 	)
 
-	switch provider.ID {
-	case "hyper":
-		dlg, cmd = dialog.NewOAuthHyper(m.com, isOnboarding, provider, model, modelType)
-	case catwalk.InferenceProviderCopilot:
-		dlg, cmd = dialog.NewOAuthCopilot(m.com, isOnboarding, provider, model, modelType)
-	default:
-		dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
-	}
+	dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
 
 	if m.dialog.ContainsDialog(dlg.ID()) {
 		m.dialog.BringToFront(dlg.ID())
@@ -3338,7 +3242,6 @@ func (m *UI) drawHeader(scr uv.Screen, area uv.Rectangle) {
 		m.isCompact,
 		m.detailsOpen,
 		area.Dx(),
-		m.hyperCredits,
 	)
 }
 
@@ -5301,27 +5204,10 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 			Title:   "Anvil is waiting...",
 			Message: fmt.Sprintf("Agent's turn completed in \"%s\"", n.SessionTitle),
 		}))
-		if m.com.IsHyper() {
-			cmds = append(cmds, m.fetchHyperCredits())
-		}
 		return tea.Batch(cmds...)
-	case notify.TypeReAuthenticate:
-		return m.handleReAuthenticate(n.ProviderID)
 	default:
 		return nil
 	}
-}
-
-func (m *UI) handleReAuthenticate(providerID string) tea.Cmd {
-	cfg := m.com.Config()
-	if cfg == nil {
-		return nil
-	}
-	providerCfg, ok := cfg.Providers.Get(providerID)
-	if !ok {
-		return nil
-	}
-	return m.openAuthenticationDialog(providerCfg.ToProvider(), cfg.Models[config.SelectedModelTypeLarge], config.SelectedModelTypeLarge)
 }
 
 // newSession clears the current session state and prepares for a new session.

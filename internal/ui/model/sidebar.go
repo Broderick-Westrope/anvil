@@ -93,7 +93,7 @@ func (m *UI) modelInfo(width int) string {
 		}
 	}
 
-	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, m.hyperCredits, extraLines...)
+	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, extraLines...)
 }
 
 // viewedSessionStats returns the turn and tool-call counts for the session
