@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/filepathext"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -50,7 +48,6 @@ var editDescription string
 type editContext struct {
 	ctx         context.Context
 	permissions permission.Service
-	files       history.Service
 	filetracker filetracker.Service
 	workingDir  string
 }
@@ -58,7 +55,6 @@ type editContext struct {
 func NewEditTool(
 	lspManager *lsp.Manager,
 	permissions permission.Service,
-	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
 ) fantasy.AgentTool {
@@ -75,7 +71,7 @@ func NewEditTool(
 			var response fantasy.ToolResponse
 			var err error
 
-			editCtx := editContext{ctx, permissions, files, filetracker, workingDir}
+			editCtx := editContext{ctx, permissions, filetracker, workingDir}
 
 			if params.OldString == "" {
 				response, err = createNewFile(editCtx, params.FilePath, params.NewString, call)
@@ -166,20 +162,6 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// File can't be in the history so we create a new file history
-	_, err = edit.files.Create(edit.ctx, sessionID, filePath, "")
-	if err != nil {
-		// Log error but don't fail the operation
-		return fantasy.ToolResponse{}, fmt.Errorf("error creating file history: %w", err)
-	}
-
-	// Add the new content to the file history
-	_, err = edit.files.CreateVersion(edit.ctx, sessionID, filePath, content)
-	if err != nil {
-		// Log error but don't fail the operation
-		slog.Error("Error creating file history version", "error", err)
-	}
-
 	edit.filetracker.RecordRead(edit.ctx, sessionID, filePath)
 
 	return fantasy.WithResponseMetadata(
@@ -241,29 +223,12 @@ func notFoundError(content, old string) error {
 	return errors.New(msg)
 }
 
-// commitFileChange writes newContent to filePath, updates the file history,
-// and records the read in the file tracker. Callers must convert line endings
-// before calling this function.
+// commitFileChange writes newContent to filePath and records the read in the
+// file tracker. Callers must convert line endings before calling this
+// function.
 func commitFileChange(edit editContext, sessionID, filePath, oldContent, newContent string) error {
 	if err := os.WriteFile(filePath, []byte(newContent), 0o644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
-	}
-
-	file, err := edit.files.GetByPathAndSession(edit.ctx, filePath, sessionID)
-	if err != nil {
-		_, err = edit.files.Create(edit.ctx, sessionID, filePath, oldContent)
-		if err != nil {
-			return fmt.Errorf("error creating file history: %w", err)
-		}
-	}
-	if file.Content != oldContent {
-		// User manually changed the content; store an intermediate version.
-		if _, err := edit.files.CreateVersion(edit.ctx, sessionID, filePath, oldContent); err != nil {
-			slog.Error("Error creating file history version", "error", err)
-		}
-	}
-	if _, err := edit.files.CreateVersion(edit.ctx, sessionID, filePath, newContent); err != nil {
-		slog.Error("Error creating file history version", "error", err)
 	}
 
 	edit.filetracker.RecordRead(edit.ctx, sessionID, filePath)

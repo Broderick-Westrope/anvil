@@ -749,7 +749,6 @@ func TestNewCoordinatorDoesNotBlockOnMCPInit(t *testing.T) {
 			env.sessions,
 			env.messages,
 			env.permissions,
-			env.history,
 			*env.filetracker,
 			nil, // lspManager — unused during construction.
 			nil, // notify — unused during construction.

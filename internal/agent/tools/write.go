@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +14,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/filepathext"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -46,7 +44,6 @@ const WriteToolName = "write"
 func NewWriteTool(
 	lspManager *lsp.Manager,
 	permissions permission.Service,
-	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
 ) fantasy.AgentTool {
@@ -137,28 +134,6 @@ func NewWriteTool(
 			err = os.WriteFile(filePath, []byte(params.Content), 0o644)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error writing file: %w", err)
-			}
-
-			// Check if file exists in history
-			file, err := files.GetByPathAndSession(ctx, filePath, sessionID)
-			if err != nil {
-				_, err = files.Create(ctx, sessionID, filePath, oldContent)
-				if err != nil {
-					// Log error but don't fail the operation
-					return fantasy.ToolResponse{}, fmt.Errorf("error creating file history: %w", err)
-				}
-			}
-			if file.Content != oldContent {
-				// User manually changed the content; store an intermediate version
-				_, err = files.CreateVersion(ctx, sessionID, filePath, oldContent)
-				if err != nil {
-					slog.Error("Error creating file history version", "error", err)
-				}
-			}
-			// Store the new version
-			_, err = files.CreateVersion(ctx, sessionID, filePath, params.Content)
-			if err != nil {
-				slog.Error("Error creating file history version", "error", err)
 			}
 
 			filetracker.RecordRead(ctx, sessionID, filePath)

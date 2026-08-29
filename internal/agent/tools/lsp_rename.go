@@ -6,13 +6,11 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
 	"charm.land/fantasy"
 
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	lsputil "github.com/Broderick-Westrope/anvil/internal/lsp/util"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -32,7 +30,6 @@ var renameDescription string
 func NewRenameTool(
 	lspManager *lsp.Manager,
 	permissions permission.Service,
-	files history.Service,
 	filetracker filetracker.Service,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
@@ -77,13 +74,6 @@ func NewRenameTool(
 			}
 
 			affectedFiles := collectAffectedFiles(edit)
-
-			if files != nil && sessionID != "" {
-				for _, path := range affectedFiles {
-					content, _ := os.ReadFile(path)
-					_, _ = files.CreateVersion(ctx, sessionID, path, string(content))
-				}
-			}
 
 			encoding := resolved.client.GetOffsetEncoding()
 			if err := lsputil.ApplyWorkspaceEdit(*edit, encoding); err != nil {

@@ -9,7 +9,6 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
@@ -29,7 +28,6 @@ var replaceSymbolDescription string
 func NewReplaceSymbolTool(
 	lspManager *lsp.Manager,
 	permissions permission.Service,
-	files history.Service,
 	filetracker filetracker.Service,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
@@ -93,10 +91,6 @@ func NewReplaceSymbolTool(
 				if !granted.Granted {
 					return NewPermissionDeniedResponse(granted.Reason), nil
 				}
-			}
-
-			if files != nil && sessionID != "" {
-				_, _ = files.CreateVersion(ctx, sessionID, params.FilePath, string(content))
 			}
 
 			newLines := make([]string, 0, len(lines))

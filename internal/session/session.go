@@ -188,9 +188,6 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	if err = qtx.DeleteSessionMessages(ctx, dbSession.ID); err != nil {
 		return fmt.Errorf("deleting session messages: %w", err)
 	}
-	if err = qtx.DeleteSessionFiles(ctx, dbSession.ID); err != nil {
-		return fmt.Errorf("deleting session files: %w", err)
-	}
 	if err = qtx.DeleteSession(ctx, dbSession.ID); err != nil {
 		return fmt.Errorf("deleting session: %w", err)
 	}
