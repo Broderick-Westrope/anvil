@@ -18,7 +18,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	anvillog "github.com/Broderick-Westrope/anvil/internal/log"
 	"github.com/Broderick-Westrope/anvil/internal/migrate"
-	"github.com/Broderick-Westrope/anvil/internal/projects"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	ui "github.com/Broderick-Westrope/anvil/internal/ui/model"
@@ -50,11 +49,8 @@ func init() {
 	rootCmd.AddCommand(
 		runCmd,
 		dirsCmd,
-		projectsCmd,
-		updateProvidersCmd,
 		logsCmd,
 		schemaCmd,
-		statsCmd,
 		sessionCmd,
 		mcpCmd,
 	)
@@ -247,10 +243,6 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 		if err := os.WriteFile(gitIgnorePath, []byte("*\n"), 0o644); err != nil {
 			return nil, nil, fmt.Errorf("failed to create .gitignore file: %q %w", gitIgnorePath, err)
 		}
-	}
-
-	if err := projects.Register(cwd, cfg.Options.ProjectDirectory); err != nil {
-		slog.Warn("Failed to register project", "error", err)
 	}
 
 	conn, err := db.ConnectGlobal(ctx)
