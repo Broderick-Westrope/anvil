@@ -120,7 +120,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 		return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for creating a new file")
 	}
 
-	_, additions, removals := diff.GenerateDiff(
+	diffText, additions, removals := diff.GenerateDiff(
 		"",
 		content,
 		strings.TrimPrefix(filePath, edit.workingDir),
@@ -164,7 +164,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 	edit.filetracker.RecordReadWithHash(edit.ctx, sessionID, filePath, filetracker.HashContent([]byte(content)))
 
 	return fantasy.WithResponseMetadata(
-		fantasy.NewTextResponse("File created: "+filePath),
+		fantasy.NewTextResponse(withDiff("File created: "+filePath, diffText)),
 		EditResponseMetadata{
 			OldContent: "",
 			NewContent: content,

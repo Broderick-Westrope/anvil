@@ -171,7 +171,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	}
 
 	// Check permissions
-	_, additions, removals := diff.GenerateDiff("", currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
+	diffText, additions, removals := diff.GenerateDiff("", currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
 
 	editsApplied := len(params.Edits) - len(failedEdits)
 	var description string
@@ -224,7 +224,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	} else {
 		message = fmt.Sprintf("File created with %d edits: %s", len(params.Edits), params.FilePath)
 	}
-	message = withWhitespaceNote(message, whitespaceCorrected)
+	message = withDiff(withWhitespaceNote(message, whitespaceCorrected), diffText)
 
 	return fantasy.WithResponseMetadata(
 		fantasy.NewTextResponse(message),
