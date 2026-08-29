@@ -551,8 +551,8 @@ func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	case "c", "y":
 		text := t.formatToolForCopy()
 		return true, common.CopyToClipboard(text, "Tool content copied to clipboard")
-	case "right":
-		// Drill into the tool detail view, matching the agent → pattern.
+	case "right", "l":
+		// Drill into the tool detail view, matching the agent →/l pattern.
 		if toolItem := t.ToolDrillIn(); toolItem != nil {
 			return true, func() tea.Msg {
 				return util.ToolDrillInMsg{

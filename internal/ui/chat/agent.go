@@ -288,11 +288,11 @@ func (a *AgentToolMessageItem) ToolDrillIn() ToolMessageItem { return nil }
 // ToolDrillInLabel shadows baseToolMessageItem — agents use session drill-in.
 func (a *AgentToolMessageItem) ToolDrillInLabel() string { return "" }
 
-// HandleKeyEvent implements [KeyEventHandler]. It handles the → key for
+// HandleKeyEvent implements [KeyEventHandler]. It handles the →/l keys for
 // drill-in navigation when a child session is available, and delegates other
 // keys to the base handler.
 func (a *AgentToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	if key.String() == "right" && a.childSessionID != "" {
+	if k := key.String(); (k == "right" || k == "l") && a.childSessionID != "" {
 		return true, func() tea.Msg {
 			return util.DrillInMsg{
 				SessionID: a.childSessionID,
@@ -577,11 +577,11 @@ func (a *AgenticFetchToolMessageItem) ToolDrillIn() ToolMessageItem { return nil
 // drill-in.
 func (a *AgenticFetchToolMessageItem) ToolDrillInLabel() string { return "" }
 
-// HandleKeyEvent implements [KeyEventHandler]. It handles the → key for
+// HandleKeyEvent implements [KeyEventHandler]. It handles the →/l keys for
 // drill-in navigation when a child session is available, and delegates other
 // keys to the base handler.
 func (a *AgenticFetchToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	if key.String() == "right" && a.childSessionID != "" {
+	if k := key.String(); (k == "right" || k == "l") && a.childSessionID != "" {
 		return true, func() tea.Msg {
 			return util.DrillInMsg{
 				SessionID: a.childSessionID,

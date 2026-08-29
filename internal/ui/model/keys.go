@@ -177,20 +177,20 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("ctrl+t", "toggle tasks"),
 	)
 	km.Chat.PillLeft = key.NewBinding(
-		key.WithKeys("left"),
+		key.WithKeys("left", "h"),
 		key.WithHelp("←/→", "switch section"),
 	)
 	km.Chat.PillRight = key.NewBinding(
-		key.WithKeys("right"),
+		key.WithKeys("right", "l"),
 		key.WithHelp("←/→", "switch section"),
 	)
 
 	km.Chat.Down = key.NewBinding(
-		key.WithKeys("shift+down", "ctrl+j", "j"),
+		key.WithKeys("shift+down", "ctrl+j", "J"),
 		key.WithHelp("shift+↓", "scroll down"),
 	)
 	km.Chat.Up = key.NewBinding(
-		key.WithKeys("shift+up", "ctrl+k", "k"),
+		key.WithKeys("shift+up", "ctrl+k", "K"),
 		key.WithHelp("shift+↑", "scroll up"),
 	)
 	km.Chat.UpDown = key.NewBinding(
@@ -198,11 +198,11 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("shift+↑↓", "scroll"),
 	)
 	km.Chat.UpOneItem = key.NewBinding(
-		key.WithKeys("up", "K"),
+		key.WithKeys("up", "k"),
 		key.WithHelp("↑", "up one item"),
 	)
 	km.Chat.DownOneItem = key.NewBinding(
-		key.WithKeys("down", "J"),
+		key.WithKeys("down", "j"),
 		key.WithHelp("↓", "down one item"),
 	)
 	km.Chat.UpDownOneItem = key.NewBinding(
@@ -246,12 +246,12 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("space", "expand/collapse"),
 	)
 	km.Chat.FocusSidebar = key.NewBinding(
-		key.WithKeys("l", "shift+right"),
-		key.WithHelp("l/shift+→", "focus sidebar"),
+		key.WithKeys("L", "shift+right"),
+		key.WithHelp("L/shift+→", "focus sidebar"),
 	)
 	km.Chat.FocusChat = key.NewBinding(
-		key.WithKeys("h", "shift+left"),
-		key.WithHelp("h/shift+←", "focus chat"),
+		key.WithKeys("H", "shift+left"),
+		key.WithHelp("H/shift+←", "focus chat"),
 	)
 
 	return km
