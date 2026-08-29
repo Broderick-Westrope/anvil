@@ -65,9 +65,10 @@ grep -rn "lsp_replace_symbol\|ReplaceSymbol" internal/ --include="*.go" --includ
   `lsp_replace_symbol.md`
 - Modify: `internal/agent/coordinator.go` (remove `NewReplaceSymbolTool`
   registration)
-- Modify: any permission allow-list defaults or docs referencing the tool
-  (grep `lsp_replace_symbol` across the repo, including README/docs and
-  `internal/config`)
+- Modify: `internal/config/config.go` (~line 888: remove
+  `lsp_replace_symbol` from `defaultAllowedTools`)
+- Modify: any other permission allow-list defaults or docs referencing the
+  tool (grep `lsp_replace_symbol` across the repo, including README/docs)
 
 **Steps:**
 
@@ -187,3 +188,8 @@ Create a PR for human review; do not merge automatically.
 (`plans/design-2026-08-29-edit-tool-ergonomics.md`, 3 devils-advocate
 rounds). Phasing rationale: cross-cutting deletion lands first to simplify
 subsequent diffs; gate semantics finalized before prompts describe them.
+Plan review (devils-advocate) caught: the per-project DB migrator copies the
+`files` table and would roll back entire migrations (data loss) after the
+drop — added phase 1 Task 4; filetracker mock blast radius; stale multiedit
+line reference; `defaultAllowedTools` entry for lsp_replace_symbol in
+config.go.

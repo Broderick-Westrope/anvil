@@ -95,8 +95,8 @@ grep -rn "internal/history" internal/db internal/app
 - Modify: `internal/agent/tools/edit.go` (drop `files` from `editContext`
   and `NewEditTool`; remove the `GetByPathAndSession`/`CreateVersion` block
   in `commitFileChange`)
-- Modify: `internal/agent/tools/multiedit.go` (same: constructor param and
-  the `CreateVersion` call at ~line 228)
+- Modify: `internal/agent/tools/multiedit.go` (same: constructor param;
+  history writes happen via the shared `commitFileChange` at ~line 327)
 - Modify: `internal/agent/tools/write.go` (drop `files` param; remove the
   history block at ~lines 142-162)
 - Modify: `internal/agent/tools/lsp_rename.go` (drop `files` param; remove
@@ -192,7 +192,9 @@ grep -rn "history" internal/agent --include="*.go" | grep -v "History\b.*prompt"
        claim if present (the full prompt/docs pass is phase 3; only the
        architecture listing changes here).
 7. [ ] Regenerate golden files if sidebar snapshots changed:
-       `go test ./internal/ui/... -update`.
+       `go test ./internal/ui/... -update`. Review the golden diff by hand:
+       confirm the Modified Files section disappeared cleanly and adjacent
+       sidebar layout (LSPs, MCPs, etc.) did not break.
 
 **Verify:**
 ```bash
@@ -200,6 +202,40 @@ go build ./... && task lint && go test ./...
 # Expected: all pass
 grep -rn "internal/history\|history.File\|ListSessionHistory\|PayloadTypeFile" internal/ --include="*.go"
 # Expected: no matches
+```
+
+### Task 4: Remove files-table copy from the per-project DB migrator
+
+**Context:** `internal/migrate/engine.go`, `engine_test.go`,
+`internal/migrate/connect.go`
+
+CRITICAL: both migration paths copy the `files` table
+(`migrateSynchronous` ~engine.go:217-225, `migrateBatched` ~357-368) via
+`INSERT INTO main.files ... SELECT FROM source.files`. Goose migrations run
+on both DBs before the copy, so after Task 1's drop migration the copy
+fails with "no such table" inside a transaction — rolling back the ENTIRE
+migration and silently losing sessions/messages/read_files for any
+not-yet-migrated per-project DB (and breaking `--force-migration`).
+
+**Files:**
+- Modify: `internal/migrate/engine.go` (remove the files-copy blocks from
+  both paths)
+- Modify: `internal/migrate/engine_test.go` (remove files seeding ~lines
+  102-108 and assertions ~174-178, 655-658)
+
+**Steps:**
+
+1. [ ] Delete the `files` copy statements from both `migrateSynchronous`
+       and `migrateBatched` (source DBs may still contain a `files` table;
+       it is simply not copied).
+2. [ ] Update `engine_test.go` accordingly; keep read_files/session/message
+       copy assertions intact.
+
+**Verify:**
+```bash
+go test ./internal/migrate/...
+grep -n "files" internal/migrate/engine.go | grep -v read_files
+# Expected: tests pass; no bare files-table references remain
 ```
 
 ## Final Verification

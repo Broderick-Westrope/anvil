@@ -102,6 +102,14 @@ grep -rn "ToUnixLineEndings\|ToWindowsLineEndings" internal/fsext/
 5. [ ] Unit tests: record-then-get round-trip, hash overwrite on
        re-record, empty hash for unknown file, `t.Parallel()` +
        `t.TempDir()` per conventions.
+6. [ ] Interface blast radius: every `filetracker.Service` mock in the repo
+       must gain the new methods — at minimum `edit_test.go`
+       (`mockEditFileTracker`), `write_test.go`, `view_test.go`
+       (`mockFileTracker`), and any others found via
+       `grep -rn "filetracker.Service = " internal/`. Note:
+       `internal/migrate/engine.go` copies `read_files` without
+       `content_hash`; the `DEFAULT ''` covers it (rows land as
+       never-seen), but confirm `engine_test.go` still passes.
 
 **Verify:**
 ```bash
@@ -194,9 +202,11 @@ error content), `internal/fsext/` (line ending helpers)
        written.
 5. [ ] Append the truncated unified diff (Task 2's helper) to the success
        response text; keep `WriteResponseMetadata` unchanged.
-6. [ ] Remove `LastReadTime` usage; if filetracker's `LastReadTime` now has
-       no consumers outside the server lastread endpoint, leave the method
-       (server API compatibility) but note it in the PR description.
+6. [ ] Remove `LastReadTime` usage from write.go. The filetracker method
+       itself stays: the server `lastread` endpoint
+       (`internal/server/proto.go` ~line 601) depends on it. Flag it as
+       tech debt in the PR description (candidate for removal if the
+       endpoint is ever deprecated).
 7. [ ] Tests: never-seen existing file → error contains content + retry
        succeeds without view; hash mismatch after external change → error,
        then retry succeeds; mtime-only touch (rewrite identical bytes,
