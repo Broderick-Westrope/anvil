@@ -45,18 +45,20 @@ In scope:
    exactly what `os.ReadFile` returns — never normalized/LF-converted
    content). This means every caller of `RecordRead` — `view`, `edit`,
    `multiedit`, and `lsp_rename` — records a fresh hash on success;
-   permission-denied and error paths record nothing. A corresponding
+   permission-denied and error paths record nothing (the one exception is
+   the write-gate block error below, which deliberately records the hash as
+   a forced read). A corresponding
    retrieval method (e.g. `LastContentHash`) is added to
    `filetracker.Service` for the gate check.
    `write` to an *existing* file blocks when the current disk hash differs
    from the last recorded hash for this session, or when the file was never
    seen. New-file creation is exempt. `write` also records the hash on
-   success. The block error includes the current
-   disk content or a diff against the proposed content (whichever is
-   smaller), capped at the same ~50-line limit as tool diffs. Recovery is
-   two turns (`error → view → retry`): the error path records no hash, but
-   its content lets the model understand the file's current state before
-   re-reading, avoiding blind retries. This also fixes today's misleading
+   success. The block error acts as a forced read: the tool records the
+   current disk hash at error time and returns the current file content in
+   the error response (subject to the view tool's size limits, with a
+   truncation note when capped). Recovery is therefore one turn — the agent
+   reviews the returned content and simply re-issues the write, which now
+   passes the gate. This also fixes today's misleading
    "Last read: 0001-01-01" error for never-read files.
    Note: `write` has no CRLF handling today (reads raw bytes, writes
    `params.Content` verbatim) — a pre-existing issue. As part of this work,
@@ -156,8 +158,9 @@ Out of scope:
 - [ ] `edit`/`multiedit` succeed on files modified externally since last
       view, provided `old_string` uniquely matches current content.
 - [ ] `write` to an existing, never-seen file fails with an error containing
-      the current file content or diff (capped at ~50 lines), and a follow-up
-      `write` after a `view` succeeds.
+      the current file content (view-style caps), records the disk hash as a
+      read, and an immediate retry of the same `write` succeeds without an
+      intervening `view`.
 - [ ] A file modified by `lsp_rename` does not trip the write gate on a
       subsequent `write` (RecordRead refreshed its hash).
 - [ ] `write` to a CRLF file preserves CRLF line endings, and a CRLF file
@@ -193,14 +196,14 @@ Out of scope:
   formatters/git operations were a real annoyance source; hashes are cheap
   at the file sizes involved. Alternative considered and declined:
   keep mtime — simpler but strictly worse signal.
-- **Error-as-context recovery on write block**: including current content in
-  the block error means the model understands the file's state immediately;
-  the subsequent `view` → retry is mechanical rather than exploratory. The
-  error path deliberately records no hash — only successful tool calls
-  refresh the gate — keeping the gate's semantics simple and auditable.
-  Alternative considered and declined: recording the hash at error time for
-  true one-turn recovery — rejected because an error response silently
-  arming the gate is surprising behavior.
+- **Error-as-read recovery on write block**: the block error records the
+  current disk hash and returns the file content, making the failed call
+  itself count as the read. Recovery is one turn: review the returned
+  content, re-issue the write. The returned content ensures the retry is
+  informed, not blind — the agent has seen exactly what it would overwrite.
+  Alternative considered and declined: not recording the hash on error
+  (two-turn `error → view → retry`) — rejected as pure friction; the error
+  already delivers everything a view would.
 - **Delete history rather than shrink it**: its only consumer is sidebar
   +/- stats the user explicitly does not read; git covers change inspection
   and undo. Keeping unused persistence of full file contents per version is
