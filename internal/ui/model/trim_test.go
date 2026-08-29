@@ -97,6 +97,16 @@ func TestTrimTrailingSpaces(t *testing.T) {
 			input: " ",
 			want:  "",
 		},
+		{
+			name:  "bare CR without LF preserved",
+			input: "foo\rbar",
+			want:  "foo\rbar",
+		},
+		{
+			name:  "bare CR with trailing spaces",
+			input: "foo   \rbar   ",
+			want:  "foo   \rbar",
+		},
 	}
 
 	for _, tc := range tests {
@@ -128,6 +138,8 @@ func TestTrimTrailingSpacesEquivalence(t *testing.T) {
 		"\n\n",
 		" ",
 		"a  \r\nb  \nc  ",
+		"foo\rbar",
+		"foo   \rbar   ",
 	}
 
 	for _, input := range cases {
