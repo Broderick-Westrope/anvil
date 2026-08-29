@@ -86,15 +86,19 @@ func NewWriteTool(
 						return fantasy.ToolResponse{}, outsideErr
 					}
 					if outside {
+						// Request this as a view/read permission: granular
+						// permission rules for the view tool apply, and the
+						// dialog renders as a read request rather than a
+						// write with an empty diff.
 						granted, permErr := permissions.Request(ctx,
 							permission.CreatePermissionRequest{
 								SessionID:   sessionID,
 								Path:        filePath,
 								ToolCallID:  call.ID,
-								ToolName:    WriteToolName,
+								ToolName:    ViewToolName,
 								Action:      "read",
-								Description: fmt.Sprintf("Read file outside working directory: %s", filePath),
-								Params:      WritePermissionsParams{FilePath: filePath},
+								Description: fmt.Sprintf("Read file outside working directory to include in write-gate error: %s", filePath),
+								Params:      ViewPermissionsParams{FilePath: filePath},
 								Input:       filePath,
 							},
 						)

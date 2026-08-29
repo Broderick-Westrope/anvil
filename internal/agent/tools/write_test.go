@@ -236,12 +236,15 @@ func TestWriteToolSuccessResponseIncludesDiff(t *testing.T) {
 	require.Contains(t, resp.Content, "+gamma")
 }
 
-// denyingPermissionService denies every permission request.
+// denyingPermissionService denies every permission request, recording the
+// last request it saw.
 type denyingPermissionService struct {
 	mockPermissionService
+	lastRequest permission.CreatePermissionRequest
 }
 
 func (d *denyingPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error) {
+	d.lastRequest = req
 	return permission.RequestResult{Granted: false, Reason: "denied"}, nil
 }
 
@@ -254,12 +257,18 @@ func TestWriteToolGateOutsideWorkingDirDeniedOmitsContent(t *testing.T) {
 	require.NoError(t, os.WriteFile(filePath, []byte("top secret\n"), 0o644))
 
 	tracker := newMockFileTracker()
-	tool := NewWriteTool(nil, &denyingPermissionService{}, tracker, workingDir)
+	perms := &denyingPermissionService{}
+	tool := NewWriteTool(nil, perms, tracker, workingDir)
 
 	resp := runWrite(t, tool, filePath, "new content\n")
 	require.True(t, resp.IsError)
 	require.NotContains(t, resp.Content, "top secret")
 	require.Contains(t, resp.Content, "Permission to read its content was denied")
+
+	// The disclosure must be requested as a view/read so granular view
+	// permission rules apply and the dialog renders as a read request.
+	require.Equal(t, ViewToolName, perms.lastRequest.ToolName)
+	require.Equal(t, "read", perms.lastRequest.Action)
 
 	// The denied call must not count as a read.
 	require.Empty(t, tracker.hashes[filePath])
