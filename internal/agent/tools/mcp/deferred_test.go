@@ -2,8 +2,11 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
@@ -87,4 +90,79 @@ func TestGetStates_IncludesDeferred(t *testing.T) {
 	single, ok := GetState(name)
 	require.True(t, ok, "deferred server must appear in GetState")
 	require.Equal(t, StateDeferred, single.State)
+}
+
+// TestConnectDeferred_ConcurrentEnable verifies that two concurrent
+// ConnectDeferred calls on the same server do not double-connect.
+// Exactly one caller should succeed; the other should observe
+// ErrAlreadyConnecting or find the server already connected.
+func TestConnectDeferred_ConcurrentEnable(t *testing.T) {
+	const name = "deferred-race"
+	t.Cleanup(func() {
+		states.Del(name)
+		sessions.Del(name)
+		allTools.Del(name)
+	})
+	updateState(name, StateDeferred, nil, nil, Counts{})
+
+	// Slow connect: blocks until released, counting how many times
+	// it was actually called. Returns an error since we don't need a
+	// real session for the race test.
+	var connectCount atomic.Int32
+	gate := make(chan struct{})
+	origNewSession := newSession
+	newSession = func(ctx context.Context, _ string, _ config.MCPConfig, _ config.VariableResolver, _ db.Querier) (*ClientSession, error) {
+		connectCount.Add(1)
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return nil, errors.New("test: simulated connect failure")
+	}
+	t.Cleanup(func() { newSession = origNewSession })
+
+	cfg := config.NewTestStore(&config.Config{
+		MCP: config.MCPs{
+			name: {
+				Type:            config.MCPStdio,
+				Command:         "echo",
+				LazyDescription: "race test",
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+
+	for i := range 2 {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = ConnectDeferred(ctx, name, cfg)
+		}(i)
+	}
+
+	// Give both goroutines time to enter ConnectDeferred.
+	time.Sleep(50 * time.Millisecond)
+	// Release the gate so the connect can complete (or timeout).
+	close(gate)
+	wg.Wait()
+
+	// At most one goroutine should have called newSession.
+	require.Equal(t, int32(1), connectCount.Load(),
+		"exactly one goroutine should attempt the actual connect")
+
+	// One should get ErrAlreadyConnecting; the other gets a connect error.
+	alreadyConnecting := 0
+	for _, err := range errs {
+		if errors.Is(err, ErrAlreadyConnecting) {
+			alreadyConnecting++
+		}
+	}
+	require.Equal(t, 1, alreadyConnecting,
+		"exactly one caller should get ErrAlreadyConnecting")
 }

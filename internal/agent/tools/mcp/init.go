@@ -319,20 +319,52 @@ func InitializeSingle(ctx context.Context, name string, cfg *config.ConfigStore,
 	return initClient(ctx, cfg, name, m, cfg.Resolver(), queries)
 }
 
+// ErrAlreadyConnecting is returned by ConnectDeferred when another
+// goroutine has already started connecting the same server.
+var ErrAlreadyConnecting = errors.New("connection already in progress")
+
 // ConnectDeferred connects a deferred (lazy, never-connected) MCP server.
 // It wraps InitializeSingle with a 30-second timeout and one automatic
 // retry for transient failures (timeout, connection refused). Auth
-// failures are not retried. The caller should check the server's state
-// before calling — if it is not StateDeferred the call is a no-op.
+// failures are not retried.
+//
+// The function serializes concurrent callers per server via renewLock and
+// atomically transitions StateDeferred→StateStarting before connecting.
+// A second caller arriving while a connection is in progress receives
+// ErrAlreadyConnecting.
 func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) error {
 	info, ok := GetState(name)
 	if !ok {
 		return fmt.Errorf("mcp '%s' not found in state registry", name)
 	}
 	if info.State != StateDeferred {
-		// Already connected or connecting — nothing to do.
+		// Already connected, connecting, or errored — nothing to do.
+		if info.State == StateStarting {
+			return ErrAlreadyConnecting
+		}
 		return nil
 	}
+
+	// Serialize per server so only one goroutine connects.
+	mu := renewLock(name)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Re-check under the lock: another goroutine may have won the race.
+	info, ok = GetState(name)
+	if !ok {
+		return fmt.Errorf("mcp '%s' not found in state registry", name)
+	}
+	if info.State != StateDeferred {
+		if info.State == StateStarting {
+			return ErrAlreadyConnecting
+		}
+		return nil
+	}
+
+	// Atomically mark as starting so concurrent callers see the
+	// transition and return ErrAlreadyConnecting.
+	updateState(name, StateStarting, nil, nil, Counts{})
 
 	attempt := func() error {
 		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -375,8 +407,8 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 	// Set initial starting state.
 	updateState(name, StateStarting, nil, nil, Counts{})
 
-	// createSession handles its own timeout internally.
-	session, err := createSession(ctx, name, m, resolver, queries)
+	// newSession handles its own timeout internally.
+	session, err := newSession(ctx, name, m, resolver, queries)
 	if err != nil {
 		return err
 	}
