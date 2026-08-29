@@ -268,4 +268,14 @@ func TestDuplicateIDInstancesDoNotCrossAdvance(t *testing.T) {
 	}
 	require.Equal(t, int64(5), root.framesSinceStart.Load())
 	require.Equal(t, int64(0), drill.framesSinceStart.Load())
+
+	// And symmetrically from the drill instance's perspective.
+	for range 5 {
+		nextDrill := drill.Animate(drillMsg)
+		require.NotNil(t, nextDrill, "own tick must advance the drill instance")
+		require.Nil(t, root.Animate(drillMsg), "drill's tick must never fan out to root")
+		drillMsg = nextDrill().(StepMsg)
+	}
+	require.Equal(t, int64(5), root.framesSinceStart.Load())
+	require.Equal(t, int64(5), drill.framesSinceStart.Load())
 }
