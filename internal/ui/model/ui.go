@@ -282,6 +282,11 @@ type UI struct {
 	// mcp
 	mcpStates       map[string]mcp.ClientInfo
 	enabledLazyMCPs map[string]bool
+	// pendingEnableMCPs tracks in-flight enable_mcp ToolCalls by
+	// ToolCallID → server name. The result has not yet arrived, so
+	// we defer the enabled/disabled decision until the correlated
+	// ToolResult is processed.
+	pendingEnableMCPs map[string]string
 
 	// skills
 	skillStates []*skills.SkillState
@@ -421,6 +426,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
 		enabledLazyMCPs:     make(map[string]bool),
+		pendingEnableMCPs:   make(map[string]string),
 		skillStates:         skills.GetLatestStates(),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
@@ -4760,6 +4766,7 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 // internal/agent/lazy_mcp.go.
 func (m *UI) deriveEnabledLazyMCPs(msgs []message.Message) {
 	m.enabledLazyMCPs = make(map[string]bool)
+	m.pendingEnableMCPs = make(map[string]string)
 
 	type event struct {
 		serverName string
@@ -4811,12 +4818,15 @@ func (m *UI) deriveEnabledLazyMCPs(msgs []message.Message) {
 }
 
 // applyLazyMCPMessageParts scans a message's parts for lazy MCP state
-// changes (enable_mcp tool calls and MCPToggleContent entries) and
-// applies them to the enabledLazyMCPs map and any open MCP palette.
+// changes (enable_mcp tool calls, their results, and MCPToggleContent
+// entries) and applies them to the enabledLazyMCPs map and any open
+// MCP palette.
+//
+// ToolCalls are recorded as pending; the enabled flag is only set when
+// the correlated ToolResult arrives with IsError == false. This prevents
+// a failed connect from briefly showing "✓ enabled" in the palette.
 func (m *UI) applyLazyMCPMessageParts(msg message.Message) {
 	for _, part := range msg.Parts {
-		var name string
-		var enabled bool
 		switch p := part.(type) {
 		case message.ToolCall:
 			if p.Name != agenttools.EnableMCPToolName || !p.Finished {
@@ -4826,20 +4836,36 @@ func (m *UI) applyLazyMCPMessageParts(msg message.Message) {
 			if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
 				continue
 			}
-			name, enabled = params.ServerName, true
-		case message.MCPToggleContent:
-			name, enabled = p.ServerName, p.Enabled
-		default:
-			continue
-		}
-		m.enabledLazyMCPs[name] = enabled
-		if m.dialog == nil {
-			continue
-		}
-		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
-			if palette, ok := dia.(*dialog.MCPPalette); ok {
-				palette.SetEntryEnabled(name, enabled)
+			if p.ID != "" {
+				m.pendingEnableMCPs[p.ID] = params.ServerName
 			}
+		case message.ToolResult:
+			serverName, ok := m.pendingEnableMCPs[p.ToolCallID]
+			if !ok {
+				continue
+			}
+			delete(m.pendingEnableMCPs, p.ToolCallID)
+			if p.IsError {
+				continue
+			}
+			m.enabledLazyMCPs[serverName] = true
+			m.updateMCPPaletteEntry(serverName, true)
+		case message.MCPToggleContent:
+			m.enabledLazyMCPs[p.ServerName] = p.Enabled
+			m.updateMCPPaletteEntry(p.ServerName, p.Enabled)
+		}
+	}
+}
+
+// updateMCPPaletteEntry updates the enabled state of a named entry in
+// any open MCP palette dialog.
+func (m *UI) updateMCPPaletteEntry(name string, enabled bool) {
+	if m.dialog == nil {
+		return
+	}
+	if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
+		if palette, ok := dia.(*dialog.MCPPalette); ok {
+			palette.SetEntryEnabled(name, enabled)
 		}
 	}
 }
