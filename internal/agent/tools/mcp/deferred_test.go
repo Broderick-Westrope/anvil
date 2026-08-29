@@ -156,13 +156,91 @@ func TestConnectDeferred_ConcurrentEnable(t *testing.T) {
 	require.Equal(t, int32(1), connectCount.Load(),
 		"exactly one goroutine should attempt the actual connect")
 
-	// One should get ErrAlreadyConnecting; the other gets a connect error.
-	alreadyConnecting := 0
+	// Exactly one goroutine should have received a connect error; the
+	// other should have returned nil (state no longer deferred) or
+	// ErrAlreadyConnecting.
+	connectErrors := 0
 	for _, err := range errs {
-		if errors.Is(err, ErrAlreadyConnecting) {
-			alreadyConnecting++
+		if err != nil && !errors.Is(err, ErrAlreadyConnecting) {
+			connectErrors++
 		}
 	}
-	require.Equal(t, 1, alreadyConnecting,
-		"exactly one caller should get ErrAlreadyConnecting")
+	require.Equal(t, 1, connectErrors,
+		"exactly one caller should get the connect error")
+}
+
+// TestConnectDeferred_TransientExhaustion_ResetsToDeferred verifies that
+// when both connect attempts fail with transient errors, state is reset
+// to StateDeferred so a later enable_mcp can retry.
+func TestConnectDeferred_TransientExhaustion_ResetsToDeferred(t *testing.T) {
+	const name = "deferred-transient"
+	t.Cleanup(func() {
+		states.Del(name)
+		sessions.Del(name)
+		allTools.Del(name)
+	})
+	updateState(name, StateDeferred, nil, nil, Counts{})
+
+	origNewSession := newSession
+	newSession = func(context.Context, string, config.MCPConfig, config.VariableResolver, db.Querier) (*ClientSession, error) {
+		return nil, errors.New("connect: connection refused")
+	}
+	t.Cleanup(func() { newSession = origNewSession })
+
+	cfg := config.NewTestStore(&config.Config{
+		MCP: config.MCPs{
+			name: {
+				Type:            config.MCPStdio,
+				Command:         "echo",
+				LazyDescription: "transient test",
+			},
+		},
+	})
+
+	err := ConnectDeferred(context.Background(), name, cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "connection refused")
+
+	// State must be reset to StateDeferred, not stuck at StateError.
+	info, ok := GetState(name)
+	require.True(t, ok)
+	require.Equal(t, StateDeferred, info.State,
+		"transient exhaustion must reset to StateDeferred for later retry")
+}
+
+// TestConnectDeferred_PermanentError_StaysError verifies that a permanent
+// (non-transient) error leaves state as StateError.
+func TestConnectDeferred_PermanentError_StaysError(t *testing.T) {
+	const name = "deferred-perm"
+	t.Cleanup(func() {
+		states.Del(name)
+		sessions.Del(name)
+		allTools.Del(name)
+	})
+	updateState(name, StateDeferred, nil, nil, Counts{})
+
+	origNewSession := newSession
+	newSession = func(context.Context, string, config.MCPConfig, config.VariableResolver, db.Querier) (*ClientSession, error) {
+		return nil, errors.New("authentication failed: invalid token")
+	}
+	t.Cleanup(func() { newSession = origNewSession })
+
+	cfg := config.NewTestStore(&config.Config{
+		MCP: config.MCPs{
+			name: {
+				Type:            config.MCPStdio,
+				Command:         "echo",
+				LazyDescription: "perm error test",
+			},
+		},
+	})
+
+	err := ConnectDeferred(context.Background(), name, cfg)
+	require.Error(t, err)
+
+	// Permanent errors stay StateError.
+	info, ok := GetState(name)
+	require.True(t, ok)
+	require.Equal(t, StateError, info.State,
+		"permanent error must keep StateError")
 }

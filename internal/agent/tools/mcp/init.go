@@ -377,10 +377,22 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 		return nil
 	}
 	if !isTransientError(err) {
+		// Auth/permanent errors: leave state as StateError so the
+		// palette and enable_mcp report the real problem.
 		return err
 	}
 	slog.Info("Retrying transient MCP connect failure", "name", name, "error", err)
-	return attempt()
+	retryErr := attempt()
+	if retryErr == nil {
+		return nil
+	}
+	if isTransientError(retryErr) {
+		// Both attempts failed transiently. Reset to StateDeferred so a
+		// later enable_mcp call re-enters the deferred branch rather
+		// than being permanently locked out in StateError.
+		updateState(name, StateDeferred, nil, nil, Counts{})
+	}
+	return retryErr
 }
 
 // isTransientError classifies an error as transient (worth retrying).
@@ -410,6 +422,7 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 	// newSession handles its own timeout internally.
 	session, err := newSession(ctx, name, m, resolver, queries)
 	if err != nil {
+		updateState(name, StateError, err, nil, Counts{})
 		return err
 	}
 
