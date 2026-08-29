@@ -204,6 +204,15 @@ Out of scope:
   Alternative considered and declined: not recording the hash on error
   (two-turn `error → view → retry`) — rejected as pure friction; the error
   already delivers everything a view would.
+  Implementation notes: the error path has already read the file to build
+  the error content, so the hash should be passed into the recording call
+  rather than re-read from disk (extend the `RecordRead` signature or add a
+  variant accepting a precomputed hash). Truncation of the returned content
+  (view-style caps) is an inherited property — `view` today records a read
+  after showing a capped 200-line window — not a new risk; the truncation
+  note is the mitigation. For binary/non-UTF-8 files where content cannot
+  be returned, record the hash and state in the error that the content is
+  binary and cannot be displayed.
 - **Delete history rather than shrink it**: its only consumer is sidebar
   +/- stats the user explicitly does not read; git covers change inspection
   and undo. Keeping unused persistence of full file contents per version is
