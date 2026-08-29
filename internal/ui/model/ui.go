@@ -1209,13 +1209,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case tickElapsedTimeMsg:
-		shouldContinue := m.hasRunningSubagents() || (m.isDrilledIn() && m.isViewedSubagentRunning())
+		// invalidateRunningAgentCaches performs a single pass per chat that
+		// both invalidates caches and reports whether any agent is still
+		// running — eliminating a separate hasRunningSubagents scan.
+		anyRunning := m.invalidateRunningAgentCaches()
+		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning())
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
 			m.elapsedTickRunning = false
 		}
-		m.invalidateRunningAgentCaches()
 	case pinSettleFailedMsg:
 		// A failed settle write must not quit silently: clear the settled
 		// and settling flags so the user regains control and the next
@@ -1734,52 +1737,25 @@ func tickElapsedTime() tea.Cmd {
 	})
 }
 
-// hasRunningSubagents reports whether any NestedToolContainer in the root
-// chat or any drill-stack chat is still running (not yet finished).
-func (m *UI) hasRunningSubagents() bool {
-	if chatHasRunningAgent(m.chat) {
-		return true
-	}
-	for _, entry := range m.drillStack {
-		if chatHasRunningAgent(entry.chat) {
-			return true
-		}
-	}
-	return false
-}
-
-// chatHasRunningAgent reports whether the given chat contains any running
-// NestedToolContainer item.
-func chatHasRunningAgent(c *Chat) bool {
-	for i := range c.Len() {
-		item := c.ItemAt(i)
-		if _, ok := item.(chat.NestedToolContainer); !ok {
-			continue
-		}
-		tmi, ok := item.(chat.ToolMessageItem)
-		if !ok {
-			continue
-		}
-		if tmi.Status() == chat.ToolStatusRunning && !tmi.ToolCall().Finished {
-			return true
-		}
-	}
-	return false
-}
-
 // invalidateRunningAgentCaches clears the render cache on any running
-// NestedToolContainer items in the root chat and all drill-stack chats
-// so that the next draw reflects live state.
-func (m *UI) invalidateRunningAgentCaches() {
-	invalidateRunningAgentsInChat(m.chat)
+// NestedToolContainer items in the root chat and all drill-stack chats so
+// that the next draw reflects live state. It returns true if at least one
+// running agent was found, allowing the caller to skip a separate detection
+// pass.
+func (m *UI) invalidateRunningAgentCaches() bool {
+	found := invalidateRunningAgentsInChat(m.chat)
 	for _, entry := range m.drillStack {
-		invalidateRunningAgentsInChat(entry.chat)
+		found = invalidateRunningAgentsInChat(entry.chat) || found
 	}
+	return found
 }
 
 // invalidateRunningAgentsInChat clears the render cache on any running
-// NestedToolContainer items in the given chat.
-func invalidateRunningAgentsInChat(c *Chat) {
+// NestedToolContainer items in the given chat. It performs detection and
+// invalidation in a single pass, returning true when at least one running
+// item was found.
+func invalidateRunningAgentsInChat(c *Chat) bool {
+	found := false
 	for i := range c.Len() {
 		item := c.ItemAt(i)
 		mi, ok := item.(chat.MessageItem)
@@ -1795,8 +1771,10 @@ func invalidateRunningAgentsInChat(c *Chat) {
 		}
 		if tmi.Status() == chat.ToolStatusRunning && !tmi.ToolCall().Finished {
 			chat.ClearItemCaches([]chat.MessageItem{mi})
+			found = true
 		}
 	}
+	return found
 }
 
 // handleChildSessionMessage handles messages from child sessions (agent tools).
