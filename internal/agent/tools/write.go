@@ -78,6 +78,35 @@ func NewWriteTool(
 
 				diskHash := filetracker.HashContent(diskBytes)
 				if tracker.LastContentHash(ctx, sessionID, filePath) != diskHash {
+					// The gate error embeds file content, which is
+					// equivalent to a view. For files outside the working
+					// directory, require the same read permission the view
+					// tool does before returning content.
+					outside, outsideErr := isOutsideWorkingDir(filePath, workingDir)
+					if outsideErr != nil {
+						return fantasy.ToolResponse{}, outsideErr
+					}
+					if outside {
+						granted, permErr := permissions.Request(ctx,
+							permission.CreatePermissionRequest{
+								SessionID:   sessionID,
+								Path:        filePath,
+								ToolCallID:  call.ID,
+								ToolName:    WriteToolName,
+								Action:      "read",
+								Description: fmt.Sprintf("Read file outside working directory: %s", filePath),
+								Params:      WritePermissionsParams{FilePath: filePath},
+								Input:       filePath,
+							},
+						)
+						if permErr != nil {
+							return fantasy.ToolResponse{}, permErr
+						}
+						if !granted.Granted {
+							return fantasy.NewTextErrorResponse(writeGateErrorWithoutContent(filePath)), nil
+						}
+					}
+
 					// Record the disk hash so the failed call itself
 					// counts as a read: an immediate retry passes the
 					// gate.
@@ -157,6 +186,29 @@ func NewWriteTool(
 				},
 			), nil
 		})
+}
+
+// isOutsideWorkingDir reports whether filePath resolves outside workingDir.
+func isOutsideWorkingDir(filePath, workingDir string) (bool, error) {
+	absWorkingDir, err := filepath.Abs(workingDir)
+	if err != nil {
+		return false, fmt.Errorf("error resolving working directory: %w", err)
+	}
+
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return false, fmt.Errorf("error resolving file path: %w", err)
+	}
+
+	relPath, err := filepath.Rel(absWorkingDir, absFilePath)
+	return err != nil || strings.HasPrefix(relPath, ".."), nil
+}
+
+// writeGateErrorWithoutContent builds the gate error used when read
+// permission for the file's content was denied: no content is embedded and
+// the failed call does not count as a read.
+func writeGateErrorWithoutContent(filePath string) string {
+	return fmt.Sprintf("File %s has not been seen this session, or has changed on disk since it was last seen. Permission to read its content was denied, so it cannot be displayed. Read the file before overwriting it.", filePath)
 }
 
 // writeGateError builds the error message returned when the write gate

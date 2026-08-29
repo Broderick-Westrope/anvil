@@ -3,13 +3,16 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/stretchr/testify/require"
 )
 
@@ -231,4 +234,73 @@ func TestWriteToolSuccessResponseIncludesDiff(t *testing.T) {
 	require.False(t, resp.IsError)
 	require.Contains(t, resp.Content, "-beta")
 	require.Contains(t, resp.Content, "+gamma")
+}
+
+// denyingPermissionService denies every permission request.
+type denyingPermissionService struct {
+	mockPermissionService
+}
+
+func (d *denyingPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error) {
+	return permission.RequestResult{Granted: false, Reason: "denied"}, nil
+}
+
+func TestWriteToolGateOutsideWorkingDirDeniedOmitsContent(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	outsideDir := t.TempDir()
+	filePath := filepath.Join(outsideDir, "secret.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("top secret\n"), 0o644))
+
+	tracker := newMockFileTracker()
+	tool := NewWriteTool(nil, &denyingPermissionService{}, tracker, workingDir)
+
+	resp := runWrite(t, tool, filePath, "new content\n")
+	require.True(t, resp.IsError)
+	require.NotContains(t, resp.Content, "top secret")
+	require.Contains(t, resp.Content, "Permission to read its content was denied")
+
+	// The denied call must not count as a read.
+	require.Empty(t, tracker.hashes[filePath])
+
+	// The file must be untouched.
+	b, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	require.Equal(t, "top secret\n", string(b))
+}
+
+func TestWriteToolGateErrorBinaryContentNotDisplayed(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	filePath := filepath.Join(workingDir, "bin.dat")
+	require.NoError(t, os.WriteFile(filePath, []byte{0xff, 0xfe, 0x00, 0x81}, 0o644))
+
+	tool := NewWriteTool(nil, &mockPermissionService{}, newMockFileTracker(), workingDir)
+
+	resp := runWrite(t, tool, "bin.dat", "new content\n")
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "binary and cannot be displayed")
+	require.NotContains(t, resp.Content, "Current file content")
+}
+
+func TestWriteToolGateErrorTruncatesLongContent(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	filePath := filepath.Join(workingDir, "long.txt")
+	var sb strings.Builder
+	for i := range DefaultReadLimit + 50 {
+		fmt.Fprintf(&sb, "line %d\n", i)
+	}
+	require.NoError(t, os.WriteFile(filePath, []byte(sb.String()), 0o644))
+
+	tool := NewWriteTool(nil, &mockPermissionService{}, newMockFileTracker(), workingDir)
+
+	resp := runWrite(t, tool, "long.txt", "new content\n")
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "line 0\n")
+	require.Contains(t, resp.Content, fmt.Sprintf("(Content truncated at %d lines.)", DefaultReadLimit))
+	require.NotContains(t, resp.Content, fmt.Sprintf("line %d\n", DefaultReadLimit))
 }
