@@ -193,7 +193,6 @@ func (m *UI) updateSidebarScrollState() {
 	lspSection := m.lspInfo(contentWidth, len(m.lspStates), true)
 	mcpSection := m.mcpInfo(contentWidth, mcpCount(m.com.Config().MCP.Sorted(), m.mcpStates), true)
 	skillsSection := m.skillsInfo(contentWidth, len(m.skillStatusItems()), true)
-	filesSection := m.filesInfo(m.com.Workspace.WorkingDir(), contentWidth, fileChangeCount(m.sessionFiles), true)
 
 	// Build the scrollable content.
 	content := lipgloss.JoinVertical(
@@ -203,8 +202,6 @@ func (m *UI) updateSidebarScrollState() {
 		cwd,
 		"",
 		m.modelInfo(contentWidth),
-		"",
-		filesSection,
 		"",
 		lspSection,
 		"",
@@ -291,19 +288,6 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 			uv.NewStyledString(scrollbar).Draw(scr, scrollbarArea)
 		}
 	}
-}
-
-// fileChangeCount returns the number of session files with non-zero additions
-// or deletions.
-func fileChangeCount(files []SessionFile) int {
-	count := 0
-	for _, f := range files {
-		if f.Additions == 0 && f.Deletions == 0 {
-			continue
-		}
-		count++
-	}
-	return count
 }
 
 // mcpCount returns the number of MCP servers that have a state entry.

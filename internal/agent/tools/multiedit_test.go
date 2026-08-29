@@ -6,12 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"charm.land/fantasy"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/stretchr/testify/require"
@@ -50,38 +48,6 @@ func (m *mockPermissionService) GrantSession(sessionID, toolPattern, inputPatter
 }
 
 func (m *mockPermissionService) GrantForever(toolPattern string, inputPattern string, action config.PermissionAction, scope config.Scope) error {
-	return nil
-}
-
-type mockHistoryService struct {
-	*pubsub.Broker[history.File]
-}
-
-func (m *mockHistoryService) Create(ctx context.Context, sessionID, path, content string) (history.File, error) {
-	return history.File{Path: path, Content: content}, nil
-}
-
-func (m *mockHistoryService) CreateVersion(ctx context.Context, sessionID, path, content string) (history.File, error) {
-	return history.File{}, nil
-}
-
-func (m *mockHistoryService) GetByPathAndSession(ctx context.Context, path, sessionID string) (history.File, error) {
-	return history.File{Path: path, Content: ""}, nil
-}
-
-func (m *mockHistoryService) Get(ctx context.Context, id string) (history.File, error) {
-	return history.File{}, nil
-}
-
-func (m *mockHistoryService) ListBySession(ctx context.Context, sessionID string) ([]history.File, error) {
-	return nil, nil
-}
-
-func (m *mockHistoryService) Delete(ctx context.Context, id string) error {
-	return nil
-}
-
-func (m *mockHistoryService) DeleteSessionFiles(ctx context.Context, sessionID string) error {
 	return nil
 }
 
@@ -257,8 +223,7 @@ func TestProcessMultiEditExistingFilePartialFailure(t *testing.T) {
 	edit := editContext{
 		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
 		permissions: &mockPermissionService{},
-		files:       &mockHistoryService{},
-		filetracker: &mockEditFileTracker{lastRead: time.Now().Add(time.Second)},
+		filetracker: &mockEditFileTracker{},
 		workingDir:  dir,
 	}
 	params := MultiEditParams{
@@ -273,6 +238,8 @@ func TestProcessMultiEditExistingFilePartialFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, resp.IsError)
 	require.Contains(t, resp.Content, "Applied 1 of 2 edits")
+	require.Contains(t, resp.Content, "-two")
+	require.Contains(t, resp.Content, "+TWO")
 
 	content, err := os.ReadFile(filePath)
 	require.NoError(t, err)
@@ -296,7 +263,6 @@ func TestProcessMultiEditWithCreationPartialFailure(t *testing.T) {
 	edit := editContext{
 		ctx:         context.WithValue(t.Context(), SessionIDContextKey, "session"),
 		permissions: &mockPermissionService{},
-		files:       &mockHistoryService{},
 		filetracker: &mockEditFileTracker{},
 		workingDir:  dir,
 	}

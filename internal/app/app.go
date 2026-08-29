@@ -25,7 +25,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/format"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/log"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -53,7 +52,6 @@ type UpdateAvailableMsg struct {
 type App struct {
 	Sessions    session.Service
 	Messages    message.Service
-	History     history.Service
 	Permissions permission.Service
 	FileTracker filetracker.Service
 
@@ -79,7 +77,6 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	q := db.New(conn)
 	sessions := session.NewService(q, conn)
 	messages := message.NewService(q, message.WithConn(conn))
-	files := history.NewService(q, conn)
 	cfg := store.Config()
 	yoloLevel := store.Overrides().YoloLevel
 	var configRules []config.PermissionRule
@@ -90,7 +87,6 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
-		History:     files,
 		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store),
 		FileTracker: filetracker.NewService(q),
 		LSPManager:  lsp.NewManager(store),
@@ -485,7 +481,6 @@ func (app *App) setupEvents() {
 	setupSubscriber(ctx, app.serviceEventsWG, "messages", app.Messages.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "agent-notifications", app.agentNotifications.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)
@@ -536,7 +531,6 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.Sessions,
 		app.Messages,
 		app.Permissions,
-		app.History,
 		app.FileTracker,
 		app.LSPManager,
 		app.agentNotifications,

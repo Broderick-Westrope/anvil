@@ -1,1 +1,0 @@
-Replace an entire symbol (function, method, class, struct) by name using LSP document symbols to find exact boundaries. The replacement includes the full symbol range (signature + body). Returns diagnostics after the edit.

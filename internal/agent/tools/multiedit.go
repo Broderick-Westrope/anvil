@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +13,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/filepathext"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 )
@@ -59,7 +57,6 @@ var multieditDescription string
 func NewMultiEditTool(
 	lspManager *lsp.Manager,
 	permissions permission.Service,
-	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
 ) fantasy.AgentTool {
@@ -85,7 +82,7 @@ func NewMultiEditTool(
 			var response fantasy.ToolResponse
 			var err error
 
-			editCtx := editContext{ctx, permissions, files, filetracker, workingDir}
+			editCtx := editContext{ctx, permissions, filetracker, workingDir}
 			// Handle file creation case (first edit has empty old_string)
 			if len(params.Edits) > 0 && params.Edits[0].OldString == "" {
 				response, err = processMultiEditWithCreation(editCtx, params, call)
@@ -174,7 +171,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	}
 
 	// Check permissions
-	_, additions, removals := diff.GenerateDiff("", currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
+	diffText, additions, removals := diff.GenerateDiff("", currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
 
 	editsApplied := len(params.Edits) - len(failedEdits)
 	var description string
@@ -219,18 +216,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// Update file history
-	_, err = edit.files.Create(edit.ctx, sessionID, params.FilePath, "")
-	if err != nil {
-		return fantasy.ToolResponse{}, fmt.Errorf("error creating file history: %w", err)
-	}
-
-	_, err = edit.files.CreateVersion(edit.ctx, sessionID, params.FilePath, currentContent)
-	if err != nil {
-		slog.Error("Error creating file history version", "error", err)
-	}
-
-	edit.filetracker.RecordRead(edit.ctx, sessionID, params.FilePath)
+	edit.filetracker.RecordReadWithHash(edit.ctx, sessionID, params.FilePath, filetracker.HashContent([]byte(currentContent)))
 
 	var message string
 	if len(failedEdits) > 0 {
@@ -238,7 +224,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	} else {
 		message = fmt.Sprintf("File created with %d edits: %s", len(params.Edits), params.FilePath)
 	}
-	message = withWhitespaceNote(message, whitespaceCorrected)
+	message = withDiff(withWhitespaceNote(message, whitespaceCorrected), diffText)
 
 	return fantasy.WithResponseMetadata(
 		fantasy.NewTextResponse(message),
@@ -280,7 +266,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	}
 
 	// Generate diff and check permissions
-	_, additions, removals := diff.GenerateDiff(oldContent, currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
+	diffText, additions, removals := diff.GenerateDiff(oldContent, currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
 
 	editsApplied := len(params.Edits) - len(failedEdits)
 	var description string
@@ -324,7 +310,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 		writeContent, _ = fsext.ToWindowsLineEndings(writeContent)
 	}
 
-	if err := commitFileChange(edit, sessionID, params.FilePath, oldContent, writeContent); err != nil {
+	if err := commitFileChange(edit, sessionID, params.FilePath, writeContent); err != nil {
 		return fantasy.ToolResponse{}, err
 	}
 
@@ -334,7 +320,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	} else {
 		message = fmt.Sprintf("Applied %d edits to file: %s", len(params.Edits), params.FilePath)
 	}
-	message = withWhitespaceNote(message, whitespaceCorrected)
+	message = withDiff(withWhitespaceNote(message, whitespaceCorrected), diffText)
 
 	return fantasy.WithResponseMetadata(
 		fantasy.NewTextResponse(message),

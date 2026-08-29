@@ -82,16 +82,6 @@ func (b *Backend) ListSessionMessages(ctx context.Context, workspaceID, sessionI
 	return ws.Messages.List(ctx, sessionID)
 }
 
-// ListSessionHistory returns the history items for a session.
-func (b *Backend) ListSessionHistory(ctx context.Context, workspaceID, sessionID string) (any, error) {
-	ws, err := b.GetWorkspace(workspaceID)
-	if err != nil {
-		return nil, err
-	}
-
-	return ws.History.ListBySession(ctx, sessionID)
-}
-
 // SaveSession updates a session in the given workspace.
 func (b *Backend) SaveSession(ctx context.Context, workspaceID string, sess session.Session) (session.Session, error) {
 	ws, err := b.GetWorkspace(workspaceID)

@@ -24,7 +24,7 @@ type resolvedSymbol struct {
 // resolveSymbol greps for a symbol name, triggers lazy LSP startup, and
 // returns the first match position that a running client can serve.
 func resolveSymbol(ctx context.Context, lspManager *lsp.Manager, symbol, workingDir string) (*resolvedSymbol, error) {
-	matches, _, err := searchFiles(ctx, regexp.QuoteMeta(symbol), workingDir, "", 100)
+	matches, _, err := searchFiles(ctx, `\b`+regexp.QuoteMeta(symbol)+`\b`, workingDir, "", 100)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search for symbol: %w", err)
 	}
@@ -54,6 +54,84 @@ func resolveSymbol(ctx context.Context, lspManager *lsp.Manager, symbol, working
 	}
 
 	return nil, fmt.Errorf("no LSP client handles any file matching '%s'", symbol)
+}
+
+// resolveSymbolCandidates greps for a symbol name, triggers lazy LSP
+// startup, and returns one candidate per file that a running client can
+// serve, sorted by path.
+func resolveSymbolCandidates(ctx context.Context, lspManager *lsp.Manager, symbol, workingDir string) ([]*resolvedSymbol, error) {
+	matches, _, err := searchFiles(ctx, `\b`+regexp.QuoteMeta(symbol)+`\b`, workingDir, "", 100)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for symbol: %w", err)
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("symbol '%s' not found in grep results", symbol)
+	}
+
+	seen := make(map[string]struct{})
+	var candidates []*resolvedSymbol
+	for _, match := range matches {
+		absPath, err := filepath.Abs(match.path)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[absPath]; ok {
+			continue
+		}
+		seen[absPath] = struct{}{}
+
+		lspManager.Start(ctx, absPath)
+
+		client := findLSPClient(lspManager, absPath)
+		if client == nil {
+			continue
+		}
+
+		candidates = append(candidates, &resolvedSymbol{
+			client: client,
+			path:   absPath,
+			line:   match.lineNum,
+			char:   match.charNum + getSymbolOffset(symbol),
+		})
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no LSP client handles any file matching '%s'", symbol)
+	}
+
+	slices.SortFunc(candidates, func(a, b *resolvedSymbol) int {
+		return strings.Compare(a.path, b.path)
+	})
+	return candidates, nil
+}
+
+// findSymbolByName searches for a symbol by name in the document symbol tree.
+func findSymbolByName(symbols []protocol.DocumentSymbolResult, name string) protocol.DocumentSymbolResult {
+	for _, sym := range symbols {
+		if sym.GetName() == name {
+			return sym
+		}
+		if ds, ok := sym.(*protocol.DocumentSymbol); ok && len(ds.Children) > 0 {
+			children := make([]protocol.DocumentSymbolResult, len(ds.Children))
+			for i := range ds.Children {
+				children[i] = &ds.Children[i]
+			}
+			if found := findSymbolByName(children, name); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
+}
+
+// symbolSelectionStart returns the position to use for position-based LSP
+// requests on a symbol: the selection range start (the symbol name itself)
+// when available, falling back to the symbol range start.
+func symbolSelectionStart(sym protocol.DocumentSymbolResult) protocol.Position {
+	if ds, ok := sym.(*protocol.DocumentSymbol); ok {
+		return ds.SelectionRange.Start
+	}
+	return sym.GetRange().Start
 }
 
 // findLSPClient returns the first LSP client that handles the given file path.
@@ -100,6 +178,31 @@ func collectAffectedFiles(edit *protocol.WorkspaceEdit) []string {
 	}
 
 	return files
+}
+
+// countEditsByFile counts the text edits per file in a WorkspaceEdit.
+func countEditsByFile(edit *protocol.WorkspaceEdit) map[string]int {
+	counts := make(map[string]int)
+
+	for uri, textEdits := range edit.Changes {
+		path, err := uri.Path()
+		if err != nil {
+			continue
+		}
+		counts[path] += len(textEdits)
+	}
+
+	for _, change := range edit.DocumentChanges {
+		if tde := change.TextDocumentEdit; tde != nil {
+			path, err := tde.TextDocument.URI.Path()
+			if err != nil {
+				continue
+			}
+			counts[path] += len(tde.Edits)
+		}
+	}
+
+	return counts
 }
 
 // isNoIdentifierError checks if an error indicates the grep match was not

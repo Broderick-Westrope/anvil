@@ -14,7 +14,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/client"
 	"github.com/Broderick-Westrope/anvil/internal/config"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/log"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -357,16 +356,6 @@ func (w *ClientWorkspace) FileTrackerListReadFiles(ctx context.Context, sessionI
 	return w.client.FileTrackerListReadFiles(ctx, w.workspaceID(), sessionID)
 }
 
-// -- History --
-
-func (w *ClientWorkspace) ListSessionHistory(ctx context.Context, sessionID string) ([]history.File, error) {
-	files, err := w.client.ListSessionHistoryFiles(ctx, w.workspaceID(), sessionID)
-	if err != nil {
-		return nil, err
-	}
-	return protoToFiles(files), nil
-}
-
 // -- LSP --
 
 func (w *ClientWorkspace) LSPStart(ctx context.Context, path string) {
@@ -686,11 +675,6 @@ func translateEvent(ev any) tea.Msg {
 			Type:    e.Type,
 			Payload: protoToSession(e.Payload),
 		}
-	case pubsub.Event[proto.File]:
-		return pubsub.Event[history.File]{
-			Type:    e.Type,
-			Payload: protoToFile(e.Payload),
-		}
 	case pubsub.Event[proto.AgentEvent]:
 		return pubsub.Event[notify.Notification]{
 			Type: e.Type,
@@ -735,18 +719,6 @@ func protoToSession(s proto.Session) session.Session {
 		UpdatedAt:        s.UpdatedAt,
 		Pinned:           s.Pinned,
 		PinNote:          s.PinNote,
-	}
-}
-
-func protoToFile(f proto.File) history.File {
-	return history.File{
-		ID:        f.ID,
-		SessionID: f.SessionID,
-		Path:      f.Path,
-		Content:   f.Content,
-		Version:   f.Version,
-		CreatedAt: f.CreatedAt,
-		UpdatedAt: f.UpdatedAt,
 	}
 }
 
@@ -834,14 +806,6 @@ func protoToMessages(msgs []proto.Message) []message.Message {
 	out := make([]message.Message, len(msgs))
 	for i, m := range msgs {
 		out[i] = protoToMessage(m)
-	}
-	return out
-}
-
-func protoToFiles(files []proto.File) []history.File {
-	out := make([]history.File, len(files))
-	for i, f := range files {
-		out[i] = protoToFile(f)
 	}
 	return out
 }

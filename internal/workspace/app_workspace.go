@@ -13,7 +13,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/app"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/oauth"
@@ -259,12 +258,6 @@ func (w *AppWorkspace) FileTrackerLastReadTime(ctx context.Context, sessionID, p
 
 func (w *AppWorkspace) FileTrackerListReadFiles(ctx context.Context, sessionID string) ([]string, error) {
 	return w.app.FileTracker.ListReadFiles(ctx, sessionID)
-}
-
-// -- History --
-
-func (w *AppWorkspace) ListSessionHistory(ctx context.Context, sessionID string) ([]history.File, error) {
-	return w.app.History.ListBySession(ctx, sessionID)
 }
 
 // -- LSP --

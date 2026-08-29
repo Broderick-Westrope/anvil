@@ -1,1 +1,1 @@
-Rename a symbol across all files using LSP rename. Performs a true semantic rename that respects scopes, overloads, and imports. Returns the list of changed files and locations.
+Rename a symbol across all files using LSP rename. Performs a true semantic rename that respects scopes, overloads, and imports. Provide file_path when the symbol name may exist in multiple places; without it, an ambiguous symbol returns a candidate list to retry from. Returns per-file rename counts.

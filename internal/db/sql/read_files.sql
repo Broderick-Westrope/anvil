@@ -2,13 +2,16 @@
 INSERT INTO read_files (
     session_id,
     path,
-    read_at
+    read_at,
+    content_hash
 ) VALUES (
     ?,
     ?,
-    strftime('%s', 'now')
+    strftime('%s', 'now'),
+    ?
 ) ON CONFLICT(path, session_id) DO UPDATE SET
-    read_at = excluded.read_at;
+    read_at = excluded.read_at,
+    content_hash = excluded.content_hash;
 
 -- name: GetFileRead :one
 SELECT * FROM read_files

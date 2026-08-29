@@ -160,10 +160,6 @@ func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, er
 				var e pubsub.Event[proto.Session]
 				_ = json.Unmarshal(p.Payload, &e)
 				sendEvent(ctx, events, e)
-			case pubsub.PayloadTypeFile:
-				var e pubsub.Event[proto.File]
-				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
 			case pubsub.PayloadTypeAgentEvent:
 				var e pubsub.Event[proto.AgentEvent]
 				_ = json.Unmarshal(p.Payload, &e)
@@ -434,23 +430,6 @@ func (c *Client) GetSession(ctx context.Context, id string, sessionID string) (*
 		return nil, fmt.Errorf("failed to decode session: %w", err)
 	}
 	return &sess, nil
-}
-
-// ListSessionHistoryFiles retrieves history files for a session as proto types.
-func (c *Client) ListSessionHistoryFiles(ctx context.Context, id string, sessionID string) ([]proto.File, error) {
-	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s/history", id, sessionID), nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get session history files: %w", err)
-	}
-	defer rsp.Body.Close()
-	if rsp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get session history files: status code %d", rsp.StatusCode)
-	}
-	var files []proto.File
-	if err := json.NewDecoder(rsp.Body).Decode(&files); err != nil {
-		return nil, fmt.Errorf("failed to decode session history files: %w", err)
-	}
-	return files, nil
 }
 
 // CreateSession creates a new session in a workspace as a proto type.
