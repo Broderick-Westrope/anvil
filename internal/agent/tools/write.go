@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
+	"unicode/utf8"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/diff"
@@ -44,7 +44,7 @@ const WriteToolName = "write"
 func NewWriteTool(
 	lspManager *lsp.Manager,
 	permissions permission.Service,
-	filetracker filetracker.Service,
+	tracker filetracker.Service,
 	workingDir string,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
@@ -62,21 +62,35 @@ func NewWriteTool(
 
 			filePath := filepathext.SmartJoin(workingDir, params.FilePath)
 
+			oldContent := ""
+			writeContent := params.Content
+
 			fileInfo, err := os.Stat(filePath)
 			if err == nil {
 				if fileInfo.IsDir() {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf("Path is a directory, not a file: %s", filePath)), nil
 				}
 
-				modTime := fileInfo.ModTime().Truncate(time.Second)
-				lastRead := filetracker.LastReadTime(ctx, sessionID, filePath)
-				if modTime.After(lastRead) {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("File %s has been modified since it was last read.\nLast modification: %s\nLast read: %s\n\nPlease read the file again before modifying it.",
-						filePath, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339))), nil
+				diskBytes, readErr := os.ReadFile(filePath)
+				if readErr != nil {
+					return fantasy.ToolResponse{}, fmt.Errorf("error reading file: %w", readErr)
 				}
 
-				oldContent, readErr := os.ReadFile(filePath)
-				if readErr == nil && string(oldContent) == params.Content {
+				diskHash := filetracker.HashContent(diskBytes)
+				if tracker.LastContentHash(ctx, sessionID, filePath) != diskHash {
+					// Record the disk hash so the failed call itself
+					// counts as a read: an immediate retry passes the
+					// gate.
+					tracker.RecordReadWithHash(ctx, sessionID, filePath, diskHash)
+					return fantasy.NewTextErrorResponse(writeGateError(filePath, diskBytes)), nil
+				}
+
+				oldContent = string(diskBytes)
+				if _, isCrlf := fsext.ToUnixLineEndings(oldContent); isCrlf {
+					writeContent, _ = fsext.ToWindowsLineEndings(writeContent)
+				}
+
+				if oldContent == writeContent {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf("File %s already contains the exact content. No changes made.", filePath)), nil
 				}
 			} else if !os.IsNotExist(err) {
@@ -88,17 +102,9 @@ func NewWriteTool(
 				return fantasy.ToolResponse{}, fmt.Errorf("error creating directory: %w", err)
 			}
 
-			oldContent := ""
-			if fileInfo != nil && !fileInfo.IsDir() {
-				oldBytes, readErr := os.ReadFile(filePath)
-				if readErr == nil {
-					oldContent = string(oldBytes)
-				}
-			}
-
-			diff, additions, removals := diff.GenerateDiff(
+			diffText, additions, removals := diff.GenerateDiff(
 				oldContent,
-				params.Content,
+				writeContent,
 				strings.TrimPrefix(filePath, workingDir),
 			)
 
@@ -113,7 +119,7 @@ func NewWriteTool(
 					Params: WritePermissionsParams{
 						FilePath:   filePath,
 						OldContent: oldContent,
-						NewContent: params.Content,
+						NewContent: writeContent,
 					},
 					Input: filePath,
 				},
@@ -124,31 +130,70 @@ func NewWriteTool(
 			if !p.Granted {
 				resp := NewPermissionDeniedResponse(p.Reason)
 				resp = fantasy.WithResponseMetadata(resp, WriteResponseMetadata{
-					Diff:      diff,
+					Diff:      diffText,
 					Additions: additions,
 					Removals:  removals,
 				})
 				return resp, nil
 			}
 
-			err = os.WriteFile(filePath, []byte(params.Content), 0o644)
+			err = os.WriteFile(filePath, []byte(writeContent), 0o644)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error writing file: %w", err)
 			}
 
-			filetracker.RecordRead(ctx, sessionID, filePath)
+			tracker.RecordReadWithHash(ctx, sessionID, filePath, filetracker.HashContent([]byte(writeContent)))
 
 			notifyLSPs(ctx, lspManager, params.FilePath)
 
-			result := fmt.Sprintf("File successfully written: %s", filePath)
+			result := withDiff(fmt.Sprintf("File successfully written: %s", filePath), diffText)
 			result = fmt.Sprintf("<result>\n%s\n</result>", result)
 			result += getDiagnostics(filePath, lspManager)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result),
 				WriteResponseMetadata{
-					Diff:      diff,
+					Diff:      diffText,
 					Additions: additions,
 					Removals:  removals,
 				},
 			), nil
 		})
+}
+
+// writeGateError builds the error message returned when the write gate
+// blocks an overwrite. It embeds the current file content, capped the same
+// way the view tool caps output, so the failed call delivers everything a
+// view would.
+func writeGateError(filePath string, diskBytes []byte) string {
+	header := fmt.Sprintf("File %s has not been seen this session, or has changed on disk since it was last seen.", filePath)
+	footer := "This counts as a read. Review the content above and re-issue the write if you still intend to overwrite it."
+
+	if !utf8.Valid(diskBytes) {
+		return fmt.Sprintf("%s\n\nThe current file content is binary and cannot be displayed.\n\n%s", header, footer)
+	}
+
+	return fmt.Sprintf("%s\n\nCurrent file content:\n\n%s\n\n%s", header, capViewContent(string(diskBytes)), footer)
+}
+
+// capViewContent caps content the same way the view tool caps output: at
+// most DefaultReadLimit lines, each at most MaxLineLength bytes, with a
+// truncation note when capped.
+func capViewContent(content string) string {
+	lines := strings.Split(content, "\n")
+	truncated := false
+	if len(lines) > DefaultReadLimit {
+		lines = lines[:DefaultReadLimit]
+		truncated = true
+	}
+	for i, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		if len(line) > MaxLineLength {
+			line = strings.ToValidUTF8(line[:MaxLineLength], "") + "..."
+		}
+		lines[i] = line
+	}
+	out := strings.Join(lines, "\n")
+	if truncated {
+		out += fmt.Sprintf("\n\n(Content truncated at %d lines.)", DefaultReadLimit)
+	}
+	return out
 }
