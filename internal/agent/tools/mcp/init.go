@@ -127,6 +127,7 @@ const (
 	StateConnected
 	StateError
 	StateLazy
+	StateDeferred
 )
 
 func (s State) String() string {
@@ -141,6 +142,8 @@ func (s State) String() string {
 		return "error"
 	case StateLazy:
 		return "lazy"
+	case StateDeferred:
+		return "deferred"
 	default:
 		return "unknown"
 	}
@@ -238,7 +241,15 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 			continue
 		}
 
-		// Set initial starting state
+		// Lazy servers are seeded as deferred and skip the connect loop.
+		// They will be connected on first enable via ConnectDeferred.
+		if m.IsLazy() {
+			updateState(name, StateDeferred, nil, nil, Counts{})
+			slog.Debug("Deferring lazy MCP connection", "name", name)
+			continue
+		}
+
+		// Set initial starting state.
 		wg.Add(1)
 		go func(name string, m config.MCPConfig) {
 			defer func() {

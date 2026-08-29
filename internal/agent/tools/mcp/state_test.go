@@ -18,6 +18,7 @@ func TestState_String(t *testing.T) {
 		{StateConnected, "connected"},
 		{StateError, "error"},
 		{StateLazy, "lazy"},
+		{StateDeferred, "deferred"},
 		{State(99), "unknown"},
 	}
 	for _, tt := range tests {
