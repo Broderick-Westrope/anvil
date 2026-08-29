@@ -2,6 +2,8 @@ package filetracker
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -98,6 +100,58 @@ func TestService_RecordRead_DifferentSessions(t *testing.T) {
 
 	lastRead2 := env.svc.LastReadTime(env.ctx, session2, path)
 	require.True(t, lastRead2.IsZero(), "session 2 should not see session 1's read")
+}
+
+func TestService_RecordRead_ComputesHashFromDisk(t *testing.T) {
+	env := setupTest(t)
+
+	sessionID := "hash-session-1"
+	env.createSession(t, sessionID)
+
+	path := filepath.Join(t.TempDir(), "file.txt")
+	content := []byte("hello\r\nworld\n")
+	require.NoError(t, os.WriteFile(path, content, 0o644))
+
+	env.svc.RecordRead(env.ctx, sessionID, path)
+
+	hash := env.svc.LastContentHash(env.ctx, sessionID, path)
+	require.Equal(t, HashContent(content), hash)
+}
+
+func TestService_RecordRead_MissingFileRecordsEmptyHash(t *testing.T) {
+	env := setupTest(t)
+
+	sessionID := "hash-session-2"
+	env.createSession(t, sessionID)
+
+	path := filepath.Join(t.TempDir(), "missing.txt")
+	env.svc.RecordRead(env.ctx, sessionID, path)
+
+	require.False(t, env.svc.LastReadTime(env.ctx, sessionID, path).IsZero())
+	require.Empty(t, env.svc.LastContentHash(env.ctx, sessionID, path))
+}
+
+func TestService_RecordReadWithHash_RoundTrip(t *testing.T) {
+	env := setupTest(t)
+
+	sessionID := "hash-session-3"
+	path := "/path/to/file.go"
+	env.createSession(t, sessionID)
+
+	env.svc.RecordReadWithHash(env.ctx, sessionID, path, "abc123")
+	require.Equal(t, "abc123", env.svc.LastContentHash(env.ctx, sessionID, path))
+	require.False(t, env.svc.LastReadTime(env.ctx, sessionID, path).IsZero())
+
+	// Re-recording overwrites the hash.
+	env.svc.RecordReadWithHash(env.ctx, sessionID, path, "def456")
+	require.Equal(t, "def456", env.svc.LastContentHash(env.ctx, sessionID, path))
+}
+
+func TestService_LastContentHash_NeverSeen(t *testing.T) {
+	env := setupTest(t)
+
+	hash := env.svc.LastContentHash(env.ctx, "nonexistent-session", "/nonexistent/path")
+	require.Empty(t, hash)
 }
 
 func TestService_RecordRead_DifferentPaths(t *testing.T) {

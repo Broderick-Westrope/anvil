@@ -51,9 +51,10 @@ type MigrationsCompleted struct {
 }
 
 type ReadFile struct {
-	SessionID string `json:"session_id"`
-	Path      string `json:"path"`
-	ReadAt    int64  `json:"read_at"`
+	SessionID   string `json:"session_id"`
+	Path        string `json:"path"`
+	ReadAt      int64  `json:"read_at"`
+	ContentHash string `json:"content_hash"`
 }
 
 type Session struct {
