@@ -1111,7 +1111,16 @@ func (c *coordinator) buildToolsWithState(
 	}
 	lazyMCPs = filterAllowedLazyMCPs(lazyMCPs, agent.AllowedMCP)
 	if len(lazyMCPs) > 0 {
-		filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs))
+		// Inject a synchronous connect callback that connects a deferred
+		// MCP and rebuilds the tool list so the same run's next
+		// PrepareStep sees the newly registered tools.
+		connectFn := func(ctx context.Context, name string) (int, error) {
+			if err := toolsmcp.ConnectDeferred(ctx, name, c.cfg); err != nil {
+				return 0, err
+			}
+			return c.refreshMCPTools(ctx, name)
+		}
+		filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs, connectFn))
 	}
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
@@ -1292,6 +1301,38 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	c.agents.Reset(make(map[string]SessionAgent))
 
 	return nil
+}
+
+// refreshMCPTools rebuilds the orchestrator's tool list and lazy MCP
+// tool map after a deferred MCP server has been connected. It pushes
+// the new tools to live agents via SetTools/SetLazyMCPToolMap so the
+// same run's next PrepareStep sees the newly registered tools. Returns
+// the number of tools registered for the named server.
+func (c *coordinator) refreshMCPTools(ctx context.Context, name string) (int, error) {
+	orchestratorCfg, ok := c.agentConfigs[config.AgentOrchestrator]
+	if !ok {
+		return 0, errOrchestratorAgentNotConfigured
+	}
+
+	agentTools, lazyMap, err := c.buildTools(ctx, orchestratorCfg, 3)
+	if err != nil {
+		return 0, fmt.Errorf("rebuilding tools after MCP connect: %w", err)
+	}
+
+	orch := c.getOrchestrator()
+	orch.SetTools(agentTools)
+	orch.SetLazyMCPToolMap(lazyMap)
+
+	// Count tools for the just-connected server.
+	toolCount := 0
+	for mcpName, mcpTools := range toolsmcp.Tools() {
+		if mcpName == name {
+			toolCount = len(mcpTools)
+			break
+		}
+	}
+
+	return toolCount, nil
 }
 
 func (c *coordinator) QueuedPrompts(sessionID string) int {

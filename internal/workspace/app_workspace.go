@@ -446,6 +446,12 @@ func (w *AppWorkspace) DisableDockerMCP() error {
 }
 
 func (w *AppWorkspace) EnableMCP(ctx context.Context, name string) error {
+	// Deferred servers need ConnectDeferred (timeout + retry); already
+	// connected servers use InitializeSingle as before.
+	info, ok := mcptools.GetState(name)
+	if ok && info.State == mcptools.StateDeferred {
+		return mcptools.ConnectDeferred(ctx, name, w.store)
+	}
 	return mcptools.InitializeSingle(ctx, name, w.store, nil)
 }
 

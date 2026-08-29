@@ -267,3 +267,39 @@ func TestLazyServerNames(t *testing.T) {
 	require.True(t, result["datadog"])
 	require.True(t, result["github"])
 }
+
+// TestFilterLazyMCPTools_StaleSnapshotPassThrough verifies the critical
+// invariant: tools not present in lazyMCPToolMap pass through unfiltered.
+// When a deferred server connects mid-run, its tools appear in
+// a.tools.Copy() (via SetTools) but are absent from the stale
+// lazyMCPToolMap snapshot taken at Run start. They must pass through so
+// the next PrepareStep exposes them.
+func TestFilterLazyMCPTools_StaleSnapshotPassThrough(t *testing.T) {
+	t.Parallel()
+
+	// Simulate: initial lazyMCPToolMap has only "datadog" tools.
+	staleMap := map[string]string{
+		"mcp_datadog_query": "datadog",
+	}
+	state := tools.NewLazyMCPState(nil)
+
+	// After connect, the full tool set includes newly registered tools
+	// from a deferred server not in the original snapshot.
+	allTools := []fantasy.AgentTool{
+		&mockAgentTool{name: "bash"},
+		&mockAgentTool{name: "mcp_datadog_query"}, // In stale map, datadog not enabled → filtered.
+		&mockAgentTool{name: "mcp_github_pr"},     // NOT in stale map → passes through.
+		&mockAgentTool{name: "mcp_github_issues"}, // NOT in stale map → passes through.
+	}
+
+	filtered := filterLazyMCPTools(allTools, staleMap, state)
+	names := make([]string, len(filtered))
+	for i, tool := range filtered {
+		names[i] = tool.Info().Name
+	}
+	require.NotContains(t, names, "mcp_datadog_query")
+	require.Contains(t, names, "mcp_github_pr")
+	require.Contains(t, names, "mcp_github_issues")
+	require.Contains(t, names, "bash")
+	require.Len(t, filtered, 3)
+}

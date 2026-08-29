@@ -319,6 +319,57 @@ func InitializeSingle(ctx context.Context, name string, cfg *config.ConfigStore,
 	return initClient(ctx, cfg, name, m, cfg.Resolver(), queries)
 }
 
+// ConnectDeferred connects a deferred (lazy, never-connected) MCP server.
+// It wraps InitializeSingle with a 30-second timeout and one automatic
+// retry for transient failures (timeout, connection refused). Auth
+// failures are not retried. The caller should check the server's state
+// before calling — if it is not StateDeferred the call is a no-op.
+func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) error {
+	info, ok := GetState(name)
+	if !ok {
+		return fmt.Errorf("mcp '%s' not found in state registry", name)
+	}
+	if info.State != StateDeferred {
+		// Already connected or connecting — nothing to do.
+		return nil
+	}
+
+	attempt := func() error {
+		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		return InitializeSingle(tctx, name, cfg, nil)
+	}
+
+	err := attempt()
+	if err == nil {
+		return nil
+	}
+	if !isTransientError(err) {
+		return err
+	}
+	slog.Info("Retrying transient MCP connect failure", "name", name, "error", err)
+	return attempt()
+}
+
+// isTransientError classifies an error as transient (worth retrying).
+// Timeouts and connection-refused errors are transient; auth errors are
+// not.
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connect: connection reset") ||
+		strings.Contains(msg, "i/o timeout") {
+		return true
+	}
+	return false
+}
+
 // initClient initializes a single MCP client with the given configuration.
 func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m config.MCPConfig, resolver config.VariableResolver, queries db.Querier) error {
 	// Set initial starting state.

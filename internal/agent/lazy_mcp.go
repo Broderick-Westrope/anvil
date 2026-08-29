@@ -67,6 +67,12 @@ func filterAllowedLazyMCPs(lazyMCPs map[string]string, allowedMCP map[string][]s
 // filterLazyMCPTools returns a subset of agentTools that excludes tools
 // belonging to lazy MCP servers unless the server is enabled in the given
 // LazyMCPState. Tools not present in lazyMCPToolMap pass through unchanged.
+//
+// Stale-snapshot invariant: lazyMCPToolMap is a Run-start snapshot while
+// agentTools is live (updated by SetTools when a deferred server
+// connects mid-run). Newly registered tools are absent from the stale
+// snapshot, so they pass through unfiltered — correct because the
+// server was just explicitly enabled.
 func filterLazyMCPTools(
 	agentTools []fantasy.AgentTool,
 	lazyMCPToolMap map[string]string,

@@ -37,9 +37,16 @@ type EnableMCPParams struct {
 	ServerName string `json:"server_name" description:"The exact name of the MCP server to enable"`
 }
 
+// ConnectFn connects a deferred MCP server and rebuilds tools. It returns
+// the number of tools registered on success.
+type ConnectFn func(ctx context.Context, name string) (toolCount int, err error)
+
 // NewEnableMCPTool creates the enable_mcp tool. The lazyMCPs argument
-// maps server name to its lazy description.
-func NewEnableMCPTool(lazyMCPs map[string]string) fantasy.AgentTool {
+// maps server name to its lazy description. connectFn is an optional
+// callback that connects deferred servers and rebuilds the agent's tool
+// list; when nil, deferred servers cannot be connected (the tool returns
+// an error for deferred servers).
+func NewEnableMCPTool(lazyMCPs map[string]string, connectFn ConnectFn) fantasy.AgentTool {
 	entries := make([]lazyMCPEntry, 0, len(lazyMCPs))
 	for name, desc := range lazyMCPs {
 		entries = append(entries, lazyMCPEntry{Name: name, Description: desc})
@@ -83,6 +90,9 @@ func NewEnableMCPTool(lazyMCPs map[string]string) fantasy.AgentTool {
 			info, exists := mcp.GetState(params.ServerName)
 			if exists {
 				switch info.State {
+				case mcp.StateDeferred:
+					// Deferred server: connect on first enable.
+					return enableDeferred(ctx, params.ServerName, state, connectFn)
 				case mcp.StateError:
 					errMsg := "unknown error"
 					if info.Error != nil {
@@ -96,11 +106,11 @@ func NewEnableMCPTool(lazyMCPs map[string]string) fantasy.AgentTool {
 						fmt.Sprintf("MCP '%s' is still starting, retry shortly", params.ServerName),
 					), nil
 				case mcp.StateLazy, mcp.StateConnected:
-					// Proceed.
+					// Proceed to enable.
 				}
 			}
 
-			// Enable the server.
+			// Enable the server (already connected).
 			if state.Enable(params.ServerName) {
 				return fantasy.NewTextResponse(
 					fmt.Sprintf("%s MCP is already enabled", params.ServerName),
@@ -121,4 +131,30 @@ func NewEnableMCPTool(lazyMCPs map[string]string) fantasy.AgentTool {
 			), nil
 		},
 	)
+}
+
+// enableDeferred handles the deferred-connect branch of enable_mcp.
+// It connects the server via connectFn, records the enable in state
+// only on success, and returns the tool count. On failure the state
+// is left untouched so a retry next turn works.
+func enableDeferred(ctx context.Context, name string, state *LazyMCPState, connectFn ConnectFn) (fantasy.ToolResponse, error) {
+	if connectFn == nil {
+		return fantasy.NewTextErrorResponse(
+			fmt.Sprintf("MCP '%s' is deferred but no connect callback is available", name),
+		), nil
+	}
+
+	toolCount, err := connectFn(ctx, name)
+	if err != nil {
+		return fantasy.NewTextErrorResponse(
+			fmt.Sprintf("Failed to connect MCP '%s': %s", name, err),
+		), nil
+	}
+
+	// Only record the enable after a successful connect.
+	state.Enable(name)
+
+	return fantasy.NewTextResponse(
+		fmt.Sprintf("Enabled %s MCP (%d tools available)", name, toolCount),
+	), nil
 }

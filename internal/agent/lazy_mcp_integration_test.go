@@ -16,7 +16,7 @@ func TestLazyMCPIntegration_ToolFilteringEndToEnd(t *testing.T) {
 
 	// Build a mixed tool set: regular tools + lazy MCP tools + enable_mcp.
 	lazyMCPs := map[string]string{"datadog": "Observability tools"}
-	enableTool := tools.NewEnableMCPTool(lazyMCPs)
+	enableTool := tools.NewEnableMCPTool(lazyMCPs, nil)
 
 	allTools := []fantasy.AgentTool{
 		&mockAgentTool{name: "bash"},
@@ -149,7 +149,7 @@ func TestLazyMCPIntegration_AllowedMCPFiltering(t *testing.T) {
 	require.NotContains(t, filtered, "slack")
 
 	// Build enable_mcp tool from filtered list.
-	enableTool := tools.NewEnableMCPTool(filtered)
+	enableTool := tools.NewEnableMCPTool(filtered, nil)
 	info := enableTool.Info()
 	require.Equal(t, tools.EnableMCPToolName, info.Name)
 	// The description should mention datadog and linear but not slack.
@@ -164,7 +164,7 @@ func TestLazyMCPIntegration_EnableMCPToolValidation(t *testing.T) {
 	lazyMCPs := map[string]string{
 		"datadog": "Observability",
 	}
-	enableTool := tools.NewEnableMCPTool(lazyMCPs)
+	enableTool := tools.NewEnableMCPTool(lazyMCPs, nil)
 
 	// Set up context with LazyMCPState.
 	state := tools.NewLazyMCPState(nil)
