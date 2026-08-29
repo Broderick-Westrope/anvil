@@ -179,6 +179,10 @@ func TestBaseToolMessageItem_MutatorsBumpVersion(t *testing.T) {
 func TestAssistantMessageItem_AnimateBumpsVersion(t *testing.T) {
 	t.Parallel()
 
+	// Hand-built StepMsgs below leave Instance at 0, the wildcard that
+	// bypasses anim's instance gate: these tests exercise version-bump
+	// behaviour, not tick routing.
+
 	sty := styles.TokyoNight()
 	streaming := &message.Message{
 		ID:   "spin",
@@ -428,6 +432,10 @@ func requireNoBump(t *testing.T, name string, item versionedItem, mutate func())
 func TestBaseToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 	t.Parallel()
 
+	// Hand-built StepMsgs below leave Instance at 0, the wildcard that
+	// bypasses anim's instance gate: these tests exercise version-bump
+	// behaviour, not tick routing.
+
 	sty := styles.TokyoNight()
 	tc := message.ToolCall{ID: "tc-spin", Name: "bash", Input: "{}", Finished: false}
 	item := NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
@@ -473,6 +481,10 @@ func TestBaseToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 func TestAgentToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 	t.Parallel()
 
+	// Hand-built StepMsgs below leave Instance at 0, the wildcard that
+	// bypasses anim's instance gate: these tests exercise version-bump
+	// behaviour, not tick routing.
+
 	sty := styles.TokyoNight()
 	parentTC := message.ToolCall{ID: "agent-parent", Name: "agent", Input: `{}`, Finished: false}
 	parent := NewAgentToolMessageItem(&sty, parentTC, nil, false)
@@ -517,6 +529,10 @@ func TestAgentToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 // override.
 func TestAgenticFetchToolMessageItem_AnimateBumpsVersion(t *testing.T) {
 	t.Parallel()
+
+	// Hand-built StepMsgs below leave Instance at 0, the wildcard that
+	// bypasses anim's instance gate: these tests exercise version-bump
+	// behaviour, not tick routing.
 
 	sty := styles.TokyoNight()
 	parentTC := message.ToolCall{ID: "fetch-parent", Name: "agentic_fetch", Input: `{}`, Finished: false}
