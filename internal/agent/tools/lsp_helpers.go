@@ -24,7 +24,7 @@ type resolvedSymbol struct {
 // resolveSymbol greps for a symbol name, triggers lazy LSP startup, and
 // returns the first match position that a running client can serve.
 func resolveSymbol(ctx context.Context, lspManager *lsp.Manager, symbol, workingDir string) (*resolvedSymbol, error) {
-	matches, _, err := searchFiles(ctx, regexp.QuoteMeta(symbol), workingDir, "", 100)
+	matches, _, err := searchFiles(ctx, `\b`+regexp.QuoteMeta(symbol)+`\b`, workingDir, "", 100)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search for symbol: %w", err)
 	}
