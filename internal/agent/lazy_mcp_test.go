@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/stretchr/testify/require"
 )
@@ -458,4 +460,103 @@ func TestFilterLazyMCPTools_StaleSnapshotPassThrough(t *testing.T) {
 	require.Contains(t, names, "mcp_github_issues")
 	require.Contains(t, names, "bash")
 	require.Len(t, filtered, 3)
+}
+
+// TestReconnectDeferredServers_HappyPath verifies that
+// reconnectDeferredServers calls connectFn for each replayed-enabled
+// deferred server and leaves the LazyMCPState enabled on success.
+func TestReconnectDeferredServers_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	const serverA = "deferred-a"
+	const serverB = "deferred-b"
+	mcp.SetStateForTest(serverA, mcp.StateDeferred)
+	mcp.SetStateForTest(serverB, mcp.StateDeferred)
+	t.Cleanup(func() {
+		mcp.DeleteStateForTest(serverA)
+		mcp.DeleteStateForTest(serverB)
+	})
+
+	connected := make(map[string]bool)
+	connectFn := func(_ context.Context, name string) (int, error) {
+		connected[name] = true
+		return 3, nil
+	}
+
+	initialEnabled := map[string]bool{serverA: true, serverB: true}
+	state := tools.NewLazyMCPState(initialEnabled)
+
+	reconnectDeferredServers(context.Background(), connectFn, initialEnabled, state)
+
+	require.True(t, connected[serverA], "connectFn must be called for serverA")
+	require.True(t, connected[serverB], "connectFn must be called for serverB")
+	require.True(t, state.IsEnabled(serverA))
+	require.True(t, state.IsEnabled(serverB))
+}
+
+// TestReconnectDeferredServers_FailureDisables verifies that a failed
+// connect disables the server for the current run.
+func TestReconnectDeferredServers_FailureDisables(t *testing.T) {
+	t.Parallel()
+
+	const serverA = "deferred-fail-a"
+	const serverB = "deferred-ok-b"
+	mcp.SetStateForTest(serverA, mcp.StateDeferred)
+	mcp.SetStateForTest(serverB, mcp.StateDeferred)
+	t.Cleanup(func() {
+		mcp.DeleteStateForTest(serverA)
+		mcp.DeleteStateForTest(serverB)
+	})
+
+	connectFn := func(_ context.Context, name string) (int, error) {
+		if name == serverA {
+			return 0, errors.New("connection refused")
+		}
+		return 3, nil
+	}
+
+	initialEnabled := map[string]bool{serverA: true, serverB: true}
+	state := tools.NewLazyMCPState(initialEnabled)
+
+	reconnectDeferredServers(context.Background(), connectFn, initialEnabled, state)
+
+	require.False(t, state.IsEnabled(serverA), "failed server must be disabled")
+	require.True(t, state.IsEnabled(serverB), "successful server must stay enabled")
+}
+
+// TestReconnectDeferredServers_NilConnectFn verifies that a nil
+// connectFn is a no-op.
+func TestReconnectDeferredServers_NilConnectFn(t *testing.T) {
+	t.Parallel()
+
+	initialEnabled := map[string]bool{"anything": true}
+	state := tools.NewLazyMCPState(initialEnabled)
+
+	// Must not panic.
+	reconnectDeferredServers(context.Background(), nil, initialEnabled, state)
+
+	require.True(t, state.IsEnabled("anything"), "state must be unchanged")
+}
+
+// TestReconnectDeferredServers_SkipsNonDeferred verifies that servers
+// not in StateDeferred are skipped.
+func TestReconnectDeferredServers_SkipsNonDeferred(t *testing.T) {
+	t.Parallel()
+
+	const serverA = "connected-a"
+	mcp.SetStateForTest(serverA, mcp.StateConnected)
+	t.Cleanup(func() { mcp.DeleteStateForTest(serverA) })
+
+	connectCalled := false
+	connectFn := func(context.Context, string) (int, error) {
+		connectCalled = true
+		return 0, nil
+	}
+
+	initialEnabled := map[string]bool{serverA: true}
+	state := tools.NewLazyMCPState(initialEnabled)
+
+	reconnectDeferredServers(context.Background(), connectFn, initialEnabled, state)
+
+	require.False(t, connectCalled, "connected servers must not trigger connectFn")
 }

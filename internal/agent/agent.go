@@ -254,23 +254,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// start (not session load) so browsing history never triggers
 	// connections. Failures are non-fatal: the server is downgraded
 	// to not-enabled for this run.
-	connectFn := a.connectFn.Get()
-	if connectFn != nil {
-		for name := range initialEnabled {
-			if !initialEnabled[name] {
-				continue
-			}
-			info, ok := mcp.GetState(name)
-			if !ok || info.State != mcp.StateDeferred {
-				continue
-			}
-			if _, err := connectFn(ctx, name); err != nil {
-				slog.Warn("Failed to reconnect replayed deferred MCP, disabling for this run",
-					"name", name, "error", err)
-				lazyState.Disable(name)
-			}
-		}
-	}
+	reconnectDeferredServers(ctx, a.connectFn.Get(), initialEnabled, lazyState)
 
 	// Filter lazy MCP tools from the initial tool set.
 	agentTools = filterLazyMCPTools(agentTools, lazyMCPToolMap, lazyState)

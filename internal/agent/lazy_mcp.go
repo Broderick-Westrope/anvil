@@ -1,11 +1,13 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 )
 
@@ -137,4 +139,34 @@ func lazyServerNames(lazyMCPToolMap map[string]string) map[string]bool {
 		servers[serverName] = true
 	}
 	return servers
+}
+
+// reconnectDeferredServers connects replayed-enabled deferred servers at
+// Run start. It calls connectFn for each server that is both enabled in
+// the replay state and still in StateDeferred. Failures are non-fatal:
+// the server is downgraded to not-enabled for this run via
+// lazyState.Disable.
+func reconnectDeferredServers(
+	ctx context.Context,
+	connectFn tools.ConnectFn,
+	initialEnabled map[string]bool,
+	lazyState *tools.LazyMCPState,
+) {
+	if connectFn == nil {
+		return
+	}
+	for name, enabled := range initialEnabled {
+		if !enabled {
+			continue
+		}
+		info, ok := mcp.GetState(name)
+		if !ok || info.State != mcp.StateDeferred {
+			continue
+		}
+		if _, err := connectFn(ctx, name); err != nil {
+			slog.Warn("Failed to reconnect replayed deferred MCP, disabling for this run",
+				"name", name, "error", err)
+			lazyState.Disable(name)
+		}
+	}
 }
