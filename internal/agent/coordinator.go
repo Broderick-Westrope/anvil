@@ -1317,6 +1317,11 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 // the new tools to live agents via SetTools/SetLazyMCPToolMap so the
 // same run's next PrepareStep sees the newly registered tools. Returns
 // the number of tools registered for the named server.
+//
+// NOTE: This only updates the orchestrator agent. Sub-agents (task
+// agents) are not updated and will not see the new tools until
+// rebuilt. This is an accepted limitation — sub-agents are
+// short-lived and rarely need newly-connected MCP tools mid-run.
 func (c *coordinator) refreshMCPTools(ctx context.Context, name string) (int, error) {
 	orchestratorCfg, ok := c.agentConfigs[config.AgentOrchestrator]
 	if !ok {

@@ -259,7 +259,15 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 		if selected := mp.list.SelectedItem(); selected != nil {
 			if item, ok := selected.(*MCPPaletteItem); ok && item != nil {
 				switch item.entry.State {
-				case mcp.StateDisabled, mcp.StateDeferred:
+				case mcp.StateDeferred:
+					// Deferred servers route through the lazy toggle path
+					// so the enable is persisted as MCPToggleContent and
+					// Run-start reconnect handles the actual connection.
+					return ActionToggleLazyMCP{
+						ServerName: item.entry.Name,
+						Enabled:    true,
+					}
+				case mcp.StateDisabled:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
 				case mcp.StateConnected, mcp.StateLazy:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: false}
