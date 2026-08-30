@@ -34,10 +34,13 @@ func TestReloadHookCanReadStoreMetadata(t *testing.T) {
 		return nil
 	})
 
-	// Change the plugins key on disk so the hook actually fires.
+	// Change the plugins key on disk so the hook actually fires. Use
+	// forward slashes: raw Windows paths contain backslashes, which are
+	// invalid JSON escapes and would fail the config parse before the
+	// hook ever ran.
 	cfgPath := filepath.Join(dir, defaultProjectDirectory, "anvil.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0o755))
-	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"plugins":[{"path":"`+dir+`/p"}]}`), 0o600))
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"plugins":[{"path":"`+filepath.ToSlash(dir)+`/p"}]}`), 0o600))
 
 	done := make(chan struct{})
 	go func() {
