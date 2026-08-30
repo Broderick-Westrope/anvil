@@ -269,9 +269,11 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 					// Deferred servers route through the lazy toggle path
 					// so the enable is persisted as MCPToggleContent and
 					// Run-start reconnect handles the actual connection.
+					// Toggle (not just enable) so Enter can also revert a
+					// pending enable.
 					return ActionToggleLazyMCP{
 						ServerName: item.entry.Name,
-						Enabled:    true,
+						Enabled:    !item.entry.Enabled,
 					}
 				case mcp.StateDisabled:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
