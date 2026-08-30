@@ -262,3 +262,51 @@ func TestConnectDeferred_PermanentError_StaysError(t *testing.T) {
 	require.Equal(t, StateError, info.State,
 		"permanent error must keep StateError")
 }
+
+// TestConnectDeferred_SessionOutlivesEnableCall is the regression test for
+// the deferred-connect context bug: the session (and its stdio subprocess's
+// process group) must hang off the long-lived session parent context, not
+// the caller's request-scoped context. The original implementation wrapped
+// the connect in a WithTimeout whose deferred cancel killed the freshly
+// connected server the moment the enable call returned — every subsequent
+// tool call then paid a full respawn through the renew path.
+func TestConnectDeferred_SessionOutlivesEnableCall(t *testing.T) {
+	const name = "deferred-outlive"
+	t.Cleanup(func() {
+		states.Del(name)
+		sessions.Del(name)
+		allTools.Del(name)
+	})
+	updateState(name, StateDeferred, nil, nil, Counts{})
+
+	// Capture the context the session is created under.
+	var sessionCtx context.Context
+	origNewSession := newSession
+	newSession = func(ctx context.Context, _ string, _ config.MCPConfig, _ config.VariableResolver, _ db.Querier) (*ClientSession, error) {
+		sessionCtx = ctx
+		// Fail so initClient does not try to register tools on a nil
+		// session; the captured context is all this test needs.
+		return nil, errors.New("test: stop after capture")
+	}
+	t.Cleanup(func() { newSession = origNewSession })
+
+	cfg := config.NewTestStore(&config.Config{
+		MCP: config.MCPs{
+			name: {
+				Type:            config.MCPStdio,
+				Command:         "echo",
+				LazyDescription: "ctx lifetime test",
+			},
+		},
+	})
+
+	// Caller context is canceled immediately after the call returns,
+	// mimicking a tool-call or palette request context.
+	callerCtx, cancel := context.WithCancel(context.Background())
+	_ = ConnectDeferred(callerCtx, name, cfg)
+	cancel()
+
+	require.NotNil(t, sessionCtx, "newSession must have been invoked")
+	require.NoError(t, sessionCtx.Err(),
+		"session context must outlive both the enable call and the caller's context")
+}

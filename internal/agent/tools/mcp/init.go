@@ -71,10 +71,39 @@ var (
 	renewMusMu sync.Mutex
 	renewMus   = map[string]*sync.Mutex{}
 
+	// sessionParentCtx is the long-lived context MCP sessions hang off.
+	// createSession derives each session's context from its ctx argument,
+	// so connections made outside Initialize's loop (ConnectDeferred) must
+	// not pass a request-scoped context — the session's stdio subprocess
+	// would be killed the moment that context is canceled. Set once during
+	// Initialize; falls back to context.Background() when unset (tests,
+	// coordinators built outside app startup).
+	sessionParentMu  sync.Mutex
+	sessionParentCtx context.Context
+
 	// newSession creates a client session. It is a seam so tests can exercise
 	// renewal concurrency without spawning a real transport.
 	newSession = createSession
 )
+
+// setSessionParentCtx records the long-lived context for deferred
+// connections.
+func setSessionParentCtx(ctx context.Context) {
+	sessionParentMu.Lock()
+	defer sessionParentMu.Unlock()
+	sessionParentCtx = ctx
+}
+
+// sessionParent returns the long-lived context deferred connections
+// should use, defaulting to context.Background().
+func sessionParent() context.Context {
+	sessionParentMu.Lock()
+	defer sessionParentMu.Unlock()
+	if sessionParentCtx != nil {
+		return sessionParentCtx
+	}
+	return context.Background()
+}
 
 // ArmInit marks that MCP initialization is expected so WaitForInit blocks
 // until it completes. Call this synchronously before launching Initialize in a
@@ -231,6 +260,7 @@ func Close(ctx context.Context) error {
 func Initialize(ctx context.Context, permissions permission.Service, cfg *config.ConfigStore, queries db.Querier) {
 	ArmInit()
 	dbQueries = queries
+	setSessionParentCtx(ctx)
 	slog.Info("Initializing MCP clients")
 	var wg sync.WaitGroup
 	// Initialize states for all configured MCPs
@@ -324,15 +354,20 @@ func InitializeSingle(ctx context.Context, name string, cfg *config.ConfigStore,
 var ErrAlreadyConnecting = errors.New("connection already in progress")
 
 // ConnectDeferred connects a deferred (lazy, never-connected) MCP server.
-// It wraps InitializeSingle with a 30-second timeout and one automatic
-// retry for transient failures (timeout, connection refused). Auth
-// failures are not retried.
+// The connection runs under the package's long-lived session parent
+// context (see sessionParentCtx) with the handshake bounded by mcpTimeout
+// inside createSession; the caller's ctx only gates starting the attempt.
+// One automatic retry is performed for transient failures (timeout,
+// connection refused). Auth failures are not retried.
 //
 // The function serializes concurrent callers per server via renewLock and
 // atomically transitions StateDeferred→StateStarting before connecting.
 // A second caller arriving while a connection is in progress receives
 // ErrAlreadyConnecting.
 func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	info, ok := GetState(name)
 	if !ok {
 		return fmt.Errorf("mcp '%s' not found in state registry", name)
@@ -367,9 +402,13 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 	updateState(name, StateStarting, nil, nil, Counts{})
 
 	attempt := func() error {
-		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		return InitializeSingle(tctx, name, cfg, nil)
+		// Connect under the long-lived session parent context, NOT the
+		// caller's ctx: createSession derives the session (and its stdio
+		// subprocess's process group) from this context, so a
+		// request-scoped or timeout-wrapped context would kill the server
+		// as soon as the enable call returns. The handshake itself is
+		// already bounded inside createSession by mcpTimeout.
+		return InitializeSingle(sessionParent(), name, cfg, nil)
 	}
 
 	err := attempt()
