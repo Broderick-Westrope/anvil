@@ -1,6 +1,6 @@
 # Phase 5: UI Rendering Perf Fixes
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Parent: `README.md` — Spec: `plans/design-2026-08-29-simplification.md`
 > Independent — parallel with phases 2, 3, 4.
 

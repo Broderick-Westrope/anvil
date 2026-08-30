@@ -1,6 +1,6 @@
 # Phase 1: Delete HTTP Client/Server Stack
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Parent: `README.md` — Spec: `plans/design-2026-08-29-simplification.md`
 
 ## Specification

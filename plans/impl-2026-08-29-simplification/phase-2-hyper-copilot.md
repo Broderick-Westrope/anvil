@@ -1,6 +1,6 @@
 # Phase 2: Remove Hyper and Copilot
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Parent: `README.md` — Spec: `plans/design-2026-08-29-simplification.md`
 > Depends on: Phase 1 (deletes `client_workspace.go`, one of the two
 > `ImportCopilot` implementations)

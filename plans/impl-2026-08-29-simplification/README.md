@@ -1,6 +1,6 @@
 # Anvil Simplification Implementation Plan
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 
 ## Overview
 

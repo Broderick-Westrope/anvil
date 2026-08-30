@@ -1,6 +1,6 @@
 # Phase 3: Command Cleanup and Migration Retirement
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Parent: `README.md` — Spec: `plans/design-2026-08-29-simplification.md`
 > Depends on: Phase 1 (both edit `cmd/root.go`; sequencing avoids
 > conflicts). Parallel with phases 2, 4, 5.
