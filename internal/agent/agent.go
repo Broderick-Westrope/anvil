@@ -149,6 +149,19 @@ type sessionAgent struct {
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, *activeCancel]
+
+	// backgroundJobs tracks fire-and-forget goroutines spawned by Run
+	// (currently only title generation) so tests — and shutdown paths —
+	// can wait for them instead of racing test/recorder teardown.
+	backgroundJobs sync.WaitGroup
+}
+
+// WaitBackgroundJobs blocks until all fire-and-forget goroutines spawned
+// by Run (e.g. title generation) have finished. Primarily for tests: the
+// async title request must complete before a VCR recorder closes or the
+// interaction is lost / logged after test completion.
+func (a *sessionAgent) WaitBackgroundJobs() {
+	a.backgroundJobs.Wait()
 }
 
 type SessionAgentOptions struct {
@@ -768,7 +781,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if titleErr != nil {
 				slog.Error("Failed to load messages for title regeneration", "error", titleErr)
 			} else {
-				go a.generateTitle(context.WithoutCancel(ctx), call.SessionID, titleMsgs)
+				a.backgroundJobs.Add(1)
+				go func() {
+					defer a.backgroundJobs.Done()
+					a.generateTitle(context.WithoutCancel(ctx), call.SessionID, titleMsgs)
+				}()
 			}
 		}
 	}
