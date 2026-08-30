@@ -79,6 +79,12 @@ func (i *MCPPaletteItem) infoLabel() string {
 		return "disabled"
 	}
 	if i.entry.State == mcp.StateDeferred {
+		// An enabled-but-deferred server has a persisted toggle awaiting
+		// its Run-start connection; reflect that so toggling gives
+		// feedback instead of a static "deferred" label.
+		if i.entry.IsLazy && i.entry.Enabled {
+			return "✓ deferred (pending)"
+		}
 		return "deferred"
 	}
 	if i.entry.State == mcp.StateStarting {

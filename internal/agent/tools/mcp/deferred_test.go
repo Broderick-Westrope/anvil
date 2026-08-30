@@ -106,13 +106,18 @@ func TestConnectDeferred_ConcurrentEnable(t *testing.T) {
 	updateState(name, StateDeferred, nil, nil, Counts{})
 
 	// Slow connect: blocks until released, counting how many times
-	// it was actually called. Returns an error since we don't need a
-	// real session for the race test.
+	// it was actually called. Signals entered so the test can
+	// deterministically order the second caller after the first has
+	// begun connecting. Returns an error since we don't need a real
+	// session for the race test.
 	var connectCount atomic.Int32
 	gate := make(chan struct{})
+	entered := make(chan struct{})
 	origNewSession := newSession
 	newSession = func(ctx context.Context, _ string, _ config.MCPConfig, _ config.VariableResolver, _ db.Querier) (*ClientSession, error) {
-		connectCount.Add(1)
+		if connectCount.Add(1) == 1 {
+			close(entered)
+		}
 		select {
 		case <-gate:
 		case <-ctx.Done():
@@ -138,16 +143,29 @@ func TestConnectDeferred_ConcurrentEnable(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 
-	for i := range 2 {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			errs[idx] = ConnectDeferred(ctx, name, cfg)
-		}(i)
+	// First caller: wins the race and blocks inside newSession.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errs[0] = ConnectDeferred(ctx, name, cfg)
+	}()
+
+	// Wait until the first caller is inside newSession — the state is
+	// StateStarting from here on, so the second caller deterministically
+	// observes the in-progress connection.
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("first caller never entered newSession")
 	}
 
-	// Give both goroutines time to enter ConnectDeferred.
-	time.Sleep(50 * time.Millisecond)
+	// Second caller: must not double-connect.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errs[1] = ConnectDeferred(ctx, name, cfg)
+	}()
+
 	// Release the gate so the connect can complete (or timeout).
 	close(gate)
 	wg.Wait()
