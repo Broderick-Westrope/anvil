@@ -71,10 +71,39 @@ var (
 	renewMusMu sync.Mutex
 	renewMus   = map[string]*sync.Mutex{}
 
+	// sessionParentCtx is the long-lived context MCP sessions hang off.
+	// createSession derives each session's context from its ctx argument,
+	// so connections made outside Initialize's loop (ConnectDeferred) must
+	// not pass a request-scoped context — the session's stdio subprocess
+	// would be killed the moment that context is canceled. Set once during
+	// Initialize; falls back to context.Background() when unset (tests,
+	// coordinators built outside app startup).
+	sessionParentMu  sync.Mutex
+	sessionParentCtx context.Context
+
 	// newSession creates a client session. It is a seam so tests can exercise
 	// renewal concurrency without spawning a real transport.
 	newSession = createSession
 )
+
+// setSessionParentCtx records the long-lived context for deferred
+// connections.
+func setSessionParentCtx(ctx context.Context) {
+	sessionParentMu.Lock()
+	defer sessionParentMu.Unlock()
+	sessionParentCtx = ctx
+}
+
+// sessionParent returns the long-lived context deferred connections
+// should use, defaulting to context.Background().
+func sessionParent() context.Context {
+	sessionParentMu.Lock()
+	defer sessionParentMu.Unlock()
+	if sessionParentCtx != nil {
+		return sessionParentCtx
+	}
+	return context.Background()
+}
 
 // ArmInit marks that MCP initialization is expected so WaitForInit blocks
 // until it completes. Call this synchronously before launching Initialize in a
@@ -127,6 +156,7 @@ const (
 	StateConnected
 	StateError
 	StateLazy
+	StateDeferred
 )
 
 func (s State) String() string {
@@ -141,6 +171,8 @@ func (s State) String() string {
 		return "error"
 	case StateLazy:
 		return "lazy"
+	case StateDeferred:
+		return "deferred"
 	default:
 		return "unknown"
 	}
@@ -228,6 +260,7 @@ func Close(ctx context.Context) error {
 func Initialize(ctx context.Context, permissions permission.Service, cfg *config.ConfigStore, queries db.Querier) {
 	ArmInit()
 	dbQueries = queries
+	setSessionParentCtx(ctx)
 	slog.Info("Initializing MCP clients")
 	var wg sync.WaitGroup
 	// Initialize states for all configured MCPs
@@ -238,7 +271,15 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 			continue
 		}
 
-		// Set initial starting state
+		// Lazy servers are seeded as deferred and skip the connect loop.
+		// They will be connected on first enable via ConnectDeferred.
+		if m.IsLazy() {
+			updateState(name, StateDeferred, nil, nil, Counts{})
+			slog.Debug("Deferring lazy MCP connection", "name", name)
+			continue
+		}
+
+		// Set initial starting state.
 		wg.Add(1)
 		go func(name string, m config.MCPConfig) {
 			defer func() {
@@ -308,14 +349,119 @@ func InitializeSingle(ctx context.Context, name string, cfg *config.ConfigStore,
 	return initClient(ctx, cfg, name, m, cfg.Resolver(), queries)
 }
 
+// ErrAlreadyConnecting is returned by ConnectDeferred when another
+// goroutine has already started connecting the same server.
+var ErrAlreadyConnecting = errors.New("connection already in progress")
+
+// ConnectDeferred connects a deferred (lazy, never-connected) MCP server.
+// The connection runs under the package's long-lived session parent
+// context (see sessionParentCtx) with the handshake bounded by mcpTimeout
+// inside createSession; the caller's ctx only gates starting the attempt.
+// One automatic retry is performed for transient failures (timeout,
+// connection refused). Auth failures are not retried.
+//
+// The function serializes concurrent callers per server via renewLock and
+// atomically transitions StateDeferred→StateStarting before connecting.
+// A second caller arriving while a connection is in progress receives
+// ErrAlreadyConnecting.
+func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info, ok := GetState(name)
+	if !ok {
+		return fmt.Errorf("mcp '%s' not found in state registry", name)
+	}
+	if info.State != StateDeferred {
+		// Already connected, connecting, or errored — nothing to do.
+		if info.State == StateStarting {
+			return ErrAlreadyConnecting
+		}
+		return nil
+	}
+
+	// Serialize per server so only one goroutine connects.
+	mu := renewLock(name)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Re-check under the lock: another goroutine may have won the race.
+	info, ok = GetState(name)
+	if !ok {
+		return fmt.Errorf("mcp '%s' not found in state registry", name)
+	}
+	if info.State != StateDeferred {
+		if info.State == StateStarting {
+			return ErrAlreadyConnecting
+		}
+		return nil
+	}
+
+	// Atomically mark as starting so concurrent callers see the
+	// transition and return ErrAlreadyConnecting.
+	updateState(name, StateStarting, nil, nil, Counts{})
+
+	attempt := func() error {
+		// Connect under the long-lived session parent context, NOT the
+		// caller's ctx: createSession derives the session (and its stdio
+		// subprocess's process group) from this context, so a
+		// request-scoped or timeout-wrapped context would kill the server
+		// as soon as the enable call returns. The handshake itself is
+		// already bounded inside createSession by mcpTimeout.
+		return InitializeSingle(sessionParent(), name, cfg, nil)
+	}
+
+	err := attempt()
+	if err == nil {
+		return nil
+	}
+	if !isTransientError(err) {
+		// Auth/permanent errors: leave state as StateError so the
+		// palette and enable_mcp report the real problem.
+		return err
+	}
+	slog.Info("Retrying transient MCP connect failure", "name", name, "error", err)
+	retryErr := attempt()
+	if retryErr == nil {
+		return nil
+	}
+	if isTransientError(retryErr) {
+		// Both attempts failed transiently. Reset to StateDeferred so a
+		// later enable_mcp call re-enters the deferred branch rather
+		// than being permanently locked out in StateError.
+		updateState(name, StateDeferred, nil, nil, Counts{})
+	}
+	return retryErr
+}
+
+// isTransientError classifies an error as transient (worth retrying).
+// Timeouts and connection-refused errors are transient; auth errors are
+// not.
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connect: connection reset") ||
+		strings.Contains(msg, "i/o timeout") {
+		return true
+	}
+	return false
+}
+
 // initClient initializes a single MCP client with the given configuration.
 func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m config.MCPConfig, resolver config.VariableResolver, queries db.Querier) error {
 	// Set initial starting state.
 	updateState(name, StateStarting, nil, nil, Counts{})
 
-	// createSession handles its own timeout internally.
-	session, err := createSession(ctx, name, m, resolver, queries)
+	// newSession handles its own timeout internally.
+	session, err := newSession(ctx, name, m, resolver, queries)
 	if err != nil {
+		updateState(name, StateError, err, nil, Counts{})
 		return err
 	}
 

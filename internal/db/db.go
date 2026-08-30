@@ -48,9 +48,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getAllSessionMessagesStmt, err = db.PrepareContext(ctx, getAllSessionMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllSessionMessages: %w", err)
 	}
-	if q.getAverageResponseTimeStmt, err = db.PrepareContext(ctx, getAverageResponseTime); err != nil {
-		return nil, fmt.Errorf("error preparing query GetAverageResponseTime: %w", err)
-	}
 	if q.getBranchPathStmt, err = db.PrepareContext(ctx, getBranchPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBranchPath: %w", err)
 	}
@@ -59,9 +56,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getFileReadStmt, err = db.PrepareContext(ctx, getFileRead); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileRead: %w", err)
-	}
-	if q.getHourDayHeatmapStmt, err = db.PrepareContext(ctx, getHourDayHeatmap); err != nil {
-		return nil, fmt.Errorf("error preparing query GetHourDayHeatmap: %w", err)
 	}
 	if q.getLastGlobalSessionStmt, err = db.PrepareContext(ctx, getLastGlobalSession); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLastGlobalSession: %w", err)
@@ -81,29 +75,8 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getMessageChildrenStmt, err = db.PrepareContext(ctx, getMessageChildren); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMessageChildren: %w", err)
 	}
-	if q.getRecentActivityStmt, err = db.PrepareContext(ctx, getRecentActivity); err != nil {
-		return nil, fmt.Errorf("error preparing query GetRecentActivity: %w", err)
-	}
 	if q.getSessionByIDStmt, err = db.PrepareContext(ctx, getSessionByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSessionByID: %w", err)
-	}
-	if q.getToolUsageStmt, err = db.PrepareContext(ctx, getToolUsage); err != nil {
-		return nil, fmt.Errorf("error preparing query GetToolUsage: %w", err)
-	}
-	if q.getTotalStatsStmt, err = db.PrepareContext(ctx, getTotalStats); err != nil {
-		return nil, fmt.Errorf("error preparing query GetTotalStats: %w", err)
-	}
-	if q.getUsageByDayStmt, err = db.PrepareContext(ctx, getUsageByDay); err != nil {
-		return nil, fmt.Errorf("error preparing query GetUsageByDay: %w", err)
-	}
-	if q.getUsageByDayOfWeekStmt, err = db.PrepareContext(ctx, getUsageByDayOfWeek); err != nil {
-		return nil, fmt.Errorf("error preparing query GetUsageByDayOfWeek: %w", err)
-	}
-	if q.getUsageByHourStmt, err = db.PrepareContext(ctx, getUsageByHour); err != nil {
-		return nil, fmt.Errorf("error preparing query GetUsageByHour: %w", err)
-	}
-	if q.getUsageByModelStmt, err = db.PrepareContext(ctx, getUsageByModel); err != nil {
-		return nil, fmt.Errorf("error preparing query GetUsageByModel: %w", err)
 	}
 	if q.listAllSessionsStmt, err = db.PrepareContext(ctx, listAllSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAllSessions: %w", err)
@@ -198,11 +171,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getAllSessionMessagesStmt: %w", cerr)
 		}
 	}
-	if q.getAverageResponseTimeStmt != nil {
-		if cerr := q.getAverageResponseTimeStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getAverageResponseTimeStmt: %w", cerr)
-		}
-	}
 	if q.getBranchPathStmt != nil {
 		if cerr := q.getBranchPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getBranchPathStmt: %w", cerr)
@@ -216,11 +184,6 @@ func (q *Queries) Close() error {
 	if q.getFileReadStmt != nil {
 		if cerr := q.getFileReadStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFileReadStmt: %w", cerr)
-		}
-	}
-	if q.getHourDayHeatmapStmt != nil {
-		if cerr := q.getHourDayHeatmapStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getHourDayHeatmapStmt: %w", cerr)
 		}
 	}
 	if q.getLastGlobalSessionStmt != nil {
@@ -253,44 +216,9 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getMessageChildrenStmt: %w", cerr)
 		}
 	}
-	if q.getRecentActivityStmt != nil {
-		if cerr := q.getRecentActivityStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getRecentActivityStmt: %w", cerr)
-		}
-	}
 	if q.getSessionByIDStmt != nil {
 		if cerr := q.getSessionByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getSessionByIDStmt: %w", cerr)
-		}
-	}
-	if q.getToolUsageStmt != nil {
-		if cerr := q.getToolUsageStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getToolUsageStmt: %w", cerr)
-		}
-	}
-	if q.getTotalStatsStmt != nil {
-		if cerr := q.getTotalStatsStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getTotalStatsStmt: %w", cerr)
-		}
-	}
-	if q.getUsageByDayStmt != nil {
-		if cerr := q.getUsageByDayStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getUsageByDayStmt: %w", cerr)
-		}
-	}
-	if q.getUsageByDayOfWeekStmt != nil {
-		if cerr := q.getUsageByDayOfWeekStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getUsageByDayOfWeekStmt: %w", cerr)
-		}
-	}
-	if q.getUsageByHourStmt != nil {
-		if cerr := q.getUsageByHourStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getUsageByHourStmt: %w", cerr)
-		}
-	}
-	if q.getUsageByModelStmt != nil {
-		if cerr := q.getUsageByModelStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getUsageByModelStmt: %w", cerr)
 		}
 	}
 	if q.listAllSessionsStmt != nil {
@@ -420,25 +348,16 @@ type Queries struct {
 	deleteSessionStmt                *sql.Stmt
 	deleteSessionMessagesStmt        *sql.Stmt
 	getAllSessionMessagesStmt        *sql.Stmt
-	getAverageResponseTimeStmt       *sql.Stmt
 	getBranchPathStmt                *sql.Stmt
 	getBranchPathTailStmt            *sql.Stmt
 	getFileReadStmt                  *sql.Stmt
-	getHourDayHeatmapStmt            *sql.Stmt
 	getLastGlobalSessionStmt         *sql.Stmt
 	getLastSessionByWorkingDirStmt   *sql.Stmt
 	getMCPOAuthClientStmt            *sql.Stmt
 	getMCPOAuthTokenStmt             *sql.Stmt
 	getMessageStmt                   *sql.Stmt
 	getMessageChildrenStmt           *sql.Stmt
-	getRecentActivityStmt            *sql.Stmt
 	getSessionByIDStmt               *sql.Stmt
-	getToolUsageStmt                 *sql.Stmt
-	getTotalStatsStmt                *sql.Stmt
-	getUsageByDayStmt                *sql.Stmt
-	getUsageByDayOfWeekStmt          *sql.Stmt
-	getUsageByHourStmt               *sql.Stmt
-	getUsageByModelStmt              *sql.Stmt
 	listAllSessionsStmt              *sql.Stmt
 	listMessagesBySessionStmt        *sql.Stmt
 	listPinnedSessionsStmt           *sql.Stmt
@@ -469,25 +388,16 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteSessionStmt:                q.deleteSessionStmt,
 		deleteSessionMessagesStmt:        q.deleteSessionMessagesStmt,
 		getAllSessionMessagesStmt:        q.getAllSessionMessagesStmt,
-		getAverageResponseTimeStmt:       q.getAverageResponseTimeStmt,
 		getBranchPathStmt:                q.getBranchPathStmt,
 		getBranchPathTailStmt:            q.getBranchPathTailStmt,
 		getFileReadStmt:                  q.getFileReadStmt,
-		getHourDayHeatmapStmt:            q.getHourDayHeatmapStmt,
 		getLastGlobalSessionStmt:         q.getLastGlobalSessionStmt,
 		getLastSessionByWorkingDirStmt:   q.getLastSessionByWorkingDirStmt,
 		getMCPOAuthClientStmt:            q.getMCPOAuthClientStmt,
 		getMCPOAuthTokenStmt:             q.getMCPOAuthTokenStmt,
 		getMessageStmt:                   q.getMessageStmt,
 		getMessageChildrenStmt:           q.getMessageChildrenStmt,
-		getRecentActivityStmt:            q.getRecentActivityStmt,
 		getSessionByIDStmt:               q.getSessionByIDStmt,
-		getToolUsageStmt:                 q.getToolUsageStmt,
-		getTotalStatsStmt:                q.getTotalStatsStmt,
-		getUsageByDayStmt:                q.getUsageByDayStmt,
-		getUsageByDayOfWeekStmt:          q.getUsageByDayOfWeekStmt,
-		getUsageByHourStmt:               q.getUsageByHourStmt,
-		getUsageByModelStmt:              q.getUsageByModelStmt,
 		listAllSessionsStmt:              q.listAllSessionsStmt,
 		listMessagesBySessionStmt:        q.listMessagesBySessionStmt,
 		listPinnedSessionsStmt:           q.listPinnedSessionsStmt,

@@ -20,7 +20,8 @@ func newAgentItem(u *UI, id string) *chat.AgentToolMessageItem {
 // TestChatHasRunningAgent_ResultIsCompletionSentinel is a regression test
 // for the elapsed-time tick dying immediately: "running" must be derived
 // from the absence of a tool result, not from ToolCall().Finished, which
-// only means the input finished streaming.
+// only means the input finished streaming. The running predicate lives in
+// invalidateRunningAgentsInChat, which detects and invalidates in one pass.
 func TestChatHasRunningAgent_ResultIsCompletionSentinel(t *testing.T) {
 	t.Parallel()
 
@@ -28,11 +29,11 @@ func TestChatHasRunningAgent_ResultIsCompletionSentinel(t *testing.T) {
 	item := newAgentItem(u, "agent-1")
 	u.chat.SetMessages(item)
 
-	require.True(t, chatHasRunningAgent(u.chat),
+	require.True(t, invalidateRunningAgentsInChat(u.chat),
 		"agent with Finished input but no result must count as running")
 
 	item.SetResult(&message.ToolResult{ToolCallID: "agent-1", Content: "done"})
-	require.False(t, chatHasRunningAgent(u.chat),
+	require.False(t, invalidateRunningAgentsInChat(u.chat),
 		"agent with a result must not count as running")
 }
 
@@ -46,7 +47,7 @@ func TestChatHasRunningAgent_CanceledIsNotRunning(t *testing.T) {
 	u.chat.SetMessages(item)
 
 	item.SetStatus(chat.ToolStatusCanceled)
-	require.False(t, chatHasRunningAgent(u.chat),
+	require.False(t, invalidateRunningAgentsInChat(u.chat),
 		"canceled agent without a result must not count as running")
 }
 

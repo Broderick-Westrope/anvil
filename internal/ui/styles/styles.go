@@ -17,12 +17,10 @@ import (
 )
 
 const (
-	CheckIcon       string = "✓"
-	SpinnerIcon     string = "⋯"
-	LoadingIcon     string = "⟳"
-	ModelIcon       string = "◇"
-	HypercreditIcon string = "◆"
-
+	CheckIcon      string = "✓"
+	SpinnerIcon    string = "⋯"
+	LoadingIcon    string = "⟳"
+	ModelIcon      string = "◇"
 	ArrowRightIcon string = "→"
 
 	ToolPending string = "●"
@@ -65,7 +63,6 @@ type Styles struct {
 	// Header
 	Header struct {
 		Percentage        lipgloss.Style // Style for context percentage
-		Hypercredit       lipgloss.Style // Style for Hypercredit count (◆ N)
 		Keystroke         lipgloss.Style // Style for keystroke hints (e.g., "ctrl+d")
 		KeystrokeTip      lipgloss.Style // Style for keystroke action text (e.g., "open", "close")
 		WorkingDir        lipgloss.Style // Style for current working directory
@@ -190,8 +187,6 @@ type Styles struct {
 		TokenPercentage      lipgloss.Style // "42%" percent of context window
 		EstimatedUsagePrefix lipgloss.Style // "~" prefix for estimated usage
 		Cost                 lipgloss.Style // "$0.42" cost readout
-		HypercreditIcon      lipgloss.Style // Hypercredit icon (◆)
-		HypercreditText      lipgloss.Style // Remaining Hypercredits text
 		Stats                lipgloss.Style // "3 turns · 12 tools" sidebar stats line
 		Elapsed              lipgloss.Style // Elapsed time display for subagent sessions
 	}

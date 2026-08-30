@@ -21,7 +21,6 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
-	"github.com/Broderick-Westrope/anvil/internal/agent/hyper"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
@@ -608,7 +607,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		if err == nil {
 			options[google.Name] = parsed
 		}
-	case openaicompat.Name, hyper.Name:
+	case openaicompat.Name:
 		extraBody := make(map[string]any)
 
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
@@ -633,8 +632,6 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		// TODO: Abstract this in Fantasy somehow?
 		// TODO: Allow custom providers to specify how to set this?
 		switch providerCfg.ID {
-		case hyper.Name:
-			extraBody["thinking"] = model.ModelCfg.Think
 		case string(catwalk.InferenceProviderIoNet):
 			if _, ok := extraBody["reasoning"]; !ok && model.CatwalkCfg.CanReason {
 				if model.ModelCfg.Think {
@@ -1109,7 +1106,16 @@ func (c *coordinator) buildToolsWithState(
 	}
 	lazyMCPs = filterAllowedLazyMCPs(lazyMCPs, agent.AllowedMCP)
 	if len(lazyMCPs) > 0 {
-		filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs))
+		// Inject a synchronous connect callback that connects a deferred
+		// MCP and rebuilds the tool list so the same run's next
+		// PrepareStep sees the newly registered tools.
+		connectFn := func(ctx context.Context, name string) (int, error) {
+			if err := toolsmcp.ConnectDeferred(ctx, name, c.cfg); err != nil {
+				return 0, err
+			}
+			return c.refreshMCPTools(ctx, name)
+		}
+		filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs, connectFn))
 	}
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
@@ -1286,10 +1292,56 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	orch.SetTools(agentTools)
 	orch.SetLazyMCPToolMap(lazyMap)
 
+	// Inject the connect callback so the agent can reconnect replayed
+	// deferred servers at Run start.
+	orch.SetConnectFn(func(ctx context.Context, name string) (int, error) {
+		if err := toolsmcp.ConnectDeferred(ctx, name, c.cfg); err != nil {
+			return 0, err
+		}
+		return c.refreshMCPTools(ctx, name)
+	})
+
 	// Invalidate lazily-built agents so they rebuild with new model config.
 	c.agents.Reset(make(map[string]SessionAgent))
 
 	return nil
+}
+
+// refreshMCPTools rebuilds the orchestrator's tool list and lazy MCP
+// tool map after a deferred MCP server has been connected. It pushes
+// the new tools to live agents via SetTools/SetLazyMCPToolMap so the
+// same run's next PrepareStep sees the newly registered tools. Returns
+// the number of tools registered for the named server.
+//
+// NOTE: This only updates the orchestrator agent. Sub-agents (task
+// agents) are not updated and will not see the new tools until
+// rebuilt. This is an accepted limitation — sub-agents are
+// short-lived and rarely need newly-connected MCP tools mid-run.
+func (c *coordinator) refreshMCPTools(ctx context.Context, name string) (int, error) {
+	orchestratorCfg, ok := c.agentConfigs[config.AgentOrchestrator]
+	if !ok {
+		return 0, errOrchestratorAgentNotConfigured
+	}
+
+	agentTools, lazyMap, err := c.buildTools(ctx, orchestratorCfg, 3)
+	if err != nil {
+		return 0, fmt.Errorf("rebuilding tools after MCP connect: %w", err)
+	}
+
+	orch := c.getOrchestrator()
+	orch.SetTools(agentTools)
+	orch.SetLazyMCPToolMap(lazyMap)
+
+	// Count tools for the just-connected server.
+	toolCount := 0
+	for mcpName, mcpTools := range toolsmcp.Tools() {
+		if mcpName == name {
+			toolCount = len(mcpTools)
+			break
+		}
+	}
+
+	return toolCount, nil
 }
 
 func (c *coordinator) QueuedPrompts(sessionID string) int {

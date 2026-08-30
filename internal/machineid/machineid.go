@@ -1,5 +1,5 @@
 // Package machineid provides a stable machine identifier for use in
-// provider headers (e.g. the Hyper provider's x-anvil-id header).
+// provider request headers.
 package machineid
 
 import (
@@ -13,8 +13,7 @@ import (
 	"github.com/denisbrodbeck/machineid"
 )
 
-// hashKey must remain "charm" to preserve ID compatibility with the
-// Hyper provider backend.
+// hashKey is fixed to preserve ID stability across restarts.
 const hashKey = "charm"
 
 var (

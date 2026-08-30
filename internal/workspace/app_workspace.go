@@ -15,7 +15,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
-	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -333,10 +332,6 @@ func (w *AppWorkspace) RemoveConfigField(scope config.Scope, key string) error {
 	return w.store.RemoveConfigField(scope, key)
 }
 
-func (w *AppWorkspace) ImportCopilot() (*oauth.Token, bool) {
-	return w.store.ImportCopilot()
-}
-
 func (w *AppWorkspace) RefreshOAuthToken(ctx context.Context, scope config.Scope, providerID string) error {
 	return w.store.RefreshOAuthToken(ctx, scope, providerID)
 }
@@ -444,6 +439,12 @@ func (w *AppWorkspace) DisableDockerMCP() error {
 }
 
 func (w *AppWorkspace) EnableMCP(ctx context.Context, name string) error {
+	// Deferred servers need ConnectDeferred (timeout + retry); already
+	// connected servers use InitializeSingle as before.
+	info, ok := mcptools.GetState(name)
+	if ok && info.State == mcptools.StateDeferred {
+		return mcptools.ConnectDeferred(ctx, name, w.store)
+	}
 	return mcptools.InitializeSingle(ctx, name, w.store, nil)
 }
 

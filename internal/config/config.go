@@ -18,7 +18,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
-	"github.com/Broderick-Westrope/anvil/internal/oauth/copilot"
 )
 
 const (
@@ -181,10 +180,6 @@ func (c *ProviderConfig) ToProvider() catwalk.Provider {
 	}
 
 	return provider
-}
-
-func (c *ProviderConfig) SetupGitHubCopilot() {
-	maps.Copy(c.ExtraHeaders, copilot.Headers())
 }
 
 // SetupAnthropic configures the Bearer API key and OAuth headers for an

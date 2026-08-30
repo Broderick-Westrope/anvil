@@ -78,6 +78,18 @@ func (i *MCPPaletteItem) infoLabel() string {
 	if i.entry.State == mcp.StateDisabled {
 		return "disabled"
 	}
+	if i.entry.State == mcp.StateDeferred {
+		// An enabled-but-deferred server has a persisted toggle awaiting
+		// its Run-start connection; reflect that so toggling gives
+		// feedback instead of a static "deferred" label.
+		if i.entry.IsLazy && i.entry.Enabled {
+			return "✓ deferred (pending)"
+		}
+		return "deferred"
+	}
+	if i.entry.State == mcp.StateStarting {
+		return "connecting..."
+	}
 	if i.entry.IsLazy && i.entry.Enabled {
 		return "✓ enabled"
 	}
@@ -253,17 +265,29 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 		if selected := mp.list.SelectedItem(); selected != nil {
 			if item, ok := selected.(*MCPPaletteItem); ok && item != nil {
 				switch item.entry.State {
+				case mcp.StateDeferred:
+					// Deferred servers route through the lazy toggle path
+					// so the enable is persisted as MCPToggleContent and
+					// Run-start reconnect handles the actual connection.
+					// Toggle (not just enable) so Enter can also revert a
+					// pending enable.
+					return ActionToggleLazyMCP{
+						ServerName: item.entry.Name,
+						Enabled:    !item.entry.Enabled,
+					}
 				case mcp.StateDisabled:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
 				case mcp.StateConnected, mcp.StateLazy:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: false}
+				case mcp.StateStarting:
+					// Already connecting — ignore.
 				}
 			}
 		}
 	case key.Matches(msg, mp.keyMap.LazyToggle):
 		if selected := mp.list.SelectedItem(); selected != nil {
 			if item, ok := selected.(*MCPPaletteItem); ok && item != nil && item.entry.IsLazy {
-				if item.entry.State != mcp.StateDisabled {
+				if item.entry.State != mcp.StateDisabled && item.entry.State != mcp.StateStarting {
 					return ActionToggleLazyMCP{
 						ServerName: item.entry.Name,
 						Enabled:    !item.entry.Enabled,

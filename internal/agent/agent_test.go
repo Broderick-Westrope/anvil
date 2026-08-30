@@ -49,6 +49,17 @@ func setupAgent(t *testing.T, pair modelPair) (SessionAgent, fakeEnv) {
 	createSimpleGoProject(t, env.workingDir)
 	agent, err := orchestratorAgent(r, env, large, small)
 	require.NoError(t, err)
+	// Wait for async background jobs (title generation) before the
+	// recorder closes. Cleanups run LIFO: this one is registered after
+	// vcr.NewRecorder's, so it runs first. Without it the async title
+	// request races test teardown — logging through the recorder after
+	// the test completes panics, and recordings lose the title
+	// interaction nondeterministically.
+	t.Cleanup(func() {
+		if w, ok := agent.(interface{ WaitBackgroundJobs() }); ok {
+			w.WaitBackgroundJobs()
+		}
+	})
 	return agent, env
 }
 

@@ -2,13 +2,33 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/stretchr/testify/require"
 )
+
+// successResult returns a ToolResult marking the given callID as successful.
+func successResult(callID string) message.ToolResult {
+	return message.ToolResult{
+		ToolCallID: callID,
+		Content:    "Enabled foo MCP (3 tools available)",
+		IsError:    false,
+	}
+}
+
+// errorResult returns a ToolResult marking the given callID as failed.
+func errorResult(callID string) message.ToolResult {
+	return message.ToolResult{
+		ToolCallID: callID,
+		Content:    "Failed to connect MCP 'foo': connection refused",
+		IsError:    true,
+	}
+}
 
 func TestDeriveLazyMCPState_EmptyMessages(t *testing.T) {
 	t.Parallel()
@@ -23,10 +43,17 @@ func TestDeriveLazyMCPState_SingleEnableMCP(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
+			},
+		},
+		{
+			Role: message.User,
+			Parts: []message.ContentPart{
+				successResult("tc1"),
 			},
 		},
 	}
@@ -42,11 +69,16 @@ func TestDeriveLazyMCPState_EnableThenToggleDisabled(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
 		},
 		{
 			Role:        message.User,
@@ -70,21 +102,31 @@ func TestDeriveLazyMCPState_MultipleServersInterleaved(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
 		},
 		{
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc2",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"github"}`,
+					ID:       "tc2",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"github"}`,
+					Finished: true,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc2")},
 		},
 		{
 			Role:        message.User,
@@ -100,11 +142,16 @@ func TestDeriveLazyMCPState_MultipleServersInterleaved(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc3",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"sentry"}`,
+					ID:       "tc3",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"sentry"}`,
+					Finished: true,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc3")},
 		},
 	}
 	result := deriveLazyMCPState(msgs)
@@ -120,11 +167,16 @@ func TestDeriveLazyMCPState_NonExistentMCPs(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"nonexistent"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"nonexistent"}`,
+					Finished: true,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
 		},
 	}
 	result := deriveLazyMCPState(msgs)
@@ -138,15 +190,121 @@ func TestDeriveLazyMCPState_BadJSON(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{bad json`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{bad json`,
+					Finished: true,
 				},
 			},
 		},
 	}
 	result := deriveLazyMCPState(msgs)
 	require.Empty(t, result)
+}
+
+// TestDeriveLazyMCPState_ErroredEnable verifies that a ToolCall with an
+// errored ToolResult is NOT counted as enabled.
+func TestDeriveLazyMCPState_ErroredEnable(t *testing.T) {
+	t.Parallel()
+	msgs := []message.Message{
+		{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
+				},
+			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{errorResult("tc1")},
+		},
+	}
+	result := deriveLazyMCPState(msgs)
+	require.Empty(t, result, "errored enable must not count as enabled")
+}
+
+// TestDeriveLazyMCPState_MissingResult verifies that a ToolCall with no
+// correlated ToolResult is NOT counted as enabled (e.g. interrupted run).
+func TestDeriveLazyMCPState_MissingResult(t *testing.T) {
+	t.Parallel()
+	msgs := []message.Message{
+		{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
+				},
+			},
+		},
+		// No ToolResult for tc1.
+	}
+	result := deriveLazyMCPState(msgs)
+	require.Empty(t, result, "missing result must not count as enabled")
+}
+
+// TestDeriveLazyMCPState_PaletteToggleAlwaysHonoured verifies that
+// MCPToggleContent entries are always honoured regardless of ToolResult
+// correlation.
+func TestDeriveLazyMCPState_PaletteToggleAlwaysHonoured(t *testing.T) {
+	t.Parallel()
+	msgs := []message.Message{
+		{
+			Role:        message.User,
+			MessageType: message.MessageTypeMCPToggle,
+			Parts: []message.ContentPart{
+				message.MCPToggleContent{ServerName: "datadog", Enabled: true},
+			},
+		},
+	}
+	result := deriveLazyMCPState(msgs)
+	require.True(t, result["datadog"])
+}
+
+// TestDeriveLazyMCPState_ErroredThenSuccessful verifies that a failed
+// enable followed by a successful enable results in enabled.
+func TestDeriveLazyMCPState_ErroredThenSuccessful(t *testing.T) {
+	t.Parallel()
+	msgs := []message.Message{
+		{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
+				},
+			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{errorResult("tc1")},
+		},
+		{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ToolCall{
+					ID:       "tc2",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
+				},
+			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc2")},
+		},
+	}
+	result := deriveLazyMCPState(msgs)
+	require.True(t, result["datadog"])
 }
 
 func TestFilterAllowedLazyMCPs_NilAllowsAll(t *testing.T) {
@@ -266,4 +424,139 @@ func TestLazyServerNames(t *testing.T) {
 	require.Len(t, result, 2)
 	require.True(t, result["datadog"])
 	require.True(t, result["github"])
+}
+
+// TestFilterLazyMCPTools_StaleSnapshotPassThrough verifies the critical
+// invariant: tools not present in lazyMCPToolMap pass through unfiltered.
+// When a deferred server connects mid-run, its tools appear in
+// a.tools.Copy() (via SetTools) but are absent from the stale
+// lazyMCPToolMap snapshot taken at Run start. They must pass through so
+// the next PrepareStep exposes them.
+func TestFilterLazyMCPTools_StaleSnapshotPassThrough(t *testing.T) {
+	t.Parallel()
+
+	// Simulate: initial lazyMCPToolMap has only "datadog" tools.
+	staleMap := map[string]string{
+		"mcp_datadog_query": "datadog",
+	}
+	state := tools.NewLazyMCPState(nil)
+
+	// After connect, the full tool set includes newly registered tools
+	// from a deferred server not in the original snapshot.
+	allTools := []fantasy.AgentTool{
+		&mockAgentTool{name: "bash"},
+		&mockAgentTool{name: "mcp_datadog_query"}, // In stale map, datadog not enabled → filtered.
+		&mockAgentTool{name: "mcp_github_pr"},     // NOT in stale map → passes through.
+		&mockAgentTool{name: "mcp_github_issues"}, // NOT in stale map → passes through.
+	}
+
+	filtered := filterLazyMCPTools(allTools, staleMap, state)
+	names := make([]string, len(filtered))
+	for i, tool := range filtered {
+		names[i] = tool.Info().Name
+	}
+	require.NotContains(t, names, "mcp_datadog_query")
+	require.Contains(t, names, "mcp_github_pr")
+	require.Contains(t, names, "mcp_github_issues")
+	require.Contains(t, names, "bash")
+	require.Len(t, filtered, 3)
+}
+
+// TestReconnectDeferredServers_HappyPath verifies that
+// reconnectDeferredServers calls connectFn for each replayed-enabled
+// deferred server and leaves the LazyMCPState enabled on success.
+func TestReconnectDeferredServers_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	const serverA = "deferred-a"
+	const serverB = "deferred-b"
+	mcp.SetStateForTest(serverA, mcp.StateDeferred)
+	mcp.SetStateForTest(serverB, mcp.StateDeferred)
+	t.Cleanup(func() {
+		mcp.DeleteStateForTest(serverA)
+		mcp.DeleteStateForTest(serverB)
+	})
+
+	connected := make(map[string]bool)
+	connectFn := func(_ context.Context, name string) (int, error) {
+		connected[name] = true
+		return 3, nil
+	}
+
+	initialEnabled := map[string]bool{serverA: true, serverB: true}
+	state := tools.NewLazyMCPState(initialEnabled)
+
+	reconnectDeferredServers(context.Background(), connectFn, initialEnabled, state)
+
+	require.True(t, connected[serverA], "connectFn must be called for serverA")
+	require.True(t, connected[serverB], "connectFn must be called for serverB")
+	require.True(t, state.IsEnabled(serverA))
+	require.True(t, state.IsEnabled(serverB))
+}
+
+// TestReconnectDeferredServers_FailureDisables verifies that a failed
+// connect disables the server for the current run.
+func TestReconnectDeferredServers_FailureDisables(t *testing.T) {
+	t.Parallel()
+
+	const serverA = "deferred-fail-a"
+	const serverB = "deferred-ok-b"
+	mcp.SetStateForTest(serverA, mcp.StateDeferred)
+	mcp.SetStateForTest(serverB, mcp.StateDeferred)
+	t.Cleanup(func() {
+		mcp.DeleteStateForTest(serverA)
+		mcp.DeleteStateForTest(serverB)
+	})
+
+	connectFn := func(_ context.Context, name string) (int, error) {
+		if name == serverA {
+			return 0, errors.New("connection refused")
+		}
+		return 3, nil
+	}
+
+	initialEnabled := map[string]bool{serverA: true, serverB: true}
+	state := tools.NewLazyMCPState(initialEnabled)
+
+	reconnectDeferredServers(context.Background(), connectFn, initialEnabled, state)
+
+	require.False(t, state.IsEnabled(serverA), "failed server must be disabled")
+	require.True(t, state.IsEnabled(serverB), "successful server must stay enabled")
+}
+
+// TestReconnectDeferredServers_NilConnectFn verifies that a nil
+// connectFn is a no-op.
+func TestReconnectDeferredServers_NilConnectFn(t *testing.T) {
+	t.Parallel()
+
+	initialEnabled := map[string]bool{"anything": true}
+	state := tools.NewLazyMCPState(initialEnabled)
+
+	// Must not panic.
+	reconnectDeferredServers(context.Background(), nil, initialEnabled, state)
+
+	require.True(t, state.IsEnabled("anything"), "state must be unchanged")
+}
+
+// TestReconnectDeferredServers_SkipsNonDeferred verifies that servers
+// not in StateDeferred are skipped.
+func TestReconnectDeferredServers_SkipsNonDeferred(t *testing.T) {
+	t.Parallel()
+
+	const serverA = "connected-a"
+	mcp.SetStateForTest(serverA, mcp.StateConnected)
+	t.Cleanup(func() { mcp.DeleteStateForTest(serverA) })
+
+	connectCalled := false
+	connectFn := func(context.Context, string) (int, error) {
+		connectCalled = true
+		return 0, nil
+	}
+
+	initialEnabled := map[string]bool{serverA: true}
+	state := tools.NewLazyMCPState(initialEnabled)
+
+	reconnectDeferredServers(context.Background(), connectFn, initialEnabled, state)
+
+	require.False(t, connectCalled, "connected servers must not trigger connectFn")
 }

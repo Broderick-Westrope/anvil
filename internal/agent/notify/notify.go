@@ -9,9 +9,6 @@ type Type string
 const (
 	// TypeAgentFinished indicates the agent has completed its turn.
 	TypeAgentFinished Type = "agent_finished"
-	// TypeReAuthenticate indicates the agent encountered an
-	// authentication error and the user needs to re-authenticate.
-	TypeReAuthenticate Type = "re_authenticate"
 )
 
 // Notification represents a domain event published by the agent.

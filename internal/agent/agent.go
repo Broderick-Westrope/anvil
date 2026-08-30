@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -33,8 +32,6 @@ import (
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
-	"charm.land/lipgloss/v2"
-	"github.com/Broderick-Westrope/anvil/internal/agent/hyper"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
@@ -45,7 +42,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/version"
-	"github.com/charmbracelet/x/exp/charmtone"
 )
 
 const (
@@ -104,6 +100,7 @@ type SessionAgent interface {
 	SetProviderConfig(cfg config.ProviderConfig)
 	SetTools(tools []fantasy.AgentTool)
 	SetLazyMCPToolMap(m map[string]string)
+	SetConnectFn(fn tools.ConnectFn)
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
 	CancelAll()
@@ -139,6 +136,7 @@ type sessionAgent struct {
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
 	lazyMCPToolMap     *csync.Map[string, string]
+	connectFn          *csync.Value[tools.ConnectFn]
 
 	depth                int
 	isSubAgent           bool
@@ -151,6 +149,19 @@ type sessionAgent struct {
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, *activeCancel]
+
+	// backgroundJobs tracks fire-and-forget goroutines spawned by Run
+	// (currently only title generation) so tests — and shutdown paths —
+	// can wait for them instead of racing test/recorder teardown.
+	backgroundJobs sync.WaitGroup
+}
+
+// WaitBackgroundJobs blocks until all fire-and-forget goroutines spawned
+// by Run (e.g. title generation) have finished. Primarily for tests: the
+// async title request must complete before a VCR recorder closes or the
+// interaction is lost / logged after test completion.
+func (a *sessionAgent) WaitBackgroundJobs() {
+	a.backgroundJobs.Wait()
 }
 
 type SessionAgentOptions struct {
@@ -184,6 +195,7 @@ func NewSessionAgent(
 		disableAutoSummarize: opts.DisableAutoSummarize,
 		tools:                csync.NewSliceFrom(opts.Tools),
 		lazyMCPToolMap:       csync.NewMap[string, string](),
+		connectFn:            csync.NewValue[tools.ConnectFn](nil),
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
@@ -250,6 +262,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	initialEnabled := deriveLazyMCPState(raw)
 	lazyState := tools.NewLazyMCPState(initialEnabled)
 	ctx = tools.WithLazyMCPState(ctx, lazyState)
+
+	// Reconnect replayed-enabled deferred servers. This runs at Run
+	// start (not session load) so browsing history never triggers
+	// connections. Failures are non-fatal: the server is downgraded
+	// to not-enabled for this run.
+	reconnectDeferredServers(ctx, a.connectFn.Get(), initialEnabled, lazyState)
 
 	// Filter lazy MCP tools from the initial tool set.
 	agentTools = filterLazyMCPTools(agentTools, lazyMCPToolMap, lazyState)
@@ -639,7 +657,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 	})
 	if err != nil {
-		isHyper := largeModel.ModelCfg.Provider == hyper.Name
 		isCancelErr := errors.Is(err, context.Canceled)
 		if currentAssistant == nil {
 			return result, err
@@ -706,35 +723,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		var fantasyErr *fantasy.Error
 		var providerErr *fantasy.ProviderError
 		const defaultTitle = "Provider Error"
-		linkStyle := lipgloss.NewStyle().Foreground(charmtone.Guac).Underline(true)
 		if isCancelErr {
 			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
-		} else if isHyper && errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized {
-			currentAssistant.AddFinish(message.FinishReasonError, "Unauthorized", `Please re-authenticate with Hyper. You can also run "anvil auth" to re-authenticate.`)
-			if a.notify != nil {
-				a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
-					SessionID:    call.SessionID,
-					SessionTitle: currentSession.Title,
-					Type:         notify.TypeReAuthenticate,
-					ProviderID:   largeModel.ModelCfg.Provider,
-				})
-			}
-		} else if isHyper && errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusPaymentRequired {
-			url := hyper.BaseURL()
-			link := linkStyle.Hyperlink(url, "id=hyper").Render(url)
-			currentAssistant.AddFinish(message.FinishReasonError, "No credits", "You're out of credits. Add more at "+link)
 		} else if errors.As(err, &providerErr) {
-			if providerErr.Message == "The requested model is not supported." {
-				url := "https://github.com/settings/copilot/features"
-				link := linkStyle.Hyperlink(url, "id=copilot").Render(url)
-				currentAssistant.AddFinish(
-					message.FinishReasonError,
-					"Copilot model not enabled",
-					fmt.Sprintf("%q is not enabled in Copilot. Go to the following page to enable it. Then, wait 5 minutes before trying again. %s", largeModel.CatwalkCfg.Name, link),
-				)
-			} else {
-				currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message)
-			}
+			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message)
 		} else if errors.As(err, &fantasyErr) {
 			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), defaultTitle), fantasyErr.Message)
 		} else if fantasy.IsTransportError(err) {
@@ -789,7 +781,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if titleErr != nil {
 				slog.Error("Failed to load messages for title regeneration", "error", titleErr)
 			} else {
-				go a.generateTitle(context.WithoutCancel(ctx), call.SessionID, titleMsgs)
+				a.backgroundJobs.Add(1)
+				go func() {
+					defer a.backgroundJobs.Done()
+					a.generateTitle(context.WithoutCancel(ctx), call.SessionID, titleMsgs)
+				}()
 			}
 		}
 	}
@@ -1619,6 +1615,10 @@ func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 
 func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
 	a.lazyMCPToolMap.Reset(m)
+}
+
+func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
+	a.connectFn.Set(fn)
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {

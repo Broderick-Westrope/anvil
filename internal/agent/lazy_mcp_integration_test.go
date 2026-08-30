@@ -16,7 +16,7 @@ func TestLazyMCPIntegration_ToolFilteringEndToEnd(t *testing.T) {
 
 	// Build a mixed tool set: regular tools + lazy MCP tools + enable_mcp.
 	lazyMCPs := map[string]string{"datadog": "Observability tools"}
-	enableTool := tools.NewEnableMCPTool(lazyMCPs)
+	enableTool := tools.NewEnableMCPTool(lazyMCPs, nil)
 
 	allTools := []fantasy.AgentTool{
 		&mockAgentTool{name: "bash"},
@@ -55,7 +55,8 @@ func TestLazyMCPIntegration_ToolFilteringEndToEnd(t *testing.T) {
 func TestLazyMCPIntegration_BranchScoping(t *testing.T) {
 	t.Parallel()
 
-	// Create a message history where MCP is enabled at message index 2.
+	// Create a message history where MCP is enabled at message index 2,
+	// with its successful result at index 3.
 	msgs := []message.Message{
 		{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "hello"}}},
 		{Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: "hi"}}},
@@ -63,11 +64,16 @@ func TestLazyMCPIntegration_BranchScoping(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
 		},
 		{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "thanks"}}},
 	}
@@ -76,8 +82,12 @@ func TestLazyMCPIntegration_BranchScoping(t *testing.T) {
 	stateBefore := deriveLazyMCPState(msgs[:2])
 	require.Empty(t, stateBefore)
 
-	// Branch path including the enable (first 3 messages).
-	stateAfter := deriveLazyMCPState(msgs[:3])
+	// Branch path including the enable but not the result (first 3 messages).
+	stateNoResult := deriveLazyMCPState(msgs[:3])
+	require.Empty(t, stateNoResult, "enable without result must not count")
+
+	// Branch path including the enable and result (first 4 messages).
+	stateAfter := deriveLazyMCPState(msgs[:4])
 	require.True(t, stateAfter["datadog"])
 
 	// Full branch path.
@@ -94,11 +104,16 @@ func TestLazyMCPIntegration_HumanToggleOrdering(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
 		},
 		// Human disables datadog via toggle.
 		{
@@ -114,15 +129,15 @@ func TestLazyMCPIntegration_HumanToggleOrdering(t *testing.T) {
 		},
 	}
 
-	// After enable only.
-	state1 := deriveLazyMCPState(msgs[:1])
+	// After enable + result only.
+	state1 := deriveLazyMCPState(msgs[:2])
 	require.True(t, state1["datadog"])
 
-	// After enable + disable.
-	state2 := deriveLazyMCPState(msgs[:2])
+	// After enable + result + disable.
+	state2 := deriveLazyMCPState(msgs[:3])
 	require.False(t, state2["datadog"])
 
-	// After enable + disable + re-enable.
+	// After enable + result + disable + re-enable.
 	state3 := deriveLazyMCPState(msgs)
 	require.True(t, state3["datadog"])
 }
@@ -149,7 +164,7 @@ func TestLazyMCPIntegration_AllowedMCPFiltering(t *testing.T) {
 	require.NotContains(t, filtered, "slack")
 
 	// Build enable_mcp tool from filtered list.
-	enableTool := tools.NewEnableMCPTool(filtered)
+	enableTool := tools.NewEnableMCPTool(filtered, nil)
 	info := enableTool.Info()
 	require.Equal(t, tools.EnableMCPToolName, info.Name)
 	// The description should mention datadog and linear but not slack.
@@ -164,7 +179,7 @@ func TestLazyMCPIntegration_EnableMCPToolValidation(t *testing.T) {
 	lazyMCPs := map[string]string{
 		"datadog": "Observability",
 	}
-	enableTool := tools.NewEnableMCPTool(lazyMCPs)
+	enableTool := tools.NewEnableMCPTool(lazyMCPs, nil)
 
 	// Set up context with LazyMCPState.
 	state := tools.NewLazyMCPState(nil)
@@ -197,11 +212,16 @@ func TestLazyMCPIntegration_SubAgentIsolation(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc1",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"datadog"}`,
+					ID:       "tc1",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"datadog"}`,
+					Finished: true,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc1")},
 		},
 	}
 	parentState := deriveLazyMCPState(parentMsgs)
@@ -217,11 +237,16 @@ func TestLazyMCPIntegration_SubAgentIsolation(t *testing.T) {
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
 				message.ToolCall{
-					ID:    "tc2",
-					Name:  tools.EnableMCPToolName,
-					Input: `{"server_name":"slack"}`,
+					ID:       "tc2",
+					Name:     tools.EnableMCPToolName,
+					Input:    `{"server_name":"slack"}`,
+					Finished: true,
 				},
 			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{successResult("tc2")},
 		},
 	}
 	subState := deriveLazyMCPState(subAgentMsgs)

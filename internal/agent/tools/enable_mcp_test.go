@@ -14,7 +14,7 @@ func TestEnableMCP_SuccessfulEnable(t *testing.T) {
 	lazyMCPs := map[string]string{
 		"datadog": "Observability platform",
 	}
-	tool := NewEnableMCPTool(lazyMCPs)
+	tool := NewEnableMCPTool(lazyMCPs, nil)
 
 	state := NewLazyMCPState(nil)
 	ctx := WithLazyMCPState(context.Background(), state)
@@ -33,7 +33,7 @@ func TestEnableMCP_AlreadyEnabled(t *testing.T) {
 	lazyMCPs := map[string]string{
 		"datadog": "Observability platform",
 	}
-	tool := NewEnableMCPTool(lazyMCPs)
+	tool := NewEnableMCPTool(lazyMCPs, nil)
 
 	state := NewLazyMCPState(map[string]bool{"datadog": true})
 	ctx := WithLazyMCPState(context.Background(), state)
@@ -51,7 +51,7 @@ func TestEnableMCP_InvalidServerName(t *testing.T) {
 		"datadog":      "Observability platform",
 		"launchdarkly": "Feature flags",
 	}
-	tool := NewEnableMCPTool(lazyMCPs)
+	tool := NewEnableMCPTool(lazyMCPs, nil)
 
 	state := NewLazyMCPState(nil)
 	ctx := WithLazyMCPState(context.Background(), state)
@@ -70,7 +70,7 @@ func TestEnableMCP_NoLazyState(t *testing.T) {
 	lazyMCPs := map[string]string{
 		"datadog": "Observability platform",
 	}
-	tool := NewEnableMCPTool(lazyMCPs)
+	tool := NewEnableMCPTool(lazyMCPs, nil)
 
 	// Context without LazyMCPState.
 	ctx := context.Background()

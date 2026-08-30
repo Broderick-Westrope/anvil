@@ -26,7 +26,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
-	"github.com/Broderick-Westrope/anvil/internal/agent/hyper"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
@@ -160,14 +159,6 @@ type (
 
 	// closeDialogMsg is sent to close the current dialog.
 	closeDialogMsg struct{}
-
-	// hyperRefreshDoneMsg is sent after a silent Hyper OAuth refresh
-	// finishes. It carries the original model-selection action so the
-	// selection can be resumed.
-	hyperRefreshDoneMsg struct {
-		action dialog.ActionSelectModel
-	}
-
 	// copyChatHighlightMsg is sent to copy the current chat highlight to clipboard.
 	copyChatHighlightMsg struct{}
 
@@ -177,12 +168,6 @@ type (
 		sessionID string
 		messages  []message.Message
 		session   *session.Session
-	}
-
-	// creditsUpdatedMsg is sent when the remaining Hyper credits have been
-	// fetched from the API.
-	creditsUpdatedMsg struct {
-		credits int
 	}
 
 	// tickElapsedTimeMsg is sent once per second to refresh elapsed-time
@@ -291,6 +276,11 @@ type UI struct {
 	// mcp
 	mcpStates       map[string]mcp.ClientInfo
 	enabledLazyMCPs map[string]bool
+	// pendingEnableMCPs tracks in-flight enable_mcp ToolCalls by
+	// ToolCallID → server name. The result has not yet arrived, so
+	// we defer the enabled/disabled decision until the correlated
+	// ToolResult is processed.
+	pendingEnableMCPs map[string]string
 
 	// skills
 	skillStates []*skills.SkillState
@@ -341,15 +331,17 @@ type UI struct {
 	// mouse highlighting related state
 	lastClickTime time.Time
 
-	// hyperCredits is the remaining Hyper credits, updated after each prompt.
-	hyperCredits *int
-
 	// Prompt history for up/down navigation through previous messages.
 	promptHistory struct {
 		messages []string
 		index    int
 		draft    string
 	}
+
+	// canvas is the reusable screen buffer. It is reallocated only when the
+	// terminal dimensions change; screen.Clear resets every cell so stale
+	// frames cannot leak between reuses.
+	canvas uv.ScreenBuffer
 }
 
 // drillInEntry represents one level of drill-in navigation into a subagent
@@ -428,6 +420,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
 		enabledLazyMCPs:     make(map[string]bool),
+		pendingEnableMCPs:   make(map[string]string),
 		skillStates:         skills.GetLatestStates(),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
@@ -499,9 +492,6 @@ func (m *UI) Init() tea.Cmd {
 	// load initial session if specified
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
-	}
-	if m.com.IsHyper() {
-		cmds = append(cmds, m.fetchHyperCredits())
 	}
 	return tea.Batch(cmds...)
 }
@@ -1199,12 +1189,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetValue(msg.Text)
 		m.textarea.MoveToEnd()
 		cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
-	case hyperRefreshDoneMsg:
-		if cmd := m.handleSelectModel(msg.action); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	case creditsUpdatedMsg:
-		m.hyperCredits = &msg.credits
 	case checkAgentIdleMsg:
 		if cmd := m.handleCheckAgentIdle(msg); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1214,13 +1198,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case tickElapsedTimeMsg:
-		shouldContinue := m.hasRunningSubagents() || (m.isDrilledIn() && m.isViewedSubagentRunning())
+		// invalidateRunningAgentCaches performs a single pass per chat that
+		// both invalidates caches and reports whether any agent is still
+		// running — eliminating a separate hasRunningSubagents scan.
+		anyRunning := m.invalidateRunningAgentCaches()
+		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning())
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
 			m.elapsedTickRunning = false
 		}
-		m.invalidateRunningAgentCaches()
 	case pinSettleFailedMsg:
 		// A failed settle write must not quit silently: clear the settled
 		// and settling flags so the user regains control and the next
@@ -1744,54 +1731,25 @@ func tickElapsedTime() tea.Cmd {
 	})
 }
 
-// hasRunningSubagents reports whether any NestedToolContainer in the root
-// chat or any drill-stack chat is still running (not yet finished).
-func (m *UI) hasRunningSubagents() bool {
-	if chatHasRunningAgent(m.chat) {
-		return true
-	}
-	for _, entry := range m.drillStack {
-		if chatHasRunningAgent(entry.chat) {
-			return true
-		}
-	}
-	return false
-}
-
-// chatHasRunningAgent reports whether the given chat contains any running
-// NestedToolContainer item.
-func chatHasRunningAgent(c *Chat) bool {
-	for i := range c.Len() {
-		item := c.ItemAt(i)
-		if _, ok := item.(chat.NestedToolContainer); !ok {
-			continue
-		}
-		tmi, ok := item.(chat.ToolMessageItem)
-		if !ok {
-			continue
-		}
-		// Status is result-aware: it reports Success/Error once a result
-		// arrives, so Running means the tool is genuinely still executing.
-		if tmi.Status() == chat.ToolStatusRunning {
-			return true
-		}
-	}
-	return false
-}
-
 // invalidateRunningAgentCaches clears the render cache on any running
-// NestedToolContainer items in the root chat and all drill-stack chats
-// so that the next draw reflects live state.
-func (m *UI) invalidateRunningAgentCaches() {
-	invalidateRunningAgentsInChat(m.chat)
+// NestedToolContainer items in the root chat and all drill-stack chats so
+// that the next draw reflects live state. It returns true if at least one
+// running agent was found, allowing the caller to skip a separate detection
+// pass.
+func (m *UI) invalidateRunningAgentCaches() bool {
+	found := invalidateRunningAgentsInChat(m.chat)
 	for _, entry := range m.drillStack {
-		invalidateRunningAgentsInChat(entry.chat)
+		found = invalidateRunningAgentsInChat(entry.chat) || found
 	}
+	return found
 }
 
 // invalidateRunningAgentsInChat clears the render cache on any running
-// NestedToolContainer items in the given chat.
-func invalidateRunningAgentsInChat(c *Chat) {
+// NestedToolContainer items in the given chat. It performs detection and
+// invalidation in a single pass, returning true when at least one running
+// item was found.
+func invalidateRunningAgentsInChat(c *Chat) bool {
+	found := false
 	for i := range c.Len() {
 		item := c.ItemAt(i)
 		mi, ok := item.(chat.MessageItem)
@@ -1807,8 +1765,10 @@ func invalidateRunningAgentsInChat(c *Chat) {
 		}
 		if tmi.Status() == chat.ToolStatusRunning {
 			chat.ClearItemCaches([]chat.MessageItem{mi})
+			found = true
 		}
 	}
+	return found
 }
 
 // handleChildSessionMessage handles messages from child sessions (agent tools).
@@ -2527,51 +2487,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// refreshHyperAndRetrySelect returns a command that silently refreshes
-// the Hyper OAuth token and then re-runs the model selection. If the
-// refresh fails, the selection resumes with ReAuthenticate set so the
-// OAuth dialog opens.
-func (m *UI) refreshHyperAndRetrySelect(msg dialog.ActionSelectModel) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := m.com.Workspace.RefreshOAuthToken(ctx, config.ScopeGlobal, "hyper"); err != nil {
-			slog.Warn("Hyper OAuth refresh failed, requesting re-auth", "error", err)
-			msg.ReAuthenticate = true
-		}
-		return hyperRefreshDoneMsg{action: msg}
-	}
-}
-
-// fetchHyperCredits returns a command that asynchronously fetches the
-// remaining Hyper credits from the API.
-func (m *UI) fetchHyperCredits() tea.Cmd {
-	return func() tea.Msg {
-		cfg := m.com.Config()
-		if cfg == nil {
-			return nil
-		}
-		providerCfg, ok := cfg.Providers.Get(hyper.Name)
-		if !ok {
-			return nil
-		}
-		apiKey, err := m.com.Workspace.Resolver().ResolveValue(providerCfg.APIKey)
-		if err != nil || apiKey == "" {
-			return nil
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		credits, err := hyper.FetchCredits(ctx, apiKey)
-		if err != nil {
-			slog.Error("Failed to fetch Hyper credits", "error", err)
-			return nil
-		}
-		return creditsUpdatedMsg{credits: credits}
-	}
-}
-
-// handleSelectModel performs the model selection after any provider
-// pre-checks (such as a silent Hyper OAuth refresh) have completed.
+// handleSelectModel performs the model selection.
 func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	var cmds []tea.Cmd
 
@@ -2589,25 +2505,9 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 
 	var (
 		providerID   = msg.Model.Provider
-		isCopilot    = providerID == string(catwalk.InferenceProviderCopilot)
 		isConfigured = func() bool { _, ok := cfg.Providers.Get(providerID); return ok }
 		isOnboarding = m.state == uiOnboarding
 	)
-
-	// For Hyper, if the stored OAuth token is expired, try a silent
-	// refresh before deciding whether the provider is configured. Keeps
-	// users from hitting a 401 on their first message after the
-	// short-lived access token ages out.
-	if !msg.ReAuthenticate && providerID == "hyper" {
-		if pc, ok := cfg.Providers.Get(providerID); ok && pc.OAuthToken != nil && pc.OAuthToken.IsExpired() {
-			return m.refreshHyperAndRetrySelect(msg)
-		}
-	}
-
-	// Attempt to import GitHub Copilot tokens from VSCode if available.
-	if isCopilot && !isConfigured() && !msg.ReAuthenticate {
-		m.com.Workspace.ImportCopilot()
-	}
 
 	if !isConfigured() || msg.ReAuthenticate {
 		m.dialog.CloseDialog(dialog.ModelsID)
@@ -2685,8 +2585,6 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		if err := m.com.Workspace.InitOrchestratorAgent(context.TODO()); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		}
-	} else if m.com.IsHyper() {
-		cmds = append(cmds, m.fetchHyperCredits())
 	}
 
 	return tea.Batch(cmds...)
@@ -2700,14 +2598,7 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 		isOnboarding = m.state == uiOnboarding
 	)
 
-	switch provider.ID {
-	case "hyper":
-		dlg, cmd = dialog.NewOAuthHyper(m.com, isOnboarding, provider, model, modelType)
-	case catwalk.InferenceProviderCopilot:
-		dlg, cmd = dialog.NewOAuthCopilot(m.com, isOnboarding, provider, model, modelType)
-	default:
-		dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
-	}
+	dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
 
 	if m.dialog.ContainsDialog(dlg.ID()) {
 		m.dialog.BringToFront(dlg.ID())
@@ -3337,7 +3228,6 @@ func (m *UI) drawHeader(scr uv.Screen, area uv.Rectangle) {
 		m.isCompact,
 		m.detailsOpen,
 		area.Dx(),
-		m.hyperCredits,
 	)
 }
 
@@ -3516,17 +3406,12 @@ func (m *UI) View() tea.View {
 	v.ReportFocus = m.caps.ReportFocusEvents
 	v.WindowTitle = "anvil " + home.Short(m.com.Workspace.WorkingDir())
 
-	canvas := uv.NewScreenBuffer(m.width, m.height)
-	v.Cursor = m.Draw(canvas, canvas.Bounds())
-
-	content := strings.ReplaceAll(canvas.Render(), "\r\n", "\n") // normalize newlines
-	contentLines := strings.Split(content, "\n")
-	for i, line := range contentLines {
-		// Trim trailing spaces for concise rendering
-		contentLines[i] = strings.TrimRight(line, " ")
+	if m.canvas.RenderBuffer == nil || m.canvas.Bounds().Dx() != m.width || m.canvas.Bounds().Dy() != m.height {
+		m.canvas = uv.NewScreenBuffer(m.width, m.height)
 	}
+	v.Cursor = m.Draw(m.canvas, m.canvas.Bounds())
 
-	content = strings.Join(contentLines, "\n")
+	content := trimTrailingSpaces(m.canvas.Render())
 
 	v.Content = content
 	if m.progressBarEnabled && m.sendProgressBar && m.isAgentBusy() {
@@ -3536,6 +3421,49 @@ func (m *UI) View() tea.View {
 	}
 
 	return v
+}
+
+// trimTrailingSpaces normalises \r\n line endings to \n and strips trailing
+// space characters from every line in a single pass. It is equivalent to the
+// four-step pipeline: strings.ReplaceAll + Split + per-line TrimRight + Join,
+// but allocates only one strings.Builder instead of two intermediate slices.
+func trimTrailingSpaces(s string) string {
+	b := strings.Builder{}
+	b.Grow(len(s))
+
+	lineStart := 0
+	lastNonSpace := -1
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\r' && i+1 < len(s) && s[i+1] == '\n':
+			// Normalise \r\n → \n and strip trailing spaces on this line.
+			if lastNonSpace >= lineStart {
+				b.WriteString(s[lineStart : lastNonSpace+1])
+			}
+			b.WriteByte('\n')
+			i++ // consume the '\n' as well
+			lineStart = i + 1
+			lastNonSpace = -1
+		case c == '\n':
+			if lastNonSpace >= lineStart {
+				b.WriteString(s[lineStart : lastNonSpace+1])
+			}
+			b.WriteByte('\n')
+			lineStart = i + 1
+			lastNonSpace = -1
+		case c != ' ':
+			lastNonSpace = i
+		}
+	}
+
+	// Flush the last line (which may have no trailing newline).
+	if lineStart < len(s) && lastNonSpace >= lineStart {
+		b.WriteString(s[lineStart : lastNonSpace+1])
+	}
+
+	return b.String()
 }
 
 // ShortHelp implements [help.KeyMap].
@@ -4828,23 +4756,74 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 }
 
 // deriveEnabledLazyMCPs scans branch-path messages for lazy MCP state
-// changes and rebuilds the enabledLazyMCPs map. Last event per server
-// wins. This mirrors the agent-side derivation in
+// changes and rebuilds the enabledLazyMCPs map. Only successful
+// enable_mcp calls (ToolResult with IsError == false, correlated by
+// ToolCallID) are counted. MCPToggleContent entries are always honoured.
+// Last event per server wins. This mirrors the agent-side derivation in
 // internal/agent/lazy_mcp.go.
 func (m *UI) deriveEnabledLazyMCPs(msgs []message.Message) {
 	m.enabledLazyMCPs = make(map[string]bool)
+	m.pendingEnableMCPs = make(map[string]string)
+
+	type event struct {
+		serverName string
+		callID     string
+		enabled    bool
+		isToggle   bool
+	}
+	var events []event
+	resultOK := make(map[string]bool)
+
 	for _, msg := range msgs {
-		m.applyLazyMCPMessageParts(msg)
+		for _, part := range msg.Parts {
+			switch p := part.(type) {
+			case message.ToolCall:
+				if p.Name != agenttools.EnableMCPToolName || !p.Finished {
+					continue
+				}
+				var params agenttools.EnableMCPParams
+				if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
+					continue
+				}
+				if p.ID != "" {
+					events = append(events, event{serverName: params.ServerName, callID: p.ID})
+				}
+			case message.ToolResult:
+				if p.ToolCallID != "" {
+					resultOK[p.ToolCallID] = !p.IsError
+				}
+			case message.MCPToggleContent:
+				events = append(events, event{
+					serverName: p.ServerName,
+					enabled:    p.Enabled,
+					isToggle:   true,
+				})
+			}
+		}
+	}
+
+	for _, e := range events {
+		if e.isToggle {
+			m.enabledLazyMCPs[e.serverName] = e.enabled
+		} else {
+			ok, found := resultOK[e.callID]
+			if found && ok {
+				m.enabledLazyMCPs[e.serverName] = true
+			}
+		}
 	}
 }
 
 // applyLazyMCPMessageParts scans a message's parts for lazy MCP state
-// changes (enable_mcp tool calls and MCPToggleContent entries) and
-// applies them to the enabledLazyMCPs map and any open MCP palette.
+// changes (enable_mcp tool calls, their results, and MCPToggleContent
+// entries) and applies them to the enabledLazyMCPs map and any open
+// MCP palette.
+//
+// ToolCalls are recorded as pending; the enabled flag is only set when
+// the correlated ToolResult arrives with IsError == false. This prevents
+// a failed connect from briefly showing "✓ enabled" in the palette.
 func (m *UI) applyLazyMCPMessageParts(msg message.Message) {
 	for _, part := range msg.Parts {
-		var name string
-		var enabled bool
 		switch p := part.(type) {
 		case message.ToolCall:
 			if p.Name != agenttools.EnableMCPToolName || !p.Finished {
@@ -4854,20 +4833,36 @@ func (m *UI) applyLazyMCPMessageParts(msg message.Message) {
 			if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
 				continue
 			}
-			name, enabled = params.ServerName, true
-		case message.MCPToggleContent:
-			name, enabled = p.ServerName, p.Enabled
-		default:
-			continue
-		}
-		m.enabledLazyMCPs[name] = enabled
-		if m.dialog == nil {
-			continue
-		}
-		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
-			if palette, ok := dia.(*dialog.MCPPalette); ok {
-				palette.SetEntryEnabled(name, enabled)
+			if p.ID != "" {
+				m.pendingEnableMCPs[p.ID] = params.ServerName
 			}
+		case message.ToolResult:
+			serverName, ok := m.pendingEnableMCPs[p.ToolCallID]
+			if !ok {
+				continue
+			}
+			delete(m.pendingEnableMCPs, p.ToolCallID)
+			if p.IsError {
+				continue
+			}
+			m.enabledLazyMCPs[serverName] = true
+			m.updateMCPPaletteEntry(serverName, true)
+		case message.MCPToggleContent:
+			m.enabledLazyMCPs[p.ServerName] = p.Enabled
+			m.updateMCPPaletteEntry(p.ServerName, p.Enabled)
+		}
+	}
+}
+
+// updateMCPPaletteEntry updates the enabled state of a named entry in
+// any open MCP palette dialog.
+func (m *UI) updateMCPPaletteEntry(name string, enabled bool) {
+	if m.dialog == nil {
+		return
+	}
+	if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
+		if palette, ok := dia.(*dialog.MCPPalette); ok {
+			palette.SetEntryEnabled(name, enabled)
 		}
 	}
 }
@@ -5300,27 +5295,10 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 			Title:   "Anvil is waiting...",
 			Message: fmt.Sprintf("Agent's turn completed in \"%s\"", n.SessionTitle),
 		}))
-		if m.com.IsHyper() {
-			cmds = append(cmds, m.fetchHyperCredits())
-		}
 		return tea.Batch(cmds...)
-	case notify.TypeReAuthenticate:
-		return m.handleReAuthenticate(n.ProviderID)
 	default:
 		return nil
 	}
-}
-
-func (m *UI) handleReAuthenticate(providerID string) tea.Cmd {
-	cfg := m.com.Config()
-	if cfg == nil {
-		return nil
-	}
-	providerCfg, ok := cfg.Providers.Get(providerID)
-	if !ok {
-		return nil
-	}
-	return m.openAuthenticationDialog(providerCfg.ToProvider(), cfg.Models[config.SelectedModelTypeLarge], config.SelectedModelTypeLarge)
 }
 
 // newSession clears the current session state and prepares for a new session.
