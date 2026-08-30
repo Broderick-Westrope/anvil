@@ -19,6 +19,15 @@ type stubAgent struct {
 	running bool // true → ToolStatusRunning; false → ToolStatusSuccess
 }
 
+// Compile-time assertions: detection in invalidateRunningAgentsInChat relies
+// on these interface checks passing, so a silently failing type assertion
+// (e.g. after an interface change upstream) must break the build, not the
+// test's semantics.
+var (
+	_ chat.ToolMessageItem     = (*stubAgent)(nil)
+	_ chat.NestedToolContainer = (*stubAgent)(nil)
+)
+
 func newStubAgent(id string, running bool) *stubAgent {
 	return &stubAgent{
 		Versioned: list.NewVersioned(),
@@ -46,6 +55,7 @@ func (s *stubAgent) SetResult(_ *message.ToolResult) {}
 func (s *stubAgent) MessageID() string               { return s.id }
 func (s *stubAgent) SetMessageID(_ string)           {}
 func (s *stubAgent) SetStatus(_ chat.ToolStatus)     {}
+func (s *stubAgent) HasResult() bool                 { return !s.running }
 func (s *stubAgent) Status() chat.ToolStatus {
 	if s.running {
 		return chat.ToolStatusRunning

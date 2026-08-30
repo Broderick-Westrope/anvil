@@ -18,7 +18,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -34,7 +33,6 @@ type fakeEnv struct {
 	sessions    session.Service
 	messages    message.Service
 	permissions permission.Service
-	history     history.Service
 	filetracker *filetracker.Service
 	lspClients  *csync.Map[string, *lsp.Client]
 }
@@ -75,7 +73,6 @@ func testEnv(t *testing.T) fakeEnv {
 	messages := message.NewService(q, message.WithConn(conn))
 
 	permissions := permission.NewPermissionService(workingDir, config.YoloStandard, nil, nil)
-	history := history.NewService(q, conn)
 	filetrackerService := filetracker.NewService(q)
 	lspClients := csync.NewMap[string, *lsp.Client]()
 
@@ -89,7 +86,6 @@ func testEnv(t *testing.T) fakeEnv {
 		sessions,
 		messages,
 		permissions,
-		history,
 		&filetrackerService,
 		lspClients,
 	}
@@ -154,15 +150,15 @@ func orchestratorAgent(r *vcr.Recorder, env fakeEnv, large, small fantasy.Langua
 	allTools := []fantasy.AgentTool{
 		tools.NewBashTool(env.permissions, env.workingDir),
 		tools.NewDownloadTool(env.permissions, env.workingDir, r.GetDefaultClient()),
-		tools.NewEditTool(nil, env.permissions, env.history, *env.filetracker, env.workingDir),
-		tools.NewMultiEditTool(nil, env.permissions, env.history, *env.filetracker, env.workingDir),
+		tools.NewEditTool(nil, env.permissions, *env.filetracker, env.workingDir),
+		tools.NewMultiEditTool(nil, env.permissions, *env.filetracker, env.workingDir),
 		tools.NewFetchTool(env.permissions, env.workingDir, r.GetDefaultClient()),
 		tools.NewGlobTool(env.workingDir, cfg.Config().Tools.Glob),
 		tools.NewGrepTool(env.workingDir, cfg.Config().Tools.Grep),
 		tools.NewLsTool(env.permissions, env.workingDir, cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(r.GetDefaultClient()),
 		tools.NewViewTool(nil, env.permissions, *env.filetracker, nil, env.workingDir),
-		tools.NewWriteTool(nil, env.permissions, env.history, *env.filetracker, env.workingDir),
+		tools.NewWriteTool(nil, env.permissions, *env.filetracker, env.workingDir),
 	}
 
 	return testSessionAgent(env, large, small, systemPrompt, allTools...), nil

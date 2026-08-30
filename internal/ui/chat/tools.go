@@ -54,6 +54,7 @@ type ToolMessageItem interface {
 	SetMessageID(id string)
 	SetStatus(status ToolStatus)
 	Status() ToolStatus
+	HasResult() bool
 }
 
 // Compactable is an interface for tool items that can render in a compacted mode.
@@ -157,6 +158,11 @@ type baseToolMessageItem struct {
 	// spinningFunc allows tools to override the default spinning logic.
 	// If nil, uses the default: !toolCall.Finished && !canceled.
 	spinningFunc SpinningFunc
+	// modelFunc optionally returns the resolved model for agent-like tools.
+	// Used by formatParametersForCopy as a fallback when the tool input has
+	// no explicit model override, keeping copied text consistent with the
+	// rendered header.
+	modelFunc func() string
 
 	sty             *styles.Styles
 	anim            *anim.Anim
@@ -468,9 +474,20 @@ func (t *baseToolMessageItem) SetStatus(status ToolStatus) {
 	t.Bump()
 }
 
-// Status returns the current tool status.
+// Status returns the effective tool status: Success or Error once a result
+// has been recorded, otherwise the raw status (Running, AwaitingPermission,
+// or Canceled). SetResult never updates the raw status field, so deriving
+// from the result here keeps callers from having to pair Status() with
+// HasResult().
 func (t *baseToolMessageItem) Status() ToolStatus {
-	return t.status
+	return t.computeStatus()
+}
+
+// HasResult returns true if the result is not nil. The result arriving is
+// the execution-finished signal for tool calls; ToolCall().Finished only
+// means the input JSON finished streaming.
+func (t *baseToolMessageItem) HasResult() bool {
+	return t.result != nil
 }
 
 // computeStatus computes the effective status considering the result.
@@ -1351,7 +1368,11 @@ func (t *baseToolMessageItem) formatParametersForCopy() string {
 	case agent.TaskToolName:
 		var params agent.TaskParams
 		if json.Unmarshal([]byte(t.toolCall.Input), &params) == nil {
-			name := agentDisplayName(params.SubagentType, params.Description, params.Model)
+			model := params.Model
+			if model == "" && t.modelFunc != nil {
+				model = t.modelFunc()
+			}
+			name := agentDisplayName(params.SubagentType, params.Description, model)
 			return fmt.Sprintf("**Agent:** %s\n**Task:** %s", name, params.Prompt)
 		}
 	}

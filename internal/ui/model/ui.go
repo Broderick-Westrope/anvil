@@ -33,7 +33,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
-	"github.com/Broderick-Westrope/anvil/internal/history"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -171,10 +170,6 @@ type (
 		session   *session.Session
 	}
 
-	// sessionFilesUpdatesMsg is sent when the files for this session have been updated
-	sessionFilesUpdatesMsg struct {
-		sessionFiles []SessionFile
-	}
 	// tickElapsedTimeMsg is sent once per second to refresh elapsed-time
 	// displays for running subagent sessions.
 	tickElapsedTimeMsg struct{}
@@ -190,9 +185,8 @@ type (
 
 // UI represents the main user interface model.
 type UI struct {
-	com          *common.Common
-	session      *session.Session
-	sessionFiles []SessionFile
+	com     *common.Common
+	session *session.Session
 
 	// keeps track of read files while we don't have a session id
 	sessionFileReads []string
@@ -719,7 +713,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setState(uiChat, m.focus)
 		m.session = msg.session
 		m.sidebarOffset = 0
-		m.sessionFiles = msg.files
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		var msgs []message.Message
 		var err error
@@ -751,14 +744,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.historyReset()
 		cmds = append(cmds, m.loadPromptHistory())
 		m.updateLayoutAndSize()
-
-	case sessionFilesUpdatesMsg:
-		m.sessionFiles = msg.sessionFiles
-		var paths []string
-		for _, f := range msg.sessionFiles {
-			paths = append(paths, f.LatestVersion.Path)
-		}
-		cmds = append(cmds, m.startLSPs(paths))
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
@@ -920,8 +905,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
-	case pubsub.Event[history.File]:
-		cmds = append(cmds, m.handleFileEvent(msg.Payload))
 	case pubsub.Event[app.LSPEvent]:
 		m.lspStates = app.GetLSPStates()
 	case pubsub.Event[skills.Event]:
@@ -1521,6 +1504,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 			for _, nm := range nestedMsgPtrs {
 				if nm.Role == message.Assistant {
 					da.IncrementTurns()
+					da.SetModel(nm.Model)
 				}
 				da.IncrementToolCalls(len(nm.ToolCalls()))
 			}
@@ -1532,7 +1516,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 				if sess.CreatedAt > 0 {
 					da.SetStartedAt(time.Unix(sess.CreatedAt, 0))
 				}
-				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.ToolCall().Finished && sess.UpdatedAt > sess.CreatedAt {
+				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && sess.UpdatedAt > sess.CreatedAt {
 					da.SetFinishedAt(time.Unix(sess.UpdatedAt, 0))
 				}
 			}
@@ -1609,7 +1593,17 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 				continue
 			}
 			if toolMsgItem, ok := toolItem.(chat.ToolMessageItem); ok {
+				hadResult := toolMsgItem.HasResult()
 				toolMsgItem.SetResult(&tr)
+				// Record finish time for elapsed-time display on agent
+				// items. The result arriving is the execution-finished
+				// signal; ToolCall().Finished only means the input JSON
+				// finished streaming.
+				if !hadResult {
+					if da, ok := toolItem.(chat.DrillableAgent); ok {
+						da.SetFinishedAt(time.Now())
+					}
+				}
 				// Only auto-scroll if this chat is currently visible.
 				if c == m.activeChat() && c.Follow() {
 					if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
@@ -1703,12 +1697,6 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input {
 				toolItem.SetToolCall(tc)
 			}
-			// Record finish time for elapsed-time display on agent items.
-			if tc.Finished && !existingToolCall.Finished {
-				if da, ok := existingToolItem.(chat.DrillableAgent); ok {
-					da.SetFinishedAt(time.Now())
-				}
-			}
 		}
 		if existingToolItem == nil {
 			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.expandedToolPatterns()))
@@ -1775,7 +1763,7 @@ func invalidateRunningAgentsInChat(c *Chat) bool {
 		if !ok {
 			continue
 		}
-		if tmi.Status() == chat.ToolStatusRunning && !tmi.ToolCall().Finished {
+		if tmi.Status() == chat.ToolStatusRunning {
 			chat.ClearItemCaches([]chat.MessageItem{mi})
 			found = true
 		}
@@ -1911,6 +1899,15 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 		da.IncrementTurns()
 	}
 
+	// Record the model used by the child agent so the collapsed view can
+	// display it even when the task call had no explicit model override.
+	// Unlike IncrementTurns this is not gated on CreatedEvent: the call is
+	// idempotent, and running on updates also covers providers that only
+	// populate the model on a later message update.
+	if event.Payload.Role == message.Assistant {
+		da.SetModel(event.Payload.Model)
+	}
+
 	// Count tool calls with deduplication via CountedToolIDs to avoid
 	// double-counting when UpdatedEvent repeats the same tool calls.
 	counted := da.CountedToolIDs()
@@ -1945,7 +1942,7 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 		if s.CreatedAt > 0 {
 			da.SetStartedAt(time.Unix(s.CreatedAt, 0))
 		}
-		if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.ToolCall().Finished && s.UpdatedAt > s.CreatedAt {
+		if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && s.UpdatedAt > s.CreatedAt {
 			da.SetFinishedAt(time.Unix(s.UpdatedAt, 0))
 		}
 	}
@@ -5315,7 +5312,6 @@ func (m *UI) newSession() tea.Cmd {
 	m.clearDrillStack()
 	m.session = nil
 	m.sidebarOffset = 0
-	m.sessionFiles = nil
 	m.sessionFileReads = nil
 	m.setState(uiLanding, uiFocusEditor)
 	m.textarea.Focus()
@@ -5581,8 +5577,7 @@ func (m *UI) drawSessionDetails(scr uv.Screen, area uv.Rectangle) {
 	lspSection := m.lspInfo(sectionWidth, maxItemsPerSection, false)
 	mcpSection := m.mcpInfo(sectionWidth, maxItemsPerSection, false)
 	skillsSection := m.skillsInfo(sectionWidth, maxItemsPerSection, false)
-	filesSection := m.filesInfo(m.com.Workspace.WorkingDir(), sectionWidth, maxItemsPerSection, false)
-	sections := lipgloss.JoinHorizontal(lipgloss.Top, filesSection, " ", lspSection, " ", mcpSection, " ", skillsSection)
+	sections := lipgloss.JoinHorizontal(lipgloss.Top, lspSection, " ", mcpSection, " ", skillsSection)
 	uv.NewStyledString(
 		s.CompactDetails.View.
 			Width(area.Dx()).

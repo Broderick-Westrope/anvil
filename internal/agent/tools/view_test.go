@@ -249,6 +249,12 @@ type mockFileTracker struct{}
 
 func (m mockFileTracker) RecordRead(ctx context.Context, sessionID, path string) {}
 
+func (m mockFileTracker) RecordReadWithHash(ctx context.Context, sessionID, path, hash string) {}
+
+func (m mockFileTracker) LastContentHash(ctx context.Context, sessionID, path string) string {
+	return ""
+}
+
 func (m mockFileTracker) LastReadTime(ctx context.Context, sessionID, path string) time.Time {
 	return time.Time{}
 }

@@ -10,21 +10,16 @@ import (
 )
 
 type Querier interface {
-	CreateFile(ctx context.Context, arg CreateFileParams) (File, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
-	DeleteFile(ctx context.Context, id string) error
 	DeleteMCPOAuthClient(ctx context.Context, serverName string) error
 	DeleteMCPOAuthToken(ctx context.Context, serverName string) error
 	DeleteMessage(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, id string) error
-	DeleteSessionFiles(ctx context.Context, sessionID string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
 	GetBranchPath(ctx context.Context, leafID string) ([]GetBranchPathRow, error)
 	GetBranchPathTail(ctx context.Context, arg GetBranchPathTailParams) ([]GetBranchPathTailRow, error)
-	GetFile(ctx context.Context, id string) (File, error)
-	GetFileByPathAndSession(ctx context.Context, arg GetFileByPathAndSessionParams) (File, error)
 	GetFileRead(ctx context.Context, arg GetFileReadParams) (ReadFile, error)
 	GetLastGlobalSession(ctx context.Context) (Session, error)
 	GetLastSessionByWorkingDir(ctx context.Context, workingDir string) (Session, error)
@@ -34,10 +29,8 @@ type Querier interface {
 	GetMessageChildren(ctx context.Context, parentID sql.NullString) ([]Message, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
 	ListAllSessions(ctx context.Context) ([]Session, error)
-	ListFilesBySession(ctx context.Context, sessionID string) ([]File, error)
 	ListMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	ListPinnedSessions(ctx context.Context) ([]Session, error)
-	ListSessionFilesByPath(ctx context.Context, arg ListSessionFilesByPathParams) ([]File, error)
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)

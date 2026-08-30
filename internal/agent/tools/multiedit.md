@@ -1,1 +1,1 @@
-Apply multiple find-and-replace edits to a single file in one operation; edits run sequentially. Prefer over edit for multiple changes to the same file. Same exact-match rules as edit apply.
+Apply multiple find-and-replace edits to a single file in one operation; edits run sequentially. Prefer over edit for multiple changes to the same file. Same exact-match rules as edit apply, and no prior read is required. The response includes a unified diff of the change (truncated when long), so verify the result from it instead of re-reading the file.

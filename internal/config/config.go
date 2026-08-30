@@ -880,7 +880,6 @@ func allToolNames() []string {
 		"lsp_definition",
 		"lsp_call_hierarchy",
 		"lsp_rename",
-		"lsp_replace_symbol",
 		"fetch",
 		"agentic_fetch",
 		"glob",
