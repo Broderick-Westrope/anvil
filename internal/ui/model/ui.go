@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"image"
 	"log/slog"
+	"maps"
 	"math/rand"
 	"net/http"
 	"os"
@@ -2388,6 +2389,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		content := substituteCustomCommandArgs(msg)
+		content = commands.FormatExpansionXML(customCommandLine(msg), content)
 
 		// Resolve and prepend skill content. This is safe to call in Update
 		// because ActiveSkillByName is an in-memory lookup (no IO). If it
@@ -4231,6 +4233,7 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		// provided inline, open the argument dialog.
 		if len(cmd.Arguments) > 0 && rawArgs == "" {
 			action := dialog.ActionRunCustomCommand{
+				Name:      argName,
 				Content:   cmd.Content,
 				Arguments: cmd.Arguments,
 				Skills:    cmd.Skills,
@@ -4242,6 +4245,11 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
 			content = commands.SubstituteArgs(content, nil, rawArgs)
 		}
+		commandLine := prefix
+		if rawArgs != "" {
+			commandLine += " " + rawArgs
+		}
+		content = commands.FormatExpansionXML(commandLine, content)
 		if resolved := skills.ResolveContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
 			content = resolved + "\n\n" + content
 		}
@@ -5603,8 +5611,16 @@ func (m *UI) runMCPPrompt(clientID, promptID string, arguments map[string]string
 		if prompt == "" {
 			return nil
 		}
+		var line strings.Builder
+		line.WriteString("/")
+		line.WriteString(promptID)
+		for _, k := range slices.Sorted(maps.Keys(arguments)) {
+			if v := strings.TrimSpace(arguments[k]); v != "" {
+				fmt.Fprintf(&line, " %s=%q", k, v)
+			}
+		}
 		return sendMessageMsg{
-			Content: prompt,
+			Content: commands.FormatExpansionXML(line.String(), prompt),
 		}
 	}
 

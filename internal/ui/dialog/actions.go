@@ -82,6 +82,7 @@ type (
 	}
 	// ActionRunCustomCommand is a message to run a custom command.
 	ActionRunCustomCommand struct {
+		Name      string // Command name as invoked (display name).
 		Content   string
 		Arguments []commands.Argument
 		Skills    []string          // Skill names to preload.

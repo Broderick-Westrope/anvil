@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 )
 
@@ -33,7 +34,7 @@ func (m *UI) loadPromptHistory() tea.Cmd {
 
 		texts := make([]string, 0, len(messages))
 		for _, msg := range messages {
-			if text := msg.Content().Text; text != "" {
+			if text := commands.CollapseExpansionXML(msg.Content().Text); text != "" {
 				texts = append(texts, text)
 			}
 		}

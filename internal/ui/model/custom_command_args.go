@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Broderick-Westrope/anvil/internal/commands"
@@ -49,4 +50,26 @@ func hasArgument(args []commands.Argument, id string) bool {
 		}
 	}
 	return false
+}
+
+// customCommandLine reconstructs the command line the user invoked,
+// e.g. "/review fix typo" or `/review scope="auth"`. Used as the compact
+// display form of an expanded command message.
+func customCommandLine(action dialog.ActionRunCustomCommand) string {
+	line := "/" + action.Name
+	if action.Args == nil {
+		return line
+	}
+	if raw := strings.TrimSpace(action.Args[rawArgumentsID]); raw != "" {
+		line += " " + raw
+	}
+	for _, arg := range action.Arguments {
+		if arg.ID == rawArgumentsID {
+			continue
+		}
+		if v := strings.TrimSpace(action.Args[arg.ID]); v != "" {
+			line += fmt.Sprintf(" %s=%q", arg.ID, v)
+		}
+	}
+	return line
 }

@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
@@ -56,6 +57,7 @@ func (m *UserMessageItem) RawRender(width int) string {
 	}
 
 	msgContent := stripSkillContentForDisplay(strings.TrimSpace(m.message.Content().Text))
+	msgContent = commands.CollapseExpansionXML(msgContent)
 	renderer := common.MarkdownRenderer(m.sty, cappedWidth)
 	mu := common.LockMarkdownRenderer(renderer)
 

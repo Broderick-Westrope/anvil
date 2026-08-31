@@ -406,15 +406,17 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 		}
 	case UserCommands:
 		for _, cmd := range c.customCommands {
+			name := cmd.ItemName()
+			if cmd.DisplayName != "" {
+				name = cmd.DisplayName
+			}
 			action := ActionRunCustomCommand{
+				Name:      name,
 				Content:   cmd.Content,
 				Arguments: cmd.Arguments,
 				Skills:    cmd.Skills,
 			}
-			title := cmd.Name
-			if cmd.DisplayName != "" {
-				title = cmd.DisplayName
-			}
+			title := name
 			if cmd.ArgumentHint != "" {
 				title += " " + cmd.ArgumentHint
 			}
