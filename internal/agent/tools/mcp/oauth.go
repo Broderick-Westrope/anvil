@@ -89,7 +89,8 @@ func (h *StoredTokenHandler) Authorize(_ context.Context, _ *http.Request, resp 
 	if resp != nil && resp.Body != nil {
 		resp.Body.Close()
 	}
-	return fmt.Errorf("MCP server %q requires authentication. Run: anvil mcp auth %s", h.serverName, h.serverName)
+	return fmt.Errorf("%w: %s (run: anvil mcp auth %s)",
+		ErrNeedsAuth, h.serverName, h.serverName)
 }
 
 // persistingTokenSource wraps another oauth2.TokenSource and persists

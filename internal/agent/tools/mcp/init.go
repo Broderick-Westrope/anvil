@@ -458,6 +458,11 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 	// Set initial starting state.
 	updateState(name, StateStarting, nil, nil, Counts{})
 
+	if err := preflightOAuth(ctx, name, m, queries); err != nil {
+		updateState(name, StateError, err, nil, Counts{})
+		return err
+	}
+
 	// newSession handles its own timeout internally.
 	session, err := newSession(ctx, name, m, resolver, queries)
 	if err != nil {

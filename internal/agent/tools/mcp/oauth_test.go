@@ -113,7 +113,8 @@ func TestStoredTokenHandler_Authorize_ReturnsError(t *testing.T) {
 
 	err := handler.Authorize(context.Background(), nil, resp)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), `MCP server "my-server" requires authentication`)
+	require.True(t, NeedsAuth(err), "Authorize must wrap ErrNeedsAuth")
+	require.Contains(t, err.Error(), "my-server")
 	require.Contains(t, err.Error(), "anvil mcp auth my-server")
 }
 
