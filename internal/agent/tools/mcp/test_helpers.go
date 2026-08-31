@@ -12,6 +12,13 @@ func SetStateForTest(name string, state State) {
 	updateState(name, state, nil, nil, Counts{})
 }
 
+// SetStateWithErrorForTest is like SetStateForTest but also seeds an
+// error. This allows tests to exercise code paths that branch on
+// NeedsAuth without calling Initialize.
+func SetStateWithErrorForTest(name string, state State, err error) {
+	updateState(name, state, err, nil, Counts{})
+}
+
 // DeleteStateForTest removes a server's state from the global registry.
 // Use in t.Cleanup after SetStateForTest.
 func DeleteStateForTest(name string) {

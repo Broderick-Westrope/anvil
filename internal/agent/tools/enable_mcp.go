@@ -94,6 +94,9 @@ func NewEnableMCPTool(lazyMCPs map[string]string, connectFn ConnectFn) fantasy.A
 					// Deferred server: connect on first enable.
 					return enableDeferred(ctx, params.ServerName, state, connectFn)
 				case mcp.StateError:
+					if info.NeedsAuth {
+						return authRequiredResponse(params.ServerName), nil
+					}
 					errMsg := "unknown error"
 					if info.Error != nil {
 						errMsg = info.Error.Error()
@@ -133,6 +136,26 @@ func NewEnableMCPTool(lazyMCPs map[string]string, connectFn ConnectFn) fantasy.A
 	)
 }
 
+// authRequiredResponse builds the tool response for a server whose
+// OAuth token must be refreshed by a human. It is deliberately a
+// success response rather than an error: the call did not fail
+// because of a malformed request, and framing it as an error pushes
+// models toward retry loops. The wording tells the model not to
+// retry within the turn and not to attempt a shell command.
+func authRequiredResponse(name string) fantasy.ToolResponse {
+	msg := fmt.Sprintf(
+		"MCP '%s' cannot be enabled: its authentication has expired "+
+			"and only a human can renew it. The user has been notified "+
+			"in the UI. Do not retry enable_mcp for '%s' this turn and "+
+			"do not attempt to authenticate yourself. Tell the user "+
+			"that '%s' needs re-authentication, then continue with "+
+			"whatever part of the task does not need it."+
+			" (If this is a non-interactive session, the user must run "+
+			"`anvil mcp auth %s`.)",
+		name, name, name, name)
+	return fantasy.NewTextResponse(msg)
+}
+
 // enableDeferred handles the deferred-connect branch of enable_mcp.
 // It connects the server via connectFn, records the enable in state
 // only on success, and returns the tool count. On failure the state
@@ -146,6 +169,9 @@ func enableDeferred(ctx context.Context, name string, state *LazyMCPState, conne
 
 	toolCount, err := connectFn(ctx, name)
 	if err != nil {
+		if mcp.NeedsAuth(err) {
+			return authRequiredResponse(name), nil
+		}
 		return fantasy.NewTextErrorResponse(
 			fmt.Sprintf("Failed to connect MCP '%s': %s", name, err),
 		), nil
