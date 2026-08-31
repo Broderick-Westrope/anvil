@@ -960,6 +960,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, handleMCPToolsEvent(m.com.Workspace, msg.Payload.Name)
 		case mcp.EventResourcesListChanged:
 			return m, handleMCPResourcesEvent(m.com.Workspace, msg.Payload.Name)
+		case mcp.EventNeedsAuth:
+			return m, util.ReportWarn(fmt.Sprintf(
+				"%s needs re-authentication — open the MCP palette "+
+					"(ctrl+p → MCP Servers) and press enter",
+				msg.Payload.Name))
 		}
 	case pubsub.Event[permission.PermissionRequest]:
 		if cmd := m.openPermissionsDialog(msg.Payload); cmd != nil {

@@ -60,6 +60,11 @@ var (
 	initDone  = make(chan struct{})
 	dbQueries db.Querier // Set during Initialize, used for OAuth token storage.
 
+	// authNotifyTimes tracks the last time an EventNeedsAuth was
+	// published for each server. Used by shouldNotifyAuth to dedup
+	// notifications within AuthNotifyDedup.
+	authNotifyTimes = csync.NewMap[string, time.Time]()
+
 	// initStarted records whether Initialize has been armed. WaitForInit only
 	// blocks once initialization is expected; coordinators built outside app
 	// startup never arm it and so must not wait forever.
@@ -186,6 +191,7 @@ const (
 	EventToolsListChanged
 	EventPromptsListChanged
 	EventResourcesListChanged
+	EventNeedsAuth
 )
 
 // Event represents an event in the MCP system
@@ -670,7 +676,7 @@ func updateState(name string, state State, err error, client *ClientSession, cou
 	}
 	states.Set(name, info)
 
-	// Publish state change event
+	// Publish state change event.
 	broker.Publish(pubsub.UpdatedEvent, Event{
 		Type:   EventStateChanged,
 		Name:   name,
@@ -678,6 +684,38 @@ func updateState(name string, state State, err error, client *ClientSession, cou
 		Error:  err,
 		Counts: counts,
 	})
+
+	// Publish a dedicated auth event so the UI can surface a toast
+	// without parsing the state change. Deduplicated per server so
+	// N failed enable_mcp calls in one turn produce one notification.
+	if state == StateError && NeedsAuth(err) {
+		if shouldNotifyAuth(name) {
+			broker.Publish(pubsub.UpdatedEvent, Event{
+				Type:  EventNeedsAuth,
+				Name:  name,
+				State: state,
+				Error: err,
+			})
+		}
+	}
+}
+
+// AuthNotifyDedup is the minimum interval between EventNeedsAuth
+// notifications for the same server. Exported as a package var so
+// tests can shorten it.
+var AuthNotifyDedup = 60 * time.Second
+
+// shouldNotifyAuth returns true if an EventNeedsAuth should be
+// published for the named server, applying the dedup window.
+func shouldNotifyAuth(name string) bool {
+	now := time.Now()
+	if last, ok := authNotifyTimes.Get(name); ok {
+		if now.Sub(last) < AuthNotifyDedup {
+			return false
+		}
+	}
+	authNotifyTimes.Set(name, now)
+	return true
 }
 
 func createSession(ctx context.Context, name string, m config.MCPConfig, resolver config.VariableResolver, queries db.Querier) (*ClientSession, error) {
