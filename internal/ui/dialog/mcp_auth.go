@@ -21,10 +21,10 @@ import (
 type mcpAuthState int
 
 const (
-	mcpAuthStateWorking         mcpAuthState = iota
-	mcpAuthStateAwaitingBrowser mcpAuthState = iota
-	mcpAuthStateSuccess         mcpAuthState = iota
-	mcpAuthStateError           mcpAuthState = iota
+	mcpAuthStateWorking mcpAuthState = iota
+	mcpAuthStateAwaitingBrowser
+	mcpAuthStateSuccess
+	mcpAuthStateError
 )
 
 // MCPAuthProgressMsg reports flow progress to the MCPAuth dialog.

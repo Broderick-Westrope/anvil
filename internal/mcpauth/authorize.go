@@ -26,11 +26,11 @@ import (
 type Stage int
 
 const (
-	StageDiscovering     Stage = iota
-	StageRegistering     Stage = iota
-	StageAwaitingBrowser Stage = iota
-	StageExchanging      Stage = iota
-	StagePersisting      Stage = iota
+	StageDiscovering Stage = iota
+	StageRegistering
+	StageAwaitingBrowser
+	StageExchanging
+	StagePersisting
 )
 
 // Options configures a single Authorize call.
@@ -73,7 +73,6 @@ type Result struct {
 // call concurrently for different servers; concurrent calls for the
 // same server are not serialised by this package.
 func Authorize(ctx context.Context, opts Options) (Result, error) {
-	// Validate inputs.
 	if opts.Config.Auth != config.MCPAuthOAuth {
 		return Result{}, fmt.Errorf(
 			"MCP server %q does not use OAuth authentication (auth=%q)",
@@ -210,7 +209,7 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 		scopes = prm.ScopesSupported
 	}
 
-	// Build OAuth2 config.
+	// Build the OAuth2 configuration from discovered endpoints.
 	authEndpoint := ""
 	tokenEndpoint := ""
 	if asm != nil {
@@ -240,7 +239,6 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 		Scopes:      scopes,
 	}
 
-	// Generate PKCE verifier and state.
 	verifier := oauth2.GenerateVerifier()
 	state, err := generateState()
 	if err != nil {
@@ -254,7 +252,6 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 	// Report the auth URL before attempting to open the browser.
 	progress(opts, StageAwaitingBrowser, authURL)
 
-	// Attempt to open the browser.
 	if opts.OpenURL != nil {
 		_ = opts.OpenURL(authURL)
 	}
@@ -280,12 +277,10 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, result.Err
 	}
 
-	// Validate state.
 	if result.State != state {
 		return Result{}, fmt.Errorf("state mismatch: possible CSRF attack")
 	}
 
-	// Exchange authorization code for token.
 	progress(opts, StageExchanging, "")
 	token, err := oauthCfg.Exchange(
 		ctx, result.Code, oauth2.VerifierOption(verifier))
@@ -293,7 +288,6 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("token exchange failed: %w", err)
 	}
 
-	// Persist token.
 	progress(opts, StagePersisting, "")
 	if err := opts.Queries.UpsertMCPOAuthToken(ctx, db.UpsertMCPOAuthTokenParams{
 		ServerName:  opts.ServerName,
