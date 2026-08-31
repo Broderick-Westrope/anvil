@@ -1,6 +1,6 @@
 # Phase 1: Reusable MCP OAuth Package + Error Classification
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > **Depends on:** —
 > **Delivers:** `internal/mcpauth` package, `mcp.ErrNeedsAuth`, layered
 > auth detection, `anvil mcp auth` as a thin wrapper.

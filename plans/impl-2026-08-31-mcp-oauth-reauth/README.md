@@ -1,6 +1,6 @@
 # In-App MCP OAuth Re-Authentication Implementation Plan
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 
 ## Overview
 
