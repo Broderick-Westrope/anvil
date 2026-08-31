@@ -572,6 +572,16 @@ type Agent struct {
 	// Variant is the model variant (e.g. thinking budget passthrough).
 	Variant string `json:"variant,omitempty"`
 
+	// ReasoningEffort overrides the reasoning effort used for this agent's
+	// model. An empty string falls back to the model's default effort. Values
+	// not supported by the resolved model are ignored at call time.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
+	// Think enables thinking mode for Anthropic models that can reason but
+	// expose no reasoning-effort levels. A nil pointer inherits the global
+	// large model's setting.
+	Think *bool `json:"think,omitempty"`
+
 	// AllowedTools is the list of tools available to the agent.
 	// nil means all tools are available; [] means no tools.
 	AllowedTools []string `json:"tools,omitempty"`
@@ -1020,6 +1030,12 @@ func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabl
 			if userAgent.Variant != "" {
 				def.Variant = userAgent.Variant
 			}
+			if userAgent.ReasoningEffort != "" {
+				def.ReasoningEffort = userAgent.ReasoningEffort
+			}
+			if userAgent.Think != nil {
+				def.Think = userAgent.Think
+			}
 			if userAgent.AllowedTools != nil {
 				def.AllowedTools = userAgent.AllowedTools
 			}
@@ -1053,67 +1069,90 @@ func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabl
 	return agents
 }
 
-// ResolveAgentModel resolves the SelectedModel for the given agent. If
-// agent.Model is empty the global large model from cfg is returned. Otherwise
-// agent.Model is parsed as "provider/model" and resolved against the
-// configured providers. If agent.Variant is set it is included in the
-// returned SelectedModel.
+// ResolveAgentModel resolves the SelectedModel for the given agent.
+//
+// The global large model is the base. When agent.Model is empty the base is
+// returned unchanged. Otherwise agent.Model is parsed as "provider/model",
+// resolved against the configured providers, and layered over the base:
+// Provider, Model, MaxTokens and ReasoningEffort come from the target model's
+// catwalk definition, while sampling parameters (temperature, top_p, top_k,
+// penalties) are inherited from the base so global tuning is not silently
+// discarded. Provider-specific options are dropped when the agent's model
+// lives on a different provider, since they would not apply.
+//
+// Agent-level Variant, ReasoningEffort and Think always win over both.
 func ResolveAgentModel(agent Agent, cfg *Config) (SelectedModel, error) {
-	if agent.Model == "" {
-		m, ok := cfg.Models[SelectedModelTypeLarge]
-		if !ok {
-			return SelectedModel{}, fmt.Errorf("agent %q: no large model configured", agent.ID)
-		}
-		if agent.Variant != "" {
-			m.Variant = agent.Variant
-		}
-		return m, nil
-	}
-
-	// Parse "provider/model" format; split on the first slash only.
-	slash := strings.IndexByte(agent.Model, '/')
-	if slash < 0 {
-		return SelectedModel{}, fmt.Errorf(
-			"agent %q: model %q must be in provider/model format",
-			agent.ID, agent.Model,
-		)
-	}
-	providerID := agent.Model[:slash]
-	modelID := agent.Model[slash+1:]
-
-	providerCfg, ok := cfg.Providers.Get(providerID)
+	result, ok := cfg.Models[SelectedModelTypeLarge]
 	if !ok {
-		return SelectedModel{}, fmt.Errorf(
-			"agent %q: provider %q not found",
-			agent.ID, providerID,
-		)
+		return SelectedModel{}, fmt.Errorf("agent %q: no large model configured", agent.ID)
 	}
 
-	var found *catwalk.Model
-	for i := range providerCfg.Models {
-		if providerCfg.Models[i].ID == modelID {
-			m := providerCfg.Models[i]
-			found = &m
-			break
+	if agent.Model != "" {
+		// Parse "provider/model" format; split on the first slash only.
+		slash := strings.IndexByte(agent.Model, '/')
+		if slash < 0 {
+			return SelectedModel{}, fmt.Errorf(
+				"agent %q: model %q must be in provider/model format",
+				agent.ID, agent.Model,
+			)
+		}
+		providerID := agent.Model[:slash]
+		modelID := agent.Model[slash+1:]
+
+		providerCfg, ok := cfg.Providers.Get(providerID)
+		if !ok {
+			return SelectedModel{}, fmt.Errorf(
+				"agent %q: provider %q not found",
+				agent.ID, providerID,
+			)
+		}
+
+		var found *catwalk.Model
+		for i := range providerCfg.Models {
+			if providerCfg.Models[i].ID == modelID {
+				m := providerCfg.Models[i]
+				found = &m
+				break
+			}
+		}
+		if found == nil {
+			return SelectedModel{}, fmt.Errorf(
+				"agent %q: model %q not found in provider %q",
+				agent.ID, modelID, providerID,
+			)
+		}
+
+		// Provider-specific options from the global large model cannot be
+		// assumed to apply to a different provider.
+		if providerID != result.Provider {
+			result.ProviderOptions = nil
+		}
+
+		result.Provider = providerID
+		result.Model = modelID
+		result.MaxTokens = found.DefaultMaxTokens
+		result.ReasoningEffort = found.DefaultReasoningEffort
+
+		if agent.ReasoningEffort != "" && len(found.ReasoningLevels) > 0 &&
+			!slices.Contains(found.ReasoningLevels, agent.ReasoningEffort) {
+			slog.Warn("Agent reasoning effort is not supported by its model; using the model default",
+				"agent", agent.ID,
+				"reasoning_effort", agent.ReasoningEffort,
+				"model", agent.Model,
+				"supported", found.ReasoningLevels,
+			)
+			agent.ReasoningEffort = ""
 		}
 	}
-	if found == nil {
-		return SelectedModel{}, fmt.Errorf(
-			"agent %q: model %q not found in provider %q",
-			agent.ID, modelID, providerID,
-		)
-	}
 
-	result := SelectedModel{
-		Provider:  providerID,
-		Model:     modelID,
-		MaxTokens: found.DefaultMaxTokens,
-	}
-	if found.DefaultReasoningEffort != "" {
-		result.ReasoningEffort = found.DefaultReasoningEffort
-	}
 	if agent.Variant != "" {
 		result.Variant = agent.Variant
+	}
+	if agent.ReasoningEffort != "" {
+		result.ReasoningEffort = agent.ReasoningEffort
+	}
+	if agent.Think != nil {
+		result.Think = *agent.Think
 	}
 	return result, nil
 }

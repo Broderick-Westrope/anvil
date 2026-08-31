@@ -473,6 +473,48 @@ from the agent, including builtin skills and skills discovered from disk.
 }
 ```
 
+### Agent Models
+
+The orchestrator uses the globally configured `models.large`. Specialist agents
+inherit that by default, which means an expensive orchestrator model is also
+paying for mechanical work like codebase search. Each agent can instead declare
+its own model in its `.md` frontmatter:
+
+```yaml
+---
+model: anthropic/claude-sonnet-5
+reasoning_effort: low
+role: Fast codebase search and pattern matching specialist
+---
+```
+
+| Key | Meaning |
+| --- | --- |
+| `model` | Exact `provider/model` ID. Omitted means inherit `models.large`. |
+| `reasoning_effort` | Effort level for the agent's model. Omitted means the model's default. Values the model does not support are ignored with a warning. |
+| `think` | Enables thinking on Anthropic models that can reason but expose no effort levels. Omitted means inherit the global setting. |
+
+Resolution layers the agent's model over `models.large`: provider, model,
+max tokens and reasoning effort come from the target model, while sampling
+parameters (temperature, top_p, top_k, penalties) are inherited so global
+tuning is not lost. Provider-specific options are dropped when the agent's
+model lives on a different provider.
+
+The same keys work in `anvil.json` and take precedence over frontmatter, so
+you can retune a plugin-provided agent without editing it:
+
+```jsonc
+{
+  "agents": {
+    "explorer": { "model": "anthropic/claude-haiku-4-5-20251001" },
+    "reviewer": { "reasoning_effort": "medium" },
+  },
+}
+```
+
+Run with `--debug` and grep the log for `Resolved agent model` to see what each
+agent actually resolved to.
+
 ### Agent Skills
 
 Anvil supports the [Agent Skills](https://agentskills.io) open standard for

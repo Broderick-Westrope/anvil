@@ -31,6 +31,14 @@ type AgentMD struct {
 	// Empty means inherit from the orchestrator.
 	Model string
 
+	// ReasoningEffort overrides the reasoning effort for the agent's model.
+	// Empty means use the model's default effort.
+	ReasoningEffort string
+
+	// Think enables thinking mode for Anthropic models that can reason but
+	// expose no reasoning-effort levels. Nil means inherit.
+	Think *bool
+
 	// Tools is the allowed tools list. nil means all tools (unrestricted),
 	// empty slice means no tools.
 	Tools []string
@@ -66,6 +74,8 @@ type agentFrontmatter struct {
 	DelegateWhen     string              `yaml:"delegate_when"`
 	DontDelegateWhen string              `yaml:"dont_delegate_when"`
 	Model            string              `yaml:"model"`
+	ReasoningEffort  string              `yaml:"reasoning_effort"`
+	Think            *bool               `yaml:"think"`
 	Tools            []string            `yaml:"tools"`
 	Skills           []string            `yaml:"skills"`
 	MCPs             map[string][]string `yaml:"mcps"`
@@ -128,6 +138,8 @@ func ParseAgentMD(name string, content []byte) (AgentMD, error) {
 	agent.DelegateWhen = fm.DelegateWhen
 	agent.DontDelegateWhen = fm.DontDelegateWhen
 	agent.Model = fm.Model
+	agent.ReasoningEffort = fm.ReasoningEffort
+	agent.Think = fm.Think
 	agent.Tools = fm.Tools
 	agent.Skills = fm.Skills
 	agent.MCPs = fm.MCPs

@@ -586,3 +586,45 @@ func TestValidateDelegatesTo(t *testing.T) {
 		require.Empty(t, warnings)
 	})
 }
+
+func TestParseAgentMD_ModelTuningFields(t *testing.T) {
+	t.Parallel()
+
+	t.Run("all fields present", func(t *testing.T) {
+		t.Parallel()
+		content := []byte(
+			"---\n" +
+				"role: Search specialist.\n" +
+				"model: anthropic/claude-sonnet-5\n" +
+				"reasoning_effort: low\n" +
+				"think: false\n" +
+				"---\n" +
+				"Body.\n",
+		)
+		got, err := ParseAgentMD("explorer", content)
+		require.NoError(t, err)
+		require.Equal(t, "anthropic/claude-sonnet-5", got.Model)
+		require.Equal(t, "low", got.ReasoningEffort)
+		require.NotNil(t, got.Think)
+		require.False(t, *got.Think)
+	})
+
+	t.Run("absent think is nil so it inherits", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nmodel: anthropic/claude-opus-5\n---\nBody.\n")
+		got, err := ParseAgentMD("planner", content)
+		require.NoError(t, err)
+		require.Equal(t, "anthropic/claude-opus-5", got.Model)
+		require.Empty(t, got.ReasoningEffort)
+		require.Nil(t, got.Think)
+	})
+
+	t.Run("think true is distinguishable from absent", func(t *testing.T) {
+		t.Parallel()
+		content := []byte("---\nthink: true\n---\nBody.\n")
+		got, err := ParseAgentMD("oracle", content)
+		require.NoError(t, err)
+		require.NotNil(t, got.Think)
+		require.True(t, *got.Think)
+	})
+}

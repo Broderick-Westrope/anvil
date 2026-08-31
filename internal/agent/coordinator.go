@@ -184,14 +184,7 @@ func NewCoordinator(
 	// during config loading with values sourced from the .md frontmatter.
 	mdDefaults := make(map[string]config.Agent, len(agentMDs))
 	for name, md := range agentMDs {
-		mdDefaults[name] = config.Agent{
-			ID:            name,
-			Name:          agentIDToName(name),
-			AllowedTools:  md.Tools,
-			AllowedSkills: md.Skills,
-			AllowedMCP:    md.MCPs,
-			Model:         md.Model,
-		}
+		mdDefaults[name] = agentConfigFromMD(name, md)
 	}
 	// Load all agent configs from the computed defaults + user overrides.
 	c.agentConfigs = cfg.Config().SetupAgentsWithDefaults(mdDefaults)
@@ -226,6 +219,22 @@ func NewCoordinator(
 	c.orchestratorMu.Unlock()
 
 	return c, nil
+}
+
+// agentConfigFromMD converts the capability and model fields of a parsed
+// agent .md file into a config.Agent default. Behavioural frontmatter (role,
+// delegate_when, routing_hint) is consumed by the prompt builder instead.
+func agentConfigFromMD(name string, md prompt.AgentMD) config.Agent {
+	return config.Agent{
+		ID:              name,
+		Name:            agentIDToName(name),
+		AllowedTools:    md.Tools,
+		AllowedSkills:   md.Skills,
+		AllowedMCP:      md.MCPs,
+		Model:           md.Model,
+		ReasoningEffort: md.ReasoningEffort,
+		Think:           md.Think,
+	}
 }
 
 // agentIDToName converts an agent ID (e.g. "devils-advocate") to a
@@ -1642,14 +1651,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	// the atomic swap below.
 	mdDefaults := make(map[string]config.Agent, len(newAgentMDs))
 	for name, md := range newAgentMDs {
-		mdDefaults[name] = config.Agent{
-			ID:            name,
-			Name:          agentIDToName(name),
-			AllowedTools:  md.Tools,
-			AllowedSkills: md.Skills,
-			AllowedMCP:    md.MCPs,
-			Model:         md.Model,
-		}
+		mdDefaults[name] = agentConfigFromMD(name, md)
 	}
 	// SetupAgentsWithDefaults is a pure function; it returns a new map
 	// without touching cfg.Agents. The new agent configs are only committed

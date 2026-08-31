@@ -23,6 +23,12 @@
         "variant": {
           "type": "string"
         },
+        "reasoning_effort": {
+          "type": "string"
+        },
+        "think": {
+          "type": "boolean"
+        },
         "tools": {
           "items": {
             "type": "string"
