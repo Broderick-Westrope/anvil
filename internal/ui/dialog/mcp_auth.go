@@ -30,6 +30,7 @@ const (
 // MCPAuthProgressMsg reports flow progress to the MCPAuth dialog.
 type MCPAuthProgressMsg struct {
 	ServerName string
+	FlowID     uint64
 	Stage      mcpauth.Stage
 	Detail     string
 }
@@ -37,11 +38,13 @@ type MCPAuthProgressMsg struct {
 // MCPAuthDoneMsg reports a successful flow and reconnect.
 type MCPAuthDoneMsg struct {
 	ServerName string
+	FlowID     uint64
 }
 
 // MCPAuthErrMsg reports a failed flow.
 type MCPAuthErrMsg struct {
 	ServerName string
+	FlowID     uint64
 	Err        error
 }
 

@@ -12,8 +12,22 @@ import (
 
 // mcpAuthFlow is the per-server state of an in-flight OAuth flow.
 type mcpAuthFlow struct {
+	id       uint64
 	cancel   context.CancelFunc
 	progress chan tea.Msg // Buffered; closed when the flow ends.
+}
+
+// allocFlowID returns the next monotonic flow ID.
+func (m *UI) allocFlowID() uint64 {
+	m.nextMCPAuthFlowID++
+	return m.nextMCPAuthFlowID
+}
+
+// isCurrentFlow reports whether flowID matches the active flow for
+// serverName. Returns false when no flow exists for the server.
+func (m *UI) isCurrentFlow(serverName string, flowID uint64) bool {
+	flow, ok := m.mcpAuthFlows[serverName]
+	return ok && flow.id == flowID
 }
 
 // startMCPAuth opens the MCPAuth dialog and kicks off the flow.
@@ -28,8 +42,13 @@ func (m *UI) startMCPAuth(serverName string) tea.Cmd {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	id := m.allocFlowID()
+	// The channel holds up to 8 messages. The flow emits roughly five
+	// progress stages, and sends are non-blocking, so an undersized
+	// buffer only drops updates rather than stalling the OAuth flow.
 	ch := make(chan tea.Msg, 8)
 	m.mcpAuthFlows[serverName] = &mcpAuthFlow{
+		id:       id,
 		cancel:   cancel,
 		progress: ch,
 	}
@@ -39,7 +58,7 @@ func (m *UI) startMCPAuth(serverName string) tea.Cmd {
 
 	return tea.Batch(
 		tickCmd,
-		m.runMCPAuthCmd(ctx, serverName, ch),
+		m.runMCPAuthCmd(ctx, serverName, id, ch),
 		m.drainMCPAuth(serverName),
 	)
 }
@@ -53,22 +72,28 @@ func (m *UI) retryMCPAuth(serverName string) tea.Cmd {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	id := m.allocFlowID()
+	// See startMCPAuth for buffer-size rationale.
 	ch := make(chan tea.Msg, 8)
 	m.mcpAuthFlows[serverName] = &mcpAuthFlow{
+		id:       id,
 		cancel:   cancel,
 		progress: ch,
 	}
 
 	return tea.Batch(
-		m.runMCPAuthCmd(ctx, serverName, ch),
+		m.runMCPAuthCmd(ctx, serverName, id, ch),
 		m.drainMCPAuth(serverName),
 	)
 }
 
 // runMCPAuthCmd returns a tea.Cmd that performs the OAuth flow off
 // the UI goroutine, sending progress messages through ch and
-// emitting MCPAuthDoneMsg or MCPAuthErrMsg when finished.
-func (m *UI) runMCPAuthCmd(ctx context.Context, serverName string, ch chan tea.Msg) tea.Cmd {
+// emitting MCPAuthDoneMsg or MCPAuthErrMsg when finished. The
+// flowID is stamped onto every message so that stale messages from
+// a superseded flow can be identified and dropped by the Update
+// handler.
+func (m *UI) runMCPAuthCmd(ctx context.Context, serverName string, flowID uint64, ch chan tea.Msg) tea.Cmd {
 	ws := m.com.Workspace
 	return func() tea.Msg {
 		defer close(ch)
@@ -76,6 +101,7 @@ func (m *UI) runMCPAuthCmd(ctx context.Context, serverName string, ch chan tea.M
 		progressFn := func(stage mcpauth.Stage, detail string) {
 			msg := dialog.MCPAuthProgressMsg{
 				ServerName: serverName,
+				FlowID:     flowID,
 				Stage:      stage,
 				Detail:     detail,
 			}
@@ -95,10 +121,14 @@ func (m *UI) runMCPAuthCmd(ctx context.Context, serverName string, ch chan tea.M
 		if err != nil {
 			return dialog.MCPAuthErrMsg{
 				ServerName: serverName,
+				FlowID:     flowID,
 				Err:        err,
 			}
 		}
-		return dialog.MCPAuthDoneMsg{ServerName: serverName}
+		return dialog.MCPAuthDoneMsg{
+			ServerName: serverName,
+			FlowID:     flowID,
+		}
 	}
 }
 

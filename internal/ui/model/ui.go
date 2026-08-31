@@ -275,9 +275,10 @@ type UI struct {
 	lspStates map[string]app.LSPClientInfo
 
 	// mcp
-	mcpStates       map[string]mcp.ClientInfo
-	mcpAuthFlows    map[string]*mcpAuthFlow
-	enabledLazyMCPs map[string]bool
+	mcpStates         map[string]mcp.ClientInfo
+	mcpAuthFlows      map[string]*mcpAuthFlow
+	nextMCPAuthFlowID uint64
+	enabledLazyMCPs   map[string]bool
 	// pendingEnableMCPs tracks in-flight enable_mcp ToolCalls by
 	// ToolCallID → server name. The result has not yet arrived, so
 	// we defer the enabled/disabled decision until the correlated
@@ -790,6 +791,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case dialog.MCPAuthProgressMsg:
+		// Drop messages from a superseded flow.
+		if !m.isCurrentFlow(msg.ServerName, msg.FlowID) {
+			break
+		}
 		// Forward to the dialog and re-issue the drain.
 		if dia := m.dialog.Dialog(dialog.MCPAuthID); dia != nil {
 			if d, ok := dia.(*dialog.MCPAuth); ok && d.ServerName() == msg.ServerName {
@@ -798,6 +803,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, m.drainMCPAuth(msg.ServerName))
 	case dialog.MCPAuthDoneMsg:
+		// Drop messages from a superseded flow.
+		if !m.isCurrentFlow(msg.ServerName, msg.FlowID) {
+			break
+		}
 		// Forward to the dialog (returns ActionClose; we close it
 		// ourselves below rather than re-entering handleDialogMsg).
 		if dia := m.dialog.Dialog(dialog.MCPAuthID); dia != nil {
@@ -810,6 +819,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		delete(m.mcpAuthFlows, msg.ServerName)
 		cmds = append(cmds, m.handleStateChanged())
 	case dialog.MCPAuthErrMsg:
+		// Drop messages from a superseded flow.
+		if !m.isCurrentFlow(msg.ServerName, msg.FlowID) {
+			break
+		}
 		if dia := m.dialog.Dialog(dialog.MCPAuthID); dia != nil {
 			if d, ok := dia.(*dialog.MCPAuth); ok && d.ServerName() == msg.ServerName {
 				d.HandleMsg(msg)
