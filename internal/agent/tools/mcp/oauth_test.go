@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -155,32 +157,26 @@ func TestOAuthRoundTripper_InjectsToken(t *testing.T) {
 	require.Equal(t, "Bearer injected-token", capturedAuth)
 }
 
-func TestOAuthRoundTripper_NoToken_NoHeader(t *testing.T) {
+func TestOAuthRoundTripper_NoToken_ReturnsErrNeedsAuth(t *testing.T) {
 	t.Parallel()
 
 	queries := setupTestDB(t)
 
-	var capturedAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
+	// Point at a closed port; no HTTP request should be made.
 	rt := &oauthRoundTripper{
 		serverName: "nonexistent-server",
 		queries:    queries,
 		headers:    map[string]string{"X-Custom": "value"},
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(),
+		http.MethodGet, "http://127.0.0.1:1", nil)
 	require.NoError(t, err)
 
-	resp, err := rt.RoundTrip(req)
-	require.NoError(t, err)
-	resp.Body.Close()
-
-	require.Empty(t, capturedAuth)
+	_, err = rt.RoundTrip(req)
+	require.Error(t, err)
+	require.True(t, NeedsAuth(err),
+		"RoundTrip with no token must return ErrNeedsAuth")
 }
 
 func TestOAuthRoundTripper_CachesToken(t *testing.T) {
@@ -242,4 +238,119 @@ func TestOAuthRoundTripper_CachesToken(t *testing.T) {
 	resp2.Body.Close()
 
 	require.Equal(t, "Bearer original-token", capturedAuth, "should use cached token within 30s window")
+}
+
+func TestIsDeadGrant(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "invalid_grant",
+			err:  &oauth2.RetrieveError{ErrorCode: "invalid_grant"},
+			want: true,
+		},
+		{
+			name: "invalid_client",
+			err:  &oauth2.RetrieveError{ErrorCode: "invalid_client"},
+			want: true,
+		},
+		{
+			name: "401 response",
+			err: &oauth2.RetrieveError{
+				Response: &http.Response{StatusCode: http.StatusUnauthorized},
+			},
+			want: true,
+		},
+		{
+			name: "503 response",
+			err: &oauth2.RetrieveError{
+				Response: &http.Response{StatusCode: http.StatusServiceUnavailable},
+			},
+			want: false,
+		},
+		{
+			name: "plain error",
+			err:  errors.New("boom"),
+			want: false,
+		},
+		{
+			name: "unrecognised code nil response",
+			err:  &oauth2.RetrieveError{ErrorCode: "server_error"},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, isDeadGrant(tt.err))
+		})
+	}
+}
+
+// stubTokenSource is an oauth2.TokenSource that returns a fixed result.
+type stubTokenSource struct {
+	token *oauth2.Token
+	err   error
+}
+
+func (s *stubTokenSource) Token() (*oauth2.Token, error) {
+	return s.token, s.err
+}
+
+// noUpsertQuerier wraps a db.Querier and fails the test if
+// UpsertMCPOAuthToken is called.
+type noUpsertQuerier struct {
+	db.Querier
+	t *testing.T
+}
+
+func (q *noUpsertQuerier) UpsertMCPOAuthToken(_ context.Context, _ db.UpsertMCPOAuthTokenParams) error {
+	q.t.Fatal("UpsertMCPOAuthToken must not be called on refresh failure")
+	return nil
+}
+
+func TestPersistingTokenSource_InvalidGrant(t *testing.T) {
+	t.Parallel()
+
+	inner := &stubTokenSource{
+		err: &oauth2.RetrieveError{ErrorCode: "invalid_grant"},
+	}
+	var mu sync.Mutex
+	pts := &persistingTokenSource{
+		inner:      inner,
+		serverName: "test-srv",
+		queries:    &noUpsertQuerier{t: t},
+		mu:         &mu,
+	}
+
+	_, err := pts.Token()
+	require.Error(t, err)
+	require.True(t, NeedsAuth(err),
+		"invalid_grant must surface as ErrNeedsAuth")
+}
+
+func TestPersistingTokenSource_503_NotNeedsAuth(t *testing.T) {
+	t.Parallel()
+
+	inner := &stubTokenSource{
+		err: &oauth2.RetrieveError{
+			Response: &http.Response{StatusCode: http.StatusServiceUnavailable},
+		},
+	}
+	var mu sync.Mutex
+	pts := &persistingTokenSource{
+		inner:      inner,
+		serverName: "test-srv",
+		queries:    &noUpsertQuerier{t: t},
+		mu:         &mu,
+	}
+
+	_, err := pts.Token()
+	require.Error(t, err)
+	require.False(t, NeedsAuth(err),
+		"503 must not surface as ErrNeedsAuth")
 }

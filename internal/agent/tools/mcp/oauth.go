@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -108,6 +109,10 @@ type persistingTokenSource struct {
 func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 	token, err := s.inner.Token()
 	if err != nil {
+		if isDeadGrant(err) {
+			return nil, fmt.Errorf("%w: refresh failed for %q: %w",
+				ErrNeedsAuth, s.serverName, err)
+		}
 		return nil, err
 	}
 	// Persist if the token changed (refresh happened).
@@ -152,10 +157,11 @@ func (rt *oauthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	}
 
 	token := rt.getToken(req.Context())
-	if token != nil && token.Valid() {
-		token.SetAuthHeader(req)
+	if token == nil || !token.Valid() {
+		return nil, fmt.Errorf(
+			"%w: no valid token for %q", ErrNeedsAuth, rt.serverName)
 	}
-
+	token.SetAuthHeader(req)
 	return http.DefaultTransport.RoundTrip(req)
 }
 
@@ -194,4 +200,22 @@ func buildTokenFromRow(row db.McpOauthToken) *oauth2.Token {
 		token.Expiry = time.Unix(row.Expiry.Int64, 0)
 	}
 	return token
+}
+
+// isDeadGrant reports whether an OAuth token-endpoint error means the
+// grant is permanently dead and the user must re-authorize. Per RFC
+// 6749 §5.2, invalid_grant covers a revoked, expired, or mismatched
+// refresh token. A 401 from the token endpoint means the client
+// credentials themselves were rejected. Anything else (5xx, network
+// failure, rate limit) is treated as retryable and left unwrapped.
+func isDeadGrant(err error) bool {
+	var re *oauth2.RetrieveError
+	if !errors.As(err, &re) {
+		return false
+	}
+	if re.ErrorCode == "invalid_grant" || re.ErrorCode == "invalid_client" {
+		return true
+	}
+	return re.Response != nil &&
+		re.Response.StatusCode == http.StatusUnauthorized
 }
