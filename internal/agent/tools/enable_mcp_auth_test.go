@@ -27,9 +27,11 @@ func TestAuthRequiredResponse_IncludesCLIHint(t *testing.T) {
 	require.Contains(t, resp.Content, "anvil mcp auth slack")
 }
 
+// TestEnableMCP_StateError_NeedsAuth is not parallel because it
+// seeds the mcp package's global state registry via SetStateWithErrorForTest.
+// Running it concurrently with tests that assert the registry is empty
+// (e.g. TestAnvilInfo_MinimalConfig) causes order-dependent failures.
 func TestEnableMCP_StateError_NeedsAuth(t *testing.T) {
-	t.Parallel()
-
 	const serverName = "auth-err"
 	authErr := fmt.Errorf("wrapped: %w", mcp.ErrNeedsAuth)
 	mcp.SetStateWithErrorForTest(serverName, mcp.StateError, authErr)
@@ -48,9 +50,9 @@ func TestEnableMCP_StateError_NeedsAuth(t *testing.T) {
 	require.Contains(t, resp.Content, "authentication has expired")
 }
 
+// TestEnableMCP_DeferredConnectAuthError is not parallel because it
+// seeds the mcp package's global state registry via seedDeferredState.
 func TestEnableMCP_DeferredConnectAuthError(t *testing.T) {
-	t.Parallel()
-
 	const serverName = "deferred-auth"
 	seedDeferredState(t, serverName)
 
@@ -74,9 +76,9 @@ func TestEnableMCP_DeferredConnectAuthError(t *testing.T) {
 	require.False(t, state.IsEnabled(serverName))
 }
 
+// TestEnableMCP_DeferredConnectPlainError is not parallel because it
+// seeds the mcp package's global state registry via seedDeferredState.
 func TestEnableMCP_DeferredConnectPlainError(t *testing.T) {
-	t.Parallel()
-
 	const serverName = "deferred-plain"
 	seedDeferredState(t, serverName)
 

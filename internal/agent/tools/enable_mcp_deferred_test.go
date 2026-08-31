@@ -17,9 +17,9 @@ func seedDeferredState(t *testing.T, name string) {
 	t.Cleanup(func() { mcp.DeleteStateForTest(name) })
 }
 
+// TestEnableMCP_DeferredConnectSuccess is not parallel because it
+// seeds the mcp package's global state registry via seedDeferredState.
 func TestEnableMCP_DeferredConnectSuccess(t *testing.T) {
-	t.Parallel()
-
 	const serverName = "deferred-ok"
 	seedDeferredState(t, serverName)
 
@@ -43,9 +43,10 @@ func TestEnableMCP_DeferredConnectSuccess(t *testing.T) {
 	require.True(t, state.IsEnabled(serverName))
 }
 
+// TestEnableMCP_DeferredConnectFailure_StateUntouched is not parallel
+// because it seeds the mcp package's global state registry via
+// seedDeferredState.
 func TestEnableMCP_DeferredConnectFailure_StateUntouched(t *testing.T) {
-	t.Parallel()
-
 	const serverName = "deferred-fail"
 	seedDeferredState(t, serverName)
 
@@ -67,9 +68,10 @@ func TestEnableMCP_DeferredConnectFailure_StateUntouched(t *testing.T) {
 	require.False(t, state.IsEnabled(serverName))
 }
 
+// TestEnableMCP_DeferredConnectFailure_RetrySucceeds is not parallel
+// because it seeds the mcp package's global state registry via
+// seedDeferredState.
 func TestEnableMCP_DeferredConnectFailure_RetrySucceeds(t *testing.T) {
-	t.Parallel()
-
 	const serverName = "deferred-retry"
 	seedDeferredState(t, serverName)
 
@@ -101,9 +103,9 @@ func TestEnableMCP_DeferredConnectFailure_RetrySucceeds(t *testing.T) {
 	require.True(t, state.IsEnabled(serverName))
 }
 
+// TestEnableMCP_DeferredNoConnectFn is not parallel because it seeds
+// the mcp package's global state registry via seedDeferredState.
 func TestEnableMCP_DeferredNoConnectFn(t *testing.T) {
-	t.Parallel()
-
 	const serverName = "deferred-no-fn"
 	seedDeferredState(t, serverName)
 
