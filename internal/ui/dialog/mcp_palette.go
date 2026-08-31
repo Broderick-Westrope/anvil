@@ -20,6 +20,7 @@ type MCPPaletteEntry struct {
 	Description string // Lazy description from config.
 	IsLazy      bool
 	Enabled     bool      // Whether currently enabled on this branch.
+	NeedsAuth   bool      // Whether the server needs re-authentication.
 	State       mcp.State // Current connection state.
 	Counts      mcp.Counts
 }
@@ -75,6 +76,9 @@ func (i *MCPPaletteItem) SetMatch(m fuzzy.Match) {
 
 // infoLabel returns a human-readable label for the item's right-side info.
 func (i *MCPPaletteItem) infoLabel() string {
+	if i.entry.NeedsAuth {
+		return "needs auth"
+	}
 	if i.entry.State == mcp.StateDisabled {
 		return "disabled"
 	}
@@ -226,6 +230,19 @@ func (mp *MCPPalette) SetEntryState(name string, state mcp.State, counts mcp.Cou
 	}
 }
 
+// SetEntryNeedsAuth updates the needs-auth flag of a named entry and
+// bumps its version so the render cache is invalidated.
+func (mp *MCPPalette) SetEntryNeedsAuth(name string, needsAuth bool) {
+	for _, item := range mp.list.Items() {
+		if pi, ok := item.(*MCPPaletteItem); ok && pi.entry.Name == name {
+			pi.entry.NeedsAuth = needsAuth
+			pi.cache = nil
+			pi.Bump()
+			return
+		}
+	}
+}
+
 // HandleMsg implements Dialog.
 // HandleMsg implements Dialog. It delegates to handleNavKey in the default
 // navigation mode and handleFilterKey when the filter input is active.
@@ -265,6 +282,12 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 		if selected := mp.list.SelectedItem(); selected != nil {
 			if item, ok := selected.(*MCPPaletteItem); ok && item != nil {
 				switch item.entry.State {
+				case mcp.StateError:
+					if item.entry.NeedsAuth {
+						return ActionStartMCPAuth{ServerName: item.entry.Name}
+					}
+					// Non-auth errors: retry the connection.
+					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
 				case mcp.StateDeferred:
 					// Deferred servers route through the lazy toggle path
 					// so the enable is persisted as MCPToggleContent and

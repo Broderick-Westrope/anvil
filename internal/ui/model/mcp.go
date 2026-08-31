@@ -83,9 +83,12 @@ func mcpList(t *styles.Styles, mcps []mcp.ClientInfo, width, maxItems int) strin
 			extraContent = mcpCounts(t, m.Counts)
 		case mcp.StateError:
 			icon = t.Resource.ErrorIcon.String()
-			description = t.Resource.StatusText.Render("error")
-			if m.Error != nil {
+			if m.NeedsAuth {
+				description = t.Resource.StatusText.Render("needs auth")
+			} else if m.Error != nil {
 				description = t.Resource.StatusText.Render(fmt.Sprintf("error: %s", m.Error.Error()))
+			} else {
+				description = t.Resource.StatusText.Render("error")
 			}
 		case mcp.StateDisabled:
 			icon = t.Resource.DisabledIcon.String()
