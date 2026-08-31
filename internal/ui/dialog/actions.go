@@ -138,6 +138,19 @@ type (
 		ServerName string
 		Enable     bool
 	}
+	// ActionStartMCPAuth requests that the parent model begin the OAuth
+	// flow for an MCP server.
+	ActionStartMCPAuth struct {
+		ServerName string
+	}
+	// ActionRetryMCPAuth requests another attempt after a failure.
+	ActionRetryMCPAuth struct {
+		ServerName string
+	}
+	// ActionCancelMCPAuth requests cancellation of an in-flight flow.
+	ActionCancelMCPAuth struct {
+		ServerName string
+	}
 	// ActionNavigateTree is dispatched when a tree or branch dialog
 	// selects a message to navigate to. The receiver uses Role and
 	// Content to decide whether to pre-fill the editor.
