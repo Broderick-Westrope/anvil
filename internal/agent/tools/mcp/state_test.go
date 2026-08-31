@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,6 +102,51 @@ func TestUpdateState_EventNeedsAuth_Dedup(t *testing.T) {
 	needsAuthCount = drainEventsForServer(events, EventNeedsAuth, name)
 	require.Equal(t, 1, needsAuthCount,
 		"updateState after dedup window must publish EventNeedsAuth again")
+}
+
+// TestShouldNotifyAuth_ConcurrentDedup verifies that N goroutines
+// calling shouldNotifyAuth concurrently for the same server produce
+// exactly one true result. This pins the atomicity of the
+// check-and-update guarded by authNotifyMu.
+//
+// Not parallel: mutates the package-level AuthNotifyDedup variable.
+func TestShouldNotifyAuth_ConcurrentDedup(t *testing.T) {
+	const name = "concurrent-dedup-test"
+	t.Cleanup(func() { authNotifyTimes.Del(name) })
+
+	// Use a long dedup window so no goroutine can slip through after
+	// the first sets the timestamp.
+	origDedup := AuthNotifyDedup
+	AuthNotifyDedup = time.Minute
+	t.Cleanup(func() { AuthNotifyDedup = origDedup })
+
+	const workers = 50
+	results := make(chan bool, workers)
+	var ready sync.WaitGroup
+	ready.Add(workers)
+	start := make(chan struct{})
+
+	for range workers {
+		go func() {
+			ready.Done()
+			<-start
+			results <- shouldNotifyAuth(name)
+		}()
+	}
+
+	// Release all goroutines at once.
+	ready.Wait()
+	close(start)
+
+	trueCount := 0
+	for range workers {
+		if <-results {
+			trueCount++
+		}
+	}
+
+	require.Equal(t, 1, trueCount,
+		"exactly one concurrent caller must win the dedup check")
 }
 
 // drainEventsForServer drains all available events from the channel

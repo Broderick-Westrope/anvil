@@ -400,3 +400,40 @@ func TestClassifyConnectError_TokenIsSent(t *testing.T) {
 	require.Equal(t, "Bearer test-access-token", receivedAuth,
 		"probe must send the stored bearer token")
 }
+
+func TestClassifyConnectError_ExpiredTokenSkipsProbe(t *testing.T) {
+	t.Parallel()
+
+	// Start a server that should never be hit.
+	probed := false
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			probed = true
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+	defer srv.Close()
+
+	q := setupTestDB(t)
+	insertTestToken(t, q, db.UpsertMCPOAuthTokenParams{
+		ServerName:  "srv",
+		ServerUrl:   srv.URL,
+		AccessToken: "expired",
+		TokenType:   "Bearer",
+		ClientID:    "c",
+		Expiry: sql.NullInt64{
+			Int64: time.Now().Add(-time.Hour).Unix(),
+			Valid: true,
+		},
+	})
+
+	orig := errors.New("calling \"initialize\": unexpected EOF")
+	got := classifyConnectError(context.Background(), orig, "srv",
+		oauthHTTPFor(srv.URL), staticResolver{}, q)
+
+	require.True(t, NeedsAuth(got),
+		"expired token must produce ErrNeedsAuth without a probe")
+	require.True(t, errors.Is(got, io.EOF) || errors.Is(got, orig),
+		"original error must be preserved in the chain")
+	require.False(t, probed,
+		"the server must not be contacted when the token is locally expired")
+}

@@ -65,6 +65,12 @@ var (
 	// notifications within AuthNotifyDedup.
 	authNotifyTimes = csync.NewMap[string, time.Time]()
 
+	// authNotifyMu serialises the read-check-write in shouldNotifyAuth.
+	// csync.Map synchronises individual Get/Set calls but not compound
+	// check-and-update, so two concurrent callers could both pass the
+	// dedup window check and both publish EventNeedsAuth.
+	authNotifyMu sync.Mutex
+
 	// initStarted records whether Initialize has been armed. WaitForInit only
 	// blocks once initialization is expected; coordinators built outside app
 	// startup never arm it and so must not wait forever.
@@ -707,7 +713,12 @@ var AuthNotifyDedup = 60 * time.Second
 
 // shouldNotifyAuth returns true if an EventNeedsAuth should be
 // published for the named server, applying the dedup window.
+// The check-and-update is serialised by authNotifyMu so two
+// concurrent callers cannot both pass the window check.
 func shouldNotifyAuth(name string) bool {
+	authNotifyMu.Lock()
+	defer authNotifyMu.Unlock()
+
 	now := time.Now()
 	if last, ok := authNotifyTimes.Get(name); ok {
 		if now.Sub(last) < AuthNotifyDedup {

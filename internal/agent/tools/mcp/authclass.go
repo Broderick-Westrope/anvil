@@ -120,6 +120,12 @@ func classifyConnectError(
 
 	token := buildTokenFromRow(row)
 
+	// A locally-expired token will produce a guaranteed 401; skip
+	// the network round-trip and return immediately.
+	if !token.Valid() {
+		return fmt.Errorf("%w: %w", ErrNeedsAuth, err)
+	}
+
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
@@ -132,7 +138,7 @@ func classifyConnectError(
 	}
 	token.SetAuthHeader(req)
 
-	resp, probeErr := http.DefaultClient.Do(req)
+	resp, probeErr := (&http.Client{Timeout: probeTimeout}).Do(req)
 	if probeErr != nil {
 		slog.Debug("Classification probe failed",
 			"name", name, "error", probeErr)

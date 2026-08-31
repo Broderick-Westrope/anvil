@@ -161,6 +161,8 @@ func TestUpdateState_ErrorClearsPromptsAndResources(t *testing.T) {
 // registered or overwrite and leak a live replacement. With the per-server
 // lock only the first arrival rebuilds; the rest re-check and reuse the
 // healthy session, so exactly one new session is created.
+//
+// Not parallel: mutates the package-level newSession function variable.
 func TestGetOrRenewClient_SerializesConcurrentRenewals(t *testing.T) {
 	const name = "test-renew-concurrency"
 	const workers = 8
@@ -302,6 +304,8 @@ func TestSessionErrorThenRenew_RestoresTools(t *testing.T) {
 // mid-session renewal fails with an ErrNeedsAuth-wrapped error, the
 // server's state transitions to StateError with NeedsAuth true.
 //
+// Not parallel: mutates the package-level newSession function variable.
+//
 // Trace (see getOrRenewClient init.go:527-617):
 //  1. Ping fails (session dead) → updateState(StateError, pingErr)
 //  2. createSession is called to rebuild the session
@@ -358,6 +362,8 @@ func TestGetOrRenewClient_AuthFailureSetsNeedsAuth(t *testing.T) {
 // tools, prompts, and resources; if renewal restored only tools while keeping
 // the old prompt/resource counts, GetState would again advertise capabilities
 // absent from the registries.
+//
+// Not parallel: mutates the package-level newSession function variable.
 func TestGetOrRenewClient_RestoresPromptsAndResources(t *testing.T) {
 	const name = "test-renew-prompts-resources"
 	t.Cleanup(func() {
