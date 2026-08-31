@@ -13,6 +13,7 @@ import (
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
+	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -150,6 +151,17 @@ type Workspace interface {
 	DisableDockerMCP() error
 	EnableMCP(ctx context.Context, name string) error
 	DisableMCP(name string) error
+	// MCPAuthenticate runs the OAuth authorization-code flow for the
+	// named MCP server and, on success, reconnects it and rebuilds
+	// the orchestrator's tool list. progress is called as the flow
+	// advances and may be invoked from a non-UI goroutine; callers
+	// must marshal it back onto the Bubble Tea loop themselves.
+	MCPAuthenticate(
+		ctx context.Context,
+		name string,
+		openURL func(string) error,
+		progress func(mcpauth.Stage, string),
+	) error
 
 	// Events
 	Subscribe(program *tea.Program)

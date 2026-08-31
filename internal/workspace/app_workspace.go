@@ -14,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
+	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -450,6 +451,49 @@ func (w *AppWorkspace) EnableMCP(ctx context.Context, name string) error {
 
 func (w *AppWorkspace) DisableMCP(name string) error {
 	return mcptools.DisableSingle(w.store, name)
+}
+
+// MCPAuthenticate runs the OAuth authorization-code flow for the named
+// MCP server and, on success, reconnects it and rebuilds the
+// orchestrator's tool list so the agent can call the server's tools.
+func (w *AppWorkspace) MCPAuthenticate(
+	ctx context.Context,
+	name string,
+	openURL func(string) error,
+	progress func(mcpauth.Stage, string),
+) error {
+	mcpCfg, ok := w.store.Config().MCP[name]
+	if !ok {
+		return fmt.Errorf("MCP server %q not found in config", name)
+	}
+	if _, err := mcpauth.Authorize(ctx, mcpauth.Options{
+		ServerName: name,
+		Config:     mcpCfg,
+		Resolver:   w.store.Resolver(),
+		Queries:    w.app.Queries,
+		Force:      true,
+		OpenURL:    openURL,
+		Progress:   progress,
+	}); err != nil {
+		return err
+	}
+	// Re-connect with the fresh token. The server is in StateError, so
+	// ConnectDeferred's StateDeferred guard would no-op; go straight to
+	// InitializeSingle.
+	if err := mcptools.InitializeSingle(ctx, name, w.store, nil); err != nil {
+		return err
+	}
+	// Reconnecting is not enough. updateState deleted this server's
+	// entries from allTools/allPrompts/allResources when it entered
+	// StateError (internal/agent/tools/mcp/init.go). InitializeSingle
+	// re-registers them in the global registry, but the orchestrator's
+	// own tool list — the one handed to the LLM — is only rebuilt by
+	// coordinator.RefreshMCPTools. Without this call the palette reads
+	// "connected" while every tool call fails.
+	if w.app.AgentCoordinator != nil {
+		return w.app.AgentCoordinator.RefreshMCPTools(ctx, name)
+	}
+	return nil
 }
 
 // -- Lifecycle --

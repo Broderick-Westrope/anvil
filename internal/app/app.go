@@ -54,6 +54,7 @@ type App struct {
 	Messages    message.Service
 	Permissions permission.Service
 	FileTracker filetracker.Service
+	Queries     db.Querier
 
 	AgentCoordinator agent.Coordinator
 
@@ -89,6 +90,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		Messages:    messages,
 		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store),
 		FileTracker: filetracker.NewService(q),
+		Queries:     q,
 		LSPManager:  lsp.NewManager(store),
 
 		globalCtx: ctx,

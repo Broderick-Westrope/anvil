@@ -87,6 +87,11 @@ type Coordinator interface {
 	// ActiveSkillByName returns the active skill with the given name, or nil
 	// if not found.
 	ActiveSkillByName(name string) *skills.Skill
+	// RefreshMCPTools rebuilds the orchestrator's tool list after an MCP
+	// server has been (re)connected. Without this, the orchestrator's
+	// PrepareStep would still use a stale snapshot that omits the
+	// server's tools.
+	RefreshMCPTools(ctx context.Context, name string) error
 }
 
 type coordinator struct {
@@ -1342,6 +1347,14 @@ func (c *coordinator) refreshMCPTools(ctx context.Context, name string) (int, er
 	}
 
 	return toolCount, nil
+}
+
+// RefreshMCPTools rebuilds the orchestrator's tool list after an MCP
+// server has been (re)connected. It is the exported entry point for
+// callers outside the agent package (e.g. workspace).
+func (c *coordinator) RefreshMCPTools(ctx context.Context, name string) error {
+	_, err := c.refreshMCPTools(ctx, name)
+	return err
 }
 
 func (c *coordinator) QueuedPrompts(sessionID string) int {
