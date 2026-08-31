@@ -737,6 +737,14 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		return nil, err
 	}
 
+	slog.Debug("Resolved agent model",
+		"agent", agentName,
+		"model", large.ModelCfg.Provider+"/"+large.ModelCfg.Model,
+		"reasoning_effort", effectiveReasoningEffort(large),
+		"think", large.ModelCfg.Think,
+		"depth", depth,
+	)
+
 	largeProviderCfg, _ := c.cfg.Config().Providers.Get(large.ModelCfg.Provider)
 	result := NewSessionAgent(SessionAgentOptions{
 		LargeModel:           large,
@@ -1147,7 +1155,14 @@ func (c *coordinator) buildAgentModels(ctx context.Context, agentCfg config.Agen
 	// Resolve large model — per-agent if configured, else global large.
 	largeModelCfg, err := config.ResolveAgentModel(agentCfg, c.cfg.Config())
 	if err != nil {
-		// Fall back to global large model on resolution failure.
+		// Fall back to global large model on resolution failure. Warn loudly:
+		// a typo in agent frontmatter would otherwise silently promote a cheap
+		// specialist onto the (expensive) orchestrator model.
+		slog.Warn("Failed to resolve agent model; falling back to the global large model",
+			"agent", agentCfg.ID,
+			"configured_model", agentCfg.Model,
+			"error", err,
+		)
 		var globalOk bool
 		largeModelCfg, globalOk = c.cfg.Config().Models[config.SelectedModelTypeLarge]
 		if !globalOk {

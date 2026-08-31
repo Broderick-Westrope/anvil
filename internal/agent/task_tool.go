@@ -23,7 +23,7 @@ type TaskParams struct {
 	Prompt       string `json:"prompt" jsonschema:"description=The task for the agent to perform,required"`
 	SubagentType string `json:"subagent_type" jsonschema:"description=The type of specialized agent to use for this task,required"`
 	Description  string `json:"description" jsonschema:"description=A short (3-5 words) description of the task"`
-	Model        string `json:"model" jsonschema:"description=Optional model override (provider/model format e.g. anthropic/claude-opus-4-6). When set the agent uses this model instead of its configured default."`
+	Model        string `json:"model,omitempty" jsonschema:"description=Rarely needed. Overrides the agent's configured model (exact provider/model ID). Omit unless you have a specific reason to deviate from the agent's tuned default."`
 }
 
 const (
@@ -70,6 +70,24 @@ func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDep
 							callerName, params.SubagentType,
 							strings.Join(callerMD.DelegatesTo, ", ")),
 					), nil
+				}
+			}
+
+			// Validate an optional model override before it reaches
+			// getOrBuildAgent. An unresolvable override (typically a
+			// hallucinated model ID) would otherwise fall through to the
+			// global large model, silently promoting a cheap specialist onto
+			// the most expensive model available. Dropping the override
+			// instead keeps the agent on its configured default.
+			if params.Model != "" {
+				candidate := config.Agent{ID: params.SubagentType, Model: params.Model}
+				if _, err := config.ResolveAgentModel(candidate, c.cfg.Config()); err != nil {
+					slog.Warn("Ignoring invalid model override; using the agent's configured model",
+						"agent", params.SubagentType,
+						"model_override", params.Model,
+						"error", err,
+					)
+					params.Model = ""
 				}
 			}
 
