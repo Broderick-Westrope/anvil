@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
@@ -65,4 +67,82 @@ func preflightOAuth(
 			ErrNeedsAuth, name)
 	}
 	return nil
+}
+
+// probeTimeout bounds the classification probe. It is short on
+// purpose: the connection has already failed and the user is waiting.
+const probeTimeout = 5 * time.Second
+
+// classifyConnectError inspects a failed connection attempt and, for
+// OAuth-backed servers, probes the endpoint with the stored token to
+// decide whether the failure was an authentication problem. This is a
+// fallback for servers that reject invalid credentials by closing the
+// connection rather than returning 401, so the status never reaches
+// StoredTokenHandler.Authorize. Returns err unchanged whenever the
+// evidence is not conclusive.
+func classifyConnectError(
+	ctx context.Context,
+	err error,
+	name string,
+	m config.MCPConfig,
+	resolver config.VariableResolver,
+	queries db.Querier,
+) error {
+	if err == nil {
+		return nil
+	}
+	if m.Auth != config.MCPAuthOAuth {
+		return err
+	}
+	if NeedsAuth(err) {
+		return err
+	}
+	if isTransientError(err) {
+		return err
+	}
+	if queries == nil {
+		return err
+	}
+
+	row, dbErr := queries.GetMCPOAuthToken(ctx, name)
+	if dbErr != nil {
+		slog.Debug("Classification probe: cannot load token",
+			"name", name, "error", dbErr)
+		return err
+	}
+
+	rawURL, urlErr := m.ResolvedURL(resolver)
+	if urlErr != nil {
+		slog.Debug("Classification probe: cannot resolve URL",
+			"name", name, "error", urlErr)
+		return err
+	}
+
+	token := buildTokenFromRow(row)
+
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	req, reqErr := http.NewRequestWithContext(
+		probeCtx, http.MethodGet, rawURL, nil)
+	if reqErr != nil {
+		slog.Debug("Classification probe: cannot build request",
+			"name", name, "error", reqErr)
+		return err
+	}
+	token.SetAuthHeader(req)
+
+	resp, probeErr := http.DefaultClient.Do(req)
+	if probeErr != nil {
+		slog.Debug("Classification probe failed",
+			"name", name, "error", probeErr)
+		return err
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("%w: %w", ErrNeedsAuth, err)
+	}
+
+	return err
 }

@@ -416,8 +416,9 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 		return nil
 	}
 	if !isTransientError(err) {
-		// Auth/permanent errors: leave state as StateError so the
-		// palette and enable_mcp report the real problem.
+		// Auth/permanent errors (including ErrNeedsAuth) are
+		// non-transient and intentionally leave the server in
+		// StateError for the palette to act on.
 		return err
 	}
 	slog.Info("Retrying transient MCP connect failure", "name", name, "error", err)
@@ -466,6 +467,7 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 	// newSession handles its own timeout internally.
 	session, err := newSession(ctx, name, m, resolver, queries)
 	if err != nil {
+		err = classifyConnectError(ctx, err, name, m, resolver, queries)
 		updateState(name, StateError, err, nil, Counts{})
 		return err
 	}
