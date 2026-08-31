@@ -213,6 +213,9 @@ type ClientInfo struct {
 	Counts      Counts
 	ConnectedAt time.Time
 	IsLazy      bool `json:"is_lazy"`
+	// NeedsAuth is true when State is StateError and the error indicates
+	// the server's OAuth token must be refreshed by the user.
+	NeedsAuth bool `json:"needs_auth"`
 }
 
 // SubscribeEvents returns a channel for MCP events
@@ -636,11 +639,12 @@ func closeSession(name string, s *ClientSession) {
 // updateState updates the state of an MCP client and publishes an event
 func updateState(name string, state State, err error, client *ClientSession, counts Counts) {
 	info := ClientInfo{
-		Name:   name,
-		State:  state,
-		Error:  err,
-		Client: client,
-		Counts: counts,
+		Name:      name,
+		State:     state,
+		Error:     err,
+		Client:    client,
+		Counts:    counts,
+		NeedsAuth: state == StateError && NeedsAuth(err),
 	}
 	switch state {
 	case StateConnected:
