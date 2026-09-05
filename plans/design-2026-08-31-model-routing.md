@@ -21,6 +21,12 @@ codebase.
 
 ## Finding 0: the biggest cost driver is not the orchestrator
 
+> **Superseded 2026-09-05. This finding is wrong.** Measured over 5 days, the
+> orchestrator is **~87% of cost** and subagents are ~11% — the inverse of the
+> claim below. The reasoning about agents inheriting the orchestrator model is
+> still correct and worth fixing; only the cost attribution, and therefore the
+> priority it implied, was wrong. See "Measured results" below.
+
 **None of the ten Anvil subagents declares a model.**
 
 ```
@@ -298,6 +304,153 @@ reason and the cost reason, not because Sonnet is a better critic.** The larger
 win is prompt-side nit suppression, which is worth more than the model choice
 (19% → 55% address rate).
 
+## Measured results, 2026-09-05 (5 days of real use)
+
+Data: `~/.local/share/anvil/anvil.db`, 5 days either side of the
+2026-08-31 16:32 UTC cutoff. 354 sessions before, 131 after.
+
+A note on the source: `messages.created_at` and `sessions.created_at` are in
+**seconds**, though both schema comments say milliseconds (the `updated_at`
+trigger uses `strftime('%s','now')`). Anything built in Phase 3 must not trust
+those comments.
+
+### Finding 0 was backwards, and it was the load-bearing claim
+
+| Era | Orchestrator cost | Subagent cost |
+| --- | --- | --- |
+| Before | $2,040.54 (**85.5%**) | $345.77 (14.5%) |
+| After | $1,421.97 (**89.1%**) | $173.22 (10.9%) |
+
+The document asserted "two thirds of the spend is in subagents" and built Phase
+0's priorities on it. The real split is the inverse: **the orchestrator is
+~87% of cost.** Subagents consumed *more* input tokens than the orchestrator
+(15.2M vs 9.1M before) at roughly a tenth of the cost per token, because they
+are short-lived while the orchestrator re-pays for a growing context on every
+turn.
+
+The error was in the model, not the data: it assumed four subagent calls each
+carrying substantial context, and ignored that orchestrator context compounds.
+Consequence — the *orchestrator* model swap was the high-leverage change and the
+subagent tiering was largely cosmetic, which is the opposite of how Phase 0 was
+framed.
+
+### The orchestrator swap delivered, and the comparison is unusually clean
+
+Orchestrator-only sessions, grouped by dominant model:
+
+| Model | Sessions | Input | Cost | Cost per M input |
+| --- | --- | --- | --- | --- |
+| Fable 5 | 52 | 7.0M | $1,699.50 | **$243.10** |
+| Opus 5 | 53 | 10.7M | $1,763.31 | **$165.50** |
+
+52 versus 53 sessions is a well-matched natural experiment. **Opus 5 is 32%
+cheaper per unit of work** and absorbed 53% more input volume for
+approximately the same total spend. List prices differ by exactly 2×, so the
+32% (rather than 50%) reflects differing output ratios and cache-hit rates.
+
+Also worth noting: `cost` is populated despite subscription OAuth, so the
+`FlatRate` flag is not set on this provider and the accounting still runs.
+
+### Weakness 6 did not materialise
+
+The Artificial Analysis figures suggested Sonnet 5 might be *slower* than Opus
+5, which would have inverted the argument for cheap subagents. Measured
+per-message duration, seconds:
+
+| Model | n | p50 | p90 | p99 |
+| --- | --- | --- | --- | --- |
+| Fable 5 (orchestrator) | 3,641 | 9 | 30 | 439 |
+| Opus 5 (orchestrator) | 6,102 | **8** | 28 | **312** |
+| Sonnet 5 | 697 | **6** | 32 | 223 |
+| Haiku 4.5 | 47 | 2 | 10 | 31 |
+
+Sonnet 5 is *faster* at the median, not 2.7× slower. The published TTFT
+numbers did not transfer to this workload — they are measured at max effort,
+and nothing here runs at max effort. Opus 5 also has a materially better tail
+than Fable 5 (p99 312s vs 439s).
+
+### Overall cost per message fell only 9%
+
+$0.1064 → $0.0965. Far short of the ~73% the Finding 0 table implied, for two
+reasons: that table was wrong about where cost lives (above), and orchestrator
+sessions got **65% heavier** (132k → 219k average input tokens). Per-unit cost
+fell 32% while units per session grew, so the aggregate barely moved. This is a
+confound, not a result — the "after" window contains this analysis and the MCP
+OAuth work, which are heavier than typical.
+
+### The escalation valve is unused; manual switching replaced it
+
+**`oracle` was invoked 0 times in 5 days.** Phase 2 Option A — "escalation is
+already delegation" — has not been exercised even once. What happened instead:
+
+- 7 orchestrator sessions were manually switched to Fable 5 (106 messages).
+- **Zero mid-session mixing.** Every session ran wholly on one model, so the
+  switch happens at session start, not mid-conversation. The cache-invalidation
+  cost modelled in Finding 4 is therefore not being paid.
+- The switches cluster on day one: 6 of 7 on 2026-09-01, alternating
+  Fable/Opus/Fable/Opus eight times in six hours. After that, 1 Fable session
+  in four days.
+
+Two readings, and I cannot separate them with this data. Either the default is
+now right and day one was calibration; or `oracle`'s `delegate_when` is written
+in terms the orchestrator never matches, so escalation only ever happens by
+hand. The day-one churn is also direct evidence for Phase 1: eight global
+config writes in six hours, each leaking into every other session.
+
+### 51% of subagent messages ran on a stale model generation
+
+| Model | Messages | Source |
+| --- | --- | --- |
+| Opus 4.6 | 802 | `review.md` pin |
+| Sonnet 5 | 698 | agent default ✓ |
+| Opus 5 | 495 | agent default ✓ |
+| Sonnet 4.6 | 480 | `review.md` pin |
+| Haiku 4.5 | 47 | agent default ✓ |
+
+66% of delegations (56 of 85) passed an explicit `model`. That is **not** the
+LLM inventing IDs — it is `anvil/commands/review.md` deliberately running
+`reviewer` twice on two models, which is the documented legitimate use of the
+parameter. But it was pinned to the 4-6 generation, so the command was
+silently overriding the tuned 5-series defaults with older models on every
+review. Now bumped to `claude-sonnet-5` / `claude-opus-5`, with the redundant
+`convention-reviewer` override dropped.
+
+This is the failure mode the fix commit was aimed at, arriving by a different
+route: not a hallucinated ID, but a **stale hand-written one**. And because
+invalid IDs now degrade silently to the agent default, a stale pin is invisible
+unless someone reads the logs. The `Ignoring invalid model override` warning
+fired 0 times, confirming these IDs all still resolve — the pins were valid,
+just old.
+
+### Scorecard
+
+| Prediction | Outcome |
+| --- | --- |
+| Subagents are two thirds of cost | **Wrong** — they are ~11%; orchestrator is ~89% |
+| Opus 5 cheaper than Fable 5 for orchestration | **Confirmed** — 32% cheaper per M input, 53% more volume |
+| Opus 5 has better latency than Fable 5 | **Confirmed** — p50 8s vs 9s, p99 312s vs 439s |
+| Sonnet 5 may be slower than Opus 5 (weakness 6) | **Not observed** — Sonnet 5 p50 6s vs Opus 5 8s |
+| Tiering subagents is high-leverage | **Wrong** — touches ~11% of spend |
+| `oracle` absorbs escalation | **Not observed** — 0 invocations |
+| Mid-conversation switching is costly, so avoid it | **Untested** — no mid-session switching occurred |
+
+### What to do next
+
+1. **Reorder Phase 3.** The Sonnet-versus-Opus latency question is answered;
+   drop it. The open question is now why `oracle` is never selected. Read its
+   `delegate_when` against the sessions that were manually switched to Fable
+   and see whether the criteria would have matched.
+2. **Phase 1 is still worth doing**, and for a better-evidenced reason than
+   originally given: eight global model writes in six hours on day one. The
+   justification is switching *churn*, not mid-session cache cost, since
+   mid-session switching does not happen.
+3. **Reconsider the subagent tier assignments** — not because they are wrong,
+   but because they matter ~8× less than assumed. Any further effort belongs on
+   orchestrator context growth (132k → 219k), which now looks like the largest
+   single lever and is not addressed anywhere in this document.
+4. **Audit commands for pinned model IDs** the way agents were audited.
+   `review.md` was the only offender found, but nothing prevents the next one.
+
 ## Plan
 
 ### Phase 0 — subagent model defaults (shipped 2026-08-31)
@@ -504,18 +657,10 @@ Anvil already records `Model` and `Provider` per message
 (`internal/agent/agent.go:446-447`) and cost per session. What is missing is the
 rollup.
 
-1. **Settle the Sonnet-slower-than-Opus question first** (weakness 6 above).
-   Fix a task, run the same subagent on Sonnet 5 and Opus 5 at default effort,
-   several trials each, and compare wall-clock and output tokens. If Sonnet 5 is
-   consistently slower, the whole Sonnet tier needs rethinking — either revert
-   to Opus 5 for latency-sensitive agents, or reintroduce a *measured* effort
-   override rather than the guessed one that was stripped. Nothing else in this
-   phase matters until this is answered.
-   - A first attempt at this was abandoned mid-run for taking too long, which is
-     itself weak evidence that these tasks are slow enough to matter. Two
-     `explorer`-at-`low` runs completed in **37.6s** and **33.8s** wall; the
-     `high` arm never finished. Not a result — a note that the experiment needs
-     to be designed to terminate.
+1. ~~**Settle the Sonnet-slower-than-Opus question first**~~ — **answered
+   2026-09-05, see Measured results.** Sonnet 5 p50 6s vs Opus 5 8s; the
+   published TTFT figures did not transfer. The open question is instead **why
+   `oracle` is never selected** (0 invocations in 5 days).
 2. Extend `anvil stats` with a breakdown by model **and by agent name**: token
    counts, wall-clock, and cost where a metered key is in use. Requires
    attributing subagent messages to their agent, which the coordinator knows.
@@ -558,13 +703,19 @@ Stated so it can be attacked:
 5. **Sonnet-for-review rests on mechanism, not measurement.** No head-to-head
    exists. If the over-flagging explanation is right, the better fix is prompt-side
    nit suppression, and the model choice is secondary.
-6. **Sonnet 5 may be *slower* than Opus 5 at default effort, which would
-   invert the latency argument for cheap subagents.** Artificial Analysis
-   reports Sonnet 5 at **182.62s** TTFT at max effort against Opus 5 at
-   **67.92s** — the smaller model spends longer thinking. Anvil sets no effort
-   overrides, so subagents inherit `high`. If that ordering holds at `high`,
-   tiering down to Sonnet 5 buys token intensity and rate-limit headroom but
-   costs wall-clock, which on subscription auth is the cost that actually
-   matters. This is the single most likely way Phase 0 is wrong. It is also
-   directly measurable and should be the first thing Phase 3 checks — before
-   any of the cost accounting.
+6. ~~**Sonnet 5 may be *slower* than Opus 5 at default effort**~~ —
+   **refuted 2026-09-05.** Artificial Analysis reported Sonnet 5 at 182.62s
+   TTFT at max effort against Opus 5 at 67.92s, and I flagged this as the most
+   likely way Phase 0 was wrong. Measured over 697 real messages, Sonnet 5 is
+   *faster* at the median (6s vs 8s). Those figures are max-effort and nothing
+   here runs at max effort. Lesson: vendor-published TTFT at extreme settings
+   is not a predictor of agent-workload latency.
+7. **The real error was Finding 0, which nothing in this list flagged.** Every
+   weakness above questioned a model-choice claim; none questioned the cost
+   *attribution* those choices were prioritised against. Subagents turned out
+   to be ~11% of spend, not two thirds. When auditing an argument, check the
+   load-bearing measurement before the conclusions drawn from it.
+8. **The largest cost lever is not in this document at all.** Orchestrator
+   context grew 132k → 219k average input tokens over the same window. With the
+   orchestrator at ~89% of cost, context growth dominates model choice, and
+   nothing here addresses it.
