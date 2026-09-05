@@ -391,11 +391,33 @@ already delegation" — has not been exercised even once. What happened instead:
   Fable/Opus/Fable/Opus eight times in six hours. After that, 1 Fable session
   in four days.
 
-Two readings, and I cannot separate them with this data. Either the default is
-now right and day one was calibration; or `oracle`'s `delegate_when` is written
-in terms the orchestrator never matches, so escalation only ever happens by
-hand. The day-one churn is also direct evidence for Phase 1: eight global
-config writes in six hours, each leaking into every other session.
+**Correction on closer inspection: only 2 of those 6 sessions were new.** The
+other 4 were created 2026-08-28, before the change, and resumed afterwards —
+already-in-flight Fable work, not fresh escalations. So genuine post-change
+escalation to Fable happened **twice in five days**, and `oracle` was still
+never selected. That is a stronger version of the same conclusion: Opus 5 is
+sufficient for nearly all orchestration, and the escalation path — by hand or
+by delegation — is almost never wanted.
+
+#### The switching data is far better evidence for Phase 1 than expected
+
+Counting model flips across the global orchestrator timeline: **68 implied
+global model switches in five days, with a minimum gap of 0 seconds** — two
+sessions on different models producing turns in the same second. A single
+global setting cannot do that. It means several Anvil processes ran
+concurrently, each holding its own in-memory model, all writing the same global
+`anvil.json`.
+
+The codebase already knows. `pinPreferredModelLocked`
+(`internal/config/store.go:430`) exists precisely because "a reload triggered
+by an unrelated write (a token refresh, say) would otherwise import whichever
+model a sibling instance last selected and switch models out from under the
+user mid-session."
+
+So Phase 1 is not a nice-to-have: **there is already a workaround in the
+codebase for the bug Phase 1 would properly fix**, and the process-global pin
+it uses cannot express "this session wants Fable while that one wants Opus".
+That is the actual observed need — 68 times in five days.
 
 ### 51% of subagent messages ran on a stale model generation
 
@@ -485,7 +507,42 @@ shallower**. Sonnet 4.6 was doing 16-turn reviews where Sonnet 5 does 35-turn
 reviews for less money per turn. Fixing that pin is the highest-value change to
 come out of this review of the data.
 
-#### Weak quality signal, reported as weak
+#### Actual quality signal: 275 attributed findings
+
+`/review` already tags every merged finding with its source
+(`[Sonnet]`, `[Opus]`, `[Convention]`, `[Opus + Sonnet]`, …). Mining those tags
+out of the orchestrator's merged output gives real per-reviewer recall — the
+ground truth I earlier said was unavailable. 275 findings:
+
+| Reviewer | Caught | Unique to it | Cost | Unique per $ |
+| --- | --- | --- | --- | --- |
+| Opus 4.6 | 144 (52.4%) | **78** (28.4%) | $49.50 | 1.58 |
+| Sonnet 4.6 | 115 (41.8%) | 48 (17.5%) | $18.53 | 2.59 |
+| `convention-reviewer` | 100 (36.4%) | **78** (28.4%) | $15.52 | **5.03** |
+
+Three results worth keeping:
+
+1. **Opus and Sonnet overlap on only 31.5% of findings** (62 of the 197 either
+   caught). They find largely *different* issues. This is a direct, measured
+   justification for the dual-model review design — not a redundancy to
+   optimise away. It also independently reproduces Greptile's breadth-first vs
+   depth-first split on a different codebase.
+2. **Opus's 2.65× cost premium buys 1.25× total recall and 1.6× unique
+   findings.** Defensible, but the marginal value is much smaller than the
+   marginal cost, and 28.4% of all findings would have been lost without it.
+   Both facts are true; which matters depends on whether a missed finding costs
+   more than $30.
+3. **`convention-reviewer` is the best value in the roster by a wide margin** —
+   3.2× Opus's unique-findings-per-dollar, on the cheapest model and the fewest
+   turns. It contributes exactly as many unique findings as Opus. It was also
+   the one pinned to Sonnet 4.6 while its configured default was Sonnet 5,
+   so this is measured on the *worse* of its two models.
+
+Caveats: findings counted, not validated — no record of which were accepted or
+were false positives, so this measures recall against the union of all
+reviewers, not against truth. All on 4-6 models. Single codebase, ~20 reviews.
+
+#### Weaker signal: severity-marker density
 
 Density of severity markers (critical/blocker/must fix/nit) in each reviewer's
 final summary:
@@ -512,10 +569,21 @@ my own assignment.
 
 In practice this was rare: `fixer` ran 6 times, versus the orchestrator (Opus 5)
 writing most code directly, so the effective pairing was usually Opus 5 author →
-Sonnet 5 reviewer, which does avoid it. But the inconsistency is real and will
-bite as `fixer` use grows. Either move `reviewer` off Sonnet 5, or accept that
-the self-review argument does not survive contact with the roster and rest the
-choice on the cost-per-turn evidence above — which is stronger anyway.
+Sonnet 5 reviewer.
+
+But the deeper problem is that **the self-review evidence never applied here at
+all.** Greptile measured Opus 4.7 at 53.7% recall on *Claude*-authored PRs
+versus 62.0% on *Codex*-authored — a cross-**vendor** effect. Nothing in that
+study shows Sonnet-reviewing-Opus behaves differently from
+Opus-reviewing-Opus; both are Claude. Escaping the penalty as measured would
+mean reviewing with a non-Anthropic model, which is not what Phase 0 did.
+
+So the fix is not to shuffle models. It is to **drop the self-review
+justification entirely** and rest the reviewer choice on the cost-per-turn
+evidence above, which is directly measured on this codebase and is stronger
+anyway. Finding 5 is hereby downgraded: of its two mechanisms, over-flagging
+survives (weakly, via the severity-marker gradient) and the self-review penalty
+does not apply.
 
 
 | Prediction | Outcome |
@@ -526,7 +594,8 @@ choice on the cost-per-turn evidence above — which is stronger anyway.
 | Sonnet 5 may be slower than Opus 5 (weakness 6) | **Not observed** — Sonnet 5 p50 6s vs Opus 5 8s |
 | Tiering subagents is high-leverage | **Wrong** — touches ~11% of spend |
 | `oracle` absorbs escalation | **Not observed** — 0 invocations |
-| Sonnet reviews better than Opus | **Untested** — 80% of reviews used stale `review.md` pins |
+| Sonnet reviews better than Opus | **Refuted on recall** — Opus caught 52.4% of findings vs Sonnet 41.8%, and 28.4% were Opus-only. Sonnet wins on findings per dollar, not on quality |
+| Dual-model review is redundant | **Refuted** — Opus/Sonnet overlap on only 31.5% of findings |
 | Sonnet-for-review avoids self-review | **Undermined** — `fixer` and `reviewer` are both Sonnet 5 |
 | Mid-conversation switching is costly, so avoid it | **Untested** — no mid-session switching occurred |
 
@@ -546,16 +615,24 @@ choice on the cost-per-turn evidence above — which is stronger anyway.
    single lever and is not addressed anywhere in this document.
 4. **Audit commands for pinned model IDs** the way agents were audited.
    `review.md` was the only offender found, but nothing prevents the next one.
-5. **Resolve the `fixer`/`reviewer` model collision.** Both are Sonnet 5, which
-   recreates the self-review penalty Finding 5 set out to avoid. Cheapest fix is
-   to stop resting the reviewer choice on that argument and rest it on
-   cost-per-turn instead, which the data supports directly.
-6. **Re-measure reviewer quality now that the pins are fixed.** The only
-   reviewer claim with real support is economic (Sonnet 5 is the cheapest per
-   turn and investigates more than Sonnet 4.6). Correctness is still unmeasured.
-   The tractable proxy is whether a finding was acted on: `/review` already
-   merges and dedups, so recording which reviewer produced each surviving
-   finding would give ground truth at near-zero cost.
+5. **Do not chase the `fixer`/`reviewer` model collision.** Both are Sonnet 5,
+   but Greptile's self-review penalty is a cross-vendor effect and never applied
+   to an all-Anthropic roster. The reviewer choice now rests on cost-per-turn,
+   which is measured here directly. No config change warranted.
+6. **Keep the dual-model `/review`, on 5-series models.** The 31.5% overlap
+   says both reviewers earn their slot. Now that the pins point at Sonnet 5 and
+   Opus 5, re-run this attribution analysis after ~20 reviews and check whether
+   Sonnet 5's extra investigation depth (35 turns vs 16) closes the recall gap.
+   If it does, the Opus arm becomes hard to justify.
+7. **Validate findings, not just count them.** The attribution analysis measures
+   recall against the union of reviewers, not against truth — no record of which
+   findings were accepted or were false positives. Capturing accept/reject would
+   turn a recall proxy into a precision measurement, and precision is where the
+   over-flagging hypothesis actually lives.
+8. **Consider promoting `convention-reviewer`.** It returns 3.2× Opus's
+   unique-findings-per-dollar and matches its unique-finding count outright,
+   on the cheapest model in the roster. Worth testing whether a second
+   convention pass beats the Opus arm.
 
 ## Plan
 
