@@ -275,8 +275,10 @@ type UI struct {
 	lspStates map[string]app.LSPClientInfo
 
 	// mcp
-	mcpStates       map[string]mcp.ClientInfo
-	enabledLazyMCPs map[string]bool
+	mcpStates         map[string]mcp.ClientInfo
+	mcpAuthFlows      map[string]*mcpAuthFlow
+	nextMCPAuthFlowID uint64
+	enabledLazyMCPs   map[string]bool
 	// pendingEnableMCPs tracks in-flight enable_mcp ToolCalls by
 	// ToolCallID → server name. The result has not yet arrived, so
 	// we defer the enabled/disabled decision until the correlated
@@ -420,6 +422,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		todoSpinner:         todoSpinner,
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
+		mcpAuthFlows:        make(map[string]*mcpAuthFlow),
 		enabledLazyMCPs:     make(map[string]bool),
 		pendingEnableMCPs:   make(map[string]string),
 		skillStates:         skills.GetLatestStates(),
@@ -783,7 +786,46 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if palette, ok := dia.(*dialog.MCPPalette); ok {
 				for name, state := range msg.states {
 					palette.SetEntryState(name, state.State, state.Counts)
+					palette.SetEntryNeedsAuth(name, state.NeedsAuth)
 				}
+			}
+		}
+	case dialog.MCPAuthProgressMsg:
+		// Drop messages from a superseded flow.
+		if !m.isCurrentFlow(msg.ServerName, msg.FlowID) {
+			break
+		}
+		// Forward to the dialog and re-issue the drain.
+		if dia := m.dialog.Dialog(dialog.MCPAuthID); dia != nil {
+			if d, ok := dia.(*dialog.MCPAuth); ok && d.ServerName() == msg.ServerName {
+				d.HandleMsg(msg)
+			}
+		}
+		cmds = append(cmds, m.drainMCPAuth(msg.ServerName))
+	case dialog.MCPAuthDoneMsg:
+		// Drop messages from a superseded flow.
+		if !m.isCurrentFlow(msg.ServerName, msg.FlowID) {
+			break
+		}
+		// Forward to the dialog (returns ActionClose; we close it
+		// ourselves below rather than re-entering handleDialogMsg).
+		if dia := m.dialog.Dialog(dialog.MCPAuthID); dia != nil {
+			if d, ok := dia.(*dialog.MCPAuth); ok && d.ServerName() == msg.ServerName {
+				d.HandleMsg(msg)
+			}
+		}
+		m.dialog.CloseDialog(dialog.MCPAuthID)
+		// Clean up the flow and refresh MCP state.
+		delete(m.mcpAuthFlows, msg.ServerName)
+		cmds = append(cmds, m.handleStateChanged())
+	case dialog.MCPAuthErrMsg:
+		// Drop messages from a superseded flow.
+		if !m.isCurrentFlow(msg.ServerName, msg.FlowID) {
+			break
+		}
+		if dia := m.dialog.Dialog(dialog.MCPAuthID); dia != nil {
+			if d, ok := dia.(*dialog.MCPAuth); ok && d.ServerName() == msg.ServerName {
+				d.HandleMsg(msg)
 			}
 		}
 	case mcpPromptsLoadedMsg:
@@ -931,6 +973,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, handleMCPToolsEvent(m.com.Workspace, msg.Payload.Name)
 		case mcp.EventResourcesListChanged:
 			return m, handleMCPResourcesEvent(m.com.Workspace, msg.Payload.Name)
+		case mcp.EventNeedsAuth:
+			return m, util.ReportWarn(fmt.Sprintf(
+				"%s needs re-authentication — open the MCP palette "+
+					"(ctrl+p → MCP Servers) and press enter",
+				msg.Payload.Name))
 		}
 	case pubsub.Event[permission.PermissionRequest]:
 		if cmd := m.openPermissionsDialog(msg.Payload); cmd != nil {
@@ -2482,6 +2529,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			}
 			return nil
 		})
+	case dialog.ActionStartMCPAuth:
+		cmds = append(cmds, m.startMCPAuth(msg.ServerName))
+	case dialog.ActionRetryMCPAuth:
+		cmds = append(cmds, m.retryMCPAuth(msg.ServerName))
+	case dialog.ActionCancelMCPAuth:
+		m.cancelMCPAuth(msg.ServerName)
+		m.dialog.CloseDialog(dialog.MCPAuthID)
 	default:
 		cmds = append(cmds, util.CmdHandler(msg))
 	}
@@ -4753,6 +4807,7 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 			Description: mcpCfg.MCP.LazyDescription,
 			IsLazy:      mcpCfg.MCP.IsLazy(),
 			Enabled:     m.enabledLazyMCPs[mcpCfg.Name],
+			NeedsAuth:   state.NeedsAuth,
 			State:       state.State,
 			Counts:      state.Counts,
 		})

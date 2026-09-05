@@ -60,6 +60,17 @@ var (
 	initDone  = make(chan struct{})
 	dbQueries db.Querier // Set during Initialize, used for OAuth token storage.
 
+	// authNotifyTimes tracks the last time an EventNeedsAuth was
+	// published for each server. Used by shouldNotifyAuth to dedup
+	// notifications within AuthNotifyDedup.
+	authNotifyTimes = csync.NewMap[string, time.Time]()
+
+	// authNotifyMu serialises the read-check-write in shouldNotifyAuth.
+	// csync.Map synchronises individual Get/Set calls but not compound
+	// check-and-update, so two concurrent callers could both pass the
+	// dedup window check and both publish EventNeedsAuth.
+	authNotifyMu sync.Mutex
+
 	// initStarted records whether Initialize has been armed. WaitForInit only
 	// blocks once initialization is expected; coordinators built outside app
 	// startup never arm it and so must not wait forever.
@@ -186,6 +197,7 @@ const (
 	EventToolsListChanged
 	EventPromptsListChanged
 	EventResourcesListChanged
+	EventNeedsAuth
 )
 
 // Event represents an event in the MCP system
@@ -213,6 +225,9 @@ type ClientInfo struct {
 	Counts      Counts
 	ConnectedAt time.Time
 	IsLazy      bool `json:"is_lazy"`
+	// NeedsAuth is true when State is StateError and the error indicates
+	// the server's OAuth token must be refreshed by the user.
+	NeedsAuth bool `json:"needs_auth"`
 }
 
 // SubscribeEvents returns a channel for MCP events
@@ -416,8 +431,9 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 		return nil
 	}
 	if !isTransientError(err) {
-		// Auth/permanent errors: leave state as StateError so the
-		// palette and enable_mcp report the real problem.
+		// Auth/permanent errors (including ErrNeedsAuth) are
+		// non-transient and intentionally leave the server in
+		// StateError for the palette to act on.
 		return err
 	}
 	slog.Info("Retrying transient MCP connect failure", "name", name, "error", err)
@@ -458,9 +474,15 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 	// Set initial starting state.
 	updateState(name, StateStarting, nil, nil, Counts{})
 
+	if err := preflightOAuth(ctx, name, m, queries); err != nil {
+		updateState(name, StateError, err, nil, Counts{})
+		return err
+	}
+
 	// newSession handles its own timeout internally.
 	session, err := newSession(ctx, name, m, resolver, queries)
 	if err != nil {
+		err = classifyConnectError(ctx, err, name, m, resolver, queries)
 		updateState(name, StateError, err, nil, Counts{})
 		return err
 	}
@@ -629,11 +651,12 @@ func closeSession(name string, s *ClientSession) {
 // updateState updates the state of an MCP client and publishes an event
 func updateState(name string, state State, err error, client *ClientSession, counts Counts) {
 	info := ClientInfo{
-		Name:   name,
-		State:  state,
-		Error:  err,
-		Client: client,
-		Counts: counts,
+		Name:      name,
+		State:     state,
+		Error:     err,
+		Client:    client,
+		Counts:    counts,
+		NeedsAuth: state == StateError && NeedsAuth(err),
 	}
 	switch state {
 	case StateConnected:
@@ -659,7 +682,7 @@ func updateState(name string, state State, err error, client *ClientSession, cou
 	}
 	states.Set(name, info)
 
-	// Publish state change event
+	// Publish state change event.
 	broker.Publish(pubsub.UpdatedEvent, Event{
 		Type:   EventStateChanged,
 		Name:   name,
@@ -667,6 +690,43 @@ func updateState(name string, state State, err error, client *ClientSession, cou
 		Error:  err,
 		Counts: counts,
 	})
+
+	// Publish a dedicated auth event so the UI can surface a toast
+	// without parsing the state change. Deduplicated per server so
+	// N failed enable_mcp calls in one turn produce one notification.
+	if state == StateError && NeedsAuth(err) {
+		if shouldNotifyAuth(name) {
+			broker.Publish(pubsub.UpdatedEvent, Event{
+				Type:  EventNeedsAuth,
+				Name:  name,
+				State: state,
+				Error: err,
+			})
+		}
+	}
+}
+
+// AuthNotifyDedup is the minimum interval between EventNeedsAuth
+// notifications for the same server. Exported as a package var so
+// tests can shorten it.
+var AuthNotifyDedup = 60 * time.Second
+
+// shouldNotifyAuth returns true if an EventNeedsAuth should be
+// published for the named server, applying the dedup window.
+// The check-and-update is serialised by authNotifyMu so two
+// concurrent callers cannot both pass the window check.
+func shouldNotifyAuth(name string) bool {
+	authNotifyMu.Lock()
+	defer authNotifyMu.Unlock()
+
+	now := time.Now()
+	if last, ok := authNotifyTimes.Get(name); ok {
+		if now.Sub(last) < AuthNotifyDedup {
+			return false
+		}
+	}
+	authNotifyTimes.Set(name, now)
+	return true
 }
 
 func createSession(ctx context.Context, name string, m config.MCPConfig, resolver config.VariableResolver, queries db.Querier) (*ClientSession, error) {

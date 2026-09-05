@@ -1,6 +1,6 @@
 # Phase 3: Agent-Facing Auth Surface
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > **Depends on:** Phase 1 (merged). Phase 2 (merged) for the interactive
 > nudge; degrades gracefully without it.
 > **Delivers:** `enable_mcp` auth-required response, `EventNeedsAuth`

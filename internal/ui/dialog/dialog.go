@@ -18,6 +18,8 @@ const (
 	BranchID = "branch"
 	// MCPPaletteID is the identifier for the MCP palette dialog.
 	MCPPaletteID = "mcp_palette"
+	// MCPAuthID is the identifier for the MCP OAuth re-authentication dialog.
+	MCPAuthID = "mcp_auth"
 )
 
 // Dialog sizing constants.

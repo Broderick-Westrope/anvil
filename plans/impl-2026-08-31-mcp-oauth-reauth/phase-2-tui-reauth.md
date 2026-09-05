@@ -1,6 +1,6 @@
 # Phase 2: In-TUI Re-Authentication
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > **Depends on:** Phase 1 (merged)
 > **Delivers:** `MCPAuth` dialog, palette "needs auth" affordance,
 > reconnect-on-success, `Workspace.MCPAuthenticate`.

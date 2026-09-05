@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -160,6 +161,8 @@ func TestUpdateState_ErrorClearsPromptsAndResources(t *testing.T) {
 // registered or overwrite and leak a live replacement. With the per-server
 // lock only the first arrival rebuilds; the rest re-check and reuse the
 // healthy session, so exactly one new session is created.
+//
+// Not parallel: mutates the package-level newSession function variable.
 func TestGetOrRenewClient_SerializesConcurrentRenewals(t *testing.T) {
 	const name = "test-renew-concurrency"
 	const workers = 8
@@ -297,11 +300,70 @@ func TestSessionErrorThenRenew_RestoresTools(t *testing.T) {
 	require.Equal(t, "send_message", got[0].Name)
 }
 
+// TestGetOrRenewClient_AuthFailureSetsNeedsAuth verifies that when a
+// mid-session renewal fails with an ErrNeedsAuth-wrapped error, the
+// server's state transitions to StateError with NeedsAuth true.
+//
+// Not parallel: mutates the package-level newSession function variable.
+//
+// Trace (see getOrRenewClient init.go:527-617):
+//  1. Ping fails (session dead) → updateState(StateError, pingErr)
+//  2. createSession is called to rebuild the session
+//  3. Inside createSession, Connect fails with ErrNeedsAuth (from the
+//     oauthRoundTripper or persistingTokenSource) → createSession calls
+//     updateState(StateError, authErr) at init.go:732, overwriting the
+//     ping-error state with the classified auth error
+//  4. updateState computes NeedsAuth = NeedsAuth(err) at init.go:647
+//
+// The mock simulates step 3 by calling updateState before returning the
+// error, mirroring createSession's internal behaviour.
+func TestGetOrRenewClient_AuthFailureSetsNeedsAuth(t *testing.T) {
+	const name = "test-renew-auth"
+	t.Cleanup(func() {
+		if s, ok := sessions.Take(name); ok {
+			_ = s.Close()
+		}
+		allTools.Del(name)
+		states.Del(name)
+	})
+
+	cfg := config.NewTestStore(&config.Config{MCP: config.MCPs{name: {Type: config.MCPStdio}}})
+
+	// Seed a dead session so the first ping fails.
+	dead, _ := liveSession(t, "send_message")
+	require.NoError(t, dead.Close())
+	sessions.Set(name, dead)
+	updateState(name, StateConnected, nil, dead, Counts{Tools: 1})
+
+	authErr := fmt.Errorf("refresh failed: %w", ErrNeedsAuth)
+	origNewSession := newSession
+	newSession = func(_ context.Context, n string, _ config.MCPConfig, _ config.VariableResolver, _ db.Querier) (*ClientSession, error) {
+		// Simulate createSession's internal updateState on connect
+		// failure (init.go:732).
+		updateState(n, StateError, authErr, nil, Counts{})
+		return nil, authErr
+	}
+	t.Cleanup(func() { newSession = origNewSession })
+
+	_, err := getOrRenewClient(context.Background(), cfg, name)
+	require.Error(t, err)
+	require.True(t, NeedsAuth(err),
+		"the error returned by getOrRenewClient must wrap ErrNeedsAuth")
+
+	info, ok := GetState(name)
+	require.True(t, ok)
+	require.Equal(t, StateError, info.State)
+	require.True(t, info.NeedsAuth,
+		"NeedsAuth must be true after a renewal failure wrapping ErrNeedsAuth")
+}
+
 // TestGetOrRenewClient_RestoresPromptsAndResources pins that a renewal
 // repopulates every registry and reports counts that match. StateError clears
 // tools, prompts, and resources; if renewal restored only tools while keeping
 // the old prompt/resource counts, GetState would again advertise capabilities
 // absent from the registries.
+//
+// Not parallel: mutates the package-level newSession function variable.
 func TestGetOrRenewClient_RestoresPromptsAndResources(t *testing.T) {
 	const name = "test-renew-prompts-resources"
 	t.Cleanup(func() {
