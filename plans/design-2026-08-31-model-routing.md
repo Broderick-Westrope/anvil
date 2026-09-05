@@ -422,7 +422,101 @@ unless someone reads the logs. The `Ignoring invalid model override` warning
 fired 0 times, confirming these IDs all still resolve — the pins were valid,
 just old.
 
-### Scorecard
+### The reviewer change: mostly bypassed, but the data is the most interesting here
+
+Exact attribution, by matching each subagent session's embedded tool-call ID
+(`{parent}$$toolu_...`) back to the `task` call that spawned it — 85 of 92
+subagent sessions attributed:
+
+| Agent | Model | Source | n | Turns | Cost | Out tok | $/turn |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `reviewer` | Opus 4.6 | `review.md` pin | 18 | 43.4 | $2.75 | 3,478 | 0.0634 |
+| `reviewer` | Sonnet 4.6 | `review.md` pin | 17 | 16.6 | $1.09 | 3,636 | 0.0652 |
+| `reviewer` | **Sonnet 5** | **agent default** | 7 | 35.1 | $1.47 | 5,060 | **0.0418** |
+| `reviewer` | Sonnet 5 | explicit | 2 | 25.0 | $0.78 | 2,624 | 0.0310 |
+| `convention-reviewer` | Sonnet 4.6 | `review.md` pin | 16 | 12.3 | $0.97 | 4,761 | 0.0788 |
+| `convention-reviewer` | **Sonnet 5** | **agent default** | 3 | 32.7 | $1.33 | 2,821 | **0.0407** |
+| `devils-advocate` | Opus 5 | agent default | 11 | 41.1 | $4.63 | 11,054 | — |
+| `fixer` | Sonnet 5 | agent default | 6 | 49.5 | $2.71 | 1,217 | — |
+| `oracle` | Fable 5 | agent default | 1 | 6.0 | $1.23 | 457 | — |
+
+**The change was bypassed 80% of the time.** 35 of 44 `reviewer` runs used
+`review.md`'s pinned 4-6 models; only 9 used the configured Sonnet 5. So
+Finding 5's recommendation went essentially untested for five days. Any claim
+that "Sonnet-for-review worked" would be unsupported.
+
+#### A paired Opus-vs-Sonnet reviewer measurement, which does not exist publicly
+
+The librarian found no head-to-head Sonnet-vs-Opus code-review evaluation from
+any lab or vendor. The `/review` command accidentally produced one: it runs the
+*same* `reviewer` agent twice on the *same* diff with the *same* instructions,
+differing only in model. 13 such pairs:
+
+| | Opus 4.6 | Sonnet 4.6 | Ratio |
+| --- | --- | --- | --- |
+| Investigation turns | 44.3 | 15.5 | **2.6×** |
+| Cost | $2.64 | $1.00 | **2.65×** |
+| Final output tokens | 3,030 | 3,725 | **0.97×** |
+
+**Opus spends 2.6× the turns and 2.65× the cost to produce the same amount of
+final review.** That is a direct corroboration of Greptile's published
+observation that Opus spends 59.4% of trace tokens scoping breadth-first, and
+of CriticGPT's recall/hallucination coupling. It is genuinely new data — small
+n, one codebase, one prompt, but properly paired.
+
+Crucially it says nothing about *correctness*. 2.6× the investigation could be
+thoroughness or analysis paralysis; equal output length could mean equal value
+or equal padding. I have no ground truth on which findings were accepted.
+
+#### Sonnet 5 dominates both pinned models on every volume metric
+
+| Comparison | Turns | Cost | Output | $/turn |
+| --- | --- | --- | --- | --- |
+| Sonnet 5 vs Sonnet 4.6 | **2.1× more** | +35% | +39% | **36% cheaper** |
+| Sonnet 5 vs Opus 4.6 | 81% of | **47% cheaper** | **+45%** | **34% cheaper** |
+
+Sonnet 5 is the cheapest per turn of any reviewer model measured ($0.0418 vs
+$0.0634 Opus 4.6 and $0.0652 Sonnet 4.6) *and* takes more turns than Sonnet 4.6.
+The same pattern holds for `convention-reviewer`: 32.7 turns at $0.0407 versus
+12.3 turns at $0.0788.
+
+So the `review.md` pins were not merely stale — they were **materially
+shallower**. Sonnet 4.6 was doing 16-turn reviews where Sonnet 5 does 35-turn
+reviews for less money per turn. Fixing that pin is the highest-value change to
+come out of this review of the data.
+
+#### Weak quality signal, reported as weak
+
+Density of severity markers (critical/blocker/must fix/nit) in each reviewer's
+final summary:
+
+| Model | n | Markers per review |
+| --- | --- | --- |
+| Opus 5 | 9 | 4.7 |
+| Opus 4.6 | 18 | 3.2 |
+| Sonnet 4.6 | 17 | 2.9 |
+| Sonnet 5 | 8 | **2.2** |
+
+Monotonic in model tier, consistent with over-flagging scaling with capability
+(CriticGPT). But this **cannot distinguish over-flagging from thoroughness**,
+counts only the summary text, and has n<20 per cell. It is a hypothesis
+generator, not a measurement. Finding 5's central claim remains unvalidated.
+
+#### A design error the data exposed: `fixer` and `reviewer` are the same model
+
+Finding 5 justified Sonnet-for-review partly on the ~8pp self-review penalty —
+use a different model from the one that wrote the code. But both `fixer` and
+`reviewer` are configured to `anthropic/claude-sonnet-5`, so whenever `fixer`
+writes the code, `reviewer` is self-reviewing. The argument was undermined by
+my own assignment.
+
+In practice this was rare: `fixer` ran 6 times, versus the orchestrator (Opus 5)
+writing most code directly, so the effective pairing was usually Opus 5 author →
+Sonnet 5 reviewer, which does avoid it. But the inconsistency is real and will
+bite as `fixer` use grows. Either move `reviewer` off Sonnet 5, or accept that
+the self-review argument does not survive contact with the roster and rest the
+choice on the cost-per-turn evidence above — which is stronger anyway.
+
 
 | Prediction | Outcome |
 | --- | --- |
@@ -432,6 +526,8 @@ just old.
 | Sonnet 5 may be slower than Opus 5 (weakness 6) | **Not observed** — Sonnet 5 p50 6s vs Opus 5 8s |
 | Tiering subagents is high-leverage | **Wrong** — touches ~11% of spend |
 | `oracle` absorbs escalation | **Not observed** — 0 invocations |
+| Sonnet reviews better than Opus | **Untested** — 80% of reviews used stale `review.md` pins |
+| Sonnet-for-review avoids self-review | **Undermined** — `fixer` and `reviewer` are both Sonnet 5 |
 | Mid-conversation switching is costly, so avoid it | **Untested** — no mid-session switching occurred |
 
 ### What to do next
@@ -450,6 +546,16 @@ just old.
    single lever and is not addressed anywhere in this document.
 4. **Audit commands for pinned model IDs** the way agents were audited.
    `review.md` was the only offender found, but nothing prevents the next one.
+5. **Resolve the `fixer`/`reviewer` model collision.** Both are Sonnet 5, which
+   recreates the self-review penalty Finding 5 set out to avoid. Cheapest fix is
+   to stop resting the reviewer choice on that argument and rest it on
+   cost-per-turn instead, which the data supports directly.
+6. **Re-measure reviewer quality now that the pins are fixed.** The only
+   reviewer claim with real support is economic (Sonnet 5 is the cheapest per
+   turn and investigates more than Sonnet 4.6). Correctness is still unmeasured.
+   The tractable proxy is whether a finding was acted on: `/review` already
+   merges and dedups, so recording which reviewer produced each surviving
+   finding would give ground truth at near-zero cost.
 
 ## Plan
 
