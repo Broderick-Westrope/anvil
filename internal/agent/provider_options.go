@@ -78,7 +78,52 @@ func knownCustomOptions(opts map[string]any, r reasoningRequest) (fantasy.Provid
 	if r.wantsEffort(opts, "reasoning_effort") {
 		opts["reasoning_effort"] = r.effort
 	}
-	return parsedOptions(openaicompat.ParseOptions(opts))
+
+	// Set "top_k" under "extra_body", as it is not part of the OpenAI
+	// protocol and will be explicitly omitted by Fantasy downstream.
+	topK := cmp.Or(r.model.ModelCfg.TopK, r.model.CatwalkCfg.Options.TopK)
+	if topK != nil {
+		extraBody, hasExtraBody := opts["extra_body"].(map[string]any)
+		if !hasExtraBody {
+			extraBody = make(map[string]any)
+			opts["extra_body"] = extraBody
+		}
+		if _, hasTopK := extraBody["top_k"]; !hasTopK {
+			extraBody["top_k"] = *topK
+		}
+	}
+
+	parsed, err := openaicompat.ParseOptions(opts)
+	if err == nil || topK == nil {
+		return parsedOptions(parsed, err)
+	}
+	slog.Warn(
+		"Failed to parse provider_options, falling back to top_k only",
+		"provider", r.providerID,
+		"error", err,
+	)
+	fallback, fallbackErr := openaicompat.ParseOptions(map[string]any{
+		"extra_body": map[string]any{"top_k": *topK},
+	})
+	if fallbackErr != nil {
+		slog.Warn(
+			"Failed to parse fallback provider options, this should never happen",
+			"provider", r.providerID,
+			"error", fallbackErr,
+		)
+	}
+	return parsedOptions(fallback, fallbackErr)
+}
+
+// callTopK returns topK for use on fantasy.Call.TopK, suppressing it for
+// known custom providers: getProviderOptions already carries top_k for
+// them via extra_body, and passing it here too makes Fantasy emit a
+// spurious "top_k unsupported" warning for every turn.
+func callTopK(providerCfg config.ProviderConfig, topK *int64) *int64 {
+	if discover.IsKnownCustomProvider(string(providerCfg.Type)) {
+		return nil
+	}
+	return topK
 }
 
 func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
