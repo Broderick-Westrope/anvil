@@ -105,6 +105,10 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	app.setupEvents()
 
+	// Sample memory and event-broker health in the background so
+	// allocation storms are diagnosable from logs post-hoc.
+	app.startMemoryMonitor(ctx)
+
 	// Check for updates in the background.
 	go app.checkForUpdates(ctx)
 
