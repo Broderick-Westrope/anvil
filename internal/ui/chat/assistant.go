@@ -445,11 +445,19 @@ func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
 	if showFooter {
 		footer = 1
 	}
+	// The thinking-finished bit guarantees exactly one cache-key
+	// change when reasoning completes, so the definitive RenderFinal
+	// output replaces any seamed streaming render even when the
+	// footer state happens not to change.
+	var thinkingDone byte
+	if a.message.ReasoningContent().FinishedAt != 0 {
+		thinkingDone = 1
+	}
 	// Length-prefixed framing avoids any delimiter collision between
 	// the flag bytes and the duration string. The view mode is folded
 	// in so that toggling collapsed ↔ tail-window ↔ full invalidates
 	// only the thinking section, not content/error.
-	extra := fnvFields([]byte{byte(a.thinkingViewMode), footer}, []byte(durationStr))
+	extra := fnvFields([]byte{byte(a.thinkingViewMode), footer, thinkingDone}, []byte(durationStr))
 	return srcHash, extra
 }
 
@@ -491,9 +499,16 @@ func (a *AssistantMessageItem) thinkingHashIncremental(thinking string) uint64 {
 }
 
 // contentKey returns the (srcHash, extra) cache key components for the
-// main content section.
+// main content section. The finished bit is folded into extra so the
+// section re-renders once when the stream completes — that render
+// goes through RenderFinal, which replaces any force-advanced (seamed)
+// streaming output with a clean monolithic render.
 func (a *AssistantMessageItem) contentKey() (uint64, uint64) {
-	return fnv64(a.message.Content().Text), 0
+	var fin uint64
+	if a.message.IsFinished() {
+		fin = 1
+	}
+	return fnv64(a.message.Content().Text), fin
 }
 
 // errorKey returns the (srcHash, extra) cache key components for the
@@ -563,7 +578,19 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	innerWidth := width - a.sty.Messages.ThinkingBox.GetHorizontalFrameSize()
 
 	renderer := common.QuietMarkdownRenderer(a.sty, innerWidth)
-	rendered := a.streamingThinking.Render(thinking, innerWidth, renderer)
+	var rendered string
+	// Gate on real stream completion (FinishedAt set by FinishThinking,
+	// or a terminal message). NOT on IsThinking(): that flips false as
+	// soon as content text or tool calls arrive while reasoning may
+	// still be streamed by interleaved-thinking providers, and calling
+	// RenderFinal per flush would reset the streaming cache each time.
+	if a.message.ReasoningContent().FinishedAt != 0 || a.message.IsFinished() {
+		// Thinking is complete: take the definitive render so any
+		// force-advanced (seamed) streaming output is replaced.
+		rendered = a.streamingThinking.RenderFinal(thinking, innerWidth, renderer)
+	} else {
+		rendered = a.streamingThinking.Render(thinking, innerWidth, renderer)
+	}
 	rendered = strings.TrimSpace(rendered)
 
 	// Count lines and, for the windowed view modes, slice the tail
@@ -642,6 +669,11 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 // findSafeMarkdownBoundary.
 func (a *AssistantMessageItem) renderMarkdown(content string, width int) string {
 	renderer := common.MarkdownRenderer(a.sty, width)
+	if a.message.IsFinished() {
+		// Stream complete: take the definitive render so any
+		// force-advanced (seamed) streaming output is replaced.
+		return a.streamingContent.RenderFinal(content, width, renderer)
+	}
 	return a.streamingContent.Render(content, width, renderer)
 }
 

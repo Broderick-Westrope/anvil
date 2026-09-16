@@ -39,11 +39,45 @@ type streamingMarkdown struct {
 	// Cached cumulative state at the stable prefix boundary.
 	// Used by findBoundaryAfter to validate new boundary candidates
 	// without re-scanning the entire prefix from the start.
-	// baseFenceCount is always even (safe boundaries require even
-	// fence parity), so the delta scan always starts outside a fence.
+	// baseFenceCount is even when the boundary is a real safe
+	// boundary and odd when the prefix was force-advanced inside an
+	// open fence (openFence != "").
 	baseFenceCount    int
 	baseHasListMarker bool
+	// openFence is the fence opener line (e.g. "```go") active at
+	// the stable-prefix boundary when the prefix was force-advanced
+	// mid-fence, or "" when the boundary sits outside any fence.
+	// When set, trailing renders prepend it so the trail keeps its
+	// code-block styling, and the cached prefix render was produced
+	// with a synthetic closing fence appended.
+	openFence string
+	// forced records that at least one force-advance happened since
+	// the last Reset. The glued output then contains synthetic fence
+	// seams (a long code block split into two adjacent blocks), so
+	// the final post-stream render should be a clean monolithic
+	// render — see RenderFinal.
+	forced bool
 }
+
+const (
+	// maxUnsafeTrailBytes is the largest segment Render will push
+	// through glamour in a single streaming flush. Without this cap
+	// a document that never reaches a safe boundary — most commonly
+	// a long open code fence — forces a full re-render of the whole
+	// accumulated text on every flush: O(n) glamour work at ~30
+	// flushes/sec with ~1000x allocation amplification. That is the
+	// mechanism behind the multi-GB memory blowups observed during
+	// concurrent subagent review streams. When the unsafe segment
+	// exceeds this cap the stable prefix is force-advanced through
+	// it (splitting open fences with a synthetic close/reopen).
+	maxUnsafeTrailBytes = 8 * 1024
+
+	// forcedTrailKeepBytes is how much trailing content a
+	// force-advance leaves behind as the fresh-render segment. Kept
+	// well under maxUnsafeTrailBytes so consecutive flushes don't
+	// immediately re-trigger the force-advance.
+	forcedTrailKeepBytes = 2 * 1024
+)
 
 // Reset drops every cached field. After Reset the next Render call
 // is guaranteed to be a full render.
@@ -53,6 +87,8 @@ func (s *streamingMarkdown) Reset() {
 	s.stablePrefixRender = ""
 	s.baseFenceCount = 0
 	s.baseHasListMarker = false
+	s.openFence = ""
+	s.forced = false
 }
 
 // Render returns the glamour render of content at the given width,
@@ -90,6 +126,12 @@ func (s *streamingMarkdown) Render(content string, width int, renderer *glamour.
 		s.width = width
 		out := full()
 		s.tryAdvanceFromEmpty(content, width, renderer)
+		// Whatever remains after seeding (possibly everything, e.g. a
+		// giant open code fence with no safe boundary) must not exceed
+		// the cap, or the next flush repeats this full render.
+		if len(content)-len(s.stablePrefix) > maxUnsafeTrailBytes {
+			s.forceAdvance(content, renderer)
+		}
 		return out
 	}
 
@@ -99,28 +141,49 @@ func (s *streamingMarkdown) Render(content string, width int, renderer *glamour.
 	// instead of re-scanning the entire prefix (upstream 884391f9).
 	boundary := s.findBoundaryAfter(content)
 	if boundary < 0 {
-		// No safe boundary anywhere yet. Full render; do not
-		// modify the cache (a future flush may find one).
-		return full()
+		// No safe boundary anywhere yet. If the document is still
+		// small, full-render and wait for a boundary; once it grows
+		// past the cap, force-advance so per-flush work stays
+		// bounded.
+		if len(content) <= maxUnsafeTrailBytes {
+			return full()
+		}
+		s.forceAdvance(content, renderer)
+		if s.stablePrefix == "" {
+			// Force-advance found no line boundary to cut at
+			// (single giant line). Nothing bounded we can do.
+			return full()
+		}
+		trail := content[len(s.stablePrefix):]
+		return glueRenders(s.stablePrefixRender, s.renderTrailingCtx(trail, renderer))
 	}
 
 	if boundary <= len(s.stablePrefix) {
 		// Cached prefix already covers an at-least-as-late
 		// boundary. Render the trailing partial fresh and glue.
+		// When the trail has grown past the cap (open fence, giant
+		// paragraph), force-advance through it first so the fresh
+		// render stays bounded.
+		if len(content)-len(s.stablePrefix) > maxUnsafeTrailBytes {
+			s.forceAdvance(content, renderer)
+		}
 		trail := content[len(s.stablePrefix):]
-		return glueRenders(s.stablePrefixRender, s.renderTrailing(trail, renderer))
+		return glueRenders(s.stablePrefixRender, s.renderTrailingCtx(trail, renderer))
 	}
 
 	// boundary > len(stablePrefix): we have a NEW chunk of safe
 	// content. Render the new chunk, append to stablePrefixRender,
 	// promote the boundary, then render the remaining trail.
 	newChunk := content[len(s.stablePrefix):boundary]
-	newChunkRender := s.renderTrailing(newChunk, renderer)
+	newChunkRender := s.renderTrailingCtx(newChunk, renderer)
 	s.stablePrefixRender = glueRenders(s.stablePrefixRender, newChunkRender)
-	s.stablePrefix = content[:boundary]
-	// Update cumulative state for the new stable prefix.
+	// Update cumulative state for the new stable prefix. A safe
+	// boundary implies even fence parity, so any force-advanced
+	// open fence has closed inside newChunk.
 	s.baseFenceCount += countFenceLines(newChunk)
-	s.baseHasListMarker = s.baseHasListMarker || chunkHasListMarker(newChunk)
+	s.baseHasListMarker = s.baseHasListMarker || chunkHasListMarker(newChunk, s.openFence != "")
+	s.stablePrefix = content[:boundary]
+	s.openFence = ""
 
 	trail := content[boundary:]
 	if trail == "" {
@@ -128,7 +191,135 @@ func (s *streamingMarkdown) Render(content string, width int, renderer *glamour.
 		// the cached prefix render directly is correct.
 		return s.stablePrefixRender
 	}
-	return glueRenders(s.stablePrefixRender, s.renderTrailing(trail, renderer))
+	// The trail past the new boundary can itself be oversized (safe
+	// boundary followed by a giant open fence); keep it bounded.
+	if len(trail) > maxUnsafeTrailBytes {
+		s.forceAdvance(content, renderer)
+		trail = content[len(s.stablePrefix):]
+	}
+	return glueRenders(s.stablePrefixRender, s.renderTrailingCtx(trail, renderer))
+}
+
+// RenderFinal returns the definitive render for a completed stream:
+// one monolithic glamour render of the full document. It drops any
+// streaming cache state (including force-advance seams) and does not
+// re-seed it — the stream is complete, so no further incremental
+// flushes will occur and seeding would only waste renders.
+func (s *streamingMarkdown) RenderFinal(content string, width int, renderer *glamour.TermRenderer) string {
+	s.Reset()
+	s.width = width
+	mu := common.LockMarkdownRenderer(renderer)
+	mu.Lock()
+	defer mu.Unlock()
+	out, err := renderer.Render(content)
+	if err != nil {
+		return content
+	}
+	return strings.TrimSuffix(out, "\n")
+}
+
+// forceAdvance promotes the stable prefix through an unsafe segment
+// so per-flush render work stays bounded. It cuts at a line boundary
+// that leaves ~forcedTrailKeepBytes of trailing content, renders the
+// promoted chunk with synthetic fence context (reopening the fence
+// active at the old boundary, closing any fence still open at the
+// cut), and records the fence opener active at the new boundary so
+// subsequent trailing renders keep their code-block styling.
+//
+// The glued output is visually near-identical to the monolithic
+// render — a long code block shows a seam at the cut — and the seam
+// is removed by the clean render in RenderFinal once the stream
+// completes. Callers must hold the renderer lock.
+func (s *streamingMarkdown) forceAdvance(content string, renderer *glamour.TermRenderer) {
+	cutLimit := len(content) - forcedTrailKeepBytes
+	if cutLimit <= len(s.stablePrefix) {
+		return
+	}
+	cut := cutLimit
+	if nl := strings.LastIndexByte(content[:cutLimit], '\n'); nl >= len(s.stablePrefix) {
+		cut = nl + 1
+	}
+	if len(content)-cut > maxUnsafeTrailBytes {
+		// The newline cut left an oversized trail (a giant line —
+		// minified JSON, base64 — dominates the document). Cut at
+		// the raw byte offset instead; the mid-line seam is removed
+		// by RenderFinal.
+		cut = cutLimit
+	}
+	newChunk := content[len(s.stablePrefix):cut]
+
+	// Track fence state across the promoted chunk, starting from
+	// the state at the old boundary.
+	inFence := s.openFence != ""
+	opener := s.openFence
+	for line := range splitLines(newChunk) {
+		if isFenceLine(line) {
+			inFence = !inFence
+			if inFence {
+				opener = line
+			} else {
+				opener = ""
+			}
+		}
+	}
+
+	src := newChunk
+	if s.openFence != "" {
+		src = s.openFence + "\n" + src
+	}
+	if inFence {
+		// Ensure the synthetic closer lands on its own line — a
+		// byte-offset cut may leave newChunk without a trailing
+		// newline.
+		if !strings.HasSuffix(src, "\n") {
+			src += "\n"
+		}
+		src += closingFence(opener)
+	}
+
+	out := s.renderTrailing(src, renderer)
+	s.stablePrefixRender = glueRenders(s.stablePrefixRender, out)
+	s.baseFenceCount += countFenceLines(newChunk)
+	s.baseHasListMarker = s.baseHasListMarker || chunkHasListMarker(newChunk, s.openFence != "")
+	s.stablePrefix = content[:cut]
+	if inFence {
+		s.openFence = opener
+	} else {
+		s.openFence = ""
+	}
+	s.forced = true
+}
+
+// closingFence returns a fence line that closes the fence opened by
+// opener: the same fence character with at least as long a run.
+func closingFence(opener string) string {
+	i := 0
+	for i < len(opener) && i < 3 && opener[i] == ' ' {
+		i++
+	}
+	if i >= len(opener) || (opener[i] != '`' && opener[i] != '~') {
+		return "```"
+	}
+	c := opener[i]
+	run := 0
+	for i < len(opener) && opener[i] == c {
+		i++
+		run++
+	}
+	return strings.Repeat(string(c), max(run, 3))
+}
+
+// renderTrailingCtx renders a trailing segment that starts at the
+// stable-prefix boundary, reopening the force-advanced fence when one
+// is active so the segment keeps its code-block styling.
+func (s *streamingMarkdown) renderTrailingCtx(text string, renderer *glamour.TermRenderer) string {
+	if text == "" {
+		return ""
+	}
+	if s.openFence != "" {
+		return s.renderTrailing(s.openFence+"\n"+text, renderer)
+	}
+	return s.renderTrailing(text, renderer)
 }
 
 // tryAdvanceFromEmpty seeds the cache from a fresh state. We've
@@ -158,7 +349,7 @@ func (s *streamingMarkdown) tryAdvanceFromEmpty(content string, width int, rende
 	s.width = width
 	// Seed cumulative state for incremental boundary search.
 	s.baseFenceCount = countFenceLines(prefix)
-	s.baseHasListMarker = chunkHasListMarker(prefix)
+	s.baseHasListMarker = chunkHasListMarker(prefix, false)
 }
 
 // findBoundaryAfter searches for the latest safe boundary in content
@@ -200,8 +391,9 @@ func (s *streamingMarkdown) isSafeBoundaryIncremental(content string, p int) boo
 		return false
 	}
 
-	// (2b) HTML and link-ref hazards in the delta.
-	if deltaHasHTMLorRef(delta) {
+	// (2b) HTML and link-ref hazards in the delta. The delta starts
+	// inside a fence when the prefix was force-advanced mid-fence.
+	if deltaHasHTMLorRef(delta, s.openFence != "") {
 		return false
 	}
 
@@ -214,7 +406,7 @@ func (s *streamingMarkdown) isSafeBoundaryIncremental(content string, p int) boo
 	// (2b) List hazard: if a list marker exists anywhere in the
 	// full prefix (base OR delta), the last non-blank line before
 	// the boundary must not be an indented continuation paragraph.
-	hasListMarker := s.baseHasListMarker || chunkHasListMarker(delta)
+	hasListMarker := s.baseHasListMarker || chunkHasListMarker(delta, s.openFence != "")
 	if hasListMarker && lastLine != "" && !isListItemMarker(strings.TrimLeft(lastLine, " \t")) {
 		if lastLine[0] == ' ' || lastLine[0] == '\t' {
 			return false
@@ -240,8 +432,8 @@ func (s *streamingMarkdown) isSafeBoundaryIncremental(content string, p int) boo
 // deltaHasHTMLorRef reports whether the delta (text between the
 // stable prefix and a boundary candidate) contains an HTML block
 // opener or a link reference definition.
-func deltaHasHTMLorRef(delta string) bool {
-	inFence := false
+func deltaHasHTMLorRef(delta string, startInFence bool) bool {
+	inFence := startInFence
 	for line := range splitLines(delta) {
 		if isFenceLine(line) {
 			inFence = !inFence
@@ -258,9 +450,11 @@ func deltaHasHTMLorRef(delta string) bool {
 }
 
 // chunkHasListMarker reports whether any line in chunk is a
-// list-item marker (outside fenced code blocks).
-func chunkHasListMarker(chunk string) bool {
-	inFence := false
+// list-item marker (outside fenced code blocks). startInFence is
+// true when the chunk begins inside an open fenced block (i.e. the
+// stable prefix was force-advanced mid-fence).
+func chunkHasListMarker(chunk string, startInFence bool) bool {
+	inFence := startInFence
 	for line := range splitLines(chunk) {
 		if isFenceLine(line) {
 			inFence = !inFence

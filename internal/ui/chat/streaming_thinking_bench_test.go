@@ -118,7 +118,7 @@ func BenchmarkFindBoundaryAfter(b *testing.B) {
 			width:             80,
 			stablePrefix:      content[:boundary],
 			baseFenceCount:    countFenceLines(content[:boundary]),
-			baseHasListMarker: chunkHasListMarker(content[:boundary]),
+			baseHasListMarker: chunkHasListMarker(content[:boundary], false),
 		}
 		b.ResetTimer()
 		for b.Loop() {
