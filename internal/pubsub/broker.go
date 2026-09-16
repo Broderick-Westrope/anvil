@@ -200,7 +200,7 @@ func (b *Broker[T]) PublishMustDeliver(ctx context.Context, t EventType, payload
 	default:
 	}
 
-	event := Event[T]{Type: t, Payload: payload}
+	event := Event[T]{Type: t, Payload: payload, MustDeliver: true}
 	timeout := b.mustDeliverTimeout
 
 	for sub := range b.subs {

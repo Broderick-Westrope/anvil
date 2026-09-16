@@ -512,7 +512,17 @@ func setupSubscriber[T any](
 					slog.Debug("Subscription channel closed", "name", name)
 					return
 				}
-				broker.Publish(pubsub.UpdatedEvent, tea.Msg(event))
+				// Preserve delivery semantics across the fan-in hop:
+				// terminal events (message finished, tool result,
+				// error, cancel) are published must-deliver at the
+				// source and must not be downgraded to the lossy
+				// path here, or the UI can miss the final state of a
+				// streamed message under channel contention.
+				if event.MustDeliver {
+					broker.PublishMustDeliver(ctx, pubsub.UpdatedEvent, tea.Msg(event))
+				} else {
+					broker.Publish(pubsub.UpdatedEvent, tea.Msg(event))
+				}
 			case <-ctx.Done():
 				slog.Debug("Subscription cancelled", "name", name)
 				return

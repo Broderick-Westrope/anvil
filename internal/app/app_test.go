@@ -48,7 +48,79 @@ func TestSetupSubscriber_NormalFlow(t *testing.T) {
 	wg.Wait()
 }
 
-// TestSetupSubscriber_ContextCancellation verifies the goroutine exits cleanly
+// TestSetupSubscriber_PreservesMustDeliver verifies that a must-deliver
+// event survives the fan-in hop even when the output broker's
+// subscriber buffer is full, while lossy events are dropped. This is
+// the regression test for streamed messages losing their terminal
+// state (finish + final content) under channel contention, which
+// left the UI showing a mid-sentence cutoff.
+func TestSetupSubscriber_PreservesMustDeliver(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	src := pubsub.NewBroker[string]()
+	defer src.Shutdown()
+	// Tiny buffer so a single unconsumed event saturates the
+	// subscriber channel.
+	out := pubsub.NewBrokerWithOptions[tea.Msg](1)
+	defer out.Shutdown()
+	// Generous must-deliver timeout so the blocking send cannot
+	// time out before this test drains the channel.
+	out.SetMustDeliverTimeout(5 * time.Second)
+
+	ch := out.Subscribe(ctx)
+
+	var wg sync.WaitGroup
+	setupSubscriber(ctx, &wg, "test", src.Subscribe, out)
+
+	// Yield so the subscriber goroutine can call src.Subscribe
+	// before we publish.
+	time.Sleep(10 * time.Millisecond)
+
+	// Fill the output buffer (capacity 1) with a lossy event that
+	// nobody consumes yet.
+	src.Publish(pubsub.UpdatedEvent, "filler")
+	time.Sleep(10 * time.Millisecond)
+
+	// A lossy event against a full buffer is dropped...
+	src.Publish(pubsub.UpdatedEvent, "dropped")
+	time.Sleep(10 * time.Millisecond)
+
+	// ...but a must-deliver event must block in the forwarder and
+	// land once the consumer drains.
+	src.PublishMustDeliver(ctx, pubsub.UpdatedEvent, "terminal")
+
+	payload := func(msg tea.Msg) string {
+		ev, ok := msg.(pubsub.Event[string])
+		require.True(t, ok, "forwarded payload must be the inner event")
+		return ev.Payload
+	}
+
+	var got []string
+	for range 2 {
+		select {
+		case ev := <-ch:
+			got = append(got, payload(ev.Payload))
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for forwarded events, got %v", got)
+		}
+	}
+	require.Equal(t, []string{"filler", "terminal"}, got,
+		"must-deliver event must survive the fan-in hop; lossy event may drop")
+
+	// No further events: "dropped" must not arrive.
+	select {
+	case ev := <-ch:
+		t.Fatalf("unexpected extra event: %v", payload(ev.Payload))
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	cancel()
+	wg.Wait()
+}
+
 // when the context is cancelled.
 func TestSetupSubscriber_ContextCancellation(t *testing.T) {
 	t.Parallel()

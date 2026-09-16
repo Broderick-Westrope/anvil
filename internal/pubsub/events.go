@@ -44,6 +44,13 @@ type (
 	Event[T any] struct {
 		Type    EventType `json:"type"`
 		Payload T         `json:"payload"`
+		// MustDeliver marks events published through
+		// [Broker.PublishMustDeliver]. Forwarders that re-publish
+		// events into another broker must preserve this flag by
+		// choosing the must-deliver path, otherwise terminal events
+		// (finish, tool result, error, cancel) can be silently
+		// dropped at the fan-in hop under channel contention.
+		MustDeliver bool `json:"-"`
 	}
 
 	// Publisher can publish events of type T.
