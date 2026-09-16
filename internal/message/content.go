@@ -206,6 +206,18 @@ type Message struct {
 	MessageType     MessageType
 	CreatedAt       int64
 	UpdatedAt       int64
+
+	// textAccum and thinkingAccum are amortized accumulation buffers
+	// for AppendContent / AppendReasoningContent. Without them every
+	// streamed delta re-copies the entire accumulated string (O(n²)
+	// over a stream — ~8GB of transient allocation for a 900KB
+	// message at 50-byte deltas, multiplied by concurrent subagent
+	// streams). strings.Builder only ever appends, so strings
+	// returned by String() before later writes remain valid and
+	// immutable. Clone drops the pointers: a clone appending through
+	// a shared builder would interleave with the original.
+	textAccum     *strings.Builder
+	thinkingAccum *strings.Builder
 }
 
 func (m *Message) Content() TextContent {
@@ -315,12 +327,21 @@ func (m *Message) AppendContent(delta string) {
 	found := false
 	for i, part := range m.Parts {
 		if c, ok := part.(TextContent); ok {
-			m.Parts[i] = TextContent{Text: c.Text + delta}
+			if m.textAccum == nil || m.textAccum.Len() != len(c.Text) {
+				// The buffer does not reflect the current text (message
+				// loaded from DB, cloned, or reset): rebuild it once.
+				m.textAccum = &strings.Builder{}
+				m.textAccum.WriteString(c.Text)
+			}
+			m.textAccum.WriteString(delta)
+			m.Parts[i] = TextContent{Text: m.textAccum.String()}
 			found = true
 		}
 	}
 	if !found {
-		m.Parts = append(m.Parts, TextContent{Text: delta})
+		m.textAccum = &strings.Builder{}
+		m.textAccum.WriteString(delta)
+		m.Parts = append(m.Parts, TextContent{Text: m.textAccum.String()})
 	}
 }
 
@@ -328,14 +349,21 @@ func (m *Message) AppendReasoningContent(delta string) {
 	found := false
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
-			c.Thinking += delta
+			if m.thinkingAccum == nil || m.thinkingAccum.Len() != len(c.Thinking) {
+				m.thinkingAccum = &strings.Builder{}
+				m.thinkingAccum.WriteString(c.Thinking)
+			}
+			m.thinkingAccum.WriteString(delta)
+			c.Thinking = m.thinkingAccum.String()
 			m.Parts[i] = c
 			found = true
 		}
 	}
 	if !found {
+		m.thinkingAccum = &strings.Builder{}
+		m.thinkingAccum.WriteString(delta)
 		m.Parts = append(m.Parts, ReasoningContent{
-			Thinking:  delta,
+			Thinking:  m.thinkingAccum.String(),
 			StartedAt: time.Now().Unix(),
 		})
 	}
@@ -476,10 +504,14 @@ func (m *Message) SetToolResults(tr []ToolResult) {
 
 // Clone returns a deep copy of the message with an independent Parts slice.
 // This prevents race conditions when the message is modified concurrently.
+// The append accumulation buffers are dropped: they must not be shared
+// between two messages that may both append.
 func (m *Message) Clone() Message {
 	clone := *m
 	clone.Parts = make([]ContentPart, len(m.Parts))
 	copy(clone.Parts, m.Parts)
+	clone.textAccum = nil
+	clone.thinkingAccum = nil
 	return clone
 }
 
