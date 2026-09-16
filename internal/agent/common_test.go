@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"os"
@@ -48,7 +49,7 @@ type modelPair struct {
 func anthropicBuilder(model string) builderFunc {
 	return func(t *testing.T, r *vcr.Recorder) (fantasy.LanguageModel, error) {
 		provider, err := anthropic.New(
-			anthropic.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")),
+			anthropic.WithAPIKey(cmp.Or(os.Getenv("ANTHROPIC_API_KEY"), "test-api-key")),
 			anthropic.WithHTTPClient(&http.Client{Transport: r}),
 		)
 		if err != nil {
