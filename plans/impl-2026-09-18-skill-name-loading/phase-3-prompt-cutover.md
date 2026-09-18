@@ -1,6 +1,6 @@
 # Phase 3: Prompt Cutover, Docs, and Measurement
 
-> **Status:** IN_PROGRESS (tasks 1–4 approved for implementation and incremental commits; no push, PR, or merge authorized)
+> **Status:** IN_PROGRESS (tasks 1–4 complete; task 5 verification/review outstanding; no push, PR, or merge authorized)
 > **Depends on:** Phase 1 and 2 implementation through `50afefabd`; user authorized continuing in this worktree without merging.
 > **Delivers:** catalog XML without locations, name-based activation guidance
 > that survives an empty catalog and disappears when the agent has no `view`
@@ -36,32 +36,32 @@ Out of scope: `specialist.md.tpl` restructuring beyond what the shared `skills_a
 
 **Success Criteria.**
 
-- [ ] `skills.ToPromptXML` emits no `<location>`, keeps `<name>`, `<description>`, and `<type>builtin</type>`.
-- [ ] No template in `internal/agent/templates/` mentions `<location>` in a
-      skills context, verified by a grep in the close-out task; the
+- [x] `skills.ToPromptXML` emits no `<location>`, keeps `<name>`, `<description>`, and `<type>builtin</type>`.
+- [x] No template in `internal/agent/templates/` mentions `<location>` in a
+      skills context, verified by the task 4 final template search; the
       skill-loading critical rule instructs by-name loading.
-- [ ] The skill-loading critical rule is itself gated on `view` availability,
+- [x] The skill-loading critical rule is itself gated on `view` availability,
       not only the `skills_usage` block: an agent without `view` receives
       neither. The remaining critical rules keep contiguous numbering in both
       states.
-- [ ] Activation guidance instructs `view(skill_name="<exact name>")` and never mentions passing a path to load a skill.
-- [ ] Guidance is present with an empty catalog when the agent has `view`, and absent when the agent does not have `view`.
-- [ ] Guidance contains the authority rule: a loaded skill provides task context only, and cannot grant tools, delegation, or permission to act beyond the current task.
-- [ ] Guidance explains that references and assets resolve relative to the location the tool returns, and that builtin skills return an `anvil://skills/...` URI whose assets are embedded, not on disk, and whose scripts cannot be executed.
-- [ ] Guidance presence matches the tool list that `buildToolsWithState`
+- [x] Activation guidance instructs `view(skill_name="<exact name>")` and never mentions passing a path to load a skill.
+- [x] Activation guidance is present with an empty catalog when the agent has `view`, and absent when the agent does not have `view`; authority guidance is unconditional.
+- [x] The shared prompt contains the unconditional authority rule: a loaded skill provides task context only, and cannot grant tools, delegation, or permission to act beyond the current task.
+- [x] Guidance explains that references and assets resolve relative to the location the tool returns, and that builtin skills return an `anvil://skills/...` URI whose assets are embedded, not on disk, and whose scripts cannot be executed.
+- [x] Guidance presence matches the tool list that `buildToolsWithState`
       actually produces for the same agent config, proven by a parity test
       over: nil filter, `["*"]`, `[]`, an include list containing `view`, an
       include list omitting `view`, `["!view"]`, `["!bash"]`, a malformed
       mixed list, and `options.disabled_tools: ["view"]`. The parity
       assertion covers the skill-loading critical rule as well as
       `<skills_usage>`.
-- [ ] Full rendered-prompt assertions exist for both an orchestrator prompt
+- [x] Full rendered-prompt assertions exist for both an orchestrator prompt
       and a specialist prompt, in the view-present and view-absent states,
       against the real templates rather than inline fixtures.
-- [ ] `view.md.tpl` documents both selectors and the no-pagination rule for name mode.
-- [ ] README and the builtin-skills skill describe name-based loading.
-- [ ] Golden file and all 13 cassettes pass in replay with no live provider calls and no response-body changes.
-- [ ] Catalog token delta is measured and written into this file's Results table, with before and after numbers and the method used.
+- [x] `view.md.tpl` documents both selectors and the no-pagination rule for name mode.
+- [x] README and the builtin-skills skill describe name-based loading.
+- [x] Golden file and all 13 cassettes pass in replay with no live provider calls and no response-body changes.
+- [x] Catalog token delta is measured and written into this file's Results table, with before and after numbers and the method used.
 
 ## Context Loading
 
@@ -297,8 +297,8 @@ opts = append(opts, prompt.WithViewToolAvailable(hasView))
    present with a non-empty catalog; guidance present with an empty catalog
    (`WithAvailableSkills(nil)`) when view is available; guidance absent with
    `WithViewToolAvailable(false)` even when the catalog is non-empty;
-   guidance text contains `skill_name` and the authority sentence and does
-   not contain `<location>`.
+   guidance text contains `skill_name`; the shared prompt contains the authority
+   sentence and does not contain `<location>`.
 2. [x] Add full rendered-prompt assertions against the real templates in
    `internal/agent/prompts_test.go`, via `orchestratorPrompt(...)` and
    `specialistPrompt(...)`, so the assertions cover the shipped prompt rather
@@ -428,40 +428,82 @@ CGO_ENABLED=0 GOEXPERIMENT=greenteagc go test ./internal/agent/ -run TestOrchest
 
 **Steps:**
 
-1. [ ] Record the "before" numbers from a build of the merge base, and the "after" numbers from the build with tasks 1 and 2 applied. The simplest order is to capture "before" prior to applying task 1 in this worktree; otherwise build the base commit in a scratch checkout.
-2. [ ] For each build, start a session in a scratch directory whose `anvil.json` sets `options.skills_paths` to a fixed directory set (the Claude Essentials plugin skills directory plus `~/.config/agents/skills`, whatever the user actually runs), with `--debug`, then exit immediately. The same skills path set must be used for both runs or the delta is meaningless.
-3. [ ] Grep the log for the single discovery line and record all three fields:
+1. [x] Compile the pre-cutover `ToPromptXML` implementation from `50afefabd`
+   alongside the current emitter in temporary test scaffolding, using the same
+   discovered skill objects for both. Baseline is the actual start of phase 3,
+   not the older draft's `f549a2ca`.
+2. [x] Discover a fixed set once: builtins plus
+   `/Users/broderick.westrope/dev/helse/claude-essentials/plugins/ce/skills` and
+   `/Users/broderick.westrope/.config/agents/skills`, then `Deduplicate`.
+   No disabled names or per-agent allowlist applied. Also measure empty and
+   builtin-only catalogs. These are representative inputs, not a claim about
+   the user's active session or total installed skill count.
+3. [x] Capture byte lengths and `ApproxTokenCount` for both emitters. Render
+   the real old/current templates against identical fixed `PromptDat` values
+   (`/project`, darwin, 2026-09-18, view available, no memory or agent body)
+   to isolate prompt overhead without starting a TUI or contacting a provider.
+4. [x] Record catalog, guidance, authority, rule, description, and schema
+   measurements separately, including small/empty cases that grow overall.
+5. [x] Check all table arithmetic against captured output; remove scaffolding.
 
-```bash
-grep '"Skill discovery complete"' ~/.local/share/anvil/logs/anvil.log | tail -1
-# Record: active, prompt_bytes, prompt_tok_est
-```
+**Results (2026-09-18):**
 
-4. [ ] Fill in the Results table below. `prompt_tok_est` is
-   `ApproxTokenCount`, a 4-chars-per-token heuristic, not a tokenizer
-   measurement, so report it as an estimate and label it as such. A real
-   count would need a provider tokenizer call and is out of scope here. Note
-   also that the catalog delta is not the whole prompt delta: the guidance
-   block itself grew, so record the net effect on `prompt_bytes` for the
-   catalog and state the guidance growth separately rather than presenting
-   the catalog saving as the total.
-5. [ ] Do not state a savings figure anywhere (review notes, commit message,
-   README) that is not backed by this table.
+All token figures below are the **4-char heuristic**, not provider tokenizer
+counts: the existing `ApproxTokenCount` computes `(len(UTF-8 bytes)+3)/4`.
+Before is `50afefabd`; after is the implementation through `ef5c9cdf`.
 
-**Results:**
+| Representative catalog | Active entries | Before bytes | After bytes | Byte delta | Before estimate | After estimate | Estimate delta |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Empty | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Small: builtins only | 3 | 1,199 | 1,024 | -175 | 300 | 256 | -44 |
+| Full fixed roots + builtins, deduplicated | 72 | 30,596 | 22,856 | -7,740 | 7,649 | 5,714 | -1,935 |
 
-| Build | Active skills | Catalog bytes | Catalog token estimate | Guidance block bytes |
-|---|---|---|---|---|
-| Before (base `f549a2ca`) | _to fill_ | _to fill_ | _to fill_ | _to fill_ |
-| After (phase 3) | _to fill_ | _to fill_ | _to fill_ | _to fill_ |
-| Delta | | | | |
+| Fixed overhead component | Before bytes | After bytes | Byte delta | Before estimate | After estimate |
+|---|---:|---:|---:|---:|---:|
+| `skills_usage` block, populated catalog | 1,567 | 1,709 | +142 | 392 | 428 |
+| Unconditional `skill_authority` block | 0 | 329 | +329 | 0 | 83 |
+| Rules 14–15 through closing tag | 582 | 627 | +45 | 146 | 157 |
+| View description, rendered | 189 | 412 | +223 | 48 | 103 |
+| View input schema, compact JSON | 505 | 505 | 0 | 127 | 127 |
 
-**Verify:**
+Schema cost is unchanged in this phase: the name selector already shipped in
+phase 1. Block sizes include their tags; surrounding separator whitespace is
+included in the whole rendered-prompt results below. The authority text adds
+cost even when `view` is absent. With an empty catalog and `view` present, the
+old prompt omitted activation guidance altogether, while the new one emits it.
 
-```bash
-grep -c '"Skill discovery complete"' ~/.local/share/anvil/logs/anvil.log
-# Expected: at least one line per run; both runs recorded in the table above.
-```
+| Catalog | Prompt | Before bytes | After bytes | Byte delta | Before estimate | After estimate |
+|---|---|---:|---:|---:|---:|---:|
+| Empty | Orchestrator | 17,010 | 19,097 | +2,087 | 4,253 | 4,775 |
+| Empty | Specialist | 2,689 | 4,731 | +2,042 | 673 | 1,183 |
+| Small | Orchestrator | 19,780 | 20,123 | +343 | 4,945 | 5,031 |
+| Small | Specialist | 5,459 | 5,757 | +298 | 1,365 | 1,440 |
+| Full fixed roots | Orchestrator | 49,177 | 41,955 | -7,222 | 12,295 | 10,489 |
+| Full fixed roots | Specialist | 34,856 | 27,589 | -7,267 | 8,714 | 6,898 |
+
+The catalog saving is not the net prompt saving. Including the additional
+223 description bytes once, but excluding unchanged tools and provider wire
+wrapping, orchestrator byte deltas are +2,310 / +566 / -6,999 for empty / small /
+full catalogs; specialist deltas are +2,265 / +521 / -7,044. This is not a claim
+about billable tokens, cache behavior, or every user's configuration.
+
+Full fixed-root catalog SHA-256 (UTF-8 XML): before
+`30a35e1fd94e7bf3905d0a295451209f6ad28f554675f38816b9467ea3dfc590`,
+after
+`dad4e2ab8a4d2cf30f47b3c2e2acc95220bb08b29f8c04f51eaa735ceebaf99e`.
+
+**Method deviation:** direct offline emitter/template measurements replace the
+draft's interactive startup/log collection. This keeps identical discovery
+inputs and rendering data, avoids config/cache and network side effects, and
+adds the requested small/empty cases. No manual UI session was performed.
+The results assertion failed on unfilled placeholders before measurement;
+temporary Go measurement tests then passed, and results arithmetic passed.
+
+**Verify:** repeat discovery for the two exact roots above, prepend
+`DiscoverBuiltin()`, deduplicate once, and pass that same slice to the old and
+new `ToPromptXML` functions. For small use `DiscoverBuiltin()` only, for empty
+use nil. Render old/current templates with the fixed data above and the
+corresponding XML. Sizes can change if installed skill metadata changes.
 
 ### Task 5: Phase close-out
 
@@ -470,7 +512,7 @@ grep -c '"Skill discovery complete"' ~/.local/share/anvil/logs/anvil.log
 1. [ ] `gofumpt -w .`
 2. [ ] `task lint`
 3. [ ] `task test`
-4. [ ] Assert the cutover is complete: `grep -rn "location" internal/agent/templates/ internal/skills/skills.go` must show no skills-related `<location>` reference (the unrelated "code locations" and "File location" phrasings may remain).
+4. [x] Assert the cutover is complete: `grep -rn "location" internal/agent/templates/ internal/skills/skills.go` must show no skills-related `<location>` reference (the unrelated "code locations" and "File location" phrasings may remain).
 5. [ ] Manual verification with the `tui-manual-testing` skill: build, start a
    fresh session (cached prompts can hide template edits, so do not reuse a
    running process), and confirm with `--debug` that the system prompt
@@ -629,3 +671,20 @@ or worktree cleanup is authorized.
 - `task lint` could not complete: log-capitalization checks passed, but
   `golangci-lint` is not installed. This is a verification limitation, not a
   claimed lint pass.
+
+### Task 4 and remaining verification
+
+- Representative measurements and net overhead are recorded above. No source
+  files changed in this task; all temporary Go measurement files were removed.
+- Full non-race `go test ./...` passed. `task test` (race-enabled) was also
+  attempted: changed agent/prompt/tools/config/skills packages passed, but the
+  suite failed on an existing race in `TestRunnerAbandonRaceSafety`, with
+  `internal/hooks/runner.go:178` racing testing cleanup. Hooks are unchanged
+  from `50afefabd` and explicitly outside this task; no hook fix attempted.
+- `task lint` remains blocked by missing `golangci-lint`; log checks and scoped
+  `go vet` passed. `gofumpt` unavailable; changed Go files are `gofmt` clean.
+- Template/catalog search confirms no `<location>` elements or instructions
+  to activate by path remain. References to the returned location are for
+  reading assets only. Snapshot/reload code and standalone fetch are untouched.
+- Task 5 manual TUI verification and human review remain undone. No push, PR,
+  merge, or cleanup was performed. This phase is not marked fully closed.
