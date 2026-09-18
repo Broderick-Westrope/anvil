@@ -401,3 +401,11 @@ func TestSniffImageMimeType(t *testing.T) {
 		})
 	}
 }
+
+func TestViewDescriptionSelectors(t *testing.T) {
+	t.Parallel()
+	description := viewDescription()
+	for _, text := range []string{"exact name", "exactly one of file_path or skill_name", "complete skill body plus the location", "does not accept offset or limit", "line numbers", "PNG, JPEG, GIF, WebP", fmt.Sprintf("default %d", DefaultReadLimit)} {
+		require.Contains(t, description, text)
+	}
+}

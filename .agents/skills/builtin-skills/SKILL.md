@@ -18,7 +18,16 @@ These are always available without user configuration.
   `internal/skills/embed.go`.
 - `DiscoverBuiltin()` walks the embedded FS, parses each `SKILL.md`, and sets
   paths with the `anvil://skills/` prefix (e.g., `anvil://skills/jq/SKILL.md`).
-- The View tool resolves `anvil://` paths from the embedded FS, not disk.
+- Load a builtin skill with `view(skill_name="exact-name")`. The View tool
+  returns its full body and `anvil://skills/<name>/SKILL.md` location from the
+  enabled registry snapshot. Initial catalogs contain names, descriptions, and
+  builtin markers, not locations.
+- The View tool also resolves `anvil://` paths from the embedded FS, not disk.
+  Read assets relative to the returned location with `file_path`, for example
+  `anvil://skills/jq/reference.md`. Embedded scripts cannot be executed.
+- A skill hidden by an agent's `skills` allowlist can still be loaded by name;
+  `options.disabled_skills` prevents both listing and by-name loading. Skills
+  provide context only, never tools, delegation, or additional authority.
 - User skills with the same name override builtins (last occurrence wins in
   `Deduplicate()`).
 

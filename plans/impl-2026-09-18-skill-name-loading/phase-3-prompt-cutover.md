@@ -373,10 +373,10 @@ git diff internal/agent/testdata/TestOrchestratorPromptGoldenFile.golden
 
 **Steps:**
 
-1. [ ] Rewrite `view.md.tpl` to document both selectors, for example: `Read a file by path, or load an enabled skill in full by exact name. Pass exactly one of file_path or skill_name. file_path supports offset and line limit (default {{ .DefaultReadLimit }}, max {{ .MaxViewSizeKB }}KB returned content section) and renders images (PNG, JPEG, GIF, WebP). skill_name returns the complete skill body plus the location it came from, and does not accept offset or limit. Use ls for directories.`
-2. [ ] Update the README Agent Skills section with a short paragraph: skills are activated by name through the `view` tool, the catalog lists names and descriptions, a globally enabled skill can be loaded by exact name even when an agent's `skills` allowlist hides it, and `options.disabled_skills` still hides a skill completely from both the catalog and by-name loading.
-3. [ ] Update `.agents/skills/builtin-skills/SKILL.md`: the View tool resolves builtin skills both from `anvil://` paths and from `skill_name`, and by-name loading returns the `anvil://skills/<name>/SKILL.md` URI as the location so embedded assets can be read relative to it. Keep the existing add-a-builtin-skill checklist intact.
-4. [ ] Patch cassettes offline, using phase 1's recipe with three regions instead of one. Generate each replacement from the code that emits it — render the prompt through `orchestratorPrompt(...)` and the description through `viewDescription()` in throwaway scaffolding, rather than hand-typing the new text — then run the suite, read the printed diff for the exact old fragments, and script the replacement over every `*.yaml` under `testdata`, printing a per-file count for each of the three fragments so a zero is visible:
+1. [x] Rewrite `view.md.tpl` to document both selectors, for example: `Read a file by path, or load an enabled skill in full by exact name. Pass exactly one of file_path or skill_name. file_path supports offset and line limit (default {{ .DefaultReadLimit }}, max {{ .MaxViewSizeKB }}KB returned content section) and renders images (PNG, JPEG, GIF, WebP). skill_name returns the complete skill body plus the location it came from, and does not accept offset or limit. Use ls for directories.`
+2. [x] Update the README Agent Skills section with a short paragraph: skills are activated by name through the `view` tool, the catalog lists names and descriptions, a globally enabled skill can be loaded by exact name even when an agent's `skills` allowlist hides it, and `options.disabled_skills` still hides a skill completely from both the catalog and by-name loading.
+3. [x] Update `.agents/skills/builtin-skills/SKILL.md`: the View tool resolves builtin skills both from `anvil://` paths and from `skill_name`, and by-name loading returns the `anvil://skills/<name>/SKILL.md` URI as the location so embedded assets can be read relative to it. Keep the existing add-a-builtin-skill checklist intact.
+4. [x] Patch cassettes offline, using phase 1's recipe with three regions instead of one. Generate each replacement from the code that emits it — render the prompt through `orchestratorPrompt(...)` and the description through `viewDescription()` in throwaway scaffolding, rather than hand-typing the new text — then run the suite, read the printed diff for the exact old fragments, and script the replacement over every `*.yaml` under `testdata`, printing a per-file count for each of the three fragments so a zero is visible:
 
 ```bash
 python3 - <<'EOF'
@@ -397,7 +397,7 @@ for p in sorted(pathlib.Path('testdata').rglob('*.yaml')):
 EOF
 ```
 
-5. [ ] Verify the edit was surgical and replay-only, exactly as in phase 1:
+5. [x] Verify the edit was surgical and replay-only, exactly as in phase 1:
 
 ```bash
 git diff internal/agent/testdata | grep -c '^[+-].*"id": "msg_'        # expect 0
@@ -585,3 +585,47 @@ or worktree cleanup is authorized.
   `goimports` are unavailable on PATH; changed Go files formatted with `gofmt`.
 - Cassette prompt requests are deliberately repaired with the description in
   task 3, offline. No provider calls or recording were used for tasks 1–2.
+
+### Task 3
+
+- Description contract test failed before editing `view.md.tpl`, then passed.
+  README and builtin-skills guidance now describe both selectors, hidden but
+  enabled names, disabled skills, returned locations, and authority limits.
+- All 13 replay cases failed with request mismatches before the offline patch,
+  then passed after it. Generated replacement text through `orchestratorPrompt`
+  and the real view tool's `Info()` (which renders `viewDescription`). Checked
+  the generated schema against every recorded view schema: phase 1 already
+  supplied it, so no schema edits were needed in phase 3.
+- Four regions changed, not the draft's three: the cassettes DO contain two
+  builtin catalog entries (`anvil-hooks`, `jq`), so their locations also had
+  to go. Counts below are independently counted for each region, not assumed.
+
+| Cassette | Rules | Usage + authority | Catalog | View description |
+|---|---:|---:|---:|---:|
+| bash_tool | 2 | 2 | 2 | 2 |
+| download_tool | 2 | 2 | 2 | 2 |
+| fetch_tool | 2 | 2 | 2 | 2 |
+| glob_tool | 2 | 2 | 2 | 2 |
+| grep_tool | 2 | 2 | 2 | 2 |
+| ls_tool | 2 | 2 | 2 | 2 |
+| multiedit_tool | 5 | 5 | 5 | 5 |
+| parallel_tool_calls | 2 | 2 | 2 | 2 |
+| read_a_file | 3 | 3 | 3 | 3 |
+| simple_test | 1 | 1 | 1 | 1 |
+| sourcegraph_tool | 3 | 3 | 3 | 3 |
+| update_a_file | 4 | 4 | 4 | 4 |
+| write_tool | 2 | 2 | 2 | 2 |
+| Total | 32 | 32 | 32 | 32 |
+
+- Compared each file against `50afefabd`: 49 interactions, 32 request body
+  lines changed. Every response body, header, interaction order, and other
+  line is byte-identical. Parsed request JSON also matches after excluding
+  only system text and the view description. Temporary scaffolding removed.
+- `go test ./...` passed with `CGO_ENABLED=0 GOEXPERIMENT=greenteagc`, with
+  HTTP(S) proxies pointed at closed loopback port 1 as an additional guard.
+  Existing cassettes use record-once's replay path; none was removed or
+  recorded, and no live provider API was used. Focused view tests and tools
+  `go vet` passed; changed Go files are `gofmt` clean.
+- `task lint` could not complete: log-capitalization checks passed, but
+  `golangci-lint` is not installed. This is a verification limitation, not a
+  claimed lint pass.
