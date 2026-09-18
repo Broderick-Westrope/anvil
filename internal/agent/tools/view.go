@@ -390,7 +390,9 @@ func runSkillNameMode(
 		return loadBuiltinSkillByName(located, params.SkillName, skillTracker)
 	}
 
-	resp, ok, err := ensureReadAllowed(ctx, call, ViewPermissionsParams(params), located.Location, workingDir, skillsPaths, permissions)
+	permParams := ViewPermissionsParams(params)
+	permParams.FilePath = located.Location
+	resp, ok, err := ensureReadAllowed(ctx, call, permParams, located.Location, workingDir, skillsPaths, permissions)
 	if err != nil {
 		return fantasy.ToolResponse{}, err
 	}

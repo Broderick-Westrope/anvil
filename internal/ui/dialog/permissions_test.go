@@ -1,15 +1,93 @@
 package dialog
 
 import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPermissions_ViewRequestDisplaysFile(t *testing.T) {
+	t.Parallel()
+	for _, selector := range []string{"skill_name", "file_path"} {
+		t.Run(selector, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			workingDir := filepath.Join(dir, "work")
+			require.NoError(t, os.Mkdir(workingDir, 0o700))
+			skillPath := filepath.Join(dir, "SKILL.md")
+			require.NoError(t, os.WriteFile(skillPath, []byte("---\nname: external\ndescription: External skill\n---\nbody"), 0o600))
+			registry := []*skills.Skill{{Name: "external", SkillFilePath: skillPath}}
+			permissions := permission.NewPermissionService(workingDir, config.YoloOff, nil, nil)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			ctx = context.WithValue(ctx, tools.SessionIDContextKey, "test-session")
+			requests := permissions.Subscribe(ctx)
+			tool := tools.NewViewTool(nil, permissions, nil, skills.NewTracker(registry), registry, workingDir)
+			params := tools.ViewParams{SkillName: "external"}
+			want := tools.ViewPermissionsParams{SkillName: "external", FilePath: skillPath}
+			if selector == "file_path" {
+				params = tools.ViewParams{FilePath: filepath.Join("..", "SKILL.md"), Offset: 2, Limit: 10}
+				want = tools.ViewPermissionsParams(params)
+			}
+			input, err := json.Marshal(params)
+			require.NoError(t, err)
+			call := fantasy.ToolCall{ID: "view-call", Name: tools.ViewToolName, Input: string(input)}
+			type outcome struct {
+				response fantasy.ToolResponse
+				err      error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				response, runErr := tool.Run(ctx, call)
+				done <- outcome{response, runErr}
+			}()
+			var request permission.PermissionRequest
+			select {
+			case event := <-requests:
+				request = event.Payload
+				permissions.Deny(request, "denied in test")
+			case result := <-done:
+				t.Fatalf("expected permission request, got %+v", result)
+			case <-ctx.Done():
+				t.Fatal("permission request timed out")
+			}
+			select {
+			case result := <-done:
+				require.NoError(t, result.err)
+				require.True(t, result.response.IsError)
+				require.Contains(t, result.response.Content, "denied in test")
+			case <-ctx.Done():
+				t.Fatal("view did not finish after denial")
+			}
+			sty := styles.TokyoNight()
+			dialog := NewPermissions(&common.Common{Styles: &sty}, request)
+			rendered := ansi.Strip(dialog.renderContent(len(skillPath) + 80))
+			require.Contains(t, rendered, "File: "+fsext.PrettyPath(want.FilePath))
+			require.Equal(t, want, request.Params)
+			require.Equal(t, skillPath, request.Input)
+			require.Equal(t, call.ID, request.ToolCallID)
+			if selector == "file_path" {
+				require.Contains(t, rendered, "Starting from line: 3")
+				require.Contains(t, rendered, "Lines to read: 10")
+			}
+		})
+	}
+}
 
 func newTestPermissions(t *testing.T) *Permissions {
 	t.Helper()
