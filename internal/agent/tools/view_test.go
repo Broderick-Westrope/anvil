@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/stretchr/testify/require"
 )
 
@@ -211,10 +213,27 @@ func TestReadTextFileAllowsExactMaxContentSize(t *testing.T) {
 
 type mockViewPermissionService struct {
 	*pubsub.Broker[permission.PermissionRequest]
+	// requestFunc overrides Request's behavior. Nil means always grant,
+	// matching the pre-existing default.
+	requestFunc func(ctx context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error)
+	mu          sync.Mutex
+	requests    []permission.CreatePermissionRequest
 }
 
 func (m *mockViewPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error) {
+	m.mu.Lock()
+	m.requests = append(m.requests, req)
+	m.mu.Unlock()
+	if m.requestFunc != nil {
+		return m.requestFunc(ctx, req)
+	}
 	return permission.RequestResult{Granted: true}, nil
+}
+
+func (m *mockViewPermissionService) requestCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.requests)
 }
 
 func (m *mockViewPermissionService) Grant(req permission.PermissionRequest) {}
@@ -265,7 +284,22 @@ func (m mockFileTracker) ListReadFiles(ctx context.Context, sessionID string) ([
 
 func newViewToolForTest(workingDir string) fantasy.AgentTool {
 	permissions := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
-	return NewViewTool(nil, permissions, mockFileTracker{}, nil, workingDir)
+	return NewViewTool(nil, permissions, mockFileTracker{}, nil, nil, workingDir)
+}
+
+func newViewToolWithRegistryForTest(registry []*skills.Skill, workingDir string, skillsPaths ...string) fantasy.AgentTool {
+	permissions := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+	return NewViewTool(nil, permissions, mockFileTracker{}, skills.NewTracker(registry), registry, workingDir, skillsPaths...)
+}
+
+func newViewToolWithPermissionsForTest(
+	registry []*skills.Skill,
+	tracker *skills.Tracker,
+	permissions *mockViewPermissionService,
+	workingDir string,
+	skillsPaths ...string,
+) fantasy.AgentTool {
+	return NewViewTool(nil, permissions, mockFileTracker{}, tracker, registry, workingDir, skillsPaths...)
 }
 
 func runViewTool(t *testing.T, tool fantasy.AgentTool, ctx context.Context, params ViewParams) fantasy.ToolResponse {

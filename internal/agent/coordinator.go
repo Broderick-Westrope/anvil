@@ -1018,7 +1018,7 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, c.cfg.WorkingDir(), mergeSkillsPaths(c.cfg.Config().Options.SkillsPaths, plugins)...),
+		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, c.cfg.WorkingDir(), mergeSkillsPaths(c.cfg.Config().Options.SkillsPaths, plugins)...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 	)
 
