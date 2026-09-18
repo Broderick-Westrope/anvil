@@ -1,7 +1,7 @@
 # Phase 2: Presentation Completeness and CLI Assurance
 
-> **Status:** DRAFT (approval pending, no implementation authorized yet)
-> **Depends on:** Phase 1 merged.
+> **Status:** COMPLETED (implementation and commits approved; verification exceptions in the final closeout below)
+> **Depends on:** Phase 1 implemented; user approved continuing without merging.
 > **Delivers:** the rendering matrix around name mode proven across every tool state, width, and degraded-metadata case; the `anvil sessions show` metadata contract locked in by test; copy-output edge cases covered; manual TUI verification recorded.
 
 ## Why this phase exists in this shape
@@ -26,14 +26,14 @@ Out of scope: prompt templates, tool description, catalog XML, docs, token measu
 
 **Success Criteria.**
 
-- [ ] A name-mode `view` renders a non-empty, artifact-free header in every `ToolStatus`: pending, running, awaiting permission, canceled, error, success.
-- [ ] Compact (nested) and expanded layouts both render the skill name; the location is dropped rather than mangled when width forces it.
-- [ ] Builtin locations render as `anvil://skills/<name>/SKILL.md` verbatim, never prettified, never `anvil:/…`.
-- [ ] Missing, empty, invalid-JSON, and non-skill result metadata all degrade to name-only with no dangling separators, no `location=` with an empty value, and no panic.
-- [ ] Path-mode rendering is byte-identical to pre-phase-1 output for the same inputs, asserted for pending, success with `limit`/`offset`, error, and canceled.
-- [ ] Copy output: name mode yields `**Skill:** <name>`; path mode unchanged; neither-selector and both-selector inputs yield no panic and no stray labels.
-- [ ] `extractSkillsFromMessages` returns exactly one entry for a name-mode tool result, with the right name and description.
-- [ ] Manual TUI verification is performed and the observations are recorded
+- [x] A name-mode `view` renders a non-empty, artifact-free header in every `ToolStatus`: pending, running, awaiting permission, canceled, error, success.
+- [x] Compact (nested) and expanded layouts both render the skill name; the location is dropped rather than mangled when width forces it.
+- [x] Builtin locations render as `anvil://skills/<name>/SKILL.md` verbatim, never prettified, never `anvil:/…`.
+- [x] Missing, empty, invalid-JSON, and non-skill result metadata all degrade to name-only with no dangling separators, no `location=` with an empty value, and no panic.
+- [x] Path-mode rendering is byte-identical to pre-phase-1 output for the same inputs, asserted for pending, success with `limit`/`offset`, error, and canceled.
+- [x] Copy output: name mode yields `**Skill:** <name>`; path mode unchanged; neither-selector and both-selector inputs yield no panic and no stray labels.
+- [x] `extractSkillsFromMessages` returns exactly one entry for a name-mode tool result, with the right name and description.
+- [x] Manual TUI verification is performed and the observations are recorded
       with the change when it is submitted for review.
 - [ ] `task test` and `task lint` pass.
 
@@ -85,12 +85,12 @@ This phase adds one decision: at narrow widths, drop the `location` pair and kee
 
 **Steps:**
 
-1. [ ] Build a table-driven test over `ToolStatus` values (`pending`, `running`, `awaiting permission`, `canceled`, `error`, `success`) crossed with the two selectors. For every name-mode cell, assert with `ansi.Strip` that the output contains the skill name, contains no `location=` with an empty value, and contains no `<nil>`, no double space, and no trailing separator. For every path-mode cell, assert the output equals the pre-phase-1 expectation for that state (capture those strings as named constants in the test so a future regression is a one-line diff).
-2. [ ] Add a compact/expanded pair for both selectors: `Compact: true` must render the nested name style and still show the skill name; `ExpandedContent: true` must not duplicate the header.
-3. [ ] Add width cases at 20, 40, and 120 columns for a completed name-mode call with a long disk location, asserting the name always survives and that the `location` pair is dropped rather than truncated into nonsense at the narrow widths.
-4. [ ] Add metadata degradation cases: `Result == nil`; `Metadata == ""`; `Metadata == "{"` (invalid JSON); metadata that parses but has `ResourceType` unset; metadata whose `FilePath` is an `anvil://` URI (assert verbatim, including the double slash); metadata whose `FilePath` is an absolute home-relative path (assert `fsext.PrettyPath` shortening).
-5. [ ] Add one assertion that a name-mode success result renders through `toolOutputSkillContent` and never through `toolOutputCodeContent` (assert the "Loaded Skill" indicator is present and no syntax-highlighted code frame is), so the empty `params.FilePath` in name mode can never reach the code renderer.
-6. [ ] Fix any failing case with the smallest possible change in `file.go` or `tools.go`, and note the fix in this file's Review Notes. Do not add a renderer, a component, a style, or a message type. Do no IO in render.
+1. [x] Build a table-driven test over `ToolStatus` values (`pending`, `running`, `awaiting permission`, `canceled`, `error`, `success`) crossed with the two selectors. For every name-mode cell, assert with `ansi.Strip` that the output contains the skill name, contains no `location=` with an empty value, and contains no `<nil>`, no double space, and no trailing separator. For every path-mode cell, assert the output equals the pre-phase-1 expectation for that state (capture those strings as named constants in the test so a future regression is a one-line diff).
+2. [x] Add a compact/expanded pair for both selectors: `Compact: true` must render the nested name style and still show the skill name; `ExpandedContent: true` must not duplicate the header.
+3. [x] Add width cases at 20, 40, and 120 columns for a completed name-mode call with a long disk location, asserting the name always survives and that the `location` pair is dropped rather than truncated into nonsense at the narrow widths.
+4. [x] Add metadata degradation cases: `Result == nil`; `Metadata == ""`; `Metadata == "{"` (invalid JSON); metadata that parses but has `ResourceType` unset; metadata whose `FilePath` is an `anvil://` URI (assert verbatim, including the double slash); metadata whose `FilePath` is an absolute home-relative path (assert `fsext.PrettyPath` shortening).
+5. [x] Add one assertion that a name-mode success result renders through `toolOutputSkillContent` and never through `toolOutputCodeContent` (assert the "Loaded Skill" indicator is present and no syntax-highlighted code frame is), so the empty `params.FilePath` in name mode can never reach the code renderer.
+6. [x] Fix any failing case with the smallest possible change in `file.go` or `tools.go`, and note the fix in this file's Review Notes. Do not add a renderer, a component, a style, or a message type. Do no IO in render.
 
 **Verify:**
 
@@ -109,9 +109,9 @@ CGO_ENABLED=0 GOEXPERIMENT=greenteagc go test ./internal/ui/chat/ -run 'TestView
 
 **Steps:**
 
-1. [ ] Extend copy coverage beyond phase 1's happy path: a call with both selectors present (the hook-prepared shape, which the UI can legitimately receive from history) reports the skill, not the path, and says so once; a call whose input is invalid JSON produces no panic and no labels; a call with `skill_name` set and `limit`/`offset` also set (rejected by the tool, but still present in history) reports the skill only, with no `limit`/`offset` lines.
-2. [ ] Add a test to `internal/cmd/session_preview_test.go` that builds a `message.ToolResult` whose metadata is a `tools.ViewResponseMetadata` from a name-mode load (`FilePath` set to an absolute skill path, `ResourceType: tools.ViewResourceSkill`, `ResourceName`, `ResourceDescription`) and asserts `extractSkillsFromMessages` returns exactly one entry with that name and description. Add a second case with a builtin `anvil://skills/jq/SKILL.md` location, asserting the entry is still returned and the location is not mangled.
-3. [ ] Do not change `internal/cmd/session.go`. If a test fails, the phase 1 metadata contract was broken and that is the bug to fix, not the CLI.
+1. [x] Extend copy coverage beyond phase 1's happy path: a call with both selectors present (the hook-prepared shape, which the UI can legitimately receive from history) reports the skill, not the path, and says so once; a call whose input is invalid JSON produces no panic and no labels; a call with `skill_name` set and `limit`/`offset` also set (rejected by the tool, but still present in history) reports the skill only, with no `limit`/`offset` lines.
+2. [x] Add a test to `internal/cmd/session_preview_test.go` that builds a `message.ToolResult` whose metadata is a `tools.ViewResponseMetadata` from a name-mode load (`FilePath` set to an absolute skill path, `ResourceType: tools.ViewResourceSkill`, `ResourceName`, `ResourceDescription`) and asserts `extractSkillsFromMessages` returns exactly one entry with that name and description. Add a second case with a builtin `anvil://skills/jq/SKILL.md` location, asserting the entry is still returned and the location is not mangled.
+3. [x] Do not change `internal/cmd/session.go`. If a test fails, the phase 1 metadata contract was broken and that is the bug to fix, not the CLI.
 
 **Verify:**
 
@@ -138,22 +138,21 @@ CGO_ENABLED=0 GOEXPERIMENT=greenteagc go test ./internal/ui/chat/ ./internal/cmd
    footer) yields `**Skill:** <name>`. Then run `anvil sessions show <id>`
    for that session and confirm the skill appears in the summary. Record what
    was observed alongside the change.
-5. [ ] Prepare the change for human review. Committing, pushing, and opening
-   a PR all require explicit authorization at implementation time; this plan
-   grants none. Do not merge, and do not start phase 3 until the human has
-   merged phase 2.
+5. [x] Submit for review and address findings; implementation and commits
+   approved. The user authorized continuing without intermediate merges.
+   No push, PR, merge, or worktree cleanup authorized.
 
 **Verify:**
 
 ```bash
 task lint
 task test
-# Expected: clean lint, full suite green.
+# Original target only; final baseline exceptions are recorded below.
 ```
 
 ## Dependencies and Parallelization
 
-Tasks 1 and 2 touch the same feature surface and run sequentially in one agent context; task 3 is last. Nothing here can start before phase 1 is merged, because `tools.ViewParams.SkillName`, `resolvedSkillLocation`, and `pendingToolWithParams` do not exist until then.
+Tasks 1 and 2 touch the same feature surface and run sequentially in one agent context; task 3 is last. Phase 1 implementation is required (the user waived intermediate merges), because `tools.ViewParams.SkillName`, `resolvedSkillLocation`, and `pendingToolWithParams` do not exist until then.
 
 ## Open Decisions
 
@@ -198,5 +197,30 @@ The verified changes that came out of adversarial review of this phase:
   `extractSkillsFromMessages`, which proves the contract phase 1 promised
   without a slow integration path.
 
-This plan stays DRAFT. Implementation, commits, pushes, and PRs all require
-explicit authorization that has not been given.
+Implementation and commits are approved and complete. Pushes, PRs, merges,
+and worktree cleanup remain unauthorized.
+
+## Final closeout (2026-09-18)
+
+- Task 1: `3750543aa` pins all six states, both selectors, normal/compact/
+  expanded layouts, widths 20/40/120, degraded metadata, builtin and shortened
+  disk locations, unchanged path-mode strings, and the loaded-skill body.
+  No additional chat renderer fix was required by this matrix.
+- Task 2: `8de493d8c` covers malformed/both-selector/pagination copy inputs
+  and disk/builtin session metadata. `internal/cmd/session.go` is unchanged
+  from `f549a2ca` (confirmed at closeout). Portable home-path assertions were
+  fixed in `01717a11d`; the permission-display review follow-up in `bfb16ab87`
+  additionally covers the real dialog renderer, beyond the original chat scope.
+- Task 3: review approved and manual observations recorded in the
+  [shared closeout](README.md#manual-verification-and-limits). Actual binary
+  PTY widths 100×30, 60×20, 200×50 and CLI JSON were checked using real tool
+  results in an isolated sandbox, not a live model. The broad manual-evidence
+  criterion is complete, but its original detailed live-streaming/OS-copy
+  recipe remains unchecked: clipboard integration and PTY permission dialog
+  were not exercised. Copy formatting and permission rendering are automated.
+- All-package non-race and focused race suites (including chat, dialog and
+  cmd), scoped lint and log lint passed. The original generic format/lint/
+  full-race gates remain unchecked exceptions; global vet also has an
+  unrelated baseline failure. See the shared record, not an all-race pass.
+- Core and convention follow-up reviews approved; Windows was cross-compiled
+  only. No merge, push, PR, or worktree deletion was performed.

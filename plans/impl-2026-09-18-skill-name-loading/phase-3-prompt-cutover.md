@@ -1,6 +1,6 @@
 # Phase 3: Prompt Cutover, Docs, and Measurement
 
-> **Status:** IN_PROGRESS (tasks 1–4 complete; task 5 verification/review outstanding; no push, PR, or merge authorized)
+> **Status:** COMPLETED (implementation and commits approved; verification exceptions in the final closeout below)
 > **Depends on:** Phase 1 and 2 implementation through `50afefabd`; user authorized continuing in this worktree without merging.
 > **Delivers:** catalog XML without locations, name-based activation guidance
 > that survives an empty catalog and disappears when the agent has no `view`
@@ -495,7 +495,8 @@ after
 **Method deviation:** direct offline emitter/template measurements replace the
 draft's interactive startup/log collection. This keeps identical discovery
 inputs and rendering data, avoids config/cache and network side effects, and
-adds the requested small/empty cases. No manual UI session was performed.
+adds the requested small/empty cases. No manual UI session was performed
+for measurement; later sandbox PTY verification is recorded in the closeout.
 The results assertion failed on unfilled placeholders before measurement;
 temporary Go measurement tests then passed, and results arithmetic passed.
 
@@ -523,16 +524,15 @@ corresponding XML. Sizes can change if installed skill metadata changes.
    Finally, configure an agent with `tools: ["bash"]` and confirm its prompt
    contains neither a `<skills_usage>` block nor a `LOAD MATCHING SKILLS`
    rule.
-6. [ ] Prepare the change for human review. Committing, pushing, and opening
-   a PR all require explicit authorization at implementation time; this plan
-   grants none. Do not merge.
+6. [x] Submit for review and address findings; implementation and commits
+   approved. No push, PR, merge, or worktree cleanup authorized.
 
 **Verify:**
 
 ```bash
 task lint
 task test
-# Expected: clean lint, full suite green, golden and cassettes consistent.
+# Original target only; final baseline exceptions are recorded below.
 ```
 
 ## Dependencies and Parallelization
@@ -604,11 +604,11 @@ The verified changes that came out of adversarial review of this phase:
   and the token figure is labelled as a 4-chars-per-token estimate rather
   than a tokenizer measurement.
 
-Tasks 1–4 are authorized for implementation and incremental commits. Task 5
-manual verification and human review remain outstanding; no push, PR, merge,
-or worktree cleanup is authorized.
+Tasks 1–5 are closed with the final verification exceptions below.
+Implementation and commits are approved; no push, PR, merge, or worktree
+cleanup is authorized.
 
-## Implementation record
+## Historical implementation checkpoints
 
 ### Tasks 1–2
 
@@ -672,7 +672,7 @@ or worktree cleanup is authorized.
   `golangci-lint` is not installed. This is a verification limitation, not a
   claimed lint pass.
 
-### Task 4 and remaining verification
+### Task 4 checkpoint (superseded by final verification below)
 
 - Representative measurements and net overhead are recorded above. No source
   files changed in this task; all temporary Go measurement files were removed.
@@ -686,5 +686,30 @@ or worktree cleanup is authorized.
 - Template/catalog search confirms no `<location>` elements or instructions
   to activate by path remain. References to the returned location are for
   reading assets only. Snapshot/reload code and standalone fetch are untouched.
-- Task 5 manual TUI verification and human review remain undone. No push, PR,
-  merge, or cleanup was performed. This phase is not marked fully closed.
+- At this checkpoint, task 5 manual TUI verification and human review were
+  still pending. No push, PR, merge, or cleanup was performed.
+
+## Final closeout (2026-09-18)
+
+- Tasks 1–2: `b805371e0`; task 3: `ef5c9cdfc`; task 4: `ce658a9f3`.
+  Catalog, prompt/tool parity, authority guidance, description, docs, golden,
+  and offline cassettes are implemented and verified. Measurement is the
+  representative 72-entry catalog, not the user's catalog; approximately
+  1,935 catalog tokens saved by the 4-char heuristic is not net/billable savings.
+- Task 5 closed with [shared verification exceptions](README.md#final-closeout-2026-09-18).
+  Fresh all-package non-race tests and focused race suites passed at
+  `bfb16ab87`; changed-line golangci-lint via `go run` passed with 0 issues,
+  superseding the earlier missing-executable limitation for that scope.
+  Log lint and diff checks passed. Full `task test`, global vet, full lint,
+  and whole-file gofumpt cleanliness are not asserted green.
+- The original manual live-model recipe remains unchecked: no provider was
+  contacted to demonstrate unprompted selection or live specialist behavior.
+  Real-template/coordinator tests cover guidance/tool parity, empty/narrow
+  catalogs and no-view agents; exact-name loading has automated coverage.
+  The actual binary was exercised with real tool outputs seeded in an isolated
+  PTY/CLI sandbox. See the shared manual record for observed widths, names,
+  canonical locations, full bodies, missing-name error, and cleanup limits.
+- Independent reviews and follow-up approved, including portable test and
+  permission-path fixes `01717a11d` and `bfb16ab87`. Reviewer-role substitution
+  and Windows cross-compile-only coverage are recorded in the shared closeout.
+  No merge, push, PR, folder move, or worktree deletion was performed.

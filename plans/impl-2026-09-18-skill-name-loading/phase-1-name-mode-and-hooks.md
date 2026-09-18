@@ -1,8 +1,6 @@
 # Phase 1: Name Mode, Resolver, Hook Integrity, and Minimal Rendering
 
-> **Status:** IN_PROGRESS (tasks 1-3 authorized for implementation and
-> incremental commits; tasks 4-5 not yet authorized; no pushes, PRs, merges,
-> or worktree cleanup authorized)
+> **Status:** COMPLETED (implementation and commits approved; verification exceptions in the final closeout below)
 > **Depends on:** nothing. Base commit `f549a2ca`, branch `feat/skill-name-loading`.
 > **Delivers:** `view(skill_name=...)` working end to end, including the minimal TUI/copy rendering it needs, because the selector becomes model-visible the moment this phase merges.
 
@@ -41,39 +39,41 @@ Out of scope: prompt templates, `view.md.tpl`, catalog XML, `README.md`, `.agent
 
 **Success Criteria.**
 
-- [ ] `view` schema exposes `file_path`, `skill_name`, `offset`, `limit`, with `required` empty, and the tool rejects zero selectors and (absent a hook baseline) two selectors at run time.
-- [ ] `view(skill_name=X)` returns the full file for both disk-backed and builtin winners, with no line-length truncation, no line numbers, and no "File has more lines" notice.
-- [ ] `offset` or `limit` non-zero with `skill_name` is a bounded error.
-- [ ] Unknown or globally disabled names return "not available in this registry snapshot", with no directory listing, no suggestions, and no discovery.
-- [ ] A skill enabled globally but absent from the calling agent's prompt catalog still loads by exact name.
-- [ ] Source precedence winner is used as-is: user skill over builtin, builtin location returned verbatim as its `anvil://skills/<name>/SKILL.md` URI, disk location returned as an absolute path with symlinks unresolved, relative registry paths absolutized against the process working directory (which is what discovery walked), never against the tool's `workingDir`.
-- [ ] `Located.BaseDir()` returns `anvil://skills/jq` for `anvil://skills/jq/SKILL.md` (the `anvil://` double slash survives) and `filepath.Dir` for disk skills.
-- [ ] Non-regular sources (FIFO, device, socket, directory) are rejected
+- [x] `view` schema exposes `file_path`, `skill_name`, `offset`, `limit`, with `required` empty, and the tool rejects zero selectors and (absent a hook baseline) two selectors at run time.
+- [x] `view(skill_name=X)` returns the full file for both disk-backed and builtin winners, with no line-length truncation, no line numbers, and no "File has more lines" notice.
+- [x] `offset` or `limit` non-zero with `skill_name` is a bounded error.
+- [x] Unknown or globally disabled names return "not available in this registry snapshot", with no directory listing, no suggestions, and no discovery.
+- [x] A skill enabled globally but absent from the calling agent's prompt catalog still loads by exact name.
+- [x] Source precedence winner is used as-is: user skill over builtin, builtin location returned verbatim as its `anvil://skills/<name>/SKILL.md` URI, disk location returned as an absolute path with symlinks unresolved, relative registry paths absolutized against the process working directory (which is what discovery walked), never against the tool's `workingDir`.
+- [x] `Located.BaseDir()` returns `anvil://skills/jq` for `anvil://skills/jq/SKILL.md` (the `anvil://` double slash survives) and `filepath.Dir` for disk skills.
+- [x] Non-regular sources (FIFO, device, socket, directory) are rejected
       without their content being read, and the open cannot block: name mode
       opens through the platform helper (Unix `O_NONBLOCK`) and judges the
       resulting descriptor, so there is no stat/open window to lose.
       Oversized sources fail with a bounded error after reading at most
       `MaxSkillLoadSize + 1` bytes; a file exactly at the cap succeeds.
-- [ ] Deleted, unreadable, malformed-frontmatter, metadata-invalid, oversized, non-regular, and renamed sources each produce a distinct bounded error with no fallback to a losing source.
-- [ ] Outside-working-directory permission requests and symlink-aware
+- [x] Deleted, unreadable, malformed-frontmatter, metadata-invalid, oversized, non-regular, and renamed sources each produce a distinct bounded error with no fallback to a losing source.
+- [x] Outside-working-directory permission requests and symlink-aware
       skills-path membership behave exactly as in path mode, and
       authorization happens before the resolved target is opened.
-- [ ] Hook payloads for a `skill_name` call carry the resolved `file_path`. Deny, halt, allow, `context`, and rewrites are honored, and a rewrite that changes the final target discards the pass-1 approval and runs exactly one additional bounded hook gate on the final canonical payload.
-- [ ] A second retarget (a rewrite during the second gate) is a bounded
+- [x] Hook payloads for a `skill_name` call carry the resolved `file_path`. Deny, halt, allow, `context`, and rewrites are honored, and a rewrite that changes the final target discards the pass-1 approval and runs exactly one additional bounded hook gate on the final canonical payload.
+- [x] A second retarget (a rewrite during the second gate) is a bounded
       error; there is no third pass and no loop.
-- [ ] A PreToolUse hook cannot convert a path-mode call into a name-mode
+- [x] A PreToolUse hook cannot convert a path-mode call into a name-mode
       call: a rewrite that introduces `skill_name` on a call that arrived in
       path mode (or with no selector) is a bounded error, enforced both in
       `hookedTool.Run` and in `view` via the baseline mode.
-- [ ] Clearing only `skill_name` in a rewrite yields path mode at the same
+- [x] Clearing only `skill_name` in a rewrite yields path mode at the same
       canonical target (because `updated_input` shallow-merges and the
       injected `file_path` survives), with no second gate; clearing both
       selectors yields the zero-selector error.
-- [ ] Ordinary `file_path` calls, and every non-`view` tool, keep today's single-pass hook semantics byte for byte.
-- [ ] Sub-agents (which are never hook-wrapped) load by name with no baseline in context and strict exactly-one-selector validation.
-- [ ] Repeated loads of the same skill always return content, including after the file changes on disk, both from the same tool instance with the skill already marked loaded and from a freshly built tool instance.
-- [ ] A pending name-mode call renders the requested skill name when the streamed input JSON is already parseable, falls back to today's anonymous pending row when it is not, and path-mode pending output is unchanged.
-- [ ] `task test` and `task lint` pass with no live provider calls.
+- [x] Ordinary `file_path` calls, and every non-`view` tool, keep today's single-pass hook semantics byte for byte.
+- [x] Sub-agents (which are never hook-wrapped) load by name with no baseline in context and strict exactly-one-selector validation.
+- [x] Repeated loads of the same skill always return content, including after the file changes on disk, both from the same tool instance with the skill already marked loaded and from a freshly built tool instance.
+- [x] A pending name-mode call renders the requested skill name when the streamed input JSON is already parseable, falls back to today's anonymous pending row when it is not, and path-mode pending output is unchanged.
+- [ ] Full `task test` and `task lint` baseline gates: exceptions in the
+      [final verification record](README.md#final-verification-at-bfb16ab87).
+- [x] Offline replays verified without live provider calls.
 
 ## Context Loading
 
@@ -820,7 +820,9 @@ cd internal/agent
 CGO_ENABLED=0 GOEXPERIMENT=greenteagc go test . -run TestOrchestratorAgent 2>&1 | head -60
 ```
 
-3. [ ] Apply the replacement with a script over every `*.yaml` under `testdata`, replacing **all** occurrences in each file (interaction counts vary from 2 to 6 and not every interaction carries the same blocks), and print the per-file replacement count so a file with zero replacements is visible rather than silently skipped:
+3. [x] Repair all affected cassette request schemas offline. Closeout verified
+   the committed replacements and printed per-file counts; the original script
+   execution is not independently attested. The planned recipe was:
 
 ```bash
 python3 - <<'EOF'
@@ -836,7 +838,7 @@ for p in sorted(pathlib.Path('testdata').rglob('*.yaml')):
 EOF
 ```
 
-4. [ ] Verify the edit was surgical and replay-only:
+4. [x] Verify the edit was surgical and replay-only:
 
 ```bash
 git diff --stat internal/agent/testdata
@@ -848,7 +850,7 @@ git diff internal/agent/testdata | grep -c 'skill_name'                # expect 
 
 Every changed line must be inside a request `body:` scalar. No response body, header, URL, or interaction ordering may change, and `content_length` values are part of the recorded request metadata — if the matcher ignores them leave them alone, and if the suite complains, recompute them in the same script rather than re-recording.
 
-5. [ ] Do not run `task test:record`, and do not add a permanent
+5. [x] Do not run `task test:record`, and do not add a permanent
    cassette-updating tool to the repo. The helper from step 1 is scaffolding:
    delete it before the change goes up for review. If a future schema change
    needs the same work, the offline recipe lives in this plan.
@@ -949,9 +951,10 @@ case tools.ViewToolName:
 
 **Steps:**
 
-1. [ ] Write `internal/ui/chat/view_skill_render_test.go` first. Use `ansi.Strip` from `github.com/charmbracelet/x/ansi` before substring assertions rather than matching styled bytes. Cases: pending with complete name-mode JSON renders the name and no `limit`/`offset`; pending with *truncated* streaming JSON (for example `{"skill_na`) renders exactly today's anonymous pending row and does not panic; pending path-mode renders exactly today's anonymous pending row; a pending-to-success transition for the same call ID (render pending, then render with a result) shows name first and then name plus location; completed name-mode with disk metadata renders the shortened location; completed name-mode with builtin metadata renders `anvil://skills/jq/SKILL.md` verbatim; result metadata absent or invalid JSON renders name only with no empty separator artifacts; path-mode completed rendering is unchanged (assert the same substrings the existing view tests use); copy output for name mode is `**Skill:** euc-go` with no `**File:**`, for path mode unchanged including `limit`/`offset` lines, and for a malformed call with neither selector produces no panic and no stray labels.
-2. [ ] Implement `pendingToolWithParams`, the selector-aware assembly, `resolvedSkillLocation`, and the copy branch. Keep the helpers beside their existing neighbors; do not add new files for a dozen lines, do not add styles, and do no IO in render.
-3. [ ] Leave the success body path (`toolOutputSkillContent`) untouched. It already renders the loaded-skill indicator from `meta.ResourceType` for both modes, and name-mode results always carry that metadata, so the empty `params.FilePath` never reaches `toolOutputCodeContent`.
+1. [x] Add `internal/ui/chat/view_skill_render_test.go` (test-first execution
+   order not independently attested at closeout). Use `ansi.Strip` from `github.com/charmbracelet/x/ansi` before substring assertions rather than matching styled bytes. Cases: pending with complete name-mode JSON renders the name and no `limit`/`offset`; pending with *truncated* streaming JSON (for example `{"skill_na`) renders exactly today's anonymous pending row and does not panic; pending path-mode renders exactly today's anonymous pending row; a pending-to-success transition for the same call ID (render pending, then render with a result) shows name first and then name plus location; completed name-mode with disk metadata renders the shortened location; completed name-mode with builtin metadata renders `anvil://skills/jq/SKILL.md` verbatim; result metadata absent or invalid JSON renders name only with no empty separator artifacts; path-mode completed rendering is unchanged (assert the same substrings the existing view tests use); copy output for name mode is `**Skill:** euc-go` with no `**File:**`, for path mode unchanged including `limit`/`offset` lines, and for a malformed call with neither selector produces no panic and no stray labels.
+2. [x] Implement `pendingToolWithParams`, the selector-aware assembly, `resolvedSkillLocation`, and the copy branch. Keep the helpers beside their existing neighbors; do not add new files for a dozen lines, do not add styles, and do no IO in render.
+3. [x] Leave the success body path (`toolOutputSkillContent`) untouched. It already renders the loaded-skill indicator from `meta.ResourceType` for both modes, and name-mode results always carry that metadata, so the empty `params.FilePath` never reaches `toolOutputCodeContent`.
 
 **Verify:**
 
@@ -969,19 +972,18 @@ CGO_ENABLED=0 GOEXPERIMENT=greenteagc go test ./internal/ui/chat/ -run 'TestView
 1. [ ] `gofumpt -w .` (fall back to `goimports` then `gofmt` if unavailable).
 2. [ ] `task lint` (includes `lint:log`, so any new `slog` message must start with a capital letter).
 3. [ ] `task test`.
-4. [ ] Delete the cassette-schema scaffolding from task 4 and confirm `git status` shows no stray files.
+4. [x] Delete the cassette-schema scaffolding from task 4 and confirm `git status` shows no stray files.
 5. [ ] Manual TUI check, using the `tui-manual-testing` skill in `.agents/skills/tui-manual-testing/`: build with `task build`, start a session, and ask the agent to call `view` with `skill_name` set to an installed disk skill and then a builtin. Confirm the body arrives, the header shows the name while streaming and the name plus location once complete, and the loaded-skill indicator appears. Rendering breadth (compact mode, narrow widths, degraded metadata) is phase 2.
-6. [ ] Prepare the change for human review. Committing, pushing, and opening
-   a PR all require explicit authorization at implementation time; this plan
-   grants none. Do not merge, and do not start phase 2 until the human has
-   merged phase 1.
+6. [x] Submit for review and address findings; implementation and commits
+   approved. The user authorized continuing without intermediate merges.
+   No push, PR, merge, or worktree cleanup authorized.
 
 **Verify:**
 
 ```bash
 task lint
 task test
-# Expected: lint clean; full suite green (baseline for this worktree was green at f549a2ca).
+# Original target only; final baseline exceptions are recorded below.
 ```
 
 ## Dependencies and Parallelization
@@ -1073,14 +1075,14 @@ does and why.
   reports per-file counts; and compaction is a reloadability guarantee, not
   retention.
 
-This plan stays IN_PROGRESS for tasks 1-3. Tasks 4 and 5, and any push,
-PR, merge, or worktree cleanup, require separate explicit authorization
-that has not been given.
+All phase tasks are closed with the verification exceptions below. The user
+approved implementation and commits, not push, PR, merge, or worktree cleanup.
 
-## Tasks 1–3 implementation record (2026-09-18)
+## Historical tasks 1–3 implementation record (2026-09-18)
 
-Tasks 1–3 are implemented and verified with the focused checks below. Phase 1
-remains IN_PROGRESS; tasks 4–6 have not been performed. The approved plan
+At this checkpoint, tasks 1–3 were implemented and verified with the focused
+checks below; tasks 4–6 were not yet performed. The final record supersedes
+these checkpoint-only verification limitations. The approved plan
 commit (`1659de075`), resolver commit (`63a8d3116`), and view constructor/read
 commit (`3e07198ec`) were already present when this execution resumed. Their
 original RED runs cannot be independently attested by this execution; new
@@ -1119,3 +1121,27 @@ classification, and tracking-induced unbounded rereads before their fixes.
 - PASS: golangci-lint v2.13.2 on the changed-line scope (`--new-from-rev=f549a2ca`); invoked through `go run` because no lint executable is installed. v2.10.1 cannot decode Go 1.27 export data. Full current lint additionally reports pre-existing MCP bodyclose/noctx/tparallel and coordinator_providers staticcheck findings; these were not changed.
 - PASS: race tests for skills, tools, and the focused hooked-tool tests. The hooks race suite reports an existing `TestRunnerAbandonRaceSafety` race between testing cleanup and its abandoned shell goroutine; rerunning the hooks race suite with that test skipped passes. Non-race hooks tests pass.
 - NOT RUN: full cassette-backed agent suite, full `task test`, live providers, and recording. Task 4 must patch the advertised view schema offline in all 13 cassettes / 49 interactions before full replay. Task 5 must implement the minimal TUI/copy rendering before this feature ships; task 6 still owns whole-phase lint/test/manual review. No UI or cassette files were modified.
+
+## Final closeout (2026-09-18)
+
+- Tasks 1–3: `63a8d3116`, `3e07198ec`, `54796029b`; task 4:
+  `50afefabd`; task 5: `1cea75656`. Task 6 review and verification are closed
+  with the [shared exceptions](README.md#final-closeout-2026-09-18).
+- Closeout inspected task 4's committed diff: 13 cassettes, 32 changed request
+  body scalars, no other lines changed. Per-file counts are 2 each for bash,
+  download, fetch, glob, grep, ls, parallel, and write; 5 multiedit, 3 read,
+  1 simple, 3 sourcegraph, 4 update. Final offline replay passes; no permanent
+  updater or temporary scaffolding remains. The original helper-generation
+  and RED-run procedure cannot be independently attested from the commit, so
+  task 4 steps 1–2 remain unchecked rather than inventing execution evidence.
+- `01717a11d` fixes portable lookup/hook-target assertions. `bfb16ab87` passes
+  the resolved target into permission parameters and adds a real permission
+  renderer regression; this fixes the review's blank-path finding without
+  changing authorization policy. Follow-up review approved both.
+- All-package non-race tests, focused race tests, changed-line lint and log
+  lint passed at `bfb16ab87`. Full race `task test`, global vet, whole-file
+  formatting and full lint are not marked green; see the shared record.
+- The original live-agent/streaming manual recipe is not claimed performed.
+  Actual tool results were seeded into an isolated real-binary PTY/CLI session;
+  streaming has automated coverage. See the shared manual record for precise
+  observations, cleanup, and untested clipboard/permission interactions.
