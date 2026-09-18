@@ -7,9 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -172,6 +175,75 @@ func TestClearDoesNotDecodeLiveDamagedRecord(t *testing.T) {
 	require.NoError(t, os.WriteFile(tracker.path, []byte("{"), 0o600))
 	require.NoError(t, Clear(root))
 	require.FileExists(t, tracker.path)
+}
+
+func TestRecoveryReclaimsAbandonedArtifacts(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	tracker, err := NewTracker(root)
+	require.NoError(t, err)
+	tracker.Track(Entry{SessionID: "closed"})
+	require.NoError(t, tracker.Close(true))
+	files, err := os.ReadDir(root)
+	require.NoError(t, err)
+	for _, file := range files {
+		require.Equal(t, ".registry.lock", file.Name())
+	}
+	dead, err := NewTracker(root)
+	require.NoError(t, err)
+	dead.Track(Entry{SessionID: "recoverable"})
+	require.NoError(t, dead.Close(false))
+	temp := strings.TrimSuffix(dead.path, ".json") + ".tmp-abandoned"
+	require.NoError(t, os.WriteFile(temp, []byte("partial"), 0o600))
+	live, err := NewTracker(root)
+	require.NoError(t, err)
+	liveTemp := strings.TrimSuffix(live.path, ".json") + ".tmp-live"
+	require.NoError(t, os.WriteFile(liveTemp, []byte("partial"), 0o600))
+	legacy := filepath.Join(root, ".recovery-legacy")
+	require.NoError(t, os.WriteFile(legacy, nil, 0o600))
+	old := time.Now().Add(-48 * time.Hour)
+	require.NoError(t, os.Chtimes(legacy, old, old))
+	require.NoError(t, Clear(root))
+	require.NoFileExists(t, temp)
+	require.NoFileExists(t, strings.TrimSuffix(dead.path, ".json")+".lock")
+	require.FileExists(t, liveTemp)
+	require.FileExists(t, legacy)
+	require.NoError(t, live.Close(true))
+	require.NoError(t, Clear(root))
+	require.NoFileExists(t, liveTemp)
+	require.NoFileExists(t, legacy)
+}
+
+func TestClearRetainsRecentLegacyTemporaryFiles(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	path := filepath.Join(root, ".recovery-recent")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	require.NoError(t, Clear(root))
+	require.FileExists(t, path)
+}
+
+func TestRecoveryConcurrentCleanupAndTracking(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(func() {
+			tracker, err := NewTracker(root)
+			if !assert.NoError(t, err) {
+				return
+			}
+			defer func() { assert.NoError(t, tracker.Close(true)) }()
+			for range 10 {
+				tracker.Track(Entry{SessionID: "active"})
+				assert.NoError(t, Clear(root))
+				entries, err := List(root)
+				assert.NoError(t, err)
+				assert.Empty(t, entries)
+			}
+		})
+	}
+	workers.Wait()
 }
 
 func TestListMissingDirectory(t *testing.T) {

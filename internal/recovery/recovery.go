@@ -1,6 +1,7 @@
 package recovery
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,11 @@ func NewTracker(root string) (*Tracker, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("creating recovery directory: %w", err)
 	}
+	unlockRegistry, err := lockRegistry(root)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockRegistry()
 	path := filepath.Join(root, uuid.NewString())
 	release, err := lock.TryFile(path + ".lock")
 	if err != nil {
@@ -90,7 +96,13 @@ func (tracker *Tracker) Close(clean bool) error {
 			tracker.err = errors.Join(tracker.err, err)
 		}
 	}
+	unlockRegistry, err := lockRegistry(filepath.Dir(tracker.path))
 	tracker.release()
+	if err != nil {
+		return errors.Join(tracker.err, err)
+	}
+	defer unlockRegistry()
+	tracker.err = errors.Join(tracker.err, sweepArtifacts(filepath.Dir(tracker.path)))
 	return tracker.err
 }
 
@@ -101,7 +113,7 @@ func (tracker *Tracker) write(entry Entry) (result error) {
 		}
 		return nil
 	}
-	file, err := os.CreateTemp(filepath.Dir(tracker.path), ".recovery-*")
+	file, err := os.CreateTemp(filepath.Dir(tracker.path), strings.TrimSuffix(filepath.Base(tracker.path), ".json")+".tmp-*")
 	if err != nil {
 		return err
 	}
@@ -160,6 +172,14 @@ func Clear(root string) error {
 }
 
 func scan(root string, decode bool, visit func(string, Entry, bool) error) error {
+	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	unlockRegistry, err := lockRegistry(root)
+	if err != nil {
+		return err
+	}
+	defer unlockRegistry()
 	files, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -206,5 +226,73 @@ func scan(root string, decode bool, visit func(string, Entry, bool) error) error
 			scanErrors = append(scanErrors, err)
 		}
 	}
+	if !decode {
+		scanErrors = append(scanErrors, sweepArtifacts(root))
+	}
 	return errors.Join(scanErrors...)
+}
+
+func lockRegistry(root string) (func(), error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return lock.File(ctx, filepath.Join(root, ".registry.lock"))
+}
+
+func sweepArtifacts(root string) error {
+	files, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	active := make(map[string]bool)
+	var cleanupErrors []error
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".lock") || file.Name() == ".registry.lock" {
+			continue
+		}
+		owner := strings.TrimSuffix(file.Name(), ".lock")
+		path := filepath.Join(root, file.Name())
+		release, err := lock.TryFile(path)
+		if errors.Is(err, lock.ErrContended) {
+			active[owner] = true
+			continue
+		}
+		if err != nil {
+			active[owner] = true
+			cleanupErrors = append(cleanupErrors, err)
+			continue
+		}
+		release()
+		if _, err := os.Stat(filepath.Join(root, owner+".json")); errors.Is(err, os.ErrNotExist) {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				cleanupErrors = append(cleanupErrors, err)
+			}
+		}
+	}
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		owner, _, ownedTemp := strings.Cut(file.Name(), ".tmp-")
+		legacy := strings.HasPrefix(file.Name(), ".recovery-")
+		if !ownedTemp && !legacy {
+			continue
+		}
+		if ownedTemp && active[owner] {
+			continue
+		}
+		if legacy {
+			info, err := file.Info()
+			if err != nil {
+				cleanupErrors = append(cleanupErrors, err)
+				continue
+			}
+			if len(active) > 0 || time.Since(info.ModTime()) < 24*time.Hour {
+				continue
+			}
+		}
+		if err := os.Remove(filepath.Join(root, file.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			cleanupErrors = append(cleanupErrors, err)
+		}
+	}
+	return errors.Join(cleanupErrors...)
 }
