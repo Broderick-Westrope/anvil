@@ -1,12 +1,56 @@
 package cmd
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/stretchr/testify/require"
 )
+
+func TestExtractSkillsFromNameModeMessages(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, path, description string
+	}{
+		{"euc-go", "/skills/euc-go/SKILL.md", "Go conventions"},
+		{"jq", "anvil://skills/jq/SKILL.md", "Query JSON"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			metadata, err := json.Marshal(tools.ViewResponseMetadata{
+				FilePath:            tc.path,
+				ResourceType:        tools.ViewResourceSkill,
+				ResourceName:        tc.name,
+				ResourceDescription: tc.description,
+			})
+			require.NoError(t, err)
+			input, err := json.Marshal(tools.ViewParams{SkillName: tc.name})
+			require.NoError(t, err)
+			const createdAt = int64(1_700_000_000)
+			msgs := []*message.Message{
+				{Role: message.Assistant, Parts: []message.ContentPart{
+					message.ToolCall{ID: "view-skill", Name: tools.ViewToolName, Input: string(input), Finished: true},
+				}},
+				{Role: message.Tool, CreatedAt: createdAt, Parts: []message.ContentPart{
+					message.ToolResult{ToolCallID: "view-skill", Name: tools.ViewToolName, Metadata: string(metadata)},
+				}},
+			}
+			require.Equal(t, []sessionShowSkill{{
+				Name:        tc.name,
+				Description: tc.description,
+				LoadedAt:    time.Unix(createdAt, 0).Format(time.RFC3339),
+			}}, extractSkillsFromMessages(msgs))
+			result := msgs[1].Parts[0].(message.ToolResult)
+			var got tools.ViewResponseMetadata
+			require.NoError(t, json.Unmarshal([]byte(result.Metadata), &got))
+			require.Equal(t, tc.path, got.FilePath)
+		})
+	}
+}
 
 func TestRenderTailEmptyInput(t *testing.T) {
 	t.Parallel()
