@@ -1,7 +1,7 @@
 # Phase 3: Prompt Cutover, Docs, and Measurement
 
-> **Status:** DRAFT (approval pending, no implementation authorized yet)
-> **Depends on:** Phases 1 and 2 merged.
+> **Status:** IN_PROGRESS (tasks 1–4 approved for implementation and incremental commits; no push, PR, or merge authorized)
+> **Depends on:** Phase 1 and 2 implementation through `50afefabd`; user authorized continuing in this worktree without merging.
 > **Delivers:** catalog XML without locations, name-based activation guidance
 > that survives an empty catalog and disappears when the agent has no `view`
 > tool, a skill-loading critical rule that neither points at a removed element
@@ -213,9 +213,9 @@ apostrophe).
 
 **Steps:**
 
-1. [ ] Update `TestToPromptXML` first: assert the output contains `<name>` and `<description>`, and assert `require.NotContains(t, xml, "<location>")`. Keep the builtin-type assertion. Add a case proving a skill whose description contains XML-significant characters is still escaped, so the removal did not disturb `escape`.
-2. [ ] Remove the `<location>` line from `ToPromptXML`. Leave `SkillFilePath` on the struct; it is now used by the resolver rather than by the prompt.
-3. [ ] Add `FilterAllows` to `internal/config/filter.go` with table-driven tests for nil, `["*"]`, `[]`, include hit, include miss, exclude hit (`["!view"]` → false), exclude miss (`["!bash"]` → true), and a mixed list failing open to `true`. Add a comment on the function pointing at the parity test in `internal/agent/coordinator_test.go`, so a future reader knows the unit test alone is not the guarantee.
+1. [x] Update `TestToPromptXML` first: assert the output contains `<name>` and `<description>`, and assert `require.NotContains(t, xml, "<location>")`. Keep the builtin-type assertion. Add a case proving a skill whose description contains XML-significant characters is still escaped, so the removal did not disturb `escape`.
+2. [x] Remove the `<location>` line from `ToPromptXML`. Leave `SkillFilePath` on the struct; it is now used by the resolver rather than by the prompt.
+3. [x] Add `FilterAllows` to `internal/config/filter.go` with table-driven tests for nil, `["*"]`, `[]`, include hit, include miss, exclude hit (`["!view"]` → false), exclude miss (`["!bash"]` → true), and a mixed list failing open to `true`. The helper is covered by `TestSkillsUsageParity` in `internal/agent/coordinator_test.go`; no code comment was added, per the implementation authorization.
 
 **Verify:**
 
@@ -293,13 +293,13 @@ opts = append(opts, prompt.WithViewToolAvailable(hasView))
 
 **Steps:**
 
-1. [ ] Add tests to `internal/agent/prompt/skills_test.go` first: guidance
+1. [x] Add tests to `internal/agent/prompt/skills_test.go` first: guidance
    present with a non-empty catalog; guidance present with an empty catalog
    (`WithAvailableSkills(nil)`) when view is available; guidance absent with
    `WithViewToolAvailable(false)` even when the catalog is non-empty;
    guidance text contains `skill_name` and the authority sentence and does
    not contain `<location>`.
-2. [ ] Add full rendered-prompt assertions against the real templates in
+2. [x] Add full rendered-prompt assertions against the real templates in
    `internal/agent/prompts_test.go`, via `orchestratorPrompt(...)` and
    `specialistPrompt(...)`, so the assertions cover the shipped prompt rather
    than an inline fixture. Four cases:
@@ -316,7 +316,7 @@ opts = append(opts, prompt.WithViewToolAvailable(hasView))
      by-name wording (specialists do not include `critical_rules`, so assert
      the rule text is absent in both states for that template);
    - specialist with `view` filtered out: contains no `<skills_usage>`.
-3. [ ] Add the parity test to `internal/agent/coordinator_test.go`. For each
+3. [x] Add the parity test to `internal/agent/coordinator_test.go`. For each
    row below, build one coordinator (via `newTestCoordinator` or a direct
    `&coordinator{...}` as existing tests do), call `buildToolsWithState` and
    `buildPromptWithState` with the **same** `config.Agent`, and assert that
@@ -343,11 +343,11 @@ If `buildToolsWithState` needs collaborators the test cannot cheaply supply,
 pass the same nil/fake values existing tests in this file already use, and
 keep the assertion on tool names only.
 
-4. [ ] Add the option, the field, the critical-rule reorder plus rewrite plus
+4. [x] Add the option, the field, the critical-rule reorder plus rewrite plus
    gate, and the `skills_and_context` restructure.
-5. [ ] Wire the coordinator. `internal/agent/coordinator.go` already imports
+5. [x] Wire the coordinator. `internal/agent/coordinator.go` already imports
    `slices`, `config`, and `tools`, so no new imports are expected.
-6. [ ] Regenerate the golden file:
+6. [x] Regenerate the golden file:
    `CGO_ENABLED=0 GOEXPERIMENT=greenteagc go test ./internal/agent/ -run TestOrchestratorPromptGoldenFile -update`,
    then read the diff and confirm it only touches the critical rules 14 and
    15, the catalog block, and the guidance block.
@@ -562,5 +562,26 @@ The verified changes that came out of adversarial review of this phase:
   and the token figure is labelled as a 4-chars-per-token estimate rather
   than a tokenizer measurement.
 
-This plan stays DRAFT. Implementation, commits, pushes, and PRs all require
-explicit authorization that has not been given.
+Tasks 1–4 are authorized for implementation and incremental commits. Task 5
+manual verification and human review remain outstanding; no push, PR, merge,
+or worktree cleanup is authorized.
+
+## Implementation record
+
+### Tasks 1–2
+
+- Combined in one commit: dropping locations separately would leave the
+  strongest prompt instruction pointing at a removed catalog field.
+- Added XML escaping/path-omission tests, filter cases, real-template tests,
+  and coordinator parity across ten filter shapes, both agent types, and
+  populated/empty allowlists. Tests failed before implementation (including
+  behavioral failures after introducing minimal API stubs), then passed.
+- Authority guidance lives outside the gated activation block in shared
+  `skill_authority`, so it remains present without a catalog or `view`,
+  including specialist prompts. Standalone fetch has its own prompt and no
+  registry; it is unchanged.
+- Golden regenerated from the shipped renderer. Focused skills/config/prompt/
+  coordinator tests and `go vet` for these packages passed. `gofumpt` and
+  `goimports` are unavailable on PATH; changed Go files formatted with `gofmt`.
+- Cassette prompt requests are deliberately repaired with the description in
+  task 3, offline. No provider calls or recording were used for tasks 1–2.

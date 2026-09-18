@@ -33,6 +33,7 @@ type Prompt struct {
 	allowedSkills      []string // nil = unrestricted, [] = none.
 	availableSkills    []*skills.Skill
 	hasAvailableSkills bool
+	hasViewTool        bool
 }
 
 type PromptDat struct {
@@ -46,6 +47,7 @@ type PromptDat struct {
 	GitStatus     string
 	ContextFiles  []ContextFile
 	AvailSkillXML string
+	HasViewTool   bool
 	// AgentsBlock is an optional XML/markdown block describing available agents for orchestrator prompts.
 	AgentsBlock string
 	// DelegationWorkflow is an optional block describing when and how to delegate tasks to specialist agents.
@@ -122,11 +124,18 @@ func WithAvailableSkills(available []*skills.Skill) Option {
 	}
 }
 
+func WithViewToolAvailable(available bool) Option {
+	return func(p *Prompt) {
+		p.hasViewTool = available
+	}
+}
+
 func NewPrompt(name, promptTemplate string, opts ...Option) (*Prompt, error) {
 	p := &Prompt{
-		name:     name,
-		template: promptTemplate,
-		now:      time.Now,
+		name:        name,
+		template:    promptTemplate,
+		now:         time.Now,
+		hasViewTool: true,
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -271,6 +280,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 		Platform:           platform,
 		Date:               p.now().Format("1/2/2006"),
 		AvailSkillXML:      availSkillXML,
+		HasViewTool:        p.hasViewTool,
 		AgentsBlock:        p.agentsBlock,
 		DelegationWorkflow: p.delegationWorkflow,
 		AgentBody:          p.agentBody,

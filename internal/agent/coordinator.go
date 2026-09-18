@@ -841,6 +841,12 @@ func (c *coordinator) buildPromptWithState(
 		prompt.WithAvailableSkills(activeSkills),
 	}
 
+	hasView := config.FilterAllows(agentCfg.AllowedTools, tools.ViewToolName)
+	if opts := c.cfg.Config().Options; opts != nil && slices.Contains(opts.DisabledTools, tools.ViewToolName) {
+		hasView = false
+	}
+	opts = append(opts, prompt.WithViewToolAvailable(hasView))
+
 	if agentName == config.AgentOrchestrator {
 		// Build agents block and delegation workflow from parsed .md files.
 		agentsBlock, delegationWorkflow := buildOrchestratorBlocksFromState(agentMDs, agentConfigs)
