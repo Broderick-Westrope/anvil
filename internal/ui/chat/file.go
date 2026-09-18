@@ -37,22 +37,33 @@ type ViewToolRenderContext struct{}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
+	var params tools.ViewParams
+	parsed := json.Unmarshal([]byte(opts.ToolCall.Input), &params) == nil
 	if opts.IsPending() {
+		if parsed && params.SkillName != "" {
+			return pendingToolWithParams(sty, "View", opts.Anim, width, opts, params.SkillName)
+		}
 		return pendingTool(sty, "View", opts.Anim, opts.Compact)
 	}
 
-	var params tools.ViewParams
-	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
+	if !parsed {
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, width)
 	}
 
-	file := fsext.PrettyPath(params.FilePath)
-	toolParams := []string{file}
-	if params.Limit != 0 {
-		toolParams = append(toolParams, "limit", fmt.Sprintf("%d", params.Limit))
-	}
-	if params.Offset != 0 {
-		toolParams = append(toolParams, "offset", fmt.Sprintf("%d", params.Offset))
+	var toolParams []string
+	if params.SkillName != "" {
+		toolParams = []string{params.SkillName}
+		if location := resolvedSkillLocation(opts); location != "" {
+			toolParams = append(toolParams, "location", location)
+		}
+	} else {
+		toolParams = []string{fsext.PrettyPath(params.FilePath)}
+		if params.Limit != 0 {
+			toolParams = append(toolParams, "limit", fmt.Sprintf("%d", params.Limit))
+		}
+		if params.Offset != 0 {
+			toolParams = append(toolParams, "offset", fmt.Sprintf("%d", params.Offset))
+		}
 	}
 
 	header := toolHeader(sty, opts.Status, "View", width, opts, toolParams...)
@@ -94,6 +105,20 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	// Render code content with syntax highlighting.
 	body := toolOutputCodeContent(sty, params.FilePath, content, params.Offset, width, opts.ExpandedContent, opts.NoTruncate)
 	return joinToolParts(header, body)
+}
+
+func resolvedSkillLocation(opts *ToolRenderOpts) string {
+	if opts.Status != ToolStatusSuccess || opts.Result == nil || opts.Result.IsError {
+		return ""
+	}
+	var meta tools.ViewResponseMetadata
+	if json.Unmarshal([]byte(opts.Result.Metadata), &meta) != nil || meta.ResourceType != tools.ViewResourceSkill {
+		return ""
+	}
+	if strings.HasPrefix(meta.FilePath, "anvil://") {
+		return meta.FilePath
+	}
+	return fsext.PrettyPath(meta.FilePath)
 }
 
 // -----------------------------------------------------------------------------
