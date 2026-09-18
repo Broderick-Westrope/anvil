@@ -197,6 +197,23 @@ interception so a single delegated turn doesn't trigger your hook N times. The
 outer sub-agent tool call itself _is_ hooked, so policy like "never let the
 agent spawn sub-agents" still works.
 
+**Loading a skill by name**: `view` can be addressed by `skill_name` instead
+of `file_path`. Before hooks run, Anvil resolves the name against the enabled
+skill registry and injects the resolved path into the hook payload as
+`file_path`, so a hook that gates reads by `ANVIL_TOOL_INPUT_FILE_PATH` still
+sees a real path and isn't silently bypassed. If a hook's `updated_input`
+changes the destination that would actually be read — by renaming
+`skill_name` to a different skill, or by pointing `file_path` somewhere
+else — the approval from that first pass is discarded and exactly one more
+`PreToolUse` pass runs against the final target; a second retarget in that
+pass is refused rather than looped. Because of this, **a hook that matches
+`view` may run twice for a single call and must be idempotent**. A rewrite
+that clears only `skill_name` is not a retarget: the injected `file_path`
+survives the merge, so the call proceeds as an ordinary path-mode read of the
+same file with no second pass. A hook may not turn a `file_path` read into a
+`skill_name` load — that shape of rewrite is refused outright, nothing is
+read, and no second pass runs.
+
 Hooks are keyed by event name. Only `command` is required, and you can omit
 `matcher` to match all tools.
 

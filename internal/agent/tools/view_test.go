@@ -213,8 +213,6 @@ func TestReadTextFileAllowsExactMaxContentSize(t *testing.T) {
 
 type mockViewPermissionService struct {
 	*pubsub.Broker[permission.PermissionRequest]
-	// requestFunc overrides Request's behavior. Nil means always grant,
-	// matching the pre-existing default.
 	requestFunc func(ctx context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error)
 	mu          sync.Mutex
 	requests    []permission.CreatePermissionRequest

@@ -26,22 +26,10 @@ const (
 	// SupportsImagesContextKey is the key for the model's image support capability.
 	SupportsImagesContextKey supportsImagesKey = "supports_images"
 	// ModelNameContextKey is the key for the model name in the context.
-	ModelNameContextKey modelNameKey = "model_name"
-	// SkillLoadBaselineContextKey is the key for the SkillLoadBaseline
-	// stashed by hookedTool before PreToolUse hooks run.
+	ModelNameContextKey         modelNameKey         = "model_name"
 	SkillLoadBaselineContextKey skillLoadBaselineKey = "skill_load_baseline"
 )
 
-// SkillLoadBaseline records how a view call was addressed before PreToolUse
-// hooks ran, so the view tool can tell which selector a hook rewrote.
-//
-// Mode is the pre-hook selector mode: "name", "path", or "none". It is
-// recorded for every prepared view call, not just name-mode ones, because a
-// hook that introduces skill_name on a path-mode call must be rejected and
-// the tool has no other way to detect that.
-//
-// Resolved is false when a requested name did not resolve at preparation
-// time, which must stay distinguishable from "no preparation".
 type SkillLoadBaseline struct {
 	Mode     string
 	Name     string
@@ -49,12 +37,10 @@ type SkillLoadBaseline struct {
 	Resolved bool
 }
 
-// WithSkillLoadBaseline returns a context carrying the given baseline.
 func WithSkillLoadBaseline(ctx context.Context, b SkillLoadBaseline) context.Context {
 	return context.WithValue(ctx, SkillLoadBaselineContextKey, b)
 }
 
-// GetSkillLoadBaseline retrieves the baseline stashed by hookedTool, if any.
 func GetSkillLoadBaseline(ctx context.Context) (SkillLoadBaseline, bool) {
 	b, ok := ctx.Value(SkillLoadBaselineContextKey).(SkillLoadBaseline)
 	return b, ok

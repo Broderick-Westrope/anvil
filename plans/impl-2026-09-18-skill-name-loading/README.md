@@ -19,9 +19,9 @@
 | 3 | `phase-3-prompt-cutover.md` | Catalog XML without `<location>`, the skill-loading critical rule rewritten and gated on `view`, name-based activation guidance gated on real `view` availability with a coordinator parity test, tool description, docs, golden and cassette updates, token measurement | Phases 1 and 2 | Prompt wording and authority rule, guidance/tool-list parity, cassette churn, measured token delta |
 
 Phases are strictly sequential. Each phase ends with a human review gate and
-a merge before the next phase starts. Committing, pushing, and opening pull
-requests are not authorized by this plan; implementation will need explicit
-authorization for each of those actions at the time.
+a merge before the next phase starts. Implementation and incremental commits
+for phase 1 tasks 1–3 are now explicitly authorized. Pushes, pull requests,
+merges, and worktree cleanup remain unauthorized.
 
 ## Phase Boundaries
 
@@ -148,3 +148,12 @@ tool authorization) are authorized for implementation with incremental
 commits. Pushes, pull requests, merges, and worktree cleanup remain
 unauthorized. Tasks 4 and 5 (cassette repair, TUI/copy rendering) are not
 authorized yet.
+
+## Implementation progress
+
+Phase 1 tasks 1–3 are complete: exact registry lookup, bounded full name-mode
+reads and constructor wiring, and canonical hook authorization with one
+re-gate. See the phase-1 implementation record for tests, deviations, and
+verification limitations. Tasks 4 (offline cassette repair), 5 (minimal
+TUI/copy rendering), and 6 (whole-phase close-out) remain outstanding; the
+phase remains IN_PROGRESS and is not ready to ship independently of them.

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -26,6 +27,35 @@ func writeSkillFile(t *testing.T, dir, name, description, body string) string {
 	content := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s\n", name, description, body)
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 	return path
+}
+
+type boundedSkillTracker struct {
+	filetracker.Service
+	hash   string
+	reread bool
+}
+
+func (f *boundedSkillTracker) RecordRead(context.Context, string, string) {
+	f.reread = true
+}
+
+func (f *boundedSkillTracker) RecordReadWithHash(_ context.Context, _, _, hash string) {
+	f.hash = hash
+}
+
+func TestViewToolSkillNameTracksBoundedBytes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := writeSkillFile(t, dir, "bounded", "description", "complete body")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	registry := []*skills.Skill{{Name: "bounded", SkillFilePath: path}}
+	tracker := &boundedSkillTracker{}
+	tool := NewViewTool(nil, nil, tracker, nil, registry, dir)
+	resp := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "bounded"})
+	require.False(t, resp.IsError)
+	require.False(t, tracker.reread, "RecordRead reopens the source with an unbounded os.ReadFile")
+	require.Equal(t, filetracker.HashContent(data), tracker.hash)
 }
 
 func sessionCtx() context.Context {
@@ -144,7 +174,10 @@ func TestViewToolSkillNameHappyPath(t *testing.T) {
 	require.Equal(t, ViewResourceSkill, meta.ResourceType)
 	require.Equal(t, "big-skill", meta.ResourceName)
 	require.Equal(t, "a big skill", meta.ResourceDescription)
-	require.Contains(t, meta.Content, longLine)
+	data, err := os.ReadFile(skillPath)
+	require.NoError(t, err)
+	require.Equal(t, string(data), meta.Content)
+	require.Contains(t, resp.Content, string(data))
 }
 
 func TestViewToolSkillNameBuiltin(t *testing.T) {
@@ -164,6 +197,10 @@ func TestViewToolSkillNameBuiltin(t *testing.T) {
 	require.Equal(t, "anvil://skills/jq/SKILL.md", meta.FilePath)
 	require.Equal(t, ViewResourceSkill, meta.ResourceType)
 	require.Equal(t, "jq", meta.ResourceName)
+	data, err := skills.BuiltinFS().ReadFile("builtin/jq/SKILL.md")
+	require.NoError(t, err)
+	require.Equal(t, string(data), meta.Content)
+	require.Contains(t, resp.Content, string(data))
 }
 
 func TestViewToolSkillNameHiddenFromCatalogStillLoads(t *testing.T) {
@@ -171,10 +208,6 @@ func TestViewToolSkillNameHiddenFromCatalogStillLoads(t *testing.T) {
 
 	workingDir := t.TempDir()
 	skillPath := writeSkillFile(t, workingDir, "hidden-skill", "hidden but enabled", "body")
-	// registry here represents the enabled snapshot the tool instance
-	// holds; there is no separate "catalog" concept at the tool level, so
-	// this asserts the tool loads by name regardless of any narrower
-	// prompt catalog a caller might build from the same registry.
 	registry := []*skills.Skill{{Name: "hidden-skill", Description: "hidden but enabled", SkillFilePath: skillPath}}
 
 	tool := newViewToolWithRegistryForTest(registry, workingDir)
@@ -197,6 +230,42 @@ func TestViewToolSkillNameMiss(t *testing.T) {
 	require.True(t, resp.IsError)
 	require.Contains(t, resp.Content, "registry snapshot")
 	require.NotContains(t, resp.Content, "euc-go-old")
+}
+
+func TestViewToolSkillNameInvalidSources(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, content, want string }{
+		{"utf8", "---\nname: invalid\ndescription: d\n---\n\xff", "not valid UTF-8"},
+		{"missing name", "---\ndescription: d\n---\nbody", "failed validation"},
+		{"invalid name", "---\nname: bad--name\ndescription: d\n---\nbody", "failed validation"},
+		{"long description", "---\nname: invalid\ndescription: " + strings.Repeat("a", skills.MaxDescriptionLength+1) + "\n---\nbody", "failed validation"},
+		{"malformed yaml", "---\nname: [\n---\nbody", "malformed frontmatter"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "SKILL.md")
+			require.NoError(t, os.WriteFile(path, []byte(tc.content), 0o600))
+			tool := newViewToolWithRegistryForTest([]*skills.Skill{{Name: "invalid", SkillFilePath: path}}, dir)
+			resp := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "invalid"})
+			require.True(t, resp.IsError)
+			require.Contains(t, resp.Content, tc.want)
+		})
+	}
+	t.Run("missing location", func(t *testing.T) {
+		t.Parallel()
+		tool := newViewToolWithRegistryForTest([]*skills.Skill{{Name: "missing"}}, t.TempDir())
+		resp := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "missing"})
+		require.True(t, resp.IsError)
+		require.Contains(t, resp.Content, "no recorded location")
+	})
+	t.Run("disabled builtin does not fall back", func(t *testing.T) {
+		t.Parallel()
+		tool := newViewToolWithRegistryForTest(nil, t.TempDir())
+		resp := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "jq"})
+		require.True(t, resp.IsError)
+		require.Contains(t, resp.Content, "registry snapshot")
+	})
 }
 
 func TestViewToolSkillNameDistinctErrors(t *testing.T) {
@@ -356,15 +425,18 @@ func TestViewToolSkillNameReloadSemantics(t *testing.T) {
 	path := writeSkillFile(t, workingDir, "reload-skill", "d", "version 1")
 	registry := []*skills.Skill{{Name: "reload-skill", Description: "d", SkillFilePath: path}}
 
-	tool := newViewToolWithRegistryForTest(registry, workingDir)
+	tracker := skills.NewTracker(registry)
+	permissions := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+	tool := newViewToolWithPermissionsForTest(registry, tracker, permissions, workingDir)
 
 	resp1 := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "reload-skill"})
 	require.False(t, resp1.IsError)
 	require.Contains(t, resp1.Content, "version 1")
+	require.True(t, tracker.IsLoaded("reload-skill"))
 
 	resp2 := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "reload-skill"})
 	require.False(t, resp2.IsError)
-	require.Contains(t, resp2.Content, "version 1")
+	require.Equal(t, resp1.Content, resp2.Content)
 
 	require.NoError(t, os.WriteFile(path, []byte("---\nname: reload-skill\ndescription: d\n---\n\nversion 2\n"), 0o644))
 
@@ -376,7 +448,7 @@ func TestViewToolSkillNameReloadSemantics(t *testing.T) {
 	freshTool := newViewToolWithRegistryForTest(registry, workingDir)
 	resp4 := runViewTool(t, freshTool, sessionCtx(), ViewParams{SkillName: "reload-skill"})
 	require.False(t, resp4.IsError)
-	require.Contains(t, resp4.Content, "version 2")
+	require.Equal(t, resp3.Content, resp4.Content)
 }
 
 func TestViewToolSkillNameSnapshotIsolation(t *testing.T) {
@@ -429,7 +501,58 @@ func TestViewToolSkillNameRelativeLocationIgnoresToolWorkingDir(t *testing.T) {
 	require.NotContains(t, meta.FilePath, toolWorkingDir)
 }
 
+func TestViewToolSkillNameAuthorizationPrecedesOpen(t *testing.T) {
+	t.Parallel()
+	dir, outside := t.TempDir(), t.TempDir()
+	path := filepath.Join(outside, "SKILL.md")
+	registry := []*skills.Skill{{Name: "late", SkillFilePath: path}}
+	permissions := &mockViewPermissionService{
+		Broker: pubsub.NewBroker[permission.PermissionRequest](),
+		requestFunc: func(_ context.Context, req permission.CreatePermissionRequest) (permission.RequestResult, error) {
+			require.Equal(t, path, req.Path)
+			require.NoError(t, os.WriteFile(path, []byte("---\nname: late\ndescription: created at approval\n---\nbody"), 0o600))
+			return permission.RequestResult{Granted: true}, nil
+		},
+	}
+	tool := newViewToolWithPermissionsForTest(registry, nil, permissions, dir)
+	resp := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "late"})
+	require.False(t, resp.IsError, resp.Content)
+	require.Equal(t, 1, permissions.requestCount())
+}
+
+func TestViewToolSkillNameSymlinkPermissionParity(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink privileges")
+	}
+	for _, escape := range []bool{false, true} {
+		t.Run(fmt.Sprint(escape), func(t *testing.T) {
+			t.Parallel()
+			dir, configured, outside := t.TempDir(), t.TempDir(), t.TempDir()
+			realDir, linkDir := configured, outside
+			if escape {
+				realDir, linkDir = outside, configured
+			}
+			path := writeSkillFile(t, realDir, "linked", "d", "body")
+			link := filepath.Join(linkDir, "linked")
+			require.NoError(t, os.Symlink(filepath.Dir(path), link))
+			registry := []*skills.Skill{{Name: "linked", SkillFilePath: filepath.Join(link, "SKILL.md")}}
+			permissions := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+			tool := newViewToolWithPermissionsForTest(registry, nil, permissions, dir, configured)
+			resp := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "linked"})
+			require.False(t, resp.IsError)
+			want := 0
+			if escape {
+				want = 1
+			}
+			require.Equal(t, want, permissions.requestCount())
+		})
+	}
+}
+
 func TestViewToolSkillNamePermissionBehavior(t *testing.T) {
+	t.Parallel()
+
 	t.Run("inside working directory needs no permission request", func(t *testing.T) {
 		t.Parallel()
 		workingDir := t.TempDir()

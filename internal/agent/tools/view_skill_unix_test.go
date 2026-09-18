@@ -4,6 +4,7 @@ package tools
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -13,6 +14,18 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOpenRegularFileSocketAndDevice(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "s")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", path)
+	require.NoError(t, err)
+	defer listener.Close()
+	for _, path := range []string{path, "/dev/null"} {
+		_, err := openRegularFile(path)
+		require.ErrorIs(t, err, errNotRegularSource)
+	}
+}
 
 func TestOpenRegularFileFIFO(t *testing.T) {
 	t.Parallel()

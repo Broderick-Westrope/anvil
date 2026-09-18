@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -22,6 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
+	"github.com/tidwall/sjson"
 )
 
 //go:embed view.md.tpl
@@ -51,8 +53,6 @@ type ViewParams struct {
 	Limit     int    `json:"limit,omitempty" description:"The number of lines to read (defaults to 200)"`
 }
 
-// ViewPermissionsParams field order must match ViewParams exactly; the
-// conversion at the permission call site depends on it.
 type ViewPermissionsParams struct {
 	FilePath  string `json:"file_path"`
 	SkillName string `json:"skill_name"`
@@ -81,28 +81,18 @@ const (
 	DefaultReadLimit = 200
 	MaxLineLength    = 2000
 
-	// MaxSkillLoadSize bounds a single name-mode read. Name mode has no
-	// pagination escape hatch, so the cap is enforced while reading
-	// (LimitReader at cap+1) rather than checked afterwards.
-	MaxSkillLoadSize = 1024 * 1024 // 1 MiB
+	MaxSkillLoadSize = 1024 * 1024
 
 	skillLoadModeName = "name"
 	skillLoadModePath = "path"
 	skillLoadModeNone = "none"
 )
 
-// errSelectorRequired is returned whenever a view call carries zero or two
-// selectors, outside of the internal hook-prepared two-key payload.
 const errSelectorRequired = "pass exactly one of file_path or skill_name"
 
-// ErrPathToNameRewrite is returned when a skill_name arrives on a call whose
-// pre-hook baseline was path mode or had no selector at all. A PreToolUse
-// hook may not convert a file_path read into a skill_name load.
 var ErrPathToNameRewrite = errors.New(
 	"PreToolUse hooks may not convert a file_path read into a skill_name load")
 
-// errNotRegularSource is returned when a name-mode read target opens to a
-// non-regular file (directory, FIFO, socket, device node).
 var errNotRegularSource = errors.New("skill source is not a regular file")
 
 type contentTooLargeError struct {
@@ -114,19 +104,12 @@ func (e contentTooLargeError) Error() string {
 	return fmt.Sprintf("content section is too large (%d bytes). Maximum size is %d bytes", e.Size, e.Max)
 }
 
-// viewTool wraps the fantasy tool so hookedTool can hang the
-// HookTargetResolver methods off a concrete type that shares the same
-// registry snapshot as the closure performing the read.
 type viewTool struct {
 	fantasy.AgentTool
-	registry []*skills.Skill
+	registry   []*skills.Skill
+	workingDir string
 }
 
-// NewViewTool builds the view tool. skillRegistry is the enabled registry
-// snapshot used for skill_name resolution; it is the same slice passed to
-// the tracker and to anvil_info, so one tool instance is internally
-// consistent. The snapshot is per instance: a rebuilt tool gets the new
-// registry, a retained instance keeps answering from its own.
 func NewViewTool(
 	lspManager *lsp.Manager,
 	permissions permission.Service,
@@ -136,7 +119,7 @@ func NewViewTool(
 	workingDir string,
 	skillsPaths ...string,
 ) fantasy.AgentTool {
-	vt := &viewTool{registry: skillRegistry}
+	vt := &viewTool{registry: skillRegistry, workingDir: workingDir}
 	vt.AgentTool = fantasy.NewAgentTool(
 		ViewToolName,
 		viewDescription(),
@@ -146,6 +129,21 @@ func NewViewTool(
 			if params.SkillName != "" && hasBaseline &&
 				(baseline.Mode == skillLoadModePath || baseline.Mode == skillLoadModeNone) {
 				return fantasy.NewTextErrorResponse(ErrPathToNameRewrite.Error()), nil
+			}
+
+			if hasBaseline && baseline.Mode == skillLoadModeName {
+				target, err := vt.CanonicalTarget(ctx, call.Input)
+				if err != nil {
+					return fantasy.NewTextErrorResponse(err.Error()), nil
+				}
+				switch target.Mode {
+				case skillLoadModeName:
+					return runSkillNameMode(ctx, call, ViewParams{SkillName: target.Name, Offset: params.Offset, Limit: params.Limit}, vt.registry, skillTracker, filetracker, permissions, workingDir, skillsPaths)
+				case skillLoadModePath:
+					return runPathMode(ctx, call, ViewParams{FilePath: target.Location, Offset: params.Offset, Limit: params.Limit}, lspManager, permissions, filetracker, skillTracker, workingDir, skillsPaths)
+				default:
+					return fantasy.NewTextErrorResponse(errSelectorRequired), nil
+				}
 			}
 
 			switch {
@@ -163,7 +161,6 @@ func NewViewTool(
 	return vt
 }
 
-// runPathMode is the pre-existing file_path behavior, unchanged.
 func runPathMode(
 	ctx context.Context,
 	call fantasy.ToolCall,
@@ -175,12 +172,10 @@ func runPathMode(
 	workingDir string,
 	skillsPaths []string,
 ) (fantasy.ToolResponse, error) {
-	// Handle builtin skill files (anvil: prefix).
 	if strings.HasPrefix(params.FilePath, skills.BuiltinPrefix) {
 		return readBuiltinFile(params, skillTracker)
 	}
 
-	// Handle relative paths
 	filePath := filepathext.SmartJoin(workingDir, params.FilePath)
 
 	absFilePath, err := filepath.Abs(filePath)
@@ -197,11 +192,9 @@ func runPathMode(
 	}
 	isSkillFile := isInSkillsPath(absFilePath, skillsPaths)
 
-	// Check if file exists
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Try to offer suggestions for similarly named files
 			dir := filepath.Dir(filePath)
 			base := filepath.Base(filePath)
 
@@ -229,12 +222,10 @@ func runPathMode(
 		return fantasy.ToolResponse{}, fmt.Errorf("error accessing file: %w", err)
 	}
 
-	// Check if it's a directory
 	if fileInfo.IsDir() {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Path is a directory, not a file: %s", filePath)), nil
 	}
 
-	// Set default limit if not provided (no limit for SKILL.md files)
 	if params.Limit <= 0 {
 		if isSkillFile {
 			params.Limit = 1000000 // Effectively no limit for skill files
@@ -259,18 +250,11 @@ func runPathMode(
 			return fantasy.ToolResponse{}, fmt.Errorf("error reading image file: %w", readErr)
 		}
 
-		// Some tools save files with a mismatched extension
-		// (e.g. pinchtab writes JPEG bytes to a .png file).
-		// Providers like Anthropic strictly validate the
-		// media type against the base64 magic bytes and 400
-		// on mismatch, so prefer the sniffed type whenever
-		// it identifies a supported image format.
 		mimeType = sniffImageMimeType(imageData, mimeType)
 
 		return fantasy.NewImageResponse(imageData, mimeType), nil
 	}
 
-	// Read the file content
 	maxContentSize := MaxViewSize
 	if isSkillFile {
 		maxContentSize = 0
@@ -321,12 +305,6 @@ func runPathMode(
 	), nil
 }
 
-// ensureReadAllowed authorizes a read of absPath, requesting permission when
-// the path is outside the working directory and outside every configured
-// skills path. It returns a non-nil response only when the caller must
-// refuse the read (permission denied); ok is false whenever resp is
-// meaningful. Session-ID validation happens unconditionally, matching the
-// pre-existing path-mode behavior this was extracted from.
 func ensureReadAllowed(
 	ctx context.Context,
 	call fantasy.ToolCall,
@@ -374,9 +352,6 @@ func ensureReadAllowed(
 	return fantasy.ToolResponse{}, true, nil
 }
 
-// runSkillNameMode resolves and loads a skill by exact name against
-// registry, the enabled snapshot held by the tool instance executing the
-// call. It never paginates: name mode always returns the whole body.
 func runSkillNameMode(
 	ctx context.Context,
 	call fantasy.ToolCall,
@@ -426,8 +401,6 @@ func runSkillNameMode(
 	return loadDiskSkillByName(ctx, located, params.SkillName, skillTracker, filetracker)
 }
 
-// loadBuiltinSkillByName reads a builtin winner's full body from the
-// embedded filesystem.
 func loadBuiltinSkillByName(located skills.Located, requestedName string, skillTracker *skills.Tracker) (fantasy.ToolResponse, error) {
 	embeddedPath := "builtin/" + strings.TrimPrefix(located.Location, skills.BuiltinPrefix)
 	data, err := fs.ReadFile(skills.BuiltinFS(), embeddedPath)
@@ -442,17 +415,12 @@ func loadBuiltinSkillByName(located skills.Located, requestedName string, skillT
 	return buildSkillLoadResponse(data, located, requestedName, skillTracker)
 }
 
-// loadDiskSkillByName opens, bounds-reads, and validates a disk-backed
-// skill. The read is bounded in this order: open through a helper that
-// cannot block on a non-regular source, validate the descriptor, then read
-// through a LimitReader at MaxSkillLoadSize+1 so the cap is a real memory
-// bound rather than a post-hoc check on an unbounded read.
 func loadDiskSkillByName(
 	ctx context.Context,
 	located skills.Located,
 	requestedName string,
 	skillTracker *skills.Tracker,
-	filetracker filetracker.Service,
+	tracker filetracker.Service,
 ) (fantasy.ToolResponse, error) {
 	f, err := openRegularFile(located.Location)
 	if err != nil {
@@ -487,14 +455,11 @@ func loadDiskSkillByName(
 
 	resp, err := buildSkillLoadResponse(data, located, requestedName, skillTracker)
 	if err == nil && !resp.IsError {
-		filetracker.RecordRead(ctx, GetSessionFromContext(ctx), located.Location)
+		tracker.RecordReadWithHash(ctx, GetSessionFromContext(ctx), located.Location, filetracker.HashContent(data))
 	}
 	return resp, err
 }
 
-// buildSkillLoadResponse validates raw skill bytes and, on success, marks
-// the skill loaded and builds the model-visible response. Shared by the
-// builtin and disk name-mode paths.
 func buildSkillLoadResponse(data []byte, located skills.Located, requestedName string, skillTracker *skills.Tracker) (fantasy.ToolResponse, error) {
 	if !utf8.Valid(data) {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Skill %q content is not valid UTF-8", requestedName)), nil
@@ -541,6 +506,121 @@ func buildSkillLoadResponse(data []byte, located skills.Located, requestedName s
 		fantasy.NewTextResponse(output),
 		meta,
 	), nil
+}
+
+type HookTargetResolver interface {
+	PrepareHookInput(ctx context.Context, input string) (string, context.Context, error)
+
+	CanonicalTarget(ctx context.Context, input string) (HookTarget, error)
+}
+
+type HookTarget struct {
+	Mode     string
+	Name     string
+	Location string
+	Resolved bool
+}
+
+var ErrAmbiguousRewrite = errors.New(
+	"both skill_name and file_path were rewritten by a hook to different targets")
+
+func (vt *viewTool) PrepareHookInput(ctx context.Context, input string) (string, context.Context, error) {
+	var params ViewParams
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return input, WithSkillLoadBaseline(ctx, SkillLoadBaseline{Mode: skillLoadModeNone}), nil
+	}
+
+	switch {
+	case params.SkillName != "" && params.FilePath == "":
+		located, err := skills.Lookup(vt.registry, params.SkillName)
+		if err != nil {
+			baseline := SkillLoadBaseline{Mode: skillLoadModeName, Name: params.SkillName, Resolved: false}
+			return input, WithSkillLoadBaseline(ctx, baseline), nil
+		}
+		baseline := SkillLoadBaseline{
+			Mode:     skillLoadModeName,
+			Name:     params.SkillName,
+			Location: located.Location,
+			Resolved: true,
+		}
+		prepared, err := sjson.Set(input, "file_path", located.Location)
+		if err != nil {
+			baseline.Resolved = false
+			return input, WithSkillLoadBaseline(ctx, baseline), err
+		}
+		return prepared, WithSkillLoadBaseline(ctx, baseline), nil
+	case params.FilePath != "" && params.SkillName == "":
+		return input, WithSkillLoadBaseline(ctx, SkillLoadBaseline{Mode: skillLoadModePath}), nil
+	default:
+		return input, WithSkillLoadBaseline(ctx, SkillLoadBaseline{Mode: skillLoadModeNone}), nil
+	}
+}
+
+func (vt *viewTool) canonicalPathLocation(filePath string) string {
+	if strings.HasPrefix(filePath, skills.BuiltinPrefix) {
+		return filePath
+	}
+	joined := filepathext.SmartJoin(vt.workingDir, filePath)
+	abs, err := filepath.Abs(joined)
+	if err != nil {
+		return joined
+	}
+	return abs
+}
+
+func (vt *viewTool) canonicalTargetForName(name string) HookTarget {
+	located, err := skills.Lookup(vt.registry, name)
+	if err != nil {
+		return HookTarget{Mode: skillLoadModeName, Name: name, Resolved: false}
+	}
+	return HookTarget{Mode: skillLoadModeName, Name: name, Location: located.Location, Resolved: true}
+}
+
+func (vt *viewTool) CanonicalTarget(ctx context.Context, input string) (HookTarget, error) {
+	baseline, hasBaseline := GetSkillLoadBaseline(ctx)
+
+	var params ViewParams
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return HookTarget{Mode: skillLoadModeNone}, nil
+	}
+
+	if !hasBaseline || baseline.Mode != skillLoadModeName {
+		if params.SkillName != "" {
+			return HookTarget{}, ErrPathToNameRewrite
+		}
+		if params.FilePath == "" {
+			return HookTarget{Mode: skillLoadModeNone}, nil
+		}
+		return HookTarget{Mode: skillLoadModePath, Location: vt.canonicalPathLocation(params.FilePath), Resolved: true}, nil
+	}
+
+	nameCleared := params.SkillName == ""
+	nameSame := !nameCleared && params.SkillName == baseline.Name
+
+	pathCleared := params.FilePath == ""
+	pathSame := !pathCleared && vt.canonicalPathLocation(params.FilePath) == baseline.Location
+	pathChanged := !pathCleared && !pathSame
+
+	switch {
+	case nameCleared && pathCleared:
+		return HookTarget{Mode: skillLoadModeNone}, nil
+	case nameCleared:
+		return HookTarget{Mode: skillLoadModePath, Location: vt.canonicalPathLocation(params.FilePath), Resolved: true}, nil
+	case nameSame && pathChanged:
+		return HookTarget{Mode: skillLoadModePath, Location: vt.canonicalPathLocation(params.FilePath), Resolved: true}, nil
+	case nameSame:
+		return HookTarget{Mode: skillLoadModeName, Name: params.SkillName, Location: baseline.Location, Resolved: baseline.Resolved}, nil
+	case pathSame:
+		return vt.canonicalTargetForName(params.SkillName), nil
+	case pathCleared:
+		return vt.canonicalTargetForName(params.SkillName), nil
+	default:
+		newTarget := vt.canonicalTargetForName(params.SkillName)
+		if newTarget.Resolved && newTarget.Location == vt.canonicalPathLocation(params.FilePath) {
+			return newTarget, nil
+		}
+		return HookTarget{}, ErrAmbiguousRewrite
+	}
 }
 
 func addLineNumbers(content string, startLine int) string {

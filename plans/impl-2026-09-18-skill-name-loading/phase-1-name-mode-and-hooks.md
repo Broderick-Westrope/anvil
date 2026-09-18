@@ -469,10 +469,10 @@ func Lookup(registry []*Skill, name string) (Located, error)
 
 **Steps:**
 
-1. [ ] Write `internal/skills/lookup_test.go` first, table driven, covering: exact match on a disk skill with an absolute `SkillFilePath`; exact match on a disk skill with a **relative** `SkillFilePath`, asserting the result is absolutized against the process working directory (run the subtest with `t.Chdir(t.TempDir())` and assert the prefix is that dir, then assert the same registry entry resolved from a different `t.Chdir` yields a different absolute path — this is the regression guard against absolutizing with a tool `workingDir`); builtin winner yields its `SkillFilePath` verbatim with `Builtin: true`; case mismatch (`Euc-Go` vs `euc-go`) returns `ErrNotInRegistry`; empty name returns `ErrNotInRegistry`; a registry where a user entry shadows a builtin (already deduplicated, so only the user entry is present) resolves to the user path; an entry with an empty `SkillFilePath` returns `ErrNoLocation`; `BaseDir` asserts exactly `anvil://skills/jq` for `anvil://skills/jq/SKILL.md` and `filepath.Dir` for disk skills; a symlinked skill directory keeps the symlink in `Location` (create a real dir plus `os.Symlink`, skip on Windows via `runtime.GOOS`).
-2. [ ] Implement `internal/skills/lookup.go`. Detect builtin by `strings.HasPrefix(s.SkillFilePath, BuiltinPrefix)` rather than by `Source`, so a mis-tagged entry cannot be turned into a disk read. Use `filepath.Abs` for disk entries — which resolves against the process working directory, matching what discovery walked — and explicitly do not call `filepath.EvalSymlinks`, with a comment saying why. Never join against any tool-level `workingDir`.
-3. [ ] Implement `BaseDir` with the prefix split for builtins (`BuiltinPrefix + path.Dir(strings.TrimPrefix(loc, BuiltinPrefix))`) and `filepath.Dir` for disk skills.
-4. [ ] Do not add a discovery fallback, a fuzzy matcher, or an `EffectiveName` match. Exact `Name` only, since `Name` is the callable identity and `DisplayName` exists purely for collision display.
+1. [x] Write `internal/skills/lookup_test.go` first, table driven, covering: exact match on a disk skill with an absolute `SkillFilePath`; exact match on a disk skill with a **relative** `SkillFilePath`, asserting the result is absolutized against the process working directory (run the subtest with `t.Chdir(t.TempDir())` and assert the prefix is that dir, then assert the same registry entry resolved from a different `t.Chdir` yields a different absolute path — this is the regression guard against absolutizing with a tool `workingDir`); builtin winner yields its `SkillFilePath` verbatim with `Builtin: true`; case mismatch (`Euc-Go` vs `euc-go`) returns `ErrNotInRegistry`; empty name returns `ErrNotInRegistry`; a registry where a user entry shadows a builtin (already deduplicated, so only the user entry is present) resolves to the user path; an entry with an empty `SkillFilePath` returns `ErrNoLocation`; `BaseDir` asserts exactly `anvil://skills/jq` for `anvil://skills/jq/SKILL.md` and `filepath.Dir` for disk skills; a symlinked skill directory keeps the symlink in `Location` (create a real dir plus `os.Symlink`, skip on Windows via `runtime.GOOS`).
+2. [x] Implement `internal/skills/lookup.go`. Detect builtin by `strings.HasPrefix(s.SkillFilePath, BuiltinPrefix)` rather than by `Source`, so a mis-tagged entry cannot be turned into a disk read. Use `filepath.Abs` for disk entries — which resolves against the process working directory, matching what discovery walked — and explicitly do not call `filepath.EvalSymlinks`, with a comment saying why. Never join against any tool-level `workingDir`.
+3. [x] Implement `BaseDir` with the prefix split for builtins (`BuiltinPrefix + path.Dir(strings.TrimPrefix(loc, BuiltinPrefix))`) and `filepath.Dir` for disk skills.
+4. [x] Do not add a discovery fallback, a fuzzy matcher, or an `EffectiveName` match. Exact `Name` only, since `Name` is the callable identity and `DisplayName` exists purely for collision display.
 
 **Verify:**
 
@@ -571,7 +571,7 @@ Metadata stays `ViewResponseMetadata` with no new fields: `FilePath` is the reso
 
 **Steps:**
 
-1. [ ] Add the context baseline to `internal/agent/tools/tools.go`, following the existing key style:
+1. [x] Add the context baseline to `internal/agent/tools/tools.go`, following the existing key style:
 
 ```go
 type skillLoadBaselineKey string
@@ -599,7 +599,7 @@ func WithSkillLoadBaseline(ctx context.Context, b SkillLoadBaseline) context.Con
 func GetSkillLoadBaseline(ctx context.Context) (SkillLoadBaseline, bool)
 ```
 
-2. [ ] Write `internal/agent/tools/view_skill_test.go` before touching `view.go`. Required cases, all with a `t.TempDir()` registry built by hand (no discovery):
+2. [x] Write `internal/agent/tools/view_skill_test.go` before touching `view.go`. Required cases, all with a `t.TempDir()` registry built by hand (no discovery):
    - schema assertions via `tool.Info()`: `required` is empty, `properties` contains `skill_name`, and the `file_path` description mentions mutual exclusivity (this string lands in the cassettes, so the assertion documents what task 4 must patch);
    - no selector; `{"skill_name": null}`; both selectors with no baseline in
      context; `skill_name` set with a baseline whose `Mode` is `"path"`
@@ -633,8 +633,8 @@ func GetSkillLoadBaseline(ctx context.Context) (SkillLoadBaseline, bool)
      permission request is made, that it is made before the target is
      opened, and that a denial is surfaced as the permission-denied
      response).
-3. [ ] Extend `ViewParams` and `ViewPermissionsParams` as above. Keep field order aligned so the existing conversion compiles unchanged.
-4. [ ] Change `NewViewTool` to return a wrapper struct rather than the bare fantasy tool, so task 3 can hang the hook-target methods off it:
+3. [x] Extend `ViewParams` and `ViewPermissionsParams` as above. Keep field order aligned so the existing conversion compiles unchanged.
+4. [x] Change `NewViewTool` to return a wrapper struct rather than the bare fantasy tool, so task 3 can hang the hook-target methods off it:
 
 ```go
 type viewTool struct {
@@ -643,8 +643,8 @@ type viewTool struct {
 }
 ```
 
-5. [ ] Restructure the tool body: resolve the mode first (`selectViewMode`, which consults the baseline when present), then dispatch. Path mode keeps the existing code path untouched, including `anvil://` handling, permission requests, image handling, `readTextFile`, LSP open/diagnostics, and the existing skill-file metadata branch.
-6. [ ] Implement name mode in the bounded order from Design Decisions:
+5. [x] Restructure the tool body: resolve the mode first (`selectViewMode`, which consults the baseline when present), then dispatch. Path mode keeps the existing code path untouched, including `anvil://` handling, permission requests, image handling, `readTextFile`, LSP open/diagnostics, and the existing skill-file metadata branch.
+6. [x] Implement name mode in the bounded order from Design Decisions:
    - reject a non-empty `skill_name` when the context baseline has
      `Mode: "path"` or `Mode: "none"` (`ErrPathToNameRewrite`), before any
      resolution;
@@ -656,13 +656,13 @@ type viewTool struct {
    - `skillTracker.MarkLoaded(parsed.Name)` unconditionally on success, never gating content on `IsLoaded`;
    - `filetracker.RecordRead` for disk loads only, matching the existing builtin behavior which records nothing;
    - skip `openInLSPs`/`waitForLSPDiagnostics`; a `SKILL.md` has no useful diagnostics and name mode should not pay the 300ms wait.
-7. [ ] Add the two build-tagged helper files. Unix: `unix.Open` with
+7. [x] Add the two build-tagged helper files. Unix: `unix.Open` with
    `O_RDONLY|O_NONBLOCK|O_CLOEXEC` wrapped by `os.NewFile`. Windows: plain
    `os.OpenFile` with `O_RDONLY`. Both then `Stat` the descriptor and return
    the non-regular error for anything that is not a regular file. Follow the
    `internal/lock/lock_unix.go` / `lock_windows.go` tag style; add no new
    module dependency (`golang.org/x/sys` is already direct at `go.mod:69`).
-8. [ ] Update all four constructor invocations per the table above, including
+8. [x] Update all four constructor invocations per the table above, including
    the `nil` plus comment at `agentic_fetch_tool.go:175`.
 
 **Verify:**
@@ -738,7 +738,7 @@ and the baseline is what makes the path-to-name refusal enforceable.
 
 **Steps:**
 
-1. [ ] Write `internal/agent/hooked_tool_skill_test.go` first, using a real
+1. [x] Write `internal/agent/hooked_tool_skill_test.go` first, using a real
    `hooks.Runner` built from shell scripts in `t.TempDir()` (no mocking of
    the hook engine, per the testing skill's "real dependencies" default) and
    a real view tool over a temp registry. Each hook script appends a line to
@@ -762,14 +762,14 @@ and the baseline is what makes the path-to-name refusal enforceable.
    - **example I**: a path-mode call whose pass-1 hook introduces `skill_name`; assert the bounded `ErrPathToNameRewrite` response, exactly one pass, nothing read, and no permission grant. Add the tool-level half of the same assertion in `internal/agent/tools/view_skill_test.go` by invoking the tool directly with a `Mode: "path"` baseline in context;
    - **example J**: a path-mode call with a path-to-path rewrite; exactly one pass, the rewritten file is read, no path-to-name error;
    - **example K**: a `skill_name` call with no hooks configured, and separately with an unwrapped tool (the sub-agent case), works with no baseline and strict exactly-one-selector validation.
-2. [ ] Add a payload-level assertion: build the prepared input through `PrepareHookInput` and assert `hooks.BuildEnv(...)` exports `ANVIL_TOOL_INPUT_FILE_PATH` equal to the resolved location, and that `hooks.BuildPayload` emits a `tool_input.file_path` equal to it, for both pass 1 and the re-gated pass-2 payload. This is the regression guard for the original bypass.
-3. [ ] Implement `HookTargetResolver` in `tools`, implement both methods on
+2. [x] Add a payload-level assertion: build the prepared input through `PrepareHookInput` and assert `hooks.BuildEnv(...)` exports `ANVIL_TOOL_INPUT_FILE_PATH` equal to the resolved location, and that `hooks.BuildPayload` emits a `tool_input.file_path` equal to it, for both pass 1 and the re-gated pass-2 payload. This is the regression guard for the original bypass.
+3. [x] Implement `HookTargetResolver` in `tools`, implement both methods on
    `viewTool` (reusing `skills.Lookup` over the instance snapshot), and wire
    the algorithm into `hookedTool.Run`. Keep the failure path non-fatal: if
    `PrepareHookInput` returns an error, log at debug, leave `call.Input`
    untouched, and stash the unresolved baseline so pass-1 hooks still run and
    the tool still produces its own bounded error.
-4. [ ] Implement the canonical-target tables inside `CanonicalTarget`,
+4. [x] Implement the canonical-target tables inside `CanonicalTarget`,
    including the "both changed but consistent" case, `ErrAmbiguousRewrite`,
    the `skill_name`-cleared rows (which depend on the shallow merge
    preserving `file_path`), and `ErrPathToNameRewrite` for a
@@ -777,9 +777,9 @@ and the baseline is what makes the path-to-name refusal enforceable.
    in `hookedTool.Run` as well, since that is the only place that knows the
    pre-hook mode for a call the tool would otherwise read as an ordinary
    name-mode request.
-5. [ ] Merge pass-2 metadata: summed hook count, joined reasons, pass-2 decision authoritative, and a `retarget` boolean so logs and the UI can see it. Any new `slog` message starts with a capital letter (`task lint:log`).
-6. [ ] Do not wrap sub-agent tools with hooks. `wrapToolsWithHooks` keeps its `isSubAgent` early return untouched, and the test above locks that in.
-7. [ ] Update `docs/hooks/README.md`: in the PreToolUse section, document
+5. [x] Merge pass-2 metadata: summed hook count, joined reasons, pass-2 decision authoritative, and a `retarget` boolean so logs and the UI can see it. Any new `slog` message starts with a capital letter (`task lint:log`).
+6. [x] Do not wrap sub-agent tools with hooks. `wrapToolsWithHooks` keeps its `isSubAgent` early return untouched, and the test above locks that in.
+7. [x] Update `docs/hooks/README.md`: in the PreToolUse section, document
    that a `view` call using `skill_name` has its resolved `file_path`
    injected into the hook payload before hooks run; that a rewrite which
    changes the destination discards the earlier `allow` and triggers one
@@ -1076,3 +1076,46 @@ does and why.
 This plan stays IN_PROGRESS for tasks 1-3. Tasks 4 and 5, and any push,
 PR, merge, or worktree cleanup, require separate explicit authorization
 that has not been given.
+
+## Tasks 1–3 implementation record (2026-09-18)
+
+Tasks 1–3 are implemented and verified with the focused checks below. Phase 1
+remains IN_PROGRESS; tasks 4–6 have not been performed. The approved plan
+commit (`1659de075`), resolver commit (`63a8d3116`), and view constructor/read
+commit (`3e07198ec`) were already present when this execution resumed. Their
+original RED runs cannot be independently attested by this execution; new
+regression tests reproduced failures for second-gate handling, socket error
+classification, and tracking-induced unbounded rereads before their fixes.
+
+### Implementation adjustments
+
+- No new code comments were retained, per the explicit implementation request;
+  pre-existing comments and required build directives are preserved.
+- Name-mode tracking uses `RecordReadWithHash` with the already bounded bytes,
+  not `RecordRead`: inspection showed the latter reopens the path with an
+  unbounded `os.ReadFile`, violating the read cap and FIFO guarantee.
+- The second gate is a single explicit branch rather than a loop plus a flag.
+  Its baseline is rebased to the payload it gates, so a second name-only or
+  path-only retarget is correctly detected. A path target clears the stale
+  name in that canonical payload. Both passes' metadata and context survive
+  second-pass denial, halt, and double-retarget errors.
+- `openRegularFile` uses a post-open-failure stat only to classify socket or
+  directory errors. Successful opens are always checked by descriptor; the
+  stat is never a safety check before opening.
+- Additional test constructors intentionally exceed the plan's original
+  five-line search count. All four original call sites are updated; the
+  coordinator supplies `activeSkills`, and `agentic_fetch` supplies `nil`.
+- Tests use a real hook runner, temporary shell scripts, and real permission
+  and SQLite file-tracker services for the authorization matrix. Small
+  existing-style test doubles remain for isolated tool cases, including the
+  regression guarding against a tracking-induced second filesystem read.
+
+### Verification
+
+- PASS: `CGO_ENABLED=0 GOEXPERIMENT=greenteagc go test ./internal/skills ./internal/agent/tools ./internal/hooks`.
+- PASS: `CGO_ENABLED=0 GOEXPERIMENT=greenteagc go test ./internal/agent -run 'TestHookedTool|TestWrapToolsWithHooks' -count=1`.
+- PASS: `go build ./...` and `go vet ./internal/agent/... ./internal/skills/... ./internal/hooks/...` with the same build environment.
+- PASS: gofumpt formatting, `task lint:log`, and `git diff --check`.
+- PASS: golangci-lint v2.13.2 on the changed-line scope (`--new-from-rev=f549a2ca`); invoked through `go run` because no lint executable is installed. v2.10.1 cannot decode Go 1.27 export data. Full current lint additionally reports pre-existing MCP bodyclose/noctx/tparallel and coordinator_providers staticcheck findings; these were not changed.
+- PASS: race tests for skills, tools, and the focused hooked-tool tests. The hooks race suite reports an existing `TestRunnerAbandonRaceSafety` race between testing cleanup and its abandoned shell goroutine; rerunning the hooks race suite with that test skipped passes. Non-race hooks tests pass.
+- NOT RUN: full cassette-backed agent suite, full `task test`, live providers, and recording. Task 4 must patch the advertised view schema offline in all 13 cassettes / 49 interactions before full replay. Task 5 must implement the minimal TUI/copy rendering before this feature ships; task 6 still owns whole-phase lint/test/manual review. No UI or cassette files were modified.

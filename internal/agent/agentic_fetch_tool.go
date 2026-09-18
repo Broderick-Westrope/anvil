@@ -172,10 +172,6 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				tools.NewGlobTool(tmpDir, c.cfg.Config().Tools.Glob),
 				tools.NewGrepTool(tmpDir, c.cfg.Config().Tools.Grep),
 				tools.NewSourcegraphTool(client),
-				// nil registry: the fetch sub-agent works inside a
-				// throwaway tmpDir on fetched web content, and its prompt
-				// never renders the skills catalog or activation guidance,
-				// so it has no legitimate reason to load a skill by name.
 				tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, nil, nil, tmpDir),
 			}
 
