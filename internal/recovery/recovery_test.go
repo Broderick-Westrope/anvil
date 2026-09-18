@@ -143,6 +143,37 @@ func TestTrackerSurvivesForceKill(t *testing.T) {
 	require.Equal(t, "Recover me", entries[0].Title)
 }
 
+func TestDamagedRecordsDoNotHideValidSessions(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	tracker, err := NewTracker(root)
+	require.NoError(t, err)
+	tracker.Track(Entry{SessionID: "valid"})
+	require.NoError(t, tracker.Close(false))
+	bad := filepath.Join(root, "bad.json")
+	require.NoError(t, os.WriteFile(bad, []byte("{"), 0o600))
+	entries, err := List(root)
+	require.ErrorContains(t, err, "bad.json")
+	require.Len(t, entries, 1)
+	require.Equal(t, "valid", entries[0].SessionID)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "empty.json"), []byte("{}"), 0o600))
+	require.NoError(t, Clear(root))
+	files, err := filepath.Glob(filepath.Join(root, "*.json"))
+	require.NoError(t, err)
+	require.Empty(t, files)
+}
+
+func TestClearDoesNotDecodeLiveDamagedRecord(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	tracker, err := NewTracker(root)
+	require.NoError(t, err)
+	defer tracker.Close(true)
+	require.NoError(t, os.WriteFile(tracker.path, []byte("{"), 0o600))
+	require.NoError(t, Clear(root))
+	require.FileExists(t, tracker.path)
+}
+
 func TestListMissingDirectory(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(t.TempDir(), "missing")

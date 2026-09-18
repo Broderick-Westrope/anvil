@@ -38,7 +38,12 @@ func newSessionRecoverCommand(root string) *cobra.Command {
 			}
 			entries, err := recovery.List(directory)
 			if err != nil {
-				return err
+				if entries == nil {
+					return err
+				}
+				if _, writeErr := fmt.Fprintf(command.ErrOrStderr(), "Warning: some recovery records could not be read: %v\n", err); writeErr != nil {
+					return writeErr
+				}
 			}
 			if asJSON {
 				return json.NewEncoder(command.OutOrStdout()).Encode(entries)

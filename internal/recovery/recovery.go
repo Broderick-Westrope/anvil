@@ -123,7 +123,7 @@ func (tracker *Tracker) write(entry Entry) (result error) {
 func List(root string) ([]Entry, error) {
 	entries := make(map[string]Entry)
 	live := make(map[string]bool)
-	err := scan(root, func(_ string, entry Entry, active bool) error {
+	err := scan(root, true, func(_ string, entry Entry, active bool) error {
 		key := entry.WorkingDir + "\x00" + entry.SessionID
 		if active {
 			live[key] = true
@@ -132,9 +132,6 @@ func List(root string) ([]Entry, error) {
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
 	result := make([]Entry, 0, len(entries))
 	for key, entry := range entries {
 		if !live[key] {
@@ -147,11 +144,11 @@ func List(root string) ([]Entry, error) {
 		}
 		return strings.Compare(left.SessionID, right.SessionID)
 	})
-	return result, nil
+	return result, err
 }
 
 func Clear(root string) error {
-	return scan(root, func(path string, _ Entry, active bool) error {
+	return scan(root, false, func(path string, _ Entry, active bool) error {
 		if active {
 			return nil
 		}
@@ -162,7 +159,7 @@ func Clear(root string) error {
 	})
 }
 
-func scan(root string, visit func(string, Entry, bool) error) error {
+func scan(root string, decode bool, visit func(string, Entry, bool) error) error {
 	files, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -170,6 +167,7 @@ func scan(root string, visit func(string, Entry, bool) error) error {
 	if err != nil {
 		return fmt.Errorf("listing recovery records: %w", err)
 	}
+	var scanErrors []error
 	for _, file := range files {
 		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
 			continue
@@ -178,11 +176,15 @@ func scan(root string, visit func(string, Entry, bool) error) error {
 		release, err := lock.TryFile(strings.TrimSuffix(path, ".json") + ".lock")
 		active := errors.Is(err, lock.ErrContended)
 		if err != nil && !active {
-			return fmt.Errorf("checking recovery record %s: %w", file.Name(), err)
+			scanErrors = append(scanErrors, fmt.Errorf("checking recovery record %s: %w", file.Name(), err))
+			continue
 		}
 		err = func() error {
 			if release != nil {
 				defer release()
+			}
+			if !decode {
+				return visit(path, Entry{}, active)
 			}
 			data, err := os.ReadFile(path)
 			if errors.Is(err, os.ErrNotExist) {
@@ -201,8 +203,8 @@ func scan(root string, visit func(string, Entry, bool) error) error {
 			return visit(path, entry, active)
 		}()
 		if err != nil {
-			return err
+			scanErrors = append(scanErrors, err)
 		}
 	}
-	return nil
+	return errors.Join(scanErrors...)
 }

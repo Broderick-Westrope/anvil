@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -47,6 +48,25 @@ func TestSessionRecoverListsOnlyInterruptedSessions(t *testing.T) {
 	entries, err = recovery.List(root)
 	require.NoError(t, err)
 	require.Empty(t, entries)
+}
+
+func TestSessionRecoverWarnsAndPrintsPartialResults(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "valid.json"), []byte(`{"session_id":"valid","title":"Work"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "bad.json"), []byte("{"), 0o600))
+	command := newSessionRecoverCommand(root)
+	var output, warnings bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&warnings)
+	command.SetArgs([]string{"--json"})
+	require.NoError(t, command.Execute())
+	var entries []recovery.Entry
+	require.NoError(t, json.Unmarshal(output.Bytes(), &entries))
+	require.Len(t, entries, 1)
+	require.Equal(t, "valid", entries[0].SessionID)
+	require.Contains(t, warnings.String(), "bad.json")
+	require.Contains(t, warnings.String(), "Warning")
 }
 
 func TestSessionRecoverEmpty(t *testing.T) {
