@@ -12,12 +12,13 @@ import (
 
 func TestLookup(t *testing.T) {
 	t.Run("exact match on disk skill with absolute path", func(t *testing.T) {
+		skillPath := filepath.Join(t.TempDir(), "euc-go", "SKILL.md")
 		registry := []*Skill{
-			{Name: "euc-go", Description: "d", SkillFilePath: "/abs/path/euc-go/SKILL.md"},
+			{Name: "euc-go", Description: "d", SkillFilePath: skillPath},
 		}
 		got, err := Lookup(registry, "euc-go")
 		require.NoError(t, err)
-		require.Equal(t, "/abs/path/euc-go/SKILL.md", got.Location)
+		require.Equal(t, skillPath, got.Location)
 		require.False(t, got.Builtin)
 		require.Same(t, registry[0], got.Skill)
 	})
@@ -69,13 +70,14 @@ func TestLookup(t *testing.T) {
 	})
 
 	t.Run("user entry shadows builtin in an already-deduplicated registry", func(t *testing.T) {
+		skillPath := filepath.Join(t.TempDir(), "user-jq", "SKILL.md")
 		registry := Deduplicate([]*Skill{
 			{Name: "jq", Description: "builtin", SkillFilePath: BuiltinPrefix + "jq/SKILL.md", Source: SourceBuiltin},
-			{Name: "jq", Description: "user", SkillFilePath: "/abs/user-jq/SKILL.md"},
+			{Name: "jq", Description: "user", SkillFilePath: skillPath},
 		})
 		got, err := Lookup(registry, "jq")
 		require.NoError(t, err)
-		require.Equal(t, "/abs/user-jq/SKILL.md", got.Location)
+		require.Equal(t, skillPath, got.Location)
 		require.False(t, got.Builtin)
 	})
 

@@ -150,7 +150,7 @@ func TestViewSkillMetadataDegradation(t *testing.T) {
 		{"unset type", &message.ToolResult{Metadata: `{"file_path":"/skills/euc-go/SKILL.md"}`}, ""},
 		{"missing location", &message.ToolResult{Metadata: `{"resource_type":"skill","resource_name":"euc-go"}`}, ""},
 		{"builtin", &message.ToolResult{Metadata: `{"resource_type":"skill","resource_name":"jq","file_path":"anvil://skills/jq/SKILL.md"}`}, "anvil://skills/jq/SKILL.md"},
-		{"home", &message.ToolResult{Metadata: string(metadata)}, "~/skills/euc-go/SKILL.md"},
+		{"home", &message.ToolResult{Metadata: string(metadata)}, filepath.Join("~", "skills", "euc-go", "SKILL.md")},
 		{"error with metadata", &message.ToolResult{Metadata: string(metadata), IsError: true}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

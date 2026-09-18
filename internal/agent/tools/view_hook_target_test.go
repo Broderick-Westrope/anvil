@@ -31,7 +31,9 @@ func TestViewToolPrepareHookInput(t *testing.T) {
 		resolver := newHookTargetResolver(t, registry, workingDir)
 		prepared, ctx, err := resolver.PrepareHookInput(context.Background(), `{"skill_name":"euc-go"}`)
 		require.NoError(t, err)
-		require.Contains(t, prepared, path)
+		var params ViewParams
+		require.NoError(t, json.Unmarshal([]byte(prepared), &params))
+		require.Equal(t, ViewParams{SkillName: "euc-go", FilePath: path}, params)
 		baseline, ok := GetSkillLoadBaseline(ctx)
 		require.True(t, ok)
 		require.Equal(t, skillLoadModeName, baseline.Mode)
@@ -225,7 +227,9 @@ func TestViewToolPreparedPayloadIsHookVisible(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, pathB, target.Location)
 
-	finalInput := `{"skill_name":"skill-b","file_path":"` + filepath.ToSlash(pathB) + `"}`
+	finalParams, err := json.Marshal(ViewParams{SkillName: "skill-b", FilePath: target.Location})
+	require.NoError(t, err)
+	finalInput := string(finalParams)
 	payload2 := hooks.BuildPayload(hooks.EventPreToolUse, "s1", workingDir, ViewToolName, finalInput)
 	require.Equal(t, pathB, extractToolInputFilePath(t, payload2))
 	env2 := hooks.BuildEnv(hooks.EventPreToolUse, ViewToolName, "s1", workingDir, workingDir, finalInput)
