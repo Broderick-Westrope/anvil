@@ -117,7 +117,7 @@ func (tracker *Tracker) write(entry Entry) (result error) {
 	if err = errors.Join(err, file.Close()); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), tracker.path)
+	return retryRename(func() error { return os.Rename(file.Name(), tracker.path) })
 }
 
 func List(root string) ([]Entry, error) {
