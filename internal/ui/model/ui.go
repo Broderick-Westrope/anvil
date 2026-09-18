@@ -38,6 +38,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/recovery"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
@@ -186,8 +187,10 @@ type (
 
 // UI represents the main user interface model.
 type UI struct {
-	com     *common.Common
-	session *session.Session
+	recoveryHandler func(recovery.Entry)
+	recoveryEntry   recovery.Entry
+	com             *common.Common
+	session         *session.Session
 
 	// keeps track of read files while we don't have a session id
 	sessionFileReads []string
@@ -680,6 +683,7 @@ func (m *UI) activeChatArea() image.Rectangle {
 
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer m.trackRecoverySession()
 	var cmds []tea.Cmd
 	if m.hasSession() && m.isAgentBusy() {
 		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
@@ -1413,6 +1417,26 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// should return all cmds anyway.
 	_ = m.attachments.Update(msg)
 	return m, tea.Batch(cmds...)
+}
+
+func (m *UI) SetRecoveryHandler(handler func(recovery.Entry)) {
+	m.recoveryHandler = handler
+}
+
+func (m *UI) trackRecoverySession() {
+	if m.recoveryHandler == nil {
+		return
+	}
+	var entry recovery.Entry
+	if m.hasSession() {
+		entry.SessionID = m.session.ID
+		entry.Title = m.session.Title
+		entry.WorkingDir = m.com.Workspace.WorkingDir()
+	}
+	if entry != m.recoveryEntry {
+		m.recoveryEntry = entry
+		m.recoveryHandler(entry)
+	}
 }
 
 // expandedToolPatterns returns the expanded_tools glob patterns from

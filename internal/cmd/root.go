@@ -17,6 +17,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	anvillog "github.com/Broderick-Westrope/anvil/internal/log"
+	"github.com/Broderick-Westrope/anvil/internal/recovery"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	ui "github.com/Broderick-Westrope/anvil/internal/ui/model"
@@ -131,6 +132,18 @@ anvil --continue --there
 
 		com := common.DefaultCommon(ws)
 		model := ui.New(com, sessionID, continueLast)
+		tracker, trackErr := recovery.NewTracker(filepath.Join(config.GlobalDataDir(), "recovery"))
+		cleanExit := false
+		if trackErr != nil {
+			slog.Error("Failed to enable session recovery", "error", trackErr)
+		} else {
+			model.SetRecoveryHandler(tracker.Track)
+			defer func() {
+				if err := tracker.Close(cleanExit); err != nil {
+					slog.Error("Failed to close session recovery record", "error", err)
+				}
+			}()
+		}
 
 		inputFilter := ui.NewFilter()
 		var env uv.Environ = os.Environ()
@@ -146,6 +159,7 @@ anvil --continue --there
 			slog.Error("TUI run error", "error", err)
 			return errors.New("Anvil crashed. Please copy the stacktrace above and open an issue at https://github.com/Broderick-Westrope/anvil/issues/new?template=bug.yml") //nolint:staticcheck
 		}
+		cleanExit = cmd.Context().Err() == nil
 		return nil
 	},
 }

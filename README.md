@@ -83,6 +83,41 @@ Anvil:
 - [Kimi Code](https://www.kimi.com/membership/pricing)
 - [MiniMax Coding Plan](https://platform.minimax.io/subscribe/coding-plan)
 
+## Finding sessions after a force-quit
+
+Anvil automatically records the current conversation in each interactive window,
+including its working directory, full session ID, and title. After killing a
+stuck process or force-quitting your terminal, run this from any directory:
+
+```bash
+anvil session recover
+anvil session recover --json
+```
+
+The list includes interrupted windows across projects, not your entire session
+history. Windows still running (including detached terminal multiplexer windows)
+are excluded. Normal exits remove their records. No pinning or action before a
+crash is needed, and listing records does not consume them or restart any work.
+
+Use a listed directory and ID to reopen a conversation:
+
+```bash
+anvil --cwd /path/to/project --session <session-id>
+```
+
+Once you have recovered what you need, dismiss the interrupted records with
+`anvil session recover --clear`. This does not delete conversations or records
+owned by running windows. Until cleared, older interrupted records can reappear
+when a resumed conversation is no longer open.
+
+Records are private files in the global Anvil data directory's `recovery/`
+folder (normally `~/.local/share/anvil/recovery/`). They are saved atomically and
+synced by a background writer when the current session or title changes, so a
+sudden kill immediately after a switch can leave the previous session recorded.
+This only tracks windows started with a build that supports recovery; it cannot
+reconstruct windows killed before the feature was installed. It does not restore
+terminal layouts, in-flight tools, or unsent input.
+
 ## Pinned Sessions
 
 Sessions you plan to return to weeks later get lost. Pinning makes quitting
