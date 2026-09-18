@@ -22,7 +22,9 @@ func TestSessionRecoverListsOnlyInterruptedSessions(t *testing.T) {
 	var output bytes.Buffer
 	command.SetOut(&output)
 	require.NoError(t, command.Execute())
-	require.Contains(t, output.String(), "full-session-id")
+	require.Contains(t, output.String(), "Session: full-session-id\n")
+	require.Contains(t, output.String(), "Directory: /project with spaces\n")
+	require.Contains(t, output.String(), "Title: Fix things\n")
 	require.Contains(t, output.String(), "/project with spaces")
 	require.Contains(t, output.String(), "Fix things")
 	require.NotContains(t, output.String(), "\x1b")

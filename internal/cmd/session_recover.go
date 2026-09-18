@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"text/tabwriter"
 	"unicode"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -52,16 +51,12 @@ func newSessionRecoverCommand(root string) *cobra.Command {
 				_, err := fmt.Fprintln(command.OutOrStdout(), "No interrupted sessions recorded.")
 				return err
 			}
-			writer := tabwriter.NewWriter(command.OutOrStdout(), 0, 4, 2, ' ', 0)
-			if _, err := fmt.Fprintln(writer, "WORKING DIRECTORY\tSESSION ID\tTITLE"); err != nil {
-				return err
-			}
 			for _, entry := range entries {
-				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\n", recoveryCell(entry.WorkingDir), recoveryCell(entry.SessionID), recoveryCell(entry.Title)); err != nil {
+				if _, err := fmt.Fprintf(command.OutOrStdout(), "Directory: %s\nSession: %s\nTitle: %s\n\n", recoveryCell(entry.WorkingDir), recoveryCell(entry.SessionID), recoveryCell(entry.Title)); err != nil {
 					return err
 				}
 			}
-			return writer.Flush()
+			return nil
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "Output recovery records as JSON")
