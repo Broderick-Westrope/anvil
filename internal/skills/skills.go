@@ -341,7 +341,6 @@ func ToPromptXML(skills []*Skill) string {
 		sb.WriteString("  <skill>\n")
 		fmt.Fprintf(&sb, "    <name>%s</name>\n", escape(s.Name))
 		fmt.Fprintf(&sb, "    <description>%s</description>\n", escape(s.Description))
-		fmt.Fprintf(&sb, "    <location>%s</location>\n", escape(s.SkillFilePath))
 		if s.Source == SourceBuiltin {
 			sb.WriteString("    <type>builtin</type>\n")
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -766,5 +767,58 @@ func TestNewCoordinatorDoesNotBlockOnMCPInit(t *testing.T) {
 		require.NoError(t, res.err, "NewCoordinator should succeed, not just return quickly with an error")
 	case <-time.After(safetyTimeout):
 		t.Fatal("NewCoordinator blocked for >10s while MCP init was pending — likely regressed to waiting for MCP init at startup")
+	}
+}
+
+func TestSkillsUsageParity(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		allowed, disabled []string
+		want              bool
+	}{
+		"nil":              {nil, nil, true},
+		"wildcard":         {[]string{"*"}, nil, true},
+		"empty":            {[]string{}, nil, false},
+		"include view":     {[]string{"view", "bash"}, nil, true},
+		"include other":    {[]string{"bash"}, nil, false},
+		"exclude view":     {[]string{"!view"}, nil, false},
+		"exclude other":    {[]string{"!bash"}, nil, true},
+		"mixed":            {[]string{"view", "!bash"}, nil, true},
+		"global disabled":  {nil, []string{"view"}, false},
+		"include disabled": {[]string{"view"}, []string{"view"}, false},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+			require.NoError(t, err)
+			cfg.Config().Options.DisabledTools = tt.disabled
+			cfg.Config().Options.ContextPaths = nil
+			cfg.Config().MCP = nil
+			c := &coordinator{cfg: cfg}
+			for _, agentName := range []string{config.AgentOrchestrator, "fixer"} {
+				for _, allowedSkills := range [][]string{nil, {}} {
+					agentCfg := config.Agent{ID: agentName, AllowedTools: tt.allowed, AllowedSkills: allowedSkills}
+					active := []*skills.Skill{{Name: "example", Description: "Example skill", SkillFilePath: "/private/example/SKILL.md"}}
+					builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, active, active, nil, nil, nil)
+					require.NoError(t, err)
+					hasView := false
+					for _, tool := range builtTools {
+						hasView = hasView || tool.Info().Name == tools.ViewToolName
+					}
+					require.Equal(t, tt.want, hasView)
+					p, err := c.buildPromptWithState(agentName, agentCfg, active, nil, nil)
+					require.NoError(t, err)
+					built, err := p.Build(t.Context(), "test", "test", cfg)
+					require.NoError(t, err)
+					require.Equal(t, hasView, strings.Contains(built, "<skills_usage>"), agentName)
+					require.Equal(t, hasView && agentName == config.AgentOrchestrator, strings.Contains(built, "LOAD MATCHING SKILLS"), agentName)
+					require.Equal(t, allowedSkills == nil, strings.Contains(built, "</available_skills>"))
+					require.Contains(t, built, "never authorizes delegation, commits, pushes or pull requests")
+					require.NotContains(t, built, "<location>")
+					require.NotContains(t, built, "/private/example")
+				}
+			}
+		})
 	}
 }

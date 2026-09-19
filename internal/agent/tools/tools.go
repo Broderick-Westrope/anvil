@@ -11,10 +11,11 @@ import (
 )
 
 type (
-	sessionIDContextKey string
-	messageIDContextKey string
-	supportsImagesKey   string
-	modelNameKey        string
+	sessionIDContextKey  string
+	messageIDContextKey  string
+	supportsImagesKey    string
+	modelNameKey         string
+	skillLoadBaselineKey string
 )
 
 const (
@@ -25,8 +26,25 @@ const (
 	// SupportsImagesContextKey is the key for the model's image support capability.
 	SupportsImagesContextKey supportsImagesKey = "supports_images"
 	// ModelNameContextKey is the key for the model name in the context.
-	ModelNameContextKey modelNameKey = "model_name"
+	ModelNameContextKey         modelNameKey         = "model_name"
+	SkillLoadBaselineContextKey skillLoadBaselineKey = "skill_load_baseline"
 )
+
+type SkillLoadBaseline struct {
+	Mode     string
+	Name     string
+	Location string
+	Resolved bool
+}
+
+func WithSkillLoadBaseline(ctx context.Context, b SkillLoadBaseline) context.Context {
+	return context.WithValue(ctx, SkillLoadBaselineContextKey, b)
+}
+
+func GetSkillLoadBaseline(ctx context.Context) (SkillLoadBaseline, bool) {
+	b, ok := ctx.Value(SkillLoadBaselineContextKey).(SkillLoadBaseline)
+	return b, ok
+}
 
 // getContextValue is a generic helper that retrieves a typed value from context.
 // If the value is not found or has the wrong type, it returns the default value.

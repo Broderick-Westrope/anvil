@@ -125,3 +125,27 @@ func TestValidateFilterList(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterAllows(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		input []string
+		want  bool
+	}{
+		"nil":                       {nil, true},
+		"wildcard":                  {[]string{"*"}, true},
+		"empty":                     {[]string{}, false},
+		"include hit":               {[]string{"view", "bash"}, true},
+		"include miss":              {[]string{"bash"}, false},
+		"exclude hit":               {[]string{"!view"}, false},
+		"exclude miss":              {[]string{"!bash"}, true},
+		"mixed fails open":          {[]string{"view", "!bash"}, true},
+		"mixed reversed fails open": {[]string{"!view", "bash"}, true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, FilterAllows(tt.input, "view"))
+		})
+	}
+}

@@ -30,6 +30,7 @@ type HookMetadata struct {
 	Reason       string     `json:"reason,omitempty"`
 	InputRewrite bool       `json:"input_rewrite,omitempty"`
 	Hooks        []HookInfo `json:"hooks,omitempty"`
+	Retarget     bool       `json:"retarget,omitempty"`
 }
 
 // HookInfo identifies a single hook that ran and its individual result.
@@ -83,6 +84,7 @@ type AggregateResult struct {
 	Reason       string     // Concatenated deny/halt reasons (newline-separated).
 	Context      string     // Concatenated context from all hooks.
 	UpdatedInput string     // Merged tool_input JSON (empty if no patches).
+	Retarget     bool
 }
 
 // aggregate merges multiple HookResults into a single AggregateResult.

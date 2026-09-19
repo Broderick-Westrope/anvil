@@ -599,6 +599,14 @@ func pendingTool(sty *styles.Styles, name string, anim *anim.Anim, nested bool) 
 	return fmt.Sprintf("%s %s %s", icon, toolName, animView)
 }
 
+func pendingToolWithParams(sty *styles.Styles, name string, anim *anim.Anim, width int, opts *ToolRenderOpts, params ...string) string {
+	var suffix string
+	if anim != nil {
+		suffix = " " + anim.Render()
+	}
+	return toolHeaderWithIcon(sty, sty.Tool.IconPending.Render(), name, width-lipgloss.Width(suffix), opts, params...) + suffix
+}
+
 // toolEarlyStateContent handles error/cancelled/pending states before content rendering.
 // Returns the rendered output and true if early state was handled.
 func toolEarlyStateContent(sty *styles.Styles, opts *ToolRenderOpts, width int) (string, bool) {
@@ -1246,6 +1254,12 @@ func (t *baseToolMessageItem) formatParametersForCopy() string {
 	case tools.ViewToolName:
 		var params tools.ViewParams
 		if json.Unmarshal([]byte(t.toolCall.Input), &params) == nil {
+			if params.SkillName != "" {
+				return fmt.Sprintf("**Skill:** %s", params.SkillName)
+			}
+			if params.FilePath == "" {
+				return ""
+			}
 			var parts []string
 			parts = append(parts, fmt.Sprintf("**File:** %s", fsext.PrettyPath(params.FilePath)))
 			if params.Limit > 0 {

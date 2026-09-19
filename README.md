@@ -557,6 +557,16 @@ extending agent capabilities with reusable skill packages. Skills are folders
 containing a `SKILL.md` file with instructions that Anvil can discover and
 activate on demand.
 
+The prompt catalog lists skill names and descriptions, with a builtin marker
+for embedded skills, rather than file paths. Agents activate a skill through
+`view(skill_name="exact-name")`, which returns its complete body and location.
+An agent with `view` can load a globally enabled skill by its exact,
+case-sensitive name even when its `skills` allowlist hides that skill from its
+catalog. `options.disabled_skills` removes a skill from both the catalog and
+by-name loading. Names resolve against the executing tool's registry snapshot;
+an unknown name returns an error without searching the filesystem. Loading a
+skill supplies task context, not additional tools, delegation, or authority.
+
 The global paths we looks for skills are:
 
 - `$ANVIL_SKILLS_DIR`

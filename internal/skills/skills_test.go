@@ -301,7 +301,7 @@ func TestToPromptXML(t *testing.T) {
 
 	skills := []*Skill{
 		{Name: "pdf-processing", Description: "Extracts text from PDFs.", SkillFilePath: "/skills/pdf-processing/SKILL.md"},
-		{Name: "data-analysis", Description: "Analyzes datasets & charts.", SkillFilePath: "/skills/data-analysis/SKILL.md"},
+		{Name: "data-analysis", Description: `Analyzes <datasets> & "charts".`, SkillFilePath: "/skills/data-analysis/SKILL.md"},
 	}
 
 	xml := ToPromptXML(skills)
@@ -309,7 +309,9 @@ func TestToPromptXML(t *testing.T) {
 	require.Contains(t, xml, "<available_skills>")
 	require.Contains(t, xml, "<name>pdf-processing</name>")
 	require.Contains(t, xml, "<description>Extracts text from PDFs.</description>")
-	require.Contains(t, xml, "&amp;") // XML escaping
+	require.Contains(t, xml, "<description>Analyzes &lt;datasets&gt; &amp; &quot;charts&quot;.</description>")
+	require.NotContains(t, xml, "<location>")
+	require.NotContains(t, xml, "/skills/")
 }
 
 func TestToPromptXMLEmpty(t *testing.T) {
@@ -356,6 +358,8 @@ func TestToPromptXMLBuiltinType(t *testing.T) {
 	xml := ToPromptXML(skills)
 	require.Contains(t, xml, "<type>builtin</type>")
 	require.Equal(t, 1, strings.Count(xml, "<type>builtin</type>"))
+	require.NotContains(t, xml, "<location>")
+	require.NotContains(t, xml, "anvil://")
 }
 
 func TestParseContent(t *testing.T) {

@@ -79,3 +79,11 @@ func ValidateFilterList(input []string) error {
 	}
 	return nil
 }
+
+func FilterAllows(input []string, item string) bool {
+	resolved, err := ParseFilterList(input, []string{item})
+	if err != nil {
+		return true
+	}
+	return len(resolved) == 1
+}
