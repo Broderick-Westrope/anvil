@@ -217,3 +217,36 @@ Anthropic credentials had expired; no authentication was attempted.
 tokens. Empty/small catalog overhead and guidance growth remain recorded
 separately in phase 3. User approval covers implementation and commits only;
 no merge, push, PR, plan-folder move, or worktree deletion was performed.
+
+### E2E verification follow-up (2026-09-19)
+
+**PASS: all 11 cases in a fresh PTY session after rebuilding with `93b94068d`.**
+Terminal MCP testing of the fresh `03dc5b93e` binary exposed a selector-error bug
+with hooks (the historical both-selectors case failed). `93b94068d` fixed it
+and added regression tests; the rebuilt run passed that case too.
+
+- **Method and limit:** a deterministic local OpenAI-compatible streaming
+  provider exercised the actual Anvil agent, tools, hooks, permissions, and
+  persistence, not seeded transcripts. No real LLM calls were made; model
+  selection of skills/tools itself was **not tested**.
+- **Cases:** builtin; filesystem skill with 268 lines and a line over 4,096
+  bytes; missing; disabled; disk override; both selectors; repeated skill;
+  references; hook deny; hook retarget with destination deny; permission
+  **Allow once**.
+- **Terminal:** verified 60×20, 100×30, and 200×50 layouts. At 120- and
+  60-column widths, the real permission dialog displayed the absolute File
+  path and **Allow once** was accepted with Enter.
+- **Independent audit:** latest-session temporary logs showed 25 requests
+  (including title generation), 13 actual `view` calls, 14 gates, and seven
+  complete skill-body results covering five distinct skills. The outgoing
+  catalog contained nine metadata entries with no locations or bodies; no
+  unexpected agent filesystem-search calls occurred.
+- **Verification:** `go test ./... -count=1` passed, targeted hook/selector
+  race tests passed, and changed-code golangci-lint reported zero issues.
+  Review approved the fix with no gate weakening. Existing broad baseline
+  issues above remain unchanged; global race/lint cleanliness is not claimed.
+- **Cleanup:** PTYs and the local server are stopped; temporary fixtures and
+  logs remain in `/tmp` pending cleanup after this documentation update.
+
+This follow-up supersedes the earlier seeded-run and untested-permission-dialog
+limitations only where covered above; it does not claim real-model behavior.
