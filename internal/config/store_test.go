@@ -14,6 +14,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNewTestStoreResolvesLiteralProviderValues(t *testing.T) {
+	store := NewTestStore(&Config{})
+	for _, value := range []string{"http://127.0.0.1:12345", "dummy-api-key"} {
+		resolved, err := store.Resolve(value)
+		require.NoError(t, err)
+		require.Equal(t, value, resolved)
+		resolved, err = store.Resolver().ResolveValue(value)
+		require.NoError(t, err)
+		require.Equal(t, value, resolved)
+	}
+}
+
 func TestConfigStore_ConfigPath_GlobalAlwaysWorks(t *testing.T) {
 	t.Parallel()
 
