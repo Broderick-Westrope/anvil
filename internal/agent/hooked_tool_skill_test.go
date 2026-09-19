@@ -349,6 +349,69 @@ func TestHookedTool_SkillName_ClearingBothSelectorsIsZeroSelectorError(t *testin
 	require.Contains(t, resp.Content, "pass exactly one of file_path or skill_name")
 }
 
+func TestHookedTool_InvalidSelectorsAndNameRewrites(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		params    tools.ViewParams
+		patch     string
+		wantError string
+	}{
+		{name: "neutral zero selectors", wantError: "pass exactly one of file_path or skill_name"},
+		{name: "neutral dual builtin selectors", params: tools.ViewParams{FilePath: "DO_NOT_READ", SkillName: "jq"}, wantError: "pass exactly one of file_path or skill_name"},
+		{name: "neutral dual disk selectors", params: tools.ViewParams{FilePath: "DO_NOT_READ", SkillName: "secret-notes"}, wantError: "pass exactly one of file_path or skill_name"},
+		{name: "non-selector rewrite preserves dual error", params: tools.ViewParams{FilePath: "DO_NOT_READ", SkillName: "jq"}, patch: `{"limit":1}`, wantError: "pass exactly one of file_path or skill_name"},
+		{name: "zero selectors rewritten to name", patch: `{"skill_name":"jq"}`, wantError: tools.ErrPathToNameRewrite.Error()},
+		{name: "dual selectors rewritten to name", params: tools.ViewParams{FilePath: "DO_NOT_READ", SkillName: "jq"}, patch: `{"file_path":""}`, wantError: tools.ErrPathToNameRewrite.Error()},
+		{name: "path rewritten to name", params: tools.ViewParams{FilePath: "DO_NOT_READ"}, patch: `{"file_path":"","skill_name":"jq"}`, wantError: tools.ErrPathToNameRewrite.Error()},
+		{name: "path rewritten to dual selectors", params: tools.ViewParams{FilePath: "DO_NOT_READ"}, patch: `{"skill_name":"jq"}`, wantError: tools.ErrPathToNameRewrite.Error()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "DO_NOT_READ")
+			require.NoError(t, os.WriteFile(path, []byte("private file content"), 0o600))
+			skillPath := writeHookedToolSkill(t, dir, "secret-notes", "private skill content")
+			registry := append(skills.DiscoverBuiltin(), &skills.Skill{Name: "secret-notes", SkillFilePath: skillPath})
+			conn, err := db.Connect(t.Context(), t.TempDir())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, conn.Close()) })
+			queries := db.New(conn)
+			_, err = queries.CreateSession(t.Context(), db.CreateSessionParams{ID: "test-session", Title: "selectors", WorkingDir: dir})
+			require.NoError(t, err)
+			tracker := filetracker.NewService(queries)
+			skillTracker := skills.NewTracker(registry)
+			permissions := newFakeHookPermissionService()
+			output := `{}`
+			if tc.patch != "" {
+				output = `{"updated_input":` + tc.patch + `}`
+			}
+			log := filepath.Join(dir, "passes")
+			tool, _ := newSkillHookedTool(t, registry, dir, permissions,
+				`echo pass >> `+shellQuote(log)+`; echo `+shellQuote(output))
+			tool.inner = tools.NewViewTool(nil, permissions, tracker, skillTracker, registry, dir)
+			params := tc.params
+			if params.FilePath != "" {
+				params.FilePath = path
+			}
+
+			resp, err := tool.Run(hookedToolSessionCtx(), skillCall(t, "selectors", params))
+
+			require.NoError(t, err)
+			require.True(t, resp.IsError)
+			require.Equal(t, tc.wantError, resp.Content)
+			require.Len(t, readLogLines(t, log), 1)
+			require.Empty(t, permissions.requests)
+			readFiles, err := tracker.ListReadFiles(t.Context(), "test-session")
+			require.NoError(t, err)
+			require.Empty(t, readFiles)
+			require.False(t, skillTracker.IsLoaded("jq"))
+			require.False(t, skillTracker.IsLoaded("secret-notes"))
+		})
+	}
+}
+
 func TestHookedTool_PathMode_HookCannotIntroduceSkillName(t *testing.T) {
 	t.Parallel()
 

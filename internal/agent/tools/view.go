@@ -127,7 +127,7 @@ func NewViewTool(
 			baseline, hasBaseline := GetSkillLoadBaseline(ctx)
 
 			if params.SkillName != "" && hasBaseline &&
-				(baseline.Mode == skillLoadModePath || baseline.Mode == skillLoadModeNone) {
+				(baseline.Mode == skillLoadModePath || (baseline.Mode == skillLoadModeNone && params.FilePath == "")) {
 				return fantasy.NewTextErrorResponse(ErrPathToNameRewrite.Error()), nil
 			}
 

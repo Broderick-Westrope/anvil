@@ -11,7 +11,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
-	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -88,11 +87,6 @@ func (h *hookedTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.To
 	}
 
 	if baseline.Mode != "name" {
-		if gjson.Get(mergedInput, "skill_name").String() != "" {
-			resp := fantasy.NewTextErrorResponse(tools.ErrPathToNameRewrite.Error())
-			resp.Metadata = hookMetadataJSON(result)
-			return resp, nil
-		}
 		call.Input = mergedInput
 		return h.finishSinglePass(ctx, call, result)
 	}

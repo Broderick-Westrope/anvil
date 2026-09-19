@@ -110,6 +110,22 @@ func TestViewToolSelectorValidation(t *testing.T) {
 		require.Contains(t, resp.Content, "pass exactly one of file_path or skill_name")
 	})
 
+	t.Run("both selectors with prepared none baseline", func(t *testing.T) {
+		t.Parallel()
+		tool := newViewToolWithRegistryForTest(registry, workingDir)
+		input := `{"file_path":"DO_NOT_READ","skill_name":"euc-go"}`
+		prepared, ctx, err := tool.(HookTargetResolver).PrepareHookInput(sessionCtx(), input)
+		require.NoError(t, err)
+		require.Equal(t, input, prepared)
+		baseline, ok := GetSkillLoadBaseline(ctx)
+		require.True(t, ok)
+		require.Equal(t, skillLoadModeNone, baseline.Mode)
+		resp, err := tool.Run(ctx, fantasy.ToolCall{ID: "c1", Name: ViewToolName, Input: prepared})
+		require.NoError(t, err)
+		require.True(t, resp.IsError)
+		require.Equal(t, errSelectorRequired, resp.Content)
+	})
+
 	t.Run("skill_name rejected when baseline mode is path", func(t *testing.T) {
 		t.Parallel()
 		tool := newViewToolWithRegistryForTest(registry, workingDir)
