@@ -94,6 +94,10 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 
 	// Handle skill content.
 	if meta.ResourceType == tools.ViewResourceSkill {
+		if (opts.NoTruncate || opts.ExpandedContent) && content != "" {
+			body := toolOutputCodeContent(sty, meta.FilePath, content, 0, width, opts.ExpandedContent, opts.NoTruncate)
+			return joinToolParts(header, body)
+		}
 		body := toolOutputSkillContent(sty, meta.ResourceName, meta.ResourceDescription)
 		return joinToolParts(header, body)
 	}

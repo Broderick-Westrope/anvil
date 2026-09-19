@@ -110,6 +110,53 @@ func TestViewSkillCopy(t *testing.T) {
 	}
 }
 
+func TestViewSkillDetailFormatting(t *testing.T) {
+	t.Parallel()
+	const content = "---\nname: example\ndescription: A skill description that wraps across multiple lines in a narrow terminal.\n---\n\n# Example\n\nFirst paragraph.\n\n## Steps\n\n- First step\n- Last step"
+	for _, tc := range []struct {
+		name, input, path string
+	}{
+		{"name", `{"skill_name":"example"}`, "/skills/example/SKILL.md"},
+		{"path", `{"file_path":"/skills/example/SKILL.md"}`, "/skills/example/SKILL.md"},
+		{"builtin", `{"skill_name":"example"}`, "anvil://skills/example/SKILL.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sty := styles.TokyoNight()
+			metadata, err := json.Marshal(tools.ViewResponseMetadata{
+				FilePath:            tc.path,
+				Content:             content,
+				ResourceType:        tools.ViewResourceSkill,
+				ResourceName:        "example",
+				ResourceDescription: "A skill description that wraps across multiple lines in a narrow terminal.",
+			})
+			require.NoError(t, err)
+			call := message.ToolCall{ID: "view-skill-detail", Name: tools.ViewToolName, Input: tc.input, Finished: true}
+			source := NewViewToolMessageItem(&sty, call, &message.ToolResult{Metadata: string(metadata), Content: "wrapped response"}, false)
+			items := BuildToolDetailItems(&sty, source)
+			output := items[len(items)-1]
+
+			fileCall := message.ToolCall{ID: "view-file-detail", Name: tools.ViewToolName, Input: `{"file_path":"SKILL.md"}`, Finished: true}
+			fileSource := NewViewToolMessageItem(&sty, fileCall, &message.ToolResult{Content: content}, false)
+			fileItems := BuildToolDetailItems(&sty, fileSource)
+			fileOutput := fileItems[len(fileItems)-1]
+
+			for _, width := range []int{40, 120} {
+				require.Equal(t, fileOutput.Render(width), output.Render(width))
+				require.Contains(t, ansi.Strip(output.Render(width)), "description:")
+				require.NotContains(t, ansi.Strip(output.Render(width)), "Last step")
+			}
+
+			require.True(t, output.(Expandable).ToggleExpanded())
+			require.True(t, fileOutput.(Expandable).ToggleExpanded())
+			for _, width := range []int{40, 120} {
+				require.Equal(t, fileOutput.Render(width), output.Render(width))
+				require.Contains(t, ansi.Strip(output.Render(width)), "Last step")
+			}
+		})
+	}
+}
+
 func TestViewPathBaseline(t *testing.T) {
 	t.Parallel()
 	sty := styles.TokyoNight()
