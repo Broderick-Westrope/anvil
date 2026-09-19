@@ -119,7 +119,7 @@ tasks:
       LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/Broderick-Westrope/anvil/internal/version.Version={{.VERSION}}"{{end}}'
     cmds:
       - task: fetch-tags
-      - go install {{.LDFLAGS}} -v .
+      - CGO_ENABLED=0 GOEXPERIMENT=greenteagc go install {{.LDFLAGS}} -v .
     sources:
       - ./**/*.go
       - go.mod
