@@ -1186,8 +1186,10 @@ func (c *coordinator) buildAgentModels(ctx context.Context, agentCfg config.Agen
 		return Model{}, Model{}, errSmallModelNotSelected
 	}
 
-	isSubAgent := agentCfg.ID != config.AgentOrchestrator
+	return c.buildResolvedAgentModels(ctx, largeModelCfg, smallModelCfg, agentCfg.ID != config.AgentOrchestrator)
+}
 
+func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCfg, smallModelCfg config.SelectedModel, isSubAgent bool) (Model, Model, error) {
 	largeProviderCfg, ok := c.cfg.Config().Providers.Get(largeModelCfg.Provider)
 	if !ok {
 		return Model{}, Model{}, errLargeModelProviderNotConfigured
@@ -1577,6 +1579,31 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		return fantasy.ToolResponse{}, errModelProviderNotConfigured
 	}
 
+	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
+		slog.Error("Failed to refresh OAuth2 token before sub-agent execution. Proceeding with existing token.", "provider", providerCfg.ID, "error", err)
+	}
+	updatedProviderCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
+	if !ok {
+		return fantasy.ToolResponse{}, errModelProviderNotConfigured
+	}
+	if updatedProviderCfg.OAuthToken != providerCfg.OAuthToken || updatedProviderCfg.APIKey != providerCfg.APIKey {
+		if err := c.refreshSubAgentModels(ctx, params.Agent); err != nil {
+			return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to refresh sub-agent models: %s", err)), nil
+		}
+	}
+	providerCfg = updatedProviderCfg
+
+	authRefresh := c.makeAuthRefreshCallback(providerCfg)
+	if authRefresh != nil {
+		refreshCredentials := authRefresh
+		authRefresh = func(ctx context.Context, providerErr *fantasy.ProviderError) error {
+			if err := refreshCredentials(ctx, providerErr); err != nil {
+				return err
+			}
+			return c.refreshSubAgentModels(ctx, params.Agent)
+		}
+	}
+
 	// Run the agent
 	result, err := params.Agent.Run(ctx, SessionAgentCall{
 		SessionID:        session.ID,
@@ -1589,7 +1616,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		FrequencyPenalty: model.ModelCfg.FrequencyPenalty,
 		PresencePenalty:  model.ModelCfg.PresencePenalty,
 		NonInteractive:   true,
-		OnAuthRefresh:    c.makeAuthRefreshCallback(providerCfg),
+		OnAuthRefresh:    authRefresh,
 	})
 	if err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to generate response: %s", err)), nil
@@ -1610,6 +1637,26 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		return fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output."), nil
 	}
 	return fantasy.NewTextResponse(output), nil
+}
+
+func (c *coordinator) refreshSubAgentModels(ctx context.Context, agent SessionAgent) error {
+	model := agent.Model()
+	smallModelCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeSmall]
+	if !ok {
+		return errSmallModelNotSelected
+	}
+	large, small, err := c.buildResolvedAgentModels(ctx, model.ModelCfg, smallModelCfg, true)
+	if err != nil {
+		return err
+	}
+	model.Model = large.Model
+	agent.SetModels(model, small)
+	providerCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
+	if !ok {
+		return errModelProviderNotConfigured
+	}
+	agent.SetProviderConfig(providerCfg)
+	return nil
 }
 
 func subAgentOutput(result *fantasy.AgentResult) string {
