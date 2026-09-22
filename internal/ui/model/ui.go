@@ -940,7 +940,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		if m.branchRun != nil {
+		if m.branchRun != nil && msg.Payload.SessionID == m.branchRun.sessionID {
 			// Pubsub is lossy and bodies are never trusted while a
 			// branch owns this session's transcript: treat the event
 			// purely as an invalidation and let the serialized

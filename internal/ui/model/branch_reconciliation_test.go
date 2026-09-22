@@ -198,6 +198,79 @@ func TestBranchDelayedReadIgnoresEventBodies(t *testing.T) {
 	require.False(t, m.branchRun.dirty)
 }
 
+func TestBranchWatchdogRoutesChildMessageEvents(t *testing.T) {
+	_, m, _, _ := branchFixtureUI(t)
+	m.Update(tea.KeyPressMsg{Code: 'B', Text: "B"})
+	driveAcceptedBranch(t, m)
+	require.False(t, m.branchRun.dirty)
+
+	agentItem := chat.NewAgentToolMessageItem(m.com.Styles, message.ToolCall{
+		ID: "agent-call", Name: "agent", Input: `{}`, Finished: true,
+	}, nil, false)
+	m.chat.AppendMessages(agentItem)
+	childSessionID := m.com.Workspace.CreateAgentToolSessionID("parent-message", agentItem.ID())
+	childChat := NewChat(m.com)
+	m.drillStack = []drillInEntry{{sessionID: childSessionID, chat: childChat}}
+
+	child := message.Message{
+		ID: "child-message", SessionID: childSessionID, Role: message.Assistant,
+		Parts: []message.ContentPart{message.TextContent{Text: "initial content"}},
+	}
+	m.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: child})
+	require.NotNil(t, childChat.MessageItem(child.ID))
+	visible := childChat.MessageItem(child.ID).(chat.SourceMessageProvider).SourceMessage()
+	require.Equal(t, "initial content", visible.Content().Text)
+	turns, toolCalls := m.viewedSessionStats()
+	require.Equal(t, 1, turns)
+	require.Zero(t, toolCalls)
+	require.Equal(t, childSessionID, agentItem.DrillIn())
+	require.False(t, m.branchRun.dirty)
+
+	child.Parts = []message.ContentPart{
+		message.TextContent{Text: "streamed content"},
+		message.ToolCall{ID: "child-call", Name: "view", Input: `{}`, Finished: true},
+	}
+	for range 2 {
+		m.Update(pubsub.Event[message.Message]{Type: pubsub.UpdatedEvent, Payload: child})
+	}
+	visible = childChat.MessageItem(child.ID).(chat.SourceMessageProvider).SourceMessage()
+	require.Equal(t, "streamed content", visible.Content().Text)
+	turns, toolCalls = m.viewedSessionStats()
+	require.Equal(t, 1, turns)
+	require.Equal(t, 1, toolCalls)
+	require.Len(t, agentItem.NestedTools(), 1)
+	require.False(t, m.branchRun.dirty)
+
+	m.Update(pubsub.Event[message.Message]{Type: pubsub.DeletedEvent, Payload: child})
+	require.Nil(t, childChat.MessageItem(child.ID))
+	require.False(t, m.branchRun.dirty)
+
+	child.SessionID = "foreign-session"
+	m.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: child})
+	require.Nil(t, childChat.MessageItem(child.ID))
+	require.Nil(t, m.chat.MessageItem(child.ID))
+	require.False(t, m.branchRun.dirty)
+}
+
+func TestBranchWatchdogInvalidatesSameSessionMessageEvents(t *testing.T) {
+	_, m, _, _ := branchFixtureUI(t)
+	m.Update(tea.KeyPressMsg{Code: 'B', Text: "B"})
+	acceptedID := driveAcceptedBranch(t, m)
+	item := m.chat.MessageItem(acceptedID).(chat.SourceMessageProvider)
+	original := item.SourceMessage()
+	stale := original
+	stale.Parts = []message.ContentPart{message.TextContent{Text: "stale body"}}
+
+	for _, eventType := range []pubsub.EventType{pubsub.CreatedEvent, pubsub.UpdatedEvent, pubsub.DeletedEvent} {
+		m.branchRun.dirty = false
+		m.Update(pubsub.Event[message.Message]{Type: eventType, Payload: stale})
+		require.True(t, m.branchRun.dirty)
+		require.NotNil(t, m.chat.MessageItem(acceptedID))
+		visible := m.chat.MessageItem(acceptedID).(chat.SourceMessageProvider).SourceMessage()
+		require.Equal(t, original, visible)
+	}
+}
+
 func TestBranchPreinsertFailureAndRepeatedEnter(t *testing.T) {
 	for _, stale := range []bool{false, true} {
 		t.Run(map[bool]string{false: "transient", true: "stale"}[stale], func(t *testing.T) {
