@@ -87,6 +87,18 @@ type FocusableMessageItem interface {
 	list.Focusable
 }
 
+// SourceMessageProvider is implemented by message items that can hand back
+// an editable, standalone snapshot of the underlying [message.Message] for
+// inline branching. Tool and footer items intentionally do not implement
+// this; only ordinary user/assistant message items are eligible branch
+// targets.
+type SourceMessageProvider interface {
+	// SourceMessage returns a deep copy of the underlying message, safe to
+	// mutate independently of the item's own cached rendering. Binary
+	// attachment bytes are copied, not shared with the original slice.
+	SourceMessage() message.Message
+}
+
 // SendMsg represents a message to send a chat message.
 type SendMsg struct {
 	Text        string
@@ -165,6 +177,21 @@ func defaultHighlighter(sty *styles.Styles, v *list.Versioned) *highlightableMes
 // output and can be asked to drop the cache.
 type cacheClearable interface {
 	clearCache()
+}
+
+// cloneSourceMessage deep-copies msg for use as an editable branch
+// snapshot: Message.Clone copies the Parts slice but not the byte slices
+// backing BinaryContent parts, so those are copied explicitly here to
+// keep the snapshot independent of the live message.
+func cloneSourceMessage(msg *message.Message) message.Message {
+	clone := msg.Clone()
+	for i, part := range clone.Parts {
+		if bc, ok := part.(message.BinaryContent); ok {
+			bc.Data = append([]byte(nil), bc.Data...)
+			clone.Parts[i] = bc
+		}
+	}
+	return clone
 }
 
 // ClearItemCaches drops any cached rendered output on each item so the

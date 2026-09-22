@@ -49,6 +49,7 @@ type KeyMap struct {
 		Expand         key.Binding
 		FocusSidebar   key.Binding
 		FocusChat      key.Binding
+		Branch         key.Binding
 	}
 
 	// Global key maps
@@ -252,6 +253,10 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.FocusChat = key.NewBinding(
 		key.WithKeys("H", "shift+left"),
 		key.WithHelp("H/shift+←", "focus chat"),
+	)
+	km.Chat.Branch = key.NewBinding(
+		key.WithKeys("B"),
+		key.WithHelp("B", "branch from message"),
 	)
 
 	return km

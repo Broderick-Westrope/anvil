@@ -123,6 +123,11 @@ func (m *UserMessageItem) ID() string {
 	return m.message.ID
 }
 
+// SourceMessage implements [SourceMessageProvider].
+func (m *UserMessageItem) SourceMessage() message.Message {
+	return cloneSourceMessage(m.message)
+}
+
 // renderAttachments renders attachments.
 func (m *UserMessageItem) renderAttachments(width int) string {
 	var attachments []message.Attachment
