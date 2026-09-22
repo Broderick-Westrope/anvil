@@ -15,10 +15,8 @@ const QuitID = "quit"
 type Quit struct {
 	com        *common.Common
 	selectedNo bool // true if "No" button is selected
-	// warning, when set, is shown above the question (e.g. a non-durable
-	// pre-branch draft that will be lost on quit).
-	warning string
-	keyMap  struct {
+	warning    string
+	keyMap     struct {
 		LeftRight,
 		EnterSpace,
 		Yes,
@@ -70,8 +68,6 @@ func (*Quit) ID() string {
 	return QuitID
 }
 
-// SetWarning sets an additional warning line shown above the question,
-// e.g. that a non-durable pre-branch draft will be lost on quit.
 func (q *Quit) SetWarning(warning string) {
 	q.warning = warning
 }

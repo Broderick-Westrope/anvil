@@ -123,7 +123,6 @@ func (m *UserMessageItem) ID() string {
 	return m.message.ID
 }
 
-// SourceMessage implements [SourceMessageProvider].
 func (m *UserMessageItem) SourceMessage() message.Message {
 	return cloneSourceMessage(m.message)
 }

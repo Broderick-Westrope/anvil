@@ -349,23 +349,10 @@ type UI struct {
 	// frames cannot leak between reuses.
 	canvas uv.ScreenBuffer
 
-	// branchPreview is non-nil while Shift+B has prefilled the composer
-	// for an inline branch that has not yet been submitted.
-	branchPreview *branchPreview
-	// branchRun is non-nil from the moment a branch is submitted until its
-	// persisted state has been fully reconciled (including a trailing
-	// watchdog period covering already-queued follow-up work).
-	branchRun *branchRun
-	// branchLoading hides the source transcript from the moment a branch
-	// is submitted until its first persisted snapshot has been read.
-	branchLoading bool
-	// branchReturn is the single recoverable pre-branch snapshot kept
-	// after a branch is accepted, consumed by "Return to pre-branch
-	// conversation".
-	branchReturn *branchReturnSnapshot
-	// pendingMutations tracks in-flight tree navigation and metadata
-	// writes that must complete (and refresh session state) before a new
-	// branch preview/submission or another such mutation may start.
+	branchPreview     *branchPreview
+	branchRun         *branchRun
+	branchLoading     bool
+	branchReturn      *branchReturnSnapshot
 	pendingMutations  map[string]struct{}
 	mutationSequence  uint64
 	mutationReadEpoch uint64
@@ -941,10 +928,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.branchRun != nil && msg.Payload.SessionID == m.branchRun.sessionID {
-			// Pubsub is lossy and bodies are never trusted while a
-			// branch owns this session's transcript: treat the event
-			// purely as an invalidation and let the serialized
-			// persisted read (never a replayed body) reconcile it.
 			m.branchRun.dirty = true
 			break
 		}
@@ -2803,10 +2786,6 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 
-	// Changing the active model rewrites session metadata tied to the
-	// current leaf, which would race a branch preview/submission's own
-	// leaf. Re-authenticating above (same provider, no model change) is
-	// still allowed while a branch is active.
 	if m.branchActive() {
 		return util.ReportWarn("Finish or cancel the current branch before changing the model.")
 	}
@@ -3031,10 +3010,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 	// Handle cancel key when agent is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
 		if m.branchRun != nil && m.branchActive() && !m.attachments.IsDeleting() && !m.completionsOpen && !m.slashACOpen {
-			// A branch submission is in flight: Escape cancels the
-			// agent, never a source-transcript restoration. The
-			// outcome consumer stays alive to observe the committed
-			// callback and finish.
 			if m.branchRun.runCancel != nil {
 				m.branchRun.runCancel()
 			}
@@ -3174,9 +3149,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				return tea.Batch(cmds...)
 			}
 
-			// A branch preview cancels on Escape before falling through
-			// to prompt-history navigation, restoring the exact
-			// pre-branch composer/history/focus state.
 			if m.branchPreview != nil && key.Matches(msg, m.keyMap.Editor.Escape) {
 				return m.cancelBranchPreview()
 			}
@@ -3197,9 +3169,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				cmds = append(cmds, m.pasteImageFromClipboard)
 
 			case m.branchPreview != nil && key.Matches(msg, m.keyMap.Editor.SendMessage):
-				// Branch Enter is routed before ordinary textarea
-				// reset, slash expansion or quit parsing: "/tree",
-				// "/branch" and "quit" are literal branch text.
 				if cmd := m.trySubmitBranch(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -3298,8 +3267,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
 			case key.Matches(msg, m.keyMap.Editor.HistoryPrev):
 				if m.branchPreview != nil {
-					// Prompt history is disabled while previewing a
-					// branch; the up arrow moves the cursor normally.
 					cmds = append(cmds, m.updateTextarea(msg))
 					break
 				}
@@ -3649,9 +3616,6 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			m.activeChat().Draw(scr, m.activeChatArea())
 		} else {
 			if m.branchLoading {
-				// Hide the source transcript until the first
-				// persisted branch snapshot arrives, rather than
-				// mix old/new rows.
 				uv.NewStyledString(m.branchLoadingView(layout.main.Dx())).Draw(scr, layout.main)
 			} else {
 				m.activeChat().Draw(scr, layout.main)
@@ -5385,7 +5349,8 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 		if err != nil {
 			return treeNavErrorMsg{err: err, movedLeaf: true, sessionID: sessionID}
 		}
-		return navigateTreeDoneMsg{nested: nested,
+		return navigateTreeDoneMsg{
+			nested:   nested,
 			session:  &sess,
 			leafID:   targetLeafID,
 			messages: msgs,
@@ -5395,9 +5360,6 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 	}
 }
 
-// treeNavErrorMsg reports a failure partway through the tree/branch
-// navigation chain, so the pending tree-nav mutation can be cleared
-// alongside ordinary error reporting.
 type treeNavErrorMsg struct {
 	movedLeaf bool
 	sessionID string

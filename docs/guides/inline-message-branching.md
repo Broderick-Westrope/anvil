@@ -68,9 +68,9 @@ workspace. A saved nonempty original draft blocks another inline branch: return 
 restored draft. An empty original draft can be replaced by a later accepted branch; canceling that later preview keeps
 the earlier return target. Successful return consumes the snapshot.
 
-The snapshot is **not durable**. Quitting or switching workspaces can discard it; confirmation warns when a saved draft
-would be lost. Recover that draft through the palette before leaving if you need it. Persisted conversation branches remain
-in the database, but reopening Anvil cannot recover this in-memory draft.
+The snapshot is **not durable**. Exiting the running Anvil instance loses the saved draft; quit confirmation warns when
+that draft would be lost. Recover it through the palette before exiting if you need it. Persisted conversation branches
+remain in the database, but reopening Anvil cannot recover this in-memory draft.
 
 Simultaneous writers to the same session from separate Anvil processes are unsupported. These guards protect the current
 in-process UI and agent, not cross-process editing.

@@ -269,7 +269,6 @@ func (a *AssistantMessageItem) ID() string {
 	return a.message.ID
 }
 
-// SourceMessage implements [SourceMessageProvider].
 func (a *AssistantMessageItem) SourceMessage() message.Message {
 	return cloneSourceMessage(a.message)
 }

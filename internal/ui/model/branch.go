@@ -20,36 +20,26 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// branchBannerLine1 and branchBannerLine2 are the two fixed lines shown
-// above the composer while a branch preview or submission is active.
 const (
 	branchBannerLine2 = "Enter send · Esc cancel"
 )
 
-// composerSnapshot captures everything needed to restore the composer
-// exactly as the user left it: raw text, file/image attachments, and
-// attached skill pills.
 type composerSnapshot struct {
 	text        string
 	attachments []message.Attachment
 	skills      []attachments.SkillAttachment
 }
 
-// isEmpty reports whether the snapshot represents a fully blank composer.
 func (c composerSnapshot) isEmpty() bool {
 	return c.text == "" && len(c.attachments) == 0 && len(c.skills) == 0
 }
 
-// historySnapshot captures prompt-history navigation state.
 type historySnapshot struct {
 	messages []string
 	index    int
 	draft    string
 }
 
-// branchPreview holds the read-only preview state installed when the user
-// presses Shift+B on an eligible message. No persistent mutation (leaf
-// movement, DB write) happens until the previewed draft is submitted.
 type branchPreview struct {
 	targetID       string
 	targetRole     message.MessageRole
@@ -64,33 +54,18 @@ type branchPreview struct {
 	originalViewport branchViewport
 }
 
-// branchRun tracks an in-flight branch submission from Enter until its
-// persisted state has been fully reconciled. Populated by trySubmitBranch.
-// All fields are only ever touched from Update, never from a tea.Cmd
-// goroutine, except through messages compared by run pointer identity.
 type branchRun struct {
 	sessionID string
-	// outcome carries exactly one accepted (optional) and one finished
-	// item from the run's own goroutine; capacity 2 so both sends
-	// complete even if this run is superseded before either is read.
-	outcome chan branchOutcome
-	// preview is the original preview, retained so a pre-acceptance
-	// failure can revert to an editable preview with the payload intact.
-	preview *branchPreview
+	outcome   chan branchOutcome
+	preview   *branchPreview
 
 	accepted       bool
 	acceptedUserID string
 	finished       bool
 	finishErr      error
 
-	// reconciledAfterFinish is set once a read succeeds after finished,
-	// satisfying the mandatory final-snapshot requirement. branchActive
-	// stays true until then so new mutations/previews remain blocked.
 	reconciledAfterFinish bool
 
-	// dirty/reading drive the single serialized read loop: at most one
-	// read is ever in flight per run, and events observed during that
-	// read are folded into dirty for the next one.
 	dirty           bool
 	reading         bool
 	failCount       int
@@ -105,8 +80,6 @@ type branchRun struct {
 	returning       bool
 }
 
-// branchOutcomeKind distinguishes the two items ever sent on a
-// branchRun's outcome channel.
 type branchOutcomeKind int
 
 const (
@@ -114,24 +87,17 @@ const (
 	branchOutcomeFinished
 )
 
-// branchOutcome is one item sent on a branchRun's outcome channel,
-// independent of pubsub.
 type branchOutcome struct {
 	kind   branchOutcomeKind
-	userID string // set for branchOutcomeAccepted
-	err    error  // set for branchOutcomeFinished
+	userID string
+	err    error
 }
 
-// branchOutcomeMsg wraps a received branchOutcome together with the run
-// it belongs to, so stale messages from a superseded/torn-down run can be
-// detected by pointer identity and ignored.
 type branchOutcomeMsg struct {
 	run     *branchRun
 	outcome branchOutcome
 }
 
-// branchReadResultMsg is the result of one serialized GetSession +
-// GetBranchPath reconciliation read.
 type branchReadResultMsg struct {
 	run         *branchRun
 	session     *session.Session
@@ -142,23 +108,14 @@ type branchReadResultMsg struct {
 	err         error
 }
 
-// branchPollMsg drives the periodic reconciliation loop: it both repairs
-// dropped pubsub events (by forcing dirty) and retries failed reads,
-// running for the lifetime of its run (including after finished, so an
-// already-queued follow-up turn still converges even if all of its
-// events are dropped).
 type branchRetryMsg struct{ run *branchRun }
 
 type branchPollMsg struct {
 	run *branchRun
 }
 
-// branchPollInterval is how often the reconciliation loop wakes up to
-// check for dirtiness (from pubsub) or force one anyway (watchdog).
 const branchPollInterval = 200 * time.Millisecond
 
-// branchReturnSnapshot is the single recoverable pre-branch snapshot kept
-// after a branch is accepted, allowing "Return to pre-branch conversation".
 type branchReturnSnapshot struct {
 	sessionID        string
 	leafID           string
@@ -168,26 +125,17 @@ type branchReturnSnapshot struct {
 	originalViewport branchViewport
 }
 
-// branchReturnResultMsg is the result of the "Return to pre-branch
-// conversation" command.
 type branchReturnResultMsg struct {
 	run       *branchRun
 	nested    map[string]branchNestedSnapshot
 	session   *session.Session
 	messages  []message.Message
 	err       error
-	movedLeaf bool // true if MoveLeaf succeeded but a later read failed
+	movedLeaf bool
 }
 
-// mutationBranchReturn identifies an in-flight "Return to pre-branch
-// conversation" as a tracked mutation.
 const mutationBranchReturn = "branch-return"
 
-// branchActive reports whether a branch preview or an in-flight branch
-// submission currently owns the composer. Once a submitted branch has
-// finished AND its mandatory post-finish snapshot has been read, this
-// returns false again even though m.branchRun stays non-nil to keep the
-// reconciliation poll loop alive for already-queued follow-up work.
 func (m *UI) branchActive() bool {
 	if m.branchLoading {
 		return true
@@ -201,10 +149,6 @@ func (m *UI) branchActive() bool {
 	return m.branchRun.reloadErr != nil || !(m.branchRun.finished && m.branchRun.reconciledAfterFinish)
 }
 
-// beginMutation registers a pending mutation under id, blocking new branch
-// previews/submissions until endMutation(id) is called. IDs are unique per
-// operation kind; registering the same id twice is a no-op (single
-// in-flight operation of that kind at a time).
 func (m *UI) beginMutation(id string) {
 	if m.pendingMutations == nil {
 		m.pendingMutations = make(map[string]struct{})
@@ -212,31 +156,18 @@ func (m *UI) beginMutation(id string) {
 	m.pendingMutations[id] = struct{}{}
 }
 
-// endMutation clears a pending mutation registered by beginMutation.
 func (m *UI) endMutation(id string) {
 	delete(m.pendingMutations, id)
 }
 
-// mutationsPending reports whether any tracked mutation (tree navigation,
-// metadata write, model/provider change, MCP toggle, ...) is still
-// in flight.
 func (m *UI) mutationsPending() bool {
 	return len(m.pendingMutations) > 0
 }
 
-// mutationTreeNav identifies the tree/branch navigation chain (legacy
-// /tree and /branch dialogs, and drill-in-free leaf moves) as a tracked
-// mutation.
 const mutationTreeNav = "tree-nav"
 
-// mutationSessionMetadata identifies session metadata writes (model,
-// reasoning effort, lazy-MCP toggle) tied to the current leaf as a
-// tracked mutation.
 const mutationSessionMetadata = "session-metadata"
 
-// mutationDoneMsg reports completion of a command wrapped by
-// trackMutation. msg carries the wrapped command's own result, if any, so
-// it can still be routed through Update.
 type mutationDoneMsg struct {
 	id        string
 	kind      string
@@ -244,10 +175,6 @@ type mutationDoneMsg struct {
 	msg       tea.Msg
 }
 
-// trackMutation registers id as pending before cmd runs and clears it once
-// cmd's result is available, forwarding that result back into Update. Use
-// this for simple fire-and-forget commands (metadata writes, MCP toggles)
-// that must block branch preview/submission until they land.
 func (m *UI) trackMutation(id string, cmd tea.Cmd) tea.Cmd {
 	if cmd == nil {
 		return nil
@@ -267,18 +194,11 @@ func (m *UI) trackMutation(id string, cmd tea.Cmd) tea.Cmd {
 	}
 }
 
-// dispatchMsg routes msg back through Update, discarding the resulting
-// model (always m). Used to unwrap messages carried inside another
-// message, such as mutationDoneMsg.
 func (m *UI) dispatchMsg(msg tea.Msg) tea.Cmd {
 	_, cmd := m.Update(msg)
 	return cmd
 }
 
-// newSessionGuarded starts a new session unless a branch preview or
-// submission is active, in which case it warns instead. Callers that must
-// start a new session unconditionally (e.g. recovering from the current
-// session being deleted elsewhere) should call m.newSession() directly.
 func (m *UI) newSessionGuarded() tea.Cmd {
 	if m.branchActive() || m.mutationsPending() {
 		return util.ReportWarn("Finish or cancel the current branch before starting a new session.")
@@ -286,10 +206,6 @@ func (m *UI) newSessionGuarded() tea.Cmd {
 	return m.newSession()
 }
 
-// eligibleBranchTarget reports why msg cannot be branched from, or ""
-// if it is an eligible target. It mirrors the backend's validateBranchParts/
-// branchSession checks so the UI can reject obviously ineligible
-// selections without a round trip, but the backend remains authoritative.
 func eligibleBranchTarget(msg message.Message, supportsImages bool) string {
 	if msg.MessageType != "" && msg.MessageType != message.MessageTypeMessage {
 		return "Select a user message or a completed assistant reply to branch from."
@@ -307,9 +223,6 @@ func eligibleBranchTarget(msg message.Message, supportsImages bool) string {
 	return ""
 }
 
-// unsupportedBranchPartsWarning reports why parts cannot be branched from,
-// or "" if every part is a supported kind (text, an in-capability binary
-// attachment, or the terminal Finish marker).
 func unsupportedBranchPartsWarning(parts []message.ContentPart, supportsImages bool) string {
 	for _, part := range parts {
 		switch p := part.(type) {
@@ -326,8 +239,6 @@ func unsupportedBranchPartsWarning(parts []message.ContentPart, supportsImages b
 	return ""
 }
 
-// shortMessageID returns a short, human-readable fragment of a message ID
-// for the branch banner.
 func shortMessageID(id string) string {
 	const n = 8
 	if len(id) <= n {
@@ -336,10 +247,6 @@ func shortMessageID(id string) string {
 	return id[:n]
 }
 
-// tryStartBranchPreview handles Shift+B from the root chat: it validates
-// eligibility, snapshots the current composer/history/focus state, and
-// prefills the composer for editing. No leaf movement or DB write happens
-// here.
 func (m *UI) tryStartBranchPreview() tea.Cmd {
 	if !m.hasSession() || m.session.ParentSessionID != "" || m.isDrilledIn() {
 		return util.ReportWarn("Branching is only available in the root chat.")
@@ -416,8 +323,6 @@ func (m *UI) tryStartBranchPreview() tea.Cmd {
 	return cmd
 }
 
-// cancelBranchPreview restores the exact pre-branch composer, prompt
-// history and focus state. It performs no IO or persistent mutation.
 func (m *UI) cancelBranchPreview() tea.Cmd {
 	preview := m.branchPreview
 	if preview == nil {
@@ -430,9 +335,6 @@ func (m *UI) cancelBranchPreview() tea.Cmd {
 	return cmd
 }
 
-// restoreComposerAndHistory replaces the composer, attachments and
-// prompt-history state with draft/hist, then restores focus. Shared by
-// preview cancellation and "Return to pre-branch conversation".
 func (m *UI) restoreComposerAndHistory(draft composerSnapshot, hist historySnapshot, focus uiFocusState) tea.Cmd {
 	prevHeight := m.textarea.Height()
 	m.textarea.Reset()
@@ -453,7 +355,6 @@ func (m *UI) restoreComposerAndHistory(draft composerSnapshot, hist historySnaps
 	return tea.Batch(m.textarea.Focus(), m.handleTextareaHeightChange(prevHeight))
 }
 
-// branchBannerLine1 renders the first banner line naming the branch target.
 func (p *branchPreview) branchBannerLine1() string {
 	role := "user"
 	if p.targetRole == message.Assistant {
@@ -462,11 +363,6 @@ func (p *branchPreview) branchBannerLine1() string {
 	return "Branching from " + role + " " + p.shortID + "; later messages won't be sent"
 }
 
-// branchBanner returns the 1-2 line banner text shown above the composer
-// while a branch preview or submission is active, or "" when neither is
-// active. Once the first persisted snapshot has loaded (m.branchLoading
-// clears), the streaming transcript itself is the indicator and no
-// banner is shown.
 func (m *UI) branchBanner() string {
 	if m.branchRun != nil && m.branchRun.reloadErr != nil {
 		return "Branch reload failed · Ctrl+P → Retry branch reload"
@@ -480,9 +376,6 @@ func (m *UI) branchBanner() string {
 	return ""
 }
 
-// branchBannerHeight returns the number of rows banner occupies (0 when
-// there is no active branch preview/submission), for layout height
-// calculations.
 func branchBannerHeight(banner string) int {
 	if banner == "" {
 		return 0
@@ -490,9 +383,6 @@ func branchBannerHeight(banner string) int {
 	return strings.Count(banner, "\n") + 1
 }
 
-// renderBranchBanner renders text truncated per-line to width using
-// ANSI/Unicode-aware measurement, styled with the semantic info message
-// style shared with the status bar.
 func renderBranchBanner(indStyle, msgStyle lipgloss.Style, width int, text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
@@ -502,8 +392,6 @@ func renderBranchBanner(indStyle, msgStyle lipgloss.Style, width int, text strin
 	return strings.Join(lines, "\n")
 }
 
-// branchLoadingView renders the placeholder shown in the main chat area
-// from submission until the first persisted branch snapshot arrives.
 func (m *UI) branchLoadingView(width int) string {
 	text := "Branching…"
 	if m.branchRun != nil && m.branchRun.reloadErr != nil {
@@ -512,11 +400,6 @@ func (m *UI) branchLoadingView(width int) string {
 	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(text)
 }
 
-// trySubmitBranch handles Enter while a branch preview is active. It
-// runs before ordinary textarea reset, slash expansion or quit parsing:
-// "/tree", "/branch" and "quit" are sent as literal text. Validation
-// never clears the composer; the payload is only frozen (and later
-// cleared, once, on acceptance) after it passes.
 func (m *UI) trySubmitBranch() tea.Cmd {
 	preview := m.branchPreview
 	if preview == nil || m.branchRun != nil {
@@ -550,7 +433,8 @@ func (m *UI) trySubmitBranch() tea.Cmd {
 	sessionID := preview.sessionID
 	ctx, cancel := context.WithCancel(context.Background())
 	runCtx, runCancel := context.WithCancel(context.Background())
-	run := &branchRun{ctx: ctx, cancel: cancel, runCancel: runCancel,
+	run := &branchRun{
+		ctx: ctx, cancel: cancel, runCancel: runCancel,
 		sessionID: sessionID,
 		outcome:   make(chan branchOutcome, 2),
 		preview:   preview,
@@ -578,9 +462,6 @@ func (m *UI) trySubmitBranch() tea.Cmd {
 	return tea.Batch(runCmd, waitBranchOutcomeCmd(run, outcomeCh))
 }
 
-// waitBranchOutcomeCmd blocks on run's outcome channel and wraps the next
-// item with run's identity so stale results from a superseded/torn-down
-// run can be detected and ignored.
 func waitBranchOutcomeCmd(run *branchRun, ch chan branchOutcome) tea.Cmd {
 	return func() tea.Msg {
 		select {
@@ -595,13 +476,9 @@ func waitBranchOutcomeCmd(run *branchRun, ch chan branchOutcome) tea.Cmd {
 	}
 }
 
-// handleBranchOutcome processes one accepted/finished outcome. It is the
-// only path that ever advances a branchRun's accepted/finished state.
 func (m *UI) handleBranchOutcome(msg branchOutcomeMsg) tea.Cmd {
 	run := msg.run
 	if m.branchRun != run {
-		// Superseded by teardown or (should never happen) a new run;
-		// never restore a draft into another session/workspace.
 		return nil
 	}
 	switch msg.outcome.kind {
@@ -620,15 +497,8 @@ func (m *UI) handleBranchOutcome(msg branchOutcomeMsg) tea.Cmd {
 		run.finished = true
 		run.finishErr = msg.outcome.err
 		if !run.accepted {
-			// Ordered synchronous callback makes this unambiguously
-			// pre-insert: restore the editable preview with its
-			// payload intact rather than resubmitting or rolling back.
 			return m.revertBranchRunToPreview(run, msg.outcome.err)
 		}
-		// Whole-run finished always forces a fresh final snapshot,
-		// regardless of events received; the poll loop started at
-		// acceptance keeps running to pick this up (and any later
-		// queued turn) even if every pubsub event drops.
 		run.dirty = true
 		read := m.scheduleBranchRead(run)
 		if msg.outcome.err != nil && !errors.Is(msg.outcome.err, context.Canceled) {
@@ -639,8 +509,6 @@ func (m *UI) handleBranchOutcome(msg branchOutcomeMsg) tea.Cmd {
 	return nil
 }
 
-// revertBranchRunToPreview restores the editable preview after a
-// pre-acceptance failure (validation, busy, cancellation).
 func (m *UI) revertBranchRunToPreview(run *branchRun, err error) tea.Cmd {
 	if m.branchRun != run {
 		return nil
@@ -664,8 +532,6 @@ func (m *UI) revertBranchRunToPreview(run *branchRun, err error) tea.Cmd {
 	return nil
 }
 
-// clearBranchComposer clears the submitted composer/attachments exactly
-// once, on acceptance.
 func (m *UI) clearBranchComposer() tea.Cmd {
 	prevHeight := m.textarea.Height()
 	m.textarea.Reset()
@@ -673,9 +539,6 @@ func (m *UI) clearBranchComposer() tea.Cmd {
 	return m.handleTextareaHeightChange(prevHeight)
 }
 
-// scheduleBranchRead issues one serialized GetSession+GetBranchPath read
-// for run if none is already in flight; otherwise it just marks run
-// dirty so the in-flight read's completion schedules the next one.
 func (m *UI) scheduleBranchRead(run *branchRun) tea.Cmd {
 	if run == nil {
 		return nil
@@ -695,9 +558,6 @@ func (m *UI) scheduleBranchRead(run *branchRun) tea.Cmd {
 	return m.branchReadCmd(run)
 }
 
-// branchReadCmd performs the actual IO for one reconciliation read. Read
-// bodies from pubsub are never trusted; only this persisted read (and
-// the equivalent one in beginBranchReturn) may install a new transcript.
 func (m *UI) branchReadCmd(run *branchRun) tea.Cmd {
 	ws := m.com.Workspace
 	sessionID := run.sessionID
@@ -749,7 +609,6 @@ func (m *UI) branchReadCmd(run *branchRun) tea.Cmd {
 	}
 }
 
-// branchPathContainsID reports whether id appears in path.
 func branchPathContainsID(path []message.Message, id string) bool {
 	for _, m := range path {
 		if m.ID == id {
@@ -759,8 +618,6 @@ func branchPathContainsID(path []message.Message, id string) bool {
 	return false
 }
 
-// handleBranchReadResult installs a persisted snapshot (or retries on
-// error), and chains the next read if more dirtiness arrived meanwhile.
 func (m *UI) handleBranchReadResult(msg branchReadResultMsg) tea.Cmd {
 	run := msg.run
 	if m.branchRun != run || run == nil || msg.epoch != run.readEpoch || !run.reading {
@@ -816,7 +673,6 @@ func (m *UI) handleBranchReadResult(msg branchReadResultMsg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// branchPollCmd schedules the next reconciliation tick for run.
 func branchPollCmd(run *branchRun) tea.Cmd {
 	return tea.Tick(branchPollInterval, func(time.Time) tea.Msg {
 		return branchPollMsg{run: run}
@@ -855,11 +711,6 @@ func (m *UI) handleBranchPoll(msg branchPollMsg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// clearBranchState resets preview/run/loading state on explicit
-// navigation away from the branch (new session, session switch, tree
-// navigation, or a successful "Return to pre-branch conversation"). The
-// recoverable branchReturn snapshot is intentionally NOT cleared here:
-// it is workspace-local and outlives session navigation.
 func (m *UI) clearBranchState() {
 	if run := m.branchRun; run != nil {
 		if run.cancel != nil {
@@ -874,10 +725,6 @@ func (m *UI) clearBranchState() {
 	m.branchLoading = false
 }
 
-// saveBranchReturnSnapshot records the single recoverable pre-branch
-// snapshot on acceptance. A nonempty existing draft is never replaced
-// (tryStartBranchPreview already refuses a second B in that case); an
-// empty one may be replaced by a later branch's acceptance.
 func (m *UI) saveBranchReturnSnapshot(run *branchRun) {
 	if m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty() {
 		return
@@ -892,9 +739,6 @@ func (m *UI) saveBranchReturnSnapshot(run *branchRun) {
 	}
 }
 
-// beginBranchReturn handles the "Return to pre-branch conversation"
-// palette action. All conflict checks happen before any IO or MoveLeaf;
-// on conflict the snapshot is retained untouched.
 func (m *UI) beginBranchReturn() tea.Cmd {
 	snap := m.branchReturn
 	if snap == nil {

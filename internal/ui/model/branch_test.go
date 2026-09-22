@@ -18,10 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// branchTestWorkspace is a richer [workspace.Workspace] stub for branch
-// preview tests: it overrides everything tryStartBranchPreview reads and
-// panics (via the nil embedded interface) if anything else is called,
-// which doubles as an assertion that preview/cancel perform no IO.
 type branchTestWorkspace struct {
 	workspace.Workspace
 	cfg         *config.Config
@@ -46,9 +42,6 @@ func newBranchTestConfig() *config.Config {
 	}
 }
 
-// newBranchTestUI builds a minimal *UI with a real Chat and textarea/
-// attachments, sufficient to drive tryStartBranchPreview/cancelBranchPreview
-// without going through New()'s full IO-touching setup.
 func newBranchTestUI(t *testing.T, ws *branchTestWorkspace) *UI {
 	t.Helper()
 	com := common.DefaultCommon(ws)

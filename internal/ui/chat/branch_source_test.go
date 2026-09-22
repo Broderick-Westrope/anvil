@@ -9,10 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUserMessageItemSourceMessage verifies the branch snapshot contract:
-// raw text (including skill/command expansion XML) is preserved verbatim,
-// and binary attachment bytes are deep-copied so mutating either the
-// original or the clone never affects the other.
 func TestUserMessageItemSourceMessage(t *testing.T) {
 	t.Parallel()
 
@@ -39,19 +35,14 @@ func TestUserMessageItemSourceMessage(t *testing.T) {
 	require.Len(t, clone.BinaryContent(), 1)
 	require.Equal(t, []byte{1, 2, 3}, clone.BinaryContent()[0].Data)
 
-	// Mutate the clone's binary bytes; the original must be unaffected.
 	cloneBinary := clone.Parts[1].(message.BinaryContent)
 	cloneBinary.Data[0] = 99
 	require.Equal(t, byte(1), original.Parts[1].(message.BinaryContent).Data[0], "cloning must deep-copy BinaryContent.Data")
 
-	// Mutate the original's bytes; the earlier clone must be unaffected.
 	original.Parts[1] = message.BinaryContent{Path: "/tmp/a.png", MIMEType: "image/png", Data: []byte{7, 7, 7}}
 	require.Equal(t, byte(99), clone.Parts[1].(message.BinaryContent).Data[0])
 }
 
-// TestAssistantMessageItemSourceMessage verifies assistant items expose the
-// same snapshot contract, including finish metadata needed for branch
-// eligibility checks.
 func TestAssistantMessageItemSourceMessage(t *testing.T) {
 	t.Parallel()
 

@@ -59,10 +59,6 @@ type Commands struct {
 	hasQueue   bool
 	selected   CommandType
 
-	// branchReturnAvailable shows "Return to pre-branch conversation"
-	// when a workspace-local pre-branch snapshot exists. Set via
-	// SetBranchReturnAvailable rather than the constructor so callers
-	// don't need to thread it through every NewCommands call site.
 	branchReturnAvailable bool
 	branchReloadAvailable bool
 
@@ -611,9 +607,6 @@ func (c *Commands) SetMCPPrompts(mcpPrompts []commands.MCPPrompt) {
 	}
 }
 
-// SetBranchReturnAvailable shows or hides "Return to pre-branch
-// conversation" and refreshes the visible list if system commands are
-// currently displayed.
 func (c *Commands) SetBranchReturnAvailable(available bool) {
 	c.branchReturnAvailable = available
 	if c.selected == SystemCommands {

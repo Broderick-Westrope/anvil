@@ -14,21 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// batchCmds extracts the underlying []tea.Cmd from a message produced by
-// tea.Batch. tea.BatchMsg is exported; this driver never needs to peer
-// inside tea.Sequence because nothing under test here uses it directly
-// (setSessionMessages's internal tea.Sequence is executed opaquely,
-// which is fine: its own messages don't need inspecting by these tests).
 func batchCmds(msg tea.Msg) ([]tea.Cmd, bool) {
 	b, ok := msg.(tea.BatchMsg)
 	return []tea.Cmd(b), ok
 }
 
-// collectMsgs runs cmd and, if it is a tea.Batch, runs each sub-command
-// once (non-recursively) and collects every resulting non-nil message.
-// This is sufficient for the finite, one-level-deep command batches
-// under test; it deliberately does not follow the perpetual
-// reconciliation poll loop, which these tests drive explicitly instead.
 func collectMsgs(cmd tea.Cmd) []tea.Msg {
 	if cmd == nil {
 		return nil
@@ -63,9 +53,6 @@ func findMsg[T any](msgs []tea.Msg) (T, bool) {
 	return zero, false
 }
 
-// newIntegrationUI builds a *UI wired to a real fixture AppWorkspace, with
-// a real Chat containing the given source message as the sole (selected)
-// item, ready to drive tryStartBranchPreview/trySubmitBranch end to end.
 func newIntegrationUI(t *testing.T, f *branchfixture.Fixture, sessionID string, source *message.Message) *UI {
 	t.Helper()
 	com := common.DefaultCommon(f.Workspace)
@@ -116,10 +103,6 @@ func seedUserSource(t *testing.T, f *branchfixture.Fixture, sessionID, text stri
 	return created
 }
 
-// driveAcceptedBranch submits ui's active preview, then drives the
-// resulting run through acceptance and both reconciliation reads
-// (immediate-on-accept and mandatory-post-finish), asserting each stage
-// completes deterministically. It returns the run's accepted user ID.
 func driveAcceptedBranch(t *testing.T, m *UI) string {
 	t.Helper()
 
@@ -128,9 +111,6 @@ func driveAcceptedBranch(t *testing.T, m *UI) string {
 	require.True(t, m.branchActive())
 	require.True(t, m.branchLoading)
 
-	// tea.Batch(runCmd, waitCmd): runCmd performs the whole
-	// fixture-served turn synchronously, filling the outcome channel
-	// with accepted then finished before waitCmd ever reads it.
 	msgs := collectMsgs(submitCmd)
 	accepted, ok := findMsg[branchOutcomeMsg](msgs)
 	require.True(t, ok, "accepted outcome must be observed")
@@ -178,15 +158,9 @@ func TestBranchSubmissionIntegration_AcceptedStreamAndFinish(t *testing.T) {
 
 	acceptedUser, err := f.Messages.Get(f.Context, acceptedID)
 	require.NoError(t, err)
-	// source is the session's first (root) message, so branching from a
-	// user target retains the target's parent — here, none — rather
-	// than appending under source itself.
 	require.Equal(t, source.ParentMessageID, acceptedUser.ParentMessageID, "a first-root user replacement keeps the same (empty) parent as the target")
 	require.Equal(t, "edited continuation prompt", acceptedUser.Content().Text)
 
-	// The transcript now shows only the new branch (accepted user +
-	// assistant reply), excluding the old sibling source, not a mix of
-	// stale UI state and the new turn.
 	ids := make(map[string]bool)
 	for i := range m.chat.Len() {
 		ids[m.chat.ItemAt(i).(interface{ ID() string }).ID()] = true
@@ -209,7 +183,6 @@ func TestBranchReturnIntegration_RestoresExactSourceLeafAndDraft(t *testing.T) {
 	driveAcceptedBranch(t, m)
 	require.NotNil(t, m.branchReturn)
 
-	// The composer must be idle/empty before a return is allowed.
 	m.textarea.Reset()
 	returnCmd := m.beginBranchReturn()
 	require.NotNil(t, returnCmd)
@@ -240,12 +213,10 @@ func TestBranchSubmissionIntegration_ReturnRejectedWithDirtyComposer(t *testing.
 	driveAcceptedBranch(t, m)
 	require.NotNil(t, m.branchReturn)
 
-	// Leave the composer dirty: return must refuse before any IO or
-	// MoveLeaf, retaining the snapshot.
 	m.textarea.SetValue("still typing something else")
 	cmd := m.beginBranchReturn()
 	require.NotNil(t, cmd)
-	_ = cmd() // a warning message, not a branchReturnResultMsg
+	_ = cmd()
 	require.NotNil(t, m.branchReturn, "conflict must retain the snapshot")
 
 	sessAfter, err := f.Workspace.GetSession(f.Context, sess.ID)
