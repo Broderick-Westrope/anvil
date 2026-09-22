@@ -468,6 +468,9 @@ func (p *branchPreview) branchBannerLine1() string {
 // clears), the streaming transcript itself is the indicator and no
 // banner is shown.
 func (m *UI) branchBanner() string {
+	if m.branchRun != nil && m.branchRun.reloadErr != nil {
+		return "Branch reload failed · Ctrl+P → Retry branch reload"
+	}
 	if m.branchPreview != nil {
 		return m.branchPreview.branchBannerLine1() + "\n" + branchBannerLine2
 	}
@@ -774,6 +777,7 @@ func (m *UI) handleBranchReadResult(msg branchReadResultMsg) tea.Cmd {
 			return tea.Tick(delays[run.failCount-1], func(time.Time) tea.Msg { return branchRetryMsg{run: run} })
 		}
 		run.reloadErr = msg.err
+		m.updateLayoutAndSize()
 		return util.ReportError(fmt.Errorf("branch reload failed; use Retry branch reload in the command palette: %w", msg.err))
 	}
 	run.failCount = 0
@@ -834,6 +838,7 @@ func (m *UI) retryBranchReload() tea.Cmd {
 	}
 	run.failCount = 0
 	run.reloadErr = nil
+	m.updateLayoutAndSize()
 	return m.scheduleBranchRead(run)
 }
 

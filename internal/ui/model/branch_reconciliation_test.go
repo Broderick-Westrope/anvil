@@ -615,3 +615,22 @@ func TestBranchSnapshotUpsertsChangedItemsAndDeletesMissing(t *testing.T) {
 	require.Nil(t, m.chat.MessageItem(assistantID))
 	require.Same(t, userItem, m.chat.MessageItem(accepted))
 }
+
+func TestBranchReloadPaletteAccessibleWhileComposerFrozen(t *testing.T) {
+	_, m, ws, _ := branchFixtureUI(t)
+	m.Update(tea.KeyPressMsg{Code: 'B', Text: "B"})
+	driveAcceptedBranch(t, m)
+	ws.readErr = errors.New("unavailable")
+	for i := range 4 {
+		var cmd tea.Cmd
+		if i == 0 {
+			cmd = m.scheduleBranchRead(m.branchRun)
+		} else {
+			_, cmd = m.Update(branchRetryMsg{run: m.branchRun})
+		}
+		m.Update(cmd())
+	}
+	require.Error(t, m.branchRun.reloadErr)
+	m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	require.True(t, m.dialog.ContainsDialog(dialog.CommandsID))
+}

@@ -2650,6 +2650,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 
 	case dialog.ActionRetryBranchReload:
+		m.dialog.CloseFrontDialog()
 		if m.mutationReload != nil {
 			cmds = append(cmds, m.mutationRefreshCmd(m.mutationReload))
 		} else {
@@ -3166,16 +3167,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 
 			if m.branchPreview == nil && m.branchActive() {
+				handleGlobalKeys(msg)
 				return tea.Batch(cmds...)
 			}
 			if ok := m.attachments.Update(msg); ok {
-				return tea.Batch(cmds...)
-			}
-
-			// Editing is frozen while a branch submission is in flight:
-			// only the earlier cancel-key handling (before this switch)
-			// may act on it, via agent cancellation.
-			if m.branchPreview == nil && m.branchActive() {
 				return tea.Batch(cmds...)
 			}
 
