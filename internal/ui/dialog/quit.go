@@ -15,7 +15,10 @@ const QuitID = "quit"
 type Quit struct {
 	com        *common.Common
 	selectedNo bool // true if "No" button is selected
-	keyMap     struct {
+	// warning, when set, is shown above the question (e.g. a non-durable
+	// pre-branch draft that will be lost on quit).
+	warning string
+	keyMap  struct {
 		LeftRight,
 		EnterSpace,
 		Yes,
@@ -67,6 +70,12 @@ func (*Quit) ID() string {
 	return QuitID
 }
 
+// SetWarning sets an additional warning line shown above the question,
+// e.g. that a non-durable pre-branch draft will be lost on quit.
+func (q *Quit) SetWarning(warning string) {
+	q.warning = warning
+}
+
 // HandleMsg implements [Model].
 func (q *Quit) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
@@ -109,15 +118,15 @@ func (q *Quit) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		{Text: "Nope", Selected: q.selectedNo, Padding: 3},
 	}
 	buttons := common.ButtonGroup(q.com.Styles, buttonOpts, " ")
+	lines := []string{question}
+	if q.warning != "" {
+		lines = append(lines, "", hintStyle.Render(q.warning))
+	}
+	lines = append(lines, "", buttons, "", hintStyle.Render(hintLineOne), hintStyle.Render(hintLineTwo))
 	content := baseStyle.Render(
 		lipgloss.JoinVertical(
 			lipgloss.Center,
-			question,
-			"",
-			buttons,
-			"",
-			hintStyle.Render(hintLineOne),
-			hintStyle.Render(hintLineTwo),
+			lines...,
 		),
 	)
 

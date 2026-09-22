@@ -356,6 +356,9 @@ type UI struct {
 	// persisted state has been fully reconciled (including a trailing
 	// watchdog period covering already-queued follow-up work).
 	branchRun *branchRun
+	// branchLoading hides the source transcript from the moment a branch
+	// is submitted until its first persisted snapshot has been read.
+	branchLoading bool
 	// branchReturn is the single recoverable pre-branch snapshot kept
 	// after a branch is accepted, consumed by "Return to pre-branch
 	// conversation".
@@ -731,6 +734,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case loadSessionMsg:
 		m.clearDrillStack()
+		m.clearBranchState()
 		if m.forceCompactMode {
 			m.isCompact = true
 		}
@@ -917,6 +921,17 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pubsub.Event[message.Message]:
 		// Check if this is a child session message for an agent tool.
 		if m.session == nil {
+			break
+		}
+
+		if m.branchRun != nil && msg.Payload.SessionID == m.session.ID {
+			// Pubsub is lossy and bodies are never trusted while a
+			// branch owns this session's transcript: treat the event
+			// purely as an invalidation and let the serialized
+			// persisted read (never a replayed body) reconcile it.
+			if cmd := m.scheduleBranchRead(m.branchRun); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			break
 		}
 
@@ -1274,6 +1289,22 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.dispatchMsg(msg.msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
+		}
+	case branchOutcomeMsg:
+		if cmd := m.handleBranchOutcome(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case branchReadResultMsg:
+		if cmd := m.handleBranchReadResult(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case branchPollMsg:
+		if cmd := m.handleBranchPoll(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case branchReturnResultMsg:
+		if cmd := m.handleBranchReturnResult(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case tickElapsedTimeMsg:
 		// invalidateRunningAgentCaches performs a single pass per chat that
@@ -2531,6 +2562,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 
+	case dialog.ActionReturnToPreBranch:
+		m.dialog.CloseFrontDialog()
+		if cmd := m.beginBranchReturn(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
 	case dialog.ActionReloadPlugins:
 		m.dialog.CloseDialog(dialog.CommandsID)
 		cmds = append(cmds, m.reloadPlugins())
@@ -3025,6 +3062,14 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 				cmds = append(cmds, m.pasteImageFromClipboard)
 
+			case m.branchPreview != nil && key.Matches(msg, m.keyMap.Editor.SendMessage):
+				// Branch Enter is routed before ordinary textarea
+				// reset, slash expansion or quit parsing: "/tree",
+				// "/branch" and "quit" are literal branch text.
+				if cmd := m.trySubmitBranch(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+
 			case key.Matches(msg, m.keyMap.Editor.SendMessage):
 				prevHeight := m.textarea.Height()
 				value := m.textarea.Value()
@@ -3462,7 +3507,14 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 			m.activeChat().Draw(scr, m.activeChatArea())
 		} else {
-			m.activeChat().Draw(scr, layout.main)
+			if m.branchLoading {
+				// Hide the source transcript until the first
+				// persisted branch snapshot arrives, rather than
+				// mix old/new rows.
+				uv.NewStyledString(m.branchLoadingView(layout.main.Dx())).Draw(scr, layout.main)
+			} else {
+				m.activeChat().Draw(scr, layout.main)
+			}
 			if layout.pills.Dy() > 0 && m.pillsView != "" {
 				uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 			}
@@ -3833,6 +3885,9 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.Chat.ClearHighlight,
 				},
 			)
+			if hasSession && m.session.ParentSessionID == "" && !m.isDrilledIn() {
+				binds = append(binds, []key.Binding{k.Chat.Branch})
+			}
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, []key.Binding{k.Chat.PillLeft})
 			}
@@ -5214,6 +5269,7 @@ type navigateTreeDoneMsg struct {
 // been moved, and optionally pre-fills the editor for user messages.
 func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.endMutation(mutationTreeNav)
+	m.clearBranchState()
 	var cmds []tea.Cmd
 
 	m.session = msg.session
@@ -5317,6 +5373,9 @@ func (m *UI) openQuitDialog() tea.Cmd {
 	}
 
 	quitDialog := dialog.NewQuit(m.com)
+	if m.branchReturn != nil {
+		quitDialog.SetWarning("A saved pre-branch draft will be lost.")
+	}
 	m.dialog.OpenDialog(quitDialog)
 	return nil
 }
@@ -5388,6 +5447,7 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 	if err != nil {
 		return util.ReportError(err)
 	}
+	commands.SetBranchReturnAvailable(m.branchReturn != nil)
 
 	m.dialog.OpenDialog(commands)
 
@@ -5510,6 +5570,7 @@ func (m *UI) newSession() tea.Cmd {
 	}
 
 	m.clearDrillStack()
+	m.clearBranchState()
 	m.session = nil
 	m.sidebarOffset = 0
 	m.sessionFileReads = nil

@@ -160,6 +160,10 @@ type (
 		Role            message.MessageRole
 		Content         string
 	}
+	// ActionReturnToPreBranch requests navigation back to the exact
+	// source session/leaf saved before the most recent accepted inline
+	// branch, restoring its full composer/history snapshot.
+	ActionReturnToPreBranch struct{}
 )
 
 // Messages for API key input dialog.
