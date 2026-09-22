@@ -2849,6 +2849,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return false
 	}
 
+	if key.Matches(msg, m.keyMap.Quit) && m.dialog.HasDialogs() && !m.dialog.ContainsDialog(dialog.QuitID) {
+		return m.handleDialogMsg(msg)
+	}
 	if key.Matches(msg, m.keyMap.Quit) && !m.dialog.ContainsDialog(dialog.QuitID) {
 		if m.state == uiChat || m.state == uiLanding {
 			// Priority 1: Close popup.
@@ -2864,6 +2867,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			if m.attachments.IsDeleting() {
 				m.attachments.ExitDeleteMode()
 				return tea.Batch(cmds...)
+			}
+			if m.branchActive() {
+				return util.ReportWarn("Send or cancel the current branch before quitting.")
 			}
 			// Priority 3: Clear text + attachments.
 			if m.textarea.Value() != "" || m.attachments.HasContent() {
@@ -2896,7 +2902,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 	// Handle cancel key when agent is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
-		if m.branchRun != nil {
+		if m.branchRun != nil && m.branchActive() {
 			// A branch submission is in flight: Escape cancels the
 			// agent, never a source-transcript restoration. The
 			// outcome consumer stays alive to observe the committed
@@ -3036,7 +3042,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			// Editing is frozen while a branch submission is in flight:
 			// only the earlier cancel-key handling (before this switch)
 			// may act on it, via agent cancellation.
-			if m.branchRun != nil {
+			if m.branchPreview == nil && m.branchActive() {
 				return tea.Batch(cmds...)
 			}
 
@@ -5347,6 +5353,9 @@ func (m *UI) setSessionPinCmd(msg dialog.ActionSetSessionPin) tea.Cmd {
 // session is pinned (choke point A: pin state is re-read from the DB at
 // prompt time), the pinned settle variant opens instead.
 func (m *UI) openQuitDialog() tea.Cmd {
+	if m.branchActive() {
+		return util.ReportWarn("Send or cancel the current branch before quitting.")
+	}
 	// A settle write is in flight: ignore the quit request so a plain
 	// quit cannot race the write.
 	if m.pinSettling {

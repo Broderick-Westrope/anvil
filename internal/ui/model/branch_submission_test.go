@@ -3,6 +3,8 @@ package model
 import (
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
+
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -72,11 +74,14 @@ func newIntegrationUI(t *testing.T, f *branchfixture.Fixture, sessionID string, 
 	require.NoError(t, err)
 
 	m := &UI{
-		com:     com,
-		keyMap:  DefaultKeyMap(),
-		chat:    NewChat(com),
-		focus:   uiFocusMain,
-		session: &sess,
+		state:           uiChat,
+		dialog:          dialog.NewOverlay(),
+		enabledLazyMCPs: make(map[string]bool),
+		com:             com,
+		keyMap:          DefaultKeyMap(),
+		chat:            NewChat(com),
+		focus:           uiFocusMain,
+		session:         &sess,
 	}
 	m.textarea = textarea.New()
 	m.attachments = attachments.New(
@@ -247,4 +252,34 @@ func TestBranchSubmissionIntegration_ReturnRejectedWithDirtyComposer(t *testing.
 	sessAfter, err := f.Workspace.GetSession(f.Context, sess.ID)
 	require.NoError(t, err)
 	require.NotEqual(t, source.ID, sessAfter.LeafMessageID, "no MoveLeaf on conflict")
+}
+
+func TestBranchKeysAfterReconciliation(t *testing.T) {
+	f := branchfixture.New(t)
+	sess, err := f.Workspace.CreateSession(f.Context, "root")
+	require.NoError(t, err)
+	source := seedUserSource(t, f, sess.ID, "source")
+	m := newIntegrationUI(t, f, sess.ID, &source)
+	m.Update(tea.KeyPressMsg{Code: 'B', Text: "B"})
+	require.NotNil(t, m.branchPreview)
+	driveAcceptedBranch(t, m)
+	m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	require.Equal(t, "x", m.textarea.Value())
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	require.Empty(t, m.textarea.Value())
+}
+
+func TestBranchQuitPreservesPreview(t *testing.T) {
+	f := branchfixture.New(t)
+	sess, err := f.Workspace.CreateSession(f.Context, "root")
+	require.NoError(t, err)
+	source := seedUserSource(t, f, sess.ID, "source")
+	m := newIntegrationUI(t, f, sess.ID, &source)
+	m.Update(tea.KeyPressMsg{Code: 'B', Text: "B"})
+	m.textarea.SetValue("edited branch")
+	m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	require.Equal(t, "edited branch", m.textarea.Value())
+	require.NotNil(t, m.branchPreview)
+	require.False(t, m.dialog.ContainsDialog(dialog.QuitID))
 }
