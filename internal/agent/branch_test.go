@@ -1,16 +1,18 @@
 package agent
 
 import (
-	"charm.land/fantasy"
 	"context"
 	"testing"
 
+	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBranchPrefixValidation(t *testing.T) {
+	t.Parallel()
+
 	call := message.Message{Role: message.Assistant, Parts: []message.ContentPart{message.ToolCall{ID: "call", Name: "local", Finished: true}}}
 	result := message.Message{Role: message.Tool, Parts: []message.ContentPart{message.ToolResult{ToolCallID: "call", Name: "local"}}}
 	user := message.Message{Role: message.User}
@@ -25,6 +27,8 @@ func TestBranchPrefixValidation(t *testing.T) {
 		{"duplicate result", []message.Message{call, result, result}, false}, {"interrupted", []message.Message{call, user, result}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := validateBranchPrefix(test.path)
 			if test.valid {
 				require.NoError(t, err)

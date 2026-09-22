@@ -2040,6 +2040,7 @@ func (c *coordinator) WaitBackgroundJobs() {
 }
 
 type modelSelectionKey struct{}
+
 type modelSelection struct {
 	large config.SelectedModel
 	small config.SelectedModel

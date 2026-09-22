@@ -2,16 +2,16 @@ package agent_test
 
 import (
 	"context"
-	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
-	"github.com/Broderick-Westrope/anvil/internal/config"
-	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
 	"github.com/stretchr/testify/require"
 )
@@ -519,6 +519,77 @@ func TestBranchQueueCapturesModelSelection(t *testing.T) {
 	}
 	f.Coordinator.WaitBackgroundJobs()
 	require.Len(t, f.Provider.Requests(), 2)
+}
+
+func TestSummaryProviderErrorPersists(t *testing.T) {
+	for _, mode := range []string{"ordinary", "branch auto-summary"} {
+		t.Run(mode, func(t *testing.T) {
+			f := branchfixture.New(t)
+			provider, _ := f.Config.Config().Providers.Get("anthropic")
+			provider.Models[0].ContextWindow = 100
+			f.Config.Config().Providers.Set("anthropic", provider)
+			s, err := f.Workspace.CreateSession(f.Context, "source")
+			require.NoError(t, err)
+			source, err := f.Messages.Create(f.Context, s.ID, message.CreateMessageParams{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "original request"}}})
+			require.NoError(t, err)
+			wantRequests, wantMessages := 1, 2
+			if mode == "branch auto-summary" {
+				f.Provider.Enqueue(branchfixture.Response{ToolName: "todos", ToolInput: `{"todos":[]}`, InputTokens: 95})
+				wantRequests, wantMessages = 2, 5
+			}
+			f.Provider.Enqueue(branchfixture.Response{Status: http.StatusBadRequest})
+			if mode == "ordinary" {
+				err = f.Coordinator.Summarize(f.Context, s.ID)
+			} else {
+				_, err = f.Coordinator.RunFromMessage(f.Context, s.ID, "branch", agent.BranchRunOptions{Origin: agent.BranchOrigin{TargetMessageID: source.ID, ExpectedSourceLeafID: source.ID}})
+			}
+			require.ErrorContains(t, err, "scripted provider failure")
+			f.Coordinator.WaitBackgroundJobs()
+			require.Len(t, f.Provider.Requests(), wantRequests)
+			require.False(t, f.Coordinator.IsSessionBusy(s.ID))
+			current, err := f.Sessions.Get(f.Context, s.ID)
+			require.NoError(t, err)
+			persisted := message.NewService(f.Queries, message.WithConn(f.Conn))
+			all, err := persisted.List(f.Context, s.ID)
+			require.NoError(t, err)
+			require.Len(t, all, wantMessages)
+			leaf, err := persisted.Get(f.Context, current.LeafMessageID)
+			require.NoError(t, err)
+			require.Equal(t, message.MessageTypeCompaction, leaf.MessageType)
+			require.Equal(t, message.FinishReasonError, leaf.FinishReason())
+			require.Equal(t, "Summarization Error", leaf.FinishPart().Message)
+			require.Contains(t, leaf.FinishPart().Details, "scripted provider failure")
+			parent, err := persisted.Get(f.Context, leaf.ParentMessageID)
+			require.NoError(t, err)
+			if mode == "ordinary" {
+				require.Equal(t, source.ID, parent.ID)
+			} else {
+				require.Equal(t, message.Tool, parent.Role)
+				require.Len(t, parent.ToolResults(), 1)
+			}
+		})
+	}
+}
+
+func TestSummaryAuthRetryRestoresParent(t *testing.T) {
+	f := branchfixture.New(t)
+	s, err := f.Workspace.CreateSession(f.Context, "source")
+	require.NoError(t, err)
+	source, err := f.Messages.Create(f.Context, s.ID, message.CreateMessageParams{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "original request"}}})
+	require.NoError(t, err)
+	f.Provider.Enqueue(branchfixture.Response{Status: http.StatusUnauthorized}, branchfixture.Response{Text: "summary"})
+	require.NoError(t, f.Coordinator.Summarize(f.Context, s.ID))
+	require.Len(t, f.Provider.Requests(), 2)
+	current, err := f.Sessions.Get(f.Context, s.ID)
+	require.NoError(t, err)
+	all, err := f.Messages.List(f.Context, s.ID)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	leaf, err := f.Messages.Get(f.Context, current.LeafMessageID)
+	require.NoError(t, err)
+	require.Equal(t, source.ID, leaf.ParentMessageID)
+	require.Equal(t, message.MessageTypeCompaction, leaf.MessageType)
+	require.Equal(t, message.FinishReasonEndTurn, leaf.FinishReason())
 }
 
 func TestBranchSummaryAuthRetry(t *testing.T) {

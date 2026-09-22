@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -822,7 +823,11 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	// Send notification that agent has finished its turn (skip for
 	// nested/non-interactive sessions).
 	if !call.NonInteractive && a.notify != nil {
-		ctx.Value(ownerKey{}).(*submissionOwner).onFinish = func() {
+		owner, ok := ctx.Value(ownerKey{}).(*submissionOwner)
+		if !ok || owner == nil || owner.sessionID != call.SessionID {
+			return nil, fmt.Errorf("missing submission owner for session %q", call.SessionID)
+		}
+		owner.onFinish = func() {
 			a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
 				SessionID: call.SessionID, SessionTitle: currentSession.Title, Type: notify.TypeAgentFinished,
 			})
@@ -934,11 +939,20 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		},
 	})
 	if err != nil {
-		if moveErr := a.sessions.MoveLeaf(persistCtx, sessionID, compactionMsg.ParentMessageID); moveErr != nil {
-			return fmt.Errorf("restoring summary parent: %w", moveErr)
+		var providerErr *fantasy.ProviderError
+		if errors.Is(err, context.Canceled) || genCtx.Err() != nil ||
+			(errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized) {
+			if moveErr := a.sessions.MoveLeaf(persistCtx, sessionID, compactionMsg.ParentMessageID); moveErr != nil {
+				return fmt.Errorf("restoring summary parent: %w", moveErr)
+			}
+			if deleteErr := a.messages.Delete(persistCtx, compactionMsg.ID); deleteErr != nil {
+				return fmt.Errorf("deleting summary placeholder: %w", deleteErr)
+			}
+			return err
 		}
-		if deleteErr := a.messages.Delete(persistCtx, compactionMsg.ID); deleteErr != nil {
-			return fmt.Errorf("deleting summary placeholder: %w", deleteErr)
+		compactionMsg.AddFinish(message.FinishReasonError, "Summarization Error", err.Error())
+		if updateErr := a.messages.Update(persistCtx, compactionMsg); updateErr != nil {
+			return updateErr
 		}
 		return err
 	}
@@ -1458,12 +1472,30 @@ func summaryCompletionTokens(usage fantasy.Usage, summaryMessage message.Message
 	return approxTokenCount(summaryMessage.Content().Text) + approxTokenCount(summaryMessage.ReasoningContent().String())
 }
 
-func (a *sessionAgent) Cancel(sessionID string)             { a.admission.cancel(sessionID) }
-func (a *sessionAgent) ClearQueue(sessionID string)         { a.admission.clear(sessionID) }
-func (a *sessionAgent) CancelAll()                          { a.admission.cancelAll() }
-func (a *sessionAgent) IsBusy() bool                        { return a.admission.busy("") }
-func (a *sessionAgent) IsSessionBusy(sessionID string) bool { return a.admission.busy(sessionID) }
-func (a *sessionAgent) QueuedPrompts(sessionID string) int  { return len(a.admission.queued(sessionID)) }
+func (a *sessionAgent) Cancel(sessionID string) {
+	a.admission.cancel(sessionID)
+}
+
+func (a *sessionAgent) ClearQueue(sessionID string) {
+	a.admission.clear(sessionID)
+}
+
+func (a *sessionAgent) CancelAll() {
+	a.admission.cancelAll()
+}
+
+func (a *sessionAgent) IsBusy() bool {
+	return a.admission.busy("")
+}
+
+func (a *sessionAgent) IsSessionBusy(sessionID string) bool {
+	return a.admission.busy(sessionID)
+}
+
+func (a *sessionAgent) QueuedPrompts(sessionID string) int {
+	return len(a.admission.queued(sessionID))
+}
+
 func (a *sessionAgent) QueuedPromptsList(sessionID string) []string {
 	return a.admission.queued(sessionID)
 }

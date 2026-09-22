@@ -10,6 +10,8 @@ import (
 )
 
 func TestAdmissionOwnsPreparationAndFIFO(t *testing.T) {
+	t.Parallel()
+
 	a := newAdmission(t.Context())
 	entered, release := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
@@ -42,6 +44,8 @@ func TestAdmissionOwnsPreparationAndFIFO(t *testing.T) {
 }
 
 func TestAdmissionCancellationAndOwnerIdentity(t *testing.T) {
+	t.Parallel()
+
 	a := newAdmission(t.Context())
 	var old context.Context
 	_, err := a.submit(t.Context(), "s", submission{run: func(ctx context.Context) (*fantasy.AgentResult, error) {
@@ -64,6 +68,8 @@ func TestAdmissionCancellationAndOwnerIdentity(t *testing.T) {
 }
 
 func TestAdmissionErrorPreservesQueue(t *testing.T) {
+	t.Parallel()
+
 	a := newAdmission(t.Context())
 	failure := errors.New("preparation failed")
 	_, err := a.submit(t.Context(), "s", submission{run: func(context.Context) (*fantasy.AgentResult, error) {
@@ -81,6 +87,8 @@ func TestAdmissionErrorPreservesQueue(t *testing.T) {
 }
 
 func TestAdmissionBranchHandoffUsesNewOwner(t *testing.T) {
+	t.Parallel()
+
 	a := newAdmission(t.Context())
 	queued := make(chan struct{})
 	release := make(chan struct{})
@@ -115,10 +123,15 @@ func TestAdmissionBranchHandoffUsesNewOwner(t *testing.T) {
 }
 
 func TestAdmissionCompletionObservesReleasedOwner(t *testing.T) {
+	t.Parallel()
+
 	a := newAdmission(t.Context())
 	completed := false
 	_, err := a.submit(t.Context(), "s", submission{run: func(ctx context.Context) (*fantasy.AgentResult, error) {
-		ctx.Value(ownerKey{}).(*submissionOwner).onFinish = func() { completed = true; require.False(t, a.busy("s")) }
+		ctx.Value(ownerKey{}).(*submissionOwner).onFinish = func() {
+			completed = true
+			require.False(t, a.busy("s"))
+		}
 		return nil, nil
 	}})
 	require.NoError(t, err)
