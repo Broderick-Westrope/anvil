@@ -76,6 +76,7 @@ func newBranchTestUI(t *testing.T, ws *branchTestWorkspace) *UI {
 		},
 	)
 	m.chat.Focus()
+	m.status = NewStatus(com, m)
 	return m
 }
 

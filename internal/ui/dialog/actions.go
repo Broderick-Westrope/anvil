@@ -164,6 +164,7 @@ type (
 	// source session/leaf saved before the most recent accepted inline
 	// branch, restoring its full composer/history snapshot.
 	ActionReturnToPreBranch struct{}
+	ActionRetryBranchReload struct{}
 )
 
 // Messages for API key input dialog.

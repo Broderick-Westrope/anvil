@@ -64,6 +64,7 @@ type Commands struct {
 	// SetBranchReturnAvailable rather than the constructor so callers
 	// don't need to thread it through every NewCommands call site.
 	branchReturnAvailable bool
+	branchReloadAvailable bool
 
 	spinner spinner.Model
 	loading bool
@@ -462,6 +463,9 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "branch", "Branch From Message", "", ActionOpenDialog{BranchID}),
 	}
 
+	if c.branchReloadAvailable {
+		commands = append(commands, NewCommandItem(c.com.Styles, "branch_reload", "Retry branch reload", "", ActionRetryBranchReload{}))
+	}
 	if c.branchReturnAvailable {
 		commands = append(commands, NewCommandItem(c.com.Styles, "branch_return", "Return to pre-branch conversation", "", ActionReturnToPreBranch{}))
 	}
@@ -629,4 +633,11 @@ func (c *Commands) StartLoading() tea.Cmd {
 // StopLoading implements [LoadingDialog].
 func (c *Commands) StopLoading() {
 	c.loading = false
+}
+
+func (c *Commands) SetBranchReloadAvailable(available bool) {
+	c.branchReloadAvailable = available
+	if c.selected == SystemCommands {
+		c.setCommandItems(c.selected)
+	}
 }

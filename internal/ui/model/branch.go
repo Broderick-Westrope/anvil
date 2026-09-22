@@ -56,10 +56,12 @@ type branchPreview struct {
 	sessionID      string
 	expectedLeafID string
 	shortID        string
+	invalid        bool
 
-	originalDraft   composerSnapshot
-	originalHistory historySnapshot
-	originalFocus   uiFocusState
+	originalDraft    composerSnapshot
+	originalHistory  historySnapshot
+	originalFocus    uiFocusState
+	originalViewport branchViewport
 }
 
 // branchRun tracks an in-flight branch submission from Enter until its
@@ -89,9 +91,18 @@ type branchRun struct {
 	// dirty/reading drive the single serialized read loop: at most one
 	// read is ever in flight per run, and events observed during that
 	// read are folded into dirty for the next one.
-	dirty     bool
-	reading   bool
-	failCount int
+	dirty           bool
+	reading         bool
+	failCount       int
+	items           map[string]branchItemSnapshot
+	ctx             context.Context
+	cancel          context.CancelFunc
+	runCancel       context.CancelFunc
+	readAfterFinish bool
+	readEpoch       uint64
+	retryPending    bool
+	reloadErr       error
+	returning       bool
 }
 
 // branchOutcomeKind distinguishes the two items ever sent on a
@@ -122,10 +133,13 @@ type branchOutcomeMsg struct {
 // branchReadResultMsg is the result of one serialized GetSession +
 // GetBranchPath reconciliation read.
 type branchReadResultMsg struct {
-	run      *branchRun
-	session  *session.Session
-	messages []message.Message
-	err      error
+	run         *branchRun
+	session     *session.Session
+	messages    []message.Message
+	nested      map[string]branchNestedSnapshot
+	afterFinish bool
+	epoch       uint64
+	err         error
 }
 
 // branchPollMsg drives the periodic reconciliation loop: it both repairs
@@ -133,6 +147,8 @@ type branchReadResultMsg struct {
 // running for the lifetime of its run (including after finished, so an
 // already-queued follow-up turn still converges even if all of its
 // events are dropped).
+type branchRetryMsg struct{ run *branchRun }
+
 type branchPollMsg struct {
 	run *branchRun
 }
@@ -144,16 +160,19 @@ const branchPollInterval = 200 * time.Millisecond
 // branchReturnSnapshot is the single recoverable pre-branch snapshot kept
 // after a branch is accepted, allowing "Return to pre-branch conversation".
 type branchReturnSnapshot struct {
-	sessionID       string
-	leafID          string
-	originalDraft   composerSnapshot
-	originalHistory historySnapshot
-	originalFocus   uiFocusState
+	sessionID        string
+	leafID           string
+	originalDraft    composerSnapshot
+	originalHistory  historySnapshot
+	originalFocus    uiFocusState
+	originalViewport branchViewport
 }
 
 // branchReturnResultMsg is the result of the "Return to pre-branch
 // conversation" command.
 type branchReturnResultMsg struct {
+	run       *branchRun
+	nested    map[string]branchNestedSnapshot
 	session   *session.Session
 	messages  []message.Message
 	err       error
@@ -170,13 +189,16 @@ const mutationBranchReturn = "branch-return"
 // returns false again even though m.branchRun stays non-nil to keep the
 // reconciliation poll loop alive for already-queued follow-up work.
 func (m *UI) branchActive() bool {
+	if m.branchLoading {
+		return true
+	}
 	if m.branchPreview != nil {
 		return true
 	}
 	if m.branchRun == nil {
 		return false
 	}
-	return !(m.branchRun.finished && m.branchRun.reconciledAfterFinish)
+	return m.branchRun.reloadErr != nil || !(m.branchRun.finished && m.branchRun.reconciledAfterFinish)
 }
 
 // beginMutation registers a pending mutation under id, blocking new branch
@@ -216,8 +238,10 @@ const mutationSessionMetadata = "session-metadata"
 // trackMutation. msg carries the wrapped command's own result, if any, so
 // it can still be routed through Update.
 type mutationDoneMsg struct {
-	id  string
-	msg tea.Msg
+	id        string
+	kind      string
+	sessionID string
+	msg       tea.Msg
 }
 
 // trackMutation registers id as pending before cmd runs and clears it once
@@ -228,9 +252,18 @@ func (m *UI) trackMutation(id string, cmd tea.Cmd) tea.Cmd {
 	if cmd == nil {
 		return nil
 	}
+	kind := id
+	if kind == mutationSessionMetadata || kind == "model-refresh" {
+		m.mutationSequence++
+		id = fmt.Sprintf("%s-%d", id, m.mutationSequence)
+	}
+	sessionID := ""
+	if m.session != nil {
+		sessionID = m.session.ID
+	}
 	m.beginMutation(id)
 	return func() tea.Msg {
-		return mutationDoneMsg{id: id, msg: cmd()}
+		return mutationDoneMsg{id: id, kind: kind, sessionID: sessionID, msg: cmd()}
 	}
 }
 
@@ -247,7 +280,7 @@ func (m *UI) dispatchMsg(msg tea.Msg) tea.Cmd {
 // start a new session unconditionally (e.g. recovering from the current
 // session being deleted elsewhere) should call m.newSession() directly.
 func (m *UI) newSessionGuarded() tea.Cmd {
-	if m.branchActive() {
+	if m.branchActive() || m.mutationsPending() {
 		return util.ReportWarn("Finish or cancel the current branch before starting a new session.")
 	}
 	return m.newSession()
@@ -317,7 +350,7 @@ func (m *UI) tryStartBranchPreview() tea.Cmd {
 	if m.branchPreview != nil {
 		return util.ReportWarn("Already previewing a branch. Press Esc to cancel or Enter to send.")
 	}
-	if m.branchRun != nil {
+	if m.branchActive() {
 		return util.ReportWarn("A branch is being submitted; please wait.")
 	}
 	if m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty() {
@@ -353,9 +386,12 @@ func (m *UI) tryStartBranchPreview() tea.Cmd {
 			index:    m.promptHistory.index,
 			draft:    m.promptHistory.draft,
 		},
-		originalFocus: m.focus,
+		originalFocus:    m.focus,
+		originalViewport: m.chat.branchViewport(),
 	}
+	m.clearBranchState()
 	m.branchPreview = preview
+	m.chat.SetFollow(false)
 
 	prevHeight := m.textarea.Height()
 	m.textarea.Reset()
@@ -374,7 +410,10 @@ func (m *UI) tryStartBranchPreview() tea.Cmd {
 	m.textarea.MoveToEnd()
 	m.focus = uiFocusEditor
 
-	return tea.Batch(m.textarea.Focus(), m.handleTextareaHeightChange(prevHeight))
+	cmd := tea.Batch(m.textarea.Focus(), m.handleTextareaHeightChange(prevHeight))
+	m.chat.restoreBranchViewport(preview.originalViewport)
+	m.chat.SetFollow(false)
+	return cmd
 }
 
 // cancelBranchPreview restores the exact pre-branch composer, prompt
@@ -385,7 +424,10 @@ func (m *UI) cancelBranchPreview() tea.Cmd {
 		return nil
 	}
 	m.branchPreview = nil
-	return m.restoreComposerAndHistory(preview.originalDraft, preview.originalHistory, preview.originalFocus)
+	cmd := m.restoreComposerAndHistory(preview.originalDraft, preview.originalHistory, preview.originalFocus)
+	m.updateLayoutAndSize()
+	m.chat.restoreBranchViewport(preview.originalViewport)
+	return cmd
 }
 
 // restoreComposerAndHistory replaces the composer, attachments and
@@ -460,7 +502,11 @@ func renderBranchBanner(indStyle, msgStyle lipgloss.Style, width int, text strin
 // branchLoadingView renders the placeholder shown in the main chat area
 // from submission until the first persisted branch snapshot arrives.
 func (m *UI) branchLoadingView(width int) string {
-	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render("Branching…")
+	text := "Branching…"
+	if m.branchRun != nil && m.branchRun.reloadErr != nil {
+		text = "Branch reload failed. Use Retry branch reload in the command palette."
+	}
+	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(text)
 }
 
 // trySubmitBranch handles Enter while a branch preview is active. It
@@ -474,6 +520,12 @@ func (m *UI) trySubmitBranch() tea.Cmd {
 		return nil
 	}
 
+	if preview.invalid {
+		return util.ReportWarn("Branch source changed. Press Esc, reselect the source message, then press B to retry.")
+	}
+	if m.mutationsPending() {
+		return util.ReportWarn("Please wait for the pending operation to finish before sending.")
+	}
 	value := strings.TrimSpace(m.textarea.Value())
 	fileAttachments := append([]message.Attachment(nil), m.attachments.List()...)
 	skillAttachments := m.attachments.SkillList()
@@ -493,7 +545,9 @@ func (m *UI) trySubmitBranch() tea.Cmd {
 
 	ws := m.com.Workspace
 	sessionID := preview.sessionID
-	run := &branchRun{
+	ctx, cancel := context.WithCancel(context.Background())
+	runCtx, runCancel := context.WithCancel(context.Background())
+	run := &branchRun{ctx: ctx, cancel: cancel, runCancel: runCancel,
 		sessionID: sessionID,
 		outcome:   make(chan branchOutcome, 2),
 		preview:   preview,
@@ -501,6 +555,7 @@ func (m *UI) trySubmitBranch() tea.Cmd {
 	m.branchPreview = nil
 	m.branchRun = run
 	m.branchLoading = true
+	m.updateLayoutAndSize()
 
 	origin := agent.BranchOrigin{TargetMessageID: preview.targetID, ExpectedSourceLeafID: preview.expectedLeafID}
 	outcomeCh := run.outcome
@@ -512,7 +567,7 @@ func (m *UI) trySubmitBranch() tea.Cmd {
 				outcomeCh <- branchOutcome{kind: branchOutcomeAccepted, userID: created.ID}
 			},
 		}
-		err := ws.AgentRunFromMessage(context.Background(), sessionID, value, opts, fileAttachments...)
+		err := ws.AgentRunFromMessage(runCtx, sessionID, value, opts, fileAttachments...)
 		outcomeCh <- branchOutcome{kind: branchOutcomeFinished, err: err}
 		return nil
 	}
@@ -525,11 +580,15 @@ func (m *UI) trySubmitBranch() tea.Cmd {
 // run can be detected and ignored.
 func waitBranchOutcomeCmd(run *branchRun, ch chan branchOutcome) tea.Cmd {
 	return func() tea.Msg {
-		out, ok := <-ch
-		if !ok {
+		select {
+		case <-run.ctx.Done():
 			return nil
+		case out, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			return branchOutcomeMsg{run: run, outcome: out}
 		}
-		return branchOutcomeMsg{run: run, outcome: out}
 	}
 }
 
@@ -568,7 +627,11 @@ func (m *UI) handleBranchOutcome(msg branchOutcomeMsg) tea.Cmd {
 		// acceptance keeps running to pick this up (and any later
 		// queued turn) even if every pubsub event drops.
 		run.dirty = true
-		return m.scheduleBranchRead(run)
+		read := m.scheduleBranchRead(run)
+		if msg.outcome.err != nil && !errors.Is(msg.outcome.err, context.Canceled) {
+			return tea.Batch(read, util.ReportError(msg.outcome.err))
+		}
+		return read
 	}
 	return nil
 }
@@ -579,9 +642,19 @@ func (m *UI) revertBranchRunToPreview(run *branchRun, err error) tea.Cmd {
 	if m.branchRun != run {
 		return nil
 	}
+	if run.cancel != nil {
+		run.cancel()
+	}
+	if run.runCancel != nil {
+		run.runCancel()
+	}
 	m.branchRun = nil
 	m.branchLoading = false
 	m.branchPreview = run.preview
+	if errors.Is(err, agent.ErrBranchStaleSource) || errors.Is(err, agent.ErrBranchInvalidTarget) {
+		m.branchPreview.invalid = true
+		return util.ReportWarn("Branch source changed. Your draft is preserved; press Esc, reselect the source message, then press B to retry.")
+	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return util.ReportError(fmt.Errorf("branch not sent: %w", err))
 	}
@@ -604,11 +677,17 @@ func (m *UI) scheduleBranchRead(run *branchRun) tea.Cmd {
 	if run == nil {
 		return nil
 	}
+	if run.retryPending || run.reloadErr != nil {
+		run.dirty = true
+		return nil
+	}
 	if run.reading {
 		run.dirty = true
 		return nil
 	}
+	run.readEpoch++
 	run.reading = true
+	run.readAfterFinish = run.finished
 	run.dirty = false
 	return m.branchReadCmd(run)
 }
@@ -620,23 +699,50 @@ func (m *UI) branchReadCmd(run *branchRun) tea.Cmd {
 	ws := m.com.Workspace
 	sessionID := run.sessionID
 	acceptedID := run.acceptedUserID
+	afterFinish := run.readAfterFinish
+	epoch := run.readEpoch
+	ctx := run.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return func() tea.Msg {
-		ctx := context.Background()
-		sess, err := ws.GetSession(ctx, sessionID)
-		if err != nil {
-			return branchReadResultMsg{run: run, err: err}
-		}
-		var msgs []message.Message
-		if sess.LeafMessageID != "" {
-			msgs, err = ws.GetBranchPath(ctx, sess.LeafMessageID)
+		result := branchReadResultMsg{run: run, afterFinish: afterFinish, epoch: epoch}
+		for range 3 {
+			sess, err := ws.GetSession(ctx, sessionID)
 			if err != nil {
-				return branchReadResultMsg{run: run, err: err}
+				result.err = err
+				return result
 			}
+			var msgs []message.Message
+			if sess.LeafMessageID != "" {
+				msgs, err = ws.GetBranchPath(ctx, sess.LeafMessageID)
+				if err != nil {
+					result.err = err
+					return result
+				}
+			}
+			nested, err := readBranchNested(ctx, ws, msgs)
+			if err != nil {
+				result.err = err
+				return result
+			}
+			latest, err := ws.GetSession(ctx, sessionID)
+			if err != nil {
+				result.err = err
+				return result
+			}
+			if latest.LeafMessageID != sess.LeafMessageID {
+				continue
+			}
+			if acceptedID != "" && !branchPathContainsID(msgs, acceptedID) {
+				result.err = fmt.Errorf("accepted branch message %s not yet in persisted path", acceptedID)
+				return result
+			}
+			result.session, result.messages, result.nested = &latest, msgs, nested
+			return result
 		}
-		if acceptedID != "" && !branchPathContainsID(msgs, acceptedID) {
-			return branchReadResultMsg{run: run, err: fmt.Errorf("accepted branch message %s not yet in persisted path", acceptedID)}
-		}
-		return branchReadResultMsg{run: run, session: &sess, messages: msgs}
+		result.err = errors.New("branch leaf changed during reload")
+		return result
 	}
 }
 
@@ -654,7 +760,7 @@ func branchPathContainsID(path []message.Message, id string) bool {
 // error), and chains the next read if more dirtiness arrived meanwhile.
 func (m *UI) handleBranchReadResult(msg branchReadResultMsg) tea.Cmd {
 	run := msg.run
-	if m.branchRun != run {
+	if m.branchRun != run || run == nil || msg.epoch != run.readEpoch || !run.reading {
 		return nil
 	}
 	run.reading = false
@@ -662,21 +768,41 @@ func (m *UI) handleBranchReadResult(msg branchReadResultMsg) tea.Cmd {
 	if msg.err != nil {
 		run.failCount++
 		run.dirty = true
-		return nil // the still-running poll loop retries this run
+		delays := [...]time.Duration{100 * time.Millisecond, 250 * time.Millisecond, 500 * time.Millisecond}
+		if run.failCount <= len(delays) {
+			run.retryPending = true
+			return tea.Tick(delays[run.failCount-1], func(time.Time) tea.Msg { return branchRetryMsg{run: run} })
+		}
+		run.reloadErr = msg.err
+		return util.ReportError(fmt.Errorf("branch reload failed; use Retry branch reload in the command palette: %w", msg.err))
 	}
 	run.failCount = 0
+	run.reloadErr = nil
+	if run.returning {
+		return m.finishBranchReturn(msg)
+	}
+	wasLoading := m.branchLoading
 	m.branchLoading = false
-	if run.finished {
+	if wasLoading {
+		m.updateLayoutAndSize()
+	}
+	if msg.afterFinish {
 		run.reconciledAfterFinish = true
 	}
 
 	m.session = msg.session
-	m.clearDrillStack()
+	m.installBranchSnapshot(msg.messages, msg.nested, run)
 	var cmds []tea.Cmd
-	if cmd := m.setSessionMessages(msg.messages); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
 	m.renderPills()
+	if m.isAgentBusy() {
+		for _, item := range run.items {
+			for _, rendered := range item.items {
+				if a, ok := rendered.(chat.Animatable); ok {
+					cmds = append(cmds, a.StartAnimation())
+				}
+			}
+		}
+	}
 
 	if run.dirty {
 		if cmd := m.scheduleBranchRead(run); cmd != nil {
@@ -693,10 +819,24 @@ func branchPollCmd(run *branchRun) tea.Cmd {
 	})
 }
 
-// handleBranchPoll forces dirtiness (repairing any dropped pubsub event
-// or retrying a failed read) and reschedules itself. It stops the moment
-// m.branchRun no longer points at run, i.e. once the user explicitly
-// navigates away or replaces it with a new run.
+func (m *UI) handleBranchRetry(msg branchRetryMsg) tea.Cmd {
+	if m.branchRun != msg.run || !msg.run.retryPending {
+		return nil
+	}
+	msg.run.retryPending = false
+	return m.scheduleBranchRead(msg.run)
+}
+
+func (m *UI) retryBranchReload() tea.Cmd {
+	run := m.branchRun
+	if run == nil || run.reloadErr == nil {
+		return nil
+	}
+	run.failCount = 0
+	run.reloadErr = nil
+	return m.scheduleBranchRead(run)
+}
+
 func (m *UI) handleBranchPoll(msg branchPollMsg) tea.Cmd {
 	run := msg.run
 	if m.branchRun != run {
@@ -716,6 +856,14 @@ func (m *UI) handleBranchPoll(msg branchPollMsg) tea.Cmd {
 // recoverable branchReturn snapshot is intentionally NOT cleared here:
 // it is workspace-local and outlives session navigation.
 func (m *UI) clearBranchState() {
+	if run := m.branchRun; run != nil {
+		if run.cancel != nil {
+			run.cancel()
+		}
+		if run.runCancel != nil {
+			run.runCancel()
+		}
+	}
 	m.branchPreview = nil
 	m.branchRun = nil
 	m.branchLoading = false
@@ -730,11 +878,12 @@ func (m *UI) saveBranchReturnSnapshot(run *branchRun) {
 		return
 	}
 	m.branchReturn = &branchReturnSnapshot{
-		sessionID:       run.preview.sessionID,
-		leafID:          run.preview.expectedLeafID,
-		originalDraft:   run.preview.originalDraft,
-		originalHistory: run.preview.originalHistory,
-		originalFocus:   run.preview.originalFocus,
+		sessionID:        run.preview.sessionID,
+		leafID:           run.preview.expectedLeafID,
+		originalDraft:    run.preview.originalDraft,
+		originalHistory:  run.preview.originalHistory,
+		originalFocus:    run.preview.originalFocus,
+		originalViewport: run.preview.originalViewport,
 	}
 }
 
@@ -758,69 +907,61 @@ func (m *UI) beginBranchReturn() tea.Cmd {
 	if m.textarea.Value() != "" || m.attachments.HasContent() {
 		return util.ReportWarn("Clear the composer before returning to the pre-branch conversation.")
 	}
-	if m.isAgentBusy() || m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
+	if m.isAgentBusy() || m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 || m.com.Workspace.AgentIsSessionBusy(snap.sessionID) || m.com.Workspace.AgentQueuedPrompts(snap.sessionID) > 0 {
 		return util.ReportWarn("Agent is busy; return is only available when idle.")
 	}
 
+	m.clearBranchState()
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &branchRun{sessionID: snap.sessionID, ctx: ctx, cancel: cancel, returning: true, finished: true, reading: true, readAfterFinish: true}
+	m.branchRun = run
+	m.branchLoading = true
 	m.beginMutation(mutationBranchReturn)
 	ws := m.com.Workspace
 	sessionID := snap.sessionID
 	leafID := snap.leafID
+	read := m.branchReadCmd(run)
 	return func() tea.Msg {
-		ctx := context.Background()
-		// Validate the exact destination exists before mutating
-		// anything (an empty leaf means an empty path, which is
-		// valid: a root-parent branch target).
 		if leafID != "" {
 			if _, err := ws.GetBranchPath(ctx, leafID); err != nil {
-				return branchReturnResultMsg{err: err}
+				return branchReturnResultMsg{run: run, err: err}
 			}
 		}
 		if err := ws.MoveLeaf(ctx, sessionID, leafID); err != nil {
-			return branchReturnResultMsg{err: err}
+			return branchReturnResultMsg{run: run, err: err}
 		}
-		sess, err := ws.GetSession(ctx, sessionID)
-		if err != nil {
-			return branchReturnResultMsg{err: err, movedLeaf: true}
-		}
-		var msgs []message.Message
-		if leafID != "" {
-			msgs, err = ws.GetBranchPath(ctx, leafID)
-			if err != nil {
-				return branchReturnResultMsg{err: err, movedLeaf: true}
-			}
-		}
-		return branchReturnResultMsg{session: &sess, messages: msgs}
+		result := read().(branchReadResultMsg)
+		return branchReturnResultMsg{run: run, session: result.session, messages: result.messages, nested: result.nested, err: result.err, movedLeaf: true}
 	}
 }
 
-// handleBranchReturnResult installs the exact saved leaf/session and
-// restores the full saved draft/history/focus, then consumes the
-// snapshot. On any failure the snapshot is retained; a leaf that moved
-// before a later read failed is reported distinctly so the user knows
-// not to submit again, only to retry the read/navigate manually.
 func (m *UI) handleBranchReturnResult(msg branchReturnResultMsg) tea.Cmd {
-	m.endMutation(mutationBranchReturn)
-	if msg.err != nil {
-		if msg.movedLeaf {
-			return util.ReportError(fmt.Errorf("pre-branch leaf restored but reload failed, use the session tree to retry: %w", msg.err))
-		}
+	if m.branchRun != msg.run {
+		return nil
+	}
+	if msg.err != nil && !msg.movedLeaf {
+		m.endMutation(mutationBranchReturn)
+		m.clearBranchState()
 		return util.ReportError(fmt.Errorf("return to pre-branch conversation failed: %w", msg.err))
 	}
+	return m.handleBranchReadResult(branchReadResultMsg{run: msg.run, session: msg.session, messages: msg.messages, nested: msg.nested, err: msg.err, afterFinish: true, epoch: msg.run.readEpoch})
+}
 
+func (m *UI) finishBranchReturn(msg branchReadResultMsg) tea.Cmd {
 	snap := m.branchReturn
+	m.endMutation(mutationBranchReturn)
 	m.session = msg.session
 	m.clearDrillStack()
+	m.installBranchSnapshot(msg.messages, msg.nested, nil)
 	m.clearBranchState()
-
-	var cmds []tea.Cmd
-	if cmd := m.setSessionMessages(msg.messages); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
+	var cmd tea.Cmd
 	if snap != nil {
-		cmds = append(cmds, m.restoreComposerAndHistory(snap.originalDraft, snap.originalHistory, snap.originalFocus))
+		cmd = m.restoreComposerAndHistory(snap.originalDraft, snap.originalHistory, snap.originalFocus)
 	}
 	m.branchReturn = nil
 	m.updateLayoutAndSize()
-	return tea.Batch(cmds...)
+	if snap != nil {
+		m.chat.restoreBranchViewport(snap.originalViewport)
+	}
+	return cmd
 }

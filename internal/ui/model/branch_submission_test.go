@@ -3,8 +3,6 @@ package model
 import (
 	"testing"
 
-	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
-
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -12,6 +10,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -137,7 +136,7 @@ func driveAcceptedBranch(t *testing.T, m *UI) string {
 	require.True(t, ok, "accepted outcome must be observed")
 	require.Equal(t, branchOutcomeAccepted, accepted.outcome.kind)
 
-	acceptedMsgs := collectMsgs(m.handleBranchOutcome(accepted))
+	acceptedMsgs := collectBranchAccepted(m.handleBranchOutcome(accepted))
 	readResult, ok := findMsg[branchReadResultMsg](acceptedMsgs)
 	require.True(t, ok, "acceptance must trigger an immediate read")
 	require.NoError(t, readResult.err)
@@ -268,6 +267,25 @@ func TestBranchKeysAfterReconciliation(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.NotNil(t, cmd)
 	require.Empty(t, m.textarea.Value())
+	executeBranchSend(t, m, cmd)
+	users, err := f.Messages.ListUserMessages(f.Context, sess.ID)
+	require.NoError(t, err)
+	require.Len(t, users, 3)
+}
+
+func executeBranchSend(t *testing.T, m *UI, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			executeBranchSend(t, m, child)
+		}
+	} else if msg != nil {
+		m.Update(msg)
+	}
 }
 
 func TestBranchQuitPreservesPreview(t *testing.T) {
@@ -282,4 +300,61 @@ func TestBranchQuitPreservesPreview(t *testing.T) {
 	require.Equal(t, "edited branch", m.textarea.Value())
 	require.NotNil(t, m.branchPreview)
 	require.False(t, m.dialog.ContainsDialog(dialog.QuitID))
+}
+
+func TestBranchSnapshotPreservesViewportAndIdentity(t *testing.T) {
+	f := branchfixture.New(t)
+	sess, err := f.Workspace.CreateSession(f.Context, "root")
+	require.NoError(t, err)
+	source := seedUserSource(t, f, sess.ID, "source")
+	m := newIntegrationUI(t, f, sess.ID, &source)
+	m.tryStartBranchPreview()
+	driveAcceptedBranch(t, m)
+	m.chat.SetSize(40, 2)
+	m.chat.ScrollToTop()
+	m.chat.SetSelected(0)
+	before := m.chat.ItemAt(0)
+	selected := m.chat.SelectedItem()
+	offset := m.chat.list.Offset()
+	m.drillStack = append(m.drillStack, drillInEntry{chat: NewChat(m.com), label: "tool"})
+	result := m.scheduleBranchRead(m.branchRun)().(branchReadResultMsg)
+	m.Update(result)
+	require.Same(t, before, m.chat.ItemAt(0))
+	require.Same(t, selected, m.chat.SelectedItem())
+	require.Equal(t, offset, m.chat.list.Offset())
+	require.False(t, m.chat.Follow())
+	require.Len(t, m.drillStack, 1)
+}
+
+func TestBranchReadBeforeFinishCannotReconcile(t *testing.T) {
+	f := branchfixture.New(t)
+	sess, err := f.Workspace.CreateSession(f.Context, "root")
+	require.NoError(t, err)
+	source := seedUserSource(t, f, sess.ID, "source")
+	m := newIntegrationUI(t, f, sess.ID, &source)
+	m.tryStartBranchPreview()
+	outcomes := collectMsgs(m.trySubmitBranch())
+	accepted, ok := findMsg[branchOutcomeMsg](outcomes)
+	require.True(t, ok)
+	results := collectBranchAccepted(m.handleBranchOutcome(accepted))
+	initial, ok := findMsg[branchReadResultMsg](results)
+	require.True(t, ok)
+	finished, ok := findMsg[branchOutcomeMsg](results)
+	require.True(t, ok)
+	m.Update(finished)
+	_, next := m.Update(initial)
+	require.True(t, m.branchActive())
+	require.False(t, m.branchRun.reconciledAfterFinish)
+	require.NotNil(t, next)
+	m.Update(next())
+	require.False(t, m.branchActive())
+}
+
+func collectBranchAccepted(cmd tea.Cmd) []tea.Msg {
+	batch := cmd().(tea.BatchMsg)
+	var msgs []tea.Msg
+	for _, cmd := range batch[:len(batch)-1] {
+		msgs = append(msgs, cmd())
+	}
+	return msgs
 }
