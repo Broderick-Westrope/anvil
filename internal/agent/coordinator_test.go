@@ -822,3 +822,17 @@ func TestSkillsUsageParity(t *testing.T) {
 		})
 	}
 }
+
+func TestCoordinatorWaitBackgroundJobsForwards(t *testing.T) {
+	orch := &waitingSessionAgent{}
+	c := &coordinator{orchestrator: orch, admission: newAdmission(t.Context())}
+	c.WaitBackgroundJobs()
+	require.True(t, orch.waited)
+}
+
+type waitingSessionAgent struct {
+	mockSessionAgent
+	waited bool
+}
+
+func (a *waitingSessionAgent) WaitBackgroundJobs() { a.waited = true }

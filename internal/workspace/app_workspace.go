@@ -518,3 +518,11 @@ func (w *AppWorkspace) Store() *config.ConfigStore {
 
 // Compile-time check that AppWorkspace implements Workspace.
 var _ Workspace = (*AppWorkspace)(nil)
+
+func (w *AppWorkspace) AgentRunFromMessage(ctx context.Context, sessionID, prompt string, opts agent.BranchRunOptions, attachments ...message.Attachment) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	_, err := w.app.AgentCoordinator.RunFromMessage(ctx, sessionID, prompt, opts, attachments...)
+	return err
+}

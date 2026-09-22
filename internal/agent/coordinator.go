@@ -68,6 +68,8 @@ var (
 )
 
 type Coordinator interface {
+	RunFromMessage(context.Context, string, string, BranchRunOptions, ...message.Attachment) (*fantasy.AgentResult, error)
+	WaitBackgroundJobs()
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
@@ -95,6 +97,7 @@ type Coordinator interface {
 }
 
 type coordinator struct {
+	admission   *admission
 	cfg         *config.ConfigStore
 	sessions    session.Service
 	messages    message.Service
@@ -149,6 +152,7 @@ func NewCoordinator(
 	skillTracker := skills.NewTracker(activeSkills)
 
 	c := &coordinator{
+		admission:    newAdmission(ctx),
 		cfg:          cfg,
 		sessions:     sessions,
 		messages:     messages,
@@ -355,6 +359,39 @@ func discoverAgentMDs(builtinFS fs.FS, plugins []*plugin.Plugin) (map[string]pro
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	return c.submitRun(ctx, sessionID, prompt, nil, attachments)
+}
+
+func (c *coordinator) submitRun(ctx context.Context, sessionID, prompt string, opts *BranchRunOptions, attachments []message.Attachment) (*fantasy.AgentResult, error) {
+	if sessionID == "" {
+		return nil, ErrSessionMissing
+	}
+	if prompt == "" && !message.ContainsTextAttachment(attachments) {
+		return nil, ErrEmptyPrompt
+	}
+	c.orchestratorMu.RLock()
+	agentCfg := c.agentConfigs[config.AgentOrchestrator]
+	c.orchestratorMu.RUnlock()
+	largeSelection, selectionErr := config.ResolveAgentModel(agentCfg, c.cfg.Config())
+	smallSelection := c.cfg.Config().Models[config.SelectedModelTypeSmall]
+	attachments = cloneAttachments(attachments)
+	state := &runState{}
+	if opts != nil {
+		origin := opts.Origin
+		state.origin = &origin
+		state.callback = opts.OnUserMessageCreated
+		state.branch = true
+	}
+	return c.admission.submit(ctx, sessionID, submission{prompt: prompt, exclusive: opts != nil, detachedDrain: opts != nil, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		if selectionErr != nil {
+			return nil, selectionErr
+		}
+		ctx = context.WithValue(ctx, modelSelectionKey{}, modelSelection{large: largeSelection, small: smallSelection})
+		return c.runOwned(ctx, sessionID, prompt, state, attachments)
+	}})
+}
+
+func (c *coordinator) runOwned(ctx context.Context, sessionID, prompt string, state *runState, attachments []message.Attachment) (*fantasy.AgentResult, error) {
 	// Wait for MCP initialization to complete before building the tool list.
 	// Without this, slow-to-start MCP servers (e.g. stdio Python via uv) may
 	// not have registered their tools yet when buildTools reads the registry,
@@ -376,7 +413,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		maxTokens = model.ModelCfg.MaxTokens
 	}
 
-	if !model.CatwalkCfg.SupportsImages && attachments != nil {
+	if !state.branch && !model.CatwalkCfg.SupportsImages && attachments != nil {
 		// filter out image attachments
 		filteredAttachments := make([]message.Attachment, 0, len(attachments))
 		for _, att := range attachments {
@@ -400,25 +437,27 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		slog.Error("Failed to refresh OAuth2 token. Proceeding with existing token.", "error", err)
 	}
 
-	var messageCreated bool
 	run := func() (*fantasy.AgentResult, error) {
 		result, err := orch.Run(ctx, SessionAgentCall{
-			SessionID:         sessionID,
-			Prompt:            prompt,
-			Attachments:       attachments,
-			MaxOutputTokens:   maxTokens,
-			ProviderOptions:   mergedOptions,
-			Temperature:       temp,
-			TopP:              topP,
-			TopK:              topK,
-			FrequencyPenalty:  freqPenalty,
-			PresencePenalty:   presPenalty,
-			skipCreateMessage: messageCreated,
-			OnAuthRefresh:     c.makeAuthRefreshCallback(providerCfg),
+			retrySummary: func(ctx context.Context, err error) error {
+				if !c.isUnauthorized(err) {
+					return err
+				}
+				return c.retryAfterUnauthorized(ctx, providerCfg)
+			},
+			SessionID:        sessionID,
+			Prompt:           prompt,
+			Attachments:      attachments,
+			MaxOutputTokens:  maxTokens,
+			ProviderOptions:  mergedOptions,
+			Temperature:      temp,
+			TopP:             topP,
+			TopK:             topK,
+			FrequencyPenalty: freqPenalty,
+			PresencePenalty:  presPenalty,
+			state:            state,
+			OnAuthRefresh:    c.makeAuthRefreshCallback(providerCfg),
 		})
-		// Safe to set unconditionally: isUnauthorized only matches
-		// 401 ProviderErrors which occur after createUserMessage.
-		messageCreated = true
 		return result, err
 	}
 	// Snapshot skill state under lock to avoid a data race with
@@ -432,7 +471,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 	result, originalErr := run()
 	logTurnSkillUsage(sessionID, prompt, activeSkillsSnap, skillTrackerSnap, beforeLoaded)
 
-	if c.isUnauthorized(originalErr) {
+	if c.isUnauthorized(originalErr) && !state.summaryFailed {
 		if err := c.retryAfterUnauthorized(ctx, providerCfg); err == nil {
 			return run()
 		}
@@ -752,6 +791,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 
 	largeProviderCfg, _ := c.cfg.Config().Providers.Get(large.ModelCfg.Provider)
 	result := NewSessionAgent(SessionAgentOptions{
+		admission:            c.admission,
 		LargeModel:           large,
 		SmallModel:           small,
 		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
@@ -1163,6 +1203,9 @@ func (c *coordinator) buildToolsWithState(
 // otherwise the global large model is used. The small model always comes from
 // the global small model config.
 func (c *coordinator) buildAgentModels(ctx context.Context, agentCfg config.Agent) (Model, Model, error) {
+	if selected, ok := ctx.Value(modelSelectionKey{}).(modelSelection); ok && agentCfg.ID == config.AgentOrchestrator {
+		return c.buildResolvedAgentModels(ctx, selected.large, selected.small, false)
+	}
 	// Resolve large model — per-agent if configured, else global large.
 	largeModelCfg, err := config.ResolveAgentModel(agentCfg, c.cfg.Config())
 	if err != nil {
@@ -1398,6 +1441,11 @@ func (c *coordinator) QueuedPromptsList(sessionID string) []string {
 }
 
 func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
+	_, err := c.admission.submit(ctx, sessionID, submission{exclusive: true, run: func(ctx context.Context) (*fantasy.AgentResult, error) { return nil, c.summarizeOwned(ctx, sessionID) }})
+	return err
+}
+
+func (c *coordinator) summarizeOwned(ctx context.Context, sessionID string) error {
 	orch := c.getOrchestrator()
 	providerCfg, ok := c.cfg.Config().Providers.Get(orch.Model().ModelCfg.Provider)
 	if !ok {
@@ -1554,6 +1602,7 @@ type subAgentParams struct {
 // It creates a sub-session, runs the agent with the given prompt, and propagates
 // the cost to the parent session.
 func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, error) {
+	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
 	// Create sub-session
 	agentToolSessionID := c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID)
 	session, err := c.sessions.CreateTaskSession(ctx, agentToolSessionID, params.SessionID, params.SessionTitle)
@@ -1979,4 +2028,19 @@ func logDiscoveryStats(
 		"prompt_tok_est", skills.ApproxTokenCount(xml),
 		"active_names", activeNames,
 	)
+}
+
+func (c *coordinator) WaitBackgroundJobs() {
+	if c.admission != nil {
+		c.admission.runners.Wait()
+	}
+	if waiter, ok := c.getOrchestrator().(interface{ WaitBackgroundJobs() }); ok {
+		waiter.WaitBackgroundJobs()
+	}
+}
+
+type modelSelectionKey struct{}
+type modelSelection struct {
+	large config.SelectedModel
+	small config.SelectedModel
 }

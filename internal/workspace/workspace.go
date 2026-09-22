@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
@@ -80,6 +81,7 @@ type Workspace interface {
 	WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error
 
 	// Agent
+	AgentRunFromMessage(ctx context.Context, sessionID, prompt string, opts agent.BranchRunOptions, attachments ...message.Attachment) error
 	AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error
 	AgentCancel(sessionID string)
 	AgentIsBusy() bool
