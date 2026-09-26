@@ -1423,6 +1423,15 @@ func (m *UI) SetRecoveryHandler(handler func(recovery.Entry)) {
 	m.recoveryHandler = handler
 }
 
+// SessionID returns the ID of the active session, or an empty string when
+// no session has been started.
+func (m *UI) SessionID() string {
+	if !m.hasSession() {
+		return ""
+	}
+	return m.session.ID
+}
+
 func (m *UI) trackRecoverySession() {
 	if m.recoveryHandler == nil {
 		return

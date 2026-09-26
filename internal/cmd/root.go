@@ -155,13 +155,26 @@ anvil --continue --there
 		)
 		go ws.Subscribe(program)
 
-		if _, err := program.Run(); err != nil {
+		finalModel, err := program.Run()
+		if err != nil {
 			slog.Error("TUI run error", "error", err)
 			return errors.New("Anvil crashed. Please copy the stacktrace above and open an issue at https://github.com/Broderick-Westrope/anvil/issues/new?template=bug.yml") //nolint:staticcheck
 		}
 		cleanExit = cmd.Context().Err() == nil
+		if finalUI, ok := finalModel.(*ui.UI); ok {
+			printResumeHint(cmd.OutOrStdout(), finalUI.SessionID())
+		}
 		return nil
 	},
+}
+
+// printResumeHint writes the command that re-enters the given session.
+// The --there flag makes the command work from any directory.
+func printResumeHint(w io.Writer, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Resume this session with:\n  anvil --session %s --there\n", sessionID)
 }
 
 func Execute() {
