@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,8 +14,5 @@ func TestHeaders_IncludesOAuthDirectAPIHeaders(t *testing.T) {
 	require.Equal(t, "2023-06-01", headers["anthropic-version"])
 	require.Equal(t, "true", headers["anthropic-dangerous-direct-browser-access"])
 	require.Equal(t, "cli", headers["x-app"])
-	require.True(t,
-		strings.HasPrefix(headers["user-agent"], "claude-cli/"),
-		"expected Claude CLI user agent",
-	)
+	require.Equal(t, "claude-cli/2.1.283 (external, sdk-cli)", headers["user-agent"])
 }

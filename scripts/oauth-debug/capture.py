@@ -50,6 +50,9 @@ def request(flow: http.HTTPFlow) -> None:
     if req.content:
         try:
             body = json.loads(req.content)
+            if not isinstance(body, dict):
+                body_fields["_non_object_body"] = True
+                body = {}
             # Extract model, system messages, and stream flag — skip
             # user message content to avoid leaking prompt data.
             if "model" in body:
