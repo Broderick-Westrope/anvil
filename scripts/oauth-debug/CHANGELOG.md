@@ -3,6 +3,18 @@
 Running log of changes made to keep Anvil's Anthropic OAuth implementation
 in sync with the upstream Claude Code protocol.
 
+## 2026-09-27 — Claude Code v2.1.283 OAuth capture
+
+An OAuth-only capture of a Haiku request confirms Bearer authorization,
+`interleaved-thinking-2025-05-14` on Haiku, and three additional beta flags:
+`advanced-tool-use-2025-11-20`, `thinking-binding-controls-2026-08-01`,
+and `message-threads-2026-08-12`. Anvil now sends these flags and reports
+CLI version 2.1.283. The capture addon also tolerates JSON `null` bodies.
+
+The captured billing line includes `cc_entrypoint=sdk-cli`,
+`cc_prompt_id`, and `cc_turn_origin=sdk`; Anvil still sends its existing
+`cc_entrypoint=cli` format without those request-specific fields.
+
 ## 2026-05-29 — Cloudflare bot block on token refresh
 
 **Symptom:** 401 Unauthorized on all API requests. Token refresh silently

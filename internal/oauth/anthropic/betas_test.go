@@ -15,24 +15,16 @@ func TestBetasForModel_Default(t *testing.T) {
 	require.Equal(t, defaultBetas, betas)
 }
 
-func TestBetasForModel_Haiku(t *testing.T) {
+func TestBetasForModel_ClaudeCodeCurrentProtocol(t *testing.T) {
 	t.Parallel()
 
-	betas := BetasForModel("claude-3-haiku-20240307")
-
-	// Haiku must not include interleaved-thinking.
-	for _, b := range betas {
-		require.NotEqual(t, "interleaved-thinking-2025-05-14", b,
-			"haiku should not include interleaved-thinking beta")
-	}
-
-	// All other default betas must be present.
-	for _, d := range defaultBetas {
-		if d == "interleaved-thinking-2025-05-14" {
-			continue
-		}
-		require.Contains(t, betas, d)
-	}
+	betas := BetasForModel("claude-haiku-4-5")
+	require.Subset(t, betas, []string{
+		"interleaved-thinking-2025-05-14",
+		"advanced-tool-use-2025-11-20",
+		"thinking-binding-controls-2026-08-01",
+		"message-threads-2026-08-12",
+	})
 }
 
 func TestBetasForModel_46(t *testing.T) {
@@ -60,12 +52,9 @@ func TestBetasForModel_47(t *testing.T) {
 func TestBetasForModel_HaikuNoEffort(t *testing.T) {
 	t.Parallel()
 
-	// A haiku 4-6 model: excludes interleaved-thinking but adds effort.
 	betas := BetasForModel("claude-haiku-4-6-20250514")
 	require.Contains(t, betas, "effort-2025-11-24")
-	for _, b := range betas {
-		require.NotEqual(t, "interleaved-thinking-2025-05-14", b)
-	}
+	require.Contains(t, betas, "interleaved-thinking-2025-05-14")
 }
 
 func TestMergeBetas_NoDuplicates(t *testing.T) {

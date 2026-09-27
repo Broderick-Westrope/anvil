@@ -15,21 +15,19 @@ var defaultBetas = []string{
 	"advisor-tool-2026-03-01",
 	"cache-diagnosis-2026-04-07",
 	"thinking-token-count-2026-05-13",
+	"advanced-tool-use-2025-11-20",
+	"thinking-binding-controls-2026-08-01",
 	"extended-cache-ttl-2025-04-11",
+	"message-threads-2026-08-12",
 }
 
 // BetasForModel returns the beta flags appropriate for the given model ID.
-// Haiku models exclude the interleaved-thinking beta. Models in the 4-6 or
-// 4-7 family additionally include the effort beta. A fresh slice is
-// returned on every call to prevent callers from mutating the defaults.
+// Models in the 4-6 or 4-7 family additionally include the effort beta.
+// A fresh slice is returned on every call to prevent callers from mutating
+// the defaults.
 func BetasForModel(modelID string) []string {
 	result := make([]string, 0, len(defaultBetas)+1)
-	for _, b := range defaultBetas {
-		if strings.Contains(modelID, "haiku") && b == "interleaved-thinking-2025-05-14" {
-			continue
-		}
-		result = append(result, b)
-	}
+	result = append(result, defaultBetas...)
 	if strings.Contains(modelID, "4-6") || strings.Contains(modelID, "4-7") {
 		result = append(result, "effort-2025-11-24")
 	}
