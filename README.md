@@ -8,7 +8,9 @@
 ## Features of Anvil
 
 - **Multi-Agent Orchestration:** an orchestrator delegates to specialist agents (designer, fixer, explorer, oracle, reviewer, and more) that run in parallel, each with a focused system prompt and toolset (inspired by [oh-my-opencode-slim](https://github.com/alvinunreal/oh-my-opencode-slim) and [Amp](https://ampcode.com/))
-- **Session Branching:** fork conversations into a tree so you can explore multiple approaches without losing context (inspired by [Pi](https://pi.dev/)); [branch from a selected message](./docs/guides/inline-message-branching.md) with **B**
+- **Session Branching:** explore alternate conversation paths with **Shift+B**, `/branch` or `/tree`,
+  with draft recovery before and after sending (inspired by [Pi](https://pi.dev/));
+  see the [session branching guide](./docs/guides/session-branching.md)
 - **Global Sessions:** all sessions, messages, and files are stored in a single global database so history persists across projects and is accessible from anywhere
 - **Pinned Sessions:** pin a session with a note before quitting, then recall and resume it from any directory with `anvil session pinned` — a cross-project picker with a transcript preview that resumes the session in its original working directory ([details](#pinned-sessions))
 - **Minimal by Default, Observable When Needed:** tool calls, subagent runs, and other activity are collapsed into scannable one-line summaries; drill into any item to see full input, output, and reasoning without leaving the conversation

@@ -1,10 +1,25 @@
 # Phase 1: Submission foundation
 
-> **Status:** COMPLETED (validation caveats in README).
+> **Status:** COMPLETED (revised; historical validation caveats in README).
 > Depends on: no implementation phase. Delivers Task 1 as a complete vertical slice.
-> Read [README.md](README.md), especially scope, branch boundary and public API.
+> Read the [post-review redesign](README.md#post-review-redesign) for current decisions.
 
-## Execution record
+## Post-review redesign
+
+Decision A makes every branch entry point navigate first, stopping a running reply,
+then use ordinary Run (`9ac0fbf4b`). Core cleanup in `1a761dec0` removed the
+send-from-message API, target validators, acceptance callback, branch-only compaction
+continuation and detached queue drain. Shared admission ownership, FIFO handling,
+accepted-user retry ancestry, safe placeholder cleanup and the summary error bubble
+remain. Automatic first-exchange title regeneration now uses the selected path for
+all runs. Run regressions live in `run_integration_test.go` and `run_state_test.go`.
+
+> [!NOTE]
+> **Superseded history:** all sections below describe the original phase and its
+> validation, not the revised API or current test inventory. The removed branch API
+> and branch-specific contracts are retained here only as implementation history.
+
+## Execution record (superseded)
 
 Implemented in `eb45eec3f` and corrected in `c92112d48`. Checked steps record the
 implemented outcome, with this record superseding the original implementation

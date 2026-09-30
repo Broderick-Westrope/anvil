@@ -1,10 +1,32 @@
 # Phase 2: Inline UI, recovery and integration
 
-> **Status:** COMPLETED (validation caveats below and in README).
+> **Status:** COMPLETED (revised; historical validation caveats below and in README).
 > Depends on: [phase-1-submission.md](phase-1-submission.md), implemented first.
-> Read [README.md](README.md) for specification, public APIs and recovery UX.
+> Read the [post-review redesign](README.md#post-review-redesign) for current behavior.
 
-## Execution record
+## Post-review redesign
+
+User review requested consistent entry points, no banner, normal commands and
+Escape/return recovery for every branch entry point. Decision A landed in `9ac0fbf4b`:
+Shift+B, `/branch` and `/tree` navigate immediately after stopping a running reply.
+User targets move to their parent with whitespace-collapsed text prefill; assistant
+targets keep the composer unchanged. Escape restores the previous point and draft
+before sending; after sending, palette return requires an empty composer.
+
+The UI keeps draft/history/viewport snapshots and nested-tool reconstruction, but
+removes the preview/banner, special send path, broad mutation exclusion, outcome
+channels, streaming reconciliation/watchdog and reload-retry action. Commands and
+sending use the ordinary flow; `1a761dec0` removes the unused core branch API.
+Navigation regressions are in `branch_navigation_test.go`; current usage is in the
+[session branching guide](../../docs/guides/session-branching.md).
+
+> [!NOTE]
+> **Superseded history:** all sections below describe the pre-review UI and its
+> validation. Banner, literal slash text, idle-only admission, reconciliation and
+> cross-session return claims are not current behavior. The old manual evidence
+> does not validate the redesigned UI, and deleted tests are historical references.
+
+## Execution record (superseded)
 
 Preview landed in `191c64d16`; submission/recovery in `40f9e56f2`; follow-up fixes
 in `2caea8451`, `2aa2d846d`, `0302fbd86` and `ae66a856d`; integration tests and the
