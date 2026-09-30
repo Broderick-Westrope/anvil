@@ -104,7 +104,7 @@ func (b *Branch) HandleMsg(msg tea.Msg) Action {
 					MessageID:       branchItem.msg.ID,
 					ParentMessageID: branchItem.msg.ParentMessageID,
 					Role:            message.User,
-					Content:         messageTextContent(branchItem.msg),
+					Content:         MessageTextContent(branchItem.msg),
 				}
 			}
 

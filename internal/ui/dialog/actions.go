@@ -161,7 +161,6 @@ type (
 		Content         string
 	}
 	ActionReturnToPreBranch struct{}
-	ActionRetryBranchReload struct{}
 )
 
 // Messages for API key input dialog.

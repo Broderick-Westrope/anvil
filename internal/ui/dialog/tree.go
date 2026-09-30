@@ -101,7 +101,7 @@ func NewTree(com *common.Common, sessionID string, leafMessageID string) (*Tree,
 		}
 		// Skip assistant messages with no text content (tool-call-only
 		// or error-only messages add noise without value).
-		if msg.Role == message.Assistant && messageTextContent(msg) == "" {
+		if msg.Role == message.Assistant && MessageTextContent(msg) == "" {
 			continue
 		}
 		t.nodeMap[msg.ID] = &treeNode{msg: msg}
@@ -320,7 +320,7 @@ func (t *Tree) handleNavKey(msg tea.KeyPressMsg) Action {
 				MessageID:       item.node.msg.ID,
 				ParentMessageID: item.node.msg.ParentMessageID,
 				Role:            item.node.msg.Role,
-				Content:         messageTextContent(item.node.msg),
+				Content:         MessageTextContent(item.node.msg),
 			}
 		}
 
@@ -562,7 +562,7 @@ func (t *Tree) rebuildItems() []list.FilterableItem {
 			isCollapsible := isBranchPoint || node.isBranchHead
 			isExpanded := t.expanded[node.msg.ID]
 			isLeaf := node.msg.ID == t.leafMessageID
-			label := messageTextContent(node.msg)
+			label := MessageTextContent(node.msg)
 
 			items = append(items, NewTreeItem(
 				t.com.Styles,
@@ -604,9 +604,7 @@ func (t *Tree) setItemsFiltered(filtered bool) {
 	}
 }
 
-// messageTextContent returns the first text content from a message, with
-// whitespace collapsed to single spaces for single-line display.
-func messageTextContent(msg message.Message) string {
+func MessageTextContent(msg message.Message) string {
 	for _, part := range msg.Parts {
 		if tc, ok := part.(message.TextContent); ok {
 			return strings.Join(strings.Fields(tc.Text), " ")

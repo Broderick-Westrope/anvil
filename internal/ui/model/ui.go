@@ -347,18 +347,12 @@ type UI struct {
 	// canvas is the reusable screen buffer. It is reallocated only when the
 	// terminal dimensions change; screen.Clear resets every cell so stale
 	// frames cannot leak between reuses.
-	canvas uv.ScreenBuffer
-
-	branchPreview     *branchPreview
-	branchRun         *branchRun
-	branchLoading     bool
-	branchReturn      *branchReturnSnapshot
-	pendingMutations  map[string]struct{}
-	mutationSequence  uint64
-	mutationReadEpoch uint64
-	branchAuthModel   *config.SelectedModel
-	branchAuthRefresh bool
-	mutationReload    *mutationRefreshRequest
+	canvas                uv.ScreenBuffer
+	pendingBranch         *branchReturnSnapshot
+	branchReturn          *branchReturnSnapshot
+	branchNavigation      *branchReturnSnapshot
+	branchRestoreSnapshot *branchReturnSnapshot
+	branchRestoring       bool
 }
 
 // drillInEntry represents one level of drill-in navigation into a subagent
@@ -725,9 +719,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case loadSessionMsg:
-		m.endMutation("session-load")
-		m.clearDrillStack()
 		m.clearBranchState()
+		m.clearDrillStack()
 		if m.forceCompactMode {
 			m.isCompact = true
 		}
@@ -866,13 +859,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dialog.CloseFrontDialog()
 
 	case pubsub.Event[session.Session]:
-		if m.branchPreview != nil && msg.Payload.ID == m.branchPreview.sessionID {
-			break
-		}
-		if m.branchRun != nil && msg.Payload.ID == m.branchRun.sessionID {
-			m.branchRun.dirty = true
-			break
-		}
 		if msg.Type == pubsub.DeletedEvent {
 			if m.session != nil && m.session.ID == msg.Payload.ID {
 				if cmd := m.newSession(); cmd != nil {
@@ -919,16 +905,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.autoExpandPillsIfReasonable()
 		}
 	case pubsub.Event[message.Message]:
-		if m.branchPreview != nil {
-			break
-		}
 		// Check if this is a child session message for an agent tool.
 		if m.session == nil {
-			break
-		}
-
-		if m.branchRun != nil && msg.Payload.SessionID == m.branchRun.sessionID {
-			m.branchRun.dirty = true
 			break
 		}
 
@@ -1056,17 +1034,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case copyChatHighlightMsg:
 		cmds = append(cmds, m.copyChatHighlight())
 	case DelayedClickMsg:
-		if m.branchLoading {
-			break
-		}
 		// Handle delayed single-click action (e.g., expansion or drill-in).
 		if _, cmd := m.activeChat().HandleDelayedClick(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case tea.MouseClickMsg:
-		if m.branchLoading {
-			break
-		}
 		// Pass mouse events to dialogs first if any are open.
 		if m.dialog.HasDialogs() {
 			m.dialog.Update(msg)
@@ -1105,9 +1077,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseMotionMsg:
-		if m.branchLoading {
-			break
-		}
 		// Pass mouse events to dialogs first if any are open.
 		if m.dialog.HasDialogs() {
 			m.dialog.Update(msg)
@@ -1147,9 +1116,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseReleaseMsg:
-		if m.branchLoading {
-			break
-		}
 		// Pass mouse events to dialogs first if any are open.
 		if m.dialog.HasDialogs() {
 			m.dialog.Update(msg)
@@ -1290,47 +1256,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case treeNavErrorMsg:
-		if msg.movedLeaf {
-			m.mutationReload = &mutationRefreshRequest{id: mutationTreeNav, sessionID: msg.sessionID}
-			cmds = append(cmds, util.ReportError(fmt.Errorf("navigation reload failed; use Retry branch reload: %w", msg.err)))
-		} else {
-			m.endMutation(mutationTreeNav)
-			cmds = append(cmds, util.ReportError(msg.err))
-		}
-	case mutationRefreshResultMsg:
-		cmds = append(cmds, m.handleMutationRefresh(msg))
-	case mutationDoneMsg:
-		if _, ok := m.pendingMutations[msg.id]; !ok {
-			break
-		}
-		if msg.sessionID != "" && (msg.kind == mutationSessionMetadata || msg.kind == "model-refresh") {
-			cmds = append(cmds, m.mutationRefreshCmd(&mutationRefreshRequest{id: msg.id, sessionID: msg.sessionID}))
-		} else {
-			m.endMutation(msg.id)
-		}
-		if msg.msg != nil {
-			if cmd := m.dispatchMsg(msg.msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-	case branchOutcomeMsg:
-		if cmd := m.handleBranchOutcome(msg); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	case branchReadResultMsg:
-		if cmd := m.handleBranchReadResult(msg); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	case branchRetryMsg:
-		cmds = append(cmds, m.handleBranchRetry(msg))
-	case branchPollMsg:
-		if cmd := m.handleBranchPoll(msg); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	case branchReturnResultMsg:
-		if cmd := m.handleBranchReturnResult(msg); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		cmds = append(cmds, m.handleTreeNavError(msg))
 	case tickElapsedTimeMsg:
 		// invalidateRunningAgentCaches performs a single pass per chat that
 		// both invalidates caches and reports whether any agent is still
@@ -1385,9 +1311,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"options", msg.Options)
 		}
 	case util.DrillInMsg:
-		if m.branchLoading {
-			break
-		}
 		if msg.SessionID == "" {
 			break
 		}
@@ -1413,9 +1336,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case util.ToolDrillInMsg:
-		if m.branchLoading {
-			break
-		}
 		toolItem, ok := msg.ToolItem.(chat.ToolMessageItem)
 		if !ok {
 			break
@@ -2195,11 +2115,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	switch msg := action.(type) {
 	// Generic dialog messages
 	case dialog.ActionClose:
-		if front := m.dialog.DialogLast(); front != nil && (front.ID() == dialog.APIKeyInputID || front.ID() == dialog.OAuthID) {
-			m.branchAuthModel = nil
-			m.branchAuthRefresh = false
-			m.endMutation("model-auth")
-		}
 		if isOnboarding && m.dialog.ContainsDialog(dialog.ModelsID) {
 			break
 		}
@@ -2227,13 +2142,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	// Session dialog messages.
 	case dialog.ActionSelectSession:
 		m.dialog.CloseDialog(dialog.SessionsID)
-		if m.branchActive() || m.mutationsPending() {
-			cmds = append(cmds, util.ReportWarn("Finish or cancel the current operation before switching sessions."))
-			break
-		}
 		m.clearDrillStack()
-		m.beginMutation("session-load")
-		cmds = append(cmds, m.trackMutation("session-load", m.loadSession(msg.Session.ID)))
+		cmds = append(cmds, m.loadSession(msg.Session.ID))
 
 	// Open dialog message.
 	case dialog.ActionOpenDialog:
@@ -2267,15 +2177,11 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
 			break
 		}
-		if cmd := m.newSessionGuarded(); cmd != nil {
+		if cmd := m.newSession(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionSummarize:
-		if m.branchActive() || m.mutationsPending() {
-			cmds = append(cmds, util.ReportWarn("Finish or cancel the current operation before summarizing."))
-			break
-		}
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before summarizing session..."))
 			break
@@ -2344,10 +2250,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionExternalEditor:
-		if m.branchActive() {
-			cmds = append(cmds, util.ReportWarn("Send or cancel the current branch before opening an external editor."))
-			break
-		}
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is working, please wait..."))
 			break
@@ -2363,29 +2265,24 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleThinking:
-		if m.branchActive() || m.mutationsPending() {
-			cmds = append(cmds, util.ReportWarn("Finish or cancel the current operation first."))
-			break
-		}
-		ws := m.com.Workspace
-		cmds = append(cmds, m.trackMutation("model-refresh", func() tea.Msg {
-			cfg := ws.Config()
+		cmds = append(cmds, func() tea.Msg {
+			cfg := m.com.Config()
 			if cfg == nil {
 				return util.ReportError(errors.New("configuration not found"))()
 			}
 
 			currentModel := cfg.Models[config.SelectedModelTypeLarge]
 			currentModel.Think = !currentModel.Think
-			if err := ws.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeLarge, currentModel); err != nil {
+			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeLarge, currentModel); err != nil {
 				return util.ReportError(err)()
 			}
-			ws.UpdateAgentModel(context.TODO())
+			m.com.Workspace.UpdateAgentModel(context.TODO())
 			status := "disabled"
 			if currentModel.Think {
 				status = "enabled"
 			}
 			return util.NewInfoMsg("Thinking mode " + status)
-		}))
+		})
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleTransparentBackground:
 		cmds = append(cmds, func() tea.Msg {
@@ -2412,10 +2309,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.toggleAnthropicAuthMode)
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionQuit:
-		if m.branchActive() {
-			cmds = append(cmds, util.ReportWarn("Send or cancel the current branch before quitting."))
-			break
-		}
 		// A settle write is in flight: ignore the quit request so a
 		// plain quit cannot race the write.
 		if m.pinSettling {
@@ -2473,16 +2366,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	case dialog.ActionSelectReasoningEffort:
-		if m.mutationsPending() {
-			cmds = append(cmds, util.ReportWarn("Please wait for the pending operation to finish."))
-			break
-		}
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
-			break
-		}
-		if m.branchActive() {
-			cmds = append(cmds, util.ReportWarn("Finish or cancel the current branch before changing reasoning effort."))
 			break
 		}
 
@@ -2507,7 +2392,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			sid := m.session.ID
 			leafID := m.session.LeafMessageID
 			effort := msg.Effort
-			cmds = append(cmds, m.trackMutation(mutationSessionMetadata, func() tea.Msg {
+			cmds = append(cmds, func() tea.Msg {
 				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
 					ParentMessageID: leafID,
 					MessageType:     message.MessageTypeThinkingLevelChange,
@@ -2517,19 +2402,15 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				})
 				if err != nil {
 					slog.Error("Failed to write thinking_level_change entry", "error", err)
-					return util.NewErrorMsg(err)
 				}
 				return nil
-			}))
+			})
 		}
 
-		ws := m.com.Workspace
-		cmds = append(cmds, m.trackMutation("model-refresh", func() tea.Msg {
-			if err := ws.UpdateAgentModel(context.Background()); err != nil {
-				return util.NewErrorMsg(err)
-			}
+		cmds = append(cmds, func() tea.Msg {
+			m.com.Workspace.UpdateAgentModel(context.TODO())
 			return util.NewInfoMsg("Reasoning effort set to " + msg.Effort)
-		}))
+		})
 		m.dialog.CloseDialog(dialog.ReasoningID)
 	case dialog.ActionPermissionResponse:
 		m.dialog.CloseDialog(dialog.PermissionsID)
@@ -2583,10 +2464,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		))
 
 	case dialog.ActionRunCustomCommand:
-		if m.branchActive() || m.mutationsPending() {
-			cmds = append(cmds, util.ReportWarn("Finish or cancel the current operation before sending."))
-			break
-		}
 		if customCommandNeedsArgumentDialog(msg) {
 			m.dialog.CloseFrontDialog()
 			argsDialog := dialog.NewArguments(
@@ -2612,10 +2489,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.sendMessage(content))
 		m.dialog.CloseFrontDialog()
 	case dialog.ActionRunMCPPrompt:
-		if m.branchActive() || m.mutationsPending() {
-			cmds = append(cmds, util.ReportWarn("Finish or cancel the current operation before sending."))
-			break
-		}
 		if len(msg.Arguments) > 0 && msg.Args == nil {
 			m.dialog.CloseFrontDialog()
 			title := cmp.Or(msg.Title, "MCP Prompt Arguments")
@@ -2632,27 +2505,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.runMCPPrompt(msg.ClientID, msg.PromptID, msg.Args))
 	case dialog.ActionNavigateTree:
 		m.dialog.CloseFrontDialog()
-		if m.branchActive() || m.mutationsPending() {
-			cmds = append(cmds, util.ReportWarn("Finish or cancel the current operation before navigating."))
-			break
-		}
-		m.beginMutation(mutationTreeNav)
 		if cmd := m.handleNavigateTree(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 
-	case dialog.ActionRetryBranchReload:
-		m.dialog.CloseFrontDialog()
-		if m.mutationReload != nil {
-			cmds = append(cmds, m.mutationRefreshCmd(m.mutationReload))
-		} else {
-			cmds = append(cmds, m.retryBranchReload())
-		}
 	case dialog.ActionReturnToPreBranch:
 		m.dialog.CloseFrontDialog()
-		if cmd := m.beginBranchReturn(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		cmds = append(cmds, m.beginBranchReturn(false))
 
 	case dialog.ActionReloadPlugins:
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -2669,14 +2528,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			Source:       msg.Source,
 		})
 	case dialog.ActionToggleLazyMCP:
-		if m.mutationsPending() || m.isAgentBusy() {
-			cmds = append(cmds, util.ReportWarn("Please wait for the pending operation to finish."))
-			break
-		}
-		if m.branchActive() {
-			cmds = append(cmds, util.ReportWarn("Finish or cancel the current branch before changing MCP servers."))
-			break
-		}
 		m.enabledLazyMCPs[msg.ServerName] = msg.Enabled
 		// Update the open dialog's item state so the label refreshes.
 		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
@@ -2690,7 +2541,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			leafID := m.session.LeafMessageID
 			serverName := msg.ServerName
 			enabled := msg.Enabled
-			cmds = append(cmds, m.trackMutation(mutationSessionMetadata, func() tea.Msg {
+			cmds = append(cmds, func() tea.Msg {
 				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
 					ParentMessageID: leafID,
 					MessageType:     message.MessageTypeMCPToggle,
@@ -2700,19 +2551,14 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				})
 				if err != nil {
 					slog.Error("Failed to write mcp_toggle entry", "error", err)
-					return util.NewErrorMsg(err)
 				}
 				return nil
-			}))
+			})
 		} else {
 			slog.Debug("MCP toggle not persisted: no active session or leaf message",
 				"server", msg.ServerName, "enabled", msg.Enabled)
 		}
 	case dialog.ActionHardToggleMCP:
-		if m.branchActive() {
-			cmds = append(cmds, util.ReportWarn("Finish or cancel the current branch before changing MCP servers."))
-			break
-		}
 		ws := m.com.Workspace
 		name := msg.ServerName
 		enable := msg.Enable
@@ -2744,20 +2590,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 // handleSelectModel performs the model selection.
 func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
-	authComplete := m.branchAuthModel != nil && !msg.ReAuthenticate && m.branchAuthModel.Provider == msg.Model.Provider && m.branchAuthModel.Model == msg.Model.Model
-	if authComplete {
-		m.branchAuthModel = nil
-		m.endMutation("model-auth")
-		if m.branchAuthRefresh {
-			m.branchAuthRefresh = false
-			m.dialog.CloseDialog(dialog.APIKeyInputID)
-			m.dialog.CloseDialog(dialog.OAuthID)
-			return nil
-		}
-	}
-	if m.mutationsPending() {
-		return util.ReportWarn("Please wait for the pending operation to finish.")
-	}
 	var cmds []tea.Cmd
 
 	// we ignore dialogs with the oauth id as they need to be able to be dismissed
@@ -2778,25 +2610,12 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		isOnboarding = m.state == uiOnboarding
 	)
 
-	if m.branchActive() && (!msg.ReAuthenticate || oldAgentModel.ModelCfg.Provider != providerID || oldAgentModel.ModelCfg.Model != msg.Model.Model) {
-		return util.ReportWarn("Finish or cancel the current branch before changing the model.")
-	}
 	if !isConfigured() || msg.ReAuthenticate {
-		model := msg.Model
-		m.branchAuthModel = &model
-		m.branchAuthRefresh = m.branchActive()
-		if !m.branchAuthRefresh {
-			m.beginMutation("model-auth")
-		}
 		m.dialog.CloseDialog(dialog.ModelsID)
 		if cmd := m.openAuthenticationDialog(msg.Provider, msg.Model, msg.ModelType); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		return tea.Batch(cmds...)
-	}
-
-	if m.branchActive() {
-		return util.ReportWarn("Finish or cancel the current branch before changing the model.")
 	}
 
 	if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, msg.ModelType, msg.Model); err != nil {
@@ -2823,7 +2642,7 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 				leafID := m.session.LeafMessageID
 				provider := msg.Model.Provider
 				modelID := msg.Model.Model
-				cmds = append(cmds, m.trackMutation(mutationSessionMetadata, func() tea.Msg {
+				cmds = append(cmds, func() tea.Msg {
 					err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
 						ParentMessageID: leafID,
 						MessageType:     message.MessageTypeModelChange,
@@ -2833,18 +2652,16 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 					})
 					if err != nil {
 						slog.Error("Failed to write model_change entry", "error", err)
-						return util.NewErrorMsg(err)
 					}
 					return nil
-				}))
+				})
 			}
 		}
 	}
 
-	ws := m.com.Workspace
-	cmds = append(cmds, m.trackMutation("model-refresh", func() tea.Msg {
-		if err := ws.UpdateAgentModel(context.TODO()); err != nil {
-			return util.NewErrorMsg(err)
+	cmds = append(cmds, func() tea.Msg {
+		if err := m.com.Workspace.UpdateAgentModel(context.TODO()); err != nil {
+			return util.ReportError(err)
 		}
 
 		var (
@@ -2857,7 +2674,7 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		modelMsg := fmt.Sprintf("%s model changed to %s", modelType, modelName)
 
 		return util.NewInfoMsg(modelMsg)
-	}))
+	})
 
 	m.dialog.CloseDialog(dialog.APIKeyInputID)
 	m.dialog.CloseDialog(dialog.OAuthID)
@@ -2961,9 +2778,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return false
 	}
 
-	if key.Matches(msg, m.keyMap.Quit) && m.dialog.HasDialogs() && !m.dialog.ContainsDialog(dialog.QuitID) {
-		return m.handleDialogMsg(msg)
-	}
 	if key.Matches(msg, m.keyMap.Quit) && !m.dialog.ContainsDialog(dialog.QuitID) {
 		if m.state == uiChat || m.state == uiLanding {
 			// Priority 1: Close popup.
@@ -2979,9 +2793,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			if m.attachments.IsDeleting() {
 				m.attachments.ExitDeleteMode()
 				return tea.Batch(cmds...)
-			}
-			if m.branchActive() {
-				return util.ReportWarn("Send or cancel the current branch before quitting.")
 			}
 			// Priority 3: Clear text + attachments.
 			if m.textarea.Value() != "" || m.attachments.HasContent() {
@@ -3012,19 +2823,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handleDialogMsg(msg)
 	}
 
-	if m.branchPreview != nil && key.Matches(msg, m.keyMap.Editor.Escape) && !m.attachments.IsDeleting() && !m.completionsOpen && !m.slashACOpen {
-		return m.cancelBranchPreview()
-	}
-
 	// Handle cancel key when agent is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
-		if m.branchRun != nil && m.branchActive() && !m.attachments.IsDeleting() && !m.completionsOpen && !m.slashACOpen {
-			if m.branchRun.runCancel != nil {
-				m.branchRun.runCancel()
-			}
-			m.com.Workspace.AgentCancel(m.branchRun.sessionID)
-			return tea.Batch(cmds...)
-		}
 		if m.isAgentBusy() {
 			if cmd := m.cancelAgent(); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -3150,16 +2950,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 			}
 
-			if m.branchPreview == nil && m.branchActive() {
-				handleGlobalKeys(msg)
-				return tea.Batch(cmds...)
-			}
 			if ok := m.attachments.Update(msg); ok {
 				return tea.Batch(cmds...)
 			}
-
-			if m.branchPreview != nil && key.Matches(msg, m.keyMap.Editor.Escape) {
-				return m.cancelBranchPreview()
+			if m.pendingBranch != nil && key.Matches(msg, m.keyMap.Editor.Escape) && !m.isAgentBusy() {
+				return m.beginBranchReturn(true)
 			}
 
 			switch {
@@ -3177,14 +2972,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 				cmds = append(cmds, m.pasteImageFromClipboard)
 
-			case m.branchPreview != nil && key.Matches(msg, m.keyMap.Editor.SendMessage):
-				if cmd := m.trySubmitBranch(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-
 			case key.Matches(msg, m.keyMap.Editor.SendMessage):
-				if m.mutationsPending() {
-					return util.ReportWarn("Please wait for the pending operation to finish before sending.")
+				if m.branchNavigation != nil || m.branchRestoring {
+					return nil
 				}
 				prevHeight := m.textarea.Height()
 				value := m.textarea.Value()
@@ -3253,7 +3043,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
 					break
 				}
-				if cmd := m.newSessionGuarded(); cmd != nil {
+				if cmd := m.newSession(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Tab):
@@ -3275,19 +3065,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.closeCompletions()
 				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
 			case key.Matches(msg, m.keyMap.Editor.HistoryPrev):
-				if m.branchPreview != nil {
-					cmds = append(cmds, m.updateTextarea(msg))
-					break
-				}
 				cmd := m.handleHistoryUp(msg)
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Editor.HistoryNext):
-				if m.branchPreview != nil {
-					cmds = append(cmds, m.updateTextarea(msg))
-					break
-				}
 				cmd := m.handleHistoryDown(msg)
 				if cmd != nil {
 					cmds = append(cmds, cmd)
@@ -3367,10 +3149,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 			}
 		case uiFocusMain:
-			if m.branchLoading {
-				handleGlobalKeys(msg)
-				return tea.Batch(cmds...)
-			}
 			switch {
 			case key.Matches(msg, m.keyMap.Tab):
 				// Do not focus the editor while drilled into a subagent.
@@ -3404,13 +3182,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					break
 				}
 				m.focus = uiFocusEditor
-				if cmd := m.newSessionGuarded(); cmd != nil {
+				if cmd := m.newSession(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Chat.Branch):
-				if cmd := m.tryStartBranchPreview(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				cmds = append(cmds, m.branchFromSelectedMessage())
 			case key.Matches(msg, m.keyMap.Chat.Expand):
 				m.activeChat().ToggleExpandedSelectedItem()
 			case key.Matches(msg, m.keyMap.Chat.Up):
@@ -3624,11 +3400,7 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 			m.activeChat().Draw(scr, m.activeChatArea())
 		} else {
-			if m.branchLoading {
-				uv.NewStyledString(m.branchLoadingView(layout.main.Dx())).Draw(scr, layout.main)
-			} else {
-				m.activeChat().Draw(scr, layout.main)
-			}
+			m.activeChat().Draw(scr, layout.main)
 			if layout.pills.Dy() > 0 && m.pillsView != "" {
 				uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 			}
@@ -3887,6 +3659,9 @@ func (m *UI) ShortHelp() []key.Binding {
 		k.Help,
 	)
 
+	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isAgentBusy() {
+		binds = append(binds, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch")))
+	}
 	return binds
 }
 
@@ -3999,9 +3774,6 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.Chat.ClearHighlight,
 				},
 			)
-			if hasSession && m.session.ParentSessionID == "" && !m.isDrilledIn() {
-				binds = append(binds, []key.Binding{k.Chat.Branch})
-			}
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, []key.Binding{k.Chat.PillLeft})
 			}
@@ -4048,6 +3820,12 @@ func (m *UI) FullHelp() [][]key.Binding {
 		},
 	)
 
+	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isAgentBusy() {
+		binds = append(binds, []key.Binding{key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch"))})
+	}
+	if m.focus == uiFocusMain && hasSession && m.session.ParentSessionID == "" && !m.isDrilledIn() {
+		binds = append(binds, []key.Binding{k.Chat.Branch})
+	}
 	return binds
 }
 
@@ -4191,7 +3969,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	// The editor height: textarea height + margin for attachments and bottom spacing.
 	// When drilled into a subagent, the editor is hidden (height = 0) so the
 	// main area can use all available vertical space.
-	editorHeight := m.textarea.Height() + editorHeightMargin + branchBannerHeight(m.branchBanner())
+	editorHeight := m.textarea.Height() + editorHeightMargin
 	if m.isDrilledIn() {
 		editorHeight = 0
 	}
@@ -4620,7 +4398,7 @@ func (m *UI) builtinCommands() []builtinDef {
 			if !m.hasSession() {
 				return util.ReportInfo("Already on the landing page")
 			}
-			return m.newSessionGuarded()
+			return m.newSession()
 		}},
 		{"sessions", "Switch between sessions", m.openSessionsDialog},
 		{"tree", "View session tree", func() tea.Cmd {
@@ -4871,16 +4649,11 @@ func (m *UI) renderEditorView(width int) string {
 	if len(m.attachments.List()) > 0 || len(m.attachments.SkillList()) > 0 {
 		attachmentsView = m.attachments.Render(width)
 	}
-	lines := []string{}
-	if banner := m.branchBanner(); banner != "" {
-		lines = append(lines, renderBranchBanner(m.com.Styles.Status.InfoIndicator, m.com.Styles.Status.InfoMessage, width, banner))
-	}
-	lines = append(lines,
+	return strings.Join([]string{
 		attachmentsView,
 		m.textarea.View(),
 		"", // margin at bottom of editor
-	)
-	return strings.Join(lines, "\n")
+	}, "\n")
 }
 
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
@@ -4904,11 +4677,13 @@ func (m *UI) initializeProject() tea.Cmd {
 
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
-	if m.branchActive() || m.mutationsPending() {
-		return util.ReportWarn("Finish or cancel the current operation before sending.")
-	}
 	if !m.com.Workspace.AgentIsReady() {
 		return util.ReportError(fmt.Errorf("orchestrator agent is not initialized"))
+	}
+
+	if m.pendingBranch != nil {
+		m.branchReturn = m.pendingBranch
+		m.pendingBranch = nil
 	}
 
 	var cmds []tea.Cmd
@@ -5227,9 +5002,6 @@ func (m *UI) openTreeDialog() tea.Cmd {
 	if !m.hasSession() {
 		return util.ReportInfo("No active session")
 	}
-	if m.branchActive() {
-		return util.ReportWarn("Finish or cancel the current branch before opening the session tree.")
-	}
 	if m.dialog.ContainsDialog(dialog.TreeID) {
 		m.dialog.BringToFront(dialog.TreeID)
 		return nil
@@ -5247,9 +5019,6 @@ func (m *UI) openTreeDialog() tea.Cmd {
 func (m *UI) openBranchDialog() tea.Cmd {
 	if !m.hasSession() {
 		return util.ReportInfo("No active session")
-	}
-	if m.branchActive() {
-		return util.ReportWarn("Finish or cancel the current branch before opening the branch picker.")
 	}
 	if m.session.LeafMessageID == "" {
 		return util.ReportInfo("No messages to branch from")
@@ -5270,6 +5039,20 @@ func (m *UI) openBranchDialog() tea.Cmd {
 // handleNavigateTree handles navigation to a tree/branch node. If the agent
 // is busy, it cancels and polls until idle before proceeding.
 func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
+	if !m.hasSession() {
+		return nil
+	}
+	if m.branchNavigation != nil || m.branchRestoring {
+		return util.ReportWarn("Please wait for navigation to finish.")
+	}
+	if m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty() {
+		return util.ReportWarn("Return to pre-branch conversation, then send or clear its draft before branching again.")
+	}
+	m.branchNavigation = m.captureBranchSnapshot()
+	return m.cancelThenNavigate(msg)
+}
+
+func (m *UI) cancelThenNavigate(msg dialog.ActionNavigateTree) tea.Cmd {
 	if m.hasSession() && m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
 		sessionID := m.session.ID
 		m.com.Workspace.AgentCancel(sessionID)
@@ -5298,15 +5081,15 @@ func (m *UI) pollAgentIdle(nav dialog.ActionNavigateTree, sessionID string, atte
 // cause a mismatch.
 func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
 	if !m.hasSession() || m.session.ID != msg.sessionID {
-		m.endMutation(mutationTreeNav)
+		m.branchNavigation = nil
+		m.branchRestoring = false
 		return nil
 	}
 	if !m.com.Workspace.AgentIsSessionBusy(msg.sessionID) {
 		return m.navigateToTreeNode(msg.nav)
 	}
 	if msg.attempt >= maxIdlePolls {
-		m.endMutation(mutationTreeNav)
-		return util.ReportError(fmt.Errorf("timed out waiting for agent to stop"))
+		return m.handleTreeNavError(treeNavErrorMsg{err: fmt.Errorf("timed out waiting for agent to stop")})
 	}
 	return m.pollAgentIdle(msg.nav, msg.sessionID, msg.attempt+1)
 }
@@ -5314,65 +5097,13 @@ func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
 // navigateToTreeNode moves the session leaf pointer and reloads the chat.
 func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 	if m.session == nil {
-		m.endMutation(mutationTreeNav)
 		return nil
 	}
-
-	// Determine target leaf. For user messages, move to the parent so the
-	// user can re-submit from that point. The ParentMessageID is passed
-	// directly from the dialog to avoid an extra DB fetch.
 	targetLeafID := msg.MessageID
-	if msg.Role == message.User && msg.ParentMessageID != "" {
+	if msg.Role == message.User {
 		targetLeafID = msg.ParentMessageID
 	}
-
-	ws := m.com.Workspace
-	sessionID := m.session.ID
-	content := msg.Content
-	role := msg.Role
-
-	return func() tea.Msg {
-		ctx := context.Background()
-
-		// Move the leaf pointer.
-		if err := ws.MoveLeaf(ctx, sessionID, targetLeafID); err != nil {
-			return treeNavErrorMsg{err: err}
-		}
-
-		// Reload the session and branch path in the command (not in
-		// Update) to avoid doing IO in the Bubble Tea update loop.
-		sess, err := ws.GetSession(ctx, sessionID)
-		if err != nil {
-			return treeNavErrorMsg{err: err, movedLeaf: true, sessionID: sessionID}
-		}
-
-		var msgs []message.Message
-		if targetLeafID != "" {
-			msgs, err = ws.GetBranchPath(ctx, targetLeafID)
-			if err != nil {
-				return treeNavErrorMsg{err: err, movedLeaf: true, sessionID: sessionID}
-			}
-		}
-
-		nested, err := readBranchNested(ctx, ws, msgs)
-		if err != nil {
-			return treeNavErrorMsg{err: err, movedLeaf: true, sessionID: sessionID}
-		}
-		return navigateTreeDoneMsg{
-			nested:   nested,
-			session:  &sess,
-			leafID:   targetLeafID,
-			messages: msgs,
-			content:  content,
-			role:     role,
-		}
-	}
-}
-
-type treeNavErrorMsg struct {
-	movedLeaf bool
-	sessionID string
-	err       error
+	return m.loadTreePoint(msg, targetLeafID)
 }
 
 // navigateTreeDoneMsg is sent after the leaf pointer has been moved,
@@ -5380,6 +5111,8 @@ type treeNavErrorMsg struct {
 // inside the command; Update only mutates state.
 type navigateTreeDoneMsg struct {
 	nested   map[string]branchNestedSnapshot
+	snapshot *branchReturnSnapshot
+	restore  *branchReturnSnapshot
 	session  *session.Session
 	leafID   string
 	messages []message.Message
@@ -5390,21 +5123,37 @@ type navigateTreeDoneMsg struct {
 // handleNavigateTreeDone rebuilds the chat view after the leaf pointer has
 // been moved, and optionally pre-fills the editor for user messages.
 func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
-	m.endMutation(mutationTreeNav)
-	m.clearBranchState()
 	var cmds []tea.Cmd
+	if !m.hasSession() || m.session.ID != msg.session.ID {
+		return nil
+	}
+	m.branchNavigation = nil
+	m.branchRestoring = false
+	m.branchRestoreSnapshot = nil
 
 	m.session = msg.session
 	m.clearDrillStack()
 
-	m.installBranchSnapshot(msg.messages, msg.nested, nil)
+	m.installBranchSnapshot(msg.messages, msg.nested)
+	if msg.restore != nil {
+		if m.pendingBranch == msg.restore {
+			m.pendingBranch = nil
+		}
+		if m.branchReturn == msg.restore {
+			m.branchReturn = nil
+		}
+		return m.restoreBranchDraft(msg.restore)
+	}
+	if msg.snapshot != nil {
+		m.pendingBranch = msg.snapshot
+	}
 
 	if len(msg.messages) == 0 {
 		m.lastUserMessageTime = 0
 	}
 
 	// Pre-fill editor for user messages.
-	if msg.role == message.User && msg.content != "" {
+	if msg.role == message.User {
 		prevHeight := m.textarea.Height()
 		m.textarea.SetValue(msg.content)
 		m.textarea.MoveToEnd()
@@ -5467,9 +5216,6 @@ func (m *UI) setSessionPinCmd(msg dialog.ActionSetSessionPin) tea.Cmd {
 // session is pinned (choke point A: pin state is re-read from the DB at
 // prompt time), the pinned settle variant opens instead.
 func (m *UI) openQuitDialog() tea.Cmd {
-	if m.branchActive() {
-		return util.ReportWarn("Send or cancel the current branch before quitting.")
-	}
 	// A settle write is in flight: ignore the quit request so a plain
 	// quit cannot race the write.
 	if m.pinSettling {
@@ -5496,7 +5242,7 @@ func (m *UI) openQuitDialog() tea.Cmd {
 	}
 
 	quitDialog := dialog.NewQuit(m.com)
-	if m.branchReturn != nil {
+	if (m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty()) || (m.pendingBranch != nil && !m.pendingBranch.originalDraft.isEmpty()) {
 		quitDialog.SetWarning("A saved pre-branch draft will be lost.")
 	}
 	m.dialog.OpenDialog(quitDialog)
@@ -5570,9 +5316,8 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 	if err != nil {
 		return util.ReportError(err)
 	}
-	commands.SetBranchReturnAvailable(m.branchReturn != nil)
-	commands.SetBranchReloadAvailable(m.mutationReload != nil || (m.branchRun != nil && m.branchRun.reloadErr != nil))
 
+	commands.SetBranchReturnAvailable(m.branchReturn != nil)
 	m.dialog.OpenDialog(commands)
 
 	return commands.InitialCmd()
@@ -5720,9 +5465,6 @@ func (m *UI) newSession() tea.Cmd {
 
 // handlePasteMsg handles a paste message.
 func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
-	if m.branchPreview == nil && m.branchActive() {
-		return nil
-	}
 	// Normalize \r\n before the textarea sanitizer sees it.
 	msg.Content = strings.ReplaceAll(msg.Content, "\r\n", "\n")
 
