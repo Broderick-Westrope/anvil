@@ -69,21 +69,19 @@ var (
 )
 
 type SessionAgentCall struct {
-	retrySummary         func(context.Context, error) error
-	BranchOrigin         *BranchOrigin
-	OnUserMessageCreated func(message.Message)
-	state                *runState
-	SessionID            string
-	Prompt               string
-	ProviderOptions      fantasy.ProviderOptions
-	Attachments          []message.Attachment
-	MaxOutputTokens      int64
-	Temperature          *float64
-	TopP                 *float64
-	TopK                 *int64
-	FrequencyPenalty     *float64
-	PresencePenalty      *float64
-	NonInteractive       bool
+	retrySummary     func(context.Context, error) error
+	state            *runState
+	SessionID        string
+	Prompt           string
+	ProviderOptions  fantasy.ProviderOptions
+	Attachments      []message.Attachment
+	MaxOutputTokens  int64
+	Temperature      *float64
+	TopP             *float64
+	TopK             *int64
+	FrequencyPenalty *float64
+	PresencePenalty  *float64
+	NonInteractive   bool
 
 	// OnAuthRefresh, when non-nil, is called by fantasy when a stream
 	// fails with an authentication error (HTTP 401). The callback should
@@ -206,11 +204,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	call.Attachments = cloneAttachments(call.Attachments)
 	if call.state == nil {
-		call.state = &runState{origin: call.BranchOrigin, callback: call.OnUserMessageCreated, branch: call.BranchOrigin != nil}
+		call.state = &runState{}
 	}
-	call.BranchOrigin = nil
-	call.OnUserMessageCreated = nil
-	return a.admission.submit(ctx, call.SessionID, submission{prompt: call.Prompt, exclusive: call.state.branch, detachedDrain: call.state.branch, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+	return a.admission.submit(ctx, call.SessionID, submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
 		return a.runOwned(ctx, call)
 	}})
 }
@@ -220,10 +216,6 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		return nil, err
 	}
 	state := call.state
-	if state.continuation {
-		call.Prompt = "Continue the interrupted request using the conversation summary."
-		call.Attachments = nil
-	}
 	if state.acceptedUserID != "" {
 		if err := a.restoreAttempt(ctx, call.SessionID, state); err != nil {
 			return nil, err
@@ -244,19 +236,8 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
-	if state.origin != nil {
-		for _, att := range call.Attachments {
-			if !att.IsText() && (!att.IsImage() || !largeModel.CatwalkCfg.SupportsImages) {
-				return nil, ErrBranchUnsupportedAttachment
-			}
-		}
-		currentSession, err = a.branchSession(ctx, currentSession, *state.origin)
-		if err != nil {
-			return nil, err
-		}
-	}
 	if state.acceptedUserID != "" {
-		currentSession.LeafMessageID = state.attemptParent
+		currentSession.LeafMessageID = state.acceptedUserID
 	}
 	currentLeaf := currentSession.LeafMessageID
 
@@ -332,32 +313,14 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	}
 	isFirstMessage := state.firstMessage
 	if state.acceptedUserID != "" {
-		if !state.continuation {
-			msgs = trimFailedAttemptMessages(msgs, state.acceptedUserID)
-		}
+		msgs = trimFailedAttemptMessages(msgs, state.acceptedUserID)
 	} else {
-		if state.origin != nil {
-			fresh, getErr := a.sessions.Get(ctx, call.SessionID)
-			if getErr != nil {
-				return nil, getErr
-			}
-			if _, err := a.branchSession(ctx, fresh, *state.origin); err != nil {
-				return nil, err
-			}
-		}
 		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
 		if err != nil {
 			return nil, err
 		}
 		currentLeaf = userMsg.ID
 		state.acceptedUserID = userMsg.ID
-		state.attemptParent = userMsg.ID
-		callback := state.callback
-		state.origin = nil
-		state.callback = nil
-		if callback != nil {
-			callback(userMsg)
-		}
 	}
 
 	// Add the session to the context.
@@ -774,18 +737,6 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			return nil, summarizeErr
 		}
 		if len(currentAssistant.ToolCalls()) > 0 {
-			if state.branch {
-				sess, err := a.sessions.Get(ctx, call.SessionID)
-				if err != nil {
-					return nil, err
-				}
-				state.attemptParent = sess.LeafMessageID
-				state.assistantIDs = nil
-				state.continuation = true
-				call.Prompt = "Continue the interrupted request using the conversation summary."
-				call.Attachments = nil
-				return a.runOwned(ctx, call)
-			}
 			call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
 			call.state = nil
 			a.admission.enqueue(call.SessionID, submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) { return a.Run(ctx, call) }})
@@ -801,13 +752,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		if sessErr != nil {
 			slog.Error("Failed to load session for title regeneration", "error", sessErr)
 		} else if !sess.TitleIsCustom {
-			var titleMsgs []message.Message
-			var titleErr error
-			if state.branch {
-				titleMsgs, titleErr = a.messages.GetBranchPath(ctx, getLeaf())
-			} else {
-				titleMsgs, titleErr = a.messages.List(ctx, call.SessionID)
-			}
+			titleMsgs, titleErr := a.messages.GetBranchPath(ctx, getLeaf())
 			if titleErr != nil {
 				slog.Error("Failed to load messages for title regeneration", "error", titleErr)
 			} else {

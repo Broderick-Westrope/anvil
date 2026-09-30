@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -20,10 +19,9 @@ type submissionOwner struct {
 }
 
 type submission struct {
-	prompt        string
-	exclusive     bool
-	detachedDrain bool
-	run           func(context.Context) (*fantasy.AgentResult, error)
+	prompt    string
+	exclusive bool
+	run       func(context.Context) (*fantasy.AgentResult, error)
 }
 
 type admission struct {
@@ -31,7 +29,6 @@ type admission struct {
 	owners   map[string]*submissionOwner
 	queues   map[string][]submission
 	lifetime context.Context
-	runners  sync.WaitGroup
 }
 
 func newAdmission(ctx context.Context) *admission {
@@ -97,9 +94,6 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 			queued = a.queues[owner.sessionID][0]
 			a.queues[owner.sessionID] = a.queues[owner.sessionID][1:]
 			next = a.claim(a.lifetime, owner.sessionID)
-			if job.detachedDrain {
-				a.runners.Add(1)
-			}
 		}
 	}
 	a.mu.Unlock()
@@ -108,15 +102,6 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 		owner.onFinish()
 	}
 	if next == nil {
-		return result, err
-	}
-	if job.detachedDrain {
-		go func() {
-			defer a.runners.Done()
-			if _, err := a.execute(next, queued); err != nil {
-				slog.Error("Queued submission failed", "error", err)
-			}
-		}()
 		return result, err
 	}
 	return a.execute(next, queued)

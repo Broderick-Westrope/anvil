@@ -68,7 +68,6 @@ var (
 )
 
 type Coordinator interface {
-	RunFromMessage(context.Context, string, string, BranchRunOptions, ...message.Attachment) (*fantasy.AgentResult, error)
 	WaitBackgroundJobs()
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
@@ -359,10 +358,6 @@ func discoverAgentMDs(builtinFS fs.FS, plugins []*plugin.Plugin) (map[string]pro
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
-	return c.submitRun(ctx, sessionID, prompt, nil, attachments)
-}
-
-func (c *coordinator) submitRun(ctx context.Context, sessionID, prompt string, opts *BranchRunOptions, attachments []message.Attachment) (*fantasy.AgentResult, error) {
 	if sessionID == "" {
 		return nil, ErrSessionMissing
 	}
@@ -376,13 +371,7 @@ func (c *coordinator) submitRun(ctx context.Context, sessionID, prompt string, o
 	smallSelection := c.cfg.Config().Models[config.SelectedModelTypeSmall]
 	attachments = cloneAttachments(attachments)
 	state := &runState{}
-	if opts != nil {
-		origin := opts.Origin
-		state.origin = &origin
-		state.callback = opts.OnUserMessageCreated
-		state.branch = true
-	}
-	return c.admission.submit(ctx, sessionID, submission{prompt: prompt, exclusive: opts != nil, detachedDrain: opts != nil, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+	return c.admission.submit(ctx, sessionID, submission{prompt: prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
 		if selectionErr != nil {
 			return nil, selectionErr
 		}
@@ -413,7 +402,7 @@ func (c *coordinator) runOwned(ctx context.Context, sessionID, prompt string, st
 		maxTokens = model.ModelCfg.MaxTokens
 	}
 
-	if !state.branch && !model.CatwalkCfg.SupportsImages && attachments != nil {
+	if !model.CatwalkCfg.SupportsImages && attachments != nil {
 		// filter out image attachments
 		filteredAttachments := make([]message.Attachment, 0, len(attachments))
 		for _, att := range attachments {
@@ -2031,9 +2020,6 @@ func logDiscoveryStats(
 }
 
 func (c *coordinator) WaitBackgroundJobs() {
-	if c.admission != nil {
-		c.admission.runners.Wait()
-	}
 	if waiter, ok := c.getOrchestrator().(interface{ WaitBackgroundJobs() }); ok {
 		waiter.WaitBackgroundJobs()
 	}

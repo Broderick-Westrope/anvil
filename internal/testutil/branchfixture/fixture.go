@@ -44,7 +44,6 @@ type Response struct {
 	ToolInput    string
 	Started      chan<- struct{}
 	Release      <-chan struct{}
-	Done         chan<- struct{}
 }
 
 type Provider struct {
@@ -86,9 +85,6 @@ func (p *Provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.responses = p.responses[1:]
 	}
 	p.mu.Unlock()
-	if response.Done != nil {
-		defer close(response.Done)
-	}
 	if response.Started != nil {
 		close(response.Started)
 	}

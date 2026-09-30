@@ -86,39 +86,22 @@ func TestAdmissionErrorPreservesQueue(t *testing.T) {
 	require.Empty(t, a.queued("s"))
 }
 
-func TestAdmissionBranchHandoffUsesNewOwner(t *testing.T) {
+func TestAdmissionHandoffUsesNewOwner(t *testing.T) {
 	t.Parallel()
 
 	a := newAdmission(t.Context())
-	queued := make(chan struct{})
-	release := make(chan struct{})
-	defer close(release)
 	var first *submissionOwner
-	_, err := a.submit(t.Context(), "s", submission{exclusive: true, detachedDrain: true, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+	_, err := a.submit(t.Context(), "s", submission{run: func(ctx context.Context) (*fantasy.AgentResult, error) {
 		first = ctx.Value(ownerKey{}).(*submissionOwner)
-		_, err := a.submit(t.Context(), "s", submission{prompt: "next", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
-			if first == ctx.Value(ownerKey{}) {
-				return nil, errors.New("reused owner")
-			}
-			close(queued)
-			select {
-			case <-release:
-			case <-ctx.Done():
-			}
+		return a.submit(t.Context(), "s", submission{prompt: "next", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			require.NotSame(t, first, ctx.Value(ownerKey{}))
+			require.ErrorIs(t, first.ctx.Err(), context.Canceled)
+			require.True(t, a.busy("s"))
+			a.cancel("s")
 			return nil, ctx.Err()
 		}})
-		return nil, err
 	}})
-	require.NoError(t, err)
-	select {
-	case <-queued:
-	case <-t.Context().Done():
-		t.Fatal(t.Context().Err())
-	}
-	require.ErrorIs(t, first.ctx.Err(), context.Canceled)
-	require.True(t, a.busy("s"))
-	a.cancelAll()
-	a.runners.Wait()
+	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, a.busy("s"))
 }
 
