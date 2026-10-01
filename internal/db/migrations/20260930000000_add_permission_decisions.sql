@@ -7,13 +7,13 @@ CREATE TABLE IF NOT EXISTS permission_decisions (
     tool_name TEXT NOT NULL,
     action TEXT NOT NULL DEFAULT '',
     input TEXT NOT NULL DEFAULT '',
-    input_segments TEXT NOT NULL DEFAULT '[]', -- JSON array of strings.
+    input_segments TEXT NOT NULL DEFAULT '[]', -- JSON array of strings
     working_dir TEXT NOT NULL DEFAULT '',
-    decided_by TEXT NOT NULL,                  -- See permission.DecisionSource.
+    decided_by TEXT NOT NULL,                  -- See permission.DecisionSource
     verdict TEXT NOT NULL,                     -- allow | deny | cancelled
     matched_rule TEXT NOT NULL DEFAULT '',
-    assessment TEXT,                           -- JSON, NULL when no assessor ran.
-    created_at INTEGER NOT NULL                -- Unix timestamp in seconds.
+    assessment TEXT,                           -- JSON, NULL when no assessor ran
+    created_at INTEGER NOT NULL                -- Unix timestamp in seconds
 );
 CREATE INDEX IF NOT EXISTS idx_permission_decisions_created_at
     ON permission_decisions (created_at);

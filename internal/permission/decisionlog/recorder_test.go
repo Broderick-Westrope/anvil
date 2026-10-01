@@ -102,14 +102,14 @@ func TestRecorderFullDoesNotBlock(t *testing.T) {
 	}
 }
 
-type blockedQueries struct {
+type blockedQuerier struct {
 	db.Querier
 	once    sync.Once
 	started chan struct{}
 	release chan struct{}
 }
 
-func (q *blockedQueries) InsertPermissionDecision(ctx context.Context, params db.InsertPermissionDecisionParams) error {
+func (q *blockedQuerier) InsertPermissionDecision(ctx context.Context, params db.InsertPermissionDecisionParams) error {
 	q.once.Do(func() { close(q.started); <-q.release })
 	return q.Querier.InsertPermissionDecision(ctx, params)
 }
@@ -117,7 +117,7 @@ func (q *blockedQueries) InsertPermissionDecision(ctx context.Context, params db
 func TestRecorderConcurrentClose(t *testing.T) {
 	t.Parallel()
 	q := testQueries(t)
-	blocked := &blockedQueries{Querier: q, started: make(chan struct{}), release: make(chan struct{})}
+	blocked := &blockedQuerier{Querier: q, started: make(chan struct{}), release: make(chan struct{})}
 	r := New(blocked)
 	var release sync.Once
 	t.Cleanup(func() {

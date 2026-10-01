@@ -14,10 +14,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// Retention is how long decisions are kept before Prune deletes them.
 const Retention = 90 * 24 * time.Hour
 
-const bufferSize = 512
+const (
+	bufferSize   = 512
+	writeTimeout = 500 * time.Millisecond
+)
 
+// Recorder writes decisions on a single background goroutine so the
+// permission path never waits on SQLite.
 type Recorder struct {
 	q      db.Querier
 	ch     chan permission.Decision
@@ -26,6 +32,7 @@ type Recorder struct {
 	closed bool
 }
 
+// New starts a recorder. Call Close to flush queued writes and stop it.
 func New(q db.Querier) *Recorder {
 	r := &Recorder{q: q, ch: make(chan permission.Decision, bufferSize), done: make(chan struct{})}
 	go r.loop()
@@ -71,7 +78,7 @@ func (r *Recorder) loop() {
 }
 
 func (r *Recorder) write(d permission.Decision) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 	segs, _ := json.Marshal(d.InputSegments)
 	if d.InputSegments == nil {
@@ -100,6 +107,7 @@ func (r *Recorder) write(d permission.Decision) {
 	}
 }
 
+// Prune deletes decisions older than Retention relative to now.
 func Prune(ctx context.Context, q db.Querier, now time.Time) error {
 	return q.DeletePermissionDecisionsBefore(ctx, now.Add(-Retention).Unix())
 }

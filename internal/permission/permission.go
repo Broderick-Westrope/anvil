@@ -286,7 +286,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 
 	case config.PermissionDeny:
 		reason := fmt.Sprintf("denied by rule %q", result.MatchedRule)
-		return s.finish(opts, DecisionSourceRule, VerdictDeny, result.MatchedRule, nil, reason), nil
+		return s.finish(opts, source, VerdictDeny, result.MatchedRule, nil, reason), nil
 	}
 
 	// Action is "ask" — prompt the user.
@@ -322,7 +322,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		Action:    perm.Action,
 		Path:      perm.Path,
 	}); ok {
-		return s.finish(opts, DecisionSourceSessionKey, VerdictAllow, "", nil, ""), nil
+		return s.finish(opts, DecisionSourceSessionGrant, VerdictAllow, "", nil, ""), nil
 	}
 
 	s.activeRequestMu.Lock()

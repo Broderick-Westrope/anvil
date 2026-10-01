@@ -78,8 +78,12 @@ type App struct {
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
 	recorder := decisionlog.New(q)
+	// Prune old decisions once at startup in the background. Failure only
+	// means the table keeps extra rows until the next start.
 	go func() {
-		if err := decisionlog.Prune(ctx, q, time.Now()); err != nil {
+		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := decisionlog.Prune(pruneCtx, q, time.Now()); err != nil {
 			slog.Warn("Failed to prune permission decisions", "error", err)
 		}
 	}()
@@ -128,11 +132,14 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Release the shared database connection on shutdown. The pool
 	// closes the underlying *sql.DB when the last reference is released.
+	// Cleanup funcs run concurrently, so the decision log is flushed here
+	// first. If the flush times out the connection is left open, since
+	// the recorder is still writing and the process is exiting anyway.
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
 		func(ctx context.Context) error {
 			if err := recorder.Close(ctx); err != nil {
-				slog.Warn("Permission decision log did not flush before shutdown", "error", err)
+				return fmt.Errorf("permission decision log did not flush before shutdown: %w", err)
 			}
 			return db.ReleaseGlobal()
 		},

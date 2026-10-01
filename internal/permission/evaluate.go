@@ -9,7 +9,7 @@ import (
 
 // EvaluateResult holds the outcome of rule evaluation.
 type EvaluateResult struct {
-	FromSession bool
+	FromSession bool // True if a session rule, not config, decided the action.
 	Action      config.PermissionAction
 	MatchedRule string // The pattern that produced this action (for logging).
 	IsDefault   bool   // True if no rule matched, using default "ask".
