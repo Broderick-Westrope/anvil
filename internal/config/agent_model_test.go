@@ -244,6 +244,144 @@ func TestResolveAgentModel_Errors(t *testing.T) {
 	}
 }
 
+func TestResolveAgenticFetchModel_UnsetReturnsGlobalSmall(t *testing.T) {
+	t.Parallel()
+
+	small := SelectedModel{Provider: "anthropic", Model: "tiny", Temperature: ptr(0.3)}
+	cfg := resolveAgentModelConfig(SelectedModel{Provider: "anthropic", Model: "big"})
+	cfg.Models[SelectedModelTypeSmall] = small
+
+	got, err := ResolveAgenticFetchModel(cfg)
+	require.NoError(t, err)
+	require.Equal(t, small, got)
+}
+
+func TestResolveAgenticFetchModel_MissingSmallModelErrors(t *testing.T) {
+	t.Parallel()
+
+	cfg := resolveAgentModelConfig(SelectedModel{Provider: "anthropic", Model: "big"})
+
+	_, err := ResolveAgenticFetchModel(cfg)
+	require.ErrorContains(t, err, "no small model configured")
+	require.ErrorContains(t, err, `agent "agentic_fetch"`)
+}
+
+func TestResolveAgenticFetchModel_OverrideLayersOverSmall(t *testing.T) {
+	t.Parallel()
+
+	cfg := resolveAgentModelConfig(SelectedModel{
+		Provider:    "anthropic",
+		Model:       "big",
+		Temperature: ptr(0.9),
+	})
+	cfg.Models[SelectedModelTypeSmall] = SelectedModel{
+		Provider:    "anthropic",
+		Model:       "tiny",
+		Temperature: ptr(0.3),
+	}
+	cfg.Tools.AgenticFetch.Model = "anthropic/big"
+
+	got, err := ResolveAgenticFetchModel(cfg)
+	require.NoError(t, err)
+	require.Equal(t, "anthropic", got.Provider)
+	require.Equal(t, "big", got.Model)
+	require.Equal(t, int64(128000), got.MaxTokens)
+	require.Equal(t, "high", got.ReasoningEffort)
+	require.Equal(t, ptr(0.3), got.Temperature)
+}
+
+func TestResolveAgenticFetchModel_CrossProviderDropsOptions(t *testing.T) {
+	t.Parallel()
+
+	cfg := resolveAgentModelConfig(SelectedModel{Provider: "anthropic", Model: "big"})
+	cfg.Models[SelectedModelTypeSmall] = SelectedModel{
+		Provider:        "anthropic",
+		Model:           "tiny",
+		ProviderOptions: map[string]any{"thinking": map[string]any{"budget_tokens": 2000}},
+	}
+	cfg.Tools.AgenticFetch.Model = "openai/gpt"
+
+	got, err := ResolveAgenticFetchModel(cfg)
+	require.NoError(t, err)
+	require.Equal(t, "openai", got.Provider)
+	require.Equal(t, "gpt", got.Model)
+	require.Nil(t, got.ProviderOptions)
+}
+
+func TestResolveAgenticFetchModel_ReasoningEffortOverride(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		effort string
+		want   string
+	}{
+		{"low", "low"},
+		{"extreme", "high"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.effort, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := resolveAgentModelConfig(SelectedModel{Provider: "anthropic", Model: "big"})
+			cfg.Models[SelectedModelTypeSmall] = SelectedModel{Provider: "anthropic", Model: "tiny"}
+			cfg.Tools.AgenticFetch = ToolAgenticFetch{
+				Model:           "anthropic/big",
+				ReasoningEffort: tt.effort,
+			}
+
+			got, err := ResolveAgenticFetchModel(cfg)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got.ReasoningEffort)
+		})
+	}
+}
+
+func TestResolveAgenticFetchModel_ReasoningOnlyAppliesToSmall(t *testing.T) {
+	t.Parallel()
+
+	small := SelectedModel{Provider: "anthropic", Model: "tiny", Temperature: ptr(0.3)}
+	cfg := resolveAgentModelConfig(SelectedModel{Provider: "anthropic", Model: "big"})
+	cfg.Models[SelectedModelTypeSmall] = small
+	cfg.Tools.AgenticFetch.ReasoningEffort = "low"
+
+	got, err := ResolveAgenticFetchModel(cfg)
+	require.NoError(t, err)
+	small.ReasoningEffort = "low"
+	require.Equal(t, small, got)
+}
+
+func TestResolveAgenticFetchModel_Errors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		model   string
+		wantErr string
+	}{
+		{"no slash", "no-slash", "must be in provider/model format"},
+		{"unknown provider", "missing/big", `provider "missing" not found`},
+		{"unknown model", "anthropic/missing", `model "missing" not found`},
+		{"disabled provider", "openai/gpt", `provider "openai" is disabled`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := resolveAgentModelConfig(SelectedModel{Provider: "anthropic", Model: "big"})
+			cfg.Models[SelectedModelTypeSmall] = SelectedModel{Provider: "anthropic", Model: "tiny"}
+			cfg.Tools.AgenticFetch.Model = tt.model
+			provider, ok := cfg.Providers.Get("openai")
+			require.True(t, ok)
+			provider.Disable = true
+			cfg.Providers.Set("openai", provider)
+
+			_, err := ResolveAgenticFetchModel(cfg)
+			require.ErrorContains(t, err, tt.wantErr)
+			require.ErrorContains(t, err, `agent "agentic_fetch"`)
+		})
+	}
+}
+
 func TestApplyOverrides_ReasoningEffortAndThink(t *testing.T) {
 	t.Parallel()
 

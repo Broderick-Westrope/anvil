@@ -644,9 +644,10 @@ func (a *Agent) UnmarshalJSON(data []byte) error {
 }
 
 type Tools struct {
-	Ls   ToolLs   `json:"ls,omitzero"`
-	Grep ToolGrep `json:"grep,omitzero"`
-	Glob ToolGlob `json:"glob,omitzero"`
+	Ls           ToolLs           `json:"ls,omitzero"`
+	Grep         ToolGrep         `json:"grep,omitzero"`
+	Glob         ToolGlob         `json:"glob,omitzero"`
+	AgenticFetch ToolAgenticFetch `json:"agentic_fetch,omitzero"`
 }
 
 type ToolLs struct {
@@ -675,6 +676,15 @@ type ToolGlob struct {
 // GetTimeout returns the user-defined timeout or the default.
 func (t ToolGlob) GetTimeout() time.Duration {
 	return ptrValOr(t.Timeout, 30*time.Second)
+}
+
+// ToolAgenticFetch configures the sub-agent behind the agentic_fetch tool.
+type ToolAgenticFetch struct {
+	// Model is the provider/model the sub-agent runs on. Empty uses the
+	// global small model.
+	Model string `json:"model,omitempty" jsonschema:"description=Model for the agentic_fetch sub-agent in provider/model format. Empty uses the global small model,example=anthropic/claude-haiku-4-5"`
+	// ReasoningEffort overrides the reasoning effort of the resolved model.
+	ReasoningEffort string `json:"reasoning_effort,omitempty" jsonschema:"description=Reasoning effort for the agentic_fetch model. Unsupported values fall back to the model default,example=low"`
 }
 
 // PluginConfig defines an external plugin directory that provides skills,
@@ -1082,11 +1092,45 @@ func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabl
 //
 // Agent-level Variant, ReasoningEffort and Think always win over both.
 func ResolveAgentModel(agent Agent, cfg *Config) (SelectedModel, error) {
-	result, ok := cfg.Models[SelectedModelTypeLarge]
+	base, ok := cfg.Models[SelectedModelTypeLarge]
 	if !ok {
 		return SelectedModel{}, fmt.Errorf("agent %q: no large model configured", agent.ID)
 	}
+	return resolveModelOverride(agent, base, cfg)
+}
 
+// AgenticFetchAgentID identifies the agentic_fetch sub-agent in model
+// resolution errors and logs.
+const AgenticFetchAgentID = "agentic_fetch"
+
+// ResolveAgenticFetchModel resolves the SelectedModel for the agentic_fetch
+// sub-agent. The global small model is the base; tools.agentic_fetch is
+// layered over it using the same rules as ResolveAgentModel.
+func ResolveAgenticFetchModel(cfg *Config) (SelectedModel, error) {
+	base, ok := cfg.Models[SelectedModelTypeSmall]
+	if !ok {
+		return SelectedModel{}, fmt.Errorf("agent %q: no small model configured", AgenticFetchAgentID)
+	}
+	fetch := cfg.Tools.AgenticFetch
+	if fetch.Model != "" {
+		if slash := strings.IndexByte(fetch.Model, '/'); slash > 0 {
+			if p, ok := cfg.Providers.Get(fetch.Model[:slash]); ok && p.Disable {
+				return SelectedModel{}, fmt.Errorf("agent %q: provider %q is disabled", AgenticFetchAgentID, fetch.Model[:slash])
+			}
+		}
+	}
+	return resolveModelOverride(Agent{
+		ID:              AgenticFetchAgentID,
+		Model:           fetch.Model,
+		ReasoningEffort: fetch.ReasoningEffort,
+	}, base, cfg)
+}
+
+// resolveModelOverride layers agent's model, variant, reasoning effort and
+// think settings over base. See ResolveAgentModel for the inheritance
+// rules.
+func resolveModelOverride(agent Agent, base SelectedModel, cfg *Config) (SelectedModel, error) {
+	result := base
 	if agent.Model != "" {
 		// Parse "provider/model" format; split on the first slash only.
 		slash := strings.IndexByte(agent.Model, '/')
