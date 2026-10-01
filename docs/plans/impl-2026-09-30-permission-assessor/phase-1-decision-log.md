@@ -175,7 +175,7 @@ go build ./... && go test ./internal/db/...
    	DecisionSourceAutoSession DecisionSource = "auto_session"
    	DecisionSourceRule        DecisionSource = "rule"
    	DecisionSourceSessionRule DecisionSource = "session_rule"
-   	DecisionSourceSessionKey  DecisionSource = "session_grant"
+   	DecisionSourceSessionGrant DecisionSource = "session_grant"
    	DecisionSourceAssessor    DecisionSource = "assessor"
    	DecisionSourceHuman       DecisionSource = "human"
    )
@@ -308,8 +308,8 @@ go build ./... && go test ./internal/db/...
      `DecisionSourceYolo` when the promotion happened; else
      `DecisionSourceSessionRule` when `result.FromSession`, else
      `DecisionSourceRule`; pass `result.MatchedRule`).
-   - rule deny → `DecisionSourceRule`, deny, `result.MatchedRule`.
-   - legacy `sessionPermissions` hit → `DecisionSourceSessionKey`, allow.
+   - rule deny → `DecisionSourceSessionRule` when `result.FromSession`, else `DecisionSourceRule`; deny, `result.MatchedRule`.
+   - legacy `sessionPermissions` hit → `DecisionSourceSessionGrant`, allow.
    - human response → `DecisionSourceHuman`, allow/deny from `resp.Granted`.
    - `ctx.Done()` → `DecisionSourceHuman`, `VerdictCancelled`.
 
