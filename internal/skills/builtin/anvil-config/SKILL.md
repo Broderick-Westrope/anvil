@@ -106,6 +106,24 @@ reviewed.
 ```
 
 - `large` is the primary coding model; `small` is for summarization.
+
+The `agentic_fetch` tool runs a web-research sub-agent on the `small`
+model by default. To give it its own model, set `tools.agentic_fetch`:
+
+```json
+{
+  "tools": {
+    "agentic_fetch": {
+      "model": "anthropic/claude-haiku-4-5",
+      "reasoning_effort": "low"
+    }
+  }
+}
+```
+
+`model` uses `provider/model` format. An invalid value logs a warning and
+falls back to `small`. Check the resolved model with `anvil_info`.
+
 - Only `model` and `provider` are required.
 - Optional tuning: `reasoning_effort`, `think`, `max_tokens`, `temperature`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`, `provider_options`.
 

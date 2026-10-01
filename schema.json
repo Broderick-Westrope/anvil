@@ -887,6 +887,26 @@
         "expires_at"
       ]
     },
+    "ToolAgenticFetch": {
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Model for the agentic_fetch sub-agent in provider/model format. Empty uses the global small model",
+          "examples": [
+            "anthropic/claude-haiku-4-5"
+          ]
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "description": "Reasoning effort for the agentic_fetch model. Unsupported values fall back to the model default",
+          "examples": [
+            "low"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ToolGlob": {
       "properties": {
         "timeout": {
@@ -939,6 +959,9 @@
         },
         "glob": {
           "$ref": "#/$defs/ToolGlob"
+        },
+        "agentic_fetch": {
+          "$ref": "#/$defs/ToolAgenticFetch"
         }
       },
       "additionalProperties": false,
