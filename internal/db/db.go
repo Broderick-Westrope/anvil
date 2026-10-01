@@ -39,6 +39,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteMessageStmt, err = db.PrepareContext(ctx, deleteMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteMessage: %w", err)
 	}
+	if q.deletePermissionDecisionsBeforeStmt, err = db.PrepareContext(ctx, deletePermissionDecisionsBefore); err != nil {
+		return nil, fmt.Errorf("error preparing query DeletePermissionDecisionsBefore: %w", err)
+	}
 	if q.deleteSessionStmt, err = db.PrepareContext(ctx, deleteSession); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSession: %w", err)
 	}
@@ -78,11 +81,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getSessionByIDStmt, err = db.PrepareContext(ctx, getSessionByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSessionByID: %w", err)
 	}
+	if q.insertPermissionDecisionStmt, err = db.PrepareContext(ctx, insertPermissionDecision); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertPermissionDecision: %w", err)
+	}
 	if q.listAllSessionsStmt, err = db.PrepareContext(ctx, listAllSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAllSessions: %w", err)
 	}
 	if q.listMessagesBySessionStmt, err = db.PrepareContext(ctx, listMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListMessagesBySession: %w", err)
+	}
+	if q.listPermissionDecisionsSinceStmt, err = db.PrepareContext(ctx, listPermissionDecisionsSince); err != nil {
+		return nil, fmt.Errorf("error preparing query ListPermissionDecisionsSince: %w", err)
 	}
 	if q.listPinnedSessionsStmt, err = db.PrepareContext(ctx, listPinnedSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListPinnedSessions: %w", err)
@@ -156,6 +165,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteMessageStmt: %w", cerr)
 		}
 	}
+	if q.deletePermissionDecisionsBeforeStmt != nil {
+		if cerr := q.deletePermissionDecisionsBeforeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deletePermissionDecisionsBeforeStmt: %w", cerr)
+		}
+	}
 	if q.deleteSessionStmt != nil {
 		if cerr := q.deleteSessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteSessionStmt: %w", cerr)
@@ -221,6 +235,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getSessionByIDStmt: %w", cerr)
 		}
 	}
+	if q.insertPermissionDecisionStmt != nil {
+		if cerr := q.insertPermissionDecisionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertPermissionDecisionStmt: %w", cerr)
+		}
+	}
 	if q.listAllSessionsStmt != nil {
 		if cerr := q.listAllSessionsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listAllSessionsStmt: %w", cerr)
@@ -229,6 +248,11 @@ func (q *Queries) Close() error {
 	if q.listMessagesBySessionStmt != nil {
 		if cerr := q.listMessagesBySessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listMessagesBySessionStmt: %w", cerr)
+		}
+	}
+	if q.listPermissionDecisionsSinceStmt != nil {
+		if cerr := q.listPermissionDecisionsSinceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listPermissionDecisionsSinceStmt: %w", cerr)
 		}
 	}
 	if q.listPinnedSessionsStmt != nil {
@@ -338,81 +362,87 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                               DBTX
-	tx                               *sql.Tx
-	createMessageStmt                *sql.Stmt
-	createSessionStmt                *sql.Stmt
-	deleteMCPOAuthClientStmt         *sql.Stmt
-	deleteMCPOAuthTokenStmt          *sql.Stmt
-	deleteMessageStmt                *sql.Stmt
-	deleteSessionStmt                *sql.Stmt
-	deleteSessionMessagesStmt        *sql.Stmt
-	getAllSessionMessagesStmt        *sql.Stmt
-	getBranchPathStmt                *sql.Stmt
-	getBranchPathTailStmt            *sql.Stmt
-	getFileReadStmt                  *sql.Stmt
-	getLastGlobalSessionStmt         *sql.Stmt
-	getLastSessionByWorkingDirStmt   *sql.Stmt
-	getMCPOAuthClientStmt            *sql.Stmt
-	getMCPOAuthTokenStmt             *sql.Stmt
-	getMessageStmt                   *sql.Stmt
-	getMessageChildrenStmt           *sql.Stmt
-	getSessionByIDStmt               *sql.Stmt
-	listAllSessionsStmt              *sql.Stmt
-	listMessagesBySessionStmt        *sql.Stmt
-	listPinnedSessionsStmt           *sql.Stmt
-	listSessionReadFilesStmt         *sql.Stmt
-	listSessionsByWorkingDirStmt     *sql.Stmt
-	listUserMessagesBySessionStmt    *sql.Stmt
-	listUserMessagesByWorkingDirStmt *sql.Stmt
-	recordFileReadStmt               *sql.Stmt
-	renameSessionStmt                *sql.Stmt
-	setSessionPinStmt                *sql.Stmt
-	updateMessageStmt                *sql.Stmt
-	updateSessionStmt                *sql.Stmt
-	updateSessionLeafStmt            *sql.Stmt
-	updateSessionTitleAndUsageStmt   *sql.Stmt
-	upsertMCPOAuthClientStmt         *sql.Stmt
-	upsertMCPOAuthTokenStmt          *sql.Stmt
+	db                                  DBTX
+	tx                                  *sql.Tx
+	createMessageStmt                   *sql.Stmt
+	createSessionStmt                   *sql.Stmt
+	deleteMCPOAuthClientStmt            *sql.Stmt
+	deleteMCPOAuthTokenStmt             *sql.Stmt
+	deleteMessageStmt                   *sql.Stmt
+	deletePermissionDecisionsBeforeStmt *sql.Stmt
+	deleteSessionStmt                   *sql.Stmt
+	deleteSessionMessagesStmt           *sql.Stmt
+	getAllSessionMessagesStmt           *sql.Stmt
+	getBranchPathStmt                   *sql.Stmt
+	getBranchPathTailStmt               *sql.Stmt
+	getFileReadStmt                     *sql.Stmt
+	getLastGlobalSessionStmt            *sql.Stmt
+	getLastSessionByWorkingDirStmt      *sql.Stmt
+	getMCPOAuthClientStmt               *sql.Stmt
+	getMCPOAuthTokenStmt                *sql.Stmt
+	getMessageStmt                      *sql.Stmt
+	getMessageChildrenStmt              *sql.Stmt
+	getSessionByIDStmt                  *sql.Stmt
+	insertPermissionDecisionStmt        *sql.Stmt
+	listAllSessionsStmt                 *sql.Stmt
+	listMessagesBySessionStmt           *sql.Stmt
+	listPermissionDecisionsSinceStmt    *sql.Stmt
+	listPinnedSessionsStmt              *sql.Stmt
+	listSessionReadFilesStmt            *sql.Stmt
+	listSessionsByWorkingDirStmt        *sql.Stmt
+	listUserMessagesBySessionStmt       *sql.Stmt
+	listUserMessagesByWorkingDirStmt    *sql.Stmt
+	recordFileReadStmt                  *sql.Stmt
+	renameSessionStmt                   *sql.Stmt
+	setSessionPinStmt                   *sql.Stmt
+	updateMessageStmt                   *sql.Stmt
+	updateSessionStmt                   *sql.Stmt
+	updateSessionLeafStmt               *sql.Stmt
+	updateSessionTitleAndUsageStmt      *sql.Stmt
+	upsertMCPOAuthClientStmt            *sql.Stmt
+	upsertMCPOAuthTokenStmt             *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                               tx,
-		tx:                               tx,
-		createMessageStmt:                q.createMessageStmt,
-		createSessionStmt:                q.createSessionStmt,
-		deleteMCPOAuthClientStmt:         q.deleteMCPOAuthClientStmt,
-		deleteMCPOAuthTokenStmt:          q.deleteMCPOAuthTokenStmt,
-		deleteMessageStmt:                q.deleteMessageStmt,
-		deleteSessionStmt:                q.deleteSessionStmt,
-		deleteSessionMessagesStmt:        q.deleteSessionMessagesStmt,
-		getAllSessionMessagesStmt:        q.getAllSessionMessagesStmt,
-		getBranchPathStmt:                q.getBranchPathStmt,
-		getBranchPathTailStmt:            q.getBranchPathTailStmt,
-		getFileReadStmt:                  q.getFileReadStmt,
-		getLastGlobalSessionStmt:         q.getLastGlobalSessionStmt,
-		getLastSessionByWorkingDirStmt:   q.getLastSessionByWorkingDirStmt,
-		getMCPOAuthClientStmt:            q.getMCPOAuthClientStmt,
-		getMCPOAuthTokenStmt:             q.getMCPOAuthTokenStmt,
-		getMessageStmt:                   q.getMessageStmt,
-		getMessageChildrenStmt:           q.getMessageChildrenStmt,
-		getSessionByIDStmt:               q.getSessionByIDStmt,
-		listAllSessionsStmt:              q.listAllSessionsStmt,
-		listMessagesBySessionStmt:        q.listMessagesBySessionStmt,
-		listPinnedSessionsStmt:           q.listPinnedSessionsStmt,
-		listSessionReadFilesStmt:         q.listSessionReadFilesStmt,
-		listSessionsByWorkingDirStmt:     q.listSessionsByWorkingDirStmt,
-		listUserMessagesBySessionStmt:    q.listUserMessagesBySessionStmt,
-		listUserMessagesByWorkingDirStmt: q.listUserMessagesByWorkingDirStmt,
-		recordFileReadStmt:               q.recordFileReadStmt,
-		renameSessionStmt:                q.renameSessionStmt,
-		setSessionPinStmt:                q.setSessionPinStmt,
-		updateMessageStmt:                q.updateMessageStmt,
-		updateSessionStmt:                q.updateSessionStmt,
-		updateSessionLeafStmt:            q.updateSessionLeafStmt,
-		updateSessionTitleAndUsageStmt:   q.updateSessionTitleAndUsageStmt,
-		upsertMCPOAuthClientStmt:         q.upsertMCPOAuthClientStmt,
-		upsertMCPOAuthTokenStmt:          q.upsertMCPOAuthTokenStmt,
+		db:                                  tx,
+		tx:                                  tx,
+		createMessageStmt:                   q.createMessageStmt,
+		createSessionStmt:                   q.createSessionStmt,
+		deleteMCPOAuthClientStmt:            q.deleteMCPOAuthClientStmt,
+		deleteMCPOAuthTokenStmt:             q.deleteMCPOAuthTokenStmt,
+		deleteMessageStmt:                   q.deleteMessageStmt,
+		deletePermissionDecisionsBeforeStmt: q.deletePermissionDecisionsBeforeStmt,
+		deleteSessionStmt:                   q.deleteSessionStmt,
+		deleteSessionMessagesStmt:           q.deleteSessionMessagesStmt,
+		getAllSessionMessagesStmt:           q.getAllSessionMessagesStmt,
+		getBranchPathStmt:                   q.getBranchPathStmt,
+		getBranchPathTailStmt:               q.getBranchPathTailStmt,
+		getFileReadStmt:                     q.getFileReadStmt,
+		getLastGlobalSessionStmt:            q.getLastGlobalSessionStmt,
+		getLastSessionByWorkingDirStmt:      q.getLastSessionByWorkingDirStmt,
+		getMCPOAuthClientStmt:               q.getMCPOAuthClientStmt,
+		getMCPOAuthTokenStmt:                q.getMCPOAuthTokenStmt,
+		getMessageStmt:                      q.getMessageStmt,
+		getMessageChildrenStmt:              q.getMessageChildrenStmt,
+		getSessionByIDStmt:                  q.getSessionByIDStmt,
+		insertPermissionDecisionStmt:        q.insertPermissionDecisionStmt,
+		listAllSessionsStmt:                 q.listAllSessionsStmt,
+		listMessagesBySessionStmt:           q.listMessagesBySessionStmt,
+		listPermissionDecisionsSinceStmt:    q.listPermissionDecisionsSinceStmt,
+		listPinnedSessionsStmt:              q.listPinnedSessionsStmt,
+		listSessionReadFilesStmt:            q.listSessionReadFilesStmt,
+		listSessionsByWorkingDirStmt:        q.listSessionsByWorkingDirStmt,
+		listUserMessagesBySessionStmt:       q.listUserMessagesBySessionStmt,
+		listUserMessagesByWorkingDirStmt:    q.listUserMessagesByWorkingDirStmt,
+		recordFileReadStmt:                  q.recordFileReadStmt,
+		renameSessionStmt:                   q.renameSessionStmt,
+		setSessionPinStmt:                   q.setSessionPinStmt,
+		updateMessageStmt:                   q.updateMessageStmt,
+		updateSessionStmt:                   q.updateSessionStmt,
+		updateSessionLeafStmt:               q.updateSessionLeafStmt,
+		updateSessionTitleAndUsageStmt:      q.updateSessionTitleAndUsageStmt,
+		upsertMCPOAuthClientStmt:            q.upsertMCPOAuthClientStmt,
+		upsertMCPOAuthTokenStmt:             q.upsertMCPOAuthTokenStmt,
 	}
 }

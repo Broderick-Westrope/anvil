@@ -50,6 +50,22 @@ type MigrationsCompleted struct {
 	MigratedAt int64  `json:"migrated_at"`
 }
 
+type PermissionDecision struct {
+	ID            string         `json:"id"`
+	SessionID     string         `json:"session_id"`
+	ToolCallID    string         `json:"tool_call_id"`
+	ToolName      string         `json:"tool_name"`
+	Action        string         `json:"action"`
+	Input         string         `json:"input"`
+	InputSegments string         `json:"input_segments"`
+	WorkingDir    string         `json:"working_dir"`
+	DecidedBy     string         `json:"decided_by"`
+	Verdict       string         `json:"verdict"`
+	MatchedRule   string         `json:"matched_rule"`
+	Assessment    sql.NullString `json:"assessment"`
+	CreatedAt     int64          `json:"created_at"`
+}
+
 type ReadFile struct {
 	SessionID   string `json:"session_id"`
 	Path        string `json:"path"`

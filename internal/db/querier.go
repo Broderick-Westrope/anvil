@@ -15,6 +15,7 @@ type Querier interface {
 	DeleteMCPOAuthClient(ctx context.Context, serverName string) error
 	DeleteMCPOAuthToken(ctx context.Context, serverName string) error
 	DeleteMessage(ctx context.Context, id string) error
+	DeletePermissionDecisionsBefore(ctx context.Context, createdAt int64) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
@@ -28,8 +29,10 @@ type Querier interface {
 	GetMessage(ctx context.Context, id string) (Message, error)
 	GetMessageChildren(ctx context.Context, parentID sql.NullString) ([]Message, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
+	InsertPermissionDecision(ctx context.Context, arg InsertPermissionDecisionParams) error
 	ListAllSessions(ctx context.Context) ([]Session, error)
 	ListMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
+	ListPermissionDecisionsSince(ctx context.Context, createdAt int64) ([]PermissionDecision, error)
 	ListPinnedSessions(ctx context.Context) ([]Session, error)
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
