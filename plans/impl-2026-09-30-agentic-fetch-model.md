@@ -1,6 +1,6 @@
 # Agentic Fetch Model Override Implementation Plan
 
-> **Status:** DRAFT
+> **Status:** COMPLETED (implemented on `feat/agentic-fetch-model`; not pushed or merged)
 > **Branch:** `feat/agentic-fetch-model` (worktree), base commit `b50540498`.
 
 ## Specification
