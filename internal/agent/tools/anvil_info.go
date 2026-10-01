@@ -106,11 +106,10 @@ func writeModels(b *strings.Builder, cfg *config.ConfigStore) {
 		}
 		fmt.Fprintf(b, "%s = %s (%s)\n", typ, m.Model, m.Provider)
 	}
-	if _, ok := c.Models[config.SelectedModelTypeSmall]; ok {
+	if small, ok := c.Models[config.SelectedModelTypeSmall]; ok {
 		if m, err := config.ResolveAgenticFetchModel(c); err == nil {
 			fmt.Fprintf(b, "agentic_fetch = %s (%s)\n", m.Model, m.Provider)
 		} else {
-			small := c.Models[config.SelectedModelTypeSmall]
 			fmt.Fprintf(b, "agentic_fetch = %s (%s) [invalid override %q, using small]\n", small.Model, small.Provider, c.Tools.AgenticFetch.Model)
 		}
 	}
