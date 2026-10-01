@@ -29,6 +29,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/permission/decisionlog"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
@@ -76,6 +77,12 @@ type App struct {
 // New initializes a new application instance.
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
+	recorder := decisionlog.New(q)
+	go func() {
+		if err := decisionlog.Prune(ctx, q, time.Now()); err != nil {
+			slog.Warn("Failed to prune permission decisions", "error", err)
+		}
+	}()
 	sessions := session.NewService(q, conn)
 	messages := message.NewService(q, message.WithConn(conn))
 	cfg := store.Config()
@@ -86,9 +93,10 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	}
 
 	app := &App{
-		Sessions:    sessions,
-		Messages:    messages,
-		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store),
+		Sessions: sessions,
+		Messages: messages,
+		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store,
+			permission.WithDecisionRecorder(recorder)),
 		FileTracker: filetracker.NewService(q),
 		Queries:     q,
 		LSPManager:  lsp.NewManager(store),
@@ -122,7 +130,12 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	// closes the underlying *sql.DB when the last reference is released.
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
-		func(context.Context) error { return db.ReleaseGlobal() },
+		func(ctx context.Context) error {
+			if err := recorder.Close(ctx); err != nil {
+				slog.Warn("Permission decision log did not flush before shutdown", "error", err)
+			}
+			return db.ReleaseGlobal()
+		},
 		func(ctx context.Context) error { return mcp.Close(ctx) },
 	)
 
@@ -132,6 +145,9 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		return app, nil
 	}
 	if err := app.InitOrchestratorAgent(ctx); err != nil {
+		if closeErr := recorder.Close(ctx); closeErr != nil {
+			slog.Warn("Failed to close permission decision log after initialization error", "error", closeErr)
+		}
 		return nil, fmt.Errorf("failed to initialize orchestrator agent: %w", err)
 	}
 
