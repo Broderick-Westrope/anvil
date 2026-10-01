@@ -9,6 +9,7 @@ import (
 
 // EvaluateResult holds the outcome of rule evaluation.
 type EvaluateResult struct {
+	FromSession bool
 	Action      config.PermissionAction
 	MatchedRule string // The pattern that produced this action (for logging).
 	IsDefault   bool   // True if no rule matched, using default "ask".
@@ -51,6 +52,7 @@ func Evaluate(
 		return EvaluateResult{
 			Action:      sessionResult.action,
 			MatchedRule: sessionResult.pattern,
+			FromSession: true,
 		}
 	}
 
@@ -71,6 +73,7 @@ func Evaluate(
 	return EvaluateResult{
 		Action:      sessionResult.action,
 		MatchedRule: sessionResult.pattern,
+		FromSession: true,
 	}
 }
 

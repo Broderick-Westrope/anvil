@@ -140,6 +140,7 @@ type permissionService struct {
 	sessionRules          map[string][]config.PermissionRule
 	sessionRulesMu        sync.RWMutex
 	configStore           *config.ConfigStore
+	recorder              DecisionRecorder
 
 	// requestMu makes sure we only process one request at a time.
 	requestMu       sync.Mutex
@@ -214,6 +215,7 @@ func (s *permissionService) Deny(permission PermissionRequest, reason string) {
 func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRequest) (RequestResult, error) {
 	// YoloFull bypasses all checks.
 	if config.YoloLevel(s.yoloLevel.Load()) == config.YoloFull {
+		s.record(opts, DecisionSourceYolo, VerdictAllow, "", nil)
 		return RequestResult{Granted: true}, nil
 	}
 
@@ -222,11 +224,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// prompt entirely. We still publish a granted notification so the UI
 	// and audit subscribers see the outcome.
 	if hookApproved(ctx, opts.ToolCallID) {
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    true,
-		})
-		return RequestResult{Granted: true}, nil
+		return s.finish(opts, DecisionSourceHook, VerdictAllow, "", nil, ""), nil
 	}
 
 	s.requestMu.Lock()
@@ -242,22 +240,18 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	s.autoApproveSessionsMu.RUnlock()
 
 	if autoApprove {
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    true,
-		})
-		return RequestResult{Granted: true}, nil
+		return s.finish(opts, DecisionSourceAutoSession, VerdictAllow, "", nil, ""), nil
 	}
 
 	// Evaluate rules. Clone the slices so a concurrent GrantForever or
 	// GrantSession upsert (which mutates elements in place) cannot race
 	// with evaluation after the locks are released.
 	s.configRulesMu.RLock()
-	configRules := slices.Clone(s.configRules)
+	configRules := cloneRules(s.configRules)
 	s.configRulesMu.RUnlock()
 
 	s.sessionRulesMu.RLock()
-	sessionRules := slices.Clone(s.sessionRules[opts.SessionID])
+	sessionRules := cloneRules(s.sessionRules[opts.SessionID])
 	s.sessionRulesMu.RUnlock()
 
 	var result EvaluateResult
@@ -277,27 +271,22 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 
 	// Apply yolo level: standard promotes ask → allow.
 	action := result.Action
+	source := DecisionSourceRule
+	if result.FromSession {
+		source = DecisionSourceSessionRule
+	}
 	if config.YoloLevel(s.yoloLevel.Load()) == config.YoloStandard && action == config.PermissionAsk {
 		action = config.PermissionAllow
+		source = DecisionSourceYolo
 	}
 
 	switch action {
 	case config.PermissionAllow:
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    true,
-		})
-		return RequestResult{Granted: true}, nil
+		return s.finish(opts, source, VerdictAllow, result.MatchedRule, nil, ""), nil
 
 	case config.PermissionDeny:
 		reason := fmt.Sprintf("denied by rule %q", result.MatchedRule)
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    false,
-			Denied:     true,
-			Reason:     reason,
-		})
-		return RequestResult{Granted: false, Reason: reason}, nil
+		return s.finish(opts, DecisionSourceRule, VerdictDeny, result.MatchedRule, nil, reason), nil
 	}
 
 	// Action is "ask" — prompt the user.
@@ -333,11 +322,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		Action:    perm.Action,
 		Path:      perm.Path,
 	}); ok {
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    true,
-		})
-		return RequestResult{Granted: true}, nil
+		return s.finish(opts, DecisionSourceSessionKey, VerdictAllow, "", nil, ""), nil
 	}
 
 	s.activeRequestMu.Lock()
@@ -353,8 +338,19 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 
 	select {
 	case <-ctx.Done():
+		s.activeRequestMu.Lock()
+		if s.activeRequest != nil && s.activeRequest.ID == perm.ID {
+			s.activeRequest = nil
+		}
+		s.activeRequestMu.Unlock()
+		s.record(opts, DecisionSourceHuman, VerdictCancelled, "", nil)
 		return RequestResult{}, ctx.Err()
 	case resp := <-respCh:
+		verdict := VerdictDeny
+		if resp.Granted {
+			verdict = VerdictAllow
+		}
+		s.record(opts, DecisionSourceHuman, verdict, "", nil)
 		return RequestResult{Granted: resp.Granted, Reason: resp.Reason}, nil
 	}
 }
@@ -429,9 +425,17 @@ func (s *permissionService) GrantForever(toolPattern string, inputPattern string
 	return nil
 }
 
+func cloneRules(rules []config.PermissionRule) []config.PermissionRule {
+	cloned := slices.Clone(rules)
+	for i := range cloned {
+		cloned[i].SubRules = slices.Clone(cloned[i].SubRules)
+	}
+	return cloned
+}
+
 // NewPermissionService creates a new permission service with the given
 // config rules.
-func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configRules []config.PermissionRule, configStore *config.ConfigStore) Service {
+func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configRules []config.PermissionRule, configStore *config.ConfigStore, opts ...Option) Service {
 	svc := &permissionService{
 		Broker:              pubsub.NewBroker[PermissionRequest](),
 		notificationBroker:  pubsub.NewBroker[PermissionNotification](),
@@ -444,5 +448,8 @@ func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configR
 		configStore:         configStore,
 	}
 	svc.yoloLevel.Store(int32(yoloLevel))
+	for _, opt := range opts {
+		opt(svc)
+	}
 	return svc
 }
