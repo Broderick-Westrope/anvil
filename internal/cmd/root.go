@@ -50,6 +50,7 @@ func init() {
 		schemaCmd,
 		sessionCmd,
 		mcpCmd,
+		permissionsCmd,
 	)
 }
 

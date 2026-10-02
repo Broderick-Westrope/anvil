@@ -87,6 +87,13 @@ func (s *ConfigStore) SetPermissionRule(scope Scope, toolPattern string, inputPa
 	return nil
 }
 
+// PermissionConfigPath returns the scope's permission rule destination.
+func (s *ConfigStore) PermissionConfigPath(scope Scope) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.permissionConfigPath(scope)
+}
+
 // permissionConfigPath returns the file path permission rules are
 // written to for the given scope. ScopeGlobal prefers the
 // user-maintained config file; it falls back to the data file when the
