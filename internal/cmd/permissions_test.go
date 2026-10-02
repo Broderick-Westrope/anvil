@@ -11,13 +11,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/permission/decisionlog"
 	"github.com/Broderick-Westrope/anvil/internal/permission/triage"
+	"github.com/stretchr/testify/require"
 )
 
 func permissionsTestDB(t *testing.T) *db.Queries {

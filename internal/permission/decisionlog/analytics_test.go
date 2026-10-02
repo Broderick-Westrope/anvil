@@ -7,10 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadRecords(t *testing.T) {

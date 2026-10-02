@@ -11,6 +11,9 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/permission/segment"
 )
 
+// safeFamilies maps each Tier A pattern to why it is safe. Invariant: no
+// argument a pattern accepts can select another command, write a file, or
+// reach an arbitrary host; TestSafeFamilies lists inputs each must reject.
 var safeFamilies = map[string]string{
 	"git status *":    "Reports workspace/index status; arguments cannot select another command or output file",
 	"git rev-parse *": "Reports revisions, paths, or parsed arguments without executing them or writing files",
@@ -41,8 +44,11 @@ var needsSubcommand = map[string]bool{
 }
 
 // neverPropose lists commands whose arguments can destroy data, execute
-// arbitrary code, escalate privileges, or reach remote systems. No allow
-// candidate is ever produced for them; deny candidates are unaffected.
+// arbitrary code, escalate privileges, or reach remote systems. Invariant:
+// no allow candidate is produced for an input whose basename-normalised
+// first one to maxNeverProposeTokens tokens equal an entry, nor for a
+// pattern that stops at a proper prefix of one; deny candidates are
+// unaffected.
 var neverPropose = map[string]bool{
 	// Destructive file operations.
 	"rm": true, "rmdir": true, "dd": true, "mv": true, "cp": true,

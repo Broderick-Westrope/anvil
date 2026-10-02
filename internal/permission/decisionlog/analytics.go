@@ -15,6 +15,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/permission/triage"
 )
 
+// LoadRecords returns triage records for decisions logged since the given time.
 func LoadRecords(ctx context.Context, q db.Querier, since time.Time) ([]triage.Record, error) {
 	rows, err := q.ListPermissionDecisionsSince(ctx, since.Unix())
 	if err != nil {
@@ -51,19 +52,23 @@ func parseAssessment(row db.PermissionDecision) *permission.AssessmentRecord {
 	return a
 }
 
+// VerdictMatrix counts final verdicts keyed by assessor outcome then verdict.
 type VerdictMatrix map[string]map[string]int
 
+// Comparisons pairs assessor outcomes with human verdicts.
 type Comparisons struct {
 	Samples int           `json:"samples"`
 	Matrix  VerdictMatrix `json:"matrix"`
 }
 
+// Enforcement summarises decisions made while the assessor was enforcing.
 type Enforcement struct {
 	Samples  int            `json:"samples"`
 	Assessor map[string]int `json:"assessor"`
 	Human    Comparisons    `json:"human"`
 }
 
+// UsageStats aggregates token usage and latency for valid assessments.
 type UsageStats struct {
 	Samples          int     `json:"samples"`
 	InputTokens      int64   `json:"input_tokens"`
@@ -74,6 +79,7 @@ type UsageStats struct {
 	P95LatencyMS     int64   `json:"p95_latency_ms"`
 }
 
+// AssessmentStats aggregates decisions for one schema and battery version.
 type AssessmentStats struct {
 	SchemaVersion  int            `json:"schema_version"`
 	BatteryVersion string         `json:"battery_version"`
@@ -86,6 +92,7 @@ type AssessmentStats struct {
 	Usage          UsageStats     `json:"usage"`
 }
 
+// Stats summarises permission-request volume and assessor performance.
 type Stats struct {
 	Total              int               `json:"total"`
 	ByDecidedBy        map[string]int    `json:"by_decided_by"`
@@ -102,6 +109,7 @@ func addComparison(c *Comparisons, outcome, verdict string) {
 	c.Matrix[outcome][verdict]++
 }
 
+// ComputeStats aggregates decisions overall and per assessment version.
 func ComputeStats(rows []db.PermissionDecision) Stats {
 	stats := Stats{Total: len(rows), ByDecidedBy: map[string]int{}, Groups: []AssessmentStats{}}
 	type version struct {

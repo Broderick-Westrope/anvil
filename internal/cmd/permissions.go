@@ -17,16 +17,15 @@ import (
 	"unicode"
 
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/colorprofile"
-	"github.com/charmbracelet/x/exp/charmtone"
-	"github.com/charmbracelet/x/term"
-	"github.com/spf13/cobra"
-
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/permission/decisionlog"
 	"github.com/Broderick-Westrope/anvil/internal/permission/triage"
+	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/exp/charmtone"
+	"github.com/charmbracelet/x/term"
+	"github.com/spf13/cobra"
 )
 
 var permissionsCmd = newPermissionsCmd()
@@ -48,23 +47,40 @@ type statsOpts struct {
 }
 
 func newPermissionsCmd() *cobra.Command {
-	root := &cobra.Command{Use: "permissions", Aliases: []string{"perms"}, Short: "Analyze permission decisions and propose explicit rules"}
+	root := &cobra.Command{
+		Use:     "permissions",
+		Aliases: []string{"perms"},
+		Short:   "Analyze permission decisions and propose explicit rules",
+		Long:    "Analyze logged permission decisions. Use triage to propose narrow allow and deny rules from repeated requests, and stats to report request volume and assessor accuracy.",
+	}
+	root.AddCommand(newPermissionsTriageCmd())
+	root.AddCommand(newPermissionsStatsCmd())
+	return root
+}
+
+func newPermissionsTriageCmd() *cobra.Command {
 	var opts triageOpts
-	triageCmd := &cobra.Command{Use: "triage", Short: "Propose narrow rules from repeated permission decisions", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		if err := validateTriageOpts(opts); err != nil {
-			return err
-		}
-		q, store, cleanup, err := permissionsSetup(cmd)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		in := cmd.InOrStdin()
-		if f, ok := in.(*os.File); ok {
-			opts.Interactive = term.IsTerminal(f.Fd())
-		}
-		return runTriage(cmd.Context(), q, store, opts, in, colorprofile.NewWriter(cmd.OutOrStdout(), os.Environ()))
-	}}
+	triageCmd := &cobra.Command{
+		Use:   "triage",
+		Short: "Propose narrow rules from repeated permission decisions",
+		Long:  "Propose narrow rules from repeated permission decisions. Tier A rules come from curated families that are safe for any argument; Tier B rules are uncurated and need review of every argument they permit. --yes applies only Tier A allow rules, never Tier B or deny rules. --scope chooses global or workspace config and evidence. --limit caps displayed rows per section but never what --yes applies. --force writes despite simulation conflicts. --json prints candidates and never writes.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateTriageOpts(opts); err != nil {
+				return err
+			}
+			q, store, cleanup, err := permissionsSetup(cmd)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			in := cmd.InOrStdin()
+			if f, ok := in.(*os.File); ok {
+				opts.Interactive = term.IsTerminal(f.Fd())
+			}
+			return runTriage(cmd.Context(), q, store, opts, in, colorprofile.NewWriter(cmd.OutOrStdout(), os.Environ()))
+		},
+	}
 	triageCmd.Flags().IntVar(&opts.Days, "days", 7, "Decision history window in days")
 	triageCmd.Flags().IntVar(&opts.MinCount, "min-count", 5, "Minimum repeated decisions")
 	triageCmd.Flags().StringVar(&opts.Scope, "scope", "global", "Rule scope: global or workspace")
@@ -72,22 +88,31 @@ func newPermissionsCmd() *cobra.Command {
 	triageCmd.Flags().BoolVar(&opts.Yes, "yes", false, "Apply only Tier A allow candidates without prompting")
 	triageCmd.Flags().IntVar(&opts.Limit, "limit", 20, "Maximum rows per section in text output (0 for all)")
 	triageCmd.Flags().BoolVar(&opts.Force, "force", false, "Write despite reported simulation conflicts")
-	var stats statsOpts
-	statsCmd := &cobra.Command{Use: "stats", Short: "Report permission-request volume and versioned assessor statistics", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		if stats.Days <= 0 {
-			return errors.New("days must be positive")
-		}
-		q, _, cleanup, err := permissionsSetup(cmd)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		return runStats(cmd.Context(), q, stats, colorprofile.NewWriter(cmd.OutOrStdout(), os.Environ()))
-	}}
-	statsCmd.Flags().IntVar(&stats.Days, "days", 30, "Decision history window in days")
-	statsCmd.Flags().BoolVar(&stats.JSON, "json", false, "Print statistics as JSON")
-	root.AddCommand(triageCmd, statsCmd)
-	return root
+	return triageCmd
+}
+
+func newPermissionsStatsCmd() *cobra.Command {
+	var opts statsOpts
+	statsCmd := &cobra.Command{
+		Use:   "stats",
+		Short: "Report permission-request volume and versioned assessor statistics",
+		Long:  "Report permission-request volume by decision source, then per assessor schema and battery version: shadow comparisons against human verdicts, enforce outcomes, errors, skips, and token and latency usage. Use --json for machine-readable output.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if opts.Days <= 0 {
+				return errors.New("days must be positive")
+			}
+			q, _, cleanup, err := permissionsSetup(cmd)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			return runStats(cmd.Context(), q, opts, colorprofile.NewWriter(cmd.OutOrStdout(), os.Environ()))
+		},
+	}
+	statsCmd.Flags().IntVar(&opts.Days, "days", 30, "Decision history window in days")
+	statsCmd.Flags().BoolVar(&opts.JSON, "json", false, "Print statistics as JSON")
+	return statsCmd
 }
 
 func permissionsSetup(cmd *cobra.Command) (db.Querier, *config.ConfigStore, func(), error) {

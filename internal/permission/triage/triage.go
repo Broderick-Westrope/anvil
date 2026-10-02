@@ -15,6 +15,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/permission/segment"
 )
 
+// Record is one logged permission decision used as triage evidence.
 type Record struct {
 	SessionID     string
 	WorkingDir    string
@@ -26,20 +27,25 @@ type Record struct {
 	MaxHazard     *float64
 }
 
+// Kind is the action a candidate rule would take.
 type Kind string
 
+// Candidate rule kinds.
 const (
 	KindAllow Kind = "allow"
 	KindDeny  Kind = "deny"
 )
 
+// Tier ranks how much review a candidate needs before it is applied.
 type Tier string
 
+// Candidate tiers: A for curated safe families, B for uncurated patterns.
 const (
 	TierA Tier = "A"
 	TierB Tier = "B"
 )
 
+// Candidate is a proposed permission rule with its supporting evidence.
 type Candidate struct {
 	Kind         Kind
 	Tier         Tier
@@ -52,6 +58,7 @@ type Candidate struct {
 	Warning      string
 }
 
+// Options tunes candidate thresholds and scope for Analyze.
 type Options struct {
 	MinCount       int
 	MaxHazardAllow float64
@@ -359,6 +366,7 @@ func recordInputs(r Record) []string {
 	return segment.Split(r.Input)
 }
 
+// Conflict describes evidence that contradicts a proposed rule set.
 type Conflict struct {
 	ToolName string
 	Input    string
