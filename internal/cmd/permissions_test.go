@@ -30,7 +30,7 @@ func permissionsTestDB(t *testing.T) *db.Queries {
 
 func seedPermissions(t *testing.T, q db.Querier) {
 	t.Helper()
-	for _, input := range []string{"git status --short", "tee out.txt", "gh pr merge 42"} {
+	for _, input := range []string{"git status --short", "wc -l out.txt", "gh pr merge 42"} {
 		verdict := "allow"
 		if strings.Contains(input, "merge") {
 			verdict = "deny"
@@ -80,7 +80,7 @@ func TestPermissionsTriage(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal(data, &cfg))
 			require.Equal(t, config.PermissionAllow, permission.Evaluate("bash", "git status", cfg.Permissions.Rules, nil).Action)
-			require.Equal(t, config.PermissionAsk, permission.Evaluate("bash", "tee out.txt", cfg.Permissions.Rules, nil).Action)
+			require.Equal(t, config.PermissionAsk, permission.Evaluate("bash", "wc -l out.txt", cfg.Permissions.Rules, nil).Action)
 			require.Equal(t, config.PermissionAsk, permission.Evaluate("bash", "gh pr merge 42", cfg.Permissions.Rules, nil).Action)
 			require.Contains(t, out.String(), `OK bash: "git status *" -> allow`)
 			require.Contains(t, out.String(), path)

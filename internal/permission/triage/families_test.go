@@ -83,3 +83,52 @@ func TestDroppedFamilies(t *testing.T) {
 		})
 	}
 }
+
+func TestNeverPropose(t *testing.T) {
+	t.Parallel()
+	inputs := []string{
+		"rm -rf build", "/bin/rm -rf x", "/usr/bin/rm x", "rmdir out", "dd if=/dev/zero of=x",
+		"mv a b", "cp a b", "chmod 777 x", "chown me x", "chgrp g x", "ln -s a b", "truncate -s 0 x",
+		"shred x", "sudo ls", "doas ls", "su root", "env FOO=1 ls", "xargs rm", "eval foo",
+		"exec ls", "source env.sh", ". env.sh", "sh script.sh", "bash script.sh", "zsh -c x",
+		"fish x", "dash x", "python x.py", "python3 x.py", "node x.js", "deno run x", "bun x",
+		"ruby x", "perl x", "php x", "lua x", "osascript x", "npx jest", "bunx jest", "pnpx jest",
+		"curl https://x", "wget https://x", "ssh host", "scp a host:b", "sftp host", "rsync a b",
+		"nc host 1", "ncat host 1", "socat a b", "telnet host", "kill 1", "pkill x", "killall x",
+		"crontab -e", "launchctl load x", "systemctl stop x", "open x", "make all", "tee out.txt",
+		"mkfs x", "mount x", "umount x", "base64 -d x", "awk x", "gawk x", "find . -name x",
+		"gcloud compute list", "aws s3 ls", "/opt/homebrew/bin/aws s3 ls",
+		"git push origin main", "git reset --hard", "git clean -fd", "git checkout main",
+		"git restore x", "git rebase main", "git stash pop", "git filter-branch x",
+		"git filter-repo x", "git config x y", "git remote add x", "git update-ref x",
+		"git reflog expire", "git gc", "git worktree add x", "/usr/bin/git push",
+		"npm run build", "npm exec jest", "npm install x", "npm i x", "npm ci", "pnpm run build",
+		"pnpm exec jest", "pnpm dlx x", "pnpm install", "pnpm add x", "yarn run x", "yarn dlx x",
+		"yarn add x", "uv run x", "uv pip install x", "pip install x", "pip3 install x",
+		"pip3 -q install x", "go run .", "go generate ./...", "go install x", "go get x",
+		"cargo run", "cargo install x", "docker run x", "docker exec x", "docker rm x",
+		"docker rmi x", "docker system prune", "kubectl exec x", "kubectl delete x",
+		"kubectl apply -f x", "kubectl patch x", "kubectl edit x", "kubectl scale x",
+		"kubectl rollout restart x", "terraform apply", "terraform destroy", "terraform import x",
+		"gh api repos/x", "gh repo delete x", "gh release create x", "gh secret set x",
+		"gh auth token", "brew install x", "brew uninstall x",
+	}
+	for _, input := range inputs {
+		pattern, _ := allowPattern(input)
+		require.Empty(t, pattern, input)
+	}
+	for input, want := range map[string]string{
+		"gh pr view 1":       "gh pr view *",
+		"sed -n 1p x":        "sed *",
+		"git status --short": "git status *",
+		"go test ./...":      "go test *",
+		"ls -la":             "ls *",
+	} {
+		pattern, _ := allowPattern(input)
+		require.Equal(t, want, pattern, input)
+	}
+	a, d := Analyze(repeated("git push origin main", "deny"), nil, Options{})
+	require.Empty(t, a)
+	require.Len(t, d, 1)
+	require.Equal(t, "git push origin *", d[0].InputPattern)
+}

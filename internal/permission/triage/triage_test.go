@@ -29,7 +29,8 @@ func TestAnalyze(t *testing.T) {
 		{"curated", "git status --short", "allow", "git status *", TierA, false},
 		{"go test uncurated", "go test ./...", "allow", "go test *", TierB, false},
 		{"git global options", "git -C /x status", "allow", "", TierB, false},
-		{"find", "find . -name x", "allow", "find *", TierB, false},
+		{"find", "find . -name x", "allow", "", TierB, false},
+		{"destructive", "/bin/rm -rf x", "allow", "", TierB, false},
 		{"verb-specific denial", "gh pr merge 42", "deny", "gh pr merge *", TierB, true},
 		{"denied chain", "git status && gh pr merge 1", "deny", "", TierB, true},
 		{"denied redirect", "git status > /etc/hosts", "deny", "", TierB, true},
@@ -80,10 +81,13 @@ func TestAnalyzeEvidence(t *testing.T) {
 	a, d := Analyze(append(repeated("npm install", "allow")[:5], Record{ToolName: "bash", Input: "npm install", Verdict: "deny", DecidedBy: "human"}), nil, Options{})
 	require.Empty(t, a)
 	require.Empty(t, d)
-	a, _ = Analyze(repeated("go test ./... | tee out.txt", "allow"), nil, Options{})
+	a, _ = Analyze(repeated("go test ./... | wc -l", "allow"), nil, Options{})
 	require.Len(t, a, 2)
 	require.Equal(t, "go test *", a[0].InputPattern)
-	require.Equal(t, "tee *", a[1].InputPattern)
+	require.Equal(t, "wc *", a[1].InputPattern)
+	a, _ = Analyze(repeated("go test ./... | tee out.txt", "allow"), nil, Options{})
+	require.Len(t, a, 1)
+	require.Equal(t, "go test *", a[0].InputPattern)
 }
 
 func TestAnalyzeFilters(t *testing.T) {
