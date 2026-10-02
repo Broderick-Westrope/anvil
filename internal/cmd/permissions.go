@@ -12,10 +12,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 	"unicode"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
@@ -37,6 +39,7 @@ type triageOpts struct {
 	Yes         bool
 	Force       bool
 	Interactive bool
+	Limit       int
 }
 
 type statsOpts struct {
@@ -60,13 +63,14 @@ func newPermissionsCmd() *cobra.Command {
 		if f, ok := in.(*os.File); ok {
 			opts.Interactive = term.IsTerminal(f.Fd())
 		}
-		return runTriage(cmd.Context(), q, store, opts, in, cmd.OutOrStdout())
+		return runTriage(cmd.Context(), q, store, opts, in, colorprofile.NewWriter(cmd.OutOrStdout(), os.Environ()))
 	}}
 	triageCmd.Flags().IntVar(&opts.Days, "days", 7, "Decision history window in days")
 	triageCmd.Flags().IntVar(&opts.MinCount, "min-count", 5, "Minimum repeated decisions")
 	triageCmd.Flags().StringVar(&opts.Scope, "scope", "global", "Rule scope: global or workspace")
 	triageCmd.Flags().BoolVar(&opts.JSON, "json", false, "Print candidates as JSON without writing")
 	triageCmd.Flags().BoolVar(&opts.Yes, "yes", false, "Apply only Tier A allow candidates without prompting")
+	triageCmd.Flags().IntVar(&opts.Limit, "limit", 20, "Maximum rows per section in text output (0 for all)")
 	triageCmd.Flags().BoolVar(&opts.Force, "force", false, "Write despite reported simulation conflicts")
 	var stats statsOpts
 	statsCmd := &cobra.Command{Use: "stats", Short: "Report permission-request volume and versioned assessor statistics", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
@@ -78,7 +82,7 @@ func newPermissionsCmd() *cobra.Command {
 			return err
 		}
 		defer cleanup()
-		return runStats(cmd.Context(), q, stats, cmd.OutOrStdout())
+		return runStats(cmd.Context(), q, stats, colorprofile.NewWriter(cmd.OutOrStdout(), os.Environ()))
 	}}
 	statsCmd.Flags().IntVar(&stats.Days, "days", 30, "Decision history window in days")
 	statsCmd.Flags().BoolVar(&stats.JSON, "json", false, "Print statistics as JSON")
@@ -104,6 +108,9 @@ func validateTriageOpts(opts triageOpts) error {
 	if opts.Days <= 0 || opts.MinCount <= 0 {
 		return errors.New("days and min-count must be positive")
 	}
+	if opts.Limit < 0 {
+		return errors.New("limit must not be negative")
+	}
 	if opts.Scope != "global" && opts.Scope != "workspace" {
 		return errors.New("scope must be global or workspace")
 	}
@@ -121,6 +128,7 @@ func runTriage(ctx context.Context, q db.Querier, store *config.ConfigStore, opt
 	if err := validateTriageOpts(opts); err != nil {
 		return err
 	}
+	out = colorWriter(out)
 	records, err := decisionlog.LoadRecords(ctx, q, time.Now().AddDate(0, 0, -opts.Days))
 	if err != nil {
 		return err
@@ -143,37 +151,15 @@ func runTriage(ctx context.Context, q db.Querier, store *config.ConfigStore, opt
 			Deny  []triage.Candidate `json:"deny"`
 		}{allow, deny})
 	}
-	candidates := append(slices.Clone(allow), deny...)
-	var buf strings.Builder
 	unresolved := 0
 	for _, r := range records {
 		if triage.IsSource(r) {
 			unresolved++
 		}
 	}
+	var buf strings.Builder
 	fmt.Fprintf(&buf, "Permission triage: last %d days, %d unresolved requests\n", opts.Days, unresolved)
-	heading := lipgloss.NewStyle().Foreground(charmtone.Malibu).Bold(true)
-	section := ""
-	for i, c := range candidates {
-		title := "Suggested allow rules (tier A: curated safe families)"
-		if c.Tier == triage.TierB {
-			title = "Needs your judgment (tier B: never applied by --yes)"
-		}
-		if c.Kind == triage.KindDeny {
-			title = "Suggested deny rules"
-		}
-		if section != title {
-			section = title
-			fmt.Fprintf(&buf, "\n%s\n  #  count  sess  proj  rule  examples\n", heading.Render(title))
-		}
-		fmt.Fprintf(&buf, "%3d  %5d  %4d  %4d  %s: %q  %s\n", i+1, c.Count, c.Sessions, c.Projects, terminalText(c.ToolPattern), terminalText(c.InputPattern), exampleSummary(c.Examples))
-		if c.Warning != "" {
-			fmt.Fprintf(&buf, "     %s\n", c.Warning)
-		}
-	}
-	if len(candidates) == 0 {
-		fmt.Fprintln(&buf, "No candidate rules.")
-	}
+	candidates := writeTriageSections(&buf, allow, deny, opts.Limit)
 	if _, err := io.WriteString(out, buf.String()); err != nil {
 		return err
 	}
@@ -196,6 +182,56 @@ func runTriage(ctx context.Context, q db.Querier, store *config.ConfigStore, opt
 		return err
 	}
 	return applyPermissionCandidates(ctx, store, scope, rules, chosen, records, opts.Force, out)
+}
+
+type triageSection struct {
+	title, warning string
+	candidates     []triage.Candidate
+}
+
+// writeTriageSections renders each section as an aligned table capped at
+// limit rows (0 for no cap) and returns the displayed candidates in the
+// order they are numbered.
+func writeTriageSections(out io.Writer, allow, deny []triage.Candidate, limit int) []triage.Candidate {
+	tierA := slices.DeleteFunc(slices.Clone(allow), func(c triage.Candidate) bool { return c.Tier != triage.TierA })
+	tierB := slices.DeleteFunc(slices.Clone(allow), func(c triage.Candidate) bool { return c.Tier == triage.TierA })
+	sections := []triageSection{
+		{"Suggested allow rules (tier A: curated safe families)", "", tierA},
+		{"Needs your judgment (tier B: never applied by --yes)", "Tier B: uncurated patterns — review every argument each one permits; --yes never applies these.", tierB},
+		{"Suggested deny rules", "Review the scope of each permanent denial.", deny},
+	}
+	heading := lipgloss.NewStyle().Foreground(charmtone.Malibu).Bold(true)
+	var displayed []triage.Candidate
+	for _, s := range sections {
+		if len(s.candidates) == 0 {
+			continue
+		}
+		fmt.Fprintf(out, "\n%s\n", heading.Render(s.title))
+		if s.warning != "" {
+			fmt.Fprintln(out, s.warning)
+		}
+		shown := s.candidates
+		if limit > 0 && len(shown) > limit {
+			shown = shown[:limit]
+		}
+		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "#\tcount\tsess\tproj\trule\texamples")
+		for _, c := range shown {
+			displayed = append(displayed, c)
+			fmt.Fprintf(tw, "%d\t%d\t%d\t%d\t%s: %q\t%s\n", len(displayed), c.Count, c.Sessions, c.Projects, terminalText(c.ToolPattern), terminalText(c.InputPattern), exampleSummary(c.Examples[:min(2, len(c.Examples))]))
+			if c.InputPattern == "" && c.Warning != "" {
+				fmt.Fprintf(tw, "\t\t\t\t\t%s\n", terminalText(c.Warning))
+			}
+		}
+		_ = tw.Flush()
+		if hidden := len(s.candidates) - len(shown); hidden > 0 {
+			fmt.Fprintf(out, "… %d more (use --limit 0 to show all)\n", hidden)
+		}
+	}
+	if len(displayed) == 0 {
+		fmt.Fprintln(out, "No candidate rules.")
+	}
+	return displayed
 }
 
 func selectPermissionCandidates(candidates []triage.Candidate, selection string) ([]triage.Candidate, error) {
@@ -303,6 +339,15 @@ func applyPermissionCandidates(ctx context.Context, store *config.ConfigStore, s
 	return nil
 }
 
+// colorWriter strips or downsamples ANSI styling unless w already applies
+// a colour profile, so piped or buffered output stays plain.
+func colorWriter(w io.Writer) io.Writer {
+	if _, ok := w.(*colorprofile.Writer); ok {
+		return w
+	}
+	return colorprofile.NewWriter(w, os.Environ())
+}
+
 func terminalText(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -328,6 +373,7 @@ func runStats(ctx context.Context, q db.Querier, opts statsOpts, out io.Writer) 
 	if opts.Days <= 0 {
 		return errors.New("days must be positive")
 	}
+	out = colorWriter(out)
 	rows, err := q.ListPermissionDecisionsSince(ctx, time.Now().AddDate(0, 0, -opts.Days).Unix())
 	if err != nil {
 		return err

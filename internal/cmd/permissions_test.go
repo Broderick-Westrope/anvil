@@ -88,6 +88,60 @@ func TestPermissionsTriage(t *testing.T) {
 	}
 }
 
+func TestPermissionsTriageText(t *testing.T) {
+	t.Parallel()
+	q := permissionsTestDB(t)
+	seedPermissions(t, q)
+	store := config.NewTestStoreWithDataPath(&config.Config{}, filepath.Join(t.TempDir(), "anvil.json"))
+	var out bytes.Buffer
+	require.NoError(t, runTriage(t.Context(), q, store, triageOpts{Days: 7, MinCount: 5, Scope: "global", Limit: 20}, strings.NewReader(""), &out))
+	text := out.String()
+	require.NotContains(t, text, "\x1b")
+	require.Equal(t, 1, strings.Count(text, "Tier B: uncurated patterns"))
+	require.NotContains(t, text, "Uncurated command")
+	lines := strings.Split(text, "\n")
+	var header, row string
+	for i, line := range lines {
+		if strings.HasPrefix(line, "Needs your judgment") {
+			header, row = lines[i+2], lines[i+3]
+		}
+	}
+	require.True(t, strings.HasPrefix(header, "#"), text)
+	require.Equal(t, strings.Index(header, "rule"), strings.Index(row, "bash:"), text)
+	require.Equal(t, strings.Index(header, "examples"), strings.Index(row, "wc -l out.txt"), text)
+}
+
+func TestPermissionsTriageSections(t *testing.T) {
+	t.Parallel()
+	var allow []triage.Candidate
+	for i := range 5 {
+		allow = append(allow, triage.Candidate{Kind: triage.KindAllow, Tier: triage.TierB, ToolPattern: "bash", InputPattern: fmt.Sprintf("cmd%d *", i), Count: 100 - i, Examples: []string{"one", "two", "three"}})
+	}
+	allow = append([]triage.Candidate{{Kind: triage.KindAllow, Tier: triage.TierA, ToolPattern: "bash", InputPattern: "git status *", Count: 1000, Examples: []string{"git status"}}}, allow...)
+	allow = append(allow, triage.Candidate{Kind: triage.KindAllow, Tier: triage.TierB, ToolPattern: "mcp_x_y", Count: 1, Examples: []string{"{}"}, Warning: "MCP rules cover every argument this tool accepts"})
+	deny := []triage.Candidate{{Kind: triage.KindDeny, Tier: triage.TierB, ToolPattern: "bash", InputPattern: "gh pr merge *", Count: 7}}
+	var out bytes.Buffer
+	shown := writeTriageSections(&out, allow, deny, 2)
+	text := out.String()
+	require.Len(t, shown, 4)
+	require.Equal(t, []string{"git status *", "cmd0 *", "cmd1 *", "gh pr merge *"}, []string{shown[0].InputPattern, shown[1].InputPattern, shown[2].InputPattern, shown[3].InputPattern})
+	require.Contains(t, text, "… 4 more (use --limit 0 to show all)")
+	require.Contains(t, text, "one | two\n")
+	require.NotContains(t, text, "three")
+	require.Contains(t, text, "\n4  7")
+	chosen, err := selectPermissionCandidates(shown, "4")
+	require.NoError(t, err)
+	require.Equal(t, "gh pr merge *", chosen[0].InputPattern)
+	_, err = selectPermissionCandidates(shown, "5")
+	require.Error(t, err)
+
+	out.Reset()
+	shown = writeTriageSections(&out, allow, deny, 0)
+	require.Len(t, shown, 8)
+	require.NotContains(t, out.String(), "more (use --limit 0")
+	require.Equal(t, 1, strings.Count(out.String(), "MCP rules cover every argument"))
+}
+
 func TestPermissionsConflicts(t *testing.T) {
 	t.Parallel()
 	for _, force := range []bool{false, true} {
@@ -152,6 +206,7 @@ func TestPermissionsStats(t *testing.T) {
 	require.Contains(t, out.String(), "Permission-request volume: 3")
 	require.Contains(t, out.String(), "not enough evidence to enable enforce")
 	require.Contains(t, out.String(), "assessor allow x human deny: 1")
+	require.NotContains(t, out.String(), "\x1b")
 }
 
 func TestPermissionsStatsNoAssessments(t *testing.T) {
