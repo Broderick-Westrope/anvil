@@ -177,7 +177,7 @@ func runTriage(ctx context.Context, q db.Querier, store *config.ConfigStore, opt
 		}
 		selection = scanner.Text()
 	}
-	chosen, err := selectPermissionCandidates(candidates, selection)
+	chosen, err := selectPermissionCandidates(candidates, allow, selection)
 	if err != nil || len(chosen) == 0 {
 		return err
 	}
@@ -234,14 +234,16 @@ func writeTriageSections(out io.Writer, allow, deny []triage.Candidate, limit in
 	return displayed
 }
 
-func selectPermissionCandidates(candidates []triage.Candidate, selection string) ([]triage.Candidate, error) {
+// selectPermissionCandidates resolves numbers against the displayed rows,
+// while "a" takes every Tier A allow candidate so --limit never hides one.
+func selectPermissionCandidates(candidates, allow []triage.Candidate, selection string) ([]triage.Candidate, error) {
 	selection = strings.TrimSpace(selection)
 	var chosen []triage.Candidate
 	if selection == "" {
 		return chosen, nil
 	}
 	if selection == "a" {
-		for _, c := range candidates {
+		for _, c := range allow {
 			if c.Tier == triage.TierA && c.Kind == triage.KindAllow {
 				chosen = append(chosen, c)
 			}

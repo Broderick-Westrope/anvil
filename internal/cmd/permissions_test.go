@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,10 +130,10 @@ func TestPermissionsTriageSections(t *testing.T) {
 	require.Contains(t, text, "one | two\n")
 	require.NotContains(t, text, "three")
 	require.Contains(t, text, "\n4  7")
-	chosen, err := selectPermissionCandidates(shown, "4")
+	chosen, err := selectPermissionCandidates(shown, allow, "4")
 	require.NoError(t, err)
 	require.Equal(t, "gh pr merge *", chosen[0].InputPattern)
-	_, err = selectPermissionCandidates(shown, "5")
+	_, err = selectPermissionCandidates(shown, allow, "5")
 	require.Error(t, err)
 
 	out.Reset()
@@ -168,14 +169,25 @@ func TestPermissionsConflicts(t *testing.T) {
 func TestPermissionsSelection(t *testing.T) {
 	t.Parallel()
 	candidates := []triage.Candidate{{Kind: triage.KindAllow, Tier: triage.TierA}, {Kind: triage.KindAllow, Tier: triage.TierB}, {Kind: triage.KindDeny, Tier: triage.TierB}, {Kind: triage.KindAllow, Tier: triage.TierB}}
-	chosen, err := selectPermissionCandidates(candidates, "a")
+	chosen, err := selectPermissionCandidates(candidates, candidates, "a")
 	require.NoError(t, err)
 	require.Equal(t, candidates[:1], chosen)
-	chosen, err = selectPermissionCandidates(candidates, "1,2,3,1")
+	var allow []triage.Candidate
+	for i := range 25 {
+		allow = append(allow, triage.Candidate{Kind: triage.KindAllow, Tier: triage.TierA, ToolPattern: "bash", InputPattern: fmt.Sprintf("cmd%d *", i), Examples: []string{"x"}})
+	}
+	shown := writeTriageSections(io.Discard, allow, nil, 20)
+	require.Len(t, shown, 20)
+	chosen, err = selectPermissionCandidates(shown, allow, "a")
+	require.NoError(t, err)
+	require.Equal(t, allow, chosen)
+	_, err = selectPermissionCandidates(shown, allow, "21")
+	require.Error(t, err)
+	chosen, err = selectPermissionCandidates(candidates, candidates, "1,2,3,1")
 	require.NoError(t, err)
 	require.Len(t, chosen, 3)
 	for _, selection := range []string{"0", "5", "oops", "2,4", "1,"} {
-		_, err := selectPermissionCandidates(candidates, selection)
+		_, err := selectPermissionCandidates(candidates, candidates, selection)
 		require.Error(t, err)
 	}
 	require.Len(t, []rune(exampleSummary([]string{strings.Repeat("界", 100)})), 60)
@@ -257,5 +269,29 @@ func TestPermissionsHelp(t *testing.T) {
 		cmd.SetArgs(args)
 		require.NoError(t, cmd.Execute())
 		require.Contains(t, out.String(), "permissions")
+	}
+}
+
+func TestPermissionsTriageYesIgnoresLimit(t *testing.T) {
+	t.Parallel()
+	q := permissionsTestDB(t)
+	for _, input := range []string{"git status --short", "git rev-parse HEAD"} {
+		for i := range 6 {
+			require.NoError(t, q.InsertPermissionDecision(t.Context(), db.InsertPermissionDecisionParams{ID: fmt.Sprintf("%s-%d", input, i), ToolName: "bash", Input: input, InputSegments: "[]", WorkingDir: "/project", SessionID: "session", DecidedBy: "human", Verdict: "allow"}))
+		}
+	}
+	path := filepath.Join(t.TempDir(), "anvil.json")
+	store := config.NewTestStoreWithDataPath(&config.Config{}, path)
+	var out bytes.Buffer
+	require.NoError(t, runTriage(t.Context(), q, store, triageOpts{Days: 7, MinCount: 5, Scope: "global", Yes: true, Limit: 1}, strings.NewReader(""), &out))
+	require.Contains(t, out.String(), "… 1 more")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var cfg struct {
+		Permissions config.Permissions `json:"permissions"`
+	}
+	require.NoError(t, json.Unmarshal(data, &cfg))
+	for _, input := range []string{"git status", "git rev-parse HEAD"} {
+		require.Equal(t, config.PermissionAllow, permission.Evaluate("bash", input, cfg.Permissions.Rules, nil).Action, input)
 	}
 }
