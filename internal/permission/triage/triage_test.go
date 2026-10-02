@@ -145,6 +145,12 @@ func TestSimulate(t *testing.T) {
 	require.Len(t, conflicts, 1)
 	require.Equal(t, config.PermissionAsk, rules[0].SubRules[0].Action)
 	require.Empty(t, Simulate(nil, chosen, []Record{{ToolName: "bash", Input: "tee /etc/hosts && rm /etc/hosts", Verdict: "deny", DecidedBy: "human"}}))
+	denied := []Record{{ToolName: "bash", Input: "tee x && curl y", Verdict: "deny", DecidedBy: "human"}}
+	require.Empty(t, Simulate(nil, chosen, denied))
+	curl := config.UpsertPermissionRule(nil, "bash", "curl *", config.PermissionAllow)
+	require.Len(t, Simulate(curl, chosen, denied), 1)
+	curl = config.UpsertPermissionRule(curl, "bash", "curl y", config.PermissionDeny)
+	require.Empty(t, Simulate(curl, chosen, denied))
 }
 
 func TestAnalyzeIndexedValidation(t *testing.T) {

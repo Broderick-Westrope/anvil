@@ -224,29 +224,6 @@ func (a *analyzer) action(tool, input string) config.PermissionAction {
 	return action
 }
 
-// actionAll mirrors permission.EvaluateAll: deny wins, then ask, then the
-// last input's action.
-func (a *analyzer) actionAll(tool string, inputs []string) config.PermissionAction {
-	if len(inputs) == 0 {
-		return a.action(tool, "")
-	}
-	var last config.PermissionAction
-	ask := false
-	for _, input := range inputs {
-		last = a.action(tool, input)
-		switch last {
-		case config.PermissionDeny:
-			return config.PermissionDeny
-		case config.PermissionAsk:
-			ask = true
-		}
-	}
-	if ask {
-		return config.PermissionAsk
-	}
-	return last
-}
-
 // validate reports whether no matching evidence contradicts c, scanning
 // only evidence that can match c's pattern.
 func (a *analyzer) validate(c Candidate, ix *evidenceIndex) bool {
@@ -406,7 +383,7 @@ func Check(rules []config.PermissionRule, chosen []Candidate, evidence []Record)
 	a := newAnalyzer(rules)
 	for _, r := range evidence {
 		if r.DecidedBy == string(permission.DecisionSourceHuman) && r.Verdict == string(permission.VerdictDeny) &&
-			a.actionAll(r.ToolName, recordInputs(r)) == config.PermissionAllow {
+			permission.EvaluateAll(r.ToolName, recordInputs(r), rules, nil).Action == config.PermissionAllow {
 			conflicts = append(conflicts, Conflict{r.ToolName, r.Input, "Human-denied request would be allowed"})
 		}
 	}
