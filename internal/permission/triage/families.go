@@ -3,6 +3,7 @@ package triage
 import (
 	"maps"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -88,31 +89,66 @@ var neverPropose = map[string]bool{
 	"terraform import": true, "gh api": true, "gh repo": true,
 	"gh release": true, "gh secret": true, "gh auth": true,
 	"brew install": true, "brew uninstall": true,
+	"gh pr merge": true, "gh pr create": true, "gh pr close": true,
+	"gh pr edit": true, "gh pr comment": true, "gh pr review": true,
+	"gh pr ready": true, "gh issue create": true, "gh issue close": true,
+	"gh issue edit": true, "gh issue comment": true, "gh issue delete": true,
+	"gh workflow run": true, "gh workflow enable": true,
+	"gh workflow disable": true, "gh run rerun": true, "gh run cancel": true,
+	"gh gist create": true, "gh gist edit": true, "gh gist delete": true,
+	"gh label": true, "gh variable": true, "gh ssh-key": true,
+	"gh gpg-key": true,
 }
 
-// neverProposeHeads holds the first token of every two-token entry, so a
-// pattern that keeps only that token (e.g. "pip3 *" from
-// "pip3 -q install x") cannot cover a blocked subcommand.
-var neverProposeHeads = func() map[string]bool {
-	heads := map[string]bool{}
-	for prefix := range neverPropose {
-		if head, _, ok := strings.Cut(prefix, " "); ok {
-			heads[head] = true
+// maxNeverProposeTokens is the longest entry in neverPropose.
+const maxNeverProposeTokens = 3
+
+// neverProposePrefixes holds every proper prefix of a multi-token entry, so
+// a pattern that keeps only that prefix (e.g. "pip3 *" from
+// "pip3 -q install x", or "gh pr *") cannot cover a blocked subcommand.
+var neverProposePrefixes = func() map[string]bool {
+	prefixes := map[string]bool{}
+	for entry := range neverPropose {
+		tokens := strings.Fields(entry)
+		if len(tokens) > maxNeverProposeTokens {
+			panic("neverPropose entry too long: " + entry)
+		}
+		for n := 1; n < len(tokens); n++ {
+			prefixes[strings.Join(tokens[:n], " ")] = true
 		}
 	}
-	return heads
+	return prefixes
 }()
 
-func blocked(input string) bool {
+// bareWordRE matches tokens the shell passes through unchanged, so a rule
+// built from them matches the command actually run. Quotes, escapes,
+// expansions, globs, and assignments are rejected.
+var bareWordRE = regexp.MustCompile(`^[A-Za-z0-9._/+-]+$`)
+
+// commandTokens returns the fields of input with the executable reduced to
+// its basename.
+func commandTokens(input string) []string {
 	tokens := strings.Fields(input)
+	if len(tokens) > 0 {
+		tokens[0] = filepath.Base(tokens[0])
+	}
+	return tokens
+}
+
+func blocked(input string) bool {
+	tokens := commandTokens(input)
 	if len(tokens) == 0 {
 		return false
 	}
-	head := filepath.Base(tokens[0])
-	if neverPropose[head] {
+	if segment.IsWrapper(tokens[0]) {
 		return true
 	}
-	return len(tokens) > 1 && neverPropose[head+" "+tokens[1]]
+	for n := 1; n <= min(maxNeverProposeTokens, len(tokens)); n++ {
+		if neverPropose[strings.Join(tokens[:n], " ")] {
+			return true
+		}
+	}
+	return false
 }
 
 func simpleSegment(input string) bool {
@@ -137,9 +173,10 @@ func allowPattern(input string) (string, Tier) {
 		}
 	}
 	prefix := strings.TrimSuffix(pattern, " *")
-	tokens := strings.Fields(prefix)
-	if len(tokens) == 0 || strings.ContainsAny(prefix, "*?[]\\") ||
-		(len(tokens) == 1 && (needsSubcommand[tokens[0]] || neverProposeHeads[filepath.Base(tokens[0])])) {
+	fields := strings.Fields(prefix)
+	tokens := commandTokens(prefix)
+	if len(tokens) == 0 || slices.ContainsFunc(fields, func(t string) bool { return !bareWordRE.MatchString(t) }) ||
+		(len(tokens) == 1 && needsSubcommand[tokens[0]]) || neverProposePrefixes[strings.Join(tokens, " ")] {
 		return "", TierB
 	}
 	return pattern, TierB

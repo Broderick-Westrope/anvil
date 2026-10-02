@@ -162,7 +162,9 @@ func isWriteRedir(op syntax.RedirOperator, target string) bool {
 
 // wrapperCommands run another command supplied in their arguments. The
 // wrapped command is emitted as its own segment so that allowing the
-// wrapper does not implicitly allow everything it can launch.
+// wrapper does not implicitly allow everything it can launch. The triage
+// package relies on this list (via IsWrapper) to never propose allow
+// rules for wrappers.
 var wrapperCommands = map[string]struct{}{
 	"command": {},
 	"doas":    {},
@@ -178,6 +180,13 @@ var wrapperCommands = map[string]struct{}{
 	"timeout": {},
 	"watch":   {},
 	"xargs":   {},
+}
+
+// IsWrapper reports whether cmd runs another command supplied in its
+// arguments.
+func IsWrapper(cmd string) bool {
+	_, ok := wrapperCommands[cmd]
+	return ok
 }
 
 // execFlags introduce a nested command in find-style utilities.

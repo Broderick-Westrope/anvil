@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Broderick-Westrope/anvil/internal/permission/segment"
 )
 
 func TestSafeFamilies(t *testing.T) {
@@ -131,4 +133,76 @@ func TestNeverPropose(t *testing.T) {
 	require.Empty(t, a)
 	require.Len(t, d, 1)
 	require.Equal(t, "git push origin *", d[0].InputPattern)
+}
+
+func TestQuotedHeadsNeverProposed(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{
+		"'rm' -rf /tmp/x", `"curl" https://evil`, "'sudo' ls", `\rm -rf x`, "r''m x",
+		"./rm x", `git "push" origin`, "'git' push", `gh "pr" merge 1`, "gh pr 'merge' 1",
+		"--opt=x -la", "l*s -la",
+	} {
+		pattern, _ := allowPattern(input)
+		require.Empty(t, pattern, input)
+		a, _ := Analyze(repeated(input, "allow"), nil, Options{})
+		require.Empty(t, a, input)
+	}
+	for _, input := range []string{"'rm' -rf /tmp/x", `"curl" https://evil`, "'sudo' ls", `m -rf x`, "r''m x"} {
+		_, d := Analyze(repeated(input, "deny"), nil, Options{})
+		require.Empty(t, d, input)
+	}
+}
+
+func TestWrappersNeverProposed(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{
+		"nohup rm -rf /x", "watch rm -rf x", "command rm -rf x", "timeout 30 rm -rf x",
+		"nice rm -rf x", "setsid rm -rf x", "stdbuf -oL rm -rf x", "ionice -c3 rm -rf x",
+		"/usr/bin/nohup rm -rf x",
+	} {
+		pattern, _ := allowPattern(input)
+		require.Empty(t, pattern, input)
+		a, _ := Analyze(repeated(input, "allow"), nil, Options{})
+		require.Empty(t, a, input)
+	}
+	for _, wrapper := range []string{"command", "doas", "env", "exec", "ionice", "nice", "nohup", "setsid", "stdbuf", "sudo", "time", "timeout", "watch", "xargs"} {
+		require.True(t, segment.IsWrapper(wrapper), wrapper)
+		for _, input := range []string{wrapper + " ls -la", wrapper + " status", wrapper} {
+			pattern, _ := allowPattern(input)
+			require.Empty(t, pattern, input)
+		}
+	}
+	require.False(t, segment.IsWrapper("ls"))
+	a, _ := Analyze(repeated("nohup ls -la", "allow"), nil, Options{})
+	require.Len(t, a, 1)
+	require.Equal(t, "ls *", a[0].InputPattern)
+	require.Equal(t, []string{"ls -la"}, a[0].Examples)
+}
+
+func TestRemoteGhVerbsNeverProposed(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{
+		"gh pr merge 42", "gh workflow run deploy", "gh issue create -t x", "gh pr create",
+		"gh pr close 1", "gh pr edit 1", "gh pr comment 1", "gh pr review 1", "gh pr ready 1",
+		"gh issue close 1", "gh issue edit 1", "gh issue comment 1", "gh issue delete 1",
+		"gh workflow enable x", "gh workflow disable x", "gh run rerun 1", "gh run cancel 1",
+		"gh gist create x", "gh gist edit x", "gh gist delete x", "gh label create x",
+		"gh variable set x", "gh ssh-key add x", "gh gpg-key add x", "/usr/bin/gh pr merge 1",
+	} {
+		pattern, _ := allowPattern(input)
+		require.Empty(t, pattern, input)
+		a, _ := Analyze(repeated(input, "allow"), nil, Options{})
+		require.Empty(t, a, input)
+	}
+	for input, want := range map[string]string{
+		"gh pr view 42":  "gh pr view *",
+		"gh pr list":     "gh pr list *",
+		"gh pr diff 1":   "gh pr diff *",
+		"gh pr checks 1": "gh pr checks *",
+	} {
+		a, _ := Analyze(repeated(input, "allow"), nil, Options{})
+		require.Len(t, a, 1, input)
+		require.Equal(t, want, a[0].InputPattern, input)
+		require.Equal(t, TierB, a[0].Tier, input)
+	}
 }
