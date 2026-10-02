@@ -295,6 +295,11 @@ var subcommandRe = regexp.MustCompile(`^[a-z][a-z-]*$`)
 // redirPrefixRe matches a segment that is a file-writing redirection.
 var redirPrefixRe = regexp.MustCompile(`^[0-9]*(&>>|&>|>>\||>>|>\||>&|<>|>)`)
 
+// IsRedirect reports whether a segment is a file-writing redirection.
+func IsRedirect(seg string) bool {
+	return redirPrefixRe.MatchString(strings.TrimSpace(seg))
+}
+
 // Generalize converts a concrete command segment into a suggested
 // glob pattern for permission grants. The first token is always
 // kept; the second token is kept if it looks like a subcommand
@@ -313,7 +318,7 @@ var redirPrefixRe = regexp.MustCompile(`^[0-9]*(&>>|&>|>>\||>>|>\||>&|<>|>)`)
 //
 //	"> /tmp/out.txt"     → "> /tmp/out.txt"
 func Generalize(segment string) string {
-	if redirPrefixRe.MatchString(strings.TrimSpace(segment)) {
+	if IsRedirect(segment) {
 		return segment
 	}
 

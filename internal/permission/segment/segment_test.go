@@ -8,6 +8,18 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/permission/match"
 )
 
+func TestIsRedirect(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{"> out", ">> out", "2> out", "&> out", "&>> out", ">| out", "<> out"} {
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+			require.True(t, IsRedirect("  "+input))
+			require.Equal(t, input, Generalize(input))
+		})
+	}
+	require.False(t, IsRedirect("git status"))
+}
+
 func TestSplit(t *testing.T) {
 	t.Parallel()
 
