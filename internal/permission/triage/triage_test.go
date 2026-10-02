@@ -2,6 +2,8 @@ package triage
 
 import (
 	"fmt"
+	"math/rand/v2"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -139,4 +141,80 @@ func TestSimulate(t *testing.T) {
 	require.Len(t, conflicts, 1)
 	require.Equal(t, config.PermissionAsk, rules[0].SubRules[0].Action)
 	require.Empty(t, Simulate(nil, chosen, []Record{{ToolName: "bash", Input: "tee /etc/hosts && rm /etc/hosts", Verdict: "deny", DecidedBy: "human"}}))
+}
+
+func TestAnalyzeIndexedValidation(t *testing.T) {
+	t.Parallel()
+	records := repeated("go test ./...", "allow")
+	sameToken := append(slices.Clone(records), Record{ToolName: "bash", Input: "go test ./secret", Verdict: "deny", DecidedBy: "human"})
+	a, _ := Analyze(sameToken, nil, Options{})
+	require.Empty(t, a)
+	chained := append(slices.Clone(records), Record{ToolName: "bash", Input: "ls && go test -run X", Verdict: "deny", DecidedBy: "human"})
+	a, _ = Analyze(chained, nil, Options{})
+	require.Empty(t, a)
+	otherToken := append(slices.Clone(records), Record{ToolName: "bash", Input: "gofmt -l .", Verdict: "deny", DecidedBy: "human"})
+	a, _ = Analyze(otherToken, nil, Options{})
+	require.Len(t, a, 1)
+	require.Equal(t, "go test *", a[0].InputPattern)
+}
+
+func TestLiteralFirstToken(t *testing.T) {
+	t.Parallel()
+	for pattern, want := range map[string]string{"git status *": "git", "pwd": "pwd", "gh pr view *": "gh"} {
+		got, ok := literalFirstToken(pattern)
+		require.True(t, ok, pattern)
+		require.Equal(t, want, got)
+	}
+	for _, pattern := range []string{"", " git *", "g*t status", "{git,gh} *", `g\it *`, "[gh] *", "gi? *"} {
+		_, ok := literalFirstToken(pattern)
+		require.False(t, ok, pattern)
+	}
+	for pattern := range safeFamilies {
+		_, ok := literalFirstToken(pattern)
+		require.True(t, ok, pattern)
+	}
+	ix := newEvidenceIndex(2)
+	ix.add(Record{ToolName: "bash", Input: "git status"})
+	ix.add(Record{ToolName: "edit", Input: "x"})
+	require.Equal(t, []int{0}, ix.lookup(Candidate{ToolPattern: "bash", InputPattern: "g?t *"}))
+	require.Equal(t, []int{0, 1}, ix.lookup(Candidate{ToolPattern: "*", InputPattern: "git *"}))
+	require.Empty(t, ix.lookup(Candidate{ToolPattern: "bash", InputPattern: "gh *"}))
+}
+
+func BenchmarkAnalyze(b *testing.B) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	commands := make([]string, 200)
+	for i := range commands {
+		switch i % 5 {
+		case 0:
+			commands[i] = fmt.Sprintf("git status --porcelain=v%d", i)
+		case 1:
+			commands[i] = fmt.Sprintf("go test ./pkg%d/...", i)
+		case 2:
+			commands[i] = fmt.Sprintf("ls -la dir%d && cat file%d.txt", i, i)
+		case 3:
+			commands[i] = fmt.Sprintf("tool%d run --flag %d", i%40, i)
+		default:
+			commands[i] = fmt.Sprintf("gh pr view %d", i)
+		}
+	}
+	verdicts := []string{"allow", "allow", "allow", "deny"}
+	sources := []string{"human", "assessor", "rule", "session_grant"}
+	records := make([]Record, 25_000)
+	for i := range records {
+		records[i] = Record{
+			SessionID:  fmt.Sprint(rng.IntN(300)),
+			WorkingDir: fmt.Sprint("/project", rng.IntN(10)),
+			ToolName:   "bash",
+			Input:      commands[rng.IntN(len(commands))],
+			DecidedBy:  sources[rng.IntN(len(sources))],
+			Verdict:    verdicts[rng.IntN(len(verdicts))],
+		}
+	}
+	rules := config.UpsertPermissionRule(nil, "bash", "git log *", config.PermissionAllow)
+	rules = config.UpsertPermissionRule(rules, "bash", "rm *", config.PermissionDeny)
+	rules = config.UpsertPermissionRule(rules, "bash", "{curl,wget} *", config.PermissionAsk)
+	for b.Loop() {
+		Analyze(records, rules, Options{})
+	}
 }

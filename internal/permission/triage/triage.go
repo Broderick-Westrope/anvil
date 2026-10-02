@@ -7,9 +7,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/permission/match"
 	"github.com/Broderick-Westrope/anvil/internal/permission/segment"
 )
 
@@ -87,13 +89,22 @@ func Analyze(records []Record, rules []config.PermissionRule, opts Options) (all
 	if opts.MaxHazardAllow <= 0 {
 		opts.MaxHazardAllow = 0.2
 	}
-	evidence := make([]Record, 0, len(records))
-	groups := make(map[string]*group)
+	a := newAnalyzer(rules)
+	ix := newEvidenceIndex(len(records))
 	for _, r := range records {
 		if opts.WorkingDir != "" && r.WorkingDir != opts.WorkingDir {
 			continue
 		}
-		evidence = append(evidence, r)
+		ix.add(r)
+	}
+	type allowResult struct {
+		pattern string
+		tier    Tier
+	}
+	allowPatterns := make(map[string]allowResult)
+	groups := make(map[string]*group)
+	for _, e := range ix.all {
+		r := e.record
 		if !IsSource(r) {
 			continue
 		}
@@ -121,24 +132,27 @@ func Analyze(records []Record, rules []config.PermissionRule, opts Options) (all
 		}
 		switch {
 		case r.ToolName == "bash":
-			inputs := recordInputs(r)
-			for _, input := range inputs {
-				pattern, tier := allowPattern(input)
-				if pattern != "" {
+			for _, input := range e.inputs {
+				res, ok := allowPatterns[input]
+				if !ok {
+					res.pattern, res.tier = allowPattern(input)
+					allowPatterns[input] = res
+				}
+				if res.pattern != "" {
 					warning := ""
-					if tier == TierB {
+					if res.tier == TierB {
 						warning = "Uncurated command: review every argument this pattern permits"
 					}
-					add(KindAllow, tier, pattern, input, warning)
+					add(KindAllow, res.tier, res.pattern, input, warning)
 				}
 			}
-			if len(inputs) == 1 && r.Verdict == string(permission.VerdictDeny) &&
+			if len(e.inputs) == 1 && r.Verdict == string(permission.VerdictDeny) &&
 				(r.DecidedBy == string(permission.DecisionSourceHuman) || r.DecidedBy == string(permission.DecisionSourceAssessor)) {
-				if pattern := denyPattern(inputs[0]); pattern != "" {
-					add(KindDeny, TierB, pattern, inputs[0], "Review the scope of this permanent denial")
+				if pattern := denyPattern(e.inputs[0]); pattern != "" {
+					add(KindDeny, TierB, pattern, e.inputs[0], "Review the scope of this permanent denial")
 				}
 			}
-		case strings.HasPrefix(r.ToolName, "mcp_") && !strings.ContainsAny(r.ToolName, "*?[]{}\\"):
+		case strings.HasPrefix(r.ToolName, "mcp_") && !strings.ContainsAny(r.ToolName, globMeta):
 			add(KindAllow, TierB, "", r.Input, "MCP rules cover every argument this tool accepts")
 		}
 	}
@@ -147,27 +161,9 @@ func Analyze(records []Record, rules []config.PermissionRule, opts Options) (all
 			continue
 		}
 		c := g.candidate
-		valid, covered := true, true
-		for _, r := range evidence {
-			if !recordMatches(c, r) {
-				continue
-			}
-			if (c.Kind == KindAllow && r.Verdict == string(permission.VerdictDeny)) ||
-				(c.Kind == KindDeny && r.Verdict == string(permission.VerdictAllow)) {
-				valid = false
-				break
-			}
-			for _, input := range recordInputs(r) {
-				if c.InputPattern != "" && !matches(c.InputPattern, input) {
-					continue
-				}
-				if c.Kind == KindAllow && permission.Evaluate(r.ToolName, input, rules, nil).Action == config.PermissionDeny {
-					valid = false
-				}
-			}
-		}
+		valid, covered := a.validate(c, ix), true
 		for _, example := range g.examples {
-			action := permission.Evaluate(c.ToolPattern, example, rules, nil).Action
+			action := a.action(c.ToolPattern, example)
 			if action != config.PermissionAction(c.Kind) {
 				covered = false
 			}
@@ -192,6 +188,171 @@ func Analyze(records []Record, rules []config.PermissionRule, opts Options) (all
 	slices.SortFunc(allow, order)
 	slices.SortFunc(deny, order)
 	return allow, deny
+}
+
+// globMeta lists characters that make a pattern token non-literal.
+const globMeta = `*?[]{}\`
+
+// analyzer caches compiled patterns and rule evaluations for one call;
+// rules are fixed for its lifetime.
+type analyzer struct {
+	rules    []config.PermissionRule
+	matchers map[string]*match.Matcher
+	actions  map[[2]string]config.PermissionAction
+}
+
+func newAnalyzer(rules []config.PermissionRule) *analyzer {
+	return &analyzer{rules: rules, matchers: map[string]*match.Matcher{}, actions: map[[2]string]config.PermissionAction{}}
+}
+
+func (a *analyzer) matches(pattern, input string) bool {
+	m, ok := a.matchers[pattern]
+	if !ok {
+		m, _ = match.Compile(pattern)
+		a.matchers[pattern] = m
+	}
+	return m != nil && m.Match(input)
+}
+
+func (a *analyzer) action(tool, input string) config.PermissionAction {
+	key := [2]string{tool, input}
+	action, ok := a.actions[key]
+	if !ok {
+		action = permission.Evaluate(tool, input, a.rules, nil).Action
+		a.actions[key] = action
+	}
+	return action
+}
+
+// actionAll mirrors permission.EvaluateAll: deny wins, then ask, then the
+// last input's action.
+func (a *analyzer) actionAll(tool string, inputs []string) config.PermissionAction {
+	if len(inputs) == 0 {
+		return a.action(tool, "")
+	}
+	var last config.PermissionAction
+	ask := false
+	for _, input := range inputs {
+		last = a.action(tool, input)
+		switch last {
+		case config.PermissionDeny:
+			return config.PermissionDeny
+		case config.PermissionAsk:
+			ask = true
+		}
+	}
+	if ask {
+		return config.PermissionAsk
+	}
+	return last
+}
+
+// validate reports whether no matching evidence contradicts c, scanning
+// only evidence that can match c's pattern.
+func (a *analyzer) validate(c Candidate, ix *evidenceIndex) bool {
+	for _, i := range ix.lookup(c) {
+		e := &ix.all[i]
+		if !a.matches(c.ToolPattern, e.record.ToolName) {
+			continue
+		}
+		matched := c.InputPattern == ""
+		if !matched {
+			for _, input := range e.inputs {
+				if a.matches(c.InputPattern, input) {
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched {
+			continue
+		}
+		if (c.Kind == KindAllow && e.record.Verdict == string(permission.VerdictDeny)) ||
+			(c.Kind == KindDeny && e.record.Verdict == string(permission.VerdictAllow)) {
+			return false
+		}
+		if c.Kind != KindAllow {
+			continue
+		}
+		for _, input := range e.inputs {
+			if c.InputPattern != "" && !a.matches(c.InputPattern, input) {
+				continue
+			}
+			if a.action(e.record.ToolName, input) == config.PermissionDeny {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+type evidence struct {
+	record Record
+	inputs []string
+}
+
+// evidenceIndex groups evidence by tool and by the first token of each
+// input so candidate validation avoids a full scan.
+type evidenceIndex struct {
+	all     []evidence
+	every   []int
+	byTool  map[string][]int
+	byToken map[string]map[string][]int
+}
+
+func newEvidenceIndex(n int) *evidenceIndex {
+	return &evidenceIndex{all: make([]evidence, 0, n), every: make([]int, 0, n), byTool: map[string][]int{}, byToken: map[string]map[string][]int{}}
+}
+
+func (ix *evidenceIndex) add(r Record) {
+	i := len(ix.all)
+	inputs := recordInputs(r)
+	ix.all = append(ix.all, evidence{record: r, inputs: inputs})
+	ix.every = append(ix.every, i)
+	ix.byTool[r.ToolName] = append(ix.byTool[r.ToolName], i)
+	tokens := ix.byToken[r.ToolName]
+	if tokens == nil {
+		tokens = map[string][]int{}
+		ix.byToken[r.ToolName] = tokens
+	}
+	for _, input := range inputs {
+		fields := strings.Fields(input)
+		if len(fields) == 0 {
+			continue
+		}
+		if refs := tokens[fields[0]]; len(refs) == 0 || refs[len(refs)-1] != i {
+			tokens[fields[0]] = append(refs, i)
+		}
+	}
+}
+
+// lookup returns the indices of evidence that could match c. It falls
+// back to broader scans whenever the pattern is not a literal prefix.
+func (ix *evidenceIndex) lookup(c Candidate) []int {
+	if strings.ContainsAny(c.ToolPattern, globMeta) {
+		return ix.every
+	}
+	if c.InputPattern == "" {
+		return ix.byTool[c.ToolPattern]
+	}
+	token, ok := literalFirstToken(c.InputPattern)
+	if !ok {
+		return ix.byTool[c.ToolPattern]
+	}
+	return ix.byToken[c.ToolPattern][token]
+}
+
+// literalFirstToken returns the first token of pattern when every input
+// matching pattern must share it as its first whitespace-separated field.
+func literalFirstToken(pattern string) (string, bool) {
+	if pattern == "" || unicode.IsSpace([]rune(pattern)[0]) {
+		return "", false
+	}
+	token := strings.Fields(pattern)[0]
+	if strings.ContainsAny(token, globMeta) {
+		return "", false
+	}
+	return token, true
 }
 
 var verbRE = regexp.MustCompile(`^[a-z][a-z-]*$`)
@@ -221,21 +382,6 @@ func recordInputs(r Record) []string {
 	return segment.Split(r.Input)
 }
 
-func recordMatches(c Candidate, r Record) bool {
-	if !matches(c.ToolPattern, r.ToolName) {
-		return false
-	}
-	if c.InputPattern == "" {
-		return true
-	}
-	for _, input := range recordInputs(r) {
-		if matches(c.InputPattern, input) {
-			return true
-		}
-	}
-	return false
-}
-
 type Conflict struct {
 	ToolName string
 	Input    string
@@ -257,15 +403,16 @@ func Simulate(rules []config.PermissionRule, chosen []Candidate, evidence []Reco
 // Check validates effective rules against denials and every selected example.
 func Check(rules []config.PermissionRule, chosen []Candidate, evidence []Record) []Conflict {
 	var conflicts []Conflict
+	a := newAnalyzer(rules)
 	for _, r := range evidence {
 		if r.DecidedBy == string(permission.DecisionSourceHuman) && r.Verdict == string(permission.VerdictDeny) &&
-			permission.EvaluateAll(r.ToolName, recordInputs(r), rules, nil).Action == config.PermissionAllow {
+			a.actionAll(r.ToolName, recordInputs(r)) == config.PermissionAllow {
 			conflicts = append(conflicts, Conflict{r.ToolName, r.Input, "Human-denied request would be allowed"})
 		}
 	}
 	for _, c := range chosen {
 		for _, example := range c.Examples {
-			if permission.Evaluate(c.ToolPattern, example, rules, nil).Action != config.PermissionAction(c.Kind) {
+			if a.action(c.ToolPattern, example) != config.PermissionAction(c.Kind) {
 				conflicts = append(conflicts, Conflict{c.ToolPattern, example, "Example does not evaluate to " + string(c.Kind)})
 			}
 		}

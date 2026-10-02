@@ -1,6 +1,8 @@
 package triage
 
 import (
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission/match"
@@ -11,6 +13,23 @@ var safeFamilies = map[string]string{
 	"git status *":    "Reports workspace/index status; arguments cannot select another command or output file",
 	"git rev-parse *": "Reports revisions, paths, or parsed arguments without executing them or writing files",
 }
+
+type compiledFamily struct {
+	pattern string
+	matcher *match.Matcher
+}
+
+var compiledFamilies = func() []compiledFamily {
+	families := make([]compiledFamily, 0, len(safeFamilies))
+	for _, pattern := range slices.Sorted(maps.Keys(safeFamilies)) {
+		m, err := match.Compile(pattern)
+		if err != nil {
+			panic(err)
+		}
+		families = append(families, compiledFamily{pattern, m})
+	}
+	return families
+}()
 
 var needsSubcommand = map[string]bool{
 	"git": true, "gh": true, "go": true, "npm": true, "pnpm": true,
@@ -28,9 +47,9 @@ func allowPattern(input string) (string, Tier) {
 	if !simpleSegment(input) {
 		return "", TierB
 	}
-	for pattern := range safeFamilies {
-		if matches(pattern, input) {
-			return pattern, TierA
+	for _, f := range compiledFamilies {
+		if f.matcher.Match(input) {
+			return f.pattern, TierA
 		}
 	}
 	pattern := segment.Generalize(input)
