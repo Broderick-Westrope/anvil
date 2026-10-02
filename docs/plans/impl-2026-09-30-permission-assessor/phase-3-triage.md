@@ -89,6 +89,27 @@ read internal/db/permission_decisions.sql.go  # generated in phase 1
 
 ### Task 1: Candidates, curated families, validation, simulation
 
+> **As implemented (2026-10-01):** Tier A shipped with only `git status *`
+> and `git rev-parse *`. Every other family below was dropped because some
+> flag writes arbitrary files or runs arbitrary programs, e.g. `git diff
+> --output`, `go test -toolexec`, `go vet -vettool`, `gofumpt -w`, or reads
+> secrets (`head`/`tail`/`wc`). `families_test.go` asserts each one is
+> absent and gives the reason. Allow candidates in either tier are also
+> never proposed when:
+> - the command is on `neverPropose` (destructive, exec, network, or
+>   mutating `git`/`gh`/package-manager verbs);
+> - the first token is a wrapper from `segment.IsWrapper` (`nohup`,
+>   `watch`, `timeout`, ...);
+> - any token in the pattern prefix isn't a bare word (quoted or escaped
+>   heads like `'rm'` bypass name checks).
+>
+> **Known issue found during review, not fixed here:** the existing rule
+> evaluator matches raw segment text. `'rm' -rf x`, `/bin/rm -rf x`, and
+> `r''m -rf x` don't match a `rm *` deny rule and fall through to ask, and
+> `segment.Split("\\rm -rf x")` returns `m -rf x`. Fix this before phase
+> 2's `enforce` mode, because ask calls would then go to the assessor
+> instead of the human.
+
 **Context:** `internal/permission/triage/` (new)
 
 **Files:**
