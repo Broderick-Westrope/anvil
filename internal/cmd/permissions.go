@@ -197,7 +197,7 @@ func writeTriageSections(out io.Writer, allow, deny []triage.Candidate, limit in
 	tierB := slices.DeleteFunc(slices.Clone(allow), func(c triage.Candidate) bool { return c.Tier == triage.TierA })
 	sections := []triageSection{
 		{"Suggested allow rules (tier A: curated safe families)", "", tierA},
-		{"Needs your judgment (tier B: never applied by --yes)", "Tier B: uncurated patterns — review every argument each one permits; --yes never applies these.", tierB},
+		{"Needs your judgment (tier B)", "Tier B: uncurated patterns — review every argument each one permits; --yes never applies these.", tierB},
 		{"Suggested deny rules", "Review the scope of each permanent denial.", deny},
 	}
 	heading := lipgloss.NewStyle().Foreground(charmtone.Malibu).Bold(true)
