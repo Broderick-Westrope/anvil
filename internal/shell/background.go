@@ -51,8 +51,10 @@ const (
 
 // syncBuffer is a thread-safe wrapper around bytes.Buffer.
 type syncBuffer struct {
-	buf bytes.Buffer
-	mu  sync.RWMutex
+	buf     bytes.Buffer
+	mu      sync.RWMutex
+	gen     uint64        // Incremented each time the cap resets the buffer.
+	changed chan struct{} // Closed and replaced on every write.
 	// onWrite, if set, is called after every write outside the lock.
 	onWrite func()
 }
@@ -70,6 +72,7 @@ func (sb *syncBuffer) Write(p []byte) (n int, err error) {
 func (sb *syncBuffer) write(p []byte) (n int, err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
+	defer sb.signalLocked()
 
 	if sb.buf.Len()+len(p) <= MaxBufferSize {
 		return sb.buf.Write(p)
@@ -78,6 +81,7 @@ func (sb *syncBuffer) write(p []byte) (n int, err error) {
 	// Cap exceeded — reset and keep only the tail. Report all bytes
 	// as consumed so callers (the shell interpreter) never retry.
 	inputLen := len(p)
+	sb.gen++
 	sb.buf.Reset()
 	sb.buf.WriteString(truncationMarker)
 
@@ -87,6 +91,15 @@ func (sb *syncBuffer) write(p []byte) (n int, err error) {
 	}
 	sb.buf.Write(p)
 	return inputLen, nil
+}
+
+// signalLocked wakes everyone waiting on the current change channel.
+// The caller must hold sb.mu for writing.
+func (sb *syncBuffer) signalLocked() {
+	if sb.changed != nil {
+		close(sb.changed)
+		sb.changed = make(chan struct{})
+	}
 }
 
 // WriteString delegates to Write so the buffer cap is enforced.
@@ -122,6 +135,11 @@ type BackgroundShell struct {
 
 	startedAt    time.Time
 	lastOutputAt atomic.Int64 // Unix nanoseconds; 0 if nothing written.
+
+	// readMu guards the incremental read cursor.
+	readMu    sync.Mutex
+	stdoutPos streamPos
+	stderrPos streamPos
 
 	ctx         context.Context
 	cancel      context.CancelFunc

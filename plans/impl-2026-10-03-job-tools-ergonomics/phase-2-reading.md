@@ -77,7 +77,7 @@ read internal/ui/chat/bash.go                # Renders job_output; check nothing
 
 **Steps:**
 
-1. [ ] Extend `syncBuffer` with a generation counter and a change signal:
+1. [x] Extend `syncBuffer` with a generation counter and a change signal:
 
    ```go
    type syncBuffer struct {
@@ -105,7 +105,7 @@ read internal/ui/chat/bash.go                # Renders job_output; check nothing
 
    `readFrom` copies the slice it returns.
 
-2. [ ] Add the read cursor to `BackgroundShell` (in `background_read.go`
+2. [x] Add the read cursor to `BackgroundShell` (in `background_read.go`
    where possible; struct fields go in `background.go`):
 
    ```go
@@ -143,7 +143,7 @@ read internal/ui/chat/bash.go                # Renders job_output; check nothing
    `HadPrevious` is true when either stream's offset was non-zero before
    the read.
 
-3. [ ] Add the line matcher. It keeps its own per-stream positions and
+3. [x] Add the line matcher. It keeps its own per-stream positions and
    partial-line buffers, so it never depends on the read cursor.
 
    ```go
@@ -176,7 +176,7 @@ read internal/ui/chat/bash.go                # Renders job_output; check nothing
    `func (sb *syncBuffer) lineStart(offset int, gen uint64) int` to find
    the starting offset (0 on generation mismatch).
 
-4. [ ] Add the bounded wait:
+4. [x] Add the bounded wait:
 
    ```go
    // WaitReason says why WaitFor returned.
@@ -201,7 +201,7 @@ read internal/ui/chat/bash.go                # Renders job_output; check nothing
    `Scan(bs, true)` once; return `WaitMatched` if it hits, otherwise
    `WaitCompleted`.
 
-5. [ ] Tests in `background_read_test.go` (all `t.Parallel()`; drive
+5. [x] Tests in `background_read_test.go` (all `t.Parallel()`; drive
    buffers directly through `bs.stdout.Write` on a shell created by
    `Start` with `sleep 30`, killed in cleanup, so writes are
    deterministic):
