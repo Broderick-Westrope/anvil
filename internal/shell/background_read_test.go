@@ -235,7 +235,7 @@ func TestBackgroundShell_WaitForCompleted(t *testing.T) {
 	bs := registerBlockingShell(t, newBackgroundShellManager(), release)
 	close(release)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 	t.Cleanup(cancel)
 	reason, _ := bs.WaitFor(ctx, time.Minute, bs.NewLineMatcher(regexp.MustCompile("ready")))
 	require.Equal(t, WaitCompleted, reason)
@@ -252,7 +252,7 @@ func TestBackgroundShell_WaitForMatched(t *testing.T) {
 		_, _ = bs.stdout.WriteString("listening, ready\n")
 	}()
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 	t.Cleanup(cancel)
 	reason, line := bs.WaitFor(ctx, time.Minute, matcher)
 	require.Equal(t, WaitMatched, reason)
@@ -268,7 +268,7 @@ func TestBackgroundShell_WaitForMatchedAtEOF(t *testing.T) {
 	write(t, bs.stdout, "ready")
 	close(release)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 	t.Cleanup(cancel)
 	reason, line := bs.WaitFor(ctx, time.Minute, matcher)
 	require.Equal(t, WaitMatched, reason)
@@ -342,7 +342,7 @@ func newWatchedShell(t *testing.T) (*BackgroundShell, *fakeSink, func()) {
 // emission to complete, so no further sink calls can follow.
 func settle(t *testing.T, bs *BackgroundShell) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 	defer cancel()
 	require.True(t, bs.WaitContext(ctx))
 	bs.mu.Lock()
