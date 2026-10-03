@@ -216,8 +216,9 @@ read internal/ui/chat/bash.go                # Renders job_output; check nothing
      final unterminated line matched only with `atEOF`; match on stderr;
      an incremental read consuming half the line between the two writes
      still matches; `\r\n` endings.
-   - `WaitFor`: timeout on silent job returns `WaitTimedOut` within
-     timeout + 200ms; ctx cancel returns `WaitCanceled`; job exit returns
+   - `WaitFor`: timeout on silent job (timeout 300ms) returns
+     `WaitTimedOut`, after at least 300ms and well under the job's
+     lifetime (assert < 5s so `-race` slowness can't flake it); ctx cancel returns `WaitCanceled`; job exit returns
      `WaitCompleted`; a matcher hit returns `WaitMatched` and the line.
 
 **Verify:**
@@ -351,11 +352,12 @@ go test -race ./internal/shell/ -count=1
    - `full=true` re-read includes everything; next call only new output.
    - `tail_lines=5` on `seq 1 100` → 5 lines and `(95 earlier lines
      omitted)`.
-   - `wait=true, timeout_seconds=1` on `sleep 30` → returns in under 2s
-     with `wait timed out after 1s`.
-   - `wait=true, pattern="ready"` on
-     `sh -c 'sleep 0.5; echo ready; sleep 30'` → returns in under 2s with
-     `matched "ready"`.
+   - `wait=true, timeout_seconds=1` on `sleep 30` → returns after at
+     least 1s and in under 10s, with `wait timed out after 1s`.
+   - `wait=true, pattern="ready", timeout_seconds=60` on
+     `sh -c 'sleep 0.5; echo ready; sleep 30'` → returns in under 10s
+     with `matched "ready"` (proves it didn't wait for the timeout or
+     the job).
    - Completed `false` job: header `Status: completed, exit 1` on the
      first read and again on an empty second read and a `full` read.
    - Validation errors for the three invalid combinations.
@@ -363,6 +365,10 @@ go test -race ./internal/shell/ -count=1
      `auto_background_after: 1` and a command that prints then sleeps):
      response contains `Output so far`; the first `job_output` still
      returns the first line.
+
+9. [ ] If Phase 5 merged before this phase, also do Phase 5 Task 2
+   step 2 (final runtime on finished `job_output` cards) here, since it
+   needs `RuntimeMS`.
 
 **Verify:**
 ```bash
