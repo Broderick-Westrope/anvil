@@ -77,6 +77,23 @@ func TestFormatNotice(t *testing.T) {
 	}
 }
 
+func TestFormatNotice_KilledJob(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 4, 7, 10, 0, 0, 0, time.UTC)
+	killed := Event{
+		JobID: "002",
+		Kind:  KindCompleted,
+		Info: shell.JobInfo{
+			ID: "002", Description: "idle sleeper", StartedAt: start,
+			CompletedAt: start.Add(15 * time.Second), Done: true, ExitCode: 1, EndReason: shell.EndKilled,
+		},
+	}
+	out := FormatNotice([]Event{killed}, 0, start)
+	require.Contains(t, out, "- Job 002 ended, killed (15s): idle sleeper.")
+	require.NotContains(t, out, "exit 1")
+}
+
 func TestFormatNotice_TailLimit(t *testing.T) {
 	t.Parallel()
 

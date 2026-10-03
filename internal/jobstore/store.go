@@ -174,6 +174,7 @@ func (s *Store) applyLiveness(ctx context.Context, records []Record) error {
 			continue
 		}
 		rec.EndReason = shell.EndInterrupted
+		rec.Info.EndReason = shell.EndInterrupted
 		rec.Info.Done = true
 		rec.Info.CompletedAt = now
 		if ok {
@@ -264,7 +265,9 @@ func (s *Store) Finalize(ctx context.Context, id string, info shell.JobInfo, end
 	var exitCode sql.NullInt64
 	if info.Done {
 		completedAt = info.CompletedAt
-		exitCode = sql.NullInt64{Int64: int64(info.ExitCode), Valid: true}
+		if shell.ExitCodeMeaningful(endReason) {
+			exitCode = sql.NullInt64{Int64: int64(info.ExitCode), Valid: true}
+		}
 	}
 	if _, err := s.q.FinalizeBackgroundJob(ctx, db.FinalizeBackgroundJobParams{
 		CompletedAt:   sql.NullInt64{Int64: completedAt.UnixMilli(), Valid: true},
@@ -320,6 +323,7 @@ func recordFromRow(row db.BackgroundJob) Record {
 			Description: row.Description,
 			WorkingDir:  row.WorkingDir,
 			StartedAt:   time.UnixMilli(row.StartedAt),
+			EndReason:   row.EndReason.String,
 		},
 		EndReason:      row.EndReason.String,
 		InstanceID:     row.InstanceID,
@@ -331,7 +335,7 @@ func recordFromRow(row db.BackgroundJob) Record {
 		rec.Info.Done = true
 		rec.Info.CompletedAt = time.UnixMilli(row.CompletedAt.Int64)
 		rec.Info.ExitCode = int(row.ExitCode.Int64)
-		rec.ExitCodeKnown = row.ExitCode.Valid
+		rec.ExitCodeKnown = row.ExitCode.Valid && shell.ExitCodeMeaningful(row.EndReason.String)
 	}
 	if row.LogExpiredAt.Valid {
 		rec.LogExpired = time.UnixMilli(row.LogExpiredAt.Int64)

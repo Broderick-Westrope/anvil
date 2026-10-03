@@ -68,8 +68,10 @@ func FormatJobStatus(info shell.JobInfo, now time.Time, reason shell.WaitReason,
 	var b strings.Builder
 	b.WriteString("Status: ")
 	switch {
-	case info.Done:
+	case info.ExitedOnItsOwn():
 		fmt.Fprintf(&b, "completed, exit %d (%s)", info.ExitCode, runtime)
+	case info.Done:
+		fmt.Fprintf(&b, "%s (%s)", shell.JobOutcome(info), runtime)
 	case reason == "":
 		lastOutput := "no output yet"
 		if !info.LastOutputAt.IsZero() {

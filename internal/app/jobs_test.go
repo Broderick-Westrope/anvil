@@ -307,7 +307,8 @@ func TestFinishJobs_RecordsAnvilExitAndFencesDB(t *testing.T) {
 		return rec
 	}
 	require.Equal(t, shell.EndAnvilExit, get(runningID).EndReason)
-	require.True(t, get(runningID).ExitCodeKnown)
+	require.False(t, get(runningID).ExitCodeKnown, "a job Anvil killed has no meaningful exit code")
+	require.True(t, get(finishedID).ExitCodeKnown)
 	require.Equal(t, shell.EndExited, get(finishedID).EndReason)
 
 	instances, err := q.ListAnvilInstances(t.Context())

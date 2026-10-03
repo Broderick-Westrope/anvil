@@ -49,8 +49,9 @@ With wait=true, it also says why the wait ended:
 - Status: running (12s), matched "ready in 141 ms"
 - Status: running (12s), wait canceled
 - Status: completed, exit 0 (13s), matched "..."
+- Status: killed (2m05s)
 Every read of a completed job includes its exit code, including empty and
-full re-reads.
+full re-reads. Jobs that were killed have no exit code.
 </status_header>
 
 <persistence>

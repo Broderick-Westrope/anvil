@@ -156,7 +156,7 @@ func formatJobEntries(running, finished []jobListEntry, now time.Time) string {
 			job := entry.info
 			status := entry.status
 			if status == "" {
-				status = fmt.Sprintf("exit %d", job.ExitCode)
+				status = shell.JobOutcome(job)
 			}
 			fmt.Fprintf(&b, "%s  %-7s  %s  %s  %s  (cwd: %s)",
 				job.ID,

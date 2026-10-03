@@ -1064,6 +1064,59 @@ func TestJobOutputTool_ArchivedInterrupted(t *testing.T) {
 	require.Contains(t, list.Content, "(Anvil exited unexpectedly)")
 }
 
+func TestJobTools_ArchivedKilledJobsShowNoExitCode(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	archive, _, _ := newTestArchive(t)
+	opts := JobToolOptions{Archive: archive}
+
+	finalizeAs := func(reason string) string {
+		startedAt := time.Now().Add(-time.Minute)
+		info := shell.JobInfo{
+			SessionID:  sessionID,
+			Origin:     shell.OriginExplicit,
+			Command:    "sleep 1000",
+			WorkingDir: "/work",
+			StartedAt:  startedAt,
+		}
+		id, log, err := archive.Allocate(t.Context(), shell.AllocateRequest{Info: info})
+		require.NoError(t, err)
+		info.Done, info.ExitCode, info.CompletedAt = true, 1, startedAt.Add(30*time.Second)
+		require.NoError(t, archive.Finalize(t.Context(), id, info, reason, log.Close()))
+		return id
+	}
+	killed := finalizeAs(shell.EndKilled)
+	anvilExit := finalizeAs(shell.EndAnvilExit)
+
+	list := runJobTool(t, NewJobListTool(opts), ctx, JobListParams{})
+	require.Contains(t, list.Content, killed+"  killed   30s")
+	require.Contains(t, list.Content, anvilExit+"  killed   30s")
+	require.Contains(t, list.Content, "(when Anvil exited)")
+	require.NotContains(t, list.Content, "exit 1")
+
+	out := runJobTool(t, NewJobOutputTool(opts), ctx, JobOutputParams{ShellID: killed})
+	require.True(t, strings.HasPrefix(out.Content, "Status: killed (30s)"), out.Content)
+	out = runJobTool(t, NewJobOutputTool(opts), ctx, JobOutputParams{ShellID: anvilExit})
+	require.True(t, strings.HasPrefix(out.Content, "Status: killed when Anvil exited (30s)"), out.Content)
+
+	kill := runJobTool(t, NewJobKillTool(opts), ctx, JobKillParams{ShellID: killed})
+	require.Equal(t, "Job "+killed+" was already killed (30s).", kill.Content)
+	kill = runJobTool(t, NewJobKillTool(opts), ctx, JobKillParams{ShellID: anvilExit})
+	require.Equal(t, "Job "+anvilExit+" was already killed when Anvil exited (30s).", kill.Content)
+}
+
+func TestFormatJobStatus_KilledJobHasNoExitCode(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	info := shell.JobInfo{StartedAt: start, CompletedAt: start.Add(15 * time.Second), Done: true, ExitCode: 1}
+
+	require.Equal(t, "Status: completed, exit 1 (15s)", FormatJobStatus(info, start, "", 0, ""))
+	info.EndReason = shell.EndKilled
+	require.Equal(t, "Status: killed (15s)", FormatJobStatus(info, start, "", 0, ""))
+}
+
 func TestJobOutputTool_ArchivedExpired(t *testing.T) {
 	t.Parallel()
 

@@ -140,6 +140,8 @@ func FormatArchivedJobStatus(rec jobstore.Record, now time.Time) string {
 			info.CompletedAt.Format(time.DateTime))
 	case rec.EndReason == shell.EndAnvilExit:
 		return fmt.Sprintf("Status: killed when Anvil exited (%s)", runtime)
+	case rec.EndReason == shell.EndKilled:
+		return fmt.Sprintf("Status: killed (%s)", runtime)
 	case rec.EndReason == shell.EndAbandoned:
 		return fmt.Sprintf("Status: abandoned after kill (%s); the process may still be running", runtime)
 	case !rec.ExitCodeKnown:
@@ -175,11 +177,14 @@ func killArchivedJob(archive JobArchive, rec jobstore.Record, id string) fantasy
 	case rec.EndReason == shell.EndAbandoned:
 		result = fmt.Sprintf("Job %s was already abandoned after an earlier kill (%s) and is no longer tracked; it may still hold resources such as ports or files.",
 			id, runtime)
-	case !rec.ExitCodeKnown:
-		result = fmt.Sprintf("Job %s had already exited (%s) before kill.", id, runtime)
+	case rec.EndReason == shell.EndKilled:
+		result = fmt.Sprintf("Job %s was already killed (%s).", id, runtime)
 		metadata.Exited = true
 	case rec.EndReason == shell.EndAnvilExit:
-		result = fmt.Sprintf("Job %s had already exited (exit %d, %s) before kill; it was killed when Anvil exited.", id, info.ExitCode, runtime)
+		result = fmt.Sprintf("Job %s was already killed when Anvil exited (%s).", id, runtime)
+		metadata.Exited = true
+	case !rec.ExitCodeKnown:
+		result = fmt.Sprintf("Job %s had already exited (%s) before kill.", id, runtime)
 		metadata.Exited = true
 	default:
 		result = fmt.Sprintf("Job %s had already exited (exit %d, %s) before kill.", id, info.ExitCode, runtime)
@@ -199,17 +204,18 @@ func killArchivedJob(archive JobArchive, rec jobstore.Record, id string) fantasy
 // archivedListStatus returns the status column and trailing note for a
 // finished persisted job in job_list.
 func archivedListStatus(rec jobstore.Record) (status, note string) {
-	status = fmt.Sprintf("exit %d", rec.Info.ExitCode)
 	switch rec.EndReason {
 	case shell.EndInterrupted:
 		return "interrupted", "Anvil exited unexpectedly"
 	case shell.EndAbandoned:
 		return "abandoned", ""
+	case shell.EndKilled:
+		return "killed", ""
 	case shell.EndAnvilExit:
-		note = "killed when Anvil exited"
+		return "killed", "when Anvil exited"
 	}
 	if !rec.ExitCodeKnown {
-		status = "no exit code"
+		return "no exit code", ""
 	}
-	return status, note
+	return shell.JobOutcome(rec.Info), ""
 }

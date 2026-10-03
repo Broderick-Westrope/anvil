@@ -287,6 +287,37 @@ func TestStore_FinalizeAbandonedUsesNow(t *testing.T) {
 	require.Equal(t, shell.EndAbandoned, rec.EndReason)
 }
 
+func TestStore_FinalizeKilledDropsExitCode(t *testing.T) {
+	t.Parallel()
+
+	for _, reason := range []string{shell.EndKilled, shell.EndAnvilExit} {
+		t.Run(reason, func(t *testing.T) {
+			t.Parallel()
+			s, q := newTestStore(t)
+			req := allocRequest("s")
+			id, log, err := s.Allocate(t.Context(), req)
+			require.NoError(t, err)
+
+			info := req.Info
+			info.Done, info.ExitCode, info.CompletedAt = true, 1, time.UnixMilli(time.Now().UnixMilli())
+			require.NoError(t, s.Finalize(t.Context(), id, info, reason, log.Close()))
+
+			key, ok := ParseID(id)
+			require.True(t, ok)
+			row, err := q.GetBackgroundJob(t.Context(), key)
+			require.NoError(t, err)
+			require.False(t, row.ExitCode.Valid, "the interpreter's cancellation status must not be stored")
+
+			rec, _, err := s.Get(t.Context(), id)
+			require.NoError(t, err)
+			require.True(t, rec.Info.Done)
+			require.False(t, rec.ExitCodeKnown)
+			require.Equal(t, reason, rec.Info.EndReason)
+			require.False(t, rec.Info.ExitedOnItsOwn())
+		})
+	}
+}
+
 func TestStore_LargeOutputCapped(t *testing.T) {
 	t.Parallel()
 

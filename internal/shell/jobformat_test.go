@@ -87,3 +87,28 @@ func TestLastLines(t *testing.T) {
 		})
 	}
 }
+
+func TestJobOutcome(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		reason       string
+		exitCode     int
+		want         string
+		exitedItself bool
+	}{
+		{reason: "", exitCode: 2, want: "exit 2", exitedItself: true},
+		{reason: EndExited, exitCode: 0, want: "exit 0", exitedItself: true},
+		{reason: EndKilled, exitCode: 1, want: "killed"},
+		{reason: EndAnvilExit, exitCode: 1, want: "killed when Anvil exited"},
+		{reason: EndAbandoned, want: "abandoned"},
+		{reason: EndInterrupted, want: "interrupted"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+			info := JobInfo{Done: true, ExitCode: tt.exitCode, EndReason: tt.reason}
+			require.Equal(t, tt.want, JobOutcome(info))
+			require.Equal(t, tt.exitedItself, info.ExitedOnItsOwn())
+		})
+	}
+}
