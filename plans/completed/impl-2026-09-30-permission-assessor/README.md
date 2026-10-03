@@ -2,6 +2,11 @@
 
 > **Status:** COMPLETED (pending human review and merge)
 
+> **Renamed after completion:** the feature is now the **bouncer**
+> (`internal/bouncer`, config key `bouncer`, `DecisionSourceBouncer`).
+> The generic System One client moved to `internal/systemone`. This plan
+> keeps the original "assessor" naming as a historical record.
+
 ## Overview
 
 **Problem:** Every tool call that no explicit permission rule covers (or that
