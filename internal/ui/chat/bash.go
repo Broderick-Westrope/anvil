@@ -133,23 +133,6 @@ func NewJobOutputToolMessageItem(
 	return &JobOutputToolMessageItem{baseToolMessageItem: t}
 }
 
-// LiveCounter is implemented by tool items that show a live elapsed
-// counter and need a redraw every second while it runs.
-type LiveCounter interface {
-	HasLiveCounter() bool
-}
-
-var _ LiveCounter = (*JobOutputToolMessageItem)(nil)
-
-// HasLiveCounter reports whether the item is a blocking wait that has not
-// returned yet.
-func (j *JobOutputToolMessageItem) HasLiveCounter() bool {
-	if j.HasResult() || j.Status() == ToolStatusCanceled {
-		return false
-	}
-	return IsJobOutputWait(j.ToolCall())
-}
-
 // IsJobOutputWait reports whether tc is a job_output call with wait=true.
 func IsJobOutputWait(tc message.ToolCall) bool {
 	if tc.Name != tools.JobOutputToolName {
