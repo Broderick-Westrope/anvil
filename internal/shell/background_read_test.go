@@ -410,6 +410,25 @@ func TestBackgroundShell_SetWatchFiresOnce(t *testing.T) {
 	require.Empty(t, sink.drain())
 }
 
+func TestBackgroundShell_FiredWatchGen(t *testing.T) {
+	t.Parallel()
+
+	bs, sink, _ := newWatchedShell(t)
+	require.Zero(t, bs.FiredWatchGen())
+
+	gen := bs.SetWatch(bs.NewLineMatcher(regexp.MustCompile("ready")))
+	require.Equal(t, "replaced", sink.next(t).kind)
+	require.Zero(t, bs.FiredWatchGen(), "the watch has not matched yet")
+
+	write(t, bs.stdout, "ready\n")
+	require.Equal(t, "matched", sink.next(t).kind)
+	require.Equal(t, gen, bs.FiredWatchGen())
+
+	bs.SetWatch(bs.NewLineMatcher(regexp.MustCompile("never")))
+	require.Equal(t, "replaced", sink.next(t).kind)
+	require.Zero(t, bs.FiredWatchGen(), "a replacement watch has not fired")
+}
+
 func TestBackgroundShell_SetWatchReplacementRace(t *testing.T) {
 	t.Parallel()
 

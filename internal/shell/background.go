@@ -219,8 +219,10 @@ type BackgroundShell struct {
 	// immutable afterwards.
 	persist *jobPersistence
 
-	// Pattern watch state, guarded by mu.
+	// Pattern watch state, guarded by mu. watchFired is the generation
+	// of the last watch that emitted its match.
 	watchGen    uint64
+	watchFired  uint64
 	watchCancel context.CancelFunc
 
 	startedAt    time.Time
@@ -365,10 +367,22 @@ func (bs *BackgroundShell) SetWatch(matcher *LineMatcher) uint64 {
 			return
 		}
 		if sink := bs.eventSinkLocked(); sink != nil {
+			bs.watchFired = gen
 			sink.PatternMatched(bs.infoLocked(), gen, line)
 		}
 	}()
 	return gen
+}
+
+// FiredWatchGen returns the current watch's generation if it has
+// already emitted its match, and 0 otherwise.
+func (bs *BackgroundShell) FiredWatchGen() uint64 {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	if bs.watchGen != 0 && bs.watchFired == bs.watchGen {
+		return bs.watchGen
+	}
+	return 0
 }
 
 // EventSink receives events for published jobs. Implementations must

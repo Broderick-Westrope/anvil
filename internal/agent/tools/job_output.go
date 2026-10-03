@@ -41,6 +41,9 @@ type JobOutputResponseMetadata struct {
 	RuntimeMS        int64  `json:"runtime_ms"`
 	EndReason        string `json:"end_reason,omitempty"` // WaitReason when wait=true.
 	MatchedLine      string `json:"matched_line,omitempty"`
+	// WatchGen is set when a wait matched and the job's current watch
+	// had already fired: the agent has now seen that watch's match.
+	WatchGen uint64 `json:"watch_gen,omitempty"`
 }
 
 const (
@@ -130,6 +133,11 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 			}
 			if info.Done {
 				metadata.ExitCode = info.ExitCode
+			}
+			if reason == shell.WaitMatched {
+				// A watch that has not fired yet can only match output
+				// after this read, so it must stay deliverable.
+				metadata.WatchGen = bgShell.FiredWatchGen()
 			}
 
 			result := FormatJobStatus(info, now, reason, timeout, matched) + "\n\n" + output
