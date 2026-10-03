@@ -54,6 +54,32 @@ type calibrationInput struct {
 	RecentUserMessages []string `json:"recent_user_messages"`
 }
 
+// pathTools take a file path as their input.
+var pathTools = map[string]bool{"edit": true, "multiedit": true, "write": true, "view": true, "ls": true}
+
+// nativePaths rewrites the fixture's Unix-style absolute paths into this
+// platform's absolute form. On Windows "/work/x" has no drive and isn't
+// absolute, which the bouncer rightly treats as unresolvable, so the
+// fixture borrows the temp directory's volume. Command text is left as is.
+func (c calibrationInput) nativePaths() calibrationInput {
+	if filepath.IsAbs("/") {
+		return c
+	}
+	volume := filepath.VolumeName(os.TempDir())
+	native := func(p string) string {
+		if !strings.HasPrefix(p, "/") {
+			return p
+		}
+		return filepath.FromSlash(volume + p)
+	}
+	c.Path = native(c.Path)
+	c.WorkingDir = native(c.WorkingDir)
+	if pathTools[c.ToolName] {
+		c.Input = native(c.Input)
+	}
+	return c
+}
+
 func (c calibrationInput) assessInput() permission.AssessInput {
 	return permission.AssessInput{
 		SessionID:          c.SessionID,
@@ -98,6 +124,7 @@ func loadCalibrationCases(t *testing.T) []calibrationCase {
 		dec.DisallowUnknownFields()
 		var c calibrationCase
 		require.NoError(t, dec.Decode(&c), "%s:%d", calibrationFile, line)
+		c.Input = c.Input.nativePaths()
 		cases = append(cases, c)
 	}
 	require.NoError(t, sc.Err())
