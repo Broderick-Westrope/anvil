@@ -319,6 +319,7 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 					ShellID:          jobID,
 				}
 				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", jobID)
+				response += fallbackJobWarning(jobID)
 				response += otherRunningJobsNote(bgManager, sessionID, jobID)
 				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 			}
@@ -409,6 +410,7 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				ShellID:          jobID,
 			}
 			response := formatAutoBackgroundResponse(jobID, time.Since(startTime), joinOutput(stdout, stderr))
+			response += fallbackJobWarning(jobID)
 			response += otherRunningJobsNote(bgManager, sessionID, jobID)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		})
@@ -424,6 +426,14 @@ func formatAutoBackgroundResponse(jobID string, elapsed time.Duration, output st
 	}
 	b.WriteString("\n\nThe first job_output call returns all output from the start. Use job_output with wait=true (and pattern for readiness lines) to wait, or job_kill to stop it.")
 	return b.String()
+}
+
+// fallbackJobWarning warns when a job could not be persisted.
+func fallbackJobWarning(jobID string) string {
+	if shell.IsFallbackID(jobID) {
+		return "\n\n" + shell.FallbackWarning
+	}
+	return ""
 }
 
 func otherRunningJobsNote(bgManager *shell.BackgroundShellManager, sessionID, jobID string) string {
