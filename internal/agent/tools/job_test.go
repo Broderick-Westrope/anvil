@@ -363,6 +363,11 @@ func sessionContext(t *testing.T) (context.Context, string) {
 	return context.WithValue(t.Context(), SessionIDContextKey, sessionID), sessionID
 }
 
+// slowRunnerTimeout bounds waits on real shell commands. Busy Windows CI
+// runners can take more than 10s just to start a process, and these
+// waits normally end in milliseconds, so a generous bound costs nothing.
+const slowRunnerTimeout = 60 * time.Second
+
 func startPublishedJob(t *testing.T, sessionID, command string, origin shell.JobOrigin) *shell.BackgroundShell {
 	t.Helper()
 
@@ -795,7 +800,7 @@ func globalJobEvents() *jobevents.Store {
 // claims everything pending.
 func claimEventually(t *testing.T, store *jobevents.Store, sessionID string) []jobevents.Event {
 	t.Helper()
-	require.Eventually(t, func() bool { return store.HasPending(sessionID) }, 10*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return store.HasPending(sessionID) }, slowRunnerTimeout, 10*time.Millisecond)
 	claimed, _ := store.Claim(sessionID, 100)
 	return claimed
 }
@@ -873,7 +878,7 @@ func TestJobOutputTool_Watch(t *testing.T) {
 
 		require.False(t, runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Pattern: "ready"}).IsError)
 		release("go")
-		require.Eventually(t, func() bool { return store.HasPending(sessionID) }, 10*time.Second, 10*time.Millisecond)
+		require.Eventually(t, func() bool { return store.HasPending(sessionID) }, slowRunnerTimeout, 10*time.Millisecond)
 
 		resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Wait: true, Pattern: "ready", TimeoutSeconds: 60})
 		require.False(t, resp.IsError)

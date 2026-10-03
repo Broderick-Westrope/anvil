@@ -16,6 +16,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// slowRunnerTimeout bounds waits on real shell commands. Busy Windows CI
+// runners can take more than 10s just to start a process, and these
+// waits normally end in milliseconds, so a generous bound costs nothing.
+const slowRunnerTimeout = 60 * time.Second
+
 func newTestJobQueries(t *testing.T) *db.Queries {
 	t.Helper()
 	dataDir := t.TempDir()
@@ -282,12 +287,12 @@ func TestFinishJobs_RecordsAnvilExitAndFencesDB(t *testing.T) {
 	}
 	finished, finishedID := publish("echo done")
 	finished.Wait()
-	require.Eventually(t, func() bool { return events.HasPending("sess") }, 10*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return events.HasPending("sess") }, slowRunnerTimeout, 10*time.Millisecond)
 	running, runningID := publish("sleep 30")
 
 	app := &App{jobs: l, jobEvents: events}
 	mgr.BeginShutdown()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 	defer cancel()
 	exited, abandoned := mgr.KillAll(ctx)
 	require.Contains(t, exited, runningID)

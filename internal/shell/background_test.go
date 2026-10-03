@@ -499,6 +499,11 @@ func registerBlockingShell(t *testing.T, m *BackgroundShellManager, release <-ch
 	return bs
 }
 
+// slowRunnerTimeout bounds waits on real shell commands. Busy Windows CI
+// runners can take more than 10s just to start a process, and these
+// waits normally end in milliseconds, so a generous bound costs nothing.
+const slowRunnerTimeout = 60 * time.Second
+
 func startShell(t *testing.T, m *BackgroundShellManager, command string) *BackgroundShell {
 	t.Helper()
 	bs, err := m.Start(t.Context(), t.TempDir(), nil, command, "")
@@ -701,7 +706,7 @@ func TestBackgroundShellManager_PublishRacingKill(t *testing.T) {
 		close(startSig)
 		wg.Wait()
 
-		waitCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		waitCtx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 		require.True(t, bs.WaitContext(waitCtx), "shell must be done after kill")
 		cancel()
 
@@ -964,7 +969,7 @@ func TestPublishRecorded_AllocateFailureFallsBack(t *testing.T) {
 	require.True(t, found)
 	require.Same(t, bs, got)
 
-	waitCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	waitCtx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 	defer cancel()
 	require.True(t, bs.WaitContext(waitCtx))
 	stdout, _, _, _ := bs.GetOutput()
@@ -1088,7 +1093,7 @@ func TestShutdown_ExitOnSignalRecordsAnvilExit(t *testing.T) {
 	_, err := manager.Publish(t.Context(), startShell(t, manager, "sleep 30").ID(), PublishOptions{SessionID: "s", Origin: OriginExplicit})
 	require.Error(t, err, "publication must be refused after BeginShutdown")
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 	defer cancel()
 	exited, abandoned := manager.KillAll(ctx)
 	require.Contains(t, exited, id)
@@ -1387,7 +1392,7 @@ func TestPublishRecorded_ShutdownDuringAllocation(t *testing.T) {
 	waitEntered(t, rec)
 
 	manager.BeginShutdown()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 	defer cancel()
 	manager.KillAll(ctx)
 	require.True(t, bs.IsDone())

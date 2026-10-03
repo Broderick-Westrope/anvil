@@ -14,6 +14,11 @@ import (
 
 // startTestJob starts command in the global manager and publishes it for
 // sessionID with the given origin. The job is killed when the test ends.
+// slowRunnerTimeout bounds waits on real shell commands. Busy Windows CI
+// runners can take more than 10s just to start a process, and these
+// waits normally end in milliseconds, so a generous bound costs nothing.
+const slowRunnerTimeout = 60 * time.Second
+
 func startTestJob(t *testing.T, sessionID, command string, origin shell.JobOrigin) string {
 	t.Helper()
 	mgr := shell.GetBackgroundShellManager()
@@ -31,7 +36,7 @@ func startCompletedTestJob(t *testing.T, sessionID string, origin shell.JobOrigi
 	id := startTestJob(t, sessionID, "true", origin)
 	bs, ok := shell.GetBackgroundShellManager().Get(id)
 	require.True(t, ok)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), slowRunnerTimeout)
 	defer cancel()
 	require.True(t, bs.WaitContext(ctx), "job did not finish in time")
 	return id
