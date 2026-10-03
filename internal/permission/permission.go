@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -152,6 +153,11 @@ type permissionService struct {
 	recorder              DecisionRecorder
 	assessor              AssessorOptions
 	assessorMode          atomic.Value // AssessorMode.
+	allowCache            *csync.Map[string, struct{}]
+
+	// beforePromptLock, when set, runs just before requestMu is acquired.
+	// Tests use it as a barrier.
+	beforePromptLock func(CreatePermissionRequest)
 
 	// requestMu makes sure we only process one request at a time.
 	requestMu       sync.Mutex
@@ -238,20 +244,135 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		return s.finish(opts, DecisionSourceHook, VerdictAllow, "", nil, ""), nil
 	}
 
-	s.requestMu.Lock()
-	defer s.requestMu.Unlock()
-
 	// Tell the UI that a permission was requested.
 	s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
 		ToolCallID: opts.ToolCallID,
 	})
 
+	p := s.evaluatePolicy(opts)
+	if p.resolved {
+		return s.finishPolicy(opts, p, nil), nil
+	}
+
+	perm := PermissionRequest{
+		ID:            uuid.New().String(),
+		Path:          s.requestDir(opts.Path),
+		SessionID:     opts.SessionID,
+		ToolCallID:    opts.ToolCallID,
+		ToolName:      opts.ToolName,
+		Description:   opts.Description,
+		Action:        opts.Action,
+		Params:        opts.Params,
+		Input:         opts.Input,
+		InputSegments: opts.InputSegments,
+	}
+
+	// The assessor runs without requestMu so concurrent requests are
+	// classified in parallel rather than queued behind a human prompt.
+	var details json.RawMessage
+	if s.shouldAssess(p) {
+		key := allowCacheKey(opts)
+		if s.currentAssessorMode() == AssessorEnforce {
+			if _, ok := s.allowCache.Get(key); ok {
+				return s.finish(opts, DecisionSourceAssessor, VerdictAllow, "", cachedAllowRecord(), ""), nil
+			}
+		}
+
+		a, failed := s.assess(ctx, opts)
+		mode := s.currentAssessorMode()
+		details = withAssessmentMode(a.Details, mode)
+		if ctx.Err() != nil {
+			s.record(opts, DecisionSourceHuman, VerdictCancelled, "", details)
+			return RequestResult{}, ctx.Err()
+		}
+
+		// Commit boundary 1: rules may have changed during the call.
+		if p2 := s.evaluatePolicy(opts); p2.resolved {
+			return s.finishPolicy(opts, p2, details), nil
+		}
+
+		if mode == AssessorEnforce {
+			switch a.Outcome {
+			case AssessAllow:
+				s.allowCache.Set(key, struct{}{})
+				return s.finish(opts, DecisionSourceAssessor, VerdictAllow, "", details, ""), nil
+			case AssessDeny:
+				reason := "blocked by permission assessor (" + a.Reason + "). Do not retry this or work around it; tell the user what you were trying to do."
+				return s.finish(opts, DecisionSourceAssessor, VerdictDeny, "", details, reason), nil
+			}
+		}
+		if mode != AssessorOff {
+			perm.AssessorNote = assessorNote(a, details, failed, mode)
+		}
+	}
+
+	if s.beforePromptLock != nil {
+		s.beforePromptLock(opts)
+	}
+	s.requestMu.Lock()
+	defer s.requestMu.Unlock()
+
+	if ctx.Err() != nil {
+		s.record(opts, DecisionSourceHuman, VerdictCancelled, "", details)
+		return RequestResult{}, ctx.Err()
+	}
+
+	// Commit boundary 2: a sibling prompt may have added a grant or rule
+	// while this request waited for the prompt slot.
+	if p3 := s.evaluatePolicy(opts); p3.resolved {
+		return s.finishPolicy(opts, p3, details), nil
+	}
+
+	s.activeRequestMu.Lock()
+	s.activeRequest = &perm
+	s.activeRequestMu.Unlock()
+
+	respCh := make(chan permissionResponse, 1)
+	s.pendingRequests.Set(perm.ID, respCh)
+	defer s.pendingRequests.Del(perm.ID)
+
+	// Publish the request.
+	s.Publish(pubsub.CreatedEvent, perm)
+
+	select {
+	case <-ctx.Done():
+		s.activeRequestMu.Lock()
+		if s.activeRequest != nil && s.activeRequest.ID == perm.ID {
+			s.activeRequest = nil
+		}
+		s.activeRequestMu.Unlock()
+		s.record(opts, DecisionSourceHuman, VerdictCancelled, "", details)
+		return RequestResult{}, ctx.Err()
+	case resp := <-respCh:
+		verdict := VerdictDeny
+		if resp.Granted {
+			verdict = VerdictAllow
+		}
+		s.record(opts, DecisionSourceHuman, verdict, "", details)
+		return RequestResult{Granted: resp.Granted, Reason: resp.Reason}, nil
+	}
+}
+
+// policyResult is the outcome of the deterministic policy layers.
+type policyResult struct {
+	resolved    bool
+	source      DecisionSource
+	verdict     Verdict
+	matchedRule string
+	reason      string
+	isDefault   bool // Unresolved because no rule matched.
+}
+
+// evaluatePolicy applies session auto-approval, config and session rules,
+// yolo-standard promotion, and legacy session grants. It reads fresh
+// snapshots on every call so it can be re-run at each commit boundary.
+func (s *permissionService) evaluatePolicy(opts CreatePermissionRequest) policyResult {
 	s.autoApproveSessionsMu.RLock()
 	autoApprove := s.autoApproveSessions[opts.SessionID]
 	s.autoApproveSessionsMu.RUnlock()
 
 	if autoApprove {
-		return s.finish(opts, DecisionSourceAutoSession, VerdictAllow, "", nil, ""), nil
+		return policyResult{resolved: true, source: DecisionSourceAutoSession, verdict: VerdictAllow}
 	}
 
 	// Evaluate rules. Clone the slices so a concurrent GrantForever or
@@ -293,77 +414,44 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 
 	switch action {
 	case config.PermissionAllow:
-		return s.finish(opts, source, VerdictAllow, result.MatchedRule, nil, ""), nil
-
+		return policyResult{resolved: true, source: source, verdict: VerdictAllow, matchedRule: result.MatchedRule}
 	case config.PermissionDeny:
-		reason := fmt.Sprintf("denied by rule %q", result.MatchedRule)
-		return s.finish(opts, source, VerdictDeny, result.MatchedRule, nil, reason), nil
-	}
-
-	// Action is "ask" — prompt the user.
-	fileInfo, err := os.Stat(opts.Path)
-	dir := opts.Path
-	if err == nil {
-		if fileInfo.IsDir() {
-			dir = opts.Path
-		} else {
-			dir = filepath.Dir(opts.Path)
+		return policyResult{
+			resolved:    true,
+			source:      source,
+			verdict:     VerdictDeny,
+			matchedRule: result.MatchedRule,
+			reason:      fmt.Sprintf("denied by rule %q", result.MatchedRule),
 		}
-	}
-
-	if dir == "." {
-		dir = s.workingDir
-	}
-	perm := PermissionRequest{
-		ID:            uuid.New().String(),
-		Path:          dir,
-		SessionID:     opts.SessionID,
-		ToolCallID:    opts.ToolCallID,
-		ToolName:      opts.ToolName,
-		Description:   opts.Description,
-		Action:        opts.Action,
-		Params:        opts.Params,
-		Input:         opts.Input,
-		InputSegments: opts.InputSegments,
 	}
 
 	if _, ok := s.sessionPermissions.Get(PermissionKey{
-		SessionID: perm.SessionID,
-		ToolName:  perm.ToolName,
-		Action:    perm.Action,
-		Path:      perm.Path,
+		SessionID: opts.SessionID,
+		ToolName:  opts.ToolName,
+		Action:    opts.Action,
+		Path:      s.requestDir(opts.Path),
 	}); ok {
-		return s.finish(opts, DecisionSourceSessionGrant, VerdictAllow, "", nil, ""), nil
+		return policyResult{resolved: true, source: DecisionSourceSessionGrant, verdict: VerdictAllow}
 	}
 
-	s.activeRequestMu.Lock()
-	s.activeRequest = &perm
-	s.activeRequestMu.Unlock()
+	return policyResult{isDefault: result.IsDefault}
+}
 
-	respCh := make(chan permissionResponse, 1)
-	s.pendingRequests.Set(perm.ID, respCh)
-	defer s.pendingRequests.Del(perm.ID)
+func (s *permissionService) finishPolicy(opts CreatePermissionRequest, p policyResult, assessment json.RawMessage) RequestResult {
+	return s.finish(opts, p.source, p.verdict, p.matchedRule, assessment, p.reason)
+}
 
-	// Publish the request.
-	s.Publish(pubsub.CreatedEvent, perm)
-
-	select {
-	case <-ctx.Done():
-		s.activeRequestMu.Lock()
-		if s.activeRequest != nil && s.activeRequest.ID == perm.ID {
-			s.activeRequest = nil
-		}
-		s.activeRequestMu.Unlock()
-		s.record(opts, DecisionSourceHuman, VerdictCancelled, "", nil)
-		return RequestResult{}, ctx.Err()
-	case resp := <-respCh:
-		verdict := VerdictDeny
-		if resp.Granted {
-			verdict = VerdictAllow
-		}
-		s.record(opts, DecisionSourceHuman, verdict, "", nil)
-		return RequestResult{Granted: resp.Granted, Reason: resp.Reason}, nil
+// requestDir resolves the directory a request applies to, as shown in the
+// prompt and used for legacy session grants.
+func (s *permissionService) requestDir(path string) string {
+	dir := path
+	if fileInfo, err := os.Stat(path); err == nil && !fileInfo.IsDir() {
+		dir = filepath.Dir(path)
 	}
+	if dir == "." {
+		dir = s.workingDir
+	}
+	return dir
 }
 
 func (s *permissionService) AutoApproveSession(sessionID string) {
@@ -457,6 +545,7 @@ func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configR
 		sessionRules:        make(map[string][]config.PermissionRule),
 		pendingRequests:     csync.NewMap[string, chan permissionResponse](),
 		configStore:         configStore,
+		allowCache:          csync.NewMap[string, struct{}](),
 	}
 	svc.yoloLevel.Store(int32(yoloLevel))
 	svc.assessorMode.Store(AssessorOff)

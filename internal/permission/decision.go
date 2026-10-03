@@ -1,9 +1,16 @@
 package permission
 
 import (
+	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"log/slog"
+	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -186,4 +193,150 @@ func (s *permissionService) finish(opts CreatePermissionRequest, src DecisionSou
 	})
 	s.record(opts, src, verdict, matchedRule, assessment)
 	return RequestResult{Granted: granted, Reason: reason}
+}
+
+// defaultAssessorTimeout bounds an assessor call when no timeout is set.
+const defaultAssessorTimeout = 8 * time.Second
+
+func (s *permissionService) currentAssessorMode() AssessorMode {
+	mode, _ := s.assessorMode.Load().(AssessorMode)
+	return mode
+}
+
+// shouldAssess reports whether an unresolved request goes to the assessor
+// before the human.
+func (s *permissionService) shouldAssess(p policyResult) bool {
+	if s.assessor.Assessor == nil {
+		return false
+	}
+	if mode := s.currentAssessorMode(); mode == "" || mode == AssessorOff {
+		return false
+	}
+	return p.isDefault || !s.assessor.ExplicitAskToHuman
+}
+
+// assess runs the assessor, converting errors and panics into an escalate
+// outcome. failed reports whether the assessor errored.
+func (s *permissionService) assess(ctx context.Context, opts CreatePermissionRequest) (a Assessment, failed bool) {
+	in := AssessInput{
+		SessionID:   opts.SessionID,
+		ToolName:    opts.ToolName,
+		Action:      opts.Action,
+		Description: opts.Description,
+		Input:       opts.Input,
+		Path:        opts.Path,
+		WorkingDir:  s.workingDir,
+		Segments:    slices.Clone(opts.InputSegments),
+		Content:     opts.Content,
+		ArgsJSON:    opts.ArgsJSON,
+	}
+	if s.assessor.Intent != nil {
+		msgs, err := s.assessor.Intent.RecentUserMessages(ctx, opts.SessionID, 3)
+		if err != nil {
+			slog.Warn("Failed to load user intent for permission assessor", "tool", opts.ToolName, "error", err)
+		} else {
+			in.RecentUserMessages = msgs
+		}
+	}
+
+	timeout := s.assessor.Timeout
+	if timeout <= 0 {
+		timeout = defaultAssessorTimeout
+	}
+	actx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	a, err := s.callAssessor(actx, in)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("Permission assessor failed; asking user", "tool", opts.ToolName, "error", err)
+		}
+		a.Outcome = AssessEscalate
+		return a, true
+	}
+	return a, false
+}
+
+func (s *permissionService) callAssessor(ctx context.Context, in AssessInput) (a Assessment, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			a = Assessment{Reason: "assessor error"}
+			err = fmt.Errorf("permission assessor panicked: %v", r)
+		}
+	}()
+	return s.assessor.Assessor.Assess(ctx, in)
+}
+
+// withAssessmentMode stamps the mode onto a marshalled AssessmentRecord.
+// Details that don't decode are returned unchanged.
+func withAssessmentMode(details json.RawMessage, mode AssessorMode) json.RawMessage {
+	if len(details) == 0 {
+		return nil
+	}
+	var rec AssessmentRecord
+	if err := json.Unmarshal(details, &rec); err != nil {
+		return details
+	}
+	rec.Mode = string(mode)
+	out, err := json.Marshal(rec)
+	if err != nil {
+		return details
+	}
+	return out
+}
+
+func cachedAllowRecord() json.RawMessage {
+	out, _ := json.Marshal(AssessmentRecord{
+		SchemaVersion: AssessmentSchemaVersion,
+		Mode:          string(AssessorEnforce),
+		Outcome:       "allow",
+		Reason:        "session allow cache",
+	})
+	return out
+}
+
+// allowCacheKey identifies a repeat of the same call within a session.
+func allowCacheKey(opts CreatePermissionRequest) string {
+	sum := sha256.Sum256([]byte(opts.Input + "\x00" + opts.Content + "\x00" + opts.ArgsJSON))
+	return opts.SessionID + "\x00" + opts.ToolName + "\x00" + hex.EncodeToString(sum[:])
+}
+
+// assessorNote is the one-line summary shown alongside the prompt.
+func assessorNote(a Assessment, details json.RawMessage, failed bool, mode AssessorMode) string {
+	prefix := "assessor"
+	if mode == AssessorShadow {
+		prefix = "assessor (shadow)"
+	}
+	if failed {
+		return prefix + ": error"
+	}
+	var rec AssessmentRecord
+	_ = json.Unmarshal(details, &rec)
+	if rec.Outcome == "skipped" {
+		return prefix + ": skipped · " + cmp.Or(rec.SkipReason, a.Reason)
+	}
+
+	note := prefix + ": " + outcomeName(a.Outcome)
+	var scores []string
+	for _, id := range slices.Sorted(maps.Keys(rec.Nouls)) {
+		scores = append(scores, fmt.Sprintf("%s=%.2g", id, rec.Nouls[id]))
+	}
+	if rec.Severity != nil {
+		scores = append(scores, fmt.Sprintf("severity=%.2g", *rec.Severity))
+	}
+	if len(scores) > 0 {
+		note += " · " + strings.Join(scores, " ")
+	}
+	return note
+}
+
+func outcomeName(o AssessOutcome) string {
+	switch o {
+	case AssessAllow:
+		return "allow"
+	case AssessDeny:
+		return "deny"
+	default:
+		return "escalate"
+	}
 }
