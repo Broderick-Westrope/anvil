@@ -42,7 +42,7 @@ func TestComposerFromMessage(t *testing.T) {
 					return &skills.Skill{Name: name, Instructions: "new instructions", Source: "user"}
 				}
 				return nil
-			})
+			}, nil)
 			require.Equal(t, tt.want, got)
 		})
 	}
@@ -57,7 +57,7 @@ func TestComposerFromMessageCopiesAttachments(t *testing.T) {
 		message.BinaryContent{Path: "/tmp/image.png", MIMEType: "image/png", Data: image},
 		message.ImageURLContent{URL: "https://example.com/image.png"},
 	}}
-	got := composerFromMessage(msg, nil)
+	got := composerFromMessage(msg, nil, nil)
 	require.Equal(t, composerSnapshot{attachments: []message.Attachment{
 		{FilePath: "/tmp/file.txt", FileName: "file.txt", MimeType: "text/plain", Content: []byte("file")},
 		{FilePath: "/tmp/image.png", FileName: "image.png", MimeType: "image/png", Content: []byte("image")},
@@ -198,11 +198,10 @@ func TestHistoryComposerSnapshotsAreIndependent(t *testing.T) {
 	m, _ := composerRestoreUI(t, "text")
 	m.focus = uiFocusEditor
 	m.Update(m.loadPromptHistory()())
-	draftBytes := m.attachments.List()[0].Content
 	m.textarea.MoveToBegin()
 	m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	draftBytes[0] = 'X'
-	m.attachments.List()[0].Content[0] = 'X'
+	m.attachments.Reset()
+	m.attachments.Update(message.Attachment{FileName: "replacement.txt", Content: []byte("replacement")})
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	requireOriginalComposer(t, m)
 	m.textarea.MoveToBegin()

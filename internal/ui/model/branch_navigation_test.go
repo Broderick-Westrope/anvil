@@ -114,7 +114,7 @@ func TestBranchEscapeRestoresFullDraft(t *testing.T) {
 	require.Empty(t, m.session.LeafMessageID)
 	require.Equal(t, leaf.ID, m.pendingBranch.leafID)
 	require.NotEqual(t, source.ID, m.pendingBranch.leafID)
-	bytes[0] = 'X'
+	m.attachments.Update(message.Attachment{FileName: "replacement.txt", Content: []byte("replacement")})
 	m.textarea.SetValue("edited")
 	m.attachments.Reset()
 	m.promptHistory.messages[0].text = "changed"

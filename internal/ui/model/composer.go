@@ -1,8 +1,10 @@
 package model
 
 import (
+	"net/url"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -10,25 +12,27 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 )
 
-func composerFromMessage(msg message.Message, lookup func(string) *skills.Skill) composerSnapshot {
+func composerFromMessage(msg message.Message, lookup func(string) *skills.Skill, customCommands []commands.CustomCommand) composerSnapshot {
 	content, text := skills.ParseContentXML(msg.Content().Text)
 	collapsed := commands.CollapseExpansionXML(text)
 	state := composerSnapshot{text: collapsed}
-	if collapsed == text {
-		for _, skill := range content {
-			att := attachments.SkillAttachment{Name: skill.Name, Instructions: skill.Instructions}
-			if lookup != nil {
-				if active := lookup(skill.Name); active != nil {
-					att.Source = active.Source
-				}
+	if collapsed != text {
+		content = commandAttachedSkills(content, collapsed, customCommands)
+		slices.Reverse(content)
+	}
+	for _, skill := range content {
+		att := attachments.SkillAttachment{Name: skill.Name, Instructions: skill.Instructions}
+		if lookup != nil {
+			if active := lookup(skill.Name); active != nil {
+				att.Source = active.Source
 			}
-			state.skills = append(state.skills, att)
 		}
+		state.skills = append(state.skills, att)
 	}
 	for _, binary := range msg.BinaryContent() {
 		state.attachments = append(state.attachments, message.Attachment{
 			FilePath: binary.Path,
-			FileName: filepath.Base(binary.Path),
+			FileName: composerAttachmentName(binary.Path),
 			MimeType: binary.MIMEType,
 			Content:  slices.Clone(binary.Data),
 		})
@@ -36,11 +40,49 @@ func composerFromMessage(msg message.Message, lookup func(string) *skills.Skill)
 	return state
 }
 
+func commandAttachedSkills(content []skills.ContentXML, line string, customCommands []commands.CustomCommand) []skills.ContentXML {
+	line, ok := strings.CutPrefix(line, "/")
+	if !ok {
+		return nil
+	}
+	name, _, _ := strings.Cut(line, " ")
+	for _, cmd := range customCommands {
+		commandName := cmd.ItemName()
+		if cmd.DisplayName != "" {
+			commandName = cmd.DisplayName
+		}
+		if name != commandName {
+			continue
+		}
+		end := len(content)
+		for i := len(cmd.Skills) - 1; i >= 0 && end > 0; i-- {
+			if content[end-1].Name == cmd.Skills[i] {
+				end--
+			}
+		}
+		return content[:end]
+	}
+	return nil
+}
+
+func composerAttachmentName(path string) string {
+	name := filepath.Base(path)
+	if strings.Contains(path, "://") {
+		if uri, err := url.Parse(path); err == nil {
+			name = filepath.Base(uri.Path)
+			if name == "." || name == "/" {
+				name = uri.Hostname()
+			}
+		}
+	}
+	if name == "" || name == "." || name == "/" {
+		return "attachment"
+	}
+	return name
+}
+
 func (c composerSnapshot) clone() composerSnapshot {
 	c.attachments = slices.Clone(c.attachments)
-	for i := range c.attachments {
-		c.attachments[i].Content = slices.Clone(c.attachments[i].Content)
-	}
 	c.skills = slices.Clone(c.skills)
 	return c
 }

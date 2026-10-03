@@ -849,7 +849,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case promptHistoryLoadedMsg:
 		m.promptHistory.messages = nil
 		for _, source := range msg.messages {
-			state := composerFromMessage(source, m.com.Workspace.ActiveSkillByName)
+			state := composerFromMessage(source, m.com.Workspace.ActiveSkillByName, m.customCommands)
 			if !state.isEmpty() {
 				m.promptHistory.messages = append(m.promptHistory.messages, state)
 			}
@@ -5157,7 +5157,7 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	// Pre-fill editor for user messages.
 	if msg.role == message.User {
 		prevHeight := m.textarea.Height()
-		m.restoreComposer(composerFromMessage(msg.source, m.com.Workspace.ActiveSkillByName))
+		m.restoreComposer(composerFromMessage(msg.source, m.com.Workspace.ActiveSkillByName, m.customCommands))
 		if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
