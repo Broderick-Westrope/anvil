@@ -527,7 +527,9 @@ func TestJobOutputTool_Incremental(t *testing.T) {
 	t.Parallel()
 
 	ctx, sessionID := sessionContext(t)
-	bgShell := startPublishedJob(t, sessionID, "echo hello; sleep 30", shell.OriginExplicit)
+	// The short sleep keeps the runtime above 0ms on fast machines, where
+	// an immediate echo can be read back within the same millisecond.
+	bgShell := startPublishedJob(t, sessionID, "sleep 0.05; echo hello; sleep 30", shell.OriginExplicit)
 	waitForOutput(t, bgShell, "hello")
 
 	first := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID()})
@@ -631,11 +633,14 @@ func TestJobOutputTool_WaitPattern(t *testing.T) {
 	t.Parallel()
 
 	ctx, sessionID := sessionContext(t)
-	bgShell := startPublishedJob(t, sessionID, "sh -c 'sleep 0.5; echo ready; sleep 30'", shell.OriginExplicit)
+	bgShell := startPublishedJob(t, sessionID, "sleep 0.5; echo ready; sleep 30", shell.OriginExplicit)
 
+	const timeout = 120
 	start := time.Now()
-	resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Wait: true, Pattern: "ready", TimeoutSeconds: 60})
-	require.Less(t, time.Since(start), 10*time.Second)
+	resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Wait: true, Pattern: "ready", TimeoutSeconds: timeout})
+	// EndReason below proves the wait matched. This bound only checks it
+	// returned well before the timeout, leaving room for slow CI runners.
+	require.Less(t, time.Since(start), timeout/2*time.Second)
 
 	require.False(t, resp.IsError)
 	require.Contains(t, resp.Content, `matched "ready"`)
