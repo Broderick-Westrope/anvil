@@ -374,3 +374,35 @@ func TestAssessorBreakerHalfOpenSingleProbe(t *testing.T) {
 	require.Equal(t, permission.AssessAllow, got.Outcome)
 	require.Equal(t, before+1, hits.Load())
 }
+
+func TestWarmBypassesBreakerAndNeverRetries(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int32
+	var healthy atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if !healthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `{"model":"von-1.0.0","answers":{"warm":{"type":"noul","noul":0.9}},"usage":{"input_tokens":10,"output_tokens":1}}`)
+	}))
+	defer srv.Close()
+
+	a := newTestAssessor(srv.URL)
+	a.Client.Backoff = []time.Duration{time.Millisecond, time.Millisecond}
+
+	require.Error(t, a.Warm(t.Context()))
+	require.Equal(t, int32(1), hits.Load(), "warm-up must not retry")
+	allowed, _ := a.breaker.allow(a.now())
+	require.True(t, allowed, "warm-up failure must not trip the breaker")
+	require.Len(t, a.Client.Backoff, 2, "warm-up must not mutate the shared client")
+
+	for range breakerThreshold {
+		a.breaker.fail(a.now(), false)
+	}
+	healthy.Store(true)
+	require.NoError(t, a.Warm(t.Context()), "warm-up runs even with the breaker open")
+	require.Equal(t, int32(2), hits.Load())
+}

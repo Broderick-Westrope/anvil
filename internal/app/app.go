@@ -98,11 +98,12 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	}
 	permOpts := []permission.Option{permission.WithDecisionRecorder(recorder)}
 	if ta := store.TrustedAssessor(); ta != nil {
-		if opt, ok := buildAssessorOption(ta, sessions, messages); ok {
-			permOpts = append(permOpts, opt)
+		if setup, ok := buildAssessorOption(ta, sessions, messages); ok {
+			permOpts = append(permOpts, setup.option)
 			slog.Info("Permission assessor configured",
 				"mode", cmp.Or(ta.Config.Mode, config.AssessorOff),
 				"model", ta.Config.Model)
+			go warmAssessor(ctx, setup.assessor, setup.mode)
 		}
 	}
 

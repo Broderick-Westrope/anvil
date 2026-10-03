@@ -2,13 +2,19 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
 )
@@ -123,10 +129,87 @@ func validTrustedAssessor(mode config.AssessorMode) *config.TrustedAssessor {
 func TestBuildAssessorOption_ModeOffStillBuilt(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []config.AssessorMode{"", config.AssessorOff, config.AssessorShadow, config.AssessorEnforce} {
-		opt, ok := buildAssessorOption(validTrustedAssessor(mode), nil, nil)
+		setup, ok := buildAssessorOption(validTrustedAssessor(mode), nil, nil)
 		require.True(t, ok, "mode %q", mode)
-		require.NotNil(t, opt, "mode %q", mode)
+		require.NotNil(t, setup.option, "mode %q", mode)
+		require.NotNil(t, setup.assessor, "mode %q", mode)
+		want := permission.AssessorMode(mode)
+		if mode == "" {
+			want = permission.AssessorOff
+		}
+		require.Equal(t, want, setup.mode, "mode %q", mode)
 	}
+}
+
+type fakeWarmer struct {
+	calls    atomic.Int32
+	err      error
+	deadline atomic.Bool
+}
+
+func (f *fakeWarmer) Warm(ctx context.Context) error {
+	f.calls.Add(1)
+	_, ok := ctx.Deadline()
+	f.deadline.Store(ok)
+	return f.err
+}
+
+func TestWarmAssessor(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode  permission.AssessorMode
+		calls int32
+	}{
+		{permission.AssessorOff, 0},
+		{permission.AssessorShadow, 1},
+		{permission.AssessorEnforce, 1},
+	} {
+		w := &fakeWarmer{}
+		warmAssessor(t.Context(), w, tc.mode)
+		require.Equal(t, tc.calls, w.calls.Load(), "mode %q", tc.mode)
+		if tc.calls > 0 {
+			require.True(t, w.deadline.Load(), "warm-up must be bounded")
+		}
+	}
+	warmAssessor(t.Context(), nil, permission.AssessorShadow)
+}
+
+func TestWarmAssessorSendsOneMinimalRequest(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int32
+	var body atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		data, _ := io.ReadAll(r.Body)
+		body.Store(string(data))
+		_, _ = io.WriteString(w, `{"model":"von-1.0.0","answers":{"warm":{"type":"noul","noul":0.9}},"usage":{"input_tokens":10,"output_tokens":1}}`)
+	}))
+	defer srv.Close()
+
+	ta := validTrustedAssessor(config.AssessorShadow)
+	ta.Config.URL = srv.URL
+	setup, ok := buildAssessorOption(ta, nil, nil)
+	require.True(t, ok)
+	warmAssessor(t.Context(), setup.assessor, setup.mode)
+	require.Equal(t, int32(1), hits.Load())
+	require.Contains(t, body.Load(), `"warm"`)
+	require.Less(t, len(body.Load().(string)), 300)
+}
+
+func TestWarmAssessorOffMakesNoRequest(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+	}))
+	defer srv.Close()
+
+	ta := validTrustedAssessor(config.AssessorOff)
+	ta.Config.URL = srv.URL
+	setup, ok := buildAssessorOption(ta, nil, nil)
+	require.True(t, ok)
+	warmAssessor(t.Context(), setup.assessor, setup.mode)
+	require.Zero(t, hits.Load())
 }
 
 func TestBuildAssessorOption_SendUserMessagesFalseBuilt(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -119,6 +120,25 @@ func (a *Assessor) Assess(ctx context.Context, in permission.AssessInput) (permi
 	rec.InputTokens = resp.Usage.InputTokens
 	rec.OutputTokens = resp.Usage.OutputTokens
 	return permission.Assessment{Outcome: outcome, Reason: reason, Details: marshal(rec)}, nil
+}
+
+// warmQuestion is the single cheap question used to prime a cold model.
+var warmQuestion = map[string]Question{
+	"warm": {Type: "noul", Instructions: "Is this a connectivity check?"},
+}
+
+// Warm sends one minimal request so a serverless deployment is running
+// before the first real assessment. It bypasses the breaker and the
+// concurrency cap, never retries, and has no effect on routing. Callers
+// bound it with ctx; cold starts can take far longer than the per-call
+// assessment timeout.
+func (a *Assessor) Warm(ctx context.Context) error {
+	c := *a.Client
+	c.Backoff = nil
+	if _, err := c.Evaluate(ctx, "connectivity check", warmQuestion); err != nil {
+		return fmt.Errorf("warm permission assessor: %w", err)
+	}
+	return nil
 }
 
 func skipped(rec permission.AssessmentRecord, reason string) permission.Assessment {

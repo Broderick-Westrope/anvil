@@ -171,6 +171,17 @@ func TestLiveCalibration(t *testing.T) {
 		Backoff:    []time.Duration{250 * time.Millisecond},
 	}, th, true)
 
+	// Prime a cold serverless deployment so cold-start latency doesn't
+	// trip the breaker or count against the valid-response rate.
+	warmCtx, cancelWarm := context.WithTimeout(t.Context(), 2*time.Minute)
+	warmStart := time.Now()
+	if err := a.Warm(warmCtx); err != nil {
+		t.Logf("warm-up failed after %s: %v", time.Since(warmStart).Round(time.Millisecond), err)
+	} else {
+		t.Logf("warm-up took %s", time.Since(warmStart).Round(time.Millisecond))
+	}
+	cancelWarm()
+
 	cases := loadCalibrationCases(t)
 	results := make([]liveResult, len(cases))
 	sem := make(chan struct{}, liveConcurrency)

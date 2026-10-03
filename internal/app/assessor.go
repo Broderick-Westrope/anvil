@@ -3,6 +3,7 @@ package app
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,14 +20,24 @@ const (
 	defaultAssessorTimeoutSeconds = 8
 	maxIntentParentDepth          = 3
 	intentBranchTail              = 50
+	// assessorWarmTimeout bounds the startup warm-up call. Serverless
+	// deployments can take tens of seconds to cold start.
+	assessorWarmTimeout = 2 * time.Minute
 )
+
+// assessorSetup is the result of building the assessor from config.
+type assessorSetup struct {
+	option   permission.Option
+	assessor *assessor.Assessor
+	mode     permission.AssessorMode
+}
 
 // buildAssessorOption turns the trusted assessor config into a permission
 // option. It builds the option even when the mode is off so a runtime
 // toggle can enable the assessor later.
-func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, messages message.Service) (permission.Option, bool) {
+func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, messages message.Service) (assessorSetup, bool) {
 	if ta == nil || ta.Config == nil {
-		return nil, false
+		return assessorSetup{}, false
 	}
 	cfg := ta.Config
 	var missing []string
@@ -41,13 +52,13 @@ func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, m
 	}
 	if len(missing) > 0 {
 		slog.Warn("Permission assessor is configured but unusable", "missing", missing)
-		return nil, false
+		return assessorSetup{}, false
 	}
 
 	th := assessorThresholds(cfg)
 	if err := th.Validate(); err != nil {
 		slog.Warn("Permission assessor thresholds are invalid", "error", err)
-		return nil, false
+		return assessorSetup{}, false
 	}
 
 	sendUserMessages := cfg.SendUserMessages == nil || *cfg.SendUserMessages
@@ -59,8 +70,9 @@ func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, m
 		HTTP:       &http.Client{},
 		Backoff:    []time.Duration{250 * time.Millisecond},
 	}
+	a := assessor.New(client, th, sendUserMessages)
 	opts := permission.AssessorOptions{
-		Assessor:           assessor.New(client, th, sendUserMessages),
+		Assessor:           a,
 		Mode:               permission.AssessorMode(cmp.Or(cfg.Mode, config.AssessorOff)),
 		Timeout:            time.Duration(cmp.Or(cfg.TimeoutSeconds, defaultAssessorTimeoutSeconds)) * time.Second,
 		ExplicitAskToHuman: cfg.ExplicitAsk == config.AssessorExplicitAskHuman,
@@ -68,7 +80,32 @@ func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, m
 	if sendUserMessages {
 		opts.Intent = &intentSource{sessions: sessions, messages: messages}
 	}
-	return permission.WithAssessor(opts), true
+	return assessorSetup{option: permission.WithAssessor(opts), assessor: a, mode: opts.Mode}, true
+}
+
+// warmer is the part of the assessor the startup warm-up needs.
+type warmer interface {
+	Warm(ctx context.Context) error
+}
+
+// warmAssessor primes a cold serverless deployment so the first real
+// assessment isn't slowed by a cold start. It does nothing when the mode
+// is off, because off promises no network calls. Failures only log: the
+// assessor still fails to the human on its own.
+func warmAssessor(ctx context.Context, w warmer, mode permission.AssessorMode) {
+	if w == nil || mode == permission.AssessorOff {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, assessorWarmTimeout)
+	defer cancel()
+	start := time.Now()
+	if err := w.Warm(ctx); err != nil {
+		if ctx.Err() == nil || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			slog.Warn("Permission assessor warm-up failed", "error", err, "elapsed", time.Since(start).Round(time.Millisecond))
+		}
+		return
+	}
+	slog.Info("Permission assessor warmed", "elapsed", time.Since(start).Round(time.Millisecond))
 }
 
 func assessorThresholds(cfg *config.PermissionAssessor) assessor.Thresholds {
