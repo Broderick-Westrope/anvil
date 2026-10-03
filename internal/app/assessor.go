@@ -14,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/systemone"
 )
 
 const (
@@ -62,7 +63,7 @@ func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, m
 	}
 
 	sendUserMessages := cfg.SendUserMessages == nil || *cfg.SendUserMessages
-	client := &assessor.Client{
+	client := &systemone.Client{
 		URL:        cfg.URL,
 		APIKey:     ta.APIKey,
 		AuthScheme: string(cmp.Or(cfg.AuthScheme, config.AssessorAuthAPIKey)),

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/systemone"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,6 +30,19 @@ func batteryBody(hazard float64, severity float64) string {
 	}
 	parts = append(parts, fmt.Sprintf(`%q:{"type":"score","score":%v}`, QSeverity, severity))
 	return `{"model":"von-1.0.0","answers":{` + strings.Join(parts, ",") + `},"usage":{"input_tokens":120,"output_tokens":14}}`
+}
+
+const testAPIKey = "test-secret-key-0123456789"
+
+func newTestClient(url string) *systemone.Client {
+	return &systemone.Client{
+		URL:        url,
+		APIKey:     testAPIKey,
+		AuthScheme: "Api-Key",
+		Model:      "von-1.0.0",
+		HTTP:       &http.Client{},
+		Backoff:    []time.Duration{time.Millisecond},
+	}
 }
 
 func newTestAssessor(url string) *Assessor {

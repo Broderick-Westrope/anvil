@@ -5,18 +5,19 @@ import (
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/systemone"
 	"github.com/stretchr/testify/require"
 )
 
-func answers(hazard map[string]float64, severity float64, userReq *float64) map[string]Answer {
-	out := map[string]Answer{}
+func answers(hazard map[string]float64, severity float64, userReq *float64) map[string]systemone.Answer {
+	out := map[string]systemone.Answer{}
 	for _, q := range HazardQuestions {
 		v := hazard[q]
-		out[q] = Answer{Type: "noul", Noul: &v}
+		out[q] = systemone.Answer{Type: "noul", Noul: &v}
 	}
-	out[QSeverity] = Answer{Type: "score", Score: &severity}
+	out[QSeverity] = systemone.Answer{Type: "score", Score: &severity}
 	if userReq != nil {
-		out[QUserRequested] = Answer{Type: "noul", Noul: userReq}
+		out[QUserRequested] = systemone.Answer{Type: "noul", Noul: userReq}
 	}
 	return out
 }
@@ -29,7 +30,7 @@ func TestRoute(t *testing.T) {
 	th := DefaultThresholds()
 	tests := []struct {
 		name    string
-		answers map[string]Answer
+		answers map[string]systemone.Answer
 		want    permission.AssessOutcome
 	}{
 		{"all low", answers(map[string]float64{QDestructive: 0.1}, 0.5, ptr(0.1)), permission.AssessAllow},
@@ -97,7 +98,7 @@ func TestTriggers(t *testing.T) {
 	th := DefaultThresholds()
 	tests := []struct {
 		name    string
-		answers map[string]Answer
+		answers map[string]systemone.Answer
 		want    map[string]string
 	}{
 		{"nothing crosses", answers(map[string]float64{QDestructive: 0.1}, 0.5, ptr(0.1)), nil},

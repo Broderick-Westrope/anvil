@@ -1,5 +1,7 @@
 package assessor
 
+import "math"
+
 // truncate returns at most n runes of s.
 func truncate(s string, n int) string {
 	if n <= 0 {
@@ -13,4 +15,8 @@ func truncate(s string, n int) string {
 		count++
 	}
 	return s
+}
+
+func finite(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }

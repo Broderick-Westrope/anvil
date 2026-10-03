@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/systemone"
 	"github.com/stretchr/testify/require"
 )
 
@@ -162,7 +163,7 @@ func TestLiveCalibration(t *testing.T) {
 
 	th := DefaultThresholds()
 	require.NoError(t, th.Validate())
-	a := New(&Client{
+	a := New(&systemone.Client{
 		URL:        url,
 		APIKey:     apiKey,
 		AuthScheme: authScheme,

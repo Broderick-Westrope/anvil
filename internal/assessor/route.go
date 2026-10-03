@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/systemone"
 )
 
 // maxSeverity is the highest severity score in the battery.
@@ -59,7 +60,7 @@ func (t Thresholds) asMap() map[string]float64 {
 
 // Route maps validated answers to an outcome and a short reason. Any
 // missing or non-finite answer escalates.
-func Route(answers map[string]Answer, th Thresholds) (permission.AssessOutcome, string) {
+func Route(answers map[string]systemone.Answer, th Thresholds) (permission.AssessOutcome, string) {
 	topName, top := "", -1.0
 	for _, q := range HazardQuestions {
 		v, ok := value(answers[q].Noul)
@@ -101,7 +102,7 @@ func value(p *float64) (float64, bool) {
 // Triggers reports which answers crossed a routing threshold and the
 // effect each had, so a reviewer can see why a request was routed as it
 // was. It mirrors the comparisons in Route.
-func Triggers(answers map[string]Answer, th Thresholds) map[string]string {
+func Triggers(answers map[string]systemone.Answer, th Thresholds) map[string]string {
 	out := map[string]string{}
 	for _, q := range HazardQuestions {
 		v, ok := value(answers[q].Noul)

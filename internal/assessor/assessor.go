@@ -1,3 +1,5 @@
+// Package assessor asks a System One classifier whether a tool call
+// needs a human.
 package assessor
 
 import (
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/systemone"
 )
 
 const (
@@ -31,7 +34,7 @@ const (
 
 // Assessor implements permission.Assessor with a System One client.
 type Assessor struct {
-	Client           *Client
+	Client           *systemone.Client
 	Thresholds       Thresholds
 	SendUserMessages bool
 	sem              chan struct{} // Cap 4: bounded concurrency.
@@ -42,7 +45,7 @@ type Assessor struct {
 var _ permission.Assessor = (*Assessor)(nil)
 
 // New returns an Assessor. Callers should validate th first.
-func New(c *Client, th Thresholds, sendUserMessages bool) *Assessor {
+func New(c *systemone.Client, th Thresholds, sendUserMessages bool) *Assessor {
 	return &Assessor{
 		Client:           c,
 		Thresholds:       th,
@@ -124,7 +127,7 @@ func (a *Assessor) Assess(ctx context.Context, in permission.AssessInput) (permi
 }
 
 // warmQuestion is the single cheap question used to prime a cold model.
-var warmQuestion = map[string]Question{
+var warmQuestion = map[string]systemone.Question{
 	"warm": {Type: "noul", Instructions: "Is this a connectivity check?"},
 }
 

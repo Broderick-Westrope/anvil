@@ -1,6 +1,6 @@
-// Package assessor asks a System One classifier whether a tool call
-// needs a human.
-package assessor
+// Package systemone is a client for TypeSafe-compatible System One
+// classifier endpoints.
+package systemone
 
 import (
 	"bytes"
@@ -71,7 +71,7 @@ const maxResponseBytes = 1 << 20
 func (c *Client) Evaluate(ctx context.Context, state any, questions map[string]Question) (Response, error) {
 	body, err := json.Marshal(request{Model: c.Model, State: state, Questions: questions})
 	if err != nil {
-		return Response{}, fmt.Errorf("marshal assessor request: %w", err)
+		return Response{}, fmt.Errorf("marshal system one request: %w", err)
 	}
 
 	var lastErr error
@@ -88,7 +88,7 @@ func (c *Client) Evaluate(ctx context.Context, state any, questions map[string]Q
 		resp, err := c.do(ctx, body)
 		if err == nil {
 			if err := Validate(resp, questions); err != nil {
-				return Response{}, fmt.Errorf("invalid assessor response: %w", err)
+				return Response{}, fmt.Errorf("invalid system one response: %w", err)
 			}
 			return resp, nil
 		}
@@ -106,7 +106,7 @@ func (c *Client) Evaluate(ctx context.Context, state any, questions map[string]Q
 func (c *Client) do(ctx context.Context, body []byte) (Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
 	if err != nil {
-		return Response{}, fmt.Errorf("build assessor request: %w", err)
+		return Response{}, fmt.Errorf("build system one request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", c.AuthScheme+" "+c.APIKey)
@@ -117,20 +117,20 @@ func (c *Client) do(ctx context.Context, body []byte) (Response, error) {
 	}
 	res, err := httpClient.Do(req)
 	if err != nil {
-		return Response{}, fmt.Errorf("assessor request failed: %w", err)
+		return Response{}, fmt.Errorf("system one request: %w", err)
 	}
 	defer res.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
 	if err != nil {
-		return Response{}, fmt.Errorf("read assessor response: %w", err)
+		return Response{}, fmt.Errorf("read system one response: %w", err)
 	}
 	if len(raw) > maxResponseBytes {
-		return Response{}, fmt.Errorf("assessor response exceeds %d bytes", maxResponseBytes)
+		return Response{}, fmt.Errorf("system one response exceeds %d bytes", maxResponseBytes)
 	}
 
 	if res.StatusCode != http.StatusOK {
-		statusErr := fmt.Errorf("assessor returned status %d: %s", res.StatusCode, truncate(string(raw), 300))
+		statusErr := fmt.Errorf("system one status %d: %s", res.StatusCode, truncate(string(raw), 300))
 		if res.StatusCode == http.StatusTooManyRequests || res.StatusCode == 529 || res.StatusCode >= 500 {
 			return Response{}, fmt.Errorf("%w: %w", ErrRetryable, statusErr)
 		}
@@ -139,7 +139,7 @@ func (c *Client) do(ctx context.Context, body []byte) (Response, error) {
 
 	var out Response
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return Response{}, fmt.Errorf("decode assessor response: %w", err)
+		return Response{}, fmt.Errorf("decode system one response: %w", err)
 	}
 	return out, nil
 }
@@ -215,4 +215,19 @@ func criteriaKeys(c any) []string {
 		}
 	}
 	return keys
+}
+
+// truncate returns at most n runes of s.
+func truncate(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
 }

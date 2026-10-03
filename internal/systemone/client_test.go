@@ -1,4 +1,4 @@
-package assessor
+package systemone
 
 import (
 	"context"
@@ -167,7 +167,7 @@ func TestClientConnectionResetMidBody(t *testing.T) {
 	defer srv.Close()
 
 	_, err := newTestClient(srv.URL).Evaluate(t.Context(), map[string]any{}, testQuestions())
-	require.ErrorContains(t, err, "read assessor response")
+	require.ErrorContains(t, err, "read system one response")
 }
 
 func TestClientRejectsInvalidAnswers(t *testing.T) {
