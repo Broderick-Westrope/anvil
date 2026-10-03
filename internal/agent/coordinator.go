@@ -31,6 +31,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
@@ -103,6 +104,7 @@ type coordinator struct {
 	filetracker filetracker.Service
 	lspManager  *lsp.Manager
 	notify      pubsub.Publisher[notify.Notification]
+	jobEvents   *jobevents.Store // Nil disables job notifications.
 
 	// orchestrator is the eagerly-built top-level agent. Protected by orchestratorMu.
 	// Do NOT use csync.Value[SessionAgent] — it panics on interface types backed by pointers.
@@ -142,6 +144,7 @@ func NewCoordinator(
 	filetracker filetracker.Service,
 	lspManager *lsp.Manager,
 	notify pubsub.Publisher[notify.Notification],
+	jobEvents *jobevents.Store,
 ) (Coordinator, error) {
 	// Discover plugins once for both skills and agents.
 	plugins := plugin.DiscoverAll(cfg.Config().Plugins)
@@ -157,6 +160,7 @@ func NewCoordinator(
 		filetracker:  filetracker,
 		lspManager:   lspManager,
 		notify:       notify,
+		jobEvents:    jobEvents,
 		allSkills:    allSkills,
 		activeSkills: activeSkills,
 		skillStates:  skillStates,
@@ -766,6 +770,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		Tools:                nil,
 		Notify:               c.notify,
 		ProviderConfig:       largeProviderCfg,
+		JobEvents:            c.jobEvents,
 	})
 
 	// Capture values needed in goroutines.
@@ -1585,7 +1590,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (r
 		return fantasy.ToolResponse{}, fmt.Errorf("create session: %w", err)
 	}
 	defer func() {
-		inventory := handOffSubagentJobs(shell.GetBackgroundShellManager(), session.ID, params.SessionID)
+		inventory := handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, params.SessionID)
 		if inventory == "" {
 			return
 		}

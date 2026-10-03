@@ -25,6 +25,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/format"
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/log"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -71,6 +72,7 @@ type App struct {
 	globalCtx          context.Context
 	cleanupFuncs       []func(context.Context) error
 	agentNotifications *pubsub.Broker[notify.Notification]
+	jobEvents          *jobevents.Store
 }
 
 // New initializes a new application instance.
@@ -102,6 +104,16 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		tuiWG:              &sync.WaitGroup{},
 		agentNotifications: pubsub.NewBroker[notify.Notification](),
 	}
+
+	mgr := shell.GetBackgroundShellManager()
+	app.jobEvents = jobevents.NewStore(func(id string) (string, bool) {
+		bs, ok := mgr.Get(id)
+		if !ok {
+			return "", false
+		}
+		return bs.Info().SessionID, true
+	})
+	mgr.SetEventSink(app.jobEvents)
 
 	app.setupEvents()
 
@@ -550,6 +562,7 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.FileTracker,
 		app.LSPManager,
 		app.agentNotifications,
+		app.jobEvents,
 	)
 	if err != nil {
 		slog.Error("Failed to create orchestrator agent", "err", err)

@@ -506,8 +506,27 @@ func TestJobKillTool_AlreadyExited(t *testing.T) {
 	require.Contains(t, resp.Content, "Job "+jobID+" had already exited (exit 3,")
 	require.Contains(t, resp.Content, "Last output:\nbye")
 
+	var meta JobKillResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.True(t, meta.Exited)
+
 	_, ok := shell.GetBackgroundShellManager().Get(jobID)
 	require.False(t, ok)
+}
+
+func TestJobKillTool_ConfirmedExit(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "sleep 30", shell.OriginExplicit)
+
+	resp := runJobTool(t, NewJobKillTool(JobToolOptions{}), ctx, JobKillParams{ShellID: bgShell.ID()})
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "terminated successfully")
+
+	var meta JobKillResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.True(t, meta.Exited)
 }
 
 func runJobOutput(t *testing.T, ctx context.Context, params JobOutputParams) fantasy.ToolResponse {

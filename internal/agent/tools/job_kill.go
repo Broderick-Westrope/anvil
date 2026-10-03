@@ -26,6 +26,10 @@ type JobKillResponseMetadata struct {
 	ShellID     string `json:"shell_id"`
 	Command     string `json:"command"`
 	Description string `json:"description"`
+	// Exited is true when the job is known to have exited: it had
+	// already finished or exited after the kill signal. It is false
+	// when the job was abandoned.
+	Exited bool `json:"exited,omitempty"`
 }
 
 func NewJobKillTool(opts JobToolOptions) fantasy.AgentTool {
@@ -51,6 +55,7 @@ func NewJobKillTool(opts JobToolOptions) fantasy.AgentTool {
 			}
 
 			if bgShell.IsDone() {
+				metadata.Exited = true
 				info := bgShell.Info()
 				stdout, stderr, _, _ := bgShell.GetOutput()
 				_ = bgManager.Kill(params.ShellID) // Removes tracking; the process is gone.
@@ -72,6 +77,7 @@ func NewJobKillTool(opts JobToolOptions) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
+			metadata.Exited = true
 			result := fmt.Sprintf("Background shell %s terminated successfully", params.ShellID)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
 		})

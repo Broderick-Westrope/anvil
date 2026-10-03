@@ -825,6 +825,7 @@ func TestNewCoordinatorDoesNotBlockOnMCPInit(t *testing.T) {
 			*env.filetracker,
 			nil, // lspManager — unused during construction.
 			nil, // notify — unused during construction.
+			nil, // jobEvents — notifications disabled.
 		)
 		done <- coordinatorResult{c, buildErr}
 	}()
