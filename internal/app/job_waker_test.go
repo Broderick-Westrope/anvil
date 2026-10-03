@@ -105,7 +105,7 @@ func newWakerFixture(t *testing.T) *wakerFixture {
 	}
 	f.waker.setAgent(f.agent)
 	f.waker.enabled.Store(true)
-	t.Cleanup(f.waker.wait)
+	t.Cleanup(func() { f.waker.wait(context.Background()) })
 	return f
 }
 
@@ -118,7 +118,7 @@ func (f *wakerFixture) complete(jobID, sessionID string) {
 func (f *wakerFixture) checkNow(t *testing.T, sessionID string) (tries, wakes int) {
 	t.Helper()
 	f.waker.check(t.Context(), sessionID)
-	f.waker.wait()
+	require.True(t, f.waker.wait(t.Context()))
 	return f.agent.counts()
 }
 
@@ -289,4 +289,32 @@ func TestEnableJobWake_FollowsConfig(t *testing.T) {
 		app.EnableJobWake()
 		require.True(t, app.jobWaker.enabled.Load())
 	})
+}
+
+func TestJobWaker_WaitIsBounded(t *testing.T) {
+	t.Parallel()
+	f := newWakerFixture(t)
+	f.waker.SetComposerState(topSession, true, false, false)
+	f.complete("J-top", topSession)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	f.agent.before = func(string) {
+		close(entered)
+		<-release
+	}
+
+	f.waker.check(t.Context(), topSession)
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no wake started")
+	}
+	expired, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.False(t, f.waker.wait(expired), "a wake run still in flight")
+
+	close(release)
+	require.True(t, f.waker.wait(t.Context()))
+	_, wakes := f.agent.counts()
+	require.Equal(t, 1, wakes)
 }
