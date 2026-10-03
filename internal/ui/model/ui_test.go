@@ -9,6 +9,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/stretchr/testify/require"
@@ -92,7 +93,8 @@ func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 // palette toggle, header/sidebar indicator, and startup triage nudge.
 type testWorkspace struct {
 	workspace.Workspace
-	cfg *config.Config
+	cfg  *config.Config
+	jobs map[string][]shell.JobInfo
 
 	bouncerConfigured bool
 	bouncerMode       permission.BouncerMode
@@ -103,6 +105,10 @@ type testWorkspace struct {
 	lastTriage      time.Time
 
 	yolo config.YoloLevel
+}
+
+func (w *testWorkspace) ListSessionJobs(sessionID string) []shell.JobInfo {
+	return w.jobs[sessionID]
 }
 
 func (w *testWorkspace) Config() *config.Config {
