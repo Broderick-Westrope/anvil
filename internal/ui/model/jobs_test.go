@@ -145,17 +145,22 @@ func TestJobsInfo(t *testing.T) {
 		require.Empty(t, u.jobsInfo(60, true, jobsTestNow))
 	})
 
-	t.Run("subagent jobs are listed and tagged", func(t *testing.T) {
+	t.Run("subagent jobs are listed and marked", func(t *testing.T) {
 		t.Parallel()
-		childJob := runningJob("00B", "tunnel", time.Minute, time.Second)
+		childJob := runningJob("00B", "tunnel", time.Minute, -1)
 		childJob.SessionID = "child"
 		u, _ := newJobsTestUI(map[string][]shell.JobInfo{
 			"s1": {runningJob("00A", "server", time.Minute, time.Second), childJob},
 		})
 		out := ansi.Strip(u.jobsInfo(60, true, jobsTestNow))
-		require.Contains(t, out, "00B tunnel  1m00s  subagent")
+		require.Contains(t, out, "00B ↳ tunnel  1m00s  no output")
 		require.Contains(t, out, "00A server  1m00s")
-		require.NotContains(t, out, "00A server  1m00s  subagent")
+		require.NotContains(t, out, "00A ↳")
+
+		// The real sidebar is about 30 columns; the marker must survive
+		// truncation of the end of the line.
+		narrow := ansi.Strip(u.jobsInfo(20, true, jobsTestNow))
+		require.Contains(t, narrow, "00B ↳ tunnel")
 	})
 
 	t.Run("long labels are truncated to the width", func(t *testing.T) {

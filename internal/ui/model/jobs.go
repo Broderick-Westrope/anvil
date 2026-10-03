@@ -115,12 +115,20 @@ func (m *UI) jobsInfo(width int, isSection bool, now time.Time) string {
 	return lipgloss.NewStyle().Width(width).Render(fmt.Sprintf("%s\n\n%s", title, list))
 }
 
+// subagentJobMarker prefixes the label of a job owned by a subagent. It
+// sits next to the ID because the sidebar truncates the end of the line.
+const subagentJobMarker = "↳ "
+
 // jobLine formats one running job as "ID label  runtime  quiet age",
-// tagging jobs owned by a subagent of rootSessionID, and reports whether
+// marking jobs owned by a subagent of rootSessionID, and reports whether
 // the job has gone without output long enough to be stale.
 func jobLine(info shell.JobInfo, rootSessionID string, now time.Time) (string, bool) {
+	marker := ""
+	if info.SessionID != rootSessionID {
+		marker = subagentJobMarker
+	}
 	parts := []string{
-		info.ID + " " + shell.JobLabel(info, jobLabelMaxLen),
+		info.ID + " " + marker + shell.JobLabel(info, jobLabelMaxLen),
 		shell.FormatRuntime(shell.JobRuntime(info, now)),
 	}
 
@@ -135,9 +143,6 @@ func jobLine(info shell.JobInfo, rootSessionID string, now time.Time) (string, b
 		parts = append(parts, "no output")
 	case quiet >= jobQuietAfter:
 		parts = append(parts, "quiet "+formatQuietAge(quiet))
-	}
-	if info.SessionID != rootSessionID {
-		parts = append(parts, "subagent")
 	}
 	return strings.Join(parts, "  "), quiet > jobStaleAfter
 }
