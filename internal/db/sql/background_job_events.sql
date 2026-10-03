@@ -52,7 +52,8 @@ SELECT
     j.working_dir,
     j.started_at,
     j.completed_at,
-    j.exit_code
+    j.exit_code,
+    j.end_reason
 FROM background_job_events e
 JOIN background_jobs j ON j.id = e.job_id
 ORDER BY e.created_at ASC, e.id ASC;

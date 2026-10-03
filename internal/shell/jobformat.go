@@ -6,6 +6,25 @@ import (
 	"time"
 )
 
+// JobOutcome describes how a finished job ended: "exit 2" when it exited
+// on its own, otherwise why Anvil stopped it ("killed", "killed when
+// Anvil exited", "abandoned", "interrupted"). Jobs Anvil stopped show no
+// exit code because theirs is the interpreter's, not the command's.
+func JobOutcome(info JobInfo) string {
+	switch info.EndReason {
+	case EndKilled:
+		return "killed"
+	case EndAnvilExit:
+		return "killed when Anvil exited"
+	case EndAbandoned:
+		return "abandoned"
+	case EndInterrupted:
+		return "interrupted"
+	default:
+		return fmt.Sprintf("exit %d", info.ExitCode)
+	}
+}
+
 // FormatRuntime renders a duration compactly: 12s, 4m12s, 2h03m.
 func FormatRuntime(d time.Duration) string {
 	d = d.Round(time.Second)

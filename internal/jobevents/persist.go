@@ -279,6 +279,7 @@ func (s *Store) load(ctx context.Context, q db.Querier, instanceID string) error
 			info.Done = true
 			info.CompletedAt = time.UnixMilli(row.CompletedAt.Int64)
 			info.ExitCode = int(row.ExitCode.Int64)
+			info.EndReason = row.EndReason.String
 		}
 		loaded = append(loaded, &Event{
 			ID:        row.ID,

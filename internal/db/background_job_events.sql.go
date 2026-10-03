@@ -129,30 +129,32 @@ SELECT
     j.working_dir,
     j.started_at,
     j.completed_at,
-    j.exit_code
+    j.exit_code,
+    j.end_reason
 FROM background_job_events e
 JOIN background_jobs j ON j.id = e.job_id
 ORDER BY e.created_at ASC, e.id ASC
 `
 
 type ListUndeliveredBackgroundJobEventsRow struct {
-	ID          string        `json:"id"`
-	JobID       int64         `json:"job_id"`
-	Kind        string        `json:"kind"`
-	WatchGen    int64         `json:"watch_gen"`
-	Line        string        `json:"line"`
-	Tail        string        `json:"tail"`
-	State       string        `json:"state"`
-	ClaimedBy   string        `json:"claimed_by"`
-	CreatedAt   int64         `json:"created_at"`
-	SessionID   string        `json:"session_id"`
-	Origin      string        `json:"origin"`
-	Command     string        `json:"command"`
-	Description string        `json:"description"`
-	WorkingDir  string        `json:"working_dir"`
-	StartedAt   int64         `json:"started_at"`
-	CompletedAt sql.NullInt64 `json:"completed_at"`
-	ExitCode    sql.NullInt64 `json:"exit_code"`
+	ID          string         `json:"id"`
+	JobID       int64          `json:"job_id"`
+	Kind        string         `json:"kind"`
+	WatchGen    int64          `json:"watch_gen"`
+	Line        string         `json:"line"`
+	Tail        string         `json:"tail"`
+	State       string         `json:"state"`
+	ClaimedBy   string         `json:"claimed_by"`
+	CreatedAt   int64          `json:"created_at"`
+	SessionID   string         `json:"session_id"`
+	Origin      string         `json:"origin"`
+	Command     string         `json:"command"`
+	Description string         `json:"description"`
+	WorkingDir  string         `json:"working_dir"`
+	StartedAt   int64          `json:"started_at"`
+	CompletedAt sql.NullInt64  `json:"completed_at"`
+	ExitCode    sql.NullInt64  `json:"exit_code"`
+	EndReason   sql.NullString `json:"end_reason"`
 }
 
 func (q *Queries) ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]ListUndeliveredBackgroundJobEventsRow, error) {
@@ -182,6 +184,7 @@ func (q *Queries) ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]Lis
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.ExitCode,
+			&i.EndReason,
 		); err != nil {
 			return nil, err
 		}

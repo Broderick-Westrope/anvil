@@ -78,6 +78,15 @@ func TestJobEventMessageRendersCompactNotice(t *testing.T) {
 	require.Contains(t, expanded, "Tests: 1 failed, 1 total")
 }
 
+func TestJobNoticeHeader_KilledJob(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	out := ansi.Strip(renderJobNotice(&sty, "- Job 002 ended, killed when Anvil exited (15s): idle sleeper.", 100, false))
+	require.Contains(t, out, "Job (Ended) 002 killed when Anvil exited · 15s idle sleeper")
+	require.NotContains(t, out, "exit 1")
+}
+
 func TestUserMessageStillRendersAsUserItem(t *testing.T) {
 	t.Parallel()
 

@@ -1177,3 +1177,21 @@ func TestShutdown_ExitBeforeKillAllRecordsAnvilExit(t *testing.T) {
 	require.Empty(t, manager.Close(t.Context()))
 	require.Empty(t, drainFinalized(rec))
 }
+
+func TestBackgroundShellManager_KillRecordsEndReasonInInfo(t *testing.T) {
+	t.Parallel()
+
+	mgr := newBackgroundShellManager()
+	bs, err := mgr.Start(t.Context(), t.TempDir(), nil, "sleep 30", "")
+	require.NoError(t, err)
+	_, err = mgr.Publish(t.Context(), bs.ID(), PublishOptions{SessionID: "s", Origin: OriginExplicit})
+	require.NoError(t, err)
+	require.Empty(t, bs.Info().EndReason)
+
+	require.NoError(t, mgr.Kill(bs.ID()))
+	info := bs.Info()
+	require.True(t, info.Done)
+	require.Equal(t, EndKilled, info.EndReason)
+	require.False(t, info.ExitedOnItsOwn())
+	require.Equal(t, "killed", JobOutcome(info))
+}

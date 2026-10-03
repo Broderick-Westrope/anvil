@@ -23,7 +23,11 @@ func FormatNotice(events []Event, remaining int, now time.Time) string {
 		switch e.Kind {
 		case KindCompleted:
 			runtime := shell.FormatRuntime(shell.JobRuntime(e.Info, now))
-			fmt.Fprintf(&b, "- Job %s completed, exit %d (%s): %s.", e.JobID, e.Info.ExitCode, runtime, label)
+			if e.Info.ExitedOnItsOwn() {
+				fmt.Fprintf(&b, "- Job %s completed, exit %d (%s): %s.", e.JobID, e.Info.ExitCode, runtime, label)
+			} else {
+				fmt.Fprintf(&b, "- Job %s ended, %s (%s): %s.", e.JobID, shell.JobOutcome(e.Info), runtime, label)
+			}
 			tail := shell.LastLines(e.Tail, noticeTailLines)
 			if tail == "" {
 				b.WriteString("\n")

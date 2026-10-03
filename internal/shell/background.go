@@ -192,7 +192,24 @@ type JobInfo struct {
 	CompletedAt  time.Time // Zero while running.
 	LastOutputAt time.Time // Zero if the job has printed nothing.
 	Done         bool
-	ExitCode     int // Only meaningful when Done.
+	ExitCode     int // Only meaningful when [JobInfo.ExitedOnItsOwn].
+	// EndReason is why the job ended, one of the End* constants, or ""
+	// while running or when the job exited before a reason was recorded.
+	EndReason string
+}
+
+// ExitedOnItsOwn reports whether a finished job ended without Anvil
+// stopping it, so its exit code came from the command. Killed jobs
+// report the interpreter's cancellation status instead, which says
+// nothing about the command.
+func (info JobInfo) ExitedOnItsOwn() bool {
+	return info.Done && ExitCodeMeaningful(info.EndReason)
+}
+
+// ExitCodeMeaningful reports whether a job that ended for endReason has
+// an exit code worth showing or recording.
+func ExitCodeMeaningful(endReason string) bool {
+	return endReason == "" || endReason == EndExited
 }
 
 // Info returns a snapshot of the shell's metadata and state.
@@ -212,6 +229,7 @@ func (bs *BackgroundShell) infoLocked() JobInfo {
 		Description: bs.Description,
 		WorkingDir:  bs.WorkingDir,
 		StartedAt:   bs.startedAt,
+		EndReason:   bs.endReason,
 	}
 
 	if n := bs.lastOutputAt.Load(); n > 0 {

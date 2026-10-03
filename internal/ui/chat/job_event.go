@@ -105,7 +105,7 @@ func (j *JobEventMessageItem) Render(width int) string {
 }
 
 var (
-	noticeCompletedRe = regexp.MustCompile(`^- Job (\S+) completed, exit (-?\d+) \(([^)]*)\): (.*?)(?: Last lines:)?$`)
+	noticeCompletedRe = regexp.MustCompile(`^- Job (\S+) (?:completed, exit (-?\d+)|ended, ([^()]+?)) \(([^)]*)\): (.*?)(?: Last lines:)?$`)
 	noticeMatchedRe   = regexp.MustCompile(`^- Job (\S+) printed a line matching your watch \(([^)]*)\): (.*)$`)
 )
 
@@ -151,7 +151,12 @@ func jobNoticeHeader(sty *styles.Styles, line string, width int) string {
 		if m[2] != "0" {
 			icon = toolIcon(sty, ToolStatusError)
 		}
-		action, jobID, detail, description = "Completed", m[1], fmt.Sprintf("exit %s · %s", m[2], m[3]), strings.TrimSuffix(m[4], ".")
+		action, jobID, description = "Completed", m[1], strings.TrimSuffix(m[5], ".")
+		if m[3] != "" {
+			action, detail = "Ended", fmt.Sprintf("%s · %s", m[3], m[4])
+		} else {
+			detail = fmt.Sprintf("exit %s · %s", m[2], m[4])
+		}
 	} else if m := noticeMatchedRe.FindStringSubmatch(line); m != nil {
 		icon = toolIcon(sty, ToolStatusRunning)
 		action, jobID, detail, description = "Watch", m[1], m[2], m[3]
