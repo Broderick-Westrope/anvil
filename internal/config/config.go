@@ -326,6 +326,25 @@ type Options struct {
 	DisableNotifications      bool     `json:"disable_notifications,omitempty" jsonschema:"description=Disable desktop notifications,default=false"`
 	DisabledSkills            []string `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=anvil-config"`
 	ExpandedTools             []string `json:"expanded_tools,omitempty" jsonschema:"description=Glob patterns for tools that should render expanded instead of compact,example=bash,example=mcp_*"`
+
+	BackgroundJobs *BackgroundJobsOptions `json:"background_jobs,omitempty" jsonschema:"description=Background job behaviour"`
+}
+
+// BackgroundJobsOptions configures how background jobs interact with
+// sessions.
+type BackgroundJobsOptions struct {
+	// WakeOnEvent starts a turn for an idle session when one of its
+	// background jobs completes or matches a watch.
+	WakeOnEvent *bool `json:"wake_on_event,omitempty" jsonschema:"description=Start a turn for an idle session when its background job completes or matches a watch,default=false"`
+}
+
+// WakeOnJobEvent reports whether idle sessions should be woken by
+// background job events. It defaults to false.
+func (o *Options) WakeOnJobEvent() bool {
+	if o == nil || o.BackgroundJobs == nil {
+		return false
+	}
+	return ptrValOr(o.BackgroundJobs.WakeOnEvent, false)
 }
 
 type MCPs map[string]MCPConfig

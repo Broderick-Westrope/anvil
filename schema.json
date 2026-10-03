@@ -48,6 +48,17 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "BackgroundJobsOptions": {
+      "properties": {
+        "wake_on_event": {
+          "type": "boolean",
+          "description": "Start a turn for an idle session when its background job completes or matches a watch",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Bouncer": {
       "properties": {
         "mode": {
@@ -687,6 +698,10 @@
           },
           "type": "array",
           "description": "Glob patterns for tools that should render expanded instead of compact"
+        },
+        "background_jobs": {
+          "$ref": "#/$defs/BackgroundJobsOptions",
+          "description": "Background job behaviour"
         }
       },
       "additionalProperties": false,
