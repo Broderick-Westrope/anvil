@@ -115,11 +115,24 @@ type Styles struct {
 		PromptNormalFocused lipgloss.Style
 		PromptNormalBlurred lipgloss.Style
 
-		// YOLO mode prompt (" ! " icon + ":::" dots).
-		PromptYoloIconFocused lipgloss.Style
-		PromptYoloIconBlurred lipgloss.Style
-		PromptYoloDotsFocused lipgloss.Style
-		PromptYoloDotsBlurred lipgloss.Style
+		// Mode badges drawn in the prompt gutter, one per line, for the
+		// permission assessor and yolo. Each renders exactly three cells
+		// plus a one-cell right margin.
+		PromptShadowFocused   lipgloss.Style // Assessor shadow (◇)
+		PromptShadowBlurred   lipgloss.Style
+		PromptEnforceFocused  lipgloss.Style // Assessor enforce (◆)
+		PromptEnforceBlurred  lipgloss.Style
+		PromptEnforceInactive lipgloss.Style // Assessor enforce while full yolo bypasses it
+		PromptYoloFocused     lipgloss.Style // Standard yolo (!)
+		PromptYoloBlurred     lipgloss.Style
+		PromptFullYoloFocused lipgloss.Style // Full yolo (!!!)
+		PromptFullYoloBlurred lipgloss.Style
+
+		// Dots on lines without a badge, tinted by the riskiest active mode.
+		PromptAssessorDotsFocused lipgloss.Style
+		PromptYoloDotsFocused     lipgloss.Style
+		PromptFullYoloDotsFocused lipgloss.Style
+		PromptModeDotsBlurred     lipgloss.Style
 	}
 
 	// Radio

@@ -555,7 +555,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	if c.com.Workspace.PermissionAssessorConfigured() {
 		current := c.com.Workspace.PermissionAssessorMode()
 		label := "Permission Assessor: " + assessorModeLabel(current) + " → " + assessorModeLabel(nextAssessorMode(current))
-		commands = append(commands, NewCommandItem(c.com.Styles, "cycle_assessor", label, "", ActionCycleAssessorMode{}))
+		commands = append(commands, NewCommandItem(c.com.Styles, "cycle_assessor", label, "ctrl+q", ActionCycleAssessorMode{}))
 	}
 
 	// Add transparent background toggle.

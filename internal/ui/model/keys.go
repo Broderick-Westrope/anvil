@@ -60,6 +60,9 @@ type KeyMap struct {
 	Sessions   key.Binding
 	Tab        key.Binding
 	ToggleYolo key.Binding
+	// CycleAssessor cycles the permission assessor mode. Only active when
+	// an assessor is configured.
+	CycleAssessor key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -95,6 +98,10 @@ func DefaultKeyMap() KeyMap {
 		ToggleYolo: key.NewBinding(
 			key.WithKeys("ctrl+y"),
 			key.WithHelp("ctrl+y", "toggle yolo"),
+		),
+		CycleAssessor: key.NewBinding(
+			key.WithKeys("ctrl+q"),
+			key.WithHelp("ctrl+q", "cycle assessor"),
 		),
 	}
 

@@ -101,6 +101,8 @@ type testWorkspace struct {
 	unresolvedCount int
 	unresolvedErr   error
 	lastTriage      time.Time
+
+	yolo config.YoloLevel
 }
 
 func (w *testWorkspace) Config() *config.Config {
@@ -111,7 +113,9 @@ func (*testWorkspace) WorkingDir() string { return "" }
 
 func (*testWorkspace) AgentIsReady() bool { return false }
 
-func (*testWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
+func (w *testWorkspace) PermissionYoloLevel() config.YoloLevel { return w.yolo }
+
+func (w *testWorkspace) PermissionSetYoloLevel(level config.YoloLevel) { w.yolo = level }
 
 func (w *testWorkspace) PermissionAssessorConfigured() bool { return w.assessorConfigured }
 

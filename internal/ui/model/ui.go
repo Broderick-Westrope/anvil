@@ -257,6 +257,11 @@ type UI struct {
 	// Attachment list
 	attachments *attachments.Attachments
 
+	// promptModes and promptBadges cache the permission state shown in
+	// the editor gutter, refreshed by refreshEditorPrompt.
+	promptModes  promptModes
+	promptBadges []promptBadge
+
 	readyPlaceholder   string
 	workingPlaceholder string
 
@@ -461,7 +466,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 
 	status := NewStatus(com, ui)
 
-	ui.setEditorPrompt(com.Workspace.PermissionYoloLevel() != config.YoloOff)
+	ui.refreshEditorPrompt()
 	ui.randomizePlaceholders()
 	ui.textarea.Placeholder = ui.readyPlaceholder
 	ui.status = status
@@ -1428,8 +1433,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.textarea.Placeholder = m.readyPlaceholder
 		}
-		if m.com.Workspace.PermissionYoloLevel() != config.YoloOff {
-			m.textarea.Placeholder = "Yolo mode!"
+		if p := m.promptModes.modePlaceholder(); p != "" {
+			m.textarea.Placeholder = p
 		}
 	}
 
@@ -2786,6 +2791,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			cmds = append(cmds, util.ReportInfo("Yolo mode "+status))
 			return true
+		case key.Matches(msg, m.keyMap.CycleAssessor):
+			cmds = append(cmds, m.handleCycleAssessorKey())
+			return true
 		}
 		return false
 	}
@@ -3709,6 +3717,9 @@ func (m *UI) FullHelp() [][]key.Binding {
 			k.Sessions,
 			k.ToggleYolo,
 		)
+		if m.com.Workspace.PermissionAssessorConfigured() {
+			mainBinds = append(mainBinds, k.CycleAssessor)
+		}
 		if hasSession {
 			mainBinds = append(mainBinds, k.Chat.NewSession)
 		}
@@ -3791,6 +3802,9 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.ToggleYolo,
 				},
 			)
+			if m.com.Workspace.PermissionAssessorConfigured() {
+				binds[len(binds)-1] = append(binds[len(binds)-1], k.CycleAssessor)
+			}
 			editorBinds := []key.Binding{
 				k.Editor.Newline,
 				k.Editor.MentionFile,
@@ -4203,49 +4217,6 @@ func (m *UI) openEditor(value string) tea.Cmd {
 			Text: strings.TrimSpace(string(content)),
 		}
 	})
-}
-
-// setEditorPrompt configures the textarea prompt function based on whether
-// yolo mode is enabled.
-func (m *UI) setEditorPrompt(yolo bool) {
-	if yolo {
-		m.textarea.SetPromptFunc(4, m.yoloPromptFunc)
-		return
-	}
-	m.textarea.SetPromptFunc(4, m.normalPromptFunc)
-}
-
-// normalPromptFunc returns the normal editor prompt style ("  > " on first
-// line, "::: " on subsequent lines).
-func (m *UI) normalPromptFunc(info textarea.PromptInfo) string {
-	t := m.com.Styles
-	if info.LineNumber == 0 {
-		if info.Focused {
-			return "  > "
-		}
-		return "::: "
-	}
-	if info.Focused {
-		return t.Editor.PromptNormalFocused.Render()
-	}
-	return t.Editor.PromptNormalBlurred.Render()
-}
-
-// yoloPromptFunc returns the yolo mode editor prompt style with warning icon
-// and colored dots.
-func (m *UI) yoloPromptFunc(info textarea.PromptInfo) string {
-	t := m.com.Styles
-	if info.LineNumber == 0 {
-		if info.Focused {
-			return t.Editor.PromptYoloIconFocused.Render()
-		} else {
-			return t.Editor.PromptYoloIconBlurred.Render()
-		}
-	}
-	if info.Focused {
-		return t.Editor.PromptYoloDotsFocused.Render()
-	}
-	return t.Editor.PromptYoloDotsBlurred.Render()
 }
 
 // closeCompletions closes the completions popup and resets state.
@@ -5895,7 +5866,7 @@ func (m *UI) cycleYoloLevel() config.YoloLevel {
 		next = config.YoloOff
 	}
 	m.com.Workspace.PermissionSetYoloLevel(next)
-	m.setEditorPrompt(next != config.YoloOff)
+	m.refreshEditorPrompt()
 	return next
 }
 
@@ -5913,7 +5884,17 @@ func (m *UI) cycleAssessorMode() permission.AssessorMode {
 		next = permission.AssessorOff
 	}
 	m.com.Workspace.PermissionSetAssessorMode(next)
+	m.refreshEditorPrompt()
 	return next
+}
+
+// handleCycleAssessorKey cycles the assessor mode from the keyboard and
+// reports the new mode, or explains why nothing happened.
+func (m *UI) handleCycleAssessorKey() tea.Cmd {
+	if !m.com.Workspace.PermissionAssessorConfigured() {
+		return util.ReportInfo("No permission assessor configured")
+	}
+	return util.ReportInfo("Permission assessor: " + string(m.cycleAssessorMode()))
 }
 
 // triageNudgeThreshold is the minimum number of unresolved permission
