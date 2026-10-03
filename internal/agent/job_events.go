@@ -16,6 +16,10 @@ import (
 // rest stay pending for the next step.
 const maxJobEventsPerNotice = 5
 
+// maxConsecutiveWakes bounds how many wake runs a session gets without
+// user input, so a chatty job can't keep an unattended agent busy.
+const maxConsecutiveWakes = 3
+
 // deliverJobEvents claims up to five pending events for the session,
 // persists them as one job_event message after parentID, and marks
 // them delivered. On failure the events are released for a later

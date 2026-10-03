@@ -7,4 +7,5 @@ var (
 	ErrSessionBusy      = errors.New("session is currently processing another request")
 	ErrEmptyPrompt      = errors.New("prompt is empty")
 	ErrSessionMissing   = errors.New("session id is missing")
+	ErrWakeNotAllowed   = errors.New("session may not be woken now")
 )
