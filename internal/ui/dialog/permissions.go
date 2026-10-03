@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -21,6 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // PermissionsID is the identifier for the permissions dialog.
@@ -640,6 +643,14 @@ func (p *Permissions) renderHeader(contentWidth int) string {
 		}
 	}
 
+	// Show the assessor's one-line verdict summary, if any, directly
+	// under the rest of the header. Reuses the key/value muted style so
+	// no new color is introduced.
+	if p.permission.AssessorNote != "" {
+		note := ansi.Truncate(capitalizeFirst(p.permission.AssessorNote), contentWidth, "…")
+		lines = append(lines, t.Dialog.Permissions.KeyText.Render(note))
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -675,6 +686,17 @@ func prettyName(name string) string {
 	name = strings.ReplaceAll(name, "_", " ")
 	name = strings.ReplaceAll(name, "-", " ")
 	return stringext.Capitalize(name)
+}
+
+// capitalizeFirst uppercases the first rune of s, leaving the rest
+// unchanged. Unlike [stringext.Capitalize], which title-cases every word,
+// this suits short status notes like "assessor: escalate · severity=2.1".
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 func (p *Permissions) renderContent(width int) string {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +102,48 @@ func newTestPermissions(t *testing.T) *Permissions {
 		Input:      "git status",
 	}
 	return NewPermissions(com, perm)
+}
+
+// TestPermissions_RenderHeaderShowsAssessorNote verifies that a non-empty
+// AssessorNote is rendered as one extra, muted line directly under the
+// rest of the header, capitalized, and that the header is otherwise
+// byte-identical to the no-note case.
+func TestPermissions_RenderHeaderShowsAssessorNote(t *testing.T) {
+	t.Parallel()
+
+	const width = 80
+
+	withoutNote := newTestPermissions(t)
+	base := ansi.Strip(withoutNote.renderHeader(width))
+	require.NotContains(t, base, "Assessor")
+
+	withNote := newTestPermissions(t)
+	withNote.permission.AssessorNote = "assessor (shadow): allow · destructive=0.05 severity=0.3"
+	noted := ansi.Strip(withNote.renderHeader(width))
+
+	baseLines := strings.Split(base, "\n")
+	notedLines := strings.Split(noted, "\n")
+	require.Len(t, notedLines, len(baseLines)+1, "note should add exactly one line")
+	require.Equal(t, baseLines, notedLines[:len(baseLines)], "lines before the note must be unaffected")
+
+	noteLine := strings.TrimRight(notedLines[len(notedLines)-1], " ")
+	require.Equal(t, "Assessor (shadow): allow · destructive=0.05 severity=0.3", noteLine)
+}
+
+// TestPermissions_RenderHeaderTruncatesLongAssessorNote verifies the note
+// is truncated to the content width rather than wrapping or overflowing.
+func TestPermissions_RenderHeaderTruncatesLongAssessorNote(t *testing.T) {
+	t.Parallel()
+
+	const width = 40
+	p := newTestPermissions(t)
+	p.permission.AssessorNote = "assessor: escalate · " + strings.Repeat("x", 100)
+
+	noted := ansi.Strip(p.renderHeader(width))
+	lines := strings.Split(noted, "\n")
+	noteLine := lines[len(lines)-1]
+	require.LessOrEqual(t, len([]rune(noteLine)), width)
+	require.Contains(t, noteLine, "…")
 }
 
 // TestPermissions_ActionKeysResolve verifies that action keys produce the
