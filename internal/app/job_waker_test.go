@@ -46,7 +46,7 @@ func (f *fakeWakeAgent) RunWake(_ context.Context, sessionID string, eligible fu
 	}
 	f.wakes = append(f.wakes, sessionID)
 	events, _ := f.store.Claim(sessionID, 100)
-	ids := make([]int64, 0, len(events))
+	ids := make([]string, 0, len(events))
 	for _, e := range events {
 		ids = append(ids, e.ID)
 	}

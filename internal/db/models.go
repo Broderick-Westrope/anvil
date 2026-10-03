@@ -34,6 +34,19 @@ type BackgroundJob struct {
 	LogExpiredAt      sql.NullInt64  `json:"log_expired_at"`
 }
 
+type BackgroundJobEvent struct {
+	ID        string        `json:"id"`
+	JobID     int64         `json:"job_id"`
+	Kind      string        `json:"kind"`
+	WatchGen  int64         `json:"watch_gen"`
+	Line      string        `json:"line"`
+	Tail      string        `json:"tail"`
+	State     string        `json:"state"`
+	ClaimedBy string        `json:"claimed_by"`
+	ClaimedAt sql.NullInt64 `json:"claimed_at"`
+	CreatedAt int64         `json:"created_at"`
+}
+
 type McpOauthClient struct {
 	ServerName   string         `json:"server_name"`
 	ServerUrl    string         `json:"server_url"`

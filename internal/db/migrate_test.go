@@ -24,6 +24,7 @@ func TestMigrations_RoundTrip(t *testing.T) {
 	// Apply all migrations, roll back every recently added one (newest
 	// first), then re-apply. Extend this list when adding migrations.
 	recent := []int64{
+		20261003100001, // add_background_job_events
 		20261003100000, // add_background_jobs
 	}
 	require.NoError(t, goose.Up(conn, "migrations"))

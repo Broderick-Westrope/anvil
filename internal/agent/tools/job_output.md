@@ -35,6 +35,8 @@ Read output from a background job by ID; returns only new output since the previ
 - Watches notify you when their pattern matches
 - Notifications arrive as a system reminder at your next step; you are not
   notified of anything a job_output or job_kill result already showed you
+- Pending notifications survive Anvil restarts; if Anvil crashes while
+  delivering one, it may be repeated after the restart
 </notifications>
 
 <status_header>
