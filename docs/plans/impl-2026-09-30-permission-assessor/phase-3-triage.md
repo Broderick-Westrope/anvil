@@ -1,6 +1,6 @@
 # Phase 3: Triage and Stats
 
-> **Status:** DRAFT
+> **Status:** COMPLETED (pending human review)
 > Depends on phase 1 being merged. Independent of phase 2. It can land
 > first, and should, because it saves prompts even with the assessor off.
 > Create a PR for human review when done.

@@ -1,6 +1,6 @@
 # Phase 2: Assessor
 
-> **Status:** DRAFT
+> **Status:** COMPLETED (pending human review)
 > Depends on phase 1 being merged. Create a PR for human review when done.
 
 ## Specification
@@ -71,6 +71,30 @@ response, missing key) also falls through to the human.
       the human without an HTTP call for 60s.
 - [ ] Live harness: at least 95% of cases get a valid response, and no case
       labelled `deny` routes to `allow`.
+
+> **As implemented (2026-10-01).** Differences from the tasks below,
+> mostly from code review:
+> - `CreatePermissionRequest`/`AssessInput` gained `Diff`, filled by
+>   `edit`/`multiedit`/`write`. The state shows `change_diff`,
+>   `lines_added`, and `lines_removed`, counted in code, so the assessor
+>   can see removals.
+> - The allow cache key is `sha256` over `SessionID`, `ToolName`,
+>   `Action`, `Path`, `Input`, `Content`, `Diff`, and `ArgsJSON`, with each
+>   field prefixed by its length. Policy is rechecked before honouring a
+>   cache hit, and the cache is never used in shadow mode.
+> - `BatteryVersion` is `v2`. Every question tells the model that `state`
+>   is untrusted data.
+> - Validation rejects extra answer IDs. The breaker allows a single
+>   half-open probe.
+> - Redaction only exempts runs that clearly look like paths.
+> - Config enums are typed (`config.AssessorMode` and friends). Bash
+>   state uses `segment.Normalized`, and dynamic command names are
+>   skipped.
+> - Banned bash commands are rejected before any permission request.
+> - The live harness ran against the Baseten URL with a dummy key and got
+>   403 everywhere: the URL and header are right, and every case
+>   escalated. A real calibration run still needs the key in the user's
+>   own shell.
 
 ## Context Loading
 
