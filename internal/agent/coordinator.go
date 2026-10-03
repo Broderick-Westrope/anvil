@@ -38,6 +38,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"golang.org/x/sync/errgroup"
 
@@ -1013,8 +1014,9 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewBashTool(c.permissions, c.cfg.WorkingDir()),
 		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker),
 		tools.NewAnvilLogsTool(logFile),
-		tools.NewJobOutputTool(),
-		tools.NewJobKillTool(),
+		tools.NewJobOutputTool(tools.JobToolOptions{}),
+		tools.NewJobKillTool(tools.JobToolOptions{}),
+		tools.NewJobListTool(tools.JobToolOptions{}),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
@@ -1062,6 +1064,7 @@ func (c *coordinator) buildToolsWithState(
 		slog.Warn("Invalid AllowedTools filter for agent; falling back to all tools", "agent", agent.Name, "error", err)
 		allowedNames = allToolNames
 	}
+	allowedNames = withJobTools(agent.AllowedTools, slices.Clone(allowedNames))
 
 	// Apply the global DisabledTools exclusion so that tools disabled at the
 	// top level are removed regardless of per-agent AllowedTools config.
@@ -1574,13 +1577,24 @@ type subAgentParams struct {
 // runSubAgent runs a sub-agent and handles session management and cost accumulation.
 // It creates a sub-session, runs the agent with the given prompt, and propagates
 // the cost to the parent session.
-func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, error) {
+func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (resp fantasy.ToolResponse, err error) {
 	// Create sub-session
 	agentToolSessionID := c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID)
 	session, err := c.sessions.CreateTaskSession(ctx, agentToolSessionID, params.SessionID, params.SessionTitle)
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("create session: %w", err)
 	}
+	defer func() {
+		inventory := handOffSubagentJobs(shell.GetBackgroundShellManager(), session.ID, params.SessionID)
+		if inventory == "" {
+			return
+		}
+		if err != nil {
+			slog.Warn("Subagent jobs handed off after error", "child_session", session.ID, "inventory", inventory)
+			return
+		}
+		resp.Content += "\n\n" + inventory
+	}()
 	defer c.permissions.RevokeAutoApproveSession(session.ID)
 
 	// Call session setup function if provided
@@ -1658,6 +1672,27 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		return fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output."), nil
 	}
 	return fantasy.NewTextResponse(output), nil
+}
+
+// withJobTools adds the job tools to an allowed set that contains bash,
+// because bash can move any command to the background. Tools excluded
+// explicitly in exclude mode ("!job_kill") are not re-added.
+func withJobTools(filter, allowed []string) []string {
+	if !slices.Contains(allowed, tools.BashToolName) {
+		return allowed
+	}
+	excluded := make(map[string]bool)
+	for _, item := range filter {
+		if name, ok := strings.CutPrefix(item, "!"); ok {
+			excluded[name] = true
+		}
+	}
+	for _, name := range tools.JobToolNames() {
+		if !excluded[name] && !slices.Contains(allowed, name) {
+			allowed = append(allowed, name)
+		}
+	}
+	return allowed
 }
 
 func (c *coordinator) refreshSubAgentModels(ctx context.Context, agent SessionAgent) error {

@@ -279,12 +279,12 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 
 				if done {
 					// Command failed or completed very quickly
-					bgManager.Remove(bgShell.ID)
+					bgManager.Remove(bgShell.ID())
 
 					interrupted := shell.IsInterrupt(execErr)
 					exitCode := shell.ExitCode(execErr)
 					if exitCode == 0 && !interrupted && execErr != nil {
-						return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
+						return fantasy.ToolResponse{}, fmt.Errorf("error executing command: %w", execErr)
 					}
 
 					stdout = formatOutput(stdout, stderr, execErr)
@@ -305,15 +305,21 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				}
 
 				// Still running after fast-failure check - return as background job
+				jobID, err := bgManager.Publish(ctx, bgShell.ID(), shell.PublishOptions{SessionID: sessionID, Origin: shell.OriginExplicit})
+				if err != nil {
+					_ = bgManager.Kill(bgShell.ID())
+					return fantasy.ToolResponse{}, fmt.Errorf("publishing background job: %w", err)
+				}
 				metadata := BashResponseMetadata{
 					StartTime:        startTime.UnixMilli(),
 					EndTime:          time.Now().UnixMilli(),
 					Description:      params.Description,
 					WorkingDirectory: bgShell.WorkingDir,
 					Background:       true,
-					ShellID:          bgShell.ID,
+					ShellID:          jobID,
 				}
-				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", jobID)
+				response += otherRunningJobsNote(bgManager, sessionID, jobID)
 				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 			}
 
@@ -354,7 +360,7 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				case <-ctx.Done():
 					// Incoming context was cancelled before we moved to background
 					// Kill the shell and return error
-					bgManager.Kill(bgShell.ID)
+					bgManager.Kill(bgShell.ID())
 					return fantasy.ToolResponse{}, ctx.Err()
 				}
 			}
@@ -363,12 +369,12 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				// Command completed within threshold - return synchronously
 				// Remove from background manager since we're returning directly
 				// Don't call Kill() as it cancels the context and corrupts the exit code
-				bgManager.Remove(bgShell.ID)
+				bgManager.Remove(bgShell.ID())
 
 				interrupted := shell.IsInterrupt(execErr)
 				exitCode := shell.ExitCode(execErr)
 				if exitCode == 0 && !interrupted && execErr != nil {
-					return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
+					return fantasy.ToolResponse{}, fmt.Errorf("error executing command: %w", execErr)
 				}
 
 				stdout = formatOutput(stdout, stderr, execErr)
@@ -389,17 +395,31 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 			}
 
 			// Still running - keep as background job
+			jobID, err := bgManager.Publish(ctx, bgShell.ID(), shell.PublishOptions{SessionID: sessionID, Origin: shell.OriginAuto})
+			if err != nil {
+				_ = bgManager.Kill(bgShell.ID())
+				return fantasy.ToolResponse{}, fmt.Errorf("publishing background job: %w", err)
+			}
 			metadata := BashResponseMetadata{
 				StartTime:        startTime.UnixMilli(),
 				EndTime:          time.Now().UnixMilli(),
 				Description:      params.Description,
 				WorkingDirectory: bgShell.WorkingDir,
 				Background:       true,
-				ShellID:          bgShell.ID,
+				ShellID:          jobID,
 			}
-			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", jobID)
+			response += otherRunningJobsNote(bgManager, sessionID, jobID)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		})
+}
+
+func otherRunningJobsNote(bgManager *shell.BackgroundShellManager, sessionID, jobID string) string {
+	others := otherRunningJobs(bgManager.ListBySession(sessionID), jobID)
+	if note := FormatOtherRunningJobs(others, time.Now(), 10); note != "" {
+		return "\n\nOther running jobs in this session: " + note
+	}
+	return ""
 }
 
 // formatOutput formats the output of a completed command with error handling

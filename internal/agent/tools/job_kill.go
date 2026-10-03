@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
@@ -26,7 +28,7 @@ type JobKillResponseMetadata struct {
 	Description string `json:"description"`
 }
 
-func NewJobKillTool() fantasy.AgentTool {
+func NewJobKillTool(opts JobToolOptions) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		JobKillToolName,
 		jobKillDescription,
@@ -48,7 +50,24 @@ func NewJobKillTool() fantasy.AgentTool {
 				Description: bgShell.Description,
 			}
 
+			if bgShell.IsDone() {
+				info := bgShell.Info()
+				stdout, stderr, _, _ := bgShell.GetOutput()
+				_ = bgManager.Kill(params.ShellID) // Removes tracking; the process is gone.
+				result := fmt.Sprintf("Job %s had already exited (exit %d, %s) before kill.",
+					params.ShellID, info.ExitCode, shell.FormatRuntime(shell.JobRuntime(info, time.Now())))
+				if tail := shell.LastLines(joinOutput(stdout, stderr), 10); tail != "" {
+					result += "\n\nLast output:\n" + tail
+				}
+				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
+			}
+
 			err := bgManager.Kill(params.ShellID)
+			if errors.Is(err, shell.ErrKillTimeout) {
+				result := fmt.Sprintf("Kill signal sent to job %s, but it did not exit within %s. It has been abandoned and may still hold resources such as ports or files.",
+					params.ShellID, shell.FormatRuntime(shell.KillGracePeriod))
+				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
+			}
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}

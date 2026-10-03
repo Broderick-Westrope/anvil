@@ -32,6 +32,8 @@ Common shell builtins and core utils available on Windows.
 - Use job_output tool to view current output from background shell
 - Use job_kill tool to terminate a background shell
 - IMPORTANT: NEVER use `&` at the end of commands to run in background - use run_in_background parameter instead
+- Before starting a long-lived server or tunnel, check job_list for an existing one you can reuse.
+- Every agent with bash has job_output, job_kill, and job_list.
 - Commands that should run in background:
   * Long-running servers (e.g., `npm start`, `python -m http.server`, `node server.js`)
   * Watch/monitoring tasks (e.g., `npm run watch`, `tail -f logfile`)

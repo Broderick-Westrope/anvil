@@ -2,10 +2,14 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
+	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +24,7 @@ func TestBackgroundShell_Integration(t *testing.T) {
 	bgManager := shell.GetBackgroundShellManager()
 	bgShell, err := bgManager.Start(ctx, workingDir, nil, "echo 'hello background' && echo 'done'", "")
 	require.NoError(t, err)
-	require.NotEmpty(t, bgShell.ID)
+	require.NotEmpty(t, bgShell.ID())
 
 	// Wait for completion
 	bgShell.Wait()
@@ -34,7 +38,7 @@ func TestBackgroundShell_Integration(t *testing.T) {
 	require.Empty(t, stderr)
 
 	// Clean up
-	bgManager.Kill(bgShell.ID)
+	bgManager.Kill(bgShell.ID())
 }
 
 func TestBackgroundShell_Kill(t *testing.T) {
@@ -49,11 +53,11 @@ func TestBackgroundShell_Kill(t *testing.T) {
 	require.NoError(t, err)
 
 	// Kill it
-	err = bgManager.Kill(bgShell.ID)
+	err = bgManager.Kill(bgShell.ID())
 	require.NoError(t, err)
 
 	// Verify it's gone
-	_, ok := bgManager.Get(bgShell.ID)
+	_, ok := bgManager.Get(bgShell.ID())
 	require.False(t, ok)
 
 	// Verify the shell is done
@@ -70,7 +74,7 @@ func TestBackgroundShell_MultipleOutputCalls(t *testing.T) {
 	bgManager := shell.GetBackgroundShellManager()
 	bgShell, err := bgManager.Start(ctx, workingDir, nil, "echo 'step 1' && echo 'step 2' && echo 'step 3'", "")
 	require.NoError(t, err)
-	defer bgManager.Kill(bgShell.ID)
+	defer bgManager.Kill(bgShell.ID())
 
 	// Check that we can call GetOutput multiple times while running
 	for range 5 {
@@ -110,7 +114,7 @@ func TestBackgroundShell_EmptyOutput(t *testing.T) {
 	bgManager := shell.GetBackgroundShellManager()
 	bgShell, err := bgManager.Start(ctx, workingDir, nil, "sleep 0.1", "")
 	require.NoError(t, err)
-	defer bgManager.Kill(bgShell.ID)
+	defer bgManager.Kill(bgShell.ID())
 
 	// Wait for completion
 	bgShell.Wait()
@@ -132,7 +136,7 @@ func TestBackgroundShell_ExitCode(t *testing.T) {
 	bgManager := shell.GetBackgroundShellManager()
 	bgShell, err := bgManager.Start(ctx, workingDir, nil, "echo 'failing' && exit 42", "")
 	require.NoError(t, err)
-	defer bgManager.Kill(bgShell.ID)
+	defer bgManager.Kill(bgShell.ID())
 
 	// Wait for completion
 	bgShell.Wait()
@@ -160,7 +164,7 @@ func TestBackgroundShell_WithBlockFuncs(t *testing.T) {
 	bgManager := shell.GetBackgroundShellManager()
 	bgShell, err := bgManager.Start(ctx, workingDir, blockFuncs, "curl example.com", "")
 	require.NoError(t, err)
-	defer bgManager.Kill(bgShell.ID)
+	defer bgManager.Kill(bgShell.ID())
 
 	// Wait for completion
 	bgShell.Wait()
@@ -189,7 +193,7 @@ func TestBackgroundShell_StdoutAndStderr(t *testing.T) {
 	bgManager := shell.GetBackgroundShellManager()
 	bgShell, err := bgManager.Start(ctx, workingDir, nil, "echo 'stdout message' && echo 'stderr message' >&2", "")
 	require.NoError(t, err)
-	defer bgManager.Kill(bgShell.ID)
+	defer bgManager.Kill(bgShell.ID())
 
 	// Wait for completion
 	bgShell.Wait()
@@ -211,7 +215,7 @@ func TestBackgroundShell_ConcurrentAccess(t *testing.T) {
 	bgManager := shell.GetBackgroundShellManager()
 	bgShell, err := bgManager.Start(ctx, workingDir, nil, "for i in 1 2 3 4 5; do echo \"line $i\"; sleep 0.05; done", "")
 	require.NoError(t, err)
-	defer bgManager.Kill(bgShell.ID)
+	defer bgManager.Kill(bgShell.ID())
 
 	// Access output concurrently from multiple goroutines
 	done := make(chan struct{})
@@ -272,12 +276,12 @@ func TestBackgroundShell_List(t *testing.T) {
 
 	// Verify all our shells are in the list
 	for _, sh := range shells {
-		require.Contains(t, ids, sh.ID, "Shell %s not found in list", sh.ID)
+		require.Contains(t, ids, sh.ID(), "Shell %s not found in list", sh.ID())
 	}
 
 	// Clean up
 	for _, sh := range shells {
-		bgManager.Kill(sh.ID)
+		bgManager.Kill(sh.ID())
 	}
 }
 
@@ -305,7 +309,7 @@ func TestBackgroundShell_AutoBackground(t *testing.T) {
 		require.Empty(t, stderr)
 
 		// Clean up
-		bgManager.Kill(bgShell.ID)
+		bgManager.Kill(bgShell.ID())
 	})
 
 	// Test that a long command stays in background
@@ -314,7 +318,7 @@ func TestBackgroundShell_AutoBackground(t *testing.T) {
 		bgManager := shell.GetBackgroundShellManager()
 		bgShell, err := bgManager.Start(ctx, workingDir, nil, "sleep 20 && echo '20 seconds completed'", "")
 		require.NoError(t, err)
-		defer bgManager.Kill(bgShell.ID)
+		defer bgManager.Kill(bgShell.ID())
 
 		// Wait threshold time
 		time.Sleep(5 * time.Second)
@@ -327,8 +331,179 @@ func TestBackgroundShell_AutoBackground(t *testing.T) {
 		require.Empty(t, stderr)
 
 		// Verify we can get the shell from manager
-		retrieved, ok := bgManager.Get(bgShell.ID)
+		retrieved, ok := bgManager.Get(bgShell.ID())
 		require.True(t, ok, "Should be able to retrieve background shell")
-		require.Equal(t, bgShell.ID, retrieved.ID)
+		require.Equal(t, bgShell.ID(), retrieved.ID())
 	})
+}
+
+func runJobTool(t *testing.T, tool fantasy.AgentTool, ctx context.Context, params any) fantasy.ToolResponse {
+	t.Helper()
+
+	input, err := json.Marshal(params)
+	require.NoError(t, err)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{ID: "test-call", Name: tool.Info().Name, Input: string(input)})
+	require.NoError(t, err)
+	return resp
+}
+
+func sessionContext(t *testing.T) (context.Context, string) {
+	t.Helper()
+	sessionID := "job-test-" + t.Name()
+	return context.WithValue(t.Context(), SessionIDContextKey, sessionID), sessionID
+}
+
+func startPublishedJob(t *testing.T, sessionID, command string, origin shell.JobOrigin) *shell.BackgroundShell {
+	t.Helper()
+
+	bgManager := shell.GetBackgroundShellManager()
+	bgShell, err := bgManager.Start(context.Background(), t.TempDir(), nil, command, "")
+	require.NoError(t, err)
+	_, err = bgManager.Publish(t.Context(), bgShell.ID(), shell.PublishOptions{SessionID: sessionID, Origin: origin})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bgManager.Kill(bgShell.ID()) })
+	return bgShell
+}
+
+func TestBashTool_ForegroundNotPublished(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	tool := newBashToolForTest(t.TempDir())
+
+	resp := runBashTool(t, tool, ctx, BashParams{Description: "echo", Command: "echo hi"})
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "hi")
+	require.Empty(t, shell.GetBackgroundShellManager().ListBySession(sessionID))
+}
+
+func TestBashTool_RunInBackgroundPublishes(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	tool := newBashToolForTest(t.TempDir())
+	bgManager := shell.GetBackgroundShellManager()
+	t.Cleanup(func() {
+		for _, job := range bgManager.ListBySession(sessionID) {
+			_ = bgManager.Kill(job.ID)
+		}
+	})
+
+	jobIDFrom := func(resp fantasy.ToolResponse) string {
+		var meta BashResponseMetadata
+		require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+		require.True(t, meta.Background)
+		require.NotEmpty(t, meta.ShellID)
+		return meta.ShellID
+	}
+
+	first := runBashTool(t, tool, ctx, BashParams{Description: "first", Command: "sleep 30", RunInBackground: true})
+	require.False(t, first.IsError)
+	firstID := jobIDFrom(first)
+	require.Contains(t, first.Content, firstID)
+	require.NotContains(t, first.Content, "Other running jobs in this session:")
+
+	jobs := bgManager.ListBySession(sessionID)
+	require.Len(t, jobs, 1)
+	require.Equal(t, firstID, jobs[0].ID)
+	require.Equal(t, shell.OriginExplicit, jobs[0].Origin)
+	require.Equal(t, sessionID, jobs[0].SessionID)
+
+	second := runBashTool(t, tool, ctx, BashParams{Description: "second", Command: "sleep 30", RunInBackground: true})
+	require.False(t, second.IsError)
+	secondID := jobIDFrom(second)
+	require.NotEqual(t, firstID, secondID)
+	require.Contains(t, second.Content, "Other running jobs in this session:")
+	require.Contains(t, second.Content, firstID)
+}
+
+func TestJobListTool_Empty(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := sessionContext(t)
+	resp := runJobTool(t, NewJobListTool(JobToolOptions{}), ctx, JobListParams{})
+	require.False(t, resp.IsError)
+	require.Equal(t, "No background jobs.", resp.Content)
+}
+
+func TestJobListTool_RunningFirst(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+
+	finished := startPublishedJob(t, sessionID, "echo done", shell.OriginAuto)
+	finished.Wait()
+	running := startPublishedJob(t, sessionID, "sleep 30", shell.OriginExplicit)
+	startPublishedJob(t, sessionID+"-other", "sleep 30", shell.OriginExplicit)
+
+	resp := runJobTool(t, NewJobListTool(JobToolOptions{}), ctx, JobListParams{})
+	require.False(t, resp.IsError)
+
+	lines := strings.Split(resp.Content, "\n")
+	require.Len(t, lines, 4, resp.Content)
+	require.Equal(t, "Running:", lines[0])
+	require.True(t, strings.HasPrefix(lines[1], running.ID()+"  running  "), lines[1])
+	require.Contains(t, lines[1], "last output never")
+	require.Contains(t, lines[1], "explicit  sleep 30")
+	require.Equal(t, "Finished:", lines[2])
+	require.True(t, strings.HasPrefix(lines[3], finished.ID()+"  exit 0   "), lines[3])
+	require.Contains(t, lines[3], "auto  echo done")
+
+	var meta JobListResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, JobListResponseMetadata{Running: 1, Finished: 1}, meta)
+
+	all := runJobTool(t, NewJobListTool(JobToolOptions{}), ctx, JobListParams{All: true})
+	require.GreaterOrEqual(t, strings.Count(all.Content, "  running  "), 2)
+}
+
+func TestFormatJobList_CapsFinished(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	running := []shell.JobInfo{{
+		ID:        "001",
+		Origin:    shell.OriginExplicit,
+		Command:   "sleep 3600",
+		StartedAt: now.Add(-2 * time.Hour),
+	}}
+	var finished []shell.JobInfo
+	for i := range 25 {
+		finished = append(finished, shell.JobInfo{
+			ID:          fmt.Sprintf("%03X", 100-i),
+			Origin:      shell.OriginAuto,
+			Command:     "true",
+			StartedAt:   now.Add(-time.Hour),
+			CompletedAt: now.Add(-time.Duration(i) * time.Minute),
+			Done:        true,
+		})
+	}
+
+	out := formatJobList(running, finished, now)
+	lines := strings.Split(out, "\n")
+	require.Equal(t, "Running:", lines[0])
+	require.True(t, strings.HasPrefix(lines[1], "001  running  2h00m  last output never  explicit  sleep 3600"), lines[1])
+	require.Equal(t, "Finished:", lines[2])
+	require.Len(t, lines, 3+20+1)
+	require.True(t, strings.HasPrefix(lines[3], finished[0].ID+"  exit 0   "))
+	require.True(t, strings.HasPrefix(lines[22], finished[19].ID+"  "))
+	require.Equal(t, "(5 older finished jobs omitted)", lines[23])
+}
+
+func TestJobKillTool_AlreadyExited(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "echo bye && exit 3", shell.OriginExplicit)
+	bgShell.Wait()
+	jobID := bgShell.ID()
+
+	resp := runJobTool(t, NewJobKillTool(JobToolOptions{}), ctx, JobKillParams{ShellID: jobID})
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "Job "+jobID+" had already exited (exit 3,")
+	require.Contains(t, resp.Content, "Last output:\nbye")
+
+	_, ok := shell.GetBackgroundShellManager().Get(jobID)
+	require.False(t, ok)
 }

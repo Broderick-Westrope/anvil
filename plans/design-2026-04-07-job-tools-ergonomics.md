@@ -204,7 +204,8 @@ depends on a later phase.
       `<system_reminder>Job 019 completed, exit 1 (9m14s): "Run
       integration tests". Last lines: ...</system_reminder>` (max 10
       lines per event), and only after the message is created marks those
-      events `delivered` (one transaction in Phase 4). Events beyond 5
+      events `delivered`. Across crashes, delivery is at-least-once (see
+      Design Decisions). Events beyond 5
       stay pending for the next step, and the message notes
       `(+N more pending)`.
     - Retention within a run: fantasy rebuilds each step's input from the
@@ -276,8 +277,10 @@ depends on a later phase.
 17. **Job records.** Table `background_jobs`: id, session_id, origin,
     command, description, working_dir, started_at, completed_at,
     exit_code, end_reason (`exited`, `killed`, `abandoned`, `anvil_exit`,
-    `interrupted`), log_bytes, log_truncated, process_instance (Anvil PID
-    plus process start time). Pending events (item 13) are persisted
+    `interrupted`), log_bytes, log_truncated, instance_id. Each Anvil
+    process registers in an `anvil_instances` table and heartbeats every
+    30s; an instance is live if its heartbeat is under 90s old (portable,
+    unlike PID plus process start time). Pending events (item 13) are persisted
     alongside.
 18. **Persistent, never-reused IDs.** `INTEGER PRIMARY KEY AUTOINCREMENT`
     with `INSERT ... RETURNING id` at publication, formatted `%03X`
@@ -285,7 +288,7 @@ depends on a later phase.
     reissued, and a single INSERT is atomic across concurrent Anvil
     processes sharing the global DB.
 19. **Recovery on startup.** Records still marked running whose
-    `process_instance` is not alive become `interrupted`: "Anvil exited
+    instance is not live become `interrupted`: "Anvil exited
     unexpectedly; the process may still be running (detached children can
     survive)". Records owned by another live Anvil process are shown as
     `running in another Anvil process` and are read-only (readable from
@@ -467,6 +470,11 @@ Phase 5
   exactly-once acknowledgements: within a session, tool calls finish
   before the next `PrepareStep`, so a re-check at injection is enough to
   avoid wait-vs-notify duplicates without a full ack protocol.
+- **At-least-once delivery across crashes** over a transaction spanning
+  the notice message and event state: the message service commits its
+  own transaction, and a crash in the gap only repeats a harmless notice.
+  Claims record the claiming instance so live processes never steal each
+  other's deliveries.
 - **Re-append injected messages each step:** fantasy rebuilds step input
   from the initial prompt and generated responses, so a one-time append
   in `PrepareStep` is invisible after one step.

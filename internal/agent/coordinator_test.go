@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -330,6 +332,74 @@ func TestRunSubAgent(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, resp.IsError)
 		assert.Equal(t, "Failed to generate response: provider request failed", resp.Content)
+	})
+
+	t.Run("agent run error hands off jobs", func(t *testing.T) {
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, providerCfg)
+
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
+		require.NoError(t, err)
+
+		var autoID, explicitID string
+		agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+			autoID = startTestJob(t, call.SessionID, "sleep 30", shell.OriginAuto)
+			explicitID = startTestJob(t, call.SessionID, "sleep 30", shell.OriginExplicit)
+			return nil, errors.New("provider request failed")
+		})
+
+		resp, err := coord.runSubAgent(t.Context(), subAgentParams{
+			Agent:          agent,
+			SessionID:      parentSession.ID,
+			AgentMessageID: "msg-1",
+			ToolCallID:     "call-1",
+			Prompt:         "test",
+			SessionTitle:   "Test",
+		})
+		require.NoError(t, err)
+		assert.True(t, resp.IsError)
+		assert.Contains(t, resp.Content, "Failed to generate response: provider request failed")
+		assert.Contains(t, resp.Content, "<background_jobs>")
+		requireJobOwner(t, explicitID, parentSession.ID)
+		requireJobGone(t, autoID)
+	})
+
+	t.Run("cancelled sub-agent hands off jobs", func(t *testing.T) {
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, providerCfg)
+
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		var autoID, explicitID string
+		agent := newMockAgent(providerID, 4096, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+			autoID = startTestJob(t, call.SessionID, "sleep 30", shell.OriginAuto)
+			explicitID = startTestJob(t, call.SessionID, "sleep 30", shell.OriginExplicit)
+			go cancel()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("context was not cancelled")
+			}
+		})
+
+		resp, err := coord.runSubAgent(ctx, subAgentParams{
+			Agent:          agent,
+			SessionID:      parentSession.ID,
+			AgentMessageID: "msg-1",
+			ToolCallID:     "call-1",
+			Prompt:         "test",
+			SessionTitle:   "Test",
+		})
+		require.NoError(t, err)
+		assert.True(t, resp.IsError)
+		assert.Contains(t, resp.Content, context.Canceled.Error())
+		requireJobOwner(t, explicitID, parentSession.ID)
+		requireJobGone(t, autoID)
 	})
 
 	t.Run("session setup callback is invoked", func(t *testing.T) {
@@ -819,6 +889,94 @@ func TestSkillsUsageParity(t *testing.T) {
 					require.NotContains(t, built, "/private/example")
 				}
 			}
+		})
+	}
+}
+
+func TestWithJobTools(t *testing.T) {
+	t.Parallel()
+	all := []string{"bash", "view", "job_output", "job_kill", "job_list"}
+	tests := map[string]struct {
+		filter, allowed, want []string
+	}{
+		"include with bash": {
+			filter:  []string{"bash", "view"},
+			allowed: []string{"bash", "view"},
+			want:    []string{"bash", "view", "job_output", "job_kill", "job_list"},
+		},
+		"include without bash": {
+			filter:  []string{"view"},
+			allowed: []string{"view"},
+			want:    []string{"view"},
+		},
+		"exclude job_kill": {
+			filter:  []string{"!job_kill"},
+			allowed: []string{"bash", "view", "job_output", "job_list"},
+			want:    []string{"bash", "view", "job_output", "job_list"},
+		},
+		"nil filter": {
+			filter:  nil,
+			allowed: all,
+			want:    all,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, withJobTools(tt.filter, slices.Clone(tt.allowed)))
+		})
+	}
+}
+
+func TestJobToolNamesCoversRegisteredJobTools(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+	require.NoError(t, err)
+	cfg.Config().MCP = nil
+	c := &coordinator{cfg: cfg}
+	builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, 1, nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	var registered []string
+	for _, tool := range builtTools {
+		if name := tool.Info().Name; strings.HasPrefix(name, "job_") {
+			registered = append(registered, name)
+		}
+	}
+	require.ElementsMatch(t, tools.JobToolNames(), registered,
+		"every job_* tool must be listed in tools.JobToolNames so agents with bash get it")
+}
+
+func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		disabled []string
+		want     []string
+	}{
+		"bash only": {
+			want: append([]string{tools.BashToolName}, tools.JobToolNames()...),
+		},
+		"globally disabled job_kill": {
+			disabled: []string{tools.JobKillToolName},
+			want:     []string{tools.BashToolName, tools.JobOutputToolName, tools.JobListToolName},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+			require.NoError(t, err)
+			cfg.Config().Options.DisabledTools = tt.disabled
+			cfg.Config().MCP = nil
+			c := &coordinator{cfg: cfg}
+			agentCfg := config.Agent{ID: "fixer", AllowedTools: []string{tools.BashToolName}}
+			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil)
+			require.NoError(t, err)
+			var names []string
+			for _, tool := range builtTools {
+				names = append(names, tool.Info().Name)
+			}
+			require.ElementsMatch(t, tt.want, names)
 		})
 	}
 }

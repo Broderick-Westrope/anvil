@@ -898,6 +898,7 @@ func allToolNames() []string {
 		"anvil_logs",
 		"job_output",
 		"job_kill",
+		"job_list",
 		"download",
 		"edit",
 		"multiedit",
