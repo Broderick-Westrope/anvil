@@ -1189,6 +1189,27 @@ func (c *coordinator) buildAgentModels(ctx context.Context, agentCfg config.Agen
 	return c.buildResolvedAgentModels(ctx, largeModelCfg, smallModelCfg, agentCfg.ID != config.AgentOrchestrator)
 }
 
+// buildAgenticFetchModel builds the (fetch, small) model pair for the
+// agentic_fetch sub-agent. tools.agentic_fetch.model wins when it
+// resolves; otherwise the global small model is used, so a bad override
+// degrades instead of failing.
+func (c *coordinator) buildAgenticFetchModel(ctx context.Context) (Model, Model, error) {
+	cfg := c.cfg.Config()
+	smallModelCfg, ok := cfg.Models[config.SelectedModelTypeSmall]
+	if !ok {
+		return Model{}, Model{}, errSmallModelNotSelected
+	}
+	fetchModelCfg, err := config.ResolveAgenticFetchModel(cfg)
+	if err != nil {
+		slog.Warn("Failed to resolve agentic_fetch model; falling back to the global small model",
+			"configured_model", cfg.Tools.AgenticFetch.Model,
+			"error", err,
+		)
+		fetchModelCfg = smallModelCfg
+	}
+	return c.buildResolvedAgentModels(ctx, fetchModelCfg, smallModelCfg, true)
+}
+
 func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCfg, smallModelCfg config.SelectedModel, isSubAgent bool) (Model, Model, error) {
 	largeProviderCfg, ok := c.cfg.Config().Providers.Get(largeModelCfg.Provider)
 	if !ok {

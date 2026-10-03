@@ -59,6 +59,51 @@ func TestAnvilInfo_Models(t *testing.T) {
 	require.Contains(t, output, "[model]")
 	require.Contains(t, output, "large = claude-sonnet-4-20250514 (anthropic)")
 	require.Contains(t, output, "small = claude-haiku-3-20250307 (anthropic)")
+	require.Contains(t, output, "agentic_fetch = claude-haiku-3-20250307 (anthropic)")
+}
+
+func TestAnvilInfo_AgenticFetchModelOverride(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{name: "valid", model: "anthropic/claude-opus-4", want: "agentic_fetch = claude-opus-4 (anthropic)"},
+		{name: "invalid", model: "bogus", want: `agentic_fetch = claude-haiku-3-20250307 (anthropic) [invalid override "bogus", using small]`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			providers := csync.NewMap[string, config.ProviderConfig]()
+			providers.Set("anthropic", config.ProviderConfig{Models: []catwalk.Model{{ID: "claude-opus-4"}}})
+			cfg := config.NewTestStore(&config.Config{
+				Providers: providers,
+				Models: map[config.SelectedModelType]config.SelectedModel{
+					config.SelectedModelTypeSmall: {Model: "claude-haiku-3-20250307", Provider: "anthropic"},
+				},
+				Tools: config.Tools{AgenticFetch: config.ToolAgenticFetch{Model: tt.model}},
+			})
+			output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+			require.Contains(t, output, tt.want)
+		})
+	}
+}
+
+func TestAnvilInfo_AgenticFetchWithoutSmallModel(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.NewTestStore(&config.Config{
+		Providers: csync.NewMap[string, config.ProviderConfig](),
+		Models: map[config.SelectedModelType]config.SelectedModel{
+			config.SelectedModelTypeLarge: {Model: "claude-opus-4", Provider: "anthropic"},
+		},
+		Tools: config.Tools{AgenticFetch: config.ToolAgenticFetch{Model: "bogus"}},
+	})
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	require.Contains(t, output, "large = claude-opus-4 (anthropic)")
+	require.NotContains(t, output, "agentic_fetch =")
 }
 
 func TestAnvilInfo_Providers(t *testing.T) {

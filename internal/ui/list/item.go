@@ -77,6 +77,15 @@ type RawRenderable interface {
 	RawRender(width int) string
 }
 
+// SourceSelectable represents an item whose rendered output is derived from
+// a raw markdown source. Copying a selection from such an item maps the
+// selected rendered text back to the source so formatting survives.
+type SourceSelectable interface {
+	// SelectionSource returns the raw markdown that produced the rendered
+	// output, or an empty string when no source mapping is available.
+	SelectionSource() string
+}
+
 // Focusable represents an item that can be aware of focus state changes.
 type Focusable interface {
 	// SetFocused sets the focus state of the item.

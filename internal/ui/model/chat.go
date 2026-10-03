@@ -942,19 +942,42 @@ func (m *Chat) HighlightContent() string {
 			} else {
 				rendered = item.Render(listWidth)
 			}
-			sb.WriteString(list.HighlightContent(
-				rendered,
-				uv.Rect(0, 0, listWidth, lipgloss.Height(rendered)),
-				startLine,
-				startCol,
-				endLine,
-				endCol,
-			))
+			area := uv.Rect(0, 0, listWidth, lipgloss.Height(rendered))
+			if text, ok := sourceSelection(item, rendered, area, startLine, startCol, endLine, endCol); ok {
+				sb.WriteString(text)
+				sb.WriteString("\n")
+			} else {
+				sb.WriteString(list.HighlightContent(
+					rendered,
+					area,
+					startLine,
+					startCol,
+					endLine,
+					endCol,
+				))
+			}
 			sb.WriteString(strings.Repeat("\n", m.list.Gap()))
 		}
 	}
 
 	return strings.TrimSpace(sb.String())
+}
+
+// sourceSelection maps a selection within a rendered item back to the
+// item's markdown source when the item provides one, so copied text keeps
+// its formatting. ok is false when the item has no source or the selection
+// cannot be mapped.
+func sourceSelection(item list.Item, rendered string, area uv.Rectangle, startLine, startCol, endLine, endCol int) (string, bool) {
+	ss, ok := item.(list.SourceSelectable)
+	if !ok {
+		return "", false
+	}
+	source := ss.SelectionSource()
+	if source == "" {
+		return "", false
+	}
+	plain, start, end := list.SelectionText(rendered, area, startLine, startCol, endLine, endCol)
+	return common.MapSelectionToSource(source, plain, start, end)
 }
 
 // ClearMouse clears the current mouse interaction state.

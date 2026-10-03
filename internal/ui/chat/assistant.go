@@ -290,6 +290,21 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 	return highlightedContent
 }
 
+// SelectionSource implements [list.SourceSelectable]. It returns the raw
+// markdown of the thinking and content sections in display order.
+func (a *AssistantMessageItem) SelectionSource() string {
+	thinking := strings.TrimSpace(a.message.ReasoningContent().Thinking)
+	content := strings.TrimSpace(a.message.Content().Text)
+	switch {
+	case thinking == "":
+		return content
+	case content == "":
+		return thinking
+	default:
+		return thinking + "\n\n" + content
+	}
+}
+
 // Render implements MessageItem.
 func (a *AssistantMessageItem) Render(width int) string {
 	// XXX: Here, we're manually applying the focused/blurred styles because
