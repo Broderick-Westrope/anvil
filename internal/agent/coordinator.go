@@ -1687,7 +1687,7 @@ func withJobTools(filter, allowed []string) []string {
 			excluded[name] = true
 		}
 	}
-	for _, name := range []string{tools.JobOutputToolName, tools.JobKillToolName, tools.JobListToolName} {
+	for _, name := range tools.JobToolNames() {
 		if !excluded[name] && !slices.Contains(allowed, name) {
 			allowed = append(allowed, name)
 		}

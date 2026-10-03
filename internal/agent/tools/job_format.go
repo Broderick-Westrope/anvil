@@ -12,6 +12,12 @@ import (
 // Later phases add fields; the zero value is valid.
 type JobToolOptions struct{}
 
+// JobToolNames returns the names of every job tool. Agents with bash are
+// granted all of them, so a new job tool must be listed here.
+func JobToolNames() []string {
+	return []string{JobOutputToolName, JobKillToolName, JobListToolName}
+}
+
 // FormatOtherRunningJobs renders up to limit running jobs as
 // "05A <label> (2h03m); 07D <label> (12s)" with "(+N more; use
 // job_list)" when truncated. It returns "" when jobs is empty.

@@ -928,6 +928,25 @@ func TestWithJobTools(t *testing.T) {
 	}
 }
 
+func TestJobToolNamesCoversRegisteredJobTools(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+	require.NoError(t, err)
+	cfg.Config().MCP = nil
+	c := &coordinator{cfg: cfg}
+	builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, 1, nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	var registered []string
+	for _, tool := range builtTools {
+		if name := tool.Info().Name; strings.HasPrefix(name, "job_") {
+			registered = append(registered, name)
+		}
+	}
+	require.ElementsMatch(t, tools.JobToolNames(), registered,
+		"every job_* tool must be listed in tools.JobToolNames so agents with bash get it")
+}
+
 func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
@@ -935,7 +954,7 @@ func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 		want     []string
 	}{
 		"bash only": {
-			want: []string{tools.BashToolName, tools.JobOutputToolName, tools.JobKillToolName, tools.JobListToolName},
+			want: append([]string{tools.BashToolName}, tools.JobToolNames()...),
 		},
 		"globally disabled job_kill": {
 			disabled: []string{tools.JobKillToolName},
