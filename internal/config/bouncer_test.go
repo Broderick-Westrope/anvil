@@ -263,6 +263,7 @@ func TestBouncer_APIKeyEnv(t *testing.T) {
 
 		_, err := e.load(t)
 		require.ErrorContains(t, err, "api_key_env")
+		require.NotContains(t, err.Error(), "1BAD-NAME", "the value may be a misplaced key, so it is never echoed")
 	})
 }
 

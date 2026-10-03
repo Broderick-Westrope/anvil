@@ -117,7 +117,9 @@ func (p *Bouncer) Validate() error {
 		}
 	}
 	if p.APIKeyEnv != "" && !envVarNameRe.MatchString(p.APIKeyEnv) {
-		errs = append(errs, fmt.Errorf("api_key_env %q is not a valid environment variable name", p.APIKeyEnv))
+		// The value isn't echoed: an invalid name is often the key itself
+		// pasted into the wrong field, and this error is logged.
+		errs = append(errs, errors.New("api_key_env must be the name of an environment variable (letters, digits, and underscores), not the key itself"))
 	}
 	if p.TimeoutSeconds < 0 || p.TimeoutSeconds > maxBouncerTimeoutSeconds {
 		errs = append(errs, fmt.Errorf("timeout_seconds %d must be between 0 and %d", p.TimeoutSeconds, maxBouncerTimeoutSeconds))
