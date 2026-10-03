@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -368,6 +370,106 @@ func TestPermissions_CtrlFTogglesFullscreen(t *testing.T) {
 	require.True(t, p.fullscreen, "ctrl+f should toggle fullscreen on")
 	p.HandleMsg(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
 	require.False(t, p.fullscreen, "ctrl+f should toggle fullscreen off")
+}
+
+func newLongBashPermissions(t *testing.T, lines int) *Permissions {
+	t.Helper()
+	script := make([]string, lines)
+	for i := range script {
+		script[i] = "echo line " + strconv.Itoa(i)
+	}
+	p := newTestPermissions(t)
+	p.permission.Params = tools.BashPermissionsParams{Command: strings.Join(script, "\n")}
+	return p
+}
+
+// drawnSize draws the dialog onto a screen of the given size and returns
+// the bounding box of the non-blank cells.
+func drawnSize(t *testing.T, p *Permissions, width, height int) (int, int) {
+	t.Helper()
+	scr := uv.NewScreenBuffer(width, height)
+	p.Draw(scr, uv.Rect(0, 0, width, height))
+	minX, minY, maxX, maxY := width, height, -1, -1
+	for y := range height {
+		for x := range width {
+			if cell := scr.CellAt(x, y); cell != nil && cell.Content != "" && cell.Content != " " {
+				minX, minY = min(minX, x), min(minY, y)
+				maxX, maxY = max(maxX, x), max(maxY, y)
+			}
+		}
+	}
+	return maxX - minX + 1, maxY - minY + 1
+}
+
+// TestPermissions_LongContentGrowsDialog verifies that simple prompts with
+// long content, like multi-line scripts, get the larger dialog size while
+// short prompts stay compact.
+func TestPermissions_LongContentGrowsDialog(t *testing.T) {
+	t.Parallel()
+
+	const screenW, screenH = 200, 60
+	shortW, shortH := drawnSize(t, newTestPermissions(t), screenW, screenH)
+	longW, longH := drawnSize(t, newLongBashPermissions(t, 200), screenW, screenH)
+
+	require.LessOrEqual(t, shortH, int(screenH*simpleHeightRatio))
+	require.Greater(t, longH, int(screenH*simpleHeightRatio), "long content should use more height")
+	require.Greater(t, longW, shortW, "long content should use more width")
+	require.LessOrEqual(t, longH, int(screenH*diffSizeRatio))
+}
+
+// TestPermissions_FullscreenForSimpleContent verifies that ctrl+f makes a
+// non-diff prompt fill the screen.
+func TestPermissions_FullscreenForSimpleContent(t *testing.T) {
+	t.Parallel()
+
+	const screenW, screenH = 200, 60
+	p := newLongBashPermissions(t, 200)
+	p.HandleMsg(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
+	require.True(t, p.fullscreen)
+
+	w, h := drawnSize(t, p, screenW, screenH)
+	require.Equal(t, screenW, w)
+	require.GreaterOrEqual(t, h, screenH-1, "fullscreen should use the full height")
+}
+
+// TestPermissions_PageKeysScrollContent verifies page and home/end keys
+// move the content viewport.
+func TestPermissions_PageKeysScrollContent(t *testing.T) {
+	t.Parallel()
+
+	p := newLongBashPermissions(t, 200)
+	drawnSize(t, p, 200, 60)
+	require.Zero(t, p.viewport.YOffset())
+
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	afterPage := p.viewport.YOffset()
+	require.Positive(t, afterPage)
+
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnd})
+	require.True(t, p.viewport.AtBottom())
+
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	require.True(t, !p.viewport.AtBottom())
+
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyHome})
+	require.Zero(t, p.viewport.YOffset())
+}
+
+// TestPermissions_BashCommandIsHighlighted verifies the bash command is
+// syntax highlighted while keeping its text intact.
+func TestPermissions_BashCommandIsHighlighted(t *testing.T) {
+	t.Parallel()
+
+	const command = "for f in *.go; do\n  echo \"$f\"\ndone"
+	p := newTestPermissions(t)
+	p.permission.Params = tools.BashPermissionsParams{Command: command}
+
+	rendered := p.renderContent(80)
+	plain := newTestPermissions(t).renderContentPanel(command, 80)
+	require.NotEqual(t, plain, rendered, "command should be highlighted")
+	for line := range strings.SplitSeq(command, "\n") {
+		require.Contains(t, ansi.Strip(rendered), line)
+	}
 }
 
 // TestPermissions_NavigationCyclesOptions verifies that tab and arrow keys

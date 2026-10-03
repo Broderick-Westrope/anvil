@@ -86,6 +86,10 @@ type Permissions struct {
 	viewportDirty bool // true when viewport content needs to be re-rendered
 	viewportWidth int
 
+	// highlightedCommand caches the syntax-highlighted bash command, which
+	// is too expensive to recompute on every frame.
+	highlightedCommand string
+
 	// Diff view state.
 	diffSplitMode        *bool // nil means use default based on width
 	defaultDiffSplitMode bool  // default split mode based on width
@@ -114,8 +118,13 @@ type permissionsKeyMap struct {
 	ScrollDown       key.Binding
 	ScrollLeft       key.Binding
 	ScrollRight      key.Binding
+	PageUp           key.Binding
+	PageDown         key.Binding
+	GotoTop          key.Binding
+	GotoBottom       key.Binding
 	Choose           key.Binding
 	Scroll           key.Binding
+	Page             key.Binding
 }
 
 func defaultPermissionsKeyMap() permissionsKeyMap {
@@ -181,6 +190,22 @@ func defaultPermissionsKeyMap() permissionsKeyMap {
 			key.WithKeys("shift+right", "L"),
 			key.WithHelp("shift+→", "scroll right"),
 		),
+		PageUp: key.NewBinding(
+			key.WithKeys("pgup"),
+			key.WithHelp("pgup", "page up"),
+		),
+		PageDown: key.NewBinding(
+			key.WithKeys("pgdown"),
+			key.WithHelp("pgdn", "page down"),
+		),
+		GotoTop: key.NewBinding(
+			key.WithKeys("home"),
+			key.WithHelp("home", "top"),
+		),
+		GotoBottom: key.NewBinding(
+			key.WithKeys("end"),
+			key.WithHelp("end", "bottom"),
+		),
 		Choose: key.NewBinding(
 			key.WithKeys("left", "right"),
 			key.WithHelp("←/→", "choose"),
@@ -188,6 +213,10 @@ func defaultPermissionsKeyMap() permissionsKeyMap {
 		Scroll: key.NewBinding(
 			key.WithKeys("shift+left", "shift+down", "shift+up", "shift+right"),
 			key.WithHelp("shift+←↓↑→", "scroll"),
+		),
+		Page: key.NewBinding(
+			key.WithKeys("pgup", "pgdown"),
+			key.WithHelp("pgup/pgdn", "page"),
 		),
 	}
 }
@@ -350,9 +379,15 @@ func (p *Permissions) handleDefaultMsg(msg tea.KeyPressMsg) Action {
 			p.viewportDirty = true
 		}
 	case key.Matches(msg, p.keyMap.ToggleFullscreen):
-		if p.hasDiffView() {
-			p.fullscreen = !p.fullscreen
-		}
+		p.fullscreen = !p.fullscreen
+	case key.Matches(msg, p.keyMap.PageDown):
+		p.viewport.PageDown()
+	case key.Matches(msg, p.keyMap.PageUp):
+		p.viewport.PageUp()
+	case key.Matches(msg, p.keyMap.GotoTop):
+		p.viewport.GotoTop()
+	case key.Matches(msg, p.keyMap.GotoBottom):
+		p.viewport.GotoBottom()
 	case key.Matches(msg, p.keyMap.ScrollDown):
 		p.viewport, _ = p.viewport.Update(msg)
 	case key.Matches(msg, p.keyMap.ScrollUp):
@@ -489,17 +524,18 @@ func (p *Permissions) scrollRight() {
 	p.viewportDirty = true
 }
 
-// Draw implements [Dialog].
 // dialogSize returns the outer dialog width and maximum height for the
 // given screen area, and whether the window is too small so the dialog
-// must fill it. Diff views get more room than simple prompts.
-func (p *Permissions) dialogSize(area uv.Rectangle) (width, maxHeight int, forceFullscreen bool) {
+// must fill it. Diff views, and simple prompts whose content overflows
+// (expanded), get more room than short simple prompts.
+func (p *Permissions) dialogSize(area uv.Rectangle, expanded bool) (width, maxHeight int, forceFullscreen bool) {
 	forceFullscreen = area.Dx() <= minWindowWidth || area.Dy() <= minWindowHeight
 	switch {
-	case forceFullscreen || (p.fullscreen && p.hasDiffView()):
+	case forceFullscreen || p.fullscreen:
 		width, maxHeight = area.Dx(), area.Dy()
-	case p.hasDiffView():
-		// Wide for side-by-side diffs, capped for readability.
+	case p.hasDiffView() || expanded:
+		// Wide for side-by-side diffs and long scripts, capped for
+		// readability.
 		width = min(int(float64(area.Dx())*diffSizeRatio), diffMaxWidth)
 		maxHeight = int(float64(area.Dy()) * diffSizeRatio)
 	default:
@@ -514,8 +550,8 @@ func (p *Permissions) dialogSize(area uv.Rectangle) (width, maxHeight int, force
 // viewport given the height taken by the fixed chrome (fixedHeight) and
 // the content's natural height. Simple prompts shrink to fit their
 // content; diff and fullscreen views always take all remaining height.
-func (p *Permissions) contentViewportHeight(forceFullscreen bool, maxHeight, fixedHeight, contentHeight int) int {
-	if p.hasDiffView() || forceFullscreen {
+func (p *Permissions) contentViewportHeight(fullscreen bool, maxHeight, fixedHeight, contentHeight int) int {
+	if p.hasDiffView() || fullscreen {
 		return maxHeight - fixedHeight
 	}
 	if fixedHeight+contentHeight < maxHeight {
@@ -524,38 +560,72 @@ func (p *Permissions) contentViewportHeight(forceFullscreen bool, maxHeight, fix
 	return max(maxHeight-fixedHeight, 3)
 }
 
-func (p *Permissions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
-	t := p.com.Styles
-	width, maxHeight, forceFullscreen := p.dialogSize(area)
-	dialogStyle := t.Dialog.View.Width(width).Padding(0, 1)
-	// The dialog fills the screen when forced small or when a diff is
-	// expanded; center the buttons then instead of hugging the far edge.
-	fullscreen := forceFullscreen || (p.fullscreen && p.hasDiffView())
+// layoutMetrics holds the measurements of one dialog layout pass.
+type layoutMetrics struct {
+	width, maxHeight  int
+	forceFullscreen   bool
+	fullscreen        bool
+	dialogStyle       lipgloss.Style
+	contentWidth      int
+	header, buttons   string
+	helpView          string
+	renderedContent   string
+	contentHeight     int
+	fixedHeight       int
+	contentOverflowed bool
+}
 
-	contentWidth := p.calculateContentWidth(width)
-	header := p.renderHeader(contentWidth)
-	buttons := p.renderButtons(contentWidth, fullscreen)
+// measure lays out the dialog chrome and content for the given size mode.
+func (p *Permissions) measure(area uv.Rectangle, expanded bool) layoutMetrics {
+	t := p.com.Styles
+	var m layoutMetrics
+	m.width, m.maxHeight, m.forceFullscreen = p.dialogSize(area, expanded)
+	m.dialogStyle = t.Dialog.View.Width(m.width).Padding(0, 1)
+	// The dialog fills the screen when forced small or toggled; center
+	// the buttons then instead of hugging the far edge.
+	m.fullscreen = m.forceFullscreen || p.fullscreen
+
+	m.contentWidth = p.calculateContentWidth(m.width)
+	m.header = p.renderHeader(m.contentWidth)
+	m.buttons = p.renderButtons(m.contentWidth, m.fullscreen)
 	// Pack the hints to the content width so they truncate cleanly instead
 	// of overflowing. The dialog frame supplies the padding, so this renders
 	// the hint line without the extra help view inset that renderDialogHelp
 	// applies for RenderContext dialogs.
-	helpView := shortHelpLine(&p.help, p.ShortHelp(), contentWidth)
+	m.helpView = shortHelpLine(&p.help, p.ShortHelp(), m.contentWidth)
 
-	p.defaultDiffSplitMode = width >= splitModeMinWidth
+	p.defaultDiffSplitMode = m.width >= splitModeMinWidth
 
 	// Pre-render content to measure its actual height, then fit the
 	// scrollable viewport into whatever height the fixed chrome leaves.
-	renderedContent := p.renderContent(contentWidth)
-	contentHeight := lipgloss.Height(renderedContent)
+	m.renderedContent = p.renderContent(m.contentWidth)
+	m.contentHeight = lipgloss.Height(m.renderedContent)
 	// The fork's pattern input (granular permissions) is part of the fixed
 	// chrome, so its height joins the budget the viewport must fit within.
-	patternHeight := lipgloss.Height(p.renderPatternInput(contentWidth))
+	patternHeight := lipgloss.Height(p.renderPatternInput(m.contentWidth))
 	if patternHeight > 0 {
 		patternHeight += 1 // Account for the blank line separator.
 	}
-	fixedHeight := lipgloss.Height(header) + lipgloss.Height(buttons) +
-		lipgloss.Height(helpView) + dialogStyle.GetVerticalFrameSize() + layoutSpacingLines + patternHeight
-	availableHeight := p.contentViewportHeight(forceFullscreen, maxHeight, fixedHeight, contentHeight)
+	m.fixedHeight = lipgloss.Height(m.header) + lipgloss.Height(m.buttons) +
+		lipgloss.Height(m.helpView) + m.dialogStyle.GetVerticalFrameSize() + layoutSpacingLines + patternHeight
+	m.contentOverflowed = m.fixedHeight+m.contentHeight > m.maxHeight
+	return m
+}
+
+// Draw implements [Dialog].
+func (p *Permissions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
+	t := p.com.Styles
+	m := p.measure(area, false)
+	// Long simple content (multi-line scripts and the like) would be
+	// cramped in the compact dialog, so grow it to the larger size.
+	if m.contentOverflowed && !m.fullscreen && !p.hasDiffView() {
+		m = p.measure(area, true)
+	}
+	dialogStyle := m.dialogStyle
+	contentWidth := m.contentWidth
+	header, buttons, helpView := m.header, m.buttons, m.helpView
+	renderedContent, contentHeight := m.renderedContent, m.contentHeight
+	availableHeight := p.contentViewportHeight(m.fullscreen, m.maxHeight, m.fixedHeight, contentHeight)
 
 	// Determine if scrollbar is needed.
 	needsScrollbar := p.hasDiffView() || contentHeight > availableHeight
@@ -727,7 +797,14 @@ func (p *Permissions) renderBashContent(width int) string {
 		return ""
 	}
 
-	return p.renderContentPanel(params.Command, width)
+	if p.highlightedCommand == "" {
+		p.highlightedCommand = params.Command
+		t := p.com.Styles
+		if highlighted, err := common.SyntaxHighlight(t, params.Command, "command.sh", t.Dialog.Permissions.ParamsBg); err == nil {
+			p.highlightedCommand = strings.TrimRight(highlighted, "\n")
+		}
+	}
+	return p.renderContentPanel(p.highlightedCommand, width)
 }
 
 func (p *Permissions) renderEditContent(contentWidth int) string {
@@ -1014,14 +1091,15 @@ func (p *Permissions) ShortHelp() []key.Binding {
 	}
 
 	if p.canScroll() {
-		bindings = append(bindings, p.keyMap.Scroll)
+		bindings = append(bindings, p.keyMap.Scroll, p.keyMap.Page)
 	}
 
 	if p.hasDiffView() {
-		bindings = append(bindings,
-			p.keyMap.ToggleDiffMode,
-			p.keyMap.ToggleFullscreen,
-		)
+		bindings = append(bindings, p.keyMap.ToggleDiffMode)
+	}
+
+	if p.canScroll() || p.fullscreen {
+		bindings = append(bindings, p.keyMap.ToggleFullscreen)
 	}
 
 	return bindings
