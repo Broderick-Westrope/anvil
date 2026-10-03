@@ -14,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/permission/segment"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -378,4 +379,25 @@ func TestPermissions_SegmentsPrefillGeneralizedPatterns(t *testing.T) {
 	p := NewPermissions(com, perm)
 
 	require.Equal(t, "cd * && go test *", p.patternInput.Value())
+}
+
+// TestPermissions_SegmentsPrefillDedupesPatterns verifies that normalised
+// segment variants which generalise to the same pattern appear once.
+func TestPermissions_SegmentsPrefillDedupesPatterns(t *testing.T) {
+	t.Parallel()
+
+	s := styles.TokyoNight()
+	com := &common.Common{Styles: &s}
+	command := `git commit -m "hello world"`
+	perm := permission.PermissionRequest{
+		ID:            "perm-test",
+		ToolCallID:    "tool-call-test",
+		ToolName:      "bash",
+		Input:         command,
+		InputSegments: segment.Split(command),
+	}
+	p := NewPermissions(com, perm)
+
+	require.Len(t, perm.InputSegments, 2)
+	require.Equal(t, "git commit *", p.patternInput.Value())
 }

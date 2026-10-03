@@ -3,6 +3,7 @@ package dialog
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -238,7 +239,9 @@ func NewPermissions(com *common.Common, perm permission.PermissionRequest, opts 
 	if len(perm.InputSegments) > 0 {
 		patterns := make([]string, 0, len(perm.InputSegments))
 		for _, seg := range perm.InputSegments {
-			patterns = append(patterns, segment.Generalize(seg))
+			if pattern := segment.Generalize(seg); !slices.Contains(patterns, pattern) {
+				patterns = append(patterns, pattern)
+			}
 		}
 		p.patternInput.SetValue(strings.Join(patterns, " && "))
 	} else {

@@ -138,7 +138,7 @@ func TestNeverPropose(t *testing.T) {
 func TestQuotedHeadsNeverProposed(t *testing.T) {
 	t.Parallel()
 	for _, input := range []string{
-		"'rm' -rf /tmp/x", `"curl" https://evil`, "'sudo' ls", `\rm -rf x`, "r''m x",
+		"'rm' -rf /tmp/x", `"curl" https://evil`, `\rm -rf x`, "r''m x",
 		"./rm x", `git "push" origin`, "'git' push", `gh "pr" merge 1`, "gh pr 'merge' 1",
 		"--opt=x -la", "l*s -la",
 	} {
@@ -147,10 +147,25 @@ func TestQuotedHeadsNeverProposed(t *testing.T) {
 		a, _ := Analyze(repeated(input, "allow"), nil, Options{})
 		require.Empty(t, a, input)
 	}
+	// The normalised "sudo ls" unwraps to "ls", which is a valid
+	// candidate on its own; the quoted or wrapper head never is.
+	pattern, _ := allowPattern("'sudo' ls")
+	require.Empty(t, pattern)
+	a, _ := Analyze(repeated("'sudo' ls", "allow"), nil, Options{})
+	require.Len(t, a, 1)
+	require.Equal(t, "ls *", a[0].InputPattern)
+	// Denials are derived from the normalised spelling, so a quoted head
+	// can yield a deny rule for the real command but never a quoted one.
 	for _, input := range []string{"'rm' -rf /tmp/x", `"curl" https://evil`, "'sudo' ls", `m -rf x`, "r''m x"} {
 		_, d := Analyze(repeated(input, "deny"), nil, Options{})
-		require.Empty(t, d, input)
+		for _, c := range d {
+			require.NotContains(t, c.InputPattern, "'", input)
+			require.NotContains(t, c.InputPattern, `"`, input)
+		}
 	}
+	_, d := Analyze(repeated("r''m x", "deny"), nil, Options{})
+	require.Len(t, d, 1)
+	require.Equal(t, "rm x *", d[0].InputPattern)
 }
 
 func TestWrappersNeverProposed(t *testing.T) {

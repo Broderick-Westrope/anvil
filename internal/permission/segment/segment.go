@@ -3,9 +3,13 @@
 package segment
 
 import (
+	"cmp"
+	"path"
 	"regexp"
+	"slices"
 	"strings"
 
+	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -29,10 +33,17 @@ const maxUnwrapDepth = 8
 //   - Commands nested inside another command's arguments: the target of
 //     a wrapper such as env, sudo, xargs, or timeout, and the body of a
 //     find-style -exec/-ok clause.
+//   - Normalised spellings of a command or write target. Words without
+//     expansions are unquoted and unescaped, brace expansions are
+//     expanded, and a command path is reduced to its base name, so
+//     "'rm' -rf x", "r”m -rf x", "\rm -rf x", and "/bin/rm -rf x"
+//     all also yield "rm -rf x". The original spelling is kept too.
 //
-// Emitting the nested and redirection segments separately can only make
-// evaluation stricter, never more permissive, because callers combine
-// segment results worst-outcome-first.
+// Emitting the nested, redirection, and normalised segments separately
+// can only make evaluation stricter, never more permissive, because
+// callers combine segment results worst-outcome-first. Words that
+// depend on runtime state (variables, command substitution, globs in
+// the command name) cannot be resolved and keep their printed form.
 //
 // Pure assignments with no command (e.g. FOO=bar) produce no segments,
 // so a command consisting only of assignments returns an empty slice.
@@ -41,29 +52,45 @@ const maxUnwrapDepth = 8
 // single segment so it can still be evaluated (and will typically fall
 // through to the default "ask").
 func Split(command string) []string {
+	all, _ := split(command)
+	return all
+}
+
+// Normalized is like Split but returns only the normalised spelling of
+// each segment, so a single command yields one segment however it is
+// quoted. Use it to reason about what a command does; use Split for
+// permission evaluation.
+func Normalized(command string) []string {
+	_, normalized := split(command)
+	return normalized
+}
+
+func split(command string) (all, normalized []string) {
 	if strings.TrimSpace(command) == "" {
-		return []string{command}
+		return []string{command}, []string{command}
 	}
 
 	parser := syntax.NewParser()
 	file, err := parser.Parse(strings.NewReader(command), "")
 	if err != nil {
-		return []string{command}
+		return []string{command}, []string{command}
 	}
 
 	printer := syntax.NewPrinter()
-	seen := make(map[string]struct{})
-	var segments []string
-	add := func(seg string) {
-		if seg == "" {
-			return
+	collector := func(out *[]string) func(string) {
+		seen := make(map[string]struct{})
+		return func(seg string) {
+			if seg == "" {
+				return
+			}
+			if _, ok := seen[seg]; ok {
+				return
+			}
+			seen[seg] = struct{}{}
+			*out = append(*out, seg)
 		}
-		if _, ok := seen[seg]; ok {
-			return
-		}
-		seen[seg] = struct{}{}
-		segments = append(segments, seg)
 	}
+	addAll, addNormalized := collector(&all), collector(&normalized)
 
 	syntax.Walk(file, func(node syntax.Node) bool {
 		stmt, ok := node.(*syntax.Stmt)
@@ -74,19 +101,20 @@ func Split(command string) []string {
 		// Redirections are collected for every statement, not just
 		// simple commands, so that a write hidden behind a subshell
 		// such as "(ls) > /etc/passwd" is still surfaced.
-		var inline, writes []string
+		var inline, writes, plainWrites []string
 		for _, redir := range stmt.Redirs {
 			text, isWrite := formatRedir(printer, redir)
 			switch {
 			case text == "":
 			case isWrite:
 				writes = append(writes, text)
+				plainWrites = append(plainWrites, cmp.Or(plainRedir(redir), text))
 			default:
 				inline = append(inline, text)
 			}
 		}
 
-		var tokens []string
+		var tokens, plain []string
 		if call, ok := stmt.Cmd.(*syntax.CallExpr); ok && len(call.Args) > 0 {
 			tokens = make([]string, 0, len(call.Args))
 			for _, arg := range call.Args {
@@ -95,22 +123,136 @@ func Split(command string) []string {
 					continue
 				}
 				tokens = append(tokens, sb.String())
+				plain = append(plain, plainWords(arg, sb.String())...)
 			}
 		}
-
-		if len(tokens) > 0 {
-			add(strings.Join(append(tokens, inline...), " "))
+		if len(plain) > 0 && strings.Contains(plain[0], "/") {
+			plain[0] = path.Base(plain[0])
 		}
-		for _, w := range writes {
-			add(w)
+		join := func(words []string) string {
+			if len(words) == 0 {
+				return ""
+			}
+			return strings.Join(append(slices.Clone(words), inline...), " ")
+		}
+
+		addAll(join(tokens))
+		addAll(join(plain))
+		addNormalized(join(plain))
+		for i := range writes {
+			addAll(writes[i])
+			addAll(plainWrites[i])
+			addNormalized(plainWrites[i])
 		}
 		for _, nested := range nestedCommands(tokens) {
-			add(nested)
+			addAll(nested)
+		}
+		for _, nested := range nestedCommands(plain) {
+			addAll(nested)
+			addNormalized(nested)
 		}
 		return true
 	})
 
-	return segments
+	return all, normalized
+}
+
+// plainWords returns the words arg expands to when it has no runtime
+// expansions, or the printed form when it does. Brace expansion can turn
+// one word into several.
+func plainWords(arg *syntax.Word, printed string) []string {
+	words := []*syntax.Word{arg}
+	if strings.Contains(printed, "{") {
+		clone := &syntax.Word{Parts: slices.Clone(arg.Parts)}
+		if syntax.SplitBraces(clone) {
+			words = expand.Braces(clone)
+		}
+	}
+	out := make([]string, 0, len(words))
+	for _, w := range words {
+		value, ok := staticWord(w)
+		if !ok {
+			return []string{printed}
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+// staticWord returns the value a word expands to when it contains only
+// literal text and quoting. It reports false for any word whose value
+// depends on runtime state.
+func staticWord(w *syntax.Word) (string, bool) {
+	var sb strings.Builder
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			sb.WriteString(unescape(p.Value, false))
+		case *syntax.SglQuoted:
+			if !p.Dollar {
+				sb.WriteString(p.Value)
+				continue
+			}
+			value, _, err := expand.Format(nil, p.Value, nil)
+			if err != nil {
+				return "", false
+			}
+			sb.WriteString(value)
+		case *syntax.DblQuoted:
+			for _, inner := range p.Parts {
+				lit, ok := inner.(*syntax.Lit)
+				if !ok {
+					return "", false
+				}
+				sb.WriteString(unescape(lit.Value, true))
+			}
+		default:
+			return "", false
+		}
+	}
+	return sb.String(), true
+}
+
+// unescape removes shell backslash escapes. Inside double quotes only
+// $, `, ", \, and newline can be escaped.
+func unescape(s string, quoted bool) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			sb.WriteByte(s[i])
+			continue
+		}
+		next := s[i+1]
+		if quoted && !strings.ContainsRune("$`\"\\\n", rune(next)) {
+			sb.WriteByte(s[i])
+			continue
+		}
+		i++
+		if next != '\n' {
+			sb.WriteByte(next)
+		}
+	}
+	return sb.String()
+}
+
+// plainRedir renders a file-writing redirection with its target
+// unquoted, or returns "" when the target has runtime expansions.
+func plainRedir(redir *syntax.Redirect) string {
+	if redir.Word == nil {
+		return ""
+	}
+	target, ok := staticWord(redir.Word)
+	if !ok {
+		return ""
+	}
+	var fd string
+	if redir.N != nil {
+		fd = redir.N.Value
+	}
+	return strings.TrimSpace(fd + redir.Op.String() + " " + target)
 }
 
 // fdTargetRe matches a redirection target that names a file descriptor
@@ -235,7 +377,7 @@ func unwrap(tokens []string, depth int) []string {
 	if depth >= maxUnwrapDepth || len(tokens) == 0 {
 		return nil
 	}
-	if _, ok := wrapperCommands[tokens[0]]; !ok {
+	if _, ok := wrapperCommands[path.Base(tokens[0])]; !ok {
 		return nil
 	}
 

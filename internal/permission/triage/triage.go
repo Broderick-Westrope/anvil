@@ -153,10 +153,10 @@ func Analyze(records []Record, rules []config.PermissionRule, opts Options) (all
 					add(KindAllow, res.tier, res.pattern, input, warning)
 				}
 			}
-			if len(e.inputs) == 1 && r.Verdict == string(permission.VerdictDeny) &&
+			if len(e.commands) == 1 && r.Verdict == string(permission.VerdictDeny) &&
 				(r.DecidedBy == string(permission.DecisionSourceHuman) || r.DecidedBy == string(permission.DecisionSourceAssessor)) {
-				if pattern := denyPattern(e.inputs[0]); pattern != "" {
-					add(KindDeny, TierB, pattern, e.inputs[0], "Review the scope of this permanent denial")
+				if pattern := denyPattern(e.commands[0]); pattern != "" {
+					add(KindDeny, TierB, pattern, e.commands[0], "Review the scope of this permanent denial")
 				}
 			}
 		case strings.HasPrefix(r.ToolName, "mcp_") && !strings.ContainsAny(r.ToolName, globMeta):
@@ -273,6 +273,9 @@ func (a *analyzer) validate(c Candidate, ix *evidenceIndex) bool {
 type evidence struct {
 	record Record
 	inputs []string
+	// commands holds one normalised segment per command for denied bash
+	// requests, used to tell a single command from a chain.
+	commands []string
 }
 
 // evidenceIndex groups evidence by tool and by the first token of each
@@ -291,7 +294,11 @@ func newEvidenceIndex(n int) *evidenceIndex {
 func (ix *evidenceIndex) add(r Record) {
 	i := len(ix.all)
 	inputs := recordInputs(r)
-	ix.all = append(ix.all, evidence{record: r, inputs: inputs})
+	commands := inputs
+	if r.ToolName == "bash" && r.Input != "" && r.Verdict == string(permission.VerdictDeny) {
+		commands = segment.Normalized(r.Input)
+	}
+	ix.all = append(ix.all, evidence{record: r, inputs: inputs, commands: commands})
 	ix.every = append(ix.every, i)
 	ix.byTool[r.ToolName] = append(ix.byTool[r.ToolName], i)
 	tokens := ix.byToken[r.ToolName]
@@ -356,11 +363,14 @@ func denyPattern(input string) string {
 	return strings.Join(tokens[:n], " ") + " *"
 }
 
+// recordInputs returns the segments a record is evaluated as. Bash
+// commands are re-split rather than trusting logged segments, so evidence
+// recorded by an older segmenter is judged by today's rules.
 func recordInputs(r Record) []string {
 	if r.ToolName != "bash" {
 		return []string{r.Input}
 	}
-	if len(r.InputSegments) > 0 {
+	if r.Input == "" && len(r.InputSegments) > 0 {
 		return r.InputSegments
 	}
 	return segment.Split(r.Input)

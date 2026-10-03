@@ -106,6 +106,31 @@ func TestSegmentwiseAdversarial(t *testing.T) {
 
 		// Parse failures fall back to the whole string → ask.
 		{"unparsable command", "if then fi (", config.PermissionAsk},
+
+		// Alternative spellings of a denied command are still denied.
+		{"single-quoted name cannot dodge deny", "'rm' -rf x", config.PermissionDeny},
+		{"double-quoted name cannot dodge deny", `"rm" -rf x`, config.PermissionDeny},
+		{"backslash cannot dodge deny", `\rm -rf x`, config.PermissionDeny},
+		{"empty quotes cannot dodge deny", "r''m -rf x", config.PermissionDeny},
+		{"split quotes cannot dodge deny", `r"m" -rf x`, config.PermissionDeny},
+		{"ANSI-C quoting cannot dodge deny", `$'\x72m' -rf x`, config.PermissionDeny},
+		{"absolute path cannot dodge deny", "/bin/rm -rf x", config.PermissionDeny},
+		{"relative path cannot dodge deny", "./rm -rf x", config.PermissionDeny},
+		{"brace expansion cannot dodge deny", "{rm,-rf} x", config.PermissionDeny},
+		{"quoted wrapper cannot launder deny", "'env' 'rm' -rf x", config.PermissionDeny},
+		{"wrapper path cannot launder deny", "/usr/bin/env rm -rf x", config.PermissionDeny},
+		{"quoted name in chain is denied", "git status && 'rm' -rf x", config.PermissionDeny},
+		{"quoted flag cannot dodge ask", "git commit '--amend' -m x", config.PermissionAsk},
+		// Both spellings must be allowed, so quoting a command name
+		// costs a prompt; quoting arguments does not.
+		{"quoted allowed command name asks", `"git" status`, config.PermissionAsk},
+		{"quoted argument is still allowed", `git commit -m "fix: thing"`, config.PermissionAllow},
+
+		// Names only known at runtime cannot be resolved; they never
+		// match a deny rule but also never match an allow rule.
+		{"variable command name asks", "$cmd -rf x", config.PermissionAsk},
+		{"substituted command name asks", "$(echo rm) -rf x", config.PermissionAsk},
+		{"globbed command name asks", "/bin/r? -rf x", config.PermissionAsk},
 	}
 
 	for _, c := range cases {
