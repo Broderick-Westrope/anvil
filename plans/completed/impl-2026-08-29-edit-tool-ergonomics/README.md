@@ -1,6 +1,6 @@
 # Edit Tool Ergonomics Implementation Plan
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 
 ## Overview
 
@@ -14,7 +14,7 @@ error-as-read recovery, adds capped unified diffs to mutating tool responses,
 deletes the history subsystem and `lsp_replace_symbol`, hardens `lsp_rename`,
 and aligns system prompts.
 
-Spec: `plans/design-2026-08-29-edit-tool-ergonomics.md` (committed; three
+Spec: `plans/completed/design-2026-08-29-edit-tool-ergonomics.md` (committed; three
 devils-advocate review rounds, approved).
 
 Phased because the work spans independent review domains: a large

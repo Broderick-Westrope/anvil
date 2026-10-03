@@ -1,8 +1,8 @@
 # Phase 2: Edit/Write Gate Ergonomics & Diff Feedback
 
-> **Status:** DRAFT
-> Part of `plans/impl-2026-08-29-edit-tool-ergonomics/` — see README.md.
-> Spec: `plans/design-2026-08-29-edit-tool-ergonomics.md`
+> **Status:** COMPLETED
+> Part of `plans/completed/impl-2026-08-29-edit-tool-ergonomics/` — see README.md.
+> Spec: `plans/completed/design-2026-08-29-edit-tool-ergonomics.md`
 > Depends on: phase 1 merged (tool constructors no longer take
 > `history.Service`).
 
@@ -52,7 +52,7 @@ changes (phase 3).
 _Run before starting:_
 
 ```bash
-read plans/design-2026-08-29-edit-tool-ergonomics.md
+read plans/completed/design-2026-08-29-edit-tool-ergonomics.md
 read internal/filetracker/service.go
 read internal/agent/tools/edit.go
 read internal/agent/tools/multiedit.go

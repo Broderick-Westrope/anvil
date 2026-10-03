@@ -1,8 +1,8 @@
 # Phase 1: Remove File History Subsystem
 
-> **Status:** DRAFT
-> Part of `plans/impl-2026-08-29-edit-tool-ergonomics/` — see README.md.
-> Spec: `plans/design-2026-08-29-edit-tool-ergonomics.md`
+> **Status:** COMPLETED
+> Part of `plans/completed/impl-2026-08-29-edit-tool-ergonomics/` — see README.md.
+> Spec: `plans/completed/design-2026-08-29-edit-tool-ergonomics.md`
 
 ## Specification
 
@@ -40,7 +40,7 @@ untouched.
 _Run before starting:_
 
 ```bash
-read plans/design-2026-08-29-edit-tool-ergonomics.md
+read plans/completed/design-2026-08-29-edit-tool-ergonomics.md
 read internal/history/file.go
 read internal/ui/model/session.go
 grep -rn "history\." internal/agent internal/ui internal/server internal/workspace internal/backend internal/client internal/app --include="*.go" | grep -v "_test.go" | grep "internal/history"

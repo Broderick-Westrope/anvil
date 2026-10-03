@@ -1,8 +1,8 @@
 # Phase 3: LSP Edit Tools & Prompt Alignment
 
-> **Status:** DRAFT
-> Part of `plans/impl-2026-08-29-edit-tool-ergonomics/` — see README.md.
-> Spec: `plans/design-2026-08-29-edit-tool-ergonomics.md`
+> **Status:** COMPLETED
+> Part of `plans/completed/impl-2026-08-29-edit-tool-ergonomics/` — see README.md.
+> Spec: `plans/completed/design-2026-08-29-edit-tool-ergonomics.md`
 > Depends on: phases 1 & 2 merged.
 
 ## Specification
@@ -44,7 +44,7 @@ matching.
 _Run before starting:_
 
 ```bash
-read plans/design-2026-08-29-edit-tool-ergonomics.md
+read plans/completed/design-2026-08-29-edit-tool-ergonomics.md
 read internal/agent/tools/lsp_rename.go
 read internal/agent/tools/lsp_replace_symbol.go
 read internal/agent/tools/lsp_helpers.go     # resolveSymbol
@@ -185,7 +185,7 @@ Create a PR for human review; do not merge automatically.
 ---
 
 **Review notes:** Plan derived from the approved spec
-(`plans/design-2026-08-29-edit-tool-ergonomics.md`, 3 devils-advocate
+(`plans/completed/design-2026-08-29-edit-tool-ergonomics.md`, 3 devils-advocate
 rounds). Phasing rationale: cross-cutting deletion lands first to simplify
 subsequent diffs; gate semantics finalized before prompts describe them.
 Plan review (devils-advocate) caught: the per-project DB migrator copies the
