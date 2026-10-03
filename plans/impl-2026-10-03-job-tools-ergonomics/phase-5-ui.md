@@ -72,14 +72,14 @@ read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
 
 **Steps:**
 
-1. [ ] Add to the `Workspace` interface:
+1. [x] Add to the `Workspace` interface:
    `ListSessionJobs(sessionID string) []shell.JobInfo`.
    `AppWorkspace` returns
    `shell.GetBackgroundShellManager().ListBySession(sessionID)`.
    (In-memory only is fine: the sidebar shows running jobs, which are
    always in memory.)
 
-2. [ ] Create `jobs.go` following `lspInfo`'s structure:
+2. [x] Create `jobs.go` following `lspInfo`'s structure:
 
    ```go
    // jobsInfo renders the Jobs section listing the session's running
@@ -100,10 +100,10 @@ read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
    sidebar; others with `t.Resource.AdditionalText`. Use the active
    session's ID; render nothing when there's no session.
 
-3. [ ] In `sidebar.go`, insert the section before the LSP section, with
+3. [x] In `sidebar.go`, insert the section before the LSP section, with
    the blank separator line only when it's non-empty.
 
-4. [ ] Live updates. The sidebar is rebuilt on redraw; make sure a redraw
+4. [x] Live updates. The sidebar is rebuilt on redraw; make sure a redraw
    happens every second while jobs are running. Reuse the existing
    `tickElapsedTime` loop: in the `tickElapsedTimeMsg` case, also
    continue when the active session has running jobs (and mark the
@@ -112,7 +112,7 @@ read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
    result with `Background: true` metadata arrives, if it isn't already
    running (`m.elapsedTickRunning`).
 
-5. [ ] Tests in `jobs_test.go` (call `jobsInfo` directly with a fake
+5. [x] Tests in `jobs_test.go` (call `jobsInfo` directly with a fake
    workspace returning fixed `JobInfo`s and a fixed `now`; add a `now`
    field or function on the UI model so tests control time):
    - No jobs → `""`.

@@ -18,6 +18,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 )
 
@@ -315,6 +316,12 @@ func (w *AppWorkspace) LSPGetDiagnosticCounts(name string) lsp.DiagnosticCounts 
 		return lsp.DiagnosticCounts{}
 	}
 	return state.Client.GetDiagnosticCounts()
+}
+
+// -- Jobs --
+
+func (w *AppWorkspace) ListSessionJobs(sessionID string) []shell.JobInfo {
+	return shell.GetBackgroundShellManager().ListBySession(sessionID)
 }
 
 // -- Config (read-only) --
