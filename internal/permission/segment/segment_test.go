@@ -1,7 +1,9 @@
 package segment
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -136,7 +138,7 @@ func TestSplit(t *testing.T) {
 		{
 			name:    "nested wrappers resolve to the innermost target",
 			command: "sudo env bash -c 'rm -rf ~'",
-			want:    []string{"sudo env bash -c 'rm -rf ~'", "sudo env bash -c rm -rf ~", "bash -c 'rm -rf ~'", "bash -c rm -rf ~"},
+			want:    []string{"sudo env bash -c 'rm -rf ~'", "sudo env bash -c rm -rf ~", "bash -c 'rm -rf ~'", "bash -c rm -rf ~", "rm -rf ~"},
 		},
 		{
 			name:    "xargs target is its own segment",
@@ -290,6 +292,62 @@ func TestSplit(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tt.want, Split(tt.command))
 		})
+	}
+}
+
+func TestSplitBraceExpansionIsBounded(t *testing.T) {
+	t.Parallel()
+	bomb := "echo " + strings.Repeat("{a,b}", 40)
+	done := make(chan []string, 1)
+	go func() { done <- Split(bomb) }()
+	select {
+	case segs := <-done:
+		require.Equal(t, []string{bomb}, segs)
+	case <-time.After(2 * time.Second):
+		t.Fatal("brace expansion was not bounded")
+	}
+	require.Equal(t, []string{"{1..100000} x"}, Split("{1..100000} x"))
+	require.Equal(t, []string{"{rm,x} y", "rm x y"}, Split("{rm,x} y"))
+}
+
+func TestSplitScriptPayloads(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    string
+	}{
+		{"bash -c 'rm -rf x'", "rm -rf x"},
+		{"sh -ec 'rm -rf x'", "rm -rf x"},
+		{"/bin/zsh -c 'rm -rf x'", "rm -rf x"},
+		{"eval 'rm -rf x'", "rm -rf x"},
+		{"eval rm -rf x", "rm -rf x"},
+		{"env -S 'rm -rf x'", "rm -rf x"},
+		{"sudo -u root bash -c 'rm -rf x'", "rm -rf x"},
+		{"bash -c 'ls; rm -rf x'", "rm -rf x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			require.Contains(t, Split(tt.command), tt.want)
+			require.Contains(t, Normalized(tt.command), tt.want)
+		})
+	}
+	require.NotContains(t, Split("bash script.sh -c 'rm -rf x'"), "rm -rf x")
+}
+
+func TestUnwrapValueFlags(t *testing.T) {
+	t.Parallel()
+	for command, want := range map[string]string{
+		"sudo -u root rm -rf x":      "rm -rf x",
+		"sudo --user root rm -rf x":  "rm -rf x",
+		"env -u HOME rm -rf x":       "rm -rf x",
+		"env -- rm -rf x":            "rm -rf x",
+		"timeout -s KILL 5 rm -rf x": "rm -rf x",
+		"nice -n 10 rm -rf x":        "rm -rf x",
+		"xargs -I {} rm {}":          "rm {}",
+		"stdbuf -o L rm -rf x":       "rm -rf x",
+	} {
+		require.Contains(t, Split(command), want, command)
 	}
 }
 

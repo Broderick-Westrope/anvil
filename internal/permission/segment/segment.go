@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
@@ -52,7 +53,7 @@ const maxUnwrapDepth = 8
 // single segment so it can still be evaluated (and will typically fall
 // through to the default "ask").
 func Split(command string) []string {
-	all, _ := split(command)
+	all, _ := split(command, 0)
 	return all
 }
 
@@ -61,11 +62,11 @@ func Split(command string) []string {
 // quoted. Use it to reason about what a command does; use Split for
 // permission evaluation.
 func Normalized(command string) []string {
-	_, normalized := split(command)
+	_, normalized := split(command, 0)
 	return normalized
 }
 
-func split(command string) (all, normalized []string) {
+func split(command string, depth int) (all, normalized []string) {
 	if strings.TrimSpace(command) == "" {
 		return []string{command}, []string{command}
 	}
@@ -91,6 +92,19 @@ func split(command string) (all, normalized []string) {
 		}
 	}
 	addAll, addNormalized := collector(&all), collector(&normalized)
+	// Normalised segments may carry control characters decoded from
+	// ANSI-C strings; they are replaced with spaces so glob matching sees
+	// one line. Original spellings are added unchanged.
+	addPlain := func(seg string) {
+		seg = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return ' '
+			}
+			return r
+		}, seg)
+		addAll(seg)
+		addNormalized(seg)
+	}
 
 	syntax.Walk(file, func(node syntax.Node) bool {
 		stmt, ok := node.(*syntax.Stmt)
@@ -137,25 +151,43 @@ func split(command string) (all, normalized []string) {
 		}
 
 		addAll(join(tokens))
-		addAll(join(plain))
-		addNormalized(join(plain))
+		addPlain(join(plain))
 		for i := range writes {
 			addAll(writes[i])
-			addAll(plainWrites[i])
-			addNormalized(plainWrites[i])
+			addPlain(plainWrites[i])
 		}
 		for _, nested := range nestedCommands(tokens) {
 			addAll(nested)
 		}
 		for _, nested := range nestedCommands(plain) {
-			addAll(nested)
-			addNormalized(nested)
+			addPlain(nested)
+		}
+		// Shell code passed as a string (eval, sh -c, env -S) is split in
+		// its own right so a denied command cannot hide inside it.
+		if depth < maxUnwrapDepth {
+			for _, words := range [][]string{plain, unwrap(plain, 0)} {
+				payload, ok := scriptPayload(words)
+				if !ok {
+					continue
+				}
+				inner, innerNormalized := split(payload, depth+1)
+				for _, seg := range inner {
+					addAll(seg)
+				}
+				for _, seg := range innerNormalized {
+					addNormalized(seg)
+				}
+			}
 		}
 		return true
 	})
 
 	return all, normalized
 }
+
+// maxBraceWords caps brace expansion, which is exponential in the number
+// of groups. Words that would expand further keep their literal form.
+const maxBraceWords = 64
 
 // plainWords returns the words arg expands to when it has no runtime
 // expansions, or the printed form when it does. Brace expansion can turn
@@ -164,7 +196,7 @@ func plainWords(arg *syntax.Word, printed string) []string {
 	words := []*syntax.Word{arg}
 	if strings.Contains(printed, "{") {
 		clone := &syntax.Word{Parts: slices.Clone(arg.Parts)}
-		if syntax.SplitBraces(clone) {
+		if syntax.SplitBraces(clone) && braceWords(clone.Parts) <= maxBraceWords {
 			words = expand.Braces(clone)
 		}
 	}
@@ -177,6 +209,65 @@ func plainWords(arg *syntax.Word, printed string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+// braceWords returns how many words parts expand to, or a value above
+// maxBraceWords once the count exceeds it. Sequences such as {1..9} are
+// never expanded.
+func braceWords(parts []syntax.WordPart) int {
+	n := 1
+	for _, part := range parts {
+		be, ok := part.(*syntax.BraceExp)
+		if !ok {
+			continue
+		}
+		if be.Sequence {
+			return maxBraceWords + 1
+		}
+		sum := 0
+		for _, elem := range be.Elems {
+			sum += braceWords(elem.Parts)
+			if sum > maxBraceWords {
+				return maxBraceWords + 1
+			}
+		}
+		n *= sum
+		if n > maxBraceWords {
+			return maxBraceWords + 1
+		}
+	}
+	return n
+}
+
+// shells run their -c argument as a script.
+var shells = map[string]struct{}{
+	"ash": {}, "bash": {}, "dash": {}, "fish": {}, "ksh": {}, "sh": {}, "zsh": {},
+}
+
+// scriptPayload returns the shell code that words would run as a string:
+// the arguments of eval, the -c argument of a shell, or the -S argument
+// of env.
+func scriptPayload(words []string) (string, bool) {
+	if len(words) < 2 {
+		return "", false
+	}
+	head := path.Base(words[0])
+	if head == "eval" {
+		return strings.Join(words[1:], " "), true
+	}
+	_, isShell := shells[head]
+	for i := 1; i < len(words)-1; i++ {
+		w := words[i]
+		switch {
+		case isShell && strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.Contains(w, "c"):
+			return words[i+1], true
+		case head == "env" && (w == "-S" || w == "--split-string"):
+			return words[i+1], true
+		case !strings.HasPrefix(w, "-"):
+			return "", false
+		}
+	}
+	return "", false
 }
 
 // staticWord returns the value a word expands to when it contains only
@@ -193,10 +284,14 @@ func staticWord(w *syntax.Word) (string, bool) {
 				sb.WriteString(p.Value)
 				continue
 			}
-			value, _, err := expand.Format(nil, p.Value, nil)
+			// A fresh Config per call: a nil Config shares package state
+			// inside expand and races under concurrent use.
+			value, _, err := expand.Format(&expand.Config{}, p.Value, nil)
 			if err != nil {
 				return "", false
 			}
+			// Bash treats $'...' as a C string, truncated at the first NUL.
+			value, _, _ = strings.Cut(value, "\x00")
 			sb.WriteString(value)
 		case *syntax.DblQuoted:
 			for _, inner := range p.Parts {
@@ -356,11 +451,11 @@ var numericRe = regexp.MustCompile(`^[0-9]+$`)
 // the target of a wrapper command and the body of any -exec clause.
 //
 // Wrapper unwrapping skips the wrapper itself plus any leading
-// assignments, flags, and bare numbers. This is a heuristic: a flag that
-// takes a separate value (as in "sudo -u root cmd") leaves the value at
-// the front of the result. That yields a segment matching no rule, so
-// the command falls through to "ask" — stricter than the alternative,
-// never more permissive.
+// assignments, flags, and bare numbers, and the values of the flags in
+// wrapperValueFlags. This is a heuristic: an unlisted flag that takes a
+// separate value leaves the value at the front of the result. That
+// yields a segment matching no rule, so the command falls through to
+// "ask" — stricter than the alternative, never more permissive.
 func nestedCommands(tokens []string) []string {
 	var out []string
 	if inner := unwrap(tokens, 0); len(inner) > 0 {
@@ -372,19 +467,54 @@ func nestedCommands(tokens []string) []string {
 	return out
 }
 
+// wrapperValueFlags lists wrapper flags that consume the next token, so
+// unwrapping "sudo -u root rm x" finds "rm x" rather than "root rm x".
+var wrapperValueFlags = map[string]map[string]struct{}{
+	"doas":    flagSet("-u", "-C"),
+	"env":     flagSet("-u", "-C", "--unset", "--chdir"),
+	"ionice":  flagSet("-c", "-n", "-p", "-P", "-u", "--class", "--classdata"),
+	"nice":    flagSet("-n", "--adjustment"),
+	"stdbuf":  flagSet("-i", "-o", "-e"),
+	"sudo":    flagSet("-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "--user", "--group", "--chdir", "--host", "--prompt", "--role", "--type", "--other-user", "--command-timeout"),
+	"timeout": flagSet("-s", "-k", "--signal", "--kill-after"),
+	"watch":   flagSet("-n", "--interval"),
+	"xargs":   flagSet("-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars"),
+}
+
+func flagSet(flags ...string) map[string]struct{} {
+	set := make(map[string]struct{}, len(flags))
+	for _, f := range flags {
+		set[f] = struct{}{}
+	}
+	return set
+}
+
 // unwrap resolves nested wrapper commands down to the innermost target.
 func unwrap(tokens []string, depth int) []string {
 	if depth >= maxUnwrapDepth || len(tokens) == 0 {
 		return nil
 	}
-	if _, ok := wrapperCommands[path.Base(tokens[0])]; !ok {
+	head := path.Base(tokens[0])
+	if _, ok := wrapperCommands[head]; !ok {
 		return nil
 	}
+	valueFlags := wrapperValueFlags[head]
 
 	for i := 1; i < len(tokens); i++ {
 		tok := tokens[i]
-		if strings.HasPrefix(tok, "-") || numericRe.MatchString(tok) || isAssignment(tok) {
-			continue
+		if tok == "--" {
+			if i+1 >= len(tokens) {
+				return nil
+			}
+			i++
+		} else {
+			if _, ok := valueFlags[tok]; ok {
+				i++
+				continue
+			}
+			if strings.HasPrefix(tok, "-") || numericRe.MatchString(tok) || isAssignment(tok) {
+				continue
+			}
 		}
 		inner := tokens[i:]
 		if deeper := unwrap(inner, depth+1); len(deeper) > 0 {
