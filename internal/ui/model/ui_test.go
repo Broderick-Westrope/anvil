@@ -88,28 +88,47 @@ func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 }
 
 // testWorkspace is a minimal [workspace.Workspace] stub for unit tests.
+// The assessor-related fields are configurable so tests can exercise the
+// palette toggle, header/sidebar indicator, and startup triage nudge.
 type testWorkspace struct {
 	workspace.Workspace
 	cfg *config.Config
+
+	assessorConfigured bool
+	assessorMode       permission.AssessorMode
+	assessorSetCalls   []permission.AssessorMode
+
+	unresolvedCount int
+	unresolvedErr   error
+	lastTriage      time.Time
 }
 
 func (w *testWorkspace) Config() *config.Config {
 	return w.cfg
 }
 
-func (*testWorkspace) PermissionAssessorConfigured() bool { return false }
+func (*testWorkspace) WorkingDir() string { return "" }
 
-func (*testWorkspace) PermissionAssessorMode() permission.AssessorMode {
-	return permission.AssessorOff
+func (*testWorkspace) AgentIsReady() bool { return false }
+
+func (*testWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
+
+func (w *testWorkspace) PermissionAssessorConfigured() bool { return w.assessorConfigured }
+
+func (w *testWorkspace) PermissionAssessorMode() permission.AssessorMode {
+	return w.assessorMode
 }
 
-func (*testWorkspace) PermissionSetAssessorMode(permission.AssessorMode) {}
-
-func (*testWorkspace) PermissionUnresolvedCount(context.Context, time.Time) (int, error) {
-	return 0, nil
+func (w *testWorkspace) PermissionSetAssessorMode(mode permission.AssessorMode) {
+	w.assessorSetCalls = append(w.assessorSetCalls, mode)
+	w.assessorMode = mode
 }
 
-func (*testWorkspace) PermissionLastTriage() time.Time { return time.Time{} }
+func (w *testWorkspace) PermissionUnresolvedCount(context.Context, time.Time) (int, error) {
+	return w.unresolvedCount, w.unresolvedErr
+}
+
+func (w *testWorkspace) PermissionLastTriage() time.Time { return w.lastTriage }
 
 func TestExtractSlashArgs(t *testing.T) {
 	t.Parallel()

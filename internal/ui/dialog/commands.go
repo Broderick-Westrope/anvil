@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -548,6 +549,15 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "init", "Initialize Project", "", ActionInitializeProject{}),
 	)
 
+	// Add a command to cycle the runtime permission assessor mode. Only
+	// shown when an assessor was wired at startup; toggling here is a
+	// runtime-only change and never writes config.
+	if c.com.Workspace.PermissionAssessorConfigured() {
+		current := c.com.Workspace.PermissionAssessorMode()
+		label := "Permission Assessor: " + assessorModeLabel(current) + " → " + assessorModeLabel(nextAssessorMode(current))
+		commands = append(commands, NewCommandItem(c.com.Styles, "cycle_assessor", label, "", ActionCycleAssessorMode{}))
+	}
+
 	// Add transparent background toggle.
 	transparentLabel := "Disable Background Color"
 	if cfg != nil && cfg.Options != nil && cfg.Options.TUI.Transparent != nil && *cfg.Options.TUI.Transparent {
@@ -579,6 +589,32 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	)
 
 	return commands
+}
+
+// assessorModeLabel returns the capitalized display label for a runtime
+// permission assessor mode, used in the command palette toggle label.
+func assessorModeLabel(mode permission.AssessorMode) string {
+	switch mode {
+	case permission.AssessorShadow:
+		return "Shadow"
+	case permission.AssessorEnforce:
+		return "Enforce"
+	default:
+		return "Off"
+	}
+}
+
+// nextAssessorMode returns the mode after the given one in the
+// off -> shadow -> enforce -> off cycle.
+func nextAssessorMode(mode permission.AssessorMode) permission.AssessorMode {
+	switch mode {
+	case permission.AssessorShadow:
+		return permission.AssessorEnforce
+	case permission.AssessorEnforce:
+		return permission.AssessorOff
+	default:
+		return permission.AssessorShadow
+	}
 }
 
 // SetCustomCommands sets the custom commands and refreshes the view if user commands are currently displayed.

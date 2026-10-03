@@ -2148,6 +2148,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionToggleYoloMode:
 		m.cycleYoloLevel()
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionCycleAssessorMode:
+		next := m.cycleAssessorMode()
+		cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Permission assessor: "+string(next))))
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleNotifications:
 		cfg := m.com.Config()
 		if cfg != nil && cfg.Options != nil {
@@ -5872,5 +5876,22 @@ func (m *UI) cycleYoloLevel() config.YoloLevel {
 	}
 	m.com.Workspace.PermissionSetYoloLevel(next)
 	m.setEditorPrompt(next != config.YoloOff)
+	return next
+}
+
+// cycleAssessorMode advances the workspace's runtime permission assessor
+// mode through the Off → Shadow → Enforce → Off cycle and returns the new
+// mode. This is a runtime-only change: it never writes config.
+func (m *UI) cycleAssessorMode() permission.AssessorMode {
+	var next permission.AssessorMode
+	switch m.com.Workspace.PermissionAssessorMode() {
+	case permission.AssessorOff:
+		next = permission.AssessorShadow
+	case permission.AssessorShadow:
+		next = permission.AssessorEnforce
+	default:
+		next = permission.AssessorOff
+	}
+	m.com.Workspace.PermissionSetAssessorMode(next)
 	return next
 }
