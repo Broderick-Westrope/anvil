@@ -28,7 +28,7 @@ and the TUI.
 | 2 | `phase-2-reading.md` | Incremental reads, `tail_lines`, bounded `wait`, blocking `pattern`, runtime headers, richer background responses, docs | Phase 1 | Cursor and matcher correctness, buffer reset handling |
 | 3 | `phase-3-events.md` | Job event store, notification injection, `pattern` watches, opt-in wake on event | Phases 1-2 | Run-loop injection, dispatch races, duplicate suppression |
 | 4 | `phase-4-persistence.md` (parallel with 3) | `background_jobs` table, AUTOINCREMENT IDs, streamed logs, recovery, retention, shutdown ordering | Phase 1 (event persistence wired only if Phase 3 merged) | Schema, crash recovery, shutdown ordering |
-| 5 | `phase-5-ui.md` (parallel with 2-4) | Sidebar Jobs section, live wait counter, final runtime on cards | Phase 1 | Rendering, golden files |
+| 5 | `phase-5-ui.md` (parallel with 2-4) | Sidebar Jobs section, live wait counter, final runtime on cards | Phase 1 | Rendering, tick lifecycle |
 
 > Parallel phases can be developed and merged in either order. Phase 4's
 > event-persistence task is skipped if Phase 3 has not merged; it is then
