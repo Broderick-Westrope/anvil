@@ -267,9 +267,12 @@ depends on a later phase.
     reset before publication is lost and marked as such; this only
     affects commands printing over 10MB within the auto-background
     threshold. If publication fails (e.g. DB error), the job still runs
-    and is returned with an in-memory ID and a warning. Per-job cap 50MB
-    per stream; beyond it, writing stops and `(log truncated at 50MB)` is
-    recorded. Reads of evicted or persisted jobs come from the files.
+    and is returned with a fallback ID in a separate namespace,
+    `M<process-instance>-<n>` (e.g. `M4f2a-3`), plus a warning. Fallback
+    IDs are never hex-formatted, never persisted, resolve only in the
+    process that issued them, and can never match a persisted ID.
+    Per-job cap 50MB per stream; beyond it, writing stops and
+    `(log truncated at 50MB)` is recorded. Reads of evicted or persisted jobs come from the files.
 17. **Job records.** Table `background_jobs`: id, session_id, origin,
     command, description, working_dir, started_at, completed_at,
     exit_code, end_reason (`exited`, `killed`, `abandoned`, `anvil_exit`,
@@ -427,7 +430,8 @@ Phase 3
 
 Phase 4
 - [ ] Job IDs never repeat across restarts, concurrent processes, or
-      after deleting the session that owned the highest ID.
+      after deleting the session that owned the highest ID; a fallback ID
+      issued on publication failure never resolves to a persisted job.
 - [ ] After restarting Anvil, `job_output` on a job from a previous run
       returns its stored output and exit code, including output beyond
       the 10MB in-memory buffer (up to the 50MB log cap).
