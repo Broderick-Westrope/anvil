@@ -26,13 +26,16 @@ and the TUI.
 |---|------|----------|------------|--------------|
 | 1 | `phase-1-lifecycle.md` | Published jobs, ownership, auto-granted job tools, subagent handoff, `job_list`, honest `job_kill`, other-jobs context, compaction jobs section | — | Manager concurrency, publication semantics, tool filtering |
 | 2 | `phase-2-reading.md` | Incremental reads, `tail_lines`, bounded `wait`, blocking `pattern`, runtime headers, richer background responses, docs | Phase 1 | Cursor and matcher correctness, buffer reset handling |
-| 3 | `phase-3-events.md` | Job event store, notification injection, `pattern` watches, opt-in wake on event | Phases 1-2 | Run-loop injection, dispatch races, duplicate suppression |
-| 4 | `phase-4-persistence.md` (parallel with 3) | `background_jobs` table, AUTOINCREMENT IDs, streamed logs, recovery, retention, shutdown ordering | Phase 1 (event persistence wired only if Phase 3 merged) | Schema, crash recovery, shutdown ordering |
-| 5 | `phase-5-ui.md` (parallel with 2-4) | Sidebar Jobs section, live wait counter, final runtime on cards | Phase 1 | Rendering, tick lifecycle |
+| 3 | `phase-3-events.md` (PRs 3a, 3b) | 3a: job event store, notification injection, `pattern` watches. 3b: dispatch gate, opt-in wake on event, TUI signals and notices | Phases 1-2 | Run-loop injection, dispatch races, duplicate suppression |
+| 4 | `phase-4-persistence.md` (PRs 4a, 4b; parallel with 3) | 4a: `background_jobs` table, AUTOINCREMENT IDs, streamed logs, finalization. 4b: tool fallbacks, recovery, retention, shutdown fencing, event persistence | Phases 1-2 (event persistence only once Phase 3 merged) | Schema, crash recovery, shutdown ordering |
+| 5 | `phase-5-ui.md` (parallel with 2-4) | Sidebar Jobs section, live wait counter, final runtime on cards | Phase 1 (final runtime needs Phase 2) | Rendering, tick lifecycle |
 
-> Parallel phases can be developed and merged in either order. Phase 4's
-> event-persistence task is skipped if Phase 3 has not merged; it is then
-> done as the last task of Phase 3.
+> Parallel phases can be developed and merged in either order. Cross-phase
+> catch-ups: Phase 4 Task 5's event persistence is done by whichever of
+> Phases 3 and 4 merges second; Phase 5's final-runtime step is done by
+> whichever of Phases 2 and 5 merges second. Job tool constructors take
+> `JobToolOptions` (Phase 1), so Phases 3 and 4 add fields instead of
+> changing signatures.
 
 ## Phase Boundaries
 
@@ -40,11 +43,19 @@ and the TUI.
   output is read and reuses those fields for runtime headers.
 - **2 → 3:** Watches and notifications reuse Phase 2's line matcher and
   cursor rules, and "observed" means a Phase 2 header said "completed".
-- **1 → 4:** Persistence plugs in through Phase 1's `IDAllocator` and
-  publication hook. It needs nothing from Phases 2-3 except the optional
-  event table.
-- **1 → 5:** The UI only needs `ListBySession` and the job metadata from
-  Phase 1.
+- **2 → 4:** Persistence plugs in through Phase 1's publication hook and
+  reuses Phase 2's read semantics for archived jobs. It needs nothing from
+  Phase 3 except the optional event table.
+- **1 → 5:** The UI only needs `ListBySession`, the job metadata, and the
+  `shell` formatting helpers from Phase 1.
+
+## Package Dependencies
+
+`shell` imports none of the packages below. `jobevents` → `shell`.
+`jobstore` → `db`, `shell`, `config`. `tools` → `shell`, `jobevents`,
+`jobstore`. `agent` and `app` wire everything. Shared formatting
+(`FormatRuntime`, `JobLabel`, `JobRuntime`, `LastLines`) lives in
+`internal/shell/jobformat.go`.
 
 ## Shared Conventions
 

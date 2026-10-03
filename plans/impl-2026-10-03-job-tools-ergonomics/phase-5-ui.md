@@ -61,7 +61,12 @@ read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
 **Files:**
 - Create: `internal/ui/model/jobs.go`
 - Modify: `internal/ui/model/sidebar.go`, `internal/ui/model/ui.go`
-- Modify: `internal/workspace/workspace.go`, `internal/workspace/app_workspace.go` (and any other `Workspace` implementations or fakes: `rg -n "Workspace = " internal`)
+- Modify: `internal/workspace/workspace.go`, `internal/workspace/app_workspace.go`
+- Modify: every fake that embeds `workspace.Workspace`
+  (`rg -n "workspace.Workspace" internal --type go`, e.g.
+  `internal/ui/model/ui_test.go` ~88): add an explicit override, because
+  an embedded nil interface compiles but panics when the sidebar calls
+  the new method
 - Modify: `internal/ui/styles/styles.go` if a stale style is needed
 - Test: create `internal/ui/model/jobs_test.go`
 
@@ -108,7 +113,8 @@ read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
    running (`m.elapsedTickRunning`).
 
 5. [ ] Tests in `jobs_test.go` (call `jobsInfo` directly with a fake
-   workspace returning fixed `JobInfo`s and a fixed `now`):
+   workspace returning fixed `JobInfo`s and a fixed `now`; add a `now`
+   field or function on the UI model so tests control time):
    - No jobs → `""`.
    - One running job with recent output → ID, label, runtime; no
      "quiet".
@@ -117,6 +123,12 @@ read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
      same style, as `mcp_test.go` does).
    - Finished jobs are not listed.
    - Long labels are truncated to the width.
+   - Tick lifecycle (drive `Update` with messages): a bash result with
+     `Background: true` starts the tick when it isn't running; a
+     `tickElapsedTimeMsg` with running jobs schedules another tick; with
+     none (and no running agents) it stops; switching to a session that
+     already has running jobs starts it.
+   - Advancing the injected clock by 61s changes the rendered runtime.
 
 **Verify:**
 ```bash
@@ -141,9 +153,11 @@ go test ./internal/ui/model/ ./internal/workspace/ -count=1
    the parsed params have `Wait`, render
    `pendingTool(sty, "Job", opts.Anim, opts.Compact)` followed by
    `waiting 1m12s` (muted), measured from the tool call's start time.
-   Find how the render opts expose the parent message's `CreatedAt`, or
-   add a `StartedAt time.Time` to `ToolRenderOpts` set from the
-   assistant message's creation time where render opts are built. Check
+   `ToolRenderOpts` (`internal/ui/chat/tools.go` ~95-105) has no
+   timestamp: add `StartedAt time.Time`, store the assistant message's
+   `CreatedAt` on the tool item when it's created (find every
+   `NewToolMessageItem` call: `rg -n "NewToolMessageItem\(" internal/ui`),
+   and copy it into the opts where they're built. Check
    that pending tool items are already redrawn every second (subagent
    items use `invalidateRunningAgentCaches`); if not, extend that pass to
    invalidate pending `job_output` items with `wait=true`.
@@ -154,8 +168,10 @@ go test ./internal/ui/model/ ./internal/workspace/ -count=1
    time) to the job header description, using `shell.FormatRuntime`.
 
 3. [ ] Tests in `job_render_test.go` following `mcp_test.go`'s approach:
-   pending wait card contains `waiting`; pending non-wait card does not;
-   finished card with `RuntimeMS: 554000, Done: true` contains `ran 9m14s`.
+   pending wait card contains `waiting` and the elapsed time from a
+   fixed `StartedAt` and clock; pending non-wait card does not; finished
+   card with `RuntimeMS: 554000, Done: true` contains `ran 9m14s` and
+   doesn't change when the clock advances.
 
 **Verify:**
 ```bash
