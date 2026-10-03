@@ -103,12 +103,22 @@ read internal/db/permission_decisions.sql.go  # generated in phase 1
 > - any token in the pattern prefix isn't a bare word (quoted or escaped
 >   heads like `'rm'` bypass name checks).
 >
-> **Known issue found during review, not fixed here:** the existing rule
-> evaluator matches raw segment text. `'rm' -rf x`, `/bin/rm -rf x`, and
-> `r''m -rf x` don't match a `rm *` deny rule and fall through to ask, and
-> `segment.Split("\\rm -rf x")` returns `m -rf x`. Fix this before phase
-> 2's `enforce` mode, because ask calls would then go to the assessor
-> instead of the human.
+> **Deny-rule matching (fixed 2026-10-01):** `segment.Split` now also
+> emits a normalised spelling of each command and write target: words
+> are unquoted and unescaped, brace expansions are expanded, ANSI-C
+> strings are decoded, and command paths are reduced to their base name.
+> So `'rm' -rf x`, `r''m -rf x`, `\rm -rf x`, `/bin/rm -rf x`, and
+> `{rm,-rf} x` all hit a `rm *` deny rule.
+>
+> Because callers combine segments worst-outcome-first, this can only
+> tighten evaluation. The one cost: a quoted command name such as
+> `"git" status` now prompts even if `git status *` is allowed.
+>
+> Names only known at runtime (`$cmd`, `$(echo rm)`, a globbed name like
+> `/bin/r?`) still can't be resolved, so they fall to ask.
+>
+> Triage re-splits logged commands instead of trusting stored segments,
+> and derives deny candidates from `segment.Normalized`.
 
 **Context:** `internal/permission/triage/` (new)
 

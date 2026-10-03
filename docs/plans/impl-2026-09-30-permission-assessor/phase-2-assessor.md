@@ -275,6 +275,13 @@ go test ./internal/assessor/ -run 'TestClient|TestValidate' -v
      - Skip when there are more than `maxSegments` segments, or when the
        input is longer than `maxInputChars`. Heredocs and inline scripts
        land here.
+     - Skip when any command name is only known at runtime. That means a
+       `segment.Normalized` segment whose first token contains `$`, a
+       backtick, or an unescaped glob character (`*?[`). Deny rules can't
+       see these commands, so the classifier must not be the one to
+       approve them.
+     - Use `segment.Normalized(in.Input)` for the `commands` field, one
+       readable entry per command, not the full `Split` output.
      - State: `commands` (each segment truncated to `maxFieldChars`),
        `executable_count`, `writes_via_redirect`,
        `uses_command_substitution`, `network_hosts`, and
