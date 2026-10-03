@@ -10,6 +10,7 @@ import (
 )
 
 type Querier interface {
+	// Mirrors triage.IsSource: keep the two in sync.
 	CountUnresolvedPermissionDecisionsSince(ctx context.Context, createdAt int64) (int64, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)

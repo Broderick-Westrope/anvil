@@ -9,6 +9,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/permission/triage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -137,6 +138,8 @@ func TestCountUnresolvedSince(t *testing.T) {
 	_, err = conn.ExecContext(t.Context(), `UPDATE permission_decisions SET created_at = ? WHERE id LIKE 'old-%'`, old)
 	require.NoError(t, err)
 
+	require.NoError(t, q.InsertPermissionDecision(t.Context(), db.InsertPermissionDecisionParams{ID: "cancelled", ToolName: "bash", InputSegments: "[]", Verdict: string(permission.VerdictCancelled), DecidedBy: string(permission.DecisionSourceHuman)}))
+
 	n, err := CountUnresolvedSince(t.Context(), q, time.Now().Add(-7*24*time.Hour))
 	require.NoError(t, err)
 	require.Equal(t, 4, n)
@@ -144,4 +147,37 @@ func TestCountUnresolvedSince(t *testing.T) {
 	n, err = CountUnresolvedSince(t.Context(), q, time.Unix(old, 0))
 	require.NoError(t, err)
 	require.Equal(t, 8, n)
+}
+
+// TestCountUnresolvedMatchesTriageSources keeps the SQL source list in
+// step with triage.IsSource.
+func TestCountUnresolvedMatchesTriageSources(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	conn, err := db.Connect(t.Context(), dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Release(dir)) })
+	q := db.New(conn)
+
+	sources := []permission.DecisionSource{
+		permission.DecisionSourceHuman, permission.DecisionSourceAssessor,
+		permission.DecisionSourceSessionGrant, permission.DecisionSourceSessionRule,
+		permission.DecisionSourceRule, permission.DecisionSourceYolo,
+		permission.DecisionSourceHook, permission.DecisionSourceAutoSession,
+	}
+	verdicts := []permission.Verdict{permission.VerdictAllow, permission.VerdictDeny, permission.VerdictCancelled}
+	want := 0
+	for _, src := range sources {
+		for _, v := range verdicts {
+			if triage.IsSource(triage.Record{DecidedBy: string(src), Verdict: string(v)}) {
+				want++
+			}
+			require.NoError(t, q.InsertPermissionDecision(t.Context(), db.InsertPermissionDecisionParams{
+				ID: string(src) + "-" + string(v), ToolName: "bash", InputSegments: "[]", Verdict: string(v), DecidedBy: string(src),
+			}))
+		}
+	}
+	got, err := CountUnresolvedSince(t.Context(), q, time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, want, got)
 }
