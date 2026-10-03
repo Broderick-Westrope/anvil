@@ -31,6 +31,11 @@ func TestRedact(t *testing.T) {
 		{"env token", "GITHUB_TOKEN=tok123 gh pr list", "tok123"},
 		{"json api key", `{"api_key": "plainvalue"}`, "plainvalue"},
 		{"long run", "x " + "QWxhZGRpbjpvcGVuIHNlc2FtZQ0123456789abcdef", "QWxhZGRpbjpvcGVuIHNlc2FtZQ0123456789abcdef"},
+		{"one slash split", "echo AbCdEfGhIjKlMnOpQrSt/UvWxYz0123456789ABCDEF", "AbCdEfGhIjKlMnOpQrSt/UvWxYz0123456789ABCDEF"},
+		{"symmetric split", "KEY Zx9Qw3Er5Ty7Ui1Op2As/" + "Df4Gh6Jk8Lz0Xc5Vb7Nm", "Zx9Qw3Er5Ty7Ui1Op2As/" + "Df4Gh6Jk8Lz0Xc5Vb7Nm"},
+		{"short and long halves", "x Kq7Lm2Np9Rs4Tv6P/" + "Wx8Yz1Ab3Cd5Ef7Gh9Ij2Kl", "Kq7Lm2Np9Rs4Tv6P/" + "Wx8Yz1Ab3Cd5Ef7Gh9Ij2Kl"},
+		{"base64 with plus", "x aB3+dE5fG7hI9jK1lM3n/oP5qR7sT9uV1wX3yZ5aB7", "aB3+dE5fG7hI9jK1lM3n/oP5qR7sT9uV1wX3yZ5aB7"},
+		{"long random component", "/srv/data/q83vEjK2mZbW9tYXJzaGFsbGVkSXNU/x", "q83vEjK2mZbW9tYXJzaGFsbGVkSXNU"},
 	}
 	for _, tt := range secrets {
 		t.Run(tt.name, func(t *testing.T) {
@@ -46,6 +51,11 @@ func TestRedact(t *testing.T) {
 		"git status",
 		"/Users/someone/dev/project/internal/assessor/state.go",
 		"go test github.com/Broderick-Westrope/anvil/internal/permission/segment",
+		"/var/folders/7h/k5xgt3hd0q1bh5s7wqzk4hzm0000gn/T/TestBuildStateBash2952617373/001",
+		"/var/folders/7h/k5xgt3hd0q1bh_s7wqzk4hzm0000gn/T/TestBuildStateEditnew_file_in_new_subdir123/002/main.go",
+		"cd /Users/someone/dev/project/internal/permission/assessor_integration_test.go",
+		"vim ./internal/agent/tools/edit_permission_request_test.go",
+		"go get golang.org/x/tools/gopls/internal/analysis/modernize",
 		"gofumpt -l .",
 		"https://pkg.go.dev/net/http",
 	}

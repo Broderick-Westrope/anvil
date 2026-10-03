@@ -144,11 +144,16 @@ func (c *Client) do(ctx context.Context, body []byte) (Response, error) {
 	return out, nil
 }
 
-// Validate checks that resp answers every question with the right type
-// and an in-range value.
+// Validate checks that resp answers exactly the given questions, each with
+// the right type and an in-range value.
 func Validate(resp Response, questions map[string]Question) error {
 	if resp.Model == "" {
 		return errors.New("response has no model")
+	}
+	for id := range resp.Answers {
+		if _, ok := questions[id]; !ok {
+			return fmt.Errorf("unexpected answer %q", id)
+		}
 	}
 	for id, q := range questions {
 		a, ok := resp.Answers[id]

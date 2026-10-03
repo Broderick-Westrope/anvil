@@ -229,6 +229,7 @@ func TestValidate(t *testing.T) {
 		{"score negative", func(r *Response) { r.Answers["level"] = Answer{Type: "score", Score: f(-1)} }},
 		{"NaN score", func(r *Response) { r.Answers["level"] = Answer{Type: "score", Score: f(math.NaN())} }},
 		{"unknown choice", func(r *Response) { r.Answers["kind"] = Answer{Type: "choice", Choice: "delete"} }},
+		{"extra answer", func(r *Response) { r.Answers["bonus"] = Answer{Type: "noul", Noul: f(0.1)} }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

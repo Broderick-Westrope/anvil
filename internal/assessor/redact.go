@@ -3,6 +3,7 @@ package assessor
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 const redacted = "[REDACTED]"
@@ -48,23 +49,38 @@ func Redact(s string) string {
 }
 
 // pathLike reports whether a long run looks like a slash-separated path
-// (e.g. a Go import path or temp dir) rather than an encoded secret.
-// Base64 secrets contain few slashes, so they rarely have several
-// slashes and almost always have a long slash-free component.
+// (e.g. a Go import path or temp dir) rather than an encoded secret. A
+// path must be anchored (the run starts at a slash, which covers "/",
+// "./", "../" and "~/" since '.' and '~' end a run) or contain several
+// slashes, and every component must be short or look like a file or
+// directory name. Splitting a secret in two at a single slash is
+// therefore not enough to escape redaction.
 func pathLike(s string) bool {
-	if strings.ContainsAny(s, "+=") {
+	if strings.ContainsAny(s, "+=") || !strings.Contains(s, "/") {
 		return false
 	}
-	if strings.Count(s, "/") >= minPathSlashes {
-		return true
-	}
-	if !strings.Contains(s, "/") {
+	if !strings.HasPrefix(s, "/") && strings.Count(s, "/") < minPathSlashes {
 		return false
 	}
 	for part := range strings.SplitSeq(s, "/") {
-		if len(part) >= maxPathComponent {
+		if len(part) >= maxPathComponent && !nameLike(part) {
 			return false
 		}
 	}
 	return true
+}
+
+// nameLike reports whether a long path component looks like a name rather
+// than random base64: it has a separator, is lowercase (like the hashed
+// directories under /var/folders), or is a digit-free word with a numeric
+// suffix (like the directories t.TempDir creates).
+func nameLike(part string) bool {
+	if strings.ContainsAny(part, "-_") {
+		return true
+	}
+	if !strings.ContainsFunc(part, unicode.IsUpper) {
+		return true
+	}
+	word := strings.TrimRightFunc(part, unicode.IsDigit)
+	return !strings.ContainsFunc(word, unicode.IsDigit)
 }
