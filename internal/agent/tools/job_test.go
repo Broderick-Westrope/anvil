@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,7 +16,9 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/jobevents"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/stretchr/testify/require"
 )
@@ -908,4 +911,252 @@ func TestJobOutputTool_Watch(t *testing.T) {
 		require.False(t, resp.IsError)
 		require.NotContains(t, resp.Content, "Watching for")
 	})
+}
+
+// newTestArchive returns a job store on a temp DB whose IDs start far
+// above the global manager's in-memory counter, so archived IDs never
+// resolve to an in-memory job from a parallel test.
+func newTestArchive(t *testing.T) (*jobstore.Store, *db.Queries, string) {
+	t.Helper()
+	dataDir := t.TempDir()
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Release(dataDir)) })
+	_, err = conn.ExecContext(t.Context(), "INSERT INTO sqlite_sequence (name, seq) VALUES ('background_jobs', 1048576)")
+	require.NoError(t, err)
+
+	q := db.New(conn)
+	logDir := filepath.Join(t.TempDir(), "jobs")
+	s, err := jobstore.New(q, logDir)
+	require.NoError(t, err)
+	return s, q, logDir
+}
+
+// archiveJob persists a job as the recorder would. A non-nil exitCode
+// finalizes it as exited.
+func archiveJob(t *testing.T, s *jobstore.Store, sessionID, command, stdout, stderr string, exitCode *int) string {
+	t.Helper()
+	startedAt := time.Now().Add(-time.Minute)
+	info := shell.JobInfo{
+		SessionID:  sessionID,
+		Origin:     shell.OriginExplicit,
+		Command:    command,
+		WorkingDir: "/work",
+		StartedAt:  startedAt,
+	}
+	id, log, err := s.Allocate(t.Context(), shell.AllocateRequest{Info: info})
+	require.NoError(t, err)
+	_, _ = log.Stdout().Write([]byte(stdout))
+	_, _ = log.Stderr().Write([]byte(stderr))
+	stats := log.Close()
+	if exitCode != nil {
+		info.Done = true
+		info.ExitCode = *exitCode
+		info.CompletedAt = startedAt.Add(30 * time.Second)
+		require.NoError(t, s.Finalize(t.Context(), id, info, shell.EndExited, stats))
+	}
+	return id
+}
+
+func jobKey(t *testing.T, id string) int64 {
+	t.Helper()
+	key, ok := jobstore.ParseID(id)
+	require.True(t, ok)
+	return key
+}
+
+func TestJobTools_EvictedJobFromArchive(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	archive, _, _ := newTestArchive(t)
+	opts := JobToolOptions{Archive: archive}
+	exit := 3
+	id := archiveJob(t, archive, sessionID, "make test", "line one\nline two\n", "oops\n", &exit)
+	_, inMemory := shell.GetBackgroundShellManager().Get(id)
+	require.False(t, inMemory)
+
+	out := runJobTool(t, NewJobOutputTool(opts), ctx, JobOutputParams{ShellID: id})
+	require.False(t, out.IsError, out.Content)
+	require.Equal(t, "Status: completed, exit 3 (30s)\n\nline one\nline two\noops", out.Content)
+	var meta JobOutputResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(out.Metadata), &meta))
+	require.True(t, meta.Done)
+	require.Equal(t, 3, meta.ExitCode)
+
+	list := runJobTool(t, NewJobListTool(opts), ctx, JobListParams{})
+	require.False(t, list.IsError)
+	lines := strings.Split(list.Content, "\n")
+	require.Len(t, lines, 2, list.Content)
+	require.Equal(t, "Finished:", lines[0])
+	require.True(t, strings.HasPrefix(lines[1], id+"  exit 3   30s  explicit  make test"), lines[1])
+
+	kill := runJobTool(t, NewJobKillTool(opts), ctx, JobKillParams{ShellID: id})
+	require.False(t, kill.IsError, kill.Content)
+	require.Contains(t, kill.Content, "Job "+id+" had already exited (exit 3, 30s) before kill.")
+	require.Contains(t, kill.Content, "Last output:\nline one\nline two\noops")
+
+	without := runJobTool(t, NewJobOutputTool(JobToolOptions{}), ctx, JobOutputParams{ShellID: id})
+	require.True(t, without.IsError)
+	require.Contains(t, without.Content, "background shell not found")
+}
+
+func TestJobOutputTool_ArchivedIncremental(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	archive, q, logDir := newTestArchive(t)
+	other, err := jobstore.New(q, logDir)
+	require.NoError(t, err)
+	require.NoError(t, q.UpsertAnvilInstance(t.Context(), db.UpsertAnvilInstanceParams{
+		ID:          other.InstanceID(),
+		Pid:         1,
+		StartedAt:   time.Now().UnixMilli(),
+		HeartbeatAt: time.Now().UnixMilli(),
+	}))
+	id := archiveJob(t, other, sessionID, "npm run dev", "", "", nil)
+	stdoutPath, _ := jobstore.LogPaths(logDir, id)
+	appendLog := func(s string) {
+		f, err := os.OpenFile(stdoutPath, os.O_APPEND|os.O_WRONLY, 0o600)
+		require.NoError(t, err)
+		_, err = f.WriteString(s)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+	}
+	read := func(params JobOutputParams) string {
+		params.ShellID = id
+		resp := runJobTool(t, NewJobOutputTool(JobToolOptions{Archive: archive}), ctx, params)
+		require.False(t, resp.IsError, resp.Content)
+		header, body, ok := strings.Cut(resp.Content, "\n\n")
+		require.True(t, ok, resp.Content)
+		require.True(t, strings.HasPrefix(header, "Status: running in another Anvil process ("), header)
+		return body
+	}
+
+	require.Equal(t, BashNoOutput, read(JobOutputParams{}))
+	appendLog("one\n")
+	require.Equal(t, "one", read(JobOutputParams{Wait: true}))
+	require.Equal(t, jobNoNewOutput, read(JobOutputParams{}))
+	appendLog("two\nthree\n")
+	require.Equal(t, "(1 earlier lines omitted)\nthree", read(JobOutputParams{TailLines: 1}))
+	require.Equal(t, "one\ntwo\nthree", read(JobOutputParams{Full: true}))
+	require.Equal(t, jobNoNewOutput, read(JobOutputParams{}))
+}
+
+func TestJobOutputTool_ArchivedInterrupted(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	archive, q, _ := newTestArchive(t)
+	id := archiveJob(t, archive, sessionID, "sleep 1000", "started\n", "", nil)
+	crashedAt := time.Date(2026, 10, 3, 14, 5, 6, 0, time.Local)
+	require.NoError(t, q.MarkBackgroundJobsInterrupted(t.Context(), db.MarkBackgroundJobsInterruptedParams{
+		CompletedAt: sql.NullInt64{Int64: crashedAt.UnixMilli(), Valid: true},
+		InstanceID:  archive.InstanceID(),
+	}))
+
+	out := runJobTool(t, NewJobOutputTool(JobToolOptions{Archive: archive}), ctx, JobOutputParams{ShellID: id})
+	require.False(t, out.IsError, out.Content)
+	require.Equal(t, "Status: interrupted (Anvil exited unexpectedly at 2026-10-03 14:05:06; the process may still be running)\n\nstarted", out.Content)
+
+	list := runJobTool(t, NewJobListTool(JobToolOptions{Archive: archive}), ctx, JobListParams{})
+	require.Contains(t, list.Content, id+"  interrupted  ")
+	require.Contains(t, list.Content, "(Anvil exited unexpectedly)")
+}
+
+func TestJobTools_ArchivedKilledJobsShowNoExitCode(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	archive, _, _ := newTestArchive(t)
+	opts := JobToolOptions{Archive: archive}
+
+	finalizeAs := func(reason string) string {
+		startedAt := time.Now().Add(-time.Minute)
+		info := shell.JobInfo{
+			SessionID:  sessionID,
+			Origin:     shell.OriginExplicit,
+			Command:    "sleep 1000",
+			WorkingDir: "/work",
+			StartedAt:  startedAt,
+		}
+		id, log, err := archive.Allocate(t.Context(), shell.AllocateRequest{Info: info})
+		require.NoError(t, err)
+		info.Done, info.ExitCode, info.CompletedAt = true, 1, startedAt.Add(30*time.Second)
+		require.NoError(t, archive.Finalize(t.Context(), id, info, reason, log.Close()))
+		return id
+	}
+	killed := finalizeAs(shell.EndKilled)
+	anvilExit := finalizeAs(shell.EndAnvilExit)
+
+	list := runJobTool(t, NewJobListTool(opts), ctx, JobListParams{})
+	require.Contains(t, list.Content, killed+"  killed   30s")
+	require.Contains(t, list.Content, anvilExit+"  killed   30s")
+	require.Contains(t, list.Content, "(when Anvil exited)")
+	require.NotContains(t, list.Content, "exit 1")
+
+	out := runJobTool(t, NewJobOutputTool(opts), ctx, JobOutputParams{ShellID: killed})
+	require.True(t, strings.HasPrefix(out.Content, "Status: killed (30s)"), out.Content)
+	out = runJobTool(t, NewJobOutputTool(opts), ctx, JobOutputParams{ShellID: anvilExit})
+	require.True(t, strings.HasPrefix(out.Content, "Status: killed when Anvil exited (30s)"), out.Content)
+
+	kill := runJobTool(t, NewJobKillTool(opts), ctx, JobKillParams{ShellID: killed})
+	require.Equal(t, "Job "+killed+" was already killed (30s).", kill.Content)
+	kill = runJobTool(t, NewJobKillTool(opts), ctx, JobKillParams{ShellID: anvilExit})
+	require.Equal(t, "Job "+anvilExit+" was already killed when Anvil exited (30s).", kill.Content)
+}
+
+func TestFormatJobStatus_KilledJobHasNoExitCode(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	info := shell.JobInfo{StartedAt: start, CompletedAt: start.Add(15 * time.Second), Done: true, ExitCode: 1}
+
+	require.Equal(t, "Status: completed, exit 1 (15s)", FormatJobStatus(info, start, "", 0, ""))
+	info.EndReason = shell.EndKilled
+	require.Equal(t, "Status: killed (15s)", FormatJobStatus(info, start, "", 0, ""))
+}
+
+func TestJobOutputTool_ArchivedExpired(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	archive, q, _ := newTestArchive(t)
+	exit := 0
+	id := archiveJob(t, archive, sessionID, "go test ./...", "ok\n", "", &exit)
+	require.NoError(t, q.MarkBackgroundJobLogExpired(t.Context(), db.MarkBackgroundJobLogExpiredParams{
+		LogExpiredAt: sql.NullInt64{Int64: time.Date(2026, 10, 17, 12, 0, 0, 0, time.Local).UnixMilli(), Valid: true},
+		ID:           jobKey(t, id),
+	}))
+
+	out := runJobTool(t, NewJobOutputTool(JobToolOptions{Archive: archive}), ctx, JobOutputParams{ShellID: id})
+	require.False(t, out.IsError, out.Content)
+	require.Equal(t, "Status: completed, exit 0 (30s)\n\n(output expired on 2026-10-17)", out.Content)
+}
+
+func TestJobKillTool_ArchivedRemoteRefused(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	archive, q, logDir := newTestArchive(t)
+	other, err := jobstore.New(q, logDir)
+	require.NoError(t, err)
+	require.NoError(t, q.UpsertAnvilInstance(t.Context(), db.UpsertAnvilInstanceParams{
+		ID:          other.InstanceID(),
+		Pid:         1,
+		StartedAt:   time.Now().UnixMilli(),
+		HeartbeatAt: time.Now().UnixMilli(),
+	}))
+	id := archiveJob(t, other, sessionID, "npm run dev", "", "", nil)
+
+	kill := runJobTool(t, NewJobKillTool(JobToolOptions{Archive: archive}), ctx, JobKillParams{ShellID: id})
+	require.True(t, kill.IsError)
+	require.Equal(t, "job "+id+" is running in another Anvil process and can only be killed there", kill.Content)
+
+	list := runJobTool(t, NewJobListTool(JobToolOptions{Archive: archive}), ctx, JobListParams{})
+	lines := strings.Split(list.Content, "\n")
+	require.Len(t, lines, 2, list.Content)
+	require.Equal(t, "Running:", lines[0])
+	require.Contains(t, lines[1], id+"  running  ")
+	require.Contains(t, lines[1], "(other Anvil process)  explicit  npm run dev")
 }

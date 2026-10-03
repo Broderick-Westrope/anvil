@@ -32,28 +32,28 @@ to processes, controlling another process's jobs.
 
 **Success Criteria:**
 
-- [ ] Job IDs never repeat across restarts, concurrent processes, or after
+- [x] Job IDs never repeat across restarts, concurrent processes, or after
       deleting the session that owned the highest ID; a fallback ID issued
       on publication failure never resolves to a persisted job.
-- [ ] After restarting Anvil, `job_output` on a job from a previous run
+- [x] After restarting Anvil, `job_output` on a job from a previous run
       returns its stored output and exit code, including output beyond
       the 10MB in-memory buffer (up to the 50MB log cap).
-- [ ] A job evicted from memory after 30 minutes is still readable through
+- [x] A job evicted from memory after 30 minutes is still readable through
       `job_output`, `job_list`, and `job_kill`.
-- [ ] After a simulated crash (records left running, owning instance's
+- [x] After a simulated crash (records left running, owning instance's
       heartbeat stale), jobs are reported as `interrupted`; jobs of a live
       other process are reported read-only.
-- [ ] Graceful shutdown records `anvil_exit` for jobs it killed and
+- [x] Graceful shutdown records `anvil_exit` for jobs it killed and
       `abandoned` for jobs that outlived the kill, even when a job's own
       exit races shutdown; no job, event, or heartbeat write reaches the
       DB after it's released.
 - [x] A failure partway through allocation leaves no running row or open
       file behind, and the job still runs under a fallback ID.
-- [ ] Pruned output returns `(output expired on <date>)`; a known ID is
+- [x] Pruned output returns `(output expired on <date>)`; a known ID is
       never "not found".
-- [ ] With Phase 3 merged: pending events survive a restart, and two Anvil
+- [x] With Phase 3 merged: pending events survive a restart, and two Anvil
       processes with the same session open never both deliver an event.
-- [ ] `go test ./... -count=1` passes, including migration tests that
+- [x] `go test ./... -count=1` passes, including migration tests that
       round-trip every new migration.
 
 ## Context Loading
@@ -348,7 +348,7 @@ go test -race ./internal/shell/ ./internal/jobstore/ -count=1
 
 **Steps:**
 
-1. [ ] Add to `JobToolOptions`:
+1. [x] Add to `JobToolOptions`:
 
    ```go
    // Archive looks up persisted jobs that are no longer in memory. Nil
@@ -364,7 +364,7 @@ go test -race ./internal/shell/ ./internal/jobstore/ -count=1
    }
    ```
 
-2. [ ] `job_output` fallback when the manager's `Get` misses:
+2. [x] `job_output` fallback when the manager's `Get` misses:
    - Not in the archive → `background shell not found` as today.
    - `LogExpired` set → header plus `(output expired on 2026-10-17)`.
    - Otherwise read the log. A process-local cursor map (per job, per
@@ -377,15 +377,15 @@ go test -race ./internal/shell/ ./internal/jobstore/ -count=1
      `anvil_exit` as `Status: killed when Anvil exited (<runtime>)`;
      remote running jobs as
      `Status: running in another Anvil process (<runtime>)`.
-3. [ ] `job_list` merges in-memory jobs with `Archive.ListBySession`,
+3. [x] `job_list` merges in-memory jobs with `Archive.ListBySession`,
    de-duplicated by ID (memory wins), same ordering and caps. Remote
    running jobs list under Running with `(other Anvil process)`.
-4. [ ] `job_kill` on an archived job: finished → the "already exited"
+4. [x] `job_kill` on an archived job: finished → the "already exited"
    message (exit code from the record, tail from the log); remote → tool
    error `job X is running in another Anvil process and can only be killed there`.
-5. [ ] Docs: results persist for 14 days; IDs are unique across restarts;
+5. [x] Docs: results persist for 14 days; IDs are unique across restarts;
    jobs die when Anvil exits and are then reported as such.
-6. [ ] Tests with a real `jobstore` on a temp DB: an evicted job (removed
+6. [x] Tests with a real `jobstore` on a temp DB: an evicted job (removed
    from the manager after completion) is readable and listable;
    incremental reads on an archived job; `interrupted` header;
    expired-log message; remote kill refusal.
@@ -409,23 +409,23 @@ go test -race ./internal/agent/tools/ -count=1
 
 **Steps:**
 
-1. [ ] `jobs.go` holds a `jobLifecycle` type that owns the
+1. [x] `jobs.go` holds a `jobLifecycle` type that owns the
    `jobstore.Store`, the heartbeat goroutine, and the sweeper goroutine,
    with `Start(ctx)` and `Stop()` (cancels both and waits for them to
    return). In `app.New`, create it from the global DB, upsert this
    process's `anvil_instances` row, set the store as the manager's
    recorder and the tools' archive, and start it.
-2. [ ] Heartbeat: touch `heartbeat_at` every 30s.
-3. [ ] Recovery at start: for each instance row other than this one whose
+2. [x] Heartbeat: touch `heartbeat_at` every 30s.
+3. [x] Recovery at start: for each instance row other than this one whose
    `heartbeat_at` is older than 90s, `MarkBackgroundJobsInterrupted` and
    delete the row. Running records whose instance row is missing are
    also marked interrupted. A record is `Remote` when its instance's
    heartbeat is fresh.
-4. [ ] Retention sweeper at start and hourly: expire logs for jobs
+4. [x] Retention sweeper at start and hourly: expire logs for jobs
    completed more than 14 days ago; then, while total log size exceeds
    500MB, expire the oldest. Expiring deletes both files and sets
    `log_expired_at`.
-5. [ ] Tests: recovery (stale instance → `interrupted`; fresh instance →
+5. [x] Tests: recovery (stale instance → `interrupted`; fresh instance →
    `Remote`; missing instance → `interrupted`); retention by age and by
    size (small files, injectable cap and clock); `Stop` returns only
    after both goroutines have exited.
@@ -449,7 +449,7 @@ go test -race ./internal/app/ -count=1
 
 **Steps:**
 
-1. [ ] Manager shutdown API:
+1. [x] Manager shutdown API:
 
    ```go
    // BeginShutdown stops new publications and event emission, and sets
@@ -468,7 +468,7 @@ go test -race ./internal/app/ -count=1
 
    Update existing `KillAll` callers and tests.
 
-2. [ ] Shutdown order in `app.Shutdown`. Today it calls `CancelAll`, then
+2. [x] Shutdown order in `app.Shutdown`. Today it calls `CancelAll`, then
    flushes messages, then runs `KillAll` in parallel with cleanup
    callbacks that include `db.ReleaseGlobal`. Change it to:
    1. Disable the Phase 3 waker (if present) and call
@@ -487,7 +487,7 @@ go test -race ./internal/app/ -count=1
    6. Continue into the existing parallel cleanup block, with the
       `KillAll` goroutine removed. The DB is released there.
 
-3. [ ] Event persistence (Phase 3 merged only):
+3. [x] Event persistence (Phase 3 merged only):
    - Migration: `background_job_events` (id TEXT PRIMARY KEY, job_id, kind,
      watch_gen, line, tail, state, claimed_by, claimed_at, created_at).
      Session and job info come from `background_jobs` at load time, so
@@ -518,7 +518,7 @@ go test -race ./internal/app/ -count=1
    - The Phase 3 `OwnerFunc` falls back to `jobstore.Get` for jobs not
      in memory.
 
-4. [ ] Tests:
+4. [x] Tests:
    - A published job that exits on SIGINT → `anvil_exit`. A test-only
      shell (Phase 1 helper) that ignores cancellation → `abandoned`;
      release it after shutdown and assert `Finalize` isn't called again

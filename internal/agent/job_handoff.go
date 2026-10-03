@@ -55,8 +55,11 @@ func handOffSubagentJobs(mgr *shell.BackgroundShellManager, store *jobevents.Sto
 	handedEntries := make([]string, 0, len(handed))
 	for _, job := range handed {
 		state := fmt.Sprintf("running, %s", shell.FormatRuntime(shell.JobRuntime(job, now)))
-		if job.Done {
-			state = fmt.Sprintf("completed, exit %d", job.ExitCode)
+		switch {
+		case job.ExitedOnItsOwn():
+			state = "completed, " + shell.JobOutcome(job)
+		case job.Done:
+			state = shell.JobOutcome(job)
 		}
 		handedEntries = append(handedEntries, fmt.Sprintf("%s %s (%s)", job.ID, shell.JobLabel(job, jobInventoryLabelLength), state))
 	}

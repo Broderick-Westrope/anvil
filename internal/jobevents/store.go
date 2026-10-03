@@ -3,10 +3,17 @@
 package jobevents
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
@@ -31,7 +38,7 @@ const (
 )
 
 type Event struct {
-	ID        int64
+	ID        string // <instance ID>-<per-process sequence>.
 	JobID     string
 	Kind      Kind
 	WatchGen  uint64 // KindMatched only.
@@ -42,6 +49,11 @@ type Event struct {
 	CreatedAt time.Time
 
 	settledAt time.Time // When the event became delivered or superseded.
+	// claimable is false while a persisted event's row is not yet
+	// committed, so no process can deliver it before it is durable.
+	claimable bool
+	// durable means the event has, or is getting, a database row.
+	durable bool
 }
 
 // OwnerFunc returns the session that currently owns a job.
@@ -51,7 +63,9 @@ type Store struct {
 	mu        sync.Mutex
 	owner     OwnerFunc
 	now       func() time.Time
+	idPrefix  string
 	nextID    int64
+	persist   atomic.Pointer[persister] // Nil while memory-only.
 	events    []*Event
 	watchGens map[string]uint64      // Latest watch generation per job.
 	observed  map[string]observation // What the agent has already seen per job.
@@ -68,9 +82,12 @@ type observation struct {
 var _ shell.EventSink = (*Store)(nil)
 
 func NewStore(owner OwnerFunc) *Store {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
 	return &Store{
 		owner:     owner,
 		now:       time.Now,
+		idPrefix:  hex.EncodeToString(b[:]),
 		watchGens: make(map[string]uint64),
 		observed:  make(map[string]observation),
 		dropped:   make(map[string]time.Time),
@@ -114,7 +131,7 @@ func (s *Store) WatchReplaced(jobID string, gen uint64) {
 	}
 	for _, e := range s.events {
 		if e.JobID == jobID && e.Kind == KindMatched && e.State == StatePending && e.WatchGen < s.watchGens[jobID] {
-			e.settleLocked(StateSuperseded, now)
+			s.settleLocked(e, StateSuperseded, now)
 		}
 	}
 }
@@ -141,24 +158,68 @@ func (s *Store) PatternMatched(info shell.JobInfo, gen uint64, line string) {
 func (s *Store) addLocked(e *Event) {
 	now := s.now()
 	s.nextID++
-	e.ID = s.nextID
+	e.ID = fmt.Sprintf("%s-%d", s.idPrefix, s.nextID)
 	e.CreatedAt = now
+	e.claimable = true
 	if e.State != StatePending {
 		e.settledAt = now
+	} else if p := s.persist.Load(); p != nil {
+		if _, ok := jobstore.ParseID(e.JobID); ok && p.enqueue(op{kind: opInsert, event: *e}) {
+			e.durable = true
+			e.claimable = false
+		}
 	}
 	s.events = append(s.events, e)
 	s.touched[e.JobID] = now
-	if e.State == StatePending {
-		select {
-		case s.signal <- struct{}{}:
-		default:
-		}
+	if e.State == StatePending && e.claimable {
+		s.signalLocked()
 	}
 }
 
-func (e *Event) settleLocked(state State, now time.Time) {
+func (s *Store) signalLocked() {
+	select {
+	case s.signal <- struct{}{}:
+	default:
+	}
+}
+
+// settleLocked marks e delivered or superseded. Settled events need no
+// row, since only pending and claimed events are loaded at startup.
+func (s *Store) settleLocked(e *Event, state State, now time.Time) {
 	e.State = state
 	e.settledAt = now
+	s.forgetRowLocked(e)
+}
+
+// forgetRowLocked deletes e's row, if it has one.
+func (s *Store) forgetRowLocked(e *Event) {
+	if !e.durable {
+		return
+	}
+	e.durable = false
+	if p := s.persist.Load(); p != nil {
+		p.enqueue(op{kind: opDelete, id: e.ID})
+	}
+}
+
+// markPersisted makes an event claimable once its row insert finished.
+// If the insert failed, the event stays memory-only.
+func (s *Store) markPersisted(id string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.events {
+		if e.ID != id {
+			continue
+		}
+		e.claimable = true
+		if !ok {
+			e.durable = false
+		}
+		if e.State == StatePending {
+			s.signalLocked()
+		}
+		return
+	}
 }
 
 // Observe records that a persisted tool result showed the agent this
@@ -181,7 +242,7 @@ func (s *Store) Observe(jobID string, kind Kind, gen uint64) {
 
 	for _, e := range s.events {
 		if e.JobID == jobID && e.State == StatePending && obs.covers(e) {
-			e.settleLocked(StateSuperseded, now)
+			s.settleLocked(e, StateSuperseded, now)
 		}
 	}
 }
@@ -198,8 +259,62 @@ func (o observation) covers(e *Event) bool {
 
 // Claim takes up to limit of the session's pending events, oldest first,
 // for delivery. remaining is the number of the session's pending events
-// left behind.
+// left behind. With persistence, persisted events are also claimed in
+// the database, and only those this process wins are returned, so two
+// processes never deliver the same event.
 func (s *Store) Claim(sessionID string, limit int) (claimed []Event, remaining int) {
+	claimed, remaining = s.claimLocal(sessionID, limit)
+	p := s.persist.Load()
+	if p == nil || len(claimed) == 0 {
+		return claimed, remaining
+	}
+
+	var durable []string
+	for _, e := range claimed {
+		if e.durable {
+			durable = append(durable, e.ID)
+		}
+	}
+	if len(durable) == 0 {
+		return claimed, remaining
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), persistTimeout)
+	defer cancel()
+	won, err := p.claim(ctx, durable, s.now())
+	if err != nil {
+		slog.Warn("Failed to claim background job events", "error", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := claimed[:0]
+	for _, c := range claimed {
+		switch {
+		case !c.durable || slices.Contains(won, c.ID):
+			kept = append(kept, c)
+		case err != nil:
+			// The claim could not be confirmed; retry at a later step.
+			if e := s.findLocked(c.ID); e != nil && e.State == StateClaimed {
+				e.State = StatePending
+			}
+		default:
+			// Another process claimed it and will deliver it.
+			s.events = slices.DeleteFunc(s.events, func(e *Event) bool { return e.ID == c.ID })
+		}
+	}
+	return kept, remaining
+}
+
+func (s *Store) findLocked(id string) *Event {
+	for _, e := range s.events {
+		if e.ID == id {
+			return e
+		}
+	}
+	return nil
+}
+
+func (s *Store) claimLocal(sessionID string, limit int) (claimed []Event, remaining int) {
 	s.mu.Lock()
 	now := s.now()
 	s.pruneEventsLocked(now)
@@ -226,7 +341,7 @@ func (s *Store) Claim(sessionID string, limit int) (claimed []Event, remaining i
 	}
 
 	for _, e := range s.events {
-		if e.State != StatePending {
+		if e.State != StatePending || !e.claimable {
 			continue
 		}
 		res, ok := owners[e.JobID]
@@ -239,7 +354,7 @@ func (s *Store) Claim(sessionID string, limit int) (claimed []Event, remaining i
 			continue
 		}
 		if e.Kind == KindMatched && e.WatchGen < s.watchGens[e.JobID] {
-			e.settleLocked(StateSuperseded, now)
+			s.settleLocked(e, StateSuperseded, now)
 			continue
 		}
 		if len(claimed) >= limit {
@@ -253,21 +368,21 @@ func (s *Store) Claim(sessionID string, limit int) (claimed []Event, remaining i
 }
 
 // MarkDelivered marks claimed events as delivered.
-func (s *Store) MarkDelivered(ids []int64) {
+func (s *Store) MarkDelivered(ids []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := s.now()
 	for _, e := range s.events {
 		if e.State == StateClaimed && slices.Contains(ids, e.ID) {
-			e.settleLocked(StateDelivered, now)
+			s.settleLocked(e, StateDelivered, now)
 		}
 	}
 }
 
 // Release returns claimed events to pending, or supersedes them if
 // they were observed or replaced while claimed. It does not signal.
-func (s *Store) Release(ids []int64) {
+func (s *Store) Release(ids []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -277,10 +392,13 @@ func (s *Store) Release(ids []int64) {
 			continue
 		}
 		if s.observed[e.JobID].covers(e) || (e.Kind == KindMatched && e.WatchGen < s.watchGens[e.JobID]) {
-			e.settleLocked(StateSuperseded, now)
+			s.settleLocked(e, StateSuperseded, now)
 			continue
 		}
 		e.State = StatePending
+		if p := s.persist.Load(); p != nil && e.durable {
+			p.enqueue(op{kind: opRelease, id: e.ID})
+		}
 	}
 }
 
@@ -290,7 +408,7 @@ func (s *Store) HasPending(sessionID string) bool {
 	var pending []*Event
 	var jobIDs []string
 	for _, e := range s.events {
-		if e.State == StatePending {
+		if e.State == StatePending && e.claimable {
 			pending = append(pending, e)
 			jobIDs = append(jobIDs, e.JobID)
 		}
@@ -323,7 +441,11 @@ func (s *Store) DropJobs(jobIDs []string) {
 		s.touched[id] = now
 	}
 	s.events = slices.DeleteFunc(s.events, func(e *Event) bool {
-		return e.State == StatePending && slices.Contains(jobIDs, e.JobID)
+		drop := e.State == StatePending && slices.Contains(jobIDs, e.JobID)
+		if drop {
+			s.forgetRowLocked(e)
+		}
+		return drop
 	})
 }
 

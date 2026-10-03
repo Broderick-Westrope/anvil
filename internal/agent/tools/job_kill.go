@@ -45,7 +45,14 @@ func NewJobKillTool(opts JobToolOptions) fantasy.AgentTool {
 
 			bgShell, ok := bgManager.Get(params.ShellID)
 			if !ok {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
+				rec, found, err := lookupArchivedJob(ctx, opts.Archive, params.ShellID)
+				if err != nil {
+					return fantasy.NewTextErrorResponse(err.Error()), nil
+				}
+				if !found {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
+				}
+				return killArchivedJob(opts.Archive, rec, params.ShellID), nil
 			}
 
 			metadata := JobKillResponseMetadata{
@@ -59,8 +66,8 @@ func NewJobKillTool(opts JobToolOptions) fantasy.AgentTool {
 				info := bgShell.Info()
 				stdout, stderr, _, _ := bgShell.GetOutput()
 				_ = bgManager.Kill(params.ShellID) // Removes tracking; the process is gone.
-				result := fmt.Sprintf("Job %s had already exited (exit %d, %s) before kill.",
-					params.ShellID, info.ExitCode, shell.FormatRuntime(shell.JobRuntime(info, time.Now())))
+				result := fmt.Sprintf("Job %s had already exited (%s, %s) before kill.",
+					params.ShellID, shell.JobOutcome(info), shell.FormatRuntime(shell.JobRuntime(info, time.Now())))
 				if tail := shell.LastLines(joinOutput(stdout, stderr), 10); tail != "" {
 					result += "\n\nLast output:\n" + tail
 				}

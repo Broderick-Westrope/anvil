@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/jobevents"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
@@ -15,6 +17,16 @@ type JobToolOptions struct {
 	// Events is the job event store. Watches reach it through the
 	// shell manager's event sink, so the tools need not call it.
 	Events *jobevents.Store
+	// Archive looks up persisted jobs that are no longer in memory. Nil
+	// disables fallbacks.
+	Archive JobArchive
+}
+
+// JobArchive is the persisted job store as seen by the job tools.
+type JobArchive interface {
+	Get(ctx context.Context, id string) (jobstore.Record, bool, error)
+	ListBySession(ctx context.Context, sessionID string) ([]jobstore.Record, error)
+	ReadLog(id string) (stdout, stderr []byte, err error)
 }
 
 // JobToolNames returns the names of every job tool. Agents with bash are
@@ -56,8 +68,10 @@ func FormatJobStatus(info shell.JobInfo, now time.Time, reason shell.WaitReason,
 	var b strings.Builder
 	b.WriteString("Status: ")
 	switch {
-	case info.Done:
+	case info.ExitedOnItsOwn():
 		fmt.Fprintf(&b, "completed, exit %d (%s)", info.ExitCode, runtime)
+	case info.Done:
+		fmt.Fprintf(&b, "%s (%s)", shell.JobOutcome(info), runtime)
 	case reason == "":
 		lastOutput := "no output yet"
 		if !info.LastOutputAt.IsZero() {

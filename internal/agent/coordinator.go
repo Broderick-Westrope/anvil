@@ -109,6 +109,7 @@ type coordinator struct {
 	lspManager  *lsp.Manager
 	notify      pubsub.Publisher[notify.Notification]
 	jobEvents   *jobevents.Store // Nil disables job notifications.
+	jobArchive  tools.JobArchive // Nil disables persisted job fallbacks.
 	onIdle      func(sessionID string)
 
 	// orchestrator is the eagerly-built top-level agent. Protected by orchestratorMu.
@@ -150,6 +151,7 @@ func NewCoordinator(
 	lspManager *lsp.Manager,
 	notify pubsub.Publisher[notify.Notification],
 	jobEvents *jobevents.Store,
+	jobArchive tools.JobArchive,
 	onIdle func(sessionID string),
 ) (Coordinator, error) {
 	// Discover plugins once for both skills and agents.
@@ -167,6 +169,7 @@ func NewCoordinator(
 		lspManager:   lspManager,
 		notify:       notify,
 		jobEvents:    jobEvents,
+		jobArchive:   jobArchive,
 		onIdle:       onIdle,
 		allSkills:    allSkills,
 		activeSkills: activeSkills,
@@ -1080,9 +1083,9 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewBashTool(c.permissions, c.cfg.WorkingDir()),
 		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker),
 		tools.NewAnvilLogsTool(logFile),
-		tools.NewJobOutputTool(tools.JobToolOptions{Events: c.jobEvents}),
-		tools.NewJobKillTool(tools.JobToolOptions{Events: c.jobEvents}),
-		tools.NewJobListTool(tools.JobToolOptions{Events: c.jobEvents}),
+		tools.NewJobOutputTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
+		tools.NewJobKillTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
+		tools.NewJobListTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),

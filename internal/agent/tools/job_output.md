@@ -35,6 +35,8 @@ Read output from a background job by ID; returns only new output since the previ
 - Watches notify you when their pattern matches
 - Notifications arrive as a system reminder at your next step; you are not
   notified of anything a job_output or job_kill result already showed you
+- Pending notifications survive Anvil restarts; if Anvil crashes while
+  delivering one, it may be repeated after the restart
 </notifications>
 
 <status_header>
@@ -47,9 +49,24 @@ With wait=true, it also says why the wait ended:
 - Status: running (12s), matched "ready in 141 ms"
 - Status: running (12s), wait canceled
 - Status: completed, exit 0 (13s), matched "..."
+- Status: killed (2m05s)
 Every read of a completed job includes its exit code, including empty and
-full re-reads.
+full re-reads. Jobs that were killed have no exit code.
 </status_header>
+
+<persistence>
+- Job IDs are unique across Anvil restarts and are never reused
+- Output and exit codes are saved, so jobs stay readable after they drop
+  out of memory and after Anvil restarts; saved output is kept for 14
+  days, after which reads return "(output expired on <date>)"
+- Jobs die when Anvil exits and are then reported as "Status: killed when
+  Anvil exited", or as "Status: interrupted" if Anvil exited unexpectedly
+  (the process may still be running)
+- Jobs running in another Anvil process are read-only and reported as
+  "Status: running in another Anvil process"
+- The first read of a saved job in a new Anvil process starts from the
+  beginning; wait returns at once for saved jobs
+</persistence>
 
 <tips>
 - The read position is per job, so two agents reading the same job share
