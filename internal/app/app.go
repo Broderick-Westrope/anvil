@@ -3,6 +3,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -95,12 +96,20 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	if cfg.Permissions != nil {
 		configRules = cfg.Permissions.Rules
 	}
+	permOpts := []permission.Option{permission.WithDecisionRecorder(recorder)}
+	if ta := store.TrustedAssessor(); ta != nil {
+		if opt, ok := buildAssessorOption(ta, sessions, messages); ok {
+			permOpts = append(permOpts, opt)
+			slog.Info("Permission assessor configured",
+				"mode", cmp.Or(ta.Config.Mode, config.AssessorModeOff),
+				"model", ta.Config.Model)
+		}
+	}
 
 	app := &App{
-		Sessions: sessions,
-		Messages: messages,
-		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store,
-			permission.WithDecisionRecorder(recorder)),
+		Sessions:    sessions,
+		Messages:    messages,
+		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store, permOpts...),
 		FileTracker: filetracker.NewService(q),
 		Queries:     q,
 		LSPManager:  lsp.NewManager(store),
