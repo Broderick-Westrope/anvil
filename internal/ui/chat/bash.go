@@ -276,9 +276,11 @@ func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, descripti
 	icon := toolIcon(sty, status)
 	jobPart := sty.Tool.JobToolName.Render("Job")
 	actionPart := sty.Tool.JobAction.Render("(" + action + ")")
-	idPart := sty.Tool.JobID.Render(jobIDLabel(shellID))
-
-	prefix := fmt.Sprintf("%s %s %s %s", icon, jobPart, actionPart, idPart)
+	prefix := fmt.Sprintf("%s %s %s", icon, jobPart, actionPart)
+	// A command that finished before it became a background job has no ID.
+	if shellID != "" {
+		prefix += " " + sty.Tool.JobID.Render(jobIDLabel(shellID))
+	}
 
 	if description == "" {
 		return prefix
