@@ -47,11 +47,11 @@ in memory here; Phase 4 persists them. Out: persistence, sidebar UI.
       old pattern.
 - [x] A job handed from a subagent to its parent notifies the parent, even
       if it completes during the handoff; killed auto jobs notify no one.
-- [ ] Notifications render in the TUI as compact notices, not user
+- [x] Notifications render in the TUI as compact notices, not user
       bubbles, and are sent to the model as user-role text.
 - [x] Concurrent completion of two jobs and two user prompts start at most
       one run at a time, and all four inputs are delivered exactly once.
-- [ ] With `wake_on_event=true`: an idle, open session is woken by an
+- [x] With `wake_on_event=true`: an idle, open session is woken by an
       event; a busy or summarising session isn't, and is woken when it
       becomes idle; no wake while the user has a draft (wake follows when
       the draft is cleared), while navigating, or after a cancel until the
@@ -59,7 +59,7 @@ in memory here; Phase 4 persists them. Out: persistence, sidebar UI.
       pending; subagent sessions, sessions not open in the TUI, and
       `anvil run` never wake.
 - [x] With the default config, no session is ever woken.
-- [ ] `go test -race ./internal/jobevents/ ./internal/agent/... ./internal/shell/ ./internal/app/`
+- [x] `go test -race ./internal/jobevents/ ./internal/agent/... ./internal/shell/ ./internal/app/`
       and `go test ./... -count=1` pass.
 
 ## Context Loading
@@ -612,10 +612,10 @@ go test -race ./internal/app/ ./internal/agent/ -count=1
 
 **Steps:**
 
-1. [ ] Add to the `Workspace` interface:
+1. [x] Add to the `Workspace` interface:
    `SetComposerState(sessionID string, open, hasDraft, navigating bool)`.
    `AppWorkspace` forwards to the app's waker (no-op when nil).
-2. [ ] In the UI model, send it:
+2. [x] In the UI model, send it:
    - when a session becomes active (`open=true`) and when another
      session replaces it or the TUI quits (`open=false`);
    - when the editor goes between empty and non-empty (text or
@@ -628,12 +628,12 @@ go test -race ./internal/app/ ./internal/agent/ -count=1
    handled like any running turn: navigation already cancels the active
    request before moving the leaf, so no extra locking is needed between
    the UI and the dispatch gate.
-3. [ ] Render `MessageTypeJobEvent` user messages in
+3. [x] Render `MessageTypeJobEvent` user messages in
    `ExtractMessageItems` as a compact, muted notice (one line per event
    header; tail lines hidden unless expanded), following an existing
    compact item as the style reference. Wake-started turns begin with
    this notice, which is how the user can tell why the agent spoke.
-4. [ ] Tests: a render test following `internal/ui/chat/mcp_test.go`
+4. [x] Tests: a render test following `internal/ui/chat/mcp_test.go`
    (shows each event header, hides tail lines when collapsed, not styled
    as a user message); a UI model test with a recording workspace fake
    asserting the composer signals for typing, clearing, switching
