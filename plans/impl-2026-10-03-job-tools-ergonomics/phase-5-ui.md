@@ -49,7 +49,7 @@ read internal/ui/chat/bash.go         # Job tool renderers ~105-260
 read internal/ui/chat/tools.go        # pendingTool ~586
 read internal/ui/chat/mcp_test.go     # Render test style
 read internal/workspace/workspace.go internal/workspace/app_workspace.go
-read internal/agent/tools/job_format.go   # FormatRuntime, JobLabel (Phase 1)
+read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
 ```
 
 ## Sidebar Tasks
@@ -89,7 +89,7 @@ read internal/agent/tools/job_format.go   # FormatRuntime, JobLabel (Phase 1)
 
    One line per running job, truncated to `width`:
    `05A port-forward ima  2h03m  quiet 2h` where the label is
-   `tools.JobLabel(info, 24)` and the last part is `quiet <age>` (or
+   `shell.JobLabel(info, 24)` and the last part is `quiet <age>` (or
    `no output` if it never printed; omit when output was under 60s ago).
    Render stale jobs with the warning style used elsewhere in the
    sidebar; others with `t.Resource.AdditionalText`. Use the active
@@ -151,7 +151,7 @@ go test ./internal/ui/model/ ./internal/workspace/ -count=1
 2. [ ] Finished `job_output` cards (needs Phase 2): read `RuntimeMS` and
    `Done` from `JobOutputResponseMetadata` and append
    `· ran 9m14s` (finished) or `· running 4m12s` (still running at read
-   time) to the job header description, using `tools.FormatRuntime`.
+   time) to the job header description, using `shell.FormatRuntime`.
 
 3. [ ] Tests in `job_render_test.go` following `mcp_test.go`'s approach:
    pending wait card contains `waiting`; pending non-wait card does not;
