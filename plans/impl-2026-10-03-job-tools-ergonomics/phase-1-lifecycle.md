@@ -230,9 +230,13 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    and `Kill` (take), `Cleanup` and `CleanupCompleted` (collect keys via
    `m.shells.Seq2()` and take them), `Transfer`, the list helpers
    (snapshot), and `KillAll` (snapshot and reset). Cancellation and
-   waiting on `done` always happen after releasing `m.mu`. Because `Kill`
-   and `Publish` both take under `m.mu`, a kill racing a publish either
-   finds the old key or the new one, never neither.
+   waiting on `done` always happen after releasing `m.mu`.
+
+   `Publish` also records `aliases[oldKey] = newID` (under `m.mu`), and
+   `Get`, `Kill`, and `Remove` resolve a key through `aliases` first, so
+   a caller still holding the internal key (for example the bash tool's
+   ctx-cancel path) reaches the job after it's re-keyed. Remove the alias
+   when the job leaves the map.
 
 8. [ ] Move job formatting helpers into `shell` so every layer (tools,
    job events, UI) can use them without import cycles. Create
@@ -288,9 +292,11 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
      `ErrKillTimeout`; closing the channel afterwards lets the goroutine
      exit. Keep `TestBackgroundShellManager_Kill_Timeout` as is (it
      checks the real escalation succeeds in bounded time).
-   - Publish racing Kill: start 50 goroutine pairs that `Publish` and
-     `Kill` the same shell; afterwards the shell is done and absent from
-     the map, and `-race` is quiet.
+   - Publish racing Kill: 50 iterations, each starting a `sleep 30`
+     shell and running `Publish` and `Kill(oldKey)` concurrently;
+     afterwards the shell is done, neither key resolves, and `-race` is
+     quiet. Also: `Kill(oldKey)` after `Publish` kills the published
+     job.
    - `lastOutputAt` is set after output and zero before.
 
 **Verify:**

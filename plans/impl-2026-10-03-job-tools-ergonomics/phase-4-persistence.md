@@ -276,7 +276,9 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate && go test ./internal/
    Each stream's `Write` copies into an in-memory pending buffer under a
    small mutex and returns. A flusher goroutine writes pending data to
    disk every 2s, or sooner when pending exceeds 1MB. If pending exceeds
-   8MB (disk too slow), new data is dropped and `Truncated` set. At 50MB
+   8MB (disk too slow), new data is dropped and `Truncated` set. The
+   initial snapshot written at publication (up to 10MB) doesn't count
+   toward that limit, so retained output is never dropped on the way in. At 50MB
    per stream, write `[log truncated at 50MB]\n` once and drop the rest.
    On the first disk error, record it, log one warning, and stop
    writing. `Close` stops the flusher, flushes, closes the files, and
@@ -304,7 +306,11 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate && go test ./internal/
    `anvil_exit` on every running job; otherwise the job goroutine sets
    `exited`. The job goroutine then closes the log and calls `Finalize`
    with a fresh 5s context, unless the manager is closed (Task 5), in
-   which case shutdown finalizes it.
+   which case shutdown finalizes it. The manager tracks in-flight
+   recorder calls with a `sync.WaitGroup` that is only added to while not
+   closed (check-and-add under a mutex), and `Close` waits for them
+   (bounded by its context) before returning, so no recorder call is
+   still running when the DB is released.
 
 7. [ ] `Transfer` calls `recorder.Transferred` for handed-off jobs.
 
@@ -482,15 +488,20 @@ go test -race ./internal/app/ -count=1
       `KillAll` goroutine removed. The DB is released there.
 
 3. [ ] Event persistence (Phase 3 merged only):
-   - Migration: `background_job_events` (id AUTOINCREMENT, job_id, kind,
+   - Migration: `background_job_events` (id TEXT PRIMARY KEY, job_id, kind,
      watch_gen, line, tail, state, claimed_by, claimed_at, created_at).
      Session and job info come from `background_jobs` at load time, so
      they aren't duplicated.
    - `persist.go`: the store's in-memory mutations are mirrored by
      appending to an ordered queue drained by one writer goroutine, so
-     `EventSink` methods stay memory-only. `Flush(ctx)` drains the
-     queue; `Close()` drains then stops, and later mutations are
-     dropped.
+     `EventSink` methods stay memory-only. Event IDs become TEXT
+     `<instanceID>-<local seq>` assigned in memory, so no DB-assigned ID
+     mapping is needed (the migration's `id` is `TEXT PRIMARY KEY`, not
+     AUTOINCREMENT). With persistence on, a new event is claimable only
+     after its row is committed: the writer marks it `persisted` and then
+     signals `Pending()`, and `Claim` skips unpersisted events.
+     `Flush(ctx)` drains the queue; `Close()` drains then stops, and later
+     mutations are dropped.
    - Claims are owned: `Claim` runs
      `UPDATE ... SET state='claimed', claimed_by=?, claimed_at=? WHERE id IN (...) AND state='pending' RETURNING id`
      synchronously (not via the queue), and only events it returns are
@@ -502,7 +513,8 @@ go test -race ./internal/app/ -count=1
    - Delivery is at-least-once across crashes: if Anvil dies between
      creating the notice message and recording delivery, the event is
      delivered again after restart. This is accepted (rare, and a
-     duplicate notice is harmless); say so in `job_output.md`.
+     duplicate notice is harmless) and matches the spec's Design
+     Decisions; say so in `job_output.md`.
    - The Phase 3 `OwnerFunc` falls back to `jobstore.Get` for jobs not
      in memory.
 
@@ -519,7 +531,9 @@ go test -race ./internal/app/ -count=1
    - Event persistence: events survive a store restart; a `claimed` event
      from a dead instance becomes pending, one from a live instance
      doesn't; two stores on independent DB handles claiming for the same
-     session concurrently deliver each event once; `Close` drains queued
+     session concurrently deliver each event once; an event isn't
+     claimable before its row commits and the waker is signalled after
+     it does; `Close` drains queued
      writes; blocked persistence (a fake querier that waits) never blocks
      `JobCompleted`.
 
