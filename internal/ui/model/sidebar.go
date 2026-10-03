@@ -190,25 +190,31 @@ func (m *UI) updateSidebarScrollState() {
 	contentHeight := contentRect.Dy()
 
 	// Render all items without truncation; virtual scrolling handles overflow.
+	jobsSection := m.jobsInfo(contentWidth, true, m.clock())
 	lspSection := m.lspInfo(contentWidth, len(m.lspStates), true)
 	mcpSection := m.mcpInfo(contentWidth, mcpCount(m.com.Config().MCP.Sorted(), m.mcpStates), true)
 	skillsSection := m.skillsInfo(contentWidth, len(m.skillStatusItems()), true)
 
 	// Build the scrollable content.
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
+	sections := []string{
 		title,
 		"",
 		cwd,
 		"",
 		m.modelInfo(contentWidth),
 		"",
+	}
+	if jobsSection != "" {
+		sections = append(sections, jobsSection, "")
+	}
+	sections = append(sections,
 		lspSection,
 		"",
 		mcpSection,
 		"",
 		skillsSection,
 	)
+	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
 	totalLines := strings.Count(content, "\n") + 1
 	m.sidebarContent = content

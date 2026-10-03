@@ -8,6 +8,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/recovery"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/stretchr/testify/require"
 )
@@ -21,6 +22,8 @@ func (*recoveryWorkspace) WorkingDir() string { return "/current" }
 func (*recoveryWorkspace) SetComposerState(string, bool, bool, bool) {}
 
 func (*recoveryWorkspace) AgentIsReady() bool { return false }
+
+func (*recoveryWorkspace) ListSessionJobs(string) []shell.JobInfo { return nil }
 
 func (*recoveryWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
 

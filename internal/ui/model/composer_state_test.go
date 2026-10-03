@@ -9,6 +9,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
@@ -42,6 +43,8 @@ func (*composerWorkspace) AgentIsBusy() bool                     { return false 
 func (*composerWorkspace) AgentIsSessionBusy(string) bool        { return false }
 func (*composerWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
 func (*composerWorkspace) Config() *config.Config                { return &config.Config{Options: &config.Options{}} }
+
+func (*composerWorkspace) ListSessionJobs(string) []shell.JobInfo { return nil }
 
 func (*composerWorkspace) MoveLeaf(context.Context, string, string) error { return nil }
 

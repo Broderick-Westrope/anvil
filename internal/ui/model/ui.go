@@ -281,6 +281,10 @@ type UI struct {
 	// currently scheduled so we avoid scheduling duplicate ticks.
 	elapsedTickRunning bool
 
+	// now returns the current time for time-based sidebar displays. Nil
+	// means time.Now; tests inject a fixed clock.
+	now func() time.Time
+
 	// lsp
 	lspStates map[string]app.LSPClientInfo
 
@@ -642,7 +646,6 @@ func (m *UI) isDrilledIn() bool {
 // clearDrillStack pops all drill-in entries and restores root state.
 func (m *UI) clearDrillStack() {
 	m.drillStack = nil
-	m.elapsedTickRunning = false
 }
 
 // findMessageItem searches the root chat and all drill-stack chats for
@@ -760,6 +763,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.historyReset()
 		cmds = append(cmds, m.loadPromptHistory())
 		m.updateLayoutAndSize()
+		if cmd := m.startElapsedTickForJobs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
@@ -943,9 +949,15 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case pubsub.CreatedEvent:
 			cmds = append(cmds, m.appendSessionMessage(msg.Payload))
 			m.applyLazyMCPMessageParts(msg.Payload)
+			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case pubsub.UpdatedEvent:
 			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
 			m.applyLazyMCPMessageParts(msg.Payload)
+			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case pubsub.DeletedEvent:
 			m.chat.RemoveMessage(msg.Payload.ID)
 		}
@@ -1262,7 +1274,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning())
+		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
