@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
@@ -17,12 +18,23 @@ const jobInventoryLabelLength = 80
 // handOffSubagentJobs transfers a finished subagent's deliberate jobs
 // to its parent and kills its incidental ones. Kills run concurrently
 // outside the manager lock because each may take the full grace
-// period. It returns an inventory for the parent, or "" if the
-// subagent had no jobs.
-func handOffSubagentJobs(mgr *shell.BackgroundShellManager, childID, parentID string) string {
+// period. Killed jobs' events are dropped and handed jobs' events
+// follow the new owner; store may be nil. It returns an inventory for
+// the parent, or "" if the subagent had no jobs.
+func handOffSubagentJobs(mgr *shell.BackgroundShellManager, store *jobevents.Store, childID, parentID string) string {
 	handed, toKill := mgr.Transfer(childID, parentID)
 	if len(handed) == 0 && len(toKill) == 0 {
 		return ""
+	}
+	if store != nil {
+		// Drop before killing so the kills' completion events are
+		// discarded on creation.
+		store.DropJobs(toKill)
+		handedIDs := make([]string, 0, len(handed))
+		for _, job := range handed {
+			handedIDs = append(handedIDs, job.ID)
+		}
+		store.Reassign(handedIDs, parentID)
 	}
 
 	outcomes := make([]string, len(toKill))

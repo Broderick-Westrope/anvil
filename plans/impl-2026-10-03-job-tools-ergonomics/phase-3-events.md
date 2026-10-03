@@ -29,23 +29,23 @@ in memory here; Phase 4 persists them. Out: persistence, sidebar UI.
 
 **Success Criteria:**
 
-- [ ] A job completing mid-run yields one notification at the next step,
+- [x] A job completing mid-run yields one notification at the next step,
       or at the first step of the next run if the run ended; none if a
       persisted `job_output` result reporting completion, or a `job_kill`
       result confirming exit, came first, including when that result was
       persisted before the completion event was created; a canceled
       `job_output` and an abandoned kill do not suppress it.
-- [ ] An injected notification is in the model input for every later step
+- [x] An injected notification is in the model input for every later step
       of the same run (three consecutive steps).
-- [ ] A failure creating the notification message leaves the events
+- [x] A failure creating the notification message leaves the events
       pending; six simultaneous events deliver five, then one at the next
       step.
-- [ ] A user cancel does not drop pending events.
+- [x] A user cancel does not drop pending events.
 - [ ] `job_output` with `wait=false, pattern=X` notifies when X appears,
       including when an unread `X` line was already in the buffer when the
       call was made; replacing the pattern never delivers a match from the
       old pattern.
-- [ ] A job handed from a subagent to its parent notifies the parent, even
+- [x] A job handed from a subagent to its parent notifies the parent, even
       if it completes during the handoff; killed auto jobs notify no one.
 - [ ] Notifications render in the TUI as compact notices, not user
       bubbles, and are sent to the model as user-role text.
@@ -172,7 +172,7 @@ go test -race ./internal/shell/ -count=1
 
 **Steps:**
 
-1. [ ] Create the store. It implements `shell.EventSink`. Events are keyed
+1. [x] Create the store. It implements `shell.EventSink`. Events are keyed
    by job; the owning session is resolved when events are claimed, so
    ownership transfers (subagent handoff) need no event bookkeeping.
 
@@ -268,7 +268,7 @@ go test -race ./internal/shell/ -count=1
    - Delivered and superseded events, and `observed`/`dropped` entries
      for jobs no longer known to `owner`, are pruned after 10 minutes.
 
-2. [ ] Create `format.go` (uses `shell.FormatRuntime` and `shell.JobLabel`;
+2. [x] Create `format.go` (uses `shell.FormatRuntime` and `shell.JobLabel`;
    must not import `tools`):
 
    ```go
@@ -289,20 +289,20 @@ go test -race ./internal/shell/ -count=1
 
    Indent tail lines by two spaces; at most 10 per event.
 
-3. [ ] Message type. Add `MessageTypeJobEvent MessageType = "job_event"` in
+3. [x] Message type. Add `MessageTypeJobEvent MessageType = "job_event"` in
    `internal/message/content.go`. In `tree.go`'s `FilterMetadataMessage`,
    pass `job_event` messages through unchanged (they're user-role text
    the model must see). `CreateMessageParams` already has `MessageType`;
    check `message.go:177`'s defaulting doesn't override it for `User`.
 
-4. [ ] Wiring. Add `JobEvents *jobevents.Store` to `SessionAgentOptions`
+4. [x] Wiring. Add `JobEvents *jobevents.Store` to `SessionAgentOptions`
    (nil disables notifications; existing tests are unchanged) and to the
    coordinator so it passes the store to every session agent it builds.
    In `app.New`, create the store with
    `jobevents.NewStore(func(id string) (string, bool) { bs, ok := mgr.Get(id); if !ok { return "", false }; return bs.Info().SessionID, true })`
    and call `mgr.SetEventSink(store)`.
 
-5. [ ] Delivery helper, used by `PrepareStep` here and by wake runs in
+5. [x] Delivery helper, used by `PrepareStep` here and by wake runs in
    Task 4:
 
    ```go
@@ -319,7 +319,7 @@ go test -race ./internal/shell/ -count=1
    `MarkDelivered` only after `Create` returns successfully; call
    `Release` on error.
 
-6. [ ] In `PrepareStep`, right after the queued prompts loop and before
+6. [x] In `PrepareStep`, right after the queued prompts loop and before
    `workaroundProviderMediaLimitations`:
 
    ```go
@@ -340,7 +340,7 @@ go test -race ./internal/shell/ -count=1
    Subagent sessions are included: their explicit jobs notify them while
    they run.
 
-7. [ ] Observation in `OnToolResult`, after the tool message is created
+7. [x] Observation in `OnToolResult`, after the tool message is created
    successfully (inside the existing `sessionLock` section):
 
    ```go
@@ -361,17 +361,17 @@ go test -race ./internal/shell/ -count=1
 
    Canceled or errored tool calls never reach this branch.
 
-8. [ ] Handoff. In `handOffSubagentJobs`, call `store.DropJobs(toKill)`
+8. [x] Handoff. In `handOffSubagentJobs`, call `store.DropJobs(toKill)`
    *before* killing, so their completion events are discarded on
    creation. For handed-off jobs, call `store.Reassign(handedIDs, parentID)`
    so the snapshot fallback is correct even after the job is evicted;
    live jobs are resolved through the owner func anyway. Pass the store
    in (nil-safe).
 
-9. [ ] Cancel: confirm `Cancel` does not touch the store, and add a test
+9. [x] Cancel: confirm `Cancel` does not touch the store, and add a test
    proving pending events survive `Cancel`.
 
-10. [ ] Tests:
+10. [x] Tests:
     - `store_test.go` (fake `OwnerFunc` backed by a map): claim, max,
       remaining; release returns to pending without signalling;
       `Observe` before `JobCompleted` creates the event superseded;
