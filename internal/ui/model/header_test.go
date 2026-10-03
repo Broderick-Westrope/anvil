@@ -52,7 +52,7 @@ func TestCompactHeader_SessionTitle(t *testing.T) {
 	t.Run("placed right after logo", func(t *testing.T) {
 		t.Parallel()
 		got := renderCompactHeader(t, "Add session title to compact header", 120)
-		require.True(t, strings.HasPrefix(got, " ANVIL Add session title to compact header "), got)
+		require.True(t, strings.HasPrefix(got, " ANVIL • Add session title to compact header "), got)
 		require.True(t, strings.HasSuffix(got, "ctrl+d open"), got)
 	})
 
@@ -62,6 +62,7 @@ func TestCompactHeader_SessionTitle(t *testing.T) {
 			got := renderCompactHeader(t, title, 120)
 			require.NotContains(t, got, "Session", "title %q", title)
 			require.True(t, strings.HasPrefix(got, " ANVIL "), got)
+			require.False(t, strings.HasPrefix(got, " ANVIL •"), got)
 		}
 	})
 
@@ -76,13 +77,13 @@ func TestCompactHeader_SessionTitle(t *testing.T) {
 	t.Run("title keeps minimum width when narrow", func(t *testing.T) {
 		t.Parallel()
 		got := renderCompactHeader(t, "Add session title to compact header", 40)
-		require.Contains(t, got, " ANVIL Add session…")
+		require.Contains(t, got, " ANVIL • Add session…")
 		require.LessOrEqual(t, ansi.StringWidth(got), 40)
 	})
 
 	t.Run("newlines collapsed", func(t *testing.T) {
 		t.Parallel()
 		got := renderCompactHeader(t, "Fix\nthe   bug", 120)
-		require.Contains(t, got, " ANVIL Fix the bug ")
+		require.Contains(t, got, " ANVIL • Fix the bug ")
 	})
 }

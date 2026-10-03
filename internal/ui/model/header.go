@@ -101,19 +101,24 @@ func (h *header) drawHeader(
 	)
 
 	if title := headerSessionTitle(session); title != "" {
-		titleBudget := availDetailWidth - lipgloss.Width(details) - 1
+		// The logo already ends in a space, so the title is framed by a
+		// "• " prefix and a trailing space.
+		const titleSeparator = "• "
+		titleOverhead := ansi.StringWidth(titleSeparator) + 1
+		titleBudget := availDetailWidth - lipgloss.Width(details) - titleOverhead
 		if titleBudget < minHeaderTitleWidth {
-			titleBudget = min(minHeaderTitleWidth, ansi.StringWidth(title), max(0, availDetailWidth-1))
+			titleBudget = min(minHeaderTitleWidth, ansi.StringWidth(title), max(0, availDetailWidth-titleOverhead))
 			details = renderHeaderDetails(
 				h.com,
 				session,
 				lspErrorCount,
 				detailsOpen,
-				availDetailWidth-titleBudget-1,
+				availDetailWidth-titleBudget-titleOverhead,
 			)
 		}
 		if titleBudget > 0 {
 			title = ansi.Truncate(title, titleBudget, "…")
+			b.WriteString(t.Header.Separator.Render(titleSeparator))
 			b.WriteString(t.Header.SessionTitle.Render(title))
 			b.WriteString(" ")
 		}
