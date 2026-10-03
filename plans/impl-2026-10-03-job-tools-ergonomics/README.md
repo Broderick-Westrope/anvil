@@ -67,3 +67,26 @@ and the TUI.
   `t.TempDir()`. Log messages start with a capital letter. Comments on
   their own lines are full sentences ending in a period.
 - Every phase ends with `go test ./... -count=1` passing.
+
+<!--
+Review notes (devil's advocate, two rounds):
+- Round 1 (15 findings, 3 critical): observation racing event creation;
+  non-atomic persisted delivery and claim stealing; shutdown not fencing
+  late writes; dispatch gate missing queue drain; watch matcher starting
+  after the read; handoff misrouting events; Publish re-keying racing
+  Kill/KillAll; allocation compensation; false merge-order independence;
+  jobevents/tools import cycle; pooled DB handle in concurrency test;
+  impossible abandonment test; blocking sink callbacks; missing fake and
+  wiring inventories; flaky timing tests.
+- Fixes: per-job observation records; claim-time ownership with snapshot
+  reassignment; single delivery helper shared by PrepareStep and wake
+  runs; owned claims with at-least-once crash semantics (spec updated);
+  BeginShutdown before CancelAll, recorder in-flight tracking, Close
+  fencing; key aliases after re-keying; JobToolOptions constructors;
+  formatters moved to shell; unpooled openDB handles; channel-controlled
+  test shell; memory-only sinks with an ordered persistence writer and
+  commit-before-claim; stacked PRs for Phases 3 and 4.
+- Round 2 verification: remaining partials and two new issues (claim
+  before row commit; publication snapshot exceeding the slow-disk limit)
+  fixed in the final commit.
+-->
