@@ -42,6 +42,56 @@ func HighlightContent(content string, area image.Rectangle, startLine, startCol,
 	return sb.String()
 }
 
+// SelectionText returns the full plain text of content as drawn into area,
+// along with the byte offsets of the selected region within that text. The
+// selection runs from (startLine, startCol) inclusive to (endLine, endCol)
+// exclusive; -1 for endLine or endCol means the end of the content. Offsets
+// are -1 when there is no selection.
+func SelectionText(content string, area image.Rectangle, startLine, startCol, endLine, endCol int) (text string, start, end int) {
+	if startLine < 0 || startCol < 0 {
+		return "", -1, -1
+	}
+	content = stringext.NormalizeSpace(content)
+
+	width, height := area.Dx(), area.Dy()
+	buf := uv.NewScreenBuffer(width, height)
+	uv.NewStyledString(content).Draw(&buf, area)
+
+	if endLine < 0 {
+		endLine = height - 1
+	}
+	if endCol < 0 {
+		endCol = width
+	}
+
+	var sb strings.Builder
+	start, end = -1, -1
+	for y := 0; y < buf.Height(); y++ {
+		if y > 0 {
+			sb.WriteByte('\n')
+		}
+		line := buf.Line(y)
+		for x := range len(line) {
+			if start < 0 && (y > startLine || y == startLine && x >= startCol) {
+				start = sb.Len()
+			}
+			if end < 0 && (y > endLine || y == endLine && x >= endCol) {
+				end = sb.Len()
+			}
+			if cell := line.At(x); cell != nil {
+				sb.WriteString(cell.Content)
+			}
+		}
+	}
+	if start < 0 {
+		start = sb.Len()
+	}
+	if end < 0 {
+		end = sb.Len()
+	}
+	return sb.String(), start, end
+}
+
 // Highlight highlights a region of text within the given content and region.
 func Highlight(content string, area image.Rectangle, startLine, startCol, endLine, endCol int, highlighter Highlighter) string {
 	buf := HighlightBuffer(content, area, startLine, startCol, endLine, endCol, highlighter)
