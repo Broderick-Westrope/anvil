@@ -646,3 +646,121 @@ func TestAssessorShadowSkipsAllowCache(t *testing.T) {
 		})
 	}
 }
+
+func newYoloAssessorHarness(t *testing.T, fake *fakeAssessor, mode AssessorMode, level config.YoloLevel, rules []config.PermissionRule, extra ...Option) *assessorHarness {
+	t.Helper()
+	h := newAssessorHarness(t, fake, mode, rules, nil, extra...)
+	h.svc.SetYoloLevel(level)
+	return h
+}
+
+func TestYoloWithAssessor(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		fake    *fakeAssessor
+		mode    AssessorMode
+		granted bool
+		source  DecisionSource
+		calls   int32
+	}{
+		{name: "enforce allow stands", fake: &fakeAssessor{outcome: AssessAllow}, mode: AssessorEnforce, granted: true, source: DecisionSourceAssessor, calls: 1},
+		{name: "enforce deny blocks", fake: &fakeAssessor{outcome: AssessDeny, reason: "destructive"}, mode: AssessorEnforce, granted: false, source: DecisionSourceAssessor, calls: 1},
+		{name: "enforce escalate is approved by yolo", fake: &fakeAssessor{outcome: AssessEscalate}, mode: AssessorEnforce, granted: true, source: DecisionSourceYolo, calls: 1},
+		{name: "assessor error is approved by yolo", fake: &fakeAssessor{outcome: AssessAllow, err: errors.New("boom")}, mode: AssessorEnforce, granted: true, source: DecisionSourceYolo, calls: 1},
+		{name: "shadow deny never blocks", fake: &fakeAssessor{outcome: AssessDeny}, mode: AssessorShadow, granted: true, source: DecisionSourceYolo, calls: 1},
+		{name: "assessor off keeps plain yolo", fake: &fakeAssessor{outcome: AssessDeny}, mode: AssessorOff, granted: true, source: DecisionSourceYolo, calls: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newYoloAssessorHarness(t, tt.fake, tt.mode, config.YoloStandard, nil)
+			r, err := h.svc.Request(testCtx(t), h.req("call", "rm -rf build"))
+			require.NoError(t, err)
+			require.Equal(t, tt.granted, r.Granted)
+			require.Empty(t, h.events, "yolo must never prompt")
+			require.Equal(t, tt.calls, tt.fake.calls.Load())
+			decisions := h.rec.snapshot()
+			require.Len(t, decisions, 1)
+			require.Equal(t, tt.source, decisions[0].DecidedBy)
+			if tt.calls > 0 {
+				require.Equal(t, string(tt.mode), h.assessment(t, decisions[0]).Mode)
+			}
+			if !tt.granted {
+				require.Contains(t, r.Reason, "permission assessor")
+			}
+		})
+	}
+}
+
+func TestYoloWithAssessorRespectsRules(t *testing.T) {
+	t.Parallel()
+	rules := []config.PermissionRule{{ToolPattern: "bash", SubRules: []config.PermissionSubRule{
+		{InputPattern: "rm *", Action: config.PermissionDeny},
+		{InputPattern: "go test *", Action: config.PermissionAllow},
+	}}}
+	fake := &fakeAssessor{outcome: AssessAllow}
+	h := newYoloAssessorHarness(t, fake, AssessorEnforce, config.YoloStandard, rules)
+
+	r, err := h.svc.Request(testCtx(t), h.req("deny", "rm -rf /"))
+	require.NoError(t, err)
+	require.False(t, r.Granted, "explicit deny rules still win")
+
+	r, err = h.svc.Request(testCtx(t), h.req("allow", "go test ./..."))
+	require.NoError(t, err)
+	require.True(t, r.Granted)
+	require.Zero(t, fake.calls.Load(), "explicit rules never reach the assessor")
+}
+
+func TestYoloWithAssessorExplicitAskToHuman(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAssessor{outcome: AssessDeny}
+	rules := []config.PermissionRule{{ToolPattern: "bash", Action: config.PermissionAsk}}
+	h := newYoloAssessorHarness(t, nil, "", config.YoloStandard, rules, WithAssessor(AssessorOptions{
+		Assessor:           fake,
+		Mode:               AssessorEnforce,
+		ExplicitAskToHuman: true,
+	}))
+	r, err := h.svc.Request(testCtx(t), h.req("call", "ls"))
+	require.NoError(t, err)
+	require.True(t, r.Granted, "yolo approves asks the assessor never sees")
+	require.Zero(t, fake.calls.Load())
+	require.Empty(t, h.events)
+}
+
+func TestYoloFullBypassesAssessor(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAssessor{outcome: AssessDeny}
+	h := newYoloAssessorHarness(t, fake, AssessorEnforce, config.YoloFull, nil)
+	r, err := h.svc.Request(testCtx(t), h.req("call", "rm -rf build"))
+	require.NoError(t, err)
+	require.True(t, r.Granted)
+	require.Zero(t, fake.calls.Load())
+}
+
+func TestNoYoloEscalateStillPrompts(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAssessor{outcome: AssessEscalate}
+	h := newYoloAssessorHarness(t, fake, AssessorEnforce, config.YoloOff, nil)
+	done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
+	perm := waitPrompt(t, h.events)
+	h.svc.Grant(perm)
+	r := waitResult(t, done)
+	require.NoError(t, r.err)
+	require.True(t, r.result.Granted)
+	require.Equal(t, DecisionSourceHuman, h.rec.snapshot()[0].DecidedBy)
+}
+
+func TestYoloWithAssessorTurnedOffMidFlight(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAssessor{outcome: AssessDeny, entered: make(chan AssessInput, 1), release: make(chan struct{})}
+	h := newYoloAssessorHarness(t, fake, AssessorEnforce, config.YoloStandard, nil)
+	done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf build"))
+	waitEntered(t, fake)
+	h.svc.assessorMode.Store(AssessorOff)
+	close(fake.release)
+	r := waitResult(t, done)
+	require.NoError(t, r.err)
+	require.True(t, r.result.Granted, "a deny from a now-disabled assessor must not apply")
+	require.Empty(t, h.events, "yolo must never prompt")
+	require.Equal(t, DecisionSourceYolo, h.rec.snapshot()[0].DecidedBy)
+}

@@ -9,6 +9,8 @@ const (
 	// YoloOff means all permissions are enforced normally.
 	YoloOff YoloLevel = iota
 	// YoloStandard promotes ask → allow, but deny is still respected.
+	// With an enforcing permission assessor, the assessor decides first
+	// and yolo only approves what it would escalate to the human.
 	YoloStandard
 	// YoloFull bypasses all permissions entirely.
 	YoloFull

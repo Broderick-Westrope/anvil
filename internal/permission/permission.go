@@ -301,7 +301,8 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		}
 
 		// Commit boundary 1: rules may have changed during the call.
-		if p2 := s.evaluatePolicy(opts); p2.resolved {
+		p2 := s.evaluatePolicy(opts)
+		if p2.resolved {
 			return s.finishPolicy(opts, p2, details), nil
 		}
 
@@ -314,6 +315,11 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 				reason := "blocked by permission assessor (" + a.Reason + "). Do not retry this or work around it; tell the user what you were trying to do."
 				return s.finish(opts, DecisionSourceAssessor, VerdictDeny, "", details, reason), nil
 			}
+		}
+		// Yolo approves whatever the assessor didn't decide, including
+		// skips and errors, exactly as it would without an assessor.
+		if p2.yolo {
+			return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
 		}
 		if mode != AssessorOff {
 			perm.AssessorNote = assessorNote(a, details, failed, mode)
@@ -335,6 +341,10 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// while this request waited for the prompt slot.
 	if p3 := s.evaluatePolicy(opts); p3.resolved {
 		return s.finishPolicy(opts, p3, details), nil
+	} else if p3.yolo {
+		// The assessor was switched on after this request skipped it;
+		// yolo never prompts.
+		return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
 	}
 
 	s.activeRequestMu.Lock()
@@ -375,6 +385,9 @@ type policyResult struct {
 	matchedRule string
 	reason      string
 	isDefault   bool // Unresolved because no rule matched.
+	// yolo marks an ask that yolo-standard would approve, deferred so the
+	// assessor decides first. Yolo approves it if the assessor escalates.
+	yolo bool
 }
 
 // evaluatePolicy applies session auto-approval, config and session rules,
@@ -415,15 +428,23 @@ func (s *permissionService) evaluatePolicy(opts CreatePermissionRequest) policyR
 		"is_default", result.IsDefault,
 	)
 
-	// Apply yolo level: standard promotes ask → allow.
+	// Apply yolo level: standard promotes ask → allow. When the assessor
+	// would see this request, the promotion is deferred so the assessor
+	// gets the first say: its allow and deny stand, and yolo only
+	// approves what it would otherwise escalate to the human.
 	action := result.Action
 	source := DecisionSourceRule
 	if result.FromSession {
 		source = DecisionSourceSessionRule
 	}
+	yoloDeferred := false
 	if config.YoloLevel(s.yoloLevel.Load()) == config.YoloStandard && action == config.PermissionAsk {
-		action = config.PermissionAllow
-		source = DecisionSourceYolo
+		if s.shouldAssess(policyResult{isDefault: result.IsDefault}) {
+			yoloDeferred = true
+		} else {
+			action = config.PermissionAllow
+			source = DecisionSourceYolo
+		}
 	}
 
 	switch action {
@@ -448,7 +469,7 @@ func (s *permissionService) evaluatePolicy(opts CreatePermissionRequest) policyR
 		return policyResult{resolved: true, source: DecisionSourceSessionGrant, verdict: VerdictAllow}
 	}
 
-	return policyResult{isDefault: result.IsDefault}
+	return policyResult{isDefault: result.IsDefault, yolo: yoloDeferred}
 }
 
 func (s *permissionService) finishPolicy(opts CreatePermissionRequest, p policyResult, assessment json.RawMessage) RequestResult {
