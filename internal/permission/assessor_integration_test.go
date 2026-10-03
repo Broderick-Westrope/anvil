@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -590,4 +591,58 @@ func TestAssessorReceivesDiff(t *testing.T) {
 	_, err := h.svc.Request(testCtx(t), opts)
 	require.NoError(t, err)
 	require.Equal(t, "-gone\n", waitEntered(t, fake).Diff)
+}
+
+func TestAssessorAllowCacheRechecksPolicy(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAssessor{outcome: AssessAllow}
+	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	opts := h.req("a", "make deploy")
+
+	r, err := h.svc.Request(testCtx(t), opts)
+	require.NoError(t, err)
+	require.True(t, r.Granted)
+
+	// The deny lands after the initial policy check but before the cache
+	// is honoured.
+	h.svc.beforeAllowCache = func(CreatePermissionRequest) {
+		require.NoError(t, h.svc.GrantSession("session", "bash", "make deploy", config.PermissionDeny))
+	}
+	opts.ToolCallID = "b"
+	r, err = h.svc.Request(testCtx(t), opts)
+	require.NoError(t, err)
+	require.False(t, r.Granted)
+	require.Equal(t, `denied by rule "bash:make deploy"`, r.Reason)
+	require.Equal(t, int32(1), fake.calls.Load())
+	d := h.rec.snapshot()[1]
+	require.Equal(t, DecisionSourceSessionRule, d.DecidedBy)
+	require.Equal(t, VerdictDeny, d.Verdict)
+}
+
+func TestAssessorShadowSkipsAllowCache(t *testing.T) {
+	t.Parallel()
+	for _, prefilled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("prefilled=%v", prefilled), func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeAssessor{outcome: AssessAllow}
+			h := newAssessorHarness(t, fake, AssessorShadow, nil, nil)
+			opts := h.req("a", "go test ./...")
+			if prefilled {
+				h.svc.allowCache.Set(allowCacheKey(opts), struct{}{})
+			}
+
+			for _, id := range []string{"a", "b"} {
+				opts.ToolCallID = id
+				done := requestAsync(testCtx(t), h.svc, opts)
+				perm := waitPrompt(t, h.events)
+				require.Equal(t, "assessor (shadow): allow · destructive=0.05 severity=0.3", perm.AssessorNote)
+				h.svc.Grant(perm)
+				require.NoError(t, waitResult(t, done).err)
+			}
+			require.Equal(t, int32(2), fake.calls.Load())
+			if !prefilled {
+				require.Zero(t, h.svc.allowCache.Len())
+			}
+		})
+	}
 }

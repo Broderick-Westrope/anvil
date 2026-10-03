@@ -161,6 +161,9 @@ type permissionService struct {
 	// beforePromptLock, when set, runs just before requestMu is acquired.
 	// Tests use it as a barrier.
 	beforePromptLock func(CreatePermissionRequest)
+	// beforeAllowCache, when set, runs just before the allow cache is
+	// consulted. Tests use it to change policy at that point.
+	beforeAllowCache func(CreatePermissionRequest)
 
 	// requestMu makes sure we only process one request at a time.
 	requestMu       sync.Mutex
@@ -276,7 +279,15 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	if s.shouldAssess(p) {
 		key := allowCacheKey(opts)
 		if s.currentAssessorMode() == AssessorEnforce {
+			if s.beforeAllowCache != nil {
+				s.beforeAllowCache(opts)
+			}
 			if _, ok := s.allowCache.Get(key); ok {
+				// A rule added since the cached allow wins over it.
+				if p2 := s.evaluatePolicy(opts); p2.resolved {
+					return s.finishPolicy(opts, p2, nil), nil
+				}
+				slog.Debug("Permission assessor allow cache hit", "tool", opts.ToolName)
 				return s.finish(opts, DecisionSourceAssessor, VerdictAllow, "", cachedAllowRecord(), ""), nil
 			}
 		}
