@@ -117,6 +117,7 @@ func (a *Assessor) Assess(ctx context.Context, in permission.AssessInput) (permi
 	if v, ok := value(resp.Answers[QSeverity].Score); ok {
 		rec.Severity = &v
 	}
+	rec.Triggers = Triggers(resp.Answers, a.Thresholds)
 	rec.InputTokens = resp.Usage.InputTokens
 	rec.OutputTokens = resp.Usage.OutputTokens
 	return permission.Assessment{Outcome: outcome, Reason: reason, Details: marshal(rec)}, nil

@@ -97,3 +97,32 @@ func value(p *float64) (float64, bool) {
 	}
 	return *p, true
 }
+
+// Triggers reports which answers crossed a routing threshold and the
+// effect each had, so a reviewer can see why a request was routed as it
+// was. It mirrors the comparisons in Route.
+func Triggers(answers map[string]Answer, th Thresholds) map[string]string {
+	out := map[string]string{}
+	for _, q := range HazardQuestions {
+		v, ok := value(answers[q].Noul)
+		switch {
+		case !ok:
+		case v >= th.DenyAt:
+			out[q] = permission.TriggerDeny
+		case v >= th.EscalateAt:
+			out[q] = permission.TriggerEscalate
+		}
+	}
+	if v, ok := value(answers[QSeverity].Score); ok && v >= th.SeverityEscalate {
+		out[QSeverity] = permission.TriggerEscalate
+	}
+	if a, ok := answers[QUserRequested]; ok {
+		if v, ok := value(a.Noul); ok && v >= th.UserRequestedAt {
+			out[QUserRequested] = permission.TriggerMitigate
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}

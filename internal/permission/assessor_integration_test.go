@@ -495,8 +495,59 @@ func TestAssessorNoteSkipped(t *testing.T) {
 	t.Parallel()
 	details, err := json.Marshal(AssessmentRecord{Outcome: "skipped", SkipReason: "protected path"})
 	require.NoError(t, err)
-	require.Equal(t, "assessor: skipped · protected path", assessorNote(Assessment{}, details, false, AssessorEnforce))
-	require.Equal(t, "assessor (shadow): escalate", assessorNote(Assessment{}, nil, false, AssessorShadow))
+	require.Equal(t, "assessor: skipped · protected path", assessorSummary(Assessment{}, details, false, AssessorEnforce).Note())
+	require.Equal(t, "assessor (shadow): escalate", assessorSummary(Assessment{}, nil, false, AssessorShadow).Note())
+	require.Empty(t, (*AssessorSummary)(nil).Note())
+}
+
+func TestAssessorSummaryOrdersDrivingAxesFirst(t *testing.T) {
+	t.Parallel()
+	severity := 2.4
+	details, err := json.Marshal(AssessmentRecord{
+		Outcome: "escalate",
+		Nouls: map[string]float64{
+			"credentials":     0.02,
+			"destructive":     0.62,
+			"exfiltration":    0.10,
+			"remote_exec":     0.91,
+			UserRequestedAxis: 0.88,
+		},
+		Severity: &severity,
+		Triggers: map[string]string{
+			"destructive":     TriggerEscalate,
+			"remote_exec":     TriggerDeny,
+			SeverityAxis:      TriggerEscalate,
+			UserRequestedAxis: TriggerMitigate,
+		},
+	})
+	require.NoError(t, err)
+
+	sum := assessorSummary(Assessment{Outcome: AssessEscalate}, details, false, AssessorEnforce)
+	require.Equal(t, "escalate", sum.Outcome)
+	require.False(t, sum.Shadow)
+	var names, triggers []string
+	for _, sc := range sum.Scores {
+		names = append(names, sc.Name)
+		triggers = append(triggers, sc.Trigger)
+	}
+	require.Equal(t, []string{"remote_exec", "destructive", "exfiltration", "credentials", SeverityAxis, UserRequestedAxis}, names)
+	require.Equal(t, []string{TriggerDeny, TriggerEscalate, "", "", TriggerEscalate, TriggerMitigate}, triggers)
+	require.Equal(t, float64(3), sum.Scores[4].Max)
+	require.Equal(t, float64(1), sum.Scores[0].Max)
+	require.Equal(t, "assessor: escalate · remote_exec=0.91 destructive=0.62 exfiltration=0.1 credentials=0.02 severity=2.4 user_requested=0.88", sum.Note())
+}
+
+func TestEscalatedPromptCarriesSummary(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAssessor{outcome: AssessEscalate}
+	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
+	perm := waitPrompt(t, h.events)
+	require.NotNil(t, perm.Assessor)
+	require.Equal(t, "escalate", perm.Assessor.Outcome)
+	require.Equal(t, perm.Assessor.Note(), perm.AssessorNote)
+	h.svc.Deny(perm, "no")
+	require.NoError(t, waitResult(t, done).err)
 }
 
 func TestWithAssessmentMode(t *testing.T) {

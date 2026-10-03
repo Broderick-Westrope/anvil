@@ -100,6 +100,9 @@ type PermissionRequest struct {
 	// AssessorNote is a one-line summary of the assessor's verdict, shown
 	// alongside the prompt.
 	AssessorNote string `json:"assessor_note,omitempty"`
+	// Assessor is the structured verdict behind AssessorNote, so the UI
+	// can show every axis and highlight the ones that drove the outcome.
+	Assessor *AssessorSummary `json:"assessor,omitempty"`
 }
 
 type Service interface {
@@ -330,7 +333,8 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 			return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
 		}
 		if mode != AssessorOff {
-			perm.AssessorNote = assessorNote(a, details, failed, mode)
+			perm.Assessor = assessorSummary(a, details, failed, mode)
+			perm.AssessorNote = perm.Assessor.Note()
 		}
 	}
 

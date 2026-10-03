@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -101,6 +102,24 @@ func TestAssessorDetailsJSONShape(t *testing.T) {
 	require.NoError(t, json.Unmarshal(got.Details, &raw))
 	require.EqualValues(t, 1, raw["schema_version"])
 	require.Equal(t, BatteryVersion, raw["battery_version"])
+}
+
+func TestAssessorRecordsTriggers(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, batteryBody(0.5, 1))
+	}))
+	defer srv.Close()
+
+	got, err := newTestAssessor(srv.URL).Assess(t.Context(), eligible)
+	require.NoError(t, err)
+	rec := decodeRecord(t, got)
+	require.NotEmpty(t, rec.Triggers)
+	for axis, effect := range rec.Triggers {
+		require.Contains(t, append(slices.Clone(HazardQuestions), QSeverity), axis)
+		require.Equal(t, permission.TriggerEscalate, effect)
+	}
 }
 
 func TestAssessorServerErrorIsError(t *testing.T) {

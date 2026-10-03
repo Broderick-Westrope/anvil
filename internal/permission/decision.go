@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -79,11 +78,26 @@ type AssessmentRecord struct {
 	Nouls          map[string]float64 `json:"nouls,omitempty"`
 	Severity       *float64           `json:"severity,omitempty"`
 	Thresholds     map[string]float64 `json:"thresholds,omitempty"`
-	InputTokens    int                `json:"input_tokens"`
-	OutputTokens   int                `json:"output_tokens"`
-	LatencyMS      int64              `json:"latency_ms"`
-	Error          string             `json:"error,omitempty"`
+	// Triggers maps each answer that crossed a routing threshold to the
+	// effect it had: TriggerDeny, TriggerEscalate, or TriggerMitigate.
+	Triggers     map[string]string `json:"triggers,omitempty"`
+	InputTokens  int               `json:"input_tokens"`
+	OutputTokens int               `json:"output_tokens"`
+	LatencyMS    int64             `json:"latency_ms"`
+	Error        string            `json:"error,omitempty"`
 }
+
+// Trigger effects recorded in AssessmentRecord.Triggers.
+const (
+	// TriggerDeny marks a hazard at or above the deny threshold.
+	TriggerDeny = "deny"
+	// TriggerEscalate marks a hazard or severity at or above the
+	// escalation threshold.
+	TriggerEscalate = "escalate"
+	// TriggerMitigate marks a user-request signal strong enough to turn
+	// a deny into an escalation.
+	TriggerMitigate = "mitigate"
+)
 
 // AssessOutcome is the assessor's routing decision for a request.
 type AssessOutcome int
@@ -357,33 +371,108 @@ func allowCacheKey(opts CreatePermissionRequest) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// assessorNote is the one-line summary shown alongside the prompt.
-func assessorNote(a Assessment, details json.RawMessage, failed bool, mode AssessorMode) string {
-	prefix := "assessor"
-	if mode == AssessorShadow {
-		prefix = "assessor (shadow)"
-	}
+// UserRequestedAxis is the noul measuring whether the user asked for the
+// action. It lowers risk rather than raising it, so it is shown last.
+// It must match assessor.QUserRequested.
+const UserRequestedAxis = "user_requested"
+
+// SeverityAxis is the score rating how bad a mistake would be.
+// It must match assessor.QSeverity.
+const SeverityAxis = "severity"
+
+// AssessorSummary is the assessor's verdict on a prompted request, in a
+// form the UI can lay out and highlight.
+type AssessorSummary struct {
+	Shadow  bool            `json:"shadow,omitempty"`
+	Outcome string          `json:"outcome"`          // allow, escalate, deny, skipped, or error.
+	Detail  string          `json:"detail,omitempty"` // Skip reason, when skipped.
+	Scores  []AssessorScore `json:"scores,omitempty"`
+}
+
+// AssessorScore is one answer from the assessor.
+type AssessorScore struct {
+	Name    string  `json:"name"`
+	Value   float64 `json:"value"`
+	Max     float64 `json:"max"`               // 1 for probabilities, 3 for severity.
+	Trigger string  `json:"trigger,omitempty"` // A Trigger* effect, if it crossed a threshold.
+}
+
+// maxSeverity is the top of the severity score's scale.
+const maxSeverity = 3
+
+// assessorSummary builds the display summary for a prompted request.
+// Scores are ordered so the axes that drove the outcome come first:
+// deny triggers, then escalation triggers, then the rest by value, with
+// severity and the user-request signal last.
+func assessorSummary(a Assessment, details json.RawMessage, failed bool, mode AssessorMode) *AssessorSummary {
+	sum := &AssessorSummary{Shadow: mode == AssessorShadow}
 	if failed {
-		return prefix + ": error"
+		sum.Outcome = "error"
+		return sum
 	}
 	var rec AssessmentRecord
 	_ = json.Unmarshal(details, &rec)
 	if rec.Outcome == "skipped" {
-		return prefix + ": skipped · " + cmp.Or(rec.SkipReason, a.Reason)
+		sum.Outcome = "skipped"
+		sum.Detail = cmp.Or(rec.SkipReason, a.Reason)
+		return sum
 	}
+	sum.Outcome = a.Outcome.String()
 
-	note := prefix + ": " + a.Outcome.String()
-	var scores []string
-	for _, id := range slices.Sorted(maps.Keys(rec.Nouls)) {
-		scores = append(scores, fmt.Sprintf("%s=%.2g", id, rec.Nouls[id]))
+	var hazards []AssessorScore
+	var userRequested *AssessorScore
+	for name, v := range rec.Nouls {
+		score := AssessorScore{Name: name, Value: v, Max: 1, Trigger: rec.Triggers[name]}
+		if name == UserRequestedAxis {
+			userRequested = &score
+			continue
+		}
+		hazards = append(hazards, score)
 	}
+	rank := map[string]int{TriggerDeny: 0, TriggerEscalate: 1}
+	slices.SortFunc(hazards, func(x, y AssessorScore) int {
+		rx, okx := rank[x.Trigger]
+		ry, oky := rank[y.Trigger]
+		if !okx {
+			rx = len(rank)
+		}
+		if !oky {
+			ry = len(rank)
+		}
+		return cmp.Or(cmp.Compare(rx, ry), cmp.Compare(y.Value, x.Value), cmp.Compare(x.Name, y.Name))
+	})
+	sum.Scores = hazards
 	if rec.Severity != nil {
-		scores = append(scores, fmt.Sprintf("severity=%.2g", *rec.Severity))
+		sum.Scores = append(sum.Scores, AssessorScore{Name: SeverityAxis, Value: *rec.Severity, Max: maxSeverity, Trigger: rec.Triggers[SeverityAxis]})
 	}
-	if len(scores) > 0 {
-		note += " · " + strings.Join(scores, " ")
+	if userRequested != nil {
+		sum.Scores = append(sum.Scores, *userRequested)
 	}
-	return note
+	return sum
+}
+
+// Note renders the summary as one plain-text line, for logs and clients
+// that can't lay out the structured form.
+func (s *AssessorSummary) Note() string {
+	if s == nil {
+		return ""
+	}
+	prefix := "assessor"
+	if s.Shadow {
+		prefix = "assessor (shadow)"
+	}
+	note := prefix + ": " + s.Outcome
+	if s.Detail != "" {
+		return note + " · " + s.Detail
+	}
+	if len(s.Scores) == 0 {
+		return note
+	}
+	scores := make([]string, len(s.Scores))
+	for i, sc := range s.Scores {
+		scores[i] = fmt.Sprintf("%s=%.2g", sc.Name, sc.Value)
+	}
+	return note + " · " + strings.Join(scores, " ")
 }
 
 // String returns the outcome name used in assessment records.

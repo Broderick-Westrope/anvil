@@ -90,3 +90,40 @@ func TestThresholdsValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestTriggers(t *testing.T) {
+	t.Parallel()
+
+	th := DefaultThresholds()
+	tests := []struct {
+		name    string
+		answers map[string]Answer
+		want    map[string]string
+	}{
+		{"nothing crosses", answers(map[string]float64{QDestructive: 0.1}, 0.5, ptr(0.1)), nil},
+		{"hazard escalates", answers(map[string]float64{QExfiltration: 0.5}, 0.5, ptr(0.1)), map[string]string{QExfiltration: permission.TriggerEscalate}},
+		{
+			"deny, escalate, severity, and mitigation together",
+			answers(map[string]float64{QDestructive: 0.95, QSharedInfra: 0.4}, 2.5, ptr(0.9)),
+			map[string]string{
+				QDestructive:   permission.TriggerDeny,
+				QSharedInfra:   permission.TriggerEscalate,
+				QSeverity:      permission.TriggerEscalate,
+				QUserRequested: permission.TriggerMitigate,
+			},
+		},
+		{"severity alone", answers(nil, 2.0, nil), map[string]string{QSeverity: permission.TriggerEscalate}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, Triggers(tt.answers, th))
+		})
+	}
+}
+
+func TestAxisNamesMatchPermission(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, permission.UserRequestedAxis, QUserRequested)
+	require.Equal(t, permission.SeverityAxis, QSeverity)
+}
