@@ -294,12 +294,13 @@ func TestStore_LargeOutputCapped(t *testing.T) {
 	id, log, err := s.Allocate(t.Context(), allocRequest("s"))
 	require.NoError(t, err)
 
-	// Pace the writes so the flusher keeps up and only the cap drops
-	// data.
+	// Snapshot writes skip the slow-disk pending limit but not the cap,
+	// so only the cap drops data however fast the flusher runs.
+	stream, ok := log.Stdout().(interface{ WriteSnapshot(p []byte) })
+	require.True(t, ok)
 	chunk := bytes.Repeat([]byte("a"), 1024*1024)
 	for range 60 {
-		_, _ = log.Stdout().Write(chunk)
-		time.Sleep(20 * time.Millisecond)
+		stream.WriteSnapshot(chunk)
 	}
 	stats := log.Close()
 	require.True(t, stats.Truncated)
