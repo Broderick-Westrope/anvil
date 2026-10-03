@@ -276,8 +276,10 @@ depends on a later phase.
 17. **Job records.** Table `background_jobs`: id, session_id, origin,
     command, description, working_dir, started_at, completed_at,
     exit_code, end_reason (`exited`, `killed`, `abandoned`, `anvil_exit`,
-    `interrupted`), log_bytes, log_truncated, process_instance (Anvil PID
-    plus process start time). Pending events (item 13) are persisted
+    `interrupted`), log_bytes, log_truncated, instance_id. Each Anvil
+    process registers in an `anvil_instances` table and heartbeats every
+    30s; an instance is live if its heartbeat is under 90s old (portable,
+    unlike PID plus process start time). Pending events (item 13) are persisted
     alongside.
 18. **Persistent, never-reused IDs.** `INTEGER PRIMARY KEY AUTOINCREMENT`
     with `INSERT ... RETURNING id` at publication, formatted `%03X`
@@ -285,7 +287,7 @@ depends on a later phase.
     reissued, and a single INSERT is atomic across concurrent Anvil
     processes sharing the global DB.
 19. **Recovery on startup.** Records still marked running whose
-    `process_instance` is not alive become `interrupted`: "Anvil exited
+    instance is not live become `interrupted`: "Anvil exited
     unexpectedly; the process may still be running (detached children can
     survive)". Records owned by another live Anvil process are shown as
     `running in another Anvil process` and are read-only (readable from
