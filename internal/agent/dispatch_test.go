@@ -204,6 +204,48 @@ func TestDispatch_ConcurrentPromptsAndJobEvents(t *testing.T) {
 	require.Contains(t, inputs.String(), "Job J01 completed")
 	require.Contains(t, inputs.String(), "Job J02 completed")
 	require.False(t, store.HasPending(sess.ID))
+	requireNoDispatchLocks(t, a)
+}
+
+func requireNoDispatchLocks(t *testing.T, a SessionAgent) {
+	t.Helper()
+	sa := a.(*sessionAgent)
+	sa.dispatchLocksMu.Lock()
+	defer sa.dispatchLocksMu.Unlock()
+	require.Empty(t, sa.dispatchLocks, "dispatch locks must be released once idle")
+}
+
+func TestDispatch_LockDispatchExcludesAndCleansUp(t *testing.T) {
+	t.Parallel()
+
+	a := NewSessionAgent(SessionAgentOptions{}).(*sessionAgent)
+	var (
+		wg      sync.WaitGroup
+		holders atomic.Int64
+		maxHeld atomic.Int64
+	)
+	start := make(chan struct{})
+	for i := range 32 {
+		wg.Go(func() {
+			<-start
+			sessionID := fmt.Sprintf("s%d", i%2)
+			for range 50 {
+				unlock := a.lockDispatch(sessionID)
+				if sessionID == "s0" {
+					n := holders.Add(1)
+					if n > maxHeld.Load() {
+						maxHeld.Store(n)
+					}
+					holders.Add(-1)
+				}
+				unlock()
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	require.Equal(t, int64(1), maxHeld.Load())
+	requireNoDispatchLocks(t, a)
 }
 
 func allowWake() bool { return true }
