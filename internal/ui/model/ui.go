@@ -511,7 +511,7 @@ func (m *UI) Init() tea.Cmd {
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
-	// check once whether to nudge the user to run permission triage
+	// Check once whether to nudge the user to run permission triage.
 	cmds = append(cmds, m.checkTriageNudge())
 	return tea.Batch(cmds...)
 }

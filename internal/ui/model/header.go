@@ -145,7 +145,7 @@ func renderHeaderDetails(
 	}
 
 	if mode := com.Workspace.PermissionAssessorMode(); mode != permission.AssessorOff {
-		parts = append(parts, t.Header.KeystrokeTip.Render("assessor:"+string(mode)))
+		parts = append(parts, t.Header.Percentage.Render("assessor:"+string(mode)))
 	}
 
 	const keystroke = "ctrl+d"

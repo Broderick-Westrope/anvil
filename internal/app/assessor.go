@@ -76,7 +76,8 @@ func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, m
 		Mode:               permission.AssessorMode(cmp.Or(cfg.Mode, config.AssessorOff)),
 		Timeout:            time.Duration(cmp.Or(cfg.TimeoutSeconds, defaultAssessorTimeoutSeconds)) * time.Second,
 		ExplicitAskToHuman: cfg.ExplicitAsk == config.AssessorExplicitAskHuman,
-		// Warm only runs when the mode is switched on at runtime.
+		// The permission service calls Warm only when switching the mode
+		// from off to on, so the target mode is never off here.
 		Warm: func(ctx context.Context) { warmAssessor(ctx, a, permission.AssessorEnforce) },
 	}
 	if sendUserMessages {
