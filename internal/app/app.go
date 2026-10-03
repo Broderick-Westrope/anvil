@@ -20,12 +20,14 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/format"
 	"github.com/Broderick-Westrope/anvil/internal/jobevents"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/log"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -74,6 +76,7 @@ type App struct {
 	agentNotifications *pubsub.Broker[notify.Notification]
 	jobEvents          *jobevents.Store
 	jobWaker           *jobWaker
+	jobs               *jobLifecycle // Nil when job persistence is unavailable.
 }
 
 // New initializes a new application instance.
@@ -107,6 +110,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	}
 
 	mgr := shell.GetBackgroundShellManager()
+	app.startJobPersistence(ctx, q, mgr)
 	app.jobEvents = jobevents.NewStore(func(id string) (string, bool) {
 		bs, ok := mgr.Get(id)
 		if !ok {
@@ -566,7 +570,7 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.LSPManager,
 		app.agentNotifications,
 		app.jobEvents,
-		nil,
+		app.jobArchive(),
 		app.jobWaker.trigger,
 	)
 	if err != nil {
@@ -575,6 +579,30 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 	}
 	app.jobWaker.setAgent(app.AgentCoordinator)
 	return nil
+}
+
+// startJobPersistence persists published jobs in the global database
+// so they survive eviction and restarts. On failure, jobs run in memory
+// only.
+func (app *App) startJobPersistence(ctx context.Context, q db.Querier, mgr *shell.BackgroundShellManager) {
+	jobs, err := newJobLifecycle(q, jobstore.DefaultLogDir())
+	if err == nil {
+		err = jobs.Start(ctx)
+	}
+	if err != nil {
+		slog.Warn("Failed to start background job persistence; jobs will not survive a restart", "error", err)
+		return
+	}
+	app.jobs = jobs
+	mgr.SetRecorder(jobs.store)
+}
+
+// jobArchive returns the persisted job store for the job tools, or nil.
+func (app *App) jobArchive() tools.JobArchive {
+	if app.jobs == nil {
+		return nil
+	}
+	return app.jobs.store
 }
 
 // EnableJobWake lets background job events start turns for idle
@@ -660,6 +688,10 @@ func (app *App) Shutdown() {
 		if err := app.Messages.FlushAll(shutdownCtx); err != nil {
 			slog.Error("Failed to flush pending message updates on shutdown", "error", err)
 		}
+	}
+
+	if app.jobs != nil {
+		app.jobs.Close(shutdownCtx)
 	}
 
 	// Now run remaining cleanup tasks in parallel.
