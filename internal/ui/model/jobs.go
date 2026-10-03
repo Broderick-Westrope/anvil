@@ -35,7 +35,7 @@ func (m *UI) clock() time.Time {
 }
 
 // runningSessionJobs returns the running published jobs of the active
-// session.
+// session and its subagent sessions.
 func (m *UI) runningSessionJobs() []shell.JobInfo {
 	if m.session == nil || m.com == nil || m.com.Workspace == nil {
 		return nil
@@ -84,9 +84,9 @@ func (m *UI) startElapsedTickForBackgroundResult(msg message.Message) tea.Cmd {
 	return nil
 }
 
-// jobsInfo renders the Jobs section listing the session's running
-// background jobs. It returns "" when there are none, so the section
-// is hidden.
+// jobsInfo renders the Jobs section listing the running background jobs
+// of the session and its subagents. It returns "" when there are none,
+// so the section is hidden.
 func (m *UI) jobsInfo(width int, isSection bool, now time.Time) string {
 	jobs := m.runningSessionJobs()
 	if len(jobs) == 0 {
@@ -101,7 +101,7 @@ func (m *UI) jobsInfo(width int, isSection bool, now time.Time) string {
 
 	lines := make([]string, 0, len(jobs))
 	for _, info := range jobs {
-		line, stale := jobLine(info, now)
+		line, stale := jobLine(info, m.session.ID, now)
 		line = ansi.Truncate(line, width, "…")
 		if stale {
 			line = t.LSP.WarningDiagnostic.Render(line)
@@ -115,10 +115,10 @@ func (m *UI) jobsInfo(width int, isSection bool, now time.Time) string {
 	return lipgloss.NewStyle().Width(width).Render(fmt.Sprintf("%s\n\n%s", title, list))
 }
 
-// jobLine formats one running job as "ID label  runtime  quiet age" and
-// reports whether the job has gone without output long enough to be
-// stale.
-func jobLine(info shell.JobInfo, now time.Time) (string, bool) {
+// jobLine formats one running job as "ID label  runtime  quiet age",
+// tagging jobs owned by a subagent of rootSessionID, and reports whether
+// the job has gone without output long enough to be stale.
+func jobLine(info shell.JobInfo, rootSessionID string, now time.Time) (string, bool) {
 	parts := []string{
 		info.ID + " " + shell.JobLabel(info, jobLabelMaxLen),
 		shell.FormatRuntime(shell.JobRuntime(info, now)),
@@ -135,6 +135,9 @@ func jobLine(info shell.JobInfo, now time.Time) (string, bool) {
 		parts = append(parts, "no output")
 	case quiet >= jobQuietAfter:
 		parts = append(parts, "quiet "+formatQuietAge(quiet))
+	}
+	if info.SessionID != rootSessionID {
+		parts = append(parts, "subagent")
 	}
 	return strings.Join(parts, "  "), quiet > jobStaleAfter
 }

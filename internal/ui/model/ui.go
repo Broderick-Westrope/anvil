@@ -968,6 +968,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.handleChildSessionMessage(msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
+			if msg.Type != pubsub.DeletedEvent {
+				if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
 			break
 		}
 		switch msg.Type {
