@@ -58,6 +58,9 @@ const (
 	MessageTypeModelChange         MessageType = "model_change"
 	MessageTypeThinkingLevelChange MessageType = "thinking_level_change"
 	MessageTypeMCPToggle           MessageType = "mcp_toggle"
+	// MessageTypeJobEvent is a user-role notice about background job
+	// events. It is sent to the model like any user message.
+	MessageTypeJobEvent MessageType = "job_event"
 )
 
 type ContentPart interface {

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/stretchr/testify/require"
@@ -60,7 +61,7 @@ func TestHandOffSubagentJobs(t *testing.T) {
 		runningID := startTestJob(t, child, "sleep 30", shell.OriginExplicit)
 		completedID := startCompletedTestJob(t, child, shell.OriginExplicit)
 
-		inventory := handOffSubagentJobs(shell.GetBackgroundShellManager(), child, parent)
+		inventory := handOffSubagentJobs(shell.GetBackgroundShellManager(), nil, child, parent)
 
 		require.True(t, strings.HasPrefix(inventory, "<background_jobs>\n"))
 		require.True(t, strings.HasSuffix(inventory, "\n</background_jobs>"))
@@ -78,9 +79,39 @@ func TestHandOffSubagentJobs(t *testing.T) {
 		require.Empty(t, shell.GetBackgroundShellManager().ListBySession(child))
 	})
 
+	t.Run("drops killed jobs' events and reassigns handed jobs", func(t *testing.T) {
+		t.Parallel()
+		child, parent := "handoff-child-"+t.Name(), "handoff-parent-"+t.Name()
+
+		autoID := startTestJob(t, child, "sleep 30", shell.OriginAuto)
+		runningID := startTestJob(t, child, "sleep 30", shell.OriginExplicit)
+		evicted := false
+		store := jobevents.NewStore(func(id string) (string, bool) {
+			if evicted {
+				return "", false
+			}
+			bs, ok := shell.GetBackgroundShellManager().Get(id)
+			if !ok {
+				return "", false
+			}
+			return bs.Info().SessionID, true
+		})
+		store.JobCompleted(shell.JobInfo{ID: runningID, SessionID: child}, "")
+
+		handOffSubagentJobs(shell.GetBackgroundShellManager(), store, child, parent)
+		store.JobCompleted(shell.JobInfo{ID: autoID, SessionID: child}, "")
+
+		evicted = true
+		claimed, remaining := store.Claim(parent, 5)
+		require.Len(t, claimed, 1)
+		require.Equal(t, runningID, claimed[0].JobID)
+		require.Zero(t, remaining)
+		require.False(t, store.HasPending(child))
+	})
+
 	t.Run("no jobs returns empty inventory", func(t *testing.T) {
 		t.Parallel()
-		require.Empty(t, handOffSubagentJobs(shell.GetBackgroundShellManager(), "handoff-child-"+t.Name(), "handoff-parent-"+t.Name()))
+		require.Empty(t, handOffSubagentJobs(shell.GetBackgroundShellManager(), nil, "handoff-child-"+t.Name(), "handoff-parent-"+t.Name()))
 	})
 }
 
