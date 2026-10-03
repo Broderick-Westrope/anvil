@@ -1,4 +1,4 @@
-Read output from a background job by ID; returns only new output since the previous call. Set wait=true to block until it completes, a pattern matches, or a timeout.
+Read output from a background job by ID; returns only new output since the previous call. Set wait=true to block until it completes, a pattern matches, or a timeout; set pattern with wait=false to be notified when a line matches.
 
 <usage>
 - Provide the job ID returned by bash or job_list
@@ -19,11 +19,23 @@ Read output from a background job by ID; returns only new output since the previ
   elapses; wait=false (the default) never blocks
 - timeout_seconds: with wait=true, the maximum seconds to wait; defaults to
   300, values above 1800 are clamped to 1800
-- pattern: RE2 regex, wait=true only for now; matched against stdout and
-  stderr line by line, including lines that arrived before this call but
-  were not yet read; on a match, returns all new output; cannot be combined
-  with full=true
+- pattern: RE2 regex matched against stdout and stderr line by line,
+  including lines that arrived before this call but were not yet read;
+  cannot be combined with full=true
+  - with wait=true: returns as soon as a line matches, with all new output
+  - with wait=false: returns new output immediately and sets a one-shot
+    watch; you get a notification when a matching line appears (at once if
+    an unread line already matches). Each job has one watch; a new pattern
+    replaces the previous one. The watch ends when the job exits
 </parameters>
+
+<notifications>
+- Every background job notifies you automatically when it completes, with
+  its exit code and last lines; no polling is needed
+- Watches notify you when their pattern matches
+- Notifications arrive as a system reminder at your next step; you are not
+  notified of anything a job_output or job_kill result already showed you
+</notifications>
 
 <status_header>
 The first line reports the job state and runtime:
@@ -42,10 +54,12 @@ full re-reads.
 <tips>
 - The read position is per job, so two agents reading the same job share
   it; use full=true if you lost track of earlier output
-- If you have other work, keep working and check back later; use wait=true
-  only when you are blocked on the result
-- For servers, wait with pattern (e.g. "listening on|ready") instead of
-  sleep loops
+- Recommended workflow: start work with run_in_background=true, set a watch
+  for its readiness line if it has one, and keep working; the completion or
+  watch notification tells you when to look again
+- Use wait=true only when you are blocked on the result
+- For servers, use pattern (e.g. "listening on|ready") instead of sleep
+  loops: wait=false to keep working, wait=true if you have nothing else to do
 - If the output buffer exceeded its cap, the response notes that earlier
   output was lost
 </tips>
