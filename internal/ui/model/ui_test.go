@@ -6,6 +6,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/stretchr/testify/require"
@@ -93,6 +94,14 @@ type testWorkspace struct {
 func (w *testWorkspace) Config() *config.Config {
 	return w.cfg
 }
+
+func (*testWorkspace) PermissionAssessorConfigured() bool { return false }
+
+func (*testWorkspace) PermissionAssessorMode() permission.AssessorMode {
+	return permission.AssessorOff
+}
+
+func (*testWorkspace) PermissionSetAssessorMode(permission.AssessorMode) {}
 
 func TestExtractSlashArgs(t *testing.T) {
 	t.Parallel()

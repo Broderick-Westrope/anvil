@@ -76,6 +76,8 @@ func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, m
 		Mode:               permission.AssessorMode(cmp.Or(cfg.Mode, config.AssessorOff)),
 		Timeout:            time.Duration(cmp.Or(cfg.TimeoutSeconds, defaultAssessorTimeoutSeconds)) * time.Second,
 		ExplicitAskToHuman: cfg.ExplicitAsk == config.AssessorExplicitAskHuman,
+		// Warm only runs when the mode is switched on at runtime.
+		Warm: func(ctx context.Context) { warmAssessor(ctx, a, permission.AssessorEnforce) },
 	}
 	if sendUserMessages {
 		opts.Intent = &intentSource{sessions: sessions, messages: messages}

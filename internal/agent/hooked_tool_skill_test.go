@@ -47,6 +47,11 @@ func (f *fakeHookPermissionService) AutoApproveSession(string)                  
 func (f *fakeHookPermissionService) RevokeAutoApproveSession(string)              {}
 func (f *fakeHookPermissionService) SetYoloLevel(config.YoloLevel)                {}
 func (f *fakeHookPermissionService) YoloLevel() config.YoloLevel                  { return config.YoloOff }
+func (f *fakeHookPermissionService) AssessorConfigured() bool                     { return false }
+func (f *fakeHookPermissionService) AssessorMode() permission.AssessorMode {
+	return permission.AssessorOff
+}
+func (f *fakeHookPermissionService) SetAssessorMode(permission.AssessorMode) {}
 
 func (f *fakeHookPermissionService) GrantSession(string, string, string, config.PermissionAction) error {
 	return nil

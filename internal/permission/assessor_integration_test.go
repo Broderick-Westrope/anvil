@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -763,4 +764,100 @@ func TestYoloWithAssessorTurnedOffMidFlight(t *testing.T) {
 	require.True(t, r.result.Granted, "a deny from a now-disabled assessor must not apply")
 	require.Empty(t, h.events, "yolo must never prompt")
 	require.Equal(t, DecisionSourceYolo, h.rec.snapshot()[0].DecidedBy)
+}
+
+func TestSetAssessorModeWithoutAssessorIsNoOp(t *testing.T) {
+	t.Parallel()
+	h := newAssessorHarness(t, nil, "", nil, nil)
+	require.False(t, h.svc.AssessorConfigured())
+	h.svc.SetAssessorMode(AssessorEnforce)
+	require.Equal(t, AssessorOff, h.svc.AssessorMode())
+}
+
+func TestSetAssessorModeIgnoresUnknownMode(t *testing.T) {
+	t.Parallel()
+	h := newAssessorHarness(t, &fakeAssessor{outcome: AssessAllow}, AssessorShadow, nil, nil)
+	require.True(t, h.svc.AssessorConfigured())
+	h.svc.SetAssessorMode("bogus")
+	require.Equal(t, AssessorShadow, h.svc.AssessorMode())
+}
+
+func TestSetAssessorModeEnforceSkipsPrompt(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAssessor{outcome: AssessAllow}
+	h := newAssessorHarness(t, fake, AssessorOff, nil, nil)
+
+	done := requestAsync(testCtx(t), h.svc, h.req("call-1", "go build ./..."))
+	perm := waitPrompt(t, h.events)
+	h.svc.Grant(perm)
+	require.NoError(t, waitResult(t, done).err)
+	require.Zero(t, fake.calls.Load())
+
+	h.svc.SetAssessorMode(AssessorEnforce)
+	require.Equal(t, AssessorEnforce, h.svc.AssessorMode())
+	r, err := h.svc.Request(testCtx(t), h.req("call-2", "go build ./..."))
+	require.NoError(t, err)
+	require.True(t, r.Granted)
+	require.Empty(t, h.events)
+	require.Equal(t, int32(1), fake.calls.Load())
+	decisions := h.rec.snapshot()
+	require.Len(t, decisions, 2)
+	require.Equal(t, DecisionSourceAssessor, decisions[1].DecidedBy)
+}
+
+func newWarmHarness(t *testing.T, mode AssessorMode) (*permissionService, <-chan struct{}) {
+	t.Helper()
+	warmed := make(chan struct{}, 16)
+	svc := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, WithAssessor(AssessorOptions{
+		Assessor: &fakeAssessor{outcome: AssessAllow},
+		Mode:     mode,
+		Warm:     func(context.Context) { warmed <- struct{}{} },
+	})).(*permissionService)
+	return svc, warmed
+}
+
+// waitWarms waits for want warm-ups, then checks no more arrive.
+func waitWarms(t *testing.T, warmed <-chan struct{}, want int) {
+	t.Helper()
+	for i := range want {
+		select {
+		case <-warmed:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("warm %d of %d did not run", i+1, want)
+		}
+	}
+	select {
+	case <-warmed:
+		t.Fatal("assessor warmed more than expected")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestSetAssessorModeWarmsOncePerEnable(t *testing.T) {
+	t.Parallel()
+	svc, warmed := newWarmHarness(t, AssessorOff)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() { svc.SetAssessorMode(AssessorEnforce) })
+	}
+	wg.Wait()
+	waitWarms(t, warmed, 1)
+}
+
+func TestSetAssessorModeOnToOnDoesNotWarm(t *testing.T) {
+	t.Parallel()
+	svc, warmed := newWarmHarness(t, AssessorShadow)
+	svc.SetAssessorMode(AssessorEnforce)
+	require.Equal(t, AssessorEnforce, svc.AssessorMode())
+	waitWarms(t, warmed, 0)
+}
+
+func TestSetAssessorModeReenableWarmsAgain(t *testing.T) {
+	t.Parallel()
+	svc, warmed := newWarmHarness(t, AssessorOff)
+	svc.SetAssessorMode(AssessorEnforce)
+	waitWarms(t, warmed, 1)
+	svc.SetAssessorMode(AssessorOff)
+	svc.SetAssessorMode(AssessorEnforce)
+	waitWarms(t, warmed, 1)
 }

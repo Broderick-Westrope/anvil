@@ -250,6 +250,14 @@ func (m *mockViewPermissionService) YoloLevel() config.YoloLevel {
 	return config.YoloOff
 }
 
+func (m *mockViewPermissionService) AssessorConfigured() bool { return false }
+
+func (m *mockViewPermissionService) AssessorMode() permission.AssessorMode {
+	return permission.AssessorOff
+}
+
+func (m *mockViewPermissionService) SetAssessorMode(permission.AssessorMode) {}
+
 func (m *mockViewPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }

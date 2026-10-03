@@ -103,6 +103,9 @@ type Workspace interface {
 	PermissionDeny(perm permission.PermissionRequest, reason string)
 	PermissionYoloLevel() config.YoloLevel
 	PermissionSetYoloLevel(level config.YoloLevel)
+	PermissionAssessorConfigured() bool
+	PermissionAssessorMode() permission.AssessorMode
+	PermissionSetAssessorMode(mode permission.AssessorMode)
 
 	// FileTracker
 	FileTrackerRecordRead(ctx context.Context, sessionID, path string)

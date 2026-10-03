@@ -39,6 +39,14 @@ func (m *mockBashPermissionService) YoloLevel() config.YoloLevel {
 	return config.YoloOff
 }
 
+func (m *mockBashPermissionService) AssessorConfigured() bool { return false }
+
+func (m *mockBashPermissionService) AssessorMode() permission.AssessorMode {
+	return permission.AssessorOff
+}
+
+func (m *mockBashPermissionService) SetAssessorMode(permission.AssessorMode) {}
+
 func (m *mockBashPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }
@@ -119,6 +127,14 @@ func (m *recordingPermissionService) SetYoloLevel(level config.YoloLevel) {}
 func (m *recordingPermissionService) YoloLevel() config.YoloLevel {
 	return config.YoloOff
 }
+
+func (m *recordingPermissionService) AssessorConfigured() bool { return false }
+
+func (m *recordingPermissionService) AssessorMode() permission.AssessorMode {
+	return permission.AssessorOff
+}
+
+func (m *recordingPermissionService) SetAssessorMode(permission.AssessorMode) {}
 
 func (m *recordingPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])

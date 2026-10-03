@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
@@ -210,6 +211,31 @@ func TestWarmAssessorOffMakesNoRequest(t *testing.T) {
 	require.True(t, ok)
 	warmAssessor(t.Context(), setup.assessor, setup.mode)
 	require.Zero(t, hits.Load())
+}
+
+func TestAssessorWarmsWhenEnabledAtRuntime(t *testing.T) {
+	t.Parallel()
+	hits := make(chan struct{}, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits <- struct{}{}
+		_, _ = io.WriteString(w, `{"model":"von-1.0.0","answers":{"warm":{"type":"noul","noul":0.9}},"usage":{"input_tokens":10,"output_tokens":1}}`)
+	}))
+	defer srv.Close()
+
+	ta := validTrustedAssessor(config.AssessorOff)
+	ta.Config.URL = srv.URL
+	setup, ok := buildAssessorOption(ta, nil, nil)
+	require.True(t, ok)
+	svc := permission.NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, setup.option)
+	require.True(t, svc.AssessorConfigured())
+	require.Equal(t, permission.AssessorOff, svc.AssessorMode())
+
+	svc.SetAssessorMode(permission.AssessorShadow)
+	select {
+	case <-hits:
+	case <-time.After(10 * time.Second):
+		t.Fatal("assessor was not warmed")
+	}
 }
 
 func TestBuildAssessorOption_SendUserMessagesFalseBuilt(t *testing.T) {

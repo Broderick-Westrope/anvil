@@ -149,6 +149,9 @@ type AssessorOptions struct {
 	Mode               AssessorMode // Initial mode; may be AssessorOff.
 	Timeout            time.Duration
 	ExplicitAskToHuman bool
+	// Warm primes the assessor when the runtime mode moves from off to
+	// shadow or enforce. It runs in the background and may be nil.
+	Warm func(ctx context.Context)
 }
 
 // Option configures a permission service.
@@ -205,6 +208,43 @@ const defaultAssessorTimeout = 8 * time.Second
 func (s *permissionService) currentAssessorMode() AssessorMode {
 	mode, _ := s.assessorMode.Load().(AssessorMode)
 	return mode
+}
+
+func (s *permissionService) AssessorConfigured() bool {
+	return s.assessor.Assessor != nil
+}
+
+func (s *permissionService) AssessorMode() AssessorMode {
+	if mode := s.currentAssessorMode(); mode != "" {
+		return mode
+	}
+	return AssessorOff
+}
+
+func (s *permissionService) SetAssessorMode(mode AssessorMode) {
+	if s.assessor.Assessor == nil {
+		return
+	}
+	switch mode {
+	case AssessorOff, AssessorShadow, AssessorEnforce:
+	default:
+		return
+	}
+	for {
+		old := s.currentAssessorMode()
+		if old == mode {
+			return
+		}
+		// The swap decides which caller saw the off-to-on transition,
+		// so concurrent toggles warm at most once.
+		if !s.assessorMode.CompareAndSwap(old, mode) {
+			continue
+		}
+		if (old == "" || old == AssessorOff) && mode != AssessorOff && s.assessor.Warm != nil {
+			go s.assessor.Warm(context.Background())
+		}
+		return
+	}
 }
 
 // shouldAssess reports whether an unresolved request goes to the assessor

@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/recovery"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
@@ -21,6 +22,14 @@ func (*recoveryWorkspace) WorkingDir() string { return "/current" }
 func (*recoveryWorkspace) AgentIsReady() bool { return false }
 
 func (*recoveryWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
+
+func (*recoveryWorkspace) PermissionAssessorConfigured() bool { return false }
+
+func (*recoveryWorkspace) PermissionAssessorMode() permission.AssessorMode {
+	return permission.AssessorOff
+}
+
+func (*recoveryWorkspace) PermissionSetAssessorMode(permission.AssessorMode) {}
 
 func TestRecoveryTracksRootSessionNotDrilledInChild(t *testing.T) {
 	t.Parallel()

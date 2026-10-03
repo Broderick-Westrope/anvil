@@ -246,6 +246,18 @@ func (w *AppWorkspace) PermissionSetYoloLevel(level config.YoloLevel) {
 	w.app.Permissions.SetYoloLevel(level)
 }
 
+func (w *AppWorkspace) PermissionAssessorConfigured() bool {
+	return w.app.Permissions.AssessorConfigured()
+}
+
+func (w *AppWorkspace) PermissionAssessorMode() permission.AssessorMode {
+	return w.app.Permissions.AssessorMode()
+}
+
+func (w *AppWorkspace) PermissionSetAssessorMode(mode permission.AssessorMode) {
+	w.app.Permissions.SetAssessorMode(mode)
+}
+
 // -- FileTracker --
 
 func (w *AppWorkspace) FileTrackerRecordRead(ctx context.Context, sessionID, path string) {

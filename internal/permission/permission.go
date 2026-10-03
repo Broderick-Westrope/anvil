@@ -125,6 +125,14 @@ type Service interface {
 	// GrantForever writes a permission rule to the config file.
 	// scope determines project vs user config.
 	GrantForever(toolPattern string, inputPattern string, action config.PermissionAction, scope config.Scope) error
+
+	// AssessorConfigured reports whether an assessor was wired at startup.
+	AssessorConfigured() bool
+	// AssessorMode returns the current runtime mode.
+	AssessorMode() AssessorMode
+	// SetAssessorMode changes the runtime mode. It is a no-op when no
+	// assessor is configured or the mode is unknown.
+	SetAssessorMode(mode AssessorMode)
 }
 
 // PermissionKey is a composite key for session permission lookups.
