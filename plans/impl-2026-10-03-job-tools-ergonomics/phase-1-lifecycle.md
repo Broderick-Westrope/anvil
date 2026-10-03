@@ -41,7 +41,7 @@ Out: incremental reads, wait changes, events, persistence, UI sections.
       section listing running jobs.
 - [x] `job_kill` on an exited job reports exit code and last lines; on a
       job outliving the grace period it reports abandonment.
-- [ ] `go test ./... -count=1` passes; `go test -race ./internal/shell/...
+- [x] `go test ./... -count=1` passes; `go test -race ./internal/shell/...
       ./internal/agent/...` passes.
 
 ## Context Loading
