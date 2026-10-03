@@ -95,7 +95,7 @@ driver the platform builds; don't add driver-specific code.
 
 **Steps:**
 
-1. [ ] Migration (goose, one statement per block, with a Down section
+1. [x] Migration (goose, one statement per block, with a Down section
    dropping in reverse order):
 
    ```sql
@@ -140,7 +140,7 @@ driver the platform builds; don't add driver-specific code.
    (step 4) so log files go too. `AUTOINCREMENT` guarantees a deleted
    highest ID is never reissued.
 
-2. [ ] Queries in `background_jobs.sql`: `CreateBackgroundJob :one`
+2. [x] Queries in `background_jobs.sql`: `CreateBackgroundJob :one`
    (`INSERT ... RETURNING id`), `DeleteBackgroundJob :exec` (allocation
    compensation), `FinalizeBackgroundJob :execrows` (sets
    `completed_at`, `exit_code`, `end_reason`, and the log columns
@@ -156,7 +156,7 @@ driver the platform builds; don't add driver-specific code.
    `TouchAnvilInstance :exec`, `ListAnvilInstances :many`,
    `DeleteAnvilInstance :exec`.
 
-3. [ ] `internal/jobstore/store.go`:
+3. [x] `internal/jobstore/store.go`:
 
    ```go
    type Store struct {
@@ -193,12 +193,12 @@ driver the platform builds; don't add driver-specific code.
    `strconv.ParseInt(id, 16, 64)`. IDs that don't parse (fallback IDs)
    are never looked up.
 
-4. [ ] Session deletion: in `session.Service.Delete`, inside the existing
+4. [x] Session deletion: in `session.Service.Delete`, inside the existing
    transaction, collect `ListBackgroundJobIDsBySession` and run
    `DeleteBackgroundJobsBySession`; after commit, remove those log files
    (best effort, one warning on failure).
 
-5. [ ] Tests:
+5. [x] Tests:
    - `internal/db/background_jobs_test.go` (package `db`, so it can use
      the unpooled `openDB`; `Connect` would return the same pooled
      handle): open two handles to one file and assert they're different
