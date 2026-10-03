@@ -210,10 +210,10 @@ depends on a later phase.
     - Retention within a run: fantasy rebuilds each step's input from the
       initial prompt plus generated responses, so messages appended in
       `PrepareStep` are dropped from later steps (fantasy `agent.go`
-      ~944, ~1067-1074). The agent keeps a run-local list of injected
-      messages and re-appends them, in order, on every subsequent step.
-      (Queued user prompts injected at `agent.go` ~401-409 appear to
-      have the same issue; verify and fix together.)
+      ~944, ~1067-1074). Reuse the run-local `injectedMessages` tracker
+      (`internal/agent/injected_messages.go`), already added for queued
+      user prompts which had the same bug, so notifications are re-applied
+      at their original position on every subsequent step.
     - No next step: if a run ends with pending events, they are delivered
       at the first step of the next run, or trigger a wake (item 15).
     - Cancel does not clear events.
