@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -21,11 +22,16 @@ type archiveCursorKey struct {
 
 type archiveCursor struct {
 	stdout, stderr int
+	touched        time.Time
 }
+
+// archiveCursorTTL is how long an unread job keeps its cursor; a later
+// read starts at the beginning again.
+const archiveCursorTTL = time.Hour
 
 // archiveCursors holds the incremental read position of persisted jobs.
 // It is process-local, so the first read in a new process starts at the
-// beginning.
+// beginning. Cursors not used for archiveCursorTTL are dropped on access.
 var archiveCursors = struct {
 	mu sync.Mutex
 	m  map[archiveCursorKey]archiveCursor
@@ -92,9 +98,14 @@ func archivedJobOutput(archive JobArchive, rec jobstore.Record, params JobOutput
 func readArchivedIncremental(archive JobArchive, id string, stdout, stderr []byte, full bool) shell.ReadResult {
 	key := archiveCursorKey{archive: archive, id: id}
 
+	now := time.Now()
+
 	archiveCursors.mu.Lock()
 	defer archiveCursors.mu.Unlock()
 
+	maps.DeleteFunc(archiveCursors.m, func(_ archiveCursorKey, c archiveCursor) bool {
+		return now.Sub(c.touched) > archiveCursorTTL
+	})
 	cur := archiveCursors.m[key]
 	res := shell.ReadResult{HadPrevious: cur.stdout != 0 || cur.stderr != 0}
 	from := func(data []byte, offset int) string {
@@ -105,7 +116,7 @@ func readArchivedIncremental(archive JobArchive, id string, stdout, stderr []byt
 	}
 	res.Stdout = from(stdout, cur.stdout)
 	res.Stderr = from(stderr, cur.stderr)
-	archiveCursors.m[key] = archiveCursor{stdout: len(stdout), stderr: len(stderr)}
+	archiveCursors.m[key] = archiveCursor{stdout: len(stdout), stderr: len(stderr), touched: now}
 	return res
 }
 
