@@ -53,9 +53,9 @@ func TestJobEventMessageRendersCompactNotice(t *testing.T) {
 	require.True(t, ok, "job_event messages must not render as user bubbles")
 
 	out := ansi.Strip(item.Render(100))
-	require.Contains(t, out, "Job (Completed) 019 exit 1")
+	require.Contains(t, out, "Job (Completed) ID 019 exit 1")
 	require.Contains(t, out, "Run integration tests")
-	require.Contains(t, out, "Job (Watch) 05A")
+	require.Contains(t, out, "Job (Watch) ID 05A")
 	require.Contains(t, out, "Server listening on :8080")
 	require.Contains(t, out, "(+1 more pending")
 	require.NotContains(t, out, "FAIL apps/grpc", "tail lines are hidden when collapsed")
@@ -83,7 +83,7 @@ func TestJobNoticeHeader_KilledJob(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	out := ansi.Strip(renderJobNotice(&sty, "- Job 002 ended, killed when Anvil exited (15s): idle sleeper.", 100, false))
-	require.Contains(t, out, "Job (Ended) 002 killed when Anvil exited · 15s idle sleeper")
+	require.Contains(t, out, "Job (Ended) ID 002 killed when Anvil exited · 15s idle sleeper")
 	require.NotContains(t, out, "exit 1")
 }
 

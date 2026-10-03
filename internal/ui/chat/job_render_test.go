@@ -119,3 +119,12 @@ func TestJobOutputItem(t *testing.T) {
 	noWait := NewToolMessageItem(&sty, "msg", message.ToolCall{ID: "tc-nowait", Name: tools.JobOutputToolName, Input: `{"shell_id":"001"}`, Finished: true}, nil, false, nil)
 	require.False(t, noWait.(*JobOutputToolMessageItem).isSpinning())
 }
+
+func TestJobHeaderLabelsJobIDNotPID(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	out := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Output", "05A", "dev server", 100))
+	require.Equal(t, "✓ Job (Output) ID 05A dev server", out)
+	require.NotContains(t, out, "PID")
+}

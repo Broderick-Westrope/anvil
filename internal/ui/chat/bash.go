@@ -270,14 +270,15 @@ func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, 
 }
 
 // jobHeader builds a header for job-related tools.
-// Format: "● Job (Action) PID shellID description..."
+// Format: "● Job (Action) ID 05A description...". The ID is the job ID
+// Anvil assigned, not an operating system process ID.
 func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, description string, width int) string {
 	icon := toolIcon(sty, status)
 	jobPart := sty.Tool.JobToolName.Render("Job")
 	actionPart := sty.Tool.JobAction.Render("(" + action + ")")
-	pidPart := sty.Tool.JobPID.Render("PID " + shellID)
+	idPart := sty.Tool.JobID.Render(jobIDLabel(shellID))
 
-	prefix := fmt.Sprintf("%s %s %s %s", icon, jobPart, actionPart, pidPart)
+	prefix := fmt.Sprintf("%s %s %s %s", icon, jobPart, actionPart, idPart)
 
 	if description == "" {
 		return prefix
@@ -291,6 +292,11 @@ func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, descripti
 
 	truncatedDesc := ansi.Truncate(description, availableWidth, "…")
 	return prefix + " " + sty.Tool.JobDescription.Render(truncatedDesc)
+}
+
+// jobIDLabel labels a job ID in tool and notice headers.
+func jobIDLabel(jobID string) string {
+	return "ID " + jobID
 }
 
 // joinToolParts joins header and body with a blank line separator.
