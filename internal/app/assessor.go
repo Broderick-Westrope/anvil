@@ -54,14 +54,14 @@ func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, m
 	client := &assessor.Client{
 		URL:        cfg.URL,
 		APIKey:     ta.APIKey,
-		AuthScheme: cmp.Or(cfg.AuthScheme, config.AssessorAuthAPIKey),
+		AuthScheme: string(cmp.Or(cfg.AuthScheme, config.AssessorAuthAPIKey)),
 		Model:      cfg.Model,
 		HTTP:       &http.Client{},
 		Backoff:    []time.Duration{250 * time.Millisecond},
 	}
 	opts := permission.AssessorOptions{
 		Assessor:           assessor.New(client, th, sendUserMessages),
-		Mode:               permission.AssessorMode(cmp.Or(cfg.Mode, config.AssessorModeOff)),
+		Mode:               permission.AssessorMode(cmp.Or(cfg.Mode, config.AssessorOff)),
 		Timeout:            time.Duration(cmp.Or(cfg.TimeoutSeconds, defaultAssessorTimeoutSeconds)) * time.Second,
 		ExplicitAskToHuman: cfg.ExplicitAsk == config.AssessorExplicitAskHuman,
 	}

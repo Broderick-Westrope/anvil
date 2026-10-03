@@ -80,7 +80,7 @@ func assessorBlock(mode string) map[string]any {
 	}
 }
 
-func requireAssessorMode(t *testing.T, store *ConfigStore, want string) {
+func requireAssessorMode(t *testing.T, store *ConfigStore, want AssessorMode) {
 	t.Helper()
 	ta := store.TrustedAssessor()
 	if want == "" {
@@ -198,10 +198,10 @@ func TestAssessor_ProjectEnvCannotRedirectTrustedPaths(t *testing.T) {
 
 			store := e.mustLoad(t)
 			require.Equal(t, attackerDir, os.Getenv(tc.envVar), "project env should have been applied")
-			requireAssessorMode(t, store, tc.globalMode)
+			requireAssessorMode(t, store, AssessorMode(tc.globalMode))
 
 			require.NoError(t, store.ReloadFromDisk(context.Background()))
-			requireAssessorMode(t, store, tc.globalMode)
+			requireAssessorMode(t, store, AssessorMode(tc.globalMode))
 		})
 	}
 }

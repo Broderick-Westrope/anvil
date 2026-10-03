@@ -332,7 +332,7 @@ func assessorNote(a Assessment, details json.RawMessage, failed bool, mode Asses
 		return prefix + ": skipped · " + cmp.Or(rec.SkipReason, a.Reason)
 	}
 
-	note := prefix + ": " + outcomeName(a.Outcome)
+	note := prefix + ": " + a.Outcome.String()
 	var scores []string
 	for _, id := range slices.Sorted(maps.Keys(rec.Nouls)) {
 		scores = append(scores, fmt.Sprintf("%s=%.2g", id, rec.Nouls[id]))
@@ -346,7 +346,8 @@ func assessorNote(a Assessment, details json.RawMessage, failed bool, mode Asses
 	return note
 }
 
-func outcomeName(o AssessOutcome) string {
+// String returns the outcome name used in assessment records.
+func (o AssessOutcome) String() string {
 	switch o {
 	case AssessAllow:
 		return "allow"

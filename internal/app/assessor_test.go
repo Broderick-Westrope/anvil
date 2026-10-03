@@ -109,7 +109,7 @@ func TestIntentSource_UnknownSessionReturnsError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func validTrustedAssessor(mode string) *config.TrustedAssessor {
+func validTrustedAssessor(mode config.AssessorMode) *config.TrustedAssessor {
 	return &config.TrustedAssessor{
 		Config: &config.PermissionAssessor{
 			Mode:  mode,
@@ -122,7 +122,7 @@ func validTrustedAssessor(mode string) *config.TrustedAssessor {
 
 func TestBuildAssessorOption_ModeOffStillBuilt(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"", config.AssessorModeOff, config.AssessorModeShadow, config.AssessorModeEnforce} {
+	for _, mode := range []config.AssessorMode{"", config.AssessorOff, config.AssessorShadow, config.AssessorEnforce} {
 		opt, ok := buildAssessorOption(validTrustedAssessor(mode), nil, nil)
 		require.True(t, ok, "mode %q", mode)
 		require.NotNil(t, opt, "mode %q", mode)
@@ -131,7 +131,7 @@ func TestBuildAssessorOption_ModeOffStillBuilt(t *testing.T) {
 
 func TestBuildAssessorOption_SendUserMessagesFalseBuilt(t *testing.T) {
 	t.Parallel()
-	ta := validTrustedAssessor(config.AssessorModeShadow)
+	ta := validTrustedAssessor(config.AssessorShadow)
 	off := false
 	ta.Config.SendUserMessages = &off
 	_, ok := buildAssessorOption(ta, nil, nil)
@@ -158,7 +158,7 @@ func captureSlog(t *testing.T) *bytes.Buffer {
 
 func TestBuildAssessorOption_EmptyKeyNotBuilt(t *testing.T) {
 	buf := captureSlog(t)
-	ta := validTrustedAssessor(config.AssessorModeShadow)
+	ta := validTrustedAssessor(config.AssessorShadow)
 	ta.APIKey = ""
 
 	_, ok := buildAssessorOption(ta, nil, nil)
@@ -170,12 +170,12 @@ func TestBuildAssessorOption_EmptyKeyNotBuilt(t *testing.T) {
 func TestBuildAssessorOption_MissingURLOrModelNotBuilt(t *testing.T) {
 	buf := captureSlog(t)
 
-	ta := validTrustedAssessor(config.AssessorModeShadow)
+	ta := validTrustedAssessor(config.AssessorShadow)
 	ta.Config.URL = ""
 	_, ok := buildAssessorOption(ta, nil, nil)
 	require.False(t, ok)
 
-	ta = validTrustedAssessor(config.AssessorModeShadow)
+	ta = validTrustedAssessor(config.AssessorShadow)
 	ta.Config.Model = ""
 	_, ok = buildAssessorOption(ta, nil, nil)
 	require.False(t, ok)
@@ -185,7 +185,7 @@ func TestBuildAssessorOption_MissingURLOrModelNotBuilt(t *testing.T) {
 
 func TestBuildAssessorOption_InvalidMergedThresholdsNotBuilt(t *testing.T) {
 	buf := captureSlog(t)
-	ta := validTrustedAssessor(config.AssessorModeEnforce)
+	ta := validTrustedAssessor(config.AssessorEnforce)
 	// Valid alone, but not below the default deny_at of 0.9.
 	escalate := 0.95
 	ta.Config.EscalateAt = &escalate

@@ -19,23 +19,39 @@ import (
 // is read from when permission_assessor.api_key_env is not set.
 const DefaultAssessorAPIKeyEnv = "BASETEN_API_KEY"
 
-// Assessor modes.
+// AssessorMode controls whether the permission assessor runs and whether
+// its verdict is acted on.
+type AssessorMode string
+
 const (
-	AssessorModeOff     = "off"
-	AssessorModeShadow  = "shadow"
-	AssessorModeEnforce = "enforce"
+	// AssessorOff disables the assessor.
+	AssessorOff AssessorMode = "off"
+	// AssessorShadow assesses and logs, but the human still decides.
+	AssessorShadow AssessorMode = "shadow"
+	// AssessorEnforce acts on the assessor's allow and deny verdicts.
+	AssessorEnforce AssessorMode = "enforce"
 )
 
-// Assessor auth schemes.
+// AssessorAuthScheme is the Authorization header scheme sent to the
+// assessor endpoint.
+type AssessorAuthScheme string
+
 const (
-	AssessorAuthAPIKey = "Api-Key"
-	AssessorAuthBearer = "Bearer"
+	// AssessorAuthAPIKey sends "Api-Key <key>", as Baseten expects.
+	AssessorAuthAPIKey AssessorAuthScheme = "Api-Key"
+	// AssessorAuthBearer sends "Bearer <key>", as TypeSafe expects.
+	AssessorAuthBearer AssessorAuthScheme = "Bearer"
 )
 
-// Assessor explicit_ask routing values.
+// AssessorExplicitAsk decides who answers requests that an explicit "ask"
+// rule matched.
+type AssessorExplicitAsk string
+
 const (
-	AssessorExplicitAskAssessor = "assessor"
-	AssessorExplicitAskHuman    = "human"
+	// AssessorExplicitAskAssessor lets the assessor answer them first.
+	AssessorExplicitAskAssessor AssessorExplicitAsk = "assessor"
+	// AssessorExplicitAskHuman always sends them to the human.
+	AssessorExplicitAskHuman AssessorExplicitAsk = "human"
 )
 
 const maxAssessorTimeoutSeconds = 60
@@ -46,21 +62,21 @@ var envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // prompts on the user's behalf. It is only honoured from user-level config
 // files; see [ConfigStore.TrustedAssessor].
 type PermissionAssessor struct {
-	Mode  string `json:"mode,omitempty" jsonschema:"enum=off,enum=shadow,enum=enforce,default=off"`
-	URL   string `json:"url,omitempty" jsonschema:"description=Full System One endpoint URL (https only)"`
-	Model string `json:"model,omitempty" jsonschema:"example=von-1.0.0"`
+	Mode  AssessorMode `json:"mode,omitempty" jsonschema:"enum=off,enum=shadow,enum=enforce,default=off"`
+	URL   string       `json:"url,omitempty" jsonschema:"description=Full System One endpoint URL (https only)"`
+	Model string       `json:"model,omitempty" jsonschema:"example=von-1.0.0"`
 	// APIKeyEnv names the environment variable holding the API key, so
 	// users whose key lives under a different name don't have to rename
 	// it. Optional; defaults to BASETEN_API_KEY.
-	APIKeyEnv        string   `json:"api_key_env,omitempty" jsonschema:"description=Name of the environment variable that holds the API key,default=BASETEN_API_KEY,example=BASETEN_API_KEY,example=TYPESAFE_API_KEY"`
-	AuthScheme       string   `json:"auth_scheme,omitempty" jsonschema:"enum=Api-Key,enum=Bearer,default=Api-Key"`
-	TimeoutSeconds   int      `json:"timeout_seconds,omitempty" jsonschema:"default=8"`
-	ExplicitAsk      string   `json:"explicit_ask,omitempty" jsonschema:"enum=assessor,enum=human,default=assessor"`
-	SendUserMessages *bool    `json:"send_user_messages,omitempty" jsonschema:"default=true"`
-	EscalateAt       *float64 `json:"escalate_at,omitempty"`
-	DenyAt           *float64 `json:"deny_at,omitempty"`
-	SeverityEscalate *float64 `json:"severity_escalate,omitempty"`
-	UserRequestedAt  *float64 `json:"user_requested_at,omitempty"`
+	APIKeyEnv        string              `json:"api_key_env,omitempty" jsonschema:"description=Name of the environment variable that holds the API key,default=BASETEN_API_KEY,example=BASETEN_API_KEY,example=TYPESAFE_API_KEY"`
+	AuthScheme       AssessorAuthScheme  `json:"auth_scheme,omitempty" jsonschema:"enum=Api-Key,enum=Bearer,default=Api-Key"`
+	TimeoutSeconds   int                 `json:"timeout_seconds,omitempty" jsonschema:"description=Assessor call timeout in seconds; 0 uses the default,minimum=0,maximum=60,default=8"`
+	ExplicitAsk      AssessorExplicitAsk `json:"explicit_ask,omitempty" jsonschema:"enum=assessor,enum=human,default=assessor"`
+	SendUserMessages *bool               `json:"send_user_messages,omitempty" jsonschema:"default=true"`
+	EscalateAt       *float64            `json:"escalate_at,omitempty" jsonschema:"description=Hazard probability at or above which the request goes to the human,minimum=0,maximum=1,default=0.35"`
+	DenyAt           *float64            `json:"deny_at,omitempty" jsonschema:"description=Hazard probability at or above which the request is denied unless the user asked for it,minimum=0,maximum=1,default=0.9"`
+	SeverityEscalate *float64            `json:"severity_escalate,omitempty" jsonschema:"description=Severity score (0-3) at or above which the request goes to the human,minimum=0,maximum=3,default=2"`
+	UserRequestedAt  *float64            `json:"user_requested_at,omitempty" jsonschema:"description=User-requested probability at or above which a likely deny goes to the human instead,minimum=0,maximum=1,default=0.7"`
 }
 
 // TrustedAssessor is the resolved, trusted assessor config plus the
@@ -80,7 +96,7 @@ func (p *PermissionAssessor) Validate() error {
 	}
 	var errs []error
 	switch p.Mode {
-	case "", AssessorModeOff, AssessorModeShadow, AssessorModeEnforce:
+	case "", AssessorOff, AssessorShadow, AssessorEnforce:
 	default:
 		errs = append(errs, fmt.Errorf("mode %q must be one of off, shadow, enforce", p.Mode))
 	}

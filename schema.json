@@ -643,6 +643,9 @@
         },
         "timeout_seconds": {
           "type": "integer",
+          "maximum": 60,
+          "minimum": 0,
+          "description": "Assessor call timeout in seconds; 0 uses the default",
           "default": 8
         },
         "explicit_ask": {
@@ -658,16 +661,32 @@
           "default": true
         },
         "escalate_at": {
-          "type": "number"
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Hazard probability at or above which the request goes to the human",
+          "default": 0.35
         },
         "deny_at": {
-          "type": "number"
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Hazard probability at or above which the request is denied unless the user asked for it",
+          "default": 0.9
         },
         "severity_escalate": {
-          "type": "number"
+          "type": "number",
+          "maximum": 3,
+          "minimum": 0,
+          "description": "Severity score (0-3) at or above which the request goes to the human",
+          "default": 2
         },
         "user_requested_at": {
-          "type": "number"
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "User-requested probability at or above which a likely deny goes to the human instead",
+          "default": 0.7
         }
       },
       "additionalProperties": false,

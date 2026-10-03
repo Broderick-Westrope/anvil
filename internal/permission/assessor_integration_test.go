@@ -39,7 +39,7 @@ func (f *fakeAssessor) Assess(ctx context.Context, in AssessInput) (Assessment, 
 	severity := 0.3
 	rec := AssessmentRecord{
 		SchemaVersion: AssessmentSchemaVersion,
-		Outcome:       outcomeName(f.outcome),
+		Outcome:       f.outcome.String(),
 		Nouls:         map[string]float64{"destructive": 0.05},
 		Severity:      &severity,
 	}

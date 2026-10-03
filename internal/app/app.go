@@ -101,7 +101,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		if opt, ok := buildAssessorOption(ta, sessions, messages); ok {
 			permOpts = append(permOpts, opt)
 			slog.Info("Permission assessor configured",
-				"mode", cmp.Or(ta.Config.Mode, config.AssessorModeOff),
+				"mode", cmp.Or(ta.Config.Mode, config.AssessorOff),
 				"model", ta.Config.Model)
 		}
 	}

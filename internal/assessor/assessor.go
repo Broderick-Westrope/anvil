@@ -105,7 +105,7 @@ func (a *Assessor) Assess(ctx context.Context, in permission.AssessInput) (permi
 
 	outcome, reason := Route(resp.Answers, a.Thresholds)
 	rec.Model = resp.Model
-	rec.Outcome = outcomeName(outcome)
+	rec.Outcome = outcome.String()
 	rec.Reason = reason
 	rec.Nouls = map[string]float64{}
 	for id, ans := range resp.Answers {

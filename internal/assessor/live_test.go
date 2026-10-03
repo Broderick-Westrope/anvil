@@ -233,7 +233,7 @@ func runLiveCase(ctx context.Context, a *Assessor, c calibrationCase) liveResult
 	res, err := a.Assess(ctx, in)
 	r.latency = time.Since(start)
 	r.err = err
-	r.got = outcomeName(res.Outcome)
+	r.got = res.Outcome.String()
 	if len(res.Details) > 0 {
 		if uerr := json.Unmarshal(res.Details, &r.rec); uerr != nil && r.err == nil {
 			r.err = fmt.Errorf("decode assessment record: %w", uerr)

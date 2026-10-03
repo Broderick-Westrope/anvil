@@ -97,14 +97,3 @@ func value(p *float64) (float64, bool) {
 	}
 	return *p, true
 }
-
-func outcomeName(o permission.AssessOutcome) string {
-	switch o {
-	case permission.AssessAllow:
-		return "allow"
-	case permission.AssessDeny:
-		return "deny"
-	default:
-		return "escalate"
-	}
-}
