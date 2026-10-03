@@ -1,6 +1,7 @@
 package assessor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,7 +121,7 @@ func TestBuildStateEdit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			state, skip := BuildState(permission.AssessInput{ToolName: "edit", Input: tt.path, WorkingDir: wd}, false)
+			state, skip := BuildState(permission.AssessInput{ToolName: "edit", Input: tt.path, WorkingDir: wd, Content: "x"}, false)
 			require.Equal(t, tt.want, skip)
 			require.Nil(t, state)
 		})
@@ -139,7 +140,7 @@ func TestBuildStateEdit(t *testing.T) {
 
 	t.Run("relative path joined to working dir", func(t *testing.T) {
 		t.Parallel()
-		state, skip := BuildState(permission.AssessInput{ToolName: "multiedit", Input: "pkg/a.go", WorkingDir: wd}, false)
+		state, skip := BuildState(permission.AssessInput{ToolName: "multiedit", Input: "pkg/a.go", WorkingDir: wd, Content: "package pkg\n"}, false)
 		require.Empty(t, skip)
 		require.Equal(t, filepath.Join(wd, "pkg", "a.go"), state["target_path"])
 	})
@@ -152,6 +153,64 @@ func TestBuildStateEdit(t *testing.T) {
 		require.Len(t, state["new_content_excerpt"], maxContentChars)
 		require.Equal(t, true, state["content_truncated"])
 	})
+
+	t.Run("diff reports removals", func(t *testing.T) {
+		t.Parallel()
+		var b strings.Builder
+		b.WriteString("--- a/a.go\n+++ b/a.go\n@@ -1,121 +1,1 @@\n")
+		for i := range 120 {
+			fmt.Fprintf(&b, "-func f%d() {}\n", i)
+		}
+		b.WriteString("--- not a header\n+// stub\n")
+		state, skip := BuildState(permission.AssessInput{
+			ToolName:   "edit",
+			Input:      filepath.Join(wd, "a.go"),
+			WorkingDir: wd,
+			Content:    "// stub",
+			Diff:       b.String(),
+		}, false)
+		require.Empty(t, skip)
+		require.Equal(t, 121, state["lines_removed"])
+		require.Equal(t, 1, state["lines_added"])
+		require.Equal(t, true, state["diff_truncated"])
+		require.Len(t, state["change_diff"], maxContentChars)
+		require.Contains(t, state["change_diff"], "-func f0() {}")
+		require.NotContains(t, state, "new_content_excerpt")
+	})
+
+	t.Run("diff secrets redacted", func(t *testing.T) {
+		t.Parallel()
+		state, skip := BuildState(permission.AssessInput{
+			ToolName:   "write",
+			Input:      filepath.Join(wd, "keys.go"),
+			WorkingDir: wd,
+			Diff:       "@@ -1 +1 @@\n-key := \"AKIA" + "ABCDEFGHIJKLMNOP\"\n+key := os.Getenv(\"K\")\n",
+		}, false)
+		require.Empty(t, skip)
+		require.NotContains(t, state["change_diff"], "AKIA"+"ABCDEFGHIJKLMNOP")
+		require.Equal(t, false, state["diff_truncated"])
+	})
+
+	t.Run("no diff or content", func(t *testing.T) {
+		t.Parallel()
+		for _, tool := range []string{"edit", "multiedit", "write"} {
+			state, skip := BuildState(permission.AssessInput{ToolName: tool, Input: filepath.Join(wd, "a.go"), WorkingDir: wd}, false)
+			require.Equal(t, skipNoEditContents, skip, tool)
+			require.Nil(t, state)
+		}
+	})
+}
+
+func TestDiffLineCounts(t *testing.T) {
+	t.Parallel()
+
+	added, removed := diffLineCounts("--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n ctx\n-old\n+new\n+++plus\n")
+	require.Equal(t, 2, added)
+	require.Equal(t, 1, removed)
+
+	added, removed = diffLineCounts("-gone\n-also\n")
+	require.Equal(t, 0, added)
+	require.Equal(t, 2, removed)
 }
 
 func TestBuildStateView(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -102,9 +103,12 @@ type AssessInput struct {
 	SessionID, ToolName, Action, Description string
 	Input, Path, WorkingDir                  string
 	Segments                                 []string
-	Content                                  string
-	ArgsJSON                                 string
-	RecentUserMessages                       []string
+	// Content is the new file content for edits.
+	Content string
+	// Diff is the unified diff an edit would apply.
+	Diff               string
+	ArgsJSON           string
+	RecentUserMessages []string
 }
 
 // Assessment is the result of assessing one request.
@@ -228,6 +232,7 @@ func (s *permissionService) assess(ctx context.Context, opts CreatePermissionReq
 		WorkingDir:  s.workingDir,
 		Segments:    slices.Clone(opts.InputSegments),
 		Content:     opts.Content,
+		Diff:        opts.Diff,
 		ArgsJSON:    opts.ArgsJSON,
 	}
 	if s.assessor.Intent != nil {
@@ -296,9 +301,20 @@ func cachedAllowRecord() json.RawMessage {
 }
 
 // allowCacheKey identifies a repeat of the same call within a session.
+// Each field is length-prefixed so no two distinct calls can encode to the
+// same bytes.
 func allowCacheKey(opts CreatePermissionRequest) string {
-	sum := sha256.Sum256([]byte(opts.Input + "\x00" + opts.Content + "\x00" + opts.ArgsJSON))
-	return opts.SessionID + "\x00" + opts.ToolName + "\x00" + hex.EncodeToString(sum[:])
+	h := sha256.New()
+	for _, f := range []string{
+		opts.SessionID, opts.ToolName, opts.Action, opts.Path,
+		opts.Input, opts.Content, opts.Diff, opts.ArgsJSON,
+	} {
+		var n [8]byte
+		binary.BigEndian.PutUint64(n[:], uint64(len(f)))
+		h.Write(n[:])
+		h.Write([]byte(f))
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // assessorNote is the one-line summary shown alongside the prompt.

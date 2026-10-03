@@ -155,6 +155,7 @@ func NewWriteTool(
 					},
 					Input:   filePath,
 					Content: writeContent,
+					Diff:    diffText,
 				},
 			)
 			if err != nil {

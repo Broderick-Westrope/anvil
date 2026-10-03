@@ -140,6 +140,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 			},
 			Input:   filePath,
 			Content: content,
+			Diff:    diffText,
 		},
 	)
 	if err != nil {
@@ -318,7 +319,9 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 				OldContent: oldContent,
 				NewContent: newContent,
 			},
-			Input: filePath,
+			Input:   filePath,
+			Content: newContent,
+			Diff:    diffText,
 		},
 	)
 	if err != nil {
@@ -394,6 +397,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 			},
 			Input:   filePath,
 			Content: newString,
+			Diff:    diffText,
 		},
 	)
 	if err != nil {

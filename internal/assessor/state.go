@@ -24,7 +24,7 @@ const (
 	maxMessages     = 3
 	maxStateBytes   = 6000 // Whole marshalled state.
 	maxMCPArgsChars = 1500
-	maxContentChars = 1200 // Excerpt of new file content for edits.
+	maxContentChars = 1200 // Excerpt of new file content or diff for edits.
 )
 
 // Skip reasons returned by BuildState.
@@ -40,6 +40,7 @@ const (
 	skipNoMCPArgs       = "mcp arguments missing"
 	skipMCPArgsTooLong  = "mcp arguments too long"
 	skipStateTooLarge   = "state too large"
+	skipNoEditContents  = "edit contents unavailable"
 )
 
 // BuildState decides whether a call is eligible for assessment and builds
@@ -174,12 +175,43 @@ func editState(state map[string]any, in permission.AssessInput) string {
 		return skipOutsideWorkDir
 	}
 
-	content := Redact(in.Content)
+	if in.Diff == "" && in.Content == "" {
+		return skipNoEditContents
+	}
+
 	state["target_path"] = clean(target, maxFieldChars)
 	state["target_inside_working_directory"] = true
+	if in.Diff != "" {
+		added, removed := diffLineCounts(in.Diff)
+		change := Redact(in.Diff)
+		state["lines_added"] = added
+		state["lines_removed"] = removed
+		state["change_diff"] = truncate(change, maxContentChars)
+		state["diff_truncated"] = utf8.RuneCountInString(change) > maxContentChars
+		return ""
+	}
+	content := Redact(in.Content)
 	state["new_content_excerpt"] = truncate(content, maxContentChars)
 	state["content_truncated"] = utf8.RuneCountInString(content) > maxContentChars
 	return ""
+}
+
+// diffLineCounts counts added and removed lines in a unified diff. File
+// headers ("--- " and "+++ " before the first hunk) are not counted.
+func diffLineCounts(d string) (added, removed int) {
+	inHunk := false
+	for line := range strings.SplitSeq(d, "\n") {
+		switch {
+		case strings.HasPrefix(line, "@@"):
+			inHunk = true
+		case !inHunk && (strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ")):
+		case strings.HasPrefix(line, "+"):
+			added++
+		case strings.HasPrefix(line, "-"):
+			removed++
+		}
+	}
+	return added, removed
 }
 
 func readState(state map[string]any, in permission.AssessInput) string {

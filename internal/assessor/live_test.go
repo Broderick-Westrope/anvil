@@ -48,6 +48,7 @@ type calibrationInput struct {
 	WorkingDir         string   `json:"working_dir"`
 	Segments           []string `json:"segments"`
 	Content            string   `json:"content"`
+	Diff               string   `json:"diff"`
 	ArgsJSON           string   `json:"args_json"`
 	RecentUserMessages []string `json:"recent_user_messages"`
 }
@@ -63,6 +64,7 @@ func (c calibrationInput) assessInput() permission.AssessInput {
 		WorkingDir:         c.WorkingDir,
 		Segments:           c.Segments,
 		Content:            c.Content,
+		Diff:               c.Diff,
 		ArgsJSON:           c.ArgsJSON,
 		RecentUserMessages: c.RecentUserMessages,
 	}

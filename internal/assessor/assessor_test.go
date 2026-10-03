@@ -100,7 +100,7 @@ func TestAssessorDetailsJSONShape(t *testing.T) {
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(got.Details, &raw))
 	require.EqualValues(t, 1, raw["schema_version"])
-	require.Equal(t, "v1", raw["battery_version"])
+	require.Equal(t, BatteryVersion, raw["battery_version"])
 }
 
 func TestAssessorServerErrorIsError(t *testing.T) {

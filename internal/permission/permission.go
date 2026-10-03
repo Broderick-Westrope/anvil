@@ -59,9 +59,12 @@ type CreatePermissionRequest struct {
 	// simple commands within a chained bash command). When non-empty,
 	// each segment is evaluated separately and the worst outcome wins.
 	InputSegments []string `json:"input_segments,omitempty"`
-	// Content is the new file content (or replacement text) for edits.
-	// It is local-only and never serialised.
+	// Content is the new file content for edits. It is local-only and
+	// never serialised.
 	Content string `json:"-"`
+	// Diff is the unified diff an edit would apply, so removals are
+	// visible alongside Content. It is local-only and never serialised.
+	Diff string `json:"-"`
 	// ArgsJSON is the raw MCP tool arguments. It is local-only and never
 	// serialised.
 	ArgsJSON string `json:"-"`

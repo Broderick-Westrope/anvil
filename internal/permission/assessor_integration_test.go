@@ -523,3 +523,71 @@ type panicAssessor struct{}
 func (panicAssessor) Assess(context.Context, AssessInput) (Assessment, error) {
 	panic("boom")
 }
+
+func TestAllowCacheKeyIncludesEditFacts(t *testing.T) {
+	t.Parallel()
+	base := CreatePermissionRequest{SessionID: "s", ToolName: "edit", Action: "write", Path: "/w", Input: "/w/a.go", Content: "x", Diff: "-a\n+x\n"}
+	key := allowCacheKey(base)
+	for name, mutate := range map[string]func(*CreatePermissionRequest){
+		"diff":   func(o *CreatePermissionRequest) { o.Diff = "-everything\n+x\n" },
+		"action": func(o *CreatePermissionRequest) { o.Action = "delete" },
+		"path":   func(o *CreatePermissionRequest) { o.Path = "/other" },
+		"shifted fields": func(o *CreatePermissionRequest) {
+			o.Content, o.Diff = "x\x00-a\n+x\n", ""
+		},
+	} {
+		o := base
+		mutate(&o)
+		require.NotEqual(t, key, allowCacheKey(o), name)
+	}
+	require.Equal(t, key, allowCacheKey(base))
+}
+
+func TestAssessorAllowCacheKeyedOnDiff(t *testing.T) {
+	t.Parallel()
+	edit := func(callID, diff string) CreatePermissionRequest {
+		return CreatePermissionRequest{
+			SessionID:  "session",
+			ToolCallID: callID,
+			ToolName:   "edit",
+			Action:     "write",
+			Input:      "/work/main.go",
+			Path:       "/work",
+			Content:    "package main\n",
+			Diff:       diff,
+		}
+	}
+	t.Run("different diff reassesses", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeAssessor{outcome: AssessAllow}
+		h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+		_, err := h.svc.Request(testCtx(t), edit("a", "-// comment\n"))
+		require.NoError(t, err)
+		_, err = h.svc.Request(testCtx(t), edit("b", "-func main() {}\n-func run() {}\n"))
+		require.NoError(t, err)
+		require.Equal(t, int32(2), fake.calls.Load())
+	})
+	t.Run("same diff hits cache", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeAssessor{outcome: AssessAllow}
+		h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+		_, err := h.svc.Request(testCtx(t), edit("a", "-// comment\n"))
+		require.NoError(t, err)
+		r, err := h.svc.Request(testCtx(t), edit("b", "-// comment\n"))
+		require.NoError(t, err)
+		require.True(t, r.Granted)
+		require.Equal(t, int32(1), fake.calls.Load())
+	})
+}
+
+func TestAssessorReceivesDiff(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAssessor{outcome: AssessAllow, entered: make(chan AssessInput, 1)}
+	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	opts := h.req("call", "/work/main.go")
+	opts.ToolName = "edit"
+	opts.Diff = "-gone\n"
+	_, err := h.svc.Request(testCtx(t), opts)
+	require.NoError(t, err)
+	require.Equal(t, "-gone\n", waitEntered(t, fake).Diff)
+}

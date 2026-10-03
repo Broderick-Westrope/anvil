@@ -194,6 +194,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 		},
 		Input:   params.FilePath,
 		Content: currentContent,
+		Diff:    diffText,
 	})
 	if err != nil {
 		return fantasy.ToolResponse{}, err
@@ -290,6 +291,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 		},
 		Input:   params.FilePath,
 		Content: currentContent,
+		Diff:    diffText,
 	})
 	if err != nil {
 		return fantasy.ToolResponse{}, err
