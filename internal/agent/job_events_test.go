@@ -195,6 +195,58 @@ func TestJobEvents_ObservedCompletionNotNotified(t *testing.T) {
 	}
 }
 
+func TestJobEvents_ObservedMatchNotNotified(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		watchGen uint64
+		notified bool
+	}{
+		{name: "wait match after the watch fired", watchGen: 1, notified: false},
+		{name: "wait match before the watch fired", watchGen: 0, notified: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := testEnv(t)
+			sess, err := env.sessions.Create(t.Context(), "Observed match", t.TempDir())
+			require.NoError(t, err)
+			store, owners := newJobEventsStore()
+			owners.set("J01", sess.ID)
+			info := shell.JobInfo{ID: "J01", SessionID: sess.ID, Command: "serve"}
+
+			tool := stepTool(tools.JobOutputToolName, func(_ context.Context, call int) fantasy.ToolResponse {
+				if call > 0 {
+					return fantasy.NewTextResponse("ok")
+				}
+				store.WatchReplaced("J01", 1)
+				store.PatternMatched(info, 1, "ready")
+				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(`Status: running, matched "ready"`),
+					tools.JobOutputResponseMetadata{
+						ShellID:     "J01",
+						EndReason:   string(shell.WaitMatched),
+						MatchedLine: "ready",
+						WatchGen:    tt.watchGen,
+					})
+			})
+			model := &scriptedModel{toolName: tools.JobOutputToolName, toolSteps: 1}
+			require.NoError(t, runJobEventsSession(t, jobEventsAgent(env, env.messages, model, store, tool), sess.ID))
+
+			require.Len(t, model.prompts, 2)
+			got := notices(model.prompts[1])
+			if tt.notified {
+				require.Len(t, got, 1)
+				require.Contains(t, got[0], "J01")
+			} else {
+				require.Empty(t, got)
+			}
+			require.False(t, store.HasPending(sess.ID))
+		})
+	}
+}
+
 func TestJobEvents_KillExitObservesCompletion(t *testing.T) {
 	t.Parallel()
 
