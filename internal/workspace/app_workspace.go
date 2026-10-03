@@ -26,8 +26,9 @@ import (
 // directly to an in-process [app.App] instance. This is the default
 // mode when the client/server architecture is not enabled.
 type AppWorkspace struct {
-	app   *app.App
-	store *config.ConfigStore
+	app      *app.App
+	store    *config.ConfigStore
+	ancestry *sessionAncestry
 }
 
 // NewAppWorkspace creates a new AppWorkspace wrapping the given app
@@ -37,6 +38,13 @@ func NewAppWorkspace(a *app.App, store *config.ConfigStore) *AppWorkspace {
 		app:   a,
 		store: store,
 	}
+	w.ancestry = newSessionAncestry(func(ctx context.Context, sessionID string) (string, error) {
+		s, err := a.Sessions.Get(ctx, sessionID)
+		if err != nil {
+			return "", err
+		}
+		return s.ParentSessionID, nil
+	})
 	store.SetPluginsChangedHook(func(ctx context.Context) error {
 		return w.ReloadPlugins(ctx)
 	})
@@ -301,7 +309,7 @@ func (w *AppWorkspace) LSPGetDiagnosticCounts(name string) lsp.DiagnosticCounts 
 // -- Jobs --
 
 func (w *AppWorkspace) ListSessionJobs(sessionID string) []shell.JobInfo {
-	return shell.GetBackgroundShellManager().ListBySession(sessionID)
+	return w.ancestry.filterSessionTreeJobs(context.Background(), shell.GetBackgroundShellManager().ListAll(), sessionID)
 }
 
 // -- Config (read-only) --

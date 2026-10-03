@@ -25,6 +25,10 @@ func (w *jobsWorkspace) ListSessionJobs(sessionID string) []shell.JobInfo {
 	return w.jobs[sessionID]
 }
 
+func (*jobsWorkspace) ParseAgentToolSessionID(string) (string, string, bool) {
+	return "", "", false
+}
+
 var jobsTestNow = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 
 func newJobsTestUI(jobs map[string][]shell.JobInfo) (*UI, *jobsWorkspace) {
@@ -80,7 +84,7 @@ func TestJobsInfo(t *testing.T) {
 		require.NotContains(t, out, "quiet")
 		require.NotContains(t, out, "no output")
 
-		line, stale := jobLine(runningJob("05A", "dev server", 2*time.Hour+3*time.Minute, 5*time.Second), jobsTestNow)
+		line, stale := jobLine(runningJob("05A", "dev server", 2*time.Hour+3*time.Minute, 5*time.Second), "s1", jobsTestNow)
 		require.False(t, stale)
 		require.Contains(t, u.jobsInfo(60, true, jobsTestNow), u.com.Styles.Resource.AdditionalText.Render(line))
 	})
@@ -101,7 +105,7 @@ func TestJobsInfo(t *testing.T) {
 		rendered := u.jobsInfo(60, true, jobsTestNow)
 		require.Contains(t, ansi.Strip(rendered), "quiet 11m")
 
-		line, stale := jobLine(job, jobsTestNow)
+		line, stale := jobLine(job, "s1", jobsTestNow)
 		require.True(t, stale)
 		require.Contains(t, rendered, u.com.Styles.LSP.WarningDiagnostic.Render(line))
 		require.NotContains(t, rendered, u.com.Styles.Resource.AdditionalText.Render(line))
@@ -113,7 +117,7 @@ func TestJobsInfo(t *testing.T) {
 		u, _ := newJobsTestUI(map[string][]shell.JobInfo{"s1": {job}})
 		rendered := u.jobsInfo(60, true, jobsTestNow)
 		require.Contains(t, ansi.Strip(rendered), "quiet 2m")
-		line, stale := jobLine(job, jobsTestNow)
+		line, stale := jobLine(job, "s1", jobsTestNow)
 		require.False(t, stale)
 		require.Contains(t, rendered, u.com.Styles.Resource.AdditionalText.Render(line))
 	})
@@ -139,6 +143,19 @@ func TestJobsInfo(t *testing.T) {
 			"other": {runningJob("008", "elsewhere", time.Minute, time.Second)},
 		})
 		require.Empty(t, u.jobsInfo(60, true, jobsTestNow))
+	})
+
+	t.Run("subagent jobs are listed and tagged", func(t *testing.T) {
+		t.Parallel()
+		childJob := runningJob("00B", "tunnel", time.Minute, time.Second)
+		childJob.SessionID = "child"
+		u, _ := newJobsTestUI(map[string][]shell.JobInfo{
+			"s1": {runningJob("00A", "server", time.Minute, time.Second), childJob},
+		})
+		out := ansi.Strip(u.jobsInfo(60, true, jobsTestNow))
+		require.Contains(t, out, "00B tunnel  1m00s  subagent")
+		require.Contains(t, out, "00A server  1m00s")
+		require.NotContains(t, out, "00A server  1m00s  subagent")
 	})
 
 	t.Run("long labels are truncated to the width", func(t *testing.T) {
@@ -183,29 +200,41 @@ func TestJobsSidebarSection(t *testing.T) {
 	require.Less(t, strings.Index(content, "Jobs"), strings.Index(content, "LSPs"))
 }
 
+func backgroundResultIn(sessionID string, background bool) pubsub.Event[message.Message] {
+	meta := `{"background":false}`
+	if background {
+		meta = `{"background":true,"shell_id":"00C"}`
+	}
+	return pubsub.Event[message.Message]{
+		Type: pubsub.CreatedEvent,
+		Payload: message.Message{
+			ID:        "m1",
+			Role:      message.Tool,
+			SessionID: sessionID,
+			Parts: []message.ContentPart{message.ToolResult{
+				ToolCallID: "tc1",
+				Name:       tools.BashToolName,
+				Content:    "moved to background",
+				Metadata:   meta,
+			}},
+		},
+	}
+}
+
 func TestJobsElapsedTick(t *testing.T) {
 	t.Parallel()
 
 	backgroundResult := func(background bool) pubsub.Event[message.Message] {
-		meta := `{"background":false}`
-		if background {
-			meta = `{"background":true,"shell_id":"00C"}`
-		}
-		return pubsub.Event[message.Message]{
-			Type: pubsub.CreatedEvent,
-			Payload: message.Message{
-				ID:        "m1",
-				Role:      message.Tool,
-				SessionID: "s1",
-				Parts: []message.ContentPart{message.ToolResult{
-					ToolCallID: "tc1",
-					Name:       tools.BashToolName,
-					Content:    "moved to background",
-					Metadata:   meta,
-				}},
-			},
-		}
+		return backgroundResultIn("s1", background)
 	}
+
+	t.Run("background bash result from a subagent starts the tick", func(t *testing.T) {
+		t.Parallel()
+		u, _ := newJobsTestUI(nil)
+		_, cmd := u.Update(backgroundResultIn("child", true))
+		require.True(t, u.elapsedTickRunning)
+		require.NotNil(t, cmd)
+	})
 
 	t.Run("background bash result starts the tick", func(t *testing.T) {
 		t.Parallel()
