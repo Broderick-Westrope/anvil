@@ -108,14 +108,14 @@ func TestJobOutputItem(t *testing.T) {
 	item := NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
 	SetToolCallStartedAt(item, time.Now().Add(-90*time.Second).Unix())
 
-	live, ok := item.(LiveCounter)
+	wait, ok := item.(*JobOutputToolMessageItem)
 	require.True(t, ok)
-	require.True(t, live.HasLiveCounter())
+	require.True(t, wait.isSpinning(), "a pending wait spins so its counter redraws")
 	require.Contains(t, ansi.Strip(item.Render(100)), "waiting 1m")
 
 	item.SetResult(&message.ToolResult{ToolCallID: "tc-wait", Content: "done"})
-	require.False(t, live.HasLiveCounter())
+	require.False(t, wait.isSpinning())
 
 	noWait := NewToolMessageItem(&sty, "msg", message.ToolCall{ID: "tc-nowait", Name: tools.JobOutputToolName, Input: `{"shell_id":"001"}`, Finished: true}, nil, false, nil)
-	require.False(t, noWait.(LiveCounter).HasLiveCounter())
+	require.False(t, noWait.(*JobOutputToolMessageItem).isSpinning())
 }
