@@ -212,6 +212,10 @@ func (w *AppWorkspace) InitOrchestratorAgent(ctx context.Context) error {
 	return w.app.InitOrchestratorAgent(ctx)
 }
 
+func (w *AppWorkspace) SetComposerState(sessionID string, open, hasDraft, navigating bool) {
+	w.app.SetComposerState(sessionID, open, hasDraft, navigating)
+}
+
 func (w *AppWorkspace) GetDefaultSmallModel(providerID string) config.SelectedModel {
 	return w.app.GetDefaultSmallModel(providerID)
 }

@@ -47,19 +47,19 @@ in memory here; Phase 4 persists them. Out: persistence, sidebar UI.
       old pattern.
 - [x] A job handed from a subagent to its parent notifies the parent, even
       if it completes during the handoff; killed auto jobs notify no one.
-- [ ] Notifications render in the TUI as compact notices, not user
+- [x] Notifications render in the TUI as compact notices, not user
       bubbles, and are sent to the model as user-role text.
-- [ ] Concurrent completion of two jobs and two user prompts start at most
+- [x] Concurrent completion of two jobs and two user prompts start at most
       one run at a time, and all four inputs are delivered exactly once.
-- [ ] With `wake_on_event=true`: an idle, open session is woken by an
+- [x] With `wake_on_event=true`: an idle, open session is woken by an
       event; a busy or summarising session isn't, and is woken when it
       becomes idle; no wake while the user has a draft (wake follows when
       the draft is cleared), while navigating, or after a cancel until the
       next user message; after 3 wakes without user input, events stay
       pending; subagent sessions, sessions not open in the TUI, and
       `anvil run` never wake.
-- [ ] With the default config, no session is ever woken.
-- [ ] `go test -race ./internal/jobevents/ ./internal/agent/... ./internal/shell/ ./internal/app/`
+- [x] With the default config, no session is ever woken.
+- [x] `go test -race ./internal/jobevents/ ./internal/agent/... ./internal/shell/ ./internal/app/`
       and `go test ./... -count=1` pass.
 
 ## Context Loading
@@ -461,7 +461,7 @@ go test -race ./internal/agent/tools/ -count=1
 
 **Steps:**
 
-1. [ ] Config. Add to `Options`:
+1. [x] Config. Add to `Options`:
 
    ```go
    BackgroundJobs *BackgroundJobsOptions `json:"background_jobs,omitempty" jsonschema:"description=Background job behaviour"`
@@ -477,7 +477,7 @@ go test -race ./internal/agent/tools/ -count=1
 
    Regenerate the JSON schema if `Taskfile.yaml` has a schema task.
 
-2. [ ] Dispatch gate. Add a per-session mutex
+2. [x] Dispatch gate. Add a per-session mutex
    (`dispatchLocks *csync.Map[string, *sync.Mutex]`, helper
    `a.dispatchLock(sessionID) *sync.Mutex`). Hold it for each of these
    sections, and only these (never across model calls):
@@ -493,7 +493,7 @@ go test -race ./internal/agent/tools/ -count=1
    Add a test-visible `takeQueued(sessionID) []SessionAgentCall` and
    `enqueue(call)` so these sections share one implementation.
 
-3. [ ] Wake runs. Add to `SessionAgent`:
+3. [x] Wake runs. Add to `SessionAgent`:
 
    ```go
    // RunWake starts a run for an idle session to deliver pending job
@@ -520,11 +520,11 @@ go test -race ./internal/agent/tools/ -count=1
    orchestrator agent, and update every `Coordinator` and `SessionAgent`
    fake (`rg -n "Coordinator = |SessionAgent = |struct\{ *SessionAgent|struct\{ *Coordinator" internal`).
 
-4. [ ] `OnIdle` hook. Add `OnIdle func(sessionID string)` to
+4. [x] `OnIdle` hook. Add `OnIdle func(sessionID string)` to
    `SessionAgentOptions`; `Run` and `Summarize` call it after their queue
    handling finds nothing queued.
 
-5. [ ] Create `internal/app/job_waker.go`:
+5. [x] Create `internal/app/job_waker.go`:
 
    ```go
    // jobWaker starts a turn for an idle session when its background jobs
@@ -565,13 +565,13 @@ go test -race ./internal/agent/tools/ -count=1
    not navigating) and `closed`. Triggers: `store.Pending()`, `OnIdle`,
    and composer changes that make a session eligible.
 
-6. [ ] Wire in `app.go`: create the waker after the coordinator. Enable it
+6. [x] Wire in `app.go`: create the waker after the coordinator. Enable it
    only from the TUI start path (where `tea.NewProgram` is created in
    `internal/cmd/root.go`, call a new `app.EnableJobWake()`), and only
    when `options.background_jobs.wake_on_event` is true. `anvil run`
    never calls it. In `Shutdown`, set `closed` first, before `CancelAll`.
 
-7. [ ] Tests:
+7. [x] Tests:
    - `dispatch_test.go` with `scriptedModel`: two goroutines each call
      `Run` twice for one session while two jobs complete; afterwards the
      session's persisted messages contain each of the four prompts once
@@ -612,10 +612,10 @@ go test -race ./internal/app/ ./internal/agent/ -count=1
 
 **Steps:**
 
-1. [ ] Add to the `Workspace` interface:
+1. [x] Add to the `Workspace` interface:
    `SetComposerState(sessionID string, open, hasDraft, navigating bool)`.
    `AppWorkspace` forwards to the app's waker (no-op when nil).
-2. [ ] In the UI model, send it:
+2. [x] In the UI model, send it:
    - when a session becomes active (`open=true`) and when another
      session replaces it or the TUI quits (`open=false`);
    - when the editor goes between empty and non-empty (text or
@@ -628,12 +628,12 @@ go test -race ./internal/app/ ./internal/agent/ -count=1
    handled like any running turn: navigation already cancels the active
    request before moving the leaf, so no extra locking is needed between
    the UI and the dispatch gate.
-3. [ ] Render `MessageTypeJobEvent` user messages in
+3. [x] Render `MessageTypeJobEvent` user messages in
    `ExtractMessageItems` as a compact, muted notice (one line per event
    header; tail lines hidden unless expanded), following an existing
    compact item as the style reference. Wake-started turns begin with
    this notice, which is how the user can tell why the agent spoke.
-4. [ ] Tests: a render test following `internal/ui/chat/mcp_test.go`
+4. [x] Tests: a render test following `internal/ui/chat/mcp_test.go`
    (shows each event header, hides tail lines when collapsed, not styled
    as a user message); a UI model test with a recording workspace fake
    asserting the composer signals for typing, clearing, switching

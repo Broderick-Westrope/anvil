@@ -93,6 +93,10 @@ type Workspace interface {
 	AgentRegenerateTitle(ctx context.Context, sessionID string) error
 	UpdateAgentModel(ctx context.Context) error
 	InitOrchestratorAgent(ctx context.Context) error
+	// SetComposerState reports whether a session is open in the TUI and
+	// whether its composer has a draft or is navigating the branch tree,
+	// so background job events only wake sessions the user isn't using.
+	SetComposerState(sessionID string, open, hasDraft, navigating bool)
 	GetDefaultSmallModel(providerID string) config.SelectedModel
 
 	// Permissions

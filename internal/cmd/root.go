@@ -157,8 +157,12 @@ anvil --continue --there
 			tea.WithFilter(inputFilter.Filter),
 		)
 		go ws.Subscribe(program)
+		if appWs, ok := ws.(*workspace.AppWorkspace); ok {
+			appWs.App().EnableJobWake()
+		}
 
 		finalModel, err := program.Run()
+		model.CloseComposerState()
 		if err != nil {
 			slog.Error("TUI run error", "error", err)
 			return errors.New("Anvil crashed. Please copy the stacktrace above and open an issue at https://github.com/Broderick-Westrope/anvil/issues/new?template=bug.yml") //nolint:staticcheck

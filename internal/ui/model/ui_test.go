@@ -134,6 +134,8 @@ func (w *testWorkspace) PermissionUnresolvedCount(context.Context, time.Time) (i
 
 func (w *testWorkspace) PermissionLastTriage() time.Time { return w.lastTriage }
 
+func (*testWorkspace) SetComposerState(string, bool, bool, bool) {}
+
 func TestExtractSlashArgs(t *testing.T) {
 	t.Parallel()
 
