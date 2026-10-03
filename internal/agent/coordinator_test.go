@@ -58,6 +58,11 @@ func (m *mockSessionAgent) Summarize(context.Context, string, fantasy.ProviderOp
 	return nil
 }
 
+func (m *mockSessionAgent) RunWake(context.Context, SessionAgentCall, func() bool) (*fantasy.AgentResult, error) {
+	return nil, nil
+}
+func (m *mockSessionAgent) IsSummarizing(string) bool { return false }
+
 // newTestCoordinator creates a minimal coordinator for unit testing runSubAgent.
 func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCfg config.ProviderConfig) *coordinator {
 	cfg, err := config.Init(env.workingDir, "", false)
@@ -826,6 +831,7 @@ func TestNewCoordinatorDoesNotBlockOnMCPInit(t *testing.T) {
 			nil, // lspManager — unused during construction.
 			nil, // notify — unused during construction.
 			nil, // jobEvents — notifications disabled.
+			nil, // onIdle — no waker.
 		)
 		done <- coordinatorResult{c, buildErr}
 	}()

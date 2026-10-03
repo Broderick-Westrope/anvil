@@ -73,6 +73,10 @@ type Coordinator interface {
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+	// RunWake starts a turn for an idle session to deliver its pending
+	// job events. See SessionAgent.RunWake.
+	RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error)
+	IsSummarizing(sessionID string) bool
 	Cancel(sessionID string)
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
@@ -105,6 +109,7 @@ type coordinator struct {
 	lspManager  *lsp.Manager
 	notify      pubsub.Publisher[notify.Notification]
 	jobEvents   *jobevents.Store // Nil disables job notifications.
+	onIdle      func(sessionID string)
 
 	// orchestrator is the eagerly-built top-level agent. Protected by orchestratorMu.
 	// Do NOT use csync.Value[SessionAgent] — it panics on interface types backed by pointers.
@@ -145,6 +150,7 @@ func NewCoordinator(
 	lspManager *lsp.Manager,
 	notify pubsub.Publisher[notify.Notification],
 	jobEvents *jobevents.Store,
+	onIdle func(sessionID string),
 ) (Coordinator, error) {
 	// Discover plugins once for both skills and agents.
 	plugins := plugin.DiscoverAll(cfg.Config().Plugins)
@@ -161,6 +167,7 @@ func NewCoordinator(
 		lspManager:   lspManager,
 		notify:       notify,
 		jobEvents:    jobEvents,
+		onIdle:       onIdle,
 		allSkills:    allSkills,
 		activeSkills: activeSkills,
 		skillStates:  skillStates,
@@ -444,6 +451,53 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 	}
 
 	return result, originalErr
+}
+
+// RunWake implements Coordinator.
+func (c *coordinator) RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error) {
+	// Cheap pre-check; the session agent re-checks under its dispatch
+	// lock.
+	if c.getOrchestrator().IsSessionBusy(sessionID) {
+		return nil, ErrSessionBusy
+	}
+	if err := toolsmcp.WaitForInit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to wait for MCP initialization: %w", err)
+	}
+	if err := c.UpdateModels(ctx); err != nil {
+		return nil, fmt.Errorf("failed to update models: %w", err)
+	}
+
+	orch := c.getOrchestrator()
+	model := orch.Model()
+	maxTokens := model.CatwalkCfg.DefaultMaxTokens
+	if model.ModelCfg.MaxTokens != 0 {
+		maxTokens = model.ModelCfg.MaxTokens
+	}
+	providerCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
+	if !ok {
+		return nil, errModelProviderNotConfigured
+	}
+	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
+	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
+		slog.Error("Failed to refresh OAuth2 token before wake. Proceeding with existing token.", "error", err)
+	}
+
+	return orch.RunWake(ctx, SessionAgentCall{
+		SessionID:        sessionID,
+		MaxOutputTokens:  maxTokens,
+		ProviderOptions:  mergedOptions,
+		Temperature:      temp,
+		TopP:             topP,
+		TopK:             topK,
+		FrequencyPenalty: freqPenalty,
+		PresencePenalty:  presPenalty,
+		OnAuthRefresh:    c.makeAuthRefreshCallback(providerCfg),
+	}, eligible)
+}
+
+// IsSummarizing implements Coordinator.
+func (c *coordinator) IsSummarizing(sessionID string) bool {
+	return c.getOrchestrator().IsSummarizing(sessionID)
 }
 
 // getOrchestrator returns the orchestrator session agent, reading under lock.
@@ -756,6 +810,12 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 	)
 
 	largeProviderCfg, _ := c.cfg.Config().Providers.Get(large.ModelCfg.Provider)
+	// Only top-level sessions are woken, so only the orchestrator reports
+	// idleness.
+	var onIdle func(string)
+	if !isSubAgent {
+		onIdle = c.onIdle
+	}
 	result := NewSessionAgent(SessionAgentOptions{
 		LargeModel:           large,
 		SmallModel:           small,
@@ -771,6 +831,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		Notify:               c.notify,
 		ProviderConfig:       largeProviderCfg,
 		JobEvents:            c.jobEvents,
+		OnIdle:               onIdle,
 	})
 
 	// Capture values needed in goroutines.

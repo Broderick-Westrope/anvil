@@ -73,6 +73,7 @@ type App struct {
 	cleanupFuncs       []func(context.Context) error
 	agentNotifications *pubsub.Broker[notify.Notification]
 	jobEvents          *jobevents.Store
+	jobWaker           *jobWaker
 }
 
 // New initializes a new application instance.
@@ -114,6 +115,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		return bs.Info().SessionID, true
 	})
 	mgr.SetEventSink(app.jobEvents)
+	app.jobWaker = newJobWaker(app.jobEvents, sessions)
+	go app.jobWaker.run(ctx)
 
 	app.setupEvents()
 
@@ -563,12 +566,25 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.LSPManager,
 		app.agentNotifications,
 		app.jobEvents,
+		app.jobWaker.trigger,
 	)
 	if err != nil {
 		slog.Error("Failed to create orchestrator agent", "err", err)
 		return err
 	}
+	app.jobWaker.setAgent(app.AgentCoordinator)
 	return nil
+}
+
+// EnableJobWake lets background job events start turns for idle
+// sessions open in the TUI, when options.background_jobs.wake_on_event
+// is set. Only the interactive TUI calls it; `anvil run` never wakes.
+func (app *App) EnableJobWake() {
+	if !app.config.Config().Options.WakeOnJobEvent() {
+		return
+	}
+	app.jobWaker.enabled.Store(true)
+	app.jobWaker.trigger("")
 }
 
 // Subscribe sends events to the TUI as tea.Msgs.
@@ -608,6 +624,12 @@ func (app *App) Subscribe(program *tea.Program) {
 func (app *App) Shutdown() {
 	start := time.Now()
 	defer func() { slog.Debug("Shutdown took " + time.Since(start).String()) }()
+
+	// Stop job wakes before canceling agents, so no new turn starts
+	// while shutting down.
+	if app.jobWaker != nil {
+		app.jobWaker.close()
+	}
 
 	// First, cancel all agents and wait for them to finish. This must complete
 	// before closing the DB so agents can finish writing their state.

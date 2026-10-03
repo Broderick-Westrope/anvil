@@ -154,6 +154,9 @@ anvil --continue --there
 			tea.WithFilter(inputFilter.Filter),
 		)
 		go ws.Subscribe(program)
+		if appWs, ok := ws.(*workspace.AppWorkspace); ok {
+			appWs.App().EnableJobWake()
+		}
 
 		finalModel, err := program.Run()
 		if err != nil {
