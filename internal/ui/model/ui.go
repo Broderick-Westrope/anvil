@@ -183,6 +183,13 @@ type (
 		sessionID string // The session being cancelled.
 		attempt   int
 	}
+
+	// triageNudgeMsg is sent once at startup when enough unresolved
+	// permission decisions have piled up to recommend running
+	// "anvil permissions triage".
+	triageNudgeMsg struct {
+		count int
+	}
 )
 
 // UI represents the main user interface model.
@@ -229,6 +236,10 @@ type UI struct {
 	// flight. While true, quit requests are ignored so a plain quit
 	// cannot race the write.
 	pinSettling bool
+
+	// triageNudgeShown tracks whether the startup permission-triage nudge
+	// has already been surfaced, so it is shown at most once per process.
+	triageNudgeShown bool
 
 	header *header
 
@@ -500,6 +511,8 @@ func (m *UI) Init() tea.Cmd {
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	// check once whether to nudge the user to run permission triage
+	cmds = append(cmds, m.checkTriageNudge())
 	return tea.Batch(cmds...)
 }
 
@@ -755,6 +768,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
+
+	case triageNudgeMsg:
+		if !m.triageNudgeShown {
+			m.triageNudgeShown = true
+			cmds = append(cmds, util.ReportInfo(fmt.Sprintf(
+				"Run \"anvil permissions triage\" to turn %d repeated approvals into rules", msg.count)))
+		}
 
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
@@ -5894,4 +5914,37 @@ func (m *UI) cycleAssessorMode() permission.AssessorMode {
 	}
 	m.com.Workspace.PermissionSetAssessorMode(next)
 	return next
+}
+
+// triageNudgeThreshold is the minimum number of unresolved permission
+// decisions in the lookback window that triggers the startup nudge to run
+// "anvil permissions triage".
+const triageNudgeThreshold = 50
+
+// triageNudgeLookback is how far back unresolved permission decisions are
+// counted for the startup nudge, and how often a triage run is expected.
+const triageNudgeLookback = 7 * 24 * time.Hour
+
+// checkTriageNudge checks once at startup whether enough unresolved
+// permission decisions have piled up in the last week to recommend
+// running permission triage, returning a [triageNudgeMsg] if so. The
+// one-time guard against showing it more than once lives on the model and
+// is applied when the message is handled in Update, not here.
+func (m *UI) checkTriageNudge() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		count, err := m.com.Workspace.PermissionUnresolvedCount(ctx, time.Now().Add(-triageNudgeLookback))
+		if err != nil {
+			slog.Debug("Failed to count unresolved permission decisions", "error", err)
+			return nil
+		}
+		if count < triageNudgeThreshold {
+			return nil
+		}
+		if last := m.com.Workspace.PermissionLastTriage(); !last.IsZero() && time.Since(last) < triageNudgeLookback {
+			return nil
+		}
+		return triageNudgeMsg{count: count}
+	}
 }
