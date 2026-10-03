@@ -192,7 +192,8 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 			OldContent: "",
 			NewContent: currentContent,
 		},
-		Input: params.FilePath,
+		Input:   params.FilePath,
+		Content: currentContent,
 	})
 	if err != nil {
 		return fantasy.ToolResponse{}, err
@@ -287,7 +288,8 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 			OldContent: oldContent,
 			NewContent: currentContent,
 		},
-		Input: params.FilePath,
+		Input:   params.FilePath,
+		Content: currentContent,
 	})
 	if err != nil {
 		return fantasy.ToolResponse{}, err
