@@ -51,6 +51,20 @@ Every read of a completed job includes its exit code, including empty and
 full re-reads.
 </status_header>
 
+<persistence>
+- Job IDs are unique across Anvil restarts and are never reused
+- Output and exit codes are saved, so jobs stay readable after they drop
+  out of memory and after Anvil restarts; saved output is kept for 14
+  days, after which reads return "(output expired on <date>)"
+- Jobs die when Anvil exits and are then reported as "Status: killed when
+  Anvil exited", or as "Status: interrupted" if Anvil exited unexpectedly
+  (the process may still be running)
+- Jobs running in another Anvil process are read-only and reported as
+  "Status: running in another Anvil process"
+- The first read of a saved job in a new Anvil process starts from the
+  beginning; wait returns at once for saved jobs
+</persistence>
+
 <tips>
 - The read position is per job, so two agents reading the same job share
   it; use full=true if you lost track of earlier output
