@@ -40,6 +40,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/version"
 )
@@ -943,6 +944,8 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	// Populate the CompactionContent part with the generated summary.
 	summaryText := compactionMsg.Content().Text
+	summaryText = appendBackgroundJobsSection(summaryText,
+		shell.GetBackgroundShellManager().ListBySession(sessionID), time.Now())
 	compactionMsg.Parts = []message.ContentPart{
 		message.CompactionContent{
 			Summary:          summaryText,
