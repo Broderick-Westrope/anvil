@@ -409,23 +409,23 @@ go test -race ./internal/agent/tools/ -count=1
 
 **Steps:**
 
-1. [ ] `jobs.go` holds a `jobLifecycle` type that owns the
+1. [x] `jobs.go` holds a `jobLifecycle` type that owns the
    `jobstore.Store`, the heartbeat goroutine, and the sweeper goroutine,
    with `Start(ctx)` and `Stop()` (cancels both and waits for them to
    return). In `app.New`, create it from the global DB, upsert this
    process's `anvil_instances` row, set the store as the manager's
    recorder and the tools' archive, and start it.
-2. [ ] Heartbeat: touch `heartbeat_at` every 30s.
-3. [ ] Recovery at start: for each instance row other than this one whose
+2. [x] Heartbeat: touch `heartbeat_at` every 30s.
+3. [x] Recovery at start: for each instance row other than this one whose
    `heartbeat_at` is older than 90s, `MarkBackgroundJobsInterrupted` and
    delete the row. Running records whose instance row is missing are
    also marked interrupted. A record is `Remote` when its instance's
    heartbeat is fresh.
-4. [ ] Retention sweeper at start and hourly: expire logs for jobs
+4. [x] Retention sweeper at start and hourly: expire logs for jobs
    completed more than 14 days ago; then, while total log size exceeds
    500MB, expire the oldest. Expiring deletes both files and sets
    `log_expired_at`.
-5. [ ] Tests: recovery (stale instance → `interrupted`; fresh instance →
+5. [x] Tests: recovery (stale instance → `interrupted`; fresh instance →
    `Remote`; missing instance → `interrupted`); retention by age and by
    size (small files, injectable cap and clock); `Stop` returns only
    after both goroutines have exited.
