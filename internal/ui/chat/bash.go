@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -121,7 +123,43 @@ func NewJobOutputToolMessageItem(
 	result *message.ToolResult,
 	canceled bool,
 ) ToolMessageItem {
-	return newBaseToolMessageItem(sty, toolCall, result, &JobOutputToolRenderContext{}, canceled)
+	t := newBaseToolMessageItem(sty, toolCall, result, &JobOutputToolRenderContext{}, canceled)
+	t.SetSpinningFunc(func(state SpinningState) bool {
+		if state.IsCanceled() {
+			return false
+		}
+		return !state.ToolCall.Finished || (!state.HasResult() && IsJobOutputWait(state.ToolCall))
+	})
+	return &JobOutputToolMessageItem{baseToolMessageItem: t}
+}
+
+// LiveCounter is implemented by tool items that show a live elapsed
+// counter and need a redraw every second while it runs.
+type LiveCounter interface {
+	HasLiveCounter() bool
+}
+
+var _ LiveCounter = (*JobOutputToolMessageItem)(nil)
+
+// HasLiveCounter reports whether the item is a blocking wait that has not
+// returned yet.
+func (j *JobOutputToolMessageItem) HasLiveCounter() bool {
+	if j.HasResult() || j.Status() == ToolStatusCanceled {
+		return false
+	}
+	return IsJobOutputWait(j.ToolCall())
+}
+
+// IsJobOutputWait reports whether tc is a job_output call with wait=true.
+func IsJobOutputWait(tc message.ToolCall) bool {
+	if tc.Name != tools.JobOutputToolName {
+		return false
+	}
+	var params tools.JobOutputParams
+	if err := json.Unmarshal([]byte(tc.Input), &params); err != nil {
+		return false
+	}
+	return params.Wait
 }
 
 // JobOutputToolRenderContext renders job_output tool messages.
@@ -129,12 +167,20 @@ type JobOutputToolRenderContext struct{}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	if opts.IsPending() {
-		return pendingTool(sty, "Job", opts.Anim, opts.Compact)
+	var params tools.JobOutputParams
+	paramsErr := json.Unmarshal([]byte(opts.ToolCall.Input), &params)
+
+	waiting := params.Wait && paramsErr == nil && !opts.HasResult() && !opts.IsCanceled()
+	if opts.IsPending() || waiting {
+		header := pendingTool(sty, "Job", opts.Anim, opts.Compact)
+		if waiting && !opts.StartedAt.IsZero() {
+			elapsed := max(opts.Now.Sub(opts.StartedAt), 0)
+			header += " " + sty.Tool.StateWaiting.Render("waiting "+shell.FormatRuntime(elapsed))
+		}
+		return header
 	}
 
-	var params tools.JobOutputParams
-	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
+	if paramsErr != nil {
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, width)
 	}
 
@@ -143,6 +189,9 @@ func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 		var meta tools.JobOutputResponseMetadata
 		if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err == nil {
 			description = cmp.Or(meta.Description, meta.Command)
+			if runtime := jobRuntimeNote(meta); runtime != "" {
+				description = strings.TrimPrefix(description+" · "+runtime, " · ")
+			}
 		}
 	}
 
@@ -151,6 +200,19 @@ func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 		content = opts.Result.Content
 	}
 	return renderJobTool(sty, opts, width, "Output", params.ShellID, description, content)
+}
+
+// jobRuntimeNote describes how long the job had run when job_output read
+// it: "ran 9m14s" once finished, "running 4m12s" otherwise.
+func jobRuntimeNote(meta tools.JobOutputResponseMetadata) string {
+	if meta.RuntimeMS <= 0 {
+		return ""
+	}
+	runtime := shell.FormatRuntime(time.Duration(meta.RuntimeMS) * time.Millisecond)
+	if meta.Done {
+		return "ran " + runtime
+	}
+	return "running " + runtime
 }
 
 // -----------------------------------------------------------------------------

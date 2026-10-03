@@ -22,17 +22,17 @@ controls for killing jobs from the UI.
 
 **Success Criteria:**
 
-- [ ] The sidebar Jobs section lists the active session's running
+- [x] The sidebar Jobs section lists the active session's running
       published jobs with ID, short label, runtime, and last-output age;
       jobs silent for over 10 minutes are styled as stale; the section is
       hidden when there are none.
-- [ ] Runtimes in the sidebar update every second while jobs are running,
+- [x] Runtimes in the sidebar update every second while jobs are running,
       and the tick stops when none are.
-- [ ] A pending `job_output` call with `wait=true` shows a live elapsed
+- [x] A pending `job_output` call with `wait=true` shows a live elapsed
       counter.
-- [ ] Finished `job_output` cards show the job's final runtime from
+- [x] Finished `job_output` cards show the job's final runtime from
       metadata (if Phase 2 merged).
-- [ ] Render tests cover each state; `go test ./internal/ui/... -count=1`
+- [x] Render tests cover each state; `go test ./internal/ui/... -count=1`
       passes.
 
 ## Context Loading
@@ -148,7 +148,7 @@ go test ./internal/ui/model/ ./internal/workspace/ -count=1
 
 **Steps:**
 
-1. [ ] Pending `job_output` with `wait=true`: in
+1. [x] Pending `job_output` with `wait=true`: in
    `JobOutputToolRenderContext.RenderTool`, when `opts.IsPending()` and
    the parsed params have `Wait`, render
    `pendingTool(sty, "Job", opts.Anim, opts.Compact)` followed by
@@ -162,12 +162,12 @@ go test ./internal/ui/model/ ./internal/workspace/ -count=1
    items use `invalidateRunningAgentCaches`); if not, extend that pass to
    invalidate pending `job_output` items with `wait=true`.
 
-2. [ ] Finished `job_output` cards (needs Phase 2): read `RuntimeMS` and
+2. [x] Finished `job_output` cards (needs Phase 2): read `RuntimeMS` and
    `Done` from `JobOutputResponseMetadata` and append
    `· ran 9m14s` (finished) or `· running 4m12s` (still running at read
    time) to the job header description, using `shell.FormatRuntime`.
 
-3. [ ] Tests in `job_render_test.go` following `mcp_test.go`'s approach:
+3. [x] Tests in `job_render_test.go` following `mcp_test.go`'s approach:
    pending wait card contains `waiting` and the elapsed time from a
    fixed `StartedAt` and clock; pending non-wait card does not; finished
    card with `RuntimeMS: 554000, Done: true` contains `ran 9m14s` and
