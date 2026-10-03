@@ -26,7 +26,7 @@ type JobOutputParams struct {
 	ShellID        string `json:"shell_id" description:"The ID of the background job"`
 	Wait           bool   `json:"wait,omitempty" description:"Block until the job completes, pattern matches, or timeout_seconds elapses"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty" description:"With wait=true, the maximum seconds to wait (default 300, max 1800)"`
-	Pattern        string `json:"pattern,omitempty" description:"RE2 regex; with wait=true, return as soon as a new output line matches"`
+	Pattern        string `json:"pattern,omitempty" description:"RE2 regex; with wait=true, return as soon as a new output line matches; with wait=false, set a watch that notifies you when a line matches"`
 	Full           bool   `json:"full,omitempty" description:"Return all output from the start instead of only new output"`
 	TailLines      int    `json:"tail_lines,omitempty" description:"Return only the last N lines of the output this call would return"`
 }
@@ -62,9 +62,6 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 				if params.Full {
 					return fantasy.NewTextErrorResponse("pattern cannot be combined with full=true"), nil
 				}
-				if !params.Wait {
-					return fantasy.NewTextErrorResponse("pattern currently requires wait=true"), nil
-				}
 				var err error
 				if re, err = regexp.Compile(params.Pattern); err != nil {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf("invalid pattern: %v", err)), nil
@@ -77,18 +74,25 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
 			}
 
+			// The matcher is created before reading so an unread
+			// matching line already in the buffer is still matched.
+			var matcher *shell.LineMatcher
+			if re != nil {
+				matcher = bgShell.NewLineMatcher(re)
+			}
+
 			var reason shell.WaitReason
 			var matched string
 			timeout := jobWaitTimeout(params.TimeoutSeconds)
 			if params.Wait {
-				var matcher *shell.LineMatcher
-				if re != nil {
-					matcher = bgShell.NewLineMatcher(re)
-				}
 				reason, matched = bgShell.WaitFor(ctx, timeout, matcher)
 			}
 
 			res := bgShell.ReadIncremental(params.Full)
+			watching := !params.Wait && matcher != nil && !res.Done
+			if watching {
+				bgShell.SetWatch(matcher)
+			}
 			info := bgShell.Info()
 			if !res.Done && info.Done {
 				// The job finished after the read; report it as running so
@@ -122,6 +126,9 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 			}
 
 			result := FormatJobStatus(info, now, reason, timeout, matched) + "\n\n" + output
+			if watching {
+				result += "\n\nWatching for \"" + params.Pattern + "\"; you'll be notified when a matching line appears or the job exits."
+			}
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
 		})
 }

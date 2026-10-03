@@ -5,12 +5,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
 // JobToolOptions holds optional dependencies for the job tools.
 // Later phases add fields; the zero value is valid.
-type JobToolOptions struct{}
+type JobToolOptions struct {
+	// Events is the job event store. Watches reach it through the
+	// shell manager's event sink, so the tools need not call it.
+	Events *jobevents.Store
+}
 
 // FormatOtherRunningJobs renders up to limit running jobs as
 // "05A <label> (2h03m); 07D <label> (12s)" with "(+N more; use
