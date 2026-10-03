@@ -79,7 +79,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
 
 **Steps:**
 
-1. [ ] Make identity and ownership safe to change after start. Replace the
+1. [x] Make identity and ownership safe to change after start. Replace the
    exported `ID` field with an unexported `id` plus accessor, and add
    ownership fields guarded by a per-shell mutex. Capture `startedAt` in
    `Start` (execution start, so runtime includes the foreground interval).
@@ -135,7 +135,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    `func() { bgShell.lastOutputAt.Store(time.Now().UnixNano()) }` for both
    buffers.
 
-2. [ ] Split internal keys from job IDs. `Start` keeps its signature but
+2. [x] Split internal keys from job IDs. `Start` keeps its signature but
    keys the shell as `fmt.Sprintf("run-%d", runCounter.Add(1))` (rename
    `idCounter` to `runCounter`). Add an allocator for public IDs, used only
    on publication:
@@ -158,7 +158,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    `allocator IDAllocator` (default `&counterAllocator{}`), plus
    `SetIDAllocator(a IDAllocator)` for Phase 4.
 
-3. [ ] Add `Publish`:
+3. [x] Add `Publish`:
 
    ```go
    // PublishOptions describes a shell being promoted to a background job.
@@ -179,7 +179,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    `m.shells.Set(newID, bs)`. Publishing an already-published shell
    returns its existing ID.
 
-4. [ ] Replace the unused `BackgroundShellInfo` with `JobInfo` and add
+4. [x] Replace the unused `BackgroundShellInfo` with `JobInfo` and add
    list helpers. Only published jobs are returned.
 
    ```go
@@ -207,7 +207,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    finished jobs newest `CompletedAt` first. `ExitCode` uses the existing
    `ExitCode(err)` helper. Keep `List() []string` working (tests use it).
 
-5. [ ] Add `Transfer` for subagent handoff:
+5. [x] Add `Transfer` for subagent handoff:
 
    ```go
    // Transfer moves ownership of fromSession's published jobs to
@@ -216,7 +216,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    func (m *BackgroundShellManager) Transfer(fromSession, toSession string) (handed []JobInfo, toKill []string)
    ```
 
-6. [ ] Make `Kill` honest about abandonment. Add
+6. [x] Make `Kill` honest about abandonment. Add
    `var ErrKillTimeout = errors.New("background shell did not exit within grace period")`
    and return it from the grace-period branch (keep the existing
    `slog.Warn`). The removal behaviour is unchanged. Existing callers that
@@ -224,7 +224,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    field (`gracePeriod`, default `KillGracePeriod`) so tests can shorten
    it.
 
-7. [ ] One lock protocol for the shell map. Every operation that adds,
+7. [x] One lock protocol for the shell map. Every operation that adds,
    removes, re-keys, or snapshots entries holds `m.mu` for the map
    change only: `Start` (set), `Publish` (lookup, take, set), `Remove`
    and `Kill` (take), `Cleanup` and `CleanupCompleted` (collect keys via
@@ -238,7 +238,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    ctx-cancel path) reaches the job after it's re-keyed. Remove the alias
    when the job leaves the map.
 
-8. [ ] Move job formatting helpers into `shell` so every layer (tools,
+8. [x] Move job formatting helpers into `shell` so every layer (tools,
    job events, UI) can use them without import cycles. Create
    `internal/shell/jobformat.go`:
 
@@ -271,7 +271,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    Unit-test `FormatRuntime` (0s, 59s, 1m00s, 4m12s, 2h03m), `JobLabel`
    truncation and newline collapsing, and `LastLines`.
 
-9. [ ] Tests in `internal/shell/background_test.go` (table tests where
+9. [x] Tests in `internal/shell/background_test.go` (table tests where
    natural, all `t.Parallel()`, use `newBackgroundShellManager()` for
    isolation rather than the singleton):
    - `Start` without `Publish`: not in `ListAll`, allocator not called
