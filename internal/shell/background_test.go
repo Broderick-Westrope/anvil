@@ -1,9 +1,13 @@
 package shell
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -736,4 +740,300 @@ func TestBackgroundShell_LastOutputAt(t *testing.T) {
 	info := bs.Info()
 	require.False(t, info.LastOutputAt.IsZero())
 	require.False(t, info.LastOutputAt.Before(info.StartedAt))
+}
+
+// memJobLog is a [JobLog] that keeps output in memory.
+type memJobLog struct {
+	stdout, stderr memFile
+	closed         atomic.Bool
+}
+
+func (l *memJobLog) Stdout() io.Writer { return &l.stdout }
+func (l *memJobLog) Stderr() io.Writer { return &l.stderr }
+
+func (l *memJobLog) Close() LogStats {
+	l.closed.Store(true)
+	return LogStats{Bytes: int64(len(l.stdout.String()) + len(l.stderr.String()))}
+}
+
+type finalizeCall struct {
+	id        string
+	info      JobInfo
+	endReason string
+	stats     LogStats
+}
+
+type transferCall struct {
+	ids       []string
+	toSession string
+}
+
+// fakeRecorder records calls and hands out in-memory logs.
+type fakeRecorder struct {
+	allocErr  error
+	next      atomic.Int64
+	finalized chan finalizeCall
+	transfers chan transferCall
+
+	mu   sync.Mutex
+	reqs []AllocateRequest
+	logs map[string]*memJobLog
+}
+
+func newFakeRecorder() *fakeRecorder {
+	return &fakeRecorder{
+		finalized: make(chan finalizeCall, 16),
+		transfers: make(chan transferCall, 16),
+		logs:      make(map[string]*memJobLog),
+	}
+}
+
+func (r *fakeRecorder) Allocate(_ context.Context, req AllocateRequest) (string, JobLog, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reqs = append(r.reqs, req)
+	if r.allocErr != nil {
+		return "", nil, r.allocErr
+	}
+	id := fmt.Sprintf("%03X", r.next.Add(1))
+	l := &memJobLog{}
+	r.logs[id] = l
+	return id, l, nil
+}
+
+func (r *fakeRecorder) Finalize(_ context.Context, id string, info JobInfo, endReason string, stats LogStats) error {
+	r.finalized <- finalizeCall{id: id, info: info, endReason: endReason, stats: stats}
+	return nil
+}
+
+func (r *fakeRecorder) Transferred(_ context.Context, ids []string, toSession string) error {
+	r.transfers <- transferCall{ids: ids, toSession: toSession}
+	return nil
+}
+
+func (r *fakeRecorder) log(id string) *memJobLog {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.logs[id]
+}
+
+func waitFinalize(t *testing.T, r *fakeRecorder) finalizeCall {
+	t.Helper()
+	select {
+	case call := <-r.finalized:
+		return call
+	case <-time.After(10 * time.Second):
+		t.Fatal("Finalize was not called")
+		return finalizeCall{}
+	}
+}
+
+func requireNoFinalize(t *testing.T, r *fakeRecorder, within time.Duration) {
+	t.Helper()
+	select {
+	case call := <-r.finalized:
+		t.Fatalf("unexpected Finalize: %+v", call)
+	case <-time.After(within):
+	}
+}
+
+func blockUntilCleanup(t *testing.T) <-chan struct{} {
+	t.Helper()
+	ch, _ := releaseOnCleanup(t)
+	return ch
+}
+
+// releaseOnCleanup returns a channel for registerBlockingShell and a
+// function that closes it; it is also closed when the test ends.
+func releaseOnCleanup(t *testing.T) (<-chan struct{}, func()) {
+	t.Helper()
+	ch := make(chan struct{})
+	release := sync.OnceFunc(func() { close(ch) })
+	t.Cleanup(release)
+	return ch, release
+}
+
+func TestPublishRecorded_LogGetsOutputInOrder(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newFakeRecorder()
+	manager.SetRecorder(rec)
+
+	ch, release := releaseOnCleanup(t)
+	bs := registerBlockingShell(t, manager, ch)
+	_, _ = bs.stdout.Write([]byte("before\n"))
+	_, _ = bs.stderr.Write([]byte("warn\n"))
+
+	id := publishShell(t, manager, bs, "s", OriginExplicit)
+	require.Equal(t, "001", id)
+	require.False(t, IsFallbackID(id))
+
+	_, _ = bs.stdout.Write([]byte("after\n"))
+	release()
+
+	call := waitFinalize(t, rec)
+	require.Equal(t, id, call.id)
+	require.Equal(t, EndExited, call.endReason)
+	require.True(t, call.info.Done)
+
+	l := rec.log(id)
+	require.True(t, l.closed.Load())
+	require.Equal(t, "before\nafter\n", l.stdout.String())
+	require.Equal(t, "warn\n", l.stderr.String())
+
+	rec.mu.Lock()
+	req := rec.reqs[0]
+	rec.mu.Unlock()
+	require.False(t, req.PrePublishLost)
+	require.Equal(t, "s", req.Info.SessionID)
+	require.Equal(t, OriginExplicit, req.Info.Origin)
+	require.Equal(t, "blocked", req.Info.Command)
+}
+
+func TestPublishRecorded_BufferResetAfterPublicationKeepsLog(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newFakeRecorder()
+	manager.SetRecorder(rec)
+
+	bs := registerBlockingShell(t, manager, blockUntilCleanup(t))
+	id := publishShell(t, manager, bs, "s", OriginAuto)
+
+	chunk := bytes.Repeat([]byte("a"), 1024*1024)
+	for range 11 {
+		_, _ = bs.stdout.Write(chunk)
+	}
+	require.Positive(t, bs.stdout.gen, "the in-memory buffer should have reset")
+	require.Len(t, rec.log(id).stdout.String(), 11*len(chunk))
+}
+
+func TestPublishRecorded_PrePublishLoss(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newFakeRecorder()
+	manager.SetRecorder(rec)
+
+	bs := registerBlockingShell(t, manager, blockUntilCleanup(t))
+	_, _ = bs.stdout.Write(bytes.Repeat([]byte("a"), MaxBufferSize))
+	_, _ = bs.stdout.Write([]byte("tail\n"))
+	require.Positive(t, bs.stdout.gen)
+
+	id := publishShell(t, manager, bs, "s", OriginAuto)
+
+	rec.mu.Lock()
+	req := rec.reqs[0]
+	rec.mu.Unlock()
+	require.True(t, req.PrePublishLost)
+
+	logged := rec.log(id).stdout.String()
+	require.True(t, strings.HasPrefix(logged, prePublishLostMarker))
+	require.NotContains(t, logged, truncationMarker)
+	require.True(t, strings.HasSuffix(logged, "tail\n"))
+	require.Empty(t, rec.log(id).stderr.String())
+}
+
+func TestPublishRecorded_AllocateFailureFallsBack(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newFakeRecorder()
+	rec.allocErr = errors.New("db down")
+	manager.SetRecorder(rec)
+
+	bs := startShell(t, manager, "sleep 0.2; echo still running")
+	id := publishShell(t, manager, bs, "s", OriginExplicit)
+
+	require.Regexp(t, `^M[0-9a-f]{4}-\d+$`, id)
+	require.True(t, IsFallbackID(id))
+	_, err := strconv.ParseInt(id, 16, 64)
+	require.Error(t, err)
+
+	got, found := manager.Get(id)
+	require.True(t, found)
+	require.Same(t, bs, got)
+
+	waitCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.True(t, bs.WaitContext(waitCtx))
+	stdout, _, _, _ := bs.GetOutput()
+	require.Equal(t, "still running\n", stdout)
+	requireNoFinalize(t, rec, 100*time.Millisecond)
+
+	// The buffers keep working without a tee.
+	require.Nil(t, bs.stdout.tee)
+}
+
+func TestPublishRecorded_FinalizeKilled(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newFakeRecorder()
+	manager.SetRecorder(rec)
+
+	bs := startShell(t, manager, "sleep 30")
+	id := publishShell(t, manager, bs, "s", OriginExplicit)
+	require.NoError(t, manager.Kill(id))
+
+	call := waitFinalize(t, rec)
+	require.Equal(t, id, call.id)
+	require.Equal(t, EndKilled, call.endReason)
+}
+
+func TestPublishRecorded_FinalizeAbandonedOnce(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	manager.gracePeriod = 50 * time.Millisecond
+	rec := newFakeRecorder()
+	manager.SetRecorder(rec)
+
+	ch, release := releaseOnCleanup(t)
+	bs := registerBlockingShell(t, manager, ch)
+	id := publishShell(t, manager, bs, "s", OriginExplicit)
+
+	require.ErrorIs(t, manager.Kill(id), ErrKillTimeout)
+	call := waitFinalize(t, rec)
+	require.Equal(t, EndAbandoned, call.endReason)
+	require.False(t, call.info.Done)
+	require.True(t, rec.log(id).closed.Load())
+
+	// Late output from the abandoned shell is dropped by the closed log,
+	// and its eventual exit does not finalize again.
+	_, _ = bs.stdout.Write([]byte("late\n"))
+	release()
+	bs.Wait()
+	requireNoFinalize(t, rec, 100*time.Millisecond)
+}
+
+func TestPublishRecorded_TransferRecorded(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newFakeRecorder()
+	manager.SetRecorder(rec)
+
+	running := registerBlockingShell(t, manager, blockUntilCleanup(t))
+	explicitID := publishShell(t, manager, running, "child", OriginExplicit)
+	auto := registerBlockingShell(t, manager, blockUntilCleanup(t))
+	publishShell(t, manager, auto, "child", OriginAuto)
+
+	rec.allocErr = errors.New("db down")
+	fallback := registerBlockingShell(t, manager, blockUntilCleanup(t))
+	fallbackID := publishShell(t, manager, fallback, "child", OriginExplicit)
+	require.True(t, IsFallbackID(fallbackID))
+
+	handed, toKill := manager.Transfer("child", "parent")
+	require.ElementsMatch(t, []string{explicitID, fallbackID}, jobIDs(handed))
+	require.Len(t, toKill, 1)
+
+	select {
+	case call := <-rec.transfers:
+		require.Equal(t, []string{explicitID}, call.ids)
+		require.Equal(t, "parent", call.toSession)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Transferred was not called")
+	}
 }
