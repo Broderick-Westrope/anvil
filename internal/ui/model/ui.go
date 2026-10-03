@@ -199,6 +199,13 @@ type UI struct {
 	com             *common.Common
 	session         *session.Session
 
+	// composerSent is the composer state last reported to the workspace;
+	// navigating is set while a branch navigation moves the leaf, and
+	// composerClosed once the TUI exits.
+	composerSent   composerSignal
+	navigating     bool
+	composerClosed bool
+
 	// keeps track of read files while we don't have a session id
 	sessionFileReads []string
 
@@ -702,6 +709,7 @@ func (m *UI) activeChatArea() image.Rectangle {
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.trackRecoverySession()
+	defer m.syncComposerState()
 	var cmds []tea.Cmd
 	if m.hasSession() && m.isAgentBusy() {
 		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
@@ -5000,7 +5008,14 @@ func (m *UI) openBranchDialog() tea.Cmd {
 // handleNavigateTree handles navigation to a tree/branch node. If the agent
 // is busy, it cancels and polls until idle before proceeding.
 func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
-	if m.hasSession() && m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
+	if !m.hasSession() {
+		return nil
+	}
+	// Report navigation before the async leaf move so no job wake starts
+	// a turn on the branch being left.
+	m.navigating = true
+	m.syncComposerState()
+	if m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
 		sessionID := m.session.ID
 		m.com.Workspace.AgentCancel(sessionID)
 		return tea.Batch(
@@ -5028,12 +5043,14 @@ func (m *UI) pollAgentIdle(nav dialog.ActionNavigateTree, sessionID string, atte
 // cause a mismatch.
 func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
 	if !m.hasSession() || m.session.ID != msg.sessionID {
+		m.navigating = false
 		return nil
 	}
 	if !m.com.Workspace.AgentIsSessionBusy(msg.sessionID) {
 		return m.navigateToTreeNode(msg.nav)
 	}
 	if msg.attempt >= maxIdlePolls {
+		m.navigating = false
 		return util.ReportError(fmt.Errorf("timed out waiting for agent to stop"))
 	}
 	return m.pollAgentIdle(msg.nav, msg.sessionID, msg.attempt+1)
@@ -5042,6 +5059,7 @@ func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
 // navigateToTreeNode moves the session leaf pointer and reloads the chat.
 func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 	if m.session == nil {
+		m.navigating = false
 		return nil
 	}
 
@@ -5063,21 +5081,21 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 
 		// Move the leaf pointer.
 		if err := ws.MoveLeaf(ctx, sessionID, targetLeafID); err != nil {
-			return util.ReportError(err)()
+			return navigateTreeDoneMsg{err: err}
 		}
 
 		// Reload the session and branch path in the command (not in
 		// Update) to avoid doing IO in the Bubble Tea update loop.
 		sess, err := ws.GetSession(ctx, sessionID)
 		if err != nil {
-			return util.ReportError(err)()
+			return navigateTreeDoneMsg{err: err}
 		}
 
 		var msgs []message.Message
 		if targetLeafID != "" {
 			msgs, err = ws.GetBranchPath(ctx, targetLeafID)
 			if err != nil {
-				return util.ReportError(err)()
+				return navigateTreeDoneMsg{err: err}
 			}
 		}
 
@@ -5095,6 +5113,7 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 // the session reloaded, and the branch path fetched. All IO happens
 // inside the command; Update only mutates state.
 type navigateTreeDoneMsg struct {
+	err      error // Set when the move or reload failed.
 	session  *session.Session
 	leafID   string
 	messages []message.Message
@@ -5105,6 +5124,11 @@ type navigateTreeDoneMsg struct {
 // handleNavigateTreeDone rebuilds the chat view after the leaf pointer has
 // been moved, and optionally pre-fills the editor for user messages.
 func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
+	m.navigating = false
+	if msg.err != nil {
+		return util.ReportError(msg.err)
+	}
+
 	var cmds []tea.Cmd
 
 	m.session = msg.session

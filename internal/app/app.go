@@ -626,6 +626,16 @@ func (app *App) EnableJobWake() {
 	app.jobWaker.trigger("")
 }
 
+// SetComposerState tells the job waker whether a session is open in the
+// TUI and whether its composer has a draft or is navigating. It is a
+// no-op when the app has no waker.
+func (app *App) SetComposerState(sessionID string, open, hasDraft, navigating bool) {
+	if app.jobWaker == nil {
+		return
+	}
+	app.jobWaker.SetComposerState(sessionID, open, hasDraft, navigating)
+}
+
 // Subscribe sends events to the TUI as tea.Msgs.
 func (app *App) Subscribe(program *tea.Program) {
 	defer log.RecoverPanic("app.Subscribe", func() {
