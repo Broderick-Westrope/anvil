@@ -169,6 +169,11 @@ func (s *intentSource) RecentUserMessages(ctx context.Context, sessionID string,
 		if path[i].Role != message.User {
 			continue
 		}
+		// Job event notices are written by Anvil and quote background job
+		// output, so they say nothing about what the user asked for.
+		if path[i].MessageType == message.MessageTypeJobEvent {
+			continue
+		}
 		if text := path[i].Content().Text; text != "" {
 			texts = append(texts, text)
 		}
