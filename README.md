@@ -17,6 +17,7 @@
 - **Lazy MCP Loading:** defer heavy MCP tool schemas from the LLM context until needed — the agent or human enables them on demand, saving 50k+ tokens per server
 - **LSP Memory Management:** concurrent sessions in the same Go repo share a single gopls daemon instead of running one each, and any LSP server left idle is shut down and restarted on demand ([details](#shared-gopls-daemon))
 - **Granular Permissions:** pattern-based allow/ask/deny rules per tool and per input (e.g. allow `git status *` but deny `rm *`), with chained-command analysis so dangerous commands can't ride along with allowed ones, editable patterns at the prompt, and session or forever grants ([details](#tool-permissions))
+- **Permission Bouncer:** an optional classifier that answers the prompts your rules leave open, letting routine calls in, turning dangerous ones away, and sending the uncertain ones to you, plus a triage command that turns repeated approvals into explicit rules so fewer calls need either ([details](#bouncer))
 - **Smart Session Titles:** finding old sessions is easier thanks to titles generated from the first real exchange (not your opening prompt); rename or regenerate them from the command palette — manual titles are never overwritten
 - **Plugins:** bundle skills, slash commands, and custom agents into a single installable package with manifest-based discovery and auto-approved file access
 - **Quality of Life:** autocomplete for commands, skills, and builtins; Ctrl+C clears the entire input; Alt+Enter newline in Ghostty; paste no longer clobbers existing prompt text
@@ -450,10 +451,24 @@ Commands that run another command given in their arguments — `env`, `sudo`,
 `xargs`, `timeout`, `nice`, `nohup`, `command`, `exec` and friends — also
 contribute the inner command as a segment, as does the body of a
 `find -exec` or `-ok` clause. Allowing the wrapper doesn't implicitly allow
-everything it can launch.
+everything it can launch. Shell code passed as a string to `sh -c`,
+`bash -c`, `eval`, or `env -S` is split and evaluated too.
+
+Each command is also matched in a normalised spelling, with quotes and
+escapes removed, braces expanded, and paths reduced to the command name,
+so a deny rule can't be dodged by respelling the command:
+
+```
+'rm' -rf x    r''m -rf x    \rm -rf x    /bin/rm -rf x    {rm,-rf} x
+```
+
+All of these are denied by `"rm *": "deny"`. Command names only known at
+runtime (`$cmd`, `$(echo rm)`) can't be resolved, so they always prompt.
 
 Because segments combine worst-outcome-first, splitting these out can only
-make a command stricter, never more permissive.
+make a command stricter, never more permissive. The one cost is that a
+quoted command name such as `"git" status` prompts even when `git status *`
+is allowed.
 
 #### Granting at the Prompt
 
@@ -468,8 +483,123 @@ or your user config.
 #### Yolo Mode
 
 Running with `--yolo` turns every `ask` into `allow` while still honouring
-`deny` rules. `--yolo=full` bypasses permissions entirely, including `deny`.
-Be very, very careful with these.
+`deny` rules. `--yolo=full` bypasses permissions entirely, including `deny`
+rules and the [bouncer](#bouncer). Be very, very careful with these.
+
+`ctrl+y` cycles yolo off, standard, and full while Anvil is running. The
+editor gutter shows the current level: an amber ` ! ` for standard and a red
+`!!!` for full.
+
+#### Bouncer
+
+The bouncer is an optional classifier that answers permission prompts on
+your behalf. Like a bouncer at a bar, it lets a call in, turns it away, or
+checks its ID by sending it to you. It only sees calls that no `allow` or
+`deny` rule resolves, so explicit rules always win.
+
+```
+Tool call
+  explicit allow or deny rule   ->  apply the rule
+  no rule (or an ask rule)      ->  bouncer
+      allow                     ->  run
+      deny                      ->  block, and stop the agent's turn
+      unsure, error, or skipped ->  prompt you (or approve, under --yolo)
+```
+
+It talks to any TypeSafe-compatible System One endpoint, such as
+[Jev](https://docs.typesafe.ai). Each check costs about 1,100 input tokens
+and 250ms. Configure it in your **user-level** config only
+(`~/.config/anvil/anvil.json`). A `bouncer` block in a project or workspace
+config is ignored, so a cloned repo can't switch it on or loosen it.
+
+```json
+{
+  "bouncer": {
+    "mode": "enforce",
+    "url": "https://api.typesafe.ai/v1/systemone",
+    "model": "jev-1.13.0",
+    "auth_scheme": "Bearer",
+    "api_key_env": "TYPESAFE_API_KEY"
+  }
+}
+```
+
+- `mode`: `off` (the default) makes no calls. `shadow` asks the bouncer but
+  still prompts you, logging its verdict alongside your decision. `enforce`
+  acts on its verdict.
+- `api_key_env`: the environment variable holding the key (default
+  `BASETEN_API_KEY`). It's read once at startup, before any project `env`
+  is applied.
+- `send_user_messages`: whether your last three messages are sent as
+  context (default `true`). The bouncer uses them to tell an action you
+  asked for from one you didn't.
+- Pin a versioned `model` so a new release can't silently change verdicts.
+- Thresholds (`escalate_at`, `deny_at`, `severity_escalate`,
+  `user_requested_at`) and `timeout_seconds` are documented in the schema.
+
+Some calls always come to you without a classifier call:
+- writes to protected paths (`.git/`, `anvil.json`, CI workflows, shell rc
+  files, `~/.ssh`);
+- reads of likely secrets;
+- command names only known at runtime;
+- MCP calls with no arguments, and oversized inputs;
+- any call while the bouncer is unreachable.
+
+When it does pass a call to you, the prompt shows its full verdict, with
+the axes that triggered it highlighted. `ctrl+q` cycles the mode while
+Anvil is running, without changing your config. The editor gutter shows a
+hollow ` ◇ ` in shadow and a solid ` ◆ ` in enforce, on the line above any
+yolo badge. The bouncer is warmed up in the background whenever it's
+switched on, so a slow cold start doesn't delay your first prompt.
+
+> [!WARNING]
+> Every call the bouncer assesses sends the command, diff, or MCP arguments
+> (after best-effort secret redaction) and, by default, your recent
+> messages to the configured endpoint. Only point it at a provider you're
+> allowed to send that data to.
+
+To check a model before trusting it, run the calibration harness against
+55 synthetic cases. It fails if any dangerous case is allowed:
+
+```bash
+ANVIL_BOUNCER_LIVE=1 \
+ANVIL_BOUNCER_URL=https://api.typesafe.ai/v1/systemone \
+ANVIL_BOUNCER_MODEL=jev-1.13.0 \
+ANVIL_BOUNCER_AUTH_SCHEME=Bearer \
+ANVIL_BOUNCER_API_KEY_ENV=TYPESAFE_API_KEY \
+go test ./internal/bouncer -run TestLiveCalibration -v
+```
+
+#### Turning Approvals into Rules
+
+Every permission decision is logged with who made it: a rule, the bouncer,
+yolo, or you. The log is kept for 90 days. Two commands read it:
+
+```bash
+# Propose explicit rules for calls you keep approving.
+anvil permissions triage --days 14
+
+# See how calls were decided, and how the bouncer is doing.
+anvil permissions stats --days 30
+```
+
+`triage` groups repeated approvals into narrow patterns and lets you pick
+which to write to your config:
+- Tier A patterns are safe for any argument (`git status *`,
+  `git rev-parse *`) and can be applied in bulk with `--yes`.
+- Tier B patterns need you to review every argument they allow, so you
+  pick them one at a time.
+- Destructive, exec, network, and mutating commands are never proposed.
+- Every proposal is checked against all logged decisions it would match
+  and simulated before it's written.
+- Deny rules are only proposed from denials you made yourself, so the
+  bouncer's false positives never become permanent rules.
+
+Anvil reminds you at startup once 50 undecided calls have built up in a
+week. `stats` reports how often you approve the bouncer's escalations,
+broken down by the axis that triggered them. An axis you approve nearly
+every time is one the bouncer is too cautious about, and a good candidate
+for an explicit allow rule.
 
 > [!NOTE]
 > The older `permissions.allowed_tools` list is deprecated. It still works
