@@ -1,6 +1,7 @@
 package jobstore
 
 import (
+	"bytes"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -189,5 +190,156 @@ func TestStore_ClosedNeverTouchesDB(t *testing.T) {
 
 		_, _, err = s.ReadLog("001")
 		require.ErrorIs(t, err, ErrClosed)
+	})
+}
+
+func allocRequest(sessionID string) shell.AllocateRequest {
+	return shell.AllocateRequest{Info: shell.JobInfo{
+		SessionID:  sessionID,
+		Origin:     shell.OriginAuto,
+		Command:    "yes",
+		WorkingDir: "/work",
+		StartedAt:  time.Now(),
+	}}
+}
+
+func TestStore_AllocateStderrFailureLeavesNothing(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestStore(t)
+	// The first AUTOINCREMENT key in a fresh database is 1.
+	stdoutPath, stderrPath := LogPaths(s.logDir, FormatID(1))
+	require.NoError(t, os.Mkdir(stderrPath, 0o700))
+
+	_, _, err := s.Allocate(t.Context(), allocRequest("s"))
+	require.Error(t, err)
+
+	records, err := s.ListBySession(t.Context(), "s")
+	require.NoError(t, err)
+	require.Empty(t, records)
+	_, ok, err := s.Get(t.Context(), FormatID(1))
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.NoFileExists(t, stdoutPath)
+}
+
+func TestStore_AllocateFinalizeRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestStore(t)
+	req := allocRequest("s")
+	req.PrePublishLost = true
+	id, log, err := s.Allocate(t.Context(), req)
+	require.NoError(t, err)
+
+	_, _ = log.Stdout().Write([]byte("out\n"))
+	_, _ = log.Stderr().Write([]byte("err\n"))
+	stats := log.Close()
+
+	rec, ok, err := s.Get(t.Context(), id)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, rec.Info.Done)
+	require.True(t, rec.PrePublishLost)
+	require.Equal(t, s.InstanceID(), rec.InstanceID)
+
+	completed := time.UnixMilli(time.Now().UnixMilli())
+	info := req.Info
+	info.Done, info.ExitCode, info.CompletedAt = true, 2, completed
+	require.NoError(t, s.Finalize(t.Context(), id, info, shell.EndExited, stats))
+	require.NoError(t, s.Finalize(t.Context(), id, info, shell.EndKilled, shell.LogStats{}))
+
+	rec, _, err = s.Get(t.Context(), id)
+	require.NoError(t, err)
+	require.True(t, rec.Info.Done)
+	require.Equal(t, 2, rec.Info.ExitCode)
+	require.True(t, completed.Equal(rec.Info.CompletedAt))
+	require.Equal(t, shell.EndExited, rec.EndReason)
+	require.False(t, rec.Truncated)
+
+	stdout, stderr, err := s.ReadLog(id)
+	require.NoError(t, err)
+	require.Equal(t, "out\n", string(stdout))
+	require.Equal(t, "err\n", string(stderr))
+
+	require.NoError(t, s.Transferred(t.Context(), []string{id, "Mabcd-1"}, "parent"))
+	records, err := s.ListBySession(t.Context(), "parent")
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+}
+
+func TestStore_FinalizeAbandonedUsesNow(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestStore(t)
+	fixed := time.UnixMilli(time.Now().Add(time.Hour).UnixMilli())
+	s.now = func() time.Time { return fixed }
+
+	req := allocRequest("s")
+	id, log, err := s.Allocate(t.Context(), req)
+	require.NoError(t, err)
+	require.NoError(t, s.Finalize(t.Context(), id, req.Info, shell.EndAbandoned, log.Close()))
+
+	rec, _, err := s.Get(t.Context(), id)
+	require.NoError(t, err)
+	require.True(t, rec.Info.Done)
+	require.True(t, fixed.Equal(rec.Info.CompletedAt))
+	require.Equal(t, shell.EndAbandoned, rec.EndReason)
+}
+
+func TestStore_LargeOutputCapped(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestStore(t)
+	id, log, err := s.Allocate(t.Context(), allocRequest("s"))
+	require.NoError(t, err)
+
+	// Pace the writes so the flusher keeps up and only the cap drops
+	// data.
+	chunk := bytes.Repeat([]byte("a"), 1024*1024)
+	for range 60 {
+		_, _ = log.Stdout().Write(chunk)
+		time.Sleep(20 * time.Millisecond)
+	}
+	stats := log.Close()
+	require.True(t, stats.Truncated)
+
+	info := allocRequest("s").Info
+	info.Done, info.CompletedAt = true, time.Now()
+	require.NoError(t, s.Finalize(t.Context(), id, info, shell.EndExited, stats))
+
+	stdoutPath, _ := LogPaths(s.logDir, id)
+	fi, err := os.Stat(stdoutPath)
+	require.NoError(t, err)
+	marker := "[log truncated at 50MB]\n"
+	require.Equal(t, int64(shell.MaxLogBytes+len(marker)), fi.Size())
+
+	stdout, _, err := s.ReadLog(id)
+	require.NoError(t, err)
+	require.True(t, bytes.HasSuffix(stdout, []byte(marker)))
+
+	rec, _, err := s.Get(t.Context(), id)
+	require.NoError(t, err)
+	require.True(t, rec.Truncated)
+
+	key, _ := ParseID(id)
+	row, err := s.q.GetBackgroundJob(t.Context(), key)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), row.LogTruncated)
+	require.Equal(t, fi.Size(), row.LogBytes)
+}
+
+func TestStore_ClosedRecorderNeverTouchesDB(t *testing.T) {
+	t.Parallel()
+
+	s, err := New(panicQuerier{}, t.TempDir())
+	require.NoError(t, err)
+	s.Close()
+
+	require.NotPanics(t, func() {
+		_, _, err := s.Allocate(t.Context(), allocRequest("s"))
+		require.ErrorIs(t, err, ErrClosed)
+		require.ErrorIs(t, s.Finalize(t.Context(), "001", shell.JobInfo{}, shell.EndExited, shell.LogStats{}), ErrClosed)
+		require.ErrorIs(t, s.Transferred(t.Context(), []string{"001"}, "p"), ErrClosed)
 	})
 }

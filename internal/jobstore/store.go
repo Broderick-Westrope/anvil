@@ -160,6 +160,104 @@ func (s *Store) Close() {
 	s.closed.Store(true)
 }
 
+var _ shell.JobRecorder = (*Store)(nil)
+
+// Allocate inserts a running record and opens its log files. If the
+// files can't be opened, the record is deleted again so nothing is
+// left behind, and the caller runs the job under a fallback ID.
+func (s *Store) Allocate(ctx context.Context, req shell.AllocateRequest) (string, shell.JobLog, error) {
+	if s.closed.Load() {
+		return "", nil, ErrClosed
+	}
+	info := req.Info
+	key, err := s.q.CreateBackgroundJob(ctx, db.CreateBackgroundJobParams{
+		SessionID:         info.SessionID,
+		Origin:            string(info.Origin),
+		Command:           info.Command,
+		Description:       info.Description,
+		WorkingDir:        info.WorkingDir,
+		StartedAt:         info.StartedAt.UnixMilli(),
+		InstanceID:        s.instanceID,
+		LogPrePublishLost: boolToInt(req.PrePublishLost),
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("creating background job: %w", err)
+	}
+
+	id := FormatID(key)
+	stdoutPath, stderrPath := LogPaths(s.logDir, id)
+	log, err := shell.NewJobLog(stdoutPath, stderrPath)
+	if err != nil {
+		delCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if delErr := s.q.DeleteBackgroundJob(delCtx, key); delErr != nil {
+			err = errors.Join(err, fmt.Errorf("deleting background job %s: %w", id, delErr))
+		}
+		return "", nil, err
+	}
+	return id, log, nil
+}
+
+// Finalize records a job's end state. Only the first call for a job
+// takes effect.
+func (s *Store) Finalize(ctx context.Context, id string, info shell.JobInfo, endReason string, stats shell.LogStats) error {
+	if s.closed.Load() {
+		return ErrClosed
+	}
+	key, ok := ParseID(id)
+	if !ok {
+		return fmt.Errorf("invalid job ID: %s", id)
+	}
+	completedAt := s.now()
+	var exitCode sql.NullInt64
+	if info.Done {
+		completedAt = info.CompletedAt
+		exitCode = sql.NullInt64{Int64: int64(info.ExitCode), Valid: true}
+	}
+	if _, err := s.q.FinalizeBackgroundJob(ctx, db.FinalizeBackgroundJobParams{
+		CompletedAt:   sql.NullInt64{Int64: completedAt.UnixMilli(), Valid: true},
+		ExitCode:      exitCode,
+		EndReason:     sql.NullString{String: endReason, Valid: true},
+		LogBytes:      stats.Bytes,
+		LogTruncated:  boolToInt(stats.Truncated),
+		LogWriteError: stats.WriteError,
+		ID:            key,
+	}); err != nil {
+		return fmt.Errorf("finalizing background job %s: %w", id, err)
+	}
+	return nil
+}
+
+// Transferred records that jobs now belong to toSession.
+func (s *Store) Transferred(ctx context.Context, jobIDs []string, toSession string) error {
+	if s.closed.Load() {
+		return ErrClosed
+	}
+	keys := make([]int64, 0, len(jobIDs))
+	for _, id := range jobIDs {
+		if key, ok := ParseID(id); ok {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	if err := s.q.TransferBackgroundJobs(ctx, db.TransferBackgroundJobsParams{
+		SessionID: toSession,
+		Ids:       keys,
+	}); err != nil {
+		return fmt.Errorf("transferring background jobs: %w", err)
+	}
+	return nil
+}
+
+func boolToInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func recordFromRow(row db.BackgroundJob) Record {
 	rec := Record{
 		Info: shell.JobInfo{
