@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"os"
 	"slices"
@@ -149,7 +150,19 @@ func permissionRules(store *config.ConfigStore) []config.PermissionRule {
 	return nil
 }
 
+// runTriage runs triage and, when it succeeds, records the run so the TUI
+// stops nudging the user to triage.
 func runTriage(ctx context.Context, q db.Querier, store *config.ConfigStore, opts triageOpts, in io.Reader, out io.Writer) error {
+	if err := triagePermissions(ctx, q, store, opts, in, out); err != nil {
+		return err
+	}
+	if err := store.SetLastPermissionTriage(time.Now()); err != nil {
+		slog.Warn("Failed to record permission triage run", "error", err)
+	}
+	return nil
+}
+
+func triagePermissions(ctx context.Context, q db.Querier, store *config.ConfigStore, opts triageOpts, in io.Reader, out io.Writer) error {
 	if err := validateTriageOpts(opts); err != nil {
 		return err
 	}

@@ -40,6 +40,17 @@ func LoadRecords(ctx context.Context, q db.Querier, since time.Time) ([]triage.R
 	return records, nil
 }
 
+// CountUnresolvedSince counts decisions logged since the given time that no
+// configured rule resolved: those a human, the assessor, or a session-level
+// grant decided. Triage can turn these into rules.
+func CountUnresolvedSince(ctx context.Context, q db.Querier, since time.Time) (int, error) {
+	n, err := q.CountUnresolvedPermissionDecisionsSince(ctx, since.Unix())
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 func parseAssessment(row db.PermissionDecision) *permission.AssessmentRecord {
 	if !row.Assessment.Valid {
 		return nil

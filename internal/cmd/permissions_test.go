@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
@@ -41,6 +42,22 @@ func seedPermissions(t *testing.T, q db.Querier) {
 	}
 }
 
+// requireTriageStamped checks the triage run was recorded in the data file
+// at path and reports whether that file also holds permission rules.
+func requireTriageStamped(t *testing.T, store *config.ConfigStore, path string) (hasRules bool) {
+	t.Helper()
+	require.WithinDuration(t, time.Now(), store.LastPermissionTriage(), 5*time.Second)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &fields))
+	var stamp int64
+	require.NoError(t, json.Unmarshal(fields["last_permission_triage"], &stamp))
+	require.WithinDuration(t, time.Now(), time.Unix(stamp, 0), 5*time.Second)
+	_, hasRules = fields["permissions"]
+	return hasRules
+}
+
 func TestPermissionsTriage(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
@@ -63,9 +80,9 @@ func TestPermissionsTriage(t *testing.T) {
 			var out bytes.Buffer
 			err := runTriage(t.Context(), q, store, triageOpts{Days: 7, MinCount: 5, Scope: "global", Yes: tt.yes, JSON: tt.json, Interactive: tt.interactive}, strings.NewReader(tt.selection), &out)
 			require.NoError(t, err)
+			require.Equal(t, tt.writes, requireTriageStamped(t, store, path))
 			data, err := os.ReadFile(path)
 			if !tt.writes {
-				require.ErrorIs(t, err, os.ErrNotExist)
 				if tt.json {
 					var result struct{ Allow, Deny []triage.Candidate }
 					require.NoError(t, json.Unmarshal(out.Bytes(), &result))
@@ -256,7 +273,7 @@ func TestPermissionsWorkspace(t *testing.T) {
 	require.Equal(t, config.PermissionAllow, permission.Evaluate("bash", "git status", permissionRules(store), nil).Action)
 	require.Contains(t, out.String(), "6 unresolved requests")
 	require.Contains(t, out.String(), path)
-	require.NoFileExists(t, filepath.Join(global, "anvil.json"))
+	require.False(t, requireTriageStamped(t, store, filepath.Join(global, "anvil.json")))
 }
 
 func TestPermissionsHelp(t *testing.T) {

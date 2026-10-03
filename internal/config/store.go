@@ -505,6 +505,25 @@ func (s *ConfigStore) updatePreferredModelFields(c *Config, modelType SelectedMo
 	return fields
 }
 
+// LastPermissionTriage returns when permission triage last ran, or the
+// zero time if it never has.
+func (s *ConfigStore) LastPermissionTriage() time.Time {
+	sec := s.Config().LastPermissionTriage
+	if sec <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
+}
+
+// SetLastPermissionTriage records when permission triage last ran in the
+// global data file.
+func (s *ConfigStore) SetLastPermissionTriage(t time.Time) error {
+	return s.update(ScopeGlobal, func(c *Config) map[string]any {
+		c.LastPermissionTriage = t.Unix()
+		return map[string]any{"last_permission_triage": c.LastPermissionTriage}
+	})
+}
+
 // SetCompactMode sets the compact mode setting and persists it.
 func (s *ConfigStore) SetCompactMode(scope Scope, enabled bool) error {
 	return s.update(scope, func(c *Config) map[string]any {

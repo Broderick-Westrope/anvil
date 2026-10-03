@@ -196,6 +196,12 @@ func (app *App) Store() *config.ConfigStore {
 	return app.config
 }
 
+// PermissionUnresolvedCount returns how many logged permission decisions
+// since the given time were not resolved by a configured rule.
+func (app *App) PermissionUnresolvedCount(ctx context.Context, since time.Time) (int, error) {
+	return decisionlog.CountUnresolvedSince(ctx, app.Queries, since)
+}
+
 // Events returns a per-caller subscription channel for application events.
 // Each caller receives its own channel; all callers receive every event.
 func (app *App) Events(ctx context.Context) <-chan pubsub.Event[tea.Msg] {

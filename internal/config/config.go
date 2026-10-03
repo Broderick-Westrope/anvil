@@ -738,6 +738,10 @@ type Config struct {
 	// Recently used models stored in the data directory config.
 	RecentModels map[SelectedModelType][]SelectedModel `json:"recent_models,omitempty" jsonschema:"-"`
 
+	// LastPermissionTriage is when `anvil permissions triage` last ran, in
+	// Unix seconds. It is stored in the data directory config.
+	LastPermissionTriage int64 `json:"last_permission_triage,omitempty" jsonschema:"-"`
+
 	// The providers that are configured
 	Providers *csync.Map[string, ProviderConfig] `json:"providers,omitempty" jsonschema:"description=AI provider configurations"`
 

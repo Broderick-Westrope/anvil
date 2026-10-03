@@ -258,6 +258,14 @@ func (w *AppWorkspace) PermissionSetAssessorMode(mode permission.AssessorMode) {
 	w.app.Permissions.SetAssessorMode(mode)
 }
 
+func (w *AppWorkspace) PermissionUnresolvedCount(ctx context.Context, since time.Time) (int, error) {
+	return w.app.PermissionUnresolvedCount(ctx, since)
+}
+
+func (w *AppWorkspace) PermissionLastTriage() time.Time {
+	return w.store.LastPermissionTriage()
+}
+
 // -- FileTracker --
 
 func (w *AppWorkspace) FileTrackerRecordRead(ctx context.Context, sessionID, path string) {

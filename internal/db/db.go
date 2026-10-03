@@ -24,6 +24,9 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.countUnresolvedPermissionDecisionsSinceStmt, err = db.PrepareContext(ctx, countUnresolvedPermissionDecisionsSince); err != nil {
+		return nil, fmt.Errorf("error preparing query CountUnresolvedPermissionDecisionsSince: %w", err)
+	}
 	if q.createMessageStmt, err = db.PrepareContext(ctx, createMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateMessage: %w", err)
 	}
@@ -140,6 +143,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.countUnresolvedPermissionDecisionsSinceStmt != nil {
+		if cerr := q.countUnresolvedPermissionDecisionsSinceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countUnresolvedPermissionDecisionsSinceStmt: %w", cerr)
+		}
+	}
 	if q.createMessageStmt != nil {
 		if cerr := q.createMessageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createMessageStmt: %w", cerr)
@@ -362,51 +370,53 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                                  DBTX
-	tx                                  *sql.Tx
-	createMessageStmt                   *sql.Stmt
-	createSessionStmt                   *sql.Stmt
-	deleteMCPOAuthClientStmt            *sql.Stmt
-	deleteMCPOAuthTokenStmt             *sql.Stmt
-	deleteMessageStmt                   *sql.Stmt
-	deletePermissionDecisionsBeforeStmt *sql.Stmt
-	deleteSessionStmt                   *sql.Stmt
-	deleteSessionMessagesStmt           *sql.Stmt
-	getAllSessionMessagesStmt           *sql.Stmt
-	getBranchPathStmt                   *sql.Stmt
-	getBranchPathTailStmt               *sql.Stmt
-	getFileReadStmt                     *sql.Stmt
-	getLastGlobalSessionStmt            *sql.Stmt
-	getLastSessionByWorkingDirStmt      *sql.Stmt
-	getMCPOAuthClientStmt               *sql.Stmt
-	getMCPOAuthTokenStmt                *sql.Stmt
-	getMessageStmt                      *sql.Stmt
-	getMessageChildrenStmt              *sql.Stmt
-	getSessionByIDStmt                  *sql.Stmt
-	insertPermissionDecisionStmt        *sql.Stmt
-	listAllSessionsStmt                 *sql.Stmt
-	listMessagesBySessionStmt           *sql.Stmt
-	listPermissionDecisionsSinceStmt    *sql.Stmt
-	listPinnedSessionsStmt              *sql.Stmt
-	listSessionReadFilesStmt            *sql.Stmt
-	listSessionsByWorkingDirStmt        *sql.Stmt
-	listUserMessagesBySessionStmt       *sql.Stmt
-	listUserMessagesByWorkingDirStmt    *sql.Stmt
-	recordFileReadStmt                  *sql.Stmt
-	renameSessionStmt                   *sql.Stmt
-	setSessionPinStmt                   *sql.Stmt
-	updateMessageStmt                   *sql.Stmt
-	updateSessionStmt                   *sql.Stmt
-	updateSessionLeafStmt               *sql.Stmt
-	updateSessionTitleAndUsageStmt      *sql.Stmt
-	upsertMCPOAuthClientStmt            *sql.Stmt
-	upsertMCPOAuthTokenStmt             *sql.Stmt
+	db                                          DBTX
+	tx                                          *sql.Tx
+	countUnresolvedPermissionDecisionsSinceStmt *sql.Stmt
+	createMessageStmt                           *sql.Stmt
+	createSessionStmt                           *sql.Stmt
+	deleteMCPOAuthClientStmt                    *sql.Stmt
+	deleteMCPOAuthTokenStmt                     *sql.Stmt
+	deleteMessageStmt                           *sql.Stmt
+	deletePermissionDecisionsBeforeStmt         *sql.Stmt
+	deleteSessionStmt                           *sql.Stmt
+	deleteSessionMessagesStmt                   *sql.Stmt
+	getAllSessionMessagesStmt                   *sql.Stmt
+	getBranchPathStmt                           *sql.Stmt
+	getBranchPathTailStmt                       *sql.Stmt
+	getFileReadStmt                             *sql.Stmt
+	getLastGlobalSessionStmt                    *sql.Stmt
+	getLastSessionByWorkingDirStmt              *sql.Stmt
+	getMCPOAuthClientStmt                       *sql.Stmt
+	getMCPOAuthTokenStmt                        *sql.Stmt
+	getMessageStmt                              *sql.Stmt
+	getMessageChildrenStmt                      *sql.Stmt
+	getSessionByIDStmt                          *sql.Stmt
+	insertPermissionDecisionStmt                *sql.Stmt
+	listAllSessionsStmt                         *sql.Stmt
+	listMessagesBySessionStmt                   *sql.Stmt
+	listPermissionDecisionsSinceStmt            *sql.Stmt
+	listPinnedSessionsStmt                      *sql.Stmt
+	listSessionReadFilesStmt                    *sql.Stmt
+	listSessionsByWorkingDirStmt                *sql.Stmt
+	listUserMessagesBySessionStmt               *sql.Stmt
+	listUserMessagesByWorkingDirStmt            *sql.Stmt
+	recordFileReadStmt                          *sql.Stmt
+	renameSessionStmt                           *sql.Stmt
+	setSessionPinStmt                           *sql.Stmt
+	updateMessageStmt                           *sql.Stmt
+	updateSessionStmt                           *sql.Stmt
+	updateSessionLeafStmt                       *sql.Stmt
+	updateSessionTitleAndUsageStmt              *sql.Stmt
+	upsertMCPOAuthClientStmt                    *sql.Stmt
+	upsertMCPOAuthTokenStmt                     *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                                  tx,
-		tx:                                  tx,
+		db: tx,
+		tx: tx,
+		countUnresolvedPermissionDecisionsSinceStmt: q.countUnresolvedPermissionDecisionsSinceStmt,
 		createMessageStmt:                   q.createMessageStmt,
 		createSessionStmt:                   q.createSessionStmt,
 		deleteMCPOAuthClientStmt:            q.deleteMCPOAuthClientStmt,

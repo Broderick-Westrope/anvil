@@ -1,7 +1,9 @@
 package model
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -30,6 +32,12 @@ func (*recoveryWorkspace) PermissionAssessorMode() permission.AssessorMode {
 }
 
 func (*recoveryWorkspace) PermissionSetAssessorMode(permission.AssessorMode) {}
+
+func (*recoveryWorkspace) PermissionUnresolvedCount(context.Context, time.Time) (int, error) {
+	return 0, nil
+}
+
+func (*recoveryWorkspace) PermissionLastTriage() time.Time { return time.Time{} }
 
 func TestRecoveryTracksRootSessionNotDrilledInChild(t *testing.T) {
 	t.Parallel()

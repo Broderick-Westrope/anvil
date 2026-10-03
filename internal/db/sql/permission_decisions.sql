@@ -14,3 +14,8 @@ ORDER BY created_at ASC;
 
 -- name: DeletePermissionDecisionsBefore :exec
 DELETE FROM permission_decisions WHERE created_at < ?;
+
+-- name: CountUnresolvedPermissionDecisionsSince :one
+SELECT COUNT(*) FROM permission_decisions
+WHERE created_at >= ?
+AND decided_by IN ('human', 'assessor', 'session_grant', 'session_rule');

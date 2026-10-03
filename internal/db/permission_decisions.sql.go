@@ -10,6 +10,19 @@ import (
 	"database/sql"
 )
 
+const countUnresolvedPermissionDecisionsSince = `-- name: CountUnresolvedPermissionDecisionsSince :one
+SELECT COUNT(*) FROM permission_decisions
+WHERE created_at >= ?
+AND decided_by IN ('human', 'assessor', 'session_grant', 'session_rule')
+`
+
+func (q *Queries) CountUnresolvedPermissionDecisionsSince(ctx context.Context, createdAt int64) (int64, error) {
+	row := q.queryRow(ctx, q.countUnresolvedPermissionDecisionsSinceStmt, countUnresolvedPermissionDecisionsSince, createdAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deletePermissionDecisionsBefore = `-- name: DeletePermissionDecisionsBefore :exec
 DELETE FROM permission_decisions WHERE created_at < ?
 `

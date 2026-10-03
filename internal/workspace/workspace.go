@@ -106,6 +106,8 @@ type Workspace interface {
 	PermissionAssessorConfigured() bool
 	PermissionAssessorMode() permission.AssessorMode
 	PermissionSetAssessorMode(mode permission.AssessorMode)
+	PermissionUnresolvedCount(ctx context.Context, since time.Time) (int, error)
+	PermissionLastTriage() time.Time
 
 	// FileTracker
 	FileTrackerRecordRead(ctx context.Context, sessionID, path string)

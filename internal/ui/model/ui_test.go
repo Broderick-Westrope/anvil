@@ -1,7 +1,9 @@
 package model
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -102,6 +104,12 @@ func (*testWorkspace) PermissionAssessorMode() permission.AssessorMode {
 }
 
 func (*testWorkspace) PermissionSetAssessorMode(permission.AssessorMode) {}
+
+func (*testWorkspace) PermissionUnresolvedCount(context.Context, time.Time) (int, error) {
+	return 0, nil
+}
+
+func (*testWorkspace) PermissionLastTriage() time.Time { return time.Time{} }
 
 func TestExtractSlashArgs(t *testing.T) {
 	t.Parallel()

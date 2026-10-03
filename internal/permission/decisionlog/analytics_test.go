@@ -106,3 +106,42 @@ func TestStatsP95(t *testing.T) {
 	}
 	require.Equal(t, int64(95), ComputeStats(rows).Groups[0].Usage.P95LatencyMS)
 }
+
+func TestCountUnresolvedSince(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	conn, err := db.Connect(t.Context(), dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Release(dir)) })
+	q := db.New(conn)
+
+	empty, err := CountUnresolvedSince(t.Context(), q, time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	require.Zero(t, empty)
+
+	sources := []permission.DecisionSource{
+		permission.DecisionSourceHuman,
+		permission.DecisionSourceAssessor,
+		permission.DecisionSourceSessionGrant,
+		permission.DecisionSourceSessionRule,
+		permission.DecisionSourceRule,
+		permission.DecisionSourceYolo,
+		permission.DecisionSourceHook,
+		permission.DecisionSourceAutoSession,
+	}
+	for i, src := range sources {
+		require.NoError(t, q.InsertPermissionDecision(t.Context(), db.InsertPermissionDecisionParams{ID: fmt.Sprint("new-", i), ToolName: "bash", InputSegments: "[]", Verdict: "allow", DecidedBy: string(src)}))
+		require.NoError(t, q.InsertPermissionDecision(t.Context(), db.InsertPermissionDecisionParams{ID: fmt.Sprint("old-", i), ToolName: "bash", InputSegments: "[]", Verdict: "allow", DecidedBy: string(src)}))
+	}
+	old := time.Now().Add(-8 * 24 * time.Hour).Unix()
+	_, err = conn.ExecContext(t.Context(), `UPDATE permission_decisions SET created_at = ? WHERE id LIKE 'old-%'`, old)
+	require.NoError(t, err)
+
+	n, err := CountUnresolvedSince(t.Context(), q, time.Now().Add(-7*24*time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 4, n)
+
+	n, err = CountUnresolvedSince(t.Context(), q, time.Unix(old, 0))
+	require.NoError(t, err)
+	require.Equal(t, 8, n)
+}
