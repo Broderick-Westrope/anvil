@@ -1,6 +1,6 @@
 # Phase 5: Runtime Visible to the Human
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Depends on Phase 1. Task 2's final-runtime step needs Phase 2's
 > `RuntimeMS` metadata; skip that step if Phase 2 has not merged. Create a
 > PR for human review when done; do not merge.
@@ -22,17 +22,20 @@ controls for killing jobs from the UI.
 
 **Success Criteria:**
 
-- [ ] The sidebar Jobs section lists the active session's running
+- [x] The sidebar Jobs section lists the active session's running
       published jobs with ID, short label, runtime, and last-output age;
       jobs silent for over 10 minutes are styled as stale; the section is
       hidden when there are none.
-- [ ] Runtimes in the sidebar update every second while jobs are running,
+- [x] Running jobs owned by a still-running subagent of the active session
+      are listed too, tagged `subagent` (follow-up found while executing
+      this plan: a subagent blocked on its own job was invisible).
+- [x] Runtimes in the sidebar update every second while jobs are running,
       and the tick stops when none are.
-- [ ] A pending `job_output` call with `wait=true` shows a live elapsed
+- [x] A pending `job_output` call with `wait=true` shows a live elapsed
       counter.
-- [ ] Finished `job_output` cards show the job's final runtime from
+- [x] Finished `job_output` cards show the job's final runtime from
       metadata (if Phase 2 merged).
-- [ ] Render tests cover each state; `go test ./internal/ui/... -count=1`
+- [x] Render tests cover each state; `go test ./internal/ui/... -count=1`
       passes.
 
 ## Context Loading
@@ -72,14 +75,14 @@ read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
 
 **Steps:**
 
-1. [ ] Add to the `Workspace` interface:
+1. [x] Add to the `Workspace` interface:
    `ListSessionJobs(sessionID string) []shell.JobInfo`.
    `AppWorkspace` returns
    `shell.GetBackgroundShellManager().ListBySession(sessionID)`.
    (In-memory only is fine: the sidebar shows running jobs, which are
    always in memory.)
 
-2. [ ] Create `jobs.go` following `lspInfo`'s structure:
+2. [x] Create `jobs.go` following `lspInfo`'s structure:
 
    ```go
    // jobsInfo renders the Jobs section listing the session's running
@@ -100,10 +103,10 @@ read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
    sidebar; others with `t.Resource.AdditionalText`. Use the active
    session's ID; render nothing when there's no session.
 
-3. [ ] In `sidebar.go`, insert the section before the LSP section, with
+3. [x] In `sidebar.go`, insert the section before the LSP section, with
    the blank separator line only when it's non-empty.
 
-4. [ ] Live updates. The sidebar is rebuilt on redraw; make sure a redraw
+4. [x] Live updates. The sidebar is rebuilt on redraw; make sure a redraw
    happens every second while jobs are running. Reuse the existing
    `tickElapsedTime` loop: in the `tickElapsedTimeMsg` case, also
    continue when the active session has running jobs (and mark the
@@ -112,7 +115,7 @@ read internal/shell/jobformat.go          # FormatRuntime, JobLabel (Phase 1)
    result with `Background: true` metadata arrives, if it isn't already
    running (`m.elapsedTickRunning`).
 
-5. [ ] Tests in `jobs_test.go` (call `jobsInfo` directly with a fake
+5. [x] Tests in `jobs_test.go` (call `jobsInfo` directly with a fake
    workspace returning fixed `JobInfo`s and a fixed `now`; add a `now`
    field or function on the UI model so tests control time):
    - No jobs → `""`.
@@ -148,7 +151,7 @@ go test ./internal/ui/model/ ./internal/workspace/ -count=1
 
 **Steps:**
 
-1. [ ] Pending `job_output` with `wait=true`: in
+1. [x] Pending `job_output` with `wait=true`: in
    `JobOutputToolRenderContext.RenderTool`, when `opts.IsPending()` and
    the parsed params have `Wait`, render
    `pendingTool(sty, "Job", opts.Anim, opts.Compact)` followed by
@@ -162,12 +165,12 @@ go test ./internal/ui/model/ ./internal/workspace/ -count=1
    items use `invalidateRunningAgentCaches`); if not, extend that pass to
    invalidate pending `job_output` items with `wait=true`.
 
-2. [ ] Finished `job_output` cards (needs Phase 2): read `RuntimeMS` and
+2. [x] Finished `job_output` cards (needs Phase 2): read `RuntimeMS` and
    `Done` from `JobOutputResponseMetadata` and append
    `· ran 9m14s` (finished) or `· running 4m12s` (still running at read
    time) to the job header description, using `shell.FormatRuntime`.
 
-3. [ ] Tests in `job_render_test.go` following `mcp_test.go`'s approach:
+3. [x] Tests in `job_render_test.go` following `mcp_test.go`'s approach:
    pending wait card contains `waiting` and the elapsed time from a
    fixed `StartedAt` and clock; pending non-wait card does not; finished
    card with `RuntimeMS: 554000, Done: true` contains `ran 9m14s` and

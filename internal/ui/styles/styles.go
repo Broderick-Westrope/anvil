@@ -319,7 +319,7 @@ type Styles struct {
 		JobIconSuccess lipgloss.Style // Success job icon (green)
 		JobToolName    lipgloss.Style // Job tool name "Bash" (blue)
 		JobAction      lipgloss.Style // Action text (Start, Output, Kill)
-		JobPID         lipgloss.Style // PID text
+		JobID          lipgloss.Style // Job ID and muted job detail text
 		JobDescription lipgloss.Style // Description text
 
 		// Agent task styles

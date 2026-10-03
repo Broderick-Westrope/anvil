@@ -17,6 +17,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 )
 
@@ -123,6 +124,12 @@ type Workspace interface {
 	LSPStopAll(ctx context.Context)
 	LSPGetStates() map[string]LSPClientInfo
 	LSPGetDiagnosticCounts(name string) lsp.DiagnosticCounts
+
+	// Jobs
+
+	// ListSessionJobs returns the jobs owned by sessionID or by any of its
+	// descendant (subagent) sessions, in manager order.
+	ListSessionJobs(sessionID string) []shell.JobInfo
 
 	// Config (read-only data)
 	Config() *config.Config

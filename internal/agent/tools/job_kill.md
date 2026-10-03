@@ -17,7 +17,9 @@ Terminate a background shell process.
 <tips>
 - Use this when you need to stop a background process
 - The process is terminated immediately (similar to SIGTERM)
-- After killing, the shell ID becomes invalid
+- After killing, the job's final output and end state stay readable with
+  job_output and job_list for the log retention window (except jobs that
+  could not be saved, which are gone once killed)
 - If a job was abandoned, check for leftover processes or ports before
   starting a replacement
 </tips>

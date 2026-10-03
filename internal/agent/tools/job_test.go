@@ -676,6 +676,7 @@ func TestJobOutputTool_WaitPattern(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
 	require.Equal(t, string(shell.WaitMatched), meta.EndReason)
 	require.Equal(t, "ready", meta.MatchedLine)
+	require.Zero(t, meta.WatchGen, "no watch was set")
 }
 
 func TestJobOutputTool_CompletedExitCode(t *testing.T) {
@@ -861,6 +862,25 @@ func TestJobOutputTool_Watch(t *testing.T) {
 		require.Len(t, claimed, 1)
 		require.Equal(t, jobevents.KindMatched, claimed[0].Kind)
 		require.Equal(t, "listening on :8080", claimed[0].Line)
+	})
+
+	t.Run("wait match after the watch fired reports its generation", func(t *testing.T) {
+		t.Parallel()
+		ctx, sessionID := watchSessionContext(t)
+		waitFile, release := gated(t)
+		bgShell := startPublishedJob(t, sessionID, "echo booting; "+waitFile("go")+"; echo server ready; sleep 30", shell.OriginExplicit)
+		waitForOutput(t, bgShell, "booting")
+
+		require.False(t, runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Pattern: "ready"}).IsError)
+		release("go")
+		require.Eventually(t, func() bool { return store.HasPending(sessionID) }, 10*time.Second, 10*time.Millisecond)
+
+		resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Wait: true, Pattern: "ready", TimeoutSeconds: 60})
+		require.False(t, resp.IsError)
+		var meta JobOutputResponseMetadata
+		require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+		require.Equal(t, string(shell.WaitMatched), meta.EndReason)
+		require.Positive(t, meta.WatchGen)
 	})
 
 	t.Run("replaced pattern only delivers the new match", func(t *testing.T) {

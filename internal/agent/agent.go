@@ -169,7 +169,7 @@ type sessionAgent struct {
 	// summaries never start two runs at once or lose a queued prompt.
 	// They are never held across model calls.
 	dispatchLocksMu sync.Mutex
-	dispatchLocks   map[string]*sync.Mutex
+	dispatchLocks   map[string]*dispatchLock
 	summarizing     *csync.Map[string, *activeCancel] // The summary's active request.
 	// wakeCounts counts consecutive wake runs since the last user run;
 	// wakeSuppressed marks sessions canceled since the last user run.
@@ -180,6 +180,13 @@ type sessionAgent struct {
 	// (currently only title generation) so tests — and shutdown paths —
 	// can wait for them instead of racing test/recorder teardown.
 	backgroundJobs sync.WaitGroup
+}
+
+// dispatchLock is a session's dispatch mutex; refs, guarded by
+// sessionAgent.dispatchLocksMu, counts its holders and waiters.
+type dispatchLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 // WaitBackgroundJobs blocks until all fire-and-forget goroutines spawned
@@ -234,7 +241,7 @@ func NewSessionAgent(
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, *activeCancel](),
 		onIdle:               opts.OnIdle,
-		dispatchLocks:        make(map[string]*sync.Mutex),
+		dispatchLocks:        make(map[string]*dispatchLock),
 		summarizing:          csync.NewMap[string, *activeCancel](),
 		wakeCounts:           csync.NewMap[string, int](),
 		wakeSuppressed:       csync.NewMap[string, bool](),
@@ -251,11 +258,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	// Queue the message if busy; otherwise register the run under the
 	// same lock so no other dispatch can start in between.
-	mu := a.dispatchLock(call.SessionID)
-	mu.Lock()
+	unlock := a.lockDispatch(call.SessionID)
 	if a.IsSessionBusy(call.SessionID) {
 		a.enqueueLocked(call)
-		mu.Unlock()
+		unlock()
 		return nil, nil
 	}
 	a.wakeCounts.Del(call.SessionID)
@@ -263,7 +269,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	genCtx, cancel := context.WithCancel(ctx)
 	ac := &activeCancel{cancel: cancel}
 	a.activeRequests.Set(call.SessionID, ac)
-	mu.Unlock()
+	unlock()
 
 	return a.runRegistered(ctx, genCtx, ac, call)
 }
@@ -292,7 +298,7 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 	sessionLock := sync.Mutex{}
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get session: %w", err)
+		return a.abortRun(ctx, ac, call.SessionID, fmt.Errorf("failed to get session: %w", err))
 	}
 	currentLeaf := currentSession.LeafMessageID
 
@@ -310,7 +316,7 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 
 	msgs, raw, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get session messages: %w", err)
+		return a.abortRun(ctx, ac, call.SessionID, fmt.Errorf("failed to get session messages: %w", err))
 	}
 
 	// Derive the lazy MCP state from conversation history and inject
@@ -372,11 +378,11 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 		noticeMsg, err := a.deliverJobEvents(ctx, call.SessionID, currentLeaf)
 		if err != nil {
 			a.refundWake(call.SessionID)
-			return nil, err
+			return a.abortRun(ctx, ac, call.SessionID, err)
 		}
 		if noticeMsg == nil {
 			a.refundWake(call.SessionID)
-			return nil, nil
+			return a.abortRun(ctx, ac, call.SessionID, nil)
 		}
 		msgs = append(msgs, *noticeMsg)
 		currentLeaf = noticeMsg.ID
@@ -396,7 +402,7 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 		// Add the user message to the session.
 		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
 		if err != nil {
-			return nil, err
+			return a.abortRun(ctx, ac, call.SessionID, err)
 		}
 		currentLeaf = userMsg.ID
 	}
@@ -899,23 +905,22 @@ func (a *sessionAgent) RunWake(ctx context.Context, call SessionAgentCall, eligi
 	if call.SessionID == "" {
 		return nil, ErrSessionMissing
 	}
-	mu := a.dispatchLock(call.SessionID)
-	mu.Lock()
+	unlock := a.lockDispatch(call.SessionID)
 	if a.IsSessionBusy(call.SessionID) {
-		mu.Unlock()
+		unlock()
 		return nil, ErrSessionBusy
 	}
 	if suppressed, _ := a.wakeSuppressed.Get(call.SessionID); suppressed ||
 		a.wakeCount(call.SessionID) >= maxConsecutiveWakes ||
 		(eligible != nil && !eligible()) {
-		mu.Unlock()
+		unlock()
 		return nil, ErrWakeNotAllowed
 	}
 	a.wakeCounts.Set(call.SessionID, a.wakeCount(call.SessionID)+1)
 	genCtx, cancel := context.WithCancel(ctx)
 	ac := &activeCancel{cancel: cancel}
 	a.activeRequests.Set(call.SessionID, ac)
-	mu.Unlock()
+	unlock()
 
 	call.wake = true
 	call.Prompt = ""
@@ -932,31 +937,42 @@ func (a *sessionAgent) wakeCount(sessionID string) int {
 // refundWake returns a wake that delivered nothing to the session's
 // budget.
 func (a *sessionAgent) refundWake(sessionID string) {
-	mu := a.dispatchLock(sessionID)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock := a.lockDispatch(sessionID)
+	defer unlock()
 	if n := a.wakeCount(sessionID); n > 0 {
 		a.wakeCounts.Set(sessionID, n-1)
 	}
 }
 
-// dispatchLock returns the session's dispatch mutex.
-func (a *sessionAgent) dispatchLock(sessionID string) *sync.Mutex {
+// lockDispatch locks the session's dispatch mutex and returns the
+// function that unlocks it. Entries are reference-counted, holders and
+// waiters alike, and removed when the last one unlocks, so the map only
+// holds sessions with dispatch decisions in progress.
+func (a *sessionAgent) lockDispatch(sessionID string) (unlock func()) {
 	a.dispatchLocksMu.Lock()
-	defer a.dispatchLocksMu.Unlock()
-	mu, ok := a.dispatchLocks[sessionID]
+	l, ok := a.dispatchLocks[sessionID]
 	if !ok {
-		mu = &sync.Mutex{}
-		a.dispatchLocks[sessionID] = mu
+		l = &dispatchLock{}
+		a.dispatchLocks[sessionID] = l
 	}
-	return mu
+	l.refs++
+	a.dispatchLocksMu.Unlock()
+
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		a.dispatchLocksMu.Lock()
+		defer a.dispatchLocksMu.Unlock()
+		if l.refs--; l.refs == 0 {
+			delete(a.dispatchLocks, sessionID)
+		}
+	}
 }
 
 // enqueue queues call for the session's running request.
 func (a *sessionAgent) enqueue(call SessionAgentCall) {
-	mu := a.dispatchLock(call.SessionID)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock := a.lockDispatch(call.SessionID)
+	defer unlock()
 	a.enqueueLocked(call)
 }
 
@@ -967,9 +983,8 @@ func (a *sessionAgent) enqueueLocked(call SessionAgentCall) {
 
 // takeQueued removes and returns every queued call for the session.
 func (a *sessionAgent) takeQueued(sessionID string) []SessionAgentCall {
-	mu := a.dispatchLock(sessionID)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock := a.lockDispatch(sessionID)
+	defer unlock()
 	queued, _ := a.messageQueue.Take(sessionID)
 	return queued
 }
@@ -977,15 +992,20 @@ func (a *sessionAgent) takeQueued(sessionID string) []SessionAgentCall {
 // popQueuedOrIdle removes the session's first queued call. When nothing
 // is queued it reports the session idle through OnIdle instead.
 func (a *sessionAgent) popQueuedOrIdle(sessionID string) (SessionAgentCall, bool) {
-	mu := a.dispatchLock(sessionID)
-	mu.Lock()
+	next, ok := a.popQueued(sessionID)
+	if !ok && a.onIdle != nil {
+		a.onIdle(sessionID)
+	}
+	return next, ok
+}
+
+// popQueued removes the session's first queued call, if any.
+func (a *sessionAgent) popQueued(sessionID string) (SessionAgentCall, bool) {
+	unlock := a.lockDispatch(sessionID)
+	defer unlock()
 	queued, _ := a.messageQueue.Get(sessionID)
 	if len(queued) == 0 {
 		a.messageQueue.Del(sessionID)
-		mu.Unlock()
-		if a.onIdle != nil {
-			a.onIdle(sessionID)
-		}
 		return SessionAgentCall{}, false
 	}
 	if len(queued) == 1 {
@@ -993,22 +1013,41 @@ func (a *sessionAgent) popQueuedOrIdle(sessionID string) (SessionAgentCall, bool
 	} else {
 		a.messageQueue.Set(sessionID, queued[1:])
 	}
-	mu.Unlock()
 	return queued[0], true
 }
 
+// abortRun ends a run that stopped before reaching the model and hands
+// the session to the calls queued meanwhile, which would otherwise wait
+// for an unrelated later run. It does not report the session idle: a
+// failing dependency would make every wake fail the same way. A queued
+// run's error is joined to err.
+func (a *sessionAgent) abortRun(ctx context.Context, ac *activeCancel, sessionID string, err error) (*fantasy.AgentResult, error) {
+	a.activeRequests.CompareAndDelete(sessionID, ac)
+	ac.cancel()
+	next, ok := a.popQueued(sessionID)
+	if !ok {
+		return nil, err
+	}
+	if err == nil {
+		return a.Run(ctx, next)
+	}
+	if _, nextErr := a.Run(ctx, next); nextErr != nil {
+		err = errors.Join(err, nextErr)
+	}
+	return nil, err
+}
+
 func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
-	mu := a.dispatchLock(sessionID)
-	mu.Lock()
+	unlock := a.lockDispatch(sessionID)
 	if a.IsSessionBusy(sessionID) {
-		mu.Unlock()
+		unlock()
 		return ErrSessionBusy
 	}
 	genCtx, cancel := context.WithCancel(ctx)
 	ac := &activeCancel{cancel: cancel}
 	a.activeRequests.Set(sessionID, ac)
 	a.summarizing.Set(sessionID, ac)
-	mu.Unlock()
+	unlock()
 	defer a.activeRequests.CompareAndDelete(sessionID, ac)
 	defer cancel()
 	defer a.summarizing.CompareAndDelete(sessionID, ac)
@@ -1719,10 +1758,9 @@ func (a *sessionAgent) Cancel(sessionID string) {
 		ac.cancel()
 	}
 
-	mu := a.dispatchLock(sessionID)
-	mu.Lock()
+	unlock := a.lockDispatch(sessionID)
 	a.wakeSuppressed.Set(sessionID, true)
-	mu.Unlock()
+	unlock()
 
 	a.ClearQueue(sessionID)
 }

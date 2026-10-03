@@ -1,6 +1,6 @@
 # Phase 2: Reading and Waiting
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Depends on Phase 1. Create a PR for human review when done; do not merge.
 
 ## Specification
@@ -366,7 +366,7 @@ go test -race ./internal/shell/ -count=1
      response contains `Output so far`; the first `job_output` still
      returns the first line.
 
-9. [ ] _(Not applicable: Phase 5 has not merged; Phase 5 will do it.)_ If Phase 5 merged before this phase, also do Phase 5 Task 2
+9. [x] _(Done in Phase 5, which merged after this phase.)_ If Phase 5 merged before this phase, also do Phase 5 Task 2
    step 2 (final runtime on finished `job_output` cards) here, since it
    needs `RuntimeMS`.
 

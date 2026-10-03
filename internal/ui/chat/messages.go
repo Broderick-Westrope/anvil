@@ -408,14 +408,16 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 			if tr, ok := toolResults[tc.ID]; ok {
 				result = &tr
 			}
-			items = append(items, NewToolMessageItem(
+			item := NewToolMessageItem(
 				sty,
 				msg.ID,
 				tc,
 				result,
 				msg.FinishReason() == message.FinishReasonCanceled,
 				expandedPatterns,
-			))
+			)
+			SetToolCallStartedAt(item, msg.CreatedAt)
+			items = append(items, item)
 		}
 		return items
 	}

@@ -111,9 +111,20 @@ func (w *jobWaker) close() {
 	w.closed.Store(true)
 }
 
-// wait blocks until in-flight RunWake calls return.
-func (w *jobWaker) wait() {
-	w.wg.Wait()
+// wait blocks until in-flight RunWake calls return or ctx is done, and
+// reports whether they all returned.
+func (w *jobWaker) wait(ctx context.Context) bool {
+	done := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // run is the single loop that decides which sessions to wake.

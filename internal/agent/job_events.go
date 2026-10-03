@@ -10,6 +10,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
 // maxJobEventsPerNotice bounds how many events one notice carries; the
@@ -64,8 +65,14 @@ func (a *sessionAgent) observeJobResult(toolName, metadata string) {
 			slog.Debug("Failed to decode job_output metadata", "error", err)
 			return
 		}
-		if meta.Done && meta.ShellID != "" {
+		if meta.ShellID == "" {
+			return
+		}
+		if meta.Done {
 			a.jobEvents.Observe(meta.ShellID, jobevents.KindCompleted, 0)
+		}
+		if meta.EndReason == string(shell.WaitMatched) && meta.WatchGen > 0 {
+			a.jobEvents.Observe(meta.ShellID, jobevents.KindMatched, meta.WatchGen)
 		}
 	case tools.JobKillToolName:
 		var meta tools.JobKillResponseMetadata
