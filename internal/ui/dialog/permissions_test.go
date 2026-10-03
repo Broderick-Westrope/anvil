@@ -414,7 +414,8 @@ func TestPermissions_LongContentGrowsDialog(t *testing.T) {
 	require.LessOrEqual(t, shortH, int(screenH*simpleHeightRatio))
 	require.Greater(t, longH, int(screenH*simpleHeightRatio), "long content should use more height")
 	require.Greater(t, longW, shortW, "long content should use more width")
-	require.LessOrEqual(t, longH, int(screenH*diffSizeRatio))
+	require.LessOrEqual(t, longH, screenH-expandedVerticalMargin)
+	require.Greater(t, longH, int(screenH*diffSizeRatio), "long content should use nearly the full height")
 }
 
 // TestPermissions_FullscreenForSimpleContent verifies that ctrl+f makes a

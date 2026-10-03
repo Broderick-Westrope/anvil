@@ -58,6 +58,9 @@ const (
 	minWindowWidth = 77
 	// minWindowHeight is the minimum window height before forcing fullscreen.
 	minWindowHeight = 20
+	// expandedVerticalMargin is the number of rows left free around a
+	// simple prompt grown to fit long content.
+	expandedVerticalMargin = 4
 )
 
 // Permissions represents a dialog for permission requests.
@@ -533,11 +536,15 @@ func (p *Permissions) dialogSize(area uv.Rectangle, expanded bool) (width, maxHe
 	switch {
 	case forceFullscreen || p.fullscreen:
 		width, maxHeight = area.Dx(), area.Dy()
-	case p.hasDiffView() || expanded:
-		// Wide for side-by-side diffs and long scripts, capped for
-		// readability.
+	case p.hasDiffView():
+		// Wide for side-by-side diffs, capped for readability.
 		width = min(int(float64(area.Dx())*diffSizeRatio), diffMaxWidth)
 		maxHeight = int(float64(area.Dy()) * diffSizeRatio)
+	case expanded:
+		// Long scripts need every row they can get: the fixed chrome
+		// alone takes over a dozen, so leave only a small margin.
+		width = min(int(float64(area.Dx())*diffSizeRatio), diffMaxWidth)
+		maxHeight = area.Dy() - expandedVerticalMargin
 	default:
 		// Narrower for simple content like commands and URLs.
 		width = min(int(float64(area.Dx())*simpleSizeRatio), simpleMaxWidth)
@@ -1086,6 +1093,12 @@ func (p *Permissions) ShortHelp() []key.Binding {
 		p.keyMap.Close,
 	}
 
+	// Fullscreen comes before the other hints so it survives truncation
+	// on narrow terminals, where it is needed most.
+	if p.canScroll() || p.fullscreen {
+		bindings = append(bindings, p.keyMap.ToggleFullscreen)
+	}
+
 	if p.permission.Input != "" {
 		bindings = append(bindings, p.keyMap.EditPattern)
 	}
@@ -1096,10 +1109,6 @@ func (p *Permissions) ShortHelp() []key.Binding {
 
 	if p.hasDiffView() {
 		bindings = append(bindings, p.keyMap.ToggleDiffMode)
-	}
-
-	if p.canScroll() || p.fullscreen {
-		bindings = append(bindings, p.keyMap.ToggleFullscreen)
 	}
 
 	return bindings
