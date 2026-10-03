@@ -831,6 +831,7 @@ func TestNewCoordinatorDoesNotBlockOnMCPInit(t *testing.T) {
 			nil, // lspManager — unused during construction.
 			nil, // notify — unused during construction.
 			nil, // jobEvents — notifications disabled.
+			nil, // jobArchive — no persisted job fallbacks.
 			nil, // onIdle — no waker.
 		)
 		done <- coordinatorResult{c, buildErr}

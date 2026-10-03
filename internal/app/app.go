@@ -605,6 +605,7 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.LSPManager,
 		app.agentNotifications,
 		app.jobEvents,
+		nil,
 		app.jobWaker.trigger,
 	)
 	if err != nil {
