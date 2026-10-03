@@ -71,7 +71,14 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 			bgManager := shell.GetBackgroundShellManager()
 			bgShell, ok := bgManager.Get(params.ShellID)
 			if !ok {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
+				rec, found, err := lookupArchivedJob(ctx, opts.Archive, params.ShellID)
+				if err != nil {
+					return fantasy.NewTextErrorResponse(err.Error()), nil
+				}
+				if !found {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
+				}
+				return archivedJobOutput(opts.Archive, rec, params), nil
 			}
 
 			// The matcher is created before reading so an unread

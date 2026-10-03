@@ -348,7 +348,7 @@ go test -race ./internal/shell/ ./internal/jobstore/ -count=1
 
 **Steps:**
 
-1. [ ] Add to `JobToolOptions`:
+1. [x] Add to `JobToolOptions`:
 
    ```go
    // Archive looks up persisted jobs that are no longer in memory. Nil
@@ -364,7 +364,7 @@ go test -race ./internal/shell/ ./internal/jobstore/ -count=1
    }
    ```
 
-2. [ ] `job_output` fallback when the manager's `Get` misses:
+2. [x] `job_output` fallback when the manager's `Get` misses:
    - Not in the archive → `background shell not found` as today.
    - `LogExpired` set → header plus `(output expired on 2026-10-17)`.
    - Otherwise read the log. A process-local cursor map (per job, per
@@ -377,15 +377,15 @@ go test -race ./internal/shell/ ./internal/jobstore/ -count=1
      `anvil_exit` as `Status: killed when Anvil exited (<runtime>)`;
      remote running jobs as
      `Status: running in another Anvil process (<runtime>)`.
-3. [ ] `job_list` merges in-memory jobs with `Archive.ListBySession`,
+3. [x] `job_list` merges in-memory jobs with `Archive.ListBySession`,
    de-duplicated by ID (memory wins), same ordering and caps. Remote
    running jobs list under Running with `(other Anvil process)`.
-4. [ ] `job_kill` on an archived job: finished → the "already exited"
+4. [x] `job_kill` on an archived job: finished → the "already exited"
    message (exit code from the record, tail from the log); remote → tool
    error `job X is running in another Anvil process and can only be killed there`.
-5. [ ] Docs: results persist for 14 days; IDs are unique across restarts;
+5. [x] Docs: results persist for 14 days; IDs are unique across restarts;
    jobs die when Anvil exits and are then reported as such.
-6. [ ] Tests with a real `jobstore` on a temp DB: an evicted job (removed
+6. [x] Tests with a real `jobstore` on a temp DB: an evicted job (removed
    from the manager after completion) is readable and listable;
    incremental reads on an archived job; `interrupted` header;
    expired-log message; remote kill refusal.
