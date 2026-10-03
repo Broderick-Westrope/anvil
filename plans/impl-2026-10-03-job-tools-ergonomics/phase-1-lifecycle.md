@@ -72,6 +72,7 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
 
 **Files:**
 - Modify: `internal/shell/background.go`
+- Create: `internal/shell/jobformat.go`, `internal/shell/jobformat_test.go`
 - Modify: every caller of `BackgroundShell.ID` (field becomes a method; find
   with `rg -n '\.ID\b' internal --type go | rg -i 'shell|bg'`)
 - Test: `internal/shell/background_test.go`
@@ -219,12 +220,54 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    `var ErrKillTimeout = errors.New("background shell did not exit within grace period")`
    and return it from the grace-period branch (keep the existing
    `slog.Warn`). The removal behaviour is unchanged. Existing callers that
-   ignore the error stay as they are.
+   ignore the error stay as they are. Make the grace period a manager
+   field (`gracePeriod`, default `KillGracePeriod`) so tests can shorten
+   it.
 
-7. [ ] Fix iteration sites that read `shell.ID` concurrently: `Cleanup`
-   and `CleanupCompleted` iterate `m.shells.Seq2()` and use the map key.
+7. [ ] One lock protocol for the shell map. Every operation that adds,
+   removes, re-keys, or snapshots entries holds `m.mu` for the map
+   change only: `Start` (set), `Publish` (lookup, take, set), `Remove`
+   and `Kill` (take), `Cleanup` and `CleanupCompleted` (collect keys via
+   `m.shells.Seq2()` and take them), `Transfer`, the list helpers
+   (snapshot), and `KillAll` (snapshot and reset). Cancellation and
+   waiting on `done` always happen after releasing `m.mu`. Because `Kill`
+   and `Publish` both take under `m.mu`, a kill racing a publish either
+   finds the old key or the new one, never neither.
 
-8. [ ] Tests in `internal/shell/background_test.go` (table tests where
+8. [ ] Move job formatting helpers into `shell` so every layer (tools,
+   job events, UI) can use them without import cycles. Create
+   `internal/shell/jobformat.go`:
+
+   ```go
+   // FormatRuntime renders a duration compactly: 12s, 4m12s, 2h03m.
+   func FormatRuntime(d time.Duration) string {
+   	d = d.Round(time.Second)
+   	switch {
+   	case d < time.Minute:
+   		return fmt.Sprintf("%ds", int(d.Seconds()))
+   	case d < time.Hour:
+   		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+   	default:
+   		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+   	}
+   }
+
+   // JobLabel is the description if set, otherwise the command,
+   // collapsed to one line and truncated to maxLen runes.
+   func JobLabel(info JobInfo, maxLen int) string
+
+   // JobRuntime is now-StartedAt for running jobs and
+   // CompletedAt-StartedAt for finished ones.
+   func JobRuntime(info JobInfo, now time.Time) time.Duration
+
+   // LastLines returns at most n trailing lines of s.
+   func LastLines(s string, n int) string
+   ```
+
+   Unit-test `FormatRuntime` (0s, 59s, 1m00s, 4m12s, 2h03m), `JobLabel`
+   truncation and newline collapsing, and `LastLines`.
+
+9. [ ] Tests in `internal/shell/background_test.go` (table tests where
    natural, all `t.Parallel()`, use `newBackgroundShellManager()` for
    isolation rather than the singleton):
    - `Start` without `Publish`: not in `ListAll`, allocator not called
@@ -237,8 +280,17 @@ read plans/design-2026-04-07-job-tools-ergonomics.md
    - `Transfer`: running auto job returned in `toKill` and still owned by
      the child; explicit running and explicit completed jobs now owned by
      the parent.
-   - `Kill` timeout returns `ErrKillTimeout` (adapt
-     `TestBackgroundShellManager_Kill_Timeout`).
+   - Kill timeout: real commands can't outlive the SIGKILL escalation, so
+     add a test-only helper in `background_test.go` that registers a
+     `BackgroundShell` whose goroutine waits on a test channel instead of
+     running a command (construct the struct directly; it's the same
+     package). With `gracePeriod = 50*time.Millisecond`, `Kill` returns
+     `ErrKillTimeout`; closing the channel afterwards lets the goroutine
+     exit. Keep `TestBackgroundShellManager_Kill_Timeout` as is (it
+     checks the real escalation succeeds in bounded time).
+   - Publish racing Kill: start 50 goroutine pairs that `Publish` and
+     `Kill` the same shell; afterwards the shell is done and absent from
+     the map, and `-race` is quiet.
    - `lastOutputAt` is set after output and zero before.
 
 **Verify:**
@@ -265,40 +317,32 @@ go build ./... && go test -race ./internal/shell/ -count=1
 
 **Steps:**
 
-1. [ ] Create `job_format.go` with shared formatting (Phase 2 and the
-   compaction section reuse it):
+1. [ ] Create `job_format.go` for tool-specific formatting, built on the
+   `shell` helpers from Task 1:
 
    ```go
-   // FormatRuntime renders a duration compactly: 12s, 4m12s, 2h03m.
-   func FormatRuntime(d time.Duration) string {
-   	d = d.Round(time.Second)
-   	switch {
-   	case d < time.Minute:
-   		return fmt.Sprintf("%ds", int(d.Seconds()))
-   	case d < time.Hour:
-   		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
-   	default:
-   		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
-   	}
-   }
-
-   // JobLabel is the description if set, otherwise the command,
-   // collapsed to one line and truncated to maxLen runes.
-   func JobLabel(info shell.JobInfo, maxLen int) string
-
-   // JobRuntime is now-StartedAt for running jobs and
-   // CompletedAt-StartedAt for finished ones.
-   func JobRuntime(info shell.JobInfo, now time.Time) time.Duration
-
    // FormatOtherRunningJobs renders up to max running jobs as
    // "05A <label> (2h03m); 07D <label> (12s)" with "(+N more; use
    // job_list)" when truncated. It returns "" when jobs is empty.
    func FormatOtherRunningJobs(jobs []shell.JobInfo, now time.Time, max int) string
    ```
 
-   Unit-test `FormatRuntime` (0s, 59s, 1m00s, 4m12s, 2h03m),
-   `JobLabel` truncation and newline collapsing, and
-   `FormatOtherRunningJobs` truncation.
+   Unit-test truncation and the empty case.
+
+   Also introduce one options struct for the job tools, so later phases
+   add dependencies without changing constructor signatures again:
+
+   ```go
+   // JobToolOptions holds optional dependencies for the job tools.
+   // Later phases add fields; the zero value is valid.
+   type JobToolOptions struct{}
+
+   func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool
+   func NewJobKillTool(opts JobToolOptions) fantasy.AgentTool
+   func NewJobListTool(opts JobToolOptions) fantasy.AgentTool
+   ```
+
+   Update the coordinator and test call sites.
 
 2. [ ] Publish from bash. In `bash.go`:
    - Explicit path (~line 280, after the fast-failure check finds the job
@@ -356,7 +400,7 @@ go build ./... && go test -race ./internal/shell/ -count=1
    All running jobs are listed (no cap); at most 20 finished jobs; omit a
    section when it's empty; "last output never" when `LastOutputAt` is
    zero; `No background jobs.` when both are empty. Labels use
-   `JobLabel(info, 80)`.
+   `shell.JobLabel(info, 80)`.
 
 5. [ ] Create `job_list.md` in the structured style of `job_kill.md`:
    when to use (rediscover IDs after context loss, check for an existing
@@ -372,8 +416,8 @@ go build ./... && go test -race ./internal/shell/ -count=1
    	stdout, stderr, _, _ := bgShell.GetOutput()
    	_ = bgManager.Kill(params.ShellID) // Removes tracking; the process is gone.
    	result := fmt.Sprintf("Job %s had already exited (exit %d, %s) before kill.",
-   		params.ShellID, info.ExitCode, FormatRuntime(JobRuntime(info, time.Now())))
-   	if tail := lastLines(joinOutput(stdout, stderr), 10); tail != "" {
+   		params.ShellID, info.ExitCode, shell.FormatRuntime(shell.JobRuntime(info, time.Now())))
+   	if tail := shell.LastLines(joinOutput(stdout, stderr), 10); tail != "" {
    		result += "\n\nLast output:\n" + tail
    	}
    	return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
@@ -383,8 +427,9 @@ go build ./... && go test -race ./internal/shell/ -count=1
    After `Kill`: `errors.Is(err, shell.ErrKillTimeout)` returns a success
    response: `Kill signal sent to job %s, but it did not exit within 5s.
    It has been abandoned and may still hold resources such as ports or
-   files.` Other errors stay tool errors. Put `lastLines` and
-   `joinOutput` in `job_format.go`. Update `job_kill.md` to describe the
+   files.` Other errors stay tool errors. Put `joinOutput` (stdout
+   then stderr, newline-separated, empty parts skipped) in
+   `job_format.go`. Update `job_kill.md` to describe the
    three outcomes.
 
 7. [ ] Tests in `job_test.go`:
@@ -429,7 +474,8 @@ go build ./... && go test -race ./internal/agent/tools/ -count=1
 
 **Steps:**
 
-1. [ ] Register `tools.NewJobListTool()` next to `tools.NewJobKillTool()`
+1. [ ] Register `tools.NewJobListTool(tools.JobToolOptions{})` next to the
+   other job tools
    in the candidate list (~line 1017).
 
 2. [ ] Auto-grant. After `ParseFilterList` (~line 1060) and before the
@@ -552,9 +598,17 @@ go build ./... && go test -race ./internal/agent/tools/ -count=1
    - Child with no jobs returns `""`.
    - `appendBackgroundJobsSection`: no running jobs leaves the summary
      unchanged; one running job appends the section.
-   - In `coordinator_test.go`, add a `runSubAgent` case (next to the
-     existing tests around line 100-170) where the sub-agent errors and
-     the explicit job still ends up owned by the parent.
+   - Stored summary (integration): run `Summarize` for a session that
+     owns a published `sleep 30` job, using the `scriptedModel` from
+     `internal/agent/injected_messages_test.go` (its non-tool response
+     doubles as the summary text). Read the compaction message back from
+     the message service: its `CompactionContent.Summary` contains
+     `## Background jobs` and the job ID.
+   - In `coordinator_test.go`, add `runSubAgent` cases (next to the
+     existing tests around line 100-170) where the sub-agent (a) returns
+     an error and (b) is cancelled through its context mid-run; in both,
+     the explicit job ends up owned by the parent and the auto job is
+     killed.
 
 **Verify:**
 ```bash

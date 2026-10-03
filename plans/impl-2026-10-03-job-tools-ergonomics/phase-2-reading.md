@@ -343,7 +343,7 @@ go test -race ./internal/shell/ -count=1
    job_output with wait=true and pattern (e.g. "listening on|ready") instead
    of sleep loops.`
 
-8. [ ] Tests in `job_test.go` through the tool (`NewJobOutputTool().Run`
+8. [ ] Tests in `job_test.go` through the tool (`NewJobOutputTool(JobToolOptions{}).Run`
    with a context carrying a session ID; check how existing tool tests
    invoke tools before writing a helper):
    - Two calls → output once, then `(no new output)`.
