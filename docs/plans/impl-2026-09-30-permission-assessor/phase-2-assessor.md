@@ -133,8 +133,18 @@ response, missing key) also falls through to the human.
 >   - A download into `tmp/` is allowed.
 >   - `chmod -R 777 /` escalates instead of denying.
 >
-> Adopted as the user's assessor, in shadow mode and pinned to
-> `jev-1.13.0`.
+> Adopted as the user's assessor, pinned to `jev-1.13.0`, in `enforce`
+> mode: most sessions run with `--yolo`, so enforcing is a strict
+> improvement on yolo's approve-everything.
+>
+> **Yolo interaction:** under `--yolo` (standard), yolo's ask → allow
+> promotion is deferred whenever the assessor would see the request.
+> - The assessor's allow and deny stand. Escalations, skips, and errors
+>   are approved by yolo, so yolo never prompts.
+> - In `shadow` mode, yolo approves everything but the assessment is still
+>   recorded for `stats`.
+> - `--yolo=full` still bypasses everything, the assessor included.
+> - Without yolo, escalations still prompt the human.
 
 ## Context Loading
 
