@@ -292,7 +292,7 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 	sessionLock := sync.Mutex{}
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get session: %w", err)
+		return a.abortRun(ctx, ac, call.SessionID, fmt.Errorf("failed to get session: %w", err))
 	}
 	currentLeaf := currentSession.LeafMessageID
 
@@ -310,7 +310,7 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 
 	msgs, raw, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get session messages: %w", err)
+		return a.abortRun(ctx, ac, call.SessionID, fmt.Errorf("failed to get session messages: %w", err))
 	}
 
 	// Derive the lazy MCP state from conversation history and inject
@@ -372,11 +372,11 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 		noticeMsg, err := a.deliverJobEvents(ctx, call.SessionID, currentLeaf)
 		if err != nil {
 			a.refundWake(call.SessionID)
-			return nil, err
+			return a.abortRun(ctx, ac, call.SessionID, err)
 		}
 		if noticeMsg == nil {
 			a.refundWake(call.SessionID)
-			return nil, nil
+			return a.abortRun(ctx, ac, call.SessionID, nil)
 		}
 		msgs = append(msgs, *noticeMsg)
 		currentLeaf = noticeMsg.ID
@@ -396,7 +396,7 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 		// Add the user message to the session.
 		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
 		if err != nil {
-			return nil, err
+			return a.abortRun(ctx, ac, call.SessionID, err)
 		}
 		currentLeaf = userMsg.ID
 	}
@@ -977,15 +977,21 @@ func (a *sessionAgent) takeQueued(sessionID string) []SessionAgentCall {
 // popQueuedOrIdle removes the session's first queued call. When nothing
 // is queued it reports the session idle through OnIdle instead.
 func (a *sessionAgent) popQueuedOrIdle(sessionID string) (SessionAgentCall, bool) {
+	next, ok := a.popQueued(sessionID)
+	if !ok && a.onIdle != nil {
+		a.onIdle(sessionID)
+	}
+	return next, ok
+}
+
+// popQueued removes the session's first queued call, if any.
+func (a *sessionAgent) popQueued(sessionID string) (SessionAgentCall, bool) {
 	mu := a.dispatchLock(sessionID)
 	mu.Lock()
+	defer mu.Unlock()
 	queued, _ := a.messageQueue.Get(sessionID)
 	if len(queued) == 0 {
 		a.messageQueue.Del(sessionID)
-		mu.Unlock()
-		if a.onIdle != nil {
-			a.onIdle(sessionID)
-		}
 		return SessionAgentCall{}, false
 	}
 	if len(queued) == 1 {
@@ -993,8 +999,28 @@ func (a *sessionAgent) popQueuedOrIdle(sessionID string) (SessionAgentCall, bool
 	} else {
 		a.messageQueue.Set(sessionID, queued[1:])
 	}
-	mu.Unlock()
 	return queued[0], true
+}
+
+// abortRun ends a run that stopped before reaching the model and hands
+// the session to the calls queued meanwhile, which would otherwise wait
+// for an unrelated later run. It does not report the session idle: a
+// failing dependency would make every wake fail the same way. A queued
+// run's error is joined to err.
+func (a *sessionAgent) abortRun(ctx context.Context, ac *activeCancel, sessionID string, err error) (*fantasy.AgentResult, error) {
+	a.activeRequests.CompareAndDelete(sessionID, ac)
+	ac.cancel()
+	next, ok := a.popQueued(sessionID)
+	if !ok {
+		return nil, err
+	}
+	if err == nil {
+		return a.Run(ctx, next)
+	}
+	if _, nextErr := a.Run(ctx, next); nextErr != nil {
+		err = errors.Join(err, nextErr)
+	}
+	return nil, err
 }
 
 func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
