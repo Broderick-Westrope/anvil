@@ -183,7 +183,7 @@ func newBaseToolMessageItem(
 ) *baseToolMessageItem {
 	var hasCappedWidth bool
 	switch toolCall.Name {
-	case tools.JobKillToolName, tools.DownloadToolName, tools.LSPRestartToolName,
+	case tools.JobKillToolName, tools.JobListToolName, tools.DownloadToolName, tools.LSPRestartToolName,
 		tools.TodosToolName, tools.FetchToolName, tools.WebFetchToolName,
 		tools.WebSearchToolName, tools.AgenticFetchToolName, agent.TaskToolName:
 		hasCappedWidth = true
