@@ -243,8 +243,63 @@ func TestPermissionsStatsNoAssessments(t *testing.T) {
 	seedPermissions(t, q)
 	var out bytes.Buffer
 	require.NoError(t, runStats(t.Context(), q, statsOpts{Days: 30}, &out))
-	require.Contains(t, out.String(), "Shadow: 0 samples")
-	require.Contains(t, out.String(), "Enforce: 0 samples")
+	require.Contains(t, out.String(), "No bouncer assessments in this window.")
+	require.NotContains(t, out.String(), "Shadow")
+	require.NotContains(t, out.String(), "not enough evidence")
+}
+
+// TestPermissionsStatsEnforceOnly covers the common setup of running the
+// bouncer straight in enforce mode: no shadow section or evidence warning,
+// and escalations broken down by the axis that caused them.
+func TestPermissionsStatsEnforceOnly(t *testing.T) {
+	t.Parallel()
+	q := permissionsTestDB(t)
+	insert := func(id, source, verdict string, a permission.AssessmentRecord) {
+		t.Helper()
+		data, err := json.Marshal(a)
+		require.NoError(t, err)
+		require.NoError(t, q.InsertPermissionDecision(t.Context(), db.InsertPermissionDecisionParams{ID: id, DecidedBy: source, Verdict: verdict, InputSegments: "[]", Assessment: sql.NullString{Valid: true, String: string(data)}}))
+	}
+	base := permission.AssessmentRecord{SchemaVersion: 1, BatteryVersion: "v2", Mode: "enforce"}
+	allow, escalate := base, base
+	allow.Outcome = "allow"
+	escalate.Outcome = "escalate"
+	insert("a", "bouncer", "allow", allow)
+	shared := escalate
+	shared.Triggers = map[string]string{"shared_infra": permission.TriggerEscalate, "user_requested": permission.TriggerMitigate}
+	for i, verdict := range []string{"allow", "allow", "allow", "deny"} {
+		insert(fmt.Sprint("s", i), "human", verdict, shared)
+	}
+	destructive := escalate
+	destructive.Triggers = map[string]string{"destructive": permission.TriggerEscalate}
+	insert("d0", "human", "deny", destructive)
+	insert("d1", "human", "cancelled", destructive)
+	insert("old", "human", "allow", escalate)
+
+	var out bytes.Buffer
+	require.NoError(t, runStats(t.Context(), q, statsOpts{Days: 30, JSON: true}, &out))
+	var stats decisionlog.Stats
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stats))
+	axes := stats.Groups[0].Enforce.EscalationAxes
+	require.Equal(t, map[string]int{"allow": 3, "deny": 1}, axes["shared_infra"])
+	require.Equal(t, map[string]int{"deny": 1}, axes["destructive"], "cancelled prompts are not counted")
+	require.NotContains(t, axes, "user_requested", "mitigating signals did not cause the escalation")
+	require.Equal(t, 1, stats.Groups[0].Enforce.UntriggeredEscalations)
+
+	out.Reset()
+	require.NoError(t, runStats(t.Context(), q, statsOpts{Days: 30}, &out))
+	text := out.String()
+	require.NotContains(t, text, "Shadow")
+	require.NotContains(t, text, "not enough evidence")
+	require.Contains(t, text, "Enforce: 8 samples")
+	require.Contains(t, text, "(1 escalations have no recorded axes; they predate trigger recording)")
+	require.Contains(t, text, "Escalations by axis (you allowed / total):")
+	sharedAt := strings.Index(text, "shared_infra")
+	destructiveAt := strings.Index(text, "destructive")
+	require.Positive(t, sharedAt)
+	require.Greater(t, destructiveAt, sharedAt, "most-allowed axis is listed first")
+	require.Contains(t, text, "3 / 4   (75% allowed)")
+	require.Contains(t, text, "0 / 1   (0% allowed)")
 }
 
 func TestPermissionsWorkspace(t *testing.T) {

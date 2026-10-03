@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -64,7 +65,7 @@ func newPermissionsTriageCmd() *cobra.Command {
 	triageCmd := &cobra.Command{
 		Use:   "triage",
 		Short: "Propose narrow rules from repeated permission decisions",
-		Long:  "Propose narrow rules from repeated permission decisions. Tier A rules come from curated families that are safe for any argument; Tier B rules are uncurated and need review of every argument they permit. --yes applies only Tier A allow rules, never Tier B or deny rules. --scope chooses global or workspace config and evidence. --limit caps displayed rows per section but never what --yes applies. --force writes despite simulation conflicts. --json prints candidates and never writes.",
+		Long:  "Propose narrow rules from repeated permission decisions. Tier A rules come from curated families that are safe for any argument; Tier B rules are uncurated and need review of every argument they permit. --yes applies only Tier A allow rules, never Tier B or deny rules. Deny rules are only proposed from denials you made yourself, not the bouncer's. --scope chooses global or workspace config and evidence. --limit caps displayed rows per section but never what --yes applies. --force writes despite simulation conflicts. --json prints candidates and never writes.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateTriageOpts(opts); err != nil {
@@ -236,7 +237,7 @@ func writeTriageSections(out io.Writer, allow, deny []triage.Candidate, limit in
 	sections := []triageSection{
 		{"Suggested allow rules (tier A: curated safe families)", "", tierA},
 		{"Needs your judgment (tier B)", "Tier B: uncurated patterns — review every argument each one permits; --yes never applies these.", tierB},
-		{"Suggested deny rules", "Review the scope of each permanent denial.", deny},
+		{"Suggested deny rules (from your own denials)", "Review the scope of each permanent denial.", deny},
 	}
 	heading := lipgloss.NewStyle().Foreground(charmtone.Malibu).Bold(true)
 	var displayed []triage.Candidate
@@ -427,26 +428,36 @@ func runStats(ctx context.Context, q db.Querier, opts statsOpts, out io.Writer) 
 	writeCounts(&buf, "Decided by", stats.ByDecidedBy)
 	fmt.Fprintf(&buf, "Without assessment: %d; invalid assessments: %d\n", stats.WithoutAssessment, stats.InvalidAssessments)
 	if len(stats.Groups) == 0 {
-		fmt.Fprintln(&buf, "Shadow: 0 samples\nEnforce: 0 samples\nWarning: not enough evidence to enable enforce")
+		fmt.Fprintln(&buf, "No bouncer assessments in this window.")
 	}
 	for _, g := range stats.Groups {
 		fmt.Fprintf(&buf, "\nSchema %d / battery %q: %d requests\n", g.SchemaVersion, terminalText(g.BatteryVersion), g.Total)
 		writeCounts(&buf, "Decided by", g.ByDecidedBy)
-		fmt.Fprintf(&buf, "Shadow: %d samples\n", g.Shadow.Samples)
-		writeMatrix(&buf, g.Shadow.Matrix)
-		alert := fmt.Sprintf("Shadow bouncer allow x human deny: %d", g.Shadow.Matrix["allow"]["deny"])
-		fmt.Fprintln(&buf, lipgloss.NewStyle().Foreground(charmtone.Coral).Bold(true).Render(alert))
-		comparisons := 0
-		for _, outcome := range []string{"allow", "escalate", "deny"} {
-			comparisons += g.Shadow.Matrix[outcome]["allow"] + g.Shadow.Matrix[outcome]["deny"]
+		// Shadow data only exists if the bouncer ran in shadow mode, so
+		// the comparison and its evidence warning are hidden otherwise.
+		if g.Shadow.Samples > 0 {
+			fmt.Fprintf(&buf, "Shadow: %d samples\n", g.Shadow.Samples)
+			writeMatrix(&buf, g.Shadow.Matrix)
+			alert := fmt.Sprintf("Shadow bouncer allow x human deny: %d", g.Shadow.Matrix["allow"]["deny"])
+			fmt.Fprintln(&buf, lipgloss.NewStyle().Foreground(charmtone.Coral).Bold(true).Render(alert))
+			comparisons := 0
+			for _, outcome := range []string{"allow", "escalate", "deny"} {
+				comparisons += g.Shadow.Matrix[outcome]["allow"] + g.Shadow.Matrix[outcome]["deny"]
+			}
+			if comparisons < shadowEvidenceThreshold {
+				fmt.Fprintf(&buf, "Warning: not enough evidence to enable enforce (fewer than %d shadow comparisons)\n", shadowEvidenceThreshold)
+			}
 		}
-		if comparisons < 200 {
-			fmt.Fprintln(&buf, "Warning: not enough evidence to enable enforce (fewer than 200 shadow comparisons)")
+		if g.Enforce.Samples > 0 {
+			fmt.Fprintf(&buf, "Enforce: %d samples\n", g.Enforce.Samples)
+			writeCounts(&buf, "Bouncer verdicts", g.Enforce.Bouncer)
+			fmt.Fprintf(&buf, "Human resolutions: %d\n", g.Enforce.Human.Samples)
+			writeMatrix(&buf, g.Enforce.Human.Matrix)
+			writeEscalationAxes(&buf, g.Enforce.EscalationAxes)
+			if n := g.Enforce.UntriggeredEscalations; n > 0 {
+				fmt.Fprintf(&buf, "  (%d escalations have no recorded axes; they predate trigger recording)\n", n)
+			}
 		}
-		fmt.Fprintf(&buf, "Enforce: %d samples\n", g.Enforce.Samples)
-		writeCounts(&buf, "Bouncer verdicts", g.Enforce.Bouncer)
-		fmt.Fprintf(&buf, "Human resolutions: %d\n", g.Enforce.Human.Samples)
-		writeMatrix(&buf, g.Enforce.Human.Matrix)
 		writeCounts(&buf, "Errors", g.Errors)
 		writeCounts(&buf, "Skips", g.Skips)
 		u := g.Usage
@@ -454,6 +465,35 @@ func runStats(ctx context.Context, q db.Querier, opts statsOpts, out io.Writer) 
 	}
 	_, err = io.WriteString(out, buf.String())
 	return err
+}
+
+// shadowEvidenceThreshold is how many shadow comparisons stats wants
+// before it stops warning that enforce lacks evidence.
+const shadowEvidenceThreshold = 200
+
+// writeEscalationAxes lists each axis that sent requests to the human,
+// with how often they were allowed, most-allowed first. An axis allowed
+// nearly every time is one the bouncer is too cautious about.
+func writeEscalationAxes(out io.Writer, axes map[string]map[string]int) {
+	if len(axes) == 0 {
+		return
+	}
+	type row struct {
+		axis         string
+		allow, total int
+	}
+	rows := make([]row, 0, len(axes))
+	for axis, v := range axes {
+		rows = append(rows, row{axis, v["allow"], v["allow"] + v["deny"]})
+	}
+	rate := func(r row) float64 { return float64(r.allow) / float64(max(1, r.total)) }
+	slices.SortFunc(rows, func(a, b row) int {
+		return cmp.Or(cmp.Compare(rate(b), rate(a)), cmp.Compare(b.total, a.total), cmp.Compare(a.axis, b.axis))
+	})
+	fmt.Fprintln(out, "Escalations by axis (you allowed / total):")
+	for _, r := range rows {
+		fmt.Fprintf(out, "  %-14s %3d / %-3d (%.0f%% allowed)\n", terminalText(r.axis), r.allow, r.total, 100*rate(r))
+	}
 }
 
 func writeCounts(out io.Writer, title string, counts map[string]int) {

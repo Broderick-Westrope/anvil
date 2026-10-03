@@ -78,6 +78,14 @@ type Enforcement struct {
 	Samples int            `json:"samples"`
 	Bouncer map[string]int `json:"bouncer"`
 	Human   Comparisons    `json:"human"`
+	// EscalationAxes counts, for each axis that triggered an escalation
+	// the human then resolved, how often they allowed or denied it. An
+	// axis the human almost always allows is one the bouncer is too
+	// cautious about.
+	EscalationAxes map[string]map[string]int `json:"escalation_axes"`
+	// UntriggeredEscalations counts resolved escalations with no recorded
+	// triggers, such as those logged before triggers were recorded.
+	UntriggeredEscalations int `json:"untriggered_escalations"`
 }
 
 // UsageStats aggregates token usage and latency for valid assessments.
@@ -121,6 +129,24 @@ func addComparison(c *Comparisons, outcome, verdict string) {
 	c.Matrix[outcome][verdict]++
 }
 
+// addEscalationAxes counts the human's verdict against each axis that
+// pushed a request to them. Mitigating signals, such as the user having
+// asked for the action, didn't cause the escalation and are skipped.
+func addEscalationAxes(axes map[string]map[string]int, triggers map[string]string, verdict string) {
+	if verdict != string(permission.VerdictAllow) && verdict != string(permission.VerdictDeny) {
+		return
+	}
+	for axis, effect := range triggers {
+		if effect == permission.TriggerMitigate {
+			continue
+		}
+		if axes[axis] == nil {
+			axes[axis] = map[string]int{}
+		}
+		axes[axis][verdict]++
+	}
+}
+
 // ComputeStats aggregates decisions overall and per assessment version.
 func ComputeStats(rows []db.PermissionDecision) Stats {
 	stats := Stats{Total: len(rows), ByDecidedBy: map[string]int{}, Groups: []AssessmentStats{}}
@@ -147,7 +173,7 @@ func ComputeStats(rows []db.PermissionDecision) Stats {
 		key := version{a.SchemaVersion, a.BatteryVersion}
 		g := groups[key]
 		if g == nil {
-			g = &accumulator{stats: AssessmentStats{SchemaVersion: key.schema, BatteryVersion: key.battery, ByDecidedBy: map[string]int{}, Shadow: Comparisons{Matrix: VerdictMatrix{}}, Enforce: Enforcement{Bouncer: map[string]int{}, Human: Comparisons{Matrix: VerdictMatrix{}}}, Errors: map[string]int{}, Skips: map[string]int{}}}
+			g = &accumulator{stats: AssessmentStats{SchemaVersion: key.schema, BatteryVersion: key.battery, ByDecidedBy: map[string]int{}, Shadow: Comparisons{Matrix: VerdictMatrix{}}, Enforce: Enforcement{Bouncer: map[string]int{}, Human: Comparisons{Matrix: VerdictMatrix{}}, EscalationAxes: map[string]map[string]int{}}, Errors: map[string]int{}, Skips: map[string]int{}}}
 			groups[key] = g
 		}
 		s := &g.stats
@@ -163,6 +189,15 @@ func ComputeStats(rows []db.PermissionDecision) Stats {
 			}
 			if row.DecidedBy == string(permission.DecisionSourceHuman) {
 				addComparison(&s.Enforce.Human, a.Outcome, row.Verdict)
+				if a.Outcome == "escalate" {
+					if len(a.Triggers) == 0 {
+						if row.Verdict == string(permission.VerdictAllow) || row.Verdict == string(permission.VerdictDeny) {
+							s.Enforce.UntriggeredEscalations++
+						}
+					} else {
+						addEscalationAxes(s.Enforce.EscalationAxes, a.Triggers, row.Verdict)
+					}
+				}
 			}
 		}
 		switch a.Outcome {

@@ -181,3 +181,17 @@ func TestCountUnresolvedMatchesTriageSources(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 }
+
+func TestAddEscalationAxes(t *testing.T) {
+	t.Parallel()
+	axes := map[string]map[string]int{}
+	triggers := map[string]string{"remote_exec": permission.TriggerDeny, "severity": permission.TriggerEscalate, "user_requested": permission.TriggerMitigate}
+	addEscalationAxes(axes, triggers, "allow")
+	addEscalationAxes(axes, triggers, "deny")
+	addEscalationAxes(axes, triggers, "cancelled")
+	addEscalationAxes(axes, nil, "allow")
+	require.Equal(t, map[string]map[string]int{
+		"remote_exec": {"allow": 1, "deny": 1},
+		"severity":    {"allow": 1, "deny": 1},
+	}, axes)
+}
