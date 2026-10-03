@@ -552,7 +552,9 @@ func TestBackgroundShellManager_Publish(t *testing.T) {
 	require.Equal(t, "session-a", info.SessionID)
 	require.Equal(t, OriginExplicit, info.Origin)
 	require.False(t, info.StartedAt.IsZero())
-	require.True(t, info.StartedAt.Before(publishedAt))
+	// Windows' clock is coarse enough that both reads can return the same
+	// instant, so only require that the start isn't after publication.
+	require.False(t, info.StartedAt.After(publishedAt))
 
 	again, err := manager.Publish(t.Context(), newID, PublishOptions{SessionID: "other", Origin: OriginAuto})
 	require.NoError(t, err)
