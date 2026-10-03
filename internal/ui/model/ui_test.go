@@ -117,6 +117,8 @@ func (w *testWorkspace) Config() *config.Config {
 
 func (*testWorkspace) WorkingDir() string { return "" }
 
+func (*testWorkspace) LSPGetStates() map[string]workspace.LSPClientInfo { return nil }
+
 func (*testWorkspace) AgentIsReady() bool { return false }
 
 func (w *testWorkspace) PermissionYoloLevel() config.YoloLevel { return w.yolo }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -22,6 +23,7 @@ const (
 	leftPadding          = 1
 	rightPadding         = 1
 	diagToDetailsSpacing = 1 // space between diagonal pattern and details section
+	minHeaderTitleWidth  = 12
 )
 
 type header struct {
@@ -98,6 +100,25 @@ func (h *header) drawHeader(
 		availDetailWidth,
 	)
 
+	if title := headerSessionTitle(session); title != "" {
+		titleBudget := availDetailWidth - lipgloss.Width(details) - 1
+		if titleBudget < minHeaderTitleWidth {
+			titleBudget = min(minHeaderTitleWidth, ansi.StringWidth(title), max(0, availDetailWidth-1))
+			details = renderHeaderDetails(
+				h.com,
+				session,
+				lspErrorCount,
+				detailsOpen,
+				availDetailWidth-titleBudget-1,
+			)
+		}
+		if titleBudget > 0 {
+			title = ansi.Truncate(title, titleBudget, "…")
+			b.WriteString(t.Header.SessionTitle.Render(title))
+			b.WriteString(" ")
+		}
+	}
+
 	remainingWidth := width -
 		lipgloss.Width(b.String()) -
 		lipgloss.Width(details) -
@@ -115,6 +136,17 @@ func (h *header) drawHeader(
 	view := uv.NewStyledString(
 		t.Header.Wrapper.Padding(0, rightPadding, 0, leftPadding).Render(b.String()))
 	view.Draw(scr, area)
+}
+
+// headerSessionTitle returns the session title to show in the compact
+// header, or an empty string when the session still has a placeholder name.
+func headerSessionTitle(session *session.Session) string {
+	title := strings.TrimSpace(session.Title)
+	switch title {
+	case "", agent.DefaultSessionName, "New Session":
+		return ""
+	}
+	return strings.Join(strings.Fields(title), " ")
 }
 
 // renderHeaderDetails renders the details section of the header.
