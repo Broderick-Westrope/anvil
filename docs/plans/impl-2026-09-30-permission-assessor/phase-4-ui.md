@@ -62,6 +62,10 @@ Also load the `tui-manual-testing` skill for the manual check at the end.
 
 ### Task 1: Runtime assessor mode on the service and workspace
 
+> When the runtime mode moves from `off` to `shadow` or `enforce`, start
+> the same background warm-up the app runs at startup (`Assessor.Warm`,
+> bounded to 2 minutes).
+
 **Context:** `internal/permission/`, `internal/workspace/`
 
 **Files:**
