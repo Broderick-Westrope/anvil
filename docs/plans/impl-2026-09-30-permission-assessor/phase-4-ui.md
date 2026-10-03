@@ -1,8 +1,26 @@
 # Phase 4: TUI Integration
 
-> **Status:** DRAFT
+> **Status:** COMPLETED (pending human review)
 > Depends on phases 2 and 3 being merged. Create a PR for human review when
 > done.
+
+> **As implemented (2026-10-03):**
+> - **Palette label:** shows the current and next mode
+>   ("Permission Assessor: Off → Shadow"), matching the Anthropic auth
+>   toggle.
+> - **Indicators:** compact header details and the sidebar model info, in
+>   existing muted styles.
+> - **Dialog note:** rendered in `renderHeader`. Output is unchanged when
+>   there is no note.
+> - **Warm-up on enable:** `SetAssessorMode` warms once per off-to-on
+>   transition, via an `AssessorOptions.Warm` hook.
+> - **Nudge count:** matches `triage.IsSource`, so cancelled prompts are
+>   excluded. A test keeps the SQL list and Go list in step.
+> - **No golden files exist** for dialog or model. Rendering is covered
+>   by unit tests.
+> - **Manual check:** verified in a real PTY at 120x35 and 70x22: off →
+>   shadow → enforce → off, indicator shown and hidden, config file
+>   untouched, one warm-up per enable.
 
 ## Specification
 
