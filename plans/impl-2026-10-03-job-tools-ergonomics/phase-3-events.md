@@ -245,6 +245,7 @@ go test -race ./internal/shell/ -count=1
    func (s *Store) Release(ids []int64) // Claimed -> pending. Does not signal.
    func (s *Store) HasPending(sessionID string) bool
    func (s *Store) DropJobs(jobIDs []string)
+   func (s *Store) Reassign(jobIDs []string, toSession string) // Updates the Info.SessionID snapshots used after eviction.
 
    // Pending returns a channel that receives a value whenever a new event
    // becomes pending. Sends are non-blocking and coalesced, so receivers
@@ -261,7 +262,9 @@ go test -race ./internal/shell/ -count=1
      and re-check state, so `owner` may take other locks), returns
      events owned by `sessionID` oldest first, at most `max`. When
      `owner` doesn't know the job (evicted from memory after 30 minutes),
-     fall back to the event's `Info.SessionID` snapshot.
+     fall back to the event's `Info.SessionID` snapshot. Before returning,
+     `Claim` drops any `KindMatched` candidate whose gen is older than
+     `watchGens[jobID]`, so a replaced watch can't be delivered.
    - Delivered and superseded events, and `observed`/`dropped` entries
      for jobs no longer known to `owner`, are pruned after 10 minutes.
 
@@ -360,8 +363,10 @@ go test -race ./internal/shell/ -count=1
 
 8. [ ] Handoff. In `handOffSubagentJobs`, call `store.DropJobs(toKill)`
    *before* killing, so their completion events are discarded on
-   creation. Nothing else is needed for transferred jobs: the owner is
-   resolved at claim time. Pass the store in (nil-safe).
+   creation. For handed-off jobs, call `store.Reassign(handedIDs, parentID)`
+   so the snapshot fallback is correct even after the job is evicted;
+   live jobs are resolved through the owner func anyway. Pass the store
+   in (nil-safe).
 
 9. [ ] Cancel: confirm `Cancel` does not touch the store, and add a test
    proving pending events survive `Cancel`.
@@ -569,9 +574,10 @@ go test -race ./internal/agent/tools/ -count=1
 7. [ ] Tests:
    - `dispatch_test.go` with `scriptedModel`: two goroutines each call
      `Run` twice for one session while two jobs complete; afterwards the
-     model saw all four prompts and both notices exactly once across its
-     calls, and never two concurrent streams for the session (track
-     in-flight count in the fake model).
+     session's persisted messages contain each of the four prompts once
+     and each notice once, every prompt and notice appeared in the
+     model's input at least once, and there were never two concurrent
+     streams for the session (track in-flight count in the fake model).
    - `job_waker_test.go` with a fake `wakeAgent` and session service:
      idle open session → wakes; not open → no wake; busy (`RunWake`
      returns `ErrSessionBusy`) → no wake, then an `OnIdle` trigger →
@@ -618,7 +624,10 @@ go test -race ./internal/app/ ./internal/agent/ -count=1
      command handler *before* returning the async `MoveLeaf` command
      (`ui.go` ~5005-5070), and `navigating=false` in the handler for its
      completion message (`navigateTreeDoneMsg`, ~line 1248).
-   Send only on changes.
+   Send only on changes. A wake that starts just before navigation is
+   handled like any running turn: navigation already cancels the active
+   request before moving the leaf, so no extra locking is needed between
+   the UI and the dispatch gate.
 3. [ ] Render `MessageTypeJobEvent` user messages in
    `ExtractMessageItems` as a compact, muted notice (one line per event
    header; tail lines hidden unless expanded), following an existing
