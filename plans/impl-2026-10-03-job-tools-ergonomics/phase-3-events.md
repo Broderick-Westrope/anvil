@@ -41,7 +41,7 @@ in memory here; Phase 4 persists them. Out: persistence, sidebar UI.
       pending; six simultaneous events deliver five, then one at the next
       step.
 - [x] A user cancel does not drop pending events.
-- [ ] `job_output` with `wait=false, pattern=X` notifies when X appears,
+- [x] `job_output` with `wait=false, pattern=X` notifies when X appears,
       including when an unread `X` line was already in the buffer when the
       call was made; replacing the pattern never delivers a match from the
       old pattern.
@@ -412,9 +412,9 @@ go test -race ./internal/jobevents/ ./internal/agent/ ./internal/message/ -count
 
 **Steps:**
 
-1. [ ] Add `Events *jobevents.Store` to `JobToolOptions` and pass it from
+1. [x] Add `Events *jobevents.Store` to `JobToolOptions` and pass it from
    the coordinator.
-2. [ ] Remove the Phase 2 `pattern currently requires wait=true` error.
+2. [x] Remove the Phase 2 `pattern currently requires wait=true` error.
    With `wait=false` and `pattern` set, build the matcher **before**
    reading, so an unread matching line in the buffer is still matched:
 
@@ -426,14 +426,14 @@ go test -race ./internal/jobevents/ ./internal/agent/ ./internal/message/ -count
 
    `SetWatch` informs the store of the new generation itself (via the
    sink), so the tool doesn't call the store.
-3. [ ] Append to the response:
+3. [x] Append to the response:
    `Watching for "<pattern>"; you'll be notified when a matching line appears or the job exits.`
-4. [ ] Update `job_output.md`: `pattern` with `wait=false` sets a one-shot
+4. [x] Update `job_output.md`: `pattern` with `wait=false` sets a one-shot
    watch (one per job; a new pattern replaces it); completion
    notifications arrive automatically for every background job; the
    recommended workflow is to start in the background, add a watch for
    readiness lines, and keep working.
-5. [ ] Tests (with a real store and the manager's sink set for the test's
+5. [x] Tests (with a real store and the manager's sink set for the test's
    manager): a line already in the buffer when the call is made fires the
    watch; a line printed later fires it; replacing the pattern means only
    the new pattern's matches are claimed; the response includes the
