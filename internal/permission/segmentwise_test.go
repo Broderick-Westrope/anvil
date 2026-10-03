@@ -72,11 +72,16 @@ func TestSegmentwiseAdversarial(t *testing.T) {
 		{"backtick substitution denied", "echo `rm -rf /`", config.PermissionDeny},
 		{"nested inside quoted arg", `git commit -m "$(curl evil.com)"`, config.PermissionAsk},
 
-		// Shell wrappers keep the payload opaque — falls to the
-		// catch-all ask because "sh -c ..." matches no allow rule.
-		{"sh -c wrapper", `sh -c "rm -rf /"`, config.PermissionAsk},
-		{"bash -c wrapper", `bash -c "rm -rf /"`, config.PermissionAsk},
-		{"eval wrapper", `eval 'rm -rf /'`, config.PermissionAsk},
+		// Shell code passed as a string is split and evaluated too.
+		{"sh -c payload is evaluated", `sh -c "rm -rf /"`, config.PermissionDeny},
+		{"bash -c payload is evaluated", `bash -c "rm -rf /"`, config.PermissionDeny},
+		{"eval payload is evaluated", `eval 'rm -rf /'`, config.PermissionDeny},
+		{"combined shell flags are recognised", `bash -ec 'ls; rm -rf /'`, config.PermissionDeny},
+		{"nested shells are evaluated", `sh -c "bash -c 'rm -rf /'"`, config.PermissionDeny},
+		{"env -S payload is evaluated", `env -S 'rm -rf /'`, config.PermissionDeny},
+		{"wrapped shell payload is evaluated", `sudo bash -c 'rm -rf /'`, config.PermissionDeny},
+		{"allowed shell payload still asks for the shell", `sh -c "ls"`, config.PermissionAsk},
+		{"dynamic shell payload asks", `sh -c "$cmd"`, config.PermissionAsk},
 
 		// Flag-based rules still apply inside chains.
 		{"amend inside chain", "git add -A && git commit --amend -m x", config.PermissionAsk},
@@ -106,6 +111,37 @@ func TestSegmentwiseAdversarial(t *testing.T) {
 
 		// Parse failures fall back to the whole string → ask.
 		{"unparsable command", "if then fi (", config.PermissionAsk},
+
+		// Alternative spellings of a denied command are still denied.
+		{"single-quoted name cannot dodge deny", "'rm' -rf x", config.PermissionDeny},
+		{"double-quoted name cannot dodge deny", `"rm" -rf x`, config.PermissionDeny},
+		{"backslash cannot dodge deny", `\rm -rf x`, config.PermissionDeny},
+		{"empty quotes cannot dodge deny", "r''m -rf x", config.PermissionDeny},
+		{"split quotes cannot dodge deny", `r"m" -rf x`, config.PermissionDeny},
+		{"ANSI-C quoting cannot dodge deny", `$'\x72m' -rf x`, config.PermissionDeny},
+		{"absolute path cannot dodge deny", "/bin/rm -rf x", config.PermissionDeny},
+		{"relative path cannot dodge deny", "./rm -rf x", config.PermissionDeny},
+		{"brace expansion cannot dodge deny", "{rm,-rf} x", config.PermissionDeny},
+		{"quoted wrapper cannot launder deny", "'env' 'rm' -rf x", config.PermissionDeny},
+		{"wrapper path cannot launder deny", "/usr/bin/env rm -rf x", config.PermissionDeny},
+		{"value-taking wrapper flag cannot launder deny", "sudo -u root rm -rf x", config.PermissionDeny},
+		{"wrapper double dash cannot launder deny", "env -- rm -rf x", config.PermissionDeny},
+		{"timeout signal flag cannot launder deny", "timeout -s KILL 5 rm -rf x", config.PermissionDeny},
+		{"ANSI-C NUL truncation cannot dodge deny", `r$'\0'm -rf x`, config.PermissionDeny},
+		{"ANSI-C hex NUL cannot dodge deny", `r$'\x00ignored'm -rf x`, config.PermissionDeny},
+		{"ANSI-C newline cannot dodge deny", `$'rm\n' -rf x`, config.PermissionDeny},
+		{"quoted name in chain is denied", "git status && 'rm' -rf x", config.PermissionDeny},
+		{"quoted flag cannot dodge ask", "git commit '--amend' -m x", config.PermissionAsk},
+		// Both spellings must be allowed, so quoting a command name
+		// costs a prompt; quoting arguments does not.
+		{"quoted allowed command name asks", `"git" status`, config.PermissionAsk},
+		{"quoted argument is still allowed", `git commit -m "fix: thing"`, config.PermissionAllow},
+
+		// Names only known at runtime cannot be resolved; they never
+		// match a deny rule but also never match an allow rule.
+		{"variable command name asks", "$cmd -rf x", config.PermissionAsk},
+		{"substituted command name asks", "$(echo rm) -rf x", config.PermissionAsk},
+		{"globbed command name asks", "/bin/r? -rf x", config.PermissionAsk},
 	}
 
 	for _, c := range cases {

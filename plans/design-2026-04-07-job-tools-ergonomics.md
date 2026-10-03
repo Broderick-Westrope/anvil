@@ -66,25 +66,31 @@ depends on a later phase.
 
 1. **Auto-grant job tools with `bash`.** When an agent's resolved tool set
    contains `bash`, add `job_output`, `job_kill`, and `job_list` after
-   `ParseFilterList` in the coordinator's tool assembly
-   (`coordinator.go` ~line 1060). Agent `.md` files do not need to list
-   them. In exclude mode (`["!job_kill"]`), an explicitly excluded job tool
-   is not re-added.
+   `ParseFilterList` and before the global disabled-tools filter in the
+   coordinator's tool assembly (`coordinator.go` ~line 1060-1079), so a
+   globally disabled job tool stays disabled. Agent `.md` files do not
+   need to list them. In exclude mode (`["!job_kill"]`), an explicitly
+   excluded job tool is not re-added.
 2. **Publication and ownership.** `Start` gains an options struct; the
    bash tool passes the session ID (available at `bash.go:217`). On
    publication, the job is assigned its ID (from an in-memory counter in
-   Phase 1, replaced by item 18 in Phase 4), origin, owner, and
-   `startedAt`. The background response is the only place the ID is first
-   shown.
+   Phase 1, replaced by item 18 in Phase 4), origin, and owner.
+   `startedAt` is captured at execution start (`bash.go` ~line 299), not
+   publication, so runtime includes the foreground interval. The
+   background response is the only place the ID is first shown.
 3. **Subagent handoff on every exit path.** A deferred step in the
    subagent runner (`coordinator.go` ~line 1579-1643, covering success,
-   error, and cancellation) atomically, under the manager lock:
-   - kills every running `auto` job owned by the subagent session;
-   - transfers every `explicit` job (running or completed) and its
-     pending events to the parent session;
+   error, and cancellation; fantasy delivers error responses to the same
+   callback) runs with a context independent of the run's cancellation:
+   - under the manager lock, marks every running `auto` job owned by the
+     subagent session as `killing`, and transfers every `explicit` job
+     (running or completed) and its pending events to the parent session;
+   - releases the lock, then kills the marked jobs concurrently (each can
+     take the 5s grace period);
    - appends a structured inventory to the subagent's tool result:
      `Background jobs handed to you: 090 python3 -u server.py (running,
-     4m10s)`. The parent does not depend on the subagent's prose.
+     4m10s)`, plus `Killed: 16C (exited)`, `16D (abandoned)`. The parent
+     does not depend on the subagent's prose.
    Nested delegation hands off one level at a time, so jobs bubble up to
    whichever ancestor is still running.
 4. **`job_list`.** Params: `all` (bool). Default scope is jobs owned by the
@@ -102,8 +108,11 @@ depends on a later phase.
      with an omitted count). This arrives after the new job starts, so a
      duplicate costs at most one extra job, which the agent can kill
      immediately;
-   - in the compaction summary input, so running jobs survive context
-     loss.
+   - in the stored compaction summary: after summarisation
+     (`buildSummaryPrompt` paths, `agent.go` ~line 884 and ~1782), Anvil
+     appends a deterministic `Background jobs` section to the stored
+     summary text. Inclusion is guaranteed and testable, rather than
+     depending on the model following an instruction.
    The bash description adds: before starting a long-lived server or
    tunnel, check `job_list` for an existing one.
 6. **Honest `job_kill`.**
@@ -142,6 +151,11 @@ depends on a later phase.
     - Partial lines are buffered until a newline or job exit (the final
       partial line is matched at EOF). A buffer reset restarts the
       matcher at offset 0 of the new generation.
+    - Registration (initial scan plus arming) happens under the stream's
+      buffer lock, so no write can land between the scan and the watch.
+      The matcher keeps its own partial-line buffer, so a prior
+      incremental read that consumed a line prefix does not affect
+      matching.
     - On match, the call returns all new output (cursor to end) with the
       matched line quoted in the header. No "stop at the matching line"
       semantics: one cursor rule everywhere.
@@ -174,22 +188,35 @@ depends on a later phase.
       ID and, for watches, a watch generation.
     - States: `pending` → `delivered`, or `pending` → `superseded` when the
       agent observed the same fact through a tool result before delivery.
-      All transitions happen under one per-session lock.
-    - Observation: when a `job_output`, `job_kill`, or synchronous bash
-      tool result that reports a job's completion (or a watch's match) is
-      returned to the agent, the matching pending event is marked
-      `superseded`. A canceled tool call observes nothing.
-    - Delivery: in `PrepareStep`, after tool results of the previous step
-      are recorded, the agent atomically takes S's pending events,
-      re-checks each is still `pending`, marks them `delivered`, and
-      injects one persisted message:
+      Event creation (on job completion or match) and observation are
+      serialised under the job's lock; delivery transitions under the
+      session's lock.
+    - Observation: a pending event is marked `superseded` only after a
+      `job_output`, `job_kill`, or synchronous bash tool result reporting
+      that completion (or match) has been persisted
+      (`agent.go` ~line 564-577). A canceled or failed tool call observes
+      nothing.
+    - Delivery: fantasy waits for all tool calls before the next step and
+      calls `PrepareStep` once per step (fantasy v0.43.2 `agent.go`
+      ~1786, ~943-956). In `PrepareStep`, the agent takes up to 5 of S's
+      pending events, re-checks each is still `pending`, creates one
+      persisted message:
       `<system_reminder>Job 019 completed, exit 1 (9m14s): "Run
       integration tests". Last lines: ...</system_reminder>` (max 10
-      lines per event, max 5 events, then `(+N more; use job_list)`).
-      Tool calls within one session finish before the next `PrepareStep`,
-      so the re-check removes the wait-vs-notify duplicate race.
-    - Cancel does not clear events; pending events are delivered on the
-      next run.
+      lines per event), and only after the message is created marks those
+      events `delivered` (one transaction in Phase 4). Events beyond 5
+      stay pending for the next step, and the message notes
+      `(+N more pending)`.
+    - Retention within a run: fantasy rebuilds each step's input from the
+      initial prompt plus generated responses, so messages appended in
+      `PrepareStep` are dropped from later steps (fantasy `agent.go`
+      ~944, ~1067-1074). Reuse the run-local `injectedMessages` tracker
+      (`internal/agent/injected_messages.go`), already added for queued
+      user prompts which had the same bug, so notifications are re-applied
+      at their original position on every subsequent step.
+    - No next step: if a run ends with pending events, they are delivered
+      at the first step of the next run, or trigger a wake (item 15).
+    - Cancel does not clear events.
     - Events live in memory in Phase 3 (lost on restart, like jobs); Phase
       4 persists them with job records.
 14. **`pattern` with `wait=false` (watch).** Returns new output immediately
@@ -203,10 +230,22 @@ depends on a later phase.
     pending for an idle session, a single dispatcher may start a run for
     S with the events as input. Guardrails:
     - One dispatch gate (per-session lock) used by every path that can
-      start a run: user prompts, queued prompts, and wakes. A wake is
-      skipped if S is busy (the event waits for that run's next
-      `PrepareStep`), if the user has a non-empty draft in the editor, or
-      during branch navigation or shutdown.
+      start work on or move S: user prompts, queued prompts, wakes,
+      manual and automatic summarisation (`agent.go` ~820-847), and leaf
+      moves from branch navigation (`ui/model/ui.go` ~5034-5070). A wake
+      is skipped if S is busy, if the user has a non-empty draft or
+      attachments, or during navigation or shutdown.
+    - Eligibility is re-checked whenever it may change: run completion,
+      summarisation completion, draft cleared, navigation finished. An
+      event arriving during a run's final step is therefore not stranded.
+    - Draft state lives in the UI (`ui/model/history.go` ~104); the UI
+      must publish composer-empty/non-empty and navigation state to the
+      agent layer (new workspace signal). Non-interactive runs (`anvil
+      run`) never wake.
+    - Cross-process: wakes run only in the process that owns the job and
+      only if it has S open. Delivery claims events with an atomic
+      `UPDATE ... WHERE state = 'pending' RETURNING` (Phase 4), so two
+      processes with S open cannot both deliver an event.
     - After a user cancel, wakes are suppressed until the next user
       message.
     - Budget: at most 3 wake-initiated runs per session between user
@@ -217,15 +256,23 @@ depends on a later phase.
       the first release; flip to `true` after dogfooding.
     - The UI labels wake-initiated turns.
 
-### Phase 4 — Persistence (depends on Phases 1-3)
+### Phase 4 — Persistence (depends on Phase 1; event persistence applies only if Phase 3 has shipped, so Phases 3 and 4 can ship in either order)
 
-16. **Streamed job logs.** At publication, the in-memory buffers are
-    written to `~/.local/share/anvil/jobs/<id>.stdout` / `.stderr`, and
-    from then on output is teed to those files as it arrives (flushed at
-    least every 2s and on exit). Per-job cap 50MB per stream; beyond it,
-    writing stops and a `(log truncated at 50MB)` marker is recorded. The
-    in-memory 10MB buffer and its reset behaviour are unchanged; reads of
-    evicted or persisted jobs come from the files.
+16. **Streamed job logs.** At publication, under the buffer locks, the
+    retained in-memory buffers are written to
+    `~/.local/share/anvil/jobs/<id>.stdout` / `.stderr` and a tee is
+    installed, so every later write goes to both buffer and file (flushed
+    at least every 2s and on exit). Guarantee: retained pre-publication
+    output plus all subsequent output. Output discarded by a 10MB buffer
+    reset before publication is lost and marked as such; this only
+    affects commands printing over 10MB within the auto-background
+    threshold. If publication fails (e.g. DB error), the job still runs
+    and is returned with a fallback ID in a separate namespace,
+    `M<process-instance>-<n>` (e.g. `M4f2a-3`), plus a warning. Fallback
+    IDs are never hex-formatted, never persisted, resolve only in the
+    process that issued them, and can never match a persisted ID.
+    Per-job cap 50MB per stream; beyond it, writing stops and
+    `(log truncated at 50MB)` is recorded. Reads of evicted or persisted jobs come from the files.
 17. **Job records.** Table `background_jobs`: id, session_id, origin,
     command, description, working_dir, started_at, completed_at,
     exit_code, end_reason (`exited`, `killed`, `abandoned`, `anvil_exit`,
@@ -253,22 +300,30 @@ depends on a later phase.
     pruned job returns metadata plus `(output expired on <date>)`, never
     "not found" for a known ID.
 22. **Shutdown ordering.** In `app.Shutdown` (`app.go` ~line 620), run in
-    sequence before the concurrent cleanup callbacks: disable event
-    dispatch and wakes; `KillAll`; flush logs; write end reasons
-    (`anvil_exit` for confirmed exits, `abandoned` when `KillAll`'s
-    context expired first); only then release the DB. `KillAll` gains a
-    return value reporting which shells were confirmed exited.
+    sequence before the concurrent cleanup callbacks:
+    1. Close admission: no new publications, events, or wakes.
+    2. `KillAll`, which gains a return value reporting which shells were
+       confirmed exited.
+    3. Close every job's log writer and event producer. Writes from
+       goroutines that outlive `KillAll` (abandoned shells, agent runs
+       past `CancelAll`'s 5s limit at `agent.go` ~1556-1563) hit a closed
+       flag and are dropped, never the DB.
+    4. With a fresh persistence deadline (not the expired kill context),
+       flush logs and write end reasons: `anvil_exit` for confirmed
+       exits, `abandoned` otherwise.
+    5. Release the DB.
 
-### Phase 5 — Human visibility and docs (UI parts depend on Phase 1)
+### Phase 5 — Human visibility and docs (depends on Phase 1; the sidebar can ship alongside Phase 1)
 
 23. **Runtime visible to the human.**
-    - Running job tool items (`bash` that backgrounded, `job_output` with
-      `wait=true`) show a live elapsed counter in the header.
-    - Sidebar "Jobs" section (alongside LSP/MCP in
+    - Primary: sidebar "Jobs" section (alongside LSP/MCP in
       `internal/ui/model/sidebar.go`) listing the session's running
       published jobs with ID, short description, runtime, and last-output
       age; no output for over 10 minutes is styled as stale. Hidden when
       empty. Read `internal/ui/AGENTS.md` first.
+    - Secondary: a `job_output` call with `wait=true` shows a live elapsed
+      counter while it is pending. Finished tool cards show the final
+      runtime from metadata; no live counters on historical cards.
 24. **Docs.** Rewrite `job_output.md`; add `job_list.md`. Cover incremental
     reads, `full`, `tail_lines`, `wait` + `timeout_seconds`, `pattern` in
     both modes, notifications, `(no new output)`, scope of `job_list`,
@@ -317,14 +372,16 @@ Phase 1
 - [ ] A foreground bash call that finishes before the threshold does not
       appear in `job_list` and consumes no job ID.
 - [ ] When a subagent returns (success, error, or cancel), its running
-      `auto` jobs are killed, its `explicit` jobs (running and completed)
-      are owned by the parent, and the tool result lists them.
+      `auto` jobs are killed without holding the manager lock, its
+      `explicit` jobs (running and completed) are owned by the parent, and
+      the tool result lists handed-off and killed (exited/abandoned) jobs.
 - [ ] `job_list` shows running jobs first and uncapped, then at most 20
       finished jobs with an omitted count; tested with 25 finished jobs
       newer than one running job.
 - [ ] Starting a background job in a session with other running jobs lists
-      them in the response; with none, the response is unchanged.
-      Compaction summaries include running jobs.
+      them in the response; with none, the response is unchanged. After
+      compaction, the stored summary contains a `Background jobs` section
+      listing running jobs.
 - [ ] `job_kill` on an exited job reports exit code and last lines; on a
       job outliving the grace period it reports abandonment.
 
@@ -344,43 +401,52 @@ Phase 2
 - [ ] `wait=true, pattern="ready"` returns promptly when: the line already
       arrived before the call; the line arrives split across two writes;
       the line is the final unterminated line at exit; the line is on
-      stderr.
+      stderr; a `wait=false` poll consumed half of the line between the
+      two writes.
 - [ ] `pattern` with `full=true` and invalid regex are tool errors.
 - [ ] Every header includes runtime; completed reads include the exit
       code, including empty and `full` re-reads.
 
 Phase 3
-- [ ] A job completing mid-run yields exactly one notification at the next
-      step; none if a `job_output` result in the same or previous step
-      already reported the completion; none for a canceled `job_output`
-      that never returned (the notification is delivered instead).
+- [ ] A job completing mid-run yields one notification at the next step
+      if there is one, otherwise at the first step of the next run; none
+      if a persisted `job_output` result already reported the completion;
+      a canceled `job_output` does not suppress it.
+- [ ] An injected notification is present in the model input for every
+      later step of the same run (tested over three consecutive steps).
+- [ ] A failure creating the notification message leaves the events
+      pending; six simultaneous events deliver five, then one next step.
 - [ ] A user cancel does not drop pending events.
 - [ ] `wait=false, pattern=X` notifies when X appears, including when X
       appeared before the call; replacing the pattern drops stale matches.
 - [ ] Concurrent completion of two jobs and a user prompt submission start
       at most one run, and all three inputs are delivered.
 - [ ] With `wake_on_event=true`: an idle session is woken by an event; a
-      busy session is not; no wake while the user has a draft or after a
-      cancel until the next user message; after 3 wakes without user
-      input, events stay pending.
+      busy or summarising session is not, and is woken when it becomes
+      idle; no wake while the user has a draft (wake follows when the
+      draft is cleared) or after a cancel until the next user message;
+      after 3 wakes without user input, events stay pending; `anvil run`
+      never wakes.
 
 Phase 4
 - [ ] Job IDs never repeat across restarts, concurrent processes, or
-      after deleting the session that owned the highest ID.
+      after deleting the session that owned the highest ID; a fallback ID
+      issued on publication failure never resolves to a persisted job.
 - [ ] After restarting Anvil, `job_output` on a job from a previous run
       returns its stored output and exit code, including output beyond
       the 10MB in-memory buffer (up to the 50MB log cap).
 - [ ] After a simulated crash (records left running, owning instance
       dead), jobs are reported as `interrupted`; jobs of a live other
       process are reported read-only.
-- [ ] Graceful shutdown records `anvil_exit` or `abandoned` correctly, and
-      no write happens after the DB is released.
+- [ ] Graceful shutdown records `anvil_exit` or `abandoned` correctly; a
+      shell goroutine that outlives `KillAll` writes nothing after the DB
+      is released (tested with a shell that ignores signals).
 - [ ] Pruned output returns `(output expired on <date>)`.
 
 Phase 5
-- [ ] Running job tool items show a live elapsed counter; the sidebar Jobs
-      section lists running published jobs with runtime and marks stale
-      ones (golden files).
+- [ ] The sidebar Jobs section lists running published jobs with runtime
+      and marks stale ones; a pending `wait=true` call shows a live
+      counter; finished cards show final runtime (golden files).
 - [ ] Docs cover every param shipped in each phase.
 - [ ] `task test` passes after each phase.
 
@@ -401,6 +467,9 @@ Phase 5
   exactly-once acknowledgements: within a session, tool calls finish
   before the next `PrepareStep`, so a re-check at injection is enough to
   avoid wait-vs-notify duplicates without a full ack protocol.
+- **Re-append injected messages each step:** fantasy rebuilds step input
+  from the initial prompt and generated responses, so a one-time append
+  in `PrepareStep` is invisible after one step.
 - **Point-of-decision job context over a per-turn reminder.** A per-turn
   reminder repeats on every step (13 jobs is ~300 tokens per request in
   the leak session), its runtimes change every request, and repeated

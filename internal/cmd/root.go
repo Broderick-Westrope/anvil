@@ -50,6 +50,7 @@ func init() {
 		schemaCmd,
 		sessionCmd,
 		mcpCmd,
+		permissionsCmd,
 	)
 }
 
@@ -70,10 +71,12 @@ cat README.md | anvil run "make this more glamorous" > GLAMOROUS_README.md
 # Run with debug logging in a specific directory
 anvil --debug --cwd /path/to/project
 
-# Run in yolo mode (auto-accept prompts, still honouring deny rules)
+# Run in yolo mode (auto-accept prompts, still honouring deny rules and
+# bouncer denials)
 anvil --yolo
 
-# Run in full yolo mode (bypass all permissions, including deny; use with care)
+# Run in full yolo mode (bypass all permissions, including deny rules and
+# the bouncer; use with care)
 anvil --yolo=full
 
 # Run with custom data directory

@@ -103,6 +103,11 @@ type Workspace interface {
 	PermissionDeny(perm permission.PermissionRequest, reason string)
 	PermissionYoloLevel() config.YoloLevel
 	PermissionSetYoloLevel(level config.YoloLevel)
+	PermissionBouncerConfigured() bool
+	PermissionBouncerMode() permission.BouncerMode
+	PermissionSetBouncerMode(mode permission.BouncerMode)
+	PermissionUnresolvedCount(ctx context.Context, since time.Time) (int, error)
+	PermissionLastTriage() time.Time
 
 	// FileTracker
 	FileTrackerRecordRead(ctx context.Context, sessionID, path string)

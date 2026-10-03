@@ -1,11 +1,14 @@
 package model
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/recovery"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
@@ -21,6 +24,20 @@ func (*recoveryWorkspace) WorkingDir() string { return "/current" }
 func (*recoveryWorkspace) AgentIsReady() bool { return false }
 
 func (*recoveryWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
+
+func (*recoveryWorkspace) PermissionBouncerConfigured() bool { return false }
+
+func (*recoveryWorkspace) PermissionBouncerMode() permission.BouncerMode {
+	return permission.BouncerOff
+}
+
+func (*recoveryWorkspace) PermissionSetBouncerMode(permission.BouncerMode) {}
+
+func (*recoveryWorkspace) PermissionUnresolvedCount(context.Context, time.Time) (int, error) {
+	return 0, nil
+}
+
+func (*recoveryWorkspace) PermissionLastTriage() time.Time { return time.Time{} }
 
 func TestRecoveryTracksRootSessionNotDrilledInChild(t *testing.T) {
 	t.Parallel()

@@ -91,6 +91,13 @@ type ConfigStore struct {
 	trackedConfigPaths []string                // unique, normalized config file paths
 	snapshots          map[string]fileSnapshot // path -> snapshot at last capture
 
+	// trustedPaths are the user-level config files captured at the start
+	// of Load, before any config-provided env could redirect
+	// ANVIL_GLOBAL_CONFIG or ANVIL_GLOBAL_DATA. Reloads reuse them.
+	trustedPaths []string
+	// trustedBouncer is guarded by metaMu.
+	trustedBouncer *TrustedBouncer
+
 	// configMu guards the config pointer field against concurrent
 	// readers (Config) and the writeMu-serialised swap (setConfig). It
 	// protects the pointer word only; the pointed-to Config is treated
@@ -496,6 +503,25 @@ func (s *ConfigStore) updatePreferredModelFields(c *Config, modelType SelectedMo
 		fields[fmt.Sprintf("recent_models.%s", modelType)] = updated
 	}
 	return fields
+}
+
+// LastPermissionTriage returns when permission triage last ran, or the
+// zero time if it never has.
+func (s *ConfigStore) LastPermissionTriage() time.Time {
+	sec := s.Config().LastPermissionTriage
+	if sec <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
+}
+
+// SetLastPermissionTriage records when permission triage last ran in the
+// global data file.
+func (s *ConfigStore) SetLastPermissionTriage(t time.Time) error {
+	return s.update(ScopeGlobal, func(c *Config) map[string]any {
+		c.LastPermissionTriage = t.Unix()
+		return map[string]any{"last_permission_triage": c.LastPermissionTriage}
+	})
 }
 
 // SetCompactMode sets the compact mode setting and persists it.
@@ -1130,6 +1156,23 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		}
 	}
 
+	// Re-read the bouncer block from the paths frozen at Load, never from
+	// the current env, which project config may have changed. The API key
+	// captured at Load is kept for the same reason, so picking up a rotated
+	// key needs a restart.
+	reloadedBouncer, err := loadBouncerBlock(s.trustedPaths)
+	if err != nil {
+		return fmt.Errorf("failed to reload config: %w", err)
+	}
+	var trustedBouncer *TrustedBouncer
+	if reloadedBouncer != nil {
+		trustedBouncer = &TrustedBouncer{Config: reloadedBouncer}
+		if prev := s.TrustedBouncer(); prev != nil {
+			trustedBouncer.APIKey = prev.APIKey
+		}
+	}
+	cfg.applyTrustedBouncer(trustedBouncer)
+
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
 	if err := cfg.ValidateHooks(); err != nil {
@@ -1192,10 +1235,12 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	oldKnownProviders := s.knownProviders
 	oldOverrides := s.overrides
 	oldWorkspacePath := s.workspacePath
+	oldTrustedBouncer := s.TrustedBouncer()
 
 	// Publish the fully-built config, then run agent setup against it.
 	s.setConfig(cfg)
 	s.setMeta(loadedPaths, resolver, providers, overrides, workspacePath)
+	s.setTrustedBouncer(trustedBouncer)
 
 	if configured {
 		s.SetupAgents()
@@ -1217,6 +1262,7 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 			// previous config so the store and coordinator stay in sync.
 			s.setConfig(oldConfig)
 			s.setMeta(oldLoadedPaths, oldResolver, oldKnownProviders, oldOverrides, oldWorkspacePath)
+			s.setTrustedBouncer(oldTrustedBouncer)
 			return fmt.Errorf("plugins changed hook failed: %w", err)
 		}
 	}

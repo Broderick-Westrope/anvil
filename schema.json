@@ -48,6 +48,95 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "Bouncer": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "shadow",
+            "enforce"
+          ],
+          "default": "off"
+        },
+        "url": {
+          "type": "string",
+          "description": "Full System One endpoint URL (https only)"
+        },
+        "model": {
+          "type": "string",
+          "examples": [
+            "von-1.0.0"
+          ]
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Name of the environment variable that holds the API key",
+          "default": "BASETEN_API_KEY",
+          "examples": [
+            "BASETEN_API_KEY",
+            "TYPESAFE_API_KEY"
+          ]
+        },
+        "auth_scheme": {
+          "type": "string",
+          "enum": [
+            "Api-Key",
+            "Bearer"
+          ],
+          "default": "Api-Key"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "maximum": 60,
+          "minimum": 0,
+          "description": "Bouncer call timeout in seconds; 0 uses the default",
+          "default": 8
+        },
+        "explicit_ask": {
+          "type": "string",
+          "enum": [
+            "bouncer",
+            "human"
+          ],
+          "default": "bouncer"
+        },
+        "send_user_messages": {
+          "type": "boolean",
+          "default": true
+        },
+        "escalate_at": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Hazard probability at or above which the request goes to the human",
+          "default": 0.35
+        },
+        "deny_at": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Hazard probability at or above which the request is denied unless the user asked for it",
+          "default": 0.9
+        },
+        "severity_escalate": {
+          "type": "number",
+          "maximum": 3,
+          "minimum": 0,
+          "description": "Severity score (0-3) at or above which the request goes to the human",
+          "default": 2
+        },
+        "user_requested_at": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "User-requested probability at or above which a likely deny goes to the human instead",
+          "default": 0.7
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Completions": {
       "properties": {
         "max_depth": {
@@ -104,6 +193,10 @@
         "permissions": {
           "$ref": "#/$defs/Permissions",
           "description": "Permission settings for tool usage"
+        },
+        "bouncer": {
+          "$ref": "#/$defs/Bouncer",
+          "description": "Classifier that answers permission prompts. Only read from user-level config files"
         },
         "tools": {
           "$ref": "#/$defs/Tools",

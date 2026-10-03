@@ -47,6 +47,11 @@ func (f *fakeHookPermissionService) AutoApproveSession(string)                  
 func (f *fakeHookPermissionService) RevokeAutoApproveSession(string)              {}
 func (f *fakeHookPermissionService) SetYoloLevel(config.YoloLevel)                {}
 func (f *fakeHookPermissionService) YoloLevel() config.YoloLevel                  { return config.YoloOff }
+func (f *fakeHookPermissionService) BouncerConfigured() bool                      { return false }
+func (f *fakeHookPermissionService) BouncerMode() permission.BouncerMode {
+	return permission.BouncerOff
+}
+func (f *fakeHookPermissionService) SetBouncerMode(permission.BouncerMode) {}
 
 func (f *fakeHookPermissionService) GrantSession(string, string, string, config.PermissionAction) error {
 	return nil

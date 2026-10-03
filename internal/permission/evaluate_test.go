@@ -208,6 +208,35 @@ func TestEvaluate(t *testing.T) {
 	})
 }
 
+func TestEvaluateFromSession(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name         string
+		configAction config.PermissionAction
+		session      bool
+		want         bool
+	}{
+		{name: "default"},
+		{name: "config only", configAction: config.PermissionAllow},
+		{name: "session only", session: true, want: true},
+		{name: "session overrides ask", configAction: config.PermissionAsk, session: true, want: true},
+		{name: "config deny wins", configAction: config.PermissionDeny, session: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var configRules, sessionRules []config.PermissionRule
+			if tt.configAction != "" {
+				configRules = []config.PermissionRule{{ToolPattern: "bash", Action: tt.configAction}}
+			}
+			if tt.session {
+				sessionRules = []config.PermissionRule{{ToolPattern: "bash", Action: config.PermissionAllow}}
+			}
+			require.Equal(t, tt.want, Evaluate("bash", "git status", configRules, sessionRules).FromSession)
+			require.Equal(t, tt.want, EvaluateAll("bash", []string{"git status", "git log"}, configRules, sessionRules).FromSession)
+		})
+	}
+}
+
 func TestEvaluateAll(t *testing.T) {
 	t.Parallel()
 

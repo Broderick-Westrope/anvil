@@ -3,7 +3,10 @@ package dialog
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -238,7 +241,9 @@ func NewPermissions(com *common.Common, perm permission.PermissionRequest, opts 
 	if len(perm.InputSegments) > 0 {
 		patterns := make([]string, 0, len(perm.InputSegments))
 		for _, seg := range perm.InputSegments {
-			patterns = append(patterns, segment.Generalize(seg))
+			if pattern := segment.Generalize(seg); !slices.Contains(patterns, pattern) {
+				patterns = append(patterns, pattern)
+			}
 		}
 		p.patternInput.SetValue(strings.Join(patterns, " && "))
 	} else {
@@ -637,6 +642,12 @@ func (p *Permissions) renderHeader(contentWidth int) string {
 		}
 	}
 
+	// Show the bouncer's verdict, if any, directly under the rest of the
+	// header. It wraps so every axis stays visible.
+	if block := p.renderBouncer(contentWidth); block != "" {
+		lines = append(lines, block)
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -672,6 +683,17 @@ func prettyName(name string) string {
 	name = strings.ReplaceAll(name, "_", " ")
 	name = strings.ReplaceAll(name, "-", " ")
 	return stringext.Capitalize(name)
+}
+
+// capitalizeFirst uppercases the first rune of s, leaving the rest
+// unchanged. Unlike [stringext.Capitalize], which title-cases every word,
+// this suits short status notes like "bouncer: escalate · severity=2.1".
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 func (p *Permissions) renderContent(width int) string {

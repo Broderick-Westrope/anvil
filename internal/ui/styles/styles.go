@@ -115,11 +115,24 @@ type Styles struct {
 		PromptNormalFocused lipgloss.Style
 		PromptNormalBlurred lipgloss.Style
 
-		// YOLO mode prompt (" ! " icon + ":::" dots).
-		PromptYoloIconFocused lipgloss.Style
-		PromptYoloIconBlurred lipgloss.Style
-		PromptYoloDotsFocused lipgloss.Style
-		PromptYoloDotsBlurred lipgloss.Style
+		// Mode badges drawn in the prompt gutter, one per line, for the
+		// bouncer and yolo. Each renders exactly three cells
+		// plus a one-cell right margin.
+		PromptShadowFocused   lipgloss.Style // Bouncer shadow (◇)
+		PromptShadowBlurred   lipgloss.Style
+		PromptEnforceFocused  lipgloss.Style // Bouncer enforce (◆)
+		PromptEnforceBlurred  lipgloss.Style
+		PromptEnforceInactive lipgloss.Style // Bouncer enforce while full yolo bypasses it
+		PromptYoloFocused     lipgloss.Style // Standard yolo (!)
+		PromptYoloBlurred     lipgloss.Style
+		PromptFullYoloFocused lipgloss.Style // Full yolo (!!!)
+		PromptFullYoloBlurred lipgloss.Style
+
+		// Dots on lines without a badge, tinted by the riskiest active mode.
+		PromptBouncerDotsFocused  lipgloss.Style
+		PromptYoloDotsFocused     lipgloss.Style
+		PromptFullYoloDotsFocused lipgloss.Style
+		PromptModeDotsBlurred     lipgloss.Style
 	}
 
 	// Radio
@@ -429,6 +442,11 @@ type Styles struct {
 			KeyText   lipgloss.Style // Left key cell of a key/value row
 			ValueText lipgloss.Style // Right value cell of a key/value row
 			ParamsBg  color.Color    // Background color behind highlighted JSON parameters
+
+			BouncerScore    lipgloss.Style // Bouncer axis that didn't affect routing
+			BouncerEscalate lipgloss.Style // Bouncer axis or outcome that escalated to the human
+			BouncerDeny     lipgloss.Style // Bouncer axis or outcome at the deny threshold
+			BouncerMitigate lipgloss.Style // User-request signal that softened a deny
 		}
 
 		Quit struct {

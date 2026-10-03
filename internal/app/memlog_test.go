@@ -47,7 +47,10 @@ func TestMemoryRecorderPersistsSamplesAndProfiles(t *testing.T) {
 		require.NoError(t, reader.Close())
 		info, err := os.Stat(path)
 		require.NoError(t, err)
-		require.Zero(t, info.Mode().Perm()&0o077)
+		// Windows has no Unix permission bits to check.
+		if runtime.GOOS != "windows" {
+			require.Zero(t, info.Mode().Perm()&0o077)
+		}
 	}
 }
 

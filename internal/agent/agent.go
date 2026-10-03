@@ -366,6 +366,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	var currentAssistant *message.Message
 	var stepMessages []fantasy.Message
+	injected := newInjectedMessages()
 	var shouldSummarize bool
 	sanitizedToolCalls := make(map[string]bool)
 	// OnToolCall writes this map while OnToolResult reads it, and tool
@@ -389,7 +390,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		TopK:             call.TopK,
 		FrequencyPenalty: call.FrequencyPenalty,
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = options.Messages
+			prepared.Messages = injected.apply(options.Messages)
 			for i := range prepared.Messages {
 				prepared.Messages[i].ProviderOptions = nil
 			}
@@ -406,7 +407,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 					return callContext, prepared, createErr
 				}
 				setLeaf(userMessage.ID)
-				prepared.Messages = append(prepared.Messages, userMessage.ToAIMessage()...)
+				aiMessages := userMessage.ToAIMessage()
+				injected.add(options.Messages, aiMessages...)
+				prepared.Messages = append(prepared.Messages, aiMessages...)
 			}
 
 			prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, largeModel)

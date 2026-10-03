@@ -82,7 +82,29 @@ func TestMatch(t *testing.T) {
 			got, err := Match(tt.pattern, tt.input)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
+			m, err := Compile(tt.pattern)
+			require.NoError(t, err)
+			require.Equal(t, got, m.Match(tt.input))
 		})
+	}
+}
+
+func TestCompileReuse(t *testing.T) {
+	t.Parallel()
+
+	m, err := Compile("git {status,diff} *")
+	require.NoError(t, err)
+	for input, want := range map[string]bool{
+		"git status":      true,
+		"git status -sb":  true,
+		"git diff a.go":   true,
+		"git statusx":     false,
+		"git push origin": false,
+	} {
+		got, err := Match("git {status,diff} *", input)
+		require.NoError(t, err)
+		require.Equal(t, want, got, input)
+		require.Equal(t, want, m.Match(input), input)
 	}
 }
 
@@ -91,6 +113,11 @@ func TestMatch_InvalidPattern(t *testing.T) {
 
 	_, err := Match("{unclosed", "input")
 	require.Error(t, err)
+	for _, pattern := range []string{"{unclosed", "a,b}", "[", "[abc", `x\`} {
+		m, err := Compile(pattern)
+		require.Error(t, err, pattern)
+		require.Nil(t, m)
+	}
 }
 
 func TestValidate(t *testing.T) {

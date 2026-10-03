@@ -60,6 +60,9 @@ type KeyMap struct {
 	Sessions   key.Binding
 	Tab        key.Binding
 	ToggleYolo key.Binding
+	// CycleBouncer cycles the bouncer mode. Only active when
+	// a bouncer is configured.
+	CycleBouncer key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -95,6 +98,10 @@ func DefaultKeyMap() KeyMap {
 		ToggleYolo: key.NewBinding(
 			key.WithKeys("ctrl+y"),
 			key.WithHelp("ctrl+y", "toggle yolo"),
+		),
+		CycleBouncer: key.NewBinding(
+			key.WithKeys("ctrl+q"),
+			key.WithHelp("ctrl+q", "cycle bouncer"),
 		),
 	}
 

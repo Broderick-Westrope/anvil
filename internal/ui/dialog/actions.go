@@ -64,8 +64,11 @@ type (
 	ActionToggleNotifications         struct{}
 	ActionToggleTransparentBackground struct{}
 	ActionToggleAnthropicAuthMode     struct{}
-	ActionInitializeProject           struct{}
-	ActionSummarize                   struct {
+	// ActionCycleBouncerMode cycles the runtime bouncer mode
+	// (off -> shadow -> enforce -> off). It never writes config.
+	ActionCycleBouncerMode  struct{}
+	ActionInitializeProject struct{}
+	ActionSummarize         struct {
 		SessionID string
 	}
 	// ActionSelectReasoningEffort is a message indicating a reasoning effort

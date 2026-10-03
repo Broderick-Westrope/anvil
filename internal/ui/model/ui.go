@@ -183,6 +183,13 @@ type (
 		sessionID string // The session being cancelled.
 		attempt   int
 	}
+
+	// triageNudgeMsg is sent once at startup when enough unresolved
+	// permission decisions have piled up to recommend running
+	// "anvil permissions triage".
+	triageNudgeMsg struct {
+		count int
+	}
 )
 
 // UI represents the main user interface model.
@@ -230,6 +237,10 @@ type UI struct {
 	// cannot race the write.
 	pinSettling bool
 
+	// triageNudgeShown tracks whether the startup permission-triage nudge
+	// has already been surfaced, so it is shown at most once per process.
+	triageNudgeShown bool
+
 	header *header
 
 	// sendProgressBar instructs the TUI to send progress bar updates to the
@@ -245,6 +256,11 @@ type UI struct {
 
 	// Attachment list
 	attachments *attachments.Attachments
+
+	// promptModes and promptBadges cache the permission state shown in
+	// the editor gutter, refreshed by refreshEditorPrompt.
+	promptModes  promptModes
+	promptBadges []promptBadge
 
 	readyPlaceholder   string
 	workingPlaceholder string
@@ -450,7 +466,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 
 	status := NewStatus(com, ui)
 
-	ui.setEditorPrompt(com.Workspace.PermissionYoloLevel() != config.YoloOff)
+	ui.refreshEditorPrompt()
 	ui.randomizePlaceholders()
 	ui.textarea.Placeholder = ui.readyPlaceholder
 	ui.status = status
@@ -500,6 +516,8 @@ func (m *UI) Init() tea.Cmd {
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	// Check once whether to nudge the user to run permission triage.
+	cmds = append(cmds, m.checkTriageNudge())
 	return tea.Batch(cmds...)
 }
 
@@ -755,6 +773,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
+
+	case triageNudgeMsg:
+		if !m.triageNudgeShown {
+			m.triageNudgeShown = true
+			cmds = append(cmds, util.ReportInfo(fmt.Sprintf(
+				"Run \"anvil permissions triage\" to turn %d repeated approvals into rules", msg.count)))
+		}
 
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
@@ -1408,8 +1433,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.textarea.Placeholder = m.readyPlaceholder
 		}
-		if m.com.Workspace.PermissionYoloLevel() != config.YoloOff {
-			m.textarea.Placeholder = "Yolo mode!"
+		if p := m.promptModes.modePlaceholder(); p != "" {
+			m.textarea.Placeholder = p
 		}
 	}
 
@@ -2148,6 +2173,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionToggleYoloMode:
 		m.cycleYoloLevel()
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionCycleBouncerMode:
+		next := m.cycleBouncerMode()
+		cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Bouncer: "+string(next))))
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleNotifications:
 		cfg := m.com.Config()
 		if cfg != nil && cfg.Options != nil {
@@ -2761,6 +2790,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				status = "enabled (" + next.String() + ")"
 			}
 			cmds = append(cmds, util.ReportInfo("Yolo mode "+status))
+			return true
+		case key.Matches(msg, m.keyMap.CycleBouncer):
+			cmds = append(cmds, m.handleCycleBouncerKey())
 			return true
 		}
 		return false
@@ -3685,6 +3717,9 @@ func (m *UI) FullHelp() [][]key.Binding {
 			k.Sessions,
 			k.ToggleYolo,
 		)
+		if m.com.Workspace.PermissionBouncerConfigured() {
+			mainBinds = append(mainBinds, k.CycleBouncer)
+		}
 		if hasSession {
 			mainBinds = append(mainBinds, k.Chat.NewSession)
 		}
@@ -3767,6 +3802,9 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.ToggleYolo,
 				},
 			)
+			if m.com.Workspace.PermissionBouncerConfigured() {
+				binds[len(binds)-1] = append(binds[len(binds)-1], k.CycleBouncer)
+			}
 			editorBinds := []key.Binding{
 				k.Editor.Newline,
 				k.Editor.MentionFile,
@@ -4179,49 +4217,6 @@ func (m *UI) openEditor(value string) tea.Cmd {
 			Text: strings.TrimSpace(string(content)),
 		}
 	})
-}
-
-// setEditorPrompt configures the textarea prompt function based on whether
-// yolo mode is enabled.
-func (m *UI) setEditorPrompt(yolo bool) {
-	if yolo {
-		m.textarea.SetPromptFunc(4, m.yoloPromptFunc)
-		return
-	}
-	m.textarea.SetPromptFunc(4, m.normalPromptFunc)
-}
-
-// normalPromptFunc returns the normal editor prompt style ("  > " on first
-// line, "::: " on subsequent lines).
-func (m *UI) normalPromptFunc(info textarea.PromptInfo) string {
-	t := m.com.Styles
-	if info.LineNumber == 0 {
-		if info.Focused {
-			return "  > "
-		}
-		return "::: "
-	}
-	if info.Focused {
-		return t.Editor.PromptNormalFocused.Render()
-	}
-	return t.Editor.PromptNormalBlurred.Render()
-}
-
-// yoloPromptFunc returns the yolo mode editor prompt style with warning icon
-// and colored dots.
-func (m *UI) yoloPromptFunc(info textarea.PromptInfo) string {
-	t := m.com.Styles
-	if info.LineNumber == 0 {
-		if info.Focused {
-			return t.Editor.PromptYoloIconFocused.Render()
-		} else {
-			return t.Editor.PromptYoloIconBlurred.Render()
-		}
-	}
-	if info.Focused {
-		return t.Editor.PromptYoloDotsFocused.Render()
-	}
-	return t.Editor.PromptYoloDotsBlurred.Render()
 }
 
 // closeCompletions closes the completions popup and resets state.
@@ -5871,6 +5866,66 @@ func (m *UI) cycleYoloLevel() config.YoloLevel {
 		next = config.YoloOff
 	}
 	m.com.Workspace.PermissionSetYoloLevel(next)
-	m.setEditorPrompt(next != config.YoloOff)
+	m.refreshEditorPrompt()
 	return next
+}
+
+// cycleBouncerMode advances the workspace's runtime bouncer
+// mode through the Off → Shadow → Enforce → Off cycle and returns the new
+// mode. This is a runtime-only change: it never writes config.
+func (m *UI) cycleBouncerMode() permission.BouncerMode {
+	var next permission.BouncerMode
+	switch m.com.Workspace.PermissionBouncerMode() {
+	case permission.BouncerOff:
+		next = permission.BouncerShadow
+	case permission.BouncerShadow:
+		next = permission.BouncerEnforce
+	default:
+		next = permission.BouncerOff
+	}
+	m.com.Workspace.PermissionSetBouncerMode(next)
+	m.refreshEditorPrompt()
+	return next
+}
+
+// handleCycleBouncerKey cycles the bouncer mode from the keyboard and
+// reports the new mode, or explains why nothing happened.
+func (m *UI) handleCycleBouncerKey() tea.Cmd {
+	if !m.com.Workspace.PermissionBouncerConfigured() {
+		return util.ReportInfo("No bouncer configured")
+	}
+	return util.ReportInfo("Bouncer: " + string(m.cycleBouncerMode()))
+}
+
+// triageNudgeThreshold is the minimum number of unresolved permission
+// decisions in the lookback window that triggers the startup nudge to run
+// "anvil permissions triage".
+const triageNudgeThreshold = 50
+
+// triageNudgeLookback is how far back unresolved permission decisions are
+// counted for the startup nudge, and how often a triage run is expected.
+const triageNudgeLookback = 7 * 24 * time.Hour
+
+// checkTriageNudge checks once at startup whether enough unresolved
+// permission decisions have piled up in the last week to recommend
+// running permission triage, returning a [triageNudgeMsg] if so. The
+// one-time guard against showing it more than once lives on the model and
+// is applied when the message is handled in Update, not here.
+func (m *UI) checkTriageNudge() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		count, err := m.com.Workspace.PermissionUnresolvedCount(ctx, time.Now().Add(-triageNudgeLookback))
+		if err != nil {
+			slog.Debug("Failed to count unresolved permission decisions", "error", err)
+			return nil
+		}
+		if count < triageNudgeThreshold {
+			return nil
+		}
+		if last := m.com.Workspace.PermissionLastTriage(); !last.IsZero() && time.Since(last) < triageNudgeLookback {
+			return nil
+		}
+		return triageNudgeMsg{count: count}
+	}
 }

@@ -19,6 +19,24 @@ func newTestStoreForPath(t *testing.T, path string) *ConfigStore {
 	}
 }
 
+func TestPermissionConfigPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := &ConfigStore{globalConfigPath: filepath.Join(dir, "user.json"), globalDataPath: filepath.Join(dir, "data.json"), workspacePath: filepath.Join(dir, ".anvil", "anvil.json")}
+	for scope, want := range map[Scope]string{ScopeGlobal: store.globalConfigPath, ScopeWorkspace: store.workspacePath} {
+		got, err := store.PermissionConfigPath(scope)
+		require.NoError(t, err)
+		require.Equal(t, want, got)
+	}
+	store.globalConfigPath = ""
+	got, err := store.PermissionConfigPath(ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, store.globalDataPath, got)
+	store.workspacePath = ""
+	_, err = store.PermissionConfigPath(ScopeWorkspace)
+	require.ErrorIs(t, err, ErrNoWorkspaceConfig)
+}
+
 func TestSetPermissionRule_EmptyConfigFile(t *testing.T) {
 	t.Parallel()
 

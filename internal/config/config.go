@@ -738,6 +738,10 @@ type Config struct {
 	// Recently used models stored in the data directory config.
 	RecentModels map[SelectedModelType][]SelectedModel `json:"recent_models,omitempty" jsonschema:"-"`
 
+	// LastPermissionTriage is when `anvil permissions triage` last ran, in
+	// Unix seconds. It is stored in the data directory config.
+	LastPermissionTriage int64 `json:"last_permission_triage,omitempty" jsonschema:"-"`
+
 	// The providers that are configured
 	Providers *csync.Map[string, ProviderConfig] `json:"providers,omitempty" jsonschema:"description=AI provider configurations"`
 
@@ -748,6 +752,10 @@ type Config struct {
 	Options *Options `json:"options,omitempty" jsonschema:"description=General application options"`
 
 	Permissions *Permissions `json:"permissions,omitempty" jsonschema:"description=Permission settings for tool usage"`
+
+	// Bouncer is top-level rather than under Permissions because
+	// the permissions keys are tool-name globs.
+	Bouncer *Bouncer `json:"bouncer,omitempty" jsonschema:"description=Classifier that answers permission prompts. Only read from user-level config files"`
 
 	Tools Tools `json:"tools,omitzero" jsonschema:"description=Tool configurations"`
 

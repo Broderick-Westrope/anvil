@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	mcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/logo"
@@ -91,6 +92,13 @@ func (m *UI) modelInfo(width int) string {
 				extraLines = append(extraLines, elapsedStr)
 			}
 		}
+	}
+
+	// Show a short, muted indicator when the runtime bouncer
+	// is active. Nothing is added when it's off (or unconfigured, which
+	// always reports off).
+	if mode := m.com.Workspace.PermissionBouncerMode(); mode != permission.BouncerOff {
+		extraLines = append(extraLines, m.com.Styles.ModelInfo.Stats.Render("bouncer:"+string(mode)))
 	}
 
 	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, extraLines...)

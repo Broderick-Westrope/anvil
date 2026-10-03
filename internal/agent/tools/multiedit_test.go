@@ -39,6 +39,12 @@ func (m *mockPermissionService) YoloLevel() config.YoloLevel {
 	return config.YoloOff
 }
 
+func (m *mockPermissionService) BouncerConfigured() bool { return false }
+
+func (m *mockPermissionService) BouncerMode() permission.BouncerMode { return permission.BouncerOff }
+
+func (m *mockPermissionService) SetBouncerMode(permission.BouncerMode) {}
+
 func (m *mockPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }

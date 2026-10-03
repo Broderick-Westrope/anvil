@@ -92,7 +92,7 @@ func (tracker *Tracker) Close(clean bool) error {
 	close(tracker.updates)
 	<-tracker.done
 	if clean {
-		if err := os.Remove(tracker.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeRecord(tracker.path); err != nil {
 			tracker.err = errors.Join(tracker.err, err)
 		}
 	}
@@ -108,17 +108,14 @@ func (tracker *Tracker) Close(clean bool) error {
 
 func (tracker *Tracker) write(entry Entry) (result error) {
 	if entry.SessionID == "" {
-		if err := os.Remove(tracker.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return nil
+		return removeRecord(tracker.path)
 	}
 	file, err := os.CreateTemp(filepath.Dir(tracker.path), strings.TrimSuffix(filepath.Base(tracker.path), ".json")+".tmp-*")
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err := os.Remove(file.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeRecord(file.Name()); err != nil {
 			result = errors.Join(result, err)
 		}
 	}()
@@ -164,10 +161,7 @@ func Clear(root string) error {
 		if active {
 			return nil
 		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return nil
+		return removeRecord(path)
 	})
 }
 
@@ -206,7 +200,7 @@ func scan(root string, decode bool, visit func(string, Entry, bool) error) error
 			if !decode {
 				return visit(path, Entry{}, active)
 			}
-			data, err := os.ReadFile(path)
+			data, err := readRecord(path)
 			if errors.Is(err, os.ErrNotExist) {
 				return nil
 			}
@@ -263,7 +257,7 @@ func sweepArtifacts(root string) error {
 		}
 		release()
 		if _, err := os.Stat(filepath.Join(root, owner+".json")); errors.Is(err, os.ErrNotExist) {
-			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := removeRecord(path); err != nil {
 				cleanupErrors = append(cleanupErrors, err)
 			}
 		}
@@ -290,7 +284,7 @@ func sweepArtifacts(root string) error {
 				continue
 			}
 		}
-		if err := os.Remove(filepath.Join(root, file.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeRecord(filepath.Join(root, file.Name())); err != nil {
 			cleanupErrors = append(cleanupErrors, err)
 		}
 	}

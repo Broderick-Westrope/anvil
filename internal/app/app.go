@@ -3,6 +3,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/permission/decisionlog"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
@@ -76,6 +78,16 @@ type App struct {
 // New initializes a new application instance.
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
+	recorder := decisionlog.New(q)
+	// Prune old decisions once at startup in the background. Failure only
+	// means the table keeps extra rows until the next start.
+	go func() {
+		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := decisionlog.Prune(pruneCtx, q, time.Now()); err != nil {
+			slog.Warn("Failed to prune permission decisions", "error", err)
+		}
+	}()
 	sessions := session.NewService(q, conn)
 	messages := message.NewService(q, message.WithConn(conn))
 	cfg := store.Config()
@@ -84,11 +96,21 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	if cfg.Permissions != nil {
 		configRules = cfg.Permissions.Rules
 	}
+	permOpts := []permission.Option{permission.WithDecisionRecorder(recorder)}
+	if ta := store.TrustedBouncer(); ta != nil {
+		if setup, ok := buildBouncerOption(ta, sessions, messages); ok {
+			permOpts = append(permOpts, setup.option)
+			slog.Info("Bouncer configured",
+				"mode", cmp.Or(ta.Config.Mode, config.BouncerOff),
+				"model", ta.Config.Model)
+			go warmBouncer(ctx, setup.bouncer, setup.mode)
+		}
+	}
 
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
-		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store),
+		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store, permOpts...),
 		FileTracker: filetracker.NewService(q),
 		Queries:     q,
 		LSPManager:  lsp.NewManager(store),
@@ -120,9 +142,17 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Release the shared database connection on shutdown. The pool
 	// closes the underlying *sql.DB when the last reference is released.
+	// Cleanup funcs run concurrently, so the decision log is flushed here
+	// first. If the flush times out the connection is left open, since
+	// the recorder is still writing and the process is exiting anyway.
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
-		func(context.Context) error { return db.ReleaseGlobal() },
+		func(ctx context.Context) error {
+			if err := recorder.Close(ctx); err != nil {
+				return fmt.Errorf("permission decision log did not flush before shutdown: %w", err)
+			}
+			return db.ReleaseGlobal()
+		},
 		func(ctx context.Context) error { return mcp.Close(ctx) },
 	)
 
@@ -132,6 +162,9 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		return app, nil
 	}
 	if err := app.InitOrchestratorAgent(ctx); err != nil {
+		if closeErr := recorder.Close(ctx); closeErr != nil {
+			slog.Warn("Failed to close permission decision log after initialization error", "error", closeErr)
+		}
 		return nil, fmt.Errorf("failed to initialize orchestrator agent: %w", err)
 	}
 
@@ -161,6 +194,12 @@ func (app *App) Config() *config.Config {
 // Store returns the config store.
 func (app *App) Store() *config.ConfigStore {
 	return app.config
+}
+
+// PermissionUnresolvedCount returns how many logged permission decisions
+// since the given time were not resolved by a configured rule.
+func (app *App) PermissionUnresolvedCount(ctx context.Context, since time.Time) (int, error) {
+	return decisionlog.CountUnresolvedSince(ctx, app.Queries, since)
 }
 
 // Events returns a per-caller subscription channel for application events.

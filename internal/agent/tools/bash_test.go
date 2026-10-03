@@ -39,6 +39,14 @@ func (m *mockBashPermissionService) YoloLevel() config.YoloLevel {
 	return config.YoloOff
 }
 
+func (m *mockBashPermissionService) BouncerConfigured() bool { return false }
+
+func (m *mockBashPermissionService) BouncerMode() permission.BouncerMode {
+	return permission.BouncerOff
+}
+
+func (m *mockBashPermissionService) SetBouncerMode(permission.BouncerMode) {}
+
 func (m *mockBashPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }
@@ -119,6 +127,14 @@ func (m *recordingPermissionService) SetYoloLevel(level config.YoloLevel) {}
 func (m *recordingPermissionService) YoloLevel() config.YoloLevel {
 	return config.YoloOff
 }
+
+func (m *recordingPermissionService) BouncerConfigured() bool { return false }
+
+func (m *recordingPermissionService) BouncerMode() permission.BouncerMode {
+	return permission.BouncerOff
+}
+
+func (m *recordingPermissionService) SetBouncerMode(permission.BouncerMode) {}
 
 func (m *recordingPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
@@ -240,4 +256,41 @@ func TestTruncateOutputEmoji(t *testing.T) {
 	out := TruncateOutput(content)
 	require.True(t, utf8.ValidString(out), "truncated output must stay valid UTF-8")
 	require.Contains(t, out, "lines truncated")
+}
+
+func TestBashTool_BannedCommandsBlockedBeforePermission(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		command string
+		blocked string
+	}{
+		{name: "plain", command: "curl https://example.com", blocked: "curl https://example.com"},
+		{name: "quoted", command: "'curl' https://example.com", blocked: "curl https://example.com"},
+		{name: "chained", command: "ls && sudo rm -rf /", blocked: "sudo rm -rf /"},
+		{name: "arguments", command: "npm install -g left-pad", blocked: "npm install -g left-pad"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tool, perms := newBashToolWithRecordingPerms(t.TempDir(), true)
+			ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+			resp := runBashTool(t, tool, ctx, BashParams{Description: "banned", Command: tt.command})
+
+			require.True(t, resp.IsError)
+			require.Equal(t, "command blocked: "+tt.blocked+" is not allowed", resp.Content)
+			require.Zero(t, perms.requestCount, "banned command must not request permission")
+		})
+	}
+}
+
+func TestBashTool_AllowedCommandStillRequestsPermission(t *testing.T) {
+	t.Parallel()
+	tool, perms := newBashToolWithRecordingPerms(t.TempDir(), false)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	resp := runBashTool(t, tool, ctx, BashParams{Description: "allowed", Command: "make build > out.txt"})
+
+	require.Equal(t, 1, perms.requestCount)
+	require.Contains(t, resp.Content, "Permission denied")
 }

@@ -246,6 +246,26 @@ func (w *AppWorkspace) PermissionSetYoloLevel(level config.YoloLevel) {
 	w.app.Permissions.SetYoloLevel(level)
 }
 
+func (w *AppWorkspace) PermissionBouncerConfigured() bool {
+	return w.app.Permissions.BouncerConfigured()
+}
+
+func (w *AppWorkspace) PermissionBouncerMode() permission.BouncerMode {
+	return w.app.Permissions.BouncerMode()
+}
+
+func (w *AppWorkspace) PermissionSetBouncerMode(mode permission.BouncerMode) {
+	w.app.Permissions.SetBouncerMode(mode)
+}
+
+func (w *AppWorkspace) PermissionUnresolvedCount(ctx context.Context, since time.Time) (int, error) {
+	return w.app.PermissionUnresolvedCount(ctx, since)
+}
+
+func (w *AppWorkspace) PermissionLastTriage() time.Time {
+	return w.store.LastPermissionTriage()
+}
+
 // -- FileTracker --
 
 func (w *AppWorkspace) FileTrackerRecordRead(ctx context.Context, sessionID, path string) {
