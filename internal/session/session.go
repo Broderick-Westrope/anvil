@@ -1,15 +1,20 @@
 package session
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/google/uuid"
 	"github.com/zeebo/xxh3"
@@ -116,6 +121,8 @@ type service struct {
 	// SQLite and incorrectly clear the UI "~" marker.
 	estimatedUsageMu sync.RWMutex
 	estimatedUsage   map[string]bool
+
+	jobLogDir string
 }
 
 func (s *service) Create(ctx context.Context, title, workingDir string) (Session, error) {
@@ -188,12 +195,20 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	if err = qtx.DeleteSessionMessages(ctx, dbSession.ID); err != nil {
 		return fmt.Errorf("deleting session messages: %w", err)
 	}
+	jobKeys, err := qtx.ListBackgroundJobIDsBySession(ctx, dbSession.ID)
+	if err != nil {
+		return fmt.Errorf("listing session background jobs: %w", err)
+	}
+	if err = qtx.DeleteBackgroundJobsBySession(ctx, dbSession.ID); err != nil {
+		return fmt.Errorf("deleting session background jobs: %w", err)
+	}
 	if err = qtx.DeleteSession(ctx, dbSession.ID); err != nil {
 		return fmt.Errorf("deleting session: %w", err)
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
+	s.removeJobLogs(jobKeys)
 
 	session := s.fromDBItem(dbSession)
 	s.clearEstimatedUsageState(dbSession.ID)
@@ -453,13 +468,48 @@ func unmarshalTodos(data string) ([]Todo, error) {
 	return todos, nil
 }
 
-func NewService(q *db.Queries, conn *sql.DB) Service {
+// Option configures a session service.
+type Option func(*service)
+
+// WithJobLogDir sets the directory holding background job logs, which
+// are removed with their session. It defaults to
+// [jobstore.DefaultLogDir].
+func WithJobLogDir(dir string) Option {
+	return func(s *service) { s.jobLogDir = dir }
+}
+
+func NewService(q *db.Queries, conn *sql.DB, opts ...Option) Service {
 	broker := pubsub.NewBroker[Session]()
-	return &service{
+	s := &service{
 		Broker:         broker,
 		db:             conn,
 		q:              q,
 		estimatedUsage: make(map[string]bool),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// removeJobLogs deletes the log files of deleted background jobs. It is
+// best effort: failures are logged once.
+func (s *service) removeJobLogs(keys []int64) {
+	if len(keys) == 0 {
+		return
+	}
+	dir := cmp.Or(s.jobLogDir, jobstore.DefaultLogDir())
+	var firstErr error
+	for _, key := range keys {
+		stdoutPath, stderrPath := jobstore.LogPaths(dir, jobstore.FormatID(key))
+		for _, path := range []string{stdoutPath, stderrPath} {
+			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	if firstErr != nil {
+		slog.Warn("Failed to remove background job logs", "error", firstErr)
 	}
 }
 
