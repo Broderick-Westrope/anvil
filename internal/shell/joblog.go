@@ -20,6 +20,7 @@ const (
 
 	logCapMarker         = "[log truncated at 50MB]\n"
 	prePublishLostMarker = "[output before publication lost: exceeded 10MB buffer cap]\n"
+	publishLostMarker    = "[output during publication lost: exceeded 10MB buffer cap]\n"
 )
 
 // JobLog receives a published job's output. Writes only touch memory
