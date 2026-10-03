@@ -188,6 +188,24 @@ func blockFuncs() []shell.BlockFunc {
 	}
 }
 
+// blockedSegment returns the first segment of command that a block
+// function rejects, so banned commands fail before a permission request.
+func blockedSegment(command string) (string, bool) {
+	blockers := blockFuncs()
+	for _, seg := range segment.Split(command) {
+		if segment.IsRedirect(seg) {
+			continue
+		}
+		args := strings.Fields(seg)
+		for _, block := range blockers {
+			if block(args) {
+				return seg, true
+			}
+		}
+	}
+	return "", false
+}
+
 func NewBashTool(permissions permission.Service, workingDir string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
@@ -195,6 +213,10 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.Command == "" {
 				return fantasy.NewTextErrorResponse("missing command"), nil
+			}
+
+			if seg, blocked := blockedSegment(params.Command); blocked {
+				return fantasy.NewTextErrorResponse("command blocked: " + seg + " is not allowed"), nil
 			}
 
 			// Determine working directory
