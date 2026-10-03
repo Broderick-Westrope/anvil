@@ -23,7 +23,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // PermissionsID is the identifier for the permissions dialog.
@@ -643,12 +642,10 @@ func (p *Permissions) renderHeader(contentWidth int) string {
 		}
 	}
 
-	// Show the assessor's one-line verdict summary, if any, directly
-	// under the rest of the header. Reuses the key/value muted style so
-	// no new color is introduced.
-	if p.permission.AssessorNote != "" {
-		note := ansi.Truncate(capitalizeFirst(p.permission.AssessorNote), contentWidth, "…")
-		lines = append(lines, t.Dialog.Permissions.KeyText.Render(note))
+	// Show the assessor's verdict, if any, directly under the rest of the
+	// header. It wraps so every axis stays visible.
+	if block := p.renderAssessor(contentWidth); block != "" {
+		lines = append(lines, block)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)

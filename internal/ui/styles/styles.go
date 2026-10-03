@@ -429,6 +429,11 @@ type Styles struct {
 			KeyText   lipgloss.Style // Left key cell of a key/value row
 			ValueText lipgloss.Style // Right value cell of a key/value row
 			ParamsBg  color.Color    // Background color behind highlighted JSON parameters
+
+			AssessorScore    lipgloss.Style // Assessor axis that didn't affect routing
+			AssessorEscalate lipgloss.Style // Assessor axis or outcome that escalated to the human
+			AssessorDeny     lipgloss.Style // Assessor axis or outcome at the deny threshold
+			AssessorMitigate lipgloss.Style // User-request signal that softened a deny
 		}
 
 		Quit struct {
