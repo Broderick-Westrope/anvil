@@ -47,7 +47,7 @@ to processes, controlling another process's jobs.
       `abandoned` for jobs that outlived the kill, even when a job's own
       exit races shutdown; no job, event, or heartbeat write reaches the
       DB after it's released.
-- [ ] A failure partway through allocation leaves no running row or open
+- [x] A failure partway through allocation leaves no running row or open
       file behind, and the job still runs under a fallback ID.
 - [ ] Pruned output returns `(output expired on <date>)`; a known ID is
       never "not found".
@@ -95,7 +95,7 @@ driver the platform builds; don't add driver-specific code.
 
 **Steps:**
 
-1. [ ] Migration (goose, one statement per block, with a Down section
+1. [x] Migration (goose, one statement per block, with a Down section
    dropping in reverse order):
 
    ```sql
@@ -140,7 +140,7 @@ driver the platform builds; don't add driver-specific code.
    (step 4) so log files go too. `AUTOINCREMENT` guarantees a deleted
    highest ID is never reissued.
 
-2. [ ] Queries in `background_jobs.sql`: `CreateBackgroundJob :one`
+2. [x] Queries in `background_jobs.sql`: `CreateBackgroundJob :one`
    (`INSERT ... RETURNING id`), `DeleteBackgroundJob :exec` (allocation
    compensation), `FinalizeBackgroundJob :execrows` (sets
    `completed_at`, `exit_code`, `end_reason`, and the log columns
@@ -156,7 +156,7 @@ driver the platform builds; don't add driver-specific code.
    `TouchAnvilInstance :exec`, `ListAnvilInstances :many`,
    `DeleteAnvilInstance :exec`.
 
-3. [ ] `internal/jobstore/store.go`:
+3. [x] `internal/jobstore/store.go`:
 
    ```go
    type Store struct {
@@ -193,12 +193,12 @@ driver the platform builds; don't add driver-specific code.
    `strconv.ParseInt(id, 16, 64)`. IDs that don't parse (fallback IDs)
    are never looked up.
 
-4. [ ] Session deletion: in `session.Service.Delete`, inside the existing
+4. [x] Session deletion: in `session.Service.Delete`, inside the existing
    transaction, collect `ListBackgroundJobIDsBySession` and run
    `DeleteBackgroundJobsBySession`; after commit, remove those log files
    (best effort, one warning on failure).
 
-5. [ ] Tests:
+5. [x] Tests:
    - `internal/db/background_jobs_test.go` (package `db`, so it can use
      the unpooled `openDB`; `Connect` would return the same pooled
      handle): open two handles to one file and assert they're different
@@ -232,7 +232,7 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate && go test ./internal/
 
 **Steps:**
 
-1. [ ] Recorder contract in `shell`:
+1. [x] Recorder contract in `shell`:
 
    ```go
    // AllocateRequest describes a job being published.
@@ -267,12 +267,12 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate && go test ./internal/
    func (m *BackgroundShellManager) SetRecorder(r JobRecorder)
    ```
 
-2. [ ] `jobstore.Store.Allocate`: insert the row, then open both log files
+2. [x] `jobstore.Store.Allocate`: insert the row, then open both log files
    with `shell.NewJobLog`. If opening either fails, close what opened,
    remove the files, `DeleteBackgroundJob`, and return the error. The
    caller then falls back (step 5).
 
-3. [ ] `joblog.go`: `NewJobLog(stdoutPath, stderrPath string) (JobLog, error)`.
+3. [x] `joblog.go`: `NewJobLog(stdoutPath, stderrPath string) (JobLog, error)`.
    Each stream's `Write` copies into an in-memory pending buffer under a
    small mutex and returns. A flusher goroutine writes pending data to
    disk every 2s, or sooner when pending exceeds 1MB. If pending exceeds
@@ -285,21 +285,21 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate && go test ./internal/
    returns `LogStats`; writes after `Close` are dropped. Because `Write`
    only touches memory, it's safe to call under the `syncBuffer` lock.
 
-4. [ ] Tee in `Publish`, under both buffers' write locks (so no write
+4. [x] Tee in `Publish`, under both buffers' write locks (so no write
    lands between the snapshot and the tee): write the retained buffer
    bytes to the log, then set `syncBuffer.tee` so later writes go to both
    in order. If the buffer was reset before publication (`gen > 0`), set
    `PrePublishLost` and write
    `[output before publication lost: exceeded 10MB buffer cap]\n` first.
 
-5. [ ] Fallback IDs. If `Allocate` fails, `Publish` logs a warning and
+5. [x] Fallback IDs. If `Allocate` fails, `Publish` logs a warning and
    assigns `fmt.Sprintf("M%s-%d", instanceShort, fallbackCounter.Add(1))`
    (`instanceShort` = four random hex characters per process). The job
    runs in memory only, and the bash response adds `Warning: this job
    could not be saved and will not survive a restart.` The `M` prefix
    and dash mean fallback IDs never parse as hex job IDs.
 
-6. [ ] Finalization state machine. Each published shell has an atomic
+6. [x] Finalization state machine. Each published shell has an atomic
    `endReason` that is set once by whoever decides first (compare and
    swap from empty): `Kill` sets `killed` before cancelling (and changes
    it to `abandoned` on timeout); `BeginShutdown` (Task 5) sets
@@ -312,9 +312,9 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate && go test ./internal/
    (bounded by its context) before returning, so no recorder call is
    still running when the DB is released.
 
-7. [ ] `Transfer` calls `recorder.Transferred` for handed-off jobs.
+7. [x] `Transfer` calls `recorder.Transferred` for handed-off jobs.
 
-8. [ ] Tests:
+8. [x] Tests:
    - `joblog`: cap and marker; flush on close; writes after close
      dropped; periodic flush (inject a short interval); a blocking disk
      writer (injected) → `Write` still returns immediately and

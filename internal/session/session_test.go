@@ -1,10 +1,12 @@
 package session
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -422,4 +424,59 @@ func TestListPinnedExcludesUnpinnedAndChildSessions(t *testing.T) {
 	ids := []string{pinned[0].ID, pinned[1].ID}
 	require.Contains(t, ids, pinnedA.ID)
 	require.Contains(t, ids, pinnedB.ID)
+}
+
+func TestDeleteRemovesBackgroundJobsAndLogs(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+	q := db.New(conn)
+
+	logDir := t.TempDir()
+	sessions := NewService(q, conn, WithJobLogDir(logDir))
+
+	doomed, err := sessions.Create(t.Context(), "doomed", "/tmp/project")
+	require.NoError(t, err)
+	kept, err := sessions.Create(t.Context(), "kept", "/tmp/project")
+	require.NoError(t, err)
+
+	createJob := func(sessionID string) []string {
+		key, err := q.CreateBackgroundJob(t.Context(), db.CreateBackgroundJobParams{
+			SessionID:  sessionID,
+			Origin:     "explicit",
+			Command:    "true",
+			WorkingDir: "/tmp/project",
+			StartedAt:  1,
+			InstanceID: "inst",
+		})
+		require.NoError(t, err)
+		stdoutPath, stderrPath := jobstore.LogPaths(logDir, jobstore.FormatID(key))
+		for _, p := range []string{stdoutPath, stderrPath} {
+			require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+		}
+		return []string{stdoutPath, stderrPath}
+	}
+	doomedLogs := append(createJob(doomed.ID), createJob(doomed.ID)...)
+	keptLogs := createJob(kept.ID)
+
+	require.NoError(t, sessions.Delete(t.Context(), doomed.ID))
+
+	ids, err := q.ListBackgroundJobIDsBySession(t.Context(), doomed.ID)
+	require.NoError(t, err)
+	require.Empty(t, ids)
+	for _, p := range doomedLogs {
+		require.NoFileExists(t, p)
+	}
+
+	ids, err = q.ListBackgroundJobIDsBySession(t.Context(), kept.ID)
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
+	for _, p := range keptLogs {
+		require.FileExists(t, p)
+	}
 }

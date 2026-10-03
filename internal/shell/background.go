@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"slices"
@@ -59,6 +62,9 @@ type syncBuffer struct {
 	changed chan struct{} // Closed and replaced on every write.
 	// onWrite, if set, is called after every write outside the lock.
 	onWrite func()
+	// tee, if set, receives every write in full, before the cap is
+	// applied. It must only touch memory: it is called under mu.
+	tee io.Writer
 }
 
 const truncationMarker = "[output truncated — exceeded 10MB buffer cap]\n"
@@ -75,6 +81,10 @@ func (sb *syncBuffer) write(p []byte) (n int, err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 	defer sb.signalLocked()
+
+	if sb.tee != nil {
+		_, _ = sb.tee.Write(p)
+	}
 
 	if sb.buf.Len()+len(p) <= MaxBufferSize {
 		return sb.buf.Write(p)
@@ -135,6 +145,10 @@ type BackgroundShell struct {
 	origin    JobOrigin
 	published bool
 	events    *atomic.Pointer[sinkHolder] // Set on publication.
+	endReason string
+	// persist is set on publication when the job was recorded, and is
+	// immutable afterwards.
+	persist *jobPersistence
 
 	// Pattern watch state, guarded by mu.
 	watchGen    uint64
@@ -208,6 +222,24 @@ func (bs *BackgroundShell) infoLocked() JobInfo {
 		info.CompletedAt = time.Unix(0, bs.completedAt.Load())
 	}
 	return info
+}
+
+// setEndReason records why the job ended if the current reason is
+// from, so whoever decides first wins.
+func (bs *BackgroundShell) setEndReason(from, to string) bool {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	if bs.endReason != from {
+		return false
+	}
+	bs.endReason = to
+	return true
+}
+
+func (bs *BackgroundShell) currentEndReason() string {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	return bs.endReason
 }
 
 func (bs *BackgroundShell) isPublished() bool {
@@ -286,6 +318,68 @@ type IDAllocator interface {
 	NextID(ctx context.Context) (string, error)
 }
 
+// End reasons recorded for persisted jobs.
+const (
+	EndExited      = "exited"
+	EndKilled      = "killed"
+	EndAbandoned   = "abandoned"
+	EndAnvilExit   = "anvil_exit"
+	EndInterrupted = "interrupted"
+)
+
+// AllocateRequest describes a job being published.
+type AllocateRequest struct {
+	Info           JobInfo
+	PrePublishLost bool // The 10MB buffer reset before publication.
+}
+
+// JobRecorder persists published jobs. With a recorder set, Publish
+// calls Allocate instead of the IDAllocator. Finalize records the end
+// state; the DB guard makes repeat calls no-ops.
+type JobRecorder interface {
+	Allocate(ctx context.Context, req AllocateRequest) (id string, log JobLog, err error)
+	Finalize(ctx context.Context, id string, info JobInfo, endReason string, stats LogStats) error
+	Transferred(ctx context.Context, jobIDs []string, toSession string) error
+}
+
+// recorderTimeout bounds recorder calls made outside a caller's
+// context.
+const recorderTimeout = 5 * time.Second
+
+// FallbackWarning is appended to bash responses for jobs that could not
+// be persisted.
+const FallbackWarning = "Warning: this job could not be saved and will not survive a restart."
+
+var (
+	instanceShort   = randomHex(2)
+	fallbackCounter atomic.Uint64
+)
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// fallbackID issues an in-memory-only job ID. The M prefix and dash
+// mean it never parses as a hex job ID.
+func fallbackID() string {
+	return fmt.Sprintf("M%s-%d", instanceShort, fallbackCounter.Add(1))
+}
+
+// IsFallbackID reports whether id was issued because the job could not
+// be persisted.
+func IsFallbackID(id string) bool {
+	return strings.HasPrefix(id, "M") && strings.Contains(id, "-")
+}
+
+// jobPersistence links a published job to its recorder and log.
+type jobPersistence struct {
+	recorder JobRecorder
+	log      JobLog
+	once     sync.Once
+}
+
 type counterAllocator struct{ next atomic.Uint64 }
 
 func (c *counterAllocator) NextID(context.Context) (string, error) {
@@ -301,6 +395,13 @@ type BackgroundShellManager struct {
 	aliases   map[string]string
 	allocator IDAllocator
 	sink      atomic.Pointer[sinkHolder]
+
+	// recMu guards the recorder and admission of recorder calls, which
+	// are tracked by recCalls so closing can wait for them.
+	recMu     sync.Mutex
+	recorder  JobRecorder
+	recClosed bool
+	recCalls  sync.WaitGroup
 
 	gracePeriod time.Duration
 }
@@ -335,6 +436,38 @@ func (m *BackgroundShellManager) SetIDAllocator(a IDAllocator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.allocator = a
+}
+
+// SetRecorder sets the recorder that persists published jobs. A nil
+// recorder falls back to the IDAllocator.
+func (m *BackgroundShellManager) SetRecorder(r JobRecorder) {
+	m.recMu.Lock()
+	defer m.recMu.Unlock()
+	m.recorder = r
+}
+
+// beginRecorderCall admits a recorder call unless recording is closed.
+// Callers must call m.recCalls.Done when it returns true.
+func (m *BackgroundShellManager) beginRecorderCall() bool {
+	m.recMu.Lock()
+	defer m.recMu.Unlock()
+	if m.recClosed {
+		return false
+	}
+	m.recCalls.Add(1)
+	return true
+}
+
+// acquireRecorder returns the current recorder with an admitted call,
+// or nil. Callers must call m.recCalls.Done for a non-nil result.
+func (m *BackgroundShellManager) acquireRecorder() JobRecorder {
+	m.recMu.Lock()
+	defer m.recMu.Unlock()
+	if m.recClosed || m.recorder == nil {
+		return nil
+	}
+	m.recCalls.Add(1)
+	return m.recorder
 }
 
 // SetEventSink sets the sink that receives events for published jobs.
@@ -403,7 +536,10 @@ type PublishOptions struct {
 
 // Publish promotes a running execution to a background job: it
 // allocates a job ID, re-keys the shell under it, and records the
-// owner and origin. It returns the new job ID.
+// owner and origin. It returns the new job ID. With a recorder set,
+// the job is persisted and its output streamed to a log; if that
+// fails, the job runs in memory only under a fallback ID (see
+// [IsFallbackID]).
 func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts PublishOptions) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -417,9 +553,24 @@ func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts P
 		return bs.ID(), nil
 	}
 
-	newID, err := m.allocator.NextID(ctx)
-	if err != nil {
-		return "", fmt.Errorf("allocating job ID: %w", err)
+	var (
+		newID   string
+		persist *jobPersistence
+	)
+	if rec := m.acquireRecorder(); rec != nil {
+		var err error
+		newID, persist, err = m.allocateRecorded(ctx, rec, bs, opts)
+		m.recCalls.Done()
+		if err != nil {
+			newID = fallbackID()
+			slog.Warn("Failed to persist background job; it will not survive a restart", "id", newID, "error", err)
+		}
+	} else {
+		var err error
+		newID, err = m.allocator.NextID(ctx)
+		if err != nil {
+			return "", fmt.Errorf("allocating job ID: %w", err)
+		}
 	}
 
 	m.shells.Take(key)
@@ -429,6 +580,7 @@ func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts P
 	bs.origin = opts.Origin
 	bs.published = true
 	bs.events = &m.sink
+	bs.persist = persist
 	bs.mu.Unlock()
 	m.shells.Set(newID, bs)
 	m.aliases[key] = newID
@@ -440,8 +592,78 @@ func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts P
 			h.sink.JobCompleted(bs.Info(), jobTail(stdout, stderr))
 		}()
 	}
+	if persist != nil {
+		go func() {
+			<-bs.done
+			bs.setEndReason("", EndExited)
+			m.finalize(bs)
+		}()
+	}
 
 	return newID, nil
+}
+
+// allocateRecorded persists bs and tees its output into a job log.
+// Both buffers stay write-locked from the snapshot until the tee is
+// installed, so no write is lost or duplicated in between.
+func (m *BackgroundShellManager) allocateRecorded(ctx context.Context, rec JobRecorder, bs *BackgroundShell, opts PublishOptions) (string, *jobPersistence, error) {
+	buffers := []*syncBuffer{bs.stdout, bs.stderr}
+	for _, sb := range buffers {
+		sb.mu.Lock()
+		defer sb.mu.Unlock()
+	}
+
+	req := AllocateRequest{
+		Info: JobInfo{
+			SessionID:   opts.SessionID,
+			Origin:      opts.Origin,
+			Command:     bs.Command,
+			Description: bs.Description,
+			WorkingDir:  bs.WorkingDir,
+			StartedAt:   bs.startedAt,
+		},
+		PrePublishLost: bs.stdout.gen > 0 || bs.stderr.gen > 0,
+	}
+	id, log, err := rec.Allocate(ctx, req)
+	if err != nil {
+		return "", nil, err
+	}
+
+	for i, w := range []io.Writer{log.Stdout(), log.Stderr()} {
+		sb := buffers[i]
+		retained := sb.buf.Bytes()
+		if sb.gen > 0 {
+			writeSnapshot(w, []byte(prePublishLostMarker))
+			retained = bytes.TrimPrefix(retained, []byte(truncationMarker))
+		}
+		writeSnapshot(w, retained)
+		sb.tee = w
+	}
+	return id, &jobPersistence{recorder: rec, log: log}, nil
+}
+
+// finalize closes a persisted job's log and records its end state,
+// once. While recording is closed, shutdown finalizes instead.
+func (m *BackgroundShellManager) finalize(bs *BackgroundShell) {
+	bs.mu.Lock()
+	p, id := bs.persist, bs.id
+	bs.mu.Unlock()
+	if p == nil {
+		return
+	}
+	p.once.Do(func() {
+		if !m.beginRecorderCall() {
+			return
+		}
+		defer m.recCalls.Done()
+
+		stats := p.log.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), recorderTimeout)
+		defer cancel()
+		if err := p.recorder.Finalize(ctx, id, bs.Info(), bs.currentEndReason(), stats); err != nil {
+			slog.Warn("Failed to record background job end state", "id", id, "error", err)
+		}
+	})
 }
 
 // jobTail returns the last ten lines of stdout followed by stderr.
@@ -518,6 +740,7 @@ func (m *BackgroundShellManager) Kill(id string) error {
 		return fmt.Errorf("background shell not found: %s", id)
 	}
 
+	shell.setEndReason("", EndKilled)
 	shell.cancel()
 	select {
 	case <-shell.done:
@@ -529,6 +752,9 @@ func (m *BackgroundShellManager) Kill(id string) error {
 			"command", shell.Command,
 			"grace_period", m.gracePeriod,
 		)
+		if shell.setEndReason(EndKilled, EndAbandoned) {
+			m.finalize(shell)
+		}
 		return ErrKillTimeout
 	}
 }
@@ -573,33 +799,40 @@ func (m *BackgroundShellManager) listJobs(keep func(JobInfo) bool) []JobInfo {
 }
 
 func sortJobs(jobs []JobInfo) {
-	slices.SortFunc(jobs, func(a, b JobInfo) int {
-		switch {
-		case !a.Done && b.Done:
-			return -1
-		case a.Done && !b.Done:
-			return 1
-		case !a.Done:
-			return cmp.Or(a.StartedAt.Compare(b.StartedAt), cmp.Compare(a.ID, b.ID))
-		default:
-			return cmp.Or(b.CompletedAt.Compare(a.CompletedAt), cmp.Compare(a.ID, b.ID))
-		}
-	})
+	slices.SortFunc(jobs, CompareJobs)
+}
+
+// CompareJobs orders jobs as [BackgroundShellManager.ListBySession]
+// does: running jobs first (oldest first), then finished jobs (newest
+// first).
+func CompareJobs(a, b JobInfo) int {
+	switch {
+	case !a.Done && b.Done:
+		return -1
+	case a.Done && !b.Done:
+		return 1
+	case !a.Done:
+		return cmp.Or(a.StartedAt.Compare(b.StartedAt), cmp.Compare(a.ID, b.ID))
+	default:
+		return cmp.Or(b.CompletedAt.Compare(a.CompletedAt), cmp.Compare(a.ID, b.ID))
+	}
 }
 
 // Transfer moves ownership of fromSession's published jobs to
 // toSession, except running auto jobs, whose IDs are returned in
 // toKill for the caller to kill outside the manager lock.
 func (m *BackgroundShellManager) Transfer(fromSession, toSession string) (handed []JobInfo, toKill []string) {
+	var persisted []string
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	for id, bs := range m.shells.Seq2() {
 		bs.mu.Lock()
 		owned := bs.published && bs.sessionID == fromSession
 		kill := owned && bs.origin == OriginAuto && !bs.IsDone()
 		if owned && !kill {
 			bs.sessionID = toSession
+			if bs.persist != nil {
+				persisted = append(persisted, id)
+			}
 		}
 		bs.mu.Unlock()
 
@@ -612,9 +845,30 @@ func (m *BackgroundShellManager) Transfer(fromSession, toSession string) (handed
 		}
 		handed = append(handed, bs.Info())
 	}
+	m.mu.Unlock()
+
 	sortJobs(handed)
 	slices.Sort(toKill)
+	m.recordTransfer(persisted, toSession)
 	return handed, toKill
+}
+
+func (m *BackgroundShellManager) recordTransfer(jobIDs []string, toSession string) {
+	if len(jobIDs) == 0 {
+		return
+	}
+	rec := m.acquireRecorder()
+	if rec == nil {
+		return
+	}
+	defer m.recCalls.Done()
+
+	slices.Sort(jobIDs)
+	ctx, cancel := context.WithTimeout(context.Background(), recorderTimeout)
+	defer cancel()
+	if err := rec.Transferred(ctx, jobIDs, toSession); err != nil {
+		slog.Warn("Failed to record background job transfer", "ids", jobIDs, "session", toSession, "error", err)
+	}
 }
 
 // Cleanup removes completed jobs that have been finished for more than the retention period
