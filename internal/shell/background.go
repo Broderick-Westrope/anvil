@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -132,6 +134,11 @@ type BackgroundShell struct {
 	sessionID string
 	origin    JobOrigin
 	published bool
+	events    *atomic.Pointer[sinkHolder] // Set on publication.
+
+	// Pattern watch state, guarded by mu.
+	watchGen    uint64
+	watchCancel context.CancelFunc
 
 	startedAt    time.Time
 	lastOutputAt atomic.Int64 // Unix nanoseconds; 0 if nothing written.
@@ -176,6 +183,12 @@ type JobInfo struct {
 // Info returns a snapshot of the shell's metadata and state.
 func (bs *BackgroundShell) Info() JobInfo {
 	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	return bs.infoLocked()
+}
+
+// infoLocked is [BackgroundShell.Info] for callers holding bs.mu.
+func (bs *BackgroundShell) infoLocked() JobInfo {
 	info := JobInfo{
 		ID:          bs.id,
 		SessionID:   bs.sessionID,
@@ -185,7 +198,6 @@ func (bs *BackgroundShell) Info() JobInfo {
 		WorkingDir:  bs.WorkingDir,
 		StartedAt:   bs.startedAt,
 	}
-	bs.mu.Unlock()
 
 	if n := bs.lastOutputAt.Load(); n > 0 {
 		info.LastOutputAt = time.Unix(0, n)
@@ -203,6 +215,71 @@ func (bs *BackgroundShell) isPublished() bool {
 	defer bs.mu.Unlock()
 	return bs.published
 }
+
+// eventSinkLocked returns the sink for a published job, or nil. The
+// caller must hold bs.mu.
+func (bs *BackgroundShell) eventSinkLocked() EventSink {
+	if !bs.published || bs.events == nil {
+		return nil
+	}
+	if h := bs.events.Load(); h != nil {
+		return h.sink
+	}
+	return nil
+}
+
+// SetWatch replaces the job's pattern watch with matcher (nil clears
+// it). The sink learns the new generation before the watch can fire,
+// and a match is only emitted while its generation is still current.
+// The watch fires at most once and ends when the job completes.
+func (bs *BackgroundShell) SetWatch(matcher *LineMatcher) uint64 {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	bs.watchGen++
+	gen := bs.watchGen
+	if bs.watchCancel != nil {
+		bs.watchCancel()
+		bs.watchCancel = nil
+	}
+	if sink := bs.eventSinkLocked(); sink != nil {
+		sink.WatchReplaced(bs.id, gen)
+	}
+	if matcher == nil {
+		return gen
+	}
+
+	watchCtx, cancel := context.WithCancel(bs.ctx)
+	bs.watchCancel = cancel
+	go func() {
+		defer cancel()
+		reason, line := bs.WaitFor(watchCtx, time.Duration(math.MaxInt64), matcher)
+		if reason != WaitMatched {
+			return
+		}
+
+		bs.mu.Lock()
+		defer bs.mu.Unlock()
+		if bs.watchGen != gen || bs.IsDone() {
+			return
+		}
+		if sink := bs.eventSinkLocked(); sink != nil {
+			sink.PatternMatched(bs.infoLocked(), gen, line)
+		}
+	}()
+	return gen
+}
+
+// EventSink receives events for published jobs. Implementations must
+// only update memory and return immediately: they may be called with
+// a BackgroundShell's mutex held.
+type EventSink interface {
+	JobCompleted(info JobInfo, tail string)
+	WatchReplaced(jobID string, gen uint64)
+	PatternMatched(info JobInfo, gen uint64, line string)
+}
+
+type sinkHolder struct{ sink EventSink }
 
 // IDAllocator issues job IDs for published background jobs.
 type IDAllocator interface {
@@ -223,6 +300,7 @@ type BackgroundShellManager struct {
 	shells    *csync.Map[string, *BackgroundShell]
 	aliases   map[string]string
 	allocator IDAllocator
+	sink      atomic.Pointer[sinkHolder]
 
 	gracePeriod time.Duration
 }
@@ -257,6 +335,16 @@ func (m *BackgroundShellManager) SetIDAllocator(a IDAllocator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.allocator = a
+}
+
+// SetEventSink sets the sink that receives events for published jobs.
+// A nil sink disables events.
+func (m *BackgroundShellManager) SetEventSink(sink EventSink) {
+	if sink == nil {
+		m.sink.Store(nil)
+		return
+	}
+	m.sink.Store(&sinkHolder{sink: sink})
 }
 
 // Start creates and starts a new background shell with the given command.
@@ -340,11 +428,31 @@ func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts P
 	bs.sessionID = opts.SessionID
 	bs.origin = opts.Origin
 	bs.published = true
+	bs.events = &m.sink
 	bs.mu.Unlock()
 	m.shells.Set(newID, bs)
 	m.aliases[key] = newID
 
+	if h := m.sink.Load(); h != nil {
+		go func() {
+			<-bs.done
+			stdout, stderr, _, _ := bs.GetOutput()
+			h.sink.JobCompleted(bs.Info(), jobTail(stdout, stderr))
+		}()
+	}
+
 	return newID, nil
+}
+
+// jobTail returns the last ten lines of stdout followed by stderr.
+func jobTail(stdout, stderr string) string {
+	var parts []string
+	for _, part := range []string{stdout, stderr} {
+		if part = strings.TrimRight(part, "\n"); part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return LastLines(strings.Join(parts, "\n"), 10)
 }
 
 // resolveLocked maps an internal key to its published job ID, if any.
