@@ -702,6 +702,13 @@ func (app *App) Shutdown() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// CancelAll stops waiting once runs are no longer busy, but a wake
+	// run may still be writing its last state. Let it finish before job
+	// events and the DB are closed below.
+	if app.jobWaker != nil && !app.jobWaker.wait(shutdownCtx) {
+		slog.Warn("Timed out waiting for job wake runs to finish")
+	}
+
 	// Drain any debounced message updates before the DB-close cleanup
 	// runs in the parallel block below. message.Service buffers
 	// streaming deltas (see internal/message/message.go) and we must
