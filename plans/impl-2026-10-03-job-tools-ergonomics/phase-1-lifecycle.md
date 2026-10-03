@@ -23,23 +23,23 @@ Out: incremental reads, wait changes, events, persistence, UI sections.
 
 **Success Criteria:**
 
-- [ ] A specialist agent with `bash` can call `job_output`, `job_kill`, and
+- [x] A specialist agent with `bash` can call `job_output`, `job_kill`, and
       `job_list` without listing them; `["!job_kill"]` still excludes
       `job_kill`; a globally disabled job tool stays disabled.
-- [ ] A foreground bash call that finishes before the threshold does not
+- [x] A foreground bash call that finishes before the threshold does not
       appear in `job_list` and consumes no job ID.
-- [ ] When a subagent returns (success, error, or cancel), its running
+- [x] When a subagent returns (success, error, or cancel), its running
       `auto` jobs are killed without holding the manager lock, its
       `explicit` jobs (running and completed) are owned by the parent, and
       the tool result lists handed-off and killed (exited/abandoned) jobs.
-- [ ] `job_list` shows running jobs first and uncapped, then at most 20
+- [x] `job_list` shows running jobs first and uncapped, then at most 20
       finished jobs with an omitted count (tested with 25 finished jobs
       newer than one running job).
-- [ ] Starting a background job in a session with other running jobs lists
+- [x] Starting a background job in a session with other running jobs lists
       them in the response; with none, the response is unchanged.
-- [ ] After compaction, the stored summary contains a `Background jobs`
+- [x] After compaction, the stored summary contains a `Background jobs`
       section listing running jobs.
-- [ ] `job_kill` on an exited job reports exit code and last lines; on a
+- [x] `job_kill` on an exited job reports exit code and last lines; on a
       job outliving the grace period it reports abandonment.
 - [ ] `go test ./... -count=1` passes; `go test -race ./internal/shell/...
       ./internal/agent/...` passes.
@@ -323,7 +323,7 @@ go build ./... && go test -race ./internal/shell/ -count=1
 
 **Steps:**
 
-1. [ ] Create `job_format.go` for tool-specific formatting, built on the
+1. [x] Create `job_format.go` for tool-specific formatting, built on the
    `shell` helpers from Task 1:
 
    ```go
@@ -350,7 +350,7 @@ go build ./... && go test -race ./internal/shell/ -count=1
 
    Update the coordinator and test call sites.
 
-2. [ ] Publish from bash. In `bash.go`:
+2. [x] Publish from bash. In `bash.go`:
    - Explicit path (~line 280, after the fast-failure check finds the job
      still running): call
      `bgManager.Publish(ctx, bgShell.ID(), shell.PublishOptions{SessionID: sessionID, Origin: shell.OriginExplicit})`.
@@ -373,11 +373,11 @@ go build ./... && go test -race ./internal/shell/ -count=1
      unpublished keys; drop the `[Job %s] ` prefix.
    - Replace remaining `bgShell.ID` field reads with `bgShell.ID()`.
 
-3. [ ] Add to `bash.md.tpl` inside `<background_execution>`:
+3. [x] Add to `bash.md.tpl` inside `<background_execution>`:
    `- Before starting a long-lived server or tunnel, check job_list for an existing one you can reuse.`
    and `- Every agent with bash has job_output, job_kill, and job_list.`
 
-4. [ ] Create `job_list.go` following `job_kill.go`'s structure:
+4. [x] Create `job_list.go` following `job_kill.go`'s structure:
 
    ```go
    const JobListToolName = "job_list"
@@ -408,13 +408,13 @@ go build ./... && go test -race ./internal/shell/ -count=1
    zero; `No background jobs.` when both are empty. Labels use
    `shell.JobLabel(info, 80)`.
 
-5. [ ] Create `job_list.md` in the structured style of `job_kill.md`:
+5. [x] Create `job_list.md` in the structured style of `job_kill.md`:
    when to use (rediscover IDs after context loss, check for an existing
    server before starting one), the `all` param, ordering and caps, and
    that `all=true` includes jobs from other sessions in the same Anvil
    process.
 
-6. [ ] Honest `job_kill`. Before calling `Kill`:
+6. [x] Honest `job_kill`. Before calling `Kill`:
 
    ```go
    if bgShell.IsDone() {
@@ -438,7 +438,7 @@ go build ./... && go test -race ./internal/shell/ -count=1
    `job_format.go`. Update `job_kill.md` to describe the
    three outcomes.
 
-7. [ ] Tests in `job_test.go`:
+7. [x] Tests in `job_test.go`:
    - Foreground bash (via `NewBashTool` with a test permission service and
      a context carrying `SessionIDContextKey`): `echo hi` does not appear
      in `ListBySession`.
@@ -480,11 +480,11 @@ go build ./... && go test -race ./internal/agent/tools/ -count=1
 
 **Steps:**
 
-1. [ ] Register `tools.NewJobListTool(tools.JobToolOptions{})` next to the
+1. [x] Register `tools.NewJobListTool(tools.JobToolOptions{})` next to the
    other job tools
    in the candidate list (~line 1017).
 
-2. [ ] Auto-grant. After `ParseFilterList` (~line 1060) and before the
+2. [x] Auto-grant. After `ParseFilterList` (~line 1060) and before the
    global `DisabledTools` filter:
 
    ```go
@@ -520,7 +520,7 @@ go build ./... && go test -race ./internal/agent/tools/ -count=1
    AllowedTools tests in `coordinator_test.go`) showing a globally
    disabled `job_kill` stays disabled for a `["bash"]` agent.
 
-3. [ ] Subagent handoff in `job_handoff.go`:
+3. [x] Subagent handoff in `job_handoff.go`:
 
    ```go
    // handOffSubagentJobs transfers a finished subagent's deliberate jobs
@@ -544,7 +544,7 @@ go build ./... && go test -race ./internal/agent/tools/ -count=1
 
    Omit a line when it has no entries. Sort entries by ID.
 
-4. [ ] Wire it into `runSubAgent` (~line 1575). Convert to named results
+4. [x] Wire it into `runSubAgent` (~line 1575). Convert to named results
    `(resp fantasy.ToolResponse, err error)` and, right after the task
    session is created, defer:
 
@@ -567,7 +567,7 @@ go build ./... && go test -race ./internal/agent/tools/ -count=1
    through the defer). Check `fantasy.ToolResponse`'s field name for the
    text body before writing this.
 
-5. [ ] Compaction jobs section. In `Summarize` (`agent.go` ~line 944),
+5. [x] Compaction jobs section. In `Summarize` (`agent.go` ~line 944),
    after `summaryText := compactionMsg.Content().Text`:
 
    ```go
@@ -594,7 +594,7 @@ go build ./... && go test -race ./internal/agent/tools/ -count=1
 
    Return `summary` unchanged when there are none.
 
-6. [ ] Tests in `job_handoff_test.go` (use `shell.GetBackgroundShellManager()`
+6. [x] Tests in `job_handoff_test.go` (use `shell.GetBackgroundShellManager()`
    with unique session IDs per test, and real `sleep` commands published
    via `Publish`):
    - Child with one auto running, one explicit running, one explicit
