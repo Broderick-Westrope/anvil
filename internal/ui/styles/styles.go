@@ -116,20 +116,20 @@ type Styles struct {
 		PromptNormalBlurred lipgloss.Style
 
 		// Mode badges drawn in the prompt gutter, one per line, for the
-		// permission assessor and yolo. Each renders exactly three cells
+		// bouncer and yolo. Each renders exactly three cells
 		// plus a one-cell right margin.
-		PromptShadowFocused   lipgloss.Style // Assessor shadow (◇)
+		PromptShadowFocused   lipgloss.Style // Bouncer shadow (◇)
 		PromptShadowBlurred   lipgloss.Style
-		PromptEnforceFocused  lipgloss.Style // Assessor enforce (◆)
+		PromptEnforceFocused  lipgloss.Style // Bouncer enforce (◆)
 		PromptEnforceBlurred  lipgloss.Style
-		PromptEnforceInactive lipgloss.Style // Assessor enforce while full yolo bypasses it
+		PromptEnforceInactive lipgloss.Style // Bouncer enforce while full yolo bypasses it
 		PromptYoloFocused     lipgloss.Style // Standard yolo (!)
 		PromptYoloBlurred     lipgloss.Style
 		PromptFullYoloFocused lipgloss.Style // Full yolo (!!!)
 		PromptFullYoloBlurred lipgloss.Style
 
 		// Dots on lines without a badge, tinted by the riskiest active mode.
-		PromptAssessorDotsFocused lipgloss.Style
+		PromptBouncerDotsFocused  lipgloss.Style
 		PromptYoloDotsFocused     lipgloss.Style
 		PromptFullYoloDotsFocused lipgloss.Style
 		PromptModeDotsBlurred     lipgloss.Style
@@ -443,10 +443,10 @@ type Styles struct {
 			ValueText lipgloss.Style // Right value cell of a key/value row
 			ParamsBg  color.Color    // Background color behind highlighted JSON parameters
 
-			AssessorScore    lipgloss.Style // Assessor axis that didn't affect routing
-			AssessorEscalate lipgloss.Style // Assessor axis or outcome that escalated to the human
-			AssessorDeny     lipgloss.Style // Assessor axis or outcome at the deny threshold
-			AssessorMitigate lipgloss.Style // User-request signal that softened a deny
+			BouncerScore    lipgloss.Style // Bouncer axis that didn't affect routing
+			BouncerEscalate lipgloss.Style // Bouncer axis or outcome that escalated to the human
+			BouncerDeny     lipgloss.Style // Bouncer axis or outcome at the deny threshold
+			BouncerMitigate lipgloss.Style // User-request signal that softened a deny
 		}
 
 		Quit struct {

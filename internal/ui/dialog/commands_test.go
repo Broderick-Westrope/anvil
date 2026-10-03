@@ -12,20 +12,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// assessorCommandsWorkspace is a minimal [workspace.Workspace] stub for
-// exercising the "cycle_assessor" command palette item.
-type assessorCommandsWorkspace struct {
+// bouncerCommandsWorkspace is a minimal [workspace.Workspace] stub for
+// exercising the "cycle_bouncer" command palette item.
+type bouncerCommandsWorkspace struct {
 	workspace.Workspace
 	cfg        *config.Config
 	configured bool
-	mode       permission.AssessorMode
+	mode       permission.BouncerMode
 }
 
-func (w *assessorCommandsWorkspace) Config() *config.Config { return w.cfg }
+func (w *bouncerCommandsWorkspace) Config() *config.Config { return w.cfg }
 
-func (w *assessorCommandsWorkspace) PermissionAssessorConfigured() bool { return w.configured }
+func (w *bouncerCommandsWorkspace) PermissionBouncerConfigured() bool { return w.configured }
 
-func (w *assessorCommandsWorkspace) PermissionAssessorMode() permission.AssessorMode {
+func (w *bouncerCommandsWorkspace) PermissionBouncerMode() permission.BouncerMode {
 	return w.mode
 }
 
@@ -42,41 +42,41 @@ func findCommandItem(items []*CommandItem, id string) *CommandItem {
 	return nil
 }
 
-func TestDefaultCommands_CycleAssessorAbsentWhenNotConfigured(t *testing.T) {
+func TestDefaultCommands_CycleBouncerAbsentWhenNotConfigured(t *testing.T) {
 	t.Parallel()
 
 	s := styles.TokyoNight()
 	com := &common.Common{
 		Styles:    &s,
-		Workspace: &assessorCommandsWorkspace{cfg: testCommandsConfig(), configured: false},
+		Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig(), configured: false},
 	}
 	c := &Commands{com: com}
 
-	require.Nil(t, findCommandItem(c.defaultCommands(), "cycle_assessor"))
+	require.Nil(t, findCommandItem(c.defaultCommands(), "cycle_bouncer"))
 }
 
-func TestDefaultCommands_CycleAssessorPresentWhenConfigured(t *testing.T) {
+func TestDefaultCommands_CycleBouncerPresentWhenConfigured(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name          string
-		mode          permission.AssessorMode
+		mode          permission.BouncerMode
 		wantLabelHas  []string
 		wantLabelMiss []string
 	}{
 		{
 			name:         "off cycles to shadow",
-			mode:         permission.AssessorOff,
+			mode:         permission.BouncerOff,
 			wantLabelHas: []string{"Off", "Shadow"},
 		},
 		{
 			name:         "shadow cycles to enforce",
-			mode:         permission.AssessorShadow,
+			mode:         permission.BouncerShadow,
 			wantLabelHas: []string{"Shadow", "Enforce"},
 		},
 		{
 			name:         "enforce cycles to off",
-			mode:         permission.AssessorEnforce,
+			mode:         permission.BouncerEnforce,
 			wantLabelHas: []string{"Enforce", "Off"},
 		},
 	}
@@ -88,32 +88,32 @@ func TestDefaultCommands_CycleAssessorPresentWhenConfigured(t *testing.T) {
 			s := styles.TokyoNight()
 			com := &common.Common{
 				Styles:    &s,
-				Workspace: &assessorCommandsWorkspace{cfg: testCommandsConfig(), configured: true, mode: tc.mode},
+				Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig(), configured: true, mode: tc.mode},
 			}
 			c := &Commands{com: com}
 
-			item := findCommandItem(c.defaultCommands(), "cycle_assessor")
+			item := findCommandItem(c.defaultCommands(), "cycle_bouncer")
 			require.NotNil(t, item)
 			for _, want := range tc.wantLabelHas {
 				require.Contains(t, item.title, want)
 			}
-			require.Equal(t, ActionCycleAssessorMode{}, item.Action())
+			require.Equal(t, ActionCycleBouncerMode{}, item.Action())
 		})
 	}
 }
 
-func TestAssessorModeLabel(t *testing.T) {
+func TestBouncerModeLabel(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, "Off", assessorModeLabel(permission.AssessorOff))
-	require.Equal(t, "Shadow", assessorModeLabel(permission.AssessorShadow))
-	require.Equal(t, "Enforce", assessorModeLabel(permission.AssessorEnforce))
+	require.Equal(t, "Off", bouncerModeLabel(permission.BouncerOff))
+	require.Equal(t, "Shadow", bouncerModeLabel(permission.BouncerShadow))
+	require.Equal(t, "Enforce", bouncerModeLabel(permission.BouncerEnforce))
 }
 
-func TestNextAssessorMode(t *testing.T) {
+func TestNextBouncerMode(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, permission.AssessorShadow, nextAssessorMode(permission.AssessorOff))
-	require.Equal(t, permission.AssessorEnforce, nextAssessorMode(permission.AssessorShadow))
-	require.Equal(t, permission.AssessorOff, nextAssessorMode(permission.AssessorEnforce))
+	require.Equal(t, permission.BouncerShadow, nextBouncerMode(permission.BouncerOff))
+	require.Equal(t, permission.BouncerEnforce, nextBouncerMode(permission.BouncerShadow))
+	require.Equal(t, permission.BouncerOff, nextBouncerMode(permission.BouncerEnforce))
 }

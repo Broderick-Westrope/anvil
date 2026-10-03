@@ -1,4 +1,4 @@
-package assessor
+package bouncer
 
 import (
 	"testing"
@@ -49,11 +49,11 @@ func TestRedact(t *testing.T) {
 	survivors := []string{
 		"go test ./...",
 		"git status",
-		"/Users/someone/dev/project/internal/assessor/state.go",
+		"/Users/someone/dev/project/internal/bouncer/state.go",
 		"go test github.com/Broderick-Westrope/anvil/internal/permission/segment",
 		"/var/folders/7h/k5xgt3hd0q1bh5s7wqzk4hzm0000gn/T/TestBuildStateBash2952617373/001",
 		"/var/folders/7h/k5xgt3hd0q1bh_s7wqzk4hzm0000gn/T/TestBuildStateEditnew_file_in_new_subdir123/002/main.go",
-		"cd /Users/someone/dev/project/internal/permission/assessor_integration_test.go",
+		"cd /Users/someone/dev/project/internal/permission/bouncer_integration_test.go",
 		"vim ./internal/agent/tools/edit_permission_request_test.go",
 		"go get golang.org/x/tools/gopls/internal/analysis/modernize",
 		"gofumpt -l .",

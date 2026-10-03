@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type fakeAssessor struct {
+type fakeBouncer struct {
 	outcome AssessOutcome
 	reason  string
 	err     error
@@ -25,7 +25,7 @@ type fakeAssessor struct {
 	release chan struct{}    // Assess blocks until closed when non-nil.
 }
 
-func (f *fakeAssessor) Assess(ctx context.Context, in AssessInput) (Assessment, error) {
+func (f *fakeBouncer) Assess(ctx context.Context, in AssessInput) (Assessment, error) {
 	f.calls.Add(1)
 	if f.entered != nil {
 		f.entered <- in
@@ -34,7 +34,7 @@ func (f *fakeAssessor) Assess(ctx context.Context, in AssessInput) (Assessment, 
 		select {
 		case <-f.release:
 		case <-ctx.Done():
-			return Assessment{Reason: "assessor error"}, ctx.Err()
+			return Assessment{Reason: "bouncer error"}, ctx.Err()
 		}
 	}
 	severity := 0.3
@@ -52,26 +52,26 @@ func (f *fakeAssessor) Assess(ctx context.Context, in AssessInput) (Assessment, 
 	return Assessment{Outcome: f.outcome, Reason: f.reason, Details: details}, f.err
 }
 
-type assessorHarness struct {
+type bouncerHarness struct {
 	svc           *permissionService
-	fake          *fakeAssessor
+	fake          *fakeBouncer
 	rec           *fakeRecorder
 	events        <-chan pubsub.Event[PermissionRequest]
 	notifications <-chan pubsub.Event[PermissionNotification]
 	dir           string
 }
 
-func newAssessorHarness(t *testing.T, fake *fakeAssessor, mode AssessorMode, rules []config.PermissionRule, store *config.ConfigStore, extra ...Option) *assessorHarness {
+func newBouncerHarness(t *testing.T, fake *fakeBouncer, mode BouncerMode, rules []config.PermissionRule, store *config.ConfigStore, extra ...Option) *bouncerHarness {
 	t.Helper()
 	dir := t.TempDir()
 	rec := &fakeRecorder{}
 	opts := []Option{WithDecisionRecorder(rec)}
 	if fake != nil {
-		opts = append(opts, WithAssessor(AssessorOptions{Assessor: fake, Mode: mode, Timeout: 5 * time.Second}))
+		opts = append(opts, WithBouncer(BouncerOptions{Bouncer: fake, Mode: mode, Timeout: 5 * time.Second}))
 	}
 	opts = append(opts, extra...)
 	svc := NewPermissionService(dir, config.YoloOff, rules, store, opts...).(*permissionService)
-	return &assessorHarness{
+	return &bouncerHarness{
 		svc:           svc,
 		fake:          fake,
 		rec:           rec,
@@ -81,7 +81,7 @@ func newAssessorHarness(t *testing.T, fake *fakeAssessor, mode AssessorMode, rul
 	}
 }
 
-func (h *assessorHarness) req(callID, input string) CreatePermissionRequest {
+func (h *bouncerHarness) req(callID, input string) CreatePermissionRequest {
 	return CreatePermissionRequest{
 		SessionID:  "session",
 		ToolCallID: callID,
@@ -93,7 +93,7 @@ func (h *assessorHarness) req(callID, input string) CreatePermissionRequest {
 }
 
 // drainNotifications returns the notifications published so far.
-func (h *assessorHarness) drainNotifications() []PermissionNotification {
+func (h *bouncerHarness) drainNotifications() []PermissionNotification {
 	var out []PermissionNotification
 	for {
 		select {
@@ -105,7 +105,7 @@ func (h *assessorHarness) drainNotifications() []PermissionNotification {
 	}
 }
 
-func (h *assessorHarness) assessment(t *testing.T, d Decision) AssessmentRecord {
+func (h *bouncerHarness) assessment(t *testing.T, d Decision) AssessmentRecord {
 	t.Helper()
 	require.NotEmpty(t, d.Assessment)
 	var rec AssessmentRecord
@@ -158,33 +158,33 @@ func waitPrompt(t *testing.T, events <-chan pubsub.Event[PermissionRequest]) Per
 	}
 }
 
-func waitEntered(t *testing.T, f *fakeAssessor) AssessInput {
+func waitEntered(t *testing.T, f *fakeBouncer) AssessInput {
 	t.Helper()
 	select {
 	case in := <-f.entered:
 		return in
 	case <-time.After(10 * time.Second):
-		t.Fatal("assessor was not called")
+		t.Fatal("bouncer was not called")
 		return AssessInput{}
 	}
 }
 
-func TestAssessorNotCalledWhenOff(t *testing.T) {
+func TestBouncerNotCalledWhenOff(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name string
-		fake *fakeAssessor
-		mode AssessorMode
+		fake *fakeBouncer
+		mode BouncerMode
 	}{
-		{name: "no assessor"},
-		{name: "mode off", fake: &fakeAssessor{outcome: AssessAllow}, mode: AssessorOff},
+		{name: "no bouncer"},
+		{name: "mode off", fake: &fakeBouncer{outcome: AssessAllow}, mode: BouncerOff},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			h := newAssessorHarness(t, tt.fake, tt.mode, nil, nil)
+			h := newBouncerHarness(t, tt.fake, tt.mode, nil, nil)
 			done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf build"))
 			perm := waitPrompt(t, h.events)
-			require.Empty(t, perm.AssessorNote)
+			require.Empty(t, perm.BouncerNote)
 			h.svc.Grant(perm)
 			r := waitResult(t, done)
 			require.NoError(t, r.err)
@@ -200,14 +200,14 @@ func TestAssessorNotCalledWhenOff(t *testing.T) {
 	}
 }
 
-func TestAssessorNotCalledForExplicitRules(t *testing.T) {
+func TestBouncerNotCalledForExplicitRules(t *testing.T) {
 	t.Parallel()
 	for _, action := range []config.PermissionAction{config.PermissionAllow, config.PermissionDeny} {
 		t.Run(string(action), func(t *testing.T) {
 			t.Parallel()
-			fake := &fakeAssessor{outcome: AssessAllow}
+			fake := &fakeBouncer{outcome: AssessAllow}
 			rules := []config.PermissionRule{{ToolPattern: "bash", Action: action}}
-			h := newAssessorHarness(t, fake, AssessorEnforce, rules, nil)
+			h := newBouncerHarness(t, fake, BouncerEnforce, rules, nil)
 			r, err := h.svc.Request(testCtx(t), h.req("call", "ls"))
 			require.NoError(t, err)
 			require.Equal(t, action == config.PermissionAllow, r.Granted)
@@ -217,10 +217,10 @@ func TestAssessorNotCalledForExplicitRules(t *testing.T) {
 	}
 }
 
-func TestAssessorEnforceAllow(t *testing.T) {
+func TestBouncerEnforceAllow(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessAllow}
-	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	fake := &fakeBouncer{outcome: AssessAllow}
+	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 	opts := h.req("call", "go build ./...")
 
 	r, err := h.svc.Request(testCtx(t), opts)
@@ -230,13 +230,13 @@ func TestAssessorEnforceAllow(t *testing.T) {
 	require.Equal(t, []PermissionNotification{{ToolCallID: "call"}, {ToolCallID: "call", Granted: true}}, h.drainNotifications())
 	decisions := h.rec.snapshot()
 	require.Len(t, decisions, 1)
-	require.Equal(t, DecisionSourceAssessor, decisions[0].DecidedBy)
+	require.Equal(t, DecisionSourceBouncer, decisions[0].DecidedBy)
 	require.Equal(t, VerdictAllow, decisions[0].Verdict)
 	rec := h.assessment(t, decisions[0])
 	require.Equal(t, "enforce", rec.Mode)
 	require.Equal(t, "allow", rec.Outcome)
 
-	// A repeat is granted from the cache without calling the assessor.
+	// A repeat is granted from the cache without calling the bouncer.
 	opts.ToolCallID = "call-2"
 	r, err = h.svc.Request(testCtx(t), opts)
 	require.NoError(t, err)
@@ -245,7 +245,7 @@ func TestAssessorEnforceAllow(t *testing.T) {
 	require.Empty(t, h.events)
 	decisions = h.rec.snapshot()
 	require.Len(t, decisions, 2)
-	require.Equal(t, DecisionSourceAssessor, decisions[1].DecidedBy)
+	require.Equal(t, DecisionSourceBouncer, decisions[1].DecidedBy)
 	require.Equal(t, "session allow cache", h.assessment(t, decisions[1]).Reason)
 
 	// Different content is a different call.
@@ -256,38 +256,38 @@ func TestAssessorEnforceAllow(t *testing.T) {
 	require.Equal(t, int32(2), fake.calls.Load())
 }
 
-func TestAssessorEnforceDeny(t *testing.T) {
+func TestBouncerEnforceDeny(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessDeny, reason: "destructive"}
-	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	fake := &fakeBouncer{outcome: AssessDeny, reason: "destructive"}
+	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 
 	r, err := h.svc.Request(testCtx(t), h.req("call", "rm -rf /"))
 	require.NoError(t, err)
 	require.False(t, r.Granted)
-	require.Contains(t, r.Reason, "permission assessor")
+	require.Contains(t, r.Reason, "permission bouncer")
 	require.Contains(t, r.Reason, "destructive")
 	require.Empty(t, h.events)
 	decisions := h.rec.snapshot()
-	require.Equal(t, DecisionSourceAssessor, decisions[0].DecidedBy)
+	require.Equal(t, DecisionSourceBouncer, decisions[0].DecidedBy)
 	require.Equal(t, VerdictDeny, decisions[0].Verdict)
 }
 
-func TestAssessorEnforceEscalatePrompts(t *testing.T) {
+func TestBouncerEnforceEscalatePrompts(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name string
-		fake *fakeAssessor
+		fake *fakeBouncer
 		note string
 	}{
-		{name: "escalate", fake: &fakeAssessor{outcome: AssessEscalate}, note: "assessor: escalate · destructive=0.05 severity=0.3"},
-		{name: "error", fake: &fakeAssessor{outcome: AssessAllow, err: errors.New("boom")}, note: "assessor: error"},
+		{name: "escalate", fake: &fakeBouncer{outcome: AssessEscalate}, note: "bouncer: escalate · destructive=0.05 severity=0.3"},
+		{name: "error", fake: &fakeBouncer{outcome: AssessAllow, err: errors.New("boom")}, note: "bouncer: error"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			h := newAssessorHarness(t, tt.fake, AssessorEnforce, nil, nil)
+			h := newBouncerHarness(t, tt.fake, BouncerEnforce, nil, nil)
 			done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
 			perm := waitPrompt(t, h.events)
-			require.Equal(t, tt.note, perm.AssessorNote)
+			require.Equal(t, tt.note, perm.BouncerNote)
 			h.svc.Deny(perm, "no")
 			r := waitResult(t, done)
 			require.NoError(t, r.err)
@@ -299,13 +299,13 @@ func TestAssessorEnforceEscalatePrompts(t *testing.T) {
 	}
 }
 
-func TestAssessorShadowAllowStillPrompts(t *testing.T) {
+func TestBouncerShadowAllowStillPrompts(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessAllow}
-	h := newAssessorHarness(t, fake, AssessorShadow, nil, nil)
+	fake := &fakeBouncer{outcome: AssessAllow}
+	h := newBouncerHarness(t, fake, BouncerShadow, nil, nil)
 	done := requestAsync(testCtx(t), h.svc, h.req("call", "go test ./..."))
 	perm := waitPrompt(t, h.events)
-	require.Equal(t, "assessor (shadow): allow · destructive=0.05 severity=0.3", perm.AssessorNote)
+	require.Equal(t, "bouncer (shadow): allow · destructive=0.05 severity=0.3", perm.BouncerNote)
 	h.svc.Grant(perm)
 	r := waitResult(t, done)
 	require.NoError(t, r.err)
@@ -318,33 +318,33 @@ func TestAssessorShadowAllowStillPrompts(t *testing.T) {
 	require.Equal(t, "allow", rec.Outcome)
 }
 
-func TestAssessorExplicitAskToHuman(t *testing.T) {
+func TestBouncerExplicitAskToHuman(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessAllow}
+	fake := &fakeBouncer{outcome: AssessAllow}
 	rules := []config.PermissionRule{{ToolPattern: "bash", Action: config.PermissionAsk}}
-	h := newAssessorHarness(t, nil, "", rules, nil, WithAssessor(AssessorOptions{
-		Assessor:           fake,
-		Mode:               AssessorEnforce,
+	h := newBouncerHarness(t, nil, "", rules, nil, WithBouncer(BouncerOptions{
+		Bouncer:            fake,
+		Mode:               BouncerEnforce,
 		ExplicitAskToHuman: true,
 	}))
 	done := requestAsync(testCtx(t), h.svc, h.req("call", "ls"))
 	perm := waitPrompt(t, h.events)
-	require.Empty(t, perm.AssessorNote)
+	require.Empty(t, perm.BouncerNote)
 	h.svc.Grant(perm)
 	require.NoError(t, waitResult(t, done).err)
 	require.Zero(t, fake.calls.Load())
 }
 
-func TestAssessorCommitBoundaryOneHonoursNewDeny(t *testing.T) {
+func TestBouncerCommitBoundaryOneHonoursNewDeny(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{
+	fake := &fakeBouncer{
 		outcome: AssessAllow,
 		entered: make(chan AssessInput, 1),
 		release: make(chan struct{}),
 	}
 	dir := t.TempDir()
 	store := config.NewTestStoreWithDataPath(&config.Config{}, filepath.Join(dir, "anvil.json"))
-	h := newAssessorHarness(t, fake, AssessorEnforce, nil, store)
+	h := newBouncerHarness(t, fake, BouncerEnforce, nil, store)
 
 	done := requestAsync(testCtx(t), h.svc, h.req("call", "git push --force"))
 	waitEntered(t, fake)
@@ -361,17 +361,17 @@ func TestAssessorCommitBoundaryOneHonoursNewDeny(t *testing.T) {
 	require.Equal(t, VerdictDeny, d.Verdict)
 }
 
-func TestAssessorCommitBoundaryTwo(t *testing.T) {
+func TestBouncerCommitBoundaryTwo(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name    string
-		grant   func(h *assessorHarness) error
+		grant   func(h *bouncerHarness) error
 		granted bool
 		source  DecisionSource
 	}{
 		{
 			name: "session allow",
-			grant: func(h *assessorHarness) error {
+			grant: func(h *bouncerHarness) error {
 				return h.svc.GrantSession("session", "bash", "make b", config.PermissionAllow)
 			},
 			granted: true,
@@ -379,7 +379,7 @@ func TestAssessorCommitBoundaryTwo(t *testing.T) {
 		},
 		{
 			name: "config deny",
-			grant: func(h *assessorHarness) error {
+			grant: func(h *bouncerHarness) error {
 				return h.svc.GrantForever("bash", "make b", config.PermissionDeny, config.ScopeGlobal)
 			},
 			source: DecisionSourceRule,
@@ -387,10 +387,10 @@ func TestAssessorCommitBoundaryTwo(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			fake := &fakeAssessor{outcome: AssessEscalate}
+			fake := &fakeBouncer{outcome: AssessEscalate}
 			lockWait := make(chan string, 2)
 			store := config.NewTestStoreWithDataPath(&config.Config{}, filepath.Join(t.TempDir(), "anvil.json"))
-			h := newAssessorHarness(t, fake, AssessorEnforce, nil, store)
+			h := newBouncerHarness(t, fake, BouncerEnforce, nil, store)
 			h.svc.beforePromptLock = func(o CreatePermissionRequest) { lockWait <- o.ToolCallID }
 
 			a := requestAsync(testCtx(t), h.svc, h.req("a", "make a"))
@@ -431,11 +431,11 @@ func TestAssessorCommitBoundaryTwo(t *testing.T) {
 	}
 }
 
-func TestAssessorCancelWhileWaitingForLock(t *testing.T) {
+func TestBouncerCancelWhileWaitingForLock(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessEscalate}
+	fake := &fakeBouncer{outcome: AssessEscalate}
 	lockWait := make(chan string, 2)
-	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 	h.svc.beforePromptLock = func(o CreatePermissionRequest) { lockWait <- o.ToolCallID }
 
 	a := requestAsync(testCtx(t), h.svc, h.req("a", "make a"))
@@ -467,14 +467,14 @@ func TestAssessorCancelWhileWaitingForLock(t *testing.T) {
 	require.Equal(t, []Verdict{VerdictCancelled}, verdicts)
 }
 
-func TestAssessorRunsConcurrently(t *testing.T) {
+func TestBouncerRunsConcurrently(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{
+	fake := &fakeBouncer{
 		outcome: AssessAllow,
 		entered: make(chan AssessInput, 2),
 		release: make(chan struct{}),
 	}
-	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 
 	first := requestAsync(testCtx(t), h.svc, h.req("a", "make a"))
 	second := requestAsync(testCtx(t), h.svc, h.req("b", "make b"))
@@ -491,16 +491,16 @@ func TestAssessorRunsConcurrently(t *testing.T) {
 	}
 }
 
-func TestAssessorNoteSkipped(t *testing.T) {
+func TestBouncerNoteSkipped(t *testing.T) {
 	t.Parallel()
 	details, err := json.Marshal(AssessmentRecord{Outcome: "skipped", SkipReason: "protected path"})
 	require.NoError(t, err)
-	require.Equal(t, "assessor: skipped · protected path", assessorSummary(Assessment{}, details, false, AssessorEnforce).Note())
-	require.Equal(t, "assessor (shadow): escalate", assessorSummary(Assessment{}, nil, false, AssessorShadow).Note())
-	require.Empty(t, (*AssessorSummary)(nil).Note())
+	require.Equal(t, "bouncer: skipped · protected path", assessmentSummary(Assessment{}, details, false, BouncerEnforce).Note())
+	require.Equal(t, "bouncer (shadow): escalate", assessmentSummary(Assessment{}, nil, false, BouncerShadow).Note())
+	require.Empty(t, (*AssessmentSummary)(nil).Note())
 }
 
-func TestAssessorSummaryOrdersDrivingAxesFirst(t *testing.T) {
+func TestAssessmentSummaryOrdersDrivingAxesFirst(t *testing.T) {
 	t.Parallel()
 	severity := 2.4
 	details, err := json.Marshal(AssessmentRecord{
@@ -522,7 +522,7 @@ func TestAssessorSummaryOrdersDrivingAxesFirst(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sum := assessorSummary(Assessment{Outcome: AssessEscalate}, details, false, AssessorEnforce)
+	sum := assessmentSummary(Assessment{Outcome: AssessEscalate}, details, false, BouncerEnforce)
 	require.Equal(t, "escalate", sum.Outcome)
 	require.False(t, sum.Shadow)
 	var names, triggers []string
@@ -534,46 +534,46 @@ func TestAssessorSummaryOrdersDrivingAxesFirst(t *testing.T) {
 	require.Equal(t, []string{TriggerDeny, TriggerEscalate, "", "", TriggerEscalate, TriggerMitigate}, triggers)
 	require.Equal(t, float64(3), sum.Scores[4].Max)
 	require.Equal(t, float64(1), sum.Scores[0].Max)
-	require.Equal(t, "assessor: escalate · remote_exec=0.91 destructive=0.62 exfiltration=0.1 credentials=0.02 severity=2.4 user_requested=0.88", sum.Note())
+	require.Equal(t, "bouncer: escalate · remote_exec=0.91 destructive=0.62 exfiltration=0.1 credentials=0.02 severity=2.4 user_requested=0.88", sum.Note())
 }
 
 func TestEscalatedPromptCarriesSummary(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessEscalate}
-	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	fake := &fakeBouncer{outcome: AssessEscalate}
+	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 	done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
 	perm := waitPrompt(t, h.events)
-	require.NotNil(t, perm.Assessor)
-	require.Equal(t, "escalate", perm.Assessor.Outcome)
-	require.Equal(t, perm.Assessor.Note(), perm.AssessorNote)
+	require.NotNil(t, perm.Bouncer)
+	require.Equal(t, "escalate", perm.Bouncer.Outcome)
+	require.Equal(t, perm.Bouncer.Note(), perm.BouncerNote)
 	h.svc.Deny(perm, "no")
 	require.NoError(t, waitResult(t, done).err)
 }
 
 func TestWithAssessmentMode(t *testing.T) {
 	t.Parallel()
-	require.Nil(t, withAssessmentMode(nil, AssessorShadow))
-	require.JSONEq(t, `"not a record"`, string(withAssessmentMode(json.RawMessage(`"not a record"`), AssessorShadow)))
-	out := withAssessmentMode(json.RawMessage(`{"outcome":"allow"}`), AssessorShadow)
+	require.Nil(t, withAssessmentMode(nil, BouncerShadow))
+	require.JSONEq(t, `"not a record"`, string(withAssessmentMode(json.RawMessage(`"not a record"`), BouncerShadow)))
+	out := withAssessmentMode(json.RawMessage(`{"outcome":"allow"}`), BouncerShadow)
 	var rec AssessmentRecord
 	require.NoError(t, json.Unmarshal(out, &rec))
 	require.Equal(t, "shadow", rec.Mode)
 	require.Equal(t, "allow", rec.Outcome)
 }
 
-func TestAssessorPanicEscalates(t *testing.T) {
+func TestBouncerPanicEscalates(t *testing.T) {
 	t.Parallel()
-	h := newAssessorHarness(t, nil, "", nil, nil, WithAssessor(AssessorOptions{Assessor: panicAssessor{}, Mode: AssessorEnforce}))
+	h := newBouncerHarness(t, nil, "", nil, nil, WithBouncer(BouncerOptions{Bouncer: panicBouncer{}, Mode: BouncerEnforce}))
 	done := requestAsync(testCtx(t), h.svc, h.req("call", "ls"))
 	perm := waitPrompt(t, h.events)
-	require.Equal(t, "assessor: error", perm.AssessorNote)
+	require.Equal(t, "bouncer: error", perm.BouncerNote)
 	h.svc.Grant(perm)
 	require.NoError(t, waitResult(t, done).err)
 }
 
-type panicAssessor struct{}
+type panicBouncer struct{}
 
-func (panicAssessor) Assess(context.Context, AssessInput) (Assessment, error) {
+func (panicBouncer) Assess(context.Context, AssessInput) (Assessment, error) {
 	panic("boom")
 }
 
@@ -596,7 +596,7 @@ func TestAllowCacheKeyIncludesEditFacts(t *testing.T) {
 	require.Equal(t, key, allowCacheKey(base))
 }
 
-func TestAssessorAllowCacheKeyedOnDiff(t *testing.T) {
+func TestBouncerAllowCacheKeyedOnDiff(t *testing.T) {
 	t.Parallel()
 	edit := func(callID, diff string) CreatePermissionRequest {
 		return CreatePermissionRequest{
@@ -612,8 +612,8 @@ func TestAssessorAllowCacheKeyedOnDiff(t *testing.T) {
 	}
 	t.Run("different diff reassesses", func(t *testing.T) {
 		t.Parallel()
-		fake := &fakeAssessor{outcome: AssessAllow}
-		h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+		fake := &fakeBouncer{outcome: AssessAllow}
+		h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 		_, err := h.svc.Request(testCtx(t), edit("a", "-// comment\n"))
 		require.NoError(t, err)
 		_, err = h.svc.Request(testCtx(t), edit("b", "-func main() {}\n-func run() {}\n"))
@@ -622,8 +622,8 @@ func TestAssessorAllowCacheKeyedOnDiff(t *testing.T) {
 	})
 	t.Run("same diff hits cache", func(t *testing.T) {
 		t.Parallel()
-		fake := &fakeAssessor{outcome: AssessAllow}
-		h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+		fake := &fakeBouncer{outcome: AssessAllow}
+		h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 		_, err := h.svc.Request(testCtx(t), edit("a", "-// comment\n"))
 		require.NoError(t, err)
 		r, err := h.svc.Request(testCtx(t), edit("b", "-// comment\n"))
@@ -633,10 +633,10 @@ func TestAssessorAllowCacheKeyedOnDiff(t *testing.T) {
 	})
 }
 
-func TestAssessorReceivesDiff(t *testing.T) {
+func TestBouncerReceivesDiff(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessAllow, entered: make(chan AssessInput, 1)}
-	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	fake := &fakeBouncer{outcome: AssessAllow, entered: make(chan AssessInput, 1)}
+	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 	opts := h.req("call", "/work/main.go")
 	opts.ToolName = "edit"
 	opts.Diff = "-gone\n"
@@ -645,10 +645,10 @@ func TestAssessorReceivesDiff(t *testing.T) {
 	require.Equal(t, "-gone\n", waitEntered(t, fake).Diff)
 }
 
-func TestAssessorAllowCacheRechecksPolicy(t *testing.T) {
+func TestBouncerAllowCacheRechecksPolicy(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessAllow}
-	h := newAssessorHarness(t, fake, AssessorEnforce, nil, nil)
+	fake := &fakeBouncer{outcome: AssessAllow}
+	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 	opts := h.req("a", "make deploy")
 
 	r, err := h.svc.Request(testCtx(t), opts)
@@ -671,13 +671,13 @@ func TestAssessorAllowCacheRechecksPolicy(t *testing.T) {
 	require.Equal(t, VerdictDeny, d.Verdict)
 }
 
-func TestAssessorShadowSkipsAllowCache(t *testing.T) {
+func TestBouncerShadowSkipsAllowCache(t *testing.T) {
 	t.Parallel()
 	for _, prefilled := range []bool{true, false} {
 		t.Run(fmt.Sprintf("prefilled=%v", prefilled), func(t *testing.T) {
 			t.Parallel()
-			fake := &fakeAssessor{outcome: AssessAllow}
-			h := newAssessorHarness(t, fake, AssessorShadow, nil, nil)
+			fake := &fakeBouncer{outcome: AssessAllow}
+			h := newBouncerHarness(t, fake, BouncerShadow, nil, nil)
 			opts := h.req("a", "go test ./...")
 			if prefilled {
 				h.svc.allowCache.Set(allowCacheKey(opts), struct{}{})
@@ -687,7 +687,7 @@ func TestAssessorShadowSkipsAllowCache(t *testing.T) {
 				opts.ToolCallID = id
 				done := requestAsync(testCtx(t), h.svc, opts)
 				perm := waitPrompt(t, h.events)
-				require.Equal(t, "assessor (shadow): allow · destructive=0.05 severity=0.3", perm.AssessorNote)
+				require.Equal(t, "bouncer (shadow): allow · destructive=0.05 severity=0.3", perm.BouncerNote)
 				h.svc.Grant(perm)
 				require.NoError(t, waitResult(t, done).err)
 			}
@@ -699,33 +699,33 @@ func TestAssessorShadowSkipsAllowCache(t *testing.T) {
 	}
 }
 
-func newYoloAssessorHarness(t *testing.T, fake *fakeAssessor, mode AssessorMode, level config.YoloLevel, rules []config.PermissionRule, extra ...Option) *assessorHarness {
+func newYoloBouncerHarness(t *testing.T, fake *fakeBouncer, mode BouncerMode, level config.YoloLevel, rules []config.PermissionRule, extra ...Option) *bouncerHarness {
 	t.Helper()
-	h := newAssessorHarness(t, fake, mode, rules, nil, extra...)
+	h := newBouncerHarness(t, fake, mode, rules, nil, extra...)
 	h.svc.SetYoloLevel(level)
 	return h
 }
 
-func TestYoloWithAssessor(t *testing.T) {
+func TestYoloWithBouncer(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name    string
-		fake    *fakeAssessor
-		mode    AssessorMode
+		fake    *fakeBouncer
+		mode    BouncerMode
 		granted bool
 		source  DecisionSource
 		calls   int32
 	}{
-		{name: "enforce allow stands", fake: &fakeAssessor{outcome: AssessAllow}, mode: AssessorEnforce, granted: true, source: DecisionSourceAssessor, calls: 1},
-		{name: "enforce deny blocks", fake: &fakeAssessor{outcome: AssessDeny, reason: "destructive"}, mode: AssessorEnforce, granted: false, source: DecisionSourceAssessor, calls: 1},
-		{name: "enforce escalate is approved by yolo", fake: &fakeAssessor{outcome: AssessEscalate}, mode: AssessorEnforce, granted: true, source: DecisionSourceYolo, calls: 1},
-		{name: "assessor error is approved by yolo", fake: &fakeAssessor{outcome: AssessAllow, err: errors.New("boom")}, mode: AssessorEnforce, granted: true, source: DecisionSourceYolo, calls: 1},
-		{name: "shadow deny never blocks", fake: &fakeAssessor{outcome: AssessDeny}, mode: AssessorShadow, granted: true, source: DecisionSourceYolo, calls: 1},
-		{name: "assessor off keeps plain yolo", fake: &fakeAssessor{outcome: AssessDeny}, mode: AssessorOff, granted: true, source: DecisionSourceYolo, calls: 0},
+		{name: "enforce allow stands", fake: &fakeBouncer{outcome: AssessAllow}, mode: BouncerEnforce, granted: true, source: DecisionSourceBouncer, calls: 1},
+		{name: "enforce deny blocks", fake: &fakeBouncer{outcome: AssessDeny, reason: "destructive"}, mode: BouncerEnforce, granted: false, source: DecisionSourceBouncer, calls: 1},
+		{name: "enforce escalate is approved by yolo", fake: &fakeBouncer{outcome: AssessEscalate}, mode: BouncerEnforce, granted: true, source: DecisionSourceYolo, calls: 1},
+		{name: "bouncer error is approved by yolo", fake: &fakeBouncer{outcome: AssessAllow, err: errors.New("boom")}, mode: BouncerEnforce, granted: true, source: DecisionSourceYolo, calls: 1},
+		{name: "shadow deny never blocks", fake: &fakeBouncer{outcome: AssessDeny}, mode: BouncerShadow, granted: true, source: DecisionSourceYolo, calls: 1},
+		{name: "bouncer off keeps plain yolo", fake: &fakeBouncer{outcome: AssessDeny}, mode: BouncerOff, granted: true, source: DecisionSourceYolo, calls: 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			h := newYoloAssessorHarness(t, tt.fake, tt.mode, config.YoloStandard, nil)
+			h := newYoloBouncerHarness(t, tt.fake, tt.mode, config.YoloStandard, nil)
 			r, err := h.svc.Request(testCtx(t), h.req("call", "rm -rf build"))
 			require.NoError(t, err)
 			require.Equal(t, tt.granted, r.Granted)
@@ -738,20 +738,20 @@ func TestYoloWithAssessor(t *testing.T) {
 				require.Equal(t, string(tt.mode), h.assessment(t, decisions[0]).Mode)
 			}
 			if !tt.granted {
-				require.Contains(t, r.Reason, "permission assessor")
+				require.Contains(t, r.Reason, "permission bouncer")
 			}
 		})
 	}
 }
 
-func TestYoloWithAssessorRespectsRules(t *testing.T) {
+func TestYoloWithBouncerRespectsRules(t *testing.T) {
 	t.Parallel()
 	rules := []config.PermissionRule{{ToolPattern: "bash", SubRules: []config.PermissionSubRule{
 		{InputPattern: "rm *", Action: config.PermissionDeny},
 		{InputPattern: "go test *", Action: config.PermissionAllow},
 	}}}
-	fake := &fakeAssessor{outcome: AssessAllow}
-	h := newYoloAssessorHarness(t, fake, AssessorEnforce, config.YoloStandard, rules)
+	fake := &fakeBouncer{outcome: AssessAllow}
+	h := newYoloBouncerHarness(t, fake, BouncerEnforce, config.YoloStandard, rules)
 
 	r, err := h.svc.Request(testCtx(t), h.req("deny", "rm -rf /"))
 	require.NoError(t, err)
@@ -760,29 +760,29 @@ func TestYoloWithAssessorRespectsRules(t *testing.T) {
 	r, err = h.svc.Request(testCtx(t), h.req("allow", "go test ./..."))
 	require.NoError(t, err)
 	require.True(t, r.Granted)
-	require.Zero(t, fake.calls.Load(), "explicit rules never reach the assessor")
+	require.Zero(t, fake.calls.Load(), "explicit rules never reach the bouncer")
 }
 
-func TestYoloWithAssessorExplicitAskToHuman(t *testing.T) {
+func TestYoloWithBouncerExplicitAskToHuman(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessDeny}
+	fake := &fakeBouncer{outcome: AssessDeny}
 	rules := []config.PermissionRule{{ToolPattern: "bash", Action: config.PermissionAsk}}
-	h := newYoloAssessorHarness(t, nil, "", config.YoloStandard, rules, WithAssessor(AssessorOptions{
-		Assessor:           fake,
-		Mode:               AssessorEnforce,
+	h := newYoloBouncerHarness(t, nil, "", config.YoloStandard, rules, WithBouncer(BouncerOptions{
+		Bouncer:            fake,
+		Mode:               BouncerEnforce,
 		ExplicitAskToHuman: true,
 	}))
 	r, err := h.svc.Request(testCtx(t), h.req("call", "ls"))
 	require.NoError(t, err)
-	require.True(t, r.Granted, "yolo approves asks the assessor never sees")
+	require.True(t, r.Granted, "yolo approves asks the bouncer never sees")
 	require.Zero(t, fake.calls.Load())
 	require.Empty(t, h.events)
 }
 
-func TestYoloFullBypassesAssessor(t *testing.T) {
+func TestYoloFullBypassesBouncer(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessDeny}
-	h := newYoloAssessorHarness(t, fake, AssessorEnforce, config.YoloFull, nil)
+	fake := &fakeBouncer{outcome: AssessDeny}
+	h := newYoloBouncerHarness(t, fake, BouncerEnforce, config.YoloFull, nil)
 	r, err := h.svc.Request(testCtx(t), h.req("call", "rm -rf build"))
 	require.NoError(t, err)
 	require.True(t, r.Granted)
@@ -791,8 +791,8 @@ func TestYoloFullBypassesAssessor(t *testing.T) {
 
 func TestNoYoloEscalateStillPrompts(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessEscalate}
-	h := newYoloAssessorHarness(t, fake, AssessorEnforce, config.YoloOff, nil)
+	fake := &fakeBouncer{outcome: AssessEscalate}
+	h := newYoloBouncerHarness(t, fake, BouncerEnforce, config.YoloOff, nil)
 	done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
 	perm := waitPrompt(t, h.events)
 	h.svc.Grant(perm)
@@ -802,41 +802,41 @@ func TestNoYoloEscalateStillPrompts(t *testing.T) {
 	require.Equal(t, DecisionSourceHuman, h.rec.snapshot()[0].DecidedBy)
 }
 
-func TestYoloWithAssessorTurnedOffMidFlight(t *testing.T) {
+func TestYoloWithBouncerTurnedOffMidFlight(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessDeny, entered: make(chan AssessInput, 1), release: make(chan struct{})}
-	h := newYoloAssessorHarness(t, fake, AssessorEnforce, config.YoloStandard, nil)
+	fake := &fakeBouncer{outcome: AssessDeny, entered: make(chan AssessInput, 1), release: make(chan struct{})}
+	h := newYoloBouncerHarness(t, fake, BouncerEnforce, config.YoloStandard, nil)
 	done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf build"))
 	waitEntered(t, fake)
-	h.svc.assessorMode.Store(AssessorOff)
+	h.svc.bouncerMode.Store(BouncerOff)
 	close(fake.release)
 	r := waitResult(t, done)
 	require.NoError(t, r.err)
-	require.True(t, r.result.Granted, "a deny from a now-disabled assessor must not apply")
+	require.True(t, r.result.Granted, "a deny from a now-disabled bouncer must not apply")
 	require.Empty(t, h.events, "yolo must never prompt")
 	require.Equal(t, DecisionSourceYolo, h.rec.snapshot()[0].DecidedBy)
 }
 
-func TestSetAssessorModeWithoutAssessorIsNoOp(t *testing.T) {
+func TestSetBouncerModeWithoutBouncerIsNoOp(t *testing.T) {
 	t.Parallel()
-	h := newAssessorHarness(t, nil, "", nil, nil)
-	require.False(t, h.svc.AssessorConfigured())
-	h.svc.SetAssessorMode(AssessorEnforce)
-	require.Equal(t, AssessorOff, h.svc.AssessorMode())
+	h := newBouncerHarness(t, nil, "", nil, nil)
+	require.False(t, h.svc.BouncerConfigured())
+	h.svc.SetBouncerMode(BouncerEnforce)
+	require.Equal(t, BouncerOff, h.svc.BouncerMode())
 }
 
-func TestSetAssessorModeIgnoresUnknownMode(t *testing.T) {
+func TestSetBouncerModeIgnoresUnknownMode(t *testing.T) {
 	t.Parallel()
-	h := newAssessorHarness(t, &fakeAssessor{outcome: AssessAllow}, AssessorShadow, nil, nil)
-	require.True(t, h.svc.AssessorConfigured())
-	h.svc.SetAssessorMode("bogus")
-	require.Equal(t, AssessorShadow, h.svc.AssessorMode())
+	h := newBouncerHarness(t, &fakeBouncer{outcome: AssessAllow}, BouncerShadow, nil, nil)
+	require.True(t, h.svc.BouncerConfigured())
+	h.svc.SetBouncerMode("bogus")
+	require.Equal(t, BouncerShadow, h.svc.BouncerMode())
 }
 
-func TestSetAssessorModeEnforceSkipsPrompt(t *testing.T) {
+func TestSetBouncerModeEnforceSkipsPrompt(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessAllow}
-	h := newAssessorHarness(t, fake, AssessorOff, nil, nil)
+	fake := &fakeBouncer{outcome: AssessAllow}
+	h := newBouncerHarness(t, fake, BouncerOff, nil, nil)
 
 	done := requestAsync(testCtx(t), h.svc, h.req("call-1", "go build ./..."))
 	perm := waitPrompt(t, h.events)
@@ -844,8 +844,8 @@ func TestSetAssessorModeEnforceSkipsPrompt(t *testing.T) {
 	require.NoError(t, waitResult(t, done).err)
 	require.Zero(t, fake.calls.Load())
 
-	h.svc.SetAssessorMode(AssessorEnforce)
-	require.Equal(t, AssessorEnforce, h.svc.AssessorMode())
+	h.svc.SetBouncerMode(BouncerEnforce)
+	require.Equal(t, BouncerEnforce, h.svc.BouncerMode())
 	r, err := h.svc.Request(testCtx(t), h.req("call-2", "go build ./..."))
 	require.NoError(t, err)
 	require.True(t, r.Granted)
@@ -853,16 +853,16 @@ func TestSetAssessorModeEnforceSkipsPrompt(t *testing.T) {
 	require.Equal(t, int32(1), fake.calls.Load())
 	decisions := h.rec.snapshot()
 	require.Len(t, decisions, 2)
-	require.Equal(t, DecisionSourceAssessor, decisions[1].DecidedBy)
+	require.Equal(t, DecisionSourceBouncer, decisions[1].DecidedBy)
 }
 
-func newWarmHarness(t *testing.T, mode AssessorMode) (*permissionService, <-chan struct{}) {
+func newWarmHarness(t *testing.T, mode BouncerMode) (*permissionService, <-chan struct{}) {
 	t.Helper()
 	warmed := make(chan struct{}, 16)
-	svc := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, WithAssessor(AssessorOptions{
-		Assessor: &fakeAssessor{outcome: AssessAllow},
-		Mode:     mode,
-		Warm:     func(context.Context) { warmed <- struct{}{} },
+	svc := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, WithBouncer(BouncerOptions{
+		Bouncer: &fakeBouncer{outcome: AssessAllow},
+		Mode:    mode,
+		Warm:    func(context.Context) { warmed <- struct{}{} },
 	})).(*permissionService)
 	return svc, warmed
 }
@@ -879,57 +879,57 @@ func waitWarms(t *testing.T, warmed <-chan struct{}, want int) {
 	}
 	select {
 	case <-warmed:
-		t.Fatal("assessor warmed more than expected")
+		t.Fatal("bouncer warmed more than expected")
 	case <-time.After(50 * time.Millisecond):
 	}
 }
 
-func TestSetAssessorModeWarmsOncePerEnable(t *testing.T) {
+func TestSetBouncerModeWarmsOncePerEnable(t *testing.T) {
 	t.Parallel()
-	svc, warmed := newWarmHarness(t, AssessorOff)
+	svc, warmed := newWarmHarness(t, BouncerOff)
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Go(func() { svc.SetAssessorMode(AssessorEnforce) })
+		wg.Go(func() { svc.SetBouncerMode(BouncerEnforce) })
 	}
 	wg.Wait()
 	waitWarms(t, warmed, 1)
 }
 
-func TestSetAssessorModeOnToOnDoesNotWarm(t *testing.T) {
+func TestSetBouncerModeOnToOnDoesNotWarm(t *testing.T) {
 	t.Parallel()
-	svc, warmed := newWarmHarness(t, AssessorShadow)
-	svc.SetAssessorMode(AssessorEnforce)
-	require.Equal(t, AssessorEnforce, svc.AssessorMode())
+	svc, warmed := newWarmHarness(t, BouncerShadow)
+	svc.SetBouncerMode(BouncerEnforce)
+	require.Equal(t, BouncerEnforce, svc.BouncerMode())
 	waitWarms(t, warmed, 0)
 }
 
-func TestSetAssessorModeReenableWarmsAgain(t *testing.T) {
+func TestSetBouncerModeReenableWarmsAgain(t *testing.T) {
 	t.Parallel()
-	svc, warmed := newWarmHarness(t, AssessorOff)
-	svc.SetAssessorMode(AssessorEnforce)
+	svc, warmed := newWarmHarness(t, BouncerOff)
+	svc.SetBouncerMode(BouncerEnforce)
 	waitWarms(t, warmed, 1)
-	svc.SetAssessorMode(AssessorOff)
-	svc.SetAssessorMode(AssessorEnforce)
+	svc.SetBouncerMode(BouncerOff)
+	svc.SetBouncerMode(BouncerEnforce)
 	waitWarms(t, warmed, 1)
 }
 
 // TestYoloEnabledWhileWaitingForPromptLock covers commit boundary 2: a
-// request that skipped the assessor, then waits for the prompt slot, is
-// approved by yolo rather than prompting once yolo and the assessor are
+// request that skipped the bouncer, then waits for the prompt slot, is
+// approved by yolo rather than prompting once yolo and the bouncer are
 // both switched on.
 func TestYoloEnabledWhileWaitingForPromptLock(t *testing.T) {
 	t.Parallel()
-	fake := &fakeAssessor{outcome: AssessDeny}
-	h := newYoloAssessorHarness(t, fake, AssessorOff, config.YoloOff, nil)
+	fake := &fakeBouncer{outcome: AssessDeny}
+	h := newYoloBouncerHarness(t, fake, BouncerOff, config.YoloOff, nil)
 	h.svc.beforePromptLock = func(CreatePermissionRequest) {
 		h.svc.SetYoloLevel(config.YoloStandard)
-		h.svc.assessorMode.Store(AssessorEnforce)
+		h.svc.bouncerMode.Store(BouncerEnforce)
 	}
 	r, err := h.svc.Request(testCtx(t), h.req("call", "make deploy"))
 	require.NoError(t, err)
 	require.True(t, r.Granted)
 	require.Empty(t, h.events, "yolo must never prompt")
-	require.Zero(t, fake.calls.Load(), "the assessor was off when this request passed it")
+	require.Zero(t, fake.calls.Load(), "the bouncer was off when this request passed it")
 	require.Equal(t, DecisionSourceYolo, h.rec.snapshot()[0].DecidedBy)
 }
 
@@ -938,7 +938,7 @@ func TestYoloEnabledWhileWaitingForPromptLock(t *testing.T) {
 // in-flight request prompting. This fails towards more prompting.
 func TestYoloFullEnabledMidFlightStillPrompts(t *testing.T) {
 	t.Parallel()
-	h := newYoloAssessorHarness(t, nil, "", config.YoloOff, nil)
+	h := newYoloBouncerHarness(t, nil, "", config.YoloOff, nil)
 	h.svc.beforePromptLock = func(CreatePermissionRequest) {
 		h.svc.SetYoloLevel(config.YoloFull)
 	}

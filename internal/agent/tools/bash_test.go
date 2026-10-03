@@ -39,13 +39,13 @@ func (m *mockBashPermissionService) YoloLevel() config.YoloLevel {
 	return config.YoloOff
 }
 
-func (m *mockBashPermissionService) AssessorConfigured() bool { return false }
+func (m *mockBashPermissionService) BouncerConfigured() bool { return false }
 
-func (m *mockBashPermissionService) AssessorMode() permission.AssessorMode {
-	return permission.AssessorOff
+func (m *mockBashPermissionService) BouncerMode() permission.BouncerMode {
+	return permission.BouncerOff
 }
 
-func (m *mockBashPermissionService) SetAssessorMode(permission.AssessorMode) {}
+func (m *mockBashPermissionService) SetBouncerMode(permission.BouncerMode) {}
 
 func (m *mockBashPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
@@ -128,13 +128,13 @@ func (m *recordingPermissionService) YoloLevel() config.YoloLevel {
 	return config.YoloOff
 }
 
-func (m *recordingPermissionService) AssessorConfigured() bool { return false }
+func (m *recordingPermissionService) BouncerConfigured() bool { return false }
 
-func (m *recordingPermissionService) AssessorMode() permission.AssessorMode {
-	return permission.AssessorOff
+func (m *recordingPermissionService) BouncerMode() permission.BouncerMode {
+	return permission.BouncerOff
 }
 
-func (m *recordingPermissionService) SetAssessorMode(permission.AssessorMode) {}
+func (m *recordingPermissionService) SetBouncerMode(permission.BouncerMode) {}
 
 func (m *recordingPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])

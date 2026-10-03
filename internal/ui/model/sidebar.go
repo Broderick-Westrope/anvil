@@ -94,11 +94,11 @@ func (m *UI) modelInfo(width int) string {
 		}
 	}
 
-	// Show a short, muted indicator when the runtime permission assessor
+	// Show a short, muted indicator when the runtime bouncer
 	// is active. Nothing is added when it's off (or unconfigured, which
 	// always reports off).
-	if mode := m.com.Workspace.PermissionAssessorMode(); mode != permission.AssessorOff {
-		extraLines = append(extraLines, m.com.Styles.ModelInfo.Stats.Render("assessor:"+string(mode)))
+	if mode := m.com.Workspace.PermissionBouncerMode(); mode != permission.BouncerOff {
+		extraLines = append(extraLines, m.com.Styles.ModelInfo.Stats.Render("bouncer:"+string(mode)))
 	}
 
 	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, extraLines...)

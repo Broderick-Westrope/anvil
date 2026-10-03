@@ -20,4 +20,4 @@ DELETE FROM permission_decisions WHERE created_at < ?;
 SELECT COUNT(*) FROM permission_decisions
 WHERE created_at >= ?
 AND verdict != 'cancelled'
-AND decided_by IN ('human', 'assessor', 'session_grant', 'session_rule');
+AND decided_by IN ('human', 'bouncer', 'session_grant', 'session_rule');

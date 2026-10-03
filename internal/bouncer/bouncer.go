@@ -1,6 +1,6 @@
-// Package assessor asks a System One classifier whether a tool call
+// Package bouncer asks a System One classifier whether a tool call
 // needs a human.
-package assessor
+package bouncer
 
 import (
 	"context"
@@ -26,14 +26,14 @@ const (
 	outcomeError   = "error"
 )
 
-// Skip reasons set by the Assessor itself rather than BuildState.
+// Skip reasons set by the Bouncer itself rather than BuildState.
 const (
-	skipUnavailable = "assessor unavailable"
-	skipBusy        = "assessor busy"
+	skipUnavailable = "bouncer unavailable"
+	skipBusy        = "bouncer busy"
 )
 
-// Assessor implements permission.Assessor with a System One client.
-type Assessor struct {
+// Bouncer implements permission.Bouncer with a System One client.
+type Bouncer struct {
 	Client           *systemone.Client
 	Thresholds       Thresholds
 	SendUserMessages bool
@@ -42,11 +42,11 @@ type Assessor struct {
 	now              func() time.Time
 }
 
-var _ permission.Assessor = (*Assessor)(nil)
+var _ permission.Bouncer = (*Bouncer)(nil)
 
-// New returns an Assessor. Callers should validate th first.
-func New(c *systemone.Client, th Thresholds, sendUserMessages bool) *Assessor {
-	return &Assessor{
+// New returns a Bouncer. Callers should validate th first.
+func New(c *systemone.Client, th Thresholds, sendUserMessages bool) *Bouncer {
+	return &Bouncer{
 		Client:           c,
 		Thresholds:       th,
 		SendUserMessages: sendUserMessages,
@@ -58,7 +58,7 @@ func New(c *systemone.Client, th Thresholds, sendUserMessages bool) *Assessor {
 // Assess classifies one request. Ineligible inputs, an open breaker, and
 // a full concurrency cap escalate without a network call. Details is
 // always a marshalled permission.AssessmentRecord.
-func (a *Assessor) Assess(ctx context.Context, in permission.AssessInput) (permission.Assessment, error) {
+func (a *Bouncer) Assess(ctx context.Context, in permission.AssessInput) (permission.Assessment, error) {
 	rec := permission.AssessmentRecord{
 		SchemaVersion:  permission.AssessmentSchemaVersion,
 		BatteryVersion: BatteryVersion,
@@ -103,7 +103,7 @@ func (a *Assessor) Assess(ctx context.Context, in permission.AssessInput) (permi
 		}
 		rec.Outcome = outcomeError
 		rec.Error = err.Error()
-		return permission.Assessment{Outcome: permission.AssessEscalate, Reason: "assessor error", Details: marshal(rec)}, err
+		return permission.Assessment{Outcome: permission.AssessEscalate, Reason: "bouncer error", Details: marshal(rec)}, err
 	}
 	a.breaker.succeed()
 
@@ -136,11 +136,11 @@ var warmQuestion = map[string]systemone.Question{
 // concurrency cap, never retries, and has no effect on routing. Callers
 // bound it with ctx; cold starts can take far longer than the per-call
 // assessment timeout.
-func (a *Assessor) Warm(ctx context.Context) error {
+func (a *Bouncer) Warm(ctx context.Context) error {
 	c := *a.Client
 	c.Backoff = nil
 	if _, err := c.Evaluate(ctx, "connectivity check", warmQuestion); err != nil {
-		return fmt.Errorf("warm permission assessor: %w", err)
+		return fmt.Errorf("warm bouncer: %w", err)
 	}
 	return nil
 }

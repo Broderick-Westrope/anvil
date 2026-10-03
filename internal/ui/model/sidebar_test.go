@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestModelInfo_AssessorIndicator(t *testing.T) {
+func TestModelInfo_BouncerIndicator(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{Providers: csync.NewMap[string, config.ProviderConfig]()}
@@ -17,14 +17,14 @@ func TestModelInfo_AssessorIndicator(t *testing.T) {
 	t.Run("shown when shadow", func(t *testing.T) {
 		t.Parallel()
 		u := newTestUI()
-		u.com.Workspace = &testWorkspace{cfg: cfg, assessorConfigured: true, assessorMode: permission.AssessorShadow}
-		require.Contains(t, u.modelInfo(40), "assessor:shadow")
+		u.com.Workspace = &testWorkspace{cfg: cfg, bouncerConfigured: true, bouncerMode: permission.BouncerShadow}
+		require.Contains(t, u.modelInfo(40), "bouncer:shadow")
 	})
 
 	t.Run("hidden when off", func(t *testing.T) {
 		t.Parallel()
 		u := newTestUI()
-		u.com.Workspace = &testWorkspace{cfg: cfg, assessorConfigured: false, assessorMode: permission.AssessorOff}
-		require.NotContains(t, u.modelInfo(40), "assessor:")
+		u.com.Workspace = &testWorkspace{cfg: cfg, bouncerConfigured: false, bouncerMode: permission.BouncerOff}
+		require.NotContains(t, u.modelInfo(40), "bouncer:")
 	})
 }

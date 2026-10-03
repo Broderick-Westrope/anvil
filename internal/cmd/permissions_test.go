@@ -233,7 +233,7 @@ func TestPermissionsStats(t *testing.T) {
 	require.NoError(t, runStats(t.Context(), q, statsOpts{Days: 30}, &out))
 	require.Contains(t, out.String(), "Permission-request volume: 3")
 	require.Contains(t, out.String(), "not enough evidence to enable enforce")
-	require.Contains(t, out.String(), "assessor allow x human deny: 1")
+	require.Contains(t, out.String(), "bouncer allow x human deny: 1")
 	require.NotContains(t, out.String(), "\x1b")
 }
 

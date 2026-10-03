@@ -55,17 +55,17 @@ func findInfoMsg(msgs []tea.Msg) (util.InfoMsg, bool) {
 	return util.InfoMsg{}, false
 }
 
-func TestCycleAssessorMode(t *testing.T) {
+func TestCycleBouncerMode(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
-		from permission.AssessorMode
-		want permission.AssessorMode
+		from permission.BouncerMode
+		want permission.BouncerMode
 	}{
-		{"off to shadow", permission.AssessorOff, permission.AssessorShadow},
-		{"shadow to enforce", permission.AssessorShadow, permission.AssessorEnforce},
-		{"enforce to off", permission.AssessorEnforce, permission.AssessorOff},
+		{"off to shadow", permission.BouncerOff, permission.BouncerShadow},
+		{"shadow to enforce", permission.BouncerShadow, permission.BouncerEnforce},
+		{"enforce to off", permission.BouncerEnforce, permission.BouncerOff},
 	}
 
 	for _, tc := range tests {
@@ -73,29 +73,29 @@ func TestCycleAssessorMode(t *testing.T) {
 			t.Parallel()
 
 			u := newTestUI()
-			ws := &testWorkspace{cfg: &config.Config{}, assessorConfigured: true, assessorMode: tc.from}
+			ws := &testWorkspace{cfg: &config.Config{}, bouncerConfigured: true, bouncerMode: tc.from}
 			u.com.Workspace = ws
 
-			got := u.cycleAssessorMode()
+			got := u.cycleBouncerMode()
 
 			require.Equal(t, tc.want, got)
-			require.Equal(t, []permission.AssessorMode{tc.want}, ws.assessorSetCalls)
+			require.Equal(t, []permission.BouncerMode{tc.want}, ws.bouncerSetCalls)
 		})
 	}
 }
 
-func TestHandleDialogMsg_ActionCycleAssessorMode(t *testing.T) {
+func TestHandleDialogMsg_ActionCycleBouncerMode(t *testing.T) {
 	t.Parallel()
 
 	u := newTestUI()
-	ws := &testWorkspace{cfg: &config.Config{}, assessorConfigured: true, assessorMode: permission.AssessorOff}
+	ws := &testWorkspace{cfg: &config.Config{}, bouncerConfigured: true, bouncerMode: permission.BouncerOff}
 	u.com.Workspace = ws
-	u.dialog = dialog.NewOverlay(&fakeActionDialog{id: dialog.CommandsID, action: dialog.ActionCycleAssessorMode{}})
+	u.dialog = dialog.NewOverlay(&fakeActionDialog{id: dialog.CommandsID, action: dialog.ActionCycleBouncerMode{}})
 
 	cmd := u.handleDialogMsg(tea.KeyPressMsg{})
 	msgs := collectMsgs(cmd)
 
-	require.Equal(t, []permission.AssessorMode{permission.AssessorShadow}, ws.assessorSetCalls)
+	require.Equal(t, []permission.BouncerMode{permission.BouncerShadow}, ws.bouncerSetCalls)
 	info, ok := findInfoMsg(msgs)
 	require.True(t, ok, "expected an info message")
 	require.Contains(t, info.Msg, "shadow")

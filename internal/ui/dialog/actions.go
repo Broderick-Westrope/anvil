@@ -64,9 +64,9 @@ type (
 	ActionToggleNotifications         struct{}
 	ActionToggleTransparentBackground struct{}
 	ActionToggleAnthropicAuthMode     struct{}
-	// ActionCycleAssessorMode cycles the runtime permission assessor mode
+	// ActionCycleBouncerMode cycles the runtime bouncer mode
 	// (off -> shadow -> enforce -> off). It never writes config.
-	ActionCycleAssessorMode struct{}
+	ActionCycleBouncerMode  struct{}
 	ActionInitializeProject struct{}
 	ActionSummarize         struct {
 		SessionID string

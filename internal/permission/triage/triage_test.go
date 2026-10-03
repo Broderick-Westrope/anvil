@@ -65,7 +65,7 @@ func TestAnalyze(t *testing.T) {
 
 func TestAnalyzeEvidence(t *testing.T) {
 	t.Parallel()
-	for _, source := range []string{"human", "assessor", "rule", "hook", "yolo", "session_rule", "session_grant"} {
+	for _, source := range []string{"human", "bouncer", "rule", "hook", "yolo", "session_rule", "session_grant"} {
 		t.Run(source, func(t *testing.T) {
 			t.Parallel()
 			records := append(repeated("cat file.txt", "allow"), Record{ToolName: "bash", Input: "cat .env", Verdict: "deny", DecidedBy: source})
@@ -209,7 +209,7 @@ func BenchmarkAnalyze(b *testing.B) {
 		}
 	}
 	verdicts := []string{"allow", "allow", "allow", "deny"}
-	sources := []string{"human", "assessor", "rule", "session_grant"}
+	sources := []string{"human", "bouncer", "rule", "session_grant"}
 	records := make([]Record, 25_000)
 	for i := range records {
 		records[i] = Record{

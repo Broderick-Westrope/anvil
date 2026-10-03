@@ -1,4 +1,4 @@
-package assessor
+package bouncer
 
 import (
 	"context"
@@ -45,7 +45,7 @@ func newTestClient(url string) *systemone.Client {
 	}
 }
 
-func newTestAssessor(url string) *Assessor {
+func newTestBouncer(url string) *Bouncer {
 	return New(newTestClient(url), DefaultThresholds(), false)
 }
 
@@ -62,7 +62,7 @@ func decodeRecord(t *testing.T, a permission.Assessment) permission.AssessmentRe
 	return rec
 }
 
-func TestAssessorRoutesCannedAnswers(t *testing.T) {
+func TestBouncerRoutesCannedAnswers(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -84,7 +84,7 @@ func TestAssessorRoutesCannedAnswers(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := newTestAssessor(srv.URL).Assess(t.Context(), eligible)
+			got, err := newTestBouncer(srv.URL).Assess(t.Context(), eligible)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got.Outcome)
 			require.NotEmpty(t, got.Reason)
@@ -102,7 +102,7 @@ func TestAssessorRoutesCannedAnswers(t *testing.T) {
 	}
 }
 
-func TestAssessorDetailsJSONShape(t *testing.T) {
+func TestBouncerDetailsJSONShape(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +110,7 @@ func TestAssessorDetailsJSONShape(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := newTestAssessor(srv.URL).Assess(t.Context(), eligible)
+	got, err := newTestBouncer(srv.URL).Assess(t.Context(), eligible)
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(got.Details, &raw))
@@ -118,7 +118,7 @@ func TestAssessorDetailsJSONShape(t *testing.T) {
 	require.Equal(t, BatteryVersion, raw["battery_version"])
 }
 
-func TestAssessorRecordsTriggers(t *testing.T) {
+func TestBouncerRecordsTriggers(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +126,7 @@ func TestAssessorRecordsTriggers(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := newTestAssessor(srv.URL).Assess(t.Context(), eligible)
+	got, err := newTestBouncer(srv.URL).Assess(t.Context(), eligible)
 	require.NoError(t, err)
 	rec := decodeRecord(t, got)
 	require.NotEmpty(t, rec.Triggers)
@@ -136,7 +136,7 @@ func TestAssessorRecordsTriggers(t *testing.T) {
 	}
 }
 
-func TestAssessorServerErrorIsError(t *testing.T) {
+func TestBouncerServerErrorIsError(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +144,7 @@ func TestAssessorServerErrorIsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := newTestAssessor(srv.URL).Assess(t.Context(), eligible)
+	got, err := newTestBouncer(srv.URL).Assess(t.Context(), eligible)
 	require.Error(t, err)
 	require.Equal(t, permission.AssessEscalate, got.Outcome)
 	rec := decodeRecord(t, got)
@@ -153,7 +153,7 @@ func TestAssessorServerErrorIsError(t *testing.T) {
 	require.NotContains(t, rec.Error, testAPIKey)
 }
 
-func TestAssessorBreaker(t *testing.T) {
+func TestBouncerBreaker(t *testing.T) {
 	t.Parallel()
 
 	var hits atomic.Int32
@@ -168,7 +168,7 @@ func TestAssessorBreaker(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := newTestAssessor(srv.URL)
+	a := newTestBouncer(srv.URL)
 	a.Client.Backoff = nil
 	var mu sync.Mutex
 	now := time.Unix(1_700_000_000, 0)
@@ -189,7 +189,7 @@ func TestAssessorBreaker(t *testing.T) {
 	require.Equal(t, permission.AssessEscalate, got.Outcome)
 	rec := decodeRecord(t, got)
 	require.Equal(t, "skipped", rec.Outcome)
-	require.Equal(t, "assessor unavailable", rec.SkipReason)
+	require.Equal(t, "bouncer unavailable", rec.SkipReason)
 	require.Equal(t, int32(breakerThreshold), hits.Load())
 
 	mu.Lock()
@@ -203,7 +203,7 @@ func TestAssessorBreaker(t *testing.T) {
 	require.Equal(t, int32(breakerThreshold+1), hits.Load())
 }
 
-func TestAssessorCallerCancelDoesNotTripBreaker(t *testing.T) {
+func TestBouncerCallerCancelDoesNotTripBreaker(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +211,7 @@ func TestAssessorCallerCancelDoesNotTripBreaker(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := newTestAssessor(srv.URL)
+	a := newTestBouncer(srv.URL)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	for range breakerThreshold + 1 {
@@ -223,7 +223,7 @@ func TestAssessorCallerCancelDoesNotTripBreaker(t *testing.T) {
 	require.False(t, probe)
 }
 
-func TestAssessorIneligibleMakesNoRequest(t *testing.T) {
+func TestBouncerIneligibleMakesNoRequest(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -231,7 +231,7 @@ func TestAssessorIneligibleMakesNoRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := newTestAssessor(srv.URL).Assess(t.Context(), permission.AssessInput{ToolName: "lsp_rename"})
+	got, err := newTestBouncer(srv.URL).Assess(t.Context(), permission.AssessInput{ToolName: "lsp_rename"})
 	require.NoError(t, err)
 	require.Equal(t, permission.AssessEscalate, got.Outcome)
 	rec := decodeRecord(t, got)
@@ -239,7 +239,7 @@ func TestAssessorIneligibleMakesNoRequest(t *testing.T) {
 	require.Equal(t, skipNotEligible, rec.SkipReason)
 }
 
-func TestAssessorConcurrencyCap(t *testing.T) {
+func TestBouncerConcurrencyCap(t *testing.T) {
 	t.Parallel()
 
 	const calls = 6
@@ -259,7 +259,7 @@ func TestAssessorConcurrencyCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := newTestAssessor(srv.URL)
+	a := newTestBouncer(srv.URL)
 	var wg sync.WaitGroup
 	results := make(chan permission.AssessOutcome, calls)
 	for range calls {
@@ -285,10 +285,10 @@ func TestAssessorConcurrencyCap(t *testing.T) {
 	require.Equal(t, int32(maxConcurrent), maxInFlight.Load())
 }
 
-func TestAssessorBusyWhenContextDone(t *testing.T) {
+func TestBouncerBusyWhenContextDone(t *testing.T) {
 	t.Parallel()
 
-	a := newTestAssessor("http://127.0.0.1:0")
+	a := newTestBouncer("http://127.0.0.1:0")
 	for range maxConcurrent {
 		a.sem <- struct{}{}
 	}
@@ -302,7 +302,7 @@ func TestAssessorBusyWhenContextDone(t *testing.T) {
 	require.Equal(t, skipBusy, rec.SkipReason)
 }
 
-func TestAssessorBreakerHalfOpenSingleProbe(t *testing.T) {
+func TestBouncerBreakerHalfOpenSingleProbe(t *testing.T) {
 	t.Parallel()
 
 	var hits, probeHits atomic.Int32
@@ -332,7 +332,7 @@ func TestAssessorBreakerHalfOpenSingleProbe(t *testing.T) {
 	defer srv.Close()
 	defer close(stop)
 
-	a := newTestAssessor(srv.URL)
+	a := newTestBouncer(srv.URL)
 	a.Client.Backoff = nil
 	var mu sync.Mutex
 	start := time.Unix(1_700_000_000, 0)
@@ -423,7 +423,7 @@ func TestWarmBypassesBreakerAndNeverRetries(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := newTestAssessor(srv.URL)
+	a := newTestBouncer(srv.URL)
 	a.Client.Backoff = []time.Duration{time.Millisecond, time.Millisecond}
 
 	require.Error(t, a.Warm(t.Context()))

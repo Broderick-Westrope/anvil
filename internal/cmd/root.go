@@ -72,11 +72,11 @@ cat README.md | anvil run "make this more glamorous" > GLAMOROUS_README.md
 anvil --debug --cwd /path/to/project
 
 # Run in yolo mode (auto-accept prompts, still honouring deny rules and
-# permission assessor denials)
+# bouncer denials)
 anvil --yolo
 
 # Run in full yolo mode (bypass all permissions, including deny rules and
-# the permission assessor; use with care)
+# the bouncer; use with care)
 anvil --yolo=full
 
 # Run with custom data directory

@@ -642,9 +642,9 @@ func (p *Permissions) renderHeader(contentWidth int) string {
 		}
 	}
 
-	// Show the assessor's verdict, if any, directly under the rest of the
+	// Show the bouncer's verdict, if any, directly under the rest of the
 	// header. It wraps so every axis stays visible.
-	if block := p.renderAssessor(contentWidth); block != "" {
+	if block := p.renderBouncer(contentWidth); block != "" {
 		lines = append(lines, block)
 	}
 
@@ -687,7 +687,7 @@ func prettyName(name string) string {
 
 // capitalizeFirst uppercases the first rune of s, leaving the rest
 // unchanged. Unlike [stringext.Capitalize], which title-cases every word,
-// this suits short status notes like "assessor: escalate · severity=2.1".
+// this suits short status notes like "bouncer: escalate · severity=2.1".
 func capitalizeFirst(s string) string {
 	if s == "" {
 		return s

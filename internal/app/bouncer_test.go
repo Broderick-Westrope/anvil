@@ -116,27 +116,27 @@ func TestIntentSource_UnknownSessionReturnsError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func validTrustedAssessor(mode config.AssessorMode) *config.TrustedAssessor {
-	return &config.TrustedAssessor{
-		Config: &config.PermissionAssessor{
+func validTrustedBouncer(mode config.BouncerMode) *config.TrustedBouncer {
+	return &config.TrustedBouncer{
+		Config: &config.Bouncer{
 			Mode:  mode,
-			URL:   "https://assessor.example.com/v1/systemone",
+			URL:   "https://bouncer.example.com/v1/systemone",
 			Model: "von-1.0.0",
 		},
 		APIKey: "secret-key-value",
 	}
 }
 
-func TestBuildAssessorOption_ModeOffStillBuilt(t *testing.T) {
+func TestBuildBouncerOption_ModeOffStillBuilt(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []config.AssessorMode{"", config.AssessorOff, config.AssessorShadow, config.AssessorEnforce} {
-		setup, ok := buildAssessorOption(validTrustedAssessor(mode), nil, nil)
+	for _, mode := range []config.BouncerMode{"", config.BouncerOff, config.BouncerShadow, config.BouncerEnforce} {
+		setup, ok := buildBouncerOption(validTrustedBouncer(mode), nil, nil)
 		require.True(t, ok, "mode %q", mode)
 		require.NotNil(t, setup.option, "mode %q", mode)
-		require.NotNil(t, setup.assessor, "mode %q", mode)
-		want := permission.AssessorMode(mode)
+		require.NotNil(t, setup.bouncer, "mode %q", mode)
+		want := permission.BouncerMode(mode)
 		if mode == "" {
-			want = permission.AssessorOff
+			want = permission.BouncerOff
 		}
 		require.Equal(t, want, setup.mode, "mode %q", mode)
 	}
@@ -155,27 +155,27 @@ func (f *fakeWarmer) Warm(ctx context.Context) error {
 	return f.err
 }
 
-func TestWarmAssessor(t *testing.T) {
+func TestWarmBouncer(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		mode  permission.AssessorMode
+		mode  permission.BouncerMode
 		calls int32
 	}{
-		{permission.AssessorOff, 0},
-		{permission.AssessorShadow, 1},
-		{permission.AssessorEnforce, 1},
+		{permission.BouncerOff, 0},
+		{permission.BouncerShadow, 1},
+		{permission.BouncerEnforce, 1},
 	} {
 		w := &fakeWarmer{}
-		warmAssessor(t.Context(), w, tc.mode)
+		warmBouncer(t.Context(), w, tc.mode)
 		require.Equal(t, tc.calls, w.calls.Load(), "mode %q", tc.mode)
 		if tc.calls > 0 {
 			require.True(t, w.deadline.Load(), "warm-up must be bounded")
 		}
 	}
-	warmAssessor(t.Context(), nil, permission.AssessorShadow)
+	warmBouncer(t.Context(), nil, permission.BouncerShadow)
 }
 
-func TestWarmAssessorSendsOneMinimalRequest(t *testing.T) {
+func TestWarmBouncerSendsOneMinimalRequest(t *testing.T) {
 	t.Parallel()
 	var hits atomic.Int32
 	var body atomic.Value
@@ -187,17 +187,17 @@ func TestWarmAssessorSendsOneMinimalRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ta := validTrustedAssessor(config.AssessorShadow)
+	ta := validTrustedBouncer(config.BouncerShadow)
 	ta.Config.URL = srv.URL
-	setup, ok := buildAssessorOption(ta, nil, nil)
+	setup, ok := buildBouncerOption(ta, nil, nil)
 	require.True(t, ok)
-	warmAssessor(t.Context(), setup.assessor, setup.mode)
+	warmBouncer(t.Context(), setup.bouncer, setup.mode)
 	require.Equal(t, int32(1), hits.Load())
 	require.Contains(t, body.Load(), `"warm"`)
 	require.Less(t, len(body.Load().(string)), 300)
 }
 
-func TestWarmAssessorOffMakesNoRequest(t *testing.T) {
+func TestWarmBouncerOffMakesNoRequest(t *testing.T) {
 	t.Parallel()
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -205,15 +205,15 @@ func TestWarmAssessorOffMakesNoRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ta := validTrustedAssessor(config.AssessorOff)
+	ta := validTrustedBouncer(config.BouncerOff)
 	ta.Config.URL = srv.URL
-	setup, ok := buildAssessorOption(ta, nil, nil)
+	setup, ok := buildBouncerOption(ta, nil, nil)
 	require.True(t, ok)
-	warmAssessor(t.Context(), setup.assessor, setup.mode)
+	warmBouncer(t.Context(), setup.bouncer, setup.mode)
 	require.Zero(t, hits.Load())
 }
 
-func TestAssessorWarmsWhenEnabledAtRuntime(t *testing.T) {
+func TestBouncerWarmsWhenEnabledAtRuntime(t *testing.T) {
 	t.Parallel()
 	hits := make(chan struct{}, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -222,34 +222,34 @@ func TestAssessorWarmsWhenEnabledAtRuntime(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ta := validTrustedAssessor(config.AssessorOff)
+	ta := validTrustedBouncer(config.BouncerOff)
 	ta.Config.URL = srv.URL
-	setup, ok := buildAssessorOption(ta, nil, nil)
+	setup, ok := buildBouncerOption(ta, nil, nil)
 	require.True(t, ok)
 	svc := permission.NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, setup.option)
-	require.True(t, svc.AssessorConfigured())
-	require.Equal(t, permission.AssessorOff, svc.AssessorMode())
+	require.True(t, svc.BouncerConfigured())
+	require.Equal(t, permission.BouncerOff, svc.BouncerMode())
 
-	svc.SetAssessorMode(permission.AssessorShadow)
+	svc.SetBouncerMode(permission.BouncerShadow)
 	select {
 	case <-hits:
 	case <-time.After(10 * time.Second):
-		t.Fatal("assessor was not warmed")
+		t.Fatal("bouncer was not warmed")
 	}
 }
 
-func TestBuildAssessorOption_SendUserMessagesFalseBuilt(t *testing.T) {
+func TestBuildBouncerOption_SendUserMessagesFalseBuilt(t *testing.T) {
 	t.Parallel()
-	ta := validTrustedAssessor(config.AssessorShadow)
+	ta := validTrustedBouncer(config.BouncerShadow)
 	off := false
 	ta.Config.SendUserMessages = &off
-	_, ok := buildAssessorOption(ta, nil, nil)
+	_, ok := buildBouncerOption(ta, nil, nil)
 	require.True(t, ok)
 }
 
-func TestBuildAssessorOption_NilNotBuilt(t *testing.T) {
+func TestBuildBouncerOption_NilNotBuilt(t *testing.T) {
 	t.Parallel()
-	_, ok := buildAssessorOption(nil, nil, nil)
+	_, ok := buildBouncerOption(nil, nil, nil)
 	require.False(t, ok)
 }
 
@@ -265,41 +265,41 @@ func captureSlog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-func TestBuildAssessorOption_EmptyKeyNotBuilt(t *testing.T) {
+func TestBuildBouncerOption_EmptyKeyNotBuilt(t *testing.T) {
 	buf := captureSlog(t)
-	ta := validTrustedAssessor(config.AssessorShadow)
+	ta := validTrustedBouncer(config.BouncerShadow)
 	ta.APIKey = ""
 
-	_, ok := buildAssessorOption(ta, nil, nil)
+	_, ok := buildBouncerOption(ta, nil, nil)
 	require.False(t, ok)
 	require.Contains(t, buf.String(), "level=WARN")
-	require.Contains(t, buf.String(), "Permission assessor is configured but unusable")
+	require.Contains(t, buf.String(), "Bouncer is configured but unusable")
 }
 
-func TestBuildAssessorOption_MissingURLOrModelNotBuilt(t *testing.T) {
+func TestBuildBouncerOption_MissingURLOrModelNotBuilt(t *testing.T) {
 	buf := captureSlog(t)
 
-	ta := validTrustedAssessor(config.AssessorShadow)
+	ta := validTrustedBouncer(config.BouncerShadow)
 	ta.Config.URL = ""
-	_, ok := buildAssessorOption(ta, nil, nil)
+	_, ok := buildBouncerOption(ta, nil, nil)
 	require.False(t, ok)
 
-	ta = validTrustedAssessor(config.AssessorShadow)
+	ta = validTrustedBouncer(config.BouncerShadow)
 	ta.Config.Model = ""
-	_, ok = buildAssessorOption(ta, nil, nil)
+	_, ok = buildBouncerOption(ta, nil, nil)
 	require.False(t, ok)
 
 	require.NotContains(t, buf.String(), "secret-key-value")
 }
 
-func TestBuildAssessorOption_InvalidMergedThresholdsNotBuilt(t *testing.T) {
+func TestBuildBouncerOption_InvalidMergedThresholdsNotBuilt(t *testing.T) {
 	buf := captureSlog(t)
-	ta := validTrustedAssessor(config.AssessorEnforce)
+	ta := validTrustedBouncer(config.BouncerEnforce)
 	// Valid alone, but not below the default deny_at of 0.9.
 	escalate := 0.95
 	ta.Config.EscalateAt = &escalate
 
-	_, ok := buildAssessorOption(ta, nil, nil)
+	_, ok := buildBouncerOption(ta, nil, nil)
 	require.False(t, ok)
-	require.Contains(t, buf.String(), "Permission assessor thresholds are invalid")
+	require.Contains(t, buf.String(), "Bouncer thresholds are invalid")
 }

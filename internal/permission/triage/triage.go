@@ -79,7 +79,7 @@ func IsSource(r Record) bool {
 		return false
 	}
 	switch permission.DecisionSource(r.DecidedBy) {
-	case permission.DecisionSourceHuman, permission.DecisionSourceAssessor,
+	case permission.DecisionSourceHuman, permission.DecisionSourceBouncer,
 		permission.DecisionSourceSessionGrant, permission.DecisionSourceSessionRule:
 		return true
 	default:
@@ -154,7 +154,7 @@ func Analyze(records []Record, rules []config.PermissionRule, opts Options) (all
 				}
 			}
 			if len(e.commands) == 1 && r.Verdict == string(permission.VerdictDeny) &&
-				(r.DecidedBy == string(permission.DecisionSourceHuman) || r.DecidedBy == string(permission.DecisionSourceAssessor)) {
+				(r.DecidedBy == string(permission.DecisionSourceHuman) || r.DecidedBy == string(permission.DecisionSourceBouncer)) {
 				if pattern := denyPattern(e.commands[0]); pattern != "" {
 					add(KindDeny, TierB, pattern, e.commands[0], "Review the scope of this permanent denial")
 				}

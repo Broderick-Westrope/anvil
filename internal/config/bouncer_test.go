@@ -12,24 +12,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// assessorEnv isolates the user-level config locations and the default key
+// bouncerEnv isolates the user-level config locations and the default key
 // var for one test, and returns the global config dir and a project dir.
-type assessorEnv struct {
+type bouncerEnv struct {
 	globalDir  string
 	dataDir    string
 	projectDir string
 }
 
-func newAssessorEnv(t *testing.T) assessorEnv {
+func newBouncerEnv(t *testing.T) bouncerEnv {
 	t.Helper()
-	e := assessorEnv{
+	e := bouncerEnv{
 		globalDir:  t.TempDir(),
 		dataDir:    t.TempDir(),
 		projectDir: t.TempDir(),
 	}
 	t.Setenv("ANVIL_GLOBAL_CONFIG", e.globalDir)
 	t.Setenv("ANVIL_GLOBAL_DATA", e.dataDir)
-	t.Setenv(DefaultAssessorAPIKeyEnv, "")
+	t.Setenv(DefaultBouncerAPIKeyEnv, "")
 	resetProviderState()
 	t.Cleanup(resetProviderState)
 	return e
@@ -46,7 +46,7 @@ func writeConfig(t *testing.T, dir string, cfg map[string]any) {
 
 // writeGlobal writes the user-level config with a single custom provider
 // and default providers disabled, so Load never reaches out to Catwalk.
-func (e assessorEnv) writeGlobal(t *testing.T, cfg map[string]any) {
+func (e bouncerEnv) writeGlobal(t *testing.T, cfg map[string]any) {
 	t.Helper()
 	cfg["options"] = map[string]any{"disable_default_providers": true}
 	cfg["providers"] = map[string]any{
@@ -60,19 +60,19 @@ func (e assessorEnv) writeGlobal(t *testing.T, cfg map[string]any) {
 	writeConfig(t, e.globalDir, cfg)
 }
 
-func (e assessorEnv) load(t *testing.T) (*ConfigStore, error) {
+func (e bouncerEnv) load(t *testing.T) (*ConfigStore, error) {
 	t.Helper()
 	return Load(e.projectDir, filepath.Join(e.projectDir, ".anvil"), false)
 }
 
-func (e assessorEnv) mustLoad(t *testing.T) *ConfigStore {
+func (e bouncerEnv) mustLoad(t *testing.T) *ConfigStore {
 	t.Helper()
 	store, err := e.load(t)
 	require.NoError(t, err)
 	return store
 }
 
-func assessorBlock(mode string) map[string]any {
+func bouncerBlock(mode string) map[string]any {
 	return map[string]any{
 		"mode":  mode,
 		"url":   "https://classifier.example.com/v1/answer",
@@ -80,100 +80,100 @@ func assessorBlock(mode string) map[string]any {
 	}
 }
 
-func requireAssessorMode(t *testing.T, store *ConfigStore, want AssessorMode) {
+func requireBouncerMode(t *testing.T, store *ConfigStore, want BouncerMode) {
 	t.Helper()
-	ta := store.TrustedAssessor()
+	ta := store.TrustedBouncer()
 	if want == "" {
 		require.Nil(t, ta)
-		require.Nil(t, store.Config().PermissionAssessor)
+		require.Nil(t, store.Config().Bouncer)
 		return
 	}
 	require.NotNil(t, ta)
 	require.Equal(t, want, ta.Config.Mode)
-	require.Same(t, ta.Config, store.Config().PermissionAssessor)
+	require.Same(t, ta.Config, store.Config().Bouncer)
 }
 
-func TestAssessor_GlobalShadowLoadsAndCapturesKey(t *testing.T) {
-	e := newAssessorEnv(t)
-	t.Setenv(DefaultAssessorAPIKeyEnv, "real-key")
-	e.writeGlobal(t, map[string]any{"permission_assessor": assessorBlock("shadow")})
+func TestBouncer_GlobalShadowLoadsAndCapturesKey(t *testing.T) {
+	e := newBouncerEnv(t)
+	t.Setenv(DefaultBouncerAPIKeyEnv, "real-key")
+	e.writeGlobal(t, map[string]any{"bouncer": bouncerBlock("shadow")})
 
 	store := e.mustLoad(t)
-	requireAssessorMode(t, store, "shadow")
-	require.Equal(t, "real-key", store.TrustedAssessor().APIKey)
-	require.Equal(t, "von-1.0.0", store.TrustedAssessor().Config.Model)
+	requireBouncerMode(t, store, "shadow")
+	require.Equal(t, "real-key", store.TrustedBouncer().APIKey)
+	require.Equal(t, "von-1.0.0", store.TrustedBouncer().Config.Model)
 }
 
-func TestAssessor_GlobalDataPathIsTrusted(t *testing.T) {
-	e := newAssessorEnv(t)
-	writeConfig(t, e.dataDir, map[string]any{"permission_assessor": assessorBlock("enforce")})
+func TestBouncer_GlobalDataPathIsTrusted(t *testing.T) {
+	e := newBouncerEnv(t)
+	writeConfig(t, e.dataDir, map[string]any{"bouncer": bouncerBlock("enforce")})
 
-	requireAssessorMode(t, e.mustLoad(t), "enforce")
+	requireBouncerMode(t, e.mustLoad(t), "enforce")
 }
 
-func TestAssessor_ProjectBlockAloneIgnored(t *testing.T) {
-	e := newAssessorEnv(t)
+func TestBouncer_ProjectBlockAloneIgnored(t *testing.T) {
+	e := newBouncerEnv(t)
 	e.writeGlobal(t, map[string]any{})
-	writeConfig(t, e.projectDir, map[string]any{"permission_assessor": assessorBlock("enforce")})
+	writeConfig(t, e.projectDir, map[string]any{"bouncer": bouncerBlock("enforce")})
 
 	store := e.mustLoad(t)
-	requireAssessorMode(t, store, "")
+	requireBouncerMode(t, store, "")
 
 	require.NoError(t, store.ReloadFromDisk(context.Background()))
-	requireAssessorMode(t, store, "")
+	requireBouncerMode(t, store, "")
 }
 
-func TestAssessor_ProjectCannotOverrideGlobal(t *testing.T) {
-	e := newAssessorEnv(t)
-	e.writeGlobal(t, map[string]any{"permission_assessor": assessorBlock("shadow")})
-	project := assessorBlock("enforce")
+func TestBouncer_ProjectCannotOverrideGlobal(t *testing.T) {
+	e := newBouncerEnv(t)
+	e.writeGlobal(t, map[string]any{"bouncer": bouncerBlock("shadow")})
+	project := bouncerBlock("enforce")
 	project["deny_at"] = 0.5
-	writeConfig(t, e.projectDir, map[string]any{"permission_assessor": project})
+	writeConfig(t, e.projectDir, map[string]any{"bouncer": project})
 
 	store := e.mustLoad(t)
-	requireAssessorMode(t, store, "shadow")
-	require.Nil(t, store.TrustedAssessor().Config.DenyAt)
+	requireBouncerMode(t, store, "shadow")
+	require.Nil(t, store.TrustedBouncer().Config.DenyAt)
 }
 
-func TestAssessor_WorkspaceBlockIgnored(t *testing.T) {
+func TestBouncer_WorkspaceBlockIgnored(t *testing.T) {
 	t.Run("alone", func(t *testing.T) {
-		e := newAssessorEnv(t)
+		e := newBouncerEnv(t)
 		e.writeGlobal(t, map[string]any{})
-		writeConfig(t, filepath.Join(e.projectDir, ".anvil"), map[string]any{"permission_assessor": assessorBlock("enforce")})
+		writeConfig(t, filepath.Join(e.projectDir, ".anvil"), map[string]any{"bouncer": bouncerBlock("enforce")})
 
 		store := e.mustLoad(t)
-		requireAssessorMode(t, store, "")
+		requireBouncerMode(t, store, "")
 
 		require.NoError(t, store.ReloadFromDisk(context.Background()))
-		requireAssessorMode(t, store, "")
+		requireBouncerMode(t, store, "")
 	})
 
 	t.Run("over global shadow", func(t *testing.T) {
-		e := newAssessorEnv(t)
-		e.writeGlobal(t, map[string]any{"permission_assessor": assessorBlock("shadow")})
-		writeConfig(t, filepath.Join(e.projectDir, ".anvil"), map[string]any{"permission_assessor": assessorBlock("enforce")})
+		e := newBouncerEnv(t)
+		e.writeGlobal(t, map[string]any{"bouncer": bouncerBlock("shadow")})
+		writeConfig(t, filepath.Join(e.projectDir, ".anvil"), map[string]any{"bouncer": bouncerBlock("enforce")})
 
 		store := e.mustLoad(t)
-		requireAssessorMode(t, store, "shadow")
+		requireBouncerMode(t, store, "shadow")
 
 		require.NoError(t, store.ReloadFromDisk(context.Background()))
-		requireAssessorMode(t, store, "shadow")
+		requireBouncerMode(t, store, "shadow")
 	})
 
 	t.Run("added before reload", func(t *testing.T) {
-		e := newAssessorEnv(t)
-		e.writeGlobal(t, map[string]any{"permission_assessor": assessorBlock("shadow")})
+		e := newBouncerEnv(t)
+		e.writeGlobal(t, map[string]any{"bouncer": bouncerBlock("shadow")})
 
 		store := e.mustLoad(t)
-		requireAssessorMode(t, store, "shadow")
+		requireBouncerMode(t, store, "shadow")
 
-		writeConfig(t, filepath.Join(e.projectDir, ".anvil"), map[string]any{"permission_assessor": assessorBlock("enforce")})
+		writeConfig(t, filepath.Join(e.projectDir, ".anvil"), map[string]any{"bouncer": bouncerBlock("enforce")})
 		require.NoError(t, store.ReloadFromDisk(context.Background()))
-		requireAssessorMode(t, store, "shadow")
+		requireBouncerMode(t, store, "shadow")
 	})
 }
 
-func TestAssessor_ProjectEnvCannotRedirectTrustedPaths(t *testing.T) {
+func TestBouncer_ProjectEnvCannotRedirectTrustedPaths(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		globalMode string
@@ -185,88 +185,88 @@ func TestAssessor_ProjectEnvCannotRedirectTrustedPaths(t *testing.T) {
 		{name: "data with global shadow", globalMode: "shadow", envVar: "ANVIL_GLOBAL_DATA"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := newAssessorEnv(t)
+			e := newBouncerEnv(t)
 			global := map[string]any{}
 			if tc.globalMode != "" {
-				global["permission_assessor"] = assessorBlock(tc.globalMode)
+				global["bouncer"] = bouncerBlock(tc.globalMode)
 			}
 			e.writeGlobal(t, global)
 
 			attackerDir := filepath.Join(e.projectDir, "attacker")
-			writeConfig(t, attackerDir, map[string]any{"permission_assessor": assessorBlock("enforce")})
+			writeConfig(t, attackerDir, map[string]any{"bouncer": bouncerBlock("enforce")})
 			writeConfig(t, e.projectDir, map[string]any{"env": map[string]string{tc.envVar: attackerDir}})
 
 			store := e.mustLoad(t)
 			require.Equal(t, attackerDir, os.Getenv(tc.envVar), "project env should have been applied")
-			requireAssessorMode(t, store, AssessorMode(tc.globalMode))
+			requireBouncerMode(t, store, BouncerMode(tc.globalMode))
 
 			require.NoError(t, store.ReloadFromDisk(context.Background()))
-			requireAssessorMode(t, store, AssessorMode(tc.globalMode))
+			requireBouncerMode(t, store, BouncerMode(tc.globalMode))
 		})
 	}
 }
 
-func TestAssessor_ProjectEnvCannotSwapKey(t *testing.T) {
-	e := newAssessorEnv(t)
-	t.Setenv(DefaultAssessorAPIKeyEnv, "real-key")
-	e.writeGlobal(t, map[string]any{"permission_assessor": assessorBlock("shadow")})
-	writeConfig(t, e.projectDir, map[string]any{"env": map[string]string{DefaultAssessorAPIKeyEnv: "attacker"}})
+func TestBouncer_ProjectEnvCannotSwapKey(t *testing.T) {
+	e := newBouncerEnv(t)
+	t.Setenv(DefaultBouncerAPIKeyEnv, "real-key")
+	e.writeGlobal(t, map[string]any{"bouncer": bouncerBlock("shadow")})
+	writeConfig(t, e.projectDir, map[string]any{"env": map[string]string{DefaultBouncerAPIKeyEnv: "attacker"}})
 
 	store := e.mustLoad(t)
-	require.Equal(t, "attacker", os.Getenv(DefaultAssessorAPIKeyEnv), "project env should have been applied")
-	require.Equal(t, "real-key", store.TrustedAssessor().APIKey)
+	require.Equal(t, "attacker", os.Getenv(DefaultBouncerAPIKeyEnv), "project env should have been applied")
+	require.Equal(t, "real-key", store.TrustedBouncer().APIKey)
 
 	require.NoError(t, store.ReloadFromDisk(context.Background()))
-	require.Equal(t, "real-key", store.TrustedAssessor().APIKey)
+	require.Equal(t, "real-key", store.TrustedBouncer().APIKey)
 }
 
-func TestAssessor_APIKeyEnv(t *testing.T) {
+func TestBouncer_APIKeyEnv(t *testing.T) {
 	t.Run("omitted reads BASETEN_API_KEY", func(t *testing.T) {
-		e := newAssessorEnv(t)
-		t.Setenv(DefaultAssessorAPIKeyEnv, "baseten-key")
-		e.writeGlobal(t, map[string]any{"permission_assessor": assessorBlock("shadow")})
+		e := newBouncerEnv(t)
+		t.Setenv(DefaultBouncerAPIKeyEnv, "baseten-key")
+		e.writeGlobal(t, map[string]any{"bouncer": bouncerBlock("shadow")})
 
-		require.Equal(t, "baseten-key", e.mustLoad(t).TrustedAssessor().APIKey)
+		require.Equal(t, "baseten-key", e.mustLoad(t).TrustedBouncer().APIKey)
 	})
 
 	t.Run("custom name is captured and default ignored", func(t *testing.T) {
-		e := newAssessorEnv(t)
-		t.Setenv(DefaultAssessorAPIKeyEnv, "baseten-key")
+		e := newBouncerEnv(t)
+		t.Setenv(DefaultBouncerAPIKeyEnv, "baseten-key")
 		t.Setenv("MY_CLASSIFIER_KEY", "custom-key")
-		block := assessorBlock("shadow")
+		block := bouncerBlock("shadow")
 		block["api_key_env"] = "MY_CLASSIFIER_KEY"
-		e.writeGlobal(t, map[string]any{"permission_assessor": block})
+		e.writeGlobal(t, map[string]any{"bouncer": block})
 
-		require.Equal(t, "custom-key", e.mustLoad(t).TrustedAssessor().APIKey)
+		require.Equal(t, "custom-key", e.mustLoad(t).TrustedBouncer().APIKey)
 	})
 
 	t.Run("custom name unset leaves key empty", func(t *testing.T) {
-		e := newAssessorEnv(t)
-		t.Setenv(DefaultAssessorAPIKeyEnv, "baseten-key")
+		e := newBouncerEnv(t)
+		t.Setenv(DefaultBouncerAPIKeyEnv, "baseten-key")
 		t.Setenv("MY_CLASSIFIER_KEY", "")
 		require.NoError(t, os.Unsetenv("MY_CLASSIFIER_KEY"))
-		block := assessorBlock("shadow")
+		block := bouncerBlock("shadow")
 		block["api_key_env"] = "MY_CLASSIFIER_KEY"
-		e.writeGlobal(t, map[string]any{"permission_assessor": block})
+		e.writeGlobal(t, map[string]any{"bouncer": block})
 
 		store, err := e.load(t)
 		require.NoError(t, err)
-		requireAssessorMode(t, store, "shadow")
-		require.Empty(t, store.TrustedAssessor().APIKey)
+		requireBouncerMode(t, store, "shadow")
+		require.Empty(t, store.TrustedBouncer().APIKey)
 	})
 
 	t.Run("invalid name fails load", func(t *testing.T) {
-		e := newAssessorEnv(t)
-		block := assessorBlock("shadow")
+		e := newBouncerEnv(t)
+		block := bouncerBlock("shadow")
 		block["api_key_env"] = "1BAD-NAME"
-		e.writeGlobal(t, map[string]any{"permission_assessor": block})
+		e.writeGlobal(t, map[string]any{"bouncer": block})
 
 		_, err := e.load(t)
 		require.ErrorContains(t, err, "api_key_env")
 	})
 }
 
-func TestAssessor_InvalidGlobalBlockFailsLoad(t *testing.T) {
+func TestBouncer_InvalidGlobalBlockFailsLoad(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		set   map[string]any
@@ -280,12 +280,12 @@ func TestAssessor_InvalidGlobalBlockFailsLoad(t *testing.T) {
 		{name: "timeout too large", set: map[string]any{"timeout_seconds": 61}, match: "timeout_seconds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := newAssessorEnv(t)
-			block := assessorBlock("shadow")
+			e := newBouncerEnv(t)
+			block := bouncerBlock("shadow")
 			for k, v := range tc.set {
 				block[k] = v
 			}
-			e.writeGlobal(t, map[string]any{"permission_assessor": block})
+			e.writeGlobal(t, map[string]any{"bouncer": block})
 
 			_, err := e.load(t)
 			require.ErrorContains(t, err, tc.match)
@@ -293,44 +293,44 @@ func TestAssessor_InvalidGlobalBlockFailsLoad(t *testing.T) {
 	}
 }
 
-func TestAssessor_InvalidGlobalBlockFailsReload(t *testing.T) {
-	e := newAssessorEnv(t)
-	e.writeGlobal(t, map[string]any{"permission_assessor": assessorBlock("shadow")})
+func TestBouncer_InvalidGlobalBlockFailsReload(t *testing.T) {
+	e := newBouncerEnv(t)
+	e.writeGlobal(t, map[string]any{"bouncer": bouncerBlock("shadow")})
 	store := e.mustLoad(t)
 
-	e.writeGlobal(t, map[string]any{"permission_assessor": assessorBlock("yolo")})
+	e.writeGlobal(t, map[string]any{"bouncer": bouncerBlock("yolo")})
 	require.ErrorContains(t, store.ReloadFromDisk(context.Background()), "mode")
-	requireAssessorMode(t, store, "shadow")
+	requireBouncerMode(t, store, "shadow")
 }
 
-func TestAssessor_WarnsOnlyWhenProjectDiffers(t *testing.T) {
+func TestBouncer_WarnsOnlyWhenProjectDiffers(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	const warning = "Ignoring permission_assessor from project config"
+	const warning = "Ignoring bouncer from project config"
 
-	e := newAssessorEnv(t)
-	t.Setenv(DefaultAssessorAPIKeyEnv, "secret-key-value")
-	e.writeGlobal(t, map[string]any{"permission_assessor": assessorBlock("shadow")})
+	e := newBouncerEnv(t)
+	t.Setenv(DefaultBouncerAPIKeyEnv, "secret-key-value")
+	e.writeGlobal(t, map[string]any{"bouncer": bouncerBlock("shadow")})
 
 	e.mustLoad(t)
 	require.NotContains(t, buf.String(), warning)
 
-	writeConfig(t, e.projectDir, map[string]any{"permission_assessor": assessorBlock("enforce")})
+	writeConfig(t, e.projectDir, map[string]any{"bouncer": bouncerBlock("enforce")})
 	resetProviderState()
 	e.mustLoad(t)
 	require.Contains(t, buf.String(), warning)
 	require.NotContains(t, buf.String(), "secret-key-value")
 }
 
-func TestPermissionAssessor_Validate(t *testing.T) {
+func TestBouncer_Validate(t *testing.T) {
 	t.Parallel()
 
 	f := func(v float64) *float64 { return &v }
 
-	valid := []*PermissionAssessor{
+	valid := []*Bouncer{
 		nil,
 		{},
 		{
@@ -343,7 +343,7 @@ func TestPermissionAssessor_Validate(t *testing.T) {
 		require.NoError(t, p.Validate())
 	}
 
-	invalid := map[string]*PermissionAssessor{
+	invalid := map[string]*Bouncer{
 		"mode":                 {Mode: "on"},
 		"auth_scheme":          {AuthScheme: "api-key"},
 		"explicit_ask":         {ExplicitAsk: "both"},

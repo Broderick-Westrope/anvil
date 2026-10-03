@@ -246,16 +246,16 @@ func (w *AppWorkspace) PermissionSetYoloLevel(level config.YoloLevel) {
 	w.app.Permissions.SetYoloLevel(level)
 }
 
-func (w *AppWorkspace) PermissionAssessorConfigured() bool {
-	return w.app.Permissions.AssessorConfigured()
+func (w *AppWorkspace) PermissionBouncerConfigured() bool {
+	return w.app.Permissions.BouncerConfigured()
 }
 
-func (w *AppWorkspace) PermissionAssessorMode() permission.AssessorMode {
-	return w.app.Permissions.AssessorMode()
+func (w *AppWorkspace) PermissionBouncerMode() permission.BouncerMode {
+	return w.app.Permissions.BouncerMode()
 }
 
-func (w *AppWorkspace) PermissionSetAssessorMode(mode permission.AssessorMode) {
-	w.app.Permissions.SetAssessorMode(mode)
+func (w *AppWorkspace) PermissionSetBouncerMode(mode permission.BouncerMode) {
+	w.app.Permissions.SetBouncerMode(mode)
 }
 
 func (w *AppWorkspace) PermissionUnresolvedCount(ctx context.Context, since time.Time) (int, error) {

@@ -69,8 +69,8 @@ func TestComputeStats(t *testing.T) {
 		assessmentRow(t, 1, "v1", "shadow", "deny", "human", "allow", 20),
 		assessmentRow(t, 1, "v1", "shadow", "error", "human", "allow", 9999),
 		assessmentRow(t, 1, "v1", "shadow", "skipped", "human", "cancelled", 9999),
-		assessmentRow(t, 1, "v1", "enforce", "allow", "assessor", "allow", 30),
-		assessmentRow(t, 1, "v1", "enforce", "deny", "assessor", "deny", 40),
+		assessmentRow(t, 1, "v1", "enforce", "allow", "bouncer", "allow", 30),
+		assessmentRow(t, 1, "v1", "enforce", "deny", "bouncer", "deny", 40),
 		assessmentRow(t, 1, "v1", "enforce", "escalate", "human", "deny", 50),
 		assessmentRow(t, 1, "v2", "shadow", "allow", "human", "allow", 100),
 		assessmentRow(t, 2, "v1", "shadow", "allow", "human", "allow", 200),
@@ -79,7 +79,7 @@ func TestComputeStats(t *testing.T) {
 	}
 	stats := ComputeStats(rows)
 	require.Equal(t, 11, stats.Total)
-	require.Equal(t, 2, stats.ByDecidedBy["assessor"])
+	require.Equal(t, 2, stats.ByDecidedBy["bouncer"])
 	require.Equal(t, 1, stats.WithoutAssessment)
 	require.Equal(t, 1, stats.InvalidAssessments)
 	require.Len(t, stats.Groups, 3)
@@ -88,8 +88,8 @@ func TestComputeStats(t *testing.T) {
 	require.Equal(t, 1, g.Shadow.Matrix["allow"]["deny"])
 	require.Equal(t, 1, g.Shadow.Matrix["skipped"]["cancelled"])
 	require.Equal(t, 3, g.Enforce.Samples)
-	require.Equal(t, 1, g.Enforce.Assessor["allow"])
-	require.Equal(t, 1, g.Enforce.Assessor["deny"])
+	require.Equal(t, 1, g.Enforce.Bouncer["allow"])
+	require.Equal(t, 1, g.Enforce.Bouncer["deny"])
 	require.Equal(t, 1, g.Enforce.Human.Matrix["escalate"]["deny"])
 	require.Equal(t, 1, g.Errors["timeout"])
 	require.Equal(t, 1, g.Skips["opaque"])
@@ -122,7 +122,7 @@ func TestCountUnresolvedSince(t *testing.T) {
 
 	sources := []permission.DecisionSource{
 		permission.DecisionSourceHuman,
-		permission.DecisionSourceAssessor,
+		permission.DecisionSourceBouncer,
 		permission.DecisionSourceSessionGrant,
 		permission.DecisionSourceSessionRule,
 		permission.DecisionSourceRule,
@@ -160,7 +160,7 @@ func TestCountUnresolvedMatchesTriageSources(t *testing.T) {
 	q := db.New(conn)
 
 	sources := []permission.DecisionSource{
-		permission.DecisionSourceHuman, permission.DecisionSourceAssessor,
+		permission.DecisionSourceHuman, permission.DecisionSourceBouncer,
 		permission.DecisionSourceSessionGrant, permission.DecisionSourceSessionRule,
 		permission.DecisionSourceRule, permission.DecisionSourceYolo,
 		permission.DecisionSourceHook, permission.DecisionSourceAutoSession,

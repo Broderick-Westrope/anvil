@@ -549,13 +549,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "init", "Initialize Project", "", ActionInitializeProject{}),
 	)
 
-	// Add a command to cycle the runtime permission assessor mode. Only
-	// shown when an assessor was wired at startup; toggling here is a
+	// Add a command to cycle the runtime bouncer mode. Only
+	// shown when a bouncer was wired at startup; toggling here is a
 	// runtime-only change and never writes config.
-	if c.com.Workspace.PermissionAssessorConfigured() {
-		current := c.com.Workspace.PermissionAssessorMode()
-		label := "Permission Assessor: " + assessorModeLabel(current) + " → " + assessorModeLabel(nextAssessorMode(current))
-		commands = append(commands, NewCommandItem(c.com.Styles, "cycle_assessor", label, "ctrl+q", ActionCycleAssessorMode{}))
+	if c.com.Workspace.PermissionBouncerConfigured() {
+		current := c.com.Workspace.PermissionBouncerMode()
+		label := "Bouncer: " + bouncerModeLabel(current) + " → " + bouncerModeLabel(nextBouncerMode(current))
+		commands = append(commands, NewCommandItem(c.com.Styles, "cycle_bouncer", label, "ctrl+q", ActionCycleBouncerMode{}))
 	}
 
 	// Add transparent background toggle.
@@ -591,29 +591,29 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	return commands
 }
 
-// assessorModeLabel returns the capitalized display label for a runtime
-// permission assessor mode, used in the command palette toggle label.
-func assessorModeLabel(mode permission.AssessorMode) string {
+// bouncerModeLabel returns the capitalized display label for a runtime
+// bouncer mode, used in the command palette toggle label.
+func bouncerModeLabel(mode permission.BouncerMode) string {
 	switch mode {
-	case permission.AssessorShadow:
+	case permission.BouncerShadow:
 		return "Shadow"
-	case permission.AssessorEnforce:
+	case permission.BouncerEnforce:
 		return "Enforce"
 	default:
 		return "Off"
 	}
 }
 
-// nextAssessorMode returns the mode after the given one in the
+// nextBouncerMode returns the mode after the given one in the
 // off -> shadow -> enforce -> off cycle.
-func nextAssessorMode(mode permission.AssessorMode) permission.AssessorMode {
+func nextBouncerMode(mode permission.BouncerMode) permission.BouncerMode {
 	switch mode {
-	case permission.AssessorShadow:
-		return permission.AssessorEnforce
-	case permission.AssessorEnforce:
-		return permission.AssessorOff
+	case permission.BouncerShadow:
+		return permission.BouncerEnforce
+	case permission.BouncerEnforce:
+		return permission.BouncerOff
 	default:
-		return permission.AssessorShadow
+		return permission.BouncerShadow
 	}
 }
 

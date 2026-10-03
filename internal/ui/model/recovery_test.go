@@ -25,13 +25,13 @@ func (*recoveryWorkspace) AgentIsReady() bool { return false }
 
 func (*recoveryWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
 
-func (*recoveryWorkspace) PermissionAssessorConfigured() bool { return false }
+func (*recoveryWorkspace) PermissionBouncerConfigured() bool { return false }
 
-func (*recoveryWorkspace) PermissionAssessorMode() permission.AssessorMode {
-	return permission.AssessorOff
+func (*recoveryWorkspace) PermissionBouncerMode() permission.BouncerMode {
+	return permission.BouncerOff
 }
 
-func (*recoveryWorkspace) PermissionSetAssessorMode(permission.AssessorMode) {}
+func (*recoveryWorkspace) PermissionSetBouncerMode(permission.BouncerMode) {}
 
 func (*recoveryWorkspace) PermissionUnresolvedCount(context.Context, time.Time) (int, error) {
 	return 0, nil

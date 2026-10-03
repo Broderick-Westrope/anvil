@@ -106,10 +106,10 @@ func newTestPermissions(t *testing.T) *Permissions {
 }
 
 // escalationSummary is an escalated verdict with every kind of trigger.
-func escalationSummary() *permission.AssessorSummary {
-	return &permission.AssessorSummary{
+func escalationSummary() *permission.AssessmentSummary {
+	return &permission.AssessmentSummary{
 		Outcome: "escalate",
-		Scores: []permission.AssessorScore{
+		Scores: []permission.AssessmentScore{
 			{Name: "remote_exec", Value: 0.91, Max: 1, Trigger: permission.TriggerDeny},
 			{Name: "destructive", Value: 0.62, Max: 1, Trigger: permission.TriggerEscalate},
 			{Name: "exfiltration", Value: 0.1, Max: 1},
@@ -121,43 +121,43 @@ func escalationSummary() *permission.AssessorSummary {
 	}
 }
 
-// TestPermissions_RenderHeaderShowsAssessorSummary verifies the verdict is
+// TestPermissions_RenderHeaderShowsAssessmentSummary verifies the verdict is
 // added under the header without changing the lines above it, and that
 // every axis is shown.
-func TestPermissions_RenderHeaderShowsAssessorSummary(t *testing.T) {
+func TestPermissions_RenderHeaderShowsAssessmentSummary(t *testing.T) {
 	t.Parallel()
 
 	const width = 100
 
 	withoutNote := newTestPermissions(t)
 	base := ansi.Strip(withoutNote.renderHeader(width))
-	require.NotContains(t, base, "Assessor")
+	require.NotContains(t, base, "Bouncer")
 
 	p := newTestPermissions(t)
-	p.permission.Assessor = escalationSummary()
-	p.permission.AssessorNote = p.permission.Assessor.Note()
+	p.permission.Bouncer = escalationSummary()
+	p.permission.BouncerNote = p.permission.Bouncer.Note()
 	noted := ansi.Strip(p.renderHeader(width))
 
 	baseLines := strings.Split(base, "\n")
 	notedLines := strings.Split(noted, "\n")
 	require.Equal(t, baseLines, notedLines[:len(baseLines)], "lines before the verdict must be unaffected")
 	block := strings.Join(notedLines[len(baseLines):], "\n")
-	require.Contains(t, block, "Assessor Escalate")
+	require.Contains(t, block, "Bouncer Escalate")
 	for _, want := range []string{"remote exec 0.91", "destructive 0.62", "exfiltration 0.10", "credentials 0.02", "shared infra 0.04", "severity 2.4/3", "user requested 0.88"} {
 		require.Contains(t, block, want)
 	}
 }
 
-// TestPermissions_AssessorSummaryWrapsInsteadOfTruncating verifies a narrow
+// TestPermissions_AssessmentSummaryWrapsInsteadOfTruncating verifies a narrow
 // dialog wraps the axes onto more lines, never cutting one off, and keeps
 // every line within the content width.
-func TestPermissions_AssessorSummaryWrapsInsteadOfTruncating(t *testing.T) {
+func TestPermissions_AssessmentSummaryWrapsInsteadOfTruncating(t *testing.T) {
 	t.Parallel()
 
 	const width = 40
 	p := newTestPermissions(t)
-	p.permission.Assessor = escalationSummary()
-	block := p.renderAssessor(width)
+	p.permission.Bouncer = escalationSummary()
+	block := p.renderBouncer(width)
 	plain := ansi.Strip(block)
 
 	lines := strings.Split(plain, "\n")
@@ -166,16 +166,16 @@ func TestPermissions_AssessorSummaryWrapsInsteadOfTruncating(t *testing.T) {
 		require.LessOrEqual(t, ansi.StringWidth(line), width, "line %q overflows", line)
 	}
 	require.NotContains(t, plain, "…")
-	for _, sc := range p.permission.Assessor.Scores {
-		require.Contains(t, strings.Join(strings.Fields(plain), " "), formatAssessorScore(sc))
+	for _, sc := range p.permission.Bouncer.Scores {
+		require.Contains(t, strings.Join(strings.Fields(plain), " "), formatAssessmentScore(sc))
 	}
 	// Continuation lines are indented under the value, not the key.
-	require.True(t, strings.HasPrefix(lines[1], strings.Repeat(" ", len("Assessor "))))
+	require.True(t, strings.HasPrefix(lines[1], strings.Repeat(" ", len("Bouncer "))))
 }
 
-// TestPermissions_AssessorSummaryHighlightsTriggers verifies each axis is
+// TestPermissions_AssessmentSummaryHighlightsTriggers verifies each axis is
 // styled by the effect it had, so the cause of an escalation stands out.
-func TestPermissions_AssessorSummaryHighlightsTriggers(t *testing.T) {
+func TestPermissions_AssessmentSummaryHighlightsTriggers(t *testing.T) {
 	t.Parallel()
 
 	p := newTestPermissions(t)
@@ -184,43 +184,43 @@ func TestPermissions_AssessorSummaryHighlightsTriggers(t *testing.T) {
 		trigger string
 		want    lipgloss.Style
 	}{
-		{permission.TriggerDeny, ps.AssessorDeny},
-		{permission.TriggerEscalate, ps.AssessorEscalate},
-		{permission.TriggerMitigate, ps.AssessorMitigate},
-		{"", ps.AssessorScore},
+		{permission.TriggerDeny, ps.BouncerDeny},
+		{permission.TriggerEscalate, ps.BouncerEscalate},
+		{permission.TriggerMitigate, ps.BouncerMitigate},
+		{"", ps.BouncerScore},
 	} {
-		sc := permission.AssessorScore{Name: "destructive", Value: 0.62, Max: 1, Trigger: tt.trigger}
-		p.permission.Assessor = &permission.AssessorSummary{Outcome: "escalate", Scores: []permission.AssessorScore{sc}}
-		require.Contains(t, p.renderAssessor(100), tt.want.Render(formatAssessorScore(sc)), "trigger %q", tt.trigger)
+		sc := permission.AssessmentScore{Name: "destructive", Value: 0.62, Max: 1, Trigger: tt.trigger}
+		p.permission.Bouncer = &permission.AssessmentSummary{Outcome: "escalate", Scores: []permission.AssessmentScore{sc}}
+		require.Contains(t, p.renderBouncer(100), tt.want.Render(formatAssessmentScore(sc)), "trigger %q", tt.trigger)
 	}
-	require.NotEqual(t, ps.AssessorScore.Render("x"), ps.AssessorEscalate.Render("x"), "escalating axes must look different")
-	require.NotEqual(t, ps.AssessorEscalate.Render("x"), ps.AssessorDeny.Render("x"), "deny and escalate must look different")
+	require.NotEqual(t, ps.BouncerScore.Render("x"), ps.BouncerEscalate.Render("x"), "escalating axes must look different")
+	require.NotEqual(t, ps.BouncerEscalate.Render("x"), ps.BouncerDeny.Render("x"), "deny and escalate must look different")
 }
 
-// TestPermissions_AssessorSkippedAndShadow covers the verdicts without
+// TestPermissions_BouncerSkippedAndShadow covers the verdicts without
 // scores and the shadow label.
-func TestPermissions_AssessorSkippedAndShadow(t *testing.T) {
+func TestPermissions_BouncerSkippedAndShadow(t *testing.T) {
 	t.Parallel()
 
 	p := newTestPermissions(t)
-	p.permission.Assessor = &permission.AssessorSummary{Outcome: "skipped", Detail: "protected path"}
-	require.Equal(t, "Assessor Skipped · protected path", strings.TrimSpace(ansi.Strip(p.renderAssessor(80))))
+	p.permission.Bouncer = &permission.AssessmentSummary{Outcome: "skipped", Detail: "protected path"}
+	require.Equal(t, "Bouncer Skipped · protected path", strings.TrimSpace(ansi.Strip(p.renderBouncer(80))))
 
-	p.permission.Assessor = &permission.AssessorSummary{Shadow: true, Outcome: "allow", Scores: []permission.AssessorScore{{Name: "destructive", Value: 0.05, Max: 1}}}
-	got := ansi.Strip(p.renderAssessor(80))
+	p.permission.Bouncer = &permission.AssessmentSummary{Shadow: true, Outcome: "allow", Scores: []permission.AssessmentScore{{Name: "destructive", Value: 0.05, Max: 1}}}
+	got := ansi.Strip(p.renderBouncer(80))
 	require.Contains(t, got, "Allow (shadow)")
 	require.Contains(t, got, "destructive 0.05")
 }
 
-// TestPermissions_AssessorNoteFallbackWraps verifies a plain note with no
+// TestPermissions_BouncerNoteFallbackWraps verifies a plain note with no
 // structured summary wraps instead of being truncated.
-func TestPermissions_AssessorNoteFallbackWraps(t *testing.T) {
+func TestPermissions_BouncerNoteFallbackWraps(t *testing.T) {
 	t.Parallel()
 
 	const width = 40
 	p := newTestPermissions(t)
-	p.permission.AssessorNote = "assessor: escalate · " + strings.Repeat("axis=0.50 ", 10)
-	plain := ansi.Strip(p.renderAssessor(width))
+	p.permission.BouncerNote = "bouncer: escalate · " + strings.Repeat("axis=0.50 ", 10)
+	plain := ansi.Strip(p.renderBouncer(width))
 	require.NotContains(t, plain, "…")
 	require.Greater(t, len(strings.Split(plain, "\n")), 1)
 	require.Equal(t, 10, strings.Count(plain, "axis=0.50"))

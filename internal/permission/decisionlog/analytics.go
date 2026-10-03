@@ -64,20 +64,20 @@ func parseAssessment(row db.PermissionDecision) *permission.AssessmentRecord {
 	return a
 }
 
-// VerdictMatrix counts final verdicts keyed by assessor outcome then verdict.
+// VerdictMatrix counts final verdicts keyed by bouncer outcome then verdict.
 type VerdictMatrix map[string]map[string]int
 
-// Comparisons pairs assessor outcomes with human verdicts.
+// Comparisons pairs bouncer outcomes with human verdicts.
 type Comparisons struct {
 	Samples int           `json:"samples"`
 	Matrix  VerdictMatrix `json:"matrix"`
 }
 
-// Enforcement summarises decisions made while the assessor was enforcing.
+// Enforcement summarises decisions made while the bouncer was enforcing.
 type Enforcement struct {
-	Samples  int            `json:"samples"`
-	Assessor map[string]int `json:"assessor"`
-	Human    Comparisons    `json:"human"`
+	Samples int            `json:"samples"`
+	Bouncer map[string]int `json:"bouncer"`
+	Human   Comparisons    `json:"human"`
 }
 
 // UsageStats aggregates token usage and latency for valid assessments.
@@ -104,7 +104,7 @@ type AssessmentStats struct {
 	Usage          UsageStats     `json:"usage"`
 }
 
-// Stats summarises permission-request volume and assessor performance.
+// Stats summarises permission-request volume and bouncer performance.
 type Stats struct {
 	Total              int               `json:"total"`
 	ByDecidedBy        map[string]int    `json:"by_decided_by"`
@@ -147,7 +147,7 @@ func ComputeStats(rows []db.PermissionDecision) Stats {
 		key := version{a.SchemaVersion, a.BatteryVersion}
 		g := groups[key]
 		if g == nil {
-			g = &accumulator{stats: AssessmentStats{SchemaVersion: key.schema, BatteryVersion: key.battery, ByDecidedBy: map[string]int{}, Shadow: Comparisons{Matrix: VerdictMatrix{}}, Enforce: Enforcement{Assessor: map[string]int{}, Human: Comparisons{Matrix: VerdictMatrix{}}}, Errors: map[string]int{}, Skips: map[string]int{}}}
+			g = &accumulator{stats: AssessmentStats{SchemaVersion: key.schema, BatteryVersion: key.battery, ByDecidedBy: map[string]int{}, Shadow: Comparisons{Matrix: VerdictMatrix{}}, Enforce: Enforcement{Bouncer: map[string]int{}, Human: Comparisons{Matrix: VerdictMatrix{}}}, Errors: map[string]int{}, Skips: map[string]int{}}}
 			groups[key] = g
 		}
 		s := &g.stats
@@ -158,8 +158,8 @@ func ComputeStats(rows []db.PermissionDecision) Stats {
 		}
 		if a.Mode == "enforce" {
 			s.Enforce.Samples++
-			if row.DecidedBy == string(permission.DecisionSourceAssessor) {
-				s.Enforce.Assessor[row.Verdict]++
+			if row.DecidedBy == string(permission.DecisionSourceBouncer) {
+				s.Enforce.Bouncer[row.Verdict]++
 			}
 			if row.DecidedBy == string(permission.DecisionSourceHuman) {
 				addComparison(&s.Enforce.Human, a.Outcome, row.Verdict)

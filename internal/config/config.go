@@ -753,9 +753,9 @@ type Config struct {
 
 	Permissions *Permissions `json:"permissions,omitempty" jsonschema:"description=Permission settings for tool usage"`
 
-	// PermissionAssessor is top-level rather than under Permissions because
+	// Bouncer is top-level rather than under Permissions because
 	// the permissions keys are tool-name globs.
-	PermissionAssessor *PermissionAssessor `json:"permission_assessor,omitempty" jsonschema:"description=Classifier that answers permission prompts. Only read from user-level config files"`
+	Bouncer *Bouncer `json:"bouncer,omitempty" jsonschema:"description=Classifier that answers permission prompts. Only read from user-level config files"`
 
 	Tools Tools `json:"tools,omitzero" jsonschema:"description=Tool configurations"`
 

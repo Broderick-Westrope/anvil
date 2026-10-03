@@ -683,7 +683,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Editor.PromptFullYoloFocused = badge.Foreground(o.fgMostSubtle).Background(o.destructive).SetString("!!!")
 	s.Editor.PromptFullYoloBlurred = blurredBadge.SetString("!!!")
 	dots := lipgloss.NewStyle().MarginRight(1).SetString(":::")
-	s.Editor.PromptAssessorDotsFocused = dots.Foreground(o.infoMoreSubtle)
+	s.Editor.PromptBouncerDotsFocused = dots.Foreground(o.infoMoreSubtle)
 	s.Editor.PromptYoloDotsFocused = dots.Foreground(o.warningSubtle)
 	s.Editor.PromptFullYoloDotsFocused = dots.Foreground(o.destructive)
 	s.Editor.PromptModeDotsBlurred = dots.Foreground(o.fgMoreSubtle)
@@ -831,10 +831,10 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Dialog.Permissions.KeyText = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.Dialog.Permissions.ValueText = lipgloss.NewStyle().Foreground(o.fgBase)
 	s.Dialog.Permissions.ParamsBg = o.bgLessVisible
-	s.Dialog.Permissions.AssessorScore = lipgloss.NewStyle().Foreground(o.fgSubtle)
-	s.Dialog.Permissions.AssessorEscalate = lipgloss.NewStyle().Foreground(o.warning).Bold(true)
-	s.Dialog.Permissions.AssessorDeny = lipgloss.NewStyle().Foreground(o.error).Bold(true)
-	s.Dialog.Permissions.AssessorMitigate = lipgloss.NewStyle().Foreground(o.success)
+	s.Dialog.Permissions.BouncerScore = lipgloss.NewStyle().Foreground(o.fgSubtle)
+	s.Dialog.Permissions.BouncerEscalate = lipgloss.NewStyle().Foreground(o.warning).Bold(true)
+	s.Dialog.Permissions.BouncerDeny = lipgloss.NewStyle().Foreground(o.error).Bold(true)
+	s.Dialog.Permissions.BouncerMitigate = lipgloss.NewStyle().Foreground(o.success)
 
 	// Dialog.Quit
 	s.Dialog.Quit.Content = lipgloss.NewStyle().Foreground(o.fgBase)

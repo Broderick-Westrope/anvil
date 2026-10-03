@@ -2173,9 +2173,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionToggleYoloMode:
 		m.cycleYoloLevel()
 		m.dialog.CloseDialog(dialog.CommandsID)
-	case dialog.ActionCycleAssessorMode:
-		next := m.cycleAssessorMode()
-		cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Permission assessor: "+string(next))))
+	case dialog.ActionCycleBouncerMode:
+		next := m.cycleBouncerMode()
+		cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Bouncer: "+string(next))))
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleNotifications:
 		cfg := m.com.Config()
@@ -2791,8 +2791,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			cmds = append(cmds, util.ReportInfo("Yolo mode "+status))
 			return true
-		case key.Matches(msg, m.keyMap.CycleAssessor):
-			cmds = append(cmds, m.handleCycleAssessorKey())
+		case key.Matches(msg, m.keyMap.CycleBouncer):
+			cmds = append(cmds, m.handleCycleBouncerKey())
 			return true
 		}
 		return false
@@ -3717,8 +3717,8 @@ func (m *UI) FullHelp() [][]key.Binding {
 			k.Sessions,
 			k.ToggleYolo,
 		)
-		if m.com.Workspace.PermissionAssessorConfigured() {
-			mainBinds = append(mainBinds, k.CycleAssessor)
+		if m.com.Workspace.PermissionBouncerConfigured() {
+			mainBinds = append(mainBinds, k.CycleBouncer)
 		}
 		if hasSession {
 			mainBinds = append(mainBinds, k.Chat.NewSession)
@@ -3802,8 +3802,8 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.ToggleYolo,
 				},
 			)
-			if m.com.Workspace.PermissionAssessorConfigured() {
-				binds[len(binds)-1] = append(binds[len(binds)-1], k.CycleAssessor)
+			if m.com.Workspace.PermissionBouncerConfigured() {
+				binds[len(binds)-1] = append(binds[len(binds)-1], k.CycleBouncer)
 			}
 			editorBinds := []key.Binding{
 				k.Editor.Newline,
@@ -5870,31 +5870,31 @@ func (m *UI) cycleYoloLevel() config.YoloLevel {
 	return next
 }
 
-// cycleAssessorMode advances the workspace's runtime permission assessor
+// cycleBouncerMode advances the workspace's runtime bouncer
 // mode through the Off → Shadow → Enforce → Off cycle and returns the new
 // mode. This is a runtime-only change: it never writes config.
-func (m *UI) cycleAssessorMode() permission.AssessorMode {
-	var next permission.AssessorMode
-	switch m.com.Workspace.PermissionAssessorMode() {
-	case permission.AssessorOff:
-		next = permission.AssessorShadow
-	case permission.AssessorShadow:
-		next = permission.AssessorEnforce
+func (m *UI) cycleBouncerMode() permission.BouncerMode {
+	var next permission.BouncerMode
+	switch m.com.Workspace.PermissionBouncerMode() {
+	case permission.BouncerOff:
+		next = permission.BouncerShadow
+	case permission.BouncerShadow:
+		next = permission.BouncerEnforce
 	default:
-		next = permission.AssessorOff
+		next = permission.BouncerOff
 	}
-	m.com.Workspace.PermissionSetAssessorMode(next)
+	m.com.Workspace.PermissionSetBouncerMode(next)
 	m.refreshEditorPrompt()
 	return next
 }
 
-// handleCycleAssessorKey cycles the assessor mode from the keyboard and
+// handleCycleBouncerKey cycles the bouncer mode from the keyboard and
 // reports the new mode, or explains why nothing happened.
-func (m *UI) handleCycleAssessorKey() tea.Cmd {
-	if !m.com.Workspace.PermissionAssessorConfigured() {
-		return util.ReportInfo("No permission assessor configured")
+func (m *UI) handleCycleBouncerKey() tea.Cmd {
+	if !m.com.Workspace.PermissionBouncerConfigured() {
+		return util.ReportInfo("No bouncer configured")
 	}
-	return util.ReportInfo("Permission assessor: " + string(m.cycleAssessorMode()))
+	return util.ReportInfo("Bouncer: " + string(m.cycleBouncerMode()))
 }
 
 // triageNudgeThreshold is the minimum number of unresolved permission

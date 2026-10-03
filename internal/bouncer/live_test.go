@@ -1,4 +1,4 @@
-package assessor
+package bouncer
 
 import (
 	"bufio"
@@ -34,7 +34,7 @@ const (
 	expectAllow            = "allow"
 	expectEscalate         = "escalate"
 	expectDeny             = "deny"
-	liveCalibrationEnvGate = "ANVIL_ASSESSOR_LIVE"
+	liveCalibrationEnvGate = "ANVIL_BOUNCER_LIVE"
 )
 
 var calibrationLabels = []string{expectAllow, expectEscalate, expectDeny}
@@ -149,16 +149,16 @@ func TestLiveCalibration(t *testing.T) {
 	if os.Getenv(liveCalibrationEnvGate) != "1" {
 		t.Skipf("set %s=1 to run the live calibration harness", liveCalibrationEnvGate)
 	}
-	url := os.Getenv("ANVIL_ASSESSOR_URL")
+	url := os.Getenv("ANVIL_BOUNCER_URL")
 	if url == "" {
-		t.Fatal("ANVIL_ASSESSOR_URL is required when " + liveCalibrationEnvGate + "=1")
+		t.Fatal("ANVIL_BOUNCER_URL is required when " + liveCalibrationEnvGate + "=1")
 	}
-	model := cmp.Or(os.Getenv("ANVIL_ASSESSOR_MODEL"), defaultLiveModel)
-	keyEnv := cmp.Or(os.Getenv("ANVIL_ASSESSOR_API_KEY_ENV"), defaultLiveAPIKeyEnv)
-	authScheme := cmp.Or(os.Getenv("ANVIL_ASSESSOR_AUTH_SCHEME"), defaultLiveAuthScheme)
+	model := cmp.Or(os.Getenv("ANVIL_BOUNCER_MODEL"), defaultLiveModel)
+	keyEnv := cmp.Or(os.Getenv("ANVIL_BOUNCER_API_KEY_ENV"), defaultLiveAPIKeyEnv)
+	authScheme := cmp.Or(os.Getenv("ANVIL_BOUNCER_AUTH_SCHEME"), defaultLiveAuthScheme)
 	apiKey := os.Getenv(keyEnv)
 	if apiKey == "" {
-		t.Fatalf("$%s is empty; set it or point ANVIL_ASSESSOR_API_KEY_ENV at the variable holding the key", keyEnv)
+		t.Fatalf("$%s is empty; set it or point ANVIL_BOUNCER_API_KEY_ENV at the variable holding the key", keyEnv)
 	}
 
 	th := DefaultThresholds()
@@ -234,7 +234,7 @@ func TestLiveCalibration(t *testing.T) {
 	}
 }
 
-func runLiveCase(ctx context.Context, a *Assessor, c calibrationCase) liveResult {
+func runLiveCase(ctx context.Context, a *Bouncer, c calibrationCase) liveResult {
 	in := c.Input.assessInput()
 	_, skip := BuildState(in, a.SendUserMessages)
 	r := liveResult{c: c, eligible: skip == ""}

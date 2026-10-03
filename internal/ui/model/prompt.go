@@ -21,30 +21,30 @@ type promptBadge struct {
 // captured when the state changes so rendering never queries the
 // workspace.
 type promptModes struct {
-	assessor permission.AssessorMode
-	yolo     config.YoloLevel
+	bouncer permission.BouncerMode
+	yolo    config.YoloLevel
 }
 
-func (pm promptModes) assessorOn() bool {
-	return pm.assessor == permission.AssessorShadow || pm.assessor == permission.AssessorEnforce
+func (pm promptModes) bouncerOn() bool {
+	return pm.bouncer == permission.BouncerShadow || pm.bouncer == permission.BouncerEnforce
 }
 
 // active reports whether any mode badge is shown.
 func (pm promptModes) active() bool {
-	return pm.assessorOn() || pm.yolo != config.YoloOff
+	return pm.bouncerOn() || pm.yolo != config.YoloOff
 }
 
 // currentPromptModes reads the permission state from the workspace.
 func (m *UI) currentPromptModes() promptModes {
 	pm := promptModes{yolo: m.com.Workspace.PermissionYoloLevel()}
-	if m.com.Workspace.PermissionAssessorConfigured() {
-		pm.assessor = m.com.Workspace.PermissionAssessorMode()
+	if m.com.Workspace.PermissionBouncerConfigured() {
+		pm.bouncer = m.com.Workspace.PermissionBouncerMode()
 	}
 	return pm
 }
 
 // refreshEditorPrompt recomputes the prompt badges from the current
-// permission state. Call it whenever yolo or the assessor mode changes.
+// permission state. Call it whenever yolo or the bouncer mode changes.
 func (m *UI) refreshEditorPrompt() {
 	m.promptModes = m.currentPromptModes()
 	m.promptBadges = m.badgesFor(m.promptModes)
@@ -55,17 +55,17 @@ func (m *UI) refreshEditorPrompt() {
 	m.textarea.SetPromptFunc(promptWidth, m.normalPromptFunc)
 }
 
-// badgesFor returns the badges to draw, top to bottom: the assessor
+// badgesFor returns the badges to draw, top to bottom: the bouncer
 // first, then yolo.
 func (m *UI) badgesFor(pm promptModes) []promptBadge {
 	t := m.com.Styles.Editor
 	var badges []promptBadge
-	switch pm.assessor {
-	case permission.AssessorShadow:
+	switch pm.bouncer {
+	case permission.BouncerShadow:
 		badges = append(badges, promptBadge{t.PromptShadowFocused, t.PromptShadowBlurred})
-	case permission.AssessorEnforce:
+	case permission.BouncerEnforce:
 		if pm.yolo == config.YoloFull {
-			// Full yolo returns before the assessor runs, so a bright
+			// Full yolo returns before the bouncer runs, so a bright
 			// badge would claim protection that isn't there.
 			badges = append(badges, promptBadge{t.PromptEnforceInactive, t.PromptEnforceBlurred})
 		} else {
@@ -101,7 +101,7 @@ func (m *UI) modePromptFunc(info textarea.PromptInfo) string {
 	case config.YoloStandard:
 		return t.PromptYoloDotsFocused.Render()
 	default:
-		return t.PromptAssessorDotsFocused.Render()
+		return t.PromptBouncerDotsFocused.Render()
 	}
 }
 

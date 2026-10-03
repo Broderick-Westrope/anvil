@@ -1,4 +1,4 @@
-package assessor
+package bouncer
 
 import (
 	"fmt"

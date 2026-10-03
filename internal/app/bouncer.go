@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Broderick-Westrope/anvil/internal/assessor"
+	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -18,27 +18,27 @@ import (
 )
 
 const (
-	defaultAssessorTimeoutSeconds = 8
-	maxIntentParentDepth          = 3
-	intentBranchTail              = 50
-	// assessorWarmTimeout bounds the startup warm-up call. Serverless
+	defaultBouncerTimeoutSeconds = 8
+	maxIntentParentDepth         = 3
+	intentBranchTail             = 50
+	// bouncerWarmTimeout bounds the startup warm-up call. Serverless
 	// deployments can take tens of seconds to cold start.
-	assessorWarmTimeout = 2 * time.Minute
+	bouncerWarmTimeout = 2 * time.Minute
 )
 
-// assessorSetup is the result of building the assessor from config.
-type assessorSetup struct {
-	option   permission.Option
-	assessor *assessor.Assessor
-	mode     permission.AssessorMode
+// bouncerSetup is the result of building the bouncer from config.
+type bouncerSetup struct {
+	option  permission.Option
+	bouncer *bouncer.Bouncer
+	mode    permission.BouncerMode
 }
 
-// buildAssessorOption turns the trusted assessor config into a permission
+// buildBouncerOption turns the trusted bouncer config into a permission
 // option. It builds the option even when the mode is off so a runtime
-// toggle can enable the assessor later.
-func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, messages message.Service) (assessorSetup, bool) {
+// toggle can enable the bouncer later.
+func buildBouncerOption(ta *config.TrustedBouncer, sessions session.Service, messages message.Service) (bouncerSetup, bool) {
 	if ta == nil || ta.Config == nil {
-		return assessorSetup{}, false
+		return bouncerSetup{}, false
 	}
 	cfg := ta.Config
 	var missing []string
@@ -49,71 +49,71 @@ func buildAssessorOption(ta *config.TrustedAssessor, sessions session.Service, m
 		missing = append(missing, "model")
 	}
 	if ta.APIKey == "" {
-		missing = append(missing, "api key ($"+cmp.Or(cfg.APIKeyEnv, config.DefaultAssessorAPIKeyEnv)+")")
+		missing = append(missing, "api key ($"+cmp.Or(cfg.APIKeyEnv, config.DefaultBouncerAPIKeyEnv)+")")
 	}
 	if len(missing) > 0 {
-		slog.Warn("Permission assessor is configured but unusable", "missing", missing)
-		return assessorSetup{}, false
+		slog.Warn("Bouncer is configured but unusable", "missing", missing)
+		return bouncerSetup{}, false
 	}
 
-	th := assessorThresholds(cfg)
+	th := bouncerThresholds(cfg)
 	if err := th.Validate(); err != nil {
-		slog.Warn("Permission assessor thresholds are invalid", "error", err)
-		return assessorSetup{}, false
+		slog.Warn("Bouncer thresholds are invalid", "error", err)
+		return bouncerSetup{}, false
 	}
 
 	sendUserMessages := cfg.SendUserMessages == nil || *cfg.SendUserMessages
 	client := &systemone.Client{
 		URL:        cfg.URL,
 		APIKey:     ta.APIKey,
-		AuthScheme: string(cmp.Or(cfg.AuthScheme, config.AssessorAuthAPIKey)),
+		AuthScheme: string(cmp.Or(cfg.AuthScheme, config.BouncerAuthAPIKey)),
 		Model:      cfg.Model,
 		HTTP:       &http.Client{},
 		Backoff:    []time.Duration{250 * time.Millisecond},
 	}
-	a := assessor.New(client, th, sendUserMessages)
-	opts := permission.AssessorOptions{
-		Assessor:           a,
-		Mode:               permission.AssessorMode(cmp.Or(cfg.Mode, config.AssessorOff)),
-		Timeout:            time.Duration(cmp.Or(cfg.TimeoutSeconds, defaultAssessorTimeoutSeconds)) * time.Second,
-		ExplicitAskToHuman: cfg.ExplicitAsk == config.AssessorExplicitAskHuman,
+	a := bouncer.New(client, th, sendUserMessages)
+	opts := permission.BouncerOptions{
+		Bouncer:            a,
+		Mode:               permission.BouncerMode(cmp.Or(cfg.Mode, config.BouncerOff)),
+		Timeout:            time.Duration(cmp.Or(cfg.TimeoutSeconds, defaultBouncerTimeoutSeconds)) * time.Second,
+		ExplicitAskToHuman: cfg.ExplicitAsk == config.BouncerExplicitAskHuman,
 		// The permission service calls Warm only when switching the mode
 		// from off to on, so the target mode is never off here.
-		Warm: func(ctx context.Context) { warmAssessor(ctx, a, permission.AssessorEnforce) },
+		Warm: func(ctx context.Context) { warmBouncer(ctx, a, permission.BouncerEnforce) },
 	}
 	if sendUserMessages {
 		opts.Intent = &intentSource{sessions: sessions, messages: messages}
 	}
-	return assessorSetup{option: permission.WithAssessor(opts), assessor: a, mode: opts.Mode}, true
+	return bouncerSetup{option: permission.WithBouncer(opts), bouncer: a, mode: opts.Mode}, true
 }
 
-// warmer is the part of the assessor the startup warm-up needs.
+// warmer is the part of the bouncer the startup warm-up needs.
 type warmer interface {
 	Warm(ctx context.Context) error
 }
 
-// warmAssessor primes a cold serverless deployment so the first real
+// warmBouncer primes a cold serverless deployment so the first real
 // assessment isn't slowed by a cold start. It does nothing when the mode
 // is off, because off promises no network calls. Failures only log: the
-// assessor still fails to the human on its own.
-func warmAssessor(ctx context.Context, w warmer, mode permission.AssessorMode) {
-	if w == nil || mode == permission.AssessorOff {
+// bouncer still fails to the human on its own.
+func warmBouncer(ctx context.Context, w warmer, mode permission.BouncerMode) {
+	if w == nil || mode == permission.BouncerOff {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, assessorWarmTimeout)
+	ctx, cancel := context.WithTimeout(ctx, bouncerWarmTimeout)
 	defer cancel()
 	start := time.Now()
 	if err := w.Warm(ctx); err != nil {
 		if ctx.Err() == nil || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			slog.Warn("Permission assessor warm-up failed", "error", err, "elapsed", time.Since(start).Round(time.Millisecond))
+			slog.Warn("Bouncer warm-up failed", "error", err, "elapsed", time.Since(start).Round(time.Millisecond))
 		}
 		return
 	}
-	slog.Info("Permission assessor warmed", "elapsed", time.Since(start).Round(time.Millisecond))
+	slog.Info("Bouncer warmed", "elapsed", time.Since(start).Round(time.Millisecond))
 }
 
-func assessorThresholds(cfg *config.PermissionAssessor) assessor.Thresholds {
-	th := assessor.DefaultThresholds()
+func bouncerThresholds(cfg *config.Bouncer) bouncer.Thresholds {
+	th := bouncer.DefaultThresholds()
 	if cfg.EscalateAt != nil {
 		th.EscalateAt = *cfg.EscalateAt
 	}

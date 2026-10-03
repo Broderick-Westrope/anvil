@@ -52,7 +52,7 @@ func newPermissionsCmd() *cobra.Command {
 		Use:     "permissions",
 		Aliases: []string{"perms"},
 		Short:   "Analyze permission decisions and propose explicit rules",
-		Long:    "Analyze logged permission decisions. Use triage to propose narrow allow and deny rules from repeated requests, and stats to report request volume and assessor accuracy.",
+		Long:    "Analyze logged permission decisions. Use triage to propose narrow allow and deny rules from repeated requests, and stats to report request volume and bouncer accuracy.",
 	}
 	root.AddCommand(newPermissionsTriageCmd())
 	root.AddCommand(newPermissionsStatsCmd())
@@ -96,8 +96,8 @@ func newPermissionsStatsCmd() *cobra.Command {
 	var opts statsOpts
 	statsCmd := &cobra.Command{
 		Use:   "stats",
-		Short: "Report permission-request volume and versioned assessor statistics",
-		Long:  "Report permission-request volume by decision source, then per assessor schema and battery version: shadow comparisons against human verdicts, enforce outcomes, errors, skips, and token and latency usage. Use --json for machine-readable output.",
+		Short: "Report permission-request volume and versioned bouncer statistics",
+		Long:  "Report permission-request volume by decision source, then per bouncer schema and battery version: shadow comparisons against human verdicts, enforce outcomes, errors, skips, and token and latency usage. Use --json for machine-readable output.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if opts.Days <= 0 {
@@ -434,7 +434,7 @@ func runStats(ctx context.Context, q db.Querier, opts statsOpts, out io.Writer) 
 		writeCounts(&buf, "Decided by", g.ByDecidedBy)
 		fmt.Fprintf(&buf, "Shadow: %d samples\n", g.Shadow.Samples)
 		writeMatrix(&buf, g.Shadow.Matrix)
-		alert := fmt.Sprintf("Shadow assessor allow x human deny: %d", g.Shadow.Matrix["allow"]["deny"])
+		alert := fmt.Sprintf("Shadow bouncer allow x human deny: %d", g.Shadow.Matrix["allow"]["deny"])
 		fmt.Fprintln(&buf, lipgloss.NewStyle().Foreground(charmtone.Coral).Bold(true).Render(alert))
 		comparisons := 0
 		for _, outcome := range []string{"allow", "escalate", "deny"} {
@@ -444,7 +444,7 @@ func runStats(ctx context.Context, q db.Querier, opts statsOpts, out io.Writer) 
 			fmt.Fprintln(&buf, "Warning: not enough evidence to enable enforce (fewer than 200 shadow comparisons)")
 		}
 		fmt.Fprintf(&buf, "Enforce: %d samples\n", g.Enforce.Samples)
-		writeCounts(&buf, "Assessor verdicts", g.Enforce.Assessor)
+		writeCounts(&buf, "Bouncer verdicts", g.Enforce.Bouncer)
 		fmt.Fprintf(&buf, "Human resolutions: %d\n", g.Enforce.Human.Samples)
 		writeMatrix(&buf, g.Enforce.Human.Matrix)
 		writeCounts(&buf, "Errors", g.Errors)

@@ -88,15 +88,15 @@ func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 }
 
 // testWorkspace is a minimal [workspace.Workspace] stub for unit tests.
-// The assessor-related fields are configurable so tests can exercise the
+// The bouncer-related fields are configurable so tests can exercise the
 // palette toggle, header/sidebar indicator, and startup triage nudge.
 type testWorkspace struct {
 	workspace.Workspace
 	cfg *config.Config
 
-	assessorConfigured bool
-	assessorMode       permission.AssessorMode
-	assessorSetCalls   []permission.AssessorMode
+	bouncerConfigured bool
+	bouncerMode       permission.BouncerMode
+	bouncerSetCalls   []permission.BouncerMode
 
 	unresolvedCount int
 	unresolvedErr   error
@@ -117,15 +117,15 @@ func (w *testWorkspace) PermissionYoloLevel() config.YoloLevel { return w.yolo }
 
 func (w *testWorkspace) PermissionSetYoloLevel(level config.YoloLevel) { w.yolo = level }
 
-func (w *testWorkspace) PermissionAssessorConfigured() bool { return w.assessorConfigured }
+func (w *testWorkspace) PermissionBouncerConfigured() bool { return w.bouncerConfigured }
 
-func (w *testWorkspace) PermissionAssessorMode() permission.AssessorMode {
-	return w.assessorMode
+func (w *testWorkspace) PermissionBouncerMode() permission.BouncerMode {
+	return w.bouncerMode
 }
 
-func (w *testWorkspace) PermissionSetAssessorMode(mode permission.AssessorMode) {
-	w.assessorSetCalls = append(w.assessorSetCalls, mode)
-	w.assessorMode = mode
+func (w *testWorkspace) PermissionSetBouncerMode(mode permission.BouncerMode) {
+	w.bouncerSetCalls = append(w.bouncerSetCalls, mode)
+	w.bouncerMode = mode
 }
 
 func (w *testWorkspace) PermissionUnresolvedCount(context.Context, time.Time) (int, error) {

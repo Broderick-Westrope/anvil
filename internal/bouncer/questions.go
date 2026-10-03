@@ -1,4 +1,4 @@
-package assessor
+package bouncer
 
 import "github.com/Broderick-Westrope/anvil/internal/systemone"
 

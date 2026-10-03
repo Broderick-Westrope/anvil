@@ -175,15 +175,15 @@ func TestDecisionCancelPreservesOtherActiveRequest(t *testing.T) {
 	require.Equal(t, "other", svc.activeRequest.ID)
 }
 
-func TestWithAssessorSetsOptionsAndMode(t *testing.T) {
+func TestWithBouncerSetsOptionsAndMode(t *testing.T) {
 	t.Parallel()
 
 	plain := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil).(*permissionService)
-	require.Equal(t, AssessorOff, plain.assessorMode.Load())
-	require.Nil(t, plain.assessor.Assessor)
+	require.Equal(t, BouncerOff, plain.bouncerMode.Load())
+	require.Nil(t, plain.bouncer.Bouncer)
 
-	opts := AssessorOptions{Mode: AssessorShadow, Timeout: time.Second, ExplicitAskToHuman: true}
-	svc := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, WithAssessor(opts)).(*permissionService)
-	require.Equal(t, AssessorShadow, svc.assessorMode.Load())
-	require.Equal(t, opts, svc.assessor)
+	opts := BouncerOptions{Mode: BouncerShadow, Timeout: time.Second, ExplicitAskToHuman: true}
+	svc := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, WithBouncer(opts)).(*permissionService)
+	require.Equal(t, BouncerShadow, svc.bouncerMode.Load())
+	require.Equal(t, opts, svc.bouncer)
 }

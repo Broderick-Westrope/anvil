@@ -1,0 +1,242 @@
+package config
+
+import (
+	"cmp"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"os"
+	"reflect"
+	"regexp"
+
+	"github.com/qjebbs/go-jsons"
+	"github.com/tidwall/gjson"
+)
+
+// DefaultBouncerAPIKeyEnv is the environment variable the bouncer API key
+// is read from when bouncer.api_key_env is not set.
+const DefaultBouncerAPIKeyEnv = "BASETEN_API_KEY"
+
+// BouncerMode controls whether the bouncer runs and whether
+// its verdict is acted on.
+type BouncerMode string
+
+const (
+	// BouncerOff disables the bouncer.
+	BouncerOff BouncerMode = "off"
+	// BouncerShadow assesses and logs, but the human still decides.
+	BouncerShadow BouncerMode = "shadow"
+	// BouncerEnforce acts on the bouncer's allow and deny verdicts.
+	BouncerEnforce BouncerMode = "enforce"
+)
+
+// BouncerAuthScheme is the Authorization header scheme sent to the
+// bouncer endpoint.
+type BouncerAuthScheme string
+
+const (
+	// BouncerAuthAPIKey sends "Api-Key <key>", as Baseten expects.
+	BouncerAuthAPIKey BouncerAuthScheme = "Api-Key"
+	// BouncerAuthBearer sends "Bearer <key>", as TypeSafe expects.
+	BouncerAuthBearer BouncerAuthScheme = "Bearer"
+)
+
+// BouncerExplicitAsk decides who answers requests that an explicit "ask"
+// rule matched.
+type BouncerExplicitAsk string
+
+const (
+	// BouncerExplicitAskBouncer lets the bouncer answer them first.
+	BouncerExplicitAskBouncer BouncerExplicitAsk = "bouncer"
+	// BouncerExplicitAskHuman always sends them to the human.
+	BouncerExplicitAskHuman BouncerExplicitAsk = "human"
+)
+
+const maxBouncerTimeoutSeconds = 60
+
+var envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// Bouncer configures the classifier that answers permission
+// prompts on the user's behalf. It is only honoured from user-level config
+// files; see [ConfigStore.TrustedBouncer].
+type Bouncer struct {
+	Mode  BouncerMode `json:"mode,omitempty" jsonschema:"enum=off,enum=shadow,enum=enforce,default=off"`
+	URL   string      `json:"url,omitempty" jsonschema:"description=Full System One endpoint URL (https only)"`
+	Model string      `json:"model,omitempty" jsonschema:"example=von-1.0.0"`
+	// APIKeyEnv names the environment variable holding the API key, so
+	// users whose key lives under a different name don't have to rename
+	// it. Optional; defaults to BASETEN_API_KEY.
+	APIKeyEnv        string             `json:"api_key_env,omitempty" jsonschema:"description=Name of the environment variable that holds the API key,default=BASETEN_API_KEY,example=BASETEN_API_KEY,example=TYPESAFE_API_KEY"`
+	AuthScheme       BouncerAuthScheme  `json:"auth_scheme,omitempty" jsonschema:"enum=Api-Key,enum=Bearer,default=Api-Key"`
+	TimeoutSeconds   int                `json:"timeout_seconds,omitempty" jsonschema:"description=Bouncer call timeout in seconds; 0 uses the default,minimum=0,maximum=60,default=8"`
+	ExplicitAsk      BouncerExplicitAsk `json:"explicit_ask,omitempty" jsonschema:"enum=bouncer,enum=human,default=bouncer"`
+	SendUserMessages *bool              `json:"send_user_messages,omitempty" jsonschema:"default=true"`
+	EscalateAt       *float64           `json:"escalate_at,omitempty" jsonschema:"description=Hazard probability at or above which the request goes to the human,minimum=0,maximum=1,default=0.35"`
+	DenyAt           *float64           `json:"deny_at,omitempty" jsonschema:"description=Hazard probability at or above which the request is denied unless the user asked for it,minimum=0,maximum=1,default=0.9"`
+	SeverityEscalate *float64           `json:"severity_escalate,omitempty" jsonschema:"description=Severity score (0-3) at or above which the request goes to the human,minimum=0,maximum=3,default=2"`
+	UserRequestedAt  *float64           `json:"user_requested_at,omitempty" jsonschema:"description=User-requested probability at or above which a likely deny goes to the human instead,minimum=0,maximum=1,default=0.7"`
+}
+
+// TrustedBouncer is the resolved, trusted bouncer config plus the
+// API key captured before any project env was applied.
+type TrustedBouncer struct {
+	Config *Bouncer
+	APIKey string
+}
+
+// Validate rejects unknown enum values, non-https URLs, out-of-range or
+// inconsistent thresholds, and out-of-range timeouts. Thresholds that are
+// left unset are not cross-checked here; the consumer validates them again
+// after overlaying its defaults.
+func (p *Bouncer) Validate() error {
+	if p == nil {
+		return nil
+	}
+	var errs []error
+	switch p.Mode {
+	case "", BouncerOff, BouncerShadow, BouncerEnforce:
+	default:
+		errs = append(errs, fmt.Errorf("mode %q must be one of off, shadow, enforce", p.Mode))
+	}
+	switch p.AuthScheme {
+	case "", BouncerAuthAPIKey, BouncerAuthBearer:
+	default:
+		errs = append(errs, fmt.Errorf("auth_scheme %q must be one of Api-Key, Bearer", p.AuthScheme))
+	}
+	switch p.ExplicitAsk {
+	case "", BouncerExplicitAskBouncer, BouncerExplicitAskHuman:
+	default:
+		errs = append(errs, fmt.Errorf("explicit_ask %q must be one of bouncer, human", p.ExplicitAsk))
+	}
+	if p.URL != "" {
+		u, err := url.Parse(p.URL)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			errs = append(errs, fmt.Errorf("url %q must be an absolute https URL", p.URL))
+		}
+	}
+	if p.APIKeyEnv != "" && !envVarNameRe.MatchString(p.APIKeyEnv) {
+		errs = append(errs, fmt.Errorf("api_key_env %q is not a valid environment variable name", p.APIKeyEnv))
+	}
+	if p.TimeoutSeconds < 0 || p.TimeoutSeconds > maxBouncerTimeoutSeconds {
+		errs = append(errs, fmt.Errorf("timeout_seconds %d must be between 0 and %d", p.TimeoutSeconds, maxBouncerTimeoutSeconds))
+	}
+	errs = append(errs,
+		checkBouncerRange("escalate_at", p.EscalateAt, 1),
+		checkBouncerRange("deny_at", p.DenyAt, 1),
+		checkBouncerRange("user_requested_at", p.UserRequestedAt, 1),
+		checkBouncerRange("severity_escalate", p.SeverityEscalate, 3),
+	)
+	if p.EscalateAt != nil && p.DenyAt != nil && *p.EscalateAt >= *p.DenyAt {
+		errs = append(errs, fmt.Errorf("escalate_at (%v) must be less than deny_at (%v)", *p.EscalateAt, *p.DenyAt))
+	}
+	return errors.Join(errs...)
+}
+
+func checkBouncerRange(name string, v *float64, upper float64) error {
+	if v == nil {
+		return nil
+	}
+	if *v < 0 || *v > upper {
+		return fmt.Errorf("%s (%v) must be between 0 and %v", name, *v, upper)
+	}
+	return nil
+}
+
+// trustedConfigPaths returns the user-level config files the bouncer block
+// may be read from. It reads the process env, so it must only be called
+// before any config-provided env has been applied.
+func trustedConfigPaths() []string {
+	return []string{systemConfigPath, GlobalConfig(), GlobalConfigData()}
+}
+
+// loadBouncerBlock merges the bouncer blocks from paths and
+// validates the result. It returns nil when no path sets the block.
+func loadBouncerBlock(paths []string) (*Bouncer, error) {
+	var blocks [][]byte
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to open config file %s: %w", path, err)
+		}
+		if len(data) == 0 {
+			continue
+		}
+		if !json.Valid(data) {
+			return nil, fmt.Errorf("invalid JSON in config file %s", path)
+		}
+		block := gjson.GetBytes(data, "bouncer")
+		switch {
+		case !block.Exists() || block.Type == gjson.Null:
+			continue
+		case !block.IsObject():
+			return nil, fmt.Errorf("bouncer in %s must be an object", path)
+		}
+		blocks = append(blocks, []byte(block.Raw))
+	}
+	if len(blocks) == 0 {
+		return nil, nil
+	}
+	merged, err := jsons.Merge(blocks)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge bouncer: %w", err)
+	}
+	var pa Bouncer
+	if err := json.Unmarshal(merged, &pa); err != nil {
+		return nil, fmt.Errorf("invalid bouncer: %w", err)
+	}
+	if err := pa.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid bouncer: %w", err)
+	}
+	return &pa, nil
+}
+
+// loadTrustedBouncer reads the bouncer block from the trusted paths and
+// captures its API key from the current process env. Callers must invoke it
+// before any config-provided env is applied.
+func loadTrustedBouncer(paths []string) (*TrustedBouncer, error) {
+	block, err := loadBouncerBlock(paths)
+	if err != nil || block == nil {
+		return nil, err
+	}
+	return &TrustedBouncer{
+		Config: block,
+		APIKey: os.Getenv(cmp.Or(block.APIKeyEnv, DefaultBouncerAPIKeyEnv)),
+	}, nil
+}
+
+// applyTrustedBouncer replaces whatever bouncer the full merge
+// produced with the trusted one, warning when a non-trusted file tried to
+// change it.
+func (c *Config) applyTrustedBouncer(ta *TrustedBouncer) {
+	var trusted *Bouncer
+	if ta != nil {
+		trusted = ta.Config
+	}
+	if !reflect.DeepEqual(c.Bouncer, trusted) {
+		slog.Warn("Ignoring bouncer from project config; it is only read from user-level config")
+	}
+	c.Bouncer = trusted
+}
+
+// TrustedBouncer returns the bouncer config read only from user-level
+// config files, with the API key captured at initial load. It returns nil
+// when no user-level file configures the bouncer.
+func (s *ConfigStore) TrustedBouncer() *TrustedBouncer {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
+	return s.trustedBouncer
+}
+
+func (s *ConfigStore) setTrustedBouncer(ta *TrustedBouncer) {
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+	s.trustedBouncer = ta
+}

@@ -27,7 +27,7 @@ const (
 	DecisionSourceRule         DecisionSource = "rule"
 	DecisionSourceSessionRule  DecisionSource = "session_rule"
 	DecisionSourceSessionGrant DecisionSource = "session_grant"
-	DecisionSourceAssessor     DecisionSource = "assessor"
+	DecisionSourceBouncer      DecisionSource = "bouncer"
 	DecisionSourceHuman        DecisionSource = "human"
 )
 
@@ -99,7 +99,7 @@ const (
 	TriggerMitigate = "mitigate"
 )
 
-// AssessOutcome is the assessor's routing decision for a request.
+// AssessOutcome is the bouncer's routing decision for a request.
 type AssessOutcome int
 
 const (
@@ -112,7 +112,7 @@ const (
 	AssessDeny
 )
 
-// AssessInput is what the assessor may see. It excludes tool output.
+// AssessInput is what the bouncer may see. It excludes tool output.
 type AssessInput struct {
 	SessionID, ToolName, Action, Description string
 	Input, Path, WorkingDir                  string
@@ -132,8 +132,8 @@ type Assessment struct {
 	Details json.RawMessage // Marshalled AssessmentRecord.
 }
 
-// Assessor judges whether a request needs a human.
-type Assessor interface {
+// Bouncer judges whether a request needs a human.
+type Bouncer interface {
 	Assess(ctx context.Context, in AssessInput) (Assessment, error)
 }
 
@@ -143,27 +143,27 @@ type IntentSource interface {
 	RecentUserMessages(ctx context.Context, sessionID string, n int) ([]string, error)
 }
 
-// AssessorMode controls whether the assessor runs and whether its
+// BouncerMode controls whether the bouncer runs and whether its
 // verdict is acted on.
-type AssessorMode string
+type BouncerMode string
 
 const (
-	// AssessorOff disables assessor calls.
-	AssessorOff AssessorMode = "off"
-	// AssessorShadow assesses and logs, but the human still decides.
-	AssessorShadow AssessorMode = "shadow"
-	// AssessorEnforce acts on the assessor's allow and deny verdicts.
-	AssessorEnforce AssessorMode = "enforce"
+	// BouncerOff disables bouncer calls.
+	BouncerOff BouncerMode = "off"
+	// BouncerShadow assesses and logs, but the human still decides.
+	BouncerShadow BouncerMode = "shadow"
+	// BouncerEnforce acts on the bouncer's allow and deny verdicts.
+	BouncerEnforce BouncerMode = "enforce"
 )
 
-// AssessorOptions configures the permission assessor.
-type AssessorOptions struct {
-	Assessor           Assessor
+// BouncerOptions configures the bouncer.
+type BouncerOptions struct {
+	Bouncer            Bouncer
 	Intent             IntentSource // Nil when user messages are not shared.
-	Mode               AssessorMode // Initial mode; may be AssessorOff.
+	Mode               BouncerMode  // Initial mode; may be BouncerOff.
 	Timeout            time.Duration
 	ExplicitAskToHuman bool
-	// Warm primes the assessor when the runtime mode moves from off to
+	// Warm primes the bouncer when the runtime mode moves from off to
 	// shadow or enforce. It runs in the background and may be nil.
 	Warm func(ctx context.Context)
 }
@@ -176,12 +176,12 @@ func WithDecisionRecorder(r DecisionRecorder) Option {
 	return func(s *permissionService) { s.recorder = r }
 }
 
-// WithAssessor sets the assessor consulted for requests that no explicit
+// WithBouncer sets the bouncer consulted for requests that no explicit
 // rule resolves.
-func WithAssessor(o AssessorOptions) Option {
+func WithBouncer(o BouncerOptions) Option {
 	return func(s *permissionService) {
-		s.assessor = o
-		s.assessorMode.Store(o.Mode)
+		s.bouncer = o
+		s.bouncerMode.Store(o.Mode)
 	}
 }
 
@@ -216,65 +216,65 @@ func (s *permissionService) finish(opts CreatePermissionRequest, src DecisionSou
 	return RequestResult{Granted: granted, Reason: reason}
 }
 
-// defaultAssessorTimeout bounds an assessor call when no timeout is set.
-const defaultAssessorTimeout = 8 * time.Second
+// defaultBouncerTimeout bounds a bouncer call when no timeout is set.
+const defaultBouncerTimeout = 8 * time.Second
 
-func (s *permissionService) currentAssessorMode() AssessorMode {
-	mode, _ := s.assessorMode.Load().(AssessorMode)
+func (s *permissionService) currentBouncerMode() BouncerMode {
+	mode, _ := s.bouncerMode.Load().(BouncerMode)
 	return mode
 }
 
-func (s *permissionService) AssessorConfigured() bool {
-	return s.assessor.Assessor != nil
+func (s *permissionService) BouncerConfigured() bool {
+	return s.bouncer.Bouncer != nil
 }
 
-func (s *permissionService) AssessorMode() AssessorMode {
-	if mode := s.currentAssessorMode(); mode != "" {
+func (s *permissionService) BouncerMode() BouncerMode {
+	if mode := s.currentBouncerMode(); mode != "" {
 		return mode
 	}
-	return AssessorOff
+	return BouncerOff
 }
 
-func (s *permissionService) SetAssessorMode(mode AssessorMode) {
-	if s.assessor.Assessor == nil {
+func (s *permissionService) SetBouncerMode(mode BouncerMode) {
+	if s.bouncer.Bouncer == nil {
 		return
 	}
 	switch mode {
-	case AssessorOff, AssessorShadow, AssessorEnforce:
+	case BouncerOff, BouncerShadow, BouncerEnforce:
 	default:
 		return
 	}
 	for {
-		old := s.currentAssessorMode()
+		old := s.currentBouncerMode()
 		if old == mode {
 			return
 		}
 		// The swap decides which caller saw the off-to-on transition,
 		// so concurrent toggles warm at most once.
-		if !s.assessorMode.CompareAndSwap(old, mode) {
+		if !s.bouncerMode.CompareAndSwap(old, mode) {
 			continue
 		}
-		if (old == "" || old == AssessorOff) && mode != AssessorOff && s.assessor.Warm != nil {
-			go s.assessor.Warm(context.Background())
+		if (old == "" || old == BouncerOff) && mode != BouncerOff && s.bouncer.Warm != nil {
+			go s.bouncer.Warm(context.Background())
 		}
 		return
 	}
 }
 
-// shouldAssess reports whether an unresolved request goes to the assessor
+// shouldAssess reports whether an unresolved request goes to the bouncer
 // before the human.
 func (s *permissionService) shouldAssess(p policyResult) bool {
-	if s.assessor.Assessor == nil {
+	if s.bouncer.Bouncer == nil {
 		return false
 	}
-	if mode := s.currentAssessorMode(); mode == "" || mode == AssessorOff {
+	if mode := s.currentBouncerMode(); mode == "" || mode == BouncerOff {
 		return false
 	}
-	return p.isDefault || !s.assessor.ExplicitAskToHuman
+	return p.isDefault || !s.bouncer.ExplicitAskToHuman
 }
 
-// assess runs the assessor, converting errors and panics into an escalate
-// outcome. failed reports whether the assessor errored.
+// assess runs the bouncer, converting errors and panics into an escalate
+// outcome. failed reports whether the bouncer errored.
 func (s *permissionService) assess(ctx context.Context, opts CreatePermissionRequest) (a Assessment, failed bool) {
 	in := AssessInput{
 		SessionID:   opts.SessionID,
@@ -289,26 +289,26 @@ func (s *permissionService) assess(ctx context.Context, opts CreatePermissionReq
 		Diff:        opts.Diff,
 		ArgsJSON:    opts.ArgsJSON,
 	}
-	if s.assessor.Intent != nil {
-		msgs, err := s.assessor.Intent.RecentUserMessages(ctx, opts.SessionID, 3)
+	if s.bouncer.Intent != nil {
+		msgs, err := s.bouncer.Intent.RecentUserMessages(ctx, opts.SessionID, 3)
 		if err != nil {
-			slog.Warn("Failed to load user intent for permission assessor", "tool", opts.ToolName, "error", err)
+			slog.Warn("Failed to load user intent for the bouncer", "tool", opts.ToolName, "error", err)
 		} else {
 			in.RecentUserMessages = msgs
 		}
 	}
 
-	timeout := s.assessor.Timeout
+	timeout := s.bouncer.Timeout
 	if timeout <= 0 {
-		timeout = defaultAssessorTimeout
+		timeout = defaultBouncerTimeout
 	}
 	actx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	a, err := s.callAssessor(actx, in)
+	a, err := s.callBouncer(actx, in)
 	if err != nil {
 		if ctx.Err() == nil {
-			slog.Warn("Permission assessor failed; asking user", "tool", opts.ToolName, "error", err)
+			slog.Warn("Bouncer failed; asking user", "tool", opts.ToolName, "error", err)
 		}
 		a.Outcome = AssessEscalate
 		return a, true
@@ -316,19 +316,19 @@ func (s *permissionService) assess(ctx context.Context, opts CreatePermissionReq
 	return a, false
 }
 
-func (s *permissionService) callAssessor(ctx context.Context, in AssessInput) (a Assessment, err error) {
+func (s *permissionService) callBouncer(ctx context.Context, in AssessInput) (a Assessment, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			a = Assessment{Reason: "assessor error"}
-			err = fmt.Errorf("permission assessor panicked: %v", r)
+			a = Assessment{Reason: "bouncer error"}
+			err = fmt.Errorf("bouncer panicked: %v", r)
 		}
 	}()
-	return s.assessor.Assessor.Assess(ctx, in)
+	return s.bouncer.Bouncer.Assess(ctx, in)
 }
 
 // withAssessmentMode stamps the mode onto a marshalled AssessmentRecord.
 // Details that don't decode are returned unchanged.
-func withAssessmentMode(details json.RawMessage, mode AssessorMode) json.RawMessage {
+func withAssessmentMode(details json.RawMessage, mode BouncerMode) json.RawMessage {
 	if len(details) == 0 {
 		return nil
 	}
@@ -347,7 +347,7 @@ func withAssessmentMode(details json.RawMessage, mode AssessorMode) json.RawMess
 func cachedAllowRecord() json.RawMessage {
 	out, _ := json.Marshal(AssessmentRecord{
 		SchemaVersion: AssessmentSchemaVersion,
-		Mode:          string(AssessorEnforce),
+		Mode:          string(BouncerEnforce),
 		Outcome:       "allow",
 		Reason:        "session allow cache",
 	})
@@ -373,24 +373,24 @@ func allowCacheKey(opts CreatePermissionRequest) string {
 
 // UserRequestedAxis is the noul measuring whether the user asked for the
 // action. It lowers risk rather than raising it, so it is shown last.
-// It must match assessor.QUserRequested.
+// It must match bouncer.QUserRequested.
 const UserRequestedAxis = "user_requested"
 
 // SeverityAxis is the score rating how bad a mistake would be.
-// It must match assessor.QSeverity.
+// It must match bouncer.QSeverity.
 const SeverityAxis = "severity"
 
-// AssessorSummary is the assessor's verdict on a prompted request, in a
+// AssessmentSummary is the bouncer's verdict on a prompted request, in a
 // form the UI can lay out and highlight.
-type AssessorSummary struct {
-	Shadow  bool            `json:"shadow,omitempty"`
-	Outcome string          `json:"outcome"`          // allow, escalate, deny, skipped, or error.
-	Detail  string          `json:"detail,omitempty"` // Skip reason, when skipped.
-	Scores  []AssessorScore `json:"scores,omitempty"`
+type AssessmentSummary struct {
+	Shadow  bool              `json:"shadow,omitempty"`
+	Outcome string            `json:"outcome"`          // allow, escalate, deny, skipped, or error.
+	Detail  string            `json:"detail,omitempty"` // Skip reason, when skipped.
+	Scores  []AssessmentScore `json:"scores,omitempty"`
 }
 
-// AssessorScore is one answer from the assessor.
-type AssessorScore struct {
+// AssessmentScore is one answer from the bouncer.
+type AssessmentScore struct {
 	Name    string  `json:"name"`
 	Value   float64 `json:"value"`
 	Max     float64 `json:"max"`               // 1 for probabilities, 3 for severity.
@@ -400,12 +400,12 @@ type AssessorScore struct {
 // maxSeverity is the top of the severity score's scale.
 const maxSeverity = 3
 
-// assessorSummary builds the display summary for a prompted request.
+// assessmentSummary builds the display summary for a prompted request.
 // Scores are ordered so the axes that drove the outcome come first:
 // deny triggers, then escalation triggers, then the rest by value, with
 // severity and the user-request signal last.
-func assessorSummary(a Assessment, details json.RawMessage, failed bool, mode AssessorMode) *AssessorSummary {
-	sum := &AssessorSummary{Shadow: mode == AssessorShadow}
+func assessmentSummary(a Assessment, details json.RawMessage, failed bool, mode BouncerMode) *AssessmentSummary {
+	sum := &AssessmentSummary{Shadow: mode == BouncerShadow}
 	if failed {
 		sum.Outcome = "error"
 		return sum
@@ -419,10 +419,10 @@ func assessorSummary(a Assessment, details json.RawMessage, failed bool, mode As
 	}
 	sum.Outcome = a.Outcome.String()
 
-	var hazards []AssessorScore
-	var userRequested *AssessorScore
+	var hazards []AssessmentScore
+	var userRequested *AssessmentScore
 	for name, v := range rec.Nouls {
-		score := AssessorScore{Name: name, Value: v, Max: 1, Trigger: rec.Triggers[name]}
+		score := AssessmentScore{Name: name, Value: v, Max: 1, Trigger: rec.Triggers[name]}
 		if name == UserRequestedAxis {
 			userRequested = &score
 			continue
@@ -430,7 +430,7 @@ func assessorSummary(a Assessment, details json.RawMessage, failed bool, mode As
 		hazards = append(hazards, score)
 	}
 	rank := map[string]int{TriggerDeny: 0, TriggerEscalate: 1}
-	slices.SortFunc(hazards, func(x, y AssessorScore) int {
+	slices.SortFunc(hazards, func(x, y AssessmentScore) int {
 		rx, okx := rank[x.Trigger]
 		ry, oky := rank[y.Trigger]
 		if !okx {
@@ -443,7 +443,7 @@ func assessorSummary(a Assessment, details json.RawMessage, failed bool, mode As
 	})
 	sum.Scores = hazards
 	if rec.Severity != nil {
-		sum.Scores = append(sum.Scores, AssessorScore{Name: SeverityAxis, Value: *rec.Severity, Max: maxSeverity, Trigger: rec.Triggers[SeverityAxis]})
+		sum.Scores = append(sum.Scores, AssessmentScore{Name: SeverityAxis, Value: *rec.Severity, Max: maxSeverity, Trigger: rec.Triggers[SeverityAxis]})
 	}
 	if userRequested != nil {
 		sum.Scores = append(sum.Scores, *userRequested)
@@ -453,13 +453,13 @@ func assessorSummary(a Assessment, details json.RawMessage, failed bool, mode As
 
 // Note renders the summary as one plain-text line, for logs and clients
 // that can't lay out the structured form.
-func (s *AssessorSummary) Note() string {
+func (s *AssessmentSummary) Note() string {
 	if s == nil {
 		return ""
 	}
-	prefix := "assessor"
+	prefix := "bouncer"
 	if s.Shadow {
-		prefix = "assessor (shadow)"
+		prefix = "bouncer (shadow)"
 	}
 	note := prefix + ": " + s.Outcome
 	if s.Detail != "" {

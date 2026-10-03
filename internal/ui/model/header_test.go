@@ -10,22 +10,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRenderHeaderDetails_AssessorIndicator(t *testing.T) {
+func TestRenderHeaderDetails_BouncerIndicator(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{Providers: csync.NewMap[string, config.ProviderConfig]()}
 
 	t.Run("shown when enforce", func(t *testing.T) {
 		t.Parallel()
-		com := common.DefaultCommon(&testWorkspace{cfg: cfg, assessorConfigured: true, assessorMode: permission.AssessorEnforce})
+		com := common.DefaultCommon(&testWorkspace{cfg: cfg, bouncerConfigured: true, bouncerMode: permission.BouncerEnforce})
 		got := renderHeaderDetails(com, nil, 0, false, 200)
-		require.Contains(t, got, "assessor:enforce")
+		require.Contains(t, got, "bouncer:enforce")
 	})
 
 	t.Run("hidden when off", func(t *testing.T) {
 		t.Parallel()
-		com := common.DefaultCommon(&testWorkspace{cfg: cfg, assessorConfigured: false, assessorMode: permission.AssessorOff})
+		com := common.DefaultCommon(&testWorkspace{cfg: cfg, bouncerConfigured: false, bouncerMode: permission.BouncerOff})
 		got := renderHeaderDetails(com, nil, 0, false, 200)
-		require.NotContains(t, got, "assessor:")
+		require.NotContains(t, got, "bouncer:")
 	})
 }

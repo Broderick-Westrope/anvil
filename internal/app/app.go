@@ -97,13 +97,13 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		configRules = cfg.Permissions.Rules
 	}
 	permOpts := []permission.Option{permission.WithDecisionRecorder(recorder)}
-	if ta := store.TrustedAssessor(); ta != nil {
-		if setup, ok := buildAssessorOption(ta, sessions, messages); ok {
+	if ta := store.TrustedBouncer(); ta != nil {
+		if setup, ok := buildBouncerOption(ta, sessions, messages); ok {
 			permOpts = append(permOpts, setup.option)
-			slog.Info("Permission assessor configured",
-				"mode", cmp.Or(ta.Config.Mode, config.AssessorOff),
+			slog.Info("Bouncer configured",
+				"mode", cmp.Or(ta.Config.Mode, config.BouncerOff),
 				"model", ta.Config.Model)
-			go warmAssessor(ctx, setup.assessor, setup.mode)
+			go warmBouncer(ctx, setup.bouncer, setup.mode)
 		}
 	}
 

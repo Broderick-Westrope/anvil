@@ -97,12 +97,12 @@ type PermissionRequest struct {
 	// InputSegments mirrors CreatePermissionRequest.InputSegments so the
 	// UI dialog can access the individually-evaluated segments.
 	InputSegments []string `json:"input_segments,omitempty"`
-	// AssessorNote is a one-line summary of the assessor's verdict, shown
+	// BouncerNote is a one-line summary of the bouncer's verdict, shown
 	// alongside the prompt.
-	AssessorNote string `json:"assessor_note,omitempty"`
-	// Assessor is the structured verdict behind AssessorNote, so the UI
+	BouncerNote string `json:"bouncer_note,omitempty"`
+	// Bouncer is the structured verdict behind BouncerNote, so the UI
 	// can show every axis and highlight the ones that drove the outcome.
-	Assessor *AssessorSummary `json:"assessor,omitempty"`
+	Bouncer *AssessmentSummary `json:"bouncer,omitempty"`
 }
 
 type Service interface {
@@ -129,13 +129,13 @@ type Service interface {
 	// scope determines project vs user config.
 	GrantForever(toolPattern string, inputPattern string, action config.PermissionAction, scope config.Scope) error
 
-	// AssessorConfigured reports whether an assessor was wired at startup.
-	AssessorConfigured() bool
-	// AssessorMode returns the current runtime mode.
-	AssessorMode() AssessorMode
-	// SetAssessorMode changes the runtime mode. It is a no-op when no
-	// assessor is configured or the mode is unknown.
-	SetAssessorMode(mode AssessorMode)
+	// BouncerConfigured reports whether a bouncer was wired at startup.
+	BouncerConfigured() bool
+	// BouncerMode returns the current runtime mode.
+	BouncerMode() BouncerMode
+	// SetBouncerMode changes the runtime mode. It is a no-op when no
+	// bouncer is configured or the mode is unknown.
+	SetBouncerMode(mode BouncerMode)
 }
 
 // PermissionKey is a composite key for session permission lookups.
@@ -165,8 +165,8 @@ type permissionService struct {
 	sessionRulesMu        sync.RWMutex
 	configStore           *config.ConfigStore
 	recorder              DecisionRecorder
-	assessor              AssessorOptions
-	assessorMode          atomic.Value // AssessorMode.
+	bouncer               BouncerOptions
+	bouncerMode           atomic.Value // BouncerMode.
 	allowCache            *csync.Map[string, struct{}]
 
 	// beforePromptLock, when set, runs just before requestMu is acquired.
@@ -284,12 +284,12 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		InputSegments: opts.InputSegments,
 	}
 
-	// The assessor runs without requestMu so concurrent requests are
+	// The bouncer runs without requestMu so concurrent requests are
 	// classified in parallel rather than queued behind a human prompt.
 	var details json.RawMessage
 	if s.shouldAssess(p) {
 		key := allowCacheKey(opts)
-		if s.currentAssessorMode() == AssessorEnforce {
+		if s.currentBouncerMode() == BouncerEnforce {
 			if s.beforeAllowCache != nil {
 				s.beforeAllowCache(opts)
 			}
@@ -298,13 +298,13 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 				if p2 := s.evaluatePolicy(opts); p2.resolved {
 					return s.finishPolicy(opts, p2, nil), nil
 				}
-				slog.Debug("Permission assessor allow cache hit", "tool", opts.ToolName)
-				return s.finish(opts, DecisionSourceAssessor, VerdictAllow, "", cachedAllowRecord(), ""), nil
+				slog.Debug("Bouncer allow cache hit", "tool", opts.ToolName)
+				return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", cachedAllowRecord(), ""), nil
 			}
 		}
 
 		a, failed := s.assess(ctx, opts)
-		mode := s.currentAssessorMode()
+		mode := s.currentBouncerMode()
 		details = withAssessmentMode(a.Details, mode)
 		if ctx.Err() != nil {
 			s.record(opts, DecisionSourceHuman, VerdictCancelled, "", details)
@@ -317,24 +317,24 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 			return s.finishPolicy(opts, p2, details), nil
 		}
 
-		if mode == AssessorEnforce {
+		if mode == BouncerEnforce {
 			switch a.Outcome {
 			case AssessAllow:
 				s.allowCache.Set(key, struct{}{})
-				return s.finish(opts, DecisionSourceAssessor, VerdictAllow, "", details, ""), nil
+				return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", details, ""), nil
 			case AssessDeny:
-				reason := "blocked by permission assessor (" + a.Reason + "). Do not retry this or work around it; tell the user what you were trying to do."
-				return s.finish(opts, DecisionSourceAssessor, VerdictDeny, "", details, reason), nil
+				reason := "blocked by the permission bouncer (" + a.Reason + "). Do not retry this or work around it; tell the user what you were trying to do."
+				return s.finish(opts, DecisionSourceBouncer, VerdictDeny, "", details, reason), nil
 			}
 		}
-		// Yolo approves whatever the assessor didn't decide, including
-		// skips and errors, exactly as it would without an assessor.
+		// Yolo approves whatever the bouncer didn't decide, including
+		// skips and errors, exactly as it would without a bouncer.
 		if p2.yolo {
 			return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
 		}
-		if mode != AssessorOff {
-			perm.Assessor = assessorSummary(a, details, failed, mode)
-			perm.AssessorNote = perm.Assessor.Note()
+		if mode != BouncerOff {
+			perm.Bouncer = assessmentSummary(a, details, failed, mode)
+			perm.BouncerNote = perm.Bouncer.Note()
 		}
 	}
 
@@ -354,7 +354,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	if p3 := s.evaluatePolicy(opts); p3.resolved {
 		return s.finishPolicy(opts, p3, details), nil
 	} else if p3.yolo {
-		// The assessor was switched on after this request skipped it;
+		// The bouncer was switched on after this request skipped it;
 		// yolo never prompts.
 		return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
 	}
@@ -398,7 +398,7 @@ type policyResult struct {
 	reason      string
 	isDefault   bool // Unresolved because no rule matched.
 	// yolo marks an ask that yolo-standard would approve, deferred so the
-	// assessor decides first. Yolo approves it if the assessor escalates.
+	// bouncer decides first. Yolo approves it if the bouncer escalates.
 	yolo bool
 }
 
@@ -440,8 +440,8 @@ func (s *permissionService) evaluatePolicy(opts CreatePermissionRequest) policyR
 		"is_default", result.IsDefault,
 	)
 
-	// Apply yolo level: standard promotes ask → allow. When the assessor
-	// would see this request, the promotion is deferred so the assessor
+	// Apply yolo level: standard promotes ask → allow. When the bouncer
+	// would see this request, the promotion is deferred so the bouncer
 	// gets the first say: its allow and deny stand, and yolo only
 	// approves what it would otherwise escalate to the human.
 	action := result.Action
@@ -595,7 +595,7 @@ func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configR
 		allowCache:          csync.NewMap[string, struct{}](),
 	}
 	svc.yoloLevel.Store(int32(yoloLevel))
-	svc.assessorMode.Store(AssessorOff)
+	svc.bouncerMode.Store(BouncerOff)
 	for _, opt := range opts {
 		opt(svc)
 	}
