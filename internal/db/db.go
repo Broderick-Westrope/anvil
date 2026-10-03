@@ -24,11 +24,17 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.claimBackgroundJobEventsStmt, err = db.PrepareContext(ctx, claimBackgroundJobEvents); err != nil {
+		return nil, fmt.Errorf("error preparing query ClaimBackgroundJobEvents: %w", err)
+	}
 	if q.countUnresolvedPermissionDecisionsSinceStmt, err = db.PrepareContext(ctx, countUnresolvedPermissionDecisionsSince); err != nil {
 		return nil, fmt.Errorf("error preparing query CountUnresolvedPermissionDecisionsSince: %w", err)
 	}
 	if q.createBackgroundJobStmt, err = db.PrepareContext(ctx, createBackgroundJob); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateBackgroundJob: %w", err)
+	}
+	if q.createBackgroundJobEventStmt, err = db.PrepareContext(ctx, createBackgroundJobEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateBackgroundJobEvent: %w", err)
 	}
 	if q.createMessageStmt, err = db.PrepareContext(ctx, createMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateMessage: %w", err)
@@ -41,6 +47,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.deleteBackgroundJobStmt, err = db.PrepareContext(ctx, deleteBackgroundJob); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteBackgroundJob: %w", err)
+	}
+	if q.deleteBackgroundJobEventStmt, err = db.PrepareContext(ctx, deleteBackgroundJobEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteBackgroundJobEvent: %w", err)
 	}
 	if q.deleteBackgroundJobsBySessionStmt, err = db.PrepareContext(ctx, deleteBackgroundJobsBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteBackgroundJobsBySession: %w", err)
@@ -141,6 +150,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listSessionsByWorkingDirStmt, err = db.PrepareContext(ctx, listSessionsByWorkingDir); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionsByWorkingDir: %w", err)
 	}
+	if q.listUndeliveredBackgroundJobEventsStmt, err = db.PrepareContext(ctx, listUndeliveredBackgroundJobEvents); err != nil {
+		return nil, fmt.Errorf("error preparing query ListUndeliveredBackgroundJobEvents: %w", err)
+	}
 	if q.listUserMessagesBySessionStmt, err = db.PrepareContext(ctx, listUserMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListUserMessagesBySession: %w", err)
 	}
@@ -155,6 +167,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.recordFileReadStmt, err = db.PrepareContext(ctx, recordFileRead); err != nil {
 		return nil, fmt.Errorf("error preparing query RecordFileRead: %w", err)
+	}
+	if q.releaseBackgroundJobEventStmt, err = db.PrepareContext(ctx, releaseBackgroundJobEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query ReleaseBackgroundJobEvent: %w", err)
 	}
 	if q.renameSessionStmt, err = db.PrepareContext(ctx, renameSession); err != nil {
 		return nil, fmt.Errorf("error preparing query RenameSession: %w", err)
@@ -194,6 +209,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.claimBackgroundJobEventsStmt != nil {
+		if cerr := q.claimBackgroundJobEventsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing claimBackgroundJobEventsStmt: %w", cerr)
+		}
+	}
 	if q.countUnresolvedPermissionDecisionsSinceStmt != nil {
 		if cerr := q.countUnresolvedPermissionDecisionsSinceStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing countUnresolvedPermissionDecisionsSinceStmt: %w", cerr)
@@ -202,6 +222,11 @@ func (q *Queries) Close() error {
 	if q.createBackgroundJobStmt != nil {
 		if cerr := q.createBackgroundJobStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createBackgroundJobStmt: %w", cerr)
+		}
+	}
+	if q.createBackgroundJobEventStmt != nil {
+		if cerr := q.createBackgroundJobEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createBackgroundJobEventStmt: %w", cerr)
 		}
 	}
 	if q.createMessageStmt != nil {
@@ -222,6 +247,11 @@ func (q *Queries) Close() error {
 	if q.deleteBackgroundJobStmt != nil {
 		if cerr := q.deleteBackgroundJobStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteBackgroundJobStmt: %w", cerr)
+		}
+	}
+	if q.deleteBackgroundJobEventStmt != nil {
+		if cerr := q.deleteBackgroundJobEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteBackgroundJobEventStmt: %w", cerr)
 		}
 	}
 	if q.deleteBackgroundJobsBySessionStmt != nil {
@@ -389,6 +419,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listSessionsByWorkingDirStmt: %w", cerr)
 		}
 	}
+	if q.listUndeliveredBackgroundJobEventsStmt != nil {
+		if cerr := q.listUndeliveredBackgroundJobEventsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listUndeliveredBackgroundJobEventsStmt: %w", cerr)
+		}
+	}
 	if q.listUserMessagesBySessionStmt != nil {
 		if cerr := q.listUserMessagesBySessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listUserMessagesBySessionStmt: %w", cerr)
@@ -412,6 +447,11 @@ func (q *Queries) Close() error {
 	if q.recordFileReadStmt != nil {
 		if cerr := q.recordFileReadStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing recordFileReadStmt: %w", cerr)
+		}
+	}
+	if q.releaseBackgroundJobEventStmt != nil {
+		if cerr := q.releaseBackgroundJobEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing releaseBackgroundJobEventStmt: %w", cerr)
 		}
 	}
 	if q.renameSessionStmt != nil {
@@ -508,12 +548,15 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                                          DBTX
 	tx                                          *sql.Tx
+	claimBackgroundJobEventsStmt                *sql.Stmt
 	countUnresolvedPermissionDecisionsSinceStmt *sql.Stmt
 	createBackgroundJobStmt                     *sql.Stmt
+	createBackgroundJobEventStmt                *sql.Stmt
 	createMessageStmt                           *sql.Stmt
 	createSessionStmt                           *sql.Stmt
 	deleteAnvilInstanceStmt                     *sql.Stmt
 	deleteBackgroundJobStmt                     *sql.Stmt
+	deleteBackgroundJobEventStmt                *sql.Stmt
 	deleteBackgroundJobsBySessionStmt           *sql.Stmt
 	deleteMCPOAuthClientStmt                    *sql.Stmt
 	deleteMCPOAuthTokenStmt                     *sql.Stmt
@@ -547,11 +590,13 @@ type Queries struct {
 	listRunningBackgroundJobsStmt               *sql.Stmt
 	listSessionReadFilesStmt                    *sql.Stmt
 	listSessionsByWorkingDirStmt                *sql.Stmt
+	listUndeliveredBackgroundJobEventsStmt      *sql.Stmt
 	listUserMessagesBySessionStmt               *sql.Stmt
 	listUserMessagesByWorkingDirStmt            *sql.Stmt
 	markBackgroundJobLogExpiredStmt             *sql.Stmt
 	markBackgroundJobsInterruptedStmt           *sql.Stmt
 	recordFileReadStmt                          *sql.Stmt
+	releaseBackgroundJobEventStmt               *sql.Stmt
 	renameSessionStmt                           *sql.Stmt
 	setSessionPinStmt                           *sql.Stmt
 	touchAnvilInstanceStmt                      *sql.Stmt
@@ -567,14 +612,17 @@ type Queries struct {
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db: tx,
-		tx: tx,
+		db:                           tx,
+		tx:                           tx,
+		claimBackgroundJobEventsStmt: q.claimBackgroundJobEventsStmt,
 		countUnresolvedPermissionDecisionsSinceStmt: q.countUnresolvedPermissionDecisionsSinceStmt,
 		createBackgroundJobStmt:                     q.createBackgroundJobStmt,
+		createBackgroundJobEventStmt:                q.createBackgroundJobEventStmt,
 		createMessageStmt:                           q.createMessageStmt,
 		createSessionStmt:                           q.createSessionStmt,
 		deleteAnvilInstanceStmt:                     q.deleteAnvilInstanceStmt,
 		deleteBackgroundJobStmt:                     q.deleteBackgroundJobStmt,
+		deleteBackgroundJobEventStmt:                q.deleteBackgroundJobEventStmt,
 		deleteBackgroundJobsBySessionStmt:           q.deleteBackgroundJobsBySessionStmt,
 		deleteMCPOAuthClientStmt:                    q.deleteMCPOAuthClientStmt,
 		deleteMCPOAuthTokenStmt:                     q.deleteMCPOAuthTokenStmt,
@@ -608,11 +656,13 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listRunningBackgroundJobsStmt:               q.listRunningBackgroundJobsStmt,
 		listSessionReadFilesStmt:                    q.listSessionReadFilesStmt,
 		listSessionsByWorkingDirStmt:                q.listSessionsByWorkingDirStmt,
+		listUndeliveredBackgroundJobEventsStmt:      q.listUndeliveredBackgroundJobEventsStmt,
 		listUserMessagesBySessionStmt:               q.listUserMessagesBySessionStmt,
 		listUserMessagesByWorkingDirStmt:            q.listUserMessagesByWorkingDirStmt,
 		markBackgroundJobLogExpiredStmt:             q.markBackgroundJobLogExpiredStmt,
 		markBackgroundJobsInterruptedStmt:           q.markBackgroundJobsInterruptedStmt,
 		recordFileReadStmt:                          q.recordFileReadStmt,
+		releaseBackgroundJobEventStmt:               q.releaseBackgroundJobEventStmt,
 		renameSessionStmt:                           q.renameSessionStmt,
 		setSessionPinStmt:                           q.setSessionPinStmt,
 		touchAnvilInstanceStmt:                      q.touchAnvilInstanceStmt,

@@ -44,8 +44,8 @@ func info(jobID, sessionID string) shell.JobInfo {
 	return shell.JobInfo{ID: jobID, SessionID: sessionID, Done: true, ExitCode: 1}
 }
 
-func eventIDs(events []Event) []int64 {
-	ids := make([]int64, 0, len(events))
+func eventIDs(events []Event) []string {
+	ids := make([]string, 0, len(events))
 	for _, e := range events {
 		ids = append(ids, e.ID)
 	}

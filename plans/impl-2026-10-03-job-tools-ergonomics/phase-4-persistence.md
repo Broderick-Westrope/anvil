@@ -32,28 +32,28 @@ to processes, controlling another process's jobs.
 
 **Success Criteria:**
 
-- [ ] Job IDs never repeat across restarts, concurrent processes, or after
+- [x] Job IDs never repeat across restarts, concurrent processes, or after
       deleting the session that owned the highest ID; a fallback ID issued
       on publication failure never resolves to a persisted job.
-- [ ] After restarting Anvil, `job_output` on a job from a previous run
+- [x] After restarting Anvil, `job_output` on a job from a previous run
       returns its stored output and exit code, including output beyond
       the 10MB in-memory buffer (up to the 50MB log cap).
-- [ ] A job evicted from memory after 30 minutes is still readable through
+- [x] A job evicted from memory after 30 minutes is still readable through
       `job_output`, `job_list`, and `job_kill`.
-- [ ] After a simulated crash (records left running, owning instance's
+- [x] After a simulated crash (records left running, owning instance's
       heartbeat stale), jobs are reported as `interrupted`; jobs of a live
       other process are reported read-only.
-- [ ] Graceful shutdown records `anvil_exit` for jobs it killed and
+- [x] Graceful shutdown records `anvil_exit` for jobs it killed and
       `abandoned` for jobs that outlived the kill, even when a job's own
       exit races shutdown; no job, event, or heartbeat write reaches the
       DB after it's released.
 - [x] A failure partway through allocation leaves no running row or open
       file behind, and the job still runs under a fallback ID.
-- [ ] Pruned output returns `(output expired on <date>)`; a known ID is
+- [x] Pruned output returns `(output expired on <date>)`; a known ID is
       never "not found".
-- [ ] With Phase 3 merged: pending events survive a restart, and two Anvil
+- [x] With Phase 3 merged: pending events survive a restart, and two Anvil
       processes with the same session open never both deliver an event.
-- [ ] `go test ./... -count=1` passes, including migration tests that
+- [x] `go test ./... -count=1` passes, including migration tests that
       round-trip every new migration.
 
 ## Context Loading
@@ -449,7 +449,7 @@ go test -race ./internal/app/ -count=1
 
 **Steps:**
 
-1. [ ] Manager shutdown API:
+1. [x] Manager shutdown API:
 
    ```go
    // BeginShutdown stops new publications and event emission, and sets
@@ -468,7 +468,7 @@ go test -race ./internal/app/ -count=1
 
    Update existing `KillAll` callers and tests.
 
-2. [ ] Shutdown order in `app.Shutdown`. Today it calls `CancelAll`, then
+2. [x] Shutdown order in `app.Shutdown`. Today it calls `CancelAll`, then
    flushes messages, then runs `KillAll` in parallel with cleanup
    callbacks that include `db.ReleaseGlobal`. Change it to:
    1. Disable the Phase 3 waker (if present) and call
@@ -487,7 +487,7 @@ go test -race ./internal/app/ -count=1
    6. Continue into the existing parallel cleanup block, with the
       `KillAll` goroutine removed. The DB is released there.
 
-3. [ ] Event persistence (Phase 3 merged only):
+3. [x] Event persistence (Phase 3 merged only):
    - Migration: `background_job_events` (id TEXT PRIMARY KEY, job_id, kind,
      watch_gen, line, tail, state, claimed_by, claimed_at, created_at).
      Session and job info come from `background_jobs` at load time, so
@@ -518,7 +518,7 @@ go test -race ./internal/app/ -count=1
    - The Phase 3 `OwnerFunc` falls back to `jobstore.Get` for jobs not
      in memory.
 
-4. [ ] Tests:
+4. [x] Tests:
    - A published job that exits on SIGINT → `anvil_exit`. A test-only
      shell (Phase 1 helper) that ignores cancellation → `abandoned`;
      release it after shutdown and assert `Finalize` isn't called again

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -377,7 +378,37 @@ func IsFallbackID(id string) bool {
 type jobPersistence struct {
 	recorder JobRecorder
 	log      JobLog
-	once     sync.Once
+	// claimed is set by whoever records the end state: the job's own
+	// finalization while recording is open, or shutdown after it closed.
+	claimed  atomic.Bool
+	logOnce  sync.Once
+	logStats LogStats
+}
+
+// closeLog closes the job's log once and returns its final stats.
+func (p *jobPersistence) closeLog() LogStats {
+	p.logOnce.Do(func() { p.logStats = p.log.Close() })
+	return p.logStats
+}
+
+// closeLog stops teeing bs's output into p's log, then closes the log,
+// so a closed log never receives another write.
+func (bs *BackgroundShell) closeLog(p *jobPersistence) LogStats {
+	for _, sb := range []*syncBuffer{bs.stdout, bs.stderr} {
+		sb.mu.Lock()
+		sb.tee = nil
+		sb.mu.Unlock()
+	}
+	return p.closeLog()
+}
+
+// UnfinalizedJob is a persisted job whose end state was not recorded
+// before [BackgroundShellManager.Close]. Its log is already closed.
+type UnfinalizedJob struct {
+	ID        string
+	Info      JobInfo
+	EndReason string // The reason decided so far; "" if none.
+	Stats     LogStats
 }
 
 type counterAllocator struct{ next atomic.Uint64 }
@@ -396,12 +427,20 @@ type BackgroundShellManager struct {
 	allocator IDAllocator
 	sink      atomic.Pointer[sinkHolder]
 
-	// recMu guards the recorder and admission of recorder calls, which
-	// are tracked by recCalls so closing can wait for them.
-	recMu     sync.Mutex
-	recorder  JobRecorder
-	recClosed bool
-	recCalls  sync.WaitGroup
+	// recMu guards the recorder, admission of recorder calls (tracked by
+	// recCalls so closing can wait for them), and the set of persisted
+	// jobs whose end state is not yet recorded.
+	recMu       sync.Mutex
+	recorder    JobRecorder
+	recClosed   bool
+	recCalls    sync.WaitGroup
+	unfinalized map[*jobPersistence]*BackgroundShell
+
+	// shuttingDown refuses new publications; guarded by mu.
+	shuttingDown bool
+	// eventsClosed stops completion events from jobs that finish after
+	// shutdown began.
+	eventsClosed atomic.Bool
 
 	gracePeriod time.Duration
 }
@@ -417,9 +456,17 @@ func newBackgroundShellManager() *BackgroundShellManager {
 	return &BackgroundShellManager{
 		shells:      csync.NewMap[string, *BackgroundShell](),
 		aliases:     make(map[string]string),
+		unfinalized: make(map[*jobPersistence]*BackgroundShell),
 		allocator:   &counterAllocator{},
 		gracePeriod: KillGracePeriod,
 	}
+}
+
+// NewBackgroundShellManager returns a manager independent of the one
+// returned by [GetBackgroundShellManager], so tests in other packages
+// can exercise shutdown without affecting the process-wide manager.
+func NewBackgroundShellManager() *BackgroundShellManager {
+	return newBackgroundShellManager()
 }
 
 // GetBackgroundShellManager returns the singleton background shell manager.
@@ -544,6 +591,9 @@ func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts P
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.shuttingDown {
+		return "", errors.New("anvil is shutting down")
+	}
 	key = m.resolveLocked(key)
 	bs, ok := m.shells.Get(key)
 	if !ok {
@@ -585,11 +635,16 @@ func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts P
 	m.shells.Set(newID, bs)
 	m.aliases[key] = newID
 
-	if h := m.sink.Load(); h != nil {
+	if m.sink.Load() != nil {
 		go func() {
 			<-bs.done
-			stdout, stderr, _, _ := bs.GetOutput()
-			h.sink.JobCompleted(bs.Info(), jobTail(stdout, stderr))
+			if m.eventsClosed.Load() {
+				return
+			}
+			if h := m.sink.Load(); h != nil {
+				stdout, stderr, _, _ := bs.GetOutput()
+				h.sink.JobCompleted(bs.Info(), jobTail(stdout, stderr))
+			}
 		}()
 	}
 	if persist != nil {
@@ -639,7 +694,11 @@ func (m *BackgroundShellManager) allocateRecorded(ctx context.Context, rec JobRe
 		writeSnapshot(w, retained)
 		sb.tee = w
 	}
-	return id, &jobPersistence{recorder: rec, log: log}, nil
+	p := &jobPersistence{recorder: rec, log: log}
+	m.recMu.Lock()
+	m.unfinalized[p] = bs
+	m.recMu.Unlock()
+	return id, p, nil
 }
 
 // finalize closes a persisted job's log and records its end state,
@@ -651,19 +710,32 @@ func (m *BackgroundShellManager) finalize(bs *BackgroundShell) {
 	if p == nil {
 		return
 	}
-	p.once.Do(func() {
-		if !m.beginRecorderCall() {
-			return
-		}
-		defer m.recCalls.Done()
+	if !m.beginRecorderCall() {
+		return
+	}
+	defer m.recCalls.Done()
+	if !m.claimFinalization(p) {
+		return
+	}
 
-		stats := p.log.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), recorderTimeout)
-		defer cancel()
-		if err := p.recorder.Finalize(ctx, id, bs.Info(), bs.currentEndReason(), stats); err != nil {
-			slog.Warn("Failed to record background job end state", "id", id, "error", err)
-		}
-	})
+	stats := bs.closeLog(p)
+	ctx, cancel := context.WithTimeout(context.Background(), recorderTimeout)
+	defer cancel()
+	if err := p.recorder.Finalize(ctx, id, bs.Info(), bs.currentEndReason(), stats); err != nil {
+		slog.Warn("Failed to record background job end state", "id", id, "error", err)
+	}
+}
+
+// claimFinalization reports whether the caller is the one to record p's
+// end state.
+func (m *BackgroundShellManager) claimFinalization(p *jobPersistence) bool {
+	if !p.claimed.CompareAndSwap(false, true) {
+		return false
+	}
+	m.recMu.Lock()
+	delete(m.unfinalized, p)
+	m.recMu.Unlock()
+	return true
 }
 
 // jobTail returns the last ten lines of stdout followed by stderr.
@@ -904,9 +976,29 @@ func (m *BackgroundShellManager) removeWhere(match func(*BackgroundShell) bool) 
 	return len(toRemove)
 }
 
-// KillAll terminates all background shells. The provided context bounds how
-// long the function waits for each shell to exit.
-func (m *BackgroundShellManager) KillAll(ctx context.Context) {
+// BeginShutdown stops new publications and event emission, and sets
+// every running published job's end reason to anvil_exit so an exit
+// racing shutdown is recorded truthfully.
+func (m *BackgroundShellManager) BeginShutdown() {
+	m.mu.Lock()
+	m.shuttingDown = true
+	shells := slices.Collect(m.shells.Seq())
+	m.mu.Unlock()
+
+	m.eventsClosed.Store(true)
+	m.SetEventSink(nil)
+	for _, bs := range shells {
+		if bs.isPublished() && !bs.IsDone() {
+			bs.setEndReason("", EndAnvilExit)
+		}
+	}
+}
+
+// KillAll terminates all background shells and reports, by ID, which
+// exited before ctx expired and which were abandoned. Published jobs
+// that had no end reason yet get anvil_exit, and abandoned ones
+// abandoned.
+func (m *BackgroundShellManager) KillAll(ctx context.Context) (exited, abandoned []string) {
 	m.CleanupCompleted()
 	m.mu.Lock()
 	shells := slices.Collect(m.shells.Seq())
@@ -914,17 +1006,93 @@ func (m *BackgroundShellManager) KillAll(ctx context.Context) {
 	clear(m.aliases)
 	m.mu.Unlock()
 
-	var wg sync.WaitGroup
+	var (
+		wg      sync.WaitGroup
+		resMu   sync.Mutex
+		results = make(map[string]bool, len(shells))
+	)
 	for _, shell := range shells {
 		wg.Go(func() {
+			if shell.isPublished() {
+				shell.setEndReason("", EndAnvilExit)
+			}
 			shell.cancel()
+			ok := true
 			select {
 			case <-shell.done:
 			case <-ctx.Done():
+				ok = shell.IsDone()
 			}
+			if !ok && shell.isPublished() {
+				if !shell.setEndReason(EndAnvilExit, EndAbandoned) {
+					shell.setEndReason("", EndAbandoned)
+				}
+			}
+			resMu.Lock()
+			results[shell.ID()] = ok
+			resMu.Unlock()
 		})
 	}
 	wg.Wait()
+
+	for id, ok := range results {
+		if ok {
+			exited = append(exited, id)
+		} else {
+			abandoned = append(abandoned, id)
+		}
+	}
+	slices.Sort(exited)
+	slices.Sort(abandoned)
+	return exited, abandoned
+}
+
+// Close closes every job log and stops calling the recorder and event
+// sink. Goroutines of abandoned shells that finish later drop their
+// output and skip Finalize. It waits, bounded by ctx, for recorder calls
+// already in flight, and returns the persisted jobs whose end state
+// was not recorded, for the caller to finalize.
+func (m *BackgroundShellManager) Close(ctx context.Context) []UnfinalizedJob {
+	m.mu.Lock()
+	m.shuttingDown = true
+	m.mu.Unlock()
+	m.eventsClosed.Store(true)
+	m.SetEventSink(nil)
+
+	m.recMu.Lock()
+	m.recClosed = true
+	m.recMu.Unlock()
+
+	idle := make(chan struct{})
+	go func() {
+		m.recCalls.Wait()
+		close(idle)
+	}()
+	select {
+	case <-idle:
+	case <-ctx.Done():
+		slog.Warn("Timed out waiting for background job recording to finish")
+	}
+
+	m.recMu.Lock()
+	pending := make(map[*jobPersistence]*BackgroundShell, len(m.unfinalized))
+	maps.Copy(pending, m.unfinalized)
+	m.recMu.Unlock()
+
+	var jobs []UnfinalizedJob
+	for p, bs := range pending {
+		if !m.claimFinalization(p) {
+			continue
+		}
+		jobs = append(jobs, UnfinalizedJob{
+			ID:        bs.ID(),
+			Info:      bs.Info(),
+			EndReason: bs.currentEndReason(),
+			Stats:     bs.closeLog(p),
+		})
+	}
+	slices.SortFunc(jobs, func(a, b UnfinalizedJob) int { return cmp.Compare(a.ID, b.ID) })
+	return jobs
 }
 
 // GetOutput returns the current output of a background shell.
