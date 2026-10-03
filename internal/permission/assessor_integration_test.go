@@ -861,3 +861,41 @@ func TestSetAssessorModeReenableWarmsAgain(t *testing.T) {
 	svc.SetAssessorMode(AssessorEnforce)
 	waitWarms(t, warmed, 1)
 }
+
+// TestYoloEnabledWhileWaitingForPromptLock covers commit boundary 2: a
+// request that skipped the assessor, then waits for the prompt slot, is
+// approved by yolo rather than prompting once yolo and the assessor are
+// both switched on.
+func TestYoloEnabledWhileWaitingForPromptLock(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAssessor{outcome: AssessDeny}
+	h := newYoloAssessorHarness(t, fake, AssessorOff, config.YoloOff, nil)
+	h.svc.beforePromptLock = func(CreatePermissionRequest) {
+		h.svc.SetYoloLevel(config.YoloStandard)
+		h.svc.assessorMode.Store(AssessorEnforce)
+	}
+	r, err := h.svc.Request(testCtx(t), h.req("call", "make deploy"))
+	require.NoError(t, err)
+	require.True(t, r.Granted)
+	require.Empty(t, h.events, "yolo must never prompt")
+	require.Zero(t, fake.calls.Load(), "the assessor was off when this request passed it")
+	require.Equal(t, DecisionSourceYolo, h.rec.snapshot()[0].DecidedBy)
+}
+
+// TestYoloFullEnabledMidFlightStillPrompts pins current behaviour: full
+// yolo is checked once on entry, so enabling it mid-flight leaves an
+// in-flight request prompting. This fails towards more prompting.
+func TestYoloFullEnabledMidFlightStillPrompts(t *testing.T) {
+	t.Parallel()
+	h := newYoloAssessorHarness(t, nil, "", config.YoloOff, nil)
+	h.svc.beforePromptLock = func(CreatePermissionRequest) {
+		h.svc.SetYoloLevel(config.YoloFull)
+	}
+	done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
+	perm := waitPrompt(t, h.events)
+	h.svc.Grant(perm)
+	r := waitResult(t, done)
+	require.NoError(t, r.err)
+	require.True(t, r.result.Granted)
+	require.Equal(t, DecisionSourceHuman, h.rec.snapshot()[0].DecidedBy)
+}
