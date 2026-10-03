@@ -44,6 +44,45 @@ func FormatOtherRunningJobs(jobs []shell.JobInfo, now time.Time, limit int) stri
 	return out
 }
 
+// FormatJobStatus renders the first line of a job_output response.
+func FormatJobStatus(info shell.JobInfo, now time.Time, reason shell.WaitReason, timeout time.Duration, matched string) string {
+	runtime := shell.FormatRuntime(shell.JobRuntime(info, now))
+
+	var b strings.Builder
+	b.WriteString("Status: ")
+	switch {
+	case info.Done:
+		fmt.Fprintf(&b, "completed, exit %d (%s)", info.ExitCode, runtime)
+	case reason == "":
+		lastOutput := "no output yet"
+		if !info.LastOutputAt.IsZero() {
+			lastOutput = "last output " + shell.FormatRuntime(now.Sub(info.LastOutputAt)) + " ago"
+		}
+		fmt.Fprintf(&b, "running (%s, %s)", runtime, lastOutput)
+	default:
+		fmt.Fprintf(&b, "running (%s)", runtime)
+	}
+
+	switch {
+	case reason == shell.WaitMatched:
+		fmt.Fprintf(&b, ", matched %q", truncateRunes(matched, 80))
+	case info.Done:
+	case reason == shell.WaitTimedOut:
+		fmt.Fprintf(&b, ", wait timed out after %ds", int(timeout.Seconds()))
+	case reason == shell.WaitCanceled:
+		b.WriteString(", wait canceled")
+	}
+	return b.String()
+}
+
+func truncateRunes(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen-1]) + "…"
+}
+
 // otherRunningJobs filters jobs down to running jobs other than jobID.
 func otherRunningJobs(jobs []shell.JobInfo, jobID string) []shell.JobInfo {
 	var others []shell.JobInfo

@@ -10,7 +10,7 @@ Common shell builtins and core utils available on Windows.
 1. Directory Verification: If creating directories/files, use LS tool to verify parent exists
 2. Security Check: Banned commands ({{ .BannedCommands }}) return error - explain to user. Safe read-only commands execute without prompts
 3. Command Execution: Execute with proper quoting, capture output
-4. Auto-Background: Commands exceeding 1 minute (default, configurable via `auto_background_after`) automatically move to background and return shell ID
+4. Auto-Background: Commands exceeding 1 minute (default) automatically move to background and return shell ID; for commands known to be slow whose result you need before continuing, raise the threshold up to 600 seconds via `auto_background_after`
 5. Output Processing: Truncate if exceeds {{ .MaxOutputLength }} characters
 6. Return Result: Include errors, metadata with <cwd></cwd> tags
 </execution_steps>
@@ -34,6 +34,7 @@ Common shell builtins and core utils available on Windows.
 - IMPORTANT: NEVER use `&` at the end of commands to run in background - use run_in_background parameter instead
 - Before starting a long-lived server or tunnel, check job_list for an existing one you can reuse.
 - Every agent with bash has job_output, job_kill, and job_list.
+- For servers, start with run_in_background and use job_output with wait=true and pattern (e.g. "listening on|ready") instead of sleep loops.
 - Commands that should run in background:
   * Long-running servers (e.g., `npm start`, `python -m http.server`, `node server.js`)
   * Watch/monitoring tasks (e.g., `npm run watch`, `tail -f logfile`)
