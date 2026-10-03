@@ -1,6 +1,6 @@
 # Phase 2: Reading and Waiting
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Depends on Phase 1. Create a PR for human review when done; do not merge.
 
 ## Specification

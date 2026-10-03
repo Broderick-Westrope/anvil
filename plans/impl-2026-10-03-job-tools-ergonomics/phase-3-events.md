@@ -1,6 +1,6 @@
 # Phase 3: Job Event Notifications
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Depends on Phases 1 and 2. Ship as two stacked PRs for human review:
 > **3a** (Tasks 1-3: events, delivery, watches) and **3b** (Tasks 4-5:
 > wake on event and the TUI signals). Do not merge.
