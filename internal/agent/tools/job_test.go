@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -506,4 +508,236 @@ func TestJobKillTool_AlreadyExited(t *testing.T) {
 
 	_, ok := shell.GetBackgroundShellManager().Get(jobID)
 	require.False(t, ok)
+}
+
+func runJobOutput(t *testing.T, ctx context.Context, params JobOutputParams) fantasy.ToolResponse {
+	t.Helper()
+	return runJobTool(t, NewJobOutputTool(JobToolOptions{}), ctx, params)
+}
+
+func waitForOutput(t *testing.T, bgShell *shell.BackgroundShell, want string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		stdout, stderr, _, _ := bgShell.GetOutput()
+		return strings.Contains(stdout+stderr, want)
+	}, 10*time.Second, 10*time.Millisecond)
+}
+
+func TestJobOutputTool_Incremental(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "echo hello; sleep 30", shell.OriginExplicit)
+	waitForOutput(t, bgShell, "hello")
+
+	first := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID()})
+	require.False(t, first.IsError)
+	require.True(t, strings.HasPrefix(first.Content, "Status: running ("), first.Content)
+	require.Contains(t, first.Content, "last output")
+	require.True(t, strings.HasSuffix(first.Content, "\n\nhello"), first.Content)
+
+	second := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID()})
+	require.False(t, second.IsError)
+	require.True(t, strings.HasSuffix(second.Content, "\n\n(no new output)"), second.Content)
+
+	var meta JobOutputResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(second.Metadata), &meta))
+	require.False(t, meta.Done)
+	require.Empty(t, meta.EndReason)
+	require.Positive(t, meta.RuntimeMS)
+}
+
+func TestJobOutputTool_SilentJob(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "sleep 30", shell.OriginExplicit)
+
+	resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID()})
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "no output yet")
+	require.True(t, strings.HasSuffix(resp.Content, "\n\n"+BashNoOutput), resp.Content)
+}
+
+func TestJobOutputTool_FullThenIncremental(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	gate := t.TempDir()
+	waitFile := func(name string) string {
+		return fmt.Sprintf("while [ ! -f %q ]; do sleep 0.05; done", filepath.Join(gate, name))
+	}
+	release := func(name string) {
+		require.NoError(t, os.WriteFile(filepath.Join(gate, name), nil, 0o644))
+	}
+	command := "echo one; " + waitFile("a") + "; echo two; " + waitFile("b") + "; echo three; sleep 30"
+	bgShell := startPublishedJob(t, sessionID, command, shell.OriginExplicit)
+	waitForOutput(t, bgShell, "one")
+
+	first := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID()})
+	require.True(t, strings.HasSuffix(first.Content, "\n\none"), first.Content)
+
+	release("a")
+	waitForOutput(t, bgShell, "two")
+	full := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Full: true})
+	require.True(t, strings.HasSuffix(full.Content, "\n\none\ntwo"), full.Content)
+
+	next := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID()})
+	require.True(t, strings.HasSuffix(next.Content, "\n\n(no new output)"), next.Content)
+
+	release("b")
+	waitForOutput(t, bgShell, "three")
+	later := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID()})
+	require.True(t, strings.HasSuffix(later.Content, "\n\nthree"), later.Content)
+	require.NotContains(t, later.Content, "two")
+}
+
+func TestJobOutputTool_TailLines(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "seq 1 100", shell.OriginExplicit)
+	bgShell.Wait()
+
+	resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), TailLines: 5})
+	require.False(t, resp.IsError)
+	require.True(t, strings.HasSuffix(resp.Content, "\n\n(95 earlier lines omitted)\n96\n97\n98\n99\n100"), resp.Content)
+
+	next := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID()})
+	require.True(t, strings.HasSuffix(next.Content, "\n\n(no new output)"), next.Content)
+}
+
+func TestJobOutputTool_WaitTimeout(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "sleep 30", shell.OriginExplicit)
+
+	start := time.Now()
+	resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Wait: true, TimeoutSeconds: 1})
+	elapsed := time.Since(start)
+
+	require.False(t, resp.IsError)
+	require.GreaterOrEqual(t, elapsed, time.Second)
+	require.Less(t, elapsed, 10*time.Second)
+	require.Contains(t, resp.Content, "wait timed out after 1s")
+
+	var meta JobOutputResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, string(shell.WaitTimedOut), meta.EndReason)
+}
+
+func TestJobOutputTool_WaitPattern(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "sh -c 'sleep 0.5; echo ready; sleep 30'", shell.OriginExplicit)
+
+	start := time.Now()
+	resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Wait: true, Pattern: "ready", TimeoutSeconds: 60})
+	require.Less(t, time.Since(start), 10*time.Second)
+
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, `matched "ready"`)
+	require.True(t, strings.HasSuffix(resp.Content, "\n\nready"), resp.Content)
+
+	var meta JobOutputResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, string(shell.WaitMatched), meta.EndReason)
+	require.Equal(t, "ready", meta.MatchedLine)
+}
+
+func TestJobOutputTool_CompletedExitCode(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "false", shell.OriginExplicit)
+	bgShell.Wait()
+
+	for _, params := range []JobOutputParams{
+		{ShellID: bgShell.ID()},
+		{ShellID: bgShell.ID()},
+		{ShellID: bgShell.ID(), Full: true},
+	} {
+		resp := runJobOutput(t, ctx, params)
+		require.False(t, resp.IsError)
+		require.True(t, strings.HasPrefix(resp.Content, "Status: completed, exit 1 ("), resp.Content)
+
+		var meta JobOutputResponseMetadata
+		require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+		require.True(t, meta.Done)
+		require.Equal(t, 1, meta.ExitCode)
+	}
+}
+
+func TestJobOutputTool_Validation(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "sleep 30", shell.OriginExplicit)
+
+	tests := []struct {
+		name   string
+		params JobOutputParams
+		want   string
+	}{
+		{
+			name:   "pattern with full",
+			params: JobOutputParams{ShellID: bgShell.ID(), Wait: true, Full: true, Pattern: "x"},
+			want:   "pattern cannot be combined with full=true",
+		},
+		{
+			name:   "pattern without wait",
+			params: JobOutputParams{ShellID: bgShell.ID(), Pattern: "x"},
+			want:   "pattern currently requires wait=true",
+		},
+		{
+			name:   "invalid regex",
+			params: JobOutputParams{ShellID: bgShell.ID(), Wait: true, Pattern: "("},
+			want:   "invalid pattern",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := runJobOutput(t, ctx, tt.params)
+			require.True(t, resp.IsError)
+			require.Contains(t, resp.Content, tt.want)
+		})
+	}
+}
+
+func TestJobWaitTimeout(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 300*time.Second, jobWaitTimeout(0))
+	require.Equal(t, 300*time.Second, jobWaitTimeout(-5))
+	require.Equal(t, 10*time.Second, jobWaitTimeout(10))
+	require.Equal(t, 1800*time.Second, jobWaitTimeout(5000))
+}
+
+func TestBashTool_AutoBackgroundShowsOutput(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := sessionContext(t)
+	tool := newBashToolForTest(t.TempDir())
+
+	resp := runBashTool(t, tool, ctx, BashParams{
+		Description:         "prints then sleeps",
+		Command:             "echo first line; sleep 30",
+		AutoBackgroundAfter: 1,
+	})
+	require.False(t, resp.IsError)
+
+	var meta BashResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.True(t, meta.Background)
+	t.Cleanup(func() { _ = shell.GetBackgroundShellManager().Kill(meta.ShellID) })
+
+	require.Contains(t, resp.Content, "has been moved to the background as job "+meta.ShellID)
+	require.Contains(t, resp.Content, "Output so far (last 20 lines):\nfirst line")
+	require.Contains(t, resp.Content, "The first job_output call returns all output from the start.")
+
+	out := runJobOutput(t, ctx, JobOutputParams{ShellID: meta.ShellID})
+	require.False(t, out.IsError)
+	require.True(t, strings.HasSuffix(out.Content, "\n\nfirst line"), out.Content)
 }

@@ -408,10 +408,22 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				Background:       true,
 				ShellID:          jobID,
 			}
-			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", jobID)
+			response := formatAutoBackgroundResponse(jobID, time.Since(startTime), joinOutput(stdout, stderr))
 			response += otherRunningJobsNote(bgManager, sessionID, jobID)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		})
+}
+
+// formatAutoBackgroundResponse renders the response for a command moved
+// to the background after the auto-background threshold.
+func formatAutoBackgroundResponse(jobID string, elapsed time.Duration, output string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Command is still running after %s and has been moved to the background as job %s.", shell.FormatRuntime(elapsed), jobID)
+	if tail := shell.LastLines(output, 20); tail != "" {
+		fmt.Fprintf(&b, "\n\nOutput so far (last 20 lines):\n%s", TruncateOutput(tail))
+	}
+	b.WriteString("\n\nThe first job_output call returns all output from the start. Use job_output with wait=true (and pattern for readiness lines) to wait, or job_kill to stop it.")
+	return b.String()
 }
 
 func otherRunningJobsNote(bgManager *shell.BackgroundShellManager, sessionID, jobID string) string {
