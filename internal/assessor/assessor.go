@@ -34,7 +34,7 @@ type Assessor struct {
 	Thresholds       Thresholds
 	SendUserMessages bool
 	sem              chan struct{} // Cap 4: bounded concurrency.
-	breaker          breaker       // 3 consecutive failures → open 60s.
+	breaker          breaker       // 3 consecutive failures → open 60s, then one probe.
 	now              func() time.Time
 }
 
@@ -66,7 +66,8 @@ func (a *Assessor) Assess(ctx context.Context, in permission.AssessInput) (permi
 	if skip != "" {
 		return skipped(rec, skip), nil
 	}
-	if a.breaker.isOpen(a.now()) {
+	allowed, probe := a.breaker.allow(a.now())
+	if !allowed {
 		return skipped(rec, skipUnavailable), nil
 	}
 
@@ -76,6 +77,9 @@ func (a *Assessor) Assess(ctx context.Context, in permission.AssessInput) (permi
 		select {
 		case a.sem <- struct{}{}:
 		case <-ctx.Done():
+			if probe {
+				a.breaker.release()
+			}
 			return skipped(rec, skipBusy), nil
 		}
 	}
@@ -86,8 +90,12 @@ func (a *Assessor) Assess(ctx context.Context, in permission.AssessInput) (permi
 	rec.LatencyMS = a.now().Sub(start).Milliseconds()
 	if err != nil {
 		// A caller cancelling is not an outage; a timeout is.
-		if !errors.Is(err, context.Canceled) {
-			a.breaker.fail(a.now())
+		if errors.Is(err, context.Canceled) {
+			if probe {
+				a.breaker.release()
+			}
+		} else {
+			a.breaker.fail(a.now(), probe)
 		}
 		rec.Outcome = outcomeError
 		rec.Error = err.Error()
@@ -128,23 +136,37 @@ func marshal(rec permission.AssessmentRecord) json.RawMessage {
 }
 
 // breaker stops calling the classifier for a cooldown after repeated
-// consecutive failures. Once the cooldown ends, a single further failure
-// reopens it until a success resets the count.
+// consecutive failures. Once the cooldown ends it is half-open: a single
+// probe call is let through while others are turned away. A successful
+// probe closes the breaker; a failed one reopens it for another cooldown.
 type breaker struct {
 	mu        sync.Mutex
 	failures  int
 	openUntil time.Time
+	probing   bool
 }
 
-func (b *breaker) isOpen(now time.Time) bool {
+// allow reports whether a call may go ahead and whether it is the
+// half-open probe. A probe must end with fail, succeed, or release.
+func (b *breaker) allow(now time.Time) (allowed, probe bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return now.Before(b.openUntil)
+	if b.failures < breakerThreshold {
+		return true, false
+	}
+	if now.Before(b.openUntil) || b.probing {
+		return false, false
+	}
+	b.probing = true
+	return true, true
 }
 
-func (b *breaker) fail(now time.Time) {
+func (b *breaker) fail(now time.Time, probe bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if probe {
+		b.probing = false
+	}
 	b.failures++
 	if b.failures >= breakerThreshold {
 		b.openUntil = now.Add(breakerCooldown)
@@ -156,4 +178,13 @@ func (b *breaker) succeed() {
 	defer b.mu.Unlock()
 	b.failures = 0
 	b.openUntil = time.Time{}
+	b.probing = false
+}
+
+// release ends a probe that finished without telling us anything about
+// the classifier's health, such as one the caller cancelled.
+func (b *breaker) release() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.probing = false
 }

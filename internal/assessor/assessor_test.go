@@ -185,7 +185,9 @@ func TestAssessorCallerCancelDoesNotTripBreaker(t *testing.T) {
 		_, err := a.Assess(ctx, eligible)
 		require.ErrorIs(t, err, context.Canceled)
 	}
-	require.False(t, a.breaker.isOpen(a.now()))
+	allowed, probe := a.breaker.allow(a.now())
+	require.True(t, allowed)
+	require.False(t, probe)
 }
 
 func TestAssessorIneligibleMakesNoRequest(t *testing.T) {
@@ -265,4 +267,110 @@ func TestAssessorBusyWhenContextDone(t *testing.T) {
 	rec := decodeRecord(t, got)
 	require.Equal(t, "skipped", rec.Outcome)
 	require.Equal(t, skipBusy, rec.SkipReason)
+}
+
+func TestAssessorBreakerHalfOpenSingleProbe(t *testing.T) {
+	t.Parallel()
+
+	var hits, probeHits atomic.Int32
+	var probing atomic.Bool
+	probeEntered := make(chan struct{})
+	probeRelease := make(chan bool) // true: succeed, false: fail.
+	stop := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if probing.Load() && probeHits.Add(1) == 1 {
+			probeEntered <- struct{}{}
+			select {
+			case ok := <-probeRelease:
+				if !ok {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+			case <-stop:
+				return
+			}
+		} else if !probing.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.WriteString(w, batteryBody(0.05, 0))
+	}))
+	defer srv.Close()
+	defer close(stop)
+
+	a := newTestAssessor(srv.URL)
+	a.Client.Backoff = nil
+	var mu sync.Mutex
+	start := time.Unix(1_700_000_000, 0)
+	now := start
+	setNow := func(d time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		now = start.Add(d)
+	}
+	a.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return now
+	}
+	requireSkipped := func() {
+		t.Helper()
+		before := hits.Load()
+		got, err := a.Assess(t.Context(), eligible)
+		require.NoError(t, err)
+		rec := decodeRecord(t, got)
+		require.Equal(t, "skipped", rec.Outcome)
+		require.Equal(t, skipUnavailable, rec.SkipReason)
+		require.Equal(t, before, hits.Load())
+	}
+	probe := func(succeed bool, failAt time.Duration) (permission.Assessment, error) {
+		t.Helper()
+		probeHits.Store(0)
+		type result struct {
+			a   permission.Assessment
+			err error
+		}
+		done := make(chan result, 1)
+		go func() {
+			got, err := a.Assess(t.Context(), eligible)
+			done <- result{got, err}
+		}()
+		<-probeEntered
+		// Other callers are turned away while the probe is in flight.
+		requireSkipped()
+		requireSkipped()
+		setNow(failAt)
+		probeRelease <- succeed
+		r := <-done
+		return r.a, r.err
+	}
+
+	for range breakerThreshold {
+		_, err := a.Assess(t.Context(), eligible)
+		require.Error(t, err)
+	}
+	requireSkipped()
+
+	probing.Store(true)
+	setNow(61 * time.Second)
+	_, err := probe(false, 100*time.Second)
+	require.Error(t, err)
+
+	// The failed probe reopens the breaker for a full cooldown from the
+	// failure, not from when the probe started.
+	setNow(150 * time.Second)
+	requireSkipped()
+
+	setNow(161 * time.Second)
+	got, err := probe(true, 161*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, permission.AssessAllow, got.Outcome)
+
+	// Closed: calls go through concurrently again.
+	before := hits.Load()
+	got, err = a.Assess(t.Context(), eligible)
+	require.NoError(t, err)
+	require.Equal(t, permission.AssessAllow, got.Outcome)
+	require.Equal(t, before+1, hits.Load())
 }
