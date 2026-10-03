@@ -26,6 +26,9 @@ controls for killing jobs from the UI.
       published jobs with ID, short label, runtime, and last-output age;
       jobs silent for over 10 minutes are styled as stale; the section is
       hidden when there are none.
+- [x] Running jobs owned by a still-running subagent of the active session
+      are listed too, tagged `subagent` (follow-up found while executing
+      this plan: a subagent blocked on its own job was invisible).
 - [x] Runtimes in the sidebar update every second while jobs are running,
       and the tick stops when none are.
 - [x] A pending `job_output` call with `wait=true` shows a live elapsed
