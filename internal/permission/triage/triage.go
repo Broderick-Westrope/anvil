@@ -153,8 +153,13 @@ func Analyze(records []Record, rules []config.PermissionRule, opts Options) (all
 					add(KindAllow, res.tier, res.pattern, input, warning)
 				}
 			}
+			// Only a human's denial proposes a permanent deny rule. The
+			// bouncer also denies explicit actions the user simply didn't
+			// mention (git push, gh pr merge), so learning denies from it
+			// would turn its false positives into permanent rules. Its
+			// denials still count as evidence against allow candidates.
 			if len(e.commands) == 1 && r.Verdict == string(permission.VerdictDeny) &&
-				(r.DecidedBy == string(permission.DecisionSourceHuman) || r.DecidedBy == string(permission.DecisionSourceBouncer)) {
+				r.DecidedBy == string(permission.DecisionSourceHuman) {
 				if pattern := denyPattern(e.commands[0]); pattern != "" {
 					add(KindDeny, TierB, pattern, e.commands[0], "Review the scope of this permanent denial")
 				}

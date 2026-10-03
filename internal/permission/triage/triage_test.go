@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 )
 
 func repeated(input, verdict string) []Record {
@@ -227,4 +228,30 @@ func BenchmarkAnalyze(b *testing.B) {
 	for b.Loop() {
 		Analyze(records, rules, Options{})
 	}
+}
+
+// TestBouncerDenialsNeverProposeDenyRules guards against turning the
+// bouncer's false positives into permanent rules: it denies explicit
+// actions like git push unless the user asked, so only a human's denial
+// proposes a deny rule.
+func TestBouncerDenialsNeverProposeDenyRules(t *testing.T) {
+	t.Parallel()
+	bouncer := repeated("git push origin feature", "deny")
+	for i := range bouncer {
+		bouncer[i].DecidedBy = string(permission.DecisionSourceBouncer)
+	}
+	a, d := Analyze(bouncer, nil, Options{})
+	require.Empty(t, a)
+	require.Empty(t, d, "bouncer denials must not propose deny rules")
+
+	_, d = Analyze(repeated("git push origin feature", "deny"), nil, Options{})
+	require.Len(t, d, 1, "the same denials from a human still do")
+	require.Equal(t, "git push origin *", d[0].InputPattern)
+
+	// The bouncer's denials still block allow candidates that would
+	// cover the denied call.
+	mixed := append(repeated("git push origin feature", "allow"), bouncer[0])
+	a, d = Analyze(mixed, nil, Options{})
+	require.Empty(t, a)
+	require.Empty(t, d)
 }
