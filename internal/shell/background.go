@@ -66,6 +66,19 @@ type syncBuffer struct {
 	// tee, if set, receives every write in full, before the cap is
 	// applied. It must only touch memory: it is called under mu.
 	tee io.Writer
+	// capture, if set, holds the output a job log has not seen yet
+	// while the job is being published.
+	capture *publishCapture
+}
+
+// publishCapture is a buffer's retained output at the publication
+// snapshot plus every write since, so the job log can be handed exactly
+// the output it has not seen once it exists.
+type publishCapture struct {
+	snapshot  []byte // Retained output, without the truncation marker.
+	lost      bool   // The cap reset the buffer before the snapshot.
+	since     bytes.Buffer
+	sinceLost bool // since hit the cap and stopped recording.
 }
 
 const truncationMarker = "[output truncated — exceeded 10MB buffer cap]\n"
@@ -85,6 +98,13 @@ func (sb *syncBuffer) write(p []byte) (n int, err error) {
 
 	if sb.tee != nil {
 		_, _ = sb.tee.Write(p)
+	}
+	if c := sb.capture; c != nil && !c.sinceLost {
+		if c.since.Len()+len(p) <= MaxBufferSize {
+			c.since.Write(p)
+		} else {
+			c.sinceLost = true
+		}
 	}
 
 	if sb.buf.Len()+len(p) <= MaxBufferSize {
@@ -113,6 +133,51 @@ func (sb *syncBuffer) signalLocked() {
 		close(sb.changed)
 		sb.changed = make(chan struct{})
 	}
+}
+
+// beginCapture snapshots the retained output and records every later
+// write until [syncBuffer.attachLog] or [syncBuffer.endCapture]. It
+// reports whether output was already lost to the cap.
+func (sb *syncBuffer) beginCapture() bool {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
+	c := &publishCapture{lost: sb.gen > 0}
+	retained := sb.buf.Bytes()
+	if c.lost {
+		retained = bytes.TrimPrefix(retained, []byte(truncationMarker))
+	}
+	c.snapshot = bytes.Clone(retained)
+	sb.capture = c
+	return c.lost
+}
+
+// attachLog writes the captured output to w and tees every later write
+// into it, so w sees each write exactly once. w must only touch memory.
+func (sb *syncBuffer) attachLog(w io.Writer) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
+	c := sb.capture
+	sb.capture = nil
+	if c != nil {
+		if c.lost {
+			writeSnapshot(w, []byte(prePublishLostMarker))
+		}
+		writeSnapshot(w, c.snapshot)
+		writeSnapshot(w, c.since.Bytes())
+		if c.sinceLost {
+			writeSnapshot(w, []byte(publishLostMarker))
+		}
+	}
+	sb.tee = w
+}
+
+// endCapture discards a capture that will not be attached to a log.
+func (sb *syncBuffer) endCapture() {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	sb.capture = nil
 }
 
 // WriteString delegates to Write so the buffer cap is enforced.
@@ -145,8 +210,11 @@ type BackgroundShell struct {
 	sessionID string
 	origin    JobOrigin
 	published bool
-	events    *atomic.Pointer[sinkHolder] // Set on publication.
-	endReason string
+	// publishing is closed when an in-flight publication finishes; nil
+	// when none is in flight.
+	publishing chan struct{}
+	events     *atomic.Pointer[sinkHolder] // Set on publication.
+	endReason  string
 	// persist is set on publication when the job was recorded, and is
 	// immutable afterwards.
 	persist *jobPersistence
@@ -586,56 +654,140 @@ type PublishOptions struct {
 // owner and origin. It returns the new job ID. With a recorder set,
 // the job is persisted and its output streamed to a log; if that
 // fails, the job runs in memory only under a fallback ID (see
-// [IsFallbackID]).
+// [IsFallbackID]). Allocation runs without the manager lock, so other
+// jobs and the job's own output are never blocked on it.
 func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts PublishOptions) (string, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.shuttingDown {
+		m.mu.Unlock()
 		return "", errors.New("anvil is shutting down")
 	}
 	key = m.resolveLocked(key)
 	bs, ok := m.shells.Get(key)
 	if !ok {
+		m.mu.Unlock()
 		return "", fmt.Errorf("background shell not found: %s", key)
 	}
-	if bs.isPublished() {
-		return bs.ID(), nil
+	bs.mu.Lock()
+	published, id, inFlight := bs.published, bs.id, bs.publishing
+	if !published && inFlight == nil {
+		bs.publishing = make(chan struct{})
+	}
+	bs.mu.Unlock()
+	allocator := m.allocator
+	m.mu.Unlock()
+
+	switch {
+	case published:
+		return id, nil
+	case inFlight != nil:
+		select {
+		case <-inFlight:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		bs.mu.Lock()
+		published, id = bs.published, bs.id
+		bs.mu.Unlock()
+		if published {
+			return id, nil
+		}
+		return m.Publish(ctx, key, opts)
 	}
 
-	var (
-		newID   string
-		persist *jobPersistence
-	)
-	if rec := m.acquireRecorder(); rec != nil {
-		var err error
-		newID, persist, err = m.allocateRecorded(ctx, rec, bs, opts)
-		m.recCalls.Done()
+	rec := m.acquireRecorder()
+	if rec == nil {
+		newID, err := allocator.NextID(ctx)
 		if err != nil {
-			newID = fallbackID()
-			slog.Warn("Failed to persist background job; it will not survive a restart", "id", newID, "error", err)
-		}
-	} else {
-		var err error
-		newID, err = m.allocator.NextID(ctx)
-		if err != nil {
+			bs.mu.Lock()
+			close(bs.publishing)
+			bs.publishing = nil
+			bs.mu.Unlock()
 			return "", fmt.Errorf("allocating job ID: %w", err)
 		}
+		return m.install(key, bs, newID, nil, opts)
+	}
+	// The recorder call stays admitted until the job is registered as
+	// unfinalized, so Close either waits for it or never sees it start.
+	defer m.recCalls.Done()
+	newID, persist, err := m.allocateRecorded(ctx, rec, bs, opts)
+	if err != nil {
+		newID = fallbackID()
+		slog.Warn("Failed to persist background job; it will not survive a restart", "id", newID, "error", err)
+	}
+	return m.install(key, bs, newID, persist, opts)
+}
+
+// allocateRecorded persists bs and tees its output into a job log. The
+// buffers capture output from the snapshot until the log is attached,
+// so no write is lost or duplicated while the recorder runs unlocked.
+func (m *BackgroundShellManager) allocateRecorded(ctx context.Context, rec JobRecorder, bs *BackgroundShell, opts PublishOptions) (string, *jobPersistence, error) {
+	stdoutLost := bs.stdout.beginCapture()
+	stderrLost := bs.stderr.beginCapture()
+	req := AllocateRequest{
+		Info: JobInfo{
+			SessionID:   opts.SessionID,
+			Origin:      opts.Origin,
+			Command:     bs.Command,
+			Description: bs.Description,
+			WorkingDir:  bs.WorkingDir,
+			StartedAt:   bs.startedAt,
+		},
+		PrePublishLost: stdoutLost || stderrLost,
 	}
 
-	m.shells.Take(key)
-	bs.mu.Lock()
-	bs.id = newID
-	bs.sessionID = opts.SessionID
-	bs.origin = opts.Origin
-	bs.published = true
-	bs.events = &m.sink
-	bs.persist = persist
-	bs.mu.Unlock()
-	m.shells.Set(newID, bs)
-	m.aliases[key] = newID
+	ctx, cancel := context.WithTimeout(ctx, recorderTimeout)
+	defer cancel()
+	id, log, err := rec.Allocate(ctx, req)
+	if err != nil {
+		bs.stdout.endCapture()
+		bs.stderr.endCapture()
+		return "", nil, err
+	}
+	bs.stdout.attachLog(log.Stdout())
+	bs.stderr.attachLog(log.Stderr())
+	return id, &jobPersistence{recorder: rec, log: log}, nil
+}
 
-	if m.sink.Load() != nil {
+// install re-keys bs under newID once allocation has finished. If bs
+// was killed or removed meanwhile it stays out of the manager and
+// Publish fails, but a persisted job is still finalized so its record
+// never stays running.
+func (m *BackgroundShellManager) install(key string, bs *BackgroundShell, newID string, persist *jobPersistence, opts PublishOptions) (string, error) {
+	m.mu.Lock()
+	cur, ok := m.shells.Get(key)
+	tracked := ok && cur == bs
+	if tracked {
+		m.shells.Take(key)
+		m.shells.Set(newID, bs)
+		m.aliases[key] = newID
+	}
+
+	bs.mu.Lock()
+	if tracked || persist != nil {
+		bs.id = newID
+		bs.sessionID = opts.SessionID
+		bs.origin = opts.Origin
+		bs.published = true
+		bs.events = &m.sink
+		bs.persist = persist
+	}
+	close(bs.publishing)
+	bs.publishing = nil
+	bs.mu.Unlock()
+
+	// Mirror BeginShutdown and KillAll for a job they saw unpublished.
+	if m.shuttingDown && (!tracked || !bs.IsDone()) {
+		bs.setEndReason("", EndAnvilExit)
+	}
+	if persist != nil {
+		m.recMu.Lock()
+		m.unfinalized[persist] = bs
+		m.recMu.Unlock()
+	}
+	m.mu.Unlock()
+
+	if tracked && m.sink.Load() != nil {
 		go func() {
 			<-bs.done
 			if m.eventsClosed.Load() {
@@ -648,6 +800,11 @@ func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts P
 		}()
 	}
 	if persist != nil {
+		// A Kill that gave up on bs before persist was installed could
+		// not finalize it.
+		if bs.currentEndReason() == EndAbandoned {
+			m.finalize(bs)
+		}
 		go func() {
 			<-bs.done
 			bs.setEndReason("", EndExited)
@@ -655,50 +812,10 @@ func (m *BackgroundShellManager) Publish(ctx context.Context, key string, opts P
 		}()
 	}
 
+	if !tracked {
+		return "", fmt.Errorf("background job %s was stopped while being published", newID)
+	}
 	return newID, nil
-}
-
-// allocateRecorded persists bs and tees its output into a job log.
-// Both buffers stay write-locked from the snapshot until the tee is
-// installed, so no write is lost or duplicated in between.
-func (m *BackgroundShellManager) allocateRecorded(ctx context.Context, rec JobRecorder, bs *BackgroundShell, opts PublishOptions) (string, *jobPersistence, error) {
-	buffers := []*syncBuffer{bs.stdout, bs.stderr}
-	for _, sb := range buffers {
-		sb.mu.Lock()
-		defer sb.mu.Unlock()
-	}
-
-	req := AllocateRequest{
-		Info: JobInfo{
-			SessionID:   opts.SessionID,
-			Origin:      opts.Origin,
-			Command:     bs.Command,
-			Description: bs.Description,
-			WorkingDir:  bs.WorkingDir,
-			StartedAt:   bs.startedAt,
-		},
-		PrePublishLost: bs.stdout.gen > 0 || bs.stderr.gen > 0,
-	}
-	id, log, err := rec.Allocate(ctx, req)
-	if err != nil {
-		return "", nil, err
-	}
-
-	for i, w := range []io.Writer{log.Stdout(), log.Stderr()} {
-		sb := buffers[i]
-		retained := sb.buf.Bytes()
-		if sb.gen > 0 {
-			writeSnapshot(w, []byte(prePublishLostMarker))
-			retained = bytes.TrimPrefix(retained, []byte(truncationMarker))
-		}
-		writeSnapshot(w, retained)
-		sb.tee = w
-	}
-	p := &jobPersistence{recorder: rec, log: log}
-	m.recMu.Lock()
-	m.unfinalized[p] = bs
-	m.recMu.Unlock()
-	return id, p, nil
 }
 
 // finalize closes a persisted job's log and records its end state,

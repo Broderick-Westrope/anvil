@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1174,4 +1175,233 @@ func TestShutdown_ExitBeforeKillAllRecordsAnvilExit(t *testing.T) {
 	require.NotContains(t, exited, id, "completed jobs are cleaned up, not killed")
 	require.Empty(t, manager.Close(t.Context()))
 	require.Empty(t, drainFinalized(rec))
+}
+
+// blockingRecorder is a fakeRecorder whose Allocate reports that it was
+// entered and then blocks until release is closed.
+type blockingRecorder struct {
+	*fakeRecorder
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newBlockingRecorder() *blockingRecorder {
+	return &blockingRecorder{
+		fakeRecorder: newFakeRecorder(),
+		entered:      make(chan struct{}, 16),
+		release:      make(chan struct{}),
+	}
+}
+
+func (r *blockingRecorder) Allocate(ctx context.Context, req AllocateRequest) (string, JobLog, error) {
+	r.entered <- struct{}{}
+	select {
+	case <-r.release:
+	case <-ctx.Done():
+		return "", nil, ctx.Err()
+	}
+	return r.fakeRecorder.Allocate(ctx, req)
+}
+
+func waitEntered(t *testing.T, r *blockingRecorder) {
+	t.Helper()
+	select {
+	case <-r.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Allocate was not called")
+	}
+}
+
+type publishResult struct {
+	id  string
+	err error
+}
+
+func publishAsync(t *testing.T, m *BackgroundShellManager, key string) <-chan publishResult {
+	t.Helper()
+	ch := make(chan publishResult, 1)
+	go func() {
+		id, err := m.Publish(t.Context(), key, PublishOptions{SessionID: "s", Origin: OriginExplicit})
+		ch <- publishResult{id: id, err: err}
+	}()
+	return ch
+}
+
+func awaitPublish(t *testing.T, ch <-chan publishResult) publishResult {
+	t.Helper()
+	select {
+	case res := <-ch:
+		return res
+	case <-time.After(10 * time.Second):
+		t.Fatal("Publish did not return")
+		return publishResult{}
+	}
+}
+
+func TestPublishRecorded_AllocationDoesNotBlockManager(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	other := registerBlockingShell(t, manager, blockUntilCleanup(t))
+	otherID := publishShell(t, manager, other, "s", OriginExplicit)
+	victim := startShell(t, manager, "sleep 30")
+	victimID := publishShell(t, manager, victim, "s", OriginExplicit)
+
+	rec := newBlockingRecorder()
+	manager.SetRecorder(rec)
+	ch, release := releaseOnCleanup(t)
+	bs := registerBlockingShell(t, manager, ch)
+	_, _ = bs.stdout.Write([]byte("before\n"))
+
+	result := publishAsync(t, manager, bs.ID())
+	waitEntered(t, rec)
+
+	proceeded := make(chan struct{})
+	go func() {
+		defer close(proceeded)
+		got, ok := manager.Get(otherID)
+		assert.True(t, ok)
+		assert.Same(t, other, got)
+		assert.ElementsMatch(t, []string{otherID, victimID}, jobIDs(manager.ListAll()))
+		assert.NoError(t, manager.Kill(victimID))
+		_, _ = bs.stdout.Write([]byte("during\n"))
+		_, _ = bs.stderr.Write([]byte("warn\n"))
+	}()
+	select {
+	case <-proceeded:
+	case <-time.After(10 * time.Second):
+		t.Fatal("manager operations blocked on allocation")
+	}
+
+	close(rec.release)
+	res := awaitPublish(t, result)
+	require.NoError(t, res.err)
+	require.Equal(t, "001", res.id)
+	got, ok := manager.Get(res.id)
+	require.True(t, ok)
+	require.Same(t, bs, got)
+
+	_, _ = bs.stdout.Write([]byte("after\n"))
+	release()
+	call := waitFinalize(t, rec.fakeRecorder)
+	require.Equal(t, res.id, call.id)
+	require.Equal(t, EndExited, call.endReason)
+
+	l := rec.log(res.id)
+	require.Equal(t, "before\nduring\nafter\n", l.stdout.String())
+	require.Equal(t, "warn\n", l.stderr.String())
+}
+
+func TestPublishRecorded_BufferResetDuringAllocationKeepsLog(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newBlockingRecorder()
+	manager.SetRecorder(rec)
+	bs := registerBlockingShell(t, manager, blockUntilCleanup(t))
+	before := bytes.Repeat([]byte("a"), 6*1024*1024)
+	during := bytes.Repeat([]byte("b"), 5*1024*1024)
+	_, _ = bs.stdout.Write(before)
+
+	result := publishAsync(t, manager, bs.ID())
+	waitEntered(t, rec)
+	_, _ = bs.stdout.Write(during)
+	require.Positive(t, bs.stdout.gen, "the in-memory buffer should have reset")
+	close(rec.release)
+
+	res := awaitPublish(t, result)
+	require.NoError(t, res.err)
+	rec.mu.Lock()
+	req := rec.reqs[0]
+	rec.mu.Unlock()
+	require.False(t, req.PrePublishLost, "nothing was lost before the snapshot")
+	require.Equal(t, string(before)+string(during), rec.log(res.id).stdout.String())
+}
+
+func TestPublishRecorded_ConcurrentPublishAllocatesOnce(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newBlockingRecorder()
+	manager.SetRecorder(rec)
+	bs := registerBlockingShell(t, manager, blockUntilCleanup(t))
+	key := bs.ID()
+
+	first := publishAsync(t, manager, key)
+	waitEntered(t, rec)
+	second := publishAsync(t, manager, key)
+	close(rec.release)
+
+	a, b := awaitPublish(t, first), awaitPublish(t, second)
+	require.NoError(t, a.err)
+	require.NoError(t, b.err)
+	require.Equal(t, a.id, b.id)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	require.Len(t, rec.reqs, 1)
+}
+
+func TestPublishRecorded_KillDuringAllocation(t *testing.T) {
+	t.Parallel()
+
+	for range 20 {
+		manager := newBackgroundShellManager()
+		rec := newBlockingRecorder()
+		manager.SetRecorder(rec)
+		bs := startShell(t, manager, "sleep 30")
+		key := bs.ID()
+
+		result := publishAsync(t, manager, key)
+		waitEntered(t, rec)
+
+		var wg sync.WaitGroup
+		wg.Go(func() { assert.NoError(t, manager.Kill(key)) })
+		wg.Go(func() { close(rec.release) })
+		wg.Wait()
+
+		res := awaitPublish(t, result)
+		require.True(t, bs.IsDone())
+		call := waitFinalize(t, rec.fakeRecorder)
+		require.Equal(t, "001", call.id)
+		require.Equal(t, EndKilled, call.endReason)
+		require.True(t, rec.log("001").closed.Load())
+		if res.err != nil {
+			require.Empty(t, res.id)
+		}
+		require.Empty(t, manager.List())
+		require.Empty(t, manager.Close(t.Context()))
+	}
+}
+
+func TestPublishRecorded_ShutdownDuringAllocation(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newBlockingRecorder()
+	manager.SetRecorder(rec)
+	bs := startShell(t, manager, "sleep 30")
+
+	result := publishAsync(t, manager, bs.ID())
+	waitEntered(t, rec)
+
+	manager.BeginShutdown()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	manager.KillAll(ctx)
+	require.True(t, bs.IsDone())
+	close(rec.release)
+
+	res := awaitPublish(t, result)
+	require.Error(t, res.err)
+	unfinalized := manager.Close(ctx)
+	calls := drainFinalized(rec.fakeRecorder)
+	require.Equal(t, 1, len(unfinalized)+len(calls), "the recorded job must be finalized exactly once")
+	if len(calls) == 1 {
+		require.Equal(t, "001", calls[0].id)
+		require.Equal(t, EndAnvilExit, calls[0].endReason)
+	} else {
+		require.Equal(t, "001", unfinalized[0].ID)
+		require.Equal(t, EndAnvilExit, unfinalized[0].EndReason)
+	}
+	require.True(t, rec.log("001").closed.Load())
 }
