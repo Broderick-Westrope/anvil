@@ -85,7 +85,7 @@ func TestBashTool_CustomAutoBackgroundThreshold(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
 	require.True(t, meta.Background)
 	require.NotEmpty(t, meta.ShellID)
-	require.Contains(t, resp.Content, "moved to background")
+	require.Contains(t, resp.Content, "moved to the background")
 
 	bgManager := shell.GetBackgroundShellManager()
 	require.NoError(t, bgManager.Kill(meta.ShellID))

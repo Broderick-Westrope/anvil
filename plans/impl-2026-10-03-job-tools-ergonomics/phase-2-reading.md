@@ -22,29 +22,29 @@ with `wait=false` is Phase 3; in this phase it is a tool error.
 
 **Success Criteria:**
 
-- [ ] Two consecutive `job_output` calls on a job that printed once return
+- [x] Two consecutive `job_output` calls on a job that printed once return
       the output once, then `(no new output)`.
-- [ ] After auto-backgrounding (including the 20-line tail in the
+- [x] After auto-backgrounding (including the 20-line tail in the
       response), the first `job_output` returns all output from the start.
-- [ ] `full=true` returns everything; the next incremental call returns
+- [x] `full=true` returns everything; the next incremental call returns
       only later output.
-- [ ] A `syncBuffer` reset doesn't panic or silently skip output; the next
+- [x] A `syncBuffer` reset doesn't panic or silently skip output; the next
       read returns the current buffer with a reset note.
-- [ ] `tail_lines=5` on 100 new lines returns 5 lines plus an omission
+- [x] `tail_lines=5` on 100 new lines returns 5 lines plus an omission
       note and moves the cursor to the end.
-- [ ] `wait=true` on a never-ending job returns within `timeout_seconds`
+- [x] `wait=true` on a never-ending job returns within `timeout_seconds`
       (default 300) with the timeout reason; `wait=false` never blocks.
-- [ ] `wait=true, pattern="ready"` returns promptly when: the line already
+- [x] `wait=true, pattern="ready"` returns promptly when: the line already
       arrived before the call; the line arrives split across two writes;
       the line is the final unterminated line at exit; the line is on
       stderr; a `wait=false` poll consumed half of the line between the
       two writes.
-- [ ] `pattern` with `full=true`, `pattern` with `wait=false`, and an
+- [x] `pattern` with `full=true`, `pattern` with `wait=false`, and an
       invalid regex are tool errors.
-- [ ] Every header includes runtime; completed reads include the exit
+- [x] Every header includes runtime; completed reads include the exit
       code, including empty and `full` re-reads.
-- [ ] `job_output.md` documents every parameter in this phase.
-- [ ] `go test -race ./internal/shell/ ./internal/agent/tools/` and
+- [x] `job_output.md` documents every parameter in this phase.
+- [x] `go test -race ./internal/shell/ ./internal/agent/tools/` and
       `go test ./... -count=1` pass.
 
 ## Context Loading
@@ -241,7 +241,7 @@ go test -race ./internal/shell/ -count=1
 
 **Steps:**
 
-1. [ ] Extend the params and metadata:
+1. [x] Extend the params and metadata:
 
    ```go
    const (
@@ -271,13 +271,13 @@ go test -race ./internal/shell/ -count=1
    }
    ```
 
-2. [ ] Validate: `pattern` with `full=true` → tool error
+2. [x] Validate: `pattern` with `full=true` → tool error
    `pattern cannot be combined with full=true`; `pattern` without
    `wait=true` → tool error `pattern currently requires wait=true`
    (Phase 3 lifts this); invalid regex → tool error with the compile
    error. Clamp `timeout_seconds`: `<=0` → 300, `>1800` → 1800.
 
-3. [ ] Flow: if `wait`, build the matcher (when `pattern` is set) and call
+3. [x] Flow: if `wait`, build the matcher (when `pattern` is set) and call
    `bgShell.WaitFor(ctx, timeout, matcher)`. Then
    `bgShell.ReadIncremental(params.Full)`. Join stdout then stderr with
    `\n`. If `BufferReset`, prefix
@@ -286,7 +286,7 @@ go test -race ./internal/shell/ -count=1
    result is empty: `(no new output)` when `HadPrevious`, else
    `BashNoOutput`. Remove the old trailing `Exit code N` line.
 
-4. [ ] Add the header formatter to `job_format.go`:
+4. [x] Add the header formatter to `job_format.go`:
 
    ```go
    // FormatJobStatus renders the first line of a job_output response.
@@ -306,7 +306,7 @@ go test -race ./internal/shell/ -count=1
 
    The response is `header + "\n\n" + output`.
 
-5. [ ] Auto-background response (`bash.go` ~line 378). Include elapsed time
+5. [x] Auto-background response (`bash.go` ~line 378). Include elapsed time
    and the last 20 lines of combined output from `GetOutput()` (doesn't
    move the cursor):
 
@@ -322,7 +322,7 @@ go test -race ./internal/shell/ -count=1
    Omit the "Output so far" block when there's no output. Keep the
    Phase 1 other-jobs note after it.
 
-6. [ ] Rewrite `job_output.md` in the structured style of `job_kill.md`:
+6. [x] Rewrite `job_output.md` in the structured style of `job_kill.md`:
    - What each call returns (only output since the previous `job_output`
      call on this job; the first call returns everything).
    - `(no new output)` vs `no output`.
@@ -337,14 +337,14 @@ go test -race ./internal/shell/ -count=1
      back; use `wait=true` when blocked on the result; use `pattern` for
      servers instead of sleep loops.
 
-7. [ ] In `bash.md.tpl`, update the Auto-Background line to say the
+7. [x] In `bash.md.tpl`, update the Auto-Background line to say the
    threshold can be raised to 600 via `auto_background_after` for
    commands known to be slow when you need the result before continuing,
    and add: `- For servers, start with run_in_background and use
    job_output with wait=true and pattern (e.g. "listening on|ready") instead
    of sleep loops.`
 
-8. [ ] Tests in `job_test.go` through the tool (`NewJobOutputTool(JobToolOptions{}).Run`
+8. [x] Tests in `job_test.go` through the tool (`NewJobOutputTool(JobToolOptions{}).Run`
    with a context carrying a session ID; check how existing tool tests
    invoke tools before writing a helper):
    - Two calls → output once, then `(no new output)`.
@@ -366,7 +366,7 @@ go test -race ./internal/shell/ -count=1
      response contains `Output so far`; the first `job_output` still
      returns the first line.
 
-9. [ ] If Phase 5 merged before this phase, also do Phase 5 Task 2
+9. [ ] _(Not applicable: Phase 5 has not merged; Phase 5 will do it.)_ If Phase 5 merged before this phase, also do Phase 5 Task 2
    step 2 (final runtime on finished `job_output` cards) here, since it
    needs `RuntimeMS`.
 
