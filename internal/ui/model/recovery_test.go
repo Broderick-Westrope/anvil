@@ -18,6 +18,8 @@ type recoveryWorkspace struct {
 
 func (*recoveryWorkspace) WorkingDir() string { return "/current" }
 
+func (*recoveryWorkspace) SetComposerState(string, bool, bool, bool) {}
+
 func (*recoveryWorkspace) AgentIsReady() bool { return false }
 
 func (*recoveryWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }

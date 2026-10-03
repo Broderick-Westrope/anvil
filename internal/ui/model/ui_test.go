@@ -94,6 +94,8 @@ func (w *testWorkspace) Config() *config.Config {
 	return w.cfg
 }
 
+func (*testWorkspace) SetComposerState(string, bool, bool, bool) {}
+
 func TestExtractSlashArgs(t *testing.T) {
 	t.Parallel()
 
