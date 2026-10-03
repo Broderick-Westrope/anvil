@@ -95,7 +95,7 @@ read internal/config/config.go        # Options ~306
 
 **Steps:**
 
-1. [ ] Define the sink in `background.go`:
+1. [x] Define the sink in `background.go`:
 
    ```go
    // EventSink receives events for published jobs. Implementations must
@@ -113,12 +113,12 @@ read internal/config/config.go        # Options ~306
    Store it in an `atomic.Pointer` wrapper so it can be read without the
    manager lock.
 
-2. [ ] In `Publish`, after re-keying, start a goroutine that waits on
+2. [x] In `Publish`, after re-keying, start a goroutine that waits on
    `bs.done` and calls `sink.JobCompleted(bs.Info(), tail)`, where `tail`
    is `LastLines` of stdout then stderr (10 lines). Skip when no sink is
    set. Unpublished executions never emit.
 
-3. [ ] Watches take a matcher built by the caller, so the caller controls
+3. [x] Watches take a matcher built by the caller, so the caller controls
    where matching starts:
 
    ```go
@@ -137,7 +137,7 @@ read internal/config/config.go        # Options ~306
    job is not done does it call `sink.PatternMatched(info, gen, line)`
    (still under the lock, so a concurrent `SetWatch` can't interleave).
 
-4. [ ] Tests with a fake sink that records calls on a buffered channel:
+4. [x] Tests with a fake sink that records calls on a buffered channel:
    - Published job completing emits one `JobCompleted` with exit code and
      tail; an unpublished execution emits nothing.
    - A matcher created before an unread `ready\n` was consumed fires

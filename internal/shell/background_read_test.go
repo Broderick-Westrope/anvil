@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -272,4 +273,201 @@ func TestBackgroundShell_WaitForMatchedAtEOF(t *testing.T) {
 	reason, line := bs.WaitFor(ctx, time.Minute, matcher)
 	require.Equal(t, WaitMatched, reason)
 	require.Equal(t, "ready", line)
+}
+
+type sinkCall struct {
+	kind  string // "completed", "replaced", or "matched".
+	jobID string
+	info  JobInfo
+	gen   uint64
+	line  string
+	tail  string
+}
+
+type fakeSink struct{ calls chan sinkCall }
+
+func newFakeSink() *fakeSink { return &fakeSink{calls: make(chan sinkCall, 1024)} }
+
+func (f *fakeSink) JobCompleted(info JobInfo, tail string) {
+	f.calls <- sinkCall{kind: "completed", jobID: info.ID, info: info, tail: tail}
+}
+
+func (f *fakeSink) WatchReplaced(jobID string, gen uint64) {
+	f.calls <- sinkCall{kind: "replaced", jobID: jobID, gen: gen}
+}
+
+func (f *fakeSink) PatternMatched(info JobInfo, gen uint64, line string) {
+	f.calls <- sinkCall{kind: "matched", jobID: info.ID, info: info, gen: gen, line: line}
+}
+
+func (f *fakeSink) next(t *testing.T) sinkCall {
+	t.Helper()
+	select {
+	case c := <-f.calls:
+		return c
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for sink call")
+		return sinkCall{}
+	}
+}
+
+func (f *fakeSink) drain() []sinkCall {
+	var calls []sinkCall
+	for {
+		select {
+		case c := <-f.calls:
+			calls = append(calls, c)
+		default:
+			return calls
+		}
+	}
+}
+
+// newWatchedShell publishes a blocking shell on a manager with a fake
+// sink. Calling the returned release completes the job.
+func newWatchedShell(t *testing.T) (*BackgroundShell, *fakeSink, func()) {
+	t.Helper()
+	m := newBackgroundShellManager()
+	sink := newFakeSink()
+	m.SetEventSink(sink)
+	ch := make(chan struct{})
+	release := sync.OnceFunc(func() { close(ch) })
+	t.Cleanup(release)
+	bs := registerBlockingShell(t, m, ch)
+	publishShell(t, m, bs, "session", OriginExplicit)
+	return bs, sink, release
+}
+
+// settle waits for the job to finish and for any in-flight watch
+// emission to complete, so no further sink calls can follow.
+func settle(t *testing.T, bs *BackgroundShell) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.True(t, bs.WaitContext(ctx))
+	bs.mu.Lock()
+	//nolint:staticcheck // Empty critical section waits for emitters.
+	bs.mu.Unlock()
+}
+
+func TestBackgroundShellManager_JobCompletedEvent(t *testing.T) {
+	t.Parallel()
+
+	m := newBackgroundShellManager()
+	sink := newFakeSink()
+	m.SetEventSink(sink)
+
+	unpublished := startShell(t, m, "echo hidden")
+	unpublished.Wait()
+
+	bs := startShell(t, m, "echo out; echo err >&2; exit 3")
+	id := publishShell(t, m, bs, "session", OriginExplicit)
+
+	call := sink.next(t)
+	require.Equal(t, "completed", call.kind)
+	require.Equal(t, id, call.jobID)
+	require.Equal(t, "session", call.info.SessionID)
+	require.True(t, call.info.Done)
+	require.Equal(t, 3, call.info.ExitCode)
+	require.Equal(t, "out\nerr", call.tail)
+	require.Empty(t, sink.drain())
+}
+
+func TestBackgroundShell_SetWatchMatchesUnreadLine(t *testing.T) {
+	t.Parallel()
+
+	bs, sink, _ := newWatchedShell(t)
+	write(t, bs.stdout, "ready\n")
+	matcher := bs.NewLineMatcher(regexp.MustCompile("ready"))
+	require.Equal(t, "ready\n", bs.ReadIncremental(false).Stdout)
+
+	gen := bs.SetWatch(matcher)
+	require.Equal(t, sinkCall{kind: "replaced", jobID: bs.ID(), gen: gen}, sink.next(t))
+	call := sink.next(t)
+	require.Equal(t, "matched", call.kind)
+	require.Equal(t, gen, call.gen)
+	require.Equal(t, "ready", call.line)
+}
+
+func TestBackgroundShell_SetWatchFiresOnce(t *testing.T) {
+	t.Parallel()
+
+	bs, sink, release := newWatchedShell(t)
+	gen := bs.SetWatch(bs.NewLineMatcher(regexp.MustCompile("ready")))
+	require.Equal(t, "replaced", sink.next(t).kind)
+
+	write(t, bs.stdout, "booting\nready one\n")
+	call := sink.next(t)
+	require.Equal(t, "matched", call.kind)
+	require.Equal(t, bs.ID(), call.jobID)
+	require.Equal(t, gen, call.gen)
+	require.Equal(t, "ready one", call.line)
+
+	write(t, bs.stdout, "ready two\n")
+	release()
+	settle(t, bs)
+	require.Equal(t, "completed", sink.next(t).kind)
+	require.Empty(t, sink.drain())
+}
+
+func TestBackgroundShell_SetWatchReplacementRace(t *testing.T) {
+	t.Parallel()
+
+	bs, sink, release := newWatchedShell(t)
+	re := regexp.MustCompile("ready")
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for range 100 {
+			_, _ = bs.stdout.WriteString("ready\n")
+		}
+	})
+	var last uint64
+	for range 100 {
+		last = bs.SetWatch(bs.NewLineMatcher(re))
+	}
+	wg.Wait()
+
+	// The last matcher starts at offset 0, so it always matches.
+	var calls []sinkCall
+	for {
+		call := sink.next(t)
+		calls = append(calls, call)
+		if call.kind == "matched" && call.gen == last {
+			break
+		}
+	}
+	release()
+	settle(t, bs)
+	calls = append(calls, sink.drain()...)
+
+	var current uint64
+	var replaced, matched int
+	for _, call := range calls {
+		switch call.kind {
+		case "replaced":
+			require.Greater(t, call.gen, current)
+			current = call.gen
+			replaced++
+		case "matched":
+			require.Equal(t, current, call.gen, "match emitted for a stale generation")
+			matched++
+		}
+	}
+	require.Equal(t, 100, replaced)
+	require.Positive(t, matched)
+}
+
+func TestBackgroundShell_SetWatchNoMatchOnCompletion(t *testing.T) {
+	t.Parallel()
+
+	bs, sink, release := newWatchedShell(t)
+	bs.SetWatch(bs.NewLineMatcher(regexp.MustCompile("ready")))
+	require.Equal(t, "replaced", sink.next(t).kind)
+
+	write(t, bs.stdout, "nope\n")
+	release()
+	settle(t, bs)
+	require.Equal(t, "completed", sink.next(t).kind)
+	require.Empty(t, sink.drain())
 }
