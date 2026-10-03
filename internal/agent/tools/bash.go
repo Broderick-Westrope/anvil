@@ -257,12 +257,12 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 
 				if done {
 					// Command failed or completed very quickly
-					bgManager.Remove(bgShell.ID)
+					bgManager.Remove(bgShell.ID())
 
 					interrupted := shell.IsInterrupt(execErr)
 					exitCode := shell.ExitCode(execErr)
 					if exitCode == 0 && !interrupted && execErr != nil {
-						return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
+						return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID(), execErr)
 					}
 
 					stdout = formatOutput(stdout, stderr, execErr)
@@ -289,9 +289,9 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 					Description:      params.Description,
 					WorkingDirectory: bgShell.WorkingDir,
 					Background:       true,
-					ShellID:          bgShell.ID,
+					ShellID:          bgShell.ID(),
 				}
-				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID())
 				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 			}
 
@@ -332,7 +332,7 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				case <-ctx.Done():
 					// Incoming context was cancelled before we moved to background
 					// Kill the shell and return error
-					bgManager.Kill(bgShell.ID)
+					bgManager.Kill(bgShell.ID())
 					return fantasy.ToolResponse{}, ctx.Err()
 				}
 			}
@@ -341,12 +341,12 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				// Command completed within threshold - return synchronously
 				// Remove from background manager since we're returning directly
 				// Don't call Kill() as it cancels the context and corrupts the exit code
-				bgManager.Remove(bgShell.ID)
+				bgManager.Remove(bgShell.ID())
 
 				interrupted := shell.IsInterrupt(execErr)
 				exitCode := shell.ExitCode(execErr)
 				if exitCode == 0 && !interrupted && execErr != nil {
-					return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
+					return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID(), execErr)
 				}
 
 				stdout = formatOutput(stdout, stderr, execErr)
@@ -373,9 +373,9 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				Description:      params.Description,
 				WorkingDirectory: bgShell.WorkingDir,
 				Background:       true,
-				ShellID:          bgShell.ID,
+				ShellID:          bgShell.ID(),
 			}
-			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID())
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		})
 }
