@@ -174,3 +174,16 @@ func TestDecisionCancelPreservesOtherActiveRequest(t *testing.T) {
 	defer svc.activeRequestMu.Unlock()
 	require.Equal(t, "other", svc.activeRequest.ID)
 }
+
+func TestWithAssessorSetsOptionsAndMode(t *testing.T) {
+	t.Parallel()
+
+	plain := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil).(*permissionService)
+	require.Equal(t, AssessorOff, plain.assessorMode.Load())
+	require.Nil(t, plain.assessor.Assessor)
+
+	opts := AssessorOptions{Mode: AssessorShadow, Timeout: time.Second, ExplicitAskToHuman: true}
+	svc := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, WithAssessor(opts)).(*permissionService)
+	require.Equal(t, AssessorShadow, svc.assessorMode.Load())
+	require.Equal(t, opts, svc.assessor)
+}

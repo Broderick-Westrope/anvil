@@ -58,6 +58,12 @@ type CreatePermissionRequest struct {
 	// simple commands within a chained bash command). When non-empty,
 	// each segment is evaluated separately and the worst outcome wins.
 	InputSegments []string `json:"input_segments,omitempty"`
+	// Content is the new file content (or replacement text) for edits.
+	// It is local-only and never serialised.
+	Content string `json:"-"`
+	// ArgsJSON is the raw MCP tool arguments. It is local-only and never
+	// serialised.
+	ArgsJSON string `json:"-"`
 }
 
 // permissionResponse is sent through the pending request channel to convey
@@ -87,6 +93,9 @@ type PermissionRequest struct {
 	// InputSegments mirrors CreatePermissionRequest.InputSegments so the
 	// UI dialog can access the individually-evaluated segments.
 	InputSegments []string `json:"input_segments,omitempty"`
+	// AssessorNote is a one-line summary of the assessor's verdict, shown
+	// alongside the prompt.
+	AssessorNote string `json:"assessor_note,omitempty"`
 }
 
 type Service interface {
@@ -141,6 +150,8 @@ type permissionService struct {
 	sessionRulesMu        sync.RWMutex
 	configStore           *config.ConfigStore
 	recorder              DecisionRecorder
+	assessor              AssessorOptions
+	assessorMode          atomic.Value // AssessorMode.
 
 	// requestMu makes sure we only process one request at a time.
 	requestMu       sync.Mutex
@@ -448,6 +459,7 @@ func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configR
 		configStore:         configStore,
 	}
 	svc.yoloLevel.Store(int32(yoloLevel))
+	svc.assessorMode.Store(AssessorOff)
 	for _, opt := range opts {
 		opt(svc)
 	}
