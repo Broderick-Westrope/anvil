@@ -573,18 +573,23 @@ func (m *BackgroundShellManager) listJobs(keep func(JobInfo) bool) []JobInfo {
 }
 
 func sortJobs(jobs []JobInfo) {
-	slices.SortFunc(jobs, func(a, b JobInfo) int {
-		switch {
-		case !a.Done && b.Done:
-			return -1
-		case a.Done && !b.Done:
-			return 1
-		case !a.Done:
-			return cmp.Or(a.StartedAt.Compare(b.StartedAt), cmp.Compare(a.ID, b.ID))
-		default:
-			return cmp.Or(b.CompletedAt.Compare(a.CompletedAt), cmp.Compare(a.ID, b.ID))
-		}
-	})
+	slices.SortFunc(jobs, CompareJobs)
+}
+
+// CompareJobs orders jobs as [BackgroundShellManager.ListBySession]
+// does: running jobs first (oldest first), then finished jobs (newest
+// first).
+func CompareJobs(a, b JobInfo) int {
+	switch {
+	case !a.Done && b.Done:
+		return -1
+	case a.Done && !b.Done:
+		return 1
+	case !a.Done:
+		return cmp.Or(a.StartedAt.Compare(b.StartedAt), cmp.Compare(a.ID, b.ID))
+	default:
+		return cmp.Or(b.CompletedAt.Compare(a.CompletedAt), cmp.Compare(a.ID, b.ID))
+	}
 }
 
 // Transfer moves ownership of fromSession's published jobs to

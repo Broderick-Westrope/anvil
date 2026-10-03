@@ -8,6 +8,32 @@ import (
 	"database/sql"
 )
 
+type AnvilInstance struct {
+	ID          string `json:"id"`
+	Pid         int64  `json:"pid"`
+	StartedAt   int64  `json:"started_at"`
+	HeartbeatAt int64  `json:"heartbeat_at"`
+}
+
+type BackgroundJob struct {
+	ID                int64          `json:"id"`
+	SessionID         string         `json:"session_id"`
+	Origin            string         `json:"origin"`
+	Command           string         `json:"command"`
+	Description       string         `json:"description"`
+	WorkingDir        string         `json:"working_dir"`
+	StartedAt         int64          `json:"started_at"`
+	CompletedAt       sql.NullInt64  `json:"completed_at"`
+	ExitCode          sql.NullInt64  `json:"exit_code"`
+	EndReason         sql.NullString `json:"end_reason"`
+	InstanceID        string         `json:"instance_id"`
+	LogBytes          int64          `json:"log_bytes"`
+	LogTruncated      int64          `json:"log_truncated"`
+	LogPrePublishLost int64          `json:"log_pre_publish_lost"`
+	LogWriteError     string         `json:"log_write_error"`
+	LogExpiredAt      sql.NullInt64  `json:"log_expired_at"`
+}
+
 type McpOauthClient struct {
 	ServerName   string         `json:"server_name"`
 	ServerUrl    string         `json:"server_url"`

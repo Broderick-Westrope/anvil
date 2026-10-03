@@ -10,14 +10,20 @@ import (
 )
 
 type Querier interface {
+	CreateBackgroundJob(ctx context.Context, arg CreateBackgroundJobParams) (int64, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	DeleteAnvilInstance(ctx context.Context, id string) error
+	DeleteBackgroundJob(ctx context.Context, id int64) error
+	DeleteBackgroundJobsBySession(ctx context.Context, sessionID string) error
 	DeleteMCPOAuthClient(ctx context.Context, serverName string) error
 	DeleteMCPOAuthToken(ctx context.Context, serverName string) error
 	DeleteMessage(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
+	FinalizeBackgroundJob(ctx context.Context, arg FinalizeBackgroundJobParams) (int64, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
+	GetBackgroundJob(ctx context.Context, id int64) (BackgroundJob, error)
 	GetBranchPath(ctx context.Context, leafID string) ([]GetBranchPathRow, error)
 	GetBranchPathTail(ctx context.Context, arg GetBranchPathTailParams) ([]GetBranchPathTailRow, error)
 	GetFileRead(ctx context.Context, arg GetFileReadParams) (ReadFile, error)
@@ -29,19 +35,30 @@ type Querier interface {
 	GetMessageChildren(ctx context.Context, parentID sql.NullString) ([]Message, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
 	ListAllSessions(ctx context.Context) ([]Session, error)
+	ListAnvilInstances(ctx context.Context) ([]AnvilInstance, error)
+	ListBackgroundJobIDsBySession(ctx context.Context, sessionID string) ([]int64, error)
+	ListBackgroundJobLogsOldestFirst(ctx context.Context) ([]ListBackgroundJobLogsOldestFirstRow, error)
+	ListBackgroundJobsBySession(ctx context.Context, sessionID string) ([]BackgroundJob, error)
+	ListBackgroundJobsWithLogsBefore(ctx context.Context, completedAt sql.NullInt64) ([]BackgroundJob, error)
 	ListMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	ListPinnedSessions(ctx context.Context) ([]Session, error)
+	ListRunningBackgroundJobs(ctx context.Context) ([]BackgroundJob, error)
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
+	MarkBackgroundJobLogExpired(ctx context.Context, arg MarkBackgroundJobLogExpiredParams) error
+	MarkBackgroundJobsInterrupted(ctx context.Context, arg MarkBackgroundJobsInterruptedParams) error
 	RecordFileRead(ctx context.Context, arg RecordFileReadParams) error
 	RenameSession(ctx context.Context, arg RenameSessionParams) error
 	SetSessionPin(ctx context.Context, arg SetSessionPinParams) error
+	TouchAnvilInstance(ctx context.Context, arg TouchAnvilInstanceParams) error
+	TransferBackgroundJobs(ctx context.Context, arg TransferBackgroundJobsParams) error
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
 	UpdateSessionLeaf(ctx context.Context, arg UpdateSessionLeafParams) error
 	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
+	UpsertAnvilInstance(ctx context.Context, arg UpsertAnvilInstanceParams) error
 	UpsertMCPOAuthClient(ctx context.Context, arg UpsertMCPOAuthClientParams) error
 	UpsertMCPOAuthToken(ctx context.Context, arg UpsertMCPOAuthTokenParams) error
 }
