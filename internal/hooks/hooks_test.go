@@ -653,20 +653,23 @@ func TestAggregationUpdatedInput(t *testing.T) {
 // Under -race this catches any code path in runOne that reads those
 // buffers after returning the DecisionNone abandon result.
 func TestRunnerAbandonRaceSafety(t *testing.T) {
+	// Synchronize shutdown with the abandoned goroutine so the test
+	// exits cleanly even under -race. The WaitGroup is incremented here,
+	// not inside the stub: an Add from zero must happen before Wait, and
+	// the stub runs on a goroutine with no ordering against cleanup.
+	// Cleanups run last-in-first-out, so the goroutine is released and
+	// waited for before runShell is restored.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	release := make(chan struct{})
 	origRunShell := runShell
 	t.Cleanup(func() { runShell = origRunShell })
-
-	// Synchronize shutdown with the abandoned goroutine so the test
-	// exits cleanly even under -race.
-	var wg sync.WaitGroup
-	release := make(chan struct{})
 	t.Cleanup(func() {
 		close(release)
 		wg.Wait()
 	})
 
 	runShell = func(_ context.Context, opts shell.RunOptions) error {
-		wg.Add(1)
 		defer wg.Done()
 		// Write before the caller observes ctx.Done(); the caller will
 		// not read the buffer while we still own it.
