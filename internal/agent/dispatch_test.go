@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -353,4 +355,73 @@ func TestDispatch_RunWakeBusy(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorIs(t, wakeErr.Load().(error), ErrSessionBusy)
 	require.Equal(t, int64(1), idle.Load(), "OnIdle fires once when the run ends with nothing queued")
+}
+
+// gatedSessions fails its first Get once gate is closed, after
+// reporting on entered that the call started.
+type gatedSessions struct {
+	session.Service
+	entered chan struct{}
+	gate    chan struct{}
+	calls   atomic.Int64
+}
+
+func (s *gatedSessions) Get(ctx context.Context, id string) (session.Session, error) {
+	if s.calls.Add(1) == 1 {
+		close(s.entered)
+		<-s.gate
+		return session.Session{}, errors.New("database unavailable")
+	}
+	return s.Service.Get(ctx, id)
+}
+
+func TestDispatch_SetupFailureRunsQueuedPrompt(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Setup failure", t.TempDir())
+	require.NoError(t, err)
+	sessions := &gatedSessions{Service: env.sessions, entered: make(chan struct{}), gate: make(chan struct{})}
+	model := &dispatchModel{}
+	a := NewSessionAgent(SessionAgentOptions{
+		LargeModel:   jobEventsModel(model),
+		SmallModel:   jobEventsModel(model),
+		SystemPrompt: "system",
+		IsYolo:       true,
+		Sessions:     sessions,
+		Messages:     env.messages,
+	})
+	ctx := dispatchCtx(t)
+
+	firstErr := make(chan error, 1)
+	go func() {
+		_, runErr := a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "first", NonInteractive: true})
+		firstErr <- runErr
+	}()
+	select {
+	case <-sessions.entered:
+	case <-ctx.Done():
+		t.Fatal("first run did not start")
+	}
+
+	res, err := a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "queued", NonInteractive: true})
+	require.NoError(t, err)
+	require.Nil(t, res)
+	require.Equal(t, 1, a.QueuedPrompts(sess.ID))
+	close(sessions.gate)
+
+	select {
+	case err = <-firstErr:
+	case <-ctx.Done():
+		t.Fatal("first run did not return")
+	}
+	require.ErrorContains(t, err, "database unavailable")
+	require.Zero(t, a.QueuedPrompts(sess.ID))
+	require.False(t, a.IsSessionBusy(sess.ID))
+	require.Equal(t, 1, model.promptCount(), "the queued prompt must run")
+
+	msgs, err := env.messages.List(t.Context(), sess.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, msgs)
+	require.Equal(t, "queued", msgs[0].Content().Text)
 }
