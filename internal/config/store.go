@@ -91,6 +91,13 @@ type ConfigStore struct {
 	trackedConfigPaths []string                // unique, normalized config file paths
 	snapshots          map[string]fileSnapshot // path -> snapshot at last capture
 
+	// trustedPaths are the user-level config files captured at the start
+	// of Load, before any config-provided env could redirect
+	// ANVIL_GLOBAL_CONFIG or ANVIL_GLOBAL_DATA. Reloads reuse them.
+	trustedPaths []string
+	// trustedAssessor is guarded by metaMu.
+	trustedAssessor *TrustedAssessor
+
 	// configMu guards the config pointer field against concurrent
 	// readers (Config) and the writeMu-serialised swap (setConfig). It
 	// protects the pointer word only; the pointed-to Config is treated
@@ -1130,6 +1137,23 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		}
 	}
 
+	// Re-read the assessor block from the paths frozen at Load, never from
+	// the current env, which project config may have changed. The API key
+	// captured at Load is kept for the same reason, so picking up a rotated
+	// key needs a restart.
+	reloadedAssessor, err := loadAssessorBlock(s.trustedPaths)
+	if err != nil {
+		return fmt.Errorf("failed to reload config: %w", err)
+	}
+	var trustedAssessor *TrustedAssessor
+	if reloadedAssessor != nil {
+		trustedAssessor = &TrustedAssessor{Config: reloadedAssessor}
+		if prev := s.TrustedAssessor(); prev != nil {
+			trustedAssessor.APIKey = prev.APIKey
+		}
+	}
+	cfg.applyTrustedAssessor(trustedAssessor)
+
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
 	if err := cfg.ValidateHooks(); err != nil {
@@ -1192,10 +1216,12 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	oldKnownProviders := s.knownProviders
 	oldOverrides := s.overrides
 	oldWorkspacePath := s.workspacePath
+	oldTrustedAssessor := s.TrustedAssessor()
 
 	// Publish the fully-built config, then run agent setup against it.
 	s.setConfig(cfg)
 	s.setMeta(loadedPaths, resolver, providers, overrides, workspacePath)
+	s.setTrustedAssessor(trustedAssessor)
 
 	if configured {
 		s.SetupAgents()
@@ -1217,6 +1243,7 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 			// previous config so the store and coordinator stay in sync.
 			s.setConfig(oldConfig)
 			s.setMeta(oldLoadedPaths, oldResolver, oldKnownProviders, oldOverrides, oldWorkspacePath)
+			s.setTrustedAssessor(oldTrustedAssessor)
 			return fmt.Errorf("plugins changed hook failed: %w", err)
 		}
 	}

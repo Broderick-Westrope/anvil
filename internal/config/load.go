@@ -37,6 +37,14 @@ const defaultCatwalkURL = "https://catwalk.charm.land"
 // Load loads the configuration from the default paths and returns a
 // ConfigStore that owns both the pure-data Config and all runtime state.
 func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
+	// Freeze the trusted user-level paths and the assessor API key before
+	// anything below can apply config-provided env.
+	trustedPaths := trustedConfigPaths()
+	trustedAssessor, err := loadTrustedAssessor(trustedPaths)
+	if err != nil {
+		return nil, err
+	}
+
 	configPaths := lookupConfigs(workingDir)
 
 	cfg, loadedPaths, err := loadFromConfigPaths(configPaths)
@@ -53,6 +61,8 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		globalDataPath:   GlobalConfigData(),
 		workspacePath:    filepath.Join(cfg.Options.ProjectDirectory, fmt.Sprintf("%s.json", appName)),
 		loadedPaths:      loadedPaths,
+		trustedPaths:     trustedPaths,
+		trustedAssessor:  trustedAssessor,
 	}
 
 	if debug {
@@ -74,6 +84,8 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 			store.loadedPaths = append(store.loadedPaths, store.workspacePath)
 		}
 	}
+
+	cfg.applyTrustedAssessor(trustedAssessor)
 
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.

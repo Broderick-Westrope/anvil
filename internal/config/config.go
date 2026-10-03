@@ -739,6 +739,10 @@ type Config struct {
 
 	Permissions *Permissions `json:"permissions,omitempty" jsonschema:"description=Permission settings for tool usage"`
 
+	// PermissionAssessor is top-level rather than under Permissions because
+	// the permissions keys are tool-name globs.
+	PermissionAssessor *PermissionAssessor `json:"permission_assessor,omitempty" jsonschema:"description=Classifier that answers permission prompts. Only read from user-level config files"`
+
 	Tools Tools `json:"tools,omitzero" jsonschema:"description=Tool configurations"`
 
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`

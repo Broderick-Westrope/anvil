@@ -105,6 +105,10 @@
           "$ref": "#/$defs/Permissions",
           "description": "Permission settings for tool usage"
         },
+        "permission_assessor": {
+          "$ref": "#/$defs/PermissionAssessor",
+          "description": "Classifier that answers permission prompts. Only read from user-level config files"
+        },
         "tools": {
           "$ref": "#/$defs/Tools",
           "description": "Tool configurations"
@@ -594,6 +598,76 @@
           },
           "type": "array",
           "description": "Glob patterns for tools that should render expanded instead of compact"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "PermissionAssessor": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "shadow",
+            "enforce"
+          ],
+          "default": "off"
+        },
+        "url": {
+          "type": "string",
+          "description": "Full System One endpoint URL (https only)"
+        },
+        "model": {
+          "type": "string",
+          "examples": [
+            "von-1.0.0"
+          ]
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Name of the environment variable that holds the API key",
+          "default": "BASETEN_API_KEY",
+          "examples": [
+            "BASETEN_API_KEY",
+            "TYPESAFE_API_KEY"
+          ]
+        },
+        "auth_scheme": {
+          "type": "string",
+          "enum": [
+            "Api-Key",
+            "Bearer"
+          ],
+          "default": "Api-Key"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "default": 8
+        },
+        "explicit_ask": {
+          "type": "string",
+          "enum": [
+            "assessor",
+            "human"
+          ],
+          "default": "assessor"
+        },
+        "send_user_messages": {
+          "type": "boolean",
+          "default": true
+        },
+        "escalate_at": {
+          "type": "number"
+        },
+        "deny_at": {
+          "type": "number"
+        },
+        "severity_escalate": {
+          "type": "number"
+        },
+        "user_requested_at": {
+          "type": "number"
         }
       },
       "additionalProperties": false,
