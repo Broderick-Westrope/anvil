@@ -37,6 +37,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -147,6 +148,7 @@ type sessionAgent struct {
 	isYolo               bool
 	notify               pubsub.Publisher[notify.Notification]
 	providerConfig       *csync.Value[config.ProviderConfig]
+	jobEvents            *jobevents.Store
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, *activeCancel]
@@ -179,6 +181,8 @@ type SessionAgentOptions struct {
 	Tools                []fantasy.AgentTool
 	Notify               pubsub.Publisher[notify.Notification]
 	ProviderConfig       config.ProviderConfig
+	// JobEvents delivers background job notifications; nil disables them.
+	JobEvents *jobevents.Store
 }
 
 func NewSessionAgent(
@@ -200,6 +204,7 @@ func NewSessionAgent(
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
+		jobEvents:            opts.JobEvents,
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, *activeCancel](),
 	}
@@ -413,6 +418,19 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				prepared.Messages = append(prepared.Messages, aiMessages...)
 			}
 
+			if a.jobEvents != nil {
+				noticeMsg, deliverErr := a.deliverJobEvents(callContext, call.SessionID, getLeaf())
+				if deliverErr != nil {
+					return callContext, prepared, deliverErr
+				}
+				if noticeMsg != nil {
+					setLeaf(noticeMsg.ID)
+					aiMessages := noticeMsg.ToAIMessage()
+					injected.add(options.Messages, aiMessages...)
+					prepared.Messages = append(prepared.Messages, aiMessages...)
+				}
+			}
+
 			prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, largeModel)
 
 			lastSystemRoleInx := 0
@@ -579,6 +597,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				return createMsgErr
 			}
 			currentLeaf = toolMsg.ID
+			if a.jobEvents != nil && !toolResult.IsError {
+				a.observeJobResult(result.ToolName, toolResult.Metadata)
+			}
 			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {

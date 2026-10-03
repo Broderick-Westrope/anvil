@@ -7,11 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/stretchr/testify/require"
 )
@@ -506,8 +510,27 @@ func TestJobKillTool_AlreadyExited(t *testing.T) {
 	require.Contains(t, resp.Content, "Job "+jobID+" had already exited (exit 3,")
 	require.Contains(t, resp.Content, "Last output:\nbye")
 
+	var meta JobKillResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.True(t, meta.Exited)
+
 	_, ok := shell.GetBackgroundShellManager().Get(jobID)
 	require.False(t, ok)
+}
+
+func TestJobKillTool_ConfirmedExit(t *testing.T) {
+	t.Parallel()
+
+	ctx, sessionID := sessionContext(t)
+	bgShell := startPublishedJob(t, sessionID, "sleep 30", shell.OriginExplicit)
+
+	resp := runJobTool(t, NewJobKillTool(JobToolOptions{}), ctx, JobKillParams{ShellID: bgShell.ID()})
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "terminated successfully")
+
+	var meta JobKillResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.True(t, meta.Exited)
 }
 
 func runJobOutput(t *testing.T, ctx context.Context, params JobOutputParams) fantasy.ToolResponse {
@@ -692,11 +715,6 @@ func TestJobOutputTool_Validation(t *testing.T) {
 			want:   "pattern cannot be combined with full=true",
 		},
 		{
-			name:   "pattern without wait",
-			params: JobOutputParams{ShellID: bgShell.ID(), Pattern: "x"},
-			want:   "pattern currently requires wait=true",
-		},
-		{
 			name:   "invalid regex",
 			params: JobOutputParams{ShellID: bgShell.ID(), Wait: true, Pattern: "("},
 			want:   "invalid pattern",
@@ -745,4 +763,149 @@ func TestBashTool_AutoBackgroundShowsOutput(t *testing.T) {
 	out := runJobOutput(t, ctx, JobOutputParams{ShellID: meta.ShellID})
 	require.False(t, out.IsError)
 	require.True(t, strings.HasSuffix(out.Content, "\n\nfirst line"), out.Content)
+}
+
+var (
+	jobEventsStoreOnce sync.Once
+	jobEventsStore     *jobevents.Store
+)
+
+// globalJobEvents installs one event store as the global manager's sink.
+// Events are claimed per session, so parallel tests do not interfere.
+func globalJobEvents() *jobevents.Store {
+	jobEventsStoreOnce.Do(func() {
+		mgr := shell.GetBackgroundShellManager()
+		jobEventsStore = jobevents.NewStore(func(id string) (string, bool) {
+			bs, ok := mgr.Get(id)
+			if !ok {
+				return "", false
+			}
+			return bs.Info().SessionID, true
+		})
+		mgr.SetEventSink(jobEventsStore)
+	})
+	return jobEventsStore
+}
+
+// claimEventually waits until the session has a pending event and
+// claims everything pending.
+func claimEventually(t *testing.T, store *jobevents.Store, sessionID string) []jobevents.Event {
+	t.Helper()
+	require.Eventually(t, func() bool { return store.HasPending(sessionID) }, 10*time.Second, 10*time.Millisecond)
+	claimed, _ := store.Claim(sessionID, 100)
+	return claimed
+}
+
+var watchSessionCounter atomic.Int64
+
+// watchSessionContext returns a session ID unique to this run, so events
+// left in the shared store by earlier runs (-count) are never claimed.
+func watchSessionContext(t *testing.T) (context.Context, string) {
+	t.Helper()
+	sessionID := fmt.Sprintf("job-watch-%s-%d", t.Name(), watchSessionCounter.Add(1))
+	return context.WithValue(t.Context(), SessionIDContextKey, sessionID), sessionID
+}
+
+func TestJobOutputTool_Watch(t *testing.T) {
+	t.Parallel()
+
+	store := globalJobEvents()
+
+	gated := func(t *testing.T) (waitFile func(string) string, release func(string)) {
+		gate := t.TempDir()
+		waitFile = func(name string) string {
+			return fmt.Sprintf("while [ ! -f %q ]; do sleep 0.05; done", filepath.Join(gate, name))
+		}
+		release = func(name string) {
+			require.NoError(t, os.WriteFile(filepath.Join(gate, name), nil, 0o644))
+		}
+		return waitFile, release
+	}
+
+	t.Run("unread line in buffer fires", func(t *testing.T) {
+		t.Parallel()
+		ctx, sessionID := watchSessionContext(t)
+		bgShell := startPublishedJob(t, sessionID, "echo booting; echo server ready; sleep 30", shell.OriginExplicit)
+		waitForOutput(t, bgShell, "server ready")
+
+		resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Pattern: "ready"})
+		require.False(t, resp.IsError)
+		require.Contains(t, resp.Content, "booting\nserver ready")
+		require.True(t, strings.HasSuffix(resp.Content,
+			"\n\nWatching for \"ready\"; you'll be notified when a matching line appears or the job exits."), resp.Content)
+
+		claimed := claimEventually(t, store, sessionID)
+		require.Len(t, claimed, 1)
+		require.Equal(t, jobevents.KindMatched, claimed[0].Kind)
+		require.Equal(t, bgShell.ID(), claimed[0].JobID)
+		require.Equal(t, "server ready", claimed[0].Line)
+	})
+
+	t.Run("later line fires", func(t *testing.T) {
+		t.Parallel()
+		ctx, sessionID := watchSessionContext(t)
+		waitFile, release := gated(t)
+		bgShell := startPublishedJob(t, sessionID, "echo booting; "+waitFile("go")+"; echo listening on :8080; sleep 30", shell.OriginExplicit)
+		waitForOutput(t, bgShell, "booting")
+
+		resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Pattern: `listening on :\d+`})
+		require.False(t, resp.IsError)
+		require.Contains(t, resp.Content, `Watching for "listening on :\d+"`)
+		require.False(t, store.HasPending(sessionID))
+
+		release("go")
+		claimed := claimEventually(t, store, sessionID)
+		require.Len(t, claimed, 1)
+		require.Equal(t, jobevents.KindMatched, claimed[0].Kind)
+		require.Equal(t, "listening on :8080", claimed[0].Line)
+	})
+
+	t.Run("replaced pattern only delivers the new match", func(t *testing.T) {
+		t.Parallel()
+		ctx, sessionID := watchSessionContext(t)
+		waitFile, release := gated(t)
+		bgShell := startPublishedJob(t, sessionID, waitFile("go")+"; echo alpha; echo beta; "+waitFile("end"), shell.OriginExplicit)
+
+		require.False(t, runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Pattern: "alpha"}).IsError)
+		require.False(t, runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Pattern: "beta"}).IsError)
+		release("go")
+		waitForOutput(t, bgShell, "beta")
+
+		// Keep the job running until the match is in: a watch never
+		// fires once the job has exited, since the completion covers it.
+		var claimed []jobevents.Event
+		require.Eventually(t, func() bool {
+			got, _ := store.Claim(sessionID, 100)
+			claimed = append(claimed, got...)
+			return len(claimed) > 0
+		}, 10*time.Second, 10*time.Millisecond)
+		release("end")
+
+		// The completion event is created after any match emitted while
+		// the job ran, so once it is claimed every match is in.
+		require.Eventually(t, func() bool {
+			got, _ := store.Claim(sessionID, 100)
+			claimed = append(claimed, got...)
+			return slices.ContainsFunc(claimed, func(e jobevents.Event) bool { return e.Kind == jobevents.KindCompleted })
+		}, 10*time.Second, 10*time.Millisecond)
+
+		var lines []string
+		for _, e := range claimed {
+			if e.Kind == jobevents.KindMatched {
+				lines = append(lines, e.Line)
+			}
+		}
+		require.Equal(t, []string{"beta"}, lines)
+	})
+
+	t.Run("finished job sets no watch", func(t *testing.T) {
+		t.Parallel()
+		ctx, sessionID := watchSessionContext(t)
+		bgShell := startPublishedJob(t, sessionID, "echo ready", shell.OriginExplicit)
+		bgShell.Wait()
+
+		resp := runJobOutput(t, ctx, JobOutputParams{ShellID: bgShell.ID(), Pattern: "ready"})
+		require.False(t, resp.IsError)
+		require.NotContains(t, resp.Content, "Watching for")
+	})
 }

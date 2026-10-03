@@ -24,6 +24,23 @@ func TestFilterBranchPathForContext(t *testing.T) {
 			},
 		},
 		{
+			name: "job_event_passes_through",
+			input: []message.Message{
+				{
+					ID:          "msg-1",
+					Role:        message.User,
+					MessageType: message.MessageTypeJobEvent,
+					Parts:       []message.ContentPart{message.TextContent{Text: "<system_reminder>job</system_reminder>"}},
+				},
+			},
+			verify: func(t *testing.T, result []message.Message) {
+				require.Len(t, result, 1)
+				require.Equal(t, "msg-1", result[0].ID)
+				require.Equal(t, message.User, result[0].Role)
+				require.Equal(t, message.MessageTypeJobEvent, result[0].MessageType)
+			},
+		},
+		{
 			name: "no_compaction",
 			input: []message.Message{
 				{
