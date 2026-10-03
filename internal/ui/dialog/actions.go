@@ -152,13 +152,12 @@ type (
 		ServerName string
 	}
 	// ActionNavigateTree is dispatched when a tree or branch dialog
-	// selects a message to navigate to. The receiver uses Role and
-	// Content to decide whether to pre-fill the editor.
+	// selects a message to navigate to.
 	ActionNavigateTree struct {
 		MessageID       string
 		ParentMessageID string
 		Role            message.MessageRole
-		Content         string
+		Source          message.Message
 	}
 	ActionReturnToPreBranch struct{}
 )

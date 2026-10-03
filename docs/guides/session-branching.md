@@ -18,8 +18,11 @@ Anvil stops any running reply before navigating, then focuses the composer.
 | Assistant reply | Moves to that reply so the next message continues after it. The composer stays unchanged. |
 
 Selecting the first user message starts an empty path in the same session.
-User prefill takes the first stored text part, collapsing whitespace (including newlines) to single spaces.
-It does not restore that message's attachments; current composer attachments stay in place.
+User prefill replaces the composer with the original message: raw Markdown and line breaks are preserved,
+commands appear as `/command args`, skills return as skill pills, and files and images return as attachments.
+Skills declared by a command are reloaded when the command runs, rather than added as separate pills.
+Up-arrow prompt history restores the same complete composer state; Down past the newest entry or Escape
+restores your saved draft, including its files and skills.
 
 Edit the prompt and press **Enter** to send normally. Slash commands and the command palette still work.
 Sending clears the composer immediately, so pressing Enter twice without adding content sends the prompt only once.

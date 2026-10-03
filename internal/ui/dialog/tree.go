@@ -320,7 +320,7 @@ func (t *Tree) handleNavKey(msg tea.KeyPressMsg) Action {
 				MessageID:       item.node.msg.ID,
 				ParentMessageID: item.node.msg.ParentMessageID,
 				Role:            item.node.msg.Role,
-				Content:         MessageTextContent(item.node.msg),
+				Source:          item.node.msg,
 			}
 		}
 

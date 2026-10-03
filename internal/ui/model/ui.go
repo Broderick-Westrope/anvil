@@ -338,11 +338,7 @@ type UI struct {
 	lastClickTime time.Time
 
 	// Prompt history for up/down navigation through previous messages.
-	promptHistory struct {
-		messages []string
-		index    int
-		draft    string
-	}
+	promptHistory historySnapshot
 
 	// canvas is the reusable screen buffer. It is reallocated only when the
 	// terminal dimensions change; screen.Clear resets every cell so stale
@@ -851,9 +847,15 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case promptHistoryLoadedMsg:
-		m.promptHistory.messages = msg.messages
+		m.promptHistory.messages = nil
+		for _, source := range msg.messages {
+			state := composerFromMessage(source, m.com.Workspace.ActiveSkillByName)
+			if !state.isEmpty() {
+				m.promptHistory.messages = append(m.promptHistory.messages, state)
+			}
+		}
 		m.promptHistory.index = -1
-		m.promptHistory.draft = ""
+		m.promptHistory.draft = composerSnapshot{}
 
 	case closeDialogMsg:
 		m.dialog.CloseFrontDialog()
@@ -5116,7 +5118,7 @@ type navigateTreeDoneMsg struct {
 	session  *session.Session
 	leafID   string
 	messages []message.Message
-	content  string
+	source   message.Message
 	role     message.MessageRole
 }
 
@@ -5155,8 +5157,7 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	// Pre-fill editor for user messages.
 	if msg.role == message.User {
 		prevHeight := m.textarea.Height()
-		m.textarea.SetValue(msg.content)
-		m.textarea.MoveToEnd()
+		m.restoreComposer(composerFromMessage(msg.source, m.com.Workspace.ActiveSkillByName))
 		if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
 			cmds = append(cmds, cmd)
 		}

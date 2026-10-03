@@ -22,9 +22,9 @@ func (c composerSnapshot) isEmpty() bool {
 }
 
 type historySnapshot struct {
-	messages []string
+	messages []composerSnapshot
 	index    int
-	draft    string
+	draft    composerSnapshot
 }
 
 type branchReturnSnapshot struct {
@@ -36,22 +36,16 @@ type branchReturnSnapshot struct {
 }
 
 func (m *UI) captureBranchSnapshot() *branchReturnSnapshot {
-	files := append([]message.Attachment(nil), m.attachments.List()...)
-	for i := range files {
-		files[i].Content = append([]byte(nil), files[i].Content...)
+	history := m.promptHistory
+	history.messages = append([]composerSnapshot(nil), history.messages...)
+	for i := range history.messages {
+		history.messages[i] = history.messages[i].clone()
 	}
+	history.draft = history.draft.clone()
 	return &branchReturnSnapshot{
-		sessionID: m.session.ID,
-		originalDraft: composerSnapshot{
-			text:        m.textarea.Value(),
-			attachments: files,
-			skills:      append([]attachments.SkillAttachment(nil), m.attachments.SkillList()...),
-		},
-		originalHistory: historySnapshot{
-			messages: append([]string(nil), m.promptHistory.messages...),
-			index:    m.promptHistory.index,
-			draft:    m.promptHistory.draft,
-		},
+		sessionID:        m.session.ID,
+		originalDraft:    m.captureComposer(),
+		originalHistory:  history,
 		originalViewport: m.chat.branchViewport(),
 	}
 }
@@ -70,7 +64,7 @@ func (m *UI) branchFromSelectedMessage() tea.Cmd {
 	}
 	return m.handleNavigateTree(dialog.ActionNavigateTree{
 		MessageID: src.ID, ParentMessageID: src.ParentMessageID,
-		Role: src.Role, Content: dialog.MessageTextContent(src),
+		Role: src.Role, Source: src,
 	})
 }
 
@@ -94,15 +88,7 @@ func (m *UI) beginBranchReturn(pending bool) tea.Cmd {
 
 func (m *UI) restoreBranchDraft(snapshot *branchReturnSnapshot) tea.Cmd {
 	prevHeight := m.textarea.Height()
-	m.textarea.SetValue(snapshot.originalDraft.text)
-	m.textarea.MoveToEnd()
-	m.attachments.Reset()
-	for _, att := range snapshot.originalDraft.attachments {
-		m.attachments.Update(att)
-	}
-	for _, skill := range snapshot.originalDraft.skills {
-		m.attachments.Update(skill)
-	}
+	m.restoreComposer(snapshot.originalDraft)
 	m.promptHistory.messages = snapshot.originalHistory.messages
 	m.promptHistory.index = snapshot.originalHistory.index
 	m.promptHistory.draft = snapshot.originalHistory.draft
@@ -176,7 +162,7 @@ func (m *UI) loadTreePoint(nav dialog.ActionNavigateTree, targetLeafID string) t
 		}
 		return navigateTreeDoneMsg{
 			session: &sess, leafID: targetLeafID, messages: msgs, nested: nested,
-			content: nav.Content, role: nav.Role, snapshot: snapshot, restore: restore,
+			source: nav.Source, role: nav.Role, snapshot: snapshot, restore: restore,
 		}
 	}
 }

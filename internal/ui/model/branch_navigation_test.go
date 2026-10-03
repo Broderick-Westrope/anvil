@@ -38,7 +38,7 @@ func TestBranchKeyNavigatesImmediately(t *testing.T) {
 	require.True(t, ok, "B must navigate immediately, not preview")
 	m.Update(done)
 	require.Equal(t, parent.ID, m.session.LeafMessageID)
-	require.Equal(t, "hello world", m.textarea.Value())
+	require.Equal(t, "hello\n  world", m.textarea.Value())
 	require.Equal(t, uiFocusEditor, m.focus)
 	require.NotContains(t, m.renderEditorView(80), "later messages")
 }
@@ -78,9 +78,15 @@ func TestBranchAssistantKeepsComposer(t *testing.T) {
 	m.chat.SetMessages(chat.NewAssistantMessageItem(m.com.Styles, &assistant))
 	m.chat.SelectLast()
 	m.textarea.SetValue("keep this")
+	file := message.Attachment{FileName: "draft.txt", Content: []byte("draft")}
+	skill := attachments.SkillAttachment{Name: "draft", Instructions: "instructions"}
+	m.attachments.Update(file)
+	m.attachments.Update(skill)
 	pressBranch(t, m)
 	require.Equal(t, assistant.ID, m.session.LeafMessageID)
 	require.Equal(t, "keep this", m.textarea.Value())
+	require.Equal(t, []message.Attachment{file}, m.attachments.List())
+	require.Equal(t, []attachments.SkillAttachment{skill}, m.attachments.SkillList())
 	require.Equal(t, uiFocusEditor, m.focus)
 }
 
@@ -92,9 +98,9 @@ func TestBranchEscapeRestoresFullDraft(t *testing.T) {
 	m.attachments.Update(message.Attachment{FileName: "draft.txt", MimeType: "text/plain", Content: bytes})
 	skill := attachments.SkillAttachment{Name: "skill", Instructions: "instructions"}
 	m.attachments.Update(skill)
-	m.promptHistory.messages = []string{"one", "two"}
+	m.promptHistory.messages = []composerSnapshot{{text: "one"}, {text: "two"}}
 	m.promptHistory.index = 1
-	m.promptHistory.draft = "history draft"
+	m.promptHistory.draft = composerSnapshot{text: "history draft"}
 	path, err := f.Workspace.GetBranchPath(f.Context, leaf.ID)
 	require.NoError(t, err)
 	m.width, m.height = 100, 40
@@ -111,7 +117,7 @@ func TestBranchEscapeRestoresFullDraft(t *testing.T) {
 	bytes[0] = 'X'
 	m.textarea.SetValue("edited")
 	m.attachments.Reset()
-	m.promptHistory.messages[0] = "changed"
+	m.promptHistory.messages[0].text = "changed"
 	require.Contains(t, fmt.Sprint(m.ShortHelp()), "return to previous branch")
 	require.Contains(t, fmt.Sprint(m.FullHelp()), "return to previous branch")
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -121,9 +127,9 @@ func TestBranchEscapeRestoresFullDraft(t *testing.T) {
 	require.Equal(t, "draft\ntext", m.textarea.Value())
 	require.Equal(t, []byte("original bytes"), m.attachments.List()[0].Content)
 	require.Equal(t, []attachments.SkillAttachment{skill}, m.attachments.SkillList())
-	require.Equal(t, []string{"one", "two"}, m.promptHistory.messages)
+	require.Equal(t, []composerSnapshot{{text: "one"}, {text: "two"}}, m.promptHistory.messages)
 	require.Equal(t, 1, m.promptHistory.index)
-	require.Equal(t, "history draft", m.promptHistory.draft)
+	require.Equal(t, composerSnapshot{text: "history draft"}, m.promptHistory.draft)
 	require.Equal(t, viewport, m.chat.branchViewport())
 	saved, err := f.Workspace.GetSession(f.Context, m.session.ID)
 	require.NoError(t, err)
