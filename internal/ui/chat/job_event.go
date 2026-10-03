@@ -133,17 +133,17 @@ func renderJobNotice(sty *styles.Styles, text string, width int, expanded bool) 
 			out = append(out, jobNoticeHeader(sty, line, width))
 		case strings.HasPrefix(line, "  "):
 			if expanded {
-				out = append(out, sty.Tool.JobPID.Render(ansi.Truncate("    "+strings.TrimPrefix(line, "  "), width, "…")))
+				out = append(out, sty.Tool.JobID.Render(ansi.Truncate("    "+strings.TrimPrefix(line, "  "), width, "…")))
 			}
 		default:
-			out = append(out, sty.Tool.JobPID.Render(ansi.Truncate(line, width, "…")))
+			out = append(out, sty.Tool.JobID.Render(ansi.Truncate(line, width, "…")))
 		}
 	}
 	return strings.Join(out, "\n")
 }
 
 // jobNoticeHeader renders one event line like a compact job tool header:
-// "● Job (Completed) 019 exit 1 · 9m14s label".
+// "● Job (Completed) ID 019 exit 1 · 9m14s label".
 func jobNoticeHeader(sty *styles.Styles, line string, width int) string {
 	var icon, action, jobID, detail, description string
 	if m := noticeCompletedRe.FindStringSubmatch(line); m != nil {
@@ -167,8 +167,8 @@ func jobNoticeHeader(sty *styles.Styles, line string, width int) string {
 	prefix := fmt.Sprintf("%s %s %s %s %s", icon,
 		sty.Tool.JobToolName.Render("Job"),
 		sty.Tool.JobAction.Render("("+action+")"),
-		sty.Tool.JobPID.Render(jobID),
-		sty.Tool.JobPID.Render(detail),
+		sty.Tool.JobID.Render(jobIDLabel(jobID)),
+		sty.Tool.JobID.Render(detail),
 	)
 	available := width - lipgloss.Width(prefix) - 1
 	if description == "" || available < 10 {
