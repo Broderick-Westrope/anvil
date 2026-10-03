@@ -506,7 +506,7 @@ go test -race ./internal/app/ ./internal/agent/ -count=1
 - Modify: `internal/app/app.go` (expose `SetComposerState`)
 - Modify: `internal/ui/model/` (editor change and branch navigation sites)
 - Modify: `internal/ui/chat/messages.go` (render `job_event`)
-- Test: UI golden test for the notice; workspace unit test
+- Test: render test for the notice in `internal/ui/chat/`; workspace unit test
 
 **Steps:**
 
@@ -524,8 +524,9 @@ go test -race ./internal/app/ ./internal/agent/ -count=1
    header, tail lines hidden unless expanded), following an existing
    compact item as the style reference. Wake-started turns are
    recognisable because they begin with this notice.
-4. [ ] Golden test for the notice item (`go test ./internal/ui/chat -update`
-   to create, then rerun without `-update`).
+4. [ ] Render test for the notice item, following
+   `internal/ui/chat/mcp_test.go`: it shows each event header, hides
+   tail lines when collapsed, and is not styled as a user message.
 
 **Verify:**
 ```bash
