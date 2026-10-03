@@ -7,6 +7,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
@@ -27,6 +28,10 @@ func (w *jobsWorkspace) ListSessionJobs(sessionID string) []shell.JobInfo {
 
 func (*jobsWorkspace) ParseAgentToolSessionID(string) (string, string, bool) {
 	return "", "", false
+}
+
+func (*jobsWorkspace) PermissionBouncerMode() permission.BouncerMode {
+	return permission.BouncerOff
 }
 
 var jobsTestNow = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
