@@ -10,11 +10,14 @@ import (
 )
 
 type Querier interface {
+	ClaimBackgroundJobEvents(ctx context.Context, arg ClaimBackgroundJobEventsParams) ([]string, error)
 	CreateBackgroundJob(ctx context.Context, arg CreateBackgroundJobParams) (int64, error)
+	CreateBackgroundJobEvent(ctx context.Context, arg CreateBackgroundJobEventParams) error
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	DeleteAnvilInstance(ctx context.Context, id string) error
 	DeleteBackgroundJob(ctx context.Context, id int64) error
+	DeleteBackgroundJobEvent(ctx context.Context, id string) error
 	DeleteBackgroundJobsBySession(ctx context.Context, sessionID string) error
 	DeleteMCPOAuthClient(ctx context.Context, serverName string) error
 	DeleteMCPOAuthToken(ctx context.Context, serverName string) error
@@ -45,11 +48,13 @@ type Querier interface {
 	ListRunningBackgroundJobs(ctx context.Context) ([]BackgroundJob, error)
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
+	ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]ListUndeliveredBackgroundJobEventsRow, error)
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
 	MarkBackgroundJobLogExpired(ctx context.Context, arg MarkBackgroundJobLogExpiredParams) error
 	MarkBackgroundJobsInterrupted(ctx context.Context, arg MarkBackgroundJobsInterruptedParams) error
 	RecordFileRead(ctx context.Context, arg RecordFileReadParams) error
+	ReleaseBackgroundJobEvent(ctx context.Context, id string) error
 	RenameSession(ctx context.Context, arg RenameSessionParams) error
 	SetSessionPin(ctx context.Context, arg SetSessionPinParams) error
 	TouchAnvilInstance(ctx context.Context, arg TouchAnvilInstanceParams) error

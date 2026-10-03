@@ -32,7 +32,7 @@ func (a *sessionAgent) deliverJobEvents(ctx context.Context, sessionID, parentID
 	if len(events) == 0 {
 		return nil, nil
 	}
-	ids := make([]int64, 0, len(events))
+	ids := make([]string, 0, len(events))
 	for _, e := range events {
 		ids = append(ids, e.ID)
 	}

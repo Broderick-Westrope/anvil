@@ -283,7 +283,9 @@ func TestBackgroundShellManager_KillAll(t *testing.T) {
 	}
 
 	// Kill all shells
-	manager.KillAll(t.Context())
+	exited, abandoned := manager.KillAll(t.Context())
+	require.ElementsMatch(t, []string{shell1.ID(), shell2.ID(), shell3.ID()}, exited)
+	require.Empty(t, abandoned)
 
 	// Verify all shells are done
 	if !shell1.IsDone() {
@@ -325,7 +327,7 @@ func TestBackgroundShellManager_KillAll_Timeout(t *testing.T) {
 	manager := newBackgroundShellManager()
 
 	// Start a shell that traps signals and ignores cancellation.
-	_, err := manager.Start(t.Context(), workingDir, nil, "trap '' TERM INT; sleep 60", "")
+	bs, err := manager.Start(t.Context(), workingDir, nil, "trap '' TERM INT; sleep 60", "")
 	require.NoError(t, err)
 
 	// Short timeout to test the timeout path.
@@ -333,9 +335,13 @@ func TestBackgroundShellManager_KillAll_Timeout(t *testing.T) {
 	t.Cleanup(cancel)
 
 	start := time.Now()
-	manager.KillAll(ctx)
+	exited, abandoned := manager.KillAll(ctx)
 
 	elapsed := time.Since(start)
+	if !bs.IsDone() {
+		require.Equal(t, []string{bs.ID()}, abandoned)
+		require.Empty(t, exited)
+	}
 
 	// Must return promptly after timeout, not hang for 60 seconds.
 	require.Less(t, elapsed, 2*time.Second)
@@ -1036,4 +1042,136 @@ func TestPublishRecorded_TransferRecorded(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Transferred was not called")
 	}
+}
+
+// fencedRecorder is a fakeRecorder that fails the test if Finalize is
+// called after fence.
+type fencedRecorder struct {
+	*fakeRecorder
+	t      *testing.T
+	fenced atomic.Bool
+}
+
+func (r *fencedRecorder) Finalize(ctx context.Context, id string, info JobInfo, endReason string, stats LogStats) error {
+	if r.fenced.Load() {
+		r.t.Errorf("Finalize(%s, %s) called after the manager was closed", id, endReason)
+	}
+	return r.fakeRecorder.Finalize(ctx, id, info, endReason, stats)
+}
+
+// drainFinalized returns the Finalize calls made so far.
+func drainFinalized(r *fakeRecorder) []finalizeCall {
+	var calls []finalizeCall
+	for {
+		select {
+		case call := <-r.finalized:
+			calls = append(calls, call)
+		default:
+			return calls
+		}
+	}
+}
+
+func TestShutdown_ExitOnSignalRecordsAnvilExit(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newFakeRecorder()
+	manager.SetRecorder(rec)
+	bs := startShell(t, manager, "sleep 30")
+	id := publishShell(t, manager, bs, "s", OriginExplicit)
+
+	manager.BeginShutdown()
+	_, err := manager.Publish(t.Context(), startShell(t, manager, "sleep 30").ID(), PublishOptions{SessionID: "s", Origin: OriginExplicit})
+	require.Error(t, err, "publication must be refused after BeginShutdown")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	exited, abandoned := manager.KillAll(ctx)
+	require.Contains(t, exited, id)
+	require.Empty(t, abandoned)
+
+	// The job's own finalization either finished before Close (which
+	// waits for it) or is left to the caller; either way it is
+	// anvil_exit, and exactly once.
+	unfinalized := manager.Close(ctx)
+	calls := drainFinalized(rec)
+	require.Equal(t, 1, len(unfinalized)+len(calls))
+	if len(calls) == 1 {
+		require.Equal(t, id, calls[0].id)
+		require.Equal(t, EndAnvilExit, calls[0].endReason)
+	} else {
+		require.Equal(t, id, unfinalized[0].ID)
+		require.Equal(t, EndAnvilExit, unfinalized[0].EndReason)
+		require.True(t, unfinalized[0].Info.Done)
+	}
+	require.True(t, rec.log(id).closed.Load())
+}
+
+func TestShutdown_IgnoredCancellationRecordsAbandoned(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := &fencedRecorder{fakeRecorder: newFakeRecorder(), t: t}
+	manager.SetRecorder(rec)
+	ch, release := releaseOnCleanup(t)
+	bs := registerBlockingShell(t, manager, ch)
+	id := publishShell(t, manager, bs, "s", OriginExplicit)
+	_, _ = bs.stdout.Write([]byte("before\n"))
+
+	manager.BeginShutdown()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	exited, abandoned := manager.KillAll(ctx)
+	require.Empty(t, exited)
+	require.Equal(t, []string{id}, abandoned)
+
+	unfinalized := manager.Close(context.Background())
+	rec.fenced.Store(true)
+	require.Len(t, unfinalized, 1)
+	job := unfinalized[0]
+	require.Equal(t, id, job.ID)
+	require.Equal(t, EndAbandoned, job.EndReason)
+	require.False(t, job.Info.Done)
+	require.Equal(t, int64(len("before\n")), job.Stats.Bytes)
+	require.Empty(t, drainFinalized(rec.fakeRecorder))
+
+	log := rec.log(id)
+	require.True(t, log.closed.Load())
+	writes := log.stdout.writes.Load()
+
+	// The abandoned shell finishes after shutdown: its output reaches
+	// neither the closed log nor the recorder.
+	_, _ = bs.stdout.Write([]byte("late\n"))
+	release()
+	bs.Wait()
+	manager.finalize(bs)
+	require.Equal(t, writes, log.stdout.writes.Load())
+	require.Equal(t, "before\n", log.stdout.String())
+	require.Empty(t, drainFinalized(rec.fakeRecorder))
+	require.Empty(t, manager.Close(context.Background()))
+}
+
+func TestShutdown_ExitBeforeKillAllRecordsAnvilExit(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	rec := newFakeRecorder()
+	manager.SetRecorder(rec)
+	ch, release := releaseOnCleanup(t)
+	bs := registerBlockingShell(t, manager, ch)
+	id := publishShell(t, manager, bs, "s", OriginExplicit)
+
+	manager.BeginShutdown()
+	release()
+	call := waitFinalize(t, rec)
+	require.Equal(t, id, call.id)
+	require.Equal(t, EndAnvilExit, call.endReason)
+	require.True(t, call.info.Done)
+
+	exited, abandoned := manager.KillAll(t.Context())
+	require.Empty(t, abandoned)
+	require.NotContains(t, exited, id, "completed jobs are cleaned up, not killed")
+	require.Empty(t, manager.Close(t.Context()))
+	require.Empty(t, drainFinalized(rec))
 }

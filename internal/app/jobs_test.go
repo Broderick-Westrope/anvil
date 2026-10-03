@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/stretchr/testify/require"
@@ -251,4 +252,98 @@ func TestJobLifecycle_StopWaitsForGoroutines(t *testing.T) {
 	require.True(t, q.heartbeatsDone.Load(), "Stop returned before the heartbeat goroutine")
 	require.True(t, q.sweepsDone.Load(), "Stop returned before the sweeper goroutine")
 	q.stopped.Store(true)
+
+	// Once closed, the store answers without touching the database.
+	l.store.Close()
+	_, _, err := l.store.Get(t.Context(), "001")
+	require.ErrorIs(t, err, jobstore.ErrClosed)
+}
+
+func TestFinishJobs_RecordsAnvilExitAndFencesDB(t *testing.T) {
+	t.Parallel()
+
+	q := newTestJobQueries(t)
+	l := newTestJobLifecycle(t, q)
+	require.NoError(t, l.Start(t.Context()))
+	events := jobevents.NewStore(nil)
+	require.NoError(t, events.Persist(t.Context(), q, l.store.InstanceID()))
+	mgr := shell.NewBackgroundShellManager()
+	mgr.SetRecorder(l.store)
+	mgr.SetEventSink(events)
+
+	publish := func(command string) (*shell.BackgroundShell, string) {
+		bs, err := mgr.Start(context.Background(), t.TempDir(), nil, command, "")
+		require.NoError(t, err)
+		id, err := mgr.Publish(t.Context(), bs.ID(), shell.PublishOptions{SessionID: "sess", Origin: shell.OriginExplicit})
+		require.NoError(t, err)
+		_, ok := jobstore.ParseID(id)
+		require.True(t, ok, "job %s was not persisted", id)
+		return bs, id
+	}
+	finished, finishedID := publish("echo done")
+	finished.Wait()
+	require.Eventually(t, func() bool { return events.HasPending("sess") }, 10*time.Second, 10*time.Millisecond)
+	running, runningID := publish("sleep 30")
+
+	app := &App{jobs: l, jobEvents: events}
+	mgr.BeginShutdown()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	exited, abandoned := mgr.KillAll(ctx)
+	require.Contains(t, exited, runningID)
+	require.Empty(t, abandoned)
+	require.True(t, running.IsDone())
+	app.finishJobs(mgr, exited, abandoned)
+
+	_, _, err := l.store.Get(t.Context(), runningID)
+	require.ErrorIs(t, err, jobstore.ErrClosed)
+
+	reader, err := jobstore.New(q, l.logDir)
+	require.NoError(t, err)
+	get := func(id string) jobstore.Record {
+		rec, ok, err := reader.Get(t.Context(), id)
+		require.NoError(t, err)
+		require.True(t, ok)
+		return rec
+	}
+	require.Equal(t, shell.EndAnvilExit, get(runningID).EndReason)
+	require.True(t, get(runningID).ExitCodeKnown)
+	require.Equal(t, shell.EndExited, get(finishedID).EndReason)
+
+	instances, err := q.ListAnvilInstances(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, instances, "the instance row must be removed on shutdown")
+
+	rows, err := q.ListUndeliveredBackgroundJobEvents(t.Context())
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "the pending completion event must survive shutdown")
+	require.Equal(t, finishedID, jobstore.FormatID(rows[0].JobID))
+
+	// Nothing reaches the database after shutdown.
+	events.JobCompleted(shell.JobInfo{ID: runningID, SessionID: "sess", Done: true}, "")
+	_, err = mgr.Publish(t.Context(), "run-0", shell.PublishOptions{SessionID: "sess"})
+	require.Error(t, err)
+	rows, err = q.ListUndeliveredBackgroundJobEvents(t.Context())
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+}
+
+func TestShutdownEndReason(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		job  shell.UnfinalizedJob
+		want string
+	}{
+		{"exited", shell.UnfinalizedJob{ID: "001", Info: shell.JobInfo{Done: true}}, shell.EndAnvilExit},
+		{"abandoned", shell.UnfinalizedJob{ID: "002", EndReason: shell.EndAnvilExit}, shell.EndAbandoned},
+		{"decided", shell.UnfinalizedJob{ID: "003", EndReason: shell.EndKilled}, shell.EndKilled},
+		{"unknown running", shell.UnfinalizedJob{ID: "004"}, shell.EndAbandoned},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, shutdownEndReason(tc.job, []string{"001"}, []string{"002"}))
+		})
+	}
 }

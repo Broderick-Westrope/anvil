@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -111,13 +112,12 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	mgr := shell.GetBackgroundShellManager()
 	app.startJobPersistence(ctx, q, mgr)
-	app.jobEvents = jobevents.NewStore(func(id string) (string, bool) {
-		bs, ok := mgr.Get(id)
-		if !ok {
-			return "", false
+	app.jobEvents = jobevents.NewStore(app.jobOwner(mgr))
+	if app.jobs != nil {
+		if err := app.jobEvents.Persist(ctx, q, app.jobs.store.InstanceID()); err != nil {
+			slog.Warn("Failed to load background job events; new events will not survive a restart", "error", err)
 		}
-		return bs.Info().SessionID, true
-	})
+	}
 	mgr.SetEventSink(app.jobEvents)
 	app.jobWaker = newJobWaker(app.jobEvents, sessions)
 	go app.jobWaker.run(ctx)
@@ -597,6 +597,26 @@ func (app *App) startJobPersistence(ctx context.Context, q db.Querier, mgr *shel
 	mgr.SetRecorder(jobs.store)
 }
 
+// jobOwner resolves the session that owns a job, falling back to the
+// persisted record for jobs no longer in memory.
+func (app *App) jobOwner(mgr *shell.BackgroundShellManager) jobevents.OwnerFunc {
+	return func(id string) (string, bool) {
+		if bs, ok := mgr.Get(id); ok {
+			return bs.Info().SessionID, true
+		}
+		if app.jobs == nil {
+			return "", false
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		rec, ok, err := app.jobs.store.Get(ctx, id)
+		if err != nil || !ok {
+			return "", false
+		}
+		return rec.Info.SessionID, true
+	}
+}
+
 // jobArchive returns the persisted job store for the job tools, or nil.
 func (app *App) jobArchive() tools.JobArchive {
 	if app.jobs == nil {
@@ -664,11 +684,13 @@ func (app *App) Shutdown() {
 	start := time.Now()
 	defer func() { slog.Debug("Shutdown took " + time.Since(start).String()) }()
 
-	// Stop job wakes before canceling agents, so no new turn starts
-	// while shutting down.
+	// Stop job wakes, publications, and job events before canceling
+	// agents, so nothing new starts while they unwind.
 	if app.jobWaker != nil {
 		app.jobWaker.close()
 	}
+	mgr := shell.GetBackgroundShellManager()
+	mgr.BeginShutdown()
 
 	// First, cancel all agents and wait for them to finish. This must complete
 	// before closing the DB so agents can finish writing their state.
@@ -690,34 +712,78 @@ func (app *App) Shutdown() {
 		}
 	}
 
-	if app.jobs != nil {
-		app.jobs.Close(shutdownCtx)
-	}
+	exited, abandoned := mgr.KillAll(shutdownCtx)
+	app.finishJobs(mgr, exited, abandoned)
+
+	// Killing jobs may have used up shutdownCtx, so the remaining
+	// cleanup gets its own deadline.
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelCleanup()
 
 	// Now run remaining cleanup tasks in parallel.
 	var wg sync.WaitGroup
 
-	// Kill all background shells.
-	wg.Go(func() {
-		shell.GetBackgroundShellManager().KillAll(shutdownCtx)
-	})
-
 	// Shutdown all LSP clients.
 	wg.Go(func() {
-		app.LSPManager.KillAll(shutdownCtx)
+		app.LSPManager.KillAll(cleanupCtx)
 	})
 
 	// Call all cleanup functions.
 	for _, cleanup := range app.cleanupFuncs {
 		if cleanup != nil {
 			wg.Go(func() {
-				if err := cleanup(shutdownCtx); err != nil {
+				if err := cleanup(cleanupCtx); err != nil {
 					slog.Error("Failed to cleanup app properly on shutdown", "error", err)
 				}
 			})
 		}
 	}
 	wg.Wait()
+}
+
+// finishJobs fences background jobs off from the database and records
+// how they ended: anvil_exit for jobs that exited during shutdown and
+// abandoned for jobs that outlived the kill. It then saves pending job
+// events and stops job persistence, after which nothing job-related
+// writes to the database.
+func (app *App) finishJobs(mgr *shell.BackgroundShellManager, exited, abandoned []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	unfinalized := mgr.Close(ctx)
+	if app.jobs != nil {
+		for _, job := range unfinalized {
+			reason := shutdownEndReason(job, exited, abandoned)
+			if err := app.jobs.store.Finalize(ctx, job.ID, job.Info, reason, job.Stats); err != nil {
+				slog.Warn("Failed to record background job end state on shutdown", "id", job.ID, "error", err)
+			}
+		}
+	}
+
+	if app.jobEvents != nil {
+		if err := app.jobEvents.Flush(ctx); err != nil {
+			slog.Warn("Failed to save background job events on shutdown", "error", err)
+		}
+		app.jobEvents.Close(ctx)
+	}
+	if app.jobs != nil {
+		app.jobs.Close(ctx)
+	}
+}
+
+func shutdownEndReason(job shell.UnfinalizedJob, exited, abandoned []string) string {
+	switch {
+	case slices.Contains(abandoned, job.ID):
+		return shell.EndAbandoned
+	case slices.Contains(exited, job.ID):
+		return shell.EndAnvilExit
+	case job.EndReason != "":
+		return job.EndReason
+	case job.Info.Done:
+		return shell.EndAnvilExit
+	default:
+		return shell.EndAbandoned
+	}
 }
 
 // checkForUpdates checks for available updates.
