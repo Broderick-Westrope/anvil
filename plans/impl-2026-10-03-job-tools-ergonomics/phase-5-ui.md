@@ -1,6 +1,6 @@
 # Phase 5: Runtime Visible to the Human
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Depends on Phase 1. Task 2's final-runtime step needs Phase 2's
 > `RuntimeMS` metadata; skip that step if Phase 2 has not merged. Create a
 > PR for human review when done; do not merge.

@@ -1,6 +1,6 @@
 # Phase 4: Persistence
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Depends on Phases 1 and 2 (fallback reads reuse Phase 2's read
 > semantics and headers). Can merge before or after Phase 3; Task 5's
 > event persistence applies only once Phase 3 has merged (if Phase 3
