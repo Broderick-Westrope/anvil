@@ -117,6 +117,16 @@ read internal/db/permission_decisions.sql.go  # generated in phase 1
 > Names only known at runtime (`$cmd`, `$(echo rm)`, a globbed name like
 > `/bin/r?`) still can't be resolved, so they fall to ask.
 >
+> Fixes from the follow-up review:
+> - Static shell code passed as a string is split recursively: `eval`,
+>   `sh`/`bash`/`zsh -c`, and `env -S`.
+> - Wrapper flags that take a value are skipped (`sudo -u root rm`).
+> - `$'...'` values are truncated at NUL, as bash does.
+> - Brace expansion is capped at 64 words, and sequences are never
+>   expanded.
+> - `expand.Format` gets its own config per call, because a nil config
+>   races under concurrent bash calls.
+>
 > Triage re-splits logged commands instead of trusting stored segments,
 > and derives deny candidates from `segment.Normalized`.
 
