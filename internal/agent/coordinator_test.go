@@ -892,7 +892,9 @@ func TestSkillsUsageParity(t *testing.T) {
 					require.Equal(t, hasView, strings.Contains(built, "<skills_usage>"), agentName)
 					require.Equal(t, hasView && agentName == config.AgentOrchestrator, strings.Contains(built, "LOAD MATCHING SKILLS"), agentName)
 					require.Equal(t, allowedSkills == nil, strings.Contains(built, "</available_skills>"))
-					require.Contains(t, built, "never authorizes delegation, commits, pushes or pull requests")
+					require.Contains(t, built, "never authorizes delegation, pushes or pull requests")
+					require.Contains(t, built, "\n<git_workflow>\n", agentName)
+					require.Contains(t, built, "In a linked worktree you are authorized to commit as you go.", agentName)
 					require.NotContains(t, built, "<location>")
 					require.NotContains(t, built, "/private/example")
 				}

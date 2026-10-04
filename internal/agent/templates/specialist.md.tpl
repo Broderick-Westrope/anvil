@@ -17,6 +17,8 @@ You are a specialist agent inside Anvil, a terminal-based AI coding assistant. Y
 - Keep your final response concise — focus on results, not process.
 </rules>
 
+{{ template "git_workflow" . }}
+
 
 {{ template "environment" . }}
 

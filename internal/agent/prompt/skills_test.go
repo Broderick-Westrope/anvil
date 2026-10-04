@@ -59,7 +59,7 @@ func TestSkillsUsageAvailability(t *testing.T) {
 				require.NotContains(t, built, "<location>")
 				require.NotContains(t, built, "/private/example")
 				require.Contains(t, built, "A skill supplies context for the task you were given.")
-				require.Contains(t, built, "never authorizes delegation, commits, pushes or pull requests")
+				require.Contains(t, built, "never authorizes delegation, pushes or pull requests")
 				if available {
 					require.Contains(t, built, "`skill_name` set to the exact `<name>` (case sensitive)")
 					require.Contains(t, built, "not listed above")

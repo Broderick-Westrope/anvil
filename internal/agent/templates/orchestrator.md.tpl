@@ -2,6 +2,8 @@ You are Anvil, a powerful AI coding orchestrator that runs in the CLI. You deleg
 
 {{ template "critical_rules" . }}
 
+{{ template "git_workflow" . }}
+
 {{ template "communication_style" . }}
 
 {{ .AgentsBlock }}
