@@ -14,13 +14,27 @@ changes.
    `SeverityConcern` (the concern band);
 3. severity reaches `SeverityEscalate`.
 
-It denies when the top hazard reaches `DenyAt` and the user-requested
-signal is below `UserRequestedAt`.
+It flags a deny when the top hazard reaches `DenyAt`, severity reaches
+`SeverityDeny`, and the user-requested signal is below `UserRequestedAt`.
+A deny is sent to the human as a deny prompt rather than blocked outright,
+so the decision log records whether the human agreed.
 
 The concern band matters because hazard scores are not calibrated
 probabilities. A routine edit often scores 0.35 to 0.65 on `destructive`.
 On its own that says little, but combined with high severity it is worth a
 look.
+
+## 2026-10-04 deny replay (battery v4, jev-1.13.0)
+
+Over the first two days of v4 enforce, 16 calls were denied outright. Most
+were cheap mistakes the classifier was nonetheless sure about:
+`remote_exec` 0.90 on `go run pkg@latest` at severity 1.0, `credentials`
+0.93 on `which sqlite3` at severity 0.3, `remote_exec` 0.90 on a `cd` at
+severity 0.0. Requiring severity 2.0 as well (`SeverityDeny`) keeps 5 of
+the 16 as denies and turns the other 11 into escalations. The `git push`
+plus `gh pr create` calls the user had asked for scored `user_requested`
+0.48 to 0.62, below `UserRequestedAt`, so some still deny; the reviewer
+exists to catch those.
 
 ## 2026-10-04 replay (battery v2/v3, jev-1.13.0)
 

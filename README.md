@@ -569,9 +569,16 @@ bad a mistake would be (`severity`, 0 to 3). A call comes to you when:
   getting it wrong would hurt; or
 - severity alone reaches `severity_escalate` (2).
 
-It's denied outright when an axis reaches `deny_at` (0.9) and you didn't
-ask for it (`user_requested_at`, 0.7). Setting `escalate_at` applies one
-value to every axis; `escalate_at_axes` overrides individual ones:
+It's flagged as a deny when an axis reaches `deny_at` (0.9), severity
+reaches `severity_deny` (2), and you didn't ask for it
+(`user_requested_at`, 0.7). A deny isn't final: it comes to you as a red
+prompt that starts on **Deny** and has no "allow forever" option. Allow it
+if the bouncer got it wrong, or deny it, with an optional reason for the
+agent. Your answer is logged next to the bouncer's verdict, so
+`anvil permissions stats` shows how often its denials were wrong. In yolo
+mode, denies are the only prompts you'll see. Setting `escalate_at`
+applies one value to every axis; `escalate_at_axes` overrides individual
+ones:
 
 ```json
 {
@@ -590,7 +597,18 @@ Some calls always come to you without a classifier call:
 - any call while the bouncer is unreachable.
 
 When it does pass a call to you, the prompt shows its full verdict, with
-the axes that triggered it highlighted. `ctrl+q` cycles the mode while
+the axes that triggered it highlighted.
+
+Prompts the bouncer escalated or flagged as a deny also get a second
+opinion from your small model, which reads your last five messages and
+judges whether you asked for the call. It can only quote you: to say it
+would allow a call, it has to give your exact words, and Anvil checks they
+appear in your messages. It can soften a deny to an ordinary prompt but
+never approve it, and it never approves a call with severity 2.5 or more.
+For now it runs in shadow: its opinion is shown under the bouncer's as
+`Reviewer (shadow)` and logged, but it never changes what happens.
+`anvil permissions stats` compares it with your answers. Set
+`"review": "off"` in the `bouncer` block to turn it off. `ctrl+q` cycles the mode while
 Anvil is running, without changing your config. The editor gutter shows a
 hollow ` ◇ ` in shadow and a solid ` ◆ ` in enforce, on the line above any
 yolo badge. The bouncer is warmed up in the background whenever it's
