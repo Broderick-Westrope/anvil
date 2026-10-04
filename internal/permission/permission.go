@@ -136,6 +136,13 @@ type Service interface {
 	// SetBouncerMode changes the runtime mode. It is a no-op when no
 	// bouncer is configured or the mode is unknown.
 	SetBouncerMode(mode BouncerMode)
+
+	// SetConfigRules replaces the rules taken from config, such as after
+	// config is reloaded from disk.
+	SetConfigRules(rules []config.PermissionRule)
+	// ResetBouncerCache forgets every cached bouncer allow, such as after
+	// the bouncer's thresholds change.
+	ResetBouncerCache()
 }
 
 // PermissionKey is a composite key for session permission lookups.
@@ -167,7 +174,9 @@ type permissionService struct {
 	recorder              DecisionRecorder
 	bouncer               BouncerOptions
 	bouncerMode           atomic.Value // BouncerMode.
-	allowCache            *csync.Map[string, struct{}]
+	// allowCache is swapped rather than cleared so an assessment that was
+	// in flight during a reset writes into the orphaned map.
+	allowCache atomic.Pointer[csync.Map[string, struct{}]]
 
 	// beforePromptLock, when set, runs just before requestMu is acquired.
 	// Tests use it as a barrier.
@@ -289,11 +298,12 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	var details json.RawMessage
 	if s.shouldAssess(p) {
 		key := allowCacheKey(opts)
+		cache := s.allowCache.Load()
 		if s.currentBouncerMode() == BouncerEnforce {
 			if s.beforeAllowCache != nil {
 				s.beforeAllowCache(opts)
 			}
-			if _, ok := s.allowCache.Get(key); ok {
+			if _, ok := cache.Get(key); ok {
 				// A rule added since the cached allow wins over it.
 				if p2 := s.evaluatePolicy(opts); p2.resolved {
 					return s.finishPolicy(opts, p2, nil), nil
@@ -320,7 +330,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		if mode == BouncerEnforce {
 			switch a.Outcome {
 			case AssessAllow:
-				s.allowCache.Set(key, struct{}{})
+				cache.Set(key, struct{}{})
 				return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", details, ""), nil
 			case AssessDeny:
 				reason := "blocked by the permission bouncer (" + a.Reason + "). Do not retry this or work around it; tell the user what you were trying to do."
@@ -571,6 +581,19 @@ func (s *permissionService) GrantForever(toolPattern string, inputPattern string
 	return nil
 }
 
+// SetConfigRules replaces the config rules with a copy of rules.
+func (s *permissionService) SetConfigRules(rules []config.PermissionRule) {
+	rules = cloneRules(rules)
+	s.configRulesMu.Lock()
+	s.configRules = rules
+	s.configRulesMu.Unlock()
+}
+
+// ResetBouncerCache replaces the allow cache with an empty one.
+func (s *permissionService) ResetBouncerCache() {
+	s.allowCache.Store(csync.NewMap[string, struct{}]())
+}
+
 func cloneRules(rules []config.PermissionRule) []config.PermissionRule {
 	cloned := slices.Clone(rules)
 	for i := range cloned {
@@ -592,8 +615,8 @@ func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configR
 		sessionRules:        make(map[string][]config.PermissionRule),
 		pendingRequests:     csync.NewMap[string, chan permissionResponse](),
 		configStore:         configStore,
-		allowCache:          csync.NewMap[string, struct{}](),
 	}
+	svc.allowCache.Store(csync.NewMap[string, struct{}]())
 	svc.yoloLevel.Store(int32(yoloLevel))
 	svc.bouncerMode.Store(BouncerOff)
 	for _, opt := range opts {

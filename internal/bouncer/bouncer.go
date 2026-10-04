@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -35,8 +37,8 @@ const (
 // Bouncer implements permission.Bouncer with a System One client.
 type Bouncer struct {
 	Client           *systemone.Client
-	Thresholds       Thresholds
 	SendUserMessages bool
+	thresholds       atomic.Pointer[Thresholds]
 	sem              chan struct{} // Cap 4: bounded concurrency.
 	breaker          breaker       // 3 consecutive failures → open 60s, then one probe.
 	now              func() time.Time
@@ -44,26 +46,46 @@ type Bouncer struct {
 
 var _ permission.Bouncer = (*Bouncer)(nil)
 
-// New returns a Bouncer. Callers should validate th first.
-func New(c *systemone.Client, th Thresholds, sendUserMessages bool) *Bouncer {
-	return &Bouncer{
+// New returns a Bouncer, or an error when th is invalid.
+func New(c *systemone.Client, th Thresholds, sendUserMessages bool) (*Bouncer, error) {
+	b := &Bouncer{
 		Client:           c,
-		Thresholds:       th,
 		SendUserMessages: sendUserMessages,
 		sem:              make(chan struct{}, maxConcurrent),
 		now:              time.Now,
 	}
+	if err := b.SetThresholds(th); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// Thresholds returns the thresholds currently used for routing.
+func (a *Bouncer) Thresholds() Thresholds {
+	return *a.thresholds.Load()
+}
+
+// SetThresholds validates th and makes it the set used by assessments
+// that start afterwards. An invalid set leaves the current one in place.
+func (a *Bouncer) SetThresholds(th Thresholds) error {
+	if err := th.Validate(); err != nil {
+		return fmt.Errorf("invalid bouncer thresholds: %w", err)
+	}
+	th.EscalateAt = maps.Clone(th.EscalateAt)
+	a.thresholds.Store(&th)
+	return nil
 }
 
 // Assess classifies one request. Ineligible inputs, an open breaker, and
 // a full concurrency cap escalate without a network call. Details is
 // always a marshalled permission.AssessmentRecord.
 func (a *Bouncer) Assess(ctx context.Context, in permission.AssessInput) (permission.Assessment, error) {
+	th := *a.thresholds.Load()
 	rec := permission.AssessmentRecord{
 		SchemaVersion:  permission.AssessmentSchemaVersion,
 		BatteryVersion: BatteryVersion,
 		Model:          a.Client.Model,
-		Thresholds:     a.Thresholds.asMap(),
+		Thresholds:     th.asMap(),
 	}
 
 	state, skip := BuildState(in, a.SendUserMessages)
@@ -107,7 +129,7 @@ func (a *Bouncer) Assess(ctx context.Context, in permission.AssessInput) (permis
 	}
 	a.breaker.succeed()
 
-	outcome, reason := Route(resp.Answers, a.Thresholds)
+	outcome, reason := Route(resp.Answers, th)
 	rec.Model = resp.Model
 	rec.Outcome = outcome.String()
 	rec.Reason = reason
@@ -120,7 +142,7 @@ func (a *Bouncer) Assess(ctx context.Context, in permission.AssessInput) (permis
 	if v, ok := value(resp.Answers[QSeverity].Score); ok {
 		rec.Severity = &v
 	}
-	rec.Triggers = Triggers(resp.Answers, a.Thresholds)
+	rec.Triggers = Triggers(resp.Answers, th)
 	rec.InputTokens = resp.Usage.InputTokens
 	rec.OutputTokens = resp.Usage.OutputTokens
 	return permission.Assessment{Outcome: outcome, Reason: reason, Details: marshal(rec)}, nil

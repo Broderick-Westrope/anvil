@@ -680,7 +680,7 @@ func TestBouncerShadowSkipsAllowCache(t *testing.T) {
 			h := newBouncerHarness(t, fake, BouncerShadow, nil, nil)
 			opts := h.req("a", "go test ./...")
 			if prefilled {
-				h.svc.allowCache.Set(allowCacheKey(opts), struct{}{})
+				h.svc.allowCache.Load().Set(allowCacheKey(opts), struct{}{})
 			}
 
 			for _, id := range []string{"a", "b"} {
@@ -693,7 +693,7 @@ func TestBouncerShadowSkipsAllowCache(t *testing.T) {
 			}
 			require.Equal(t, int32(2), fake.calls.Load())
 			if !prefilled {
-				require.Zero(t, h.svc.allowCache.Len())
+				require.Zero(t, h.svc.allowCache.Load().Len())
 			}
 		})
 	}

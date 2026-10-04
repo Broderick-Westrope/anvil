@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/bouncer"
@@ -57,12 +58,6 @@ func buildBouncerOption(ta *config.TrustedBouncer, sessions session.Service, mes
 		return bouncerSetup{}, false
 	}
 
-	th := bouncerThresholds(cfg)
-	if err := th.Validate(); err != nil {
-		slog.Warn("Bouncer thresholds are invalid", "error", err)
-		return bouncerSetup{}, false
-	}
-
 	sendUserMessages := cfg.SendUserMessages == nil || *cfg.SendUserMessages
 	client := &systemone.Client{
 		URL:        cfg.URL,
@@ -72,7 +67,11 @@ func buildBouncerOption(ta *config.TrustedBouncer, sessions session.Service, mes
 		HTTP:       &http.Client{},
 		Backoff:    []time.Duration{250 * time.Millisecond},
 	}
-	a := bouncer.New(client, th, sendUserMessages)
+	a, err := bouncer.New(client, bouncerThresholds(cfg), sendUserMessages)
+	if err != nil {
+		slog.Warn("Bouncer thresholds are invalid", "error", err)
+		return bouncerSetup{}, false
+	}
 	opts := permission.BouncerOptions{
 		Bouncer:            a,
 		Mode:               permission.BouncerMode(cmp.Or(cfg.Mode, config.BouncerOff)),
@@ -111,6 +110,31 @@ func warmBouncer(ctx context.Context, w warmer, mode permission.BouncerMode) {
 		return
 	}
 	slog.Info("Bouncer warmed", "elapsed", time.Since(start).Round(time.Millisecond))
+}
+
+// ApplyConfig pushes the parts of a reloaded config that services copied
+// at startup into those services: the permission rules and the bouncer's
+// thresholds. The allow cache is reset only when the thresholds change,
+// since a cached allow was decided under the old ones.
+func (app *App) ApplyConfig(cur *config.Config, curB *config.TrustedBouncer) error {
+	var rules []config.PermissionRule
+	if cur != nil && cur.Permissions != nil {
+		rules = cur.Permissions.Rules
+	}
+	app.Permissions.SetConfigRules(rules)
+
+	if app.bouncer == nil || curB == nil || curB.Config == nil {
+		return nil
+	}
+	th := bouncerThresholds(curB.Config)
+	if reflect.DeepEqual(th, app.bouncer.Thresholds()) {
+		return nil
+	}
+	if err := app.bouncer.SetThresholds(th); err != nil {
+		return err
+	}
+	app.Permissions.ResetBouncerCache()
+	return nil
 }
 
 func bouncerThresholds(cfg *config.Bouncer) bouncer.Thresholds {

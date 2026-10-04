@@ -47,6 +47,10 @@ func (m *mockBashPermissionService) BouncerMode() permission.BouncerMode {
 
 func (m *mockBashPermissionService) SetBouncerMode(permission.BouncerMode) {}
 
+func (m *mockBashPermissionService) SetConfigRules([]config.PermissionRule) {}
+
+func (m *mockBashPermissionService) ResetBouncerCache() {}
+
 func (m *mockBashPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }
@@ -164,6 +168,10 @@ func (m *recordingPermissionService) BouncerMode() permission.BouncerMode {
 }
 
 func (m *recordingPermissionService) SetBouncerMode(permission.BouncerMode) {}
+
+func (m *recordingPermissionService) SetConfigRules([]config.PermissionRule) {}
+
+func (m *recordingPermissionService) ResetBouncerCache() {}
 
 func (m *recordingPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])

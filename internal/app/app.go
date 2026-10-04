@@ -24,6 +24,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
@@ -67,6 +68,9 @@ type App struct {
 	LSPManager *lsp.Manager
 
 	config *config.ConfigStore
+	// bouncer is the same Bouncer the permission service assesses with,
+	// kept so ApplyConfig can swap its thresholds. Nil when unconfigured.
+	bouncer *bouncer.Bouncer
 
 	serviceEventsWG *sync.WaitGroup
 	eventsCtx       context.Context
@@ -95,6 +99,9 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 			slog.Warn("Failed to prune permission decisions", "error", err)
 		}
 	}()
+	store.SetBouncerValidator(func(b *config.Bouncer) error {
+		return bouncerThresholds(b).Validate()
+	})
 	sessions := session.NewService(q, conn)
 	messages := message.NewService(q, message.WithConn(conn))
 	cfg := store.Config()
@@ -104,9 +111,11 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		configRules = cfg.Permissions.Rules
 	}
 	permOpts := []permission.Option{permission.WithDecisionRecorder(recorder)}
+	var bnc *bouncer.Bouncer
 	if ta := store.TrustedBouncer(); ta != nil {
 		if setup, ok := buildBouncerOption(ta, sessions, messages); ok {
 			permOpts = append(permOpts, setup.option)
+			bnc = setup.bouncer
 			slog.Info("Bouncer configured",
 				"mode", cmp.Or(ta.Config.Mode, config.BouncerOff),
 				"model", ta.Config.Model)
@@ -124,7 +133,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 		globalCtx: ctx,
 
-		config: store,
+		config:  store,
+		bouncer: bnc,
 
 		events:             pubsub.NewBroker[tea.Msg](),
 		serviceEventsWG:    &sync.WaitGroup{},

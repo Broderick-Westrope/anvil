@@ -443,3 +443,59 @@ func TestBouncerRequestOmitsJobEventNotices(t *testing.T) {
 	require.NotContains(t, body, "NOTE TO ASSISTANT")
 	require.NotContains(t, body, "Background job updates")
 }
+
+type applyConfigPermissions struct {
+	permission.Service
+	rules  []config.PermissionRule
+	resets int
+}
+
+func (p *applyConfigPermissions) SetConfigRules(rules []config.PermissionRule) { p.rules = rules }
+
+func (p *applyConfigPermissions) ResetBouncerCache() { p.resets++ }
+
+func TestApplyConfig(t *testing.T) {
+	t.Parallel()
+	f := func(v float64) *float64 { return &v }
+
+	setup, ok := buildBouncerOption(validTrustedBouncer(config.BouncerEnforce), nil, nil)
+	require.True(t, ok)
+	perms := &applyConfigPermissions{}
+	app := &App{Permissions: perms, bouncer: setup.bouncer}
+
+	rules := []config.PermissionRule{{ToolPattern: "bash", Action: config.PermissionAllow}}
+	cur := &config.Config{Permissions: &config.Permissions{Rules: rules}}
+	same := validTrustedBouncer(config.BouncerEnforce)
+	require.NoError(t, app.ApplyConfig(cur, same))
+	require.Equal(t, rules, perms.rules)
+	require.Zero(t, perms.resets, "unchanged thresholds keep the allow cache")
+
+	changed := validTrustedBouncer(config.BouncerEnforce)
+	changed.Config.SeverityConcern = f(1.8)
+	require.NoError(t, app.ApplyConfig(&config.Config{}, changed))
+	require.Nil(t, perms.rules)
+	require.Equal(t, 1, perms.resets)
+	require.InDelta(t, 1.8, setup.bouncer.Thresholds().SeverityConcern, 1e-9)
+
+	require.NoError(t, app.ApplyConfig(&config.Config{}, changed))
+	require.Equal(t, 1, perms.resets, "reapplying the same thresholds is a no-op")
+
+	invalid := validTrustedBouncer(config.BouncerEnforce)
+	invalid.Config.DenyAt = f(0.4)
+	require.Error(t, app.ApplyConfig(&config.Config{}, invalid))
+	require.Equal(t, 1, perms.resets)
+	require.InDelta(t, 1.8, setup.bouncer.Thresholds().SeverityConcern, 1e-9)
+
+	require.NoError(t, app.ApplyConfig(&config.Config{}, nil))
+	require.Equal(t, 1, perms.resets)
+}
+
+func TestApplyConfigWithoutBouncerSetsRules(t *testing.T) {
+	t.Parallel()
+	perms := &applyConfigPermissions{}
+	app := &App{Permissions: perms}
+	rules := []config.PermissionRule{{ToolPattern: "view", Action: config.PermissionAllow}}
+	require.NoError(t, app.ApplyConfig(&config.Config{Permissions: &config.Permissions{Rules: rules}}, validTrustedBouncer(config.BouncerEnforce)))
+	require.Equal(t, rules, perms.rules)
+	require.Zero(t, perms.resets)
+}
