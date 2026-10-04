@@ -25,6 +25,11 @@ var namedArgPattern = regexp.MustCompile(`\$([A-Z][A-Z0-9_]*)`)
 const (
 	userCommandPrefix    = "user:"
 	projectCommandPrefix = "project:"
+
+	// CommandFileName marks a directory as a single command. The directory
+	// name is the command name, and every other file in it is a resource the
+	// command can reference rather than a command of its own.
+	CommandFileName = "COMMAND.md"
 )
 
 // Argument represents a command argument with its metadata.
@@ -57,6 +62,10 @@ type CustomCommand struct {
 	Arguments    []Argument
 	Source       string // "" = user, "project" = project, "plugin:{name}" = plugin.
 	DisplayName  string // Set by collision detection. Empty = use Name.
+	// Location is the path to the COMMAND.md of a directory command, so the
+	// agent can resolve the command's bundled files. Empty for single-file
+	// commands.
+	Location string
 }
 
 // commandFrontmatter is the YAML structure expected in command .md files.
@@ -197,6 +206,24 @@ func applyCommandCollisions(commands []CustomCommand) {
 	plugin.DetectCollisions(ptrs)
 }
 
+// SourcePaths returns every directory commands are loaded from: the user and
+// project command directories plus each plugin's commands directory. Files
+// under these paths are command resources the agent may read without a
+// permission prompt, the same way skill directories are treated.
+func SourcePaths(cfg *config.Config, plugins []*plugin.Plugin) []string {
+	sources := buildCommandSources(cfg)
+	paths := make([]string, 0, len(sources)+len(plugins))
+	for _, src := range sources {
+		paths = append(paths, src.path)
+	}
+	for _, p := range plugins {
+		if p.CommandsPath != "" {
+			paths = append(paths, p.CommandsPath)
+		}
+	}
+	return paths
+}
+
 func buildCommandSources(cfg *config.Config) []commandSource {
 	return []commandSource{
 		{
@@ -237,8 +264,28 @@ func loadFromSource(source commandSource) ([]CustomCommand, error) {
 	var commands []CustomCommand
 
 	err := filepath.WalkDir(source.path, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !isMarkdownFile(d.Name()) {
+		if err != nil {
 			return err
+		}
+
+		if d.IsDir() {
+			if path == source.path || !hasCommandFile(path) {
+				return nil
+			}
+			cmd, err := loadCommand(filepath.Join(path, CommandFileName), source.path, source.prefix)
+			if err != nil {
+				slog.Warn("Failed to load command, skipping", "path", path, "error", err)
+				return fs.SkipDir
+			}
+			cmd.Source = source.source
+			commands = append(commands, cmd)
+			// Everything else in a command directory is a resource, not a command.
+			return fs.SkipDir
+		}
+
+		// A COMMAND.md at the source root has no directory to name it.
+		if !isMarkdownFile(d.Name()) || d.Name() == CommandFileName {
+			return nil
 		}
 
 		cmd, err := loadCommand(path, source.path, source.prefix)
@@ -269,6 +316,9 @@ func loadCommand(path, baseDir, prefix string) (CustomCommand, error) {
 	cmd := CustomCommand{
 		ID:   id,
 		Name: id,
+	}
+	if filepath.Base(path) == CommandFileName {
+		cmd.Location = path
 	}
 
 	// Look for frontmatter delimited by "---".
@@ -365,9 +415,11 @@ func buildCommandID(path, baseDir, prefix string) string {
 	relPath, _ := filepath.Rel(baseDir, path)
 	parts := strings.Split(relPath, string(filepath.Separator))
 
-	// Remove .md extension from last part
-	if len(parts) > 0 {
-		lastIdx := len(parts) - 1
+	lastIdx := len(parts) - 1
+	if parts[lastIdx] == CommandFileName && lastIdx > 0 {
+		// A directory command is named after its directory.
+		parts = parts[:lastIdx]
+	} else {
 		parts[lastIdx] = strings.TrimSuffix(parts[lastIdx], filepath.Ext(parts[lastIdx]))
 	}
 
@@ -376,6 +428,22 @@ func buildCommandID(path, baseDir, prefix string) string {
 
 func isMarkdownFile(name string) bool {
 	return strings.HasSuffix(strings.ToLower(name), ".md")
+}
+
+// hasCommandFile reports whether dir directly contains a COMMAND.md. The name
+// is matched exactly so a legacy command.md on a case-insensitive filesystem
+// is not mistaken for a directory command.
+func hasCommandFile(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Name() == CommandFileName && entry.Type().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
 
 func GetMCPPrompt(cfg *config.ConfigStore, clientID, promptID string, args map[string]string) (string, error) {

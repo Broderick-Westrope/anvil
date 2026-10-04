@@ -745,6 +745,24 @@ func TestMergeSkillsPaths(t *testing.T) {
 	}
 }
 
+func TestTrustedReadPathsIncludesCommandDirectories(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Options: &config.Options{
+			ProjectDirectory: "/project/.anvil",
+			SkillsPaths:      []string{"/user/skills"},
+		},
+	}
+	plugins := []*plugin.Plugin{{Name: "p1", SkillsPath: "/plugins/p1/skills", CommandsPath: "/plugins/p1/commands"}}
+
+	got := trustedReadPaths(cfg, plugins)
+	require.Contains(t, got, "/user/skills")
+	require.Contains(t, got, "/plugins/p1/skills")
+	require.Contains(t, got, "/project/.anvil/commands")
+	require.Contains(t, got, "/plugins/p1/commands")
+}
+
 func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
 	t.Parallel()
 

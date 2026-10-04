@@ -2522,7 +2522,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		content := substituteCustomCommandArgs(msg)
-		content = commands.FormatExpansionXML(customCommandLine(msg), content)
+		content = commands.FormatExpansionXML(customCommandLine(msg), msg.Location, content)
 
 		// Resolve and prepend skill content. This is safe to call in Update
 		// because ActiveSkillByName is an in-memory lookup (no IO). If it
@@ -4364,6 +4364,7 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 				Content:   cmd.Content,
 				Arguments: cmd.Arguments,
 				Skills:    cmd.Skills,
+				Location:  cmd.Location,
 			}
 			return func() tea.Msg { return action }
 		}
@@ -4376,7 +4377,7 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		if rawArgs != "" {
 			commandLine += " " + rawArgs
 		}
-		content = commands.FormatExpansionXML(commandLine, content)
+		content = commands.FormatExpansionXML(commandLine, cmd.Location, content)
 		if resolved := skills.ResolveContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
 			content = resolved + "\n\n" + content
 		}
@@ -5771,7 +5772,7 @@ func (m *UI) runMCPPrompt(clientID, promptID string, arguments map[string]string
 			}
 		}
 		return sendMessageMsg{
-			Content: commands.FormatExpansionXML(line.String(), prompt),
+			Content: commands.FormatExpansionXML(line.String(), "", prompt),
 		}
 	})
 

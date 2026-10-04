@@ -123,6 +123,10 @@ References, scripts and assets mentioned by a skill live alongside it: join thei
 
 Do not use MCP tools (including read_mcp_resource) to load skills.
 </skills_usage>
+
+<command_resources>
+A custom command the user runs arrives wrapped in a `<command_expansion>` block. When that block has a `location` attribute, the command is a directory command: files it references by relative path (references, scripts, assets) live alongside that location. Join their relative paths to the directory of the location and read them with `file_path`, as you would for a skill.
+</command_resources>
 {{- end}}
 
 <skill_authority>

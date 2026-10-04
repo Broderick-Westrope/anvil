@@ -26,6 +26,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/discover"
@@ -1253,7 +1254,7 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, c.cfg.WorkingDir(), mergeSkillsPaths(c.cfg.Config().Options.SkillsPaths, plugins)...),
+		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, c.cfg.WorkingDir(), trustedReadPaths(c.cfg.Config(), plugins)...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 	)
 
@@ -2128,6 +2129,13 @@ func mergeSkillsPaths(userPaths []string, plugins []*plugin.Plugin) []string {
 		}
 	}
 	return merged
+}
+
+// trustedReadPaths returns the directories the view tool reads without a
+// permission prompt: skill directories and command directories, so skills
+// and directory commands can both load their bundled resources.
+func trustedReadPaths(cfg *config.Config, plugins []*plugin.Plugin) []string {
+	return append(mergeSkillsPaths(cfg.Options.SkillsPaths, plugins), commands.SourcePaths(cfg, plugins)...)
 }
 
 // discoverSkills runs the skill discovery pipeline and returns both the

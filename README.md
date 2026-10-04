@@ -809,6 +809,33 @@ git clone https://github.com/anthropics/skills.git _temp
 mv _temp/skills/* . ; rm -r -force _temp
 ```
 
+### Custom Commands
+
+Custom commands are markdown prompts you run as slash commands. Anvil loads
+them from `~/.config/anvil/commands/`, `~/.anvil/commands/`, the project's
+`.anvil/commands/`, and each plugin's commands directory.
+
+A command is either a single file or a directory:
+
+```
+commands/
+├── commit.md                # /commit
+├── git/
+│   └── rebase.md            # /git:rebase
+└── wtp-pruning/             # /wtp-pruning
+    ├── COMMAND.md
+    └── references/
+        └── cleanup.md
+```
+
+A directory containing a `COMMAND.md` is one command, named after the
+directory. Every other file in it is a resource, not a command, so a command
+can bundle references, scripts, and assets the same way a skill does. When a
+directory command runs, Anvil records its location so the agent can resolve
+relative paths such as `references/cleanup.md`, and the agent reads those
+files without a permission prompt. `COMMAND.md` must be uppercase; a lowercase
+`command.md` is treated as an ordinary single-file command.
+
 ### Desktop notifications
 
 Anvil sends desktop notifications when a tool call requires permission and when

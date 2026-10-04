@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -377,4 +378,117 @@ func TestSubstituteArgs_AdversarialRawArgs(t *testing.T) {
 		"$NAME is raw",
 	)
 	require.Equal(t, "$NAME is raw and alice", result)
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+}
+
+func TestLoadFromSource_DirectoryCommand(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	commandFile := filepath.Join(dir, "wtp-pruning", CommandFileName)
+	writeFile(t, commandFile, "---\ndescription: Prune worktrees\n---\nSee references/cleanup.md\n")
+	writeFile(t, filepath.Join(dir, "wtp-pruning", "references", "cleanup.md"), "not a command")
+	writeFile(t, filepath.Join(dir, "wtp-pruning", "notes.md"), "not a command either")
+
+	cmds, err := loadFromSource(commandSource{path: dir, prefix: userCommandPrefix})
+	require.NoError(t, err)
+	require.Len(t, cmds, 1)
+	require.Equal(t, "user:wtp-pruning", cmds[0].ID)
+	require.Equal(t, "Prune worktrees", cmds[0].Description)
+	require.Equal(t, "See references/cleanup.md\n", cmds[0].Content)
+	require.Equal(t, commandFile, cmds[0].Location)
+}
+
+func TestLoadFromSource_NestedDirectoryCommand(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "git", "commit", CommandFileName), "commit body")
+
+	cmds, err := loadFromSource(commandSource{path: dir, prefix: userCommandPrefix})
+	require.NoError(t, err)
+	require.Equal(t, []string{"user:git:commit"}, commandIDs(cmds))
+}
+
+func TestLoadFromSource_MixedLayouts(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "flat.md"), "flat body")
+	writeFile(t, filepath.Join(dir, "group", "legacy.md"), "legacy body")
+	writeFile(t, filepath.Join(dir, "boxed", CommandFileName), "boxed body")
+
+	cmds, err := loadFromSource(commandSource{path: dir, prefix: userCommandPrefix})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"user:flat", "user:group:legacy", "user:boxed"}, commandIDs(cmds))
+
+	byID := commandsByID(cmds)
+	require.Empty(t, byID["user:flat"].Location)
+	require.Empty(t, byID["user:group:legacy"].Location)
+	require.Equal(t, filepath.Join(dir, "boxed", CommandFileName), byID["user:boxed"].Location)
+}
+
+func TestLoadFromSource_RootCommandFileIgnored(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, CommandFileName), "no directory to name it")
+
+	cmds, err := loadFromSource(commandSource{path: dir, prefix: userCommandPrefix})
+	require.NoError(t, err)
+	require.Empty(t, cmds)
+}
+
+func TestLoadFromSource_LowercaseCommandFileIsLegacy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "group", "command.md"), "legacy body")
+	writeFile(t, filepath.Join(dir, "group", "other.md"), "other body")
+
+	cmds, err := loadFromSource(commandSource{path: dir, prefix: userCommandPrefix})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"user:group:command", "user:group:other"}, commandIDs(cmds))
+}
+
+func TestLoadAllCommands_PluginDirectoryCommand(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	pluginDir := filepath.Join(root, "plug")
+	commandFile := filepath.Join(pluginDir, "commands", "greet", CommandFileName)
+	writeFile(t, commandFile, "hello")
+	writeFile(t, filepath.Join(pluginDir, "commands", "greet", "references", "tone.md"), "be nice")
+
+	cfg := &config.Config{
+		Options: &config.Options{ProjectDirectory: filepath.Join(root, ".anvil")},
+		Plugins: []config.PluginConfig{{Path: pluginDir}},
+	}
+
+	cmds, err := LoadAllCommands(cfg, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"plugin:plug:greet"}, commandIDs(cmds))
+	require.Equal(t, "greet", cmds[0].ItemName())
+	require.Equal(t, commandFile, cmds[0].Location)
+}
+
+func TestSourcePaths(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	pluginDir := filepath.Join(root, "plug")
+	require.NoError(t, os.MkdirAll(filepath.Join(pluginDir, "commands"), 0o755))
+	cfg := &config.Config{
+		Options: &config.Options{ProjectDirectory: filepath.Join(root, ".anvil")},
+		Plugins: []config.PluginConfig{{Path: pluginDir}},
+	}
+
+	paths := SourcePaths(cfg, plugin.DiscoverAll(cfg.Plugins, nil))
+	require.Contains(t, paths, filepath.Join(root, ".anvil", "commands"))
+	require.Contains(t, paths, filepath.Join(pluginDir, "commands"))
 }
