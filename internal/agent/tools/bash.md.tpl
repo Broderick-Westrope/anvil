@@ -76,7 +76,7 @@ When user asks to create git commit:
    - git diff (staged/unstaged changes)
    - git log (recent commit message style)
 
-2. Add relevant untracked files to staging. Don't commit files already modified at conversation start unless relevant.
+2. Stage only the files relevant to this commit by explicit path (`git add <path>...`), including untracked ones. Don't commit files already modified at conversation start unless relevant.
 
 3. Analyze staged changes in <commit_analysis> tags:
    - List changed/added files, summarize nature (feature/enhancement/bug fix/refactoring/test/docs)
@@ -96,7 +96,7 @@ When user asks to create git commit:
 
 6. Run git status to verify.
 
-Notes: Use "git commit -am" when possible, don't stage unrelated files, NEVER update config, don't push, no -i flags, no empty commits, return empty response, when rebasing always use -m.
+Notes: Never use "git commit -a", "git commit -am", "git add -A" or "git add .", don't stage unrelated files, NEVER update config, don't push, no -i flags, no empty commits, return empty response, when rebasing always use -m.
 </git_commits>
 
 <pull_requests>
