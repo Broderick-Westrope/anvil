@@ -93,10 +93,14 @@ watcher.
   the `plugins` key in-process. Removing `pluginsChangedHook` removes the
   rollback coupling, the deadlock constraint, and the reload-ordering race
   in one go.
-- **No locks around agent runs.** "Reload Config & Plugins" relies on
-  atomic swaps, as "Reload Plugins" does today; Task 2 of phase 1 verifies
-  this mid-run. `/reload-instance` uses an atomic "closing" admission flag.
-  Anything that slips past it is cancelled by the normal shutdown.
+- **One admission gate for both reloads.** The coordinator's `Pause` (phase
+  1) stops new top-level runs from being admitted and waits up to 2 seconds
+  for in-flight ones, preparation included.
+  - "Reload Config & Plugins" always applies config (safe mid-turn) and
+    rebuilds plugins only under a successful `Pause`. When a turn is
+    running it reports "plugins not reloaded: agent is busy".
+  - `/reload-instance` pauses and never resumes. The UI also freezes
+    submissions and waits for pending sends.
 
 ## Review Notes
 
@@ -202,3 +206,24 @@ specific race:
   latest published config, so an `autoReload` in between converges.
 - **Simplification:** `ReloadResult` and `ReloadFromDiskWithResult` were
   dropped. With the hook gone, `ReloadFromDisk` suffices.
+
+### Round 4 (devil's advocate)
+
+Revision 5. This round replaced round 3's two separate mechanisms (the busy
+refusal and the `closing` flag) with one:
+
+- **Config reload could still overlap runs.** Its busy check came before
+  seconds of asynchronous loading. Fixed with a coordinator `Pause`
+  admission gate in phase 1, covering preparation as well as the run.
+  - Config always applies.
+  - Plugins rebuild only under the pause, or are reported busy. This also
+    removes the refusal UX: rules and thresholds now apply even mid-turn.
+- **The `agentsGen` check-then-set race.** The generation compare and
+  `agents.Set` now share one `orchestratorMu.RLock` critical section.
+  `Reset` happens under the write lock. The lock order is `agentBuildMu`
+  then `orchestratorMu`.
+- **Handoff vs a rejected prompt.** `/reload-instance` now reuses `Pause`,
+  which never rejects runs (they wait), so no prompt is turned back. A UI
+  `pendingSends` counter and a `reloading` freeze cover a send `tea.Cmd`
+  that's been scheduled but hasn't reached `Run`. `ErrClosing`, the second
+  dispatch check, and the job-waker special case are all gone.

@@ -40,13 +40,20 @@
   - After this change, `autoReload` refreshes the store only.
   - Plugin rediscovery and pushing config into services happen only in
     `ReloadConfigAndPlugins`, serialised by one mutex.
-- **Refuse while the agent is busy.** Round 3 confirmed that tools are
-  re-read on every step (`agent.go:466-468`). That's deliberate, so MCP
-  tools enabled mid-run appear immediately. It also means a mid-run swap
-  could remove a tool the model is about to call. So the UI refuses the
-  reload while `AgentIsBusy()` and says so. The tiny window between that
-  check and the swap is no worse than today's "Reload Plugins", which never
-  checks.
+- **Config applies at any time; plugins wait for idle.** Round 3 confirmed
+  that tools are re-read on every step (`agent.go:466-468`). That's
+  deliberate, so MCP tools enabled mid-run appear immediately, but it means
+  swapping tools mid-turn isn't safe.
+  - Config publication (rules, thresholds, models from the next run) is
+    safe mid-turn, so it always runs.
+  - The plugin rebuild runs under a coordinator `Pause` (Task 2). `Pause`
+    stops new top-level runs from being admitted and waits, up to 2
+    seconds, for in-flight ones, preparation included, to finish.
+  - If a turn is still running when `Pause` gives up, plugins are skipped
+    and reported as "plugins not reloaded: agent is busy". Config is still
+    applied, so the two are independent.
+  - Runs that arrive during a pause wait for it to end; they aren't
+    rejected.
 - **Last-good agent defaults live on the store**, so every reload path,
   including `autoReload`, rebuilds `Agents` from the last successful plugin
   discovery before publishing.
@@ -96,8 +103,10 @@ restart-required unless shown to be read live.
   agents remain. After any later `autoReload` (for example, toggling compact
   mode), plugin agents are still present.
 - [ ] Add an MCP server and reload twice: both reports name `mcp`.
-- [ ] Reload during an active agent turn: refused with "Agent is busy", and
-  the turn is unaffected.
+- [ ] Reload during an active agent turn: config and rules apply
+  immediately, the report says "plugins not reloaded: agent is busy", and
+  the turn is unaffected. A message sent while a plugin rebuild is paused
+  starts once it finishes.
 - [ ] A plugin with a malformed manifest, or an unparsable agent `.md`: the
   other plugins load, and the report says "plugins reloaded with N
   warnings" and names the files.
@@ -212,7 +221,7 @@ go test -race ./internal/config -count=1
 
 ## Coordinator Tasks
 
-### Task 2: Commit plugin agent defaults through the store, fix the coordinator's unlocked reads, and surface plugin diagnostics
+### Task 2: Run admission (`Pause`), commit plugin agent defaults through the store, fix the coordinator's unlocked reads, and surface plugin diagnostics
 
 **Files:**
 
@@ -221,7 +230,38 @@ go test -race ./internal/config -count=1
 
 **Steps:**
 
-1. [ ] In coordinator construction (`coordinator.go:200-212`) and in
+1. [ ] **Run admission.** Add an admission gate to the coordinator: a
+   `sync.Mutex`, `paused bool`, `active int`, and a `chan struct{}` that's
+   closed and replaced on each resume, so waiters can `select` on it
+   together with `ctx.Done()`.
+   - **Top-level entry points:** `Run`, `RunWake`, and `Summarize`. At
+     entry, under the mutex: while `paused`, unlock and wait on the resume
+     channel or `ctx.Done()`, returning `ctx.Err()` in the latter case.
+     Then `active++` and unlock. `defer` the decrement when the call
+     returns, so `active` covers preparation (`WaitForInit`, `UpdateModels`,
+     token refresh) as well as the run.
+   - **Nested runs** (task tool subagents, auto-summarise inside a run)
+     must not take the gate, or a paused gate would deadlock with its own
+     parent. Verify how they're invoked. If any reach `coordinator.Run` or
+     `Summarize`, give them an internal, ungated path.
+   - Add:
+
+     ```go
+     // Pause stops new top-level runs from being admitted and waits for
+     // active ones to finish, up to budget. On success the caller must
+     // call resume. On timeout it un-pauses and returns ErrBusy.
+     func (c *coordinator) Pause(ctx context.Context, budget time.Duration) (resume func(), err error)
+     ```
+
+     It sets `paused`, then polls `active == 0` every 20ms under the mutex
+     until the budget runs out.
+   - Add `ErrBusy` and put `Pause` on the coordinator interface.
+   - Check that title generation and any other direct `orch.Run` callers
+     are either nested (ungated) or go through a gated entry point.
+   - A run waiting on a pause must return when its context is cancelled,
+     so `Shutdown` (`CancelAll`, job waker close) never hangs on it.
+2. [ ] **Agent defaults through the store.** In coordinator construction
+   (`coordinator.go:200-212`) and in
    `ReloadPlugins` step 7, replace the direct `cfg.Agents = ...` with
    `c.cfg.SetAgentDefaults(mdDefaults)`. Read `c.cfg.Config().Agents` for
    `c.agentConfigs`.
@@ -231,23 +271,25 @@ go test -race ./internal/config -count=1
      Keep using that snapshot for discovery, and don't mix in later live
      reads. That's safe because `ReloadConfigAndPlugins` serialises calls
      (Task 4) and nothing else calls `ReloadPlugins` once the hook is gone.
-2. [ ] **Fix the existing unlocked reads.** The task tool reads
+3. [ ] **Fix the existing unlocked reads.** The task tool reads
    `c.agentConfigs` and `c.agentMDs` without a lock
    (`task_tool.go:49-66`). `getOrBuildAgent` reads `c.agentConfigs` under
    `agentBuildMu` only (`coordinator.go:997`), while `ReloadPlugins` writes
    them under `orchestratorMu`.
    - Take `c.orchestratorMu.RLock()` for those reads and copy out what's
      needed before releasing.
-   - Lock order: `getOrBuildAgent` must release `orchestratorMu` before
-     taking `agentBuildMu`, or take them in the fixed order `agentBuildMu`
-     then `orchestratorMu.RLock`. Document whichever is chosen next to both
+   - **Stale cache entries:** add `agentsGen uint64`, guarded by
+     `orchestratorMu`. `ReloadPlugins` increments it and calls
+     `c.agents.Reset` under `orchestratorMu.Lock`, which it already holds
+     for the swap. `getOrBuildAgent` reads the generation under
+     `orchestratorMu.RLock` before building and releases the lock while
+     building. It then takes `orchestratorMu.RLock` again to compare the
+     generation and call `c.agents.Set` in the same critical section. Reset
+     and Set are then mutually exclusive.
+   - The resulting lock order is `agentBuildMu` then `orchestratorMu`.
+     `ReloadPlugins` never takes `agentBuildMu`. Document this next to both
      locks.
-   - **Stale cache entries:** add `agentsGen atomic.Uint64`, incremented in
-     `ReloadPlugins` together with `c.agents.Reset`. `getOrBuildAgent`
-     captures the generation before building and only calls
-     `c.agents.Set` if it's unchanged. It still returns the built agent for
-     the current call.
-3. [ ] **Plugin diagnostics.** Today `plugin.Discover` drops malformed
+4. [ ] **Plugin diagnostics.** Today `plugin.Discover` drops malformed
    manifests (`plugin.go:88-94`) and `discoverAgentMDs` skips unparsable
    agent files (`coordinator.go:288-296`) with only a log line.
    - Collect these as `[]PluginWarning{Path, Err}` and return them from
@@ -259,7 +301,14 @@ go test -race ./internal/config -count=1
    - Thread the warnings through `plugin.DiscoverAll` and
      `discoverAgentMDs` with a collector parameter, and update their other
      callers (construction) to log as today.
-4. [ ] Tests:
+5. [ ] Tests:
+   - `Pause`: blocks new runs; waits for an active one, including one
+     blocked in `UpdateModels` on a channel; times out with `ErrBusy` and
+     un-pauses; releases waiters on resume.
+   - A run waiting on a pause returns `ctx.Err()` when its context is
+     cancelled.
+   - A nested subagent call inside a run doesn't deadlock while another
+     goroutine waits in `Pause`.
    - `ReloadPlugins` failing at tool build leaves `Config().Agents` and
      `c.agentConfigs` unchanged.
    - Under `-race`, a task-tool lookup and a subagent build run concurrently
@@ -271,7 +320,7 @@ go test -race ./internal/config -count=1
 **Verify:**
 
 ```bash
-go test -race ./internal/agent ./internal/plugin -run 'Reload|Task|Plugin' -count=1
+go test -race ./internal/agent ./internal/plugin -run 'Pause|Reload|Task|Plugin' -count=1
 # Expected: PASS
 ```
 
@@ -349,6 +398,7 @@ go test -race ./internal/bouncer ./internal/permission/... ./internal/app -count
    	ConfigErr, ApplyErr, PluginsErr error
    	PluginWarnings                  []agent.PluginWarning
    	PluginsSkipped                  bool // No coordinator yet (onboarding).
+   	PluginsBusy                     bool // A turn was running; plugins not reloaded.
    	RestartRequired                 []string
    }
    ```
@@ -372,8 +422,11 @@ go test -race ./internal/bouncer ./internal/permission/... ./internal/app -count
    	}
    	if w.app.AgentCoordinator == nil {
    		r.PluginsSkipped = true
+   	} else if resume, err := w.app.AgentCoordinator.Pause(ctx, 2*time.Second); err != nil {
+   		r.PluginsBusy = true // Config above still applied.
    	} else {
    		r.PluginWarnings, r.PluginsErr = w.app.AgentCoordinator.ReloadPlugins(ctx)
+   		resume()
    	}
    	startCfg, startB, startRaw := w.store.StartupSnapshot()
    	r.RestartRequired = config.RestartRequired(startCfg, w.store.Config(), startB, w.store.TrustedBouncer(), startRaw, w.store.RawProjectDirectory())
@@ -388,6 +441,8 @@ go test -race ./internal/bouncer ./internal/permission/... ./internal/app -count
      keeps plugin agents.
    - A new MCP server is reported twice.
    - A nil coordinator gives `PluginsSkipped`.
+   - A coordinator whose `Pause` returns `ErrBusy` gives `PluginsBusy`, with
+     `ConfigErr` nil and the new rules applied.
    - Two goroutines reloading at once both succeed.
 
 **Verify:**
@@ -411,13 +466,13 @@ go test -race ./internal/workspace -count=1
 1. [ ] Rename `ActionReloadPlugins` to `ActionReloadConfig`. The palette
    item becomes `"reload_config"`, "Reload Config & Plugins", with aliases
    `"reload plugins"` and `"reload config"` if `WithAliases` supports them.
-2. [ ] `reloadConfig` first checks `m.com.Workspace.AgentIsBusy()` and
-   refuses with `"Agent is busy; reload when it's idle"`. Otherwise it shows
-   the status "Reloading config…" immediately, because provider discovery
-   can take seconds (`load.go:426-450`). It runs the reload in a `tea.Cmd`
-   and formats the result with a pure
+2. [ ] `reloadConfig` shows the status "Reloading config…" immediately,
+   because provider discovery can take seconds (`load.go:426-450`). It runs
+   the reload in a `tea.Cmd` and formats the result with a pure
    `formatReloadReport(r) (string, bool)`:
    - All OK: `"Config and plugins reloaded"`.
+   - Plugins busy: `"Config reloaded · plugins not reloaded: agent is busy"`
+     (error).
    - With plugin warnings: `"Config and plugins reloaded · 2 plugin warnings: <first path>"`.
      Warnings don't make the bool true.
    - Restart pending: `"… · mcp, lsp need /reload-instance"`.
@@ -429,7 +484,7 @@ go test -race ./internal/workspace -count=1
    - Errors are truncated to 120 runes, with the full text logged.
 3. [ ] Keep the existing post-reload UI refresh (slash autocomplete, custom
    commands, skill states), run whenever `PluginsErr == nil &&
-   !PluginsSkipped`.
+   !PluginsSkipped && !PluginsBusy`.
 4. [ ] Tests: a `formatReloadReport` table covering every branch; the
    palette item; review any golden updates.
 5. [ ] README: one paragraph. After editing config or running `anvil

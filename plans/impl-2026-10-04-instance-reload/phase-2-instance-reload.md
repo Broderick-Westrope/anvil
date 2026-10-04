@@ -51,9 +51,9 @@ state. In particular:
   and the notice shows both versions.
 - [ ] While the agent is running: refused, nothing changes.
 - [ ] After confirming: no user run, job wake, or summarisation can start
-  or finish preparing before exit. A run that was mid-preparation when the
-  reload began either completes its dispatch before the reload proceeds or
-  is turned back before it creates a message, so nothing is half written.
+  before exit. The reload proceeds only once every top-level call,
+  preparation included, has finished, and no send is pending in the UI, so
+  nothing is half written and no submitted prompt is lost.
 - [ ] With a running background job: confirmation first, listing the job.
   No keeps it running.
 - [ ] With an attachment: the confirmation mentions it, and refusing or
@@ -348,38 +348,26 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
 
 **Steps:**
 
-1. [ ] **Admission: flag plus a count of runs being prepared.** Add
-   `closing atomic.Bool` and `preparing atomic.Int32` to the coordinator.
-   - In `Run`, `RunWake`, and `Summarize`, do the following at entry:
-     `c.preparing.Add(1)`, then check `closing` and return
-     `ErrClosing = errors.New("anvil is reloading")` if it's set (after
-     `preparing.Add(-1)`).
-   - Then do the existing preparation (`WaitForInit`, `UpdateModels`,
-     token refresh). Check `closing` **again** immediately before
-     dispatching to the session agent (`orch.Run`, `orch.RunWake`,
-     `orch.Summarize`). If it's set, decrement and return `ErrClosing`
-     before the user message is created. Message creation happens inside
-     the dispatch (`coordinator.go:403` onwards), so nothing is half
-     written.
-   - Decrement `preparing` with a `defer` when the entry point returns. It
-     then counts every call from entry to finish, preparation included, so
-     `preparing == 0` means nothing is running or about to run. That's
-     stronger than `IsBusy()`, which only sees registered runs.
-   - Add `BeginClosing(ctx context.Context) error`. It sets `closing`, then
-     polls every 20ms, up to a 2-second budget, until `preparing == 0`. On
-     timeout it clears `closing` and returns `ErrBusy`. Add `EndClosing()`
-     to clear it. Expose both through the workspace as `AgentBeginClosing`
-     and `AgentEndClosing`.
-   - Check that title generation and any other `orch.Run` callers go through
-     one of the three entry points; if not, give them the same guard.
-   - **The UI path for a returned `ErrClosing`:** the user can't submit
-     while the confirmation is open, and after confirming the process is
-     about to exit. If `Run` does return `ErrClosing` to the UI, put the
-     prompt back in the editor so it ends up in the handoff draft. Find the
-     UI's send-error path for this.
-   - **The job waker:** read `job_waker.go:205-235`. Make `ErrClosing` stop
-     rescheduling for that wake. Don't fold it into `ErrSessionBusy`, whose
-     recheck is scheduled separately. Add a test.
+1. [ ] **Admission: reuse phase 1's `Pause`, and freeze submissions.**
+   - Expose the coordinator's `Pause` through the workspace as
+     `AgentPause(ctx, budget) (resume func(), err error)`. Phase 2 never
+     calls `resume`, because the process exits. Runs that arrive afterwards
+     (job wakes) wait on the pause until shutdown cancels their contexts.
+     Phase 1 already tests that this path returns. No `ErrClosing` and no
+     second check before dispatch are needed: `Pause` only succeeds once
+     every top-level call, preparation included, has finished, and nothing
+     new is admitted afterwards.
+   - **UI submission freeze.** Add a `pendingSends int` to the UI model.
+     Increment it when a send `tea.Cmd` is created (the submit path near
+     `ui.go:3043-3064`). Decrement it when that send's result message is
+     handled (`ui.go:4705-4718`), on success or error. Add a `reloading`
+     flag, set at the start of `startReloadInstance` and cleared on every
+     refusal or cancellation. While `reloading` is set, the submit path,
+     session switching, and new-session creation report "Reload in
+     progress" and do nothing.
+   - `startReloadInstance` refuses with "Wait for the message to send" if
+     `pendingSends > 0`. That covers a send `tea.Cmd` that's been scheduled
+     but hasn't reached `coordinator.Run`, which `Pause` alone can't see.
 2. [ ] Workspace: `RunningJobs() []shell.JobInfo` across sessions. Return
    nil when there's no app or coordinator.
 3. [ ] `ReloadRequest{Exe, SessionID, HandoffPath string; Yolo config.YoloLevel}`
@@ -394,46 +382,46 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
    test that drives real key messages (type `/reload-instance`, then enter)
    with an attachment present, and asserts the attachment survives a
    refusal and a cancellation.
-5. [ ] `startReloadInstance`:
+5. [ ] `startReloadInstance` sets `reloading` first, then checks:
    1. If a permission prompt is open, refuse.
-   2. If `AgentIsBusy()`, refuse: "Agent is busy; wait for it or cancel it".
-   3. If `reload.Executable()` fails, show its error.
-   4. Run `reload.Preflight` in a `tea.Cmd` with the status "Checking new
+   2. If `pendingSends > 0`, refuse: "Wait for the message to send".
+   3. If `AgentIsBusy()`, refuse: "Agent is busy; wait for it or cancel it".
+   4. If `reload.Executable()` fails, show its error.
+   5. Run `reload.Preflight` in a `tea.Cmd` with the status "Checking new
       anvil binary…". On error, show "New binary failed its check: <err>".
-   5. If any jobs are running or attachments are present, open
+   6. If any jobs are running or attachments are present, open
       `ReloadConfirm` with the version, the jobs (up to 3, then "+K more"),
       and "attachments will be dropped".
-   6. On confirm, or when there's nothing to confirm:
-      - Call `AgentBeginClosing(ctx)` in a `tea.Cmd`, with the status
-        "Waiting for agent to settle…". On `ErrBusy`, refuse: "Agent started
-        a turn; try again when it's idle".
+   7. On confirm, or when there's nothing to confirm:
+      - Call `AgentPause(ctx, 2*time.Second)` in a `tea.Cmd`, with the
+        status "Waiting for agent to settle…". On `ErrBusy`, refuse: "Agent
+        started a turn; try again when it's idle".
       - Write the handoff (draft, yolo, bouncer mode, session ID,
-        `version.Version`). On failure, call `AgentEndClosing()`, show the
-        error, and stop.
+        `version.Version`). On failure, call `resume()`, show the error, and
+        stop.
       - Set `m.reloadRequest` and return the normal quit sequence that runs
-        before `tea.Quit`. Closing stays set until exit.
-   7. On cancel, do nothing. Closing was never set.
+        before `tea.Quit`. The pause stays in place until exit.
+   8. Every refusal and cancellation clears `reloading`. Cancelling before
+      confirming never pauses.
 6. [ ] Tests:
-   - Every refusal leaves `reloadRequest` nil and closing cleared.
-   - Confirming begins closing, writes the handoff with the draft, and sets
-     the request.
-   - A `BeginClosing` timeout clears closing and refuses.
+   - Every refusal leaves `reloadRequest` nil, `reloading` cleared, and the
+     coordinator un-paused.
+   - A pending send (`pendingSends > 0`) refuses.
+   - While `reloading` is set, submit and session switching are no-ops
+     with "Reload in progress".
+   - Confirming pauses, writes the handoff with the draft, and sets the
+     request.
+   - A `Pause` timeout refuses, and the coordinator is un-paused (phase 1
+     guarantees it).
+   - A handoff write failure calls `resume`.
    - `SetReloadHandoff` restores the draft and calls `ack` once.
    - The key-driven attachment test.
-   - Coordinator: a run blocked in preparation (stub `UpdateModels` on a
-     channel) when `BeginClosing` starts makes `BeginClosing` wait. After
-     release, the run returns `ErrClosing` at the second check, creates no
-     message, and `BeginClosing` then succeeds. Use channels, not sleeps,
-     apart from `BeginClosing`'s own poll.
-   - `Run`, `RunWake`, and `Summarize` return `ErrClosing` while closing is
-     set.
-   - The waker doesn't reschedule after `ErrClosing`.
    - Review any golden updates.
 
 **Verify:**
 
 ```bash
-go test ./internal/ui/... ./internal/agent -count=1 && task lint
+go test ./internal/ui/... -count=1 && task lint
 # Expected: PASS
 ```
 
