@@ -21,8 +21,6 @@ const (
 	navDialogHeight   = 30
 )
 
-const treeScrollMargin = 3
-
 // treeNode represents a single node in the in-memory message tree.
 type treeNode struct {
 	msg            message.Message
@@ -342,11 +340,11 @@ func (t *Tree) handleNavKey(msg tea.KeyPressMsg) Action {
 
 	case key.Matches(msg, t.keyMap.GoTop):
 		t.list.SelectFirst()
-		t.list.ScrollToSelectedWithMargin(treeScrollMargin)
+		t.list.ScrollToSelectedWithMargin(listScrollMargin)
 
 	case key.Matches(msg, t.keyMap.GoBottom):
 		t.list.SelectLast()
-		t.list.ScrollToSelectedWithMargin(treeScrollMargin)
+		t.list.ScrollToSelectedWithMargin(listScrollMargin)
 
 	case key.Matches(msg, t.keyMap.Left):
 		if item := t.selectedTreeItem(); item != nil {
@@ -377,7 +375,7 @@ func (t *Tree) handleNavKey(msg tea.KeyPressMsg) Action {
 		} else {
 			t.list.SelectPrev()
 		}
-		t.list.ScrollToSelectedWithMargin(treeScrollMargin)
+		t.list.ScrollToSelectedWithMargin(listScrollMargin)
 
 	case key.Matches(msg, t.keyMap.Next):
 		t.list.Focus()
@@ -386,7 +384,7 @@ func (t *Tree) handleNavKey(msg tea.KeyPressMsg) Action {
 		} else {
 			t.list.SelectNext()
 		}
-		t.list.ScrollToSelectedWithMargin(treeScrollMargin)
+		t.list.ScrollToSelectedWithMargin(listScrollMargin)
 	}
 	return nil
 }
@@ -440,7 +438,7 @@ func (t *Tree) selectByMessageID(messageID string) {
 		item := t.list.ItemAt(i)
 		if ti, ok := item.(*TreeItem); ok && ti.node.msg.ID == messageID {
 			t.list.SetSelected(i)
-			t.list.ScrollToSelectedWithMargin(treeScrollMargin)
+			t.list.ScrollToSelectedWithMargin(listScrollMargin)
 			return
 		}
 	}
@@ -525,7 +523,7 @@ func (t *Tree) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	t.list.SetSize(innerWidth, height-heightOffset)
 	if t.needsInitialScroll {
 		t.needsInitialScroll = false
-		t.list.ScrollToSelectedWithMargin(treeScrollMargin)
+		t.list.ScrollToSelectedWithMargin(listScrollMargin)
 	}
 
 	rc := NewRenderContext(sty, width)

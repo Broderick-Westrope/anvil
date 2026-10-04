@@ -269,7 +269,7 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 		} else {
 			mp.list.SelectPrev()
 		}
-		mp.list.ScrollToSelected()
+		mp.list.ScrollToSelectedWithMargin(listScrollMargin)
 	case key.Matches(msg, mp.keyMap.Next):
 		mp.list.Focus()
 		if mp.list.IsSelectedLast() {
@@ -277,7 +277,7 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 		} else {
 			mp.list.SelectNext()
 		}
-		mp.list.ScrollToSelected()
+		mp.list.ScrollToSelectedWithMargin(listScrollMargin)
 	case key.Matches(msg, mp.keyMap.Select):
 		if selected := mp.list.SelectedItem(); selected != nil {
 			if item, ok := selected.(*MCPPaletteItem); ok && item != nil {

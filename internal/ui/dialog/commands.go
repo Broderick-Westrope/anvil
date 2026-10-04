@@ -171,7 +171,7 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 				for i, it := range c.list.FilteredItems() {
 					if ci, ok := it.(*CommandItem); ok && ci != nil && ci.id == prevID {
 						c.list.SetSelected(i)
-						c.list.ScrollToSelected()
+						c.list.ScrollToSelectedWithMargin(listScrollMargin)
 						break
 					}
 				}
@@ -195,7 +195,7 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 			} else {
 				c.list.SelectPrev()
 			}
-			c.list.ScrollToSelected()
+			c.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, c.keyMap.Next):
 			c.list.Focus()
 			if c.list.IsSelectedLast() {
@@ -203,7 +203,7 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 			} else {
 				c.list.SelectNext()
 			}
-			c.list.ScrollToSelected()
+			c.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, c.keyMap.Select):
 			if selectedItem := c.list.SelectedItem(); selectedItem != nil {
 				if item, ok := selectedItem.(*CommandItem); ok && item != nil {

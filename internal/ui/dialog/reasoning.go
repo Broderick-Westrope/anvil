@@ -124,7 +124,7 @@ func (r *Reasoning) HandleMsg(msg tea.Msg) Action {
 				break
 			}
 			r.list.SelectPrev()
-			r.list.ScrollToSelected()
+			r.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, r.keyMap.Next):
 			r.list.Focus()
 			if r.list.IsSelectedLast() {
@@ -133,7 +133,7 @@ func (r *Reasoning) HandleMsg(msg tea.Msg) Action {
 				break
 			}
 			r.list.SelectNext()
-			r.list.ScrollToSelected()
+			r.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, r.keyMap.Select):
 			selectedItem := r.list.SelectedItem()
 			if selectedItem == nil {
@@ -191,7 +191,7 @@ func (r *Reasoning) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	if r.list.Height() >= visibleCount {
 		r.list.ScrollToTop()
 	} else {
-		r.list.ScrollToSelected()
+		r.list.ScrollToSelectedWithMargin(listScrollMargin)
 	}
 
 	listView := t.Dialog.List.Height(r.list.Height()).Render(r.list.Render())
@@ -266,7 +266,7 @@ func (r *Reasoning) setReasoningItems() error {
 
 	r.list.SetItems(items...)
 	r.list.SetSelected(selectedIndex)
-	r.list.ScrollToSelected()
+	r.list.ScrollToSelectedWithMargin(listScrollMargin)
 	return nil
 }
 

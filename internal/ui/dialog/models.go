@@ -174,7 +174,7 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 			} else {
 				m.list.SelectPrev()
 			}
-			m.list.ScrollToSelected()
+			m.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, m.keyMap.Next):
 			m.list.Focus()
 			if m.list.IsSelectedLast() {
@@ -182,7 +182,7 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 			} else {
 				m.list.SelectNext()
 			}
-			m.list.ScrollToSelected()
+			m.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, m.keyMap.Select, m.keyMap.Edit):
 			selectedItem := m.list.SelectedItem()
 			if selectedItem == nil {
@@ -482,7 +482,7 @@ func (m *Models) setProviderItems() error {
 	m.list.SetGroups(groups...)
 	m.list.SetSelectedItem(selectedItemID)
 	if selectedItemID != "" {
-		m.list.ScrollToSelected()
+		m.list.ScrollToSelectedWithMargin(listScrollMargin)
 	} else {
 		m.list.ScrollToTop()
 	}
