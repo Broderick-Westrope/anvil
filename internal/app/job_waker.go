@@ -22,6 +22,10 @@ type jobWaker struct {
 	sessions sessionGetter
 	enabled  atomic.Bool
 	closed   atomic.Bool
+	// lifetime bounds every wake run and is canceled by close, so a wake
+	// waiting for run admission (coordinator Pause) returns at shutdown.
+	lifetime context.Context
+	stop     context.CancelFunc
 	// signal wakes the loop to drain triggered; capacity 1, non-blocking
 	// sends, so triggers are coalesced but never lost.
 	signal chan struct{}
@@ -53,9 +57,12 @@ func (s composerState) idle() bool {
 }
 
 func newJobWaker(store *jobevents.Store, sessions sessionGetter) *jobWaker {
+	lifetime, stop := context.WithCancel(context.Background())
 	return &jobWaker{
 		store:     store,
 		sessions:  sessions,
+		lifetime:  lifetime,
+		stop:      stop,
 		signal:    make(chan struct{}, 1),
 		composer:  make(map[string]composerState),
 		triggered: make(map[string]bool),
@@ -105,10 +112,12 @@ func (w *jobWaker) trigger(sessionID string) {
 	}
 }
 
-// close stops all future wakes. In-flight wake runs are canceled by the
+// close stops all future wakes and cancels in-flight ones, including any
+// still waiting to be admitted. Running wakes are also canceled by the
 // agent's CancelAll.
 func (w *jobWaker) close() {
 	w.closed.Store(true)
+	w.stop()
 }
 
 // wait blocks until in-flight RunWake calls return or ctx is done, and
@@ -213,6 +222,9 @@ func (w *jobWaker) check(ctx context.Context, sessionID string) {
 
 	go func() {
 		defer w.wg.Done()
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		defer context.AfterFunc(w.lifetime, cancel)()
 		_, err := wakeAgent.RunWake(ctx, sessionID, func() bool { return w.eligible(sessionID) })
 		if err != nil && !errors.Is(err, agent.ErrSessionBusy) &&
 			!errors.Is(err, agent.ErrWakeNotAllowed) && !errors.Is(err, context.Canceled) {

@@ -387,7 +387,8 @@ func (w *AppWorkspace) ReloadPlugins(ctx context.Context) error {
 	if w.app.AgentCoordinator == nil {
 		return fmt.Errorf("agent coordinator not initialized")
 	}
-	return w.app.AgentCoordinator.ReloadPlugins(ctx)
+	_, err := w.app.AgentCoordinator.ReloadPlugins(ctx)
+	return err
 }
 
 // -- Skills --

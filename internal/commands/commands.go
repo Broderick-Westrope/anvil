@@ -96,7 +96,7 @@ func LoadCustomCommands(cfg *config.Config) ([]CustomCommand, error) {
 // pass them to avoid redundant filesystem walks and TOCTOU divergence.
 func LoadAllCommands(cfg *config.Config, plugins []*plugin.Plugin) ([]CustomCommand, error) {
 	if plugins == nil {
-		plugins = plugin.DiscoverAll(cfg.Plugins)
+		plugins = plugin.DiscoverAll(cfg.Plugins, nil)
 	}
 
 	var all []CustomCommand

@@ -318,3 +318,41 @@ func TestJobWaker_WaitIsBounded(t *testing.T) {
 	_, wakes := f.agent.counts()
 	require.Equal(t, 1, wakes)
 }
+
+// pausedWakeAgent mimics a coordinator whose Pause is never resumed: each
+// RunWake waits for admission until its context is done.
+type pausedWakeAgent struct {
+	entered chan struct{}
+}
+
+func (p *pausedWakeAgent) RunWake(ctx context.Context, _ string, _ func() bool) (*fantasy.AgentResult, error) {
+	close(p.entered)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestJobWaker_ShutdownCancelsWakeBlockedBehindPause(t *testing.T) {
+	t.Parallel()
+	f := newWakerFixture(t)
+	paused := &pausedWakeAgent{entered: make(chan struct{})}
+	f.waker.setAgent(paused)
+	f.waker.SetComposerState(topSession, true, false, false)
+	f.complete("J-top", topSession)
+
+	// The app context outlives shutdown, as it does in App.Shutdown.
+	f.waker.check(context.Background(), topSession)
+	select {
+	case <-paused.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no wake started")
+	}
+
+	// Mirror App.Shutdown: close the waker, then wait for wakes within the
+	// shared 5-second shutdown budget.
+	start := time.Now()
+	f.waker.close()
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.True(t, f.waker.wait(shutdownCtx))
+	require.Less(t, time.Since(start), 500*time.Millisecond)
+}
