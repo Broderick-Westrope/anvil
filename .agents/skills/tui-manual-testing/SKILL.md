@@ -104,5 +104,9 @@ the behaviour under test genuinely requires a live turn.
 ## When Not To Use This
 
 - Component-level rendering: add or update a Catwalk golden instead.
-- Logic that is not visual: write a normal unit test.
 - Anything the user can answer faster by looking at their own screen.
+
+Non-visual logic still gets a unit test first. Then confirm it here too,
+because a passing unit test doesn't prove the wiring works in a real
+session. That usually means submitting a prompt, which spends tokens, so
+keep it to one short turn.
