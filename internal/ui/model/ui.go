@@ -139,15 +139,6 @@ type (
 	mcpPromptsLoadedMsg struct {
 		Prompts []commands.MCPPrompt
 	}
-	// pluginReloadedMsg is sent when plugin reload completes successfully.
-	pluginReloadedMsg struct {
-		SkillStates    []*skills.SkillState
-		CustomCommands []commands.CustomCommand
-	}
-	// pluginReloadFailedMsg is sent when plugin reload fails.
-	pluginReloadFailedMsg struct {
-		Err error
-	}
 	// mcpStateChangedMsg is sent when there is a change in MCP client states.
 	mcpStateChangedMsg struct {
 		states map[string]mcp.ClientInfo
@@ -602,26 +593,6 @@ func (m *UI) loadCustomCommands() tea.Cmd {
 	}
 }
 
-// reloadPlugins re-discovers all plugin content asynchronously.
-func (m *UI) reloadPlugins() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		r := m.com.Workspace.ReloadConfigAndPlugins(ctx)
-		if err := cmp.Or(r.ConfigErr, r.ApplyErr, r.PluginsErr); err != nil {
-			return pluginReloadFailedMsg{Err: err}
-		}
-		// Reload custom commands (which now include plugin commands).
-		customCmds, err := commands.LoadAllCommands(m.com.Config(), nil)
-		if err != nil {
-			slog.Error("Failed to reload custom commands after plugin reload", "error", err)
-		}
-		return pluginReloadedMsg{
-			SkillStates:    m.com.Workspace.SkillStates(),
-			CustomCommands: customCmds,
-		}
-	}
-}
-
 // loadMCPrompts loads the MCP prompts asynchronously.
 func (m *UI) loadMCPrompts() tea.Msg {
 	prompts, err := commands.LoadMCPPrompts()
@@ -809,21 +780,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			commands.SetCustomCommands(m.customCommands)
 		}
 
-	case pluginReloadedMsg:
-		// Update skill states and custom commands after reload.
-		m.skillStates = msg.SkillStates
-		m.customCommands = msg.CustomCommands
-		m.slashAC.SetItems(m.buildSlashACItems())
-		// Update open commands dialog if present.
-		if dia := m.dialog.Dialog(dialog.CommandsID); dia != nil {
-			if cmdsDialog, ok := dia.(*dialog.Commands); ok {
-				cmdsDialog.SetCustomCommands(m.customCommands)
-			}
-		}
-		cmds = append(cmds, util.ReportInfo("Plugins reloaded."))
-	case pluginReloadFailedMsg:
-		slog.Error("Plugin reload failed", "error", msg.Err)
-		cmds = append(cmds, util.ReportError(msg.Err))
+	case configReloadedMsg:
+		cmds = append(cmds, m.handleConfigReloaded(msg))
 	case mcpStateChangedMsg:
 		m.mcpStates = msg.states
 		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
@@ -2559,9 +2517,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 
-	case dialog.ActionReloadPlugins:
+	case dialog.ActionReloadConfig:
 		m.dialog.CloseDialog(dialog.CommandsID)
-		cmds = append(cmds, m.reloadPlugins())
+		cmds = append(cmds, m.reloadConfig())
 	case dialog.ActionAttachSkill:
 		if m.slashACOpen {
 			m.closeSlashAC(true)

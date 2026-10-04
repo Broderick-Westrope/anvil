@@ -117,3 +117,23 @@ func TestNextBouncerMode(t *testing.T) {
 	require.Equal(t, permission.BouncerEnforce, nextBouncerMode(permission.BouncerShadow))
 	require.Equal(t, permission.BouncerOff, nextBouncerMode(permission.BouncerEnforce))
 }
+
+func TestDefaultCommands_ReloadConfig(t *testing.T) {
+	t.Parallel()
+
+	s := styles.TokyoNight()
+	com := &common.Common{
+		Styles:    &s,
+		Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig()},
+	}
+	c := &Commands{com: com}
+	items := c.defaultCommands()
+
+	require.Nil(t, findCommandItem(items, "reload_plugins"))
+	item := findCommandItem(items, "reload_config")
+	require.NotNil(t, item)
+	require.Equal(t, "Reload Config & Plugins", item.title)
+	require.Equal(t, ActionReloadConfig{}, item.Action())
+	require.Contains(t, item.Filter(), "reload plugins")
+	require.Contains(t, item.Filter(), "reload config")
+}

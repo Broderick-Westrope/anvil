@@ -196,6 +196,13 @@ they are automatically migrated into the global database on first startup.
 > - `ANVIL_GLOBAL_CONFIG`
 > - `ANVIL_GLOBAL_DATA`
 
+After editing config or running `anvil permissions triage`, run **Reload
+Config & Plugins** from the command palette (`ctrl+p`). Permission rules,
+bouncer thresholds, hooks, agents, and plugins apply immediately, and model
+changes apply from the next turn. Changes to MCP servers, LSPs, and the
+bouncer connection need `/reload-instance`, and the reload names any that are
+pending.
+
 ### LSPs
 
 Anvil can use LSPs for additional context to help inform its decisions, just
