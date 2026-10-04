@@ -196,9 +196,10 @@ anvil --continue --there
 				workDir: ws.WorkingDir(),
 				dataDir: absDataDir(cmd),
 				debug:   debug,
+				now:     time.Now,
 			})
 		}
-		printResumeHint(cmd.OutOrStdout(), finalUI.SessionID())
+		printResumeHint(cmd.OutOrStdout(), finalUI.SessionID(), time.Now())
 		return nil
 	},
 }
@@ -219,11 +220,11 @@ func absDataDir(cmd *cobra.Command) string {
 
 // printResumeHint writes the command that re-enters the given session.
 // The --there flag makes the command work from any directory.
-func printResumeHint(w io.Writer, sessionID string) {
+func printResumeHint(w io.Writer, sessionID string, now time.Time) {
 	if sessionID == "" {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Resume this session with:\n  anvil --session %s --there\n", sessionID)
+	_, _ = fmt.Fprintf(w, "%sResume this session with:\n  anvil --session %s --there\n", hintTimestamp(now), sessionID)
 }
 
 func Execute() {

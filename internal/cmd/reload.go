@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/reload"
@@ -25,6 +26,15 @@ type reloadDeps struct {
 	workDir string
 	dataDir string
 	debug   bool
+	now     func() time.Time
+}
+
+// hintTimeLayout stamps the resume instructions printed on exit, so a
+// scrollback with several of them shows which came when.
+const hintTimeLayout = "2006-01-02 15:04:05 MST"
+
+func hintTimestamp(t time.Time) string {
+	return "[" + t.Format(hintTimeLayout) + "] "
 }
 
 // finishReload replaces this process with req.Exe once the TUI has exited.
@@ -38,8 +48,11 @@ func finishReload(req *ui.ReloadRequest, deps reloadDeps) error {
 		Debug:     deps.debug,
 		Yolo:      req.Yolo,
 	})
+	// The trailing blank line separates this block from whatever the next
+	// process prints when it exits.
 	_, _ = fmt.Fprintf(deps.out,
-		"Reloading anvil… if it doesn't come back, resume with:\n  %s=%s %s %s\n",
+		"%sReloading anvil… if it doesn't come back, resume with:\n  %s=%s %s %s\n\n",
+		hintTimestamp(deps.now()),
 		reload.EnvHandoff, reload.ShellQuote([]string{req.HandoffPath}),
 		reload.ShellQuote([]string{req.Exe}), reload.ShellQuote(args))
 

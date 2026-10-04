@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -49,8 +50,12 @@ func (r *reloadRecorder) deps() reloadDeps {
 		workDir: "/work",
 		dataDir: "/data dir",
 		debug:   true,
+		now:     func() time.Time { return testHintTime },
 	}
 }
+
+// testHintTime is a fixed clock for the timestamped resume hints.
+var testHintTime = time.Date(2026, 10, 4, 15, 29, 33, 0, time.UTC)
 
 func testReloadRequest() *ui.ReloadRequest {
 	return &ui.ReloadRequest{
@@ -73,8 +78,8 @@ func TestFinishReloadOrder(t *testing.T) {
 	require.Equal(t, "/opt/my anvil/anvil", r.execed.exe)
 	require.Equal(t, []string{"--session", "sess-1", "--there", "--data-dir", "/data dir", "--debug", "--yolo=full"}, r.execed.args)
 	require.Equal(t,
-		"Reloading anvil… if it doesn't come back, resume with:\n"+
-			"  ANVIL_RELOAD_HANDOFF=/state/reload/handoff-1.json '/opt/my anvil/anvil' --session sess-1 --there --data-dir '/data dir' --debug --yolo=full\n",
+		"[2026-10-04 15:29:33 UTC] Reloading anvil… if it doesn't come back, resume with:\n"+
+			"  ANVIL_RELOAD_HANDOFF=/state/reload/handoff-1.json '/opt/my anvil/anvil' --session sess-1 --there --data-dir '/data dir' --debug --yolo=full\n\n",
 		r.out.String())
 }
 
