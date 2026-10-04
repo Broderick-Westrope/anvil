@@ -37,10 +37,11 @@ func TestRoute(t *testing.T) {
 		{"mid hazard low severity", answers(map[string]float64{QExfiltration: 0.5}, 0.5, ptr(0.1)), permission.AssessAllow},
 		{"mid hazard with severity", answers(map[string]float64{QExfiltration: 0.5}, 1.5, ptr(0.1)), permission.AssessEscalate},
 		{"below concern band with severity", answers(map[string]float64{QExfiltration: 0.3}, 1.9, ptr(0.1)), permission.AssessAllow},
-		{"destructive below its threshold", answers(map[string]float64{QDestructive: 0.65}, 1.0, ptr(0.1)), permission.AssessAllow},
-		{"destructive at its threshold", answers(map[string]float64{QDestructive: 0.7}, 0.0, ptr(0.1)), permission.AssessEscalate},
+		{"destructive below its threshold", answers(map[string]float64{QDestructive: 0.45}, 1.0, ptr(0.1)), permission.AssessAllow},
+		{"destructive at its threshold", answers(map[string]float64{QDestructive: 0.5}, 0.0, ptr(0.1)), permission.AssessEscalate},
+		{"credentials below its threshold", answers(map[string]float64{QCredentials: 0.55}, 0.0, ptr(0.1)), permission.AssessAllow},
 		{"credentials at its threshold", answers(map[string]float64{QCredentials: 0.6}, 0.0, ptr(0.1)), permission.AssessEscalate},
-		{"remote exec below its threshold", answers(map[string]float64{QRemoteExec: 0.65}, 1.0, ptr(0.1)), permission.AssessAllow},
+		{"remote exec below its threshold", answers(map[string]float64{QRemoteExec: 0.55}, 1.0, ptr(0.1)), permission.AssessAllow},
 		{"high hazard not requested", answers(map[string]float64{QDestructive: 0.95}, 3, ptr(0.2)), permission.AssessDeny},
 		{"high hazard requested", answers(map[string]float64{QDestructive: 0.95}, 3, ptr(0.9)), permission.AssessEscalate},
 		{"high hazard no user question", answers(map[string]float64{QSharedInfra: 0.95}, 3, nil), permission.AssessDeny},
@@ -65,13 +66,13 @@ func TestRoute(t *testing.T) {
 
 	t.Run("reason names top hazard", func(t *testing.T) {
 		t.Parallel()
-		_, reason := Route(answers(map[string]float64{QRemoteExec: 0.6, QDestructive: 0.2}, 1, nil), th)
-		require.Equal(t, "remote_exec=0.60 severity=1.0", reason)
+		_, reason := Route(answers(map[string]float64{QRemoteExec: 0.55, QDestructive: 0.2}, 1, nil), th)
+		require.Equal(t, "remote_exec=0.55 severity=1.0", reason)
 	})
 
 	t.Run("reason names the hazard that crossed its threshold", func(t *testing.T) {
 		t.Parallel()
-		got, reason := Route(answers(map[string]float64{QDestructive: 0.68, QCredentials: 0.62}, 0, nil), th)
+		got, reason := Route(answers(map[string]float64{QDestructive: 0.45, QCredentials: 0.62}, 0, nil), th)
 		require.Equal(t, permission.AssessEscalate, got)
 		require.Equal(t, "credentials=0.62 severity=0.0", reason)
 	})

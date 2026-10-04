@@ -120,7 +120,7 @@
           "type": "number",
           "maximum": 1,
           "minimum": 0,
-          "description": "Hazard probability at or above which the request goes to the human whatever its severity. Setting it applies one value to every axis; escalate_at_axes overrides it per axis. When unset each axis uses its own default (destructive and remote_exec 0.7; exfiltration and credentials and shared_infra 0.6)"
+          "description": "Hazard probability at or above which the request goes to the human whatever its severity. Setting it applies one value to every axis; escalate_at_axes overrides it per axis. When unset each axis uses its own default (destructive 0.5; the other axes 0.6)"
         },
         "escalate_at_axes": {
           "additionalProperties": {

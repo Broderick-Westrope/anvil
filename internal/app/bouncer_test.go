@@ -375,7 +375,7 @@ func TestBouncerThresholds(t *testing.T) {
 	t.Run("does not mutate defaults", func(t *testing.T) {
 		t.Parallel()
 		bouncerThresholds(&config.Bouncer{EscalateAt: f(0.1)})
-		require.Equal(t, 0.7, bouncer.DefaultThresholds().EscalateAt["destructive"])
+		require.Equal(t, 0.5, bouncer.DefaultThresholds().EscalateAt["destructive"])
 	})
 }
 

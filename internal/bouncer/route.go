@@ -33,10 +33,10 @@ type Thresholds struct {
 func DefaultThresholds() Thresholds {
 	return Thresholds{
 		EscalateAt: map[string]float64{
-			QDestructive:  0.7,
+			QDestructive:  0.5,
 			QExfiltration: 0.6,
 			QCredentials:  0.6,
-			QRemoteExec:   0.7,
+			QRemoteExec:   0.6,
 			QSharedInfra:  0.6,
 		},
 		ConcernAt:        0.35,

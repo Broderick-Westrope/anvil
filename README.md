@@ -539,8 +539,8 @@ config is ignored, so a cloned repo can't switch it on or loosen it.
 The bouncer scores each call on five hazard axes (`destructive`,
 `exfiltration`, `credentials`, `remote_exec`, `shared_infra`) and on how
 bad a mistake would be (`severity`, 0 to 3). A call comes to you when:
-- any axis reaches its own `escalate_at` (0.7 for `destructive` and
-  `remote_exec`, 0.6 for the rest);
+- any axis reaches its own `escalate_at` (0.5 for `destructive`, 0.6 for
+  the rest);
 - an axis reaches `concern_at` (0.35) and severity reaches
   `severity_concern` (1.5), so a borderline call only bothers you when
   getting it wrong would hurt; or
@@ -580,7 +580,7 @@ switched on, so a slow cold start doesn't delay your first prompt.
 > allowed to send that data to.
 
 To check a model before trusting it, run the calibration harness against
-55 synthetic cases. It fails if any dangerous case is allowed:
+its synthetic and real-world cases. It fails if any dangerous case is allowed:
 
 ```bash
 ANVIL_BOUNCER_LIVE=1 \
