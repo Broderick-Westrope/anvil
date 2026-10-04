@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -628,8 +629,9 @@ func (m *BackgroundShellManager) SetEventSink(sink EventSink) {
 }
 
 // Start creates and starts a new background shell with the given command.
-// The shell is keyed by an internal key until it is published.
-func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, blockFuncs []BlockFunc, command string, description string) (*BackgroundShell, error) {
+// The shell is keyed by an internal key until it is published. Extra env
+// entries are appended to the process environment.
+func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, blockFuncs []BlockFunc, command string, description string, env ...string) (*BackgroundShell, error) {
 	// Check job limit
 	if m.shells.Len() >= MaxBackgroundJobs {
 		return nil, fmt.Errorf("maximum number of background jobs (%d) reached. Please terminate or wait for some jobs to complete", MaxBackgroundJobs)
@@ -639,6 +641,7 @@ func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, b
 
 	shell := NewShell(&Options{
 		WorkingDir: workingDir,
+		Env:        append(os.Environ(), env...),
 		BlockFuncs: blockFuncs,
 	})
 
