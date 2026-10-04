@@ -15,14 +15,17 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/permission/segment"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 const (
-	maxFieldChars   = 300 // Per command segment / per message.
-	maxInputChars   = 1500
-	maxSegments     = 12
+	maxFieldChars = 300 // Per message and descriptive field.
+	// maxInputChars caps a bash command. Command segments are sent whole,
+	// never truncated, so the classifier can't approve text it didn't see.
+	maxInputChars   = 4500
+	maxSegments     = 24
 	maxMessages     = 3
-	maxStateBytes   = 6000 // Whole marshalled state.
+	maxStateBytes   = 12000 // Whole marshalled state.
 	maxMCPArgsChars = 1500
 	maxContentChars = 1200 // Excerpt of new file content or diff for edits.
 )
@@ -118,16 +121,46 @@ func bashState(state map[string]any, in permission.AssessInput) string {
 			}
 			executable++
 		}
-		commands = append(commands, clean(seg, maxFieldChars))
+		commands = append(commands, clean(seg, maxInputChars))
 	}
 
 	state["commands"] = commands
+	if bodies := heredocBodies(in.Input); len(bodies) > 0 {
+		state["heredoc_bodies"] = bodies
+	}
 	state["executable_count"] = executable
 	state["writes_via_redirect"] = redirect
 	state["uses_command_substitution"] = strings.Contains(in.Input, "$(") || strings.Contains(in.Input, "`")
 	state["network_hosts"] = hosts(in.Input)
 	state["working_directory"] = clean(cmp.Or(in.Path, in.WorkingDir), maxFieldChars)
 	return ""
+}
+
+// heredocBodies returns the body of each heredoc in cmd. Command segments
+// keep only the heredoc operator and delimiter, so without this the
+// classifier would judge an inline script it never saw.
+func heredocBodies(cmd string) []string {
+	if !strings.Contains(cmd, "<<") {
+		return nil
+	}
+	file, err := syntax.NewParser().Parse(strings.NewReader(cmd), "")
+	if err != nil {
+		return nil
+	}
+	printer := syntax.NewPrinter()
+	var out []string
+	syntax.Walk(file, func(node syntax.Node) bool {
+		redir, ok := node.(*syntax.Redirect)
+		if !ok || redir.Hdoc == nil {
+			return true
+		}
+		var b strings.Builder
+		if err := printer.Print(&b, redir.Hdoc); err == nil && b.Len() > 0 {
+			out = append(out, clean(b.String(), maxInputChars))
+		}
+		return true
+	})
+	return out
 }
 
 // dynamicCommandName reports whether a segment's command name is only

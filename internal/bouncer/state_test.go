@@ -69,17 +69,17 @@ func TestBuildStateBash(t *testing.T) {
 func TestBuildStateBashSkips(t *testing.T) {
 	t.Parallel()
 
-	thirteen := make([]string, 13)
-	for i := range thirteen {
-		thirteen[i] = "echo " + string(rune('a'+i))
+	tooMany := make([]string, maxSegments+1)
+	for i := range tooMany {
+		tooMany[i] = "echo " + string(rune('a'+i))
 	}
 	tests := []struct {
 		name string
 		cmd  string
 		want string
 	}{
-		{"13 segments", strings.Join(thirteen, "; "), skipTooManySegments},
-		{"long heredoc", "cat <<EOF\n" + strings.Repeat("line of text\n", 200) + "EOF", skipInputTooLong},
+		{"too many segments", strings.Join(tooMany, "; "), skipTooManySegments},
+		{"long heredoc", "cat <<EOF\n" + strings.Repeat("line of text\n", 400) + "EOF", skipInputTooLong},
 		{"variable command name", "$CMD --flag", skipDynamicCommand},
 		{"substituted command name", "$(which go) test", skipDynamicCommand},
 		{"backtick command name", "`which go` test", skipDynamicCommand},
@@ -300,10 +300,49 @@ func TestBuildStateTooLarge(t *testing.T) {
 	t.Parallel()
 
 	// Each '<' is escaped to six bytes when marshalled.
-	args := `{"q":"` + strings.Repeat("<", 1400) + `"}`
-	state, skip := BuildState(permission.AssessInput{ToolName: "mcp_x_search", ArgsJSON: args}, false)
+	cmd := "echo '" + strings.Repeat("<", 2500) + "'"
+	state, skip := BuildState(permission.AssessInput{ToolName: "bash", Input: cmd, WorkingDir: t.TempDir()}, false)
 	require.Equal(t, skipStateTooLarge, skip)
 	require.Nil(t, state)
+}
+
+func TestBuildStateSendsLongCommandsWhole(t *testing.T) {
+	t.Parallel()
+
+	script := "python3 - <<'EOF'\n" + strings.Repeat("print('routine analysis step')\n", 80) + "import os; os.system('rm -rf ~')\nEOF"
+	require.Greater(t, len(script), 1500)
+	require.Less(t, len(script), maxInputChars)
+
+	wd := t.TempDir()
+	state, skip := BuildState(permission.AssessInput{ToolName: "bash", Input: script, Path: wd, WorkingDir: wd}, false)
+	require.Empty(t, skip)
+	commands := state["commands"].([]string)
+	bodies, _ := state["heredoc_bodies"].([]string)
+	sent := strings.Join(append(commands, bodies...), "\n")
+	require.Contains(t, sent, "rm -rf ~", "the tail of a long command must reach the classifier")
+}
+
+func TestHeredocBodies(t *testing.T) {
+	t.Parallel()
+
+	require.Nil(t, heredocBodies("go test ./..."))
+	require.Nil(t, heredocBodies("cat <<EOF"), "unterminated heredoc fails to parse")
+	require.Equal(t, []string{"print(1)\n"}, heredocBodies("python3 - <<'EOF'\nprint(1)\nEOF"))
+	require.Equal(t,
+		[]string{"a\n", "b\n"},
+		heredocBodies("cat <<A > x && cat <<B > y\na\nA\nb\nB"))
+}
+
+func TestBuildStateAllowsUpToMaxSegments(t *testing.T) {
+	t.Parallel()
+
+	segs := make([]string, maxSegments)
+	for i := range segs {
+		segs[i] = "echo " + string(rune('a'+i))
+	}
+	wd := t.TempDir()
+	_, skip := BuildState(permission.AssessInput{ToolName: "bash", Input: strings.Join(segs, "; "), Path: wd, WorkingDir: wd}, false)
+	require.Empty(t, skip)
 }
 
 func TestIsInside(t *testing.T) {
