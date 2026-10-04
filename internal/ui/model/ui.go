@@ -362,6 +362,11 @@ type UI struct {
 		draft    string
 	}
 
+	// reloadHandoff is restored on Init, and reloadRequest is set once
+	// the user confirms /reload-instance.
+	reloadHandoff *reloadHandoff
+	reloadRequest *ReloadRequest
+
 	// canvas is the reusable screen buffer. It is reallocated only when the
 	// terminal dimensions change; screen.Clear resets every cell so stale
 	// frames cannot leak between reuses.
@@ -520,6 +525,9 @@ func (m *UI) Init() tea.Cmd {
 	}
 	// Check once whether to nudge the user to run permission triage.
 	cmds = append(cmds, m.checkTriageNudge())
+	if cmd := m.applyReloadHandoff(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	return tea.Batch(cmds...)
 }
 
