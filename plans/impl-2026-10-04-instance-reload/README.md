@@ -227,3 +227,20 @@ refusal and the `closing` flag) with one:
   `pendingSends` counter and a `reloading` freeze cover a send `tea.Cmd`
   that's been scheduled but hasn't reached `Run`. `ErrClosing`, the second
   dispatch check, and the job-waker special case are all gone.
+
+### Round 5 (devil's advocate)
+
+Revision 6:
+
+- **Send accounting.** The send command emits nothing on success or
+  cancellation, and prompts also come from custom commands and asynchronous
+  producers. Fixed with a centralised `trackSend` wrapper that always emits
+  `sendDoneMsg`, applied inside `sendMessage` and at each asynchronous
+  producer. While `reloading` is set, `sendMessage` restores the text to the
+  editor instead of sending. `pendingSends` is re-checked just before the
+  handoff is written.
+- **Paused job wakes weren't cancelled by shutdown.** `CancelAll` doesn't
+  reach admission waiters, and the waker used the app context. The waker now
+  owns a cancellable lifetime context, which `close()` cancels. A test
+  asserts that shutdown with a permanently paused wake finishes in under
+  500ms.

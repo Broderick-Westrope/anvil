@@ -357,17 +357,30 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
      second check before dispatch are needed: `Pause` only succeeds once
      every top-level call, preparation included, has finished, and nothing
      new is admitted afterwards.
-   - **UI submission freeze.** Add a `pendingSends int` to the UI model.
-     Increment it when a send `tea.Cmd` is created (the submit path near
-     `ui.go:3043-3064`). Decrement it when that send's result message is
-     handled (`ui.go:4705-4718`), on success or error. Add a `reloading`
-     flag, set at the start of `startReloadInstance` and cleared on every
-     refusal or cancellation. While `reloading` is set, the submit path,
-     session switching, and new-session creation report "Reload in
-     progress" and do nothing.
-   - `startReloadInstance` refuses with "Wait for the message to send" if
-     `pendingSends > 0`. That covers a send `tea.Cmd` that's been scheduled
-     but hasn't reached `coordinator.Run`, which `Pause` alone can't see.
+   - **UI submission tracking, centralised.** The send command emits
+     nothing on success or cancellation (`ui.go:4705-4718`). Prompts also
+     reach it from custom commands (`ui.go:2538`, `:4373`) and asynchronous
+     producers (`ui.go:4660-4668`, `:5730-5751`).
+     - Add `pendingSends int` and
+       `func (m *UI) trackSend(cmd tea.Cmd) tea.Cmd`. It increments the
+       counter and wraps `cmd` so it always returns
+       `sendDoneMsg{inner tea.Msg}`, whatever the outcome (success, error,
+       cancellation, nil).
+     - `Update` handles `sendDoneMsg` by decrementing, then processing
+       `inner` if it isn't nil.
+     - Apply `trackSend` inside `sendMessage` itself, so every caller is
+       covered, and at each asynchronous producer that later calls
+       `sendMessage`, from scheduling to completion. Find them all with
+       `rg -n 'sendMessage\(' internal/ui/model` and by tracing each
+       `tea.Cmd` that ends in one.
+   - **Freeze.** Add a `reloading` flag, set at the start of
+     `startReloadInstance` and cleared on every refusal or cancellation.
+     While it's set, `sendMessage` doesn't send: it puts the text back in
+     the editor and reports "Reload in progress", so a late asynchronous
+     producer's prompt ends up in the draft. Session switching and
+     new-session creation report the same message and do nothing.
+   - `startReloadInstance` refuses with "Wait for the message to send"
+     while `pendingSends > 0`.
 2. [ ] Workspace: `RunningJobs() []shell.JobInfo` across sessions. Return
    nil when there's no app or coordinator.
 3. [ ] `ReloadRequest{Exe, SessionID, HandoffPath string; Yolo config.YoloLevel}`
@@ -393,6 +406,9 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
       `ReloadConfirm` with the version, the jobs (up to 3, then "+K more"),
       and "attachments will be dropped".
    7. On confirm, or when there's nothing to confirm:
+      - Re-check `pendingSends == 0`. A producer started after the freeze
+        would have restored its text to the editor, but it may still be
+        running. If it's not zero, refuse as in step 2.
       - Call `AgentPause(ctx, 2*time.Second)` in a `tea.Cmd`, with the
         status "Waiting for agent to settle…". On `ErrBusy`, refuse: "Agent
         started a turn; try again when it's idle".
@@ -406,9 +422,13 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
 6. [ ] Tests:
    - Every refusal leaves `reloadRequest` nil, `reloading` cleared, and the
      coordinator un-paused.
-   - A pending send (`pendingSends > 0`) refuses.
-   - While `reloading` is set, submit and session switching are no-ops
-     with "Reload in progress".
+   - A pending send (`pendingSends > 0`) refuses. `trackSend` decrements
+     exactly once for a cmd returning nil, an error message, and a normal
+     message. A custom-command send and an asynchronous producer are each
+     counted until they complete.
+   - While `reloading` is set, `sendMessage` restores the text to the
+     editor instead of sending. Session switching is a no-op with "Reload in
+     progress".
    - Confirming pauses, writes the handoff with the draft, and sets the
      request.
    - A `Pause` timeout refuses, and the coordinator is un-paused (phase 1

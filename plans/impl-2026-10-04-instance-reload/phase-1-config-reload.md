@@ -225,8 +225,8 @@ go test -race ./internal/config -count=1
 
 **Files:**
 
-- Modify: `internal/agent/coordinator.go`, `internal/agent/task_tool.go`, `internal/plugin/plugin.go`
-- Test: `internal/agent/coordinator_test.go`, `internal/plugin/plugin_test.go`
+- Modify: `internal/agent/coordinator.go`, `internal/agent/task_tool.go`, `internal/plugin/plugin.go`, `internal/app/job_waker.go`
+- Test: `internal/agent/coordinator_test.go`, `internal/plugin/plugin_test.go`, `internal/app/job_waker_test.go`
 
 **Steps:**
 
@@ -258,8 +258,16 @@ go test -race ./internal/config -count=1
    - Add `ErrBusy` and put `Pause` on the coordinator interface.
    - Check that title generation and any other direct `orch.Run` callers
      are either nested (ungated) or go through a gated entry point.
-   - A run waiting on a pause must return when its context is cancelled,
-     so `Shutdown` (`CancelAll`, job waker close) never hangs on it.
+   - A run waiting on a pause must return when its context is cancelled.
+     `CancelAll` only cancels registered session requests
+     (`agent.go:1779-1795`), not admission waiters, and the job waker passes
+     the app context (`job_waker.go:216`) and only sets `closed` in
+     `close()` (`job_waker.go:110-112`). So give the waker its own
+     `context.WithCancel` lifetime context, use it for wake runs, and cancel
+     it in `close()`. `Shutdown` calls `jobWaker.close()` first
+     (`app.go:727`), so a paused wake returns immediately instead of using
+     up the 5-second shutdown context. Add `internal/app/job_waker.go` to
+     this task's files.
 2. [ ] **Agent defaults through the store.** In coordinator construction
    (`coordinator.go:200-212`) and in
    `ReloadPlugins` step 7, replace the direct `cfg.Agents = ...` with
@@ -307,6 +315,9 @@ go test -race ./internal/config -count=1
      un-pauses; releases waiters on resume.
    - A run waiting on a pause returns `ctx.Err()` when its context is
      cancelled.
+   - Shutdown with a wake blocked behind a pause that's never resumed
+     finishes well under the 5-second shutdown budget. Assert under 500ms,
+     in `internal/app`.
    - A nested subagent call inside a run doesn't deadlock while another
      goroutine waits in `Pause`.
    - `ReloadPlugins` failing at tool build leaves `Config().Agents` and
@@ -320,7 +331,7 @@ go test -race ./internal/config -count=1
 **Verify:**
 
 ```bash
-go test -race ./internal/agent ./internal/plugin -run 'Pause|Reload|Task|Plugin' -count=1
+go test -race ./internal/agent ./internal/plugin ./internal/app -run 'Pause|Reload|Task|Plugin|Waker|Shutdown' -count=1
 # Expected: PASS
 ```
 
