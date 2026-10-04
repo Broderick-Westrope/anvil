@@ -1,6 +1,6 @@
 # Phase 2: `/reload-instance`
 
-> **Status:** DRAFT
+> **Status:** DRAFT (revision 2)
 > Create a PR for human review when done. Don't merge.
 
 ## Specification
@@ -8,31 +8,30 @@
 **Problem:** Picking up a new Anvil build means quitting, then running
 `anvil --session <id> --there`. Unsent editor text and the runtime yolo
 level and bouncer mode are lost. If the new build fails to start or rejects
-the config, you only find out after you've already quit.
+the config, you find out only after you've quit.
 
 **Goal:** `/reload-instance` (slash command, plus a "Reload Instance" palette
 item) replaces the running process with the `anvil` binary currently on
 disk. It resumes the same session in the same terminal and process ID,
-usually in about a second, carrying over:
+carrying over:
 
 - unsent editor text;
-- the yolo level;
-- the bouncer mode;
+- the runtime yolo level and bouncer mode;
 - `--debug` and `--data-dir`.
 
-It refuses, or asks you to confirm first, when reloading would lose work.
+It refuses, or asks you to confirm first, when reloading would lose work. If
+anything fails after the old instance has shut down, you're left with a
+command that resumes exactly where you were, and your draft is still on
+disk.
 
 **Scope:**
 
 In scope:
 
-- Checks before reloading:
-  - the agent is busy;
-  - a permission prompt is open;
-  - background jobs are running;
-  - the binary was built with `go run`;
-  - the new binary fails a pre-flight check.
-- A one-shot handoff file for state that isn't saved anywhere.
+- Checks and an exclusion gate.
+- A structural (non-executing) pre-flight of the new binary.
+- A private, one-shot handoff file.
+- Capturing the original environment.
 - Explicit, idempotent shutdown before exec.
 - Building the new process's arguments.
 - Consuming the handoff at startup.
@@ -40,149 +39,183 @@ In scope:
 
 Out of scope:
 
-- Keeping background job processes or MCP/LSP processes alive across the
-  reload. They are shut down normally. gopls survives because it runs as a
-  shared daemon.
-- Reloading `anvil run` (non-interactive).
-- Queuing a reload until the agent is idle. That's possible later; v1
-  refuses.
+- Keeping background jobs or MCP/LSP processes alive. They're shut down
+  normally. gopls survives as a shared daemon.
+- `anvil run`.
+- Queuing a reload until the agent is idle.
+- Guaranteeing the new binary's database migrations are compatible with
+  other instances that are still running. This exists today with any
+  upgrade and is documented, not solved.
+
+**Security model:**
+
+- The new process gets the environment Anvil started with, captured before
+  any config-provided `env` was applied, plus `ANVIL_RELOAD_HANDOFF`. A
+  project's `env` block must not be able to redirect the next process's
+  trusted config paths or bouncer key (`internal/config/load.go:601-614`,
+  `internal/config/bouncer.go:173-177`).
+- A consequence: a key exported in another terminal after startup isn't
+  picked up either. Document this.
+- The handoff path is accepted only if it's a regular file, inside
+  `<data dir>/reload/`, owned by the current user (Unix), 64 KiB or smaller,
+  under two minutes old, and bound to the session being resumed. Anything
+  else is ignored and not deleted.
 
 **Success Criteria:**
 
-- [ ] With an idle session and unsent text, `go install .` then
-  `/reload-instance`: the new build resumes the same session in the same
-  terminal, the text is back in the editor, and the yolo and bouncer modes
-  match.
-- [ ] While the agent is running, `/reload-instance` refuses with a message.
-  The process is untouched.
-- [ ] With a background job running, `/reload-instance` asks for
-  confirmation and lists the jobs. Choosing No leaves everything running.
-- [ ] Replace the binary with one that exits non-zero on `preflight`:
-  `/reload-instance` reports the pre-flight error and the old instance keeps
-  running.
-- [ ] Run under `go run .`, then `/reload-instance`: it refuses with "built
-  with go run".
+- [ ] Idle session with unsent text, `go install .`, then
+  `/reload-instance`: the new build resumes the same session, the text is in
+  the editor, the yolo and bouncer modes match, and the notice shows both
+  versions.
+- [ ] While the agent is running, or a job wake is starting, it refuses, and
+  nothing changes. No run can start between a passed check and the process
+  exiting.
+- [ ] With a running background job, it asks first and lists the job. No
+  leaves the job running.
+- [ ] With an attachment in the editor, the confirmation mentions it, and
+  cancelling leaves the attachment in place.
+- [ ] A new binary that fails `preflight`: the error is shown and the old
+  instance keeps running.
+- [ ] A new binary that passes preflight but exits at startup: the terminal
+  shows a resume command that includes the original flags and the handoff
+  path. The draft is still in the handoff file, and the session recovery
+  record still exists.
+- [ ] Running under `go run .`: refused with "built with go run".
+- [ ] A project `env` block that sets `ANVIL_GLOBAL_CONFIG` or
+  `ANVIL_RELOAD_HANDOFF` has no effect on the exec'd process.
 - [ ] `go test ./internal/reload ./internal/cmd ./internal/ui/... -count=1`
   passes, and `task lint` is clean.
 
 ## Context Loading
 
 ```bash
-read internal/cmd/root.go                       # 33-45 flags, 95-175 RunE, 220-270 setupWorkspace
-read internal/cmd/session_picker.go             # 55-80 cleanup + execResume
-read internal/cmd/session_picker_exec_unix.go
-read internal/cmd/session_picker_exec_windows.go
-read internal/app/app.go                        # 720-790 Shutdown
-read internal/recovery/recovery.go              # Tracker.Close
-read internal/version/version.go
-read internal/workspace/workspace.go            # AgentIsBusy, ListSessionJobs, PermissionBouncerMode/Set
-read internal/ui/model/ui.go                    # 4389-4430 builtinCommands, tryExecuteBuiltinCommand
-read internal/ui/dialog/quit.go                 # confirmation dialog pattern
+read internal/cmd/root.go                       # 33-45 flags, 95-175 RunE, 180-270 Execute + setupWorkspace
+read internal/cmd/session_picker.go             # 55-80
+read internal/cmd/session_picker_exec_unix.go internal/cmd/session_picker_exec_windows.go
+read internal/config/load.go                    # Load, applyEnv (601), provider discovery (426-450)
+read internal/config/bouncer.go                 # trustedConfigPaths, GlobalConfig/GlobalConfigData env use
+read internal/config/resolve.go                 # 76-104: shell substitution executes commands
+read internal/db/connect.go                     # 141-144 migrations
+read internal/app/app.go                        # 150-165 MCP start, 720-790 Shutdown
+read internal/recovery/recovery.go
+read internal/workspace/app_workspace.go        # 254-275 PermissionYoloLevel, PermissionSetBouncerMode
+read internal/ui/model/ui.go                    # 3030-3050 submit + attachment reset, 4389-4430 builtins
+read internal/ui/dialog/quit.go
 read internal/ui/AGENTS.md
 ```
 
 ## Process Tasks
 
-### Task 1: `internal/reload` package (pure logic)
-
-**Context:** `internal/cmd/root.go` (flags), `internal/config` (`GlobalDataDir`), `internal/version`
+### Task 1: `internal/reload` package
 
 **Files:**
 
-- Create: `internal/reload/reload.go`, `internal/reload/handoff.go`
-- Test: `internal/reload/reload_test.go`, `internal/reload/handoff_test.go`
+- Create: `internal/reload/env.go`, `internal/reload/handoff.go`, `internal/reload/reload.go`
+- Test: `internal/reload/*_test.go`, plus `internal/reload/testdata/fakebin/main.go`
 
 **Steps:**
 
-1. [ ] `handoff.go`: one-shot handoff of state that isn't stored in the
-   database.
+1. [ ] `env.go`: capture the original environment.
 
    ```go
    // EnvHandoff names the environment variable holding the handoff path.
    const EnvHandoff = "ANVIL_RELOAD_HANDOFF"
 
-   // maxHandoffAge bounds how long a handoff stays valid, so a stale file
-   // from a failed exec is never applied to a later, unrelated start.
-   const maxHandoffAge = 2 * time.Minute
+   // CaptureStartup records the process environment and takes the handoff
+   // path out of it. Call it first in main, before any config is loaded.
+   // It returns the handoff path ("" if none).
+   func CaptureStartup() (handoffPath string)
 
-   // Handoff is the runtime state carried across /reload-instance.
+   // StartupEnv returns the environment captured by CaptureStartup,
+   // without EnvHandoff.
+   func StartupEnv() []string
+   ```
+
+   `CaptureStartup` reads `EnvHandoff`, calls `os.Unsetenv(EnvHandoff)`, and
+   stores a clone of `os.Environ()`. Because the variable is unset before
+   anything runs, MCP servers and jobs never inherit it, and a project's
+   `env` block setting it later has no effect.
+2. [ ] `handoff.go`:
+
+   ```go
+   const (
+   	maxHandoffAge  = 2 * time.Minute
+   	maxHandoffSize = 64 << 10
+   )
+
    type Handoff struct {
    	SessionID   string    `json:"session_id"`
    	Draft       string    `json:"draft,omitempty"`
+   	YoloLevel   string    `json:"yolo_level,omitempty"`
    	BouncerMode string    `json:"bouncer_mode,omitempty"`
    	FromVersion string    `json:"from_version"`
    	CreatedAt   time.Time `json:"created_at"`
    }
 
-   // Write saves h under dir with mode 0o600 and returns its path.
+   // Dir returns <dataDir>/reload. It's created with mode 0o700.
+   func Dir(dataDir string) string
+
+   // Write saves h as a new 0o600 file in dir and returns its path.
    func Write(dir string, h Handoff) (string, error)
 
-   // Consume reads and deletes the handoff at path. It returns ok=false
-   // when the file is missing, unreadable, or older than maxHandoffAge,
-   // and always tries to delete it.
-   func Consume(path string, now time.Time) (h Handoff, ok bool)
+   // Load validates and reads the handoff at path without deleting it.
+   // It rejects anything that isn't a regular file directly inside dir,
+   // owned by this user (Unix), at most maxHandoffSize, newer than
+   // maxHandoffAge, and decodable.
+   func Load(dir, path string, now time.Time) (Handoff, error)
+
+   // Remove deletes path only if it passes the same location checks as Load.
+   func Remove(dir, path string) error
+
+   // Sweep removes handoff files in dir older than maxHandoffAge.
+   func Sweep(dir string, now time.Time)
    ```
 
-   Use `os.CreateTemp(dir, "handoff-*.json")` and `Chmod(0o600)`, and create
-   `dir` with `0o700`. The draft may contain secrets, which is why the file
-   is private and deleted when read. The yolo level travels as a flag (Step
-   2), not in the handoff.
-2. [ ] `reload.go`: argument building and binary checks.
+   Compare paths after `filepath.EvalSymlinks` on `dir` and `filepath.Clean`
+   on the path, and use `os.Lstat` so a symlinked handoff is rejected. Put
+   the ownership check in `handoff_unix.go` (stat `Uid == os.Getuid()`) and
+   make it a no-op in `handoff_windows.go`.
+3. [ ] `reload.go`:
 
    ```go
-   // Options is the subset of the root command's flags that carries over.
    type Options struct {
-   	SessionID string // Empty on the landing page.
-   	WorkDir   string // Used only when SessionID is empty.
-   	DataDir   string // --data-dir, if set.
-   	Debug     bool
-   	Yolo      string // "", "true" (standard), or "full".
+   	SessionID, WorkDir, DataDir string
+   	Debug                       bool
+   	Yolo                        config.YoloLevel
    }
 
    // Args returns argv for the new process, not including argv[0].
    func Args(o Options) []string
-   ```
 
-   - With a session: `--session <id> --there`. `--there` can't be combined
-     with `--cwd` (`root.go:44`), so `--cwd` is left out.
-   - Without a session: `--cwd <workdir>`.
-   - Append `--data-dir <dir>` when it's set, `--debug` when true, and
-     `--yolo=<value>` when it isn't empty.
-
-   ```go
-   // Executable resolves the binary to exec. It fails for go run builds
-   // and for a binary that no longer exists.
+   // Executable resolves the binary to exec. It fails for go run builds and
+   // missing files.
    func Executable() (string, error)
+
+   // Preflight runs `<exe> preflight` with StartupEnv and a 20s timeout.
+   // It returns the new binary's version.
+   func Preflight(ctx context.Context, exe, workDir, dataDir string) (string, error)
    ```
 
-   - Use `os.Executable()`. On Linux, strip a trailing `" (deleted)"`, which
-     is how `/proc/self/exe` looks after the file was replaced, then `Stat`
-     the path.
-   - Treat it as a `go run` build when any path element starts with
-     `go-build` and the path is under `os.TempDir()`. Return
-     `ErrGoRun = errors.New("this anvil was built with go run; build it with go build or go install to use /reload-instance")`.
-
-   ```go
-   // Preflight runs `<exe> preflight --cwd <workDir>` with a timeout and
-   // returns the new binary's version on success, or its stderr (trimmed
-   // to 500 bytes) on failure.
-   func Preflight(ctx context.Context, exe, workDir, dataDir string) (version string, err error)
-   ```
-
-   Use `exec.CommandContext` with a 20-second timeout. Pass `--data-dir`
-   through when it's set. Phase 2's preflight subcommand (Task 2) prints
-   the version on its first line of stdout.
-3. [ ] Tests:
-   - `Args`: table tests for each flag combination.
-   - Handoff: `Write` then `Consume` round-trips; the file is gone after
-     `Consume`; a file older than `maxHandoffAge` gives `ok=false` and is
-     deleted; a missing file gives `ok=false`.
-   - The file mode is 0o600. Skip that check on Windows.
-   - `Executable`: test the `go-build` detection through an unexported
-     helper, `isGoRunPath(p, tmp string) bool`.
-   - `Preflight`: build a tiny fake binary in `t.TempDir()` with `go build`
-     from a testdata `main.go` that exits 0 and prints a version, and
-     another that exits 1 and writes to stderr. Skip with `testing.Short()`.
+   - `Args`: with a session, `--session <id> --there`. Without one,
+     `--cwd <workdir>`. Then `--data-dir <dir>` if set, `--debug` if true,
+     and `--yolo` / `--yolo=full` from the level (check the flag value
+     strings against `root.go:38-39` and the `YoloLevel` constants).
+   - `Executable`: `os.Executable()`. On Linux, strip a trailing
+     `" (deleted)"`. `Stat` the result. Reject it as a `go run` build when
+     `isGoRunPath` holds: a path element with the prefix `go-build` under
+     `os.TempDir()`, or the Go build cache directory.
+   - `Preflight` reads the version from the first stdout line and returns
+     stderr, trimmed to 500 bytes, on failure.
+4. [ ] Tests:
+   - `Args` table.
+   - Handoff round trip.
+   - `Load` rejects: outside `dir`, a symlink, too old, too large, bad JSON,
+     and the wrong owner (Unix only, using a fake stat seam).
+   - `Remove` refuses paths outside `dir`; `Sweep` removes only stale files.
+   - `CaptureStartup` unsets the variable and `StartupEnv` excludes it.
+   - `isGoRunPath` table.
+   - `Preflight` against `go build`-ed fakes that pass and fail. Skip with
+     `testing.Short()`.
 
 **Verify:**
 
@@ -191,110 +224,128 @@ go test ./internal/reload -count=1
 # Expected: PASS
 ```
 
-### Task 2: Hidden `anvil preflight` subcommand
-
-**Context:** `internal/cmd/root.go:220-270` (`setupWorkspace`, `setupLocalWorkspace`), `internal/config/load.go` (`Load`)
+### Task 2: Hidden `anvil preflight` (structural, non-executing)
 
 **Files:**
 
 - Create: `internal/cmd/preflight.go`
-- Modify: `internal/cmd/root.go` (`AddCommand`)
-- Test: `internal/cmd/preflight_test.go`
+- Modify: `internal/cmd/root.go`
+- Possibly create: `internal/config/validate_files.go`
+- Test: `internal/cmd/preflight_test.go`, `internal/config/validate_files_test.go`
 
 **Steps:**
 
-1. [ ] Add `preflightCmd`: `Use: "preflight"`, `Hidden: true`, using the
-   persistent `--cwd` and `--data-dir` flags. It:
-   - prints `version.Version` on the first line of stdout;
-   - loads and validates config with the same function the TUI start path
-     uses, as found in `setupLocalWorkspace`, without opening the database,
-     running migrations, starting MCP or LSP, or building the app;
-   - exits 0 on success, or returns the error so cobra or fang exits
-     non-zero with it on stderr.
+1. [ ] Define what preflight proves: the new binary starts, parses its
+   flags, and accepts every config file the instance would load,
+   structurally. That means JSON syntax, the schema it can unmarshal, and
+   the `Validate` methods that don't need env resolution:
+   - bouncer, including effective thresholds through
+     `bouncer.DefaultThresholds()` merged as `internal/app/bouncer.go`
+     does;
+   - hooks;
+   - permission rules;
+   - MCP auth.
 
-   It must not:
-   - run database migrations, because the new binary may add migrations
-     that would then run before the user commits to reloading;
-   - make network calls, so it skips provider catalogue refresh if `Load`
-     does that;
-   - write any file.
+   It explicitly does **not**:
+   - resolve `$(...)` or `${VAR}` (`resolve.go:76-104` runs shell
+     commands);
+   - apply `env`;
+   - discover providers or make network calls (`load.go:426-450`);
+   - open the database or run migrations;
+   - write files.
 
-   Read `config.Load` and its callees and list the side effects in a
-   comment at the top of `preflight.go`. If `Load` can't avoid one of them,
-   factor out a `config.LoadForValidation` that skips it, and test that it
-   doesn't.
-2. [ ] Tests:
-   - A valid config in `t.TempDir()` exits 0 and prints the version.
-   - Invalid JSON returns an error.
-   - A bouncer block with `escalate_at_axes: {"nope": 1}` returns an error.
+   Put this list in a comment at the top of `preflight.go`.
+2. [ ] Implement `config.ValidateFiles(workingDir, dataDir string) error`.
+   - It reuses `lookupConfigs` and the merge code in `loadFromConfigPaths`
+     without the resolver, provider, or env steps. If those steps are
+     interleaved, factor out the pure part rather than calling `Load`.
+   - It reads the bouncer block from `trustedConfigPaths()`. The env is the
+     startup env, because `CaptureStartup` runs first.
+   - It passes the bouncer to a validator function argument, so `config`
+     doesn't import `bouncer`. The preflight command supplies it.
+3. [ ] `preflightCmd`: `Hidden: true`, using the persistent `--cwd` and
+   `--data-dir` flags. It prints `version.Version` as the first stdout line,
+   then runs `ValidateFiles`. It exits non-zero with the error on failure.
+4. [ ] Tests:
+   - A valid config prints the version and exits 0.
+   - Invalid JSON fails.
+   - `escalate_at_axes: {"nope": 1}` fails.
+   - `deny_at: 0.4` fails (an effective-threshold error).
+   - A config containing `"$(touch <tmp>/pwned)"` in an MCP env value passes
+     and the file isn't created, which proves nothing was executed.
+   - No database file appears under the data dir.
 
 **Verify:**
 
 ```bash
-go test ./internal/cmd -run Preflight -count=1 && go run . preflight --cwd . ; echo "exit=$?"
-# Expected: PASS; prints a version and exit=0
+go test ./internal/cmd ./internal/config -run 'Preflight|ValidateFiles' -count=1 && go run . preflight --cwd . ; echo "exit=$?"
+# Expected: PASS; version line; exit=0
 ```
 
-### Task 3: Root command: run, shut down, exec, and consume the handoff
-
-**Context:** `internal/cmd/root.go:95-175`, `internal/cmd/session_picker*.go`, `internal/app/app.go:722`, `internal/recovery/recovery.go:85`
+### Task 3: Root command lifecycle
 
 **Files:**
 
-- Modify: `internal/cmd/root.go`
-- Modify: `internal/cmd/session_picker_exec_unix.go`, `internal/cmd/session_picker_exec_windows.go` (generalise `execResume`)
-- Test: `internal/cmd/root_test.go` (or a new `reload_test.go`)
+- Modify: `main.go` or `internal/cmd/root.go` `Execute` (`CaptureStartup` first), `internal/cmd/root.go`, `internal/cmd/session_picker_exec_unix.go`, `internal/cmd/session_picker_exec_windows.go`
+- Test: `internal/cmd/reload_test.go`
 
 **Steps:**
 
-1. [ ] Generalise
-   `execResume(sessionID string) error` into
-   `execAnvil(exe string, args []string, extraEnv []string) error` in both
-   platform files. Keep `execResume` as a thin wrapper so the session picker
-   is unchanged.
-   - Unix: `syscall.Exec(exe, append([]string{exe}, args...), append(os.Environ(), extraEnv...))`.
-   - Windows: spawn the child, wire stdin, stdout, and stderr, wait, and
-     propagate the exit code, as the existing code does. Document in a
-     comment that each reload on Windows nests one more parent process.
-2. [ ] Make `cleanup` from `setupWorkspaceWithProgressBar` idempotent by
-   wrapping it in `sync.OnceFunc`. The reload path then calls it explicitly
-   before exec, and the deferred call becomes a no-op.
-3. [ ] After `program.Run()` returns, if the final UI holds a reload
-   request (`finalUI.ReloadRequest() *ui.ReloadRequest`, added in Task 4):
-   - Build `reload.Options`:
-     - `SessionID` from the request;
-     - `WorkDir` from `ws.WorkingDir()`;
-     - `DataDir` and `Debug` from `cmd.Flags()`;
-     - `Yolo` from the current runtime yolo level (`ws` or the store's
-       overrides; find the accessor), not the original flag, so a level
-       changed at runtime carries over.
-   - Write the handoff to `filepath.Join(config.GlobalDataDir(), "reload")`.
-     The request carries the draft and bouncer mode, and `FromVersion` is
-     `version.Version`.
-   - Set `cleanExit = true`, then call `tracker.Close(true)` and `cleanup()`
-     explicitly. `syscall.Exec` skips deferred calls, as
-     `session_picker.go:71` already notes.
-   - Call `execAnvil(req.Exe, reload.Args(opts), []string{reload.EnvHandoff + "=" + path})`.
-     `req.Exe` was resolved and checked before the UI quit (Task 4).
-   - If exec returns an error, by which point the old instance is already
-     shut down, print
-     `"Reload failed: <err>\nResume this session with:\n  anvil --session <id> --there"`
-     to stderr and return the error.
-4. [ ] At startup in `RunE`, after `setupWorkspaceWithProgressBar`: if
-   `os.Getenv(reload.EnvHandoff)` is set, call `reload.Consume`, then
-   `os.Unsetenv(reload.EnvHandoff)` so child processes such as shell jobs
-   and MCP servers don't inherit it. If `ok` and `h.SessionID == sessionID`:
-   - apply `h.BouncerMode` through `ws.SetPermissionBouncerMode` when the
-     bouncer is configured;
-   - pass the draft and a notice
-     `"Reloaded " + h.FromVersion + " → " + version.Version` to the model
-     through `model.SetReloadHandoff(draft, notice string)` (Task 4).
-5. [ ] Tests: a unit test that the reload branch calls `cleanup` exactly
-   once and passes the expected args and env to a stubbed `execAnvil` (make
-   it a package-level var for testing), and that a handoff for a different
-   session ID isn't applied. If restructuring `RunE` for testability is too
-   invasive, extract the post-run reload branch into
-   `func finishReload(req *ui.ReloadRequest, ...) error` and test that.
+1. [ ] Call `reload.CaptureStartup()` as the first statement of
+   `cmd.Execute()`, before `fang.Execute`, and keep the returned path in a
+   package variable `startupHandoffPath`.
+2. [ ] Generalise `execResume` into
+   `var execAnvil = func(exe string, args, env []string) error`. It's a
+   variable so tests can stub it. Keep `execResume` as a wrapper that passes
+   `reload.StartupEnv()`, so the session picker gets the same env fix.
+   - Unix: `syscall.Exec(exe, append([]string{exe}, args...), env)`.
+   - Windows: spawn, wire stdio, wait, and propagate the exit code. Add a
+     comment that each reload nests one parent process.
+3. [ ] Wrap the workspace `cleanup` in `sync.OnceFunc`. Guard the recovery
+   tracker: `tracker` may be nil when `NewTracker` failed (`root.go:138-149`),
+   so every `tracker.Close` call checks for nil.
+4. [ ] Post-run reload branch, extracted as
+   `func finishReload(req *ui.ReloadRequest, deps reloadDeps) error` for
+   testing:
+   1. The handoff was already written by the UI before quitting (Task 4).
+      `req.HandoffPath` is set.
+   2. Call `tracker.Close(false)`. This deliberately keeps the recovery
+      record, so a failed exec or startup still offers recovery. The new
+      process tracks the same session. Verify `recovery.NewTracker` and
+      `Track` replace the same session's record rather than adding a
+      second one, and fix that if they don't.
+   3. Call `cleanup()`.
+   4. Call `execAnvil(req.Exe, reload.Args(opts), append(reload.StartupEnv(), reload.EnvHandoff+"="+req.HandoffPath))`.
+   5. If exec returns, print to stderr:
+
+      ```text
+      Reload failed: <err>
+      Your draft is saved. Resume with:
+        ANVIL_RELOAD_HANDOFF=<path> anvil <args...>
+      ```
+
+      `<args...>` is `reload.Args(opts)`, quoted for the shell. Return the
+      error.
+5. [ ] Startup consumption in `RunE`:
+   - Call `reload.Sweep(dir, now)`.
+   - If `startupHandoffPath != ""`, call `reload.Load`. On error, log a
+     warning and continue with a normal start.
+   - On success, when `h.SessionID` equals the resolved session ID:
+     - apply `h.BouncerMode` with `ws.PermissionSetBouncerMode` if
+       `ws.PermissionBouncerConfigured()`;
+     - leave the yolo level alone, because it was passed as a flag;
+     - call `model.SetReloadHandoff(h.Draft, notice, ack)`, where
+       `ack = func() { _ = reload.Remove(dir, path) }`.
+   - The UI calls `ack` only once the draft is in the textarea, so a crash
+     before that leaves the file to retry with.
+6. [ ] Tests for `finishReload`:
+   - The order: tracker closed with `false`, then cleanup exactly once,
+     then exec.
+   - The args and env passed to the stubbed `execAnvil` contain the handoff
+     variable and none of the project-applied env. Set a variable after
+     `CaptureStartup` and assert it's absent.
+   - On exec failure, stderr contains the resume command.
+   - A handoff for another session isn't applied.
 
 **Verify:**
 
@@ -305,73 +356,72 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
 
 ## UI Tasks
 
-### Task 4: Slash command, palette item, checks, and confirmation
+### Task 4: Slash command, palette item, gate, and confirmation
 
-**Context:** `internal/ui/AGENTS.md` (read first), `internal/ui/model/ui.go` (`builtinCommands` at 4389, `tryExecuteBuiltinCommand`, the quit flow), `internal/ui/dialog/quit.go`, `internal/ui/dialog/commands.go:585-590`, `internal/workspace/workspace.go`
+**Context:** `internal/ui/AGENTS.md` (read first), `internal/ui/model/ui.go` (`builtinCommands` 4389, submit path 3030-3050 where attachments reset, quit flow), `internal/ui/dialog/quit.go`
 
 **Files:**
 
-- Create: `internal/ui/dialog/reload_confirm.go` (modelled on `quit.go`)
-- Create: `internal/ui/model/reload.go`
-- Modify: `internal/ui/model/ui.go`, `internal/ui/dialog/actions.go`, `internal/ui/dialog/commands.go`
-- Modify: `internal/workspace/workspace.go` and its implementations, if a "running jobs" accessor across all sessions is missing
+- Create: `internal/ui/dialog/reload_confirm.go`, `internal/ui/model/reload.go`
+- Modify: `internal/ui/model/ui.go`, `internal/ui/dialog/actions.go`, `internal/ui/dialog/commands.go`, `internal/workspace/workspace.go` and its implementations
 - Test: `internal/ui/model/reload_test.go`, `internal/ui/dialog/reload_confirm_test.go`
 
 **Steps:**
 
-1. [ ] Add `ReloadRequest` in `internal/ui/model/reload.go`:
-
-   ```go
-   // ReloadRequest is set when the user confirms /reload-instance. The root
-   // command reads it after the program exits.
-   type ReloadRequest struct {
-   	Exe         string
-   	SessionID   string
-   	Draft       string
-   	BouncerMode permission.BouncerMode
-   }
-
-   func (m *UI) ReloadRequest() *ReloadRequest { return m.reloadRequest }
-   ```
-
-   Also add `SetReloadHandoff(draft, notice string)`. On the first render or
-   in `Init`, it puts `draft` in the textarea and reports `notice` through
-   `util.ReportInfo`.
-2. [ ] Add a builtin `{"reload-instance", "Restart on the latest anvil binary", m.startReloadInstance}`
-   to `builtinCommands` and a palette item
-   `NewCommandItem(..., "reload_instance", "Reload Instance", "", ActionReloadInstance{})`.
-3. [ ] `startReloadInstance` runs the checks in this order, stopping at the
-   first that fails, with a `util.ReportError` message:
-   1. `m.com.Workspace.AgentIsBusy()`:
-      `"Agent is busy; wait for it to finish or cancel it first"`.
-   2. A permission dialog is open:
-      `"Answer the open permission prompt first"`. Find how `ui.go` tracks
-      open dialogs.
-   3. `reload.Executable()` fails: show its error. This covers `go run`.
-   4. Run `reload.Preflight` in a `tea.Cmd` with a status message
-      "Checking new anvil binary…". On error, show
-      `"New binary failed its check: <err>"`, truncated to 200 runes.
-   5. On success, collect the running background jobs across sessions.
-      Use an existing workspace accessor or add
-      `RunningJobs() []shell.JobInfo`. If there are any, open the
-      `ReloadConfirm` dialog:
-      "Reload to <version>? N background job(s) will be stopped: <names,
-      max 3, then '+K more'>". Otherwise go straight to Step 4.
-4. [ ] On confirm, or with no jobs, set `m.reloadRequest` with the draft
-   from `m.textarea.Value()`, the current bouncer mode, the session ID
-   (empty on the landing page), and `Exe`. Then return `tea.Quit`. Make
-   sure whatever the normal quit path does before `tea.Quit` (recovery,
-   composer state) also runs here. If quit goes through a helper, reuse it.
-5. [ ] Attachments in the editor aren't carried over. If any are present,
-   add "attachments will be dropped" to the confirmation text, and always
-   show the confirmation in that case.
+1. [ ] Workspace additions:
+   - `RunningJobs() []shell.JobInfo`, across sessions. Reuse the background
+     shell manager.
+   - `HoldReloadGate() (release func(), err error)`. It takes the phase 1
+     coordinator gate (`reloadGate.Lock` through a new coordinator method,
+     `Hold() (func(), error)`, using `TryLock`) and keeps it until
+     `release` is called or the process exits. That stops a user run or job
+     wake from starting between the checks and the exit.
+2. [ ] `ReloadRequest` gets `{Exe, SessionID, HandoffPath string}`, plus
+   `func (m *UI) ReloadRequest() *ReloadRequest`. Add
+   `SetReloadHandoff(draft, notice string, ack func())`, which restores the
+   draft into the textarea, reports `notice`, then calls `ack`.
+3. [ ] Dispatch:
+   - Add a builtin `{"reload-instance", "Restart on the latest anvil binary", m.startReloadInstance}`
+     and a palette item `ActionReloadInstance`.
+   - In the submit path, builtins must run before the attachment reset at
+     `ui.go:3043-3047`. If they don't, make `reload-instance` return before
+     the reset.
+   - Add a test that drives real key messages (type `/reload-instance`,
+     press enter) with an attachment present, and asserts the attachment
+     survives a refusal and a cancellation.
+4. [ ] `startReloadInstance` checks, in order:
+   1. A permission prompt is open: "Answer the open permission prompt
+      first".
+   2. `reload.Executable()` fails: show its error.
+   3. `HoldReloadGate()` fails with busy: "Agent is busy; wait for it to
+      finish or cancel it". On every later failure or cancel path, call
+      `release`.
+   4. Run `reload.Preflight` in a `tea.Cmd`, with the status "Checking new
+      anvil binary…". On error: "New binary failed its check: <err>"
+      (truncated to 200 runes), then release.
+   5. Open the `ReloadConfirm` dialog when there are running jobs or
+      attachments. It reads "Reload to <version>?", followed by "N
+      background job(s) will be stopped: a, b, c (+K more)" and/or
+      "attachments will be dropped". Otherwise go straight to Step 5.
+5. [ ] On confirm, or when there's nothing to confirm:
+   - Write the handoff with `reload.Write(reload.Dir(dataDir), ...)`,
+     containing the draft (`m.textarea.Value()`),
+     `PermissionYoloLevel()`, `PermissionBouncerMode()`, the session ID, and
+     `version.Version`.
+   - On a write error, show it, release, and stop. Never quit without the
+     draft saved.
+   - Set `m.reloadRequest` and return the same command sequence the normal
+     quit path uses before `tea.Quit` (composer state, recovery). Keep the
+     gate held, because the process is about to exit.
 6. [ ] Tests:
-   - Each check produces its message, and none sets `reloadRequest`. Use the
-     fake workspace in `ui_test.go` with configurable busy and jobs.
-   - The confirmation's Yes sets `reloadRequest` with the draft; No clears
-     it.
-   - `SetReloadHandoff` restores the draft.
-   - Update golden files if any change, and review them.
+   - Each refusal leaves `reloadRequest` nil and releases the gate. Use a
+     fake workspace recording hold and release.
+   - Confirming writes a handoff containing the draft, then sets the
+     request.
+   - Cancelling releases the gate and deletes nothing.
+   - `SetReloadHandoff` restores the draft and calls `ack` exactly once.
+   - The key-driven attachment test from Step 3.
+   - Review any golden updates.
 
 **Verify:**
 
@@ -382,28 +432,21 @@ go test ./internal/ui/... -count=1 && task lint
 
 ### Task 5: Docs and a manual end-to-end check
 
-**Files:**
-
-- Modify: `README.md` (a short "Reloading" subsection near the
-  permissions/bouncer docs, linked from the bouncer section's tuning note)
-
 **Steps:**
 
-1. [ ] Document both reloads in 6-10 lines:
-   - **Reload Config & Plugins:** config, rules, thresholds, skills, agents,
-     and plugin commands.
-   - **`/reload-instance`:** new binary, MCP/LSP changes, and API key
-     changes.
-   - What carries over: session, unsent text, yolo, bouncer mode.
-   - What doesn't: background jobs and attachments.
-   - Windows nesting caveat.
-2. [ ] Manual check using the `tui-manual-testing` skill. Build to a fixed
-   path with `go build -o /tmp/anvil-reload/anvil .`, start it in the
-   terminal MCP, type unsent text, rebuild with a visible change (for
-   example a changed palette label), then run `/reload-instance`. Confirm
-   the session, text, and modes survive and the notice shows both
-   versions. Then run `sleep 300` as a background job, run
-   `/reload-instance`, and confirm the dialog appears and No keeps the job.
+1. [ ] README "Reloading" subsection, 8-12 lines. Cover what each reload
+   applies; what carries over; what doesn't (jobs, attachments); that the
+   environment is the one Anvil started with; the Windows nesting caveat;
+   and the mixed-version database migration caveat.
+2. [ ] Manual check using the `tui-manual-testing` skill:
+   - Build with `go build -o /tmp/anvil-reload/anvil .`, start it, type a
+     draft, rebuild with a visible change, and run `/reload-instance`.
+     Check that the session, draft, modes, and notice are right.
+   - Run `sleep 300` as a background job and reload. The dialog should
+     appear, and No should keep the job.
+   - Replace the binary with one that exits 1 at startup and reload.
+     Check that the resume command is printed and works once the good
+     binary is restored.
 
 **Verify:**
 

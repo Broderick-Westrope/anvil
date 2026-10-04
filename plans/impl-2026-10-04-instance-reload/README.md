@@ -83,3 +83,49 @@ watcher.
 - **Exec, not a child process (Unix).** `syscall.Exec` keeps the process ID,
   the terminal, and the parent shell's job control. Windows spawns a child
   and waits, as `execResume` already does (`internal/cmd/session_picker_exec_windows.go`).
+- **The exec'd process gets Anvil's original environment.** It's captured
+  before any config `env` is applied, so a project can't redirect the next
+  process's trusted config or bouncer key.
+- **Preflight is structural only.** It never resolves `$(...)`, applies env,
+  reaches the network, or touches the database.
+
+## Review Notes
+
+### Round 1 (devil's advocate)
+
+Fixes folded into revision 2:
+
+- **Critical: environment.** The exec'd process inherited
+  project-controlled env, which could redirect trusted bouncer config.
+  Fixed by capturing the startup env.
+- **The store mutated published configs.** `SetupAgents` ran after
+  publication, and the coordinator assigned `cfg.Agents` directly. A
+  `SetAgents` store method would have deadlocked under the hook. Fixed by
+  building the config fully before publishing, keeping last-good agent
+  defaults on the store, and running the hook outside `writeMu`.
+- **Plugin-failure recovery covered only the palette path.** Last-good
+  defaults now protect `autoReload` too.
+- **Busy checks weren't exclusive.** `Run` and `RunWake` could start
+  mid-reload. Added a coordinator reload gate.
+- **Allow cache:** an in-flight assessment could repopulate the cache after
+  a reset. Fixed with a generation counter.
+- **Validation:** config validation missed effective thresholds that only
+  fail once defaults are merged. Added an app-registered validator that runs
+  before publishing. Env from a failed reload is now rolled back.
+- **Restart warnings vanished after one reload.** They're now measured
+  against a startup snapshot. Added a table classifying each setting as
+  live, next-run, or restart-required.
+- **Handoff:**
+  - consumed too late and inheritable by MCP servers;
+  - path not validated;
+  - written only after quitting;
+  - recovery record deleted before exec;
+  - nil recovery tracker not handled.
+
+  Each was fixed.
+- **Preflight:** it would have executed `$(...)`, reached the network, and
+  migrated the database. It's now structural only.
+- **Attachments** could be dropped by the submit path. Added a key-driven
+  test.
+- **Wrong accessor names:** now `PermissionSetBouncerMode` and
+  `PermissionYoloLevel`.
