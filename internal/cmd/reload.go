@@ -91,10 +91,19 @@ func applyStartupHandoff(dir, path, sessionID string, perms handoffPermissions, 
 	if h.BouncerMode != "" && perms.PermissionBouncerConfigured() {
 		perms.PermissionSetBouncerMode(permission.BouncerMode(h.BouncerMode))
 	}
-	notice := "Reloaded " + h.FromVersion + " → " + version.Version
-	model.SetReloadHandoff(h.Draft, notice, func() {
+	model.SetReloadHandoff(h.Draft, reloadNotice(h.FromVersion, version.Version), func() {
 		if err := reload.Remove(dir, path); err != nil {
 			slog.Warn("Failed to remove reload handoff", "path", path, "error", err)
 		}
 	})
+}
+
+// reloadNotice describes a completed reload. Dev builds of different code
+// can share a version string, so an unchanged version is called out rather
+// than shown as "vX → vX".
+func reloadNotice(from, to string) string {
+	if from == to {
+		return "Reloaded " + to + " (same version)"
+	}
+	return "Reloaded " + from + " → " + to
 }

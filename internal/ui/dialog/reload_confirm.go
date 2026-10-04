@@ -50,7 +50,9 @@ func NewReloadConfirm(com *common.Common, version string, jobs []string, attachm
 		version:     version,
 		jobs:        jobs,
 		attachments: attachments,
-		selectedNo:  true,
+		// Default to Cancel: confirming stops background jobs and drops
+		// attachments, so a stray enter must not do that.
+		selectedNo: true,
 	}
 	r.keyMap.LeftRight = key.NewBinding(
 		key.WithKeys("left", "right"),

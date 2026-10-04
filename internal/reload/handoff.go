@@ -16,6 +16,9 @@ const (
 )
 
 // Handoff is the state a reloading process passes to its replacement.
+// YoloLevel and CreatedAt are informational: the yolo level is restored
+// through the --yolo flag in Args, and Sweep ages files by mtime. They're
+// kept so a stuck handoff can be understood when inspected by hand.
 type Handoff struct {
 	SessionID   string    `json:"session_id"`
 	Draft       string    `json:"draft"`

@@ -166,6 +166,12 @@ func TestApplyStartupHandoff(t *testing.T) {
 	require.NoFileExists(t, path)
 }
 
+func TestReloadNotice(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "Reloaded v1 → v2", reloadNotice("v1", "v2"))
+	require.Equal(t, "Reloaded v2 (same version)", reloadNotice("v2", "v2"))
+}
+
 func TestApplyStartupHandoffOtherSession(t *testing.T) {
 	t.Parallel()
 	dir, path := writeTestHandoff(t, reload.Handoff{SessionID: "sess-1", Draft: "unsent", BouncerMode: "shadow"})
