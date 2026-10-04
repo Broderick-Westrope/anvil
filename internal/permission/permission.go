@@ -103,6 +103,10 @@ type PermissionRequest struct {
 	// Bouncer is the structured verdict behind BouncerNote, so the UI
 	// can show every axis and highlight the ones that drove the outcome.
 	Bouncer *AssessmentSummary `json:"bouncer,omitempty"`
+	// Review is the reviewer's second opinion on the bouncer's verdict.
+	// It is pending when the prompt is first published and arrives as an
+	// update event.
+	Review *ReviewSummary `json:"review,omitempty"`
 }
 
 type Service interface {
@@ -173,6 +177,7 @@ type permissionService struct {
 	configStore           *config.ConfigStore
 	recorder              DecisionRecorder
 	bouncer               BouncerOptions
+	review                ReviewOptions
 	bouncerMode           atomic.Value // BouncerMode.
 	// allowCache is swapped rather than cleared so an assessment that was
 	// in flight during a reset writes into the orphaned map.
@@ -301,6 +306,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// never approves it.
 	var bouncerDenied bool
 	var denyReason string
+	var review *pendingReview
 	if s.shouldAssess(p) {
 		key := allowCacheKey(opts)
 		cache := s.allowCache.Load()
@@ -350,6 +356,9 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		if mode != BouncerOff {
 			perm.Bouncer = assessmentSummary(a, details, failed, mode)
 			perm.BouncerNote = perm.Bouncer.Note()
+			if s.shouldReview(perm.Bouncer) {
+				review = s.startReview(ctx, opts, perm.Bouncer, details)
+			}
 		}
 	}
 
@@ -360,17 +369,20 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	defer s.requestMu.Unlock()
 
 	if ctx.Err() != nil {
-		s.record(opts, DecisionSourceHuman, VerdictCancelled, "", details)
+		review.stop()
+		s.recordReviewed(opts, VerdictCancelled, details, review)
 		return RequestResult{}, ctx.Err()
 	}
 
 	// Commit boundary 2: a sibling prompt may have added a grant or rule
 	// while this request waited for the prompt slot.
 	if p3 := s.evaluatePolicy(opts); p3.resolved {
+		review.stop()
 		return s.finishPolicy(opts, p3, details), nil
 	} else if p3.yolo && !bouncerDenied {
 		// The bouncer was switched on after this request skipped it;
 		// yolo never prompts.
+		review.stop()
 		return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
 	}
 
@@ -383,7 +395,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	defer s.pendingRequests.Del(perm.ID)
 
 	// Publish the request.
-	s.Publish(pubsub.CreatedEvent, perm)
+	s.publishWithReview(&perm, review)
 
 	select {
 	case <-ctx.Done():
@@ -392,14 +404,15 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 			s.activeRequest = nil
 		}
 		s.activeRequestMu.Unlock()
-		s.record(opts, DecisionSourceHuman, VerdictCancelled, "", details)
+		review.stop()
+		s.recordReviewed(opts, VerdictCancelled, details, review)
 		return RequestResult{}, ctx.Err()
 	case resp := <-respCh:
 		verdict := VerdictDeny
 		if resp.Granted {
 			verdict = VerdictAllow
 		}
-		s.record(opts, DecisionSourceHuman, verdict, "", details)
+		s.recordReviewed(opts, verdict, details, review)
 		reason := resp.Reason
 		if !resp.Granted && bouncerDenied && reason == "" {
 			reason = "the user confirmed the permission bouncer's block (" + denyReason + "). Do not retry this or work around it; tell the user what you were trying to do."

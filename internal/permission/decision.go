@@ -62,8 +62,9 @@ type DecisionRecorder interface {
 }
 
 // AssessmentSchemaVersion changes with the schema, battery, or routing so
-// stats never combines incomparable assessments.
-const AssessmentSchemaVersion = 1
+// stats never combines incomparable assessments. Version 2 gates denies on
+// severity, sends them to the human, and adds the reviewer's opinion.
+const AssessmentSchemaVersion = 2
 
 // AssessmentRecord is the JSON stored in the decision log's assessment
 // column. Field names are a stable contract between writers and readers.
@@ -85,6 +86,9 @@ type AssessmentRecord struct {
 	OutputTokens int               `json:"output_tokens"`
 	LatencyMS    int64             `json:"latency_ms"`
 	Error        string            `json:"error,omitempty"`
+	// Review is the reviewer's opinion, when the request was prompted
+	// and reviewed.
+	Review *ReviewRecord `json:"review,omitempty"`
 }
 
 // Trigger effects recorded in AssessmentRecord.Triggers.
