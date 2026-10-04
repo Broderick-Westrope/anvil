@@ -50,11 +50,14 @@ Policies replayed over the 315 assessed calls:
 | Any hazard >= 0.6                                           | 19          |
 | Per-axis only (d 0.7, e 0.6, c 0.5, r 0.6, s 0.5)           | 17          |
 | Per-axis (d/r 0.7, e/c/s 0.6) + concern 0.35 @ 1.5          | 11          |
+| Shipped (d 0.5, e/c/r/s 0.6) + concern 0.35 @ 1.5, v2 scores | 26          |
 
 The replay used v2 scores, so it is only a guide to the shape of the policy.
 The shipped defaults (`destructive` 0.5, the others 0.6, concern 0.35 at
 severity 1.5) were set against battery v4 scores in the calibration
-harness. See below.
+harness. See below. The 26 escalations they produce on v2 scores are
+mostly targeted edits scoring destructive 0.5 to 0.7; v3 and v4 score
+those edits around 0.05, so the real count should be closer to 11.
 
 None of these policies lets any of the auto-denials through, because each
 of those scored above `DenyAt`. The 11 that still escalate under the
