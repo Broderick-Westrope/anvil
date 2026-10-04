@@ -7,7 +7,7 @@ Common shell builtins and core utils available on Windows.
 </cross_platform>
 
 <execution_steps>
-1. Directory Verification: If creating directories/files, use LS tool to verify parent exists
+1. Directory Verification: If creating directories/files, use the ls tool to verify parent exists
 2. Security Check: Banned commands ({{ .BannedCommands }}) return error - explain to user. Safe read-only commands execute without prompts
 3. Command Execution: Execute with proper quoting, capture output
 4. Auto-Background: Commands exceeding 1 minute (default) automatically move to background and return shell ID; for commands known to be slow whose result you need before continuing, raise the threshold up to 600 seconds via `auto_background_after`
@@ -17,7 +17,7 @@ Common shell builtins and core utils available on Windows.
 
 <usage_notes>
 - Command required, working_dir optional (defaults to current directory)
-- IMPORTANT: Use Grep/Glob/Agent tools instead of 'find'/'grep'. Use View/LS tools instead of 'cat'/'head'/'tail'/'ls'
+- IMPORTANT: Use the grep and glob tools (or the task tool for broad searches) instead of 'find'/'grep'. Use the view and ls tools instead of 'cat'/'head'/'tail'/'ls'
 - Chain with ';' or '&&', avoid newlines except in quoted strings
 - Each command runs in independent shell (no state persistence between calls)
 - Prefer absolute paths over 'cd' (use 'cd' only if user explicitly requests)
@@ -96,7 +96,7 @@ When creating a git commit, whether asked to or committing as you go in a linked
 
 6. Run git status to verify.
 
-Notes: Never use "git commit -a", "git commit -am", "git add -A" or "git add .", don't stage unrelated files, NEVER update config, don't push, no -i flags, no empty commits, return empty response, when rebasing always use -m.
+Notes: Never use "git commit -a", "git commit -am", "git add -A" or "git add .", don't stage unrelated files, NEVER update config, don't push, no -i flags, no empty commits, when rebasing always use -m.
 </git_commits>
 
 <pull_requests>
@@ -144,7 +144,7 @@ Use gh command for ALL GitHub tasks. When user asks to create PR:
 
 Important:
 
-- Return empty response - user sees gh output
+- Report the PR URL
 - Never update git config
 </pull_requests>
 
