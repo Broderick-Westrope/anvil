@@ -108,7 +108,7 @@ Use gh command for ALL GitHub tasks. When user asks to create PR:
    - Check if branch tracks remote and is up to date
    - git log and 'git diff main...HEAD' (full commit history from main divergence)
 
-2. If in the root worktree or on the default branch, create a linked worktree on a feature branch with `wtp add -b <branch> --stay` and work there, as described in <git_workflow>
+2. If in the root worktree or on the default branch, move the work to a linked worktree on a feature branch as described in the `using-git-worktrees` skill
 3. Commit changes if needed, following <git_commits>
 4. Push to remote with -u flag if needed
 
