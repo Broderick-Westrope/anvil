@@ -596,7 +596,7 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.list.SelectPrev()
 		}
-		m.list.ScrollToSelected()
+		m.list.ScrollToSelectedWithMargin(pickerScrollMargin)
 		m.status = ""
 		return m, m.previewLoadCmd()
 
@@ -606,7 +606,7 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.list.SelectNext()
 		}
-		m.list.ScrollToSelected()
+		m.list.ScrollToSelectedWithMargin(pickerScrollMargin)
 		m.status = ""
 		return m, m.previewLoadCmd()
 
@@ -668,6 +668,8 @@ func (m *pickerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // pickerChromeHeight is the number of non-list lines in the picker view:
 // filter input, status line, and help line.
 const pickerChromeHeight = 3
+
+const pickerScrollMargin = 3
 
 // resize recomputes component sizes from the current terminal size.
 func (m *pickerModel) resize() {
