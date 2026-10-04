@@ -69,14 +69,14 @@ After pushing to a branch that has a pull request (including right after `gh pr 
 </ci_checks>
 
 <git_commits>
-When user asks to create git commit:
+When creating a git commit, whether asked to or committing as you go in a linked worktree:
 
 1. Single message with three tool_use blocks (IMPORTANT for speed):
-   - git status (untracked files)
+   - git status (untracked files) and git rev-parse --git-dir --git-common-dir (equal paths mean the root worktree)
    - git diff (staged/unstaged changes)
    - git log (recent commit message style)
 
-2. Stage only the files relevant to this commit by explicit path (`git add <path>...`), including untracked ones. Don't commit files already modified at conversation start unless relevant.
+2. Stage only the files relevant to this commit by explicit path (`git add <path>...`), including untracked ones. Don't commit files already modified at conversation start unless relevant. Never commit in the root worktree unless the user or a repository memory file explicitly says to; follow <git_workflow> and commit in a linked worktree instead.
 
 3. Analyze staged changes in <commit_analysis> tags:
    - List changed/added files, summarize nature (feature/enhancement/bug fix/refactoring/test/docs)
@@ -108,8 +108,8 @@ Use gh command for ALL GitHub tasks. When user asks to create PR:
    - Check if branch tracks remote and is up to date
    - git log and 'git diff main...HEAD' (full commit history from main divergence)
 
-2. Create new branch if needed
-3. Commit changes if needed
+2. If in the root worktree or on the default branch, create a linked worktree on a feature branch with `wtp add -b <branch> --stay` and work there, as described in <git_workflow>
+3. Commit changes if needed, following <git_commits>
 4. Push to remote with -u flag if needed
 
 5. Analyze changes in <pr_analysis> tags:
