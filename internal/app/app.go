@@ -100,7 +100,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		}
 	}()
 	store.SetBouncerValidator(func(b *config.Bouncer) error {
-		return bouncerThresholds(b).Validate()
+		return BouncerThresholds(b).Validate()
 	})
 	sessions := session.NewService(q, conn)
 	messages := message.NewService(q, message.WithConn(conn))

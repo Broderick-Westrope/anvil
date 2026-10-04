@@ -191,7 +191,9 @@ func Preflight(ctx context.Context, exe, workDir, dataDir string) (string, error
 		if ctx.Err() != nil {
 			err = fmt.Errorf("%w after %s", ctx.Err(), preflightTimeout)
 		}
-		if msg := truncate(strings.TrimSpace(stderr.String()), maxPreflightStderr); msg != "" {
+		// Collapse the padding fang adds around errors so the limit is
+		// spent on the message.
+		if msg := truncate(strings.Join(strings.Fields(stderr.String()), " "), maxPreflightStderr); msg != "" {
 			return "", fmt.Errorf("%w: %s", err, msg)
 		}
 		return "", err

@@ -67,7 +67,7 @@ func buildBouncerOption(ta *config.TrustedBouncer, sessions session.Service, mes
 		HTTP:       &http.Client{},
 		Backoff:    []time.Duration{250 * time.Millisecond},
 	}
-	a, err := bouncer.New(client, bouncerThresholds(cfg), sendUserMessages)
+	a, err := bouncer.New(client, BouncerThresholds(cfg), sendUserMessages)
 	if err != nil {
 		slog.Warn("Bouncer thresholds are invalid", "error", err)
 		return bouncerSetup{}, false
@@ -126,7 +126,7 @@ func (app *App) ApplyConfig(cur *config.Config, curB *config.TrustedBouncer) err
 	if app.bouncer == nil || curB == nil || curB.Config == nil {
 		return nil
 	}
-	th := bouncerThresholds(curB.Config)
+	th := BouncerThresholds(curB.Config)
 	if reflect.DeepEqual(th, app.bouncer.Thresholds()) {
 		return nil
 	}
@@ -137,7 +137,9 @@ func (app *App) ApplyConfig(cur *config.Config, curB *config.TrustedBouncer) err
 	return nil
 }
 
-func bouncerThresholds(cfg *config.Bouncer) bouncer.Thresholds {
+// BouncerThresholds overlays the thresholds set in cfg on the bouncer's
+// defaults.
+func BouncerThresholds(cfg *config.Bouncer) bouncer.Thresholds {
 	th := bouncer.DefaultThresholds()
 	if cfg.EscalateAt != nil {
 		for axis := range th.EscalateAt {

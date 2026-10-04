@@ -51,6 +51,7 @@ func init() {
 		sessionCmd,
 		mcpCmd,
 		permissionsCmd,
+		preflightCmd,
 	)
 }
 

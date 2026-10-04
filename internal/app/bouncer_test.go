@@ -345,12 +345,12 @@ func TestBouncerThresholds(t *testing.T) {
 
 	t.Run("unset uses defaults", func(t *testing.T) {
 		t.Parallel()
-		require.Equal(t, bouncer.DefaultThresholds(), bouncerThresholds(&config.Bouncer{}))
+		require.Equal(t, bouncer.DefaultThresholds(), BouncerThresholds(&config.Bouncer{}))
 	})
 
 	t.Run("escalate_at sets every axis and axes override it", func(t *testing.T) {
 		t.Parallel()
-		th := bouncerThresholds(&config.Bouncer{
+		th := BouncerThresholds(&config.Bouncer{
 			EscalateAt:      f(0.5),
 			EscalateAtAxes:  map[string]float64{"credentials": 0.4},
 			ConcernAt:       f(0.3),
@@ -366,7 +366,7 @@ func TestBouncerThresholds(t *testing.T) {
 
 	t.Run("axes alone keep other defaults", func(t *testing.T) {
 		t.Parallel()
-		th := bouncerThresholds(&config.Bouncer{EscalateAtAxes: map[string]float64{"destructive": 0.8}})
+		th := BouncerThresholds(&config.Bouncer{EscalateAtAxes: map[string]float64{"destructive": 0.8}})
 		want := bouncer.DefaultThresholds()
 		want.EscalateAt["destructive"] = 0.8
 		require.Equal(t, want, th)
@@ -374,7 +374,7 @@ func TestBouncerThresholds(t *testing.T) {
 
 	t.Run("does not mutate defaults", func(t *testing.T) {
 		t.Parallel()
-		bouncerThresholds(&config.Bouncer{EscalateAt: f(0.1)})
+		BouncerThresholds(&config.Bouncer{EscalateAt: f(0.1)})
 		require.Equal(t, 0.5, bouncer.DefaultThresholds().EscalateAt["destructive"])
 	})
 }
