@@ -157,7 +157,7 @@ func (s *Session) HandleMsg(msg tea.Msg) Action {
 				action := s.confirmDeleteSession()
 				s.list.SetItems(sessionItems(s.com.Styles, sessionsModeNormal, s.sessions...)...)
 				s.list.SelectFirst()
-				s.list.ScrollToSelected()
+				s.list.ScrollToSelectedWithMargin(listScrollMargin)
 				return action
 			case key.Matches(msg, s.keyMap.CancelDelete):
 				s.sessionsMode = sessionsModeNormal
@@ -204,7 +204,7 @@ func (s *Session) HandleMsg(msg tea.Msg) Action {
 				} else {
 					s.list.SelectPrev()
 				}
-				s.list.ScrollToSelected()
+				s.list.ScrollToSelectedWithMargin(listScrollMargin)
 			case key.Matches(msg, s.keyMap.Next):
 				s.list.Focus()
 				if s.list.IsSelectedLast() {
@@ -212,7 +212,7 @@ func (s *Session) HandleMsg(msg tea.Msg) Action {
 				} else {
 					s.list.SelectNext()
 				}
-				s.list.ScrollToSelected()
+				s.list.ScrollToSelectedWithMargin(listScrollMargin)
 			case key.Matches(msg, s.keyMap.Select):
 				if item := s.list.SelectedItem(); item != nil {
 					sessionItem := item.(*SessionItem)
@@ -254,7 +254,7 @@ func (s *Session) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	// if selected index is outside visible range, scroll to it
 	if s.selectedSessionInx < start || s.selectedSessionInx > end {
-		s.list.ScrollToSelected()
+		s.list.ScrollToSelectedWithMargin(listScrollMargin)
 	}
 
 	var cur *tea.Cursor
@@ -455,7 +455,7 @@ func (s *Session) reloadSessions() {
 	sortPinnedFirst(s.sessions)
 	s.list.SetItems(sessionItems(s.com.Styles, sessionsModeNormal, s.sessions...)...)
 	s.list.SelectFirst()
-	s.list.ScrollToSelected()
+	s.list.ScrollToSelectedWithMargin(listScrollMargin)
 }
 
 // ShortHelp implements [help.KeyMap].

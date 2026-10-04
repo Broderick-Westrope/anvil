@@ -180,7 +180,7 @@ func (sp *SkillPicker) HandleMsg(msg tea.Msg) Action {
 			} else {
 				sp.list.SelectPrev()
 			}
-			sp.list.ScrollToSelected()
+			sp.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, sp.keyMap.Next):
 			sp.list.Focus()
 			if sp.list.IsSelectedLast() {
@@ -188,7 +188,7 @@ func (sp *SkillPicker) HandleMsg(msg tea.Msg) Action {
 			} else {
 				sp.list.SelectNext()
 			}
-			sp.list.ScrollToSelected()
+			sp.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, sp.keyMap.Select):
 			if selected := sp.list.SelectedItem(); selected != nil {
 				if item, ok := selected.(*SkillPickerItem); ok && item != nil {

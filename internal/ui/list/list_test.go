@@ -830,3 +830,86 @@ func totalRenderHits(items []*trackedItem) int {
 	}
 	return n
 }
+
+func newOneLineList(count, height int) *List {
+	items := make([]Item, count)
+	for i := range items {
+		items[i] = newTrackedItem(strconv.Itoa(i), "body", true)
+	}
+	l := NewList(items...)
+	l.SetSize(40, height)
+	l.SetSelected(0)
+	return l
+}
+
+func TestList_ScrollToSelectedWithMargin_Down(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(20, 10)
+	want := []int{0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10}
+	for sel, offset := range want {
+		l.SetSelected(sel)
+		l.ScrollToSelectedWithMargin(3)
+		require.Equal(t, offset, l.Offset(), "selected=%d", sel)
+	}
+}
+
+func TestList_ScrollToSelectedWithMargin_Up(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(20, 10)
+	l.SelectLast()
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 10, l.Offset())
+
+	want := map[int]int{19: 10, 16: 10, 13: 10, 12: 9, 4: 1, 3: 0, 0: 0}
+	for sel := 19; sel >= 0; sel-- {
+		l.SetSelected(sel)
+		l.ScrollToSelectedWithMargin(3)
+		if offset, ok := want[sel]; ok {
+			require.Equal(t, offset, l.Offset(), "selected=%d", sel)
+		}
+	}
+}
+
+func TestList_ScrollToSelectedWithMargin_Jumps(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(20, 10)
+	l.SelectLast()
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 10, l.Offset())
+
+	l.SelectFirst()
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 0, l.Offset())
+
+	l.SetSelected(15)
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 9, l.Offset(), "selection lands with the margin below it")
+}
+
+func TestList_ScrollToSelectedWithMargin_SmallViewport(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(20, 3)
+	for sel := range 20 {
+		l.SetSelected(sel)
+		l.ScrollToSelectedWithMargin(3)
+		require.True(t, l.SelectedItemInView(), "selected=%d", sel)
+	}
+	l.SetSelected(10)
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 9, l.Offset(), "margin of 1 keeps the selection centred")
+}
+
+func TestList_ScrollToSelectedWithMargin_FitsViewport(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(5, 10)
+	for sel := range 5 {
+		l.SetSelected(sel)
+		l.ScrollToSelectedWithMargin(3)
+		require.Equal(t, 0, l.Offset(), "selected=%d", sel)
+	}
+}

@@ -32,6 +32,7 @@ const (
 	titleContentHeight = 1
 	// inputContentHeight is the height of the input content line.
 	inputContentHeight = 1
+	listScrollMargin   = 3
 )
 
 // CloseKey is the default key binding to close dialogs.

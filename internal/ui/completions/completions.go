@@ -29,6 +29,8 @@ const (
 	tierFallback
 )
 
+const scrollMargin = 2
+
 // SelectionMsg is sent when a completion is selected.
 type SelectionMsg[T any] struct {
 	Value    T
@@ -196,7 +198,7 @@ func (c *Completions) SetItems(files []FileCompletionValue, resources []Resource
 	c.height = ordered.Clamp(len(items), int(minHeight), int(maxHeight))
 	c.list.SetSize(c.width, c.height)
 	c.list.SelectFirst()
-	c.list.ScrollToSelected()
+	c.list.ScrollToSelectedWithMargin(scrollMargin)
 
 	c.updateSize()
 }
@@ -287,7 +289,7 @@ func (c *Completions) updateSize() {
 	c.height = ordered.Clamp(len(items), int(minHeight), int(maxHeight))
 	c.list.SetSize(c.width, c.height)
 	c.list.SelectFirst()
-	c.list.ScrollToSelected()
+	c.list.ScrollToSelectedWithMargin(scrollMargin)
 }
 
 // HasItems returns whether there are visible items.
@@ -338,7 +340,7 @@ func (c *Completions) selectPrev() {
 	if !c.list.SelectPrev() {
 		c.list.WrapToEnd()
 	}
-	c.list.ScrollToSelected()
+	c.list.ScrollToSelectedWithMargin(scrollMargin)
 }
 
 // selectNext selects the next item with circular navigation.
@@ -350,7 +352,7 @@ func (c *Completions) selectNext() {
 	if !c.list.SelectNext() {
 		c.list.WrapToStart()
 	}
-	c.list.ScrollToSelected()
+	c.list.ScrollToSelectedWithMargin(scrollMargin)
 }
 
 // selectCurrent returns a command with the currently selected item.
