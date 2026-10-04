@@ -158,6 +158,13 @@ func (w *AppWorkspace) AgentIsBusy() bool {
 	return w.app.AgentCoordinator.IsBusy()
 }
 
+func (w *AppWorkspace) AgentPause(ctx context.Context, budget time.Duration) (func(), error) {
+	if w.app.AgentCoordinator == nil {
+		return func() {}, nil
+	}
+	return w.app.AgentCoordinator.Pause(ctx, budget)
+}
+
 func (w *AppWorkspace) AgentIsSessionBusy(sessionID string) bool {
 	if w.app.AgentCoordinator == nil {
 		return false
@@ -331,6 +338,19 @@ func (w *AppWorkspace) LSPGetDiagnosticCounts(name string) lsp.DiagnosticCounts 
 
 func (w *AppWorkspace) ListSessionJobs(sessionID string) []shell.JobInfo {
 	return w.ancestry.filterSessionTreeJobs(context.Background(), shell.GetBackgroundShellManager().ListAll(), sessionID)
+}
+
+func (w *AppWorkspace) RunningJobs() []shell.JobInfo {
+	if w.app == nil || w.app.AgentCoordinator == nil {
+		return nil
+	}
+	var running []shell.JobInfo
+	for _, job := range shell.GetBackgroundShellManager().ListAll() {
+		if !job.Done {
+			running = append(running, job)
+		}
+	}
+	return running
 }
 
 // -- Config (read-only) --

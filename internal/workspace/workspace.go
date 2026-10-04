@@ -116,6 +116,10 @@ type Workspace interface {
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
 	AgentRegenerateTitle(ctx context.Context, sessionID string) error
+	// AgentPause stops new top-level runs from being admitted and waits up
+	// to budget for active ones to finish. On success the caller must call
+	// resume; on timeout it returns agent.ErrBusy, already un-paused.
+	AgentPause(ctx context.Context, budget time.Duration) (resume func(), err error)
 	UpdateAgentModel(ctx context.Context) error
 	InitOrchestratorAgent(ctx context.Context) error
 	// SetComposerState reports whether a session is open in the TUI and
@@ -154,6 +158,8 @@ type Workspace interface {
 	// ListSessionJobs returns the jobs owned by sessionID or by any of its
 	// descendant (subagent) sessions, in manager order.
 	ListSessionJobs(sessionID string) []shell.JobInfo
+	// RunningJobs returns the jobs still running, across all sessions.
+	RunningJobs() []shell.JobInfo
 
 	// Config (read-only data)
 	Config() *config.Config

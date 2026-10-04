@@ -233,3 +233,29 @@ func TestReloadConfigAndPlugins_Concurrent(t *testing.T) {
 	require.Equal(t, 2, coord.reloads)
 	require.Equal(t, []string{"view"}, f.perms.toolPatterns())
 }
+
+func TestAgentPause_NoCoordinator(t *testing.T) {
+	t.Parallel()
+	ws := NewAppWorkspace(&app.App{}, nil)
+
+	resume, err := ws.AgentPause(t.Context(), time.Second)
+	require.NoError(t, err)
+	require.NotNil(t, resume)
+	resume()
+	require.Nil(t, ws.RunningJobs())
+}
+
+func TestAgentPause_PassesThrough(t *testing.T) {
+	t.Parallel()
+	coord := &reloadCoordinator{}
+	ws := NewAppWorkspace(&app.App{AgentCoordinator: coord}, nil)
+
+	resume, err := ws.AgentPause(t.Context(), time.Second)
+	require.NoError(t, err)
+	resume()
+	require.Equal(t, 1, coord.resumes)
+
+	coord.pauseErr = agent.ErrBusy
+	_, err = ws.AgentPause(t.Context(), time.Second)
+	require.ErrorIs(t, err, agent.ErrBusy)
+}

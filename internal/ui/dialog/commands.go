@@ -585,6 +585,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "browse_skills", "Browse Skills", "", ActionOpenDialog{SkillPickerID}),
 		NewCommandItem(c.com.Styles, "mcp_servers", "MCP Servers", "", ActionOpenDialog{MCPPaletteID}),
 		NewCommandItem(c.com.Styles, "reload_config", "Reload Config & Plugins", "", ActionReloadConfig{}).WithAliases("reload plugins", "reload config"),
+		NewCommandItem(c.com.Styles, "reload_instance", "Reload Instance", "", ActionReloadInstance{}).WithAliases("restart", "reload-instance"),
 		NewCommandItem(c.com.Styles, "quit", "Quit", "ctrl+c", tea.QuitMsg{}).WithAliases("exit"),
 	)
 

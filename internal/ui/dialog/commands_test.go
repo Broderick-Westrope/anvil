@@ -137,3 +137,19 @@ func TestDefaultCommands_ReloadConfig(t *testing.T) {
 	require.Contains(t, item.Filter(), "reload plugins")
 	require.Contains(t, item.Filter(), "reload config")
 }
+
+func TestDefaultCommands_ReloadInstance(t *testing.T) {
+	t.Parallel()
+
+	s := styles.TokyoNight()
+	com := &common.Common{
+		Styles:    &s,
+		Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig()},
+	}
+	c := &Commands{com: com}
+	item := findCommandItem(c.defaultCommands(), "reload_instance")
+	require.NotNil(t, item)
+	require.Equal(t, "Reload Instance", item.title)
+	require.Equal(t, ActionReloadInstance{}, item.Action())
+	require.Contains(t, item.Filter(), "restart")
+}

@@ -366,6 +366,15 @@ type UI struct {
 	// the user confirms /reload-instance.
 	reloadHandoff *reloadHandoff
 	reloadRequest *ReloadRequest
+	// reloading freezes submissions and session changes while a reload
+	// is being checked or confirmed; reloadExe is the binary it checked.
+	reloading bool
+	reloadExe string
+	// reloadOps is nil outside tests.
+	reloadOps *reloadOps
+	// pendingSends counts tracked send commands that haven't returned,
+	// so a reload never exits while a prompt is on its way to the agent.
+	pendingSends int
 
 	// canvas is the reusable screen buffer. It is reallocated only when the
 	// terminal dimensions change; screen.Clear resets every cell so stale
@@ -767,6 +776,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
+	case sendDoneMsg:
+		cmds = append(cmds, m.handleSendDone(msg))
+	case reloadPreflightMsg:
+		cmds = append(cmds, m.handleReloadPreflight(msg))
+	case reloadPausedMsg:
+		cmds = append(cmds, m.handleReloadPaused(msg))
+	case reloadHandoffWrittenMsg:
+		cmds = append(cmds, m.handleReloadHandoffWritten(msg))
 
 	case triageNudgeMsg:
 		if !m.triageNudgeShown {
@@ -2153,6 +2170,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	// Session dialog messages.
 	case dialog.ActionSelectSession:
+		if m.reloading {
+			cmds = append(cmds, util.ReportWarn(reloadInProgressMsg))
+			break
+		}
 		m.dialog.CloseDialog(dialog.SessionsID)
 		m.clearDrillStack()
 		cmds = append(cmds, m.loadSession(msg.Session.ID))
@@ -2528,6 +2549,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionReloadConfig:
 		m.dialog.CloseDialog(dialog.CommandsID)
 		cmds = append(cmds, m.reloadConfig())
+	case dialog.ActionReloadInstance:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		cmds = append(cmds, m.startReloadInstance())
+	case dialog.ActionReloadInstanceConfirm:
+		cmds = append(cmds, m.confirmReloadInstance())
+	case dialog.ActionReloadInstanceCancel:
+		cmds = append(cmds, m.cancelReloadInstance())
 	case dialog.ActionAttachSkill:
 		if m.slashACOpen {
 			m.closeSlashAC(true)
@@ -2996,6 +3024,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					break
 				}
 
+				// Leave the text and attachments in place so they are
+				// carried over in the draft.
+				if m.reloading {
+					cmds = append(cmds, util.ReportWarn(reloadInProgressMsg))
+					return tea.Batch(cmds...)
+				}
+
 				// Otherwise, send the message
 				m.textarea.Reset()
 				if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
@@ -3005,6 +3040,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
+				}
+
+				// Handled before the slash-command path, which drops
+				// attachments, so a refused or cancelled reload keeps them.
+				if value == "/"+reloadInstanceCommand {
+					cmds = append(cmds, m.startReloadInstance())
+					return tea.Batch(cmds...)
 				}
 
 				// Check for /command prefix and execute as a slash
@@ -4368,6 +4410,7 @@ func (m *UI) builtinCommands() []builtinDef {
 		{"branch", "Branch from a message", func() tea.Cmd {
 			return m.openDialog(dialog.BranchID)
 		}},
+		{reloadInstanceCommand, "Restart on the latest anvil binary", m.startReloadInstance},
 	}
 }
 
@@ -4624,7 +4667,7 @@ func (m *UI) cacheSidebarLogo(width int) {
 
 // initializeProject sends the project initialization prompt into the current session.
 func (m *UI) initializeProject() tea.Cmd {
-	return func() tea.Msg {
+	return m.trackSend(func() tea.Msg {
 		initPrompt, err := m.com.Workspace.InitializePrompt()
 		if err != nil {
 			return util.InfoMsg{
@@ -4633,11 +4676,14 @@ func (m *UI) initializeProject() tea.Cmd {
 			}
 		}
 		return sendMessageMsg{Content: initPrompt}
-	}
+	})
 }
 
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
+	if m.reloading {
+		return m.freezeSend(content, attachments)
+	}
 	if !m.com.Workspace.AgentIsReady() {
 		return util.ReportError(fmt.Errorf("orchestrator agent is not initialized"))
 	}
@@ -4669,7 +4715,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
-	cmds = append(cmds, func() tea.Msg {
+	cmds = append(cmds, m.trackSend(func() tea.Msg {
 		err := m.com.Workspace.AgentRun(context.Background(), sessionID, content, attachments...)
 		if err != nil {
 			isCancelErr := errors.Is(err, context.Canceled)
@@ -4682,7 +4728,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 			}
 		}
 		return nil
-	})
+	}))
 	return tea.Batch(cmds...)
 }
 
@@ -5410,6 +5456,9 @@ func (m *UI) newSession() tea.Cmd {
 	if !m.hasSession() {
 		return nil
 	}
+	if m.reloading {
+		return util.ReportWarn(reloadInProgressMsg)
+	}
 
 	m.clearDrillStack()
 	m.session = nil
@@ -5695,7 +5744,7 @@ func (m *UI) drawSessionDetails(scr uv.Screen, area uv.Rectangle) {
 }
 
 func (m *UI) runMCPPrompt(clientID, promptID string, arguments map[string]string) tea.Cmd {
-	load := func() tea.Msg {
+	load := m.trackSend(func() tea.Msg {
 		prompt, err := m.com.Workspace.GetMCPPrompt(clientID, promptID, arguments)
 		if err != nil {
 			// TODO: make this better
@@ -5716,7 +5765,7 @@ func (m *UI) runMCPPrompt(clientID, promptID string, arguments map[string]string
 		return sendMessageMsg{
 			Content: commands.FormatExpansionXML(line.String(), prompt),
 		}
-	}
+	})
 
 	var cmds []tea.Cmd
 	if cmd := m.dialog.StartLoading(); cmd != nil {
