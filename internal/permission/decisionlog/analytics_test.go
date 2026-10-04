@@ -195,3 +195,28 @@ func TestAddEscalationAxes(t *testing.T) {
 		"severity":    {"allow": 1, "deny": 1},
 	}, axes)
 }
+
+func TestStatsReview(t *testing.T) {
+	t.Parallel()
+	row := func(review *permission.ReviewRecord, source, verdict string) db.PermissionDecision {
+		data, err := json.Marshal(permission.AssessmentRecord{SchemaVersion: 2, BatteryVersion: "v4", Mode: "enforce", Outcome: "deny", Review: review})
+		require.NoError(t, err)
+		return db.PermissionDecision{DecidedBy: source, Verdict: verdict, Assessment: sql.NullString{Valid: true, String: string(data)}}
+	}
+	stats := ComputeStats([]db.PermissionDecision{
+		row(&permission.ReviewRecord{Effect: "escalate"}, "human", "allow"),
+		row(&permission.ReviewRecord{Effect: "deny"}, "human", "deny"),
+		row(&permission.ReviewRecord{Effect: "allow"}, "human", "deny"),
+		row(&permission.ReviewRecord{Effect: "escalate", Error: "timeout"}, "human", "allow"),
+		row(&permission.ReviewRecord{Effect: "allow"}, "human", "cancelled"),
+		row(nil, "human", "allow"),
+	})
+	require.Len(t, stats.Groups, 1)
+	g := stats.Groups[0]
+	require.Equal(t, 3, g.Review.Samples)
+	require.Equal(t, 1, g.Review.Matrix["escalate"]["allow"])
+	require.Equal(t, 1, g.Review.Matrix["deny"]["deny"])
+	require.Equal(t, 1, g.Review.Matrix["allow"]["deny"])
+	require.Equal(t, 1, g.ReviewErrors)
+	require.Equal(t, map[string]int{"allow": 3, "deny": 2, "cancelled": 1}, g.Enforce.Human.Matrix["deny"], "deny prompts the human overrode")
+}

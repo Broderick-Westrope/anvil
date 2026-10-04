@@ -701,3 +701,37 @@ func TestPermissions_ShadowDenyIsNormalPrompt(t *testing.T) {
 	require.Equal(t, 0, p.selectedOption)
 	require.Contains(t, ansi.Strip(p.renderHeader(100)), "Permission Required")
 }
+
+// TestPermissions_ReviewRow verifies the reviewer's opinion renders in
+// each state and that a late review updates only its own prompt.
+func TestPermissions_ReviewRow(t *testing.T) {
+	t.Parallel()
+
+	p := newDenyPermissions(t, false)
+	require.Empty(t, p.renderReview(100))
+
+	p.permission.Review = &permission.ReviewSummary{Shadow: true, Pending: true}
+	require.Contains(t, ansi.Strip(p.renderHeader(100)), "Reviewer Checking your recent messages")
+
+	p.SetReview("someone-else", &permission.ReviewSummary{Effect: "allow"})
+	require.True(t, p.permission.Review.Pending, "a review for another prompt is ignored")
+
+	p.SetReview(p.permission.ID, &permission.ReviewSummary{
+		Shadow: true, Effect: "escalate", Quote: "open a PR", QuoteVerified: true, Reason: "a PR needs a push, but not a force push",
+	})
+	row := ansi.Strip(p.renderReview(60))
+	require.Contains(t, row, "Would ask you (shadow)")
+	require.Contains(t, row, "you said “open a PR”")
+	require.Contains(t, row, "force push")
+	require.NotContains(t, row, "not found")
+
+	p.SetReview(p.permission.ID, &permission.ReviewSummary{Effect: "allow", Quote: "ship it", QuoteVerified: false})
+	row = ansi.Strip(p.renderReview(100))
+	require.Contains(t, row, "Would allow")
+	require.Contains(t, row, "(not found in your messages)")
+
+	p.SetReview(p.permission.ID, &permission.ReviewSummary{Shadow: true, Error: "agent not ready"})
+	row = ansi.Strip(p.renderReview(100))
+	require.Contains(t, row, "Unavailable (shadow)")
+	require.Contains(t, row, "agent not ready")
+}

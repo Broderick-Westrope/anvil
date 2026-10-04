@@ -107,9 +107,14 @@ type AssessmentStats struct {
 	ByDecidedBy    map[string]int `json:"by_decided_by"`
 	Shadow         Comparisons    `json:"shadow"`
 	Enforce        Enforcement    `json:"enforce"`
-	Errors         map[string]int `json:"errors"`
-	Skips          map[string]int `json:"skips"`
-	Usage          UsageStats     `json:"usage"`
+	// Review pairs the reviewer's effect with the human's verdict on the
+	// prompts it reviewed. Reviews that failed are counted in
+	// ReviewErrors instead.
+	Review       Comparisons    `json:"review"`
+	ReviewErrors int            `json:"review_errors"`
+	Errors       map[string]int `json:"errors"`
+	Skips        map[string]int `json:"skips"`
+	Usage        UsageStats     `json:"usage"`
 }
 
 // Stats summarises permission-request volume and bouncer performance.
@@ -173,7 +178,7 @@ func ComputeStats(rows []db.PermissionDecision) Stats {
 		key := version{a.SchemaVersion, a.BatteryVersion}
 		g := groups[key]
 		if g == nil {
-			g = &accumulator{stats: AssessmentStats{SchemaVersion: key.schema, BatteryVersion: key.battery, ByDecidedBy: map[string]int{}, Shadow: Comparisons{Matrix: VerdictMatrix{}}, Enforce: Enforcement{Bouncer: map[string]int{}, Human: Comparisons{Matrix: VerdictMatrix{}}, EscalationAxes: map[string]map[string]int{}}, Errors: map[string]int{}, Skips: map[string]int{}}}
+			g = &accumulator{stats: AssessmentStats{SchemaVersion: key.schema, BatteryVersion: key.battery, ByDecidedBy: map[string]int{}, Shadow: Comparisons{Matrix: VerdictMatrix{}}, Review: Comparisons{Matrix: VerdictMatrix{}}, Enforce: Enforcement{Bouncer: map[string]int{}, Human: Comparisons{Matrix: VerdictMatrix{}}, EscalationAxes: map[string]map[string]int{}}, Errors: map[string]int{}, Skips: map[string]int{}}}
 			groups[key] = g
 		}
 		s := &g.stats
@@ -198,6 +203,13 @@ func ComputeStats(rows []db.PermissionDecision) Stats {
 						addEscalationAxes(s.Enforce.EscalationAxes, a.Triggers, row.Verdict)
 					}
 				}
+			}
+		}
+		if a.Review != nil && row.DecidedBy == string(permission.DecisionSourceHuman) && row.Verdict != string(permission.VerdictCancelled) {
+			if a.Review.Error != "" {
+				s.ReviewErrors++
+			} else {
+				addComparison(&s.Review, a.Review.Effect, row.Verdict)
 			}
 		}
 		switch a.Outcome {

@@ -780,6 +780,9 @@ func (p *Permissions) renderHeader(contentWidth int) string {
 	if block := p.renderBouncer(contentWidth); block != "" {
 		lines = append(lines, block)
 	}
+	if block := p.renderReview(contentWidth); block != "" {
+		lines = append(lines, block)
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }

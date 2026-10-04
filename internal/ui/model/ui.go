@@ -1018,6 +1018,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Payload.Name))
 		}
 	case pubsub.Event[permission.PermissionRequest]:
+		// An update carries the reviewer's opinion for a prompt that is
+		// already open; it must not reopen the dialog or notify again.
+		if msg.Type == pubsub.UpdatedEvent {
+			if d, ok := m.dialog.Dialog(dialog.PermissionsID).(*dialog.Permissions); ok {
+				d.SetReview(msg.Payload.ID, msg.Payload.Review)
+			}
+			break
+		}
 		if cmd := m.openPermissionsDialog(msg.Payload); cmd != nil {
 			cmds = append(cmds, cmd)
 		}

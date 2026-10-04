@@ -118,3 +118,81 @@ func wrapStyled(tokens []string, width int, gap string) []string {
 	}
 	return lines
 }
+
+// SetReview attaches the reviewer's opinion when it arrives after the
+// prompt opened. It ignores reviews for any other request.
+func (p *Permissions) SetReview(id string, review *permission.ReviewSummary) {
+	if p.permission.ID != id {
+		return
+	}
+	p.permission.Review = review
+}
+
+// renderReview renders the reviewer's second opinion under the bouncer's
+// verdict: what it would do, the user's words it relied on, and why.
+func (p *Permissions) renderReview(width int) string {
+	rv := p.permission.Review
+	if rv == nil {
+		return ""
+	}
+	s := p.com.Styles.Dialog.Permissions
+	keyStr := s.KeyText.Render("Reviewer")
+	valueWidth := max(1, width-lipgloss.Width(keyStr)-1)
+	shadow := ""
+	if rv.Shadow {
+		shadow = s.BouncerScore.Render(" (shadow)")
+	}
+
+	var head string
+	var detail []string
+	switch {
+	case rv.Pending:
+		head = s.BouncerScore.Render("Checking your recent messages…")
+	case rv.Error != "":
+		head = s.BouncerScore.Render("Unavailable") + shadow
+		detail = append(detail, rv.Error)
+	default:
+		head = p.reviewEffectStyle(rv.Effect).Render(reviewEffectLabel(rv.Effect)) + shadow
+		if rv.Quote != "" {
+			quote := "you said “" + rv.Quote + "”"
+			if !rv.QuoteVerified {
+				quote += " (not found in your messages)"
+			}
+			detail = append(detail, quote)
+		}
+		if rv.Reason != "" {
+			detail = append(detail, rv.Reason)
+		}
+	}
+
+	lines := wrapStyled([]string{head}, valueWidth, " ")
+	for _, d := range detail {
+		wrapped := lipgloss.NewStyle().Width(valueWidth).Render(d)
+		lines = append(lines, s.BouncerScore.Render(wrapped))
+	}
+	value := lipgloss.JoinVertical(lipgloss.Left, lines...)
+	return lipgloss.JoinHorizontal(lipgloss.Top, keyStr, " ", value)
+}
+
+func reviewEffectLabel(effect string) string {
+	switch effect {
+	case string(permission.ReviewAllow):
+		return "Would allow"
+	case string(permission.ReviewDeny):
+		return "Would deny"
+	default:
+		return "Would ask you"
+	}
+}
+
+func (p *Permissions) reviewEffectStyle(effect string) lipgloss.Style {
+	s := p.com.Styles.Dialog.Permissions
+	switch effect {
+	case string(permission.ReviewAllow):
+		return s.BouncerMitigate
+	case string(permission.ReviewDeny):
+		return s.BouncerDeny
+	default:
+		return s.BouncerEscalate
+	}
+}

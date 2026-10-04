@@ -458,6 +458,12 @@ func runStats(ctx context.Context, q db.Querier, opts statsOpts, out io.Writer) 
 				fmt.Fprintf(&buf, "  (%d escalations have no recorded axes; they predate trigger recording)\n", n)
 			}
 		}
+		if g.Review.Samples > 0 || g.ReviewErrors > 0 {
+			fmt.Fprintf(&buf, "Reviewer: %d samples, %d errors (reviewer effect x your verdict)\n", g.Review.Samples, g.ReviewErrors)
+			writeMatrix(&buf, g.Review.Matrix)
+			alert := fmt.Sprintf("Reviewer allow x human deny: %d", g.Review.Matrix["allow"]["deny"])
+			fmt.Fprintln(&buf, lipgloss.NewStyle().Foreground(charmtone.Coral).Bold(true).Render(alert))
+		}
 		writeCounts(&buf, "Errors", g.Errors)
 		writeCounts(&buf, "Skips", g.Skips)
 		u := g.Usage
