@@ -240,6 +240,7 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for executing shell command")
 			}
+			rootSessionEnv := []string{"ANVIL_ROOT_SESSION_ID=" + cmp.Or(GetRootSessionFromContext(ctx), sessionID)}
 			if !isSafeReadOnly {
 				p, err := permissions.Request(ctx,
 					permission.CreatePermissionRequest{
@@ -268,7 +269,7 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				bgManager := shell.GetBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
+				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description, rootSessionEnv...)
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
@@ -330,7 +331,7 @@ func NewBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 			// Start with detached context so it can survive if moved to background
 			bgManager := shell.GetBackgroundShellManager()
 			bgManager.Cleanup()
-			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
+			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description, rootSessionEnv...)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
 			}

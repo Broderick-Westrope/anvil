@@ -56,6 +56,20 @@ func TestBackgroundShellManager_Start(t *testing.T) {
 	}
 }
 
+func TestBackgroundShellManager_StartEnv(t *testing.T) {
+	t.Parallel()
+
+	manager := newBackgroundShellManager()
+	bgShell, err := manager.Start(t.Context(), t.TempDir(), nil, "echo \"$EXTRA_ENV $ANVIL\"", "", "EXTRA_ENV=extra")
+	require.NoError(t, err)
+	bgShell.Wait()
+
+	stdout, _, done, err := bgShell.GetOutput()
+	require.True(t, done)
+	require.NoError(t, err)
+	require.Equal(t, "extra 1", strings.TrimSpace(stdout))
+}
+
 func TestBackgroundShellManager_Get(t *testing.T) {
 	t.Parallel()
 

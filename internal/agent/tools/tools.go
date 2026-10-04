@@ -21,6 +21,9 @@ type (
 const (
 	// SessionIDContextKey is the key for the session ID in the context.
 	SessionIDContextKey sessionIDContextKey = "session_id"
+	// RootSessionIDContextKey is the key for the ID of the top-level session
+	// that a subagent session descends from.
+	RootSessionIDContextKey sessionIDContextKey = "root_session_id"
 	// MessageIDContextKey is the key for the message ID in the context.
 	MessageIDContextKey messageIDContextKey = "message_id"
 	// SupportsImagesContextKey is the key for the model's image support capability.
@@ -62,6 +65,12 @@ func getContextValue[T any](ctx context.Context, key any, defaultValue T) T {
 // GetSessionFromContext retrieves the session ID from the context.
 func GetSessionFromContext(ctx context.Context) string {
 	return getContextValue(ctx, SessionIDContextKey, "")
+}
+
+// GetRootSessionFromContext retrieves the top-level session ID from the
+// context.
+func GetRootSessionFromContext(ctx context.Context) string {
+	return getContextValue(ctx, RootSessionIDContextKey, "")
 }
 
 // GetMessageFromContext retrieves the message ID from the context.
