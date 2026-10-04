@@ -203,6 +203,22 @@ changes apply from the next turn. Changes to MCP servers, LSPs, and the
 bouncer connection need `/reload-instance`, and the reload names any that are
 pending.
 
+### Reloading
+
+`/reload-instance` (or **Reload Instance** in the palette) restarts Anvil on
+the `anvil` binary currently on disk, resuming the same session in the same
+terminal. Unlike **Reload Config & Plugins**, it applies everything: new code,
+MCP servers, LSPs, and the bouncer connection. It carries over unsent editor
+text, the yolo level, the bouncer mode, `--debug`, and `--data-dir`.
+Background jobs are stopped and attachments are dropped, so Anvil asks first
+when either would be lost, and it refuses while the agent is running. The new
+binary is checked before the old one exits; if it still fails to start, the
+terminal shows a command that resumes where you were. A reload behaves like
+quitting and resuming by hand: the new process starts from the environment
+Anvil started with, then loads `.env` and config afresh. On Windows each
+reload keeps the previous process waiting as a parent. A newer binary may
+migrate the database while older instances are still running.
+
 ### LSPs
 
 Anvil can use LSPs for additional context to help inform its decisions, just
