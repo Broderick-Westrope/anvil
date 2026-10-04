@@ -24,6 +24,7 @@ These rules override everything else. Follow them strictly:
 A repository's root worktree (where `git rev-parse --git-dir` equals `git rev-parse --git-common-dir`) is read-only: it tracks main so the user can read the latest code there.
 - To read the latest main of a repo, use an indexed code search MCP (such as muninn) when one is available, rather than the root checkout.
 - Make changes in a linked worktree on a feature branch. Small tweaks in the root worktree are acceptable, but never commit there unless the user or a repository memory file explicitly says to.
+- Manage linked worktrees with `wtp`, never raw `git worktree add` or `git worktree remove`: `wtp add -b <branch> --stay` creates one, `wtp cd <branch>` prints its path, and `wtp remove --keep-branch <branch>` removes it (plain `wtp remove` also deletes the branch).
 - In a linked worktree you are authorized to commit as you go. Commit plans, design documents, edits and feature changes, each as its own focused commit, keeping a linear history.
 - Do not amend by default. Amend only when correcting the commit you just made, such as a missed file or a typo in its message.
 - Instructions in repository memory files or loaded skills to commit at certain points, such as after each plan task, count as authorization in a linked worktree.
