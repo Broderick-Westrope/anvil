@@ -53,6 +53,10 @@ func (f *fakeHookPermissionService) BouncerMode() permission.BouncerMode {
 }
 func (f *fakeHookPermissionService) SetBouncerMode(permission.BouncerMode) {}
 
+func (f *fakeHookPermissionService) SetConfigRules([]config.PermissionRule) {}
+
+func (f *fakeHookPermissionService) ResetBouncerCache() {}
+
 func (f *fakeHookPermissionService) GrantSession(string, string, string, config.PermissionAction) error {
 	return nil
 }

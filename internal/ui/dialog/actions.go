@@ -122,8 +122,16 @@ type (
 	// ActionRegenerateTitle is a message to regenerate the current session
 	// title.
 	ActionRegenerateTitle struct{}
-	// ActionReloadPlugins is dispatched to re-discover all plugin content.
-	ActionReloadPlugins struct{}
+	// ActionReloadConfig is dispatched to re-read config from disk and
+	// re-discover all plugin content.
+	ActionReloadConfig struct{}
+	// ActionReloadInstance is dispatched to replace the process with the
+	// anvil binary on disk, resuming the same session.
+	ActionReloadInstance struct{}
+	// ActionReloadInstanceConfirm and ActionReloadInstanceCancel answer
+	// the reload confirmation dialog.
+	ActionReloadInstanceConfirm struct{}
+	ActionReloadInstanceCancel  struct{}
 	// ActionAttachSkill is dispatched when a skill is selected from the
 	// slash autocomplete or the Browse Skills picker dialog.
 	ActionAttachSkill struct {

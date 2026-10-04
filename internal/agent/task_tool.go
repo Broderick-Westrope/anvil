@@ -45,14 +45,24 @@ func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDep
 				return fantasy.NewTextErrorResponse("subagent_type is required"), nil
 			}
 
-			// Validate that the requested agent type is configured.
-			if _, ok := c.agentConfigs[params.SubagentType]; !ok {
-				validTypes := make([]string, 0, len(c.agentConfigs))
+			// Snapshot what's needed under orchestratorMu, which
+			// ReloadPlugins holds while swapping these maps.
+			c.orchestratorMu.RLock()
+			_, configured := c.agentConfigs[params.SubagentType]
+			var validTypes []string
+			if !configured {
+				validTypes = make([]string, 0, len(c.agentConfigs))
 				for name := range c.agentConfigs {
 					if name != config.AgentOrchestrator {
 						validTypes = append(validTypes, name)
 					}
 				}
+			}
+			callerMD, hasMD := c.agentMDs[callerName]
+			c.orchestratorMu.RUnlock()
+
+			// Validate that the requested agent type is configured.
+			if !configured {
 				slices.Sort(validTypes)
 				return fantasy.NewTextErrorResponse(
 					fmt.Sprintf("unknown subagent_type %q; valid types: %s",
@@ -63,7 +73,6 @@ func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDep
 			// Enforce delegation rules: non-orchestrator callers may only delegate
 			// to agents listed in their delegates_to frontmatter.
 			if callerName != config.AgentOrchestrator {
-				callerMD, hasMD := c.agentMDs[callerName]
 				if hasMD && !slices.Contains(callerMD.DelegatesTo, params.SubagentType) {
 					return fantasy.NewTextErrorResponse(
 						fmt.Sprintf("agent %q is not allowed to delegate to %q; allowed: %s",

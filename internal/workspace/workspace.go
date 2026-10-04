@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
@@ -20,6 +21,29 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 )
+
+// ReloadReport is the outcome of [Workspace.ReloadConfigAndPlugins].
+type ReloadReport struct {
+	// ConfigErr is set when config could not be re-read; the previous
+	// config stays live.
+	ConfigErr error
+	// ApplyErr is set when the reloaded config was published but could not
+	// be pushed into the running services.
+	ApplyErr error
+	// PluginsErr is set when plugin discovery failed; the previous plugin
+	// agents stay live.
+	PluginsErr     error
+	PluginWarnings []agent.PluginWarning
+	// PluginsSkipped is set when there is no agent coordinator yet
+	// (onboarding).
+	PluginsSkipped bool
+	// PluginsBusy is set when a turn was running, so plugins were not
+	// reloaded. Config was still applied.
+	PluginsBusy bool
+	// RestartRequired names the settings changed since startup that only
+	// /reload-instance applies.
+	RestartRequired []string
+}
 
 // LSPClientInfo holds information about an LSP client's state. This is
 // the frontend-facing type; implementations translate from the
@@ -92,6 +116,10 @@ type Workspace interface {
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
 	AgentRegenerateTitle(ctx context.Context, sessionID string) error
+	// AgentPause stops new top-level runs from being admitted and waits up
+	// to budget for active ones to finish. On success the caller must call
+	// resume; on timeout it returns agent.ErrBusy, already un-paused.
+	AgentPause(ctx context.Context, budget time.Duration) (resume func(), err error)
 	UpdateAgentModel(ctx context.Context) error
 	InitOrchestratorAgent(ctx context.Context) error
 	// SetComposerState reports whether a session is open in the TUI and
@@ -130,6 +158,8 @@ type Workspace interface {
 	// ListSessionJobs returns the jobs owned by sessionID or by any of its
 	// descendant (subagent) sessions, in manager order.
 	ListSessionJobs(sessionID string) []shell.JobInfo
+	// RunningJobs returns the jobs still running, across all sessions.
+	RunningJobs() []shell.JobInfo
 
 	// Config (read-only data)
 	Config() *config.Config
@@ -139,6 +169,7 @@ type Workspace interface {
 	// Config mutations (proxied to server in client mode)
 	UpdatePreferredModel(scope config.Scope, modelType config.SelectedModelType, model config.SelectedModel) error
 	SetCompactMode(scope config.Scope, enabled bool) error
+	SetTransparentBackground(scope config.Scope, enabled bool) error
 	SetProviderAPIKey(scope config.Scope, providerID string, apiKey any) error
 	SetConfigField(scope config.Scope, key string, value any) error
 	RemoveConfigField(scope config.Scope, key string) error
@@ -147,8 +178,12 @@ type Workspace interface {
 	// Project lifecycle
 	InitializePrompt() (string, error)
 
-	// Plugins.
-	ReloadPlugins(ctx context.Context) error
+	// Reload.
+
+	// ReloadConfigAndPlugins re-reads config from disk, pushes it into the
+	// services that copied it at startup, and re-scans plugins. Config and
+	// plugins succeed or fail independently; the report says which.
+	ReloadConfigAndPlugins(ctx context.Context) ReloadReport
 
 	// Skills.
 	SkillStates() []*skills.SkillState

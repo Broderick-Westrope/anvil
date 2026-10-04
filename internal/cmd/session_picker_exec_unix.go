@@ -2,17 +2,10 @@
 
 package cmd
 
-import (
-	"os"
-	"syscall"
-)
+import "syscall"
 
-// execResume replaces the current process with an Anvil instance
-// resuming the given session in its original working directory.
-func execResume(sessionID string) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	return syscall.Exec(exe, []string{exe, "--session", sessionID, "--there"}, os.Environ())
+// execAnvil replaces the current process with exe, keeping the process ID
+// and terminal.
+var execAnvil = func(exe string, args, env []string) error {
+	return syscall.Exec(exe, append([]string{exe}, args...), env)
 }

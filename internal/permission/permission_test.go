@@ -627,3 +627,54 @@ func TestGrantForever_UpsertsInMemory(t *testing.T) {
 	require.Len(t, impl.configRules, 1)
 	require.Len(t, impl.configRules[0].SubRules, 2)
 }
+
+func TestSetConfigRulesResolvesRequests(t *testing.T) {
+	t.Parallel()
+	h := newBouncerHarness(t, nil, BouncerOff, nil, nil)
+	rules := []config.PermissionRule{{ToolPattern: "bash", SubRules: []config.PermissionSubRule{{InputPattern: "git status", Action: config.PermissionAllow}}}}
+	h.svc.SetConfigRules(rules)
+	// The service keeps its own copy.
+	rules[0].SubRules[0].Action = config.PermissionDeny
+
+	r, err := h.svc.Request(testCtx(t), h.req("a", "git status"))
+	require.NoError(t, err)
+	require.True(t, r.Granted)
+	d := h.rec.snapshot()[0]
+	require.Equal(t, DecisionSourceRule, d.DecidedBy)
+	require.Equal(t, VerdictAllow, d.Verdict)
+
+	h.svc.SetConfigRules([]config.PermissionRule{{ToolPattern: "bash", Action: config.PermissionDeny}})
+	r, err = h.svc.Request(testCtx(t), h.req("b", "git status"))
+	require.NoError(t, err)
+	require.False(t, r.Granted)
+	require.Equal(t, DecisionSourceRule, h.rec.snapshot()[1].DecidedBy)
+}
+
+func TestResetBouncerCacheOrphansInFlightAllow(t *testing.T) {
+	t.Parallel()
+	fake := &fakeBouncer{
+		outcome: AssessAllow,
+		entered: make(chan AssessInput, 2),
+		release: make(chan struct{}),
+	}
+	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
+	opts := h.req("a", "go build ./...")
+
+	done := requestAsync(testCtx(t), h.svc, opts)
+	waitEntered(t, fake)
+	old := h.svc.allowCache.Load()
+	h.svc.ResetBouncerCache()
+	close(fake.release)
+	res := waitResult(t, done)
+	require.NoError(t, res.err)
+	require.True(t, res.result.Granted)
+
+	require.Equal(t, 1, old.Len(), "the stale allow lands in the orphaned cache")
+	require.Zero(t, h.svc.allowCache.Load().Len())
+
+	opts.ToolCallID = "b"
+	r, err := h.svc.Request(testCtx(t), opts)
+	require.NoError(t, err)
+	require.True(t, r.Granted)
+	require.Equal(t, int32(2), fake.calls.Load(), "the repeat is assessed again rather than served from cache")
+}

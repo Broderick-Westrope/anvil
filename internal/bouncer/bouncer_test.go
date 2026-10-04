@@ -46,7 +46,11 @@ func newTestClient(url string) *systemone.Client {
 }
 
 func newTestBouncer(url string) *Bouncer {
-	return New(newTestClient(url), DefaultThresholds(), false)
+	b, err := New(newTestClient(url), DefaultThresholds(), false)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 var eligible = permission.AssessInput{ToolName: "bash", Action: "execute", Input: "go test ./..."}
@@ -439,4 +443,90 @@ func TestWarmBypassesBreakerAndNeverRetries(t *testing.T) {
 	healthy.Store(true)
 	require.NoError(t, a.Warm(t.Context()), "warm-up runs even with the breaker open")
 	require.Equal(t, int32(2), hits.Load())
+}
+
+func TestBouncerSetThresholdsChangesRouting(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, batteryBody(0.4, 1.6))
+	}))
+	defer srv.Close()
+
+	b := newTestBouncer(srv.URL)
+	got, err := b.Assess(t.Context(), eligible)
+	require.NoError(t, err)
+	require.Equal(t, permission.AssessEscalate, got.Outcome)
+
+	th := DefaultThresholds()
+	th.SeverityConcern = 1.8
+	require.NoError(t, b.SetThresholds(th))
+	th.EscalateAt[QDestructive] = 0.01
+	require.Equal(t, 0.5, b.Thresholds().EscalateAt[QDestructive], "SetThresholds must copy the axis map")
+
+	got, err = b.Assess(t.Context(), eligible)
+	require.NoError(t, err)
+	require.Equal(t, permission.AssessAllow, got.Outcome)
+	var rec permission.AssessmentRecord
+	require.NoError(t, json.Unmarshal(got.Details, &rec))
+	require.InDelta(t, 1.8, rec.Thresholds["severity_concern"], 1e-9)
+	require.Equal(t, b.Thresholds().asMap(), rec.Thresholds)
+}
+
+func TestBouncerSetThresholdsRejectsInvalid(t *testing.T) {
+	t.Parallel()
+
+	b := newTestBouncer("http://127.0.0.1:0")
+	th := DefaultThresholds()
+	th.DenyAt = 0.4
+	require.Error(t, b.SetThresholds(th))
+	require.Equal(t, DefaultThresholds(), b.Thresholds())
+}
+
+func TestNewRejectsInvalidThresholds(t *testing.T) {
+	t.Parallel()
+
+	th := DefaultThresholds()
+	th.DenyAt = 1.1
+	b, err := New(newTestClient("http://127.0.0.1:0"), th, false)
+	require.Error(t, err)
+	require.Nil(t, b)
+}
+
+func TestBouncerSetThresholdsConcurrentWithAssess(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, batteryBody(0.4, 1.6))
+	}))
+	defer srv.Close()
+
+	b := newTestBouncer(srv.URL)
+	loose := DefaultThresholds()
+	loose.SeverityConcern = 1.8
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for i := range 200 {
+			th := DefaultThresholds()
+			if i%2 == 0 {
+				th = loose
+			}
+			require.NoError(t, b.SetThresholds(th))
+		}
+	})
+	for range 50 {
+		wg.Go(func() {
+			got, err := b.Assess(context.Background(), eligible)
+			require.NoError(t, err)
+			var rec permission.AssessmentRecord
+			require.NoError(t, json.Unmarshal(got.Details, &rec))
+			// Routing and the recorded thresholds come from one snapshot.
+			want := permission.AssessEscalate
+			if rec.Thresholds["severity_concern"] == loose.SeverityConcern {
+				want = permission.AssessAllow
+			}
+			require.Equal(t, want, got.Outcome)
+		})
+	}
+	wg.Wait()
 }

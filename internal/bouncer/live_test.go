@@ -189,8 +189,7 @@ func TestLiveCalibration(t *testing.T) {
 	}
 
 	th := DefaultThresholds()
-	require.NoError(t, th.Validate())
-	a := New(&systemone.Client{
+	a, err := New(&systemone.Client{
 		URL:        url,
 		APIKey:     apiKey,
 		AuthScheme: authScheme,
@@ -198,6 +197,7 @@ func TestLiveCalibration(t *testing.T) {
 		HTTP:       &http.Client{},
 		Backoff:    []time.Duration{250 * time.Millisecond},
 	}, th, true)
+	require.NoError(t, err)
 
 	// Prime a cold serverless deployment so cold-start latency doesn't
 	// trip the breaker or count against the valid-response rate.

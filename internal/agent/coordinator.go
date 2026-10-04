@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
@@ -69,6 +70,14 @@ var (
 	errSmallModelNotFound              = errors.New("small model not found in provider config")
 )
 
+// ErrBusy is returned by Pause when active top-level runs don't finish
+// within the budget.
+var ErrBusy = errors.New("agent is busy")
+
+// PluginWarning describes plugin content that a reload skipped because it
+// could not be parsed. Warnings don't fail the reload.
+type PluginWarning = plugin.Warning
+
 type Coordinator interface {
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
@@ -88,7 +97,13 @@ type Coordinator interface {
 	RegenerateTitle(ctx context.Context, sessionID string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
-	ReloadPlugins(ctx context.Context) error
+	// ReloadPlugins re-discovers plugin content and rebuilds the
+	// orchestrator. Skipped plugin content is returned as warnings.
+	ReloadPlugins(ctx context.Context) ([]PluginWarning, error)
+	// Pause stops new top-level runs from being admitted and waits for
+	// active ones to finish, up to budget. On success the caller must
+	// call resume. On timeout it un-pauses and returns ErrBusy.
+	Pause(ctx context.Context, budget time.Duration) (resume func(), err error)
 	SkillStates() []*skills.SkillState
 	// ActiveSkillByName returns the active skill with the given name, or nil
 	// if not found.
@@ -114,15 +129,32 @@ type coordinator struct {
 
 	// orchestrator is the eagerly-built top-level agent. Protected by orchestratorMu.
 	// Do NOT use csync.Value[SessionAgent] — it panics on interface types backed by pointers.
-	orchestrator   SessionAgent
+	orchestrator SessionAgent
+	// orchestratorMu guards the plugin-derived state below. Lock order:
+	// agentBuildMu, then orchestratorMu. Never take agentBuildMu while
+	// holding orchestratorMu; ReloadPlugins never takes agentBuildMu.
 	orchestratorMu sync.RWMutex
 
 	// agents is a lazy map of named sub-agents, populated on first delegation.
 	agents *csync.Map[string, SessionAgent]
 
+	// agentsGen counts plugin reloads so a sub-agent build that started
+	// before one is not cached after it. Protected by orchestratorMu.
+	agentsGen uint64
+
 	// agentBuildMu serialises lazy agent construction to prevent duplicate
-	// builds when two goroutines race on the same agent name.
+	// builds when two goroutines race on the same agent name. Lock order:
+	// agentBuildMu, then orchestratorMu.
 	agentBuildMu sync.Mutex
+
+	// Admission gate for top-level runs (Run, RunWake, Summarize). While
+	// pauses > 0 new runs wait on resumed; active counts admitted calls
+	// from entry to return. Nested runs (sub-agents, auto-summarise, title
+	// generation) go through SessionAgent directly and are never gated.
+	admitMu sync.Mutex
+	pauses  int
+	active  int
+	resumed chan struct{} // Closed and cleared when the last pause ends.
 
 	// agentConfigs holds per-agent config loaded from cfg at init.
 	agentConfigs map[string]config.Agent
@@ -155,7 +187,7 @@ func NewCoordinator(
 	onIdle func(sessionID string),
 ) (Coordinator, error) {
 	// Discover plugins once for both skills and agents.
-	plugins := plugin.DiscoverAll(cfg.Config().Plugins)
+	plugins := plugin.DiscoverAll(cfg.Config().Plugins, nil)
 	// Discover skills once at session start.
 	allSkills, activeSkills, skillStates := discoverSkills(cfg, plugins)
 	skillTracker := skills.NewTracker(activeSkills)
@@ -189,7 +221,7 @@ func NewCoordinator(
 		}
 	}
 
-	agentMDs, err := discoverAgentMDs(agentMDFS, plugins)
+	agentMDs, err := discoverAgentMDs(agentMDFS, plugins, nil)
 	if err != nil {
 		return nil, fmt.Errorf("loading agent descriptions: %w", err)
 	}
@@ -198,16 +230,6 @@ func NewCoordinator(
 	if len(agentMDs) == 0 {
 		slog.Warn("No specialist agents discovered; the orchestrator will handle all tasks directly. Configure plugins to provide agent definitions.")
 	}
-
-	// Convert AgentMD capability fields to config.Agent defaults and re-setup
-	// the agent roster, replacing the hardcoded non-orchestrator defaults set
-	// during config loading with values sourced from the .md frontmatter.
-	mdDefaults := make(map[string]config.Agent, len(agentMDs))
-	for name, md := range agentMDs {
-		mdDefaults[name] = agentConfigFromMD(name, md)
-	}
-	// Load all agent configs from the computed defaults + user overrides.
-	c.agentConfigs = cfg.Config().SetupAgentsWithDefaults(mdDefaults)
 
 	// Validate delegates_to references. Warn on disabled refs, error on missing.
 	agentMDSlice := make([]prompt.AgentMD, 0, len(agentMDs))
@@ -221,6 +243,17 @@ func NewCoordinator(
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("agent delegates_to validation failed: %w", errors.Join(errs...))
 	}
+
+	// Convert AgentMD capability fields to config.Agent defaults and re-setup
+	// the agent roster, replacing the hardcoded non-orchestrator defaults set
+	// during config loading with values sourced from the .md frontmatter.
+	// The store keeps them so later config reloads retain plugin agents.
+	mdDefaults := make(map[string]config.Agent, len(agentMDs))
+	for name, md := range agentMDs {
+		mdDefaults[name] = agentConfigFromMD(name, md)
+	}
+	cfg.SetAgentDefaults(mdDefaults)
+	c.agentConfigs = cfg.Config().Agents
 
 	// Build the orchestrator eagerly at depth=3.
 	orchestratorCfg, ok := c.agentConfigs[config.AgentOrchestrator]
@@ -271,8 +304,10 @@ func agentIDToName(id string) string {
 // loadAgentMDsFromDir reads *.md files from a filesystem directory (non-
 // recursive, unlike loadAgentMDs which uses fs.WalkDir) and parses each one
 // using prompt.ParseAgentMD. Used for plugin agent discovery. Subdirectories
-// are intentionally ignored; plugin agents must be at the top level.
-func loadAgentMDsFromDir(dir string) (map[string]prompt.AgentMD, error) {
+// are intentionally ignored; plugin agents must be at the top level. Files
+// that can't be read or parsed are skipped and reported to warn, which may
+// be nil.
+func loadAgentMDsFromDir(dir string, warn func(PluginWarning)) (map[string]prompt.AgentMD, error) {
 	result := make(map[string]prompt.AgentMD)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -283,16 +318,21 @@ func loadAgentMDsFromDir(dir string) (map[string]prompt.AgentMD, error) {
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), ".md")
-		content, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		path := filepath.Join(dir, entry.Name())
+		content, err := os.ReadFile(path)
 		if err != nil {
-			slog.Warn("Failed to read plugin agent file",
-				"path", filepath.Join(dir, entry.Name()), "error", err)
+			slog.Warn("Failed to read plugin agent file", "path", path, "error", err)
+			if warn != nil {
+				warn(PluginWarning{Path: path, Err: fmt.Errorf("reading agent file: %w", err)})
+			}
 			continue
 		}
 		md, err := prompt.ParseAgentMD(name, content)
 		if err != nil {
-			slog.Warn("Failed to parse plugin agent file",
-				"path", filepath.Join(dir, entry.Name()), "error", err)
+			slog.Warn("Failed to parse plugin agent file", "path", path, "error", err)
+			if warn != nil {
+				warn(PluginWarning{Path: path, Err: fmt.Errorf("parsing agent file: %w", err)})
+			}
 			continue
 		}
 		result[name] = md
@@ -334,8 +374,10 @@ func loadAgentMDs(fsys fs.FS) (map[string]prompt.AgentMD, error) {
 
 // discoverAgentMDs loads built-in agent definitions from the embedded
 // filesystem and overlays plugin-provided definitions in reverse priority
-// order (earlier-configured plugins win on name collisions).
-func discoverAgentMDs(builtinFS fs.FS, plugins []*plugin.Plugin) (map[string]prompt.AgentMD, error) {
+// order (earlier-configured plugins win on name collisions). Plugin agent
+// files that can't be loaded are skipped and reported to warn, which may be
+// nil.
+func discoverAgentMDs(builtinFS fs.FS, plugins []*plugin.Plugin, warn func(PluginWarning)) (map[string]prompt.AgentMD, error) {
 	agentMDs, err := loadAgentMDs(builtinFS)
 	if err != nil {
 		return nil, err
@@ -345,10 +387,13 @@ func discoverAgentMDs(builtinFS fs.FS, plugins []*plugin.Plugin) (map[string]pro
 		if p.AgentsPath == "" {
 			continue
 		}
-		pluginAgentMDs, loadErr := loadAgentMDsFromDir(p.AgentsPath)
+		pluginAgentMDs, loadErr := loadAgentMDsFromDir(p.AgentsPath, warn)
 		if loadErr != nil {
 			slog.Warn("Failed to load plugin agents",
 				"plugin", p.Name, "path", p.AgentsPath, "error", loadErr)
+			if warn != nil {
+				warn(PluginWarning{Path: p.AgentsPath, Err: loadErr})
+			}
 			continue
 		}
 		for name, md := range pluginAgentMDs {
@@ -368,8 +413,86 @@ func discoverAgentMDs(builtinFS fs.FS, plugins []*plugin.Plugin) (map[string]pro
 	return agentMDs, nil
 }
 
+// admit waits until no Pause is in effect, then counts the caller as an
+// active top-level run until it calls release. It returns ctx.Err() if ctx
+// is done first.
+func (c *coordinator) admit(ctx context.Context) (release func(), err error) {
+	c.admitMu.Lock()
+	for c.pauses > 0 {
+		resumed := c.resumed
+		c.admitMu.Unlock()
+		select {
+		case <-resumed:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		c.admitMu.Lock()
+	}
+	c.active++
+	c.admitMu.Unlock()
+	return func() {
+		c.admitMu.Lock()
+		c.active--
+		c.admitMu.Unlock()
+	}, nil
+}
+
+// Pause stops new top-level runs from being admitted and waits for active
+// ones to finish, up to budget. On success the caller must call resume. On
+// timeout it un-pauses and returns ErrBusy. Overlapping pauses nest: runs
+// are admitted again once every one has resumed.
+func (c *coordinator) Pause(ctx context.Context, budget time.Duration) (resume func(), err error) {
+	c.admitMu.Lock()
+	if c.pauses == 0 {
+		c.resumed = make(chan struct{})
+	}
+	c.pauses++
+	c.admitMu.Unlock()
+
+	var once sync.Once
+	resume = func() {
+		once.Do(func() {
+			c.admitMu.Lock()
+			defer c.admitMu.Unlock()
+			c.pauses--
+			if c.pauses == 0 {
+				close(c.resumed)
+				c.resumed = nil
+			}
+		})
+	}
+
+	deadline := time.NewTimer(budget)
+	defer deadline.Stop()
+	poll := time.NewTicker(20 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		c.admitMu.Lock()
+		idle := c.active == 0
+		c.admitMu.Unlock()
+		if idle {
+			return resume, nil
+		}
+		select {
+		case <-ctx.Done():
+			resume()
+			return nil, ctx.Err()
+		case <-deadline.C:
+			resume()
+			return nil, ErrBusy
+		case <-poll.C:
+		}
+	}
+}
+
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	release, err := c.admit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	// Wait for MCP initialization to complete before building the tool list.
 	// Without this, slow-to-start MCP servers (e.g. stdio Python via uv) may
 	// not have registered their tools yet when buildTools reads the registry,
@@ -458,6 +581,12 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 
 // RunWake implements Coordinator.
 func (c *coordinator) RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error) {
+	release, err := c.admit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	// Cheap pre-check; the session agent re-checks under its dispatch
 	// lock.
 	if c.getOrchestrator().IsSessionBusy(sessionID) {
@@ -994,7 +1123,10 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 		return existing, nil
 	}
 
+	c.orchestratorMu.RLock()
 	agentCfg, ok := c.agentConfigs[agentName]
+	gen := c.agentsGen
+	c.orchestratorMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("agent %q not configured", agentName)
 	}
@@ -1012,8 +1144,31 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 	if err != nil {
 		return nil, err
 	}
-	c.agents.Set(cacheKey, built)
+	c.cacheAgent(cacheKey, gen, built)
 	return built, nil
+}
+
+// cacheAgent caches a built sub-agent unless a plugin reload happened since
+// gen was read. The compare and Set share one critical section so they
+// can't interleave with ReloadPlugins' Reset. It reports whether the agent
+// was cached.
+func (c *coordinator) cacheAgent(cacheKey string, gen uint64, built SessionAgent) bool {
+	c.orchestratorMu.RLock()
+	defer c.orchestratorMu.RUnlock()
+	if c.agentsGen != gen {
+		return false
+	}
+	c.agents.Set(cacheKey, built)
+	return true
+}
+
+// orchestratorConfig returns the orchestrator's agent config, read under
+// orchestratorMu.
+func (c *coordinator) orchestratorConfig() (config.Agent, bool) {
+	c.orchestratorMu.RLock()
+	defer c.orchestratorMu.RUnlock()
+	agentCfg, ok := c.agentConfigs[config.AgentOrchestrator]
+	return agentCfg, ok
 }
 
 // buildTools assembles the tool set for an agent at the given delegation depth.
@@ -1396,7 +1551,7 @@ func (c *coordinator) Model() Model {
 // UpdateModels rebuilds the orchestrator with the latest model config and
 // clears the lazy agent map so sub-agents are rebuilt on next delegation.
 func (c *coordinator) UpdateModels(ctx context.Context) error {
-	orchestratorCfg, ok := c.agentConfigs[config.AgentOrchestrator]
+	orchestratorCfg, ok := c.orchestratorConfig()
 	if !ok {
 		return errOrchestratorAgentNotConfigured
 	}
@@ -1448,7 +1603,7 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 // rebuilt. This is an accepted limitation — sub-agents are
 // short-lived and rarely need newly-connected MCP tools mid-run.
 func (c *coordinator) refreshMCPTools(ctx context.Context, name string) (int, error) {
-	orchestratorCfg, ok := c.agentConfigs[config.AgentOrchestrator]
+	orchestratorCfg, ok := c.orchestratorConfig()
 	if !ok {
 		return 0, errOrchestratorAgentNotConfigured
 	}
@@ -1491,6 +1646,12 @@ func (c *coordinator) QueuedPromptsList(sessionID string) []string {
 }
 
 func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
+	release, err := c.admit(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	orch := c.getOrchestrator()
 	providerCfg, ok := c.cfg.Config().Providers.Get(orch.Model().ModelCfg.Provider)
 	if !ok {
@@ -1505,7 +1666,7 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 		return orch.Summarize(ctx, sessionID, getProviderOptions(orch.Model(), providerCfg))
 	}
 
-	err := summarize()
+	err = summarize()
 	if err != nil && c.isUnauthorized(err) {
 		if retryErr := c.retryAfterUnauthorized(ctx, providerCfg); retryErr == nil {
 			return summarize()
@@ -1836,20 +1997,24 @@ func (c *coordinator) ActiveSkillByName(name string) *skills.Skill {
 // ReloadPlugins re-discovers all plugin content (skills, agents, commands)
 // and rebuilds the orchestrator's system prompt and tools. The swap is
 // atomic: if any step fails, the previous state is preserved. Lazy
-// sub-agent caches are cleared so they rebuild on next use.
-func (c *coordinator) ReloadPlugins(ctx context.Context) error {
+// sub-agent caches are cleared so they rebuild on next use. Malformed
+// manifests and unparsable agent files are skipped and returned as
+// warnings; they don't fail the reload.
+func (c *coordinator) ReloadPlugins(ctx context.Context) ([]PluginWarning, error) {
 	cfg := c.cfg.Config()
+	var pluginWarnings []PluginWarning
+	collect := func(w PluginWarning) { pluginWarnings = append(pluginWarnings, w) }
 
 	// 1. Discover plugins.
-	plugins := plugin.DiscoverAll(cfg.Plugins)
+	plugins := plugin.DiscoverAll(cfg.Plugins, collect)
 
 	// 2. Rebuild skills.
 	newAll, newActive, newStates := discoverSkills(c.cfg, plugins)
 
 	// 3. Rebuild agent MDs from embedded + plugins.
-	newAgentMDs, err := discoverAgentMDs(agentMDFS, plugins)
+	newAgentMDs, err := discoverAgentMDs(agentMDFS, plugins, collect)
 	if err != nil {
-		return fmt.Errorf("reloading agent descriptions: %w", err)
+		return pluginWarnings, fmt.Errorf("reloading agent descriptions: %w", err)
 	}
 
 	// 4. Re-apply .md defaults to produce new agent configs.
@@ -1860,8 +2025,8 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		mdDefaults[name] = agentConfigFromMD(name, md)
 	}
 	// SetupAgentsWithDefaults is a pure function; it returns a new map
-	// without touching cfg.Agents. The new agent configs are only committed
-	// in the atomic swap section below.
+	// without touching cfg.Agents. The defaults are only committed to the
+	// store after every fallible step below has succeeded.
 	newAgentConfigs := cfg.SetupAgentsWithDefaults(mdDefaults)
 
 	// 5. Validate delegates_to.
@@ -1874,7 +2039,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 		slog.Warn("Agent delegation warning on reload", "error", w)
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("agent delegates_to validation failed on reload: %w", errors.Join(errs...))
+		return pluginWarnings, fmt.Errorf("agent delegates_to validation failed on reload: %w", errors.Join(errs...))
 	}
 
 	// 6. Rebuild orchestrator prompt and tools against the proposed state before
@@ -1882,36 +2047,37 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	// runtime state intact.
 	orchestratorCfg, ok := newAgentConfigs[config.AgentOrchestrator]
 	if !ok {
-		return errOrchestratorAgentNotConfigured
+		return pluginWarnings, errOrchestratorAgentNotConfigured
 	}
 
 	orch := c.getOrchestrator()
 	if orch == nil {
-		return errOrchestratorAgentNotConfigured
+		return pluginWarnings, errOrchestratorAgentNotConfigured
 	}
 
 	newSkillTracker := skills.NewTracker(newActive)
 	p, err := c.buildPromptWithState(config.AgentOrchestrator, orchestratorCfg, newActive, newAgentMDs, newAgentConfigs)
 	if err != nil {
-		return fmt.Errorf("rebuilding orchestrator prompt: %w", err)
+		return pluginWarnings, fmt.Errorf("rebuilding orchestrator prompt: %w", err)
 	}
 
 	large := orch.Model()
 	systemPrompt, err := p.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
 	if err != nil {
-		return fmt.Errorf("building orchestrator system prompt: %w", err)
+		return pluginWarnings, fmt.Errorf("building orchestrator system prompt: %w", err)
 	}
 
 	agentTools, lazyMap, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs, plugins)
 	if err != nil {
-		return fmt.Errorf("rebuilding orchestrator tools: %w", err)
+		return pluginWarnings, fmt.Errorf("rebuilding orchestrator tools: %w", err)
 	}
 
-	// 7. Atomic swap of coordinator state. Also commit the new agent
-	// configs to the live Config so the rest of the application sees
-	// a consistent view.
+	// 7. Commit the new agent defaults through the store, which publishes
+	// a Config whose Agents include them, then atomically swap coordinator
+	// state.
+	c.cfg.SetAgentDefaults(mdDefaults)
+	newAgentConfigs = c.cfg.Config().Agents
 	c.orchestratorMu.Lock()
-	cfg.Agents = newAgentConfigs
 	c.allSkills = newAll
 	c.activeSkills = newActive
 	c.skillStates = newStates
@@ -1919,7 +2085,9 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	c.agentConfigs = newAgentConfigs
 	c.agentMDs = newAgentMDs
 	c.plugins = plugins
-	// Clear lazy agent cache so sub-agents rebuild on next use.
+	// Clear lazy agent cache so sub-agents rebuild on next use, and bump
+	// the generation so builds already in flight don't repopulate it.
+	c.agentsGen++
 	c.agents.Reset(make(map[string]SessionAgent))
 	orch.SetSystemPrompt(systemPrompt)
 	orch.SetTools(agentTools)
@@ -1929,8 +2097,9 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) error {
 	slog.Info("Plugin reload complete",
 		"skills", len(newActive),
 		"agents", len(newAgentConfigs)-1, // exclude orchestrator
-		"plugins", len(plugins))
-	return nil
+		"plugins", len(plugins),
+		"warnings", len(pluginWarnings))
+	return pluginWarnings, nil
 }
 
 // mergeSkillsPaths returns a combined slice of user-configured skills paths

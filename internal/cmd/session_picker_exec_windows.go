@@ -8,16 +8,13 @@ import (
 	"os/exec"
 )
 
-// execResume spawns a child Anvil instance resuming the given session in
-// its original working directory and waits for it to exit, propagating
-// the child's exit code. Windows has no exec-replacement, so this is the
-// closest equivalent.
-func execResume(sessionID string) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command(exe, "--session", sessionID, "--there")
+// execAnvil spawns exe as a child and waits for it to exit, propagating the
+// child's exit code. Windows has no exec-replacement, so this is the
+// closest equivalent. Each reload therefore nests one more waiting parent
+// process, and a nil return means the child has already exited cleanly.
+var execAnvil = func(exe string, args, env []string) error {
+	cmd := exec.Command(exe, args...)
+	cmd.Env = env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

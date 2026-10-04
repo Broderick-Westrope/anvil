@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/reload"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/charmbracelet/x/ansi"
@@ -75,6 +76,18 @@ func runSessionPinned(cmd *cobra.Command, _ []string) error {
 	}
 	cleanup()
 	return nil
+}
+
+// execResume replaces the current process with an Anvil instance resuming
+// the given session in its original working directory. Like a reload, it
+// starts from the environment Anvil inherited rather than one changed by
+// .env or config.
+func execResume(sessionID string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	return execAnvil(exe, []string{"--session", sessionID, "--there"}, reload.StartupEnv())
 }
 
 // pickerStyles holds the lipgloss styles used by the picker.

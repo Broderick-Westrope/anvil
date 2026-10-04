@@ -258,6 +258,10 @@ func (m *mockViewPermissionService) BouncerMode() permission.BouncerMode {
 
 func (m *mockViewPermissionService) SetBouncerMode(permission.BouncerMode) {}
 
+func (m *mockViewPermissionService) SetConfigRules([]config.PermissionRule) {}
+
+func (m *mockViewPermissionService) ResetBouncerCache() {}
+
 func (m *mockViewPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }
