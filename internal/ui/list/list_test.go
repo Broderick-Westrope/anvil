@@ -830,3 +830,98 @@ func totalRenderHits(items []*trackedItem) int {
 	}
 	return n
 }
+
+func newOneLineList(count, height int) *List {
+	items := make([]Item, count)
+	for i := range items {
+		items[i] = newTrackedItem(strconv.Itoa(i), "body", true)
+	}
+	l := NewList(items...)
+	l.SetSize(40, height)
+	l.SetSelected(0)
+	return l
+}
+
+// TestList_ScrollToSelectedWithMargin_Down covers stepping down: the
+// viewport starts scrolling once fewer than margin rows remain below the
+// selection, and stops at the end so the selection can reach the last row.
+func TestList_ScrollToSelectedWithMargin_Down(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(20, 10)
+	want := []int{0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10}
+	for sel, offset := range want {
+		l.SetSelected(sel)
+		l.ScrollToSelectedWithMargin(3)
+		require.Equal(t, offset, l.Offset(), "selected=%d", sel)
+	}
+}
+
+// TestList_ScrollToSelectedWithMargin_Up covers stepping up from the end:
+// the mirror of the downward case.
+func TestList_ScrollToSelectedWithMargin_Up(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(20, 10)
+	l.SelectLast()
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 10, l.Offset())
+
+	want := map[int]int{19: 10, 16: 10, 13: 10, 12: 9, 4: 1, 3: 0, 0: 0}
+	for sel := 19; sel >= 0; sel-- {
+		l.SetSelected(sel)
+		l.ScrollToSelectedWithMargin(3)
+		if offset, ok := want[sel]; ok {
+			require.Equal(t, offset, l.Offset(), "selected=%d", sel)
+		}
+	}
+}
+
+// TestList_ScrollToSelectedWithMargin_Jumps covers wrapping between the
+// ends of the list, where the margin is clamped by the list bounds.
+func TestList_ScrollToSelectedWithMargin_Jumps(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(20, 10)
+	l.SelectLast()
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 10, l.Offset())
+
+	l.SelectFirst()
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 0, l.Offset())
+
+	l.SetSelected(15)
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 9, l.Offset(), "selection lands with the margin below it")
+}
+
+// TestList_ScrollToSelectedWithMargin_SmallViewport covers viewports too
+// short for the full margin on both sides: the margin shrinks so the
+// selection stays visible.
+func TestList_ScrollToSelectedWithMargin_SmallViewport(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(20, 3)
+	for sel := range 20 {
+		l.SetSelected(sel)
+		l.ScrollToSelectedWithMargin(3)
+		require.True(t, l.SelectedItemInView(), "selected=%d", sel)
+	}
+	l.SetSelected(10)
+	l.ScrollToSelectedWithMargin(3)
+	require.Equal(t, 9, l.Offset(), "margin of 1 keeps the selection centred")
+}
+
+// TestList_ScrollToSelectedWithMargin_FitsViewport covers lists shorter
+// than the viewport, which never scroll.
+func TestList_ScrollToSelectedWithMargin_FitsViewport(t *testing.T) {
+	t.Parallel()
+
+	l := newOneLineList(5, 10)
+	for sel := range 5 {
+		l.SetSelected(sel)
+		l.ScrollToSelectedWithMargin(3)
+		require.Equal(t, 0, l.Offset(), "selected=%d", sel)
+	}
+}

@@ -736,25 +736,53 @@ func (l *List) ScrollToSelected() {
 		l.offsetLine = 0
 	} else if l.selectedIdx > endIdx {
 		// Selected item is below the visible range
-		// Scroll so that the selected item is at the bottom
-		var totalHeight int
-		for i := l.selectedIdx; i >= 0; i-- {
-			item := l.getItem(i)
-			totalHeight += item.height
-			if l.gap > 0 && i < l.selectedIdx {
-				totalHeight += l.gap
-			}
-			if totalHeight >= l.height {
-				l.offsetIdx = i
-				l.offsetLine = totalHeight - l.height
-				break
-			}
+		l.scrollIndexToBottom(l.selectedIdx)
+	}
+}
+
+// ScrollToSelectedWithMargin scrolls the list so the selected item is
+// visible with at least margin items above and below it, like Vim's
+// scrolloff. The margin shrinks near the start and end of the list so the
+// selection can still reach the first and last rows, and it is capped so
+// the selection always fits in the viewport.
+func (l *List) ScrollToSelectedWithMargin(margin int) {
+	if l.selectedIdx < 0 || l.selectedIdx >= len(l.items) {
+		return
+	}
+	margin = min(margin, (l.height-1)/2)
+	if margin <= 0 {
+		l.ScrollToSelected()
+		return
+	}
+
+	top := max(l.selectedIdx-margin, 0)
+	bottom := min(l.selectedIdx+margin, len(l.items)-1)
+	startIdx, endIdx := l.VisibleItemIndices()
+	if top < startIdx || (top == startIdx && l.offsetLine > 0) {
+		l.offsetIdx = top
+		l.offsetLine = 0
+	} else if bottom > endIdx {
+		l.scrollIndexToBottom(bottom)
+	}
+}
+
+// scrollIndexToBottom scrolls so the item at idx sits at the bottom of the
+// viewport, or to the top when everything up to idx fits.
+func (l *List) scrollIndexToBottom(idx int) {
+	var totalHeight int
+	for i := idx; i >= 0; i-- {
+		item := l.getItem(i)
+		totalHeight += item.height
+		if l.gap > 0 && i < idx {
+			totalHeight += l.gap
 		}
-		if totalHeight < l.height {
-			// All items fit in the viewport
-			l.ScrollToTop()
+		if totalHeight >= l.height {
+			l.offsetIdx = i
+			l.offsetLine = totalHeight - l.height
+			return
 		}
 	}
+	l.ScrollToTop()
 }
 
 // SelectedItemInView returns whether the selected item is currently in view.
