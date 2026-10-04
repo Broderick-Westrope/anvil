@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/entrydir"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
 )
@@ -26,9 +28,10 @@ const (
 	userCommandPrefix    = "user:"
 	projectCommandPrefix = "project:"
 
-	// CommandFileName marks a directory as a single command. The directory
-	// name is the command name, and every other file in it is a resource the
-	// command can reference rather than a command of its own.
+	// CommandFileName is the entry file of a command. Every command is a
+	// directory directly inside a commands directory, named after the command
+	// and holding a COMMAND.md; any other files in it are resources the
+	// command can reference.
 	CommandFileName = "COMMAND.md"
 )
 
@@ -62,9 +65,8 @@ type CustomCommand struct {
 	Arguments    []Argument
 	Source       string // "" = user, "project" = project, "plugin:{name}" = plugin.
 	DisplayName  string // Set by collision detection. Empty = use Name.
-	// Location is the path to the COMMAND.md of a directory command, so the
-	// agent can resolve the command's bundled files. Empty for single-file
-	// commands.
+	// Location is the path to the command's COMMAND.md, so the agent can
+	// resolve the files it bundles.
 	Location string
 }
 
@@ -261,64 +263,56 @@ func loadFromSource(source commandSource) ([]CustomCommand, error) {
 		return nil, nil
 	}
 
+	entries, err := os.ReadDir(source.path)
+	if err != nil {
+		return nil, err
+	}
+	entrydir.WarnStrayMarkdown(source.path, CommandFileName, "command")
+
 	var commands []CustomCommand
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		dir := filepath.Join(source.path, entry.Name())
+		// Stat rather than entry.IsDir so symlinked command directories load.
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			continue
+		}
+		commandFile := filepath.Join(dir, CommandFileName)
+		if !hasEntryFile(commandFile) {
+			slog.Warn("Ignoring directory without a "+CommandFileName, "path", dir)
+			continue
+		}
 
-	err := filepath.WalkDir(source.path, func(path string, d fs.DirEntry, err error) error {
+		cmd, err := loadCommand(commandFile, source.prefix)
 		if err != nil {
-			return err
+			slog.Warn("Failed to load command, skipping", "path", commandFile, "error", err)
+			continue
 		}
-
-		if d.IsDir() {
-			if path == source.path || !hasCommandFile(path) {
-				return nil
-			}
-			cmd, err := loadCommand(filepath.Join(path, CommandFileName), source.path, source.prefix)
-			if err != nil {
-				slog.Warn("Failed to load command, skipping", "path", path, "error", err)
-				return fs.SkipDir
-			}
-			cmd.Source = source.source
-			commands = append(commands, cmd)
-			// Everything else in a command directory is a resource, not a command.
-			return fs.SkipDir
-		}
-
-		// A COMMAND.md at the source root has no directory to name it.
-		if !isMarkdownFile(d.Name()) || d.Name() == CommandFileName {
-			return nil
-		}
-
-		cmd, err := loadCommand(path, source.path, source.prefix)
-		if err != nil {
-			slog.Warn("Failed to load command, skipping", "path", path, "error", err)
-			return nil // Skip invalid files.
-		}
-
 		cmd.Source = source.source
 		commands = append(commands, cmd)
-		return nil
-	})
-
-	return commands, err
+	}
+	return commands, nil
 }
 
-func loadCommand(path, baseDir, prefix string) (CustomCommand, error) {
+// loadCommand parses the COMMAND.md at path. The command is named after the
+// directory holding it.
+func loadCommand(path, prefix string) (CustomCommand, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return CustomCommand{}, err
 	}
 
-	id := buildCommandID(path, baseDir, prefix)
+	id := prefix + filepath.Base(filepath.Dir(path))
 
 	// Normalise line endings.
 	text := string(bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n")))
 
 	cmd := CustomCommand{
-		ID:   id,
-		Name: id,
-	}
-	if filepath.Base(path) == CommandFileName {
-		cmd.Location = path
+		ID:       id,
+		Name:     id,
+		Location: path,
 	}
 
 	// Look for frontmatter delimited by "---".
@@ -411,39 +405,19 @@ func extractArgNames(content string) []Argument {
 	return args
 }
 
-func buildCommandID(path, baseDir, prefix string) string {
-	relPath, _ := filepath.Rel(baseDir, path)
-	parts := strings.Split(relPath, string(filepath.Separator))
-
-	lastIdx := len(parts) - 1
-	if parts[lastIdx] == CommandFileName && lastIdx > 0 {
-		// A directory command is named after its directory.
-		parts = parts[:lastIdx]
-	} else {
-		parts[lastIdx] = strings.TrimSuffix(parts[lastIdx], filepath.Ext(parts[lastIdx]))
+func hasEntryFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
 	}
-
-	return prefix + strings.Join(parts, ":")
-}
-
-func isMarkdownFile(name string) bool {
-	return strings.HasSuffix(strings.ToLower(name), ".md")
-}
-
-// hasCommandFile reports whether dir directly contains a COMMAND.md. The name
-// is matched exactly so a legacy command.md on a case-insensitive filesystem
-// is not mistaken for a directory command.
-func hasCommandFile(dir string) bool {
-	entries, err := os.ReadDir(dir)
+	// Stat ignores case on case-insensitive filesystems; require the exact
+	// name, as skill discovery does for SKILL.md.
+	entries, err := os.ReadDir(filepath.Dir(path))
 	if err != nil {
 		return false
 	}
-	for _, entry := range entries {
-		if entry.Name() == CommandFileName && entry.Type().IsRegular() {
-			return true
-		}
-	}
-	return false
+	name := filepath.Base(path)
+	return slices.ContainsFunc(entries, func(entry fs.DirEntry) bool { return entry.Name() == name })
 }
 
 func GetMCPPrompt(cfg *config.ConfigStore, clientID, promptID string, args map[string]string) (string, error) {

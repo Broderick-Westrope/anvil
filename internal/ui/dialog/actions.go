@@ -89,7 +89,7 @@ type (
 		Content   string
 		Arguments []commands.Argument
 		Skills    []string          // Skill names to preload.
-		Location  string            // COMMAND.md path for directory commands.
+		Location  string            // Path to the command's COMMAND.md.
 		Args      map[string]string // Actual argument values
 	}
 	// ActionRunMCPPrompt is a message to run a custom command.

@@ -2133,7 +2133,7 @@ func mergeSkillsPaths(userPaths []string, plugins []*plugin.Plugin) []string {
 
 // trustedReadPaths returns the directories the view tool reads without a
 // permission prompt: skill directories and command directories, so skills
-// and directory commands can both load their bundled resources.
+// and commands can both load their bundled resources.
 func trustedReadPaths(cfg *config.Config, plugins []*plugin.Plugin) []string {
 	return append(mergeSkillsPaths(cfg.Options.SkillsPaths, plugins), commands.SourcePaths(cfg, plugins)...)
 }

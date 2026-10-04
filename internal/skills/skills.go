@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/entrydir"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/charlievieth/fastwalk"
 	"gopkg.in/yaml.v3"
@@ -270,6 +271,8 @@ func DiscoverWithStates(paths []string) ([]*Skill, []*SkillState) {
 	}
 
 	for _, base := range paths {
+		entrydir.WarnStrayMarkdown(base, SkillFileName, "skill")
+
 		// We use fastwalk with Follow: true instead of filepath.WalkDir because
 		// WalkDir doesn't follow symlinked directories at any depth—only entry
 		// points. This ensures skills in symlinked subdirectories are discovered.
