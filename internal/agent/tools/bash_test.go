@@ -99,6 +99,35 @@ func TestBashTool_CustomAutoBackgroundThreshold(t *testing.T) {
 	require.NoError(t, bgManager.Kill(meta.ShellID))
 }
 
+func TestBashTool_RootSessionEnv(t *testing.T) {
+	tests := map[string]struct {
+		rootSessionID string
+		want          string
+	}{
+		"subagent session exposes its root": {rootSessionID: "root-session", want: "root-session"},
+		"root session exposes itself":       {want: "child-session"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			tool := newBashToolForTest(t.TempDir())
+			ctx := context.WithValue(context.Background(), SessionIDContextKey, "child-session")
+			if tc.rootSessionID != "" {
+				ctx = context.WithValue(ctx, RootSessionIDContextKey, tc.rootSessionID)
+			}
+
+			resp := runBashTool(t, tool, ctx, BashParams{
+				Description: "print root session",
+				Command:     "echo \"$ANVIL_ROOT_SESSION_ID\"",
+			})
+
+			require.False(t, resp.IsError)
+			var meta BashResponseMetadata
+			require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+			require.Equal(t, tc.want, strings.TrimSpace(meta.Output))
+		})
+	}
+}
+
 type recordingPermissionService struct {
 	*pubsub.Broker[permission.PermissionRequest]
 	requestCount int
