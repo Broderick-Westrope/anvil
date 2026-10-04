@@ -100,28 +100,8 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		return nil, fmt.Errorf("invalid MCP auth configuration: %w", err)
 	}
 
-	// Migrate deprecated allowed_tools to permission rules.
-	if cfg.Permissions != nil && len(cfg.Permissions.AllowedTools) > 0 {
-		slog.Warn("Deprecated 'permissions.allowed_tools' found, migrating to permission rules; update your anvil.json to use the new format",
-			"allowed_tools", cfg.Permissions.AllowedTools,
-		)
-		cfg.Permissions.Rules = MigrateAllowedTools(cfg.Permissions.AllowedTools)
-	}
-
-	if !isInsideWorktree() {
-		const depth = 2
-		const items = 100
-		slog.Warn("No git repository detected in working directory, will limit file walk operations", "depth", depth, "items", items)
-		assignIfNil(&cfg.Tools.Ls.MaxDepth, depth)
-		assignIfNil(&cfg.Tools.Ls.MaxItems, items)
-		assignIfNil(&cfg.Options.TUI.Completions.MaxDepth, depth)
-		assignIfNil(&cfg.Options.TUI.Completions.MaxItems, items)
-	}
-
-	if isAppleTerminal() {
-		slog.Warn("Detected Apple Terminal, enabling transparent mode")
-		assignIfNil(&cfg.Options.TUI.Transparent, true)
-	}
+	store.insideWorktree = isInsideWorktree()
+	cfg.applyLoadAdjustments(store.insideWorktree)
 
 	// Load known providers, this loads the config from catwalk
 	providers, err := Providers(cfg)
@@ -1286,6 +1266,34 @@ func ProjectSkillsDir(workingDir string) []string {
 	}
 
 	return dirs
+}
+
+// applyLoadAdjustments migrates deprecated settings and fills the defaults
+// that depend on the environment. Load and reloads both run it after
+// merging, so a reload neither drops a migrated rule nor reports a spurious
+// difference from startup.
+func (c *Config) applyLoadAdjustments(insideWorktree bool) {
+	if c.Permissions != nil && len(c.Permissions.AllowedTools) > 0 {
+		slog.Warn("Deprecated 'permissions.allowed_tools' found, migrating to permission rules; update your anvil.json to use the new format",
+			"allowed_tools", c.Permissions.AllowedTools,
+		)
+		c.Permissions.Rules = MigrateAllowedTools(c.Permissions.AllowedTools)
+	}
+
+	if !insideWorktree {
+		const depth = 2
+		const items = 100
+		slog.Warn("No git repository detected in working directory, will limit file walk operations", "depth", depth, "items", items)
+		assignIfNil(&c.Tools.Ls.MaxDepth, depth)
+		assignIfNil(&c.Tools.Ls.MaxItems, items)
+		assignIfNil(&c.Options.TUI.Completions.MaxDepth, depth)
+		assignIfNil(&c.Options.TUI.Completions.MaxItems, items)
+	}
+
+	if isAppleTerminal() {
+		slog.Warn("Detected Apple Terminal, enabling transparent mode")
+		assignIfNil(&c.Options.TUI.Transparent, true)
+	}
 }
 
 func isAppleTerminal() bool { return os.Getenv("TERM_PROGRAM") == "Apple_Terminal" }

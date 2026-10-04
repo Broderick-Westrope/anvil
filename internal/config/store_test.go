@@ -13,6 +13,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/sjson"
 )
 
 func TestNewTestStoreResolvesLiteralProviderValues(t *testing.T) {
@@ -1001,4 +1002,68 @@ func TestMetadataReadersDoNotTakeWriteMu(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("a metadata reader blocked on writeMu")
 	}
+}
+
+func restartRequiredNow(s *ConfigStore) []string {
+	startCfg, startB, startRaw := s.StartupSnapshot()
+	return RestartRequired(startCfg, s.Config(), startB, s.TrustedBouncer(), startRaw, s.RawProjectDirectory())
+}
+
+// isolateGlobalConfig keeps the developer's own global config out of a
+// test that compares whole sections such as mcp.
+func isolateGlobalConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("ANVIL_GLOBAL_CONFIG", t.TempDir())
+	t.Setenv("ANVIL_GLOBAL_DATA", t.TempDir())
+}
+
+func TestRestartRequired_InAppTogglesNotReported(t *testing.T) {
+	isolateGlobalConfig(t)
+
+	store, configPath := loadConfiguredStore(t, "")
+
+	require.NoError(t, store.SetCompactMode(ScopeGlobal, true))
+	require.NoError(t, store.SetTransparentBackground(ScopeGlobal, true))
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+	require.True(t, store.Config().Options.TUI.CompactMode)
+	require.Empty(t, restartRequiredNow(store))
+
+	require.NoError(t, store.PersistDockerMCPConfig(DockerMCPConfig()))
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+	require.Contains(t, store.Config().MCP, DockerMCPName)
+	require.Empty(t, restartRequiredNow(store))
+
+	require.NoError(t, store.DisableDockerMCP())
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+	require.NotContains(t, store.Config().MCP, DockerMCPName)
+	require.Empty(t, restartRequiredNow(store))
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	edited, err := sjson.SetBytes(data, "mcp.other", map[string]any{"type": "stdio", "command": "other"})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, edited, 0o600))
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+	require.Equal(t, []string{"mcp"}, restartRequiredNow(store), "an external edit is still reported")
+}
+
+func TestReloadFromDisk_AppliesLoadAdjustments(t *testing.T) {
+	isolateGlobalConfig(t)
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+
+	store, _ := loadConfiguredStore(t, `,
+	"permissions": {"allowed_tools": ["view"]}`)
+	startRules := store.Config().Permissions.Rules
+	require.NotEmpty(t, startRules)
+	require.True(t, *store.Config().Options.TUI.Transparent)
+
+	store.insideWorktree = false
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+
+	cfg := store.Config()
+	require.True(t, *cfg.Options.TUI.Transparent)
+	require.Equal(t, startRules, cfg.Permissions.Rules, "a reload keeps migrated rules")
+	require.Equal(t, 2, *cfg.Tools.Ls.MaxDepth)
+	require.Equal(t, 100, *cfg.Options.TUI.Completions.MaxItems)
+	require.Empty(t, restartRequiredNow(store))
 }

@@ -29,7 +29,9 @@ import (
 //     so the raw configured values are compared.
 //   - options.tui: only compact_mode and transparent are captured at UI
 //     construction. diff_mode and completions are read live, so they are
-//     not compared.
+//     not compared. The in-app toggles apply compact_mode and transparent
+//     live and record that in the startup snapshot, as Docker MCP
+//     enablement does for mcp.
 func RestartRequired(startup, cur *Config, startupB, curB *TrustedBouncer, startupRaw, curRaw string) []string {
 	if startup == nil || cur == nil {
 		return nil

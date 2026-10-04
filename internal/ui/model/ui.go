@@ -606,7 +606,8 @@ func (m *UI) loadCustomCommands() tea.Cmd {
 func (m *UI) reloadPlugins() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		if err := m.com.Workspace.ReloadPlugins(ctx); err != nil {
+		r := m.com.Workspace.ReloadConfigAndPlugins(ctx)
+		if err := cmp.Or(r.ConfigErr, r.ApplyErr, r.PluginsErr); err != nil {
 			return pluginReloadFailedMsg{Err: err}
 		}
 		// Reload custom commands (which now include plugin commands).
@@ -2342,7 +2343,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 			isTransparent := cfg.Options != nil && cfg.Options.TUI.Transparent != nil && *cfg.Options.TUI.Transparent
 			newValue := !isTransparent
-			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.transparent", newValue); err != nil {
+			if err := m.com.Workspace.SetTransparentBackground(config.ScopeGlobal, newValue); err != nil {
 				return util.ReportError(err)()
 			}
 			m.isTransparent = newValue

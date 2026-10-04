@@ -135,11 +135,19 @@ type ConfigStore struct {
 	bouncerValidator func(*Bouncer) error
 
 	// startupConfig, startupBouncer, and startupRawProjectDir are captured
-	// once at the end of Load and never change. They are the baseline for
-	// RestartRequired, so a pending restart stays reported across reloads.
+	// once at the end of Load. They are the baseline for RestartRequired,
+	// so a pending restart stays reported across reloads. They represent
+	// what this process has applied, so the in-app toggles that apply a
+	// change live (compact mode, transparency, Docker MCP) update
+	// startupConfig too; nothing else changes them. Guarded by metaMu.
 	startupConfig        *Config
 	startupBouncer       *TrustedBouncer
 	startupRawProjectDir string
+
+	// insideWorktree records whether the working directory was inside a git
+	// worktree at Load, so reloads apply the same environment defaults
+	// without running git again.
+	insideWorktree bool
 
 	// refreshSF collapses concurrent in-process OAuth refreshes for the
 	// same provider into a single attempt. Combined with the per-provider
@@ -189,10 +197,25 @@ func (s *ConfigStore) SetBouncerValidator(fn func(*Bouncer) error) {
 }
 
 // StartupSnapshot returns the config, trusted bouncer, and raw
-// options.project_directory captured at the end of Load. They never change
-// afterwards.
+// options.project_directory captured at the end of Load, updated only by
+// the in-app toggles that apply their change live.
 func (s *ConfigStore) StartupSnapshot() (*Config, *TrustedBouncer, string) {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 	return s.startupConfig, s.startupBouncer, s.startupRawProjectDir
+}
+
+// markAppliedLive records a change this process has already applied in the
+// startup snapshot, so RestartRequired doesn't report it.
+func (s *ConfigStore) markAppliedLive(apply func(*Config)) {
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+	if s.startupConfig == nil {
+		return
+	}
+	nc := s.startupConfig.cloneForWrite()
+	apply(nc)
+	s.startupConfig = nc
 }
 
 // RawProjectDirectory returns options.project_directory as written in the
@@ -206,9 +229,12 @@ func (s *ConfigStore) RawProjectDirectory() string {
 // captureStartupSnapshot records the RestartRequired baseline. Load calls
 // it once, on every successful return path.
 func (s *ConfigStore) captureStartupSnapshot() {
-	s.startupConfig = s.Config()
-	s.startupBouncer = s.TrustedBouncer()
-	s.startupRawProjectDir = s.RawProjectDirectory()
+	cfg, tb, raw := s.Config(), s.TrustedBouncer(), s.RawProjectDirectory()
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+	s.startupConfig = cfg
+	s.startupBouncer = tb
+	s.startupRawProjectDir = raw
 }
 
 // Config returns the pure-data config struct (read-only after load).
@@ -592,19 +618,32 @@ func (s *ConfigStore) SetLastPermissionTriage(t time.Time) error {
 }
 
 // SetCompactMode sets the compact mode setting and persists it.
+// The UI applies the change live, so it is recorded as applied.
 func (s *ConfigStore) SetCompactMode(scope Scope, enabled bool) error {
-	return s.update(scope, func(c *Config) map[string]any {
+	if err := s.update(scope, func(c *Config) map[string]any {
 		c.ensureTUI().CompactMode = enabled
 		return map[string]any{"options.tui.compact_mode": enabled}
-	})
+	}); err != nil {
+		return err
+	}
+	s.markAppliedLive(func(c *Config) { c.ensureTUI().CompactMode = enabled })
+	return nil
 }
 
 // SetTransparentBackground sets the transparent background setting and persists it.
+// The UI applies the change live, so it is recorded as applied.
 func (s *ConfigStore) SetTransparentBackground(scope Scope, enabled bool) error {
-	return s.update(scope, func(c *Config) map[string]any {
+	if err := s.update(scope, func(c *Config) map[string]any {
 		c.ensureTUI().Transparent = &enabled
 		return map[string]any{"options.tui.transparent": enabled}
+	}); err != nil {
+		return err
+	}
+	s.markAppliedLive(func(c *Config) {
+		v := enabled
+		c.ensureTUI().Transparent = &v
 	})
+	return nil
 }
 
 // SetProviderAPIKey sets the API key for a provider and persists it.
@@ -1256,6 +1295,8 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	if err := cfg.ValidateMCPAuth(); err != nil {
 		return fmt.Errorf("invalid MCP auth configuration on reload: %w", err)
 	}
+
+	cfg.applyLoadAdjustments(s.insideWorktree)
 
 	// Preserve runtime overrides
 	overrides := s.overrides

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,6 +30,9 @@ type AppWorkspace struct {
 	app      *app.App
 	store    *config.ConfigStore
 	ancestry *sessionAncestry
+
+	// reloadMu serialises ReloadConfigAndPlugins.
+	reloadMu sync.Mutex
 }
 
 // NewAppWorkspace creates a new AppWorkspace wrapping the given app
@@ -353,6 +357,10 @@ func (w *AppWorkspace) SetCompactMode(scope config.Scope, enabled bool) error {
 	return w.store.SetCompactMode(scope, enabled)
 }
 
+func (w *AppWorkspace) SetTransparentBackground(scope config.Scope, enabled bool) error {
+	return w.store.SetTransparentBackground(scope, enabled)
+}
+
 func (w *AppWorkspace) SetProviderAPIKey(scope config.Scope, providerID string, apiKey any) error {
 	if err := w.store.SetProviderAPIKey(scope, providerID, apiKey); err != nil {
 		return err
@@ -379,16 +387,44 @@ func (w *AppWorkspace) InitializePrompt() (string, error) {
 	return agent.InitializePrompt(w.store)
 }
 
-// -- Plugins --
+// -- Reload --
 
-// ReloadPlugins re-discovers all plugin content and rebuilds the
-// orchestrator.
-func (w *AppWorkspace) ReloadPlugins(ctx context.Context) error {
-	if w.app.AgentCoordinator == nil {
-		return fmt.Errorf("agent coordinator not initialized")
+// pluginPauseBudget bounds how long a reload waits for running turns before
+// it skips the plugin rebuild.
+const pluginPauseBudget = 2 * time.Second
+
+// ReloadConfigAndPlugins re-reads config from disk and applies it, then
+// rebuilds plugins under a coordinator pause. Calls are serialised so a
+// second reload sees the first's result.
+func (w *AppWorkspace) ReloadConfigAndPlugins(ctx context.Context) ReloadReport {
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
+
+	var r ReloadReport
+	if err := w.store.ReloadFromDisk(ctx); err != nil {
+		r.ConfigErr = err
+	} else {
+		// Apply the latest published config rather than the reload's own
+		// result: an autoReload may have published a newer one since.
+		r.ApplyErr = w.app.ApplyConfig(w.store.Config(), w.store.TrustedBouncer())
 	}
-	_, err := w.app.AgentCoordinator.ReloadPlugins(ctx)
-	return err
+
+	if w.app.AgentCoordinator == nil {
+		r.PluginsSkipped = true
+	} else if resume, err := w.app.AgentCoordinator.Pause(ctx, pluginPauseBudget); err != nil {
+		r.PluginsBusy = true
+	} else {
+		r.PluginWarnings, r.PluginsErr = w.app.AgentCoordinator.ReloadPlugins(ctx)
+		resume()
+	}
+
+	startCfg, startB, startRaw := w.store.StartupSnapshot()
+	r.RestartRequired = config.RestartRequired(
+		startCfg, w.store.Config(),
+		startB, w.store.TrustedBouncer(),
+		startRaw, w.store.RawProjectDirectory(),
+	)
+	return r
 }
 
 // -- Skills --
