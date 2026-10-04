@@ -249,6 +249,8 @@ Other options: `context_paths`, `progress`, `disable_notifications`, `disable_au
 
 Hooks are user-defined shell commands that fire on agent events. Currently only `PreToolUse` is supported, which runs before a tool is executed.
 
+This section covers configuring hooks. For writing or debugging a hook script (output envelope, input rewriting, halting, examples), load the **anvil-hooks** skill: it is the source of truth for hook behavior.
+
 ```json
 {
   "hooks": {
@@ -278,7 +280,7 @@ Event names are case-insensitive and accept snake_case variants: `PreToolUse`, `
 
 ### How Hooks Work
 
-1. When a tool is about to be called, all `PreToolUse` hooks with a matching `matcher` (or no matcher) run in parallel.
+1. When a tool is about to be called, all `PreToolUse` hooks with a matching `matcher` (or no matcher) run in parallel; their results are combined in config order.
 2. Duplicate commands are deduplicated — each unique command runs at most once.
 3. The hook receives JSON on **stdin** and hook-specific **environment variables**.
 
@@ -319,7 +321,8 @@ A JSON payload is piped to the hook command:
 - `decision`: `allow` to explicitly allow, `deny` to block, `none` (or omit) for no opinion.
 - `reason`: Explanation text (used when denying).
 - `context`: Extra context appended to the tool result.
-- `updated_input`: Replacement JSON for the tool input. Last non-empty value wins.
+- `updated_input`: A shallow-merge patch against the tool input, not a replacement. Keys you include overwrite; keys you omit are kept.
+- `halt`: `true` ends the whole turn, not just this tool call.
 
 **Exit code 2** — the tool call is blocked. Stderr is used as the deny reason.
 
@@ -327,6 +330,8 @@ A JSON payload is piped to the hook command:
 echo "No Haskell allowed" >&2
 exit 2
 ```
+
+**Exit code 49** — halts the whole turn. Stderr is used as the halt reason.
 
 **Any other exit code** — non-blocking error. The tool call proceeds as normal.
 
@@ -350,11 +355,12 @@ Existing Claude Code hooks should work without modification.
 
 When multiple hooks match, their decisions are aggregated:
 
+- **Halt is sticky** — if any hook halts, the turn ends.
 - **Deny wins over allow** — if any hook denies, the tool call is blocked.
 - **Allow wins over none** — if no hook denies but at least one allows, the call proceeds.
 - All deny reasons are concatenated (newline-separated).
 - All context strings are concatenated (newline-separated).
-- For `updated_input`, the last non-empty value wins.
+- `updated_input` patches are shallow-merged in config order; later hooks win on colliding keys.
 
 ## Tool Permissions
 
