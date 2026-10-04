@@ -1,6 +1,6 @@
 # Phase 2: `/reload-instance`
 
-> **Status:** APPROVED (revision 7)
+> **Status:** COMPLETED
 > Create a PR for human review when done. Don't merge.
 
 ## Specification
