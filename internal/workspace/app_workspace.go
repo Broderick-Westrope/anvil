@@ -45,9 +45,6 @@ func NewAppWorkspace(a *app.App, store *config.ConfigStore) *AppWorkspace {
 		}
 		return s.ParentSessionID, nil
 	})
-	store.SetPluginsChangedHook(func(ctx context.Context) error {
-		return w.ReloadPlugins(ctx)
-	})
 	return w
 }
 

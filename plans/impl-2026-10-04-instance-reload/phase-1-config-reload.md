@@ -77,11 +77,13 @@
 | Models, providers | Next run | `coordinator.Run` calls `UpdateModels` before every run (`coordinator.go:382`) |
 | Hooks, `agents`, `disabled_agents`, tool and MCP allow-lists, skills paths, plugins | Live after the plugin rebuild | Tools and the hook runner are captured when the orchestrator is rebuilt (`coordinator.go:1046-1052`) |
 | Top-level `env` | Live (process env), as today | Not rolled back on failure (see Out of scope) |
-| `mcp`, `lsp` | Restart | Reported |
+| `mcp` | Restart | Reported. The server set is built once by `mcp.Initialize`; re-enabling a server (`InitializeSingle`) and tool filtering read the live config, but running servers aren't restarted |
+| `lsp` | Restart | Reported. `lsp.NewManager` copies server definitions at startup; only `timeout` and `disabled` are read live (`manager.go:409,443`) |
 | `bouncer` url, model, auth_scheme, api_key_env, timeout_seconds, explicit_ask, send_user_messages; block added or removed | Restart | Reported |
 | `bouncer.mode` | Not applied | Reported as "ctrl+q to change" |
 | `options.project_directory` | Restart | Reload keeps the existing directory (`store.go:1137-1142`); compare raw values |
-| `options.tui.*` | Restart | Read at UI construction (`ui.go:486,502`) |
+| `options.tui.compact_mode`, `options.tui.transparent` | Restart | Read at UI construction (`ui.go:486,502`); reported as `options.tui` |
+| `options.tui.diff_mode`, `options.tui.completions` | Live | Read on each use (`ui.go:3152,5394`); not compared |
 
 Task 1 Step 5 has the implementer verify every row by grepping for its
 readers before the labels are hard-coded. Fields not listed are reported as

@@ -51,6 +51,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config from paths %v: %w", configPaths, err)
 	}
+	rawProjectDir := rawProjectDirectory(cfg)
 
 	cfg.setDefaults(workingDir, dataDir)
 
@@ -63,6 +64,8 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		loadedPaths:      loadedPaths,
 		trustedPaths:     trustedPaths,
 		trustedBouncer:   trustedBouncer,
+
+		rawProjectDirectory: rawProjectDir,
 	}
 
 	if debug {
@@ -147,6 +150,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 
 	if !cfg.IsConfigured() {
 		slog.Warn("No providers configured")
+		store.captureStartupSnapshot()
 		return store, nil
 	}
 
@@ -177,6 +181,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	// Capture initial staleness snapshot
 	store.captureStalenessSnapshot(loadedPaths)
 
+	store.captureStartupSnapshot()
 	return store, nil
 }
 

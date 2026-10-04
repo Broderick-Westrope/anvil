@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -804,65 +805,200 @@ func TestRefreshOAuthToken_Anthropic(t *testing.T) {
 	}
 }
 
-func TestPluginConfigsEqual(t *testing.T) {
+// configuredStoreJSON configures a provider so Load and reloads run agent
+// setup, which they skip on an unconfigured store.
+const configuredStoreJSON = `{
+	"models": {"large": {"provider": "openai", "model": "gpt-4"}},
+	"providers": {
+		"openai": {"api_key": "test-key", "models": [{"id": "gpt-4", "name": "GPT-4"}]}
+	}%s
+}`
+
+func loadConfiguredStore(t *testing.T, extra string) (*ConfigStore, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "anvil.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(fmt.Sprintf(configuredStoreJSON, extra)), 0o600))
+	store, err := Load(dir, dir, false)
+	require.NoError(t, err)
+	require.True(t, store.Config().IsConfigured())
+	store.globalDataPath = configPath
+	return store, configPath
+}
+
+func TestAutoReload_KeepsAgentDefaults(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		a    []PluginConfig
-		b    []PluginConfig
-		want bool
-	}{
-		{
-			name: "both nil",
-			a:    nil,
-			b:    nil,
-			want: true,
-		},
-		{
-			name: "both empty slices",
-			a:    []PluginConfig{},
-			b:    []PluginConfig{},
-			want: true,
-		},
-		{
-			name: "same paths same order",
-			a:    []PluginConfig{{Path: "/a"}, {Path: "/b"}},
-			b:    []PluginConfig{{Path: "/a"}, {Path: "/b"}},
-			want: true,
-		},
-		{
-			name: "same paths different order",
-			a:    []PluginConfig{{Path: "/a"}, {Path: "/b"}},
-			b:    []PluginConfig{{Path: "/b"}, {Path: "/a"}},
-			want: false,
-		},
-		{
-			name: "different lengths",
-			a:    []PluginConfig{{Path: "/a"}},
-			b:    []PluginConfig{{Path: "/a"}, {Path: "/b"}},
-			want: false,
-		},
-		{
-			name: "one nil one empty",
-			a:    nil,
-			b:    []PluginConfig{},
-			want: true,
-		},
-		{
-			name: "different paths",
-			a:    []PluginConfig{{Path: "/a"}},
-			b:    []PluginConfig{{Path: "/z"}},
-			want: false,
-		},
+	store, _ := loadConfiguredStore(t, "")
+	store.SetAgentDefaults(map[string]Agent{
+		"reviewer": {ID: "reviewer", Name: "Reviewer"},
+	})
+	require.Contains(t, store.Config().Agents, "reviewer")
+
+	stop := make(chan struct{})
+	readerDone := make(chan struct{})
+	var missing int
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, ok := store.Config().Agents["reviewer"]; !ok {
+				missing++
+			}
+		}
+	}()
+
+	for i := range 5 {
+		require.NoError(t, store.SetConfigField(ScopeGlobal, "options.debug", i%2 == 0))
 	}
+	close(stop)
+	<-readerDone
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+	require.Zero(t, missing, "a reader observed Agents without the plugin agent")
+	agents := store.Config().Agents
+	require.Contains(t, agents, "reviewer")
+	require.Contains(t, agents, AgentOrchestrator)
+}
 
-			got := pluginConfigsEqual(tc.a, tc.b)
-			require.Equal(t, tc.want, got)
-		})
+func TestSetAgentDefaults_PreservesUserOverrides(t *testing.T) {
+	t.Parallel()
+
+	store, _ := loadConfiguredStore(t, `,
+	"agents": {"reviewer": {"model": "openai/gpt-4", "append_prompt": "Be terse."}},
+	"disabled_agents": ["scout"]`)
+
+	original := store.Config()
+	store.SetAgentDefaults(map[string]Agent{
+		"reviewer": {ID: "reviewer", Name: "Reviewer", Model: "anthropic/claude"},
+		"scout":    {ID: "scout", Name: "Scout"},
+	})
+	require.NotSame(t, original, store.Config(), "SetAgentDefaults must publish a new Config")
+
+	assertAgents := func() {
+		t.Helper()
+		agents := store.Config().Agents
+		require.Equal(t, "Reviewer", agents["reviewer"].Name)
+		require.Equal(t, "openai/gpt-4", agents["reviewer"].Model)
+		require.Equal(t, "Be terse.", agents["reviewer"].AppendPrompt)
+		require.NotContains(t, agents, "scout")
+	}
+	assertAgents()
+
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+	assertAgents()
+}
+
+func TestReloadFromDisk_BouncerValidatorRejects(t *testing.T) {
+	t.Parallel()
+
+	store, _ := loadConfiguredStore(t, "")
+	bouncerPath := filepath.Join(t.TempDir(), "anvil.json")
+	store.trustedPaths = []string{bouncerPath}
+	require.NoError(t, os.WriteFile(bouncerPath, []byte(`{"bouncer": {"deny_at": 0.4}}`), 0o600))
+
+	var validated *Bouncer
+	store.SetBouncerValidator(func(b *Bouncer) error {
+		validated = b
+		return errors.New("deny_at below escalate_at")
+	})
+
+	before := store.Config()
+	beforeBouncer := store.TrustedBouncer()
+	err := store.ReloadFromDisk(context.Background())
+	require.ErrorContains(t, err, "deny_at below escalate_at")
+	require.NotNil(t, validated)
+	require.InDelta(t, 0.4, *validated.DenyAt, 1e-9)
+	require.Same(t, before, store.Config(), "a rejected reload must keep the old config")
+	require.Equal(t, beforeBouncer, store.TrustedBouncer())
+
+	store.SetBouncerValidator(func(*Bouncer) error { return nil })
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+	require.NotSame(t, before, store.Config())
+	require.NotNil(t, store.TrustedBouncer())
+	require.InDelta(t, 0.4, *store.TrustedBouncer().Config.DenyAt, 1e-9)
+}
+
+func TestReloadFromDisk_ValidatorSkippedWithoutBouncer(t *testing.T) {
+	t.Parallel()
+
+	store, _ := loadConfiguredStore(t, "")
+	store.trustedPaths = []string{filepath.Join(t.TempDir(), "missing.json")}
+	store.SetBouncerValidator(func(*Bouncer) error {
+		return errors.New("must not be called")
+	})
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+}
+
+func TestStartupSnapshotAndRawProjectDirectory(t *testing.T) {
+	t.Parallel()
+
+	store, configPath := loadConfiguredStore(t, `,
+	"options": {"project_directory": "state"}`)
+
+	startCfg, startB, startRaw := store.StartupSnapshot()
+	require.Same(t, store.Config(), startCfg)
+	require.True(t, startB == store.TrustedBouncer(), "startup bouncer must be the one Load captured")
+	require.Equal(t, "state", startRaw)
+	require.Equal(t, "state", store.RawProjectDirectory())
+
+	require.NoError(t, os.WriteFile(configPath, []byte(fmt.Sprintf(configuredStoreJSON, `,
+	"options": {"project_directory": "other"}`)), 0o600))
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+
+	require.Equal(t, "other", store.RawProjectDirectory())
+	require.Equal(t, startCfg.Options.ProjectDirectory, store.Config().Options.ProjectDirectory,
+		"a reload keeps the existing project directory")
+	snapCfg, snapB, snapRaw := store.StartupSnapshot()
+	require.Same(t, startCfg, snapCfg, "the startup snapshot never changes")
+	require.Equal(t, "state", snapRaw)
+	require.Equal(t, []string{"options.project_directory"},
+		RestartRequired(snapCfg, store.Config(), snapB, store.TrustedBouncer(), snapRaw, store.RawProjectDirectory()))
+}
+
+func TestStartupSnapshot_UnconfiguredStore(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "anvil.json"), []byte(`{"options": {"data_directory": "legacy"}}`), 0o600))
+	store, err := Load(dir, dir, false)
+	require.NoError(t, err)
+
+	startCfg, _, startRaw := store.StartupSnapshot()
+	require.Same(t, store.Config(), startCfg)
+	require.Equal(t, "legacy", startRaw)
+}
+
+// TestMetadataReadersDoNotTakeWriteMu pins that store metadata stays
+// readable while writeMu is held. A reload holds writeMu for the whole
+// provider discovery, which can take seconds, and UI and agent code read
+// this metadata throughout.
+func TestMetadataReadersDoNotTakeWriteMu(t *testing.T) {
+	t.Parallel()
+
+	store, _ := loadConfiguredStore(t, "")
+	store.writeMu.Lock()
+	defer store.writeMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = store.Config()
+		_ = store.Resolver()
+		_ = store.LoadedPaths()
+		_ = store.KnownProviders()
+		_ = store.Overrides()
+		_ = store.TrustedBouncer()
+		_ = store.RawProjectDirectory()
+		_, _, _ = store.StartupSnapshot()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a metadata reader blocked on writeMu")
 	}
 }
