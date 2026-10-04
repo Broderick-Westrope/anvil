@@ -238,6 +238,8 @@ func TestYourFunction(t *testing.T) {
 
 ## Committing
 
+- Work and commit in a linked worktree on a feature branch, never in the root
+  checkout. Follow the builtin `using-git-worktrees` skill.
 - ALWAYS use semantic commits (`fix:`, `feat:`, `chore:`, `refactor:`,
   `docs:`, `sec:`, etc).
 - Try to keep commits to one line, not including your attribution. Only use
