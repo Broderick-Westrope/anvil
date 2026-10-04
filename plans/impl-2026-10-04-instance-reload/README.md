@@ -60,7 +60,7 @@ watcher.
 
 | # | File | Delivers | Depends on | Review focus |
 |---|------|----------|------------|--------------|
-| 1 | `phase-1-config-reload.md` | Config and plugins reload independently; rules and bouncer thresholds update live; palette item and report | — | Reload atomicity, lock ordering, what can and can't change at runtime |
+| 1 | `phase-1-config-reload.md` | Config and plugins reload independently; rules and bouncer thresholds update live; palette item and report | — | Immutable publication, last-good agent defaults, what can and can't change at runtime |
 | 2 | `phase-2-instance-reload.md` | `/reload-instance`: binary check, state handoff, clean shutdown, exec-resume | Phase 1 (shares the reload report UI and the list of settings that need a restart) | Process lifecycle, data-loss guards, cross-platform exec |
 
 ## Phase Boundaries
@@ -83,11 +83,20 @@ watcher.
 - **Exec, not a child process (Unix).** `syscall.Exec` keeps the process ID,
   the terminal, and the parent shell's job control. Windows spawns a child
   and waits, as `execResume` already does (`internal/cmd/session_picker_exec_windows.go`).
-- **The exec'd process gets Anvil's original environment.** It's captured
-  before any config `env` is applied, so a project can't redirect the next
-  process's trusted config or bouncer key.
+- **A reload is equivalent to a manual restart.** The exec'd process gets
+  the environment Anvil inherited, captured in `main` before `.env` or
+  config `env` ran. It then loads both itself, exactly as a fresh start
+  would.
 - **Preflight is structural only.** It never resolves `$(...)`, applies env,
   reaches the network, or touches the database.
+- **One plugin rebuild path, no store hook.** Nothing in production writes
+  the `plugins` key in-process. Removing `pluginsChangedHook` removes the
+  rollback coupling, the deadlock constraint, and the reload-ordering race
+  in one go.
+- **No locks around agent runs.** "Reload Config & Plugins" relies on
+  atomic swaps, as "Reload Plugins" does today; Task 2 of phase 1 verifies
+  this mid-run. `/reload-instance` uses an atomic "closing" admission flag.
+  Anything that slips past it is cancelled by the normal shutdown.
 
 ## Review Notes
 
@@ -129,3 +138,38 @@ Fixes folded into revision 2:
   test.
 - **Wrong accessor names:** now `PermissionSetBouncerMode` and
   `PermissionYoloLevel`.
+
+### Round 2 (devil's advocate)
+
+Fixes folded into revision 3:
+
+- **Critical: `.env` timing.** `main.go` imported `godotenv/autoload`, which
+  loads `.env` before any capture point. It's now replaced by explicit
+  `reload.CaptureStartup()` followed by `godotenv.Load()` in `main`. This is
+  tested with the compiled binary and a hostile `.env`.
+- **Reload ordering race.** A hook running outside `writeMu` let a stale
+  rebuild land on a newer config. Fixed by removing the hook altogether and
+  serialising the single rebuild path with a workspace mutex.
+- **Cache generation check was still check-then-set.** Replaced with an
+  atomic swap of the cache object: each assessment writes into the object it
+  read from.
+- **The RWMutex run gate** missed `UpdateAgentModel`, summarisation, and
+  title paths, could stall job wakes into the shutdown timeout, and was more
+  machinery than needed. It's replaced by:
+  - no gate for the config reload (atomic swaps, verified mid-run);
+  - a `closing` admission flag for `/reload-instance`.
+- **Unix exec never returns,** so a resume message printed after exec could
+  never appear. It's now printed before exec. The handoff has no age limit
+  on load; there's only a 7-day sweep.
+- **Recovery records are per-process UUID files.** `Close(false)` would
+  have resurfaced a stale record later. Changed to `Close(true)`; the
+  printed command and the retained handoff cover a failed exec.
+- **A nil coordinator** (onboarding) would have panicked. It's now handled
+  as `PluginsSkipped`.
+- **Env rollback wasn't isolation.** It was dropped, keeping today's
+  behaviour, and recorded as Future Work rather than half-solved.
+- **"Milliseconds" was wrong:** provider discovery can take seconds. Added a
+  "Reloading config…" status and a manual check.
+- **Confirmed safe:** the `TryLock` hook-skip semantics; the same bouncer
+  pointer passed through `WithBouncer`; the pure merge helpers are reusable
+  by `ValidateFiles`.
