@@ -116,6 +116,15 @@
           "type": "boolean",
           "default": true
         },
+        "review": {
+          "type": "string",
+          "enum": [
+            "off",
+            "shadow"
+          ],
+          "description": "Whether the small model reviews requests the bouncer sends to you against your recent messages. shadow shows and logs its opinion without acting on it",
+          "default": "shadow"
+        },
         "escalate_at": {
           "type": "number",
           "maximum": 1,

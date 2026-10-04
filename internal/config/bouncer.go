@@ -57,6 +57,18 @@ const (
 	BouncerExplicitAskHuman BouncerExplicitAsk = "human"
 )
 
+// BouncerReviewMode controls the small-model reviewer that gives a second
+// opinion when the bouncer sends a request to the human.
+type BouncerReviewMode string
+
+const (
+	// BouncerReviewOff disables the reviewer.
+	BouncerReviewOff BouncerReviewMode = "off"
+	// BouncerReviewShadow shows and logs the reviewer's opinion without
+	// acting on it.
+	BouncerReviewShadow BouncerReviewMode = "shadow"
+)
+
 const maxBouncerTimeoutSeconds = 60
 
 // BouncerHazardAxes are the hazard axes escalate_at_axes may set. They
@@ -80,6 +92,7 @@ type Bouncer struct {
 	TimeoutSeconds   int                `json:"timeout_seconds,omitempty" jsonschema:"description=Bouncer call timeout in seconds; 0 uses the default,minimum=0,maximum=60,default=8"`
 	ExplicitAsk      BouncerExplicitAsk `json:"explicit_ask,omitempty" jsonschema:"enum=bouncer,enum=human,default=bouncer"`
 	SendUserMessages *bool              `json:"send_user_messages,omitempty" jsonschema:"default=true"`
+	Review           BouncerReviewMode  `json:"review,omitempty" jsonschema:"description=Whether the small model reviews requests the bouncer sends to you against your recent messages. shadow shows and logs its opinion without acting on it,enum=off,enum=shadow,default=shadow"`
 	EscalateAt       *float64           `json:"escalate_at,omitempty" jsonschema:"description=Hazard probability at or above which the request goes to the human whatever its severity. Setting it applies one value to every axis; escalate_at_axes overrides it per axis. When unset each axis uses its own default (destructive 0.5; the other axes 0.6),minimum=0,maximum=1"`
 	// EscalateAtAxes overrides EscalateAt for individual hazard axes.
 	EscalateAtAxes   map[string]float64 `json:"escalate_at_axes,omitempty" jsonschema:"description=Per-axis overrides of escalate_at keyed by destructive or exfiltration or credentials or remote_exec or shared_infra"`
@@ -111,6 +124,11 @@ func (p *Bouncer) Validate() error {
 	case "", BouncerOff, BouncerShadow, BouncerEnforce:
 	default:
 		errs = append(errs, fmt.Errorf("mode %q must be one of off, shadow, enforce", p.Mode))
+	}
+	switch p.Review {
+	case "", BouncerReviewOff, BouncerReviewShadow:
+	default:
+		errs = append(errs, fmt.Errorf("review %q must be one of off, shadow", p.Review))
 	}
 	switch p.AuthScheme {
 	case "", BouncerAuthAPIKey, BouncerAuthBearer:

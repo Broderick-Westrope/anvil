@@ -9,8 +9,10 @@ import (
 	"maps"
 	"net/http"
 	"reflect"
+	"sync"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -85,6 +87,50 @@ func buildBouncerOption(ta *config.TrustedBouncer, sessions session.Service, mes
 		opts.Intent = &intentSource{sessions: sessions, messages: messages}
 	}
 	return bouncerSetup{option: permission.WithBouncer(opts), bouncer: a, mode: opts.Mode}, true
+}
+
+// buildReviewOption sets up the small-model reviewer that runs alongside
+// bouncer prompts. It is on in shadow mode unless the config turns it off.
+func buildReviewOption(cfg *config.Bouncer, sessions session.Service, messages message.Service, completer bouncer.Completer) (permission.Option, bool) {
+	if cfg == nil || cfg.Review == config.BouncerReviewOff {
+		return nil, false
+	}
+	return permission.WithReviewer(permission.ReviewOptions{
+		Reviewer: &bouncer.Reviewer{Completer: completer},
+		// The reviewer always sees the user's messages: it runs on the
+		// small model, which already sees the whole conversation.
+		Intent: &intentSource{sessions: sessions, messages: messages},
+		Mode:   permission.ReviewShadow,
+	}), true
+}
+
+// smallCompleter sends reviewer prompts to the agent coordinator's small
+// model. The permission service is built before the coordinator, so the
+// coordinator is attached once it exists.
+type smallCompleter struct {
+	mu          sync.Mutex
+	coordinator agent.Coordinator
+}
+
+var _ bouncer.Completer = (*smallCompleter)(nil)
+
+func (c *smallCompleter) set(coordinator agent.Coordinator) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.coordinator = coordinator
+}
+
+func (c *smallCompleter) Complete(ctx context.Context, system, prompt string) (string, string, error) {
+	c.mu.Lock()
+	coordinator := c.coordinator
+	c.mu.Unlock()
+	if coordinator == nil {
+		return "", "", errors.New("agent not ready")
+	}
+	return coordinator.CompleteSmall(ctx, system, prompt)
 }
 
 // warmer is the part of the bouncer the startup warm-up needs.

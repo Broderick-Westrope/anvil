@@ -71,6 +71,9 @@ type App struct {
 	// bouncer is the same Bouncer the permission service assesses with,
 	// kept so ApplyConfig can swap its thresholds. Nil when unconfigured.
 	bouncer *bouncer.Bouncer
+	// reviewCompleter gives the bouncer's reviewer the small model once
+	// the coordinator exists.
+	reviewCompleter *smallCompleter
 
 	serviceEventsWG *sync.WaitGroup
 	eventsCtx       context.Context
@@ -112,9 +115,13 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	}
 	permOpts := []permission.Option{permission.WithDecisionRecorder(recorder)}
 	var bnc *bouncer.Bouncer
+	completer := &smallCompleter{}
 	if ta := store.TrustedBouncer(); ta != nil {
 		if setup, ok := buildBouncerOption(ta, sessions, messages); ok {
 			permOpts = append(permOpts, setup.option)
+			if opt, ok := buildReviewOption(ta.Config, sessions, messages, completer); ok {
+				permOpts = append(permOpts, opt)
+			}
 			bnc = setup.bouncer
 			slog.Info("Bouncer configured",
 				"mode", cmp.Or(ta.Config.Mode, config.BouncerOff),
@@ -133,8 +140,9 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 		globalCtx: ctx,
 
-		config:  store,
-		bouncer: bnc,
+		config:          store,
+		bouncer:         bnc,
+		reviewCompleter: completer,
 
 		events:             pubsub.NewBroker[tea.Msg](),
 		serviceEventsWG:    &sync.WaitGroup{},
@@ -627,6 +635,7 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		return err
 	}
 	app.jobWaker.setAgent(app.AgentCoordinator)
+	app.reviewCompleter.set(app.AgentCoordinator)
 	return nil
 }
 

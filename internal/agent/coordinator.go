@@ -95,6 +95,9 @@ type Coordinator interface {
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
 	RegenerateTitle(ctx context.Context, sessionID string) error
+	// CompleteSmall sends one prompt to the small model, outside any
+	// session, and returns its reply and the model's ID.
+	CompleteSmall(ctx context.Context, system, prompt string) (text, model string, err error)
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	// ReloadPlugins re-discovers plugin content and rebuilds the
@@ -1711,6 +1714,19 @@ func (c *coordinator) RegenerateTitle(ctx context.Context, sessionID string) err
 // approaching expiry. Anthropic tokens use a fixed 60-second window
 // (anthropicoauth.NeedsRefresh); all other providers use the generic
 // 10% margin from Token.IsExpired.
+func (c *coordinator) CompleteSmall(ctx context.Context, system, prompt string) (string, string, error) {
+	sa, ok := c.getOrchestrator().(*sessionAgent)
+	if !ok {
+		return "", "", errors.New("orchestrator is not a *sessionAgent")
+	}
+	if providerCfg, ok := c.cfg.Config().Providers.Get(sa.smallModel.Get().ModelCfg.Provider); ok {
+		if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
+			slog.Warn("Failed to refresh OAuth2 token before a small-model call. Proceeding with existing token.", "error", err)
+		}
+	}
+	return sa.completeSmall(ctx, system, prompt)
+}
+
 func (c *coordinator) refreshTokenIfExpired(ctx context.Context, providerCfg config.ProviderConfig) error {
 	if providerCfg.OAuthToken == nil {
 		return nil

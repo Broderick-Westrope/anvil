@@ -1552,6 +1552,50 @@ func formatConversationForTitle(msgs []message.Message) string {
 	return result
 }
 
+// completeSmallMaxTokens bounds a one-shot small-model reply from a model
+// that doesn't reason.
+const completeSmallMaxTokens = 1024
+
+// completeSmall sends one prompt to the small model outside any session
+// and returns its reply and the model's ID.
+func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string) (string, string, error) {
+	small := a.smallModel.Get()
+	if small.Model == nil {
+		return "", "", errors.New("small model not configured")
+	}
+	systemPromptPrefix := a.systemPromptPrefix.Get()
+	providerCfg := a.providerConfig.Get()
+
+	tok := int64(completeSmallMaxTokens)
+	if small.CatwalkCfg.CanReason {
+		tok = max(tok, small.CatwalkCfg.DefaultMaxTokens)
+	}
+	agent := fantasy.NewAgent(small.Model,
+		fantasy.WithSystemPrompt(system),
+		fantasy.WithMaxOutputTokens(tok),
+		fantasy.WithUserAgent(userAgent),
+	)
+	resp, err := agent.Stream(ctx, fantasy.AgentStreamCall{
+		Prompt: prompt,
+		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
+			prepared.Messages = opts.Messages
+			if systemPromptPrefix != "" {
+				prepared.Messages = append([]fantasy.Message{
+					fantasy.NewSystemMessage(systemPromptPrefix),
+				}, prepared.Messages...)
+			}
+			if isAnthropicOAuth(providerCfg) {
+				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
+			}
+			return callCtx, prepared, nil
+		},
+	})
+	if err != nil {
+		return "", small.ModelCfg.Model, fmt.Errorf("small model: %w", err)
+	}
+	return resp.Response.Content.Text(), small.ModelCfg.Model, nil
+}
+
 // generateTitle generates a session title from the full conversation
 // context. Callers must pre-check TitleIsCustom before calling.
 func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs []message.Message) {

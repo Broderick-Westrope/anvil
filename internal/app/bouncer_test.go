@@ -499,3 +499,32 @@ func TestApplyConfigWithoutBouncerSetsRules(t *testing.T) {
 	require.Equal(t, rules, perms.rules)
 	require.Zero(t, perms.resets)
 }
+
+func TestBuildReviewOption(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		cfg  *config.Bouncer
+		want bool
+	}{
+		{"default is shadow", &config.Bouncer{}, true},
+		{"explicit shadow", &config.Bouncer{Review: config.BouncerReviewShadow}, true},
+		{"off", &config.Bouncer{Review: config.BouncerReviewOff}, false},
+		{"no bouncer", nil, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			opt, ok := buildReviewOption(tt.cfg, nil, nil, &smallCompleter{})
+			require.Equal(t, tt.want, ok)
+			require.Equal(t, tt.want, opt != nil)
+		})
+	}
+}
+
+func TestSmallCompleterBeforeAgentIsReady(t *testing.T) {
+	t.Parallel()
+	var nilCompleter *smallCompleter
+	nilCompleter.set(nil)
+	_, _, err := (&smallCompleter{}).Complete(t.Context(), "system", "prompt")
+	require.ErrorContains(t, err, "agent not ready")
+}

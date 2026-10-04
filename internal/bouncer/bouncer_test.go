@@ -119,7 +119,7 @@ func TestBouncerDetailsJSONShape(t *testing.T) {
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(got.Details, &raw))
-	require.EqualValues(t, 1, raw["schema_version"])
+	require.EqualValues(t, permission.AssessmentSchemaVersion, raw["schema_version"])
 	require.Equal(t, BatteryVersion, raw["battery_version"])
 }
 

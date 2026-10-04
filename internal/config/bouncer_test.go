@@ -336,7 +336,7 @@ func TestBouncer_Validate(t *testing.T) {
 		nil,
 		{},
 		{
-			Mode: "enforce", URL: "https://x.example.com/p", AuthScheme: "Bearer",
+			Mode: "enforce", Review: "off", URL: "https://x.example.com/p", AuthScheme: "Bearer",
 			ExplicitAsk: "human", APIKeyEnv: "_KEY_2", TimeoutSeconds: 60,
 			EscalateAt: f(0), DenyAt: f(1), SeverityEscalate: f(3), SeverityDeny: f(0), UserRequestedAt: f(1),
 			ConcernAt: f(0.2), SeverityConcern: f(1), EscalateAtAxes: map[string]float64{"destructive": 0.8, "credentials": 0},
@@ -348,6 +348,7 @@ func TestBouncer_Validate(t *testing.T) {
 
 	invalid := map[string]*Bouncer{
 		"mode":                 {Mode: "on"},
+		"review":               {Review: "enforce"},
 		"auth_scheme":          {AuthScheme: "api-key"},
 		"explicit_ask":         {ExplicitAsk: "both"},
 		"url scheme":           {URL: "http://x.example.com"},
