@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -60,14 +61,16 @@ func (r *Reviewer) Review(ctx context.Context, in permission.ReviewInput) (permi
 	return op, err
 }
 
-// fenceTags defuses tags in agent-written text so it can't close the tool
-// call block and pose as a user message.
-var fenceTags = strings.NewReplacer(
-	"<user_message", "<user-message",
-	"</user_message", "</user-message",
-	"<tool_call", "<tool-call",
-	"</tool_call", "</tool-call",
-)
+// fenceTagRe matches the tags that frame the prompt, in any case and with
+// stray whitespace, so agent-written text can't close the tool call block
+// and pose as a user message.
+var fenceTagRe = regexp.MustCompile(`(?i)<\s*/?\s*(user_message|tool_call)`)
+
+func fenceTags(s string) string {
+	return fenceTagRe.ReplaceAllStringFunc(s, func(tag string) string {
+		return strings.ReplaceAll(tag, "_", "-")
+	})
+}
 
 func reviewPrompt(in permission.ReviewInput) string {
 	var b strings.Builder
@@ -103,7 +106,7 @@ func reviewPrompt(in permission.ReviewInput) string {
 		fmt.Fprintf(&call, "diff:\n%s\n", clean(in.Diff, reviewMaxDiff))
 	}
 	b.WriteString("\n<tool_call>\n")
-	b.WriteString(fenceTags.Replace(call.String()))
+	b.WriteString(fenceTags(call.String()))
 	b.WriteString("</tool_call>\n")
 
 	if in.Bouncer != nil {

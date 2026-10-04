@@ -229,7 +229,9 @@ func (s *permissionService) startReview(ctx context.Context, opts CreatePermissi
 		}
 		update := *perm
 		update.Review = result.summary()
-		s.Publish(pubsub.UpdatedEvent, update)
+		// A dropped update would leave the prompt showing a pending
+		// review until it closes.
+		s.PublishMustDeliver(context.Background(), pubsub.UpdatedEvent, update)
 	}()
 	return r
 }

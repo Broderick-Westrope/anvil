@@ -159,7 +159,9 @@ type PermissionKey struct {
 
 // Lock ordering: requestMu is the outermost lock and must not be held
 // when acquiring configRulesMu, sessionRulesMu, or activeRequestMu. The
-// latter three are independent and never nested.
+// latter three are independent and never nested. A request's
+// pendingReview.mu may be taken while requestMu is held, and nothing is
+// acquired under it.
 type permissionService struct {
 	*pubsub.Broker[PermissionRequest]
 
@@ -376,6 +378,8 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 
 	// Commit boundary 2: a sibling prompt may have added a grant or rule
 	// while this request waited for the prompt slot.
+	// Requests resolved here never reach the human, so their review has
+	// nothing to be compared with and is dropped.
 	if p3 := s.evaluatePolicy(opts); p3.resolved {
 		review.stop()
 		return s.finishPolicy(opts, p3, details), nil

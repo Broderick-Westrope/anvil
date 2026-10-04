@@ -66,7 +66,7 @@ func waitDecision(t *testing.T, rec *fakeRecorder) Decision {
 
 func TestReviewEffect(t *testing.T) {
 	t.Parallel()
-	low, high := 0.3, 2.6
+	low, edge, high := 0.3, reviewAllowSeverityBelow, 2.6
 	allow := ReviewOpinion{Verdict: ReviewAllow}
 	tests := []struct {
 		name     string
@@ -79,6 +79,7 @@ func TestReviewEffect(t *testing.T) {
 		{"escalate with a verified quote allows", "escalate", &low, allow, true, ReviewAllow},
 		{"escalate without a verified quote stays", "escalate", &low, allow, false, ReviewEscalate},
 		{"escalate at high severity stays", "escalate", &high, allow, true, ReviewEscalate},
+		{"escalate at the severity limit stays", "escalate", &edge, allow, true, ReviewEscalate},
 		{"escalate with unknown severity stays", "escalate", nil, allow, true, ReviewEscalate},
 		{"escalate is never raised to deny", "escalate", &low, ReviewOpinion{Verdict: ReviewDeny}, false, ReviewEscalate},
 		{"deny never goes straight to allow", "deny", &low, allow, true, ReviewEscalate},
