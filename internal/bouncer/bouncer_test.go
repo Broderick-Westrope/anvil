@@ -73,7 +73,8 @@ func TestBouncerRoutesCannedAnswers(t *testing.T) {
 		outcome  string
 	}{
 		{"allow", 0.05, 0, permission.AssessAllow, "allow"},
-		{"escalate", 0.5, 1, permission.AssessEscalate, "escalate"},
+		{"escalate", 0.5, 1.6, permission.AssessEscalate, "escalate"},
+		{"mid hazard cheap to undo", 0.5, 1, permission.AssessAllow, "allow"},
 		{"deny", 0.97, 3, permission.AssessDeny, "deny"},
 	}
 	for _, tt := range tests {
@@ -122,7 +123,7 @@ func TestBouncerRecordsTriggers(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, batteryBody(0.5, 1))
+		_, _ = io.WriteString(w, batteryBody(0.5, 1.6))
 	}))
 	defer srv.Close()
 

@@ -534,8 +534,29 @@ config is ignored, so a cloned repo can't switch it on or loosen it.
   context (default `true`). The bouncer uses them to tell an action you
   asked for from one you didn't.
 - Pin a versioned `model` so a new release can't silently change verdicts.
-- Thresholds (`escalate_at`, `deny_at`, `severity_escalate`,
-  `user_requested_at`) and `timeout_seconds` are documented in the schema.
+- `timeout_seconds` and the thresholds below are documented in the schema.
+
+The bouncer scores each call on five hazard axes (`destructive`,
+`exfiltration`, `credentials`, `remote_exec`, `shared_infra`) and on how
+bad a mistake would be (`severity`, 0 to 3). A call comes to you when:
+- any axis reaches its own `escalate_at` (0.7 for `destructive` and
+  `remote_exec`, 0.6 for the rest);
+- an axis reaches `concern_at` (0.35) and severity reaches
+  `severity_concern` (1.5), so a borderline call only bothers you when
+  getting it wrong would hurt; or
+- severity alone reaches `severity_escalate` (2).
+
+It's denied outright when an axis reaches `deny_at` (0.9) and you didn't
+ask for it (`user_requested_at`, 0.7). Setting `escalate_at` applies one
+value to every axis; `escalate_at_axes` overrides individual ones:
+
+```json
+{
+  "bouncer": {
+    "escalate_at_axes": { "credentials": 0.5, "destructive": 0.8 }
+  }
+}
+```
 
 Some calls always come to you without a classifier call:
 - writes to protected paths (`.git/`, `anvil.json`, CI workflows, shell rc

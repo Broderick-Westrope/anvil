@@ -120,8 +120,28 @@
           "type": "number",
           "maximum": 1,
           "minimum": 0,
-          "description": "Hazard probability at or above which the request goes to the human",
+          "description": "Hazard probability at or above which the request goes to the human whatever its severity. Setting it applies one value to every axis; escalate_at_axes overrides it per axis. When unset each axis uses its own default (destructive and remote_exec 0.7; exfiltration and credentials and shared_infra 0.6)"
+        },
+        "escalate_at_axes": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object",
+          "description": "Per-axis overrides of escalate_at keyed by destructive or exfiltration or credentials or remote_exec or shared_infra"
+        },
+        "concern_at": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Hazard probability at or above which the request goes to the human when severity also reaches severity_concern",
           "default": 0.35
+        },
+        "severity_concern": {
+          "type": "number",
+          "maximum": 3,
+          "minimum": 0,
+          "description": "Severity score (0-3) at or above which a hazard in the concern band goes to the human",
+          "default": 1.5
         },
         "deny_at": {
           "type": "number",

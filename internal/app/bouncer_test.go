@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -331,6 +332,51 @@ func TestBuildBouncerOption_InvalidMergedThresholdsNotBuilt(t *testing.T) {
 	_, ok := buildBouncerOption(ta, nil, nil)
 	require.False(t, ok)
 	require.Contains(t, buf.String(), "Bouncer thresholds are invalid")
+}
+
+func TestBouncerHazardAxesMatchConfig(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, bouncer.HazardQuestions, config.BouncerHazardAxes)
+}
+
+func TestBouncerThresholds(t *testing.T) {
+	t.Parallel()
+	f := func(v float64) *float64 { return &v }
+
+	t.Run("unset uses defaults", func(t *testing.T) {
+		t.Parallel()
+		require.Equal(t, bouncer.DefaultThresholds(), bouncerThresholds(&config.Bouncer{}))
+	})
+
+	t.Run("escalate_at sets every axis and axes override it", func(t *testing.T) {
+		t.Parallel()
+		th := bouncerThresholds(&config.Bouncer{
+			EscalateAt:      f(0.5),
+			EscalateAtAxes:  map[string]float64{"credentials": 0.4},
+			ConcernAt:       f(0.3),
+			SeverityConcern: f(1.2),
+		})
+		require.Equal(t, map[string]float64{
+			"destructive": 0.5, "exfiltration": 0.5, "credentials": 0.4, "remote_exec": 0.5, "shared_infra": 0.5,
+		}, th.EscalateAt)
+		require.Equal(t, 0.3, th.ConcernAt)
+		require.Equal(t, 1.2, th.SeverityConcern)
+		require.NoError(t, th.Validate())
+	})
+
+	t.Run("axes alone keep other defaults", func(t *testing.T) {
+		t.Parallel()
+		th := bouncerThresholds(&config.Bouncer{EscalateAtAxes: map[string]float64{"destructive": 0.8}})
+		want := bouncer.DefaultThresholds()
+		want.EscalateAt["destructive"] = 0.8
+		require.Equal(t, want, th)
+	})
+
+	t.Run("does not mutate defaults", func(t *testing.T) {
+		t.Parallel()
+		bouncerThresholds(&config.Bouncer{EscalateAt: f(0.1)})
+		require.Equal(t, 0.7, bouncer.DefaultThresholds().EscalateAt["destructive"])
+	})
 }
 
 // TestBouncerRequestOmitsJobEventNotices drives a permission request through

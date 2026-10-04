@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"time"
 
@@ -115,7 +116,16 @@ func warmBouncer(ctx context.Context, w warmer, mode permission.BouncerMode) {
 func bouncerThresholds(cfg *config.Bouncer) bouncer.Thresholds {
 	th := bouncer.DefaultThresholds()
 	if cfg.EscalateAt != nil {
-		th.EscalateAt = *cfg.EscalateAt
+		for axis := range th.EscalateAt {
+			th.EscalateAt[axis] = *cfg.EscalateAt
+		}
+	}
+	maps.Copy(th.EscalateAt, cfg.EscalateAtAxes)
+	if cfg.ConcernAt != nil {
+		th.ConcernAt = *cfg.ConcernAt
+	}
+	if cfg.SeverityConcern != nil {
+		th.SeverityConcern = *cfg.SeverityConcern
 	}
 	if cfg.DenyAt != nil {
 		th.DenyAt = *cfg.DenyAt

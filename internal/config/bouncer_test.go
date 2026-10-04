@@ -278,6 +278,7 @@ func TestBouncer_InvalidGlobalBlockFailsLoad(t *testing.T) {
 		{name: "explicit_ask", set: map[string]any{"explicit_ask": "robot"}, match: "explicit_ask"},
 		{name: "http url", set: map[string]any{"url": "http://classifier.example.com"}, match: "url"},
 		{name: "escalate above deny", set: map[string]any{"escalate_at": 0.95, "deny_at": 0.9}, match: "escalate_at"},
+		{name: "unknown axis", set: map[string]any{"escalate_at_axes": map[string]any{"secrets": 0.5}}, match: "escalate_at_axes"},
 		{name: "timeout too large", set: map[string]any{"timeout_seconds": 61}, match: "timeout_seconds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -338,6 +339,7 @@ func TestBouncer_Validate(t *testing.T) {
 			Mode: "enforce", URL: "https://x.example.com/p", AuthScheme: "Bearer",
 			ExplicitAsk: "human", APIKeyEnv: "_KEY_2", TimeoutSeconds: 60,
 			EscalateAt: f(0), DenyAt: f(1), SeverityEscalate: f(3), UserRequestedAt: f(1),
+			ConcernAt: f(0.2), SeverityConcern: f(1), EscalateAtAxes: map[string]float64{"destructive": 0.8, "credentials": 0},
 		},
 	}
 	for _, p := range valid {
@@ -359,6 +361,11 @@ func TestBouncer_Validate(t *testing.T) {
 		"user_requested range": {UserRequestedAt: f(2)},
 		"severity range":       {SeverityEscalate: f(3.5)},
 		"escalate equals deny": {EscalateAt: f(0.9), DenyAt: f(0.9)},
+		"concern_at range":     {ConcernAt: f(1.5)},
+		"severity_concern":     {SeverityConcern: f(-1)},
+		"unknown axis":         {EscalateAtAxes: map[string]float64{"destructve": 0.5}},
+		"axis range":           {EscalateAtAxes: map[string]float64{"destructive": 1.5}},
+		"axis equals deny":     {EscalateAtAxes: map[string]float64{"destructive": 0.9}, DenyAt: f(0.9)},
 	}
 	for name, p := range invalid {
 		require.Error(t, p.Validate(), name)

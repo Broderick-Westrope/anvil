@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/qjebbs/go-jsons"
 	"github.com/tidwall/gjson"
@@ -56,6 +59,10 @@ const (
 
 const maxBouncerTimeoutSeconds = 60
 
+// BouncerHazardAxes are the hazard axes escalate_at_axes may set. They
+// must match the bouncer's hazard questions.
+var BouncerHazardAxes = []string{"destructive", "exfiltration", "credentials", "remote_exec", "shared_infra"}
+
 var envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Bouncer configures the classifier that answers permission
@@ -73,7 +80,11 @@ type Bouncer struct {
 	TimeoutSeconds   int                `json:"timeout_seconds,omitempty" jsonschema:"description=Bouncer call timeout in seconds; 0 uses the default,minimum=0,maximum=60,default=8"`
 	ExplicitAsk      BouncerExplicitAsk `json:"explicit_ask,omitempty" jsonschema:"enum=bouncer,enum=human,default=bouncer"`
 	SendUserMessages *bool              `json:"send_user_messages,omitempty" jsonschema:"default=true"`
-	EscalateAt       *float64           `json:"escalate_at,omitempty" jsonschema:"description=Hazard probability at or above which the request goes to the human,minimum=0,maximum=1,default=0.35"`
+	EscalateAt       *float64           `json:"escalate_at,omitempty" jsonschema:"description=Hazard probability at or above which the request goes to the human whatever its severity. Setting it applies one value to every axis; escalate_at_axes overrides it per axis. When unset each axis uses its own default (destructive and remote_exec 0.7; exfiltration and credentials and shared_infra 0.6),minimum=0,maximum=1"`
+	// EscalateAtAxes overrides EscalateAt for individual hazard axes.
+	EscalateAtAxes   map[string]float64 `json:"escalate_at_axes,omitempty" jsonschema:"description=Per-axis overrides of escalate_at keyed by destructive or exfiltration or credentials or remote_exec or shared_infra"`
+	ConcernAt        *float64           `json:"concern_at,omitempty" jsonschema:"description=Hazard probability at or above which the request goes to the human when severity also reaches severity_concern,minimum=0,maximum=1,default=0.35"`
+	SeverityConcern  *float64           `json:"severity_concern,omitempty" jsonschema:"description=Severity score (0-3) at or above which a hazard in the concern band goes to the human,minimum=0,maximum=3,default=1.5"`
 	DenyAt           *float64           `json:"deny_at,omitempty" jsonschema:"description=Hazard probability at or above which the request is denied unless the user asked for it,minimum=0,maximum=1,default=0.9"`
 	SeverityEscalate *float64           `json:"severity_escalate,omitempty" jsonschema:"description=Severity score (0-3) at or above which the request goes to the human,minimum=0,maximum=3,default=2"`
 	UserRequestedAt  *float64           `json:"user_requested_at,omitempty" jsonschema:"description=User-requested probability at or above which a likely deny goes to the human instead,minimum=0,maximum=1,default=0.7"`
@@ -129,9 +140,22 @@ func (p *Bouncer) Validate() error {
 		checkBouncerRange("deny_at", p.DenyAt, 1),
 		checkBouncerRange("user_requested_at", p.UserRequestedAt, 1),
 		checkBouncerRange("severity_escalate", p.SeverityEscalate, 3),
+		checkBouncerRange("concern_at", p.ConcernAt, 1),
+		checkBouncerRange("severity_concern", p.SeverityConcern, 3),
 	)
 	if p.EscalateAt != nil && p.DenyAt != nil && *p.EscalateAt >= *p.DenyAt {
 		errs = append(errs, fmt.Errorf("escalate_at (%v) must be less than deny_at (%v)", *p.EscalateAt, *p.DenyAt))
+	}
+	for _, axis := range slices.Sorted(maps.Keys(p.EscalateAtAxes)) {
+		v := p.EscalateAtAxes[axis]
+		if !slices.Contains(BouncerHazardAxes, axis) {
+			errs = append(errs, fmt.Errorf("escalate_at_axes has unknown axis %q; valid axes are %s", axis, strings.Join(BouncerHazardAxes, ", ")))
+			continue
+		}
+		errs = append(errs, checkBouncerRange("escalate_at_axes."+axis, &v, 1))
+		if p.DenyAt != nil && v >= *p.DenyAt {
+			errs = append(errs, fmt.Errorf("escalate_at_axes.%s (%v) must be less than deny_at (%v)", axis, v, *p.DenyAt))
+		}
 	}
 	return errors.Join(errs...)
 }
