@@ -842,9 +842,6 @@ func newOneLineList(count, height int) *List {
 	return l
 }
 
-// TestList_ScrollToSelectedWithMargin_Down covers stepping down: the
-// viewport starts scrolling once fewer than margin rows remain below the
-// selection, and stops at the end so the selection can reach the last row.
 func TestList_ScrollToSelectedWithMargin_Down(t *testing.T) {
 	t.Parallel()
 
@@ -857,8 +854,6 @@ func TestList_ScrollToSelectedWithMargin_Down(t *testing.T) {
 	}
 }
 
-// TestList_ScrollToSelectedWithMargin_Up covers stepping up from the end:
-// the mirror of the downward case.
 func TestList_ScrollToSelectedWithMargin_Up(t *testing.T) {
 	t.Parallel()
 
@@ -877,8 +872,6 @@ func TestList_ScrollToSelectedWithMargin_Up(t *testing.T) {
 	}
 }
 
-// TestList_ScrollToSelectedWithMargin_Jumps covers wrapping between the
-// ends of the list, where the margin is clamped by the list bounds.
 func TestList_ScrollToSelectedWithMargin_Jumps(t *testing.T) {
 	t.Parallel()
 
@@ -896,9 +889,6 @@ func TestList_ScrollToSelectedWithMargin_Jumps(t *testing.T) {
 	require.Equal(t, 9, l.Offset(), "selection lands with the margin below it")
 }
 
-// TestList_ScrollToSelectedWithMargin_SmallViewport covers viewports too
-// short for the full margin on both sides: the margin shrinks so the
-// selection stays visible.
 func TestList_ScrollToSelectedWithMargin_SmallViewport(t *testing.T) {
 	t.Parallel()
 
@@ -913,8 +903,6 @@ func TestList_ScrollToSelectedWithMargin_SmallViewport(t *testing.T) {
 	require.Equal(t, 9, l.Offset(), "margin of 1 keeps the selection centred")
 }
 
-// TestList_ScrollToSelectedWithMargin_FitsViewport covers lists shorter
-// than the viewport, which never scroll.
 func TestList_ScrollToSelectedWithMargin_FitsViewport(t *testing.T) {
 	t.Parallel()
 

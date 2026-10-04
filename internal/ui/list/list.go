@@ -740,15 +740,11 @@ func (l *List) ScrollToSelected() {
 	}
 }
 
-// ScrollToSelectedWithMargin scrolls the list so the selected item is
-// visible with at least margin items above and below it, like Vim's
-// scrolloff. The margin shrinks near the start and end of the list so the
-// selection can still reach the first and last rows, and it is capped so
-// the selection always fits in the viewport.
 func (l *List) ScrollToSelectedWithMargin(margin int) {
 	if l.selectedIdx < 0 || l.selectedIdx >= len(l.items) {
 		return
 	}
+	// A full margin on both sides may not fit in a short viewport.
 	margin = min(margin, (l.height-1)/2)
 	if margin <= 0 {
 		l.ScrollToSelected()
@@ -766,8 +762,6 @@ func (l *List) ScrollToSelectedWithMargin(margin int) {
 	}
 }
 
-// scrollIndexToBottom scrolls so the item at idx sits at the bottom of the
-// viewport, or to the top when everything up to idx fits.
 func (l *List) scrollIndexToBottom(idx int) {
 	var totalHeight int
 	for i := idx; i >= 0; i-- {

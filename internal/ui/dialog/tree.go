@@ -21,8 +21,6 @@ const (
 	navDialogHeight   = 30
 )
 
-// treeScrollMargin is how many rows the tree keeps visible above and below
-// the selection while scrolling.
 const treeScrollMargin = 3
 
 // treeNode represents a single node in the in-memory message tree.
