@@ -156,6 +156,9 @@ func BouncerThresholds(cfg *config.Bouncer) bouncer.Thresholds {
 	if cfg.DenyAt != nil {
 		th.DenyAt = *cfg.DenyAt
 	}
+	if cfg.SeverityDeny != nil {
+		th.SeverityDeny = *cfg.SeverityDeny
+	}
 	if cfg.SeverityEscalate != nil {
 		th.SeverityEscalate = *cfg.SeverityEscalate
 	}

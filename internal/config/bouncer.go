@@ -85,7 +85,8 @@ type Bouncer struct {
 	EscalateAtAxes   map[string]float64 `json:"escalate_at_axes,omitempty" jsonschema:"description=Per-axis overrides of escalate_at keyed by destructive or exfiltration or credentials or remote_exec or shared_infra"`
 	ConcernAt        *float64           `json:"concern_at,omitempty" jsonschema:"description=Hazard probability at or above which the request goes to the human when severity also reaches severity_concern,minimum=0,maximum=1,default=0.35"`
 	SeverityConcern  *float64           `json:"severity_concern,omitempty" jsonschema:"description=Severity score (0-3) at or above which a hazard in the concern band goes to the human,minimum=0,maximum=3,default=1.5"`
-	DenyAt           *float64           `json:"deny_at,omitempty" jsonschema:"description=Hazard probability at or above which the request is denied unless the user asked for it,minimum=0,maximum=1,default=0.9"`
+	DenyAt           *float64           `json:"deny_at,omitempty" jsonschema:"description=Hazard probability at or above which the request is flagged as a deny when severity also reaches severity_deny and the user did not ask for it,minimum=0,maximum=1,default=0.9"`
+	SeverityDeny     *float64           `json:"severity_deny,omitempty" jsonschema:"description=Severity score (0-3) a request must also reach before a hazard at deny_at flags it as a deny; below it the request is only escalated,minimum=0,maximum=3,default=2"`
 	SeverityEscalate *float64           `json:"severity_escalate,omitempty" jsonschema:"description=Severity score (0-3) at or above which the request goes to the human,minimum=0,maximum=3,default=2"`
 	UserRequestedAt  *float64           `json:"user_requested_at,omitempty" jsonschema:"description=User-requested probability at or above which a likely deny goes to the human instead,minimum=0,maximum=1,default=0.7"`
 }
@@ -142,6 +143,7 @@ func (p *Bouncer) Validate() error {
 		checkBouncerRange("severity_escalate", p.SeverityEscalate, 3),
 		checkBouncerRange("concern_at", p.ConcernAt, 1),
 		checkBouncerRange("severity_concern", p.SeverityConcern, 3),
+		checkBouncerRange("severity_deny", p.SeverityDeny, 3),
 	)
 	if p.EscalateAt != nil && p.DenyAt != nil && *p.EscalateAt >= *p.DenyAt {
 		errs = append(errs, fmt.Errorf("escalate_at (%v) must be less than deny_at (%v)", *p.EscalateAt, *p.DenyAt))

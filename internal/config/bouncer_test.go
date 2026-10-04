@@ -338,7 +338,7 @@ func TestBouncer_Validate(t *testing.T) {
 		{
 			Mode: "enforce", URL: "https://x.example.com/p", AuthScheme: "Bearer",
 			ExplicitAsk: "human", APIKeyEnv: "_KEY_2", TimeoutSeconds: 60,
-			EscalateAt: f(0), DenyAt: f(1), SeverityEscalate: f(3), UserRequestedAt: f(1),
+			EscalateAt: f(0), DenyAt: f(1), SeverityEscalate: f(3), SeverityDeny: f(0), UserRequestedAt: f(1),
 			ConcernAt: f(0.2), SeverityConcern: f(1), EscalateAtAxes: map[string]float64{"destructive": 0.8, "credentials": 0},
 		},
 	}
@@ -363,6 +363,7 @@ func TestBouncer_Validate(t *testing.T) {
 		"escalate equals deny": {EscalateAt: f(0.9), DenyAt: f(0.9)},
 		"concern_at range":     {ConcernAt: f(1.5)},
 		"severity_concern":     {SeverityConcern: f(-1)},
+		"severity_deny":        {SeverityDeny: f(3.1)},
 		"unknown axis":         {EscalateAtAxes: map[string]float64{"destructve": 0.5}},
 		"axis range":           {EscalateAtAxes: map[string]float64{"destructive": 1.5}},
 		"axis equals deny":     {EscalateAtAxes: map[string]float64{"destructive": 0.9}, DenyAt: f(0.9)},

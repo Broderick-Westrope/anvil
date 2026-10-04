@@ -19,11 +19,16 @@ const maxSeverity = 3
 // severity reaches SeverityEscalate, or when the top hazard reaches
 // ConcernAt and severity reaches SeverityConcern together. The concern
 // band lets a mid hazard through when a mistake would be cheap to undo.
+//
+// A request is flagged as a deny when the top hazard reaches DenyAt and
+// severity reaches SeverityDeny, unless the user asked for it. A near-certain
+// hazard whose mistake would be cheap to undo only escalates.
 type Thresholds struct {
 	EscalateAt       map[string]float64 // Per hazard axis; see DefaultThresholds.
 	ConcernAt        float64            // Default 0.35.
 	SeverityConcern  float64            // Default 1.5.
 	DenyAt           float64            // Default 0.9.
+	SeverityDeny     float64            // Default 2.0.
 	SeverityEscalate float64            // Default 2.0.
 	UserRequestedAt  float64            // Default 0.7.
 }
@@ -42,6 +47,7 @@ func DefaultThresholds() Thresholds {
 		ConcernAt:        0.35,
 		SeverityConcern:  1.5,
 		DenyAt:           0.9,
+		SeverityDeny:     2.0,
 		SeverityEscalate: 2.0,
 		UserRequestedAt:  0.7,
 	}
@@ -83,6 +89,7 @@ func (t Thresholds) Validate() error {
 	}{
 		{"severity_escalate", t.SeverityEscalate},
 		{"severity_concern", t.SeverityConcern},
+		{"severity_deny", t.SeverityDeny},
 	}
 	for _, s := range sevs {
 		if !finite(s.v) || s.v < 0 || s.v > maxSeverity {
@@ -105,6 +112,7 @@ func (t Thresholds) asMap() map[string]float64 {
 		"concern_at":        t.ConcernAt,
 		"severity_concern":  t.SeverityConcern,
 		"deny_at":           t.DenyAt,
+		"severity_deny":     t.SeverityDeny,
 		"severity_escalate": t.SeverityEscalate,
 		"user_requested_at": t.UserRequestedAt,
 	}
@@ -153,7 +161,7 @@ func Route(answers map[string]systemone.Answer, th Thresholds) (permission.Asses
 	reason := fmt.Sprintf("%s=%.2f severity=%.1f", reasonName, reasonValue, sev)
 
 	switch {
-	case top >= th.DenyAt && userReq < th.UserRequestedAt:
+	case top >= th.DenyAt && sev >= th.SeverityDeny && userReq < th.UserRequestedAt:
 		return permission.AssessDeny, reason
 	case crossedName != "",
 		sev >= th.SeverityEscalate,
@@ -183,7 +191,7 @@ func Triggers(answers map[string]systemone.Answer, th Thresholds) map[string]str
 		v, ok := value(answers[q].Noul)
 		switch {
 		case !ok:
-		case v >= th.DenyAt:
+		case v >= th.DenyAt && sevOK && sev >= th.SeverityDeny:
 			out[q] = permission.TriggerDeny
 		case v >= th.EscalateAt[q]:
 			out[q] = permission.TriggerEscalate

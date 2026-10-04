@@ -89,6 +89,7 @@ func bouncerConnection(b *Bouncer) Bouncer {
 	c.ConcernAt = nil
 	c.SeverityConcern = nil
 	c.DenyAt = nil
+	c.SeverityDeny = nil
 	c.SeverityEscalate = nil
 	c.UserRequestedAt = nil
 	return c

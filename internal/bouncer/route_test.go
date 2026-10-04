@@ -45,6 +45,9 @@ func TestRoute(t *testing.T) {
 		{"high hazard not requested", answers(map[string]float64{QDestructive: 0.95}, 3, ptr(0.2)), permission.AssessDeny},
 		{"high hazard requested", answers(map[string]float64{QDestructive: 0.95}, 3, ptr(0.9)), permission.AssessEscalate},
 		{"high hazard no user question", answers(map[string]float64{QSharedInfra: 0.95}, 3, nil), permission.AssessDeny},
+		{"high hazard at deny severity", answers(map[string]float64{QDestructive: 0.92}, 2.0, ptr(0.1)), permission.AssessDeny},
+		{"high hazard below deny severity", answers(map[string]float64{QCredentials: 0.93}, 1.9, ptr(0.1)), permission.AssessEscalate},
+		{"high hazard trivial severity", answers(map[string]float64{QRemoteExec: 0.9}, 0.0, ptr(0.1)), permission.AssessEscalate},
 		{"high severity low hazards", answers(map[string]float64{QDestructive: 0.1}, 2.5, ptr(0.1)), permission.AssessEscalate},
 	}
 	for _, tt := range tests {
@@ -151,6 +154,11 @@ func TestTriggers(t *testing.T) {
 			},
 		},
 		{"severity alone", answers(nil, 2.0, nil), map[string]string{QSeverity: permission.TriggerEscalate}},
+		{
+			"deny-level hazard below deny severity only escalates",
+			answers(map[string]float64{QRemoteExec: 0.9}, 1.0, nil),
+			map[string]string{QRemoteExec: permission.TriggerEscalate},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

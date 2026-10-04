@@ -147,8 +147,15 @@
           "type": "number",
           "maximum": 1,
           "minimum": 0,
-          "description": "Hazard probability at or above which the request is denied unless the user asked for it",
+          "description": "Hazard probability at or above which the request is flagged as a deny when severity also reaches severity_deny and the user did not ask for it",
           "default": 0.9
+        },
+        "severity_deny": {
+          "type": "number",
+          "maximum": 3,
+          "minimum": 0,
+          "description": "Severity score (0-3) a request must also reach before a hazard at deny_at flags it as a deny; below it the request is only escalated",
+          "default": 2
         },
         "severity_escalate": {
           "type": "number",
