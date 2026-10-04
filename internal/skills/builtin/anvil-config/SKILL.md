@@ -148,7 +148,7 @@ falls back to `small`. Check the resolved model with `anvil_info`.
 }
 ```
 
-- `type` (required): `openai`, `openai-compat`, `anthropic`, or a local provider type (`llamacpp`, `omlx`, `lmstudio`, `litellm`, `ollama`)
+- `type` (required): a hosted API type (`openai`, `openai-compat`, `openrouter`, `vercel`, `anthropic`, `google`, `azure`, `bedrock`, `google-vertex`) or a local provider type (`llamacpp`, `omlx`, `lmstudio`, `litellm`, `ollama`)
 - `api_key`, `base_url`, `api_endpoint`, and `extra_headers` are shell-expanded (see [Shell Expansion](#shell-expansion)).
 - `extra_body` is a JSON passthrough and is **not** expanded.
 - Additional fields: `disable`, `system_prompt_prefix`, `extra_headers`, `extra_body`, `provider_options`.
