@@ -407,9 +407,13 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 		currentLeaf = userMsg.ID
 	}
 
-	// Add the session to the context.
+	// Add the session to the context. Subagents run on their parent's tool
+	// context, so an inherited root session ID wins over this session's own.
+	rootSessionID := cmp.Or(tools.GetRootSessionFromContext(ctx), call.SessionID)
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
+	ctx = context.WithValue(ctx, tools.RootSessionIDContextKey, rootSessionID)
 	genCtx = context.WithValue(genCtx, tools.SessionIDContextKey, call.SessionID)
+	genCtx = context.WithValue(genCtx, tools.RootSessionIDContextKey, rootSessionID)
 
 	// persistCtx survives cancellation and is used for persistence that must
 	// succeed even when the request is canceled (finish parts, error tool
