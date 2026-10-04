@@ -1,6 +1,6 @@
 # Phase 2: `/reload-instance`
 
-> **Status:** DRAFT (revision 3)
+> **Status:** APPROVED (revision 7)
 > Create a PR for human review when done. Don't merge.
 
 ## Specification
@@ -362,17 +362,30 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
      reach it from custom commands (`ui.go:2538`, `:4373`) and asynchronous
      producers (`ui.go:4660-4668`, `:5730-5751`).
      - Add `pendingSends int` and
-       `func (m *UI) trackSend(cmd tea.Cmd) tea.Cmd`. It increments the
-       counter and wraps `cmd` so it always returns
-       `sendDoneMsg{inner tea.Msg}`, whatever the outcome (success, error,
-       cancellation, nil).
-     - `Update` handles `sendDoneMsg` by decrementing, then processing
-       `inner` if it isn't nil.
-     - Apply `trackSend` inside `sendMessage` itself, so every caller is
-       covered, and at each asynchronous producer that later calls
-       `sendMessage`, from scheduling to completion. Find them all with
-       `rg -n 'sendMessage\(' internal/ui/model` and by tracing each
-       `tea.Cmd` that ends in one.
+       `func (m *UI) trackSend(fn func() tea.Msg) tea.Cmd`. It increments
+       the counter immediately and returns a command that runs `fn` and
+       always returns `sendDoneMsg{inner tea.Msg}`, whatever the outcome
+       (success, error, cancellation, nil).
+     - **Wrap leaf closures only, never composites.** `sendMessage` returns
+       a `tea.Batch` (`ui.go:4719`) and the MCP prompt path a `tea.Sequence`
+       (`ui.go:5762`). Wrapping those would report completion before their
+       children run. Wrap:
+       - the `AgentRun` closure (`ui.go:4705-4718`);
+       - the MCP prompt `load` closure (`ui.go:5731-5752`);
+       - the session-initialisation producer (`ui.go:4660-4669`);
+
+       each before it's composed into a `tea.Batch` or `tea.Sequence`. A nil
+       `fn` must not be wrapped; return nil without incrementing.
+     - `Update` handles `sendDoneMsg` by decrementing, then, if `inner`
+       isn't nil, returning `func() tea.Msg { return inner }` as a command,
+       so `inner` goes back through Bubble Tea's normal dispatch rather than
+       a direct recursive `Update` call.
+     - **No zero-count gap between a producer and its send.** When a
+       wrapped producer's result leads to `sendMessage`, the send's own
+       `trackSend` increment must happen in the same `Update` that
+       decrements the producer: increment first, then decrement. Find
+       every producer-to-send chain with `rg -n 'sendMessage\(' internal/ui/model`
+       and by tracing each `tea.Cmd` that ends in one.
    - **Freeze.** Add a `reloading` flag, set at the start of
      `startReloadInstance` and cleared on every refusal or cancellation.
      While it's set, `sendMessage` doesn't send: it puts the text back in
@@ -423,9 +436,13 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
    - Every refusal leaves `reloadRequest` nil, `reloading` cleared, and the
      coordinator un-paused.
    - A pending send (`pendingSends > 0`) refuses. `trackSend` decrements
-     exactly once for a cmd returning nil, an error message, and a normal
-     message. A custom-command send and an asynchronous producer are each
-     counted until they complete.
+     exactly once for a closure returning nil, an error message, and a
+     normal message, and a nil `fn` doesn't increment.
+   - Delayed child execution: run the composed `tea.Batch` from
+     `sendMessage` with the `AgentRun` child blocked on a channel, and
+     assert `pendingSends` stays at 1 until the child finishes.
+   - A producer-to-send chain (MCP prompt `load`, then `sendMessage`) never
+     shows `pendingSends == 0` in between.
    - While `reloading` is set, `sendMessage` restores the text to the
      editor instead of sending. Session switching is a no-op with "Reload in
      progress".

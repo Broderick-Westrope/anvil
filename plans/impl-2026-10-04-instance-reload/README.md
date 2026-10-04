@@ -1,6 +1,6 @@
 # Config, Plugin, and Instance Reload Implementation Plan
 
-> **Status:** DRAFT
+> **Status:** APPROVED (pending user sign-off)
 
 ## Overview
 
@@ -244,3 +244,24 @@ Revision 6:
   owns a cancellable lifetime context, which `close()` cancels. A test
   asserts that shutdown with a permanently paused wake finishes in under
   500ms.
+
+### Round 6 (devil's advocate, final)
+
+Revision 7:
+
+- **`trackSend` must wrap leaf closures, not the composites `sendMessage`
+  returns** (`tea.Batch` and `tea.Sequence`), or it reports completion
+  before the children run. Fixed:
+  - it wraps the `AgentRun`, MCP prompt `load`, and session-initialisation
+    closures before composition;
+  - inner messages are re-dispatched as commands;
+  - a producer-to-send chain increments before it decrements, so the count
+    never drops to zero in between.
+
+  Tests cover delayed child execution and the chain.
+- **Waker cancellation confirmed feasible.** No wake needs to survive
+  `close()`, persistence uses cancellation-independent contexts, and
+  shutdown waits before closing storage.
+
+The reviewer found no further Critical or Major issues in the rest of the
+plan. Status is now APPROVED, pending the user's sign-off.
