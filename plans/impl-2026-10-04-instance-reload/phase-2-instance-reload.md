@@ -51,8 +51,9 @@ state. In particular:
   and the notice shows both versions.
 - [ ] While the agent is running: refused, nothing changes.
 - [ ] After confirming: no user run, job wake, or summarisation can start
-  before exit. A run that started in the gap between the check and the
-  confirm is cancelled by the normal shutdown, and its user message is kept.
+  or finish preparing before exit. A run that was mid-preparation when the
+  reload began either completes its dispatch before the reload proceeds or
+  is turned back before it creates a message, so nothing is half written.
 - [ ] With a running background job: confirmation first, listing the job.
   No keeps it running.
 - [ ] With an attachment: the confirmation mentions it, and refusing or
@@ -347,18 +348,38 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
 
 **Steps:**
 
-1. [ ] **Admission flag (no lock).** Add `closing atomic.Bool` to the
-   coordinator and `SetClosing(bool)` to its interface.
-   - `Run`, `RunWake`, and `Summarize` return
-     `ErrClosing = errors.New("anvil is reloading")` at entry when it's set.
-     Check that title generation and any other `orch.Run` callers go through
-     one of these; if not, add the check there.
-   - The job waker treats `ErrClosing` like `ErrSessionBusy` and doesn't
-     retry. Read `job_waker.go` for how it handles errors.
-   - Expose it through the workspace as `AgentSetClosing(bool)`.
-   - There's no lock: a run that starts in the tiny window before the flag
-     is set is cancelled by `Shutdown`'s `CancelAll`. Its user message is
-     already in the database, so it isn't lost.
+1. [ ] **Admission: flag plus a count of runs being prepared.** Add
+   `closing atomic.Bool` and `preparing atomic.Int32` to the coordinator.
+   - In `Run`, `RunWake`, and `Summarize`, do the following at entry:
+     `c.preparing.Add(1)`, then check `closing` and return
+     `ErrClosing = errors.New("anvil is reloading")` if it's set (after
+     `preparing.Add(-1)`).
+   - Then do the existing preparation (`WaitForInit`, `UpdateModels`,
+     token refresh). Check `closing` **again** immediately before
+     dispatching to the session agent (`orch.Run`, `orch.RunWake`,
+     `orch.Summarize`). If it's set, decrement and return `ErrClosing`
+     before the user message is created. Message creation happens inside
+     the dispatch (`coordinator.go:403` onwards), so nothing is half
+     written.
+   - Decrement `preparing` with a `defer` when the entry point returns. It
+     then counts every call from entry to finish, preparation included, so
+     `preparing == 0` means nothing is running or about to run. That's
+     stronger than `IsBusy()`, which only sees registered runs.
+   - Add `BeginClosing(ctx context.Context) error`. It sets `closing`, then
+     polls every 20ms, up to a 2-second budget, until `preparing == 0`. On
+     timeout it clears `closing` and returns `ErrBusy`. Add `EndClosing()`
+     to clear it. Expose both through the workspace as `AgentBeginClosing`
+     and `AgentEndClosing`.
+   - Check that title generation and any other `orch.Run` callers go through
+     one of the three entry points; if not, give them the same guard.
+   - **The UI path for a returned `ErrClosing`:** the user can't submit
+     while the confirmation is open, and after confirming the process is
+     about to exit. If `Run` does return `ErrClosing` to the UI, put the
+     prompt back in the editor so it ends up in the handoff draft. Find the
+     UI's send-error path for this.
+   - **The job waker:** read `job_waker.go:205-235`. Make `ErrClosing` stop
+     rescheduling for that wake. Don't fold it into `ErrSessionBusy`, whose
+     recheck is scheduled separately. Add a test.
 2. [ ] Workspace: `RunningJobs() []shell.JobInfo` across sessions. Return
    nil when there's no app or coordinator.
 3. [ ] `ReloadRequest{Exe, SessionID, HandoffPath string; Yolo config.YoloLevel}`
@@ -383,23 +404,30 @@ go test ./internal/cmd -count=1 && go build . && go vet ./internal/cmd
       `ReloadConfirm` with the version, the jobs (up to 3, then "+K more"),
       and "attachments will be dropped".
    6. On confirm, or when there's nothing to confirm:
-      - Call `AgentSetClosing(true)`, then re-check `AgentIsBusy()`. If it's
-        busy, call `AgentSetClosing(false)` and refuse.
+      - Call `AgentBeginClosing(ctx)` in a `tea.Cmd`, with the status
+        "Waiting for agent to settle…". On `ErrBusy`, refuse: "Agent started
+        a turn; try again when it's idle".
       - Write the handoff (draft, yolo, bouncer mode, session ID,
-        `version.Version`). On failure, `AgentSetClosing(false)`, show the
+        `version.Version`). On failure, call `AgentEndClosing()`, show the
         error, and stop.
       - Set `m.reloadRequest` and return the normal quit sequence that runs
-        before `tea.Quit`.
-   7. On cancel, do nothing. The flag was never set.
+        before `tea.Quit`. Closing stays set until exit.
+   7. On cancel, do nothing. Closing was never set.
 6. [ ] Tests:
-   - Every refusal leaves `reloadRequest` nil and the closing flag false.
-   - Confirming sets the flag, writes the handoff with the draft, and sets
+   - Every refusal leaves `reloadRequest` nil and closing cleared.
+   - Confirming begins closing, writes the handoff with the draft, and sets
      the request.
-   - Busy at the re-check clears the flag.
+   - A `BeginClosing` timeout clears closing and refuses.
    - `SetReloadHandoff` restores the draft and calls `ack` once.
    - The key-driven attachment test.
-   - Coordinator: `Run`, `RunWake`, and `Summarize` return `ErrClosing`
-     while the flag is set.
+   - Coordinator: a run blocked in preparation (stub `UpdateModels` on a
+     channel) when `BeginClosing` starts makes `BeginClosing` wait. After
+     release, the run returns `ErrClosing` at the second check, creates no
+     message, and `BeginClosing` then succeeds. Use channels, not sleeps,
+     apart from `BeginClosing`'s own poll.
+   - `Run`, `RunWake`, and `Summarize` return `ErrClosing` while closing is
+     set.
+   - The waker doesn't reschedule after `ErrClosing`.
    - Review any golden updates.
 
 **Verify:**

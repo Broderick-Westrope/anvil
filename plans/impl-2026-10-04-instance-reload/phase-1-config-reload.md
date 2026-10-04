@@ -40,11 +40,13 @@
   - After this change, `autoReload` refreshes the store only.
   - Plugin rediscovery and pushing config into services happen only in
     `ReloadConfigAndPlugins`, serialised by one mutex.
-- **No busy refusal.** Config publication is an atomic pointer swap, and
-  `ReloadPlugins` already swaps the orchestrator's prompt and tools
-  atomically under `orchestratorMu`. Today's "Reload Plugins" runs at any
-  time, so the combined reload does too. An in-flight run sees the old or
-  the new tool set, never a mix. Task 2 verifies that claim.
+- **Refuse while the agent is busy.** Round 3 confirmed that tools are
+  re-read on every step (`agent.go:466-468`). That's deliberate, so MCP
+  tools enabled mid-run appear immediately. It also means a mid-run swap
+  could remove a tool the model is about to call. So the UI refuses the
+  reload while `AgentIsBusy()` and says so. The tiny window between that
+  check and the swap is no worse than today's "Reload Plugins", which never
+  checks.
 - **Last-good agent defaults live on the store**, so every reload path,
   including `autoReload`, rebuilds `Agents` from the last successful plugin
   discovery before publishing.
@@ -94,8 +96,11 @@ restart-required unless shown to be read live.
   agents remain. After any later `autoReload` (for example, toggling compact
   mode), plugin agents are still present.
 - [ ] Add an MCP server and reload twice: both reports name `mcp`.
-- [ ] Reload during an active agent turn: the turn completes normally with
-  no tool-call errors.
+- [ ] Reload during an active agent turn: refused with "Agent is busy", and
+  the turn is unaffected.
+- [ ] A plugin with a malformed manifest, or an unparsable agent `.md`: the
+  other plugins load, and the report says "plugins reloaded with N
+  warnings" and names the files.
 - [ ] Two reloads fired back to back: both complete, and the final state
   matches the files on disk.
 - [ ] Unconfigured (onboarding) start: the reload reloads config and reports
@@ -171,21 +176,11 @@ read internal/ui/AGENTS.md
    caller (`ui.go:2730`, `m.com.Config().SetupAgents()`) as it is: it runs
    before any coordinator exists and is out of scope. Note it in Future
    Work.
-4. [ ] **`ReloadFromDiskWithResult`.** `reloadFromDiskLocked` returns
-   `(ReloadResult, error)`:
-
-   ```go
-   type ReloadResult struct {
-   	Previous, Current               *Config
-   	PreviousBouncer, CurrentBouncer *TrustedBouncer
-   	RawProjectDirectory             string
-   }
-   ```
-
-   `ReloadFromDisk` and `autoReload` discard the result.
-   `ReloadFromDiskWithResult(ctx)` returns it. Capture
-   `RawProjectDirectory` from the merged files before `setDefaults`, and
-   store it on the store for `RawProjectDirectory()`.
+4. [ ] **Raw project directory.** Capture `options.project_directory` from
+   the merged files before `setDefaults` in both `Load` and
+   `reloadFromDiskLocked`, and store it for a new `RawProjectDirectory()`
+   accessor. No result type is needed: with the hook gone,
+   `ReloadFromDisk` already does everything the workspace needs.
 5. [ ] **Effective-threshold validator.** Add
    `SetBouncerValidator(fn func(*Bouncer) error)`. In `reloadFromDiskLocked`,
    call it on `reloadedBouncer`, if both are non-nil, before publishing.
@@ -217,12 +212,12 @@ go test -race ./internal/config -count=1
 
 ## Coordinator Tasks
 
-### Task 2: Commit plugin agent defaults through the store, and confirm tool swaps are safe mid-run
+### Task 2: Commit plugin agent defaults through the store, fix the coordinator's unlocked reads, and surface plugin diagnostics
 
 **Files:**
 
-- Modify: `internal/agent/coordinator.go`
-- Test: `internal/agent/coordinator_test.go`
+- Modify: `internal/agent/coordinator.go`, `internal/agent/task_tool.go`, `internal/plugin/plugin.go`
+- Test: `internal/agent/coordinator_test.go`, `internal/plugin/plugin_test.go`
 
 **Steps:**
 
@@ -236,24 +231,47 @@ go test -race ./internal/config -count=1
      Keep using that snapshot for discovery, and don't mix in later live
      reads. That's safe because `ReloadConfigAndPlugins` serialises calls
      (Task 4) and nothing else calls `ReloadPlugins` once the hook is gone.
-2. [ ] **Verify the mid-run claim.** Read how `sessionAgent` consumes
-   `SetTools` and `SetSystemPrompt` during a `Run`: is it a snapshot per run
-   or a read per step? Write a test that swaps the tools while a fake
-   provider's stream is in progress, and assert the run finishes without
-   tool-not-found errors.
-   - If tools are read per step and a removed tool can be called, change
-     `Run` to snapshot the tools at run start. That's the smallest fix.
-   - If the snapshot is too invasive, have the UI refuse the reload while
-     `AgentIsBusy()`, and record that decision in this plan.
-3. [ ] Tests:
+2. [ ] **Fix the existing unlocked reads.** The task tool reads
+   `c.agentConfigs` and `c.agentMDs` without a lock
+   (`task_tool.go:49-66`). `getOrBuildAgent` reads `c.agentConfigs` under
+   `agentBuildMu` only (`coordinator.go:997`), while `ReloadPlugins` writes
+   them under `orchestratorMu`.
+   - Take `c.orchestratorMu.RLock()` for those reads and copy out what's
+     needed before releasing.
+   - Lock order: `getOrBuildAgent` must release `orchestratorMu` before
+     taking `agentBuildMu`, or take them in the fixed order `agentBuildMu`
+     then `orchestratorMu.RLock`. Document whichever is chosen next to both
+     locks.
+   - **Stale cache entries:** add `agentsGen atomic.Uint64`, incremented in
+     `ReloadPlugins` together with `c.agents.Reset`. `getOrBuildAgent`
+     captures the generation before building and only calls
+     `c.agents.Set` if it's unchanged. It still returns the built agent for
+     the current call.
+3. [ ] **Plugin diagnostics.** Today `plugin.Discover` drops malformed
+   manifests (`plugin.go:88-94`) and `discoverAgentMDs` skips unparsable
+   agent files (`coordinator.go:288-296`) with only a log line.
+   - Collect these as `[]PluginWarning{Path, Err}` and return them from
+     `ReloadPlugins` as `(warnings []PluginWarning, err error)`. Keep the
+     slog lines.
+   - Warnings don't fail the reload: one broken plugin shouldn't block the
+     others, which matches startup behaviour. Hard errors (`delegates_to`
+     validation, prompt or tool build) still fail it and keep last-good.
+   - Thread the warnings through `plugin.DiscoverAll` and
+     `discoverAgentMDs` with a collector parameter, and update their other
+     callers (construction) to log as today.
+4. [ ] Tests:
    - `ReloadPlugins` failing at tool build leaves `Config().Agents` and
      `c.agentConfigs` unchanged.
-   - The mid-run swap test from Step 2.
+   - Under `-race`, a task-tool lookup and a subagent build run concurrently
+     with `ReloadPlugins`.
+   - A build started before a reload doesn't populate the cache after it.
+   - A malformed manifest and an unparsable agent `.md` produce two
+     warnings and no error, and the valid plugin's agents load.
 
 **Verify:**
 
 ```bash
-go test -race ./internal/agent -run 'Reload|MidRun' -count=1
+go test -race ./internal/agent ./internal/plugin -run 'Reload|Task|Plugin' -count=1
 # Expected: PASS
 ```
 
@@ -329,6 +347,7 @@ go test -race ./internal/bouncer ./internal/permission/... ./internal/app -count
    ```go
    type ReloadReport struct {
    	ConfigErr, ApplyErr, PluginsErr error
+   	PluginWarnings                  []agent.PluginWarning
    	PluginsSkipped                  bool // No coordinator yet (onboarding).
    	RestartRequired                 []string
    }
@@ -344,15 +363,17 @@ go test -race ./internal/bouncer ./internal/permission/... ./internal/app -count
    	w.reloadMu.Lock()
    	defer w.reloadMu.Unlock()
    	var r ReloadReport
-   	if res, err := w.store.ReloadFromDiskWithResult(ctx); err != nil {
+   	if err := w.store.ReloadFromDisk(ctx); err != nil {
    		r.ConfigErr = err
    	} else {
-   		r.ApplyErr = w.app.ApplyConfig(res.Current, res.CurrentBouncer)
+   		// Apply the latest published config rather than the reload's
+   		// own result: an autoReload may have published a newer one.
+   		r.ApplyErr = w.app.ApplyConfig(w.store.Config(), w.store.TrustedBouncer())
    	}
    	if w.app.AgentCoordinator == nil {
    		r.PluginsSkipped = true
    	} else {
-   		r.PluginsErr = w.app.AgentCoordinator.ReloadPlugins(ctx)
+   		r.PluginWarnings, r.PluginsErr = w.app.AgentCoordinator.ReloadPlugins(ctx)
    	}
    	startCfg, startB, startRaw := w.store.StartupSnapshot()
    	r.RestartRequired = config.RestartRequired(startCfg, w.store.Config(), startB, w.store.TrustedBouncer(), startRaw, w.store.RawProjectDirectory())
@@ -390,11 +411,15 @@ go test -race ./internal/workspace -count=1
 1. [ ] Rename `ActionReloadPlugins` to `ActionReloadConfig`. The palette
    item becomes `"reload_config"`, "Reload Config & Plugins", with aliases
    `"reload plugins"` and `"reload config"` if `WithAliases` supports them.
-2. [ ] `reloadConfig` shows the status "Reloading config…" immediately,
-   because provider discovery can take seconds (`load.go:426-450`). It runs
-   the reload in a `tea.Cmd` and formats the result with a pure
+2. [ ] `reloadConfig` first checks `m.com.Workspace.AgentIsBusy()` and
+   refuses with `"Agent is busy; reload when it's idle"`. Otherwise it shows
+   the status "Reloading config…" immediately, because provider discovery
+   can take seconds (`load.go:426-450`). It runs the reload in a `tea.Cmd`
+   and formats the result with a pure
    `formatReloadReport(r) (string, bool)`:
    - All OK: `"Config and plugins reloaded"`.
+   - With plugin warnings: `"Config and plugins reloaded · 2 plugin warnings: <first path>"`.
+     Warnings don't make the bool true.
    - Restart pending: `"… · mcp, lsp need /reload-instance"`.
      `bouncer.mode` is shown as `"bouncer mode differs from config (ctrl+q)"`.
    - Config error: `"Config not reloaded: <err> · plugins reloaded"`.

@@ -173,3 +173,32 @@ Fixes folded into revision 3:
 - **Confirmed safe:** the `TryLock` hook-skip semantics; the same bouncer
   pointer passed through `WithBouncer`; the pure merge helpers are reusable
   by `ValidateFiles`.
+
+### Round 3 (devil's advocate)
+
+Revision 4 addresses the three blocking findings with narrow fixes rather
+than the suggested "runtime generation" refactor. Each fix targets the
+specific race:
+
+- **Tools are re-read every step** (`agent.go:466-468`, deliberate for
+  MCP). Reload Config & Plugins now refuses while the agent is busy. The
+  coordinator's existing unlocked reads of `agentConfigs` and `agentMDs`
+  (the task tool, `getOrBuildAgent`) take `orchestratorMu`, with a
+  documented lock order. A generation counter stops a build that started
+  before a reload from caching a stale subagent.
+- **The entry-only `closing` flag** let a run that was mid-preparation slip
+  past `CancelAll`. Now:
+  - a `preparing` counter covers each call from entry to finish;
+  - a second `closing` check sits just before dispatch, before any message
+    is created;
+  - `BeginClosing` waits up to 2 seconds for the counter to reach zero, or
+    refuses;
+  - the job waker stops rescheduling on `ErrClosing`.
+- **Plugin parse failures were only logged.** Malformed manifests and agent
+  files are now returned as warnings and shown in the report. They don't
+  fail the reload: one broken plugin shouldn't block the others, which
+  matches startup behaviour. Hard errors still keep last-good.
+- **The config reload applied a possibly stale result.** It now applies the
+  latest published config, so an `autoReload` in between converges.
+- **Simplification:** `ReloadResult` and `ReloadFromDiskWithResult` were
+  dropped. With the hook gone, `ReloadFromDisk` suffices.
