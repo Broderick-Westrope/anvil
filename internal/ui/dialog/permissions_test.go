@@ -634,3 +634,70 @@ func TestPermissions_SegmentsPrefillDedupesPatterns(t *testing.T) {
 	require.Len(t, perm.InputSegments, 2)
 	require.Equal(t, "git commit *", p.patternInput.Value())
 }
+
+func newDenyPermissions(t *testing.T, shadow bool) *Permissions {
+	t.Helper()
+	s := styles.TokyoNight()
+	com := &common.Common{Styles: &s}
+	sum := escalationSummary()
+	sum.Outcome = "deny"
+	sum.Shadow = shadow
+	return NewPermissions(com, permission.PermissionRequest{
+		ID:         "perm-deny",
+		ToolCallID: "tool-call-deny",
+		ToolName:   "bash",
+		Input:      "git push --force",
+		Bouncer:    sum,
+	})
+}
+
+// TestPermissions_BouncerDenyPrompt verifies that a deny prompt starts on
+// Deny, drops Forever, and says it is a deny.
+func TestPermissions_BouncerDenyPrompt(t *testing.T) {
+	t.Parallel()
+
+	p := newDenyPermissions(t, false)
+	require.True(t, p.bouncerDenied())
+	require.Equal(t, []permissionOption{optionAllow, optionSession, optionDeny}, p.options())
+	require.Equal(t, 2, p.selectedOption, "a deny prompt starts on Deny")
+
+	header := ansi.Strip(p.renderHeader(100))
+	require.Contains(t, header, "Bouncer Would Deny")
+	require.Contains(t, header, "blocked unless you allow it")
+	buttons := ansi.Strip(p.renderButtons(100, false))
+	require.NotContains(t, buttons, "Forever")
+	require.Contains(t, buttons, "Deny")
+
+	// Forever is unreachable by key as well as by button.
+	require.Nil(t, p.HandleMsg(keyMsg('f')))
+	require.False(t, p.foreverExpanded)
+
+	// Navigation wraps over the three buttons.
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Equal(t, 0, p.selectedOption)
+	p.HandleMsg(keyMsg('h'))
+	require.Equal(t, 2, p.selectedOption)
+
+	// Enter on Deny asks for a reason; escaping it returns to Deny.
+	require.Nil(t, p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	require.True(t, p.denyReasonVisible)
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.Equal(t, 2, p.selectedOption)
+
+	// The human can still override.
+	resp, ok := p.HandleMsg(keyMsg('a')).(ActionPermissionResponse)
+	require.True(t, ok)
+	require.Equal(t, PermissionAllow, resp.Action)
+}
+
+// TestPermissions_ShadowDenyIsNormalPrompt verifies that a shadow deny,
+// which never blocks, keeps the normal prompt.
+func TestPermissions_ShadowDenyIsNormalPrompt(t *testing.T) {
+	t.Parallel()
+
+	p := newDenyPermissions(t, true)
+	require.False(t, p.bouncerDenied())
+	require.Len(t, p.options(), 4)
+	require.Equal(t, 0, p.selectedOption)
+	require.Contains(t, ansi.Strip(p.renderHeader(100)), "Permission Required")
+}

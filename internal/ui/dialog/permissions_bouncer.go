@@ -36,6 +36,9 @@ func (p *Permissions) renderBouncer(width int) string {
 	if sum.Detail != "" {
 		head += t.Dialog.Permissions.BouncerScore.Render(" · " + sum.Detail)
 	}
+	if p.bouncerDenied() {
+		head += t.Dialog.Permissions.BouncerScore.Render(" · blocked unless you allow it")
+	}
 	lines := wrapStyled([]string{head}, valueWidth, " ")
 
 	tokens := make([]string, len(sum.Scores))

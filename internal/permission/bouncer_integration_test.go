@@ -256,20 +256,55 @@ func TestBouncerEnforceAllow(t *testing.T) {
 	require.Equal(t, int32(2), fake.calls.Load())
 }
 
-func TestBouncerEnforceDeny(t *testing.T) {
+func TestBouncerEnforceDenyPrompts(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{outcome: AssessDeny, reason: "destructive"}
-	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
-
-	r, err := h.svc.Request(testCtx(t), h.req("call", "rm -rf /"))
-	require.NoError(t, err)
-	require.False(t, r.Granted)
-	require.Contains(t, r.Reason, "permission bouncer")
-	require.Contains(t, r.Reason, "destructive")
-	require.Empty(t, h.events)
-	decisions := h.rec.snapshot()
-	require.Equal(t, DecisionSourceBouncer, decisions[0].DecidedBy)
-	require.Equal(t, VerdictDeny, decisions[0].Verdict)
+	for _, tt := range []struct {
+		name    string
+		yolo    config.YoloLevel
+		grant   bool
+		reason  string
+		verdict Verdict
+	}{
+		{name: "human confirms", verdict: VerdictDeny},
+		{name: "human confirms with a reason", reason: "use the staging bucket", verdict: VerdictDeny},
+		{name: "human overrides", grant: true, verdict: VerdictAllow},
+		{name: "yolo still prompts", yolo: config.YoloStandard, verdict: VerdictDeny},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeBouncer{outcome: AssessDeny, reason: "destructive=0.95 severity=2.5"}
+			h := newYoloBouncerHarness(t, fake, BouncerEnforce, tt.yolo, nil)
+			done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf /"))
+			perm := waitPrompt(t, h.events)
+			require.NotNil(t, perm.Bouncer)
+			require.Equal(t, "deny", perm.Bouncer.Outcome)
+			require.False(t, perm.Bouncer.Shadow)
+			if tt.grant {
+				h.svc.Grant(perm)
+			} else {
+				h.svc.Deny(perm, tt.reason)
+			}
+			r := waitResult(t, done)
+			require.NoError(t, r.err)
+			require.Equal(t, tt.grant, r.result.Granted)
+			switch {
+			case tt.grant:
+				require.Empty(t, r.result.Reason)
+			case tt.reason != "":
+				require.Equal(t, tt.reason, r.result.Reason)
+			default:
+				require.Contains(t, r.result.Reason, "permission bouncer")
+				require.Contains(t, r.result.Reason, "destructive=0.95")
+			}
+			decisions := h.rec.snapshot()
+			require.Len(t, decisions, 1)
+			require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
+			require.Equal(t, tt.verdict, decisions[0].Verdict)
+			rec := h.assessment(t, decisions[0])
+			require.Equal(t, "enforce", rec.Mode)
+			require.Equal(t, "deny", rec.Outcome)
+		})
+	}
 }
 
 func TestBouncerEnforceEscalatePrompts(t *testing.T) {
@@ -717,7 +752,6 @@ func TestYoloWithBouncer(t *testing.T) {
 		calls   int32
 	}{
 		{name: "enforce allow stands", fake: &fakeBouncer{outcome: AssessAllow}, mode: BouncerEnforce, granted: true, source: DecisionSourceBouncer, calls: 1},
-		{name: "enforce deny blocks", fake: &fakeBouncer{outcome: AssessDeny, reason: "destructive"}, mode: BouncerEnforce, granted: false, source: DecisionSourceBouncer, calls: 1},
 		{name: "enforce escalate is approved by yolo", fake: &fakeBouncer{outcome: AssessEscalate}, mode: BouncerEnforce, granted: true, source: DecisionSourceYolo, calls: 1},
 		{name: "bouncer error is approved by yolo", fake: &fakeBouncer{outcome: AssessAllow, err: errors.New("boom")}, mode: BouncerEnforce, granted: true, source: DecisionSourceYolo, calls: 1},
 		{name: "shadow deny never blocks", fake: &fakeBouncer{outcome: AssessDeny}, mode: BouncerShadow, granted: true, source: DecisionSourceYolo, calls: 1},
@@ -736,9 +770,6 @@ func TestYoloWithBouncer(t *testing.T) {
 			require.Equal(t, tt.source, decisions[0].DecidedBy)
 			if tt.calls > 0 {
 				require.Equal(t, string(tt.mode), h.assessment(t, decisions[0]).Mode)
-			}
-			if !tt.granted {
-				require.Contains(t, r.Reason, "permission bouncer")
 			}
 		})
 	}

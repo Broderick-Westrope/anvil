@@ -265,6 +265,10 @@ func NewPermissions(com *common.Common, perm permission.PermissionRequest, opts 
 		help:           h,
 		keyMap:         km,
 	}
+	// A deny prompt starts on Deny so a reflexive Enter keeps the block.
+	if p.bouncerDenied() {
+		p.selectedOption = p.optionIndex(optionDeny)
+	}
 
 	p.patternInput = textinput.New()
 	p.patternInput.SetVirtualCursor(false)
@@ -355,10 +359,11 @@ func (p *Permissions) handleDefaultMsg(msg tea.KeyPressMsg) Action {
 		// backs out to this state instead.
 		return p.respond(PermissionDeny)
 	case key.Matches(msg, p.keyMap.Right), key.Matches(msg, p.keyMap.Tab):
-		p.selectedOption = (p.selectedOption + 1) % 4
+		p.selectedOption = (p.selectedOption + 1) % len(p.options())
 	case key.Matches(msg, p.keyMap.Left):
-		// Add 3 instead of subtracting 1 to avoid negative modulo.
-		p.selectedOption = (p.selectedOption + 3) % 4
+		// Add n-1 instead of subtracting 1 to avoid negative modulo.
+		n := len(p.options())
+		p.selectedOption = (p.selectedOption + n - 1) % n
 	case key.Matches(msg, p.keyMap.Select):
 		return p.selectCurrentOption()
 	case key.Matches(msg, p.keyMap.Allow):
@@ -366,6 +371,9 @@ func (p *Permissions) handleDefaultMsg(msg tea.KeyPressMsg) Action {
 	case key.Matches(msg, p.keyMap.AllowSession):
 		return p.respond(PermissionAllowForSession)
 	case key.Matches(msg, p.keyMap.AllowForever):
+		if p.bouncerDenied() {
+			break
+		}
 		p.foreverExpanded = true
 		p.selectedOption = 0
 	case key.Matches(msg, p.keyMap.Deny):
@@ -416,7 +424,7 @@ func (p *Permissions) handleForeverMsg(msg tea.KeyPressMsg) Action {
 	case key.Matches(msg, p.keyMap.Close):
 		// Return to default state.
 		p.foreverExpanded = false
-		p.selectedOption = 2
+		p.selectedOption = p.optionIndex(optionForever)
 	case key.Matches(msg, p.keyMap.Right), key.Matches(msg, p.keyMap.Tab):
 		p.selectedOption = (p.selectedOption + 1) % 2
 	case key.Matches(msg, p.keyMap.Left):
@@ -457,7 +465,7 @@ func (p *Permissions) handleDenyReasonMsg(msg tea.KeyPressMsg) Action {
 		// Return to default state without denying.
 		p.denyReasonVisible = false
 		p.denyReasonInput = ""
-		p.selectedOption = 3
+		p.selectedOption = p.optionIndex(optionDeny)
 	case msg.Code == tea.KeyEnter:
 		return p.respond(PermissionDeny)
 	case msg.Code == tea.KeyBackspace:
@@ -474,12 +482,12 @@ func (p *Permissions) handleDenyReasonMsg(msg tea.KeyPressMsg) Action {
 }
 
 func (p *Permissions) selectCurrentOption() tea.Msg {
-	switch p.selectedOption {
-	case 0:
+	switch p.options()[p.selectedOption] {
+	case optionAllow:
 		return p.respond(PermissionAllow)
-	case 1:
+	case optionSession:
 		return p.respond(PermissionAllowForSession)
-	case 2:
+	case optionForever:
 		p.foreverExpanded = true
 		p.selectedOption = 0
 		return nil
@@ -488,6 +496,44 @@ func (p *Permissions) selectCurrentOption() tea.Msg {
 		p.denyReasonInput = ""
 		return nil
 	}
+}
+
+// permissionOption is one button in the dialog's default state.
+type permissionOption int
+
+const (
+	optionAllow permissionOption = iota
+	optionSession
+	optionForever
+	optionDeny
+)
+
+var permissionOptionLabels = map[permissionOption]string{
+	optionAllow:   "Allow",
+	optionSession: "Session",
+	optionForever: "Forever",
+	optionDeny:    "Deny",
+}
+
+// bouncerDenied reports whether the enforcing bouncer flagged this request
+// as a deny and is asking the human to confirm or override it.
+func (p *Permissions) bouncerDenied() bool {
+	b := p.permission.Bouncer
+	return b != nil && !b.Shadow && b.Outcome == permission.AssessDeny.String()
+}
+
+// options returns the buttons shown in the default state. A deny prompt
+// drops Forever: a permanent rule should not be one keypress away from a
+// call the bouncer judged dangerous.
+func (p *Permissions) options() []permissionOption {
+	if p.bouncerDenied() {
+		return []permissionOption{optionAllow, optionSession, optionDeny}
+	}
+	return []permissionOption{optionAllow, optionSession, optionForever, optionDeny}
+}
+
+func (p *Permissions) optionIndex(o permissionOption) int {
+	return max(0, slices.Index(p.options(), o))
 }
 
 func (p *Permissions) respond(action PermissionAction) tea.Msg {
@@ -588,6 +634,9 @@ func (p *Permissions) measure(area uv.Rectangle, expanded bool) layoutMetrics {
 	var m layoutMetrics
 	m.width, m.maxHeight, m.forceFullscreen = p.dialogSize(area, expanded)
 	m.dialogStyle = t.Dialog.View.Width(m.width).Padding(0, 1)
+	if p.bouncerDenied() {
+		m.dialogStyle = m.dialogStyle.BorderForeground(t.Dialog.Permissions.BouncerDeny.GetForeground())
+	}
 	// The dialog fills the screen when forced small or toggled; center
 	// the buttons then instead of hugging the far edge.
 	m.fullscreen = m.forceFullscreen || p.fullscreen
@@ -678,8 +727,15 @@ func (p *Permissions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 func (p *Permissions) renderHeader(contentWidth int) string {
 	t := p.com.Styles
 
-	title := common.DialogTitle(t, "Permission Required", contentWidth-t.Dialog.Title.GetHorizontalFrameSize(), t.Dialog.TitleGradFromColor, t.Dialog.TitleGradToColor)
-	title = t.Dialog.Title.Render(title)
+	titleText, gradFrom, gradTo := "Permission Required", t.Dialog.TitleGradFromColor, t.Dialog.TitleGradToColor
+	titleStyle := t.Dialog.Title
+	if p.bouncerDenied() {
+		red := t.Dialog.Permissions.BouncerDeny.GetForeground()
+		titleText, gradFrom, gradTo = "Bouncer Would Deny", red, red
+		titleStyle = titleStyle.Foreground(red)
+	}
+	title := common.DialogTitle(t, titleText, contentWidth-titleStyle.GetHorizontalFrameSize(), gradFrom, gradTo)
+	title = titleStyle.Render(title)
 
 	// Tool info.
 	toolLine := p.renderToolName(contentWidth)
@@ -1015,11 +1071,8 @@ func (p *Permissions) renderButtons(contentWidth int, fullscreen bool) string {
 			{Text: "User", UnderlineIndex: 0, Selected: p.selectedOption == 1},
 		}
 	} else {
-		buttons = []common.ButtonOpts{
-			{Text: "Allow", UnderlineIndex: 0, Selected: p.selectedOption == 0},
-			{Text: "Session", UnderlineIndex: 0, Selected: p.selectedOption == 1},
-			{Text: "Forever", UnderlineIndex: 0, Selected: p.selectedOption == 2},
-			{Text: "Deny", UnderlineIndex: 0, Selected: p.selectedOption == 3},
+		for i, o := range p.options() {
+			buttons = append(buttons, common.ButtonOpts{Text: permissionOptionLabels[o], UnderlineIndex: 0, Selected: p.selectedOption == i})
 		}
 	}
 

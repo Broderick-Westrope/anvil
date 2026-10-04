@@ -296,6 +296,11 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// The bouncer runs without requestMu so concurrent requests are
 	// classified in parallel rather than queued behind a human prompt.
 	var details json.RawMessage
+	// bouncerDenied marks a request the enforcing bouncer would have
+	// blocked. It goes to the human as a deny prompt instead, and yolo
+	// never approves it.
+	var bouncerDenied bool
+	var denyReason string
 	if s.shouldAssess(p) {
 		key := allowCacheKey(opts)
 		cache := s.allowCache.Load()
@@ -333,13 +338,13 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 				cache.Set(key, struct{}{})
 				return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", details, ""), nil
 			case AssessDeny:
-				reason := "blocked by the permission bouncer (" + a.Reason + "). Do not retry this or work around it; tell the user what you were trying to do."
-				return s.finish(opts, DecisionSourceBouncer, VerdictDeny, "", details, reason), nil
+				bouncerDenied = true
+				denyReason = a.Reason
 			}
 		}
 		// Yolo approves whatever the bouncer didn't decide, including
 		// skips and errors, exactly as it would without a bouncer.
-		if p2.yolo {
+		if p2.yolo && !bouncerDenied {
 			return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
 		}
 		if mode != BouncerOff {
@@ -363,7 +368,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// while this request waited for the prompt slot.
 	if p3 := s.evaluatePolicy(opts); p3.resolved {
 		return s.finishPolicy(opts, p3, details), nil
-	} else if p3.yolo {
+	} else if p3.yolo && !bouncerDenied {
 		// The bouncer was switched on after this request skipped it;
 		// yolo never prompts.
 		return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
@@ -395,7 +400,11 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 			verdict = VerdictAllow
 		}
 		s.record(opts, DecisionSourceHuman, verdict, "", details)
-		return RequestResult{Granted: resp.Granted, Reason: resp.Reason}, nil
+		reason := resp.Reason
+		if !resp.Granted && bouncerDenied && reason == "" {
+			reason = "the user confirmed the permission bouncer's block (" + denyReason + "). Do not retry this or work around it; tell the user what you were trying to do."
+		}
+		return RequestResult{Granted: resp.Granted, Reason: reason}, nil
 	}
 }
 
