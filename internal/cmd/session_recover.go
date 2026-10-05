@@ -13,6 +13,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/recovery"
+	"github.com/Broderick-Westrope/anvil/internal/reload"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
@@ -64,10 +65,10 @@ func currentRecoveredSessions(ctx context.Context, entries []recovery.Entry, loo
 const recoveryTimeLayout = "2006-01-02 15:04 MST"
 
 func newSessionRecoverCommand(root string, openSessions openSessionLookup) *cobra.Command {
-	var asJSON, clearRecords, all bool
+	var asJSON, clearRecords, all, printCommands bool
 	command := &cobra.Command{
 		Use: "recover", Short: "List sessions left open after an interrupted exit",
-		Long: "List working directories, full session IDs, and titles from Anvil windows that were open when Anvil last stopped without being closed, such as during a restart. Windows lost together are grouped, and only the most recent group is shown unless --all is given. Running windows are excluded. Nothing is resumed automatically.",
+		Long: "List working directories, full session IDs, and titles from Anvil windows that were open when Anvil last stopped without being closed, such as during a restart. Windows lost together are grouped, and only the most recent group is shown unless --all is given. Running windows and sessions with no messages are excluded. Nothing is resumed automatically; use --print-commands for commands that resume each session.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			directory := root
@@ -120,13 +121,22 @@ func newSessionRecoverCommand(root string, openSessions openSessionLookup) *cobr
 				}
 				return json.NewEncoder(command.OutOrStdout()).Encode(shown)
 			}
+			if printCommands {
+				if hidden > 0 {
+					if _, err := fmt.Fprintf(command.ErrOrStderr(), "%s from earlier interruptions not shown. Use --all to include them.\n", countSessions(hidden)); err != nil {
+						return err
+					}
+				}
+				return writeRecoveryCommands(command.OutOrStdout(), groups)
+			}
 			return writeRecoveryGroups(command.OutOrStdout(), groups, hidden)
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "Output recovery records as JSON")
 	command.Flags().BoolVar(&clearRecords, "clear", false, "Dismiss interrupted-session records without deleting conversations")
 	command.Flags().BoolVar(&all, "all", false, "Include sessions from earlier interruptions")
-	command.MarkFlagsMutuallyExclusive("json", "clear")
+	command.Flags().BoolVar(&printCommands, "print-commands", false, "Print one resume command per session, for pasting into new terminals")
+	command.MarkFlagsMutuallyExclusive("json", "clear", "print-commands")
 	command.MarkFlagsMutuallyExclusive("all", "clear")
 	return command
 }
@@ -149,6 +159,19 @@ func writeRecoveryGroups(out io.Writer, groups [][]recovery.Entry, hidden int) e
 	if hidden > 0 {
 		_, err := fmt.Fprintf(out, "%s from earlier interruptions not shown. Use --all to list them.\n", countSessions(hidden))
 		return err
+	}
+	return nil
+}
+
+// writeRecoveryCommands prints a command per session that resumes it in
+// its original directory, matching the hint printed on a clean exit.
+func writeRecoveryCommands(out io.Writer, groups [][]recovery.Entry) error {
+	for _, group := range groups {
+		for _, entry := range group {
+			if _, err := fmt.Fprintln(out, reload.ShellQuote([]string{"anvil", "--session", entry.SessionID, "--there"})); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
