@@ -194,7 +194,7 @@ func checkBouncerRange(name string, v *float64, upper float64) error {
 // may be read from. It reads the process env, so it must only be called
 // before any config-provided env has been applied.
 func trustedConfigPaths() []string {
-	return []string{systemConfigPath, GlobalConfig(), GlobalConfigData()}
+	return []string{systemConfigPath, GlobalConfigData(), GlobalConfig()}
 }
 
 // loadBouncerBlock merges the bouncer blocks from paths and

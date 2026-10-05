@@ -10,6 +10,7 @@ Anvil uses JSON configuration files with the following priority (highest to lowe
 1. `.anvil.json` (project-local, hidden)
 2. `anvil.json` (project-local)
 3. `$XDG_CONFIG_HOME/anvil/anvil.json` or `$HOME/.config/anvil/anvil.json` (global)
+4. `$HOME/.local/share/anvil/anvil.json` (state Anvil writes itself, such as UI-selected models and OAuth tokens; anything set in the files above overrides it)
 
 ## Basic Structure
 

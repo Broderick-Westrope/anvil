@@ -938,12 +938,17 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 // so an unrelated anvil.json placed above the project is never picked
 // up. Global user-level config locations are always included
 // regardless of the boundary.
+//
+// Later paths win when merged. The runtime data file comes before the
+// user-maintained config so that anything the user wrote by hand
+// outranks state Anvil persisted on its own (a model picked in the UI,
+// a fallback written at startup, a copied MCP entry).
 func lookupConfigs(cwd string) []string {
 	// prepend default config paths
 	configPaths := []string{
 		systemConfigPath,
-		GlobalConfig(),
 		GlobalConfigData(),
+		GlobalConfig(),
 	}
 
 	configNames := []string{appName + ".json", "." + appName + ".json"}

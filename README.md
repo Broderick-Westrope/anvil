@@ -164,6 +164,7 @@ or globally, with the following priority:
 1. `.anvil.json`
 2. `anvil.json`
 3. `$HOME/.config/anvil/anvil.json`
+4. `$HOME/.local/share/anvil/anvil.json` (written by Anvil itself)
 
 Configuration itself is stored as a JSON object:
 
@@ -175,7 +176,9 @@ Configuration itself is stored as a JSON object:
 ```
 
 As an additional note, Anvil also stores persistent data in one additional
-location:
+location. Anything you set in your own config files takes precedence over what
+Anvil has written here, so a model picked in the UI only sticks for settings
+your config leaves unset:
 
 ```bash
 # Unix
