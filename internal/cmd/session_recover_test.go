@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/recovery"
 	"github.com/stretchr/testify/require"
@@ -85,4 +87,47 @@ func TestSessionRecoverEmpty(t *testing.T) {
 	output.Reset()
 	require.NoError(t, command.Execute())
 	require.JSONEq(t, "[]", output.String())
+}
+
+func writeRecoveryRecord(t *testing.T, root, name string, entry recovery.Entry) {
+	t.Helper()
+	data, err := json.Marshal(entry)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, name+".json"), data, 0o600))
+}
+
+func TestSessionRecoverShowsOnlyLatestInterruption(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	restart := time.Now().Add(-time.Hour).UTC()
+	writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "latest-a", Title: "A", SeenAt: restart})
+	writeRecoveryRecord(t, root, "b", recovery.Entry{SessionID: "latest-b", Title: "B", SeenAt: restart.Add(-30 * time.Second)})
+	writeRecoveryRecord(t, root, "c", recovery.Entry{SessionID: "stale", Title: "C", SeenAt: restart.Add(-72 * time.Hour)})
+
+	run := func(args ...string) string {
+		command := newSessionRecoverCommand(root)
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetArgs(args)
+		require.NoError(t, command.Execute())
+		return output.String()
+	}
+
+	latest := run()
+	require.Contains(t, latest, "(2 sessions)")
+	require.Contains(t, latest, "Session: latest-a\n")
+	require.Contains(t, latest, "Session: latest-b\n")
+	require.NotContains(t, latest, "stale")
+	require.Contains(t, latest, "1 session from earlier interruptions not shown. Use --all")
+
+	everything := run("--all")
+	require.Contains(t, everything, "Session: stale\n")
+	require.Equal(t, 2, strings.Count(everything, "Interrupted around"))
+	require.NotContains(t, everything, "not shown")
+
+	var entries []recovery.Entry
+	require.NoError(t, json.Unmarshal([]byte(run("--json")), &entries))
+	require.Len(t, entries, 2)
+	require.NoError(t, json.Unmarshal([]byte(run("--json", "--all")), &entries))
+	require.Len(t, entries, 3)
 }
