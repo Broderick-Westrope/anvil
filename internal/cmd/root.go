@@ -147,6 +147,9 @@ anvil --continue --there
 		reload.Sweep(handoffDir, time.Now())
 		applyStartupHandoff(handoffDir, reload.StartupHandoffPath(), sessionID, ws, model)
 
+		termination := watchTermination()
+		defer termination.Stop()
+
 		var tracker recoveryCloser
 		recoveryTracker, trackErr := recovery.NewTracker(filepath.Join(config.GlobalDataDir(), "recovery"))
 		cleanExit := false
@@ -181,7 +184,7 @@ anvil --continue --there
 			slog.Error("TUI run error", "error", err)
 			return errors.New("Anvil crashed. Please copy the stacktrace above and open an issue at https://github.com/Broderick-Westrope/anvil/issues/new?template=bug.yml") //nolint:staticcheck
 		}
-		cleanExit = cmd.Context().Err() == nil
+		cleanExit = cmd.Context().Err() == nil && !termination.Received()
 		finalUI, ok := finalModel.(*ui.UI)
 		if !ok {
 			return nil
