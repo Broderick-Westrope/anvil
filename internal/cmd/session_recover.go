@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -10,18 +13,57 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/recovery"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 )
 
 func init() {
-	sessionCmd.AddCommand(newSessionRecoverCommand(""))
+	sessionCmd.AddCommand(newSessionRecoverCommand("", openRecoverySessions))
+}
+
+// sessionLookup fetches a stored session by ID.
+type sessionLookup func(ctx context.Context, id string) (session.Session, error)
+
+// openSessionLookup connects to the session store for a recover command.
+type openSessionLookup func(command *cobra.Command) (sessionLookup, func(), error)
+
+func openRecoverySessions(command *cobra.Command) (sessionLookup, func(), error) {
+	_, services, closeDB, err := sessionSetup(command)
+	if err != nil {
+		return nil, nil, err
+	}
+	return services.sessions.Get, closeDB, nil
+}
+
+// currentRecoveredSessions drops records whose session was deleted or never
+// got a message, since neither leaves anything to resume, and replaces each
+// title with the stored one, which may have been generated after the record
+// was last written. Records that cannot be looked up are kept as they are.
+func currentRecoveredSessions(ctx context.Context, entries []recovery.Entry, lookup sessionLookup) ([]recovery.Entry, error) {
+	kept := make([]recovery.Entry, 0, len(entries))
+	var lookupErrors []error
+	for _, entry := range entries {
+		stored, err := lookup(ctx, entry.SessionID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			continue
+		case err != nil:
+			lookupErrors = append(lookupErrors, fmt.Errorf("looking up session %s: %w", entry.SessionID, err))
+		case stored.MessageCount == 0:
+			continue
+		case stored.Title != "":
+			entry.Title = stored.Title
+		}
+		kept = append(kept, entry)
+	}
+	return kept, errors.Join(lookupErrors...)
 }
 
 // recoveryTimeLayout dates an interruption in the listing header.
 const recoveryTimeLayout = "2006-01-02 15:04 MST"
 
-func newSessionRecoverCommand(root string) *cobra.Command {
+func newSessionRecoverCommand(root string, openSessions openSessionLookup) *cobra.Command {
 	var asJSON, clearRecords, all bool
 	command := &cobra.Command{
 		Use: "recover", Short: "List sessions left open after an interrupted exit",
@@ -46,6 +88,21 @@ func newSessionRecoverCommand(root string) *cobra.Command {
 				}
 				if _, writeErr := fmt.Fprintf(command.ErrOrStderr(), "Warning: some recovery records could not be read: %v\n", err); writeErr != nil {
 					return writeErr
+				}
+			}
+			if openSessions != nil && len(entries) > 0 {
+				if err := func() error {
+					lookup, closeSessions, err := openSessions(command)
+					if err != nil {
+						return fmt.Errorf("opening session store: %w", err)
+					}
+					defer closeSessions()
+					entries, err = currentRecoveredSessions(command.Context(), entries, lookup)
+					return err
+				}(); err != nil {
+					if _, writeErr := fmt.Fprintf(command.ErrOrStderr(), "Warning: some sessions could not be checked, so they are listed as recorded: %v\n", err); writeErr != nil {
+						return writeErr
+					}
 				}
 			}
 			groups := recovery.GroupByInterruption(entries)
