@@ -55,12 +55,19 @@ func NewTracker(root string) (*Tracker, error) {
 	}
 	go func() {
 		defer close(tracker.done)
+		var reclaimed string
 		for entry := range tracker.updates {
 			if err := tracker.write(entry); err != nil {
 				tracker.err = err
 				slog.Error("Failed to save session recovery record", "error", err)
-			} else {
-				tracker.err = nil
+				continue
+			}
+			tracker.err = nil
+			if entry.SessionID != "" && entry.SessionID != reclaimed {
+				reclaimed = entry.SessionID
+				if err := reclaim(filepath.Dir(tracker.path), entry.SessionID); err != nil {
+					slog.Warn("Failed to dismiss earlier recovery records for reopened session", "session_id", entry.SessionID, "error", err)
+				}
 			}
 		}
 	}()
@@ -154,6 +161,18 @@ func List(root string) ([]Entry, error) {
 		return strings.Compare(left.SessionID, right.SessionID)
 	})
 	return result, err
+}
+
+// reclaim removes interrupted records for sessionID. Once a window has the
+// session open again, those records describe work that is no longer lost,
+// and leaving them would keep it listed after this window exits cleanly.
+func reclaim(root, sessionID string) error {
+	return scan(root, true, func(path string, entry Entry, active bool) error {
+		if active || entry.SessionID != sessionID {
+			return nil
+		}
+		return removeRecord(path)
+	})
 }
 
 func Clear(root string) error {

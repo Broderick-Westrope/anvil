@@ -70,6 +70,25 @@ func TestListExcludesLiveSessionsAndDeduplicatesInterruptedRuns(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
+func TestReopeningSessionDismissesItsInterruptedRecords(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, sessionID := range []string{"reopened", "reopened", "untouched"} {
+		interrupted, err := NewTracker(root)
+		require.NoError(t, err)
+		interrupted.Track(Entry{SessionID: sessionID, WorkingDir: "/project"})
+		require.NoError(t, interrupted.Close(false))
+	}
+	resumed, err := NewTracker(root)
+	require.NoError(t, err)
+	resumed.Track(Entry{SessionID: "reopened", WorkingDir: "/elsewhere"})
+	require.NoError(t, resumed.Close(true))
+	entries, err := List(root)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "untouched", entries[0].SessionID)
+}
+
 func TestTrackerEmptySessionClearsPreviousSession(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
