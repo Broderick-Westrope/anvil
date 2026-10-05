@@ -104,14 +104,15 @@ titles generated after the window was lost. No pinning or action before a
 restart is needed, and listing records does not consume them or restart any
 work.
 
-`--print-commands` prints one command per session that reopens it in its
-original directory:
+`--print-commands` prints each session's title as a comment, followed by a
+command that changes into its original directory and reopens it:
 
 ```bash
-anvil --session <session-id> --there
+# Fix the flaky login test
+cd '/path/to/project' && anvil --session <session-id>
 ```
 
-Paste each line into a new terminal tab. Reopening a session dismisses its
+Paste each `cd` line into a new terminal tab. Reopening a session dismisses its
 interrupted record, so the list shrinks as you work through it. To dismiss
 the rest without reopening them, run `anvil session recover --clear`. This
 does not delete conversations or records owned by running windows.

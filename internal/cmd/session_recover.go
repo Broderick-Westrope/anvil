@@ -163,12 +163,16 @@ func writeRecoveryGroups(out io.Writer, groups [][]recovery.Entry, hidden int) e
 	return nil
 }
 
-// writeRecoveryCommands prints a command per session that resumes it in
-// its original directory, matching the hint printed on a clean exit.
+// writeRecoveryCommands prints, for each session, its title as a comment
+// line and a command that changes into its directory and resumes it. The
+// title gets its own line because interactive zsh does not treat a
+// trailing # as a comment by default, so it would reach anvil as
+// arguments.
 func writeRecoveryCommands(out io.Writer, groups [][]recovery.Entry) error {
 	for _, group := range groups {
 		for _, entry := range group {
-			if _, err := fmt.Fprintln(out, reload.ShellQuote([]string{"anvil", "--session", entry.SessionID, "--there"})); err != nil {
+			resume := "cd " + reload.ShellQuote([]string{entry.WorkingDir}) + " && " + reload.ShellQuote([]string{"anvil", "--session", entry.SessionID})
+			if _, err := fmt.Fprintf(out, "# %s\n%s\n\n", recoveryCell(entry.Title), resume); err != nil {
 				return err
 			}
 		}

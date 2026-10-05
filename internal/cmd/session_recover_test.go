@@ -196,8 +196,8 @@ func TestSessionRecoverPrintsResumeCommands(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	restart := time.Now().UTC()
-	writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "first", WorkingDir: "/a", SeenAt: restart})
-	writeRecoveryRecord(t, root, "b", recovery.Entry{SessionID: "it's-second", WorkingDir: "/b", SeenAt: restart.Add(-time.Second)})
+	writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "first", WorkingDir: "/a", Title: "First", SeenAt: restart})
+	writeRecoveryRecord(t, root, "b", recovery.Entry{SessionID: "it's-second", WorkingDir: "/b with space", Title: "Multi\nline title", SeenAt: restart.Add(-time.Second)})
 	writeRecoveryRecord(t, root, "c", recovery.Entry{SessionID: "stale", WorkingDir: "/c", SeenAt: restart.Add(-24 * time.Hour)})
 	command := newSessionRecoverCommand(root, nil)
 	var output, notes bytes.Buffer
@@ -205,7 +205,7 @@ func TestSessionRecoverPrintsResumeCommands(t *testing.T) {
 	command.SetErr(&notes)
 	command.SetArgs([]string{"--print-commands"})
 	require.NoError(t, command.Execute())
-	require.Equal(t, "anvil --session first --there\nanvil --session 'it'\\''s-second' --there\n", output.String())
+	require.Equal(t, "# First\ncd /a && anvil --session first\n\n# Multi line title\ncd '/b with space' && anvil --session 'it'\\''s-second'\n\n", output.String())
 	require.Contains(t, notes.String(), "1 session from earlier interruptions not shown")
 
 	command = newSessionRecoverCommand(root, nil)
@@ -214,7 +214,7 @@ func TestSessionRecoverPrintsResumeCommands(t *testing.T) {
 	command.SetErr(&notes)
 	command.SetArgs([]string{"--print-commands", "--all"})
 	require.NoError(t, command.Execute())
-	require.Equal(t, 3, strings.Count(output.String(), "anvil --session"))
+	require.Equal(t, 3, strings.Count(output.String(), "&& anvil --session"))
 
 	command = newSessionRecoverCommand(root, nil)
 	command.SetOut(&output)
