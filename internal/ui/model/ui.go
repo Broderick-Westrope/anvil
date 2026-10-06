@@ -1474,6 +1474,15 @@ func (m *UI) SessionID() string {
 	return m.session.ID
 }
 
+// SessionTitle returns the title of the active session, or an empty string
+// when there is none.
+func (m *UI) SessionTitle() string {
+	if !m.hasSession() {
+		return ""
+	}
+	return m.session.Title
+}
+
 func (m *UI) trackRecoverySession() {
 	if m.recoveryHandler == nil {
 		return
