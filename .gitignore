@@ -57,3 +57,6 @@ completions/anvil.*sh
 
 # OAuth debug captures (contain secrets)
 scripts/oauth-debug/capture.json
+
+# Python bytecode caches
+__pycache__/
