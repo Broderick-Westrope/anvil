@@ -17,14 +17,14 @@ description: "Source of truth for where to make changes and how to manage git wo
 ```bash
 git rev-parse --git-dir --git-common-dir   # two equal paths: root worktree
 git branch --show-current
-wtp list --no-sync                         # all worktrees; * marks the current one
+wtp list                                   # all worktrees; * marks the current one
 ```
 
 If you're already in a linked worktree for this task, keep working there.
 
 ## Create a Worktree
 
-Reuse a worktree if one already exists for the branch (`wtp list --no-sync`). Otherwise create one from anywhere in the repository:
+Reuse a worktree if one already exists for the branch (`wtp list`). Otherwise create one from anywhere in the repository:
 
 ```bash
 wtp add -b <branch> --stay              # new branch from the current HEAD
@@ -73,7 +73,7 @@ Don't remove worktrees on your own initiative. Leave them for the user unless th
 | Situation | Action |
 |---|---|
 | Am I in the root worktree? | `git rev-parse --git-dir --git-common-dir` |
-| List worktrees | `wtp list --no-sync` |
+| List worktrees | `wtp list` |
 | New branch | `wtp add -b <branch> --stay` |
 | Existing branch | `wtp add <branch> --stay` |
 | Path to a worktree | `wtp cd <branch>` |
