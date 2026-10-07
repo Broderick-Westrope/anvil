@@ -107,12 +107,15 @@ func TestHerdrSnapshot_PlaceholderTitlesOmitted(t *testing.T) {
 	t.Parallel()
 
 	for _, title := range []string{agent.DefaultSessionName, "New Session"} {
-		u, _ := newHerdrTestUI(t)
-		u.session = &session.Session{ID: "s1", Title: title}
+		t.Run(title, func(t *testing.T) {
+			t.Parallel()
+			u, _ := newHerdrTestUI(t)
+			u.session = &session.Session{ID: "s1", Title: title}
 
-		s := u.herdrSnapshot()
-		require.Equal(t, "s1", s.SessionID)
-		require.Empty(t, s.SessionTitle, title)
+			s := u.herdrSnapshot()
+			require.Equal(t, "s1", s.SessionID)
+			require.Empty(t, s.SessionTitle)
+		})
 	}
 }
 
@@ -146,12 +149,79 @@ func TestHerdrHandler_UnsetSkipsSnapshot(t *testing.T) {
 	_, _ = u.Update(herdrTickMsg{})
 }
 
-func TestHerdrTick_Rearms(t *testing.T) {
+func TestHerdrTick_OnlyWhileBusy(t *testing.T) {
 	t.Parallel()
 
-	u, _ := newHerdrTestUI(t)
-	u.SetHerdrHandler(func(herdr.State) {})
+	tests := []struct {
+		name    string
+		busy    bool
+		pending bool
+		armed   bool
+	}{
+		{name: "idle", armed: false},
+		{name: "working", busy: true, armed: true},
+		{name: "blocked", pending: true, armed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			u, ws := newHerdrTestUI(t)
+			u.SetHerdrHandler(func(herdr.State) {})
+			ws.ready, ws.busy = true, tt.busy
+			if tt.pending {
+				ws.pending = &permission.PendingPermission{ID: "p1", ToolName: "bash"}
+			}
 
-	_, cmd := u.Update(herdrTickMsg{})
-	require.NotNil(t, cmd)
+			_, _ = u.Update(tea.BlurMsg{})
+			require.Equal(t, tt.armed, u.herdrTickPending)
+		})
+	}
+}
+
+func TestHerdrTick_NotDuplicated(t *testing.T) {
+	t.Parallel()
+
+	u, ws := newHerdrTestUI(t)
+	u.SetHerdrHandler(func(herdr.State) {})
+	ws.ready, ws.busy = true, true
+
+	_, _ = u.Update(tea.BlurMsg{})
+	require.True(t, u.herdrTickPending)
+	require.Nil(t, u.herdrTickCmd())
+}
+
+func TestHerdrTick_MsgClearsPending(t *testing.T) {
+	t.Parallel()
+
+	u, ws := newHerdrTestUI(t)
+	u.SetHerdrHandler(func(herdr.State) {})
+	ws.ready, ws.busy = true, true
+	_, _ = u.Update(tea.BlurMsg{})
+	require.True(t, u.herdrTickPending)
+
+	ws.busy = false
+	_, _ = u.Update(herdrTickMsg{})
+	require.False(t, u.herdrTickPending)
+	require.Equal(t, herdr.StatusIdle, u.herdrState.Status)
+}
+
+func TestHerdrTick_RearmsWhileBusy(t *testing.T) {
+	t.Parallel()
+
+	u, ws := newHerdrTestUI(t)
+	u.SetHerdrHandler(func(herdr.State) {})
+	ws.ready, ws.busy = true, true
+	_, _ = u.Update(tea.BlurMsg{})
+
+	_, _ = u.Update(herdrTickMsg{})
+	require.True(t, u.herdrTickPending)
+}
+
+func TestHerdrTick_NoHandler(t *testing.T) {
+	t.Parallel()
+
+	u, ws := newHerdrTestUI(t)
+	ws.ready, ws.busy = true, true
+	_, _ = u.Update(tea.BlurMsg{})
+	require.False(t, u.herdrTickPending)
 }

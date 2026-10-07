@@ -79,9 +79,9 @@ State is always **recomputed from authoritative snapshots**, never
 inferred from event transitions. The snapshot (pending permission request
 via a new `permission.Service.PendingRequest()` getter, `AgentIsBusy()`,
 displayed session) is taken on the UI goroutine — at the end of every
-`UI.Update`, like `trackRecoverySession`, plus a 250ms tick so state that
-changes without a UI message (e.g. a background run ending on an error
-path, which publishes no event) is still observed. Taking it on the UI
+`UI.Update`, like `trackRecoverySession`, plus a 250ms tick while not
+idle so state that changes without a UI message (e.g. a background run
+ending on an error path, which publishes no event) is still observed. Taking it on the UI
 goroutine avoids racing `App.AgentCoordinator`, which the UI reassigns on
 re-init (`internal/ui/model/ui.go:2743`). The reporter receives each
 snapshot and **debounces ~150ms**: a state is sent only after it has been
@@ -318,7 +318,7 @@ delivery = "herdr"
   channels have no cross-channel ordering guarantee, and some transitions
   (error-path run ends, permission prompts cancelled with their context)
   publish no event at all. A cheap snapshot on every UI update plus a
-  250ms tick, debounced in the reporter, is authoritative and needs no
+  250ms tick while not idle, debounced in the reporter, is authoritative and needs no
   new pubsub events.
 - **Zero config (YAGNI).** No escape hatch option; outside Herdr the
   reporter cannot activate, and inside Herdr there is no known reason to

@@ -21,6 +21,18 @@ func herdrTick() tea.Cmd {
 	return tea.Tick(herdrPollInterval, func(time.Time) tea.Msg { return herdrTickMsg{} })
 }
 
+// herdrTickCmd arms the next poll tick unless one is pending or the last
+// reported status is idle. From idle, every way a run or prompt starts
+// produces a UI message, while a busy run can end with no message (error
+// path), so polling is only needed while not idle.
+func (m *UI) herdrTickCmd() tea.Cmd {
+	if m.herdrHandler == nil || m.herdrTickPending || m.herdrState.Status == herdr.StatusIdle {
+		return nil
+	}
+	m.herdrTickPending = true
+	return herdrTick()
+}
+
 // SetHerdrHandler registers the Herdr reporter. It must be called
 // before the program starts.
 func (m *UI) SetHerdrHandler(handler func(herdr.State)) { m.herdrHandler = handler }

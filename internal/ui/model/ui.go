@@ -185,13 +185,14 @@ type (
 
 // UI represents the main user interface model.
 type UI struct {
-	recoveryHandler func(recovery.Entry)
-	recoveryEntry   recovery.Entry
-	herdrHandler    func(herdr.State)
-	herdrState      herdr.State
-	herdrSent       bool
-	com             *common.Common
-	session         *session.Session
+	recoveryHandler  func(recovery.Entry)
+	recoveryEntry    recovery.Entry
+	herdrHandler     func(herdr.State)
+	herdrState       herdr.State
+	herdrSent        bool
+	herdrTickPending bool
+	com              *common.Common
+	session          *session.Session
 
 	// composerSent is the composer state last reported to the workspace;
 	// navigating is set while a branch navigation moves the leaf, and
@@ -540,9 +541,6 @@ func (m *UI) Init() tea.Cmd {
 	if cmd := m.applyReloadHandoff(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
-	if m.herdrHandler != nil {
-		cmds = append(cmds, herdrTick())
-	}
 	return tea.Batch(cmds...)
 }
 
@@ -706,12 +704,14 @@ func (m *UI) activeChatArea() image.Rectangle {
 
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	m.trackHerdrState()
+	return model, tea.Batch(cmd, m.herdrTickCmd())
+}
+
+func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.trackRecoverySession()
-	defer m.trackHerdrState()
 	defer m.syncComposerState()
-	if _, ok := msg.(herdrTickMsg); ok {
-		return m, herdrTick()
-	}
 	var cmds []tea.Cmd
 	if m.hasSession() && m.isAgentBusy() {
 		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
@@ -723,6 +723,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Update terminal capabilities
 	m.caps.Update(msg)
 	switch msg := msg.(type) {
+	case herdrTickMsg:
+		m.herdrTickPending = false
 	case tea.EnvMsg:
 		// Is this Windows Terminal?
 		if !m.sendProgressBar {
