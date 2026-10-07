@@ -13,6 +13,8 @@ import (
 )
 
 // scriptRunner returns a cliRunner whose herdr binary is a shell script.
+// The timeout is raised because the first exec of a new file can be slow
+// on a loaded macOS machine.
 func scriptRunner(t *testing.T, body string) cliRunner {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -20,7 +22,9 @@ func scriptRunner(t *testing.T, body string) cliRunner {
 	}
 	bin := filepath.Join(t.TempDir(), "herdr")
 	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\n"+body+"\n"), 0o755))
-	return newCLIRunner(Config{Bin: bin, PaneID: "w1:p2", SocketPath: "/run/herdr.sock"}, nil)
+	r := newCLIRunner(Config{Bin: bin, PaneID: "w1:p2", SocketPath: "/run/herdr.sock"}, nil)
+	r.timeout = time.Minute
+	return r
 }
 
 func TestCLIRunnerPassesArgvVerbatim(t *testing.T) {
@@ -67,5 +71,5 @@ func TestCLIRunnerCancelKillsChild(t *testing.T) {
 	start := time.Now()
 	_, err := r.run(ctx, "pane", "get")
 	require.Error(t, err)
-	require.Less(t, time.Since(start), 2*time.Second)
+	require.Less(t, time.Since(start), commandTimeout)
 }

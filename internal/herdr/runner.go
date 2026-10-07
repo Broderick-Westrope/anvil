@@ -17,8 +17,9 @@ type runner interface {
 
 // cliRunner is the only place that execs herdr.
 type cliRunner struct {
-	bin string
-	env []string
+	bin     string
+	env     []string
+	timeout time.Duration
 }
 
 // newCLIRunner freezes the child environment: the startup environment
@@ -32,11 +33,11 @@ func newCLIRunner(cfg Config, startupEnv []string) cliRunner {
 		env = append(env, kv)
 	}
 	env = append(env, "HERDR_PANE_ID="+cfg.PaneID, "HERDR_SOCKET_PATH="+cfg.SocketPath)
-	return cliRunner{bin: cfg.Bin, env: env}
+	return cliRunner{bin: cfg.Bin, env: env, timeout: commandTimeout}
 }
 
 func (r cliRunner) run(ctx context.Context, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.bin, args...)
 	cmd.Env = r.env
