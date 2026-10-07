@@ -45,7 +45,11 @@ func (r cliRunner) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return out, fmt.Errorf("herdr %s: %w: %s", strings.Join(args[:min(2, len(args))], " "), err, strings.TrimSpace(stderr.String()))
+		name := strings.Join(args[:min(2, len(args))], " ")
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return out, fmt.Errorf("herdr %s: %w: %s", name, err, msg)
+		}
+		return out, fmt.Errorf("herdr %s: %w", name, err)
 	}
 	return out, nil
 }
