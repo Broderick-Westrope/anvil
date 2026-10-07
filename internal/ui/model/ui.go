@@ -3589,7 +3589,11 @@ func (m *UI) View() tea.View {
 	}
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = m.caps.ReportFocusEvents
-	v.WindowTitle = windowTitle(m.SessionTitle(), m.com.Workspace.WorkingDir())
+	var sessionTitle string
+	if m.hasSession() {
+		sessionTitle = headerSessionTitle(m.session)
+	}
+	v.WindowTitle = windowTitle(sessionTitle, m.com.Workspace.WorkingDir())
 
 	if m.canvas.RenderBuffer == nil || m.canvas.Bounds().Dx() != m.width || m.canvas.Bounds().Dy() != m.height {
 		m.canvas = uv.NewScreenBuffer(m.width, m.height)

@@ -6,7 +6,6 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/herdr"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 )
@@ -30,9 +29,7 @@ func (m *UI) herdrSnapshot() herdr.State {
 	var s herdr.State
 	if m.hasSession() {
 		s.SessionID = m.session.ID
-		if m.session.Title != agent.DefaultSessionName {
-			s.SessionTitle = m.session.Title
-		}
+		s.SessionTitle = headerSessionTitle(m.session)
 	}
 	if req, ok := m.com.Workspace.PermissionPending(); ok {
 		s.Status = herdr.StatusBlocked
@@ -60,7 +57,8 @@ func (m *UI) trackHerdrState() {
 }
 
 // windowTitle leads with the session title so terminal multiplexers
-// listing panes by title can tell sessions apart.
+// listing panes by title can tell sessions apart. sessionTitle must already
+// have placeholder names removed.
 func windowTitle(sessionTitle, workingDir string) string {
 	title := strings.Join(strings.Fields(strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -68,7 +66,7 @@ func windowTitle(sessionTitle, workingDir string) string {
 		}
 		return r
 	}, sessionTitle)), " ")
-	if title == "" || title == agent.DefaultSessionName {
+	if title == "" {
 		return "anvil " + home.Short(workingDir)
 	}
 	return title + " · anvil"

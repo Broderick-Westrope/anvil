@@ -75,7 +75,6 @@ func TestWindowTitle(t *testing.T) {
 
 	fallback := "anvil " + home.Short("/work")
 	require.Equal(t, fallback, windowTitle("", "/work"))
-	require.Equal(t, fallback, windowTitle(agent.DefaultSessionName, "/work"))
 	require.Equal(t, "Fix auth · anvil", windowTitle("Fix auth", "/work"))
 
 	got := windowTitle("a\x1b]2;x\x07b", "/work")
@@ -104,15 +103,17 @@ func TestHerdrSnapshot_Priority(t *testing.T) {
 	require.Equal(t, "s1", s.SessionID)
 }
 
-func TestHerdrSnapshot_DefaultSessionTitleOmitted(t *testing.T) {
+func TestHerdrSnapshot_PlaceholderTitlesOmitted(t *testing.T) {
 	t.Parallel()
 
-	u, _ := newHerdrTestUI(t)
-	u.session = &session.Session{ID: "s1", Title: agent.DefaultSessionName}
+	for _, title := range []string{agent.DefaultSessionName, "New Session"} {
+		u, _ := newHerdrTestUI(t)
+		u.session = &session.Session{ID: "s1", Title: title}
 
-	s := u.herdrSnapshot()
-	require.Equal(t, "s1", s.SessionID)
-	require.Empty(t, s.SessionTitle)
+		s := u.herdrSnapshot()
+		require.Equal(t, "s1", s.SessionID)
+		require.Empty(t, s.SessionTitle, title)
+	}
 }
 
 func TestHerdrHandler_ReportsOnlyChanges(t *testing.T) {
