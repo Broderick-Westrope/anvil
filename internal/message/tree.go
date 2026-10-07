@@ -93,6 +93,8 @@ func FilterMetadataMessage(msg Message) *Message {
 	switch msg.MessageType {
 	case MessageTypeLabel, MessageTypeModelChange, MessageTypeThinkingLevelChange, MessageTypeMCPToggle:
 		return nil
+	case MessageTypeJobEvent:
+		return &msg
 	case MessageTypeCompaction:
 		// Older compactions on the path are skipped — only the most
 		// recent one is processed by the caller.

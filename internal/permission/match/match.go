@@ -17,25 +17,47 @@ import (
 	"strings"
 )
 
+// Matcher is a compiled pattern for repeated matching.
+type Matcher struct{ res []*regexp.Regexp }
+
+// Compile validates and compiles pattern. Brace expansion is applied
+// first, then each expanded pattern is compiled as a glob.
+func Compile(pattern string) (*Matcher, error) {
+	if err := checkBraces(pattern); err != nil {
+		return nil, err
+	}
+
+	expanded := expandBraces(pattern)
+	m := &Matcher{res: make([]*regexp.Regexp, 0, len(expanded))}
+	for _, p := range expanded {
+		re, err := globToRegexp(p)
+		if err != nil {
+			return nil, fmt.Errorf("glob error: %w", err)
+		}
+		m.res = append(m.res, re)
+	}
+	return m, nil
+}
+
+// Match reports whether input matches any expanded pattern.
+func (m *Matcher) Match(input string) bool {
+	for _, re := range m.res {
+		if re.MatchString(input) {
+			return true
+		}
+	}
+	return false
+}
+
 // Match reports whether input matches the pattern. Brace expansion is
 // applied first, then each expanded pattern is glob-matched. Returns
 // true if any expanded pattern matches.
 func Match(pattern, input string) (bool, error) {
-	if err := checkBraces(pattern); err != nil {
+	m, err := Compile(pattern)
+	if err != nil {
 		return false, err
 	}
-
-	for _, p := range expandBraces(pattern) {
-		re, err := globToRegexp(p)
-		if err != nil {
-			return false, fmt.Errorf("glob error: %w", err)
-		}
-		if re.MatchString(input) {
-			return true, nil
-		}
-	}
-
-	return false, nil
+	return m.Match(input), nil
 }
 
 // Validate checks whether a pattern is syntactically valid. It returns
@@ -163,9 +185,7 @@ func expandBraces(pattern string) []string {
 	var results []string
 	for _, alt := range alternatives {
 		// Recurse to handle nested braces in suffix and alternatives.
-		for _, expanded := range expandBraces(prefix + alt + suffix) {
-			results = append(results, expanded)
-		}
+		results = append(results, expandBraces(prefix+alt+suffix)...)
 	}
 
 	return results

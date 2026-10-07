@@ -139,15 +139,6 @@ type (
 	mcpPromptsLoadedMsg struct {
 		Prompts []commands.MCPPrompt
 	}
-	// pluginReloadedMsg is sent when plugin reload completes successfully.
-	pluginReloadedMsg struct {
-		SkillStates    []*skills.SkillState
-		CustomCommands []commands.CustomCommand
-	}
-	// pluginReloadFailedMsg is sent when plugin reload fails.
-	pluginReloadFailedMsg struct {
-		Err error
-	}
 	// mcpStateChangedMsg is sent when there is a change in MCP client states.
 	mcpStateChangedMsg struct {
 		states map[string]mcp.ClientInfo
@@ -183,6 +174,13 @@ type (
 		sessionID string // The session being cancelled.
 		attempt   int
 	}
+
+	// triageNudgeMsg is sent once at startup when enough unresolved
+	// permission decisions have piled up to recommend running
+	// "anvil permissions triage".
+	triageNudgeMsg struct {
+		count int
+	}
 )
 
 // UI represents the main user interface model.
@@ -191,6 +189,13 @@ type UI struct {
 	recoveryEntry   recovery.Entry
 	com             *common.Common
 	session         *session.Session
+
+	// composerSent is the composer state last reported to the workspace;
+	// navigating is set while a branch navigation moves the leaf, and
+	// composerClosed once the TUI exits.
+	composerSent   composerSignal
+	navigating     bool
+	composerClosed bool
 
 	// keeps track of read files while we don't have a session id
 	sessionFileReads []string
@@ -230,6 +235,10 @@ type UI struct {
 	// cannot race the write.
 	pinSettling bool
 
+	// triageNudgeShown tracks whether the startup permission-triage nudge
+	// has already been surfaced, so it is shown at most once per process.
+	triageNudgeShown bool
+
 	header *header
 
 	// sendProgressBar instructs the TUI to send progress bar updates to the
@@ -245,6 +254,11 @@ type UI struct {
 
 	// Attachment list
 	attachments *attachments.Attachments
+
+	// promptModes and promptBadges cache the permission state shown in
+	// the editor gutter, refreshed by refreshEditorPrompt.
+	promptModes  promptModes
+	promptBadges []promptBadge
 
 	readyPlaceholder   string
 	workingPlaceholder string
@@ -273,6 +287,10 @@ type UI struct {
 	// elapsedTickRunning tracks whether the elapsed-time tick command is
 	// currently scheduled so we avoid scheduling duplicate ticks.
 	elapsedTickRunning bool
+
+	// now returns the current time for time-based sidebar displays. Nil
+	// means time.Now; tests inject a fixed clock.
+	now func() time.Time
 
 	// lsp
 	lspStates map[string]app.LSPClientInfo
@@ -339,6 +357,20 @@ type UI struct {
 
 	// Prompt history for up/down navigation through previous messages.
 	promptHistory historySnapshot
+
+	// reloadHandoff is restored on Init, and reloadRequest is set once
+	// the user confirms /reload-instance.
+	reloadHandoff *reloadHandoff
+	reloadRequest *ReloadRequest
+	// reloading freezes submissions and session changes while a reload
+	// is being checked or confirmed; reloadExe is the binary it checked.
+	reloading bool
+	reloadExe string
+	// reloadOps is nil outside tests.
+	reloadOps *reloadOps
+	// pendingSends counts tracked send commands that haven't returned,
+	// so a reload never exits while a prompt is on its way to the agent.
+	pendingSends int
 
 	// canvas is the reusable screen buffer. It is reallocated only when the
 	// terminal dimensions change; screen.Clear resets every cell so stale
@@ -451,7 +483,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 
 	status := NewStatus(com, ui)
 
-	ui.setEditorPrompt(com.Workspace.PermissionYoloLevel() != config.YoloOff)
+	ui.refreshEditorPrompt()
 	ui.randomizePlaceholders()
 	ui.textarea.Placeholder = ui.readyPlaceholder
 	ui.status = status
@@ -499,6 +531,11 @@ func (m *UI) Init() tea.Cmd {
 	m.mcpStates = m.com.Workspace.MCPGetStates()
 	// load initial session if specified
 	if cmd := m.loadInitialSession(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	// Check once whether to nudge the user to run permission triage.
+	cmds = append(cmds, m.checkTriageNudge())
+	if cmd := m.applyReloadHandoff(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	return tea.Batch(cmds...)
@@ -574,25 +611,6 @@ func (m *UI) loadCustomCommands() tea.Cmd {
 	}
 }
 
-// reloadPlugins re-discovers all plugin content asynchronously.
-func (m *UI) reloadPlugins() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		if err := m.com.Workspace.ReloadPlugins(ctx); err != nil {
-			return pluginReloadFailedMsg{Err: err}
-		}
-		// Reload custom commands (which now include plugin commands).
-		customCmds, err := commands.LoadAllCommands(m.com.Config(), nil)
-		if err != nil {
-			slog.Error("Failed to reload custom commands after plugin reload", "error", err)
-		}
-		return pluginReloadedMsg{
-			SkillStates:    m.com.Workspace.SkillStates(),
-			CustomCommands: customCmds,
-		}
-	}
-}
-
 // loadMCPrompts loads the MCP prompts asynchronously.
 func (m *UI) loadMCPrompts() tea.Msg {
 	prompts, err := commands.LoadMCPPrompts()
@@ -636,7 +654,6 @@ func (m *UI) isDrilledIn() bool {
 // clearDrillStack pops all drill-in entries and restores root state.
 func (m *UI) clearDrillStack() {
 	m.drillStack = nil
-	m.elapsedTickRunning = false
 }
 
 // findMessageItem searches the root chat and all drill-stack chats for
@@ -685,6 +702,7 @@ func (m *UI) activeChatArea() image.Rectangle {
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.trackRecoverySession()
+	defer m.syncComposerState()
 	var cmds []tea.Cmd
 	if m.hasSession() && m.isAgentBusy() {
 		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
@@ -754,9 +772,27 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.historyReset()
 		cmds = append(cmds, m.loadPromptHistory())
 		m.updateLayoutAndSize()
+		if cmd := m.startElapsedTickForJobs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
+	case sendDoneMsg:
+		cmds = append(cmds, m.handleSendDone(msg))
+	case reloadPreflightMsg:
+		cmds = append(cmds, m.handleReloadPreflight(msg))
+	case reloadPausedMsg:
+		cmds = append(cmds, m.handleReloadPaused(msg))
+	case reloadHandoffWrittenMsg:
+		cmds = append(cmds, m.handleReloadHandoffWritten(msg))
+
+	case triageNudgeMsg:
+		if !m.triageNudgeShown {
+			m.triageNudgeShown = true
+			cmds = append(cmds, util.ReportInfo(fmt.Sprintf(
+				"Run \"anvil permissions triage\" to turn %d repeated approvals into rules", msg.count)))
+		}
 
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
@@ -771,21 +807,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			commands.SetCustomCommands(m.customCommands)
 		}
 
-	case pluginReloadedMsg:
-		// Update skill states and custom commands after reload.
-		m.skillStates = msg.SkillStates
-		m.customCommands = msg.CustomCommands
-		m.slashAC.SetItems(m.buildSlashACItems())
-		// Update open commands dialog if present.
-		if dia := m.dialog.Dialog(dialog.CommandsID); dia != nil {
-			if cmdsDialog, ok := dia.(*dialog.Commands); ok {
-				cmdsDialog.SetCustomCommands(m.customCommands)
-			}
-		}
-		cmds = append(cmds, util.ReportInfo("Plugins reloaded."))
-	case pluginReloadFailedMsg:
-		slog.Error("Plugin reload failed", "error", msg.Err)
-		cmds = append(cmds, util.ReportError(msg.Err))
+	case configReloadedMsg:
+		cmds = append(cmds, m.handleConfigReloaded(msg))
 	case mcpStateChangedMsg:
 		m.mcpStates = msg.states
 		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
@@ -937,15 +960,26 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.handleChildSessionMessage(msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
+			if msg.Type != pubsub.DeletedEvent {
+				if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
 			break
 		}
 		switch msg.Type {
 		case pubsub.CreatedEvent:
 			cmds = append(cmds, m.appendSessionMessage(msg.Payload))
 			m.applyLazyMCPMessageParts(msg.Payload)
+			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case pubsub.UpdatedEvent:
 			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
 			m.applyLazyMCPMessageParts(msg.Payload)
+			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case pubsub.DeletedEvent:
 			m.chat.RemoveMessage(msg.Payload.ID)
 		}
@@ -992,6 +1026,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Payload.Name))
 		}
 	case pubsub.Event[permission.PermissionRequest]:
+		// An update carries the reviewer's opinion for a prompt that is
+		// already open; it must not reopen the dialog or notify again.
+		if msg.Type == pubsub.UpdatedEvent {
+			if d, ok := m.dialog.Dialog(dialog.PermissionsID).(*dialog.Permissions); ok {
+				d.SetReview(msg.Payload.ID, msg.Payload.Review)
+			}
+			break
+		}
 		if cmd := m.openPermissionsDialog(msg.Payload); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -1264,7 +1306,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning())
+		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
@@ -1418,8 +1460,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.textarea.Placeholder = m.readyPlaceholder
 		}
-		if m.com.Workspace.PermissionYoloLevel() != config.YoloOff {
-			m.textarea.Placeholder = "Yolo mode!"
+		if p := m.promptModes.modePlaceholder(); p != "" {
+			m.textarea.Placeholder = p
 		}
 	}
 
@@ -1440,6 +1482,15 @@ func (m *UI) SessionID() string {
 		return ""
 	}
 	return m.session.ID
+}
+
+// SessionTitle returns the title of the active session, or an empty string
+// when there is none.
+func (m *UI) SessionTitle() string {
+	if !m.hasSession() {
+		return ""
+	}
+	return m.session.Title
 }
 
 func (m *UI) trackRecoverySession() {
@@ -1790,7 +1841,9 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			}
 		}
 		if existingToolItem == nil {
-			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.expandedToolPatterns()))
+			item := chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.expandedToolPatterns())
+			chat.SetToolCallStartedAt(item, msg.CreatedAt)
+			items = append(items, item)
 		}
 	}
 
@@ -1922,6 +1975,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		if !found {
 			// Create a new nested tool item.
 			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false, m.expandedToolPatterns())
+			chat.SetToolCallStartedAt(nestedItem, event.Payload.CreatedAt)
 			if simplifiable, ok := nestedItem.(chat.Compactable); ok {
 				simplifiable.SetCompact(true)
 			}
@@ -2143,6 +2197,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	// Session dialog messages.
 	case dialog.ActionSelectSession:
+		if m.reloading {
+			cmds = append(cmds, util.ReportWarn(reloadInProgressMsg))
+			break
+		}
 		m.dialog.CloseDialog(dialog.SessionsID)
 		m.clearDrillStack()
 		cmds = append(cmds, m.loadSession(msg.Session.ID))
@@ -2157,6 +2215,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	// Command dialog messages.
 	case dialog.ActionToggleYoloMode:
 		m.cycleYoloLevel()
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionCycleBouncerMode:
+		next := m.cycleBouncerMode()
+		cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Bouncer: "+string(next))))
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleNotifications:
 		cfg := m.com.Config()
@@ -2295,7 +2357,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 			isTransparent := cfg.Options != nil && cfg.Options.TUI.Transparent != nil && *cfg.Options.TUI.Transparent
 			newValue := !isTransparent
-			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.transparent", newValue); err != nil {
+			if err := m.com.Workspace.SetTransparentBackground(config.ScopeGlobal, newValue); err != nil {
 				return util.ReportError(err)()
 			}
 			m.isTransparent = newValue
@@ -2479,7 +2541,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		content := substituteCustomCommandArgs(msg)
-		content = commands.FormatExpansionXML(customCommandLine(msg), content)
+		content = commands.FormatExpansionXML(customCommandLine(msg), msg.Location, content)
 
 		// Resolve and prepend skill content. This is safe to call in Update
 		// because ActiveSkillByName is an in-memory lookup (no IO). If it
@@ -2515,9 +2577,16 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.dialog.CloseFrontDialog()
 		cmds = append(cmds, m.beginBranchReturn(false))
 
-	case dialog.ActionReloadPlugins:
+	case dialog.ActionReloadConfig:
 		m.dialog.CloseDialog(dialog.CommandsID)
-		cmds = append(cmds, m.reloadPlugins())
+		cmds = append(cmds, m.reloadConfig())
+	case dialog.ActionReloadInstance:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		cmds = append(cmds, m.startReloadInstance())
+	case dialog.ActionReloadInstanceConfirm:
+		cmds = append(cmds, m.confirmReloadInstance())
+	case dialog.ActionReloadInstanceCancel:
+		cmds = append(cmds, m.cancelReloadInstance())
 	case dialog.ActionAttachSkill:
 		if m.slashACOpen {
 			m.closeSlashAC(true)
@@ -2776,6 +2845,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			cmds = append(cmds, util.ReportInfo("Yolo mode "+status))
 			return true
+		case key.Matches(msg, m.keyMap.CycleBouncer):
+			cmds = append(cmds, m.handleCycleBouncerKey())
+			return true
 		}
 		return false
 	}
@@ -2989,6 +3061,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					break
 				}
 
+				// Leave the text and attachments in place so they are
+				// carried over in the draft.
+				if m.reloading {
+					cmds = append(cmds, util.ReportWarn(reloadInProgressMsg))
+					return tea.Batch(cmds...)
+				}
+
 				// Otherwise, send the message
 				m.textarea.Reset()
 				if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
@@ -2998,6 +3077,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
+				}
+
+				// Handled before the slash-command path, which drops
+				// attachments, so a refused or cancelled reload keeps them.
+				if value == "/"+reloadInstanceCommand {
+					cmds = append(cmds, m.startReloadInstance())
+					return tea.Batch(cmds...)
 				}
 
 				// Check for /command prefix and execute as a slash
@@ -3710,6 +3796,9 @@ func (m *UI) FullHelp() [][]key.Binding {
 			k.Sessions,
 			k.ToggleYolo,
 		)
+		if m.com.Workspace.PermissionBouncerConfigured() {
+			mainBinds = append(mainBinds, k.CycleBouncer)
+		}
 		if hasSession {
 			mainBinds = append(mainBinds, k.Chat.NewSession)
 		}
@@ -3792,6 +3881,9 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.ToggleYolo,
 				},
 			)
+			if m.com.Workspace.PermissionBouncerConfigured() {
+				binds[len(binds)-1] = append(binds[len(binds)-1], k.CycleBouncer)
+			}
 			editorBinds := []key.Binding{
 				k.Editor.Newline,
 				k.Editor.MentionFile,
@@ -4212,49 +4304,6 @@ func (m *UI) openEditor(value string) tea.Cmd {
 	})
 }
 
-// setEditorPrompt configures the textarea prompt function based on whether
-// yolo mode is enabled.
-func (m *UI) setEditorPrompt(yolo bool) {
-	if yolo {
-		m.textarea.SetPromptFunc(4, m.yoloPromptFunc)
-		return
-	}
-	m.textarea.SetPromptFunc(4, m.normalPromptFunc)
-}
-
-// normalPromptFunc returns the normal editor prompt style ("  > " on first
-// line, "::: " on subsequent lines).
-func (m *UI) normalPromptFunc(info textarea.PromptInfo) string {
-	t := m.com.Styles
-	if info.LineNumber == 0 {
-		if info.Focused {
-			return "  > "
-		}
-		return "::: "
-	}
-	if info.Focused {
-		return t.Editor.PromptNormalFocused.Render()
-	}
-	return t.Editor.PromptNormalBlurred.Render()
-}
-
-// yoloPromptFunc returns the yolo mode editor prompt style with warning icon
-// and colored dots.
-func (m *UI) yoloPromptFunc(info textarea.PromptInfo) string {
-	t := m.com.Styles
-	if info.LineNumber == 0 {
-		if info.Focused {
-			return t.Editor.PromptYoloIconFocused.Render()
-		} else {
-			return t.Editor.PromptYoloIconBlurred.Render()
-		}
-	}
-	if info.Focused {
-		return t.Editor.PromptYoloDotsFocused.Render()
-	}
-	return t.Editor.PromptYoloDotsBlurred.Render()
-}
-
 // closeCompletions closes the completions popup and resets state.
 func (m *UI) closeCompletions() {
 	m.completionsOpen = false
@@ -4355,6 +4404,7 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 				Content:   cmd.Content,
 				Arguments: cmd.Arguments,
 				Skills:    cmd.Skills,
+				Location:  cmd.Location,
 			}
 			return func() tea.Msg { return action }
 		}
@@ -4367,7 +4417,7 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		if rawArgs != "" {
 			commandLine += " " + rawArgs
 		}
-		content = commands.FormatExpansionXML(commandLine, content)
+		content = commands.FormatExpansionXML(commandLine, cmd.Location, content)
 		if resolved := skills.ResolveContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
 			content = resolved + "\n\n" + content
 		}
@@ -4409,6 +4459,7 @@ func (m *UI) builtinCommands() []builtinDef {
 		{"branch", "Branch from a message", func() tea.Cmd {
 			return m.openDialog(dialog.BranchID)
 		}},
+		{reloadInstanceCommand, "Restart on the latest anvil binary", m.startReloadInstance},
 	}
 }
 
@@ -4665,7 +4716,7 @@ func (m *UI) cacheSidebarLogo(width int) {
 
 // initializeProject sends the project initialization prompt into the current session.
 func (m *UI) initializeProject() tea.Cmd {
-	return func() tea.Msg {
+	return m.trackSend(func() tea.Msg {
 		initPrompt, err := m.com.Workspace.InitializePrompt()
 		if err != nil {
 			return util.InfoMsg{
@@ -4674,11 +4725,14 @@ func (m *UI) initializeProject() tea.Cmd {
 			}
 		}
 		return sendMessageMsg{Content: initPrompt}
-	}
+	})
 }
 
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
+	if m.reloading {
+		return m.freezeSend(content, attachments)
+	}
 	if !m.com.Workspace.AgentIsReady() {
 		return util.ReportError(fmt.Errorf("orchestrator agent is not initialized"))
 	}
@@ -4715,7 +4769,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
-	cmds = append(cmds, func() tea.Msg {
+	cmds = append(cmds, m.trackSend(func() tea.Msg {
 		err := m.com.Workspace.AgentRun(context.Background(), sessionID, content, attachments...)
 		if err != nil {
 			isCancelErr := errors.Is(err, context.Canceled)
@@ -4728,7 +4782,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 			}
 		}
 		return nil
-	})
+	}))
 	return tea.Batch(cmds...)
 }
 
@@ -5055,6 +5109,10 @@ func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
 }
 
 func (m *UI) cancelThenNavigate(msg dialog.ActionNavigateTree) tea.Cmd {
+	// Report navigation before the async leaf move so no job wake starts
+	// a turn on the branch being left.
+	m.navigating = true
+	m.syncComposerState()
 	if m.hasSession() && m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
 		sessionID := m.session.ID
 		m.com.Workspace.AgentCancel(sessionID)
@@ -5085,6 +5143,7 @@ func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
 	if !m.hasSession() || m.session.ID != msg.sessionID {
 		m.branchNavigation = nil
 		m.branchRestoring = false
+		m.navigating = false
 		return nil
 	}
 	if !m.com.Workspace.AgentIsSessionBusy(msg.sessionID) {
@@ -5099,6 +5158,7 @@ func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
 // navigateToTreeNode moves the session leaf pointer and reloads the chat.
 func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 	if m.session == nil {
+		m.navigating = false
 		return nil
 	}
 	targetLeafID := msg.MessageID
@@ -5112,6 +5172,7 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 // the session reloaded, and the branch path fetched. All IO happens
 // inside the command; Update only mutates state.
 type navigateTreeDoneMsg struct {
+	err      error // Set when the move or reload failed.
 	nested   map[string]branchNestedSnapshot
 	snapshot *branchReturnSnapshot
 	restore  *branchReturnSnapshot
@@ -5125,6 +5186,11 @@ type navigateTreeDoneMsg struct {
 // handleNavigateTreeDone rebuilds the chat view after the leaf pointer has
 // been moved, and optionally pre-fills the editor for user messages.
 func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
+	m.navigating = false
+	if msg.err != nil {
+		return m.handleTreeNavError(treeNavErrorMsg{err: msg.err})
+	}
+
 	var cmds []tea.Cmd
 	if !m.hasSession() || m.session.ID != msg.session.ID {
 		return nil
@@ -5438,6 +5504,9 @@ func (m *UI) newSession() tea.Cmd {
 	if !m.hasSession() {
 		return nil
 	}
+	if m.reloading {
+		return util.ReportWarn(reloadInProgressMsg)
+	}
 
 	m.clearDrillStack()
 	m.clearBranchState()
@@ -5724,7 +5793,7 @@ func (m *UI) drawSessionDetails(scr uv.Screen, area uv.Rectangle) {
 }
 
 func (m *UI) runMCPPrompt(clientID, promptID string, arguments map[string]string) tea.Cmd {
-	load := func() tea.Msg {
+	load := m.trackSend(func() tea.Msg {
 		prompt, err := m.com.Workspace.GetMCPPrompt(clientID, promptID, arguments)
 		if err != nil {
 			// TODO: make this better
@@ -5743,9 +5812,9 @@ func (m *UI) runMCPPrompt(clientID, promptID string, arguments map[string]string
 			}
 		}
 		return sendMessageMsg{
-			Content: commands.FormatExpansionXML(line.String(), prompt),
+			Content: commands.FormatExpansionXML(line.String(), "", prompt),
 		}
-	}
+	})
 
 	var cmds []tea.Cmd
 	if cmd := m.dialog.StartLoading(); cmd != nil {
@@ -5906,6 +5975,66 @@ func (m *UI) cycleYoloLevel() config.YoloLevel {
 		next = config.YoloOff
 	}
 	m.com.Workspace.PermissionSetYoloLevel(next)
-	m.setEditorPrompt(next != config.YoloOff)
+	m.refreshEditorPrompt()
 	return next
+}
+
+// cycleBouncerMode advances the workspace's runtime bouncer
+// mode through the Off → Shadow → Enforce → Off cycle and returns the new
+// mode. This is a runtime-only change: it never writes config.
+func (m *UI) cycleBouncerMode() permission.BouncerMode {
+	var next permission.BouncerMode
+	switch m.com.Workspace.PermissionBouncerMode() {
+	case permission.BouncerOff:
+		next = permission.BouncerShadow
+	case permission.BouncerShadow:
+		next = permission.BouncerEnforce
+	default:
+		next = permission.BouncerOff
+	}
+	m.com.Workspace.PermissionSetBouncerMode(next)
+	m.refreshEditorPrompt()
+	return next
+}
+
+// handleCycleBouncerKey cycles the bouncer mode from the keyboard and
+// reports the new mode, or explains why nothing happened.
+func (m *UI) handleCycleBouncerKey() tea.Cmd {
+	if !m.com.Workspace.PermissionBouncerConfigured() {
+		return util.ReportInfo("No bouncer configured")
+	}
+	return util.ReportInfo("Bouncer: " + string(m.cycleBouncerMode()))
+}
+
+// triageNudgeThreshold is the minimum number of unresolved permission
+// decisions in the lookback window that triggers the startup nudge to run
+// "anvil permissions triage".
+const triageNudgeThreshold = 50
+
+// triageNudgeLookback is how far back unresolved permission decisions are
+// counted for the startup nudge, and how often a triage run is expected.
+const triageNudgeLookback = 7 * 24 * time.Hour
+
+// checkTriageNudge checks once at startup whether enough unresolved
+// permission decisions have piled up in the last week to recommend
+// running permission triage, returning a [triageNudgeMsg] if so. The
+// one-time guard against showing it more than once lives on the model and
+// is applied when the message is handled in Update, not here.
+func (m *UI) checkTriageNudge() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		count, err := m.com.Workspace.PermissionUnresolvedCount(ctx, time.Now().Add(-triageNudgeLookback))
+		if err != nil {
+			slog.Debug("Failed to count unresolved permission decisions", "error", err)
+			return nil
+		}
+		if count < triageNudgeThreshold {
+			return nil
+		}
+		if last := m.com.Workspace.PermissionLastTriage(); !last.IsZero() && time.Since(last) < triageNudgeLookback {
+			return nil
+		}
+		return triageNudgeMsg{count: count}
+	}
 }

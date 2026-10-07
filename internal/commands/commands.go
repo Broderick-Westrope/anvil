@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/entrydir"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
 )
@@ -25,6 +27,12 @@ var namedArgPattern = regexp.MustCompile(`\$([A-Z][A-Z0-9_]*)`)
 const (
 	userCommandPrefix    = "user:"
 	projectCommandPrefix = "project:"
+
+	// CommandFileName is the entry file of a command. Every command is a
+	// directory directly inside a commands directory, named after the command
+	// and holding a COMMAND.md; any other files in it are resources the
+	// command can reference.
+	CommandFileName = "COMMAND.md"
 )
 
 // Argument represents a command argument with its metadata.
@@ -57,6 +65,9 @@ type CustomCommand struct {
 	Arguments    []Argument
 	Source       string // "" = user, "project" = project, "plugin:{name}" = plugin.
 	DisplayName  string // Set by collision detection. Empty = use Name.
+	// Location is the path to the command's COMMAND.md, so the agent can
+	// resolve the files it bundles.
+	Location string
 }
 
 // commandFrontmatter is the YAML structure expected in command .md files.
@@ -96,7 +107,7 @@ func LoadCustomCommands(cfg *config.Config) ([]CustomCommand, error) {
 // pass them to avoid redundant filesystem walks and TOCTOU divergence.
 func LoadAllCommands(cfg *config.Config, plugins []*plugin.Plugin) ([]CustomCommand, error) {
 	if plugins == nil {
-		plugins = plugin.DiscoverAll(cfg.Plugins)
+		plugins = plugin.DiscoverAll(cfg.Plugins, nil)
 	}
 
 	var all []CustomCommand
@@ -197,6 +208,24 @@ func applyCommandCollisions(commands []CustomCommand) {
 	plugin.DetectCollisions(ptrs)
 }
 
+// SourcePaths returns every directory commands are loaded from: the user and
+// project command directories plus each plugin's commands directory. Files
+// under these paths are command resources the agent may read without a
+// permission prompt, the same way skill directories are treated.
+func SourcePaths(cfg *config.Config, plugins []*plugin.Plugin) []string {
+	sources := buildCommandSources(cfg)
+	paths := make([]string, 0, len(sources)+len(plugins))
+	for _, src := range sources {
+		paths = append(paths, src.path)
+	}
+	for _, p := range plugins {
+		if p.CommandsPath != "" {
+			paths = append(paths, p.CommandsPath)
+		}
+	}
+	return paths
+}
+
 func buildCommandSources(cfg *config.Config) []commandSource {
 	return []commandSource{
 		{
@@ -234,41 +263,56 @@ func loadFromSource(source commandSource) ([]CustomCommand, error) {
 		return nil, nil
 	}
 
+	entries, err := os.ReadDir(source.path)
+	if err != nil {
+		return nil, err
+	}
+	entrydir.WarnStrayMarkdown(source.path, CommandFileName, "command")
+
 	var commands []CustomCommand
-
-	err := filepath.WalkDir(source.path, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !isMarkdownFile(d.Name()) {
-			return err
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		dir := filepath.Join(source.path, entry.Name())
+		// Stat rather than entry.IsDir so symlinked command directories load.
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			continue
+		}
+		commandFile := filepath.Join(dir, CommandFileName)
+		if !hasEntryFile(commandFile) {
+			slog.Warn("Ignoring directory without a "+CommandFileName, "path", dir)
+			continue
 		}
 
-		cmd, err := loadCommand(path, source.path, source.prefix)
+		cmd, err := loadCommand(commandFile, source.prefix)
 		if err != nil {
-			slog.Warn("Failed to load command, skipping", "path", path, "error", err)
-			return nil // Skip invalid files.
+			slog.Warn("Failed to load command, skipping", "path", commandFile, "error", err)
+			continue
 		}
-
 		cmd.Source = source.source
 		commands = append(commands, cmd)
-		return nil
-	})
-
-	return commands, err
+	}
+	return commands, nil
 }
 
-func loadCommand(path, baseDir, prefix string) (CustomCommand, error) {
+// loadCommand parses the COMMAND.md at path. The command is named after the
+// directory holding it.
+func loadCommand(path, prefix string) (CustomCommand, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return CustomCommand{}, err
 	}
 
-	id := buildCommandID(path, baseDir, prefix)
+	id := prefix + filepath.Base(filepath.Dir(path))
 
 	// Normalise line endings.
 	text := string(bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n")))
 
 	cmd := CustomCommand{
-		ID:   id,
-		Name: id,
+		ID:       id,
+		Name:     id,
+		Location: path,
 	}
 
 	// Look for frontmatter delimited by "---".
@@ -361,21 +405,19 @@ func extractArgNames(content string) []Argument {
 	return args
 }
 
-func buildCommandID(path, baseDir, prefix string) string {
-	relPath, _ := filepath.Rel(baseDir, path)
-	parts := strings.Split(relPath, string(filepath.Separator))
-
-	// Remove .md extension from last part
-	if len(parts) > 0 {
-		lastIdx := len(parts) - 1
-		parts[lastIdx] = strings.TrimSuffix(parts[lastIdx], filepath.Ext(parts[lastIdx]))
+func hasEntryFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
 	}
-
-	return prefix + strings.Join(parts, ":")
-}
-
-func isMarkdownFile(name string) bool {
-	return strings.HasSuffix(strings.ToLower(name), ".md")
+	// Stat ignores case on case-insensitive filesystems; require the exact
+	// name, as skill discovery does for SKILL.md.
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return false
+	}
+	name := filepath.Base(path)
+	return slices.ContainsFunc(entries, func(entry fs.DirEntry) bool { return entry.Name() == name })
 }
 
 func GetMCPPrompt(cfg *config.ConfigStore, clientID, promptID string, args map[string]string) (string, error) {

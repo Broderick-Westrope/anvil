@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	mcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/logo"
@@ -91,6 +92,13 @@ func (m *UI) modelInfo(width int) string {
 				extraLines = append(extraLines, elapsedStr)
 			}
 		}
+	}
+
+	// Show a short, muted indicator when the runtime bouncer
+	// is active. Nothing is added when it's off (or unconfigured, which
+	// always reports off).
+	if mode := m.com.Workspace.PermissionBouncerMode(); mode != permission.BouncerOff {
+		extraLines = append(extraLines, m.com.Styles.ModelInfo.Stats.Render("bouncer:"+string(mode)))
 	}
 
 	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, extraLines...)
@@ -190,25 +198,31 @@ func (m *UI) updateSidebarScrollState() {
 	contentHeight := contentRect.Dy()
 
 	// Render all items without truncation; virtual scrolling handles overflow.
+	jobsSection := m.jobsInfo(contentWidth, true, m.clock())
 	lspSection := m.lspInfo(contentWidth, len(m.lspStates), true)
 	mcpSection := m.mcpInfo(contentWidth, mcpCount(m.com.Config().MCP.Sorted(), m.mcpStates), true)
 	skillsSection := m.skillsInfo(contentWidth, len(m.skillStatusItems()), true)
 
 	// Build the scrollable content.
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
+	sections := []string{
 		title,
 		"",
 		cwd,
 		"",
 		m.modelInfo(contentWidth),
 		"",
+	}
+	if jobsSection != "" {
+		sections = append(sections, jobsSection, "")
+	}
+	sections = append(sections,
 		lspSection,
 		"",
 		mcpSection,
 		"",
 		skillsSection,
 	)
+	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
 	totalLines := strings.Count(content, "\n") + 1
 	m.sidebarContent = content

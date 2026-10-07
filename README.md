@@ -19,6 +19,7 @@
 - **Lazy MCP Loading:** defer heavy MCP tool schemas from the LLM context until needed — the agent or human enables them on demand, saving 50k+ tokens per server
 - **LSP Memory Management:** concurrent sessions in the same Go repo share a single gopls daemon instead of running one each, and any LSP server left idle is shut down and restarted on demand ([details](#shared-gopls-daemon))
 - **Granular Permissions:** pattern-based allow/ask/deny rules per tool and per input (e.g. allow `git status *` but deny `rm *`), with chained-command analysis so dangerous commands can't ride along with allowed ones, editable patterns at the prompt, and session or forever grants ([details](#tool-permissions))
+- **Permission Bouncer:** an optional classifier that answers the prompts your rules leave open, letting routine calls in, turning dangerous ones away, and sending the uncertain ones to you, plus a triage command that turns repeated approvals into explicit rules so fewer calls need either ([details](#bouncer))
 - **Smart Session Titles:** finding old sessions is easier thanks to titles generated from the first real exchange (not your opening prompt); rename or regenerate them from the command palette — manual titles are never overwritten
 - **Plugins:** bundle skills, slash commands, and custom agents into a single installable package with manifest-based discovery and auto-approved file access
 - **Quality of Life:** autocomplete for commands, skills, and builtins; Ctrl+C clears the entire input; Alt+Enter newline in Ghostty; paste no longer clobbers existing prompt text
@@ -85,40 +86,52 @@ Anvil:
 - [Kimi Code](https://www.kimi.com/membership/pricing)
 - [MiniMax Coding Plan](https://platform.minimax.io/subscribe/coding-plan)
 
-## Finding sessions after a force-quit
+## Finding sessions after a restart or force-quit
 
 Anvil automatically records the current conversation in each interactive window,
-including its working directory, full session ID, and title. After killing a
-stuck process or force-quitting your terminal, run this from any directory:
+including its working directory, full session ID, and title. After a restart,
+logout, or force-quit, run this from any directory:
 
 ```bash
 anvil session recover
-anvil session recover --json
+anvil session recover --print-commands
 ```
 
-The list includes interrupted windows across projects, not your entire session
-history. Windows still running (including detached terminal multiplexer windows)
-are excluded. Normal exits remove their records. No pinning or action before a
-crash is needed, and listing records does not consume them or restart any work.
+The list shows the windows lost in the most recent interruption, grouped by
+when they stopped. Add `--all` to include earlier interruptions, or `--json`
+for machine-readable output. Windows still running (including detached
+terminal multiplexer windows) are excluded, as are sessions that were deleted
+or never got a message. Titles come from the session store, so they reflect
+titles generated after the window was lost. No pinning or action before a
+restart is needed, and listing records does not consume them or restart any
+work.
 
-Use a listed directory and ID to reopen a conversation:
+`--print-commands` prints each session's title as a comment, followed by a
+command that changes into its original directory and reopens it:
 
 ```bash
-anvil --cwd /path/to/project --session <session-id>
+# Fix the flaky login test
+cd '/path/to/project' && anvil --session <session-id>
 ```
 
-Once you have recovered what you need, dismiss the interrupted records with
-`anvil session recover --clear`. This does not delete conversations or records
-owned by running windows. Until cleared, older interrupted records can reappear
-when a resumed conversation is no longer open.
+Paste each `cd` line into a new terminal tab. Reopening a session dismisses its
+interrupted record, so the list shrinks as you work through it. To dismiss
+the rest without reopening them, run `anvil session recover --clear`. This
+does not delete conversations or records owned by running windows.
+
+A window counts as interrupted when it is killed, loses its terminal, or
+receives `SIGTERM` (as macOS sends during restart and logout). Quitting
+normally removes its record.
 
 Records are private files in the global Anvil data directory's `recovery/`
-folder (normally `~/.local/share/anvil/recovery/`). They are saved atomically and
-synced by a background writer when the current session or title changes, so a
-sudden kill immediately after a switch can leave the previous session recorded.
-This only tracks windows started with a build that supports recovery; it cannot
-reconstruct windows killed before the feature was installed. It does not restore
-terminal layouts, in-flight tools, or unsent input.
+folder (normally `~/.local/share/anvil/recovery/`). They are saved atomically
+by a background writer when the current session or title changes, and
+refreshed every minute so windows lost together can be grouped. A sudden kill
+immediately after a switch can leave the previous session recorded. This only
+tracks windows started with a build that supports recovery; it cannot
+reconstruct windows killed before the feature was installed, and records
+written before grouping existed are grouped by when they last changed. It does
+not restore terminal layouts, in-flight tools, or unsent input.
 
 ## Pinned Sessions
 
@@ -165,6 +178,7 @@ or globally, with the following priority:
 1. `.anvil.json`
 2. `anvil.json`
 3. `$HOME/.config/anvil/anvil.json`
+4. `$HOME/.local/share/anvil/anvil.json` (written by Anvil itself)
 
 Configuration itself is stored as a JSON object:
 
@@ -176,7 +190,9 @@ Configuration itself is stored as a JSON object:
 ```
 
 As an additional note, Anvil also stores persistent data in one additional
-location:
+location. Anything you set in your own config files takes precedence over what
+Anvil has written here, so a model picked in the UI only sticks for settings
+your config leaves unset:
 
 ```bash
 # Unix
@@ -196,6 +212,29 @@ they are automatically migrated into the global database on first startup.
 >
 > - `ANVIL_GLOBAL_CONFIG`
 > - `ANVIL_GLOBAL_DATA`
+
+After editing config or running `anvil permissions triage`, run **Reload
+Config & Plugins** from the command palette (`ctrl+p`). Permission rules,
+bouncer thresholds, hooks, agents, and plugins apply immediately, and model
+changes apply from the next turn. Changes to MCP servers, LSPs, and the
+bouncer connection need `/reload-instance`, and the reload names any that are
+pending.
+
+### Reloading
+
+`/reload-instance` (or **Reload Instance** in the palette) restarts Anvil on
+the `anvil` binary currently on disk, resuming the same session in the same
+terminal. Unlike **Reload Config & Plugins**, it applies everything: new code,
+MCP servers, LSPs, and the bouncer connection. It carries over unsent editor
+text, the yolo level, the bouncer mode, `--debug`, and `--data-dir`.
+Background jobs are stopped and attachments are dropped, so Anvil asks first
+when either would be lost, and it refuses while the agent is running. The new
+binary is checked before the old one exits; if it still fails to start, the
+terminal shows a command that resumes where you were. A reload behaves like
+quitting and resuming by hand: the new process starts from the environment
+Anvil started with, then loads `.env` and config afresh. On Windows each
+reload keeps the previous process waiting as a parent. A newer binary may
+migrate the database while older instances are still running.
 
 ### LSPs
 
@@ -452,10 +491,24 @@ Commands that run another command given in their arguments — `env`, `sudo`,
 `xargs`, `timeout`, `nice`, `nohup`, `command`, `exec` and friends — also
 contribute the inner command as a segment, as does the body of a
 `find -exec` or `-ok` clause. Allowing the wrapper doesn't implicitly allow
-everything it can launch.
+everything it can launch. Shell code passed as a string to `sh -c`,
+`bash -c`, `eval`, or `env -S` is split and evaluated too.
+
+Each command is also matched in a normalised spelling, with quotes and
+escapes removed, braces expanded, and paths reduced to the command name,
+so a deny rule can't be dodged by respelling the command:
+
+```
+'rm' -rf x    r''m -rf x    \rm -rf x    /bin/rm -rf x    {rm,-rf} x
+```
+
+All of these are denied by `"rm *": "deny"`. Command names only known at
+runtime (`$cmd`, `$(echo rm)`) can't be resolved, so they always prompt.
 
 Because segments combine worst-outcome-first, splitting these out can only
-make a command stricter, never more permissive.
+make a command stricter, never more permissive. The one cost is that a
+quoted command name such as `"git" status` prompts even when `git status *`
+is allowed.
 
 #### Granting at the Prompt
 
@@ -470,8 +523,162 @@ or your user config.
 #### Yolo Mode
 
 Running with `--yolo` turns every `ask` into `allow` while still honouring
-`deny` rules. `--yolo=full` bypasses permissions entirely, including `deny`.
-Be very, very careful with these.
+`deny` rules. `--yolo=full` bypasses permissions entirely, including `deny`
+rules and the [bouncer](#bouncer). Be very, very careful with these.
+
+`ctrl+y` cycles yolo off, standard, and full while Anvil is running. The
+editor gutter shows the current level: an amber ` ! ` for standard and a red
+`!!!` for full.
+
+#### Bouncer
+
+The bouncer is an optional classifier that answers permission prompts on
+your behalf. Like a bouncer at a bar, it lets a call in, turns it away, or
+checks its ID by sending it to you. It only sees calls that no `allow` or
+`deny` rule resolves, so explicit rules always win.
+
+```
+Tool call
+  explicit allow or deny rule   ->  apply the rule
+  no rule (or an ask rule)      ->  bouncer
+      allow                     ->  run
+      deny                      ->  block, and stop the agent's turn
+      unsure, error, or skipped ->  prompt you (or approve, under --yolo)
+```
+
+It talks to any TypeSafe-compatible System One endpoint, such as
+[Jev](https://docs.typesafe.ai). Each check costs about 1,100 input tokens
+and 250ms. Configure it in your **user-level** config only
+(`~/.config/anvil/anvil.json`). A `bouncer` block in a project or workspace
+config is ignored, so a cloned repo can't switch it on or loosen it.
+
+```json
+{
+  "bouncer": {
+    "mode": "enforce",
+    "url": "https://api.typesafe.ai/v1/systemone",
+    "model": "jev-1.13.0",
+    "auth_scheme": "Bearer",
+    "api_key_env": "TYPESAFE_API_KEY"
+  }
+}
+```
+
+- `mode`: `off` (the default) makes no calls. `shadow` asks the bouncer but
+  still prompts you, logging its verdict alongside your decision. `enforce`
+  acts on its verdict.
+- `api_key_env`: the environment variable holding the key (default
+  `BASETEN_API_KEY`). It's read once at startup, before any project `env`
+  is applied.
+- `send_user_messages`: whether your last three messages are sent as
+  context (default `true`). The bouncer uses them to tell an action you
+  asked for from one you didn't.
+- Pin a versioned `model` so a new release can't silently change verdicts.
+- `timeout_seconds` and the thresholds below are documented in the schema.
+
+The bouncer scores each call on five hazard axes (`destructive`,
+`exfiltration`, `credentials`, `remote_exec`, `shared_infra`) and on how
+bad a mistake would be (`severity`, 0 to 3). A call comes to you when:
+- any axis reaches its own `escalate_at` (0.5 for `destructive`, 0.6 for
+  the rest);
+- an axis reaches `concern_at` (0.35) and severity reaches
+  `severity_concern` (1.5), so a borderline call only bothers you when
+  getting it wrong would hurt; or
+- severity alone reaches `severity_escalate` (2).
+
+It's flagged as a deny when an axis reaches `deny_at` (0.9), severity
+reaches `severity_deny` (2), and you didn't ask for it
+(`user_requested_at`, 0.7). A deny isn't final: it comes to you as a red
+prompt that starts on **Deny** and has no "allow forever" option. Allow it
+if the bouncer got it wrong, or deny it, with an optional reason for the
+agent. Your answer is logged next to the bouncer's verdict, so
+`anvil permissions stats` shows how often its denials were wrong. In yolo
+mode, denies are the only prompts you'll see. Setting `escalate_at`
+applies one value to every axis; `escalate_at_axes` overrides individual
+ones:
+
+```json
+{
+  "bouncer": {
+    "escalate_at_axes": { "credentials": 0.5, "destructive": 0.8 }
+  }
+}
+```
+
+Some calls always come to you without a classifier call:
+- writes to protected paths (`.git/`, `anvil.json`, CI workflows, shell rc
+  files, `~/.ssh`);
+- reads of likely secrets;
+- command names only known at runtime;
+- MCP calls with no arguments, and oversized inputs;
+- any call while the bouncer is unreachable.
+
+When it does pass a call to you, the prompt shows its full verdict, with
+the axes that triggered it highlighted.
+
+Prompts the bouncer escalated or flagged as a deny also get a second
+opinion from your small model, which reads your last five messages and
+judges whether you asked for the call. It can only quote you: to say it
+would allow a call, it has to give your exact words, and Anvil checks they
+appear in your messages. It can soften a deny to an ordinary prompt but
+never approve it, and it never approves a call with severity 2.5 or more.
+For now it runs in shadow: its opinion is shown under the bouncer's as
+`Reviewer (shadow)` and logged, but it never changes what happens.
+`anvil permissions stats` compares it with your answers. Set
+`"review": "off"` in the `bouncer` block to turn it off. `ctrl+q` cycles the mode while
+Anvil is running, without changing your config. The editor gutter shows a
+hollow ` ◇ ` in shadow and a solid ` ◆ ` in enforce, on the line above any
+yolo badge. The bouncer is warmed up in the background whenever it's
+switched on, so a slow cold start doesn't delay your first prompt.
+
+> [!WARNING]
+> Every call the bouncer assesses sends the command, diff, or MCP arguments
+> (after best-effort secret redaction) and, by default, your recent
+> messages to the configured endpoint. Only point it at a provider you're
+> allowed to send that data to.
+
+To check a model before trusting it, run the calibration harness against
+its synthetic and real-world cases. It fails if any dangerous case is allowed:
+
+```bash
+ANVIL_BOUNCER_LIVE=1 \
+ANVIL_BOUNCER_URL=https://api.typesafe.ai/v1/systemone \
+ANVIL_BOUNCER_MODEL=jev-1.13.0 \
+ANVIL_BOUNCER_AUTH_SCHEME=Bearer \
+ANVIL_BOUNCER_API_KEY_ENV=TYPESAFE_API_KEY \
+go test ./internal/bouncer -run TestLiveCalibration -v
+```
+
+#### Turning Approvals into Rules
+
+Every permission decision is logged with who made it: a rule, the bouncer,
+yolo, or you. The log is kept for 90 days. Two commands read it:
+
+```bash
+# Propose explicit rules for calls you keep approving.
+anvil permissions triage --days 14
+
+# See how calls were decided, and how the bouncer is doing.
+anvil permissions stats --days 30
+```
+
+`triage` groups repeated approvals into narrow patterns and lets you pick
+which to write to your config:
+- Tier A patterns are safe for any argument (`git status *`,
+  `git rev-parse *`) and can be applied in bulk with `--yes`.
+- Tier B patterns need you to review every argument they allow, so you
+  pick them one at a time.
+- Destructive, exec, network, and mutating commands are never proposed.
+- Every proposal is checked against all logged decisions it would match
+  and simulated before it's written.
+- Deny rules are only proposed from denials you made yourself, so the
+  bouncer's false positives never become permanent rules.
+
+Anvil reminds you at startup once 50 undecided calls have built up in a
+week. `stats` reports how often you approve the bouncer's escalations,
+broken down by the axis that triggered them. An axis you approve nearly
+every time is one the bouncer is too cautious about, and a good candidate
+for an explicit allow rule.
 
 > [!NOTE]
 > The older `permissions.allowed_tools` list is deprecated. It still works
@@ -618,6 +825,37 @@ cd "$env:LOCALAPPDATA\anvil\skills"
 git clone https://github.com/anthropics/skills.git _temp
 mv _temp/skills/* . ; rm -r -force _temp
 ```
+
+### Custom Commands
+
+Custom commands are markdown prompts you run as slash commands. Anvil loads
+them from `~/.config/anvil/commands/`, `~/.anvil/commands/`, the project's
+`.anvil/commands/`, and each plugin's commands directory.
+
+Each command lives in its own directory:
+
+```
+commands/
+├── commit/                  # /commit
+│   └── COMMAND.md
+└── wtp-pruning/             # /wtp-pruning
+    ├── COMMAND.md
+    └── references/
+        └── cleanup.md
+```
+
+Every command is a directory directly inside a commands directory, named after
+the command and holding a `COMMAND.md`, the same way skills hold a `SKILL.md`.
+Other files in the directory are resources the command can reference; by
+convention, put supporting docs in `references/`. When a command runs, Anvil
+records its location so the agent can resolve relative paths such as
+`references/cleanup.md`, and the agent reads those files without a permission
+prompt.
+
+Commands are not nested, and `COMMAND.md` must be uppercase. Anvil logs a
+warning for anything it skips: loose `.md` files in a commands directory
+(skills directories get the same check) and directories without a
+`COMMAND.md`.
 
 ### Desktop notifications
 

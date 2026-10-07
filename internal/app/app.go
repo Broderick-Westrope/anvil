@@ -3,6 +3,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,15 +22,20 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/format"
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/log"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/permission/decisionlog"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
@@ -61,6 +68,12 @@ type App struct {
 	LSPManager *lsp.Manager
 
 	config *config.ConfigStore
+	// bouncer is the same Bouncer the permission service assesses with,
+	// kept so ApplyConfig can swap its thresholds. Nil when unconfigured.
+	bouncer *bouncer.Bouncer
+	// reviewCompleter gives the bouncer's reviewer the small model once
+	// the coordinator exists.
+	reviewCompleter *smallCompleter
 
 	serviceEventsWG *sync.WaitGroup
 	eventsCtx       context.Context
@@ -71,11 +84,27 @@ type App struct {
 	globalCtx          context.Context
 	cleanupFuncs       []func(context.Context) error
 	agentNotifications *pubsub.Broker[notify.Notification]
+	jobEvents          *jobevents.Store
+	jobWaker           *jobWaker
+	jobs               *jobLifecycle // Nil when job persistence is unavailable.
 }
 
 // New initializes a new application instance.
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
+	recorder := decisionlog.New(q)
+	// Prune old decisions once at startup in the background. Failure only
+	// means the table keeps extra rows until the next start.
+	go func() {
+		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := decisionlog.Prune(pruneCtx, q, time.Now()); err != nil {
+			slog.Warn("Failed to prune permission decisions", "error", err)
+		}
+	}()
+	store.SetBouncerValidator(func(b *config.Bouncer) error {
+		return BouncerThresholds(b).Validate()
+	})
 	sessions := session.NewService(q, conn)
 	messages := message.NewService(q, message.WithConn(conn))
 	cfg := store.Config()
@@ -84,24 +113,54 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	if cfg.Permissions != nil {
 		configRules = cfg.Permissions.Rules
 	}
+	permOpts := []permission.Option{permission.WithDecisionRecorder(recorder)}
+	var bnc *bouncer.Bouncer
+	completer := &smallCompleter{}
+	if ta := store.TrustedBouncer(); ta != nil {
+		if setup, ok := buildBouncerOption(ta, sessions, messages); ok {
+			permOpts = append(permOpts, setup.option)
+			if opt, ok := buildReviewOption(ta.Config, sessions, messages, completer); ok {
+				permOpts = append(permOpts, opt)
+			}
+			bnc = setup.bouncer
+			slog.Info("Bouncer configured",
+				"mode", cmp.Or(ta.Config.Mode, config.BouncerOff),
+				"model", ta.Config.Model)
+			go warmBouncer(ctx, setup.bouncer, setup.mode)
+		}
+	}
 
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
-		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store),
+		Permissions: permission.NewPermissionService(store.WorkingDir(), yoloLevel, configRules, store, permOpts...),
 		FileTracker: filetracker.NewService(q),
 		Queries:     q,
 		LSPManager:  lsp.NewManager(store),
 
 		globalCtx: ctx,
 
-		config: store,
+		config:          store,
+		bouncer:         bnc,
+		reviewCompleter: completer,
 
 		events:             pubsub.NewBroker[tea.Msg](),
 		serviceEventsWG:    &sync.WaitGroup{},
 		tuiWG:              &sync.WaitGroup{},
 		agentNotifications: pubsub.NewBroker[notify.Notification](),
 	}
+
+	mgr := shell.GetBackgroundShellManager()
+	app.startJobPersistence(ctx, q, mgr)
+	app.jobEvents = jobevents.NewStore(app.jobOwner(mgr))
+	if app.jobs != nil {
+		if err := app.jobEvents.Persist(ctx, q, app.jobs.store.InstanceID()); err != nil {
+			slog.Warn("Failed to load background job events; new events will not survive a restart", "error", err)
+		}
+	}
+	mgr.SetEventSink(app.jobEvents)
+	app.jobWaker = newJobWaker(app.jobEvents, sessions)
+	go app.jobWaker.run(ctx)
 
 	app.setupEvents()
 
@@ -120,9 +179,17 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Release the shared database connection on shutdown. The pool
 	// closes the underlying *sql.DB when the last reference is released.
+	// Cleanup funcs run concurrently, so the decision log is flushed here
+	// first. If the flush times out the connection is left open, since
+	// the recorder is still writing and the process is exiting anyway.
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
-		func(context.Context) error { return db.ReleaseGlobal() },
+		func(ctx context.Context) error {
+			if err := recorder.Close(ctx); err != nil {
+				return fmt.Errorf("permission decision log did not flush before shutdown: %w", err)
+			}
+			return db.ReleaseGlobal()
+		},
 		func(ctx context.Context) error { return mcp.Close(ctx) },
 	)
 
@@ -132,6 +199,9 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		return app, nil
 	}
 	if err := app.InitOrchestratorAgent(ctx); err != nil {
+		if closeErr := recorder.Close(ctx); closeErr != nil {
+			slog.Warn("Failed to close permission decision log after initialization error", "error", closeErr)
+		}
 		return nil, fmt.Errorf("failed to initialize orchestrator agent: %w", err)
 	}
 
@@ -161,6 +231,12 @@ func (app *App) Config() *config.Config {
 // Store returns the config store.
 func (app *App) Store() *config.ConfigStore {
 	return app.config
+}
+
+// PermissionUnresolvedCount returns how many logged permission decisions
+// since the given time were not resolved by a configured rule.
+func (app *App) PermissionUnresolvedCount(ctx context.Context, since time.Time) (int, error) {
+	return decisionlog.CountUnresolvedSince(ctx, app.Queries, since)
 }
 
 // Events returns a per-caller subscription channel for application events.
@@ -550,12 +626,82 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.FileTracker,
 		app.LSPManager,
 		app.agentNotifications,
+		app.jobEvents,
+		app.jobArchive(),
+		app.jobWaker.trigger,
 	)
 	if err != nil {
 		slog.Error("Failed to create orchestrator agent", "err", err)
 		return err
 	}
+	app.jobWaker.setAgent(app.AgentCoordinator)
+	app.reviewCompleter.set(app.AgentCoordinator)
 	return nil
+}
+
+// startJobPersistence persists published jobs in the global database
+// so they survive eviction and restarts. On failure, jobs run in memory
+// only.
+func (app *App) startJobPersistence(ctx context.Context, q db.Querier, mgr *shell.BackgroundShellManager) {
+	jobs, err := newJobLifecycle(q, jobstore.DefaultLogDir())
+	if err == nil {
+		err = jobs.Start(ctx)
+	}
+	if err != nil {
+		slog.Warn("Failed to start background job persistence; jobs will not survive a restart", "error", err)
+		return
+	}
+	app.jobs = jobs
+	mgr.SetRecorder(jobs.store)
+}
+
+// jobOwner resolves the session that owns a job, falling back to the
+// persisted record for jobs no longer in memory.
+func (app *App) jobOwner(mgr *shell.BackgroundShellManager) jobevents.OwnerFunc {
+	return func(id string) (string, bool) {
+		if bs, ok := mgr.Get(id); ok {
+			return bs.Info().SessionID, true
+		}
+		if app.jobs == nil {
+			return "", false
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		rec, ok, err := app.jobs.store.Get(ctx, id)
+		if err != nil || !ok {
+			return "", false
+		}
+		return rec.Info.SessionID, true
+	}
+}
+
+// jobArchive returns the persisted job store for the job tools, or nil.
+func (app *App) jobArchive() tools.JobArchive {
+	if app.jobs == nil {
+		return nil
+	}
+	return app.jobs.store
+}
+
+// EnableJobWake lets background job events start turns for idle
+// sessions open in the TUI, when options.background_jobs.wake_on_event
+// is set. Only the interactive TUI calls it; `anvil run` never wakes.
+func (app *App) EnableJobWake() {
+	if !app.config.Config().Options.WakeOnJobEvent() {
+		return
+	}
+	app.jobWaker.enabled.Store(true)
+	app.jobWaker.trigger("")
+}
+
+// SetComposerState tells the job waker whether a session is open in the
+// TUI and whether its composer has a draft or is navigating. It is a
+// no-op when the app has no waker.
+func (app *App) SetComposerState(sessionID string, open, hasDraft, navigating bool) {
+	if app.jobWaker == nil {
+		return
+	}
+	app.jobWaker.SetComposerState(sessionID, open, hasDraft, navigating)
 }
 
 // Subscribe sends events to the TUI as tea.Msgs.
@@ -596,6 +742,14 @@ func (app *App) Shutdown() {
 	start := time.Now()
 	defer func() { slog.Debug("Shutdown took " + time.Since(start).String()) }()
 
+	// Stop job wakes, publications, and job events before canceling
+	// agents, so nothing new starts while they unwind.
+	if app.jobWaker != nil {
+		app.jobWaker.close()
+	}
+	mgr := shell.GetBackgroundShellManager()
+	mgr.BeginShutdown()
+
 	// First, cancel all agents and wait for them to finish. This must complete
 	// before closing the DB so agents can finish writing their state.
 	if app.AgentCoordinator != nil {
@@ -605,6 +759,13 @@ func (app *App) Shutdown() {
 	// Shared shutdown context for all timeout-bounded cleanup.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// CancelAll stops waiting once runs are no longer busy, but a wake
+	// run may still be writing its last state. Let it finish before job
+	// events and the DB are closed below.
+	if app.jobWaker != nil && !app.jobWaker.wait(shutdownCtx) {
+		slog.Warn("Timed out waiting for job wake runs to finish")
+	}
 
 	// Drain any debounced message updates before the DB-close cleanup
 	// runs in the parallel block below. message.Service buffers
@@ -616,30 +777,78 @@ func (app *App) Shutdown() {
 		}
 	}
 
+	exited, abandoned := mgr.KillAll(shutdownCtx)
+	app.finishJobs(mgr, exited, abandoned)
+
+	// Killing jobs may have used up shutdownCtx, so the remaining
+	// cleanup gets its own deadline.
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelCleanup()
+
 	// Now run remaining cleanup tasks in parallel.
 	var wg sync.WaitGroup
 
-	// Kill all background shells.
-	wg.Go(func() {
-		shell.GetBackgroundShellManager().KillAll(shutdownCtx)
-	})
-
 	// Shutdown all LSP clients.
 	wg.Go(func() {
-		app.LSPManager.KillAll(shutdownCtx)
+		app.LSPManager.KillAll(cleanupCtx)
 	})
 
 	// Call all cleanup functions.
 	for _, cleanup := range app.cleanupFuncs {
 		if cleanup != nil {
 			wg.Go(func() {
-				if err := cleanup(shutdownCtx); err != nil {
+				if err := cleanup(cleanupCtx); err != nil {
 					slog.Error("Failed to cleanup app properly on shutdown", "error", err)
 				}
 			})
 		}
 	}
 	wg.Wait()
+}
+
+// finishJobs fences background jobs off from the database and records
+// how they ended: anvil_exit for jobs that exited during shutdown and
+// abandoned for jobs that outlived the kill. It then saves pending job
+// events and stops job persistence, after which nothing job-related
+// writes to the database.
+func (app *App) finishJobs(mgr *shell.BackgroundShellManager, exited, abandoned []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	unfinalized := mgr.Close(ctx)
+	if app.jobs != nil {
+		for _, job := range unfinalized {
+			reason := shutdownEndReason(job, exited, abandoned)
+			if err := app.jobs.store.Finalize(ctx, job.ID, job.Info, reason, job.Stats); err != nil {
+				slog.Warn("Failed to record background job end state on shutdown", "id", job.ID, "error", err)
+			}
+		}
+	}
+
+	if app.jobEvents != nil {
+		if err := app.jobEvents.Flush(ctx); err != nil {
+			slog.Warn("Failed to save background job events on shutdown", "error", err)
+		}
+		app.jobEvents.Close(ctx)
+	}
+	if app.jobs != nil {
+		app.jobs.Close(ctx)
+	}
+}
+
+func shutdownEndReason(job shell.UnfinalizedJob, exited, abandoned []string) string {
+	switch {
+	case slices.Contains(abandoned, job.ID):
+		return shell.EndAbandoned
+	case slices.Contains(exited, job.ID):
+		return shell.EndAnvilExit
+	case job.EndReason != "":
+		return job.EndReason
+	case job.Info.Done:
+		return shell.EndAnvilExit
+	default:
+		return shell.EndAbandoned
+	}
 }
 
 // checkForUpdates checks for available updates.

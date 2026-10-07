@@ -5,18 +5,23 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/fantasy"
+	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/permission/segment"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -100,6 +105,134 @@ func newTestPermissions(t *testing.T) *Permissions {
 		Input:      "git status",
 	}
 	return NewPermissions(com, perm)
+}
+
+// escalationSummary is an escalated verdict with every kind of trigger.
+func escalationSummary() *permission.AssessmentSummary {
+	return &permission.AssessmentSummary{
+		Outcome: "escalate",
+		Scores: []permission.AssessmentScore{
+			{Name: "remote_exec", Value: 0.91, Max: 1, Trigger: permission.TriggerDeny},
+			{Name: "destructive", Value: 0.62, Max: 1, Trigger: permission.TriggerEscalate},
+			{Name: "exfiltration", Value: 0.1, Max: 1},
+			{Name: "credentials", Value: 0.02, Max: 1},
+			{Name: "shared_infra", Value: 0.04, Max: 1},
+			{Name: permission.SeverityAxis, Value: 2.4, Max: 3, Trigger: permission.TriggerEscalate},
+			{Name: permission.UserRequestedAxis, Value: 0.88, Max: 1, Trigger: permission.TriggerMitigate},
+		},
+	}
+}
+
+// TestPermissions_RenderHeaderShowsAssessmentSummary verifies the verdict is
+// added under the header without changing the lines above it, and that
+// every axis is shown.
+func TestPermissions_RenderHeaderShowsAssessmentSummary(t *testing.T) {
+	t.Parallel()
+
+	const width = 100
+
+	withoutNote := newTestPermissions(t)
+	base := ansi.Strip(withoutNote.renderHeader(width))
+	require.NotContains(t, base, "Bouncer")
+
+	p := newTestPermissions(t)
+	p.permission.Bouncer = escalationSummary()
+	p.permission.BouncerNote = p.permission.Bouncer.Note()
+	noted := ansi.Strip(p.renderHeader(width))
+
+	baseLines := strings.Split(base, "\n")
+	notedLines := strings.Split(noted, "\n")
+	require.Equal(t, baseLines, notedLines[:len(baseLines)], "lines before the verdict must be unaffected")
+	block := strings.Join(notedLines[len(baseLines):], "\n")
+	require.Contains(t, block, "Bouncer Escalate")
+	for _, want := range []string{"remote exec 0.91", "destructive 0.62", "exfiltration 0.10", "credentials 0.02", "shared infra 0.04", "severity 2.4/3", "user requested 0.88"} {
+		require.Contains(t, block, want)
+	}
+}
+
+// TestPermissions_AssessmentSummaryWrapsInsteadOfTruncating verifies a narrow
+// dialog wraps the axes onto more lines, never cutting one off, and keeps
+// every line within the content width.
+func TestPermissions_AssessmentSummaryWrapsInsteadOfTruncating(t *testing.T) {
+	t.Parallel()
+
+	const width = 40
+	p := newTestPermissions(t)
+	p.permission.Bouncer = escalationSummary()
+	block := p.renderBouncer(width)
+	plain := ansi.Strip(block)
+
+	lines := strings.Split(plain, "\n")
+	require.Greater(t, len(lines), 2, "the axes should wrap at this width")
+	for _, line := range lines {
+		require.LessOrEqual(t, ansi.StringWidth(line), width, "line %q overflows", line)
+	}
+	require.NotContains(t, plain, "…")
+	for _, sc := range p.permission.Bouncer.Scores {
+		require.Contains(t, strings.Join(strings.Fields(plain), " "), formatAssessmentScore(sc))
+	}
+	// Continuation lines are indented under the value, not the key.
+	require.True(t, strings.HasPrefix(lines[1], strings.Repeat(" ", len("Bouncer "))))
+}
+
+// TestPermissions_AssessmentSummaryHighlightsTriggers verifies each axis is
+// styled by the effect it had, so the cause of an escalation stands out.
+func TestPermissions_AssessmentSummaryHighlightsTriggers(t *testing.T) {
+	t.Parallel()
+
+	p := newTestPermissions(t)
+	ps := p.com.Styles.Dialog.Permissions
+	for _, tt := range []struct {
+		trigger string
+		want    lipgloss.Style
+	}{
+		{permission.TriggerDeny, ps.BouncerDeny},
+		{permission.TriggerEscalate, ps.BouncerEscalate},
+		{permission.TriggerMitigate, ps.BouncerMitigate},
+		{"", ps.BouncerScore},
+	} {
+		sc := permission.AssessmentScore{Name: "destructive", Value: 0.62, Max: 1, Trigger: tt.trigger}
+		p.permission.Bouncer = &permission.AssessmentSummary{Outcome: "escalate", Scores: []permission.AssessmentScore{sc}}
+		require.Contains(t, p.renderBouncer(100), tt.want.Render(formatAssessmentScore(sc)), "trigger %q", tt.trigger)
+	}
+	require.NotEqual(t, ps.BouncerScore.Render("x"), ps.BouncerEscalate.Render("x"), "escalating axes must look different")
+	require.NotEqual(t, ps.BouncerEscalate.Render("x"), ps.BouncerDeny.Render("x"), "deny and escalate must look different")
+}
+
+// TestPermissions_BouncerSkippedAndShadow covers the verdicts without
+// scores and the shadow label.
+func TestPermissions_BouncerSkippedAndShadow(t *testing.T) {
+	t.Parallel()
+
+	p := newTestPermissions(t)
+	p.permission.Bouncer = &permission.AssessmentSummary{Outcome: "skipped", Detail: "protected path"}
+	require.Equal(t, "Bouncer Skipped · protected path", strings.TrimSpace(ansi.Strip(p.renderBouncer(80))))
+
+	p.permission.Bouncer = &permission.AssessmentSummary{Shadow: true, Outcome: "allow", Scores: []permission.AssessmentScore{{Name: "destructive", Value: 0.05, Max: 1}}}
+	got := ansi.Strip(p.renderBouncer(80))
+	require.Contains(t, got, "Allow (shadow)")
+	require.Contains(t, got, "destructive 0.05")
+}
+
+// TestPermissions_BouncerNoteFallbackWraps verifies a plain note with no
+// structured summary wraps instead of being truncated.
+func TestPermissions_BouncerNoteFallbackWraps(t *testing.T) {
+	t.Parallel()
+
+	const width = 40
+	p := newTestPermissions(t)
+	p.permission.BouncerNote = "bouncer: escalate · " + strings.Repeat("axis=0.50 ", 10)
+	plain := ansi.Strip(p.renderBouncer(width))
+	require.NotContains(t, plain, "…")
+	require.Greater(t, len(strings.Split(plain, "\n")), 1)
+	require.Equal(t, 10, strings.Count(plain, "axis=0.50"))
+}
+
+func TestWrapStyled(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, []string{"aa  bb", "cc"}, wrapStyled([]string{"aa", "bb", "cc"}, 6, "  "))
+	require.Equal(t, []string{"abcd…"}, wrapStyled([]string{"abcdefgh"}, 5, "  "))
+	require.Nil(t, wrapStyled(nil, 10, "  "))
 }
 
 // TestPermissions_ActionKeysResolve verifies that action keys produce the
@@ -237,6 +370,107 @@ func TestPermissions_CtrlFTogglesFullscreen(t *testing.T) {
 	require.True(t, p.fullscreen, "ctrl+f should toggle fullscreen on")
 	p.HandleMsg(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
 	require.False(t, p.fullscreen, "ctrl+f should toggle fullscreen off")
+}
+
+func newLongBashPermissions(t *testing.T, lines int) *Permissions {
+	t.Helper()
+	script := make([]string, lines)
+	for i := range script {
+		script[i] = "echo line " + strconv.Itoa(i)
+	}
+	p := newTestPermissions(t)
+	p.permission.Params = tools.BashPermissionsParams{Command: strings.Join(script, "\n")}
+	return p
+}
+
+// drawnSize draws the dialog onto a screen of the given size and returns
+// the bounding box of the non-blank cells.
+func drawnSize(t *testing.T, p *Permissions, width, height int) (int, int) {
+	t.Helper()
+	scr := uv.NewScreenBuffer(width, height)
+	p.Draw(scr, uv.Rect(0, 0, width, height))
+	minX, minY, maxX, maxY := width, height, -1, -1
+	for y := range height {
+		for x := range width {
+			if cell := scr.CellAt(x, y); cell != nil && cell.Content != "" && cell.Content != " " {
+				minX, minY = min(minX, x), min(minY, y)
+				maxX, maxY = max(maxX, x), max(maxY, y)
+			}
+		}
+	}
+	return maxX - minX + 1, maxY - minY + 1
+}
+
+// TestPermissions_LongContentGrowsDialog verifies that simple prompts with
+// long content, like multi-line scripts, get the larger dialog size while
+// short prompts stay compact.
+func TestPermissions_LongContentGrowsDialog(t *testing.T) {
+	t.Parallel()
+
+	const screenW, screenH = 200, 60
+	shortW, shortH := drawnSize(t, newTestPermissions(t), screenW, screenH)
+	longW, longH := drawnSize(t, newLongBashPermissions(t, 200), screenW, screenH)
+
+	require.LessOrEqual(t, shortH, int(screenH*simpleHeightRatio))
+	require.Greater(t, longH, int(screenH*simpleHeightRatio), "long content should use more height")
+	require.Greater(t, longW, shortW, "long content should use more width")
+	require.LessOrEqual(t, longH, screenH-expandedVerticalMargin)
+	require.Greater(t, longH, int(screenH*diffSizeRatio), "long content should use nearly the full height")
+}
+
+// TestPermissions_FullscreenForSimpleContent verifies that ctrl+f makes a
+// non-diff prompt fill the screen.
+func TestPermissions_FullscreenForSimpleContent(t *testing.T) {
+	t.Parallel()
+
+	const screenW, screenH = 200, 60
+	p := newLongBashPermissions(t, 200)
+	p.HandleMsg(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
+	require.True(t, p.fullscreen)
+
+	w, h := drawnSize(t, p, screenW, screenH)
+	require.Equal(t, screenW, w)
+	require.GreaterOrEqual(t, h, screenH-1, "fullscreen should use the full height")
+}
+
+// TestPermissions_PageKeysScrollContent verifies page and home/end keys
+// move the content viewport.
+func TestPermissions_PageKeysScrollContent(t *testing.T) {
+	t.Parallel()
+
+	p := newLongBashPermissions(t, 200)
+	drawnSize(t, p, 200, 60)
+	require.Zero(t, p.viewport.YOffset())
+
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	afterPage := p.viewport.YOffset()
+	require.Positive(t, afterPage)
+
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnd})
+	require.True(t, p.viewport.AtBottom())
+
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	require.True(t, !p.viewport.AtBottom())
+
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyHome})
+	require.Zero(t, p.viewport.YOffset())
+}
+
+// TestPermissions_BashCommandIsHighlighted verifies the bash command is
+// syntax highlighted while keeping its text intact.
+func TestPermissions_BashCommandIsHighlighted(t *testing.T) {
+	t.Parallel()
+
+	const command = "for f in *.go; do\n  echo \"$f\"\ndone"
+	p := newTestPermissions(t)
+	p.permission.Params = tools.BashPermissionsParams{Command: command}
+
+	rendered := p.renderContent(80)
+	plain := newTestPermissions(t).renderContentPanel(command, 80)
+	require.NotEqual(t, plain, rendered, "command should be highlighted")
+	for line := range strings.SplitSeq(command, "\n") {
+		require.Contains(t, ansi.Strip(rendered), line)
+	}
 }
 
 // TestPermissions_NavigationCyclesOptions verifies that tab and arrow keys
@@ -378,4 +612,126 @@ func TestPermissions_SegmentsPrefillGeneralizedPatterns(t *testing.T) {
 	p := NewPermissions(com, perm)
 
 	require.Equal(t, "cd * && go test *", p.patternInput.Value())
+}
+
+// TestPermissions_SegmentsPrefillDedupesPatterns verifies that normalised
+// segment variants which generalise to the same pattern appear once.
+func TestPermissions_SegmentsPrefillDedupesPatterns(t *testing.T) {
+	t.Parallel()
+
+	s := styles.TokyoNight()
+	com := &common.Common{Styles: &s}
+	command := `git commit -m "hello world"`
+	perm := permission.PermissionRequest{
+		ID:            "perm-test",
+		ToolCallID:    "tool-call-test",
+		ToolName:      "bash",
+		Input:         command,
+		InputSegments: segment.Split(command),
+	}
+	p := NewPermissions(com, perm)
+
+	require.Len(t, perm.InputSegments, 2)
+	require.Equal(t, "git commit *", p.patternInput.Value())
+}
+
+func newDenyPermissions(t *testing.T, shadow bool) *Permissions {
+	t.Helper()
+	s := styles.TokyoNight()
+	com := &common.Common{Styles: &s}
+	sum := escalationSummary()
+	sum.Outcome = "deny"
+	sum.Shadow = shadow
+	return NewPermissions(com, permission.PermissionRequest{
+		ID:         "perm-deny",
+		ToolCallID: "tool-call-deny",
+		ToolName:   "bash",
+		Input:      "git push --force",
+		Bouncer:    sum,
+	})
+}
+
+// TestPermissions_BouncerDenyPrompt verifies that a deny prompt starts on
+// Deny, drops Forever, and says it is a deny.
+func TestPermissions_BouncerDenyPrompt(t *testing.T) {
+	t.Parallel()
+
+	p := newDenyPermissions(t, false)
+	require.True(t, p.bouncerDenied())
+	require.Equal(t, []permissionOption{optionAllow, optionSession, optionDeny}, p.options())
+	require.Equal(t, 2, p.selectedOption, "a deny prompt starts on Deny")
+
+	header := ansi.Strip(p.renderHeader(100))
+	require.Contains(t, header, "Bouncer Would Deny")
+	require.Contains(t, header, "blocked unless you allow it")
+	buttons := ansi.Strip(p.renderButtons(100, false))
+	require.NotContains(t, buttons, "Forever")
+	require.Contains(t, buttons, "Deny")
+
+	// Forever is unreachable by key as well as by button.
+	require.Nil(t, p.HandleMsg(keyMsg('f')))
+	require.False(t, p.foreverExpanded)
+
+	// Navigation wraps over the three buttons.
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Equal(t, 0, p.selectedOption)
+	p.HandleMsg(keyMsg('h'))
+	require.Equal(t, 2, p.selectedOption)
+
+	// Enter on Deny asks for a reason; escaping it returns to Deny.
+	require.Nil(t, p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	require.True(t, p.denyReasonVisible)
+	p.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.Equal(t, 2, p.selectedOption)
+
+	// The human can still override.
+	resp, ok := p.HandleMsg(keyMsg('a')).(ActionPermissionResponse)
+	require.True(t, ok)
+	require.Equal(t, PermissionAllow, resp.Action)
+}
+
+// TestPermissions_ShadowDenyIsNormalPrompt verifies that a shadow deny,
+// which never blocks, keeps the normal prompt.
+func TestPermissions_ShadowDenyIsNormalPrompt(t *testing.T) {
+	t.Parallel()
+
+	p := newDenyPermissions(t, true)
+	require.False(t, p.bouncerDenied())
+	require.Len(t, p.options(), 4)
+	require.Equal(t, 0, p.selectedOption)
+	require.Contains(t, ansi.Strip(p.renderHeader(100)), "Permission Required")
+}
+
+// TestPermissions_ReviewRow verifies the reviewer's opinion renders in
+// each state and that a late review updates only its own prompt.
+func TestPermissions_ReviewRow(t *testing.T) {
+	t.Parallel()
+
+	p := newDenyPermissions(t, false)
+	require.Empty(t, p.renderReview(100))
+
+	p.permission.Review = &permission.ReviewSummary{Shadow: true, Pending: true}
+	require.Contains(t, ansi.Strip(p.renderHeader(100)), "Reviewer Checking your recent messages")
+
+	p.SetReview("someone-else", &permission.ReviewSummary{Effect: "allow"})
+	require.True(t, p.permission.Review.Pending, "a review for another prompt is ignored")
+
+	p.SetReview(p.permission.ID, &permission.ReviewSummary{
+		Shadow: true, Effect: "escalate", Quote: "open a PR", QuoteVerified: true, Reason: "a PR needs a push, but not a force push",
+	})
+	row := ansi.Strip(p.renderReview(60))
+	require.Contains(t, row, "Would ask you (shadow)")
+	require.Contains(t, row, "you said “open a PR”")
+	require.Contains(t, row, "force push")
+	require.NotContains(t, row, "not found")
+
+	p.SetReview(p.permission.ID, &permission.ReviewSummary{Effect: "allow", Quote: "ship it", QuoteVerified: false})
+	row = ansi.Strip(p.renderReview(100))
+	require.Contains(t, row, "Would allow")
+	require.Contains(t, row, "(not found in your messages)")
+
+	p.SetReview(p.permission.ID, &permission.ReviewSummary{Shadow: true, Error: "agent not ready"})
+	row = ansi.Strip(p.renderReview(100))
+	require.Contains(t, row, "Unavailable (shadow)")
+	require.Contains(t, row, "agent not ready")
 }

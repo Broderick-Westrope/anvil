@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -172,7 +173,7 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 				for i, it := range c.list.FilteredItems() {
 					if ci, ok := it.(*CommandItem); ok && ci != nil && ci.id == prevID {
 						c.list.SetSelected(i)
-						c.list.ScrollToSelected()
+						c.list.ScrollToSelectedWithMargin(listScrollMargin)
 						break
 					}
 				}
@@ -196,7 +197,7 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 			} else {
 				c.list.SelectPrev()
 			}
-			c.list.ScrollToSelected()
+			c.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, c.keyMap.Next):
 			c.list.Focus()
 			if c.list.IsSelectedLast() {
@@ -204,7 +205,7 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 			} else {
 				c.list.SelectNext()
 			}
-			c.list.ScrollToSelected()
+			c.list.ScrollToSelectedWithMargin(listScrollMargin)
 		case key.Matches(msg, c.keyMap.Select):
 			if selectedItem := c.list.SelectedItem(); selectedItem != nil {
 				if item, ok := selectedItem.(*CommandItem); ok && item != nil {
@@ -417,6 +418,7 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 				Content:   cmd.Content,
 				Arguments: cmd.Arguments,
 				Skills:    cmd.Skills,
+				Location:  cmd.Location,
 			}
 			title := name
 			if cmd.ArgumentHint != "" {
@@ -554,6 +556,15 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "init", "Initialize Project", "", ActionInitializeProject{}),
 	)
 
+	// Add a command to cycle the runtime bouncer mode. Only
+	// shown when a bouncer was wired at startup; toggling here is a
+	// runtime-only change and never writes config.
+	if c.com.Workspace.PermissionBouncerConfigured() {
+		current := c.com.Workspace.PermissionBouncerMode()
+		label := "Bouncer: " + bouncerModeLabel(current) + " → " + bouncerModeLabel(nextBouncerMode(current))
+		commands = append(commands, NewCommandItem(c.com.Styles, "cycle_bouncer", label, "ctrl+q", ActionCycleBouncerMode{}))
+	}
+
 	// Add transparent background toggle.
 	transparentLabel := "Disable Background Color"
 	if cfg != nil && cfg.Options != nil && cfg.Options.TUI.Transparent != nil && *cfg.Options.TUI.Transparent {
@@ -580,11 +591,38 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	commands = append(commands,
 		NewCommandItem(c.com.Styles, "browse_skills", "Browse Skills", "", ActionOpenDialog{SkillPickerID}),
 		NewCommandItem(c.com.Styles, "mcp_servers", "MCP Servers", "", ActionOpenDialog{MCPPaletteID}),
-		NewCommandItem(c.com.Styles, "reload_plugins", "Reload Plugins", "", ActionReloadPlugins{}),
+		NewCommandItem(c.com.Styles, "reload_config", "Reload Config & Plugins", "", ActionReloadConfig{}).WithAliases("reload plugins", "reload config"),
+		NewCommandItem(c.com.Styles, "reload_instance", "Reload Instance", "", ActionReloadInstance{}).WithAliases("restart", "reload-instance"),
 		NewCommandItem(c.com.Styles, "quit", "Quit", "ctrl+c", tea.QuitMsg{}).WithAliases("exit"),
 	)
 
 	return commands
+}
+
+// bouncerModeLabel returns the capitalized display label for a runtime
+// bouncer mode, used in the command palette toggle label.
+func bouncerModeLabel(mode permission.BouncerMode) string {
+	switch mode {
+	case permission.BouncerShadow:
+		return "Shadow"
+	case permission.BouncerEnforce:
+		return "Enforce"
+	default:
+		return "Off"
+	}
+}
+
+// nextBouncerMode returns the mode after the given one in the
+// off -> shadow -> enforce -> off cycle.
+func nextBouncerMode(mode permission.BouncerMode) permission.BouncerMode {
+	switch mode {
+	case permission.BouncerShadow:
+		return permission.BouncerEnforce
+	case permission.BouncerEnforce:
+		return permission.BouncerOff
+	default:
+		return permission.BouncerShadow
+	}
 }
 
 // SetCustomCommands sets the custom commands and refreshes the view if user commands are currently displayed.

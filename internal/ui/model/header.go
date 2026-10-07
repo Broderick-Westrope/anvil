@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/logo"
@@ -21,6 +23,7 @@ const (
 	leftPadding          = 1
 	rightPadding         = 1
 	diagToDetailsSpacing = 1 // space between diagonal pattern and details section
+	minHeaderTitleWidth  = 12
 )
 
 type header struct {
@@ -97,6 +100,30 @@ func (h *header) drawHeader(
 		availDetailWidth,
 	)
 
+	if title := headerSessionTitle(session); title != "" {
+		// The logo already ends in a space, so the title is framed by a
+		// "• " prefix and a trailing space.
+		const titleSeparator = "• "
+		titleOverhead := ansi.StringWidth(titleSeparator) + 1
+		titleBudget := availDetailWidth - lipgloss.Width(details) - titleOverhead
+		if titleBudget < minHeaderTitleWidth {
+			titleBudget = min(minHeaderTitleWidth, ansi.StringWidth(title), max(0, availDetailWidth-titleOverhead))
+			details = renderHeaderDetails(
+				h.com,
+				session,
+				lspErrorCount,
+				detailsOpen,
+				availDetailWidth-titleBudget-titleOverhead,
+			)
+		}
+		if titleBudget > 0 {
+			title = ansi.Truncate(title, titleBudget, "…")
+			b.WriteString(t.Header.Separator.Render(titleSeparator))
+			b.WriteString(t.Header.SessionTitle.Render(title))
+			b.WriteString(" ")
+		}
+	}
+
 	remainingWidth := width -
 		lipgloss.Width(b.String()) -
 		lipgloss.Width(details) -
@@ -114,6 +141,17 @@ func (h *header) drawHeader(
 	view := uv.NewStyledString(
 		t.Header.Wrapper.Padding(0, rightPadding, 0, leftPadding).Render(b.String()))
 	view.Draw(scr, area)
+}
+
+// headerSessionTitle returns the session title to show in the compact
+// header, or an empty string when the session still has a placeholder name.
+func headerSessionTitle(session *session.Session) string {
+	title := strings.TrimSpace(session.Title)
+	switch title {
+	case "", agent.DefaultSessionName, "New Session":
+		return ""
+	}
+	return strings.Join(strings.Fields(title), " ")
 }
 
 // renderHeaderDetails renders the details section of the header.
@@ -141,6 +179,10 @@ func renderHeaderDetails(
 		}
 		formattedPercentage := t.Header.Percentage.Render(percentageText)
 		parts = append(parts, formattedPercentage)
+	}
+
+	if mode := com.Workspace.PermissionBouncerMode(); mode != permission.BouncerOff {
+		parts = append(parts, t.Header.Percentage.Render("bouncer:"+string(mode)))
 	}
 
 	const keystroke = "ctrl+d"

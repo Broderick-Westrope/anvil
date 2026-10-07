@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	fang "charm.land/fang/v2"
@@ -18,6 +20,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	anvillog "github.com/Broderick-Westrope/anvil/internal/log"
 	"github.com/Broderick-Westrope/anvil/internal/recovery"
+	"github.com/Broderick-Westrope/anvil/internal/reload"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	ui "github.com/Broderick-Westrope/anvil/internal/ui/model"
@@ -50,6 +53,8 @@ func init() {
 		schemaCmd,
 		sessionCmd,
 		mcpCmd,
+		permissionsCmd,
+		preflightCmd,
 	)
 }
 
@@ -70,10 +75,12 @@ cat README.md | anvil run "make this more glamorous" > GLAMOROUS_README.md
 # Run with debug logging in a specific directory
 anvil --debug --cwd /path/to/project
 
-# Run in yolo mode (auto-accept prompts, still honouring deny rules)
+# Run in yolo mode (auto-accept prompts, still honouring deny rules and
+# bouncer denials)
 anvil --yolo
 
-# Run in full yolo mode (bypass all permissions, including deny; use with care)
+# Run in full yolo mode (bypass all permissions, including deny rules and
+# the bouncer; use with care)
 anvil --yolo=full
 
 # Run with custom data directory
@@ -116,10 +123,13 @@ anvil --continue --there
 			continueLast = false
 		}
 
-		ws, cleanup, err := setupWorkspaceWithProgressBar(cmd)
+		ws, wsCleanup, err := setupWorkspaceWithProgressBar(cmd)
 		if err != nil {
 			return err
 		}
+		// A reload shuts the workspace down before exec, and the deferred
+		// call must not shut it down twice if exec fails.
+		cleanup := sync.OnceFunc(wsCleanup)
 		defer cleanup()
 
 		if sessionID != "" && !there {
@@ -132,12 +142,22 @@ anvil --continue --there
 
 		com := common.DefaultCommon(ws)
 		model := ui.New(com, sessionID, continueLast)
-		tracker, trackErr := recovery.NewTracker(filepath.Join(config.GlobalDataDir(), "recovery"))
+
+		handoffDir := reload.Dir(config.GlobalDataDir())
+		reload.Sweep(handoffDir, time.Now())
+		applyStartupHandoff(handoffDir, reload.StartupHandoffPath(), sessionID, ws, model)
+
+		termination := watchTermination()
+		defer termination.Stop()
+
+		var tracker recoveryCloser
+		recoveryTracker, trackErr := recovery.NewTracker(filepath.Join(config.GlobalDataDir(), "recovery"))
 		cleanExit := false
 		if trackErr != nil {
 			slog.Error("Failed to enable session recovery", "error", trackErr)
 		} else {
-			model.SetRecoveryHandler(tracker.Track)
+			tracker = recoveryTracker
+			model.SetRecoveryHandler(recoveryTracker.Track)
 			defer func() {
 				if err := tracker.Close(cleanExit); err != nil {
 					slog.Error("Failed to close session recovery record", "error", err)
@@ -154,27 +174,64 @@ anvil --continue --there
 			tea.WithFilter(inputFilter.Filter),
 		)
 		go ws.Subscribe(program)
+		if appWs, ok := ws.(*workspace.AppWorkspace); ok {
+			appWs.App().EnableJobWake()
+		}
 
 		finalModel, err := program.Run()
+		model.CloseComposerState()
 		if err != nil {
 			slog.Error("TUI run error", "error", err)
 			return errors.New("Anvil crashed. Please copy the stacktrace above and open an issue at https://github.com/Broderick-Westrope/anvil/issues/new?template=bug.yml") //nolint:staticcheck
 		}
-		cleanExit = cmd.Context().Err() == nil
-		if finalUI, ok := finalModel.(*ui.UI); ok {
-			printResumeHint(cmd.OutOrStdout(), finalUI.SessionID())
+		cleanExit = cmd.Context().Err() == nil && !termination.Received()
+		finalUI, ok := finalModel.(*ui.UI)
+		if !ok {
+			return nil
 		}
+		if req := finalUI.ReloadRequest(); req != nil && cleanExit {
+			debug, _ := cmd.Flags().GetBool("debug")
+			return finishReload(req, reloadDeps{
+				out:     cmd.OutOrStdout(),
+				tracker: tracker,
+				cleanup: cleanup,
+				exec:    execAnvil,
+				workDir: ws.WorkingDir(),
+				dataDir: absDataDir(cmd),
+				debug:   debug,
+				now:     time.Now,
+			})
+		}
+		printResumeHint(cmd.OutOrStdout(), finalUI.SessionID(), finalUI.SessionTitle(), time.Now())
 		return nil
 	},
 }
 
+// absDataDir returns the --data-dir flag made absolute against the current
+// directory, which is the workspace directory once it is set up, so the
+// replacement process resolves it the same way after --there.
+func absDataDir(cmd *cobra.Command) string {
+	dataDir, _ := cmd.Flags().GetString("data-dir")
+	if dataDir == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(dataDir); err == nil {
+		return abs
+	}
+	return dataDir
+}
+
 // printResumeHint writes the command that re-enters the given session.
 // The --there flag makes the command work from any directory.
-func printResumeHint(w io.Writer, sessionID string) {
+func printResumeHint(w io.Writer, sessionID, title string, now time.Time) {
 	if sessionID == "" {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Resume this session with:\n  anvil --session %s --there\n", sessionID)
+	if title = strings.Join(strings.Fields(title), " "); title != "" {
+		_, _ = fmt.Fprintf(w, "%sResume %q with:\n  anvil --session %s --there\n", hintTimestamp(now), title, sessionID)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%sResume this session with:\n  anvil --session %s --there\n", hintTimestamp(now), sessionID)
 }
 
 func Execute() {

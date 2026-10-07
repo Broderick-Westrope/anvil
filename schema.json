@@ -48,6 +48,142 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "BackgroundJobsOptions": {
+      "properties": {
+        "wake_on_event": {
+          "type": "boolean",
+          "description": "Start a turn for an idle session when its background job completes or matches a watch",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Bouncer": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "shadow",
+            "enforce"
+          ],
+          "default": "off"
+        },
+        "url": {
+          "type": "string",
+          "description": "Full System One endpoint URL (https only)"
+        },
+        "model": {
+          "type": "string",
+          "examples": [
+            "von-1.0.0"
+          ]
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Name of the environment variable that holds the API key",
+          "default": "BASETEN_API_KEY",
+          "examples": [
+            "BASETEN_API_KEY",
+            "TYPESAFE_API_KEY"
+          ]
+        },
+        "auth_scheme": {
+          "type": "string",
+          "enum": [
+            "Api-Key",
+            "Bearer"
+          ],
+          "default": "Api-Key"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "maximum": 60,
+          "minimum": 0,
+          "description": "Bouncer call timeout in seconds; 0 uses the default",
+          "default": 8
+        },
+        "explicit_ask": {
+          "type": "string",
+          "enum": [
+            "bouncer",
+            "human"
+          ],
+          "default": "bouncer"
+        },
+        "send_user_messages": {
+          "type": "boolean",
+          "default": true
+        },
+        "review": {
+          "type": "string",
+          "enum": [
+            "off",
+            "shadow"
+          ],
+          "description": "Whether the small model reviews requests the bouncer sends to you against your recent messages. shadow shows and logs its opinion without acting on it",
+          "default": "shadow"
+        },
+        "escalate_at": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Hazard probability at or above which the request goes to the human whatever its severity. Setting it applies one value to every axis; escalate_at_axes overrides it per axis. When unset each axis uses its own default (destructive 0.5; the other axes 0.6)"
+        },
+        "escalate_at_axes": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object",
+          "description": "Per-axis overrides of escalate_at keyed by destructive or exfiltration or credentials or remote_exec or shared_infra"
+        },
+        "concern_at": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Hazard probability at or above which the request goes to the human when severity also reaches severity_concern",
+          "default": 0.35
+        },
+        "severity_concern": {
+          "type": "number",
+          "maximum": 3,
+          "minimum": 0,
+          "description": "Severity score (0-3) at or above which a hazard in the concern band goes to the human",
+          "default": 1.5
+        },
+        "deny_at": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Hazard probability at or above which the request is flagged as a deny when severity also reaches severity_deny and the user did not ask for it",
+          "default": 0.9
+        },
+        "severity_deny": {
+          "type": "number",
+          "maximum": 3,
+          "minimum": 0,
+          "description": "Severity score (0-3) a request must also reach before a hazard at deny_at flags it as a deny; below it the request is only escalated",
+          "default": 2
+        },
+        "severity_escalate": {
+          "type": "number",
+          "maximum": 3,
+          "minimum": 0,
+          "description": "Severity score (0-3) at or above which the request goes to the human",
+          "default": 2
+        },
+        "user_requested_at": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "User-requested probability at or above which a likely deny goes to the human instead",
+          "default": 0.7
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Completions": {
       "properties": {
         "max_depth": {
@@ -104,6 +240,10 @@
         "permissions": {
           "$ref": "#/$defs/Permissions",
           "description": "Permission settings for tool usage"
+        },
+        "bouncer": {
+          "$ref": "#/$defs/Bouncer",
+          "description": "Classifier that answers permission prompts. Only read from user-level config files"
         },
         "tools": {
           "$ref": "#/$defs/Tools",
@@ -594,6 +734,10 @@
           },
           "type": "array",
           "description": "Glob patterns for tools that should render expanded instead of compact"
+        },
+        "background_jobs": {
+          "$ref": "#/$defs/BackgroundJobsOptions",
+          "description": "Background job behaviour"
         }
       },
       "additionalProperties": false,
@@ -887,6 +1031,26 @@
         "expires_at"
       ]
     },
+    "ToolAgenticFetch": {
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Model for the agentic_fetch sub-agent in provider/model format. Empty uses the global small model",
+          "examples": [
+            "anthropic/claude-haiku-4-5"
+          ]
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "description": "Reasoning effort for the agentic_fetch model. Unsupported values fall back to the model default",
+          "examples": [
+            "low"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ToolGlob": {
       "properties": {
         "timeout": {
@@ -939,6 +1103,9 @@
         },
         "glob": {
           "$ref": "#/$defs/ToolGlob"
+        },
+        "agentic_fetch": {
+          "$ref": "#/$defs/ToolAgenticFetch"
         }
       },
       "additionalProperties": false,

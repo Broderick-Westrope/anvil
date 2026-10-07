@@ -123,6 +123,7 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 				Action:      "execute",
 				Description: permissionDescription,
 				Params:      params.Input,
+				ArgsJSON:    params.Input,
 			},
 		)
 		if err != nil {

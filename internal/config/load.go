@@ -37,12 +37,21 @@ const defaultCatwalkURL = "https://catwalk.charm.land"
 // Load loads the configuration from the default paths and returns a
 // ConfigStore that owns both the pure-data Config and all runtime state.
 func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
+	// Freeze the trusted user-level paths and the bouncer API key before
+	// anything below can apply config-provided env.
+	trustedPaths := trustedConfigPaths()
+	trustedBouncer, err := loadTrustedBouncer(trustedPaths)
+	if err != nil {
+		return nil, err
+	}
+
 	configPaths := lookupConfigs(workingDir)
 
 	cfg, loadedPaths, err := loadFromConfigPaths(configPaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config from paths %v: %w", configPaths, err)
 	}
+	rawProjectDir := rawProjectDirectory(cfg)
 
 	cfg.setDefaults(workingDir, dataDir)
 
@@ -53,6 +62,10 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		globalDataPath:   GlobalConfigData(),
 		workspacePath:    filepath.Join(cfg.Options.ProjectDirectory, fmt.Sprintf("%s.json", appName)),
 		loadedPaths:      loadedPaths,
+		trustedPaths:     trustedPaths,
+		trustedBouncer:   trustedBouncer,
+
+		rawProjectDirectory: rawProjectDir,
 	}
 
 	if debug {
@@ -75,6 +88,8 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		}
 	}
 
+	cfg.applyTrustedBouncer(trustedBouncer)
+
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.
 	if err := cfg.ValidateHooks(); err != nil {
@@ -85,28 +100,8 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		return nil, fmt.Errorf("invalid MCP auth configuration: %w", err)
 	}
 
-	// Migrate deprecated allowed_tools to permission rules.
-	if cfg.Permissions != nil && len(cfg.Permissions.AllowedTools) > 0 {
-		slog.Warn("Deprecated 'permissions.allowed_tools' found, migrating to permission rules; update your anvil.json to use the new format",
-			"allowed_tools", cfg.Permissions.AllowedTools,
-		)
-		cfg.Permissions.Rules = MigrateAllowedTools(cfg.Permissions.AllowedTools)
-	}
-
-	if !isInsideWorktree() {
-		const depth = 2
-		const items = 100
-		slog.Warn("No git repository detected in working directory, will limit file walk operations", "depth", depth, "items", items)
-		assignIfNil(&cfg.Tools.Ls.MaxDepth, depth)
-		assignIfNil(&cfg.Tools.Ls.MaxItems, items)
-		assignIfNil(&cfg.Options.TUI.Completions.MaxDepth, depth)
-		assignIfNil(&cfg.Options.TUI.Completions.MaxItems, items)
-	}
-
-	if isAppleTerminal() {
-		slog.Warn("Detected Apple Terminal, enabling transparent mode")
-		assignIfNil(&cfg.Options.TUI.Transparent, true)
-	}
+	store.insideWorktree = isInsideWorktree()
+	cfg.applyLoadAdjustments(store.insideWorktree)
 
 	// Load known providers, this loads the config from catwalk
 	providers, err := Providers(cfg)
@@ -135,6 +130,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 
 	if !cfg.IsConfigured() {
 		slog.Warn("No providers configured")
+		store.captureStartupSnapshot()
 		return store, nil
 	}
 
@@ -165,6 +161,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	// Capture initial staleness snapshot
 	store.captureStalenessSnapshot(loadedPaths)
 
+	store.captureStartupSnapshot()
 	return store, nil
 }
 
@@ -941,12 +938,17 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 // so an unrelated anvil.json placed above the project is never picked
 // up. Global user-level config locations are always included
 // regardless of the boundary.
+//
+// Later paths win when merged. The runtime data file comes before the
+// user-maintained config so that anything the user wrote by hand
+// outranks state Anvil persisted on its own (a model picked in the UI,
+// a fallback written at startup, a copied MCP entry).
 func lookupConfigs(cwd string) []string {
 	// prepend default config paths
 	configPaths := []string{
 		systemConfigPath,
-		GlobalConfig(),
 		GlobalConfigData(),
+		GlobalConfig(),
 	}
 
 	configNames := []string{appName + ".json", "." + appName + ".json"}
@@ -1269,6 +1271,34 @@ func ProjectSkillsDir(workingDir string) []string {
 	}
 
 	return dirs
+}
+
+// applyLoadAdjustments migrates deprecated settings and fills the defaults
+// that depend on the environment. Load and reloads both run it after
+// merging, so a reload neither drops a migrated rule nor reports a spurious
+// difference from startup.
+func (c *Config) applyLoadAdjustments(insideWorktree bool) {
+	if c.Permissions != nil && len(c.Permissions.AllowedTools) > 0 {
+		slog.Warn("Deprecated 'permissions.allowed_tools' found, migrating to permission rules; update your anvil.json to use the new format",
+			"allowed_tools", c.Permissions.AllowedTools,
+		)
+		c.Permissions.Rules = MigrateAllowedTools(c.Permissions.AllowedTools)
+	}
+
+	if !insideWorktree {
+		const depth = 2
+		const items = 100
+		slog.Warn("No git repository detected in working directory, will limit file walk operations", "depth", depth, "items", items)
+		assignIfNil(&c.Tools.Ls.MaxDepth, depth)
+		assignIfNil(&c.Tools.Ls.MaxItems, items)
+		assignIfNil(&c.Options.TUI.Completions.MaxDepth, depth)
+		assignIfNil(&c.Options.TUI.Completions.MaxItems, items)
+	}
+
+	if isAppleTerminal() {
+		slog.Warn("Detected Apple Terminal, enabling transparent mode")
+		assignIfNil(&c.Options.TUI.Transparent, true)
+	}
 }
 
 func isAppleTerminal() bool { return os.Getenv("TERM_PROGRAM") == "Apple_Terminal" }

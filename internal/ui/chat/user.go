@@ -56,8 +56,7 @@ func (m *UserMessageItem) RawRender(width int) string {
 		return m.renderHighlighted(content, cappedWidth, height)
 	}
 
-	msgContent := stripSkillContentForDisplay(strings.TrimSpace(m.message.Content().Text))
-	msgContent = commands.CollapseExpansionXML(msgContent)
+	msgContent := m.displayContent()
 	renderer := common.MarkdownRenderer(m.sty, cappedWidth)
 	mu := common.LockMarkdownRenderer(renderer)
 
@@ -83,6 +82,17 @@ func (m *UserMessageItem) RawRender(width int) string {
 	height = lipgloss.Height(content)
 	m.setCachedRender(content, cappedWidth, height)
 	return m.renderHighlighted(content, cappedWidth, height)
+}
+
+// displayContent returns the markdown source shown for the message.
+func (m *UserMessageItem) displayContent() string {
+	msgContent := stripSkillContentForDisplay(strings.TrimSpace(m.message.Content().Text))
+	return commands.CollapseExpansionXML(msgContent)
+}
+
+// SelectionSource implements [list.SourceSelectable].
+func (m *UserMessageItem) SelectionSource() string {
+	return m.displayContent()
 }
 
 // Render implements MessageItem.

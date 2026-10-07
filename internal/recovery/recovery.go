@@ -23,7 +23,22 @@ type Entry struct {
 	Title      string    `json:"title"`
 	PID        int       `json:"pid"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	// SeenAt is the last time the window was known to be running. Records
+	// written before heartbeats existed leave it zero.
+	SeenAt time.Time `json:"seen_at,omitzero"`
 }
+
+// LastSeen is the best estimate of when the window stopped running.
+func (entry Entry) LastSeen() time.Time {
+	if entry.SeenAt.IsZero() {
+		return entry.UpdatedAt
+	}
+	return entry.SeenAt
+}
+
+// heartbeat is how often a running window refreshes SeenAt, which bounds
+// how far apart windows closed by the same restart appear to have died.
+const heartbeat = time.Minute
 
 type Tracker struct {
 	mu      sync.Mutex
@@ -36,6 +51,10 @@ type Tracker struct {
 }
 
 func NewTracker(root string) (*Tracker, error) {
+	return newTracker(root, heartbeat)
+}
+
+func newTracker(root string, interval time.Duration) (*Tracker, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("creating recovery directory: %w", err)
 	}
@@ -53,18 +72,44 @@ func NewTracker(root string) (*Tracker, error) {
 		updates: make(chan Entry, 1), done: make(chan struct{}),
 		path: path + ".json", release: release,
 	}
-	go func() {
-		defer close(tracker.done)
-		for entry := range tracker.updates {
-			if err := tracker.write(entry); err != nil {
-				tracker.err = err
-				slog.Error("Failed to save session recovery record", "error", err)
-			} else {
-				tracker.err = nil
+	go tracker.run(interval)
+	return tracker, nil
+}
+
+// run saves each tracked entry and refreshes the saved one every interval
+// until Close.
+func (tracker *Tracker) run(interval time.Duration) {
+	defer close(tracker.done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	var current Entry
+	var reclaimed string
+	for {
+		select {
+		case entry, ok := <-tracker.updates:
+			if !ok {
+				return
+			}
+			current = entry
+		case <-ticker.C:
+			if current.SessionID == "" {
+				continue
 			}
 		}
-	}()
-	return tracker, nil
+		current.SeenAt = time.Now().UTC()
+		if err := tracker.write(current); err != nil {
+			tracker.err = err
+			slog.Error("Failed to save session recovery record", "error", err)
+			continue
+		}
+		tracker.err = nil
+		if current.SessionID != "" && current.SessionID != reclaimed {
+			reclaimed = current.SessionID
+			if err := reclaim(filepath.Dir(tracker.path), current.SessionID); err != nil {
+				slog.Warn("Failed to dismiss earlier recovery records for reopened session", "session_id", current.SessionID, "error", err)
+			}
+		}
+	}
 }
 
 func (tracker *Tracker) Track(entry Entry) {
@@ -92,7 +137,7 @@ func (tracker *Tracker) Close(clean bool) error {
 	close(tracker.updates)
 	<-tracker.done
 	if clean {
-		if err := os.Remove(tracker.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeRecord(tracker.path); err != nil {
 			tracker.err = errors.Join(tracker.err, err)
 		}
 	}
@@ -108,17 +153,14 @@ func (tracker *Tracker) Close(clean bool) error {
 
 func (tracker *Tracker) write(entry Entry) (result error) {
 	if entry.SessionID == "" {
-		if err := os.Remove(tracker.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return nil
+		return removeRecord(tracker.path)
 	}
 	file, err := os.CreateTemp(filepath.Dir(tracker.path), strings.TrimSuffix(filepath.Base(tracker.path), ".json")+".tmp-*")
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err := os.Remove(file.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeRecord(file.Name()); err != nil {
 			result = errors.Join(result, err)
 		}
 	}()
@@ -139,7 +181,7 @@ func List(root string) ([]Entry, error) {
 		key := entry.WorkingDir + "\x00" + entry.SessionID
 		if active {
 			live[key] = true
-		} else if previous, ok := entries[key]; !ok || entry.UpdatedAt.After(previous.UpdatedAt) {
+		} else if previous, ok := entries[key]; !ok || entry.LastSeen().After(previous.LastSeen()) {
 			entries[key] = entry
 		}
 		return nil
@@ -151,7 +193,7 @@ func List(root string) ([]Entry, error) {
 		}
 	}
 	slices.SortFunc(result, func(left, right Entry) int {
-		if order := right.UpdatedAt.Compare(left.UpdatedAt); order != 0 {
+		if order := right.LastSeen().Compare(left.LastSeen()); order != 0 {
 			return order
 		}
 		return strings.Compare(left.SessionID, right.SessionID)
@@ -159,15 +201,43 @@ func List(root string) ([]Entry, error) {
 	return result, err
 }
 
+// interruptionGap separates interruptions. Windows closed by one restart
+// stop within a heartbeat of each other, so a wider gap between their last
+// heartbeats means they were lost on different occasions.
+const interruptionGap = 5 * heartbeat
+
+// GroupByInterruption splits entries, sorted most recent first as List
+// returns them, into the windows lost together. Groups are ordered most
+// recent first.
+func GroupByInterruption(entries []Entry) [][]Entry {
+	var groups [][]Entry
+	for index, entry := range entries {
+		if index == 0 || entries[index-1].LastSeen().Sub(entry.LastSeen()) > interruptionGap {
+			groups = append(groups, nil)
+		}
+		groups[len(groups)-1] = append(groups[len(groups)-1], entry)
+	}
+	return groups
+}
+
+// reclaim removes interrupted records for sessionID. Once a window has the
+// session open again, those records describe work that is no longer lost,
+// and leaving them would keep it listed after this window exits cleanly.
+func reclaim(root, sessionID string) error {
+	return scan(root, true, func(path string, entry Entry, active bool) error {
+		if active || entry.SessionID != sessionID {
+			return nil
+		}
+		return removeRecord(path)
+	})
+}
+
 func Clear(root string) error {
 	return scan(root, false, func(path string, _ Entry, active bool) error {
 		if active {
 			return nil
 		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return nil
+		return removeRecord(path)
 	})
 }
 
@@ -206,7 +276,7 @@ func scan(root string, decode bool, visit func(string, Entry, bool) error) error
 			if !decode {
 				return visit(path, Entry{}, active)
 			}
-			data, err := os.ReadFile(path)
+			data, err := readRecord(path)
 			if errors.Is(err, os.ErrNotExist) {
 				return nil
 			}
@@ -263,7 +333,7 @@ func sweepArtifacts(root string) error {
 		}
 		release()
 		if _, err := os.Stat(filepath.Join(root, owner+".json")); errors.Is(err, os.ErrNotExist) {
-			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := removeRecord(path); err != nil {
 				cleanupErrors = append(cleanupErrors, err)
 			}
 		}
@@ -290,7 +360,7 @@ func sweepArtifacts(root string) error {
 				continue
 			}
 		}
-		if err := os.Remove(filepath.Join(root, file.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeRecord(filepath.Join(root, file.Name())); err != nil {
 			cleanupErrors = append(cleanupErrors, err)
 		}
 	}

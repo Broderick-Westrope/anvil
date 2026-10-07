@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -58,6 +59,15 @@ type CreatePermissionRequest struct {
 	// simple commands within a chained bash command). When non-empty,
 	// each segment is evaluated separately and the worst outcome wins.
 	InputSegments []string `json:"input_segments,omitempty"`
+	// Content is the new file content for edits. It is local-only and
+	// never serialised.
+	Content string `json:"-"`
+	// Diff is the unified diff an edit would apply, so removals are
+	// visible alongside Content. It is local-only and never serialised.
+	Diff string `json:"-"`
+	// ArgsJSON is the raw MCP tool arguments. It is local-only and never
+	// serialised.
+	ArgsJSON string `json:"-"`
 }
 
 // permissionResponse is sent through the pending request channel to convey
@@ -87,6 +97,16 @@ type PermissionRequest struct {
 	// InputSegments mirrors CreatePermissionRequest.InputSegments so the
 	// UI dialog can access the individually-evaluated segments.
 	InputSegments []string `json:"input_segments,omitempty"`
+	// BouncerNote is a one-line summary of the bouncer's verdict, shown
+	// alongside the prompt.
+	BouncerNote string `json:"bouncer_note,omitempty"`
+	// Bouncer is the structured verdict behind BouncerNote, so the UI
+	// can show every axis and highlight the ones that drove the outcome.
+	Bouncer *AssessmentSummary `json:"bouncer,omitempty"`
+	// Review is the reviewer's second opinion on the bouncer's verdict.
+	// It is pending when the prompt is first published and arrives as an
+	// update event.
+	Review *ReviewSummary `json:"review,omitempty"`
 }
 
 type Service interface {
@@ -112,6 +132,21 @@ type Service interface {
 	// GrantForever writes a permission rule to the config file.
 	// scope determines project vs user config.
 	GrantForever(toolPattern string, inputPattern string, action config.PermissionAction, scope config.Scope) error
+
+	// BouncerConfigured reports whether a bouncer was wired at startup.
+	BouncerConfigured() bool
+	// BouncerMode returns the current runtime mode.
+	BouncerMode() BouncerMode
+	// SetBouncerMode changes the runtime mode. It is a no-op when no
+	// bouncer is configured or the mode is unknown.
+	SetBouncerMode(mode BouncerMode)
+
+	// SetConfigRules replaces the rules taken from config, such as after
+	// config is reloaded from disk.
+	SetConfigRules(rules []config.PermissionRule)
+	// ResetBouncerCache forgets every cached bouncer allow, such as after
+	// the bouncer's thresholds change.
+	ResetBouncerCache()
 }
 
 // PermissionKey is a composite key for session permission lookups.
@@ -124,7 +159,9 @@ type PermissionKey struct {
 
 // Lock ordering: requestMu is the outermost lock and must not be held
 // when acquiring configRulesMu, sessionRulesMu, or activeRequestMu. The
-// latter three are independent and never nested.
+// latter three are independent and never nested. A request's
+// pendingReview.mu may be taken while requestMu is held, and nothing is
+// acquired under it.
 type permissionService struct {
 	*pubsub.Broker[PermissionRequest]
 
@@ -140,6 +177,20 @@ type permissionService struct {
 	sessionRules          map[string][]config.PermissionRule
 	sessionRulesMu        sync.RWMutex
 	configStore           *config.ConfigStore
+	recorder              DecisionRecorder
+	bouncer               BouncerOptions
+	review                ReviewOptions
+	bouncerMode           atomic.Value // BouncerMode.
+	// allowCache is swapped rather than cleared so an assessment that was
+	// in flight during a reset writes into the orphaned map.
+	allowCache atomic.Pointer[csync.Map[string, struct{}]]
+
+	// beforePromptLock, when set, runs just before requestMu is acquired.
+	// Tests use it as a barrier.
+	beforePromptLock func(CreatePermissionRequest)
+	// beforeAllowCache, when set, runs just before the allow cache is
+	// consulted. Tests use it to change policy at that point.
+	beforeAllowCache func(CreatePermissionRequest)
 
 	// requestMu makes sure we only process one request at a time.
 	requestMu       sync.Mutex
@@ -214,6 +265,7 @@ func (s *permissionService) Deny(permission PermissionRequest, reason string) {
 func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRequest) (RequestResult, error) {
 	// YoloFull bypasses all checks.
 	if config.YoloLevel(s.yoloLevel.Load()) == config.YoloFull {
+		s.record(opts, DecisionSourceYolo, VerdictAllow, "", nil)
 		return RequestResult{Granted: true}, nil
 	}
 
@@ -222,42 +274,191 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// prompt entirely. We still publish a granted notification so the UI
 	// and audit subscribers see the outcome.
 	if hookApproved(ctx, opts.ToolCallID) {
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    true,
-		})
-		return RequestResult{Granted: true}, nil
+		return s.finish(opts, DecisionSourceHook, VerdictAllow, "", nil, ""), nil
 	}
-
-	s.requestMu.Lock()
-	defer s.requestMu.Unlock()
 
 	// Tell the UI that a permission was requested.
 	s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
 		ToolCallID: opts.ToolCallID,
 	})
 
+	p := s.evaluatePolicy(opts)
+	if p.resolved {
+		return s.finishPolicy(opts, p, nil), nil
+	}
+
+	perm := PermissionRequest{
+		ID:            uuid.New().String(),
+		Path:          s.requestDir(opts.Path),
+		SessionID:     opts.SessionID,
+		ToolCallID:    opts.ToolCallID,
+		ToolName:      opts.ToolName,
+		Description:   opts.Description,
+		Action:        opts.Action,
+		Params:        opts.Params,
+		Input:         opts.Input,
+		InputSegments: opts.InputSegments,
+	}
+
+	// The bouncer runs without requestMu so concurrent requests are
+	// classified in parallel rather than queued behind a human prompt.
+	var details json.RawMessage
+	// bouncerDenied marks a request the enforcing bouncer would have
+	// blocked. It goes to the human as a deny prompt instead, and yolo
+	// never approves it.
+	var bouncerDenied bool
+	var denyReason string
+	var review *pendingReview
+	if s.shouldAssess(p) {
+		key := allowCacheKey(opts)
+		cache := s.allowCache.Load()
+		if s.currentBouncerMode() == BouncerEnforce {
+			if s.beforeAllowCache != nil {
+				s.beforeAllowCache(opts)
+			}
+			if _, ok := cache.Get(key); ok {
+				// A rule added since the cached allow wins over it.
+				if p2 := s.evaluatePolicy(opts); p2.resolved {
+					return s.finishPolicy(opts, p2, nil), nil
+				}
+				slog.Debug("Bouncer allow cache hit", "tool", opts.ToolName)
+				return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", cachedAllowRecord(), ""), nil
+			}
+		}
+
+		a, failed := s.assess(ctx, opts)
+		mode := s.currentBouncerMode()
+		details = withAssessmentMode(a.Details, mode)
+		if ctx.Err() != nil {
+			s.record(opts, DecisionSourceHuman, VerdictCancelled, "", details)
+			return RequestResult{}, ctx.Err()
+		}
+
+		// Commit boundary 1: rules may have changed during the call.
+		p2 := s.evaluatePolicy(opts)
+		if p2.resolved {
+			return s.finishPolicy(opts, p2, details), nil
+		}
+
+		if mode == BouncerEnforce {
+			switch a.Outcome {
+			case AssessAllow:
+				cache.Set(key, struct{}{})
+				return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", details, ""), nil
+			case AssessDeny:
+				bouncerDenied = true
+				denyReason = a.Reason
+			}
+		}
+		// Yolo approves whatever the bouncer didn't decide, including
+		// skips and errors, exactly as it would without a bouncer.
+		if p2.yolo && !bouncerDenied {
+			return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
+		}
+		if mode != BouncerOff {
+			perm.Bouncer = assessmentSummary(a, details, failed, mode)
+			perm.BouncerNote = perm.Bouncer.Note()
+			if s.shouldReview(perm.Bouncer) {
+				review = s.startReview(ctx, opts, perm.Bouncer, details)
+			}
+		}
+	}
+
+	if s.beforePromptLock != nil {
+		s.beforePromptLock(opts)
+	}
+	s.requestMu.Lock()
+	defer s.requestMu.Unlock()
+
+	if ctx.Err() != nil {
+		review.stop()
+		s.recordReviewed(opts, VerdictCancelled, details, review)
+		return RequestResult{}, ctx.Err()
+	}
+
+	// Commit boundary 2: a sibling prompt may have added a grant or rule
+	// while this request waited for the prompt slot.
+	// Requests resolved here never reach the human, so their review has
+	// nothing to be compared with and is dropped.
+	if p3 := s.evaluatePolicy(opts); p3.resolved {
+		review.stop()
+		return s.finishPolicy(opts, p3, details), nil
+	} else if p3.yolo && !bouncerDenied {
+		// The bouncer was switched on after this request skipped it;
+		// yolo never prompts.
+		review.stop()
+		return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
+	}
+
+	s.activeRequestMu.Lock()
+	s.activeRequest = &perm
+	s.activeRequestMu.Unlock()
+
+	respCh := make(chan permissionResponse, 1)
+	s.pendingRequests.Set(perm.ID, respCh)
+	defer s.pendingRequests.Del(perm.ID)
+
+	// Publish the request.
+	s.publishWithReview(&perm, review)
+
+	select {
+	case <-ctx.Done():
+		s.activeRequestMu.Lock()
+		if s.activeRequest != nil && s.activeRequest.ID == perm.ID {
+			s.activeRequest = nil
+		}
+		s.activeRequestMu.Unlock()
+		review.stop()
+		s.recordReviewed(opts, VerdictCancelled, details, review)
+		return RequestResult{}, ctx.Err()
+	case resp := <-respCh:
+		verdict := VerdictDeny
+		if resp.Granted {
+			verdict = VerdictAllow
+		}
+		s.recordReviewed(opts, verdict, details, review)
+		reason := resp.Reason
+		if !resp.Granted && bouncerDenied && reason == "" {
+			reason = "the user confirmed the permission bouncer's block (" + denyReason + "). Do not retry this or work around it; tell the user what you were trying to do."
+		}
+		return RequestResult{Granted: resp.Granted, Reason: reason}, nil
+	}
+}
+
+// policyResult is the outcome of the deterministic policy layers.
+type policyResult struct {
+	resolved    bool
+	source      DecisionSource
+	verdict     Verdict
+	matchedRule string
+	reason      string
+	isDefault   bool // Unresolved because no rule matched.
+	// yolo marks an ask that yolo-standard would approve, deferred so the
+	// bouncer decides first. Yolo approves it if the bouncer escalates.
+	yolo bool
+}
+
+// evaluatePolicy applies session auto-approval, config and session rules,
+// yolo-standard promotion, and legacy session grants. It reads fresh
+// snapshots on every call so it can be re-run at each commit boundary.
+func (s *permissionService) evaluatePolicy(opts CreatePermissionRequest) policyResult {
 	s.autoApproveSessionsMu.RLock()
 	autoApprove := s.autoApproveSessions[opts.SessionID]
 	s.autoApproveSessionsMu.RUnlock()
 
 	if autoApprove {
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    true,
-		})
-		return RequestResult{Granted: true}, nil
+		return policyResult{resolved: true, source: DecisionSourceAutoSession, verdict: VerdictAllow}
 	}
 
 	// Evaluate rules. Clone the slices so a concurrent GrantForever or
 	// GrantSession upsert (which mutates elements in place) cannot race
 	// with evaluation after the locks are released.
 	s.configRulesMu.RLock()
-	configRules := slices.Clone(s.configRules)
+	configRules := cloneRules(s.configRules)
 	s.configRulesMu.RUnlock()
 
 	s.sessionRulesMu.RLock()
-	sessionRules := slices.Clone(s.sessionRules[opts.SessionID])
+	sessionRules := cloneRules(s.sessionRules[opts.SessionID])
 	s.sessionRulesMu.RUnlock()
 
 	var result EvaluateResult
@@ -275,88 +476,65 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		"is_default", result.IsDefault,
 	)
 
-	// Apply yolo level: standard promotes ask → allow.
+	// Apply yolo level: standard promotes ask → allow. When the bouncer
+	// would see this request, the promotion is deferred so the bouncer
+	// gets the first say: its allow and deny stand, and yolo only
+	// approves what it would otherwise escalate to the human.
 	action := result.Action
+	source := DecisionSourceRule
+	if result.FromSession {
+		source = DecisionSourceSessionRule
+	}
+	yoloDeferred := false
 	if config.YoloLevel(s.yoloLevel.Load()) == config.YoloStandard && action == config.PermissionAsk {
-		action = config.PermissionAllow
+		if s.shouldAssess(policyResult{isDefault: result.IsDefault}) {
+			yoloDeferred = true
+		} else {
+			action = config.PermissionAllow
+			source = DecisionSourceYolo
+		}
 	}
 
 	switch action {
 	case config.PermissionAllow:
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    true,
-		})
-		return RequestResult{Granted: true}, nil
-
+		return policyResult{resolved: true, source: source, verdict: VerdictAllow, matchedRule: result.MatchedRule}
 	case config.PermissionDeny:
-		reason := fmt.Sprintf("denied by rule %q", result.MatchedRule)
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    false,
-			Denied:     true,
-			Reason:     reason,
-		})
-		return RequestResult{Granted: false, Reason: reason}, nil
-	}
-
-	// Action is "ask" — prompt the user.
-	fileInfo, err := os.Stat(opts.Path)
-	dir := opts.Path
-	if err == nil {
-		if fileInfo.IsDir() {
-			dir = opts.Path
-		} else {
-			dir = filepath.Dir(opts.Path)
+		return policyResult{
+			resolved:    true,
+			source:      source,
+			verdict:     VerdictDeny,
+			matchedRule: result.MatchedRule,
+			reason:      fmt.Sprintf("denied by rule %q", result.MatchedRule),
 		}
 	}
 
+	if _, ok := s.sessionPermissions.Get(PermissionKey{
+		SessionID: opts.SessionID,
+		ToolName:  opts.ToolName,
+		Action:    opts.Action,
+		Path:      s.requestDir(opts.Path),
+	}); ok {
+		return policyResult{resolved: true, source: DecisionSourceSessionGrant, verdict: VerdictAllow}
+	}
+
+	return policyResult{isDefault: result.IsDefault, yolo: yoloDeferred}
+}
+
+func (s *permissionService) finishPolicy(opts CreatePermissionRequest, p policyResult, assessment json.RawMessage) RequestResult {
+	return s.finish(opts, p.source, p.verdict, p.matchedRule, assessment, p.reason)
+}
+
+// requestDir resolves the directory a request applies to, as shown in the
+// prompt and used for legacy session grants.
+func (s *permissionService) requestDir(path string) string {
+	dir := path
+	if fileInfo, err := os.Stat(path); err == nil && !fileInfo.IsDir() {
+		dir = filepath.Dir(path)
+	}
 	if dir == "." {
 		dir = s.workingDir
 	}
-	perm := PermissionRequest{
-		ID:            uuid.New().String(),
-		Path:          dir,
-		SessionID:     opts.SessionID,
-		ToolCallID:    opts.ToolCallID,
-		ToolName:      opts.ToolName,
-		Description:   opts.Description,
-		Action:        opts.Action,
-		Params:        opts.Params,
-		Input:         opts.Input,
-		InputSegments: opts.InputSegments,
-	}
-
-	if _, ok := s.sessionPermissions.Get(PermissionKey{
-		SessionID: perm.SessionID,
-		ToolName:  perm.ToolName,
-		Action:    perm.Action,
-		Path:      perm.Path,
-	}); ok {
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    true,
-		})
-		return RequestResult{Granted: true}, nil
-	}
-
-	s.activeRequestMu.Lock()
-	s.activeRequest = &perm
-	s.activeRequestMu.Unlock()
-
-	respCh := make(chan permissionResponse, 1)
-	s.pendingRequests.Set(perm.ID, respCh)
-	defer s.pendingRequests.Del(perm.ID)
-
-	// Publish the request.
-	s.Publish(pubsub.CreatedEvent, perm)
-
-	select {
-	case <-ctx.Done():
-		return RequestResult{}, ctx.Err()
-	case resp := <-respCh:
-		return RequestResult{Granted: resp.Granted, Reason: resp.Reason}, nil
-	}
+	return dir
 }
 
 func (s *permissionService) AutoApproveSession(sessionID string) {
@@ -429,9 +607,30 @@ func (s *permissionService) GrantForever(toolPattern string, inputPattern string
 	return nil
 }
 
+// SetConfigRules replaces the config rules with a copy of rules.
+func (s *permissionService) SetConfigRules(rules []config.PermissionRule) {
+	rules = cloneRules(rules)
+	s.configRulesMu.Lock()
+	s.configRules = rules
+	s.configRulesMu.Unlock()
+}
+
+// ResetBouncerCache replaces the allow cache with an empty one.
+func (s *permissionService) ResetBouncerCache() {
+	s.allowCache.Store(csync.NewMap[string, struct{}]())
+}
+
+func cloneRules(rules []config.PermissionRule) []config.PermissionRule {
+	cloned := slices.Clone(rules)
+	for i := range cloned {
+		cloned[i].SubRules = slices.Clone(cloned[i].SubRules)
+	}
+	return cloned
+}
+
 // NewPermissionService creates a new permission service with the given
 // config rules.
-func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configRules []config.PermissionRule, configStore *config.ConfigStore) Service {
+func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configRules []config.PermissionRule, configStore *config.ConfigStore, opts ...Option) Service {
 	svc := &permissionService{
 		Broker:              pubsub.NewBroker[PermissionRequest](),
 		notificationBroker:  pubsub.NewBroker[PermissionNotification](),
@@ -443,6 +642,11 @@ func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configR
 		pendingRequests:     csync.NewMap[string, chan permissionResponse](),
 		configStore:         configStore,
 	}
+	svc.allowCache.Store(csync.NewMap[string, struct{}]())
 	svc.yoloLevel.Store(int32(yoloLevel))
+	svc.bouncerMode.Store(BouncerOff)
+	for _, opt := range opts {
+		opt(svc)
+	}
 	return svc
 }

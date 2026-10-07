@@ -401,6 +401,9 @@ func cappedMessageWidth(availableWidth int) int {
 func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult, expandedPatterns []string) []MessageItem {
 	switch msg.Role {
 	case message.User:
+		if msg.MessageType == message.MessageTypeJobEvent {
+			return []MessageItem{NewJobEventMessageItem(sty, msg)}
+		}
 		r := attachments.NewRenderer(
 			sty.Attachments.Normal,
 			sty.Attachments.Deleting,
@@ -420,14 +423,16 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 			if tr, ok := toolResults[tc.ID]; ok {
 				result = &tr
 			}
-			items = append(items, NewToolMessageItem(
+			item := NewToolMessageItem(
 				sty,
 				msg.ID,
 				tc,
 				result,
 				msg.FinishReason() == message.FinishReasonCanceled,
 				expandedPatterns,
-			))
+			)
+			SetToolCallStartedAt(item, msg.CreatedAt)
+			items = append(items, item)
 		}
 		return items
 	}

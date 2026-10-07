@@ -1,12 +1,26 @@
 package segment
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/Broderick-Westrope/anvil/internal/permission/match"
 )
+
+func TestIsRedirect(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{"> out", ">> out", "2> out", "&> out", "&>> out", ">| out", "<> out"} {
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+			require.True(t, IsRedirect("  "+input))
+			require.Equal(t, input, Generalize(input))
+		})
+	}
+	require.False(t, IsRedirect("git status"))
+}
 
 func TestSplit(t *testing.T) {
 	t.Parallel()
@@ -124,7 +138,7 @@ func TestSplit(t *testing.T) {
 		{
 			name:    "nested wrappers resolve to the innermost target",
 			command: "sudo env bash -c 'rm -rf ~'",
-			want:    []string{"sudo env bash -c 'rm -rf ~'", "bash -c 'rm -rf ~'"},
+			want:    []string{"sudo env bash -c 'rm -rf ~'", "sudo env bash -c rm -rf ~", "bash -c 'rm -rf ~'", "bash -c rm -rf ~", "rm -rf ~"},
 		},
 		{
 			name:    "xargs target is its own segment",
@@ -134,12 +148,12 @@ func TestSplit(t *testing.T) {
 		{
 			name:    "find exec body is its own segment",
 			command: `find . -name '*.go' -exec rm {} \;`,
-			want:    []string{`find . -name '*.go' -exec rm {} \;`, "rm {}"},
+			want:    []string{`find . -name '*.go' -exec rm {} \;`, "find . -name *.go -exec rm {} ;", "rm {}"},
 		},
 		{
 			name:    "find execdir body is its own segment",
 			command: `find . -execdir sh -c 'echo hi' \;`,
-			want:    []string{`find . -execdir sh -c 'echo hi' \;`, "sh -c 'echo hi'"},
+			want:    []string{`find . -execdir sh -c 'echo hi' \;`, "find . -execdir sh -c echo hi ;", "sh -c 'echo hi'", "sh -c echo hi"},
 		},
 		{
 			name:    "find exec terminated by plus",
@@ -159,7 +173,7 @@ func TestSplit(t *testing.T) {
 		{
 			name:    "quoted strings preserved",
 			command: `git commit -m "hello world"`,
-			want:    []string{`git commit -m "hello world"`},
+			want:    []string{`git commit -m "hello world"`, "git commit -m hello world"},
 		},
 		{
 			name:    "complex real-world",
@@ -182,6 +196,81 @@ func TestSplit(t *testing.T) {
 			want:    []string{"if then fi ("},
 		},
 		{
+			name:    "single-quoted command name is normalised",
+			command: "'rm' -rf x",
+			want:    []string{"'rm' -rf x", "rm -rf x"},
+		},
+		{
+			name:    "double-quoted command name is normalised",
+			command: `"rm" -rf x`,
+			want:    []string{`"rm" -rf x`, "rm -rf x"},
+		},
+		{
+			name:    "backslash-escaped command name is normalised",
+			command: `\rm -rf x`,
+			want:    []string{`\rm -rf x`, "rm -rf x"},
+		},
+		{
+			name:    "empty quotes inside a command name are removed",
+			command: "r''m -rf x",
+			want:    []string{"r''m -rf x", "rm -rf x"},
+		},
+		{
+			name:    "ANSI-C quoted command name is decoded",
+			command: `$'\x72m' -rf x`,
+			want:    []string{`$'\x72m' -rf x`, "rm -rf x"},
+		},
+		{
+			name:    "command path is reduced to its base name",
+			command: "/bin/rm -rf x",
+			want:    []string{"/bin/rm -rf x", "rm -rf x"},
+		},
+		{
+			name:    "relative command path is reduced to its base name",
+			command: "./rm -rf x",
+			want:    []string{"./rm -rf x", "rm -rf x"},
+		},
+		{
+			name:    "quoted flag is normalised",
+			command: "git push '--force' origin",
+			want:    []string{"git push '--force' origin", "git push --force origin"},
+		},
+		{
+			name:    "brace expansion in command name is expanded",
+			command: "{rm,-rf} x",
+			want:    []string{"{rm,-rf} x", "rm -rf x"},
+		},
+		{
+			name:    "quoted wrapper is unwrapped",
+			command: "'sudo' 'rm' -rf x",
+			want:    []string{"'sudo' 'rm' -rf x", "sudo rm -rf x", "rm -rf x"},
+		},
+		{
+			name:    "wrapper path is unwrapped",
+			command: "/usr/bin/env rm -rf x",
+			want:    []string{"/usr/bin/env rm -rf x", "env rm -rf x", "rm -rf x"},
+		},
+		{
+			name:    "quoted write target is normalised",
+			command: "ls > '/etc/passwd'",
+			want:    []string{"ls", "> '/etc/passwd'", "> /etc/passwd"},
+		},
+		{
+			name:    "variable command name keeps its printed form",
+			command: "$cmd -rf x",
+			want:    []string{"$cmd -rf x"},
+		},
+		{
+			name:    "substituted command name keeps its printed form",
+			command: "$(echo rm) -rf x",
+			want:    []string{"$(echo rm) -rf x", "echo rm"},
+		},
+		{
+			name:    "double-quoted variable keeps its printed form",
+			command: `rm "$dir"`,
+			want:    []string{`rm "$dir"`},
+		},
+		{
 			name:    "duplicates deduped",
 			command: "ls && ls",
 			want:    []string{"ls"},
@@ -202,6 +291,83 @@ func TestSplit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tt.want, Split(tt.command))
+		})
+	}
+}
+
+func TestSplitBraceExpansionIsBounded(t *testing.T) {
+	t.Parallel()
+	bomb := "echo " + strings.Repeat("{a,b}", 40)
+	done := make(chan []string, 1)
+	go func() { done <- Split(bomb) }()
+	select {
+	case segs := <-done:
+		require.Equal(t, []string{bomb}, segs)
+	case <-time.After(2 * time.Second):
+		t.Fatal("brace expansion was not bounded")
+	}
+	require.Equal(t, []string{"{1..100000} x"}, Split("{1..100000} x"))
+	require.Equal(t, []string{"{rm,x} y", "rm x y"}, Split("{rm,x} y"))
+}
+
+func TestSplitScriptPayloads(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    string
+	}{
+		{"bash -c 'rm -rf x'", "rm -rf x"},
+		{"sh -ec 'rm -rf x'", "rm -rf x"},
+		{"/bin/zsh -c 'rm -rf x'", "rm -rf x"},
+		{"eval 'rm -rf x'", "rm -rf x"},
+		{"eval rm -rf x", "rm -rf x"},
+		{"env -S 'rm -rf x'", "rm -rf x"},
+		{"sudo -u root bash -c 'rm -rf x'", "rm -rf x"},
+		{"bash -c 'ls; rm -rf x'", "rm -rf x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			require.Contains(t, Split(tt.command), tt.want)
+			require.Contains(t, Normalized(tt.command), tt.want)
+		})
+	}
+	require.NotContains(t, Split("bash script.sh -c 'rm -rf x'"), "rm -rf x")
+}
+
+func TestUnwrapValueFlags(t *testing.T) {
+	t.Parallel()
+	for command, want := range map[string]string{
+		"sudo -u root rm -rf x":      "rm -rf x",
+		"sudo --user root rm -rf x":  "rm -rf x",
+		"env -u HOME rm -rf x":       "rm -rf x",
+		"env -- rm -rf x":            "rm -rf x",
+		"timeout -s KILL 5 rm -rf x": "rm -rf x",
+		"nice -n 10 rm -rf x":        "rm -rf x",
+		"xargs -I {} rm {}":          "rm {}",
+		"stdbuf -o L rm -rf x":       "rm -rf x",
+	} {
+		require.Contains(t, Split(command), want, command)
+	}
+}
+
+func TestNormalized(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    []string
+	}{
+		{"git status", []string{"git status"}},
+		{`git commit -m "hello world"`, []string{"git commit -m hello world"}},
+		{"'rm' -rf x && /bin/ls", []string{"rm -rf x", "ls"}},
+		{"ls > '/tmp/out'", []string{"ls", "> /tmp/out"}},
+		{"sudo 'rm' x", []string{"sudo rm x", "rm x"}},
+		{"FOO=bar", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, Normalized(tt.command))
 		})
 	}
 }

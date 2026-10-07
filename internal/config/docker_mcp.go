@@ -99,11 +99,22 @@ func (s *ConfigStore) PrepareDockerMCPConfig() (MCPConfig, error) {
 }
 
 // PersistDockerMCPConfig persists a previously prepared Docker MCP
-// configuration to the global config file.
+// configuration to the global config file. The server was started before
+// persisting, so the entry is recorded as applied.
 func (s *ConfigStore) PersistDockerMCPConfig(mcpConfig MCPConfig) error {
 	if err := s.SetConfigField(ScopeGlobal, "mcp."+DockerMCPName, mcpConfig); err != nil {
 		return fmt.Errorf("failed to persist docker mcp configuration: %w", err)
 	}
+	live, ok := s.Config().MCP[DockerMCPName]
+	s.markAppliedLive(func(c *Config) {
+		if !ok {
+			return
+		}
+		if c.MCP == nil {
+			c.MCP = make(map[string]MCPConfig)
+		}
+		c.MCP[DockerMCPName] = live
+	})
 	return nil
 }
 
@@ -120,14 +131,19 @@ func (s *ConfigStore) EnableDockerMCP() error {
 }
 
 // DisableDockerMCP removes Docker MCP configuration and persists the change.
+// Callers stop the server first, so the removal is recorded as applied.
 func (s *ConfigStore) DisableDockerMCP() error {
-	return s.update(ScopeGlobal, func(c *Config) map[string]any {
+	if err := s.update(ScopeGlobal, func(c *Config) map[string]any {
 		if c.MCP == nil {
 			return nil
 		}
 		delete(c.MCP, DockerMCPName)
 		return map[string]any{"mcp": c.MCP}
-	})
+	}); err != nil {
+		return err
+	}
+	s.markAppliedLive(func(c *Config) { delete(c.MCP, DockerMCPName) })
+	return nil
 }
 
 // RemoveDockerMCPInMemory removes the Docker MCP entry from the in-memory

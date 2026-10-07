@@ -38,9 +38,11 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/version"
 )
@@ -83,6 +85,10 @@ type SessionAgentCall struct {
 	PresencePenalty  *float64
 	NonInteractive   bool
 
+	// wake marks a run started by RunWake: it begins with a job notice
+	// instead of a user prompt.
+	wake bool
+
 	// OnAuthRefresh, when non-nil, is called by fantasy when a stream
 	// fails with an authentication error (HTTP 401). The callback should
 	// refresh credentials and return nil on success, in which case
@@ -107,6 +113,12 @@ type SessionAgent interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string, fantasy.ProviderOptions) error
+	// RunWake starts a run for an idle session to deliver pending job
+	// events, using call's options with no user prompt. eligible is
+	// re-checked under the dispatch lock. It returns ErrSessionBusy,
+	// ErrWakeNotAllowed, or nil without running when nothing is pending.
+	RunWake(ctx context.Context, call SessionAgentCall, eligible func() bool) (*fantasy.AgentResult, error)
+	IsSummarizing(sessionID string) bool
 	Model() Model
 }
 
@@ -134,13 +146,34 @@ type sessionAgent struct {
 	isYolo               bool
 	notify               pubsub.Publisher[notify.Notification]
 	providerConfig       *csync.Value[config.ProviderConfig]
+	jobEvents            *jobevents.Store
 
 	admission *admission
+	onIdle    func(sessionID string)
+
+	// dispatchLocks serialise, per session, the decisions that start,
+	// queue, or finish a run, so concurrent prompts, wakes, and
+	// summaries never start two runs at once or lose a queued prompt.
+	// They are never held across model calls.
+	dispatchLocksMu sync.Mutex
+	dispatchLocks   map[string]*dispatchLock
+	summarizing     *csync.Map[string, *submissionOwner]
+	// wakeCounts counts consecutive wake runs since the last user run;
+	// wakeSuppressed marks sessions canceled since the last user run.
+	wakeCounts     *csync.Map[string, int]
+	wakeSuppressed *csync.Map[string, bool]
 
 	// backgroundJobs tracks fire-and-forget goroutines spawned by Run
 	// (currently only title generation) so tests — and shutdown paths —
 	// can wait for them instead of racing test/recorder teardown.
 	backgroundJobs sync.WaitGroup
+}
+
+// dispatchLock is a session's dispatch mutex; refs, guarded by
+// sessionAgent.dispatchLocksMu, counts its holders and waiters.
+type dispatchLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 // WaitBackgroundJobs blocks until all fire-and-forget goroutines spawned
@@ -166,6 +199,11 @@ type SessionAgentOptions struct {
 	Tools                []fantasy.AgentTool
 	Notify               pubsub.Publisher[notify.Notification]
 	ProviderConfig       config.ProviderConfig
+	// JobEvents delivers background job notifications; nil disables them.
+	JobEvents *jobevents.Store
+	// OnIdle, when non-nil, is called after a run or summary finishes
+	// with nothing queued for the session. It must not block.
+	OnIdle func(sessionID string)
 }
 
 func NewSessionAgent(
@@ -191,6 +229,12 @@ func NewSessionAgent(
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
 		admission:            opts.admission,
+		jobEvents:            opts.JobEvents,
+		onIdle:               opts.OnIdle,
+		dispatchLocks:        make(map[string]*dispatchLock),
+		summarizing:          csync.NewMap[string, *submissionOwner](),
+		wakeCounts:           csync.NewMap[string, int](),
+		wakeSuppressed:       csync.NewMap[string, bool](),
 	}
 }
 
@@ -216,6 +260,12 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		return nil, err
 	}
 	state := call.state
+	if !call.wake && state.acceptedUserID == "" {
+		unlock := a.lockDispatch(call.SessionID)
+		a.wakeCounts.Del(call.SessionID)
+		a.wakeSuppressed.Del(call.SessionID)
+		unlock()
+	}
 	if state.acceptedUserID != "" {
 		if err := a.restoreAttempt(ctx, call.SessionID, state); err != nil {
 			return nil, err
@@ -234,7 +284,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	sessionLock := sync.Mutex{}
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get session: %w", err)
+		return a.abortSetup(ctx, fmt.Errorf("failed to get session: %w", err))
 	}
 	if state.acceptedUserID != "" {
 		currentSession.LeafMessageID = state.acceptedUserID
@@ -255,7 +305,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 
 	msgs, raw, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get session messages: %w", err)
+		return a.abortSetup(ctx, fmt.Errorf("failed to get session messages: %w", err))
 	}
 
 	// Derive the lazy MCP state from conversation history and inject
@@ -312,19 +362,34 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		state.firstMessage = len(msgs) == 0
 	}
 	isFirstMessage := state.firstMessage
-	if state.acceptedUserID != "" {
+	if call.wake {
+		noticeMsg, err := a.deliverJobEvents(ctx, call.SessionID, currentLeaf)
+		if err != nil {
+			a.refundWake(call.SessionID)
+			return a.abortSetup(ctx, err)
+		}
+		if noticeMsg == nil {
+			a.refundWake(call.SessionID)
+			return nil, nil
+		}
+		msgs = append(msgs, *noticeMsg)
+		currentLeaf = noticeMsg.ID
+	} else if state.acceptedUserID != "" {
 		msgs = trimFailedAttemptMessages(msgs, state.acceptedUserID)
 	} else {
 		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
 		if err != nil {
-			return nil, err
+			return a.abortSetup(ctx, err)
 		}
 		currentLeaf = userMsg.ID
 		state.acceptedUserID = userMsg.ID
 	}
 
-	// Add the session to the context.
+	// Add the session to the context. Subagents run on their parent's tool
+	// context, so an inherited root session ID wins over this session's own.
+	rootSessionID := cmp.Or(tools.GetRootSessionFromContext(ctx), call.SessionID)
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
+	ctx = context.WithValue(ctx, tools.RootSessionIDContextKey, rootSessionID)
 
 	// persistCtx survives cancellation and is used for persistence that must
 	// succeed even when the request is canceled (finish parts, error tool
@@ -350,6 +415,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 
 	var currentAssistant *message.Message
 	var stepMessages []fantasy.Message
+	injected := newInjectedMessages()
 	var shouldSummarize bool
 	sanitizedToolCalls := make(map[string]bool)
 	// OnToolCall writes this map while OnToolResult reads it, and tool
@@ -373,7 +439,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		TopK:             call.TopK,
 		FrequencyPenalty: call.FrequencyPenalty,
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = options.Messages
+			prepared.Messages = injected.apply(options.Messages)
 			for i := range prepared.Messages {
 				prepared.Messages[i].ProviderOptions = nil
 			}
@@ -381,6 +447,19 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			// Use latest tools (updated by SetTools when MCP tools change),
 			// filtering out lazy MCP tools that haven't been enabled.
 			prepared.Tools = filterLazyMCPTools(a.tools.Copy(), lazyMCPToolMap, lazyState)
+
+			if a.jobEvents != nil {
+				noticeMsg, deliverErr := a.deliverJobEvents(callContext, call.SessionID, getLeaf())
+				if deliverErr != nil {
+					return callContext, prepared, deliverErr
+				}
+				if noticeMsg != nil {
+					setLeaf(noticeMsg.ID)
+					aiMessages := noticeMsg.ToAIMessage()
+					injected.add(options.Messages, aiMessages...)
+					prepared.Messages = append(prepared.Messages, aiMessages...)
+				}
+			}
 
 			prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, largeModel)
 
@@ -428,6 +507,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
+			callContext = context.WithValue(callContext, ownerKey{}, struct{}{})
 			currentAssistant = &assistantMsg
 			return callContext, prepared, err
 		},
@@ -549,6 +629,9 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 				return createMsgErr
 			}
 			currentLeaf = toolMsg.ID
+			if a.jobEvents != nil && !toolResult.IsError {
+				a.observeJobResult(result.ToolName, toolResult.Metadata)
+			}
 			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
@@ -737,7 +820,12 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			return nil, summarizeErr
 		}
 		if len(currentAssistant.ToolCalls()) > 0 {
-			call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
+			if call.wake {
+				call.wake = false
+				call.Prompt = "The previous session was interrupted because it got too long while handling background job updates. Continue from the summary."
+			} else {
+				call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
+			}
 			call.state = nil
 			a.admission.enqueue(call.SessionID, submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) { return a.Run(ctx, call) }})
 		}
@@ -779,7 +867,94 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		}
 	}
 
+	a.reportIdleWhenDone(ctx, call.SessionID)
 	return result, err
+}
+
+// RunWake implements SessionAgent.
+func (a *sessionAgent) RunWake(ctx context.Context, call SessionAgentCall, eligible func() bool) (*fantasy.AgentResult, error) {
+	if call.SessionID == "" {
+		return nil, ErrSessionMissing
+	}
+	unlock := a.lockDispatch(call.SessionID)
+	owner, err := a.admission.claimIdle(ctx, call.SessionID, func() error {
+		if suppressed, _ := a.wakeSuppressed.Get(call.SessionID); suppressed ||
+			a.wakeCount(call.SessionID) >= maxConsecutiveWakes ||
+			(eligible != nil && !eligible()) {
+			return ErrWakeNotAllowed
+		}
+		return nil
+	})
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	a.wakeCounts.Set(call.SessionID, a.wakeCount(call.SessionID)+1)
+	unlock()
+
+	call.wake = true
+	call.Prompt = ""
+	call.Attachments = nil
+	call.state = &runState{}
+	return a.admission.execute(owner, submission{run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		return a.runOwned(ctx, call)
+	}})
+}
+
+func (a *sessionAgent) wakeCount(sessionID string) int {
+	n, _ := a.wakeCounts.Get(sessionID)
+	return n
+}
+
+// refundWake returns a wake that delivered nothing to the session's
+// budget.
+func (a *sessionAgent) refundWake(sessionID string) {
+	unlock := a.lockDispatch(sessionID)
+	defer unlock()
+	if n := a.wakeCount(sessionID); n > 0 {
+		a.wakeCounts.Set(sessionID, n-1)
+	}
+}
+
+// lockDispatch locks the session's dispatch mutex and returns the
+// function that unlocks it. Entries are reference-counted, holders and
+// waiters alike, and removed when the last one unlocks, so the map only
+// holds sessions with dispatch decisions in progress.
+func (a *sessionAgent) lockDispatch(sessionID string) (unlock func()) {
+	a.dispatchLocksMu.Lock()
+	l, ok := a.dispatchLocks[sessionID]
+	if !ok {
+		l = &dispatchLock{}
+		a.dispatchLocks[sessionID] = l
+	}
+	l.refs++
+	a.dispatchLocksMu.Unlock()
+
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		a.dispatchLocksMu.Lock()
+		defer a.dispatchLocksMu.Unlock()
+		if l.refs--; l.refs == 0 {
+			delete(a.dispatchLocks, sessionID)
+		}
+	}
+}
+
+func (a *sessionAgent) abortSetup(ctx context.Context, err error) (*fantasy.AgentResult, error) {
+	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil {
+		owner.handoffOnError = true
+	}
+	return nil, err
+}
+
+func (a *sessionAgent) reportIdleWhenDone(ctx context.Context, sessionID string) {
+	if a.onIdle == nil {
+		return
+	}
+	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil && owner.sessionID == sessionID {
+		owner.onIdle = func() { a.onIdle(sessionID) }
+	}
 }
 
 func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
@@ -790,6 +965,10 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 }
 
 func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
+	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil {
+		a.summarizing.Set(sessionID, owner)
+		defer a.summarizing.CompareAndDelete(sessionID, owner)
+	}
 	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
 	systemPromptPrefix := a.systemPromptPrefix.Get()
@@ -904,6 +1083,8 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 
 	// Populate the CompactionContent part with the generated summary.
 	summaryText := compactionMsg.Content().Text
+	summaryText = appendBackgroundJobsSection(summaryText,
+		shell.GetBackgroundShellManager().ListBySession(sessionID), time.Now())
 	compactionMsg.Parts = []message.ContentPart{
 		message.CompactionContent{
 			Summary:          summaryText,
@@ -947,6 +1128,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		return err
 	}
 
+	a.reportIdleWhenDone(ctx, sessionID)
 	return nil
 }
 
@@ -1219,6 +1401,50 @@ func formatConversationForTitle(msgs []message.Message) string {
 	return result
 }
 
+// completeSmallMaxTokens bounds a one-shot small-model reply from a model
+// that doesn't reason.
+const completeSmallMaxTokens = 1024
+
+// completeSmall sends one prompt to the small model outside any session
+// and returns its reply and the model's ID.
+func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string) (string, string, error) {
+	small := a.smallModel.Get()
+	if small.Model == nil {
+		return "", "", errors.New("small model not configured")
+	}
+	systemPromptPrefix := a.systemPromptPrefix.Get()
+	providerCfg := a.providerConfig.Get()
+
+	tok := int64(completeSmallMaxTokens)
+	if small.CatwalkCfg.CanReason {
+		tok = max(tok, small.CatwalkCfg.DefaultMaxTokens)
+	}
+	agent := fantasy.NewAgent(small.Model,
+		fantasy.WithSystemPrompt(system),
+		fantasy.WithMaxOutputTokens(tok),
+		fantasy.WithUserAgent(userAgent),
+	)
+	resp, err := agent.Stream(ctx, fantasy.AgentStreamCall{
+		Prompt: prompt,
+		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
+			prepared.Messages = opts.Messages
+			if systemPromptPrefix != "" {
+				prepared.Messages = append([]fantasy.Message{
+					fantasy.NewSystemMessage(systemPromptPrefix),
+				}, prepared.Messages...)
+			}
+			if isAnthropicOAuth(providerCfg) {
+				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
+			}
+			return callCtx, prepared, nil
+		},
+	})
+	if err != nil {
+		return "", small.ModelCfg.Model, fmt.Errorf("small model: %w", err)
+	}
+	return resp.Response.Content.Text(), small.ModelCfg.Model, nil
+}
+
 // generateTitle generates a session title from the full conversation
 // context. Callers must pre-check TitleIsCustom before calling.
 func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs []message.Message) {
@@ -1418,11 +1644,20 @@ func summaryCompletionTokens(usage fantasy.Usage, summaryMessage message.Message
 }
 
 func (a *sessionAgent) Cancel(sessionID string) {
+	unlock := a.lockDispatch(sessionID)
+	a.wakeSuppressed.Set(sessionID, true)
+	unlock()
+
 	a.admission.cancel(sessionID)
 }
 
 func (a *sessionAgent) ClearQueue(sessionID string) {
 	a.admission.clear(sessionID)
+}
+
+func (a *sessionAgent) IsSummarizing(sessionID string) bool {
+	_, summarizing := a.summarizing.Get(sessionID)
+	return summarizing
 }
 
 func (a *sessionAgent) CancelAll() {

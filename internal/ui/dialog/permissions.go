@@ -3,7 +3,10 @@ package dialog
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -55,6 +58,9 @@ const (
 	minWindowWidth = 77
 	// minWindowHeight is the minimum window height before forcing fullscreen.
 	minWindowHeight = 20
+	// expandedVerticalMargin is the number of rows left free around a
+	// simple prompt grown to fit long content.
+	expandedVerticalMargin = 4
 )
 
 // Permissions represents a dialog for permission requests.
@@ -82,6 +88,10 @@ type Permissions struct {
 	viewport      viewport.Model
 	viewportDirty bool // true when viewport content needs to be re-rendered
 	viewportWidth int
+
+	// highlightedCommand caches the syntax-highlighted bash command, which
+	// is too expensive to recompute on every frame.
+	highlightedCommand string
 
 	// Diff view state.
 	diffSplitMode        *bool // nil means use default based on width
@@ -111,8 +121,13 @@ type permissionsKeyMap struct {
 	ScrollDown       key.Binding
 	ScrollLeft       key.Binding
 	ScrollRight      key.Binding
+	PageUp           key.Binding
+	PageDown         key.Binding
+	GotoTop          key.Binding
+	GotoBottom       key.Binding
 	Choose           key.Binding
 	Scroll           key.Binding
+	Page             key.Binding
 }
 
 func defaultPermissionsKeyMap() permissionsKeyMap {
@@ -178,6 +193,22 @@ func defaultPermissionsKeyMap() permissionsKeyMap {
 			key.WithKeys("shift+right", "L"),
 			key.WithHelp("shift+→", "scroll right"),
 		),
+		PageUp: key.NewBinding(
+			key.WithKeys("pgup"),
+			key.WithHelp("pgup", "page up"),
+		),
+		PageDown: key.NewBinding(
+			key.WithKeys("pgdown"),
+			key.WithHelp("pgdn", "page down"),
+		),
+		GotoTop: key.NewBinding(
+			key.WithKeys("home"),
+			key.WithHelp("home", "top"),
+		),
+		GotoBottom: key.NewBinding(
+			key.WithKeys("end"),
+			key.WithHelp("end", "bottom"),
+		),
 		Choose: key.NewBinding(
 			key.WithKeys("left", "right"),
 			key.WithHelp("←/→", "choose"),
@@ -185,6 +216,10 @@ func defaultPermissionsKeyMap() permissionsKeyMap {
 		Scroll: key.NewBinding(
 			key.WithKeys("shift+left", "shift+down", "shift+up", "shift+right"),
 			key.WithHelp("shift+←↓↑→", "scroll"),
+		),
+		Page: key.NewBinding(
+			key.WithKeys("pgup", "pgdown"),
+			key.WithHelp("pgup/pgdn", "page"),
 		),
 	}
 }
@@ -230,6 +265,10 @@ func NewPermissions(com *common.Common, perm permission.PermissionRequest, opts 
 		help:           h,
 		keyMap:         km,
 	}
+	// A deny prompt starts on Deny so a reflexive Enter keeps the block.
+	if p.bouncerDenied() {
+		p.selectedOption = p.optionIndex(optionDeny)
+	}
 
 	p.patternInput = textinput.New()
 	p.patternInput.SetVirtualCursor(false)
@@ -238,7 +277,9 @@ func NewPermissions(com *common.Common, perm permission.PermissionRequest, opts 
 	if len(perm.InputSegments) > 0 {
 		patterns := make([]string, 0, len(perm.InputSegments))
 		for _, seg := range perm.InputSegments {
-			patterns = append(patterns, segment.Generalize(seg))
+			if pattern := segment.Generalize(seg); !slices.Contains(patterns, pattern) {
+				patterns = append(patterns, pattern)
+			}
 		}
 		p.patternInput.SetValue(strings.Join(patterns, " && "))
 	} else {
@@ -318,10 +359,11 @@ func (p *Permissions) handleDefaultMsg(msg tea.KeyPressMsg) Action {
 		// backs out to this state instead.
 		return p.respond(PermissionDeny)
 	case key.Matches(msg, p.keyMap.Right), key.Matches(msg, p.keyMap.Tab):
-		p.selectedOption = (p.selectedOption + 1) % 4
+		p.selectedOption = (p.selectedOption + 1) % len(p.options())
 	case key.Matches(msg, p.keyMap.Left):
-		// Add 3 instead of subtracting 1 to avoid negative modulo.
-		p.selectedOption = (p.selectedOption + 3) % 4
+		// Add n-1 instead of subtracting 1 to avoid negative modulo.
+		n := len(p.options())
+		p.selectedOption = (p.selectedOption + n - 1) % n
 	case key.Matches(msg, p.keyMap.Select):
 		return p.selectCurrentOption()
 	case key.Matches(msg, p.keyMap.Allow):
@@ -329,6 +371,9 @@ func (p *Permissions) handleDefaultMsg(msg tea.KeyPressMsg) Action {
 	case key.Matches(msg, p.keyMap.AllowSession):
 		return p.respond(PermissionAllowForSession)
 	case key.Matches(msg, p.keyMap.AllowForever):
+		if p.bouncerDenied() {
+			break
+		}
 		p.foreverExpanded = true
 		p.selectedOption = 0
 	case key.Matches(msg, p.keyMap.Deny):
@@ -345,9 +390,15 @@ func (p *Permissions) handleDefaultMsg(msg tea.KeyPressMsg) Action {
 			p.viewportDirty = true
 		}
 	case key.Matches(msg, p.keyMap.ToggleFullscreen):
-		if p.hasDiffView() {
-			p.fullscreen = !p.fullscreen
-		}
+		p.fullscreen = !p.fullscreen
+	case key.Matches(msg, p.keyMap.PageDown):
+		p.viewport.PageDown()
+	case key.Matches(msg, p.keyMap.PageUp):
+		p.viewport.PageUp()
+	case key.Matches(msg, p.keyMap.GotoTop):
+		p.viewport.GotoTop()
+	case key.Matches(msg, p.keyMap.GotoBottom):
+		p.viewport.GotoBottom()
 	case key.Matches(msg, p.keyMap.ScrollDown):
 		p.viewport, _ = p.viewport.Update(msg)
 	case key.Matches(msg, p.keyMap.ScrollUp):
@@ -373,7 +424,7 @@ func (p *Permissions) handleForeverMsg(msg tea.KeyPressMsg) Action {
 	case key.Matches(msg, p.keyMap.Close):
 		// Return to default state.
 		p.foreverExpanded = false
-		p.selectedOption = 2
+		p.selectedOption = p.optionIndex(optionForever)
 	case key.Matches(msg, p.keyMap.Right), key.Matches(msg, p.keyMap.Tab):
 		p.selectedOption = (p.selectedOption + 1) % 2
 	case key.Matches(msg, p.keyMap.Left):
@@ -414,7 +465,7 @@ func (p *Permissions) handleDenyReasonMsg(msg tea.KeyPressMsg) Action {
 		// Return to default state without denying.
 		p.denyReasonVisible = false
 		p.denyReasonInput = ""
-		p.selectedOption = 3
+		p.selectedOption = p.optionIndex(optionDeny)
 	case msg.Code == tea.KeyEnter:
 		return p.respond(PermissionDeny)
 	case msg.Code == tea.KeyBackspace:
@@ -431,12 +482,12 @@ func (p *Permissions) handleDenyReasonMsg(msg tea.KeyPressMsg) Action {
 }
 
 func (p *Permissions) selectCurrentOption() tea.Msg {
-	switch p.selectedOption {
-	case 0:
+	switch p.options()[p.selectedOption] {
+	case optionAllow:
 		return p.respond(PermissionAllow)
-	case 1:
+	case optionSession:
 		return p.respond(PermissionAllowForSession)
-	case 2:
+	case optionForever:
 		p.foreverExpanded = true
 		p.selectedOption = 0
 		return nil
@@ -445,6 +496,44 @@ func (p *Permissions) selectCurrentOption() tea.Msg {
 		p.denyReasonInput = ""
 		return nil
 	}
+}
+
+// permissionOption is one button in the dialog's default state.
+type permissionOption int
+
+const (
+	optionAllow permissionOption = iota
+	optionSession
+	optionForever
+	optionDeny
+)
+
+var permissionOptionLabels = map[permissionOption]string{
+	optionAllow:   "Allow",
+	optionSession: "Session",
+	optionForever: "Forever",
+	optionDeny:    "Deny",
+}
+
+// bouncerDenied reports whether the enforcing bouncer flagged this request
+// as a deny and is asking the human to confirm or override it.
+func (p *Permissions) bouncerDenied() bool {
+	b := p.permission.Bouncer
+	return b != nil && !b.Shadow && b.Outcome == permission.AssessDeny.String()
+}
+
+// options returns the buttons shown in the default state. A deny prompt
+// drops Forever: a permanent rule should not be one keypress away from a
+// call the bouncer judged dangerous.
+func (p *Permissions) options() []permissionOption {
+	if p.bouncerDenied() {
+		return []permissionOption{optionAllow, optionSession, optionDeny}
+	}
+	return []permissionOption{optionAllow, optionSession, optionForever, optionDeny}
+}
+
+func (p *Permissions) optionIndex(o permissionOption) int {
+	return max(0, slices.Index(p.options(), o))
 }
 
 func (p *Permissions) respond(action PermissionAction) tea.Msg {
@@ -484,19 +573,24 @@ func (p *Permissions) scrollRight() {
 	p.viewportDirty = true
 }
 
-// Draw implements [Dialog].
 // dialogSize returns the outer dialog width and maximum height for the
 // given screen area, and whether the window is too small so the dialog
-// must fill it. Diff views get more room than simple prompts.
-func (p *Permissions) dialogSize(area uv.Rectangle) (width, maxHeight int, forceFullscreen bool) {
+// must fill it. Diff views, and simple prompts whose content overflows
+// (expanded), get more room than short simple prompts.
+func (p *Permissions) dialogSize(area uv.Rectangle, expanded bool) (width, maxHeight int, forceFullscreen bool) {
 	forceFullscreen = area.Dx() <= minWindowWidth || area.Dy() <= minWindowHeight
 	switch {
-	case forceFullscreen || (p.fullscreen && p.hasDiffView()):
+	case forceFullscreen || p.fullscreen:
 		width, maxHeight = area.Dx(), area.Dy()
 	case p.hasDiffView():
 		// Wide for side-by-side diffs, capped for readability.
 		width = min(int(float64(area.Dx())*diffSizeRatio), diffMaxWidth)
 		maxHeight = int(float64(area.Dy()) * diffSizeRatio)
+	case expanded:
+		// Long scripts need every row they can get: the fixed chrome
+		// alone takes over a dozen, so leave only a small margin.
+		width = min(int(float64(area.Dx())*diffSizeRatio), diffMaxWidth)
+		maxHeight = area.Dy() - expandedVerticalMargin
 	default:
 		// Narrower for simple content like commands and URLs.
 		width = min(int(float64(area.Dx())*simpleSizeRatio), simpleMaxWidth)
@@ -509,8 +603,8 @@ func (p *Permissions) dialogSize(area uv.Rectangle) (width, maxHeight int, force
 // viewport given the height taken by the fixed chrome (fixedHeight) and
 // the content's natural height. Simple prompts shrink to fit their
 // content; diff and fullscreen views always take all remaining height.
-func (p *Permissions) contentViewportHeight(forceFullscreen bool, maxHeight, fixedHeight, contentHeight int) int {
-	if p.hasDiffView() || forceFullscreen {
+func (p *Permissions) contentViewportHeight(fullscreen bool, maxHeight, fixedHeight, contentHeight int) int {
+	if p.hasDiffView() || fullscreen {
 		return maxHeight - fixedHeight
 	}
 	if fixedHeight+contentHeight < maxHeight {
@@ -519,38 +613,75 @@ func (p *Permissions) contentViewportHeight(forceFullscreen bool, maxHeight, fix
 	return max(maxHeight-fixedHeight, 3)
 }
 
-func (p *Permissions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
-	t := p.com.Styles
-	width, maxHeight, forceFullscreen := p.dialogSize(area)
-	dialogStyle := t.Dialog.View.Width(width).Padding(0, 1)
-	// The dialog fills the screen when forced small or when a diff is
-	// expanded; center the buttons then instead of hugging the far edge.
-	fullscreen := forceFullscreen || (p.fullscreen && p.hasDiffView())
+// layoutMetrics holds the measurements of one dialog layout pass.
+type layoutMetrics struct {
+	width, maxHeight  int
+	forceFullscreen   bool
+	fullscreen        bool
+	dialogStyle       lipgloss.Style
+	contentWidth      int
+	header, buttons   string
+	helpView          string
+	renderedContent   string
+	contentHeight     int
+	fixedHeight       int
+	contentOverflowed bool
+}
 
-	contentWidth := p.calculateContentWidth(width)
-	header := p.renderHeader(contentWidth)
-	buttons := p.renderButtons(contentWidth, fullscreen)
+// measure lays out the dialog chrome and content for the given size mode.
+func (p *Permissions) measure(area uv.Rectangle, expanded bool) layoutMetrics {
+	t := p.com.Styles
+	var m layoutMetrics
+	m.width, m.maxHeight, m.forceFullscreen = p.dialogSize(area, expanded)
+	m.dialogStyle = t.Dialog.View.Width(m.width).Padding(0, 1)
+	if p.bouncerDenied() {
+		m.dialogStyle = m.dialogStyle.BorderForeground(t.Dialog.Permissions.BouncerDeny.GetForeground())
+	}
+	// The dialog fills the screen when forced small or toggled; center
+	// the buttons then instead of hugging the far edge.
+	m.fullscreen = m.forceFullscreen || p.fullscreen
+
+	m.contentWidth = p.calculateContentWidth(m.width)
+	m.header = p.renderHeader(m.contentWidth)
+	m.buttons = p.renderButtons(m.contentWidth, m.fullscreen)
 	// Pack the hints to the content width so they truncate cleanly instead
 	// of overflowing. The dialog frame supplies the padding, so this renders
 	// the hint line without the extra help view inset that renderDialogHelp
 	// applies for RenderContext dialogs.
-	helpView := shortHelpLine(&p.help, p.ShortHelp(), contentWidth)
+	m.helpView = shortHelpLine(&p.help, p.ShortHelp(), m.contentWidth)
 
-	p.defaultDiffSplitMode = width >= splitModeMinWidth
+	p.defaultDiffSplitMode = m.width >= splitModeMinWidth
 
 	// Pre-render content to measure its actual height, then fit the
 	// scrollable viewport into whatever height the fixed chrome leaves.
-	renderedContent := p.renderContent(contentWidth)
-	contentHeight := lipgloss.Height(renderedContent)
+	m.renderedContent = p.renderContent(m.contentWidth)
+	m.contentHeight = lipgloss.Height(m.renderedContent)
 	// The fork's pattern input (granular permissions) is part of the fixed
 	// chrome, so its height joins the budget the viewport must fit within.
-	patternHeight := lipgloss.Height(p.renderPatternInput(contentWidth))
+	patternHeight := lipgloss.Height(p.renderPatternInput(m.contentWidth))
 	if patternHeight > 0 {
 		patternHeight += 1 // Account for the blank line separator.
 	}
-	fixedHeight := lipgloss.Height(header) + lipgloss.Height(buttons) +
-		lipgloss.Height(helpView) + dialogStyle.GetVerticalFrameSize() + layoutSpacingLines + patternHeight
-	availableHeight := p.contentViewportHeight(forceFullscreen, maxHeight, fixedHeight, contentHeight)
+	m.fixedHeight = lipgloss.Height(m.header) + lipgloss.Height(m.buttons) +
+		lipgloss.Height(m.helpView) + m.dialogStyle.GetVerticalFrameSize() + layoutSpacingLines + patternHeight
+	m.contentOverflowed = m.fixedHeight+m.contentHeight > m.maxHeight
+	return m
+}
+
+// Draw implements [Dialog].
+func (p *Permissions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
+	t := p.com.Styles
+	m := p.measure(area, false)
+	// Long simple content (multi-line scripts and the like) would be
+	// cramped in the compact dialog, so grow it to the larger size.
+	if m.contentOverflowed && !m.fullscreen && !p.hasDiffView() {
+		m = p.measure(area, true)
+	}
+	dialogStyle := m.dialogStyle
+	contentWidth := m.contentWidth
+	header, buttons, helpView := m.header, m.buttons, m.helpView
+	renderedContent, contentHeight := m.renderedContent, m.contentHeight
+	availableHeight := p.contentViewportHeight(m.fullscreen, m.maxHeight, m.fixedHeight, contentHeight)
 
 	// Determine if scrollbar is needed.
 	needsScrollbar := p.hasDiffView() || contentHeight > availableHeight
@@ -596,8 +727,15 @@ func (p *Permissions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 func (p *Permissions) renderHeader(contentWidth int) string {
 	t := p.com.Styles
 
-	title := common.DialogTitle(t, "Permission Required", contentWidth-t.Dialog.Title.GetHorizontalFrameSize(), t.Dialog.TitleGradFromColor, t.Dialog.TitleGradToColor)
-	title = t.Dialog.Title.Render(title)
+	titleText, gradFrom, gradTo := "Permission Required", t.Dialog.TitleGradFromColor, t.Dialog.TitleGradToColor
+	titleStyle := t.Dialog.Title
+	if p.bouncerDenied() {
+		red := t.Dialog.Permissions.BouncerDeny.GetForeground()
+		titleText, gradFrom, gradTo = "Bouncer Would Deny", red, red
+		titleStyle = titleStyle.Foreground(red)
+	}
+	title := common.DialogTitle(t, titleText, contentWidth-titleStyle.GetHorizontalFrameSize(), gradFrom, gradTo)
+	title = titleStyle.Render(title)
 
 	// Tool info.
 	toolLine := p.renderToolName(contentWidth)
@@ -637,6 +775,15 @@ func (p *Permissions) renderHeader(contentWidth int) string {
 		}
 	}
 
+	// Show the bouncer's verdict, if any, directly under the rest of the
+	// header. It wraps so every axis stays visible.
+	if block := p.renderBouncer(contentWidth); block != "" {
+		lines = append(lines, block)
+	}
+	if block := p.renderReview(contentWidth); block != "" {
+		lines = append(lines, block)
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -674,6 +821,17 @@ func prettyName(name string) string {
 	return stringext.Capitalize(name)
 }
 
+// capitalizeFirst uppercases the first rune of s, leaving the rest
+// unchanged. Unlike [stringext.Capitalize], which title-cases every word,
+// this suits short status notes like "bouncer: escalate · severity=2.1".
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(r)) + s[size:]
+}
+
 func (p *Permissions) renderContent(width int) string {
 	switch p.permission.ToolName {
 	case tools.BashToolName:
@@ -705,7 +863,14 @@ func (p *Permissions) renderBashContent(width int) string {
 		return ""
 	}
 
-	return p.renderContentPanel(params.Command, width)
+	if p.highlightedCommand == "" {
+		p.highlightedCommand = params.Command
+		t := p.com.Styles
+		if highlighted, err := common.SyntaxHighlight(t, params.Command, "command.sh", t.Dialog.Permissions.ParamsBg); err == nil {
+			p.highlightedCommand = strings.TrimRight(highlighted, "\n")
+		}
+	}
+	return p.renderContentPanel(p.highlightedCommand, width)
 }
 
 func (p *Permissions) renderEditContent(contentWidth int) string {
@@ -909,11 +1074,8 @@ func (p *Permissions) renderButtons(contentWidth int, fullscreen bool) string {
 			{Text: "User", UnderlineIndex: 0, Selected: p.selectedOption == 1},
 		}
 	} else {
-		buttons = []common.ButtonOpts{
-			{Text: "Allow", UnderlineIndex: 0, Selected: p.selectedOption == 0},
-			{Text: "Session", UnderlineIndex: 0, Selected: p.selectedOption == 1},
-			{Text: "Forever", UnderlineIndex: 0, Selected: p.selectedOption == 2},
-			{Text: "Deny", UnderlineIndex: 0, Selected: p.selectedOption == 3},
+		for i, o := range p.options() {
+			buttons = append(buttons, common.ButtonOpts{Text: permissionOptionLabels[o], UnderlineIndex: 0, Selected: p.selectedOption == i})
 		}
 	}
 
@@ -987,19 +1149,22 @@ func (p *Permissions) ShortHelp() []key.Binding {
 		p.keyMap.Close,
 	}
 
+	// Fullscreen comes before the other hints so it survives truncation
+	// on narrow terminals, where it is needed most.
+	if p.canScroll() || p.fullscreen {
+		bindings = append(bindings, p.keyMap.ToggleFullscreen)
+	}
+
 	if p.permission.Input != "" {
 		bindings = append(bindings, p.keyMap.EditPattern)
 	}
 
 	if p.canScroll() {
-		bindings = append(bindings, p.keyMap.Scroll)
+		bindings = append(bindings, p.keyMap.Scroll, p.keyMap.Page)
 	}
 
 	if p.hasDiffView() {
-		bindings = append(bindings,
-			p.keyMap.ToggleDiffMode,
-			p.keyMap.ToggleFullscreen,
-		)
+		bindings = append(bindings, p.keyMap.ToggleDiffMode)
 	}
 
 	return bindings

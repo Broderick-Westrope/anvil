@@ -115,7 +115,7 @@ func (b *Branch) HandleMsg(msg tea.Msg) Action {
 			} else {
 				b.list.SelectPrev()
 			}
-			b.list.ScrollToSelected()
+			b.list.ScrollToSelectedWithMargin(listScrollMargin)
 
 		case key.Matches(msg, b.keyMap.Next):
 			b.list.Focus()
@@ -124,7 +124,7 @@ func (b *Branch) HandleMsg(msg tea.Msg) Action {
 			} else {
 				b.list.SelectNext()
 			}
-			b.list.ScrollToSelected()
+			b.list.ScrollToSelectedWithMargin(listScrollMargin)
 
 		default:
 			var cmd tea.Cmd

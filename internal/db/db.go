@@ -24,11 +24,35 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.claimBackgroundJobEventsStmt, err = db.PrepareContext(ctx, claimBackgroundJobEvents); err != nil {
+		return nil, fmt.Errorf("error preparing query ClaimBackgroundJobEvents: %w", err)
+	}
+	if q.countUnresolvedPermissionDecisionsSinceStmt, err = db.PrepareContext(ctx, countUnresolvedPermissionDecisionsSince); err != nil {
+		return nil, fmt.Errorf("error preparing query CountUnresolvedPermissionDecisionsSince: %w", err)
+	}
+	if q.createBackgroundJobStmt, err = db.PrepareContext(ctx, createBackgroundJob); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateBackgroundJob: %w", err)
+	}
+	if q.createBackgroundJobEventStmt, err = db.PrepareContext(ctx, createBackgroundJobEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateBackgroundJobEvent: %w", err)
+	}
 	if q.createMessageStmt, err = db.PrepareContext(ctx, createMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateMessage: %w", err)
 	}
 	if q.createSessionStmt, err = db.PrepareContext(ctx, createSession); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateSession: %w", err)
+	}
+	if q.deleteAnvilInstanceStmt, err = db.PrepareContext(ctx, deleteAnvilInstance); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteAnvilInstance: %w", err)
+	}
+	if q.deleteBackgroundJobStmt, err = db.PrepareContext(ctx, deleteBackgroundJob); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteBackgroundJob: %w", err)
+	}
+	if q.deleteBackgroundJobEventStmt, err = db.PrepareContext(ctx, deleteBackgroundJobEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteBackgroundJobEvent: %w", err)
+	}
+	if q.deleteBackgroundJobsBySessionStmt, err = db.PrepareContext(ctx, deleteBackgroundJobsBySession); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteBackgroundJobsBySession: %w", err)
 	}
 	if q.deleteMCPOAuthClientStmt, err = db.PrepareContext(ctx, deleteMCPOAuthClient); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteMCPOAuthClient: %w", err)
@@ -39,14 +63,23 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteMessageStmt, err = db.PrepareContext(ctx, deleteMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteMessage: %w", err)
 	}
+	if q.deletePermissionDecisionsBeforeStmt, err = db.PrepareContext(ctx, deletePermissionDecisionsBefore); err != nil {
+		return nil, fmt.Errorf("error preparing query DeletePermissionDecisionsBefore: %w", err)
+	}
 	if q.deleteSessionStmt, err = db.PrepareContext(ctx, deleteSession); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSession: %w", err)
 	}
 	if q.deleteSessionMessagesStmt, err = db.PrepareContext(ctx, deleteSessionMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSessionMessages: %w", err)
 	}
+	if q.finalizeBackgroundJobStmt, err = db.PrepareContext(ctx, finalizeBackgroundJob); err != nil {
+		return nil, fmt.Errorf("error preparing query FinalizeBackgroundJob: %w", err)
+	}
 	if q.getAllSessionMessagesStmt, err = db.PrepareContext(ctx, getAllSessionMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllSessionMessages: %w", err)
+	}
+	if q.getBackgroundJobStmt, err = db.PrepareContext(ctx, getBackgroundJob); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBackgroundJob: %w", err)
 	}
 	if q.getBranchPathStmt, err = db.PrepareContext(ctx, getBranchPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBranchPath: %w", err)
@@ -78,14 +111,38 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getSessionByIDStmt, err = db.PrepareContext(ctx, getSessionByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSessionByID: %w", err)
 	}
+	if q.insertPermissionDecisionStmt, err = db.PrepareContext(ctx, insertPermissionDecision); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertPermissionDecision: %w", err)
+	}
 	if q.listAllSessionsStmt, err = db.PrepareContext(ctx, listAllSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAllSessions: %w", err)
+	}
+	if q.listAnvilInstancesStmt, err = db.PrepareContext(ctx, listAnvilInstances); err != nil {
+		return nil, fmt.Errorf("error preparing query ListAnvilInstances: %w", err)
+	}
+	if q.listBackgroundJobIDsBySessionStmt, err = db.PrepareContext(ctx, listBackgroundJobIDsBySession); err != nil {
+		return nil, fmt.Errorf("error preparing query ListBackgroundJobIDsBySession: %w", err)
+	}
+	if q.listBackgroundJobLogsOldestFirstStmt, err = db.PrepareContext(ctx, listBackgroundJobLogsOldestFirst); err != nil {
+		return nil, fmt.Errorf("error preparing query ListBackgroundJobLogsOldestFirst: %w", err)
+	}
+	if q.listBackgroundJobsBySessionStmt, err = db.PrepareContext(ctx, listBackgroundJobsBySession); err != nil {
+		return nil, fmt.Errorf("error preparing query ListBackgroundJobsBySession: %w", err)
+	}
+	if q.listBackgroundJobsWithLogsBeforeStmt, err = db.PrepareContext(ctx, listBackgroundJobsWithLogsBefore); err != nil {
+		return nil, fmt.Errorf("error preparing query ListBackgroundJobsWithLogsBefore: %w", err)
 	}
 	if q.listMessagesBySessionStmt, err = db.PrepareContext(ctx, listMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListMessagesBySession: %w", err)
 	}
+	if q.listPermissionDecisionsSinceStmt, err = db.PrepareContext(ctx, listPermissionDecisionsSince); err != nil {
+		return nil, fmt.Errorf("error preparing query ListPermissionDecisionsSince: %w", err)
+	}
 	if q.listPinnedSessionsStmt, err = db.PrepareContext(ctx, listPinnedSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListPinnedSessions: %w", err)
+	}
+	if q.listRunningBackgroundJobsStmt, err = db.PrepareContext(ctx, listRunningBackgroundJobs); err != nil {
+		return nil, fmt.Errorf("error preparing query ListRunningBackgroundJobs: %w", err)
 	}
 	if q.listSessionReadFilesStmt, err = db.PrepareContext(ctx, listSessionReadFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionReadFiles: %w", err)
@@ -93,20 +150,38 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listSessionsByWorkingDirStmt, err = db.PrepareContext(ctx, listSessionsByWorkingDir); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionsByWorkingDir: %w", err)
 	}
+	if q.listUndeliveredBackgroundJobEventsStmt, err = db.PrepareContext(ctx, listUndeliveredBackgroundJobEvents); err != nil {
+		return nil, fmt.Errorf("error preparing query ListUndeliveredBackgroundJobEvents: %w", err)
+	}
 	if q.listUserMessagesBySessionStmt, err = db.PrepareContext(ctx, listUserMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListUserMessagesBySession: %w", err)
 	}
 	if q.listUserMessagesByWorkingDirStmt, err = db.PrepareContext(ctx, listUserMessagesByWorkingDir); err != nil {
 		return nil, fmt.Errorf("error preparing query ListUserMessagesByWorkingDir: %w", err)
 	}
+	if q.markBackgroundJobLogExpiredStmt, err = db.PrepareContext(ctx, markBackgroundJobLogExpired); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkBackgroundJobLogExpired: %w", err)
+	}
+	if q.markBackgroundJobsInterruptedStmt, err = db.PrepareContext(ctx, markBackgroundJobsInterrupted); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkBackgroundJobsInterrupted: %w", err)
+	}
 	if q.recordFileReadStmt, err = db.PrepareContext(ctx, recordFileRead); err != nil {
 		return nil, fmt.Errorf("error preparing query RecordFileRead: %w", err)
+	}
+	if q.releaseBackgroundJobEventStmt, err = db.PrepareContext(ctx, releaseBackgroundJobEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query ReleaseBackgroundJobEvent: %w", err)
 	}
 	if q.renameSessionStmt, err = db.PrepareContext(ctx, renameSession); err != nil {
 		return nil, fmt.Errorf("error preparing query RenameSession: %w", err)
 	}
 	if q.setSessionPinStmt, err = db.PrepareContext(ctx, setSessionPin); err != nil {
 		return nil, fmt.Errorf("error preparing query SetSessionPin: %w", err)
+	}
+	if q.touchAnvilInstanceStmt, err = db.PrepareContext(ctx, touchAnvilInstance); err != nil {
+		return nil, fmt.Errorf("error preparing query TouchAnvilInstance: %w", err)
+	}
+	if q.transferBackgroundJobsStmt, err = db.PrepareContext(ctx, transferBackgroundJobs); err != nil {
+		return nil, fmt.Errorf("error preparing query TransferBackgroundJobs: %w", err)
 	}
 	if q.updateMessageStmt, err = db.PrepareContext(ctx, updateMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateMessage: %w", err)
@@ -120,6 +195,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateSessionTitleAndUsageStmt, err = db.PrepareContext(ctx, updateSessionTitleAndUsage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSessionTitleAndUsage: %w", err)
 	}
+	if q.upsertAnvilInstanceStmt, err = db.PrepareContext(ctx, upsertAnvilInstance); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertAnvilInstance: %w", err)
+	}
 	if q.upsertMCPOAuthClientStmt, err = db.PrepareContext(ctx, upsertMCPOAuthClient); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertMCPOAuthClient: %w", err)
 	}
@@ -131,6 +209,26 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.claimBackgroundJobEventsStmt != nil {
+		if cerr := q.claimBackgroundJobEventsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing claimBackgroundJobEventsStmt: %w", cerr)
+		}
+	}
+	if q.countUnresolvedPermissionDecisionsSinceStmt != nil {
+		if cerr := q.countUnresolvedPermissionDecisionsSinceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countUnresolvedPermissionDecisionsSinceStmt: %w", cerr)
+		}
+	}
+	if q.createBackgroundJobStmt != nil {
+		if cerr := q.createBackgroundJobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createBackgroundJobStmt: %w", cerr)
+		}
+	}
+	if q.createBackgroundJobEventStmt != nil {
+		if cerr := q.createBackgroundJobEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createBackgroundJobEventStmt: %w", cerr)
+		}
+	}
 	if q.createMessageStmt != nil {
 		if cerr := q.createMessageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createMessageStmt: %w", cerr)
@@ -139,6 +237,26 @@ func (q *Queries) Close() error {
 	if q.createSessionStmt != nil {
 		if cerr := q.createSessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createSessionStmt: %w", cerr)
+		}
+	}
+	if q.deleteAnvilInstanceStmt != nil {
+		if cerr := q.deleteAnvilInstanceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteAnvilInstanceStmt: %w", cerr)
+		}
+	}
+	if q.deleteBackgroundJobStmt != nil {
+		if cerr := q.deleteBackgroundJobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteBackgroundJobStmt: %w", cerr)
+		}
+	}
+	if q.deleteBackgroundJobEventStmt != nil {
+		if cerr := q.deleteBackgroundJobEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteBackgroundJobEventStmt: %w", cerr)
+		}
+	}
+	if q.deleteBackgroundJobsBySessionStmt != nil {
+		if cerr := q.deleteBackgroundJobsBySessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteBackgroundJobsBySessionStmt: %w", cerr)
 		}
 	}
 	if q.deleteMCPOAuthClientStmt != nil {
@@ -156,6 +274,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteMessageStmt: %w", cerr)
 		}
 	}
+	if q.deletePermissionDecisionsBeforeStmt != nil {
+		if cerr := q.deletePermissionDecisionsBeforeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deletePermissionDecisionsBeforeStmt: %w", cerr)
+		}
+	}
 	if q.deleteSessionStmt != nil {
 		if cerr := q.deleteSessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteSessionStmt: %w", cerr)
@@ -166,9 +289,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteSessionMessagesStmt: %w", cerr)
 		}
 	}
+	if q.finalizeBackgroundJobStmt != nil {
+		if cerr := q.finalizeBackgroundJobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing finalizeBackgroundJobStmt: %w", cerr)
+		}
+	}
 	if q.getAllSessionMessagesStmt != nil {
 		if cerr := q.getAllSessionMessagesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAllSessionMessagesStmt: %w", cerr)
+		}
+	}
+	if q.getBackgroundJobStmt != nil {
+		if cerr := q.getBackgroundJobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBackgroundJobStmt: %w", cerr)
 		}
 	}
 	if q.getBranchPathStmt != nil {
@@ -221,9 +354,39 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getSessionByIDStmt: %w", cerr)
 		}
 	}
+	if q.insertPermissionDecisionStmt != nil {
+		if cerr := q.insertPermissionDecisionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertPermissionDecisionStmt: %w", cerr)
+		}
+	}
 	if q.listAllSessionsStmt != nil {
 		if cerr := q.listAllSessionsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listAllSessionsStmt: %w", cerr)
+		}
+	}
+	if q.listAnvilInstancesStmt != nil {
+		if cerr := q.listAnvilInstancesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listAnvilInstancesStmt: %w", cerr)
+		}
+	}
+	if q.listBackgroundJobIDsBySessionStmt != nil {
+		if cerr := q.listBackgroundJobIDsBySessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listBackgroundJobIDsBySessionStmt: %w", cerr)
+		}
+	}
+	if q.listBackgroundJobLogsOldestFirstStmt != nil {
+		if cerr := q.listBackgroundJobLogsOldestFirstStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listBackgroundJobLogsOldestFirstStmt: %w", cerr)
+		}
+	}
+	if q.listBackgroundJobsBySessionStmt != nil {
+		if cerr := q.listBackgroundJobsBySessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listBackgroundJobsBySessionStmt: %w", cerr)
+		}
+	}
+	if q.listBackgroundJobsWithLogsBeforeStmt != nil {
+		if cerr := q.listBackgroundJobsWithLogsBeforeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listBackgroundJobsWithLogsBeforeStmt: %w", cerr)
 		}
 	}
 	if q.listMessagesBySessionStmt != nil {
@@ -231,9 +394,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listMessagesBySessionStmt: %w", cerr)
 		}
 	}
+	if q.listPermissionDecisionsSinceStmt != nil {
+		if cerr := q.listPermissionDecisionsSinceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listPermissionDecisionsSinceStmt: %w", cerr)
+		}
+	}
 	if q.listPinnedSessionsStmt != nil {
 		if cerr := q.listPinnedSessionsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listPinnedSessionsStmt: %w", cerr)
+		}
+	}
+	if q.listRunningBackgroundJobsStmt != nil {
+		if cerr := q.listRunningBackgroundJobsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listRunningBackgroundJobsStmt: %w", cerr)
 		}
 	}
 	if q.listSessionReadFilesStmt != nil {
@@ -246,6 +419,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listSessionsByWorkingDirStmt: %w", cerr)
 		}
 	}
+	if q.listUndeliveredBackgroundJobEventsStmt != nil {
+		if cerr := q.listUndeliveredBackgroundJobEventsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listUndeliveredBackgroundJobEventsStmt: %w", cerr)
+		}
+	}
 	if q.listUserMessagesBySessionStmt != nil {
 		if cerr := q.listUserMessagesBySessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listUserMessagesBySessionStmt: %w", cerr)
@@ -256,9 +434,24 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listUserMessagesByWorkingDirStmt: %w", cerr)
 		}
 	}
+	if q.markBackgroundJobLogExpiredStmt != nil {
+		if cerr := q.markBackgroundJobLogExpiredStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markBackgroundJobLogExpiredStmt: %w", cerr)
+		}
+	}
+	if q.markBackgroundJobsInterruptedStmt != nil {
+		if cerr := q.markBackgroundJobsInterruptedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markBackgroundJobsInterruptedStmt: %w", cerr)
+		}
+	}
 	if q.recordFileReadStmt != nil {
 		if cerr := q.recordFileReadStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing recordFileReadStmt: %w", cerr)
+		}
+	}
+	if q.releaseBackgroundJobEventStmt != nil {
+		if cerr := q.releaseBackgroundJobEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing releaseBackgroundJobEventStmt: %w", cerr)
 		}
 	}
 	if q.renameSessionStmt != nil {
@@ -269,6 +462,16 @@ func (q *Queries) Close() error {
 	if q.setSessionPinStmt != nil {
 		if cerr := q.setSessionPinStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing setSessionPinStmt: %w", cerr)
+		}
+	}
+	if q.touchAnvilInstanceStmt != nil {
+		if cerr := q.touchAnvilInstanceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing touchAnvilInstanceStmt: %w", cerr)
+		}
+	}
+	if q.transferBackgroundJobsStmt != nil {
+		if cerr := q.transferBackgroundJobsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing transferBackgroundJobsStmt: %w", cerr)
 		}
 	}
 	if q.updateMessageStmt != nil {
@@ -289,6 +492,11 @@ func (q *Queries) Close() error {
 	if q.updateSessionTitleAndUsageStmt != nil {
 		if cerr := q.updateSessionTitleAndUsageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateSessionTitleAndUsageStmt: %w", cerr)
+		}
+	}
+	if q.upsertAnvilInstanceStmt != nil {
+		if cerr := q.upsertAnvilInstanceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertAnvilInstanceStmt: %w", cerr)
 		}
 	}
 	if q.upsertMCPOAuthClientStmt != nil {
@@ -338,81 +546,133 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                               DBTX
-	tx                               *sql.Tx
-	createMessageStmt                *sql.Stmt
-	createSessionStmt                *sql.Stmt
-	deleteMCPOAuthClientStmt         *sql.Stmt
-	deleteMCPOAuthTokenStmt          *sql.Stmt
-	deleteMessageStmt                *sql.Stmt
-	deleteSessionStmt                *sql.Stmt
-	deleteSessionMessagesStmt        *sql.Stmt
-	getAllSessionMessagesStmt        *sql.Stmt
-	getBranchPathStmt                *sql.Stmt
-	getBranchPathTailStmt            *sql.Stmt
-	getFileReadStmt                  *sql.Stmt
-	getLastGlobalSessionStmt         *sql.Stmt
-	getLastSessionByWorkingDirStmt   *sql.Stmt
-	getMCPOAuthClientStmt            *sql.Stmt
-	getMCPOAuthTokenStmt             *sql.Stmt
-	getMessageStmt                   *sql.Stmt
-	getMessageChildrenStmt           *sql.Stmt
-	getSessionByIDStmt               *sql.Stmt
-	listAllSessionsStmt              *sql.Stmt
-	listMessagesBySessionStmt        *sql.Stmt
-	listPinnedSessionsStmt           *sql.Stmt
-	listSessionReadFilesStmt         *sql.Stmt
-	listSessionsByWorkingDirStmt     *sql.Stmt
-	listUserMessagesBySessionStmt    *sql.Stmt
-	listUserMessagesByWorkingDirStmt *sql.Stmt
-	recordFileReadStmt               *sql.Stmt
-	renameSessionStmt                *sql.Stmt
-	setSessionPinStmt                *sql.Stmt
-	updateMessageStmt                *sql.Stmt
-	updateSessionStmt                *sql.Stmt
-	updateSessionLeafStmt            *sql.Stmt
-	updateSessionTitleAndUsageStmt   *sql.Stmt
-	upsertMCPOAuthClientStmt         *sql.Stmt
-	upsertMCPOAuthTokenStmt          *sql.Stmt
+	db                                          DBTX
+	tx                                          *sql.Tx
+	claimBackgroundJobEventsStmt                *sql.Stmt
+	countUnresolvedPermissionDecisionsSinceStmt *sql.Stmt
+	createBackgroundJobStmt                     *sql.Stmt
+	createBackgroundJobEventStmt                *sql.Stmt
+	createMessageStmt                           *sql.Stmt
+	createSessionStmt                           *sql.Stmt
+	deleteAnvilInstanceStmt                     *sql.Stmt
+	deleteBackgroundJobStmt                     *sql.Stmt
+	deleteBackgroundJobEventStmt                *sql.Stmt
+	deleteBackgroundJobsBySessionStmt           *sql.Stmt
+	deleteMCPOAuthClientStmt                    *sql.Stmt
+	deleteMCPOAuthTokenStmt                     *sql.Stmt
+	deleteMessageStmt                           *sql.Stmt
+	deletePermissionDecisionsBeforeStmt         *sql.Stmt
+	deleteSessionStmt                           *sql.Stmt
+	deleteSessionMessagesStmt                   *sql.Stmt
+	finalizeBackgroundJobStmt                   *sql.Stmt
+	getAllSessionMessagesStmt                   *sql.Stmt
+	getBackgroundJobStmt                        *sql.Stmt
+	getBranchPathStmt                           *sql.Stmt
+	getBranchPathTailStmt                       *sql.Stmt
+	getFileReadStmt                             *sql.Stmt
+	getLastGlobalSessionStmt                    *sql.Stmt
+	getLastSessionByWorkingDirStmt              *sql.Stmt
+	getMCPOAuthClientStmt                       *sql.Stmt
+	getMCPOAuthTokenStmt                        *sql.Stmt
+	getMessageStmt                              *sql.Stmt
+	getMessageChildrenStmt                      *sql.Stmt
+	getSessionByIDStmt                          *sql.Stmt
+	insertPermissionDecisionStmt                *sql.Stmt
+	listAllSessionsStmt                         *sql.Stmt
+	listAnvilInstancesStmt                      *sql.Stmt
+	listBackgroundJobIDsBySessionStmt           *sql.Stmt
+	listBackgroundJobLogsOldestFirstStmt        *sql.Stmt
+	listBackgroundJobsBySessionStmt             *sql.Stmt
+	listBackgroundJobsWithLogsBeforeStmt        *sql.Stmt
+	listMessagesBySessionStmt                   *sql.Stmt
+	listPermissionDecisionsSinceStmt            *sql.Stmt
+	listPinnedSessionsStmt                      *sql.Stmt
+	listRunningBackgroundJobsStmt               *sql.Stmt
+	listSessionReadFilesStmt                    *sql.Stmt
+	listSessionsByWorkingDirStmt                *sql.Stmt
+	listUndeliveredBackgroundJobEventsStmt      *sql.Stmt
+	listUserMessagesBySessionStmt               *sql.Stmt
+	listUserMessagesByWorkingDirStmt            *sql.Stmt
+	markBackgroundJobLogExpiredStmt             *sql.Stmt
+	markBackgroundJobsInterruptedStmt           *sql.Stmt
+	recordFileReadStmt                          *sql.Stmt
+	releaseBackgroundJobEventStmt               *sql.Stmt
+	renameSessionStmt                           *sql.Stmt
+	setSessionPinStmt                           *sql.Stmt
+	touchAnvilInstanceStmt                      *sql.Stmt
+	transferBackgroundJobsStmt                  *sql.Stmt
+	updateMessageStmt                           *sql.Stmt
+	updateSessionStmt                           *sql.Stmt
+	updateSessionLeafStmt                       *sql.Stmt
+	updateSessionTitleAndUsageStmt              *sql.Stmt
+	upsertAnvilInstanceStmt                     *sql.Stmt
+	upsertMCPOAuthClientStmt                    *sql.Stmt
+	upsertMCPOAuthTokenStmt                     *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                               tx,
-		tx:                               tx,
-		createMessageStmt:                q.createMessageStmt,
-		createSessionStmt:                q.createSessionStmt,
-		deleteMCPOAuthClientStmt:         q.deleteMCPOAuthClientStmt,
-		deleteMCPOAuthTokenStmt:          q.deleteMCPOAuthTokenStmt,
-		deleteMessageStmt:                q.deleteMessageStmt,
-		deleteSessionStmt:                q.deleteSessionStmt,
-		deleteSessionMessagesStmt:        q.deleteSessionMessagesStmt,
-		getAllSessionMessagesStmt:        q.getAllSessionMessagesStmt,
-		getBranchPathStmt:                q.getBranchPathStmt,
-		getBranchPathTailStmt:            q.getBranchPathTailStmt,
-		getFileReadStmt:                  q.getFileReadStmt,
-		getLastGlobalSessionStmt:         q.getLastGlobalSessionStmt,
-		getLastSessionByWorkingDirStmt:   q.getLastSessionByWorkingDirStmt,
-		getMCPOAuthClientStmt:            q.getMCPOAuthClientStmt,
-		getMCPOAuthTokenStmt:             q.getMCPOAuthTokenStmt,
-		getMessageStmt:                   q.getMessageStmt,
-		getMessageChildrenStmt:           q.getMessageChildrenStmt,
-		getSessionByIDStmt:               q.getSessionByIDStmt,
-		listAllSessionsStmt:              q.listAllSessionsStmt,
-		listMessagesBySessionStmt:        q.listMessagesBySessionStmt,
-		listPinnedSessionsStmt:           q.listPinnedSessionsStmt,
-		listSessionReadFilesStmt:         q.listSessionReadFilesStmt,
-		listSessionsByWorkingDirStmt:     q.listSessionsByWorkingDirStmt,
-		listUserMessagesBySessionStmt:    q.listUserMessagesBySessionStmt,
-		listUserMessagesByWorkingDirStmt: q.listUserMessagesByWorkingDirStmt,
-		recordFileReadStmt:               q.recordFileReadStmt,
-		renameSessionStmt:                q.renameSessionStmt,
-		setSessionPinStmt:                q.setSessionPinStmt,
-		updateMessageStmt:                q.updateMessageStmt,
-		updateSessionStmt:                q.updateSessionStmt,
-		updateSessionLeafStmt:            q.updateSessionLeafStmt,
-		updateSessionTitleAndUsageStmt:   q.updateSessionTitleAndUsageStmt,
-		upsertMCPOAuthClientStmt:         q.upsertMCPOAuthClientStmt,
-		upsertMCPOAuthTokenStmt:          q.upsertMCPOAuthTokenStmt,
+		db:                           tx,
+		tx:                           tx,
+		claimBackgroundJobEventsStmt: q.claimBackgroundJobEventsStmt,
+		countUnresolvedPermissionDecisionsSinceStmt: q.countUnresolvedPermissionDecisionsSinceStmt,
+		createBackgroundJobStmt:                     q.createBackgroundJobStmt,
+		createBackgroundJobEventStmt:                q.createBackgroundJobEventStmt,
+		createMessageStmt:                           q.createMessageStmt,
+		createSessionStmt:                           q.createSessionStmt,
+		deleteAnvilInstanceStmt:                     q.deleteAnvilInstanceStmt,
+		deleteBackgroundJobStmt:                     q.deleteBackgroundJobStmt,
+		deleteBackgroundJobEventStmt:                q.deleteBackgroundJobEventStmt,
+		deleteBackgroundJobsBySessionStmt:           q.deleteBackgroundJobsBySessionStmt,
+		deleteMCPOAuthClientStmt:                    q.deleteMCPOAuthClientStmt,
+		deleteMCPOAuthTokenStmt:                     q.deleteMCPOAuthTokenStmt,
+		deleteMessageStmt:                           q.deleteMessageStmt,
+		deletePermissionDecisionsBeforeStmt:         q.deletePermissionDecisionsBeforeStmt,
+		deleteSessionStmt:                           q.deleteSessionStmt,
+		deleteSessionMessagesStmt:                   q.deleteSessionMessagesStmt,
+		finalizeBackgroundJobStmt:                   q.finalizeBackgroundJobStmt,
+		getAllSessionMessagesStmt:                   q.getAllSessionMessagesStmt,
+		getBackgroundJobStmt:                        q.getBackgroundJobStmt,
+		getBranchPathStmt:                           q.getBranchPathStmt,
+		getBranchPathTailStmt:                       q.getBranchPathTailStmt,
+		getFileReadStmt:                             q.getFileReadStmt,
+		getLastGlobalSessionStmt:                    q.getLastGlobalSessionStmt,
+		getLastSessionByWorkingDirStmt:              q.getLastSessionByWorkingDirStmt,
+		getMCPOAuthClientStmt:                       q.getMCPOAuthClientStmt,
+		getMCPOAuthTokenStmt:                        q.getMCPOAuthTokenStmt,
+		getMessageStmt:                              q.getMessageStmt,
+		getMessageChildrenStmt:                      q.getMessageChildrenStmt,
+		getSessionByIDStmt:                          q.getSessionByIDStmt,
+		insertPermissionDecisionStmt:                q.insertPermissionDecisionStmt,
+		listAllSessionsStmt:                         q.listAllSessionsStmt,
+		listAnvilInstancesStmt:                      q.listAnvilInstancesStmt,
+		listBackgroundJobIDsBySessionStmt:           q.listBackgroundJobIDsBySessionStmt,
+		listBackgroundJobLogsOldestFirstStmt:        q.listBackgroundJobLogsOldestFirstStmt,
+		listBackgroundJobsBySessionStmt:             q.listBackgroundJobsBySessionStmt,
+		listBackgroundJobsWithLogsBeforeStmt:        q.listBackgroundJobsWithLogsBeforeStmt,
+		listMessagesBySessionStmt:                   q.listMessagesBySessionStmt,
+		listPermissionDecisionsSinceStmt:            q.listPermissionDecisionsSinceStmt,
+		listPinnedSessionsStmt:                      q.listPinnedSessionsStmt,
+		listRunningBackgroundJobsStmt:               q.listRunningBackgroundJobsStmt,
+		listSessionReadFilesStmt:                    q.listSessionReadFilesStmt,
+		listSessionsByWorkingDirStmt:                q.listSessionsByWorkingDirStmt,
+		listUndeliveredBackgroundJobEventsStmt:      q.listUndeliveredBackgroundJobEventsStmt,
+		listUserMessagesBySessionStmt:               q.listUserMessagesBySessionStmt,
+		listUserMessagesByWorkingDirStmt:            q.listUserMessagesByWorkingDirStmt,
+		markBackgroundJobLogExpiredStmt:             q.markBackgroundJobLogExpiredStmt,
+		markBackgroundJobsInterruptedStmt:           q.markBackgroundJobsInterruptedStmt,
+		recordFileReadStmt:                          q.recordFileReadStmt,
+		releaseBackgroundJobEventStmt:               q.releaseBackgroundJobEventStmt,
+		renameSessionStmt:                           q.renameSessionStmt,
+		setSessionPinStmt:                           q.setSessionPinStmt,
+		touchAnvilInstanceStmt:                      q.touchAnvilInstanceStmt,
+		transferBackgroundJobsStmt:                  q.transferBackgroundJobsStmt,
+		updateMessageStmt:                           q.updateMessageStmt,
+		updateSessionStmt:                           q.updateSessionStmt,
+		updateSessionLeafStmt:                       q.updateSessionLeafStmt,
+		updateSessionTitleAndUsageStmt:              q.updateSessionTitleAndUsageStmt,
+		upsertAnvilInstanceStmt:                     q.upsertAnvilInstanceStmt,
+		upsertMCPOAuthClientStmt:                    q.upsertMCPOAuthClientStmt,
+		upsertMCPOAuthTokenStmt:                     q.upsertMCPOAuthTokenStmt,
 	}
 }

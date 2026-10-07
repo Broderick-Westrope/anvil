@@ -145,23 +145,22 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 
 			promptTemplate, err := prompt.NewPrompt("agentic_fetch", string(agenticFetchPromptTmpl), promptOpts...)
 			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("error creating prompt: %s", err)
+				return fantasy.ToolResponse{}, fmt.Errorf("error creating prompt: %w", err)
 			}
 
-			// Use a sub-agent config (depth < 3) for the small model resolution.
-			_, small, err := c.buildAgentModels(ctx, config.Agent{ID: "agentic_fetch"})
+			fetchModel, smallModel, err := c.buildAgenticFetchModel(ctx)
 			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("error building models: %s", err)
+				return fantasy.ToolResponse{}, fmt.Errorf("error building models: %w", err)
 			}
 
-			systemPrompt, err := promptTemplate.Build(ctx, small.Model.Provider(), small.Model.Model(), c.cfg)
+			systemPrompt, err := promptTemplate.Build(ctx, fetchModel.Model.Provider(), fetchModel.Model.Model(), c.cfg)
 			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("error building system prompt: %s", err)
+				return fantasy.ToolResponse{}, fmt.Errorf("error building system prompt: %w", err)
 			}
 
-			smallProviderCfg, ok := c.cfg.Config().Providers.Get(small.ModelCfg.Provider)
+			fetchProviderCfg, ok := c.cfg.Config().Providers.Get(fetchModel.ModelCfg.Provider)
 			if !ok {
-				return fantasy.ToolResponse{}, errors.New("small model provider not configured")
+				return fantasy.ToolResponse{}, errors.New("agentic_fetch model provider not configured")
 			}
 
 			webFetchTool := tools.NewWebFetchTool(tmpDir, client)
@@ -181,16 +180,17 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 			// the user's hooks N times per delegated turn.
 
 			agent := NewSessionAgent(SessionAgentOptions{
-				LargeModel:           small, // Use small model for both (fetch doesn't need large)
-				SmallModel:           small,
-				ProviderConfig:       smallProviderCfg,
-				SystemPromptPrefix:   smallProviderCfg.SystemPromptPrefix,
+				LargeModel:           fetchModel,
+				SmallModel:           smallModel,
+				ProviderConfig:       fetchProviderCfg,
+				SystemPromptPrefix:   fetchProviderCfg.SystemPromptPrefix,
 				SystemPrompt:         systemPrompt,
 				DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
 				IsYolo:               c.permissions.YoloLevel() != config.YoloOff,
 				Sessions:             c.sessions,
 				Messages:             c.messages,
 				Tools:                fetchTools,
+				JobEvents:            c.jobEvents,
 			})
 
 			return c.runSubAgent(ctx, subAgentParams{

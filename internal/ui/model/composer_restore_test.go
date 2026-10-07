@@ -27,8 +27,8 @@ func TestComposerFromMessage(t *testing.T) {
 		want composerSnapshot
 	}{
 		{"markdown", markdown, composerSnapshot{text: markdown}},
-		{"command", commands.FormatExpansionXML("/review fix typo", "expanded"), composerSnapshot{text: "/review fix typo"}},
-		{"command skills", one + "\n\n" + two + "\n\n" + commands.FormatExpansionXML("/review fix typo", "expanded"), composerSnapshot{text: "/review fix typo"}},
+		{"command", commands.FormatExpansionXML("/review fix typo", "", "expanded"), composerSnapshot{text: "/review fix typo"}},
+		{"command skills", one + "\n\n" + two + "\n\n" + commands.FormatExpansionXML("/review fix typo", "", "expanded"), composerSnapshot{text: "/review fix typo"}},
 		{"one skill", one + "\n\n" + markdown, composerSnapshot{text: markdown, skills: []attachments.SkillAttachment{firstSkill}}},
 		{"multiple skills", one + "\n\n" + two + "\n\n" + markdown, composerSnapshot{text: markdown, skills: []attachments.SkillAttachment{firstSkill, secondSkill}}},
 		{"skill only", one + "\n\n", composerSnapshot{skills: []attachments.SkillAttachment{firstSkill}}},
@@ -142,7 +142,7 @@ func TestHistoryRestoresComposerState(t *testing.T) {
 func TestCommandComposerRestoration(t *testing.T) {
 	for _, entry := range []string{"shift+b", dialog.BranchID, dialog.TreeID, "history"} {
 		t.Run(entry, func(t *testing.T) {
-			m, _ := composerRestoreUI(t, commands.FormatExpansionXML("/review fix typo", "expanded review instructions"))
+			m, _ := composerRestoreUI(t, commands.FormatExpansionXML("/review fix typo", "", "expanded review instructions"))
 			switch entry {
 			case "shift+b":
 				pressBranch(t, m)

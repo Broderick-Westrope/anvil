@@ -3,6 +3,7 @@ package recovery
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -68,6 +69,25 @@ func TestListExcludesLiveSessionsAndDeduplicatesInterruptedRuns(t *testing.T) {
 		entries, err := List(root)
 		return err == nil && len(entries) == 0
 	}, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestReopeningSessionDismissesItsInterruptedRecords(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, sessionID := range []string{"reopened", "reopened", "untouched"} {
+		interrupted, err := NewTracker(root)
+		require.NoError(t, err)
+		interrupted.Track(Entry{SessionID: sessionID, WorkingDir: "/project"})
+		require.NoError(t, interrupted.Close(false))
+	}
+	resumed, err := NewTracker(root)
+	require.NoError(t, err)
+	resumed.Track(Entry{SessionID: "reopened", WorkingDir: "/elsewhere"})
+	require.NoError(t, resumed.Close(true))
+	entries, err := List(root)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "untouched", entries[0].SessionID)
 }
 
 func TestTrackerEmptySessionClearsPreviousSession(t *testing.T) {
@@ -253,4 +273,54 @@ func TestListMissingDirectory(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, entries)
 	require.NoError(t, Clear(root))
+}
+
+func TestTrackerHeartbeatRefreshesLastSeen(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	tracker, err := newTracker(root, 10*time.Millisecond)
+	require.NoError(t, err)
+	tracker.Track(Entry{SessionID: "running"})
+	read := func() Entry {
+		data, err := os.ReadFile(tracker.path)
+		if err != nil {
+			return Entry{}
+		}
+		var entry Entry
+		_ = json.Unmarshal(data, &entry)
+		return entry
+	}
+	require.Eventually(t, func() bool {
+		entry := read()
+		return entry.SessionID == "running" && entry.SeenAt.Sub(entry.UpdatedAt) > 20*time.Millisecond
+	}, 5*time.Second, 5*time.Millisecond)
+	require.NoError(t, tracker.Close(false))
+	entries, err := List(root)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.True(t, entries[0].LastSeen().After(entries[0].UpdatedAt))
+}
+
+func TestGroupByInterruption(t *testing.T) {
+	t.Parallel()
+	restart := time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
+	entries := []Entry{
+		{SessionID: "a", SeenAt: restart},
+		{SessionID: "b", SeenAt: restart.Add(-50 * time.Second)},
+		{SessionID: "legacy", UpdatedAt: restart.Add(-90 * time.Second)},
+		{SessionID: "old", SeenAt: restart.Add(-48 * time.Hour)},
+	}
+	groups := GroupByInterruption(entries)
+	require.Len(t, groups, 2)
+	require.Equal(t, []string{"a", "b", "legacy"}, sessionIDs(groups[0]))
+	require.Equal(t, []string{"old"}, sessionIDs(groups[1]))
+	require.Empty(t, GroupByInterruption(nil))
+}
+
+func sessionIDs(entries []Entry) []string {
+	ids := make([]string, len(entries))
+	for index, entry := range entries {
+		ids[index] = entry.SessionID
+	}
+	return ids
 }

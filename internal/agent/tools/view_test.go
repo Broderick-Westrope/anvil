@@ -250,6 +250,18 @@ func (m *mockViewPermissionService) YoloLevel() config.YoloLevel {
 	return config.YoloOff
 }
 
+func (m *mockViewPermissionService) BouncerConfigured() bool { return false }
+
+func (m *mockViewPermissionService) BouncerMode() permission.BouncerMode {
+	return permission.BouncerOff
+}
+
+func (m *mockViewPermissionService) SetBouncerMode(permission.BouncerMode) {}
+
+func (m *mockViewPermissionService) SetConfigRules([]config.PermissionRule) {}
+
+func (m *mockViewPermissionService) ResetBouncerCache() {}
+
 func (m *mockViewPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }

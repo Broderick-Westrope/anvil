@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -91,6 +92,13 @@ type ConfigStore struct {
 	trackedConfigPaths []string                // unique, normalized config file paths
 	snapshots          map[string]fileSnapshot // path -> snapshot at last capture
 
+	// trustedPaths are the user-level config files captured at the start
+	// of Load, before any config-provided env could redirect
+	// ANVIL_GLOBAL_CONFIG or ANVIL_GLOBAL_DATA. Reloads reuse them.
+	trustedPaths []string
+	// trustedBouncer is guarded by metaMu.
+	trustedBouncer *TrustedBouncer
+
 	// configMu guards the config pointer field against concurrent
 	// readers (Config) and the writeMu-serialised swap (setConfig). It
 	// protects the pointer word only; the pointed-to Config is treated
@@ -102,14 +110,44 @@ type ConfigStore struct {
 	writeMu sync.Mutex // serialises in-memory config production (mutators + reload)
 
 	// metaMu guards the store metadata that a reload republishes
-	// (resolver, knownProviders, overrides, loadedPaths). It is
-	// deliberately separate from writeMu: writeMu is held for the whole
-	// reload, and pluginsChangedHook runs inside that window and calls
-	// back into readers like Resolver(). Guarding metadata with writeMu
-	// would make those reads re-enter the held lock and deadlock.
+	// (resolver, knownProviders, overrides, loadedPaths,
+	// rawProjectDirectory). It is deliberately separate from writeMu:
+	// writeMu is held for the whole reload, which can take seconds while
+	// providers are discovered, and readers like Resolver() must not wait
+	// on it.
 	metaMu sync.RWMutex
 
-	pluginsChangedHook func(context.Context) error
+	// rawProjectDirectory is options.project_directory as written in the
+	// merged config files, before defaulting. A reload keeps the existing
+	// directory, so comparing raw values is the only way to tell that the
+	// configured one changed. Guarded by metaMu.
+	rawProjectDirectory string
+
+	// agentDefaults are the agent .md defaults from the latest successful
+	// plugin discovery. Reloads rebuild Agents from them before publishing,
+	// so a published Config never loses its plugin agents. Guarded by
+	// writeMu.
+	agentDefaults map[string]Agent
+
+	// bouncerValidator checks the effective bouncer thresholds (with the
+	// consumer's defaults merged in) before a reload publishes. Guarded by
+	// writeMu.
+	bouncerValidator func(*Bouncer) error
+
+	// startupConfig, startupBouncer, and startupRawProjectDir are captured
+	// once at the end of Load. They are the baseline for RestartRequired,
+	// so a pending restart stays reported across reloads. They represent
+	// what this process has applied, so the in-app toggles that apply a
+	// change live (compact mode, transparency, Docker MCP) update
+	// startupConfig too; nothing else changes them. Guarded by metaMu.
+	startupConfig        *Config
+	startupBouncer       *TrustedBouncer
+	startupRawProjectDir string
+
+	// insideWorktree records whether the working directory was inside a git
+	// worktree at Load, so reloads apply the same environment defaults
+	// without running git again.
+	insideWorktree bool
 
 	// refreshSF collapses concurrent in-process OAuth refreshes for the
 	// same provider into a single attempt. Combined with the per-provider
@@ -131,11 +169,72 @@ type ConfigStore struct {
 	authSignals  map[string]chan struct{}
 }
 
-// SetPluginsChangedHook registers a callback run after ReloadFromDisk observes
-// a successful change to the plugins config key. The callback is intended for
-// runtime services that need to re-discover plugin-provided resources.
-func (s *ConfigStore) SetPluginsChangedHook(fn func(context.Context) error) {
-	s.pluginsChangedHook = fn
+// SetAgentDefaults records the agent .md defaults from the latest
+// successful plugin discovery and publishes a Config whose Agents are
+// rebuilt from them. Later reloads reuse them, so a failed rediscovery
+// never strips plugin agents.
+func (s *ConfigStore) SetAgentDefaults(defaults map[string]Agent) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	s.agentDefaults = maps.Clone(defaults)
+	// The shallow clone carries userAgentOverrides and agentsInitialized,
+	// so user overrides from config still apply on top of the defaults.
+	nc := s.Config().cloneForWrite()
+	nc.Agents = nc.SetupAgentsWithDefaults(s.agentDefaults)
+	s.setConfig(nc)
+}
+
+// SetBouncerValidator registers a check that a reload runs on the reloaded
+// bouncer block before publishing. Its error fails the reload and leaves
+// the previous config live. It exists because config validation leaves
+// unset thresholds unchecked, so a value can be valid on its own and only
+// conflict once the consumer's defaults are merged in.
+func (s *ConfigStore) SetBouncerValidator(fn func(*Bouncer) error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	s.bouncerValidator = fn
+}
+
+// StartupSnapshot returns the config, trusted bouncer, and raw
+// options.project_directory captured at the end of Load, updated only by
+// the in-app toggles that apply their change live.
+func (s *ConfigStore) StartupSnapshot() (*Config, *TrustedBouncer, string) {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
+	return s.startupConfig, s.startupBouncer, s.startupRawProjectDir
+}
+
+// markAppliedLive records a change this process has already applied in the
+// startup snapshot, so RestartRequired doesn't report it.
+func (s *ConfigStore) markAppliedLive(apply func(*Config)) {
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+	if s.startupConfig == nil {
+		return
+	}
+	nc := s.startupConfig.cloneForWrite()
+	apply(nc)
+	s.startupConfig = nc
+}
+
+// RawProjectDirectory returns options.project_directory as written in the
+// config files at the latest load or reload, before defaulting.
+func (s *ConfigStore) RawProjectDirectory() string {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
+	return s.rawProjectDirectory
+}
+
+// captureStartupSnapshot records the RestartRequired baseline. Load calls
+// it once, on every successful return path.
+func (s *ConfigStore) captureStartupSnapshot() {
+	cfg, tb, raw := s.Config(), s.TrustedBouncer(), s.RawProjectDirectory()
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+	s.startupConfig = cfg
+	s.startupBouncer = tb
+	s.startupRawProjectDir = raw
 }
 
 // Config returns the pure-data config struct (read-only after load).
@@ -162,14 +261,14 @@ func (s *ConfigStore) setConfig(cfg *Config) {
 
 // setMeta republishes the store metadata that a reload rebuilds. It is
 // guarded by metaMu rather than writeMu so readers (Resolver, LoadedPaths,
-// ...) can run while a reload holds writeMu, which is what lets
-// pluginsChangedHook call back into the store without deadlocking.
+// ...) can run while a reload holds writeMu.
 func (s *ConfigStore) setMeta(
 	loadedPaths []string,
 	resolver VariableResolver,
 	providers []catwalk.Provider,
 	overrides RuntimeOverrides,
 	workspacePath string,
+	rawProjectDirectory string,
 ) {
 	s.metaMu.Lock()
 	defer s.metaMu.Unlock()
@@ -178,6 +277,7 @@ func (s *ConfigStore) setMeta(
 	s.knownProviders = providers
 	s.overrides = overrides
 	s.workspacePath = workspacePath
+	s.rawProjectDirectory = rawProjectDirectory
 }
 
 // WorkingDir returns the current working directory.
@@ -498,20 +598,52 @@ func (s *ConfigStore) updatePreferredModelFields(c *Config, modelType SelectedMo
 	return fields
 }
 
-// SetCompactMode sets the compact mode setting and persists it.
-func (s *ConfigStore) SetCompactMode(scope Scope, enabled bool) error {
-	return s.update(scope, func(c *Config) map[string]any {
-		c.ensureTUI().CompactMode = enabled
-		return map[string]any{"options.tui.compact_mode": enabled}
+// LastPermissionTriage returns when permission triage last ran, or the
+// zero time if it never has.
+func (s *ConfigStore) LastPermissionTriage() time.Time {
+	sec := s.Config().LastPermissionTriage
+	if sec <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
+}
+
+// SetLastPermissionTriage records when permission triage last ran in the
+// global data file.
+func (s *ConfigStore) SetLastPermissionTriage(t time.Time) error {
+	return s.update(ScopeGlobal, func(c *Config) map[string]any {
+		c.LastPermissionTriage = t.Unix()
+		return map[string]any{"last_permission_triage": c.LastPermissionTriage}
 	})
 }
 
+// SetCompactMode sets the compact mode setting and persists it.
+// The UI applies the change live, so it is recorded as applied.
+func (s *ConfigStore) SetCompactMode(scope Scope, enabled bool) error {
+	if err := s.update(scope, func(c *Config) map[string]any {
+		c.ensureTUI().CompactMode = enabled
+		return map[string]any{"options.tui.compact_mode": enabled}
+	}); err != nil {
+		return err
+	}
+	s.markAppliedLive(func(c *Config) { c.ensureTUI().CompactMode = enabled })
+	return nil
+}
+
 // SetTransparentBackground sets the transparent background setting and persists it.
+// The UI applies the change live, so it is recorded as applied.
 func (s *ConfigStore) SetTransparentBackground(scope Scope, enabled bool) error {
-	return s.update(scope, func(c *Config) map[string]any {
+	if err := s.update(scope, func(c *Config) map[string]any {
 		c.ensureTUI().Transparent = &enabled
 		return map[string]any{"options.tui.transparent": enabled}
+	}); err != nil {
+		return err
+	}
+	s.markAppliedLive(func(c *Config) {
+		v := enabled
+		c.ensureTUI().Transparent = &v
 	})
+	return nil
 }
 
 // SetProviderAPIKey sets the API key for a provider and persists it.
@@ -1089,8 +1221,9 @@ func (s *ConfigStore) captureStalenessSnapshot(paths []string) {
 
 // ReloadFromDisk re-runs the config load/merge flow and updates the in-memory
 // config atomically. It rebuilds the staleness snapshot after successful reload.
-// On failure, the store state is rolled back to its previous state.
-// Concurrent calls are serialised via writeMu.
+// The new Config is fully built and validated before it is published, so on
+// failure the previous config stays live. Concurrent calls are serialised via
+// writeMu.
 func (s *ConfigStore) ReloadFromDisk(ctx context.Context) error {
 	if s.workingDir == "" {
 		return fmt.Errorf("cannot reload: working directory not set")
@@ -1107,6 +1240,7 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to reload config: %w", err)
 	}
+	rawProjectDir := rawProjectDirectory(cfg)
 
 	// Apply defaults (using existing data directory if set)
 	var dataDir string
@@ -1130,6 +1264,28 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		}
 	}
 
+	// Re-read the bouncer block from the paths frozen at Load, never from
+	// the current env, which project config may have changed. The API key
+	// captured at Load is kept for the same reason, so picking up a rotated
+	// key needs a restart.
+	reloadedBouncer, err := loadBouncerBlock(s.trustedPaths)
+	if err != nil {
+		return fmt.Errorf("failed to reload config: %w", err)
+	}
+	if reloadedBouncer != nil && s.bouncerValidator != nil {
+		if err := s.bouncerValidator(reloadedBouncer); err != nil {
+			return fmt.Errorf("invalid bouncer configuration on reload: %w", err)
+		}
+	}
+	var trustedBouncer *TrustedBouncer
+	if reloadedBouncer != nil {
+		trustedBouncer = &TrustedBouncer{Config: reloadedBouncer}
+		if prev := s.TrustedBouncer(); prev != nil {
+			trustedBouncer.APIKey = prev.APIKey
+		}
+	}
+	cfg.applyTrustedBouncer(trustedBouncer)
+
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
 	if err := cfg.ValidateHooks(); err != nil {
@@ -1139,6 +1295,8 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	if err := cfg.ValidateMCPAuth(); err != nil {
 		return fmt.Errorf("invalid MCP auth configuration on reload: %w", err)
 	}
+
+	cfg.applyLoadAdjustments(s.insideWorktree)
 
 	// Preserve runtime overrides
 	overrides := s.overrides
@@ -1185,55 +1343,33 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		cfg.Models[SelectedModelTypeSmall] = resolved.Small
 	}
 
-	// Save current state for potential rollback
-	oldConfig := s.Config()
-	oldLoadedPaths := s.loadedPaths
-	oldResolver := s.resolver
-	oldKnownProviders := s.knownProviders
-	oldOverrides := s.overrides
-	oldWorkspacePath := s.workspacePath
-
-	// Publish the fully-built config, then run agent setup against it.
-	s.setConfig(cfg)
-	s.setMeta(loadedPaths, resolver, providers, overrides, workspacePath)
-
+	// Build the agent roster on the unpublished config so readers never
+	// observe an orchestrator-only Agents between publish and rebuild.
 	if configured {
-		s.SetupAgents()
-		// NOTE: After SetupAgents, the config only has the
-		// orchestrator agent. Non-orchestrator agents come from
-		// SetupAgentsWithDefaults (called by the coordinator).
-		// The coordinator.ReloadPlugins method re-applies .md
-		// defaults. Callers must trigger ReloadPlugins after
-		// config changes that affect the plugins key.
+		cfg.SetupAgents()
+		if s.agentDefaults != nil {
+			cfg.Agents = cfg.SetupAgentsWithDefaults(s.agentDefaults)
+		}
 	}
+
+	s.setConfig(cfg)
+	s.setMeta(loadedPaths, resolver, providers, overrides, workspacePath, rawProjectDir)
+	s.setTrustedBouncer(trustedBouncer)
 
 	// Rebuild staleness tracking
 	s.captureStalenessSnapshot(loadedPaths)
 
-	if oldConfig != nil && !pluginConfigsEqual(oldConfig.Plugins, cfg.Plugins) && s.pluginsChangedHook != nil {
-		if err := s.pluginsChangedHook(ctx); err != nil {
-			// Rollback: the config store is already updated but the
-			// coordinator failed to reload plugin state. Restore the
-			// previous config so the store and coordinator stay in sync.
-			s.setConfig(oldConfig)
-			s.setMeta(oldLoadedPaths, oldResolver, oldKnownProviders, oldOverrides, oldWorkspacePath)
-			return fmt.Errorf("plugins changed hook failed: %w", err)
-		}
-	}
-
 	return nil
 }
 
-func pluginConfigsEqual(a, b []PluginConfig) bool {
-	if len(a) != len(b) {
-		return false
+// rawProjectDirectory returns the project directory the merged config files
+// set, before setDefaults resolves it. The deprecated data_directory key
+// counts when project_directory is unset, matching setDefaults.
+func rawProjectDirectory(c *Config) string {
+	if c.Options == nil {
+		return ""
 	}
-	for i := range a {
-		if a[i].Path != b[i].Path {
-			return false
-		}
-	}
-	return true
+	return cmp.Or(c.Options.ProjectDirectory, c.Options.DeprecatedDataDirectory)
 }
 
 // autoReload conditionally reloads config from disk after writes.

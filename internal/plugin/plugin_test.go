@@ -110,10 +110,31 @@ func TestDiscoverAll_MixedValidity(t *testing.T) {
 		{Path: "/nonexistent/bad/path"},
 	}
 
-	result := DiscoverAll(plugins)
+	result := DiscoverAll(plugins, nil)
 
 	require.Len(t, result, 1)
 	require.Equal(t, validDir, result[0].Path)
+}
+
+func TestDiscoverAll_ReportsMalformedManifest(t *testing.T) {
+	t.Parallel()
+
+	validDir := t.TempDir()
+	mkdirs(t, validDir, "skills")
+	badDir := t.TempDir()
+	badManifest := filepath.Join(badDir, manifestFile)
+	require.NoError(t, os.WriteFile(badManifest, []byte(`{not json`), 0o644))
+
+	var warnings []Warning
+	result := DiscoverAll([]config.PluginConfig{{Path: validDir}, {Path: badDir}}, func(w Warning) {
+		warnings = append(warnings, w)
+	})
+
+	require.Len(t, result, 1)
+	require.Equal(t, validDir, result[0].Path)
+	require.Len(t, warnings, 1)
+	require.Equal(t, badManifest, warnings[0].Path)
+	require.Error(t, warnings[0].Err)
 }
 
 func TestDiscover_ManifestPathTraversal(t *testing.T) {

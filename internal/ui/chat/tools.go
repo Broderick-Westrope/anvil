@@ -102,6 +102,11 @@ type ToolRenderOpts struct {
 	IsSpinning      bool
 	Status          ToolStatus
 	NoTruncate      bool
+	// StartedAt is when the assistant message carrying the tool call was
+	// created; zero when unknown.
+	StartedAt time.Time
+	// Now is the render time, used for live elapsed counters.
+	Now time.Time
 }
 
 // IsPending returns true if the tool call is still pending (not finished and
@@ -169,6 +174,7 @@ type baseToolMessageItem struct {
 	expandedContent bool
 	noTruncate      bool
 	resultVersion   uint64
+	startedAt       time.Time
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -183,7 +189,7 @@ func newBaseToolMessageItem(
 ) *baseToolMessageItem {
 	var hasCappedWidth bool
 	switch toolCall.Name {
-	case tools.JobKillToolName, tools.DownloadToolName, tools.LSPRestartToolName,
+	case tools.JobKillToolName, tools.JobListToolName, tools.DownloadToolName, tools.LSPRestartToolName,
 		tools.TodosToolName, tools.FetchToolName, tools.WebFetchToolName,
 		tools.WebSearchToolName, tools.AgenticFetchToolName, agent.TaskToolName:
 		hasCappedWidth = true
@@ -380,6 +386,8 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 			IsSpinning:      t.isSpinning(),
 			Status:          t.computeStatus(),
 			NoTruncate:      t.noTruncate,
+			StartedAt:       t.startedAt,
+			Now:             time.Now(),
 		})
 
 		// Prepend hook indicator if hooks ran for this tool call.
@@ -450,6 +458,28 @@ func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.resultVersion++
 	t.clearCache()
 	t.Bump()
+}
+
+// SetCallStartedAt records when the tool call started, for elapsed-time
+// displays.
+func (t *baseToolMessageItem) SetCallStartedAt(at time.Time) {
+	if t.startedAt.Equal(at) {
+		return
+	}
+	t.startedAt = at
+	t.clearCache()
+	t.Bump()
+}
+
+// SetToolCallStartedAt records the start time on tool items that track it.
+// unixSeconds is a message CreatedAt timestamp; zero leaves it unset.
+func SetToolCallStartedAt(item MessageItem, unixSeconds int64) {
+	if unixSeconds == 0 {
+		return
+	}
+	if st, ok := item.(interface{ SetCallStartedAt(time.Time) }); ok {
+		st.SetCallStartedAt(time.Unix(unixSeconds, 0))
+	}
 }
 
 // MessageID returns the ID of the message containing this tool call.

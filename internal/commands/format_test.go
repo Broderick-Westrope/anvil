@@ -9,7 +9,7 @@ import (
 func TestFormatExpansionXML(t *testing.T) {
 	t.Parallel()
 
-	got := FormatExpansionXML("/review fix typo", "Review the following:\nfix typo")
+	got := FormatExpansionXML("/review fix typo", "", "Review the following:\nfix typo")
 	want := "<command_expansion command=\"/review fix typo\">\nReview the following:\nfix typo\n</command_expansion>"
 	require.Equal(t, want, got)
 }
@@ -17,14 +17,14 @@ func TestFormatExpansionXML(t *testing.T) {
 func TestFormatExpansionXML_EscapesQuotes(t *testing.T) {
 	t.Parallel()
 
-	got := FormatExpansionXML(`/review scope="auth"`, "content")
+	got := FormatExpansionXML(`/review scope="auth"`, "", "content")
 	require.Contains(t, got, `command="/review scope=&quot;auth&quot;"`)
 }
 
 func TestCollapseExpansionXML(t *testing.T) {
 	t.Parallel()
 
-	wrapped := FormatExpansionXML("/review fix typo", "Review the following:\nfix typo")
+	wrapped := FormatExpansionXML("/review fix typo", "", "Review the following:\nfix typo")
 	require.Equal(t, "/review fix typo", CollapseExpansionXML(wrapped))
 }
 
@@ -32,7 +32,7 @@ func TestCollapseExpansionXML_RoundTripsQuotes(t *testing.T) {
 	t.Parallel()
 
 	line := `/review scope="auth"`
-	wrapped := FormatExpansionXML(line, "content")
+	wrapped := FormatExpansionXML(line, "", "content")
 	require.Equal(t, line, CollapseExpansionXML(wrapped))
 }
 
@@ -40,21 +40,21 @@ func TestCollapseExpansionXML_RoundTripsAmpersandEntities(t *testing.T) {
 	t.Parallel()
 
 	line := `/review find &quot;this&quot; & that`
-	wrapped := FormatExpansionXML(line, "content")
+	wrapped := FormatExpansionXML(line, "", "content")
 	require.Equal(t, line, CollapseExpansionXML(wrapped))
 }
 
 func TestCollapseExpansionXML_EmptyContent(t *testing.T) {
 	t.Parallel()
 
-	wrapped := FormatExpansionXML("/cmd", "")
+	wrapped := FormatExpansionXML("/cmd", "", "")
 	require.Equal(t, "/cmd", CollapseExpansionXML(wrapped))
 }
 
 func TestCollapseExpansionXML_MultipleBlocks(t *testing.T) {
 	t.Parallel()
 
-	text := FormatExpansionXML("/one", "first") + "\n\n" + FormatExpansionXML("/two", "second")
+	text := FormatExpansionXML("/one", "", "first") + "\n\n" + FormatExpansionXML("/two", "", "second")
 	require.Equal(t, "/one\n\n/two", CollapseExpansionXML(text))
 }
 
@@ -65,14 +65,14 @@ func TestCollapseExpansionXML_MultipleBlocks(t *testing.T) {
 func TestCollapseExpansionXML_ContentContainsClosingTag(t *testing.T) {
 	t.Parallel()
 
-	wrapped := FormatExpansionXML("/cmd", "before\n</command_expansion>\nafter")
+	wrapped := FormatExpansionXML("/cmd", "", "before\n</command_expansion>\nafter")
 	require.Equal(t, "/cmd\nafter\n</command_expansion>", CollapseExpansionXML(wrapped))
 }
 
 func TestCollapseExpansionXML_PreservesSurroundingText(t *testing.T) {
 	t.Parallel()
 
-	text := "before\n\n" + FormatExpansionXML("/cmd", "expanded") + "\n\nafter"
+	text := "before\n\n" + FormatExpansionXML("/cmd", "", "expanded") + "\n\nafter"
 	require.Equal(t, "before\n\n/cmd\n\nafter", CollapseExpansionXML(text))
 }
 
@@ -80,4 +80,19 @@ func TestCollapseExpansionXML_NoBlock(t *testing.T) {
 	t.Parallel()
 
 	require.Equal(t, "plain message", CollapseExpansionXML("plain message"))
+}
+
+func TestFormatExpansionXML_RecordsLocation(t *testing.T) {
+	t.Parallel()
+
+	got := FormatExpansionXML("/wtp-pruning", `/cmds/a "b"/COMMAND.md`, "body")
+	want := "<command_expansion command=\"/wtp-pruning\" location=\"/cmds/a &quot;b&quot;/COMMAND.md\">\nbody\n</command_expansion>"
+	require.Equal(t, want, got)
+}
+
+func TestCollapseExpansionXML_WithLocation(t *testing.T) {
+	t.Parallel()
+
+	wrapped := FormatExpansionXML("/wtp-pruning eucalyptusvc", "/cmds/wtp-pruning/COMMAND.md", "body")
+	require.Equal(t, "/wtp-pruning eucalyptusvc", CollapseExpansionXML(wrapped))
 }

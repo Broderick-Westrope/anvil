@@ -67,6 +67,26 @@ func TestConfig_LoadFromBytes(t *testing.T) {
 	require.Equal(t, "https://api.openai.com/v2", pc.BaseURL)
 }
 
+func TestLoadFromBytes_AgenticFetchMerge(t *testing.T) {
+	t.Parallel()
+
+	global := []byte(`{"tools":{"agentic_fetch":{"model":"anthropic/big"},"grep":{"timeout":10000000000}}}`)
+	project := []byte(`{"tools":{"agentic_fetch":{"reasoning_effort":"low"}}}`)
+	reset := []byte(`{"tools":{"agentic_fetch":{"model":""}}}`)
+
+	cfg, err := loadFromBytes([][]byte{global, project})
+	require.NoError(t, err)
+	require.Equal(t, "anthropic/big", cfg.Tools.AgenticFetch.Model)
+	require.Equal(t, "low", cfg.Tools.AgenticFetch.ReasoningEffort)
+	require.Equal(t, ptr(10*time.Second), cfg.Tools.Grep.Timeout)
+
+	cfg, err = loadFromBytes([][]byte{global, project, reset})
+	require.NoError(t, err)
+	require.Empty(t, cfg.Tools.AgenticFetch.Model)
+	require.Equal(t, "low", cfg.Tools.AgenticFetch.ReasoningEffort)
+	require.Equal(t, ptr(10*time.Second), cfg.Tools.Grep.Timeout)
+}
+
 func TestLookupConfigs_BoundedByProject(t *testing.T) {
 	// Force GlobalConfig and GlobalConfigData to point at locations we
 	// control so they can be present in the result without polluting

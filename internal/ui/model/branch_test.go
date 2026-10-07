@@ -14,35 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func batchCmds(msg tea.Msg) ([]tea.Cmd, bool) {
-	b, ok := msg.(tea.BatchMsg)
-	return []tea.Cmd(b), ok
-}
-
-func collectMsgs(cmd tea.Cmd) []tea.Msg {
-	if cmd == nil {
-		return nil
-	}
-	msg := cmd()
-	if msg == nil {
-		return nil
-	}
-	cmds, ok := batchCmds(msg)
-	if !ok {
-		return []tea.Msg{msg}
-	}
-	var out []tea.Msg
-	for _, c := range cmds {
-		if c == nil {
-			continue
-		}
-		if m := c(); m != nil {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 func findMsg[T any](msgs []tea.Msg) (T, bool) {
 	var zero T
 	for _, m := range msgs {

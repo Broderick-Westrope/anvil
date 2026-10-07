@@ -1,6 +1,6 @@
 ---
 name: tui-manual-testing
-description: Use when manually testing, driving, or visually verifying Anvil's TUI — reproducing a UI bug, checking a dialog renders correctly, verifying keybindings, or confirming a rendering change before claiming it works. Requires the lazy `terminal` MCP server.
+description: Use before claiming any Anvil behaviour change works, to verify it end to end in a real session, and when manually testing, driving, or visually verifying Anvil's TUI — reproducing a UI bug, checking a dialog renders correctly, verifying keybindings, or confirming a rendering change. Requires the lazy `terminal` MCP server.
 ---
 
 # Manual TUI Testing
@@ -104,5 +104,9 @@ the behaviour under test genuinely requires a live turn.
 ## When Not To Use This
 
 - Component-level rendering: add or update a Catwalk golden instead.
-- Logic that is not visual: write a normal unit test.
 - Anything the user can answer faster by looking at their own screen.
+
+Non-visual logic still gets a unit test first. Then confirm it here too,
+because a passing unit test doesn't prove the wiring works in a real
+session. That usually means submitting a prompt, which spends tokens, so
+keep it to one short turn.

@@ -264,7 +264,9 @@ The available environment variables are:
 
 The `ANVIL`, `AGENT`, and `AI_AGENT` markers are also set by the `bash`
 tool, so a script can detect "am I running under Anvil?" the same way in
-either context.
+either context. The `bash` tool also sets `ANVIL_ROOT_SESSION_ID`, the
+top-level session a command runs under. It's the same in subagents, so a
+script can find the user's session without walking `parent_session_id`.
 
 #### JSON
 

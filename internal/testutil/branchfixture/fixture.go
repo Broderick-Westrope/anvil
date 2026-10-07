@@ -203,7 +203,7 @@ func New(t *testing.T) *Fixture {
 	permissions := permission.NewPermissionService(cfg.WorkingDir(), config.YoloOff, nil, cfg)
 	tracker := filetracker.NewService(queries)
 	manager := lsp.NewManager(cfg)
-	coord, err := agent.NewCoordinator(ctx, cfg, sessions, messages, permissions, tracker, manager, nil)
+	coord, err := agent.NewCoordinator(ctx, cfg, sessions, messages, permissions, tracker, manager, nil, nil, nil, nil)
 	require.NoError(t, err)
 	w := workspace.NewAppWorkspace(&app.App{Sessions: sessions, Messages: messages, Permissions: permissions, FileTracker: tracker, Queries: queries, LSPManager: manager, AgentCoordinator: coord}, cfg)
 	t.Cleanup(func() {

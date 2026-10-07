@@ -8,6 +8,45 @@ import (
 	"database/sql"
 )
 
+type AnvilInstance struct {
+	ID          string `json:"id"`
+	Pid         int64  `json:"pid"`
+	StartedAt   int64  `json:"started_at"`
+	HeartbeatAt int64  `json:"heartbeat_at"`
+}
+
+type BackgroundJob struct {
+	ID                int64          `json:"id"`
+	SessionID         string         `json:"session_id"`
+	Origin            string         `json:"origin"`
+	Command           string         `json:"command"`
+	Description       string         `json:"description"`
+	WorkingDir        string         `json:"working_dir"`
+	StartedAt         int64          `json:"started_at"`
+	CompletedAt       sql.NullInt64  `json:"completed_at"`
+	ExitCode          sql.NullInt64  `json:"exit_code"`
+	EndReason         sql.NullString `json:"end_reason"`
+	InstanceID        string         `json:"instance_id"`
+	LogBytes          int64          `json:"log_bytes"`
+	LogTruncated      int64          `json:"log_truncated"`
+	LogPrePublishLost int64          `json:"log_pre_publish_lost"`
+	LogWriteError     string         `json:"log_write_error"`
+	LogExpiredAt      sql.NullInt64  `json:"log_expired_at"`
+}
+
+type BackgroundJobEvent struct {
+	ID        string        `json:"id"`
+	JobID     int64         `json:"job_id"`
+	Kind      string        `json:"kind"`
+	WatchGen  int64         `json:"watch_gen"`
+	Line      string        `json:"line"`
+	Tail      string        `json:"tail"`
+	State     string        `json:"state"`
+	ClaimedBy string        `json:"claimed_by"`
+	ClaimedAt sql.NullInt64 `json:"claimed_at"`
+	CreatedAt int64         `json:"created_at"`
+}
+
 type McpOauthClient struct {
 	ServerName   string         `json:"server_name"`
 	ServerUrl    string         `json:"server_url"`
@@ -48,6 +87,22 @@ type Message struct {
 type MigrationsCompleted struct {
 	SourcePath string `json:"source_path"`
 	MigratedAt int64  `json:"migrated_at"`
+}
+
+type PermissionDecision struct {
+	ID            string         `json:"id"`
+	SessionID     string         `json:"session_id"`
+	ToolCallID    string         `json:"tool_call_id"`
+	ToolName      string         `json:"tool_name"`
+	Action        string         `json:"action"`
+	Input         string         `json:"input"`
+	InputSegments string         `json:"input_segments"`
+	WorkingDir    string         `json:"working_dir"`
+	DecidedBy     string         `json:"decided_by"`
+	Verdict       string         `json:"verdict"`
+	MatchedRule   string         `json:"matched_rule"`
+	Assessment    sql.NullString `json:"assessment"`
+	CreatedAt     int64          `json:"created_at"`
 }
 
 type ReadFile struct {

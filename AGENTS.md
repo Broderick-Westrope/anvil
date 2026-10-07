@@ -121,6 +121,10 @@ internal/
 - **Modernize**: `task modernize` (runs `modernize` which makes code
   simplifications)
 - **Dev**: `task dev` (runs with profiling enabled)
+- **Verify end to end**: after unit tests pass, build the binary and drive
+  it through the `terminal` MCP to confirm the change works in a real
+  session. This applies to any behaviour change, not just UI. Load the
+  `tui-manual-testing` skill for how.
 
 ## Code Style Guidelines
 

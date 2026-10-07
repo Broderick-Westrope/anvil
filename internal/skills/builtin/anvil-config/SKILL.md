@@ -10,6 +10,7 @@ Anvil uses JSON configuration files with the following priority (highest to lowe
 1. `.anvil.json` (project-local, hidden)
 2. `anvil.json` (project-local)
 3. `$XDG_CONFIG_HOME/anvil/anvil.json` or `$HOME/.config/anvil/anvil.json` (global)
+4. `$HOME/.local/share/anvil/anvil.json` (state Anvil writes itself, such as UI-selected models and OAuth tokens; anything set in the files above overrides it)
 
 ## Basic Structure
 
@@ -108,6 +109,23 @@ reviewed.
 - `large` is the primary coding model; `small` is for summarization.
 - Only `model` and `provider` are required.
 - Optional tuning: `reasoning_effort`, `think`, `max_tokens`, `temperature`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`, `provider_options`.
+
+The `agentic_fetch` tool runs a web-research sub-agent on the `small`
+model by default. To give it its own model, set `tools.agentic_fetch`:
+
+```json
+{
+  "tools": {
+    "agentic_fetch": {
+      "model": "anthropic/claude-haiku-4-5",
+      "reasoning_effort": "low"
+    }
+  }
+}
+```
+
+`model` uses `provider/model` format. An invalid value logs a warning and
+falls back to `small`. Check the resolved model with `anvil_info`.
 
 ## Custom Providers
 

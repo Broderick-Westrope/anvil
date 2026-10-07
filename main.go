@@ -18,10 +18,14 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/cmd"
 	_ "github.com/Broderick-Westrope/anvil/internal/dns"
-	_ "github.com/joho/godotenv/autoload"
+	"github.com/Broderick-Westrope/anvil/internal/reload"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	reload.CaptureStartup() // Before .env or config can change the env.
+	_ = godotenv.Load()     // What godotenv/autoload did; never overrides existing vars.
+
 	if os.Getenv("ANVIL_PROFILE") != "" {
 		go func() {
 			slog.Info("Serving pprof at localhost:6060")

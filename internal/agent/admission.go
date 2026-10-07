@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -12,10 +13,12 @@ import (
 type ownerKey struct{}
 
 type submissionOwner struct {
-	onFinish  func()
-	sessionID string
-	ctx       context.Context
-	cancel    context.CancelFunc
+	onFinish       func()
+	onIdle         func()
+	handoffOnError bool
+	sessionID      string
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 type submission struct {
@@ -75,6 +78,21 @@ func (a *admission) submit(ctx context.Context, id string, job submission) (*fan
 	return a.execute(owner, job)
 }
 
+func (a *admission) claimIdle(ctx context.Context, id string, check func() error) (*submissionOwner, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if a.owners[id] != nil {
+		return nil, ErrSessionBusy
+	}
+	if err := check(); err != nil {
+		return nil, err
+	}
+	return a.claim(ctx, id), nil
+}
+
 func (a *admission) execute(owner *submissionOwner, job submission) (result *fantasy.AgentResult, err error) {
 	defer func() {
 		a.mu.Lock()
@@ -90,7 +108,7 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	var queued submission
 	if a.owners[owner.sessionID] == owner {
 		delete(a.owners, owner.sessionID)
-		if err == nil && owner.ctx.Err() == nil && len(a.queues[owner.sessionID]) > 0 {
+		if (err == nil || owner.handoffOnError) && owner.ctx.Err() == nil && len(a.queues[owner.sessionID]) > 0 {
 			queued = a.queues[owner.sessionID][0]
 			a.queues[owner.sessionID] = a.queues[owner.sessionID][1:]
 			next = a.claim(a.lifetime, owner.sessionID)
@@ -102,9 +120,18 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 		owner.onFinish()
 	}
 	if next == nil {
+		if err == nil && owner.onIdle != nil {
+			owner.onIdle()
+		}
 		return result, err
 	}
-	return a.execute(next, queued)
+	if err == nil {
+		return a.execute(next, queued)
+	}
+	if _, nextErr := a.execute(next, queued); nextErr != nil {
+		err = errors.Join(err, nextErr)
+	}
+	return nil, err
 }
 
 func (a *admission) enqueue(id string, job submission) {

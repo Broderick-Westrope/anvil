@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -121,7 +123,26 @@ func NewJobOutputToolMessageItem(
 	result *message.ToolResult,
 	canceled bool,
 ) ToolMessageItem {
-	return newBaseToolMessageItem(sty, toolCall, result, &JobOutputToolRenderContext{}, canceled)
+	t := newBaseToolMessageItem(sty, toolCall, result, &JobOutputToolRenderContext{}, canceled)
+	t.SetSpinningFunc(func(state SpinningState) bool {
+		if state.IsCanceled() {
+			return false
+		}
+		return !state.ToolCall.Finished || (!state.HasResult() && IsJobOutputWait(state.ToolCall))
+	})
+	return &JobOutputToolMessageItem{baseToolMessageItem: t}
+}
+
+// IsJobOutputWait reports whether tc is a job_output call with wait=true.
+func IsJobOutputWait(tc message.ToolCall) bool {
+	if tc.Name != tools.JobOutputToolName {
+		return false
+	}
+	var params tools.JobOutputParams
+	if err := json.Unmarshal([]byte(tc.Input), &params); err != nil {
+		return false
+	}
+	return params.Wait
 }
 
 // JobOutputToolRenderContext renders job_output tool messages.
@@ -129,12 +150,20 @@ type JobOutputToolRenderContext struct{}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	if opts.IsPending() {
-		return pendingTool(sty, "Job", opts.Anim, opts.Compact)
+	var params tools.JobOutputParams
+	paramsErr := json.Unmarshal([]byte(opts.ToolCall.Input), &params)
+
+	waiting := params.Wait && paramsErr == nil && !opts.HasResult() && !opts.IsCanceled()
+	if opts.IsPending() || waiting {
+		header := pendingTool(sty, "Job", opts.Anim, opts.Compact)
+		if waiting && !opts.StartedAt.IsZero() {
+			elapsed := max(opts.Now.Sub(opts.StartedAt), 0)
+			header += " " + sty.Tool.StateWaiting.Render("waiting "+shell.FormatRuntime(elapsed))
+		}
+		return header
 	}
 
-	var params tools.JobOutputParams
-	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
+	if paramsErr != nil {
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, width)
 	}
 
@@ -143,6 +172,9 @@ func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 		var meta tools.JobOutputResponseMetadata
 		if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err == nil {
 			description = cmp.Or(meta.Description, meta.Command)
+			if runtime := jobRuntimeNote(meta); runtime != "" {
+				description = strings.TrimPrefix(description+" · "+runtime, " · ")
+			}
 		}
 	}
 
@@ -151,6 +183,19 @@ func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 		content = opts.Result.Content
 	}
 	return renderJobTool(sty, opts, width, "Output", params.ShellID, description, content)
+}
+
+// jobRuntimeNote describes how long the job had run when job_output read
+// it: "ran 9m14s" once finished, "running 4m12s" otherwise.
+func jobRuntimeNote(meta tools.JobOutputResponseMetadata) string {
+	if meta.RuntimeMS <= 0 {
+		return ""
+	}
+	runtime := shell.FormatRuntime(time.Duration(meta.RuntimeMS) * time.Millisecond)
+	if meta.Done {
+		return "ran " + runtime
+	}
+	return "running " + runtime
 }
 
 // -----------------------------------------------------------------------------
@@ -225,14 +270,17 @@ func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, 
 }
 
 // jobHeader builds a header for job-related tools.
-// Format: "● Job (Action) PID shellID description..."
+// Format: "● Job (Action) ID 05A description...". The ID is the job ID
+// Anvil assigned, not an operating system process ID.
 func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, description string, width int) string {
 	icon := toolIcon(sty, status)
 	jobPart := sty.Tool.JobToolName.Render("Job")
 	actionPart := sty.Tool.JobAction.Render("(" + action + ")")
-	pidPart := sty.Tool.JobPID.Render("PID " + shellID)
-
-	prefix := fmt.Sprintf("%s %s %s %s", icon, jobPart, actionPart, pidPart)
+	prefix := fmt.Sprintf("%s %s %s", icon, jobPart, actionPart)
+	// A command that finished before it became a background job has no ID.
+	if shellID != "" {
+		prefix += " " + sty.Tool.JobID.Render(jobIDLabel(shellID))
+	}
 
 	if description == "" {
 		return prefix
@@ -246,6 +294,11 @@ func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, descripti
 
 	truncatedDesc := ansi.Truncate(description, availableWidth, "…")
 	return prefix + " " + sty.Tool.JobDescription.Render(truncatedDesc)
+}
+
+// jobIDLabel labels a job ID in tool and notice headers.
+func jobIDLabel(jobID string) string {
+	return "ID " + jobID
 }
 
 // joinToolParts joins header and body with a blank line separator.

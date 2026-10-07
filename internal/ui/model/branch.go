@@ -114,6 +114,7 @@ type treeNavErrorMsg struct {
 }
 
 func (m *UI) handleTreeNavError(msg treeNavErrorMsg) tea.Cmd {
+	m.navigating = false
 	if msg.movedLeaf && !m.branchRestoring && msg.snapshot != nil {
 		m.pendingBranch = msg.snapshot
 	}

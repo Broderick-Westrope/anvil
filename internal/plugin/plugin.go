@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -53,9 +54,22 @@ type Plugin struct {
 	AgentsPath string
 }
 
+// Warning describes plugin content that discovery skipped because it could
+// not be read or parsed. Warnings don't stop other plugins from loading.
+type Warning struct {
+	Path string
+	Err  error
+}
+
 // Discover resolves a PluginConfig into a Plugin. Returns nil with a logged
 // warning if the path doesn't exist or the manifest is malformed.
 func Discover(cfg config.PluginConfig) *Plugin {
+	return discover(cfg, nil)
+}
+
+// discover is Discover with a collector for manifest problems. warn may be
+// nil.
+func discover(cfg config.PluginConfig, warn func(Warning)) *Plugin {
 	// Expand ~ and environment variables.
 	resolvedPath := os.ExpandEnv(home.Long(cfg.Path))
 
@@ -90,12 +104,18 @@ func Discover(cfg config.PluginConfig) *Plugin {
 		if err := json.Unmarshal(data, &m); err != nil {
 			slog.Warn("Malformed plugin manifest, skipping plugin",
 				"path", manifestPath, "error", err)
+			if warn != nil {
+				warn(Warning{Path: manifestPath, Err: fmt.Errorf("malformed plugin manifest: %w", err)})
+			}
 			return nil
 		}
 		if m.Name != "" {
 			if !validatePluginName(m.Name) {
 				slog.Warn("Plugin manifest has invalid name, skipping plugin",
 					"path", manifestPath, "name", m.Name)
+				if warn != nil {
+					warn(Warning{Path: manifestPath, Err: fmt.Errorf("invalid plugin name %q", m.Name)})
+				}
 				return nil
 			}
 			p.Name = m.Name
@@ -116,11 +136,12 @@ func Discover(cfg config.PluginConfig) *Plugin {
 }
 
 // DiscoverAll resolves a list of PluginConfigs into Plugins, filtering out
-// any that failed discovery.
-func DiscoverAll(plugins []config.PluginConfig) []*Plugin {
+// any that failed discovery. Malformed manifests are reported to warn,
+// which may be nil.
+func DiscoverAll(plugins []config.PluginConfig, warn func(Warning)) []*Plugin {
 	result := make([]*Plugin, 0, len(plugins))
 	for _, cfg := range plugins {
-		if p := Discover(cfg); p != nil {
+		if p := discover(cfg, warn); p != nil {
 			result = append(result, p)
 		}
 	}

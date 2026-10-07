@@ -3,6 +3,8 @@ package recovery
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -44,4 +46,16 @@ func TestRetryRenameBounded(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrPermission)
 	require.Greater(t, attempts, 1)
 	require.Less(t, attempts, 100)
+}
+
+func TestRemoveRecordIgnoresMissingFile(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, removeRecord(filepath.Join(t.TempDir(), "missing.json")))
+}
+
+func TestWindowsTransientOnlyOnWindows(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, runtime.GOOS == "windows", windowsTransient(errSharingViolation))
+	require.False(t, windowsTransient(os.ErrNotExist))
+	require.False(t, windowsTransient(nil))
 }

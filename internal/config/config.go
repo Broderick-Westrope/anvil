@@ -326,6 +326,25 @@ type Options struct {
 	DisableNotifications      bool     `json:"disable_notifications,omitempty" jsonschema:"description=Disable desktop notifications,default=false"`
 	DisabledSkills            []string `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=anvil-config"`
 	ExpandedTools             []string `json:"expanded_tools,omitempty" jsonschema:"description=Glob patterns for tools that should render expanded instead of compact,example=bash,example=mcp_*"`
+
+	BackgroundJobs *BackgroundJobsOptions `json:"background_jobs,omitempty" jsonschema:"description=Background job behaviour"`
+}
+
+// BackgroundJobsOptions configures how background jobs interact with
+// sessions.
+type BackgroundJobsOptions struct {
+	// WakeOnEvent starts a turn for an idle session when one of its
+	// background jobs completes or matches a watch.
+	WakeOnEvent *bool `json:"wake_on_event,omitempty" jsonschema:"description=Start a turn for an idle session when its background job completes or matches a watch,default=false"`
+}
+
+// WakeOnJobEvent reports whether idle sessions should be woken by
+// background job events. It defaults to false.
+func (o *Options) WakeOnJobEvent() bool {
+	if o == nil || o.BackgroundJobs == nil {
+		return false
+	}
+	return ptrValOr(o.BackgroundJobs.WakeOnEvent, false)
 }
 
 type MCPs map[string]MCPConfig
@@ -644,9 +663,10 @@ func (a *Agent) UnmarshalJSON(data []byte) error {
 }
 
 type Tools struct {
-	Ls   ToolLs   `json:"ls,omitzero"`
-	Grep ToolGrep `json:"grep,omitzero"`
-	Glob ToolGlob `json:"glob,omitzero"`
+	Ls           ToolLs           `json:"ls,omitzero"`
+	Grep         ToolGrep         `json:"grep,omitzero"`
+	Glob         ToolGlob         `json:"glob,omitzero"`
+	AgenticFetch ToolAgenticFetch `json:"agentic_fetch,omitzero"`
 }
 
 type ToolLs struct {
@@ -675,6 +695,15 @@ type ToolGlob struct {
 // GetTimeout returns the user-defined timeout or the default.
 func (t ToolGlob) GetTimeout() time.Duration {
 	return ptrValOr(t.Timeout, 30*time.Second)
+}
+
+// ToolAgenticFetch configures the sub-agent behind the agentic_fetch tool.
+type ToolAgenticFetch struct {
+	// Model is the provider/model the sub-agent runs on. Empty uses the
+	// global small model.
+	Model string `json:"model,omitempty" jsonschema:"description=Model for the agentic_fetch sub-agent in provider/model format. Empty uses the global small model,example=anthropic/claude-haiku-4-5"`
+	// ReasoningEffort overrides the reasoning effort of the resolved model.
+	ReasoningEffort string `json:"reasoning_effort,omitempty" jsonschema:"description=Reasoning effort for the agentic_fetch model. Unsupported values fall back to the model default,example=low"`
 }
 
 // PluginConfig defines an external plugin directory that provides skills,
@@ -728,6 +757,10 @@ type Config struct {
 	// Recently used models stored in the data directory config.
 	RecentModels map[SelectedModelType][]SelectedModel `json:"recent_models,omitempty" jsonschema:"-"`
 
+	// LastPermissionTriage is when `anvil permissions triage` last ran, in
+	// Unix seconds. It is stored in the data directory config.
+	LastPermissionTriage int64 `json:"last_permission_triage,omitempty" jsonschema:"-"`
+
 	// The providers that are configured
 	Providers *csync.Map[string, ProviderConfig] `json:"providers,omitempty" jsonschema:"description=AI provider configurations"`
 
@@ -738,6 +771,10 @@ type Config struct {
 	Options *Options `json:"options,omitempty" jsonschema:"description=General application options"`
 
 	Permissions *Permissions `json:"permissions,omitempty" jsonschema:"description=Permission settings for tool usage"`
+
+	// Bouncer is top-level rather than under Permissions because
+	// the permissions keys are tool-name globs.
+	Bouncer *Bouncer `json:"bouncer,omitempty" jsonschema:"description=Classifier that answers permission prompts. Only read from user-level config files"`
 
 	Tools Tools `json:"tools,omitzero" jsonschema:"description=Tool configurations"`
 
@@ -880,6 +917,7 @@ func allToolNames() []string {
 		"anvil_logs",
 		"job_output",
 		"job_kill",
+		"job_list",
 		"download",
 		"edit",
 		"multiedit",
@@ -1082,11 +1120,45 @@ func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabl
 //
 // Agent-level Variant, ReasoningEffort and Think always win over both.
 func ResolveAgentModel(agent Agent, cfg *Config) (SelectedModel, error) {
-	result, ok := cfg.Models[SelectedModelTypeLarge]
+	base, ok := cfg.Models[SelectedModelTypeLarge]
 	if !ok {
 		return SelectedModel{}, fmt.Errorf("agent %q: no large model configured", agent.ID)
 	}
+	return resolveModelOverride(agent, base, cfg)
+}
 
+// AgenticFetchAgentID identifies the agentic_fetch sub-agent in model
+// resolution errors and logs.
+const AgenticFetchAgentID = "agentic_fetch"
+
+// ResolveAgenticFetchModel resolves the SelectedModel for the agentic_fetch
+// sub-agent. The global small model is the base; tools.agentic_fetch is
+// layered over it using the same rules as ResolveAgentModel.
+func ResolveAgenticFetchModel(cfg *Config) (SelectedModel, error) {
+	base, ok := cfg.Models[SelectedModelTypeSmall]
+	if !ok {
+		return SelectedModel{}, fmt.Errorf("agent %q: no small model configured", AgenticFetchAgentID)
+	}
+	fetch := cfg.Tools.AgenticFetch
+	if fetch.Model != "" {
+		if slash := strings.IndexByte(fetch.Model, '/'); slash > 0 {
+			if p, ok := cfg.Providers.Get(fetch.Model[:slash]); ok && p.Disable {
+				return SelectedModel{}, fmt.Errorf("agent %q: provider %q is disabled", AgenticFetchAgentID, fetch.Model[:slash])
+			}
+		}
+	}
+	return resolveModelOverride(Agent{
+		ID:              AgenticFetchAgentID,
+		Model:           fetch.Model,
+		ReasoningEffort: fetch.ReasoningEffort,
+	}, base, cfg)
+}
+
+// resolveModelOverride layers agent's model, variant, reasoning effort and
+// think settings over base. See ResolveAgentModel for the inheritance
+// rules.
+func resolveModelOverride(agent Agent, base SelectedModel, cfg *Config) (SelectedModel, error) {
+	result := base
 	if agent.Model != "" {
 		// Parse "provider/model" format; split on the first slash only.
 		slash := strings.IndexByte(agent.Model, '/')

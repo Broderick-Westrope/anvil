@@ -64,8 +64,11 @@ type (
 	ActionToggleNotifications         struct{}
 	ActionToggleTransparentBackground struct{}
 	ActionToggleAnthropicAuthMode     struct{}
-	ActionInitializeProject           struct{}
-	ActionSummarize                   struct {
+	// ActionCycleBouncerMode cycles the runtime bouncer mode
+	// (off -> shadow -> enforce -> off). It never writes config.
+	ActionCycleBouncerMode  struct{}
+	ActionInitializeProject struct{}
+	ActionSummarize         struct {
 		SessionID string
 	}
 	// ActionSelectReasoningEffort is a message indicating a reasoning effort
@@ -86,6 +89,7 @@ type (
 		Content   string
 		Arguments []commands.Argument
 		Skills    []string          // Skill names to preload.
+		Location  string            // Path to the command's COMMAND.md.
 		Args      map[string]string // Actual argument values
 	}
 	// ActionRunMCPPrompt is a message to run a custom command.
@@ -119,8 +123,16 @@ type (
 	// ActionRegenerateTitle is a message to regenerate the current session
 	// title.
 	ActionRegenerateTitle struct{}
-	// ActionReloadPlugins is dispatched to re-discover all plugin content.
-	ActionReloadPlugins struct{}
+	// ActionReloadConfig is dispatched to re-read config from disk and
+	// re-discover all plugin content.
+	ActionReloadConfig struct{}
+	// ActionReloadInstance is dispatched to replace the process with the
+	// anvil binary on disk, resuming the same session.
+	ActionReloadInstance struct{}
+	// ActionReloadInstanceConfirm and ActionReloadInstanceCancel answer
+	// the reload confirmation dialog.
+	ActionReloadInstanceConfirm struct{}
+	ActionReloadInstanceCancel  struct{}
 	// ActionAttachSkill is dispatched when a skill is selected from the
 	// slash autocomplete or the Browse Skills picker dialog.
 	ActionAttachSkill struct {

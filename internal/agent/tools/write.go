@@ -153,7 +153,9 @@ func NewWriteTool(
 						OldContent: oldContent,
 						NewContent: writeContent,
 					},
-					Input: filePath,
+					Input:   filePath,
+					Content: writeContent,
+					Diff:    diffText,
 				},
 			)
 			if err != nil {
