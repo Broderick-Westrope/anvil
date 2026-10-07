@@ -34,7 +34,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
-	"github.com/Broderick-Westrope/anvil/internal/home"
+	"github.com/Broderick-Westrope/anvil/internal/herdr"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -187,6 +187,9 @@ type (
 type UI struct {
 	recoveryHandler func(recovery.Entry)
 	recoveryEntry   recovery.Entry
+	herdrHandler    func(herdr.State)
+	herdrState      herdr.State
+	herdrSent       bool
 	com             *common.Common
 	session         *session.Session
 
@@ -537,6 +540,9 @@ func (m *UI) Init() tea.Cmd {
 	if cmd := m.applyReloadHandoff(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	if m.herdrHandler != nil {
+		cmds = append(cmds, herdrTick())
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -701,7 +707,11 @@ func (m *UI) activeChatArea() image.Rectangle {
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.trackRecoverySession()
+	defer m.trackHerdrState()
 	defer m.syncComposerState()
+	if _, ok := msg.(herdrTickMsg); ok {
+		return m, herdrTick()
+	}
 	var cmds []tea.Cmd
 	if m.hasSession() && m.isAgentBusy() {
 		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
@@ -3579,7 +3589,7 @@ func (m *UI) View() tea.View {
 	}
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = m.caps.ReportFocusEvents
-	v.WindowTitle = "anvil " + home.Short(m.com.Workspace.WorkingDir())
+	v.WindowTitle = windowTitle(m.SessionTitle(), m.com.Workspace.WorkingDir())
 
 	if m.canvas.RenderBuffer == nil || m.canvas.Bounds().Dx() != m.width || m.canvas.Bounds().Dy() != m.height {
 		m.canvas = uv.NewScreenBuffer(m.width, m.height)
