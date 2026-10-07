@@ -1,6 +1,6 @@
 # Herdr Integration Implementation Plan
 
-> **Status:** DRAFT
+> **Status:** IN_PROGRESS
 
 Design spec: `plans/design-2026-10-08-herdr-integration.md` (read it first;
 its "Validated assumptions" table is the source of truth for Herdr 0.9.3
