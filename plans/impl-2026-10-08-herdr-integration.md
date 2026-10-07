@@ -109,41 +109,68 @@ the three permission service test doubles listed below.
 - Modify: `internal/permission/permission_test.go`
 - Modify: `internal/workspace/workspace.go`
 - Modify: `internal/workspace/app_workspace.go`
-- Modify: `internal/agent/tools/multiedit_test.go` (`mockPermissionService`)
-- Modify: `internal/agent/tools/view_test.go` (`mockViewPermissionService`)
-- Modify: `internal/agent/hooked_tool_skill_test.go` (`fakeHookPermissionService`)
+- Modify the five `permission.Service` test doubles that implement every
+  method (the two that embed `permission.Service` —
+  `internal/workspace/app_workspace_test.go:30`,
+  `internal/app/bouncer_test.go:448` — need nothing):
+  - `internal/agent/tools/multiedit_test.go` (`mockPermissionService`)
+  - `internal/agent/tools/view_test.go` (`mockViewPermissionService`)
+  - `internal/agent/tools/bash_test.go` (`mockBashPermissionService`,
+    `recordingPermissionService`)
+  - `internal/agent/hooked_tool_skill_test.go` (`fakeHookPermissionService`)
 
 **Steps:**
 
-1. [ ] Add to the `Service` interface in `permission.go` (next to
-   `SubscribeNotifications`):
+1. [ ] Add a narrow snapshot type and interface method in `permission.go`
+   (next to `SubscribeNotifications`). Do **not** return a copy of the
+   whole `PermissionRequest`: `publishWithReview`
+   (`internal/permission/review.go:248-262`) writes `perm.Review` through
+   the same pointer stored in `activeRequest` without holding
+   `activeRequestMu`, so a whole-struct copy is a data race. `ID`,
+   `SessionID` and `ToolName` are never written after
+   `s.activeRequest = &perm` (`permission.go:393-395`), so reading only
+   those fields is race-free.
    ```go
+   // PendingPermission identifies the prompt waiting for a human decision.
+   type PendingPermission struct {
+   	ID        string
+   	SessionID string
+   	ToolName  string
+   }
+
    // PendingRequest returns the permission prompt currently waiting for a
    // human decision, if any. Requests are serialised, so at most one is
    // pending at a time.
-   PendingRequest() (PermissionRequest, bool)
+   PendingRequest() (PendingPermission, bool)
    ```
 2. [ ] Implement it on `*permissionService`:
    ```go
-   func (s *permissionService) PendingRequest() (PermissionRequest, bool) {
+   func (s *permissionService) PendingRequest() (PendingPermission, bool) {
    	s.activeRequestMu.Lock()
    	defer s.activeRequestMu.Unlock()
    	if s.activeRequest == nil {
-   		return PermissionRequest{}, false
+   		return PendingPermission{}, false
    	}
-   	return *s.activeRequest, true
+   	// Only fields never written after the request is stored; Review is
+   	// updated concurrently without this lock.
+   	return PendingPermission{
+   		ID:        s.activeRequest.ID,
+   		SessionID: s.activeRequest.SessionID,
+   		ToolName:  s.activeRequest.ToolName,
+   	}, true
    }
    ```
-3. [ ] Add `PendingRequest() (permission.PermissionRequest, bool) { return
-   permission.PermissionRequest{}, false }` to the three test doubles.
+3. [ ] Add `func (...) PendingRequest() (permission.PendingPermission,
+   bool) { return permission.PendingPermission{}, false }` to all five
+   test doubles listed above.
 4. [ ] Add to the `Workspace` interface (permissions block,
    `workspace.go` ~line 143):
    ```go
-   PermissionPending() (permission.PermissionRequest, bool)
+   PermissionPending() (permission.PendingPermission, bool)
    ```
    and implement on `*AppWorkspace`:
    ```go
-   func (w *AppWorkspace) PermissionPending() (permission.PermissionRequest, bool) {
+   func (w *AppWorkspace) PermissionPending() (permission.PendingPermission, bool) {
    	return w.app.Permissions.PendingRequest()
    }
    ```
@@ -151,14 +178,20 @@ the three permission service test doubles listed below.
    built the same way existing tests build one that prompts (find an
    existing test that calls `Request` and waits for the `CreatedEvent`
    on `Subscribe`), assert `PendingRequest()` is `false` before the
-   request, `true` with the matching `ToolName`/`ID` once the created
-   event arrives, and `false` after `Grant`. Repeat the last assertion
-   for `Deny`.
+   request, `true` with the matching `ToolName`/`ID`/`SessionID` once the
+   created event arrives, and `false` after `Grant`. Repeat the last
+   assertion for `Deny`. Add `TestPendingRequestConcurrentWithReview`:
+   if an existing test builds a service with the reviewer enabled (search
+   `permission_test.go` / `review_test.go` for `WithReview` or similar),
+   reuse that setup and call `PendingRequest()` in a tight loop from a
+   second goroutine while the prompt is published and reviewed; it must
+   pass under `-race`. If no reviewer test setup exists, skip this case
+   and note it in the commit message.
 
 **Verify:**
 ```bash
-go build ./... && go test ./internal/permission/ ./internal/workspace/ ./internal/agent/... -run 'Pending|Permission' -count=1
-# Expected: build succeeds; tests pass
+go build ./... && go vet ./internal/agent/... ./internal/app/ ./internal/workspace/ && go test -race ./internal/permission/ -run 'Pending' -count=1 && go test ./internal/permission/ ./internal/workspace/ ./internal/agent/... -count=1
+# Expected: build and vet succeed (all test doubles compile); tests pass
 ```
 
 Commit: `feat: expose pending permission request for status reporting`
@@ -215,11 +248,12 @@ Tasks 2–4 are one group (same package, sequential).
    - `HERDR_SOCKET_PATH` empty, or (on non-Windows) `stat` fails or
      `info.Mode()&fs.ModeSocket == 0` → reason `"HERDR_SOCKET_PATH is not
      a socket"`. On Windows accept any path with prefix `\\.\pipe\`.
-   - Binary: if `HERDR_BIN_PATH` is set it must be absolute and pass
-     `isExecutable`; otherwise search `filepath.SplitList(lookup(env,
-     "PATH"))`, skipping non-absolute entries, for `herdr` (`herdr.exe` on
-     Windows) passing `isExecutable`. None → reason `"no absolute herdr
-     binary found"`.
+   - Binary: use `HERDR_BIN_PATH` if it is absolute and passes
+     `isExecutable`; otherwise (unset, relative or not executable) fall
+     back to searching `filepath.SplitList(lookup(env, "PATH"))`,
+     skipping non-absolute entries, for `herdr` (`herdr.exe` on Windows)
+     passing `isExecutable`. None → reason `"no absolute herdr binary
+     found"`.
    - `isExecutable(stat, path)`: `stat` ok, `info.Mode().IsRegular()`, and
      on non-Windows `info.Mode().Perm()&0o111 != 0`.
    - `lookup(env, key)` returns the value of the **last** `key=` entry.
@@ -281,7 +315,8 @@ Tasks 2–4 are one group (same package, sequential).
    `fs.FileInfo`). Cases: not in Herdr (silent, empty reason); missing
    pane; nested (`ANVIL_HERDR_REPORTING=1`); socket path missing / not a
    socket; `HERDR_BIN_PATH` absolute executable → used; `HERDR_BIN_PATH`
-   relative → falls back to PATH; PATH with relative entry `.` containing
+   relative → falls back to PATH; `HERDR_BIN_PATH` absolute but not
+   executable → falls back to PATH; PATH with relative entry `.` containing
    herdr → skipped; PATH absolute dir with non-executable herdr →
    rejected; duplicate key → last wins; full success returns the expected
    `Config`. Skip Windows-only behaviour with `runtime.GOOS` guards.
@@ -335,6 +370,7 @@ Commit: `feat(herdr): add activation detection, CLI runner and seq`
    	debounceDelay  = 150 * time.Millisecond
    	retryDelay     = 2 * time.Second
    	releaseTimeout = 2 * time.Second
+   	restoreTimeout = 2 * time.Second
    )
 
    type Reporter struct {
@@ -343,9 +379,10 @@ Commit: `feat(herdr): add activation detection, CLI runner and seq`
    	debounce time.Duration
    	retry    time.Duration
 
-   	mu     sync.Mutex
-   	latest State
-   	has    bool
+   	mu      sync.Mutex
+   	latest  State
+   	has     bool
+   	sawBusy bool // A working/blocked snapshot arrived since the last flush.
 
    	wake   chan struct{} // Capacity 1.
    	stop   chan struct{}
@@ -354,11 +391,10 @@ Commit: `feat(herdr): add activation detection, CLI runner and seq`
    	cancel context.CancelFunc
    	once   sync.Once
 
-   	// Owned by the loop goroutine, then by Close after the loop exits.
+   	// Owned by the loop goroutine; Close touches them only after <-done.
    	seq     seqGen
    	sent    reportKey
    	hasSent bool
-   	tabs    tabNamer // Task 4.
    }
 
    type reportKey struct {
@@ -372,18 +408,23 @@ Commit: `feat(herdr): add activation detection, CLI runner and seq`
 
    func start(cfg Config, run runner, now func() time.Time, debounce, retry time.Duration) *Reporter
    ```
-3. [ ] `Update(s State)`: lock; if `r.has && s == r.latest` return
-   without waking (the UI calls this on every update, so waking only on
-   change is what lets the debounce settle); store; non-blocking send on
-   `wake`. Never blocks.
+3. [ ] `Update(s State)`: lock; if `s.Status != StatusIdle` set
+   `r.sawBusy = true`; if `r.has && s == r.latest` return without waking
+   (the UI calls this on every update and every 250ms tick, so waking only
+   on change is what lets the debounce settle); store; non-blocking send
+   on `wake`. Never blocks.
 4. [ ] `loop()`: the first wake flushes immediately (startup
    registration); later wakes (re)arm a debounce timer; timer fire →
    `flush()`. A failed flush arms the timer with `retry`. `stop` returns.
    Use one `*time.Timer` and a nil-able `<-chan time.Time`.
-5. [ ] `flush()`: copy `latest` under the lock; call
-   `r.tabs.sync(r.ctx, r.run, s, r.sentStatus())` (Task 4; until then a
-   no-op stub); build the key; if `hasSent && key == sent` return true.
-   Args:
+5. [ ] `flush() bool`: under the lock copy `latest` and `sawBusy`, then
+   reset `sawBusy = false`. Preserve the completion edge: Herdr only
+   marks a pane `done` when it observes `working → idle` (validated), so
+   if the copied status is `idle`, the last sent status is `idle` and
+   `sawBusy` was true (a run started and ended inside one debounce
+   window), first send a `working` report, then the `idle` one. Then
+   build the key; if `hasSent && key == sent` return true. Args for each
+   report:
    ```go
    args := []string{"pane", "report-agent", r.cfg.PaneID,
    	"--source", Source, "--agent", Agent,
@@ -397,31 +438,41 @@ Commit: `feat(herdr): add activation detection, CLI runner and seq`
    }
    ```
    On error: `slog.Debug("Herdr state report failed", "error", err)`,
-   return false. On success record `sent`.
+   restore `sawBusy` if it was set, return false. On success record
+   `sent`. The state report always runs before any optional work (tab
+   naming, Task 4) so registration and `blocked` are never delayed by it.
 6. [ ] `Close()` (idempotent via `once`): `close(stop)`; `cancel()` (kills
-   an in-flight child); `<-done`; then with
-   `context.WithTimeout(context.Background(), releaseTimeout)`: call
-   `r.tabs.restore(ctx, r.run)` (Task 4 stub until then) and run
-   `pane release-agent <pane> --source custom:anvil --agent anvil --seq
-   <next>`; log failures at debug. Because the loop has exited before
-   release, no state report can land after it.
-7. [ ] `reporter_test.go` with a `fakeRunner` (mutex-guarded slice of
-   recorded args; optional per-subcommand error and a `block chan
-   struct{}` that makes `run` wait for `ctx.Done()`), fake clock, and
-   short debounce (5ms). Use `require.Eventually` / channel waits, never
-   bare sleeps for assertions. Cases:
-   - first `Update` reports immediately (no debounce wait) with
+   an in-flight child); `<-done`; then run `pane release-agent <pane>
+   --source custom:anvil --agent anvil --seq <next>` with its **own**
+   `context.WithTimeout(context.Background(), releaseTimeout)`. Release
+   comes first so nothing optional can starve it. Log failures at debug.
+   Because the loop has exited before release, no state report can land
+   after it.
+7. [ ] `reporter_test.go`. Use `testing/synctest` (Go 1.27; already used
+   in `internal/csync/maps_test.go`) so the real `time.Timer`s in the
+   loop run on a fake clock: wrap each test body in
+   `synctest.Test(t, func(t *testing.T) { ... })`, advance with
+   `time.Sleep(d)` and settle with `synctest.Wait()`. Pass
+   `time.Now` as the seq clock (it is faked inside the bubble). Never
+   assert after a real-time sleep. The `fakeRunner` records args under a
+   mutex, supports per-subcommand errors and canned stdout keyed by the
+   first two args, and a `block` flag that makes `run` wait on
+   `ctx.Done()`. Cases:
+   - first `Update` reports immediately (before any debounce) with
      `--state idle` and no `--agent-session-id` when empty;
    - identical repeated `Update`s produce one report;
    - `working` then `blocked` then `working` within the debounce window
      → only the final `working` is reported after the first report;
+   - short run: after an `idle` report, `working` then `idle` within one
+     debounce window → reports `working` then `idle` (completion edge);
    - blocked includes `--message`; working/idle never include it;
    - session ID change with the same status reports again; title-only
      change does not produce a `report-agent`;
-   - runner error → retried after `retry`;
-   - `Close` while a report blocks: returns within ~`releaseTimeout`,
-     the blocked call saw `ctx.Done()`, and the last recorded command is
-     `release-agent`;
+   - runner error → retried after `retry`, and a later success clears it;
+   - `Close` while a report blocks: returns, the blocked call saw
+     `ctx.Done()`, and the last recorded command is `release-agent`;
+   - `Update` racing `Close` from another goroutine is safe under `-race`
+     and nothing is recorded after `release-agent`;
    - `--seq` values strictly increase across all recorded commands;
    - `Close` twice is safe.
 
@@ -441,7 +492,8 @@ rows about tabs.
 **Files:**
 - Create: `internal/herdr/tab.go`
 - Create: `internal/herdr/tab_test.go`
-- Modify: `internal/herdr/reporter.go` (replace stubs)
+- Modify: `internal/herdr/reporter.go` (add a `tabs tabNamer` field
+  next to `seq`, call it from `flush` and `Close`)
 
 **Steps:**
 
@@ -457,42 +509,52 @@ rows about tabs.
    Map `unicode.IsControl` runes to spaces, `strings.Fields` + join with
    single spaces, and if longer than `maxTabLabel` runes keep
    `maxTabLabel-1` runes + `"…"`.
-2. [ ] `tabNamer` (loop-owned, no locking):
+2. [ ] `tabNamer` (loop-owned, no locking; `Close` uses it only after
+   `<-done`):
    ```go
    type tabNamer struct {
-   	ours       map[string]string // tab ID → label Anvil set.
-   	userNamed  map[string]bool   // Tabs the user renamed; never touched again.
-   	lastTitle  string            // Title last synced.
-   	lastStatus Status
+   	ours      map[string]string // tab ID → label Anvil set.
+   	userNamed map[string]bool   // Tabs the user renamed; never touched again.
+   	synced    string            // Title fully handled (renamed or decided against).
+   	dirty     bool              // A re-check is owed (title change or idle/blocked edge).
    }
    ```
-3. [ ] `sync(ctx, run, s State, prevStatus Status)`: compute `want :=
-   TabLabel(s.SessionTitle)`. Do nothing (no subprocess) unless `want !=
-   ""` and (`s.SessionTitle != lastTitle` or (`s.Status != prevStatus`
-   and `s.Status` is idle or blocked)) — the latter re-checks after a
-   pane move before the toast fires. Then:
+3. [ ] `sync(ctx, run, s State, statusChanged bool) (ok bool)`. Mark
+   `dirty` when `s.SessionTitle != synced`, or when `statusChanged` and
+   `s.Status` is idle or blocked (re-check after a pane move before the
+   toast fires). If not dirty, or `TabLabel(s.SessionTitle) == ""`,
+   return true with no subprocess. Run all lookups and the rename under a
+   1s budget: `ctx, cancel := context.WithTimeout(ctx, time.Second)`.
+   Then:
    - `pane get <pane>` → parse `result.pane.tab_id`;
    - `tab get <tab>` → parse `result.tab` (`label`, `number`,
      `pane_count`);
-   - `pane_count != 1` → stop;
-   - `userNamed[tab]` → stop;
+   - `pane_count != 1` → done (no rename);
+   - `userNamed[tab]` → done;
    - claimable iff `isDigits(label)` or `label == ours[tab]`; otherwise
      set `userNamed[tab] = true`, `slog.Debug("Herdr tab named by user;
-     leaving it alone", "tab", tab)`, stop;
-   - `label == want` → record `ours[tab] = want`, stop;
+     leaving it alone", "tab", tab)`, done;
+   - `label == want` → record `ours[tab] = want`, done;
    - run `tab rename <tab> <want>` (label as one argv element; never add
      `--`, Herdr treats it as part of the label); on success
-     `ours[tab] = want`.
-   Update `lastTitle` only after a successful lookup so failures retry on
-   the next trigger. Errors log at debug and never propagate.
-4. [ ] `restore(ctx, run)`: for each `tab, label := range ours`: `tab get
+     `ours[tab] = want`, done.
+   "Done" sets `synced = s.SessionTitle`, `dirty = false`, returns true.
+   Any command error logs at debug, leaves `dirty` set and returns false.
+4. [ ] In `Reporter.flush`, after the state report succeeds (or was
+   unchanged), call `r.tabs.sync(r.ctx, r.run, s, statusChanged)` where
+   `statusChanged` is whether this flush sent a new status. If it returns
+   false, `flush` returns false so the loop arms the `retry` timer; the
+   retry's flush skips the unchanged state report (key equal) and only
+   retries the tab. This is the only retry path; it is bounded by the
+   retry interval and stops once `dirty` clears.
+5. [ ] `restore(ctx, run)`: for each `tab, label := range ours`: `tab get
    <tab>`; if it still exists and its label equals `label`, run `tab
    rename <tab> <strconv.Itoa(number)>`. (Herdr cannot restore an
-   automatic label; `""` would leave a blank tab.)
-5. [ ] Wire into `Reporter.flush` and `Reporter.Close`; initialise maps in
-   `start`.
-6. [ ] `tab_test.go` using the Task 3 `fakeRunner`, extended to return
-   canned stdout per subcommand (`pane get`, `tab get`). Cases:
+   automatic label; `""` would leave a blank tab.) In `Reporter.Close`
+   call it **after** `release-agent`, with its own
+   `context.WithTimeout(context.Background(), restoreTimeout)`.
+6. [ ] Initialise the maps in `start`.
+7. [ ] `tab_test.go` using the Task 3 `fakeRunner` and `synctest`. Cases:
    - `TabLabel`: newline/ESC stripped, whitespace collapsed, 31+ runes
      capped to 30 with `…`, multi-byte runes not split, empty → empty;
    - unnamed tab (`label "3"`, `pane_count 1`) → `tab rename w1:t3 "Fix
@@ -506,8 +568,13 @@ rows about tabs.
      renamed on the next idle transition;
    - no subprocesses at all when title is empty or unchanged and status
      unchanged;
+   - state report precedes any `pane get`/`tab get` in the recorded order;
+   - `tab rename` fails once → retried after `retry` without a second
+     `report-agent`; succeeds on retry and then stops;
    - `restore`: our label still present → renamed to `number`; user
-     renamed it since → untouched.
+     renamed it since → untouched;
+   - `Close` with a hung `tab get` during restore: `release-agent` is
+     still recorded (it runs first).
 
 **Verify:**
 ```bash
@@ -609,7 +676,7 @@ Commit: `feat(herdr): name the pane's tab after the session title`
    windowTitle(m.SessionTitle(), m.com.Workspace.WorkingDir())`.
 3. [ ] `herdr_test.go` with a `herdrWorkspace` fake embedding
    `workspace.Workspace` (fields `ready, busy bool`, `pending
-   *permission.PermissionRequest`; methods `AgentIsReady`, `AgentIsBusy`,
+   *permission.PendingPermission`; methods `AgentIsReady`, `AgentIsBusy`,
    `PermissionPending`, plus whatever `Update(tea.BlurMsg{})` needs —
    copy the method set from `composerWorkspace`). Cases (`t.Parallel()`):
    - `windowTitle`: empty / default title → `anvil <dir>`; `"Fix auth"`
@@ -618,9 +685,9 @@ Commit: `feat(herdr): name the pane's tab after the session title`
      required: bash`, even while busy; busy → working; otherwise idle;
    - `SessionTitle` empty for `agent.DefaultSessionName`;
    - handler called once for repeated identical `Update`s, again after
-     `busy` flips; never called when no handler is set (fake with nil
-     `pending` and a workspace whose `PermissionPending` panics proves the
-     snapshot is skipped);
+     `busy` flips; with no handler set, `Update` never calls
+     `PermissionPending` (make the fake's `PermissionPending` call
+     `t.Error`);
    - `Update(herdrTickMsg{})` returns a non-nil command.
 
 **Verify:**
@@ -735,4 +802,25 @@ Checks (spend at most one or two short LLM turns):
 
 Commit: `feat: report anvil status and session to herdr from the interactive TUI`
 
-<!-- Review notes: added after devils-advocate review. -->
+<!--
+Review notes (devils-advocate, before approval):
+- Task 1: returning a copy of the whole PermissionRequest raced with
+  publishWithReview writing perm.Review through the shared pointer; now
+  returns a narrow PendingPermission of never-mutated fields, with a
+  concurrent -race test. Two more test doubles (bash_test.go) added.
+- Task 3: release and tab restore shared one timeout; release now runs
+  first with its own timeout. A run shorter than the debounce could lose
+  Herdr's done state; the reporter now preserves the working -> idle edge.
+  Timing tests switched to testing/synctest.
+- Task 4: tab naming ran before the state report (delaying registration
+  and blocked) and had no retry; it now runs after the report, under a 1s
+  budget, with dirty-tracking and the reporter's retry timer. The forward
+  dependency from Task 3 to Task 4 stubs was removed.
+- Task 2: HERDR_BIN_PATH policy made consistent (fall back to PATH).
+- Spec: digit-label heuristic limitation documented.
+- Phasing: reviewer suggested four phases. Kept as one plan with one
+  commit per task: the permission change is ~40 lines, UI and cmd wiring
+  are small and only meaningful with the herdr package, and the work
+  lands as a single PR on a personal fork. Tasks are ordered so each
+  commit builds and passes tests.
+-->

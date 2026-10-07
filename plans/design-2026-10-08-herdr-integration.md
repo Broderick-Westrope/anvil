@@ -85,7 +85,10 @@ path, which publishes no event) is still observed. Taking it on the UI
 goroutine avoids racing `App.AgentCoordinator`, which the UI reassigns on
 re-init (`internal/ui/model/ui.go:2743`). The reporter receives each
 snapshot and **debounces ~150ms**: a state is sent only after it has been
-stable that long. This absorbs the permission service publishing its
+stable that long. Debouncing must not erase a completion: Herdr only
+marks a pane `done` on an observed `working → idle`, so if a run starts
+and ends inside one debounce window the reporter sends `working` then
+`idle`. The debounce absorbs the permission service publishing its
 resolution notification *before* clearing the active request
 (`internal/permission/permission.go:229-262`) and the queued-permission
 flicker below. (Reordering publish-after-clear in `permission.go` was
@@ -202,9 +205,11 @@ Rules:
   Anvil claims a tab only if its current label is all digits, or equals
   the label Anvil itself last set on it in this process. If the label is
   anything else, the user renamed it: stop renaming that tab for the
-  rest of the process.
+  rest of the process. Known limitation: a user name that is all digits
+  (e.g. `2026`) is indistinguishable from an automatic label and will be
+  claimed.
 - **On clean exit**, restore the tab to its current position number
-  (computed from `herdr tab list`). There is no way to restore the
+  (from `herdr tab get`). There is no way to restore the
   automatic label: `tab rename <id> ""` leaves a blank tab, and there is
   no `--clear`. The restored digit label is static (it will not
   renumber), but stays claimable by the next Anvil. After a crash the
@@ -217,9 +222,11 @@ Rules:
   leading dashes are taken literally, and `--` is **not** a separator
   (it becomes part of the label).
 - **Triggers:** activation, session switch/new session, session title
-  generated or renamed. Re-check (resolve + rename if needed) before
-  each `idle`/`blocked` report so a moved pane is renamed before the
-  toast fires.
+  generated or renamed. Re-check (resolve + rename if needed) right
+  after each `idle`/`blocked` report — never before it, so tab naming
+  cannot delay status — so a moved pane is renamed within Herdr's toast
+  delay (`delay_seconds`, default 1s). Tab work has a 1s budget and is
+  retried on the reporter's retry timer until it succeeds.
 - Fallback while no session exists: leave the tab label alone.
 
 Recommended user Herdr config (documented, not shipped). The tab row
