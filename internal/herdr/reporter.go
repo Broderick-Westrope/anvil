@@ -26,11 +26,10 @@ type State struct {
 }
 
 const (
-	debounceDelay  = 150 * time.Millisecond
-	retryDelay     = 2 * time.Second
-	maxRetryDelay  = 30 * time.Second
-	releaseTimeout = 2 * time.Second
-	restoreTimeout = 2 * time.Second
+	debounceDelay = 150 * time.Millisecond
+	retryDelay    = 2 * time.Second
+	maxRetryDelay = 30 * time.Second
+	closeTimeout  = 3 * time.Second
 )
 
 // Reporter sends debounced state snapshots to Herdr from one goroutine,
@@ -114,14 +113,18 @@ func (r *Reporter) Update(s State) {
 }
 
 // Close stops the sender, kills any in-flight report and releases agent
-// authority. It is safe to call more than once.
+// authority, then restores the tab, all within closeTimeout. It is safe
+// to call more than once and on a nil Reporter.
 func (r *Reporter) Close() {
+	if r == nil {
+		return
+	}
 	r.once.Do(func() {
 		close(r.stop)
 		r.cancel()
 		<-r.done
 
-		ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 		defer cancel()
 		_, err := r.run.run(ctx, "pane", "release-agent", r.cfg.PaneID,
 			"--source", Source, "--agent", Agent,
@@ -129,10 +132,7 @@ func (r *Reporter) Close() {
 		if err != nil {
 			slog.Debug("Herdr agent release failed", "error", err)
 		}
-
-		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), restoreTimeout)
-		defer restoreCancel()
-		r.tabs.restore(restoreCtx, r.run)
+		r.tabs.restore(ctx, r.run)
 	})
 }
 

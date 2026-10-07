@@ -308,11 +308,31 @@ func TestCloseWithHungRestoreStillReleases(t *testing.T) {
 
 		start := time.Now()
 		r.Close()
-		require.Equal(t, restoreTimeout, time.Since(start))
+		require.Equal(t, closeTimeout, time.Since(start))
 
 		require.Len(t, f.commands("pane release-agent"), 1)
 		calls := f.recorded()
 		require.Equal(t, []string{"tab", "get", "w1:t3"}, calls[len(calls)-1])
 		require.Equal(t, "release-agent", calls[len(calls)-2][1])
+	})
+}
+
+func TestCloseSharesOneDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := tabFake("3", 1)
+		r := newTestReporter(f)
+
+		r.Update(State{Status: StatusIdle, SessionID: "s1", SessionTitle: "Fix auth"})
+		synctest.Wait()
+		f.set(func(f *fakeRunner) {
+			f.block["pane release-agent"] = true
+			f.block["tab get"] = true
+		})
+
+		start := time.Now()
+		r.Close()
+		require.Equal(t, closeTimeout, time.Since(start))
+		require.Len(t, f.commands("pane release-agent"), 1)
 	})
 }

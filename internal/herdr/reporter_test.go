@@ -423,3 +423,9 @@ func TestReporterCloseTwice(t *testing.T) {
 		require.Len(t, f.commands("pane release-agent"), 1)
 	})
 }
+
+func TestReporterCloseNil(t *testing.T) {
+	t.Parallel()
+	var r *Reporter
+	require.NotPanics(t, r.Close)
+}

@@ -144,12 +144,7 @@ anvil --continue --there
 		model := ui.New(com, sessionID, continueLast)
 
 		herdrReporter := startHerdrReporter()
-		closeHerdr := sync.OnceFunc(func() {
-			if herdrReporter != nil {
-				herdrReporter.Close()
-			}
-		})
-		defer closeHerdr()
+		defer herdrReporter.Close()
 		if herdrReporter != nil {
 			model.SetHerdrHandler(herdrReporter.Update)
 		}
@@ -205,7 +200,7 @@ anvil --continue --there
 			return finishReload(req, reloadDeps{
 				out:     cmd.OutOrStdout(),
 				tracker: tracker,
-				cleanup: func() { closeHerdr(); cleanup() },
+				cleanup: func() { herdrReporter.Close(); cleanup() },
 				exec:    execAnvil,
 				workDir: ws.WorkingDir(),
 				dataDir: absDataDir(cmd),
