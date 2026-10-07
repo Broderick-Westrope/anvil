@@ -26,8 +26,8 @@ cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdB
 cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
 git.sr.ht/~jackmordaunt/go-toast v1.1.2 h1:/yrfI55LRt1M7H1vkaw+NaH1+L1CDxrqDltwm5euVuE=
 git.sr.ht/~jackmordaunt/go-toast v1.1.2/go.mod h1:jA4OqHKTQ4AFBdwrSnwnskUIIS3HYzlJSgdzCKqfavo=
-github.com/Broderick-Westrope/wtp/v3 v3.1.0 h1:BroFPyQ23w9VHl6Owh8NEtQBGCTBCcJ7nKQeC2Nmb+Y=
-github.com/Broderick-Westrope/wtp/v3 v3.1.0/go.mod h1:tfM5nm7AtECIpDLXGHSkdh6l4mN5FUHizzXvE9LBnqg=
+github.com/Broderick-Westrope/wtp/v3 v3.2.0 h1:TzDDuOmy9UsHgCilmllBaHywlvjxM/nWCCLGjTT9DsE=
+github.com/Broderick-Westrope/wtp/v3 v3.2.0/go.mod h1:tfM5nm7AtECIpDLXGHSkdh6l4mN5FUHizzXvE9LBnqg=
 github.com/JohannesKaufmann/html-to-markdown v1.6.0 h1:04VXMiE50YYfCfLboJCLcgqF5x+rHJnb1ssNmqpLH/k=
 github.com/JohannesKaufmann/html-to-markdown v1.6.0/go.mod h1:NUI78lGg/a7vpEJTz/0uOcYMaibytE4BUOQS8k78yPQ=
 github.com/MakeNowJust/heredoc v1.0.0 h1:cXCdzVdstXyiTqTvfqk9SDHpKNjxuom+DOlyEeQ4pzQ=
