@@ -273,6 +273,64 @@ func TestReporterRetriesFailedReport(t *testing.T) {
 	})
 }
 
+// expectRetryAfter advances the fake clock and asserts the next herdr call
+// happens exactly d later.
+func expectRetryAfter(t *testing.T, f *fakeRunner, d time.Duration) {
+	t.Helper()
+	n := len(f.recorded())
+	time.Sleep(d - time.Millisecond)
+	synctest.Wait()
+	require.Len(t, f.recorded(), n, "retried before %s", d)
+	time.Sleep(time.Millisecond)
+	synctest.Wait()
+	require.Len(t, f.recorded(), n+1, "no retry after %s", d)
+}
+
+func TestReporterRetryBacksOffAndCaps(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := newFakeRunner()
+		f.set(func(f *fakeRunner) { f.fail["pane report-agent"] = -1 })
+		r := newTestReporter(f)
+		defer r.Close()
+
+		r.Update(State{Status: StatusIdle})
+		synctest.Wait()
+		require.Len(t, f.recorded(), 1)
+
+		for _, d := range []time.Duration{
+			2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second,
+			maxRetryDelay, maxRetryDelay,
+		} {
+			expectRetryAfter(t, f, d)
+		}
+	})
+}
+
+func TestReporterRetryBackoffResetsAfterSuccess(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := newFakeRunner()
+		f.set(func(f *fakeRunner) { f.fail["pane report-agent"] = 2 })
+		r := newTestReporter(f)
+		defer r.Close()
+
+		r.Update(State{Status: StatusIdle})
+		synctest.Wait()
+		expectRetryAfter(t, f, retryDelay)
+		expectRetryAfter(t, f, 2*retryDelay)
+		require.Equal(t, []string{"idle", "idle", "idle"}, f.states())
+
+		f.set(func(f *fakeRunner) { f.fail["pane report-agent"] = 1 })
+		r.Update(State{Status: StatusWorking})
+		time.Sleep(debounceDelay)
+		synctest.Wait()
+		require.Len(t, f.recorded(), 4)
+		expectRetryAfter(t, f, retryDelay)
+		require.Equal(t, []string{"idle", "idle", "idle", "working", "working"}, f.states())
+	})
+}
+
 func TestReporterCloseCancelsInFlight(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

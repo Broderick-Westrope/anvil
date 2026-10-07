@@ -28,6 +28,7 @@ type State struct {
 const (
 	debounceDelay  = 150 * time.Millisecond
 	retryDelay     = 2 * time.Second
+	maxRetryDelay  = 30 * time.Second
 	releaseTimeout = 2 * time.Second
 	restoreTimeout = 2 * time.Second
 )
@@ -154,6 +155,24 @@ func (r *Reporter) loop() {
 		}
 	}()
 
+	delay := r.retry
+	failing := false
+	attempt := func() {
+		err := r.flush()
+		if err == nil {
+			delay, failing = r.retry, false
+			return
+		}
+		if failing {
+			slog.Debug("Herdr report failed; retrying", "error", err, "delay", delay)
+		} else {
+			slog.Warn("Herdr report failed; retrying", "error", err, "delay", delay)
+		}
+		failing = true
+		arm(delay)
+		delay = min(delay*2, maxRetryDelay)
+	}
+
 	first := true
 	for {
 		select {
@@ -165,24 +184,20 @@ func (r *Reporter) loop() {
 				continue
 			}
 			first = false
-			if !r.flush() {
-				arm(r.retry)
-			}
+			attempt()
 		case <-fire:
 			fire = nil
-			if !r.flush() {
-				arm(r.retry)
-			}
+			attempt()
 		}
 	}
 }
 
 // flush sends the latest snapshot if it differs from the last one sent,
-// then names the tab. It returns false when a report or tab command
+// then names the tab. It returns an error when a report or tab command
 // failed and should be retried.
-func (r *Reporter) flush() bool {
+func (r *Reporter) flush() error {
 	if r.ctx.Err() != nil {
-		return true
+		return nil
 	}
 
 	r.mu.Lock()
@@ -191,13 +206,13 @@ func (r *Reporter) flush() bool {
 	r.sawBusy = false
 	r.mu.Unlock()
 
-	fail := func() bool {
+	fail := func(err error) error {
 		if sawBusy {
 			r.mu.Lock()
 			r.sawBusy = true
 			r.mu.Unlock()
 		}
-		return false
+		return err
 	}
 
 	// Herdr marks a pane done only on an observed working to idle edge,
@@ -207,15 +222,15 @@ func (r *Reporter) flush() bool {
 	if s.Status == StatusIdle && sawBusy && r.hasSent && r.sent.status == StatusIdle {
 		busy := s
 		busy.Status = StatusWorking
-		changed, ok := r.report(busy)
-		if !ok {
-			return fail()
+		changed, err := r.report(busy)
+		if err != nil {
+			return fail(err)
 		}
 		statusChanged = statusChanged || changed
 	}
-	changed, ok := r.report(s)
-	if !ok {
-		return fail()
+	changed, err := r.report(s)
+	if err != nil {
+		return fail(err)
 	}
 	statusChanged = statusChanged || changed
 
@@ -226,13 +241,13 @@ func (r *Reporter) flush() bool {
 
 // report sends s unless it matches the last report sent. changed reports
 // whether a report with a new status was sent.
-func (r *Reporter) report(s State) (changed, ok bool) {
+func (r *Reporter) report(s State) (changed bool, err error) {
 	key := reportKey{status: s.Status, sessionID: s.SessionID}
 	if s.Status == StatusBlocked {
 		key.message = s.Message
 	}
 	if r.hasSent && key == r.sent {
-		return false, true
+		return false, nil
 	}
 	changed = !r.hasSent || r.sent.status != key.status
 
@@ -249,10 +264,9 @@ func (r *Reporter) report(s State) (changed, ok bool) {
 		args = append(args, "--agent-session-id", s.SessionID)
 	}
 	if _, err := r.run.run(r.ctx, args...); err != nil {
-		slog.Debug("Herdr state report failed", "error", err)
-		return false, false
+		return false, err
 	}
 	r.sent = key
 	r.hasSent = true
-	return changed, true
+	return changed, nil
 }

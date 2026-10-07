@@ -60,8 +60,8 @@ type tabInfo struct {
 }
 
 // sync renames the pane's tab to the session title when Anvil may claim
-// it. It returns false when a herdr command failed and a retry is owed.
-func (t *tabNamer) sync(ctx context.Context, run runner, s State, statusChanged bool) bool {
+// it. It returns an error when a herdr command failed and a retry is owed.
+func (t *tabNamer) sync(ctx context.Context, run runner, s State, statusChanged bool) error {
 	if s.SessionTitle != t.synced {
 		t.dirty = true
 	}
@@ -70,19 +70,18 @@ func (t *tabNamer) sync(ctx context.Context, run runner, s State, statusChanged 
 	}
 	want := TabLabel(s.SessionTitle)
 	if !t.dirty || want == "" {
-		return true
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, tabSyncBudget)
 	defer cancel()
 
 	if err := t.claim(ctx, run, want); err != nil {
-		slog.Debug("Herdr tab naming failed", "error", err)
-		return false
+		return fmt.Errorf("name tab: %w", err)
 	}
 	t.synced = s.SessionTitle
 	t.dirty = false
-	return true
+	return nil
 }
 
 func (t *tabNamer) claim(ctx context.Context, run runner, want string) error {
