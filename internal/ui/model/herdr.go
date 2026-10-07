@@ -1,9 +1,7 @@
 package model
 
 import (
-	"strings"
 	"time"
-	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/herdr"
@@ -72,12 +70,7 @@ func (m *UI) trackHerdrState() {
 // listing panes by title can tell sessions apart. sessionTitle must already
 // have placeholder names removed.
 func windowTitle(sessionTitle, workingDir string) string {
-	title := strings.Join(strings.Fields(strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, sessionTitle)), " ")
+	title := herdr.CleanTitle(sessionTitle)
 	if title == "" {
 		return "anvil " + home.Short(workingDir)
 	}

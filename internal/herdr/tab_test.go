@@ -37,7 +37,7 @@ func TestTabLabel(t *testing.T) {
 	}{
 		{name: "empty", title: "", want: ""},
 		{name: "plain", title: "Fix auth", want: "Fix auth"},
-		{name: "newline and escape stripped", title: "Fix\nauth\x1b now", want: "Fix auth now"},
+		{name: "newline and escape stripped", title: "Fix\nauth\x1b[1m now", want: "Fix auth now"},
 		{name: "whitespace collapsed", title: "  Fix \t  auth  ", want: "Fix auth"},
 		{name: "only control characters", title: "\n\r\t", want: ""},
 		{name: "exactly thirty", title: strings.Repeat("a", 30), want: strings.Repeat("a", 30)},
@@ -111,6 +111,19 @@ func TestTabLeavesUserNamedTab(t *testing.T) {
 		require.Empty(t, f.commands("tab rename"))
 		require.Len(t, f.commands("tab get"), 1)
 		require.Len(t, f.commands("pane get"), 2)
+	})
+}
+
+func TestTabClaimsEmptyLabel(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := tabFake("", 1)
+		r := newTestReporter(f)
+		defer r.Close()
+
+		r.Update(State{Status: StatusIdle, SessionID: "s1", SessionTitle: "Fix auth"})
+		synctest.Wait()
+		require.Equal(t, [][]string{{"tab", "rename", "w1:t3", "Fix auth"}}, f.commands("tab rename"))
 	})
 }
 

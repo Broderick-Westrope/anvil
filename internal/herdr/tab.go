@@ -3,12 +3,11 @@ package herdr
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"time"
-	"unicode"
 )
 
 const (
@@ -16,17 +15,11 @@ const (
 	tabSyncBudget = time.Second
 )
 
-// TabLabel turns a session title into a tab label: control characters
-// removed, whitespace collapsed, capped with an ellipsis. Herdr has no
-// length limit and renders control characters badly.
+// TabLabel turns a session title into a tab label: cleaned with
+// CleanTitle and capped with an ellipsis. Herdr has no length limit and
+// renders control characters badly.
 func TabLabel(title string) string {
-	cleaned := strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, title)
-	label := strings.Join(strings.Fields(cleaned), " ")
+	label := CleanTitle(title)
 	if runes := []rune(label); len(runes) > maxTabLabel {
 		label = string(runes[:maxTabLabel-1]) + "…"
 	}
@@ -99,7 +92,8 @@ func (t *tabNamer) claim(ctx context.Context, run runner, want string) error {
 	if tab.PaneCount != 1 {
 		return nil
 	}
-	if !isDigits(tab.Label) && tab.Label != t.ours[tabID] {
+	claimable := isDigits(tab.Label) || tab.Label == "" || tab.Label == t.ours[tabID]
+	if !claimable {
 		t.userNamed[tabID] = true
 		slog.Debug("Herdr tab named by user; leaving it alone", "tab", tabID)
 		return nil
@@ -148,7 +142,7 @@ func paneTab(ctx context.Context, run runner, pane string) (string, error) {
 		return "", fmt.Errorf("parse herdr pane get: %w", err)
 	}
 	if resp.Result.Pane.TabID == "" {
-		return "", fmt.Errorf("herdr pane get: no tab_id")
+		return "", errors.New("herdr pane get: no tab_id")
 	}
 	return resp.Result.Pane.TabID, nil
 }
