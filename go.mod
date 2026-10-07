@@ -12,7 +12,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	charm.land/log/v2 v2.0.1
 	charm.land/x/vcr v0.1.1
-	github.com/Broderick-Westrope/wtp/v3 v3.2.0
+	github.com/Broderick-Westrope/wtp/v3 v3.3.0
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/PuerkitoBio/goquery v1.13.0
 	github.com/alecthomas/chroma/v2 v2.27.0
