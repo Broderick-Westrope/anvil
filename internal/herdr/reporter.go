@@ -29,6 +29,7 @@ const (
 	debounceDelay  = 150 * time.Millisecond
 	retryDelay     = 2 * time.Second
 	releaseTimeout = 2 * time.Second
+	restoreTimeout = 2 * time.Second
 )
 
 // Reporter sends debounced state snapshots to Herdr from one goroutine,
@@ -54,6 +55,7 @@ type Reporter struct {
 
 	// Owned by the loop goroutine; Close touches them only after <-done.
 	seq     seqGen
+	tabs    tabNamer
 	sent    reportKey
 	hasSent bool
 }
@@ -82,6 +84,7 @@ func start(cfg Config, run runner, now func() time.Time, debounce, retry time.Du
 		ctx:      ctx,
 		cancel:   cancel,
 		seq:      seqGen{now: now},
+		tabs:     newTabNamer(cfg.PaneID),
 	}
 	go r.loop()
 	return r
@@ -125,6 +128,10 @@ func (r *Reporter) Close() {
 		if err != nil {
 			slog.Debug("Herdr agent release failed", "error", err)
 		}
+
+		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), restoreTimeout)
+		defer restoreCancel()
+		r.tabs.restore(restoreCtx, r.run)
 	})
 }
 
@@ -170,8 +177,9 @@ func (r *Reporter) loop() {
 	}
 }
 
-// flush sends the latest snapshot if it differs from the last one sent.
-// It returns false when a report failed and should be retried.
+// flush sends the latest snapshot if it differs from the last one sent,
+// then names the tab. It returns false when a report or tab command
+// failed and should be retried.
 func (r *Reporter) flush() bool {
 	if r.ctx.Err() != nil {
 		return true
@@ -195,28 +203,38 @@ func (r *Reporter) flush() bool {
 	// Herdr marks a pane done only on an observed working to idle edge,
 	// so a run that started and ended inside one debounce window still
 	// reports working first.
+	statusChanged := false
 	if s.Status == StatusIdle && sawBusy && r.hasSent && r.sent.status == StatusIdle {
 		busy := s
 		busy.Status = StatusWorking
-		if !r.report(busy) {
+		changed, ok := r.report(busy)
+		if !ok {
 			return fail()
 		}
+		statusChanged = statusChanged || changed
 	}
-	if !r.report(s) {
+	changed, ok := r.report(s)
+	if !ok {
 		return fail()
 	}
-	return true
+	statusChanged = statusChanged || changed
+
+	// Tab naming runs only after the state report so it never delays
+	// registration or blocked.
+	return r.tabs.sync(r.ctx, r.run, s, statusChanged)
 }
 
-// report sends s unless it matches the last report sent.
-func (r *Reporter) report(s State) bool {
+// report sends s unless it matches the last report sent. changed reports
+// whether a report with a new status was sent.
+func (r *Reporter) report(s State) (changed, ok bool) {
 	key := reportKey{status: s.Status, sessionID: s.SessionID}
 	if s.Status == StatusBlocked {
 		key.message = s.Message
 	}
 	if r.hasSent && key == r.sent {
-		return true
+		return false, true
 	}
+	changed = !r.hasSent || r.sent.status != key.status
 
 	args := []string{
 		"pane", "report-agent", r.cfg.PaneID,
@@ -232,9 +250,9 @@ func (r *Reporter) report(s State) bool {
 	}
 	if _, err := r.run.run(r.ctx, args...); err != nil {
 		slog.Debug("Herdr state report failed", "error", err)
-		return false
+		return false, false
 	}
 	r.sent = key
 	r.hasSent = true
-	return true
+	return changed, true
 }
