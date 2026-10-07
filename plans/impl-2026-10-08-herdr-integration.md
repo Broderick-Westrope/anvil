@@ -711,7 +711,7 @@ Commit: `feat: lead the terminal title with the session title and snapshot state
 **Files:**
 - Create: `internal/cmd/herdr.go`
 - Modify: `internal/cmd/root.go`
-- Create: `docs/herdr.md`
+- Create: `docs/herdr/README.md`
 
 **Steps:**
 
@@ -757,7 +757,7 @@ Commit: `feat: lead the terminal title with the session title and snapshot state
    release happens before the workspace shuts down.
 3. [ ] Confirm `anvil run` is untouched: `rg -n startHerdrReporter
    internal/` shows only `herdr.go` and `root.go`.
-4. [ ] `docs/herdr.md`: short user doc — what Anvil reports, tab naming
+4. [ ] `docs/herdr/README.md`: short user doc — what Anvil reports, tab naming
    rules (sole pane, unnamed or Anvil-named tabs only, reverts to its
    number on exit), terminal title format, that it is automatic inside
    Herdr, the `ANVIL_HERDR_REPORTING` nesting guard, and the recommended
