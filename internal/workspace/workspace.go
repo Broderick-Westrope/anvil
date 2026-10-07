@@ -134,6 +134,7 @@ type Workspace interface {
 	PermissionGrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error
 	PermissionGrantForever(toolPattern, inputPattern string, action config.PermissionAction, scope config.Scope) error
 	PermissionDeny(perm permission.PermissionRequest, reason string)
+	PermissionPending() (permission.PendingPermission, bool)
 	PermissionYoloLevel() config.YoloLevel
 	PermissionSetYoloLevel(level config.YoloLevel)
 	PermissionBouncerConfigured() bool

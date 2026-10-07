@@ -109,6 +109,13 @@ type PermissionRequest struct {
 	Review *ReviewSummary `json:"review,omitempty"`
 }
 
+// PendingPermission identifies the prompt waiting for a human decision.
+type PendingPermission struct {
+	ID        string
+	SessionID string
+	ToolName  string
+}
+
 type Service interface {
 	pubsub.Subscriber[PermissionRequest]
 	// Deprecated: use GrantSession instead. Kept for backward compatibility
@@ -122,6 +129,11 @@ type Service interface {
 	SetYoloLevel(level config.YoloLevel)
 	YoloLevel() config.YoloLevel
 	SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[PermissionNotification]
+
+	// PendingRequest returns the permission prompt currently waiting for a
+	// human decision, if any. Requests are serialised, so at most one is
+	// pending at a time.
+	PendingRequest() (PendingPermission, bool)
 
 	// GrantSession adds an ephemeral permission rule for this session.
 	// The patterns are matched as globs against tool names and inputs.
@@ -553,6 +565,21 @@ func (s *permissionService) RevokeAutoApproveSession(sessionID string) {
 
 func (s *permissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[PermissionNotification] {
 	return s.notificationBroker.Subscribe(ctx)
+}
+
+func (s *permissionService) PendingRequest() (PendingPermission, bool) {
+	s.activeRequestMu.Lock()
+	defer s.activeRequestMu.Unlock()
+	if s.activeRequest == nil {
+		return PendingPermission{}, false
+	}
+	// Only fields never written after the request is stored; Review is
+	// updated concurrently without this lock.
+	return PendingPermission{
+		ID:        s.activeRequest.ID,
+		SessionID: s.activeRequest.SessionID,
+		ToolName:  s.activeRequest.ToolName,
+	}, true
 }
 
 func (s *permissionService) SetYoloLevel(level config.YoloLevel) {

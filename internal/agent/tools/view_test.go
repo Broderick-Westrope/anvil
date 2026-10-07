@@ -266,6 +266,10 @@ func (m *mockViewPermissionService) SubscribeNotifications(ctx context.Context) 
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }
 
+func (m *mockViewPermissionService) PendingRequest() (permission.PendingPermission, bool) {
+	return permission.PendingPermission{}, false
+}
+
 func (m *mockViewPermissionService) GrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {
 	return nil
 }

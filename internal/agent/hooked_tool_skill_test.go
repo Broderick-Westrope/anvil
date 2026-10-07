@@ -69,6 +69,10 @@ func (f *fakeHookPermissionService) SubscribeNotifications(ctx context.Context) 
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }
 
+func (f *fakeHookPermissionService) PendingRequest() (permission.PendingPermission, bool) {
+	return permission.PendingPermission{}, false
+}
+
 type fakeHookFileTracker struct{}
 
 func (fakeHookFileTracker) RecordRead(ctx context.Context, sessionID, path string)               {}
