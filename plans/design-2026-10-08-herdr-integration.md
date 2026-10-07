@@ -59,32 +59,38 @@ The reporter activates only when ALL of the following hold at TUI startup:
 4. `ANVIL_HERDR_REPORTING` is not already set. On activation, Anvil sets
    `ANVIL_HERDR_REPORTING=1` in its own environment (inherited by spawned
    shells/tools) so a nested Anvil launched from a tool call inside the
-   pane does not double-report and fight the parent over pane state.
+   pane does not double-report and fight the parent over pane state. The
+   reload re-exec path uses `reload.StartupEnv()` (captured before this is
+   set), so a reloaded Anvil activates normally.
 5. The process is the interactive TUI. `anvil run` never activates the
-   reporter. In client/server mode (`ANVIL_CLIENT_SERVER=1`,
-   `internal/cmd/root.go:245`) the reporter is **disabled for v1**: the
-   agent/permission state lives in a separate server process serving
-   potentially many panes, and deriving correct per-pane state through
-   `ClientWorkspace` is unproven. Documented limitation; revisit with B.
+   reporter (it never builds the UI model; the reporter is wired only in
+   `rootCmd.RunE`). There is no client/server mode in this codebase (the
+   only `Workspace` implementation is the in-process `AppWorkspace`), so
+   no gate is needed for it.
+
+All `HERDR_*` and `ANVIL_HERDR_REPORTING` values are read from
+`reload.StartupEnv()` (the environment captured first thing in `main`,
+before a project `.env` is loaded), not `os.Getenv`, so a repo `.env`
+cannot forge activation.
 
 **State model:**
 
 State is always **recomputed from authoritative snapshots**, never
-inferred from event transitions. Events (permission created/resolved, run
-started/ended, session switched) are only *triggers* to recompute. This
-makes cross-channel event-ordering races (agent pubsub vs
-`SubscribeNotifications`, `internal/permission/permission.go:376`)
-harmless — provided the snapshot settles before the recompute. One known
-counterexample: the permission service publishes its resolution
-notification *before* clearing the active request
-(`internal/permission/permission.go:154-176`), so a recompute triggered
-by that notification can observe the pre-resolution `blocked` snapshot.
-Mitigation: every trigger schedules a **trailing debounced recompute
-(~100ms)** in addition to the immediate one, so the settled state is
-always re-observed. (Reordering publish-after-clear in `permission.go`
-was considered; the debounce is chosen because it also covers any other
-publish-before-settle source without auditing each one, and suppresses
-the queued-permission flicker below.)
+inferred from event transitions. The snapshot (pending permission request
+via a new `permission.Service.PendingRequest()` getter, `AgentIsBusy()`,
+displayed session) is taken on the UI goroutine — at the end of every
+`UI.Update`, like `trackRecoverySession`, plus a 250ms tick so state that
+changes without a UI message (e.g. a background run ending on an error
+path, which publishes no event) is still observed. Taking it on the UI
+goroutine avoids racing `App.AgentCoordinator`, which the UI reassigns on
+re-init (`internal/ui/model/ui.go:2743`). The reporter receives each
+snapshot and **debounces ~150ms**: a state is sent only after it has been
+stable that long. This absorbs the permission service publishing its
+resolution notification *before* clearing the active request
+(`internal/permission/permission.go:229-262`) and the queued-permission
+flicker below. (Reordering publish-after-clear in `permission.go` was
+considered; the debounce also covers any other publish-before-settle
+source without auditing each one.)
 
 Pane state is an **aggregate across all sessions in the process**, not the
 displayed session — Anvil keeps background sessions running after a
@@ -266,7 +272,7 @@ delivery = "herdr"
 - [ ] Outside Herdr (env vars absent), no subprocesses are spawned and no
       behavior changes.
 - [ ] Inside Herdr with no `herdr` binary resolvable, or with
-      `ANVIL_HERDR_REPORTING` already set, or in client/server mode, Anvil
+      `ANVIL_HERDR_REPORTING` already set, Anvil
       works normally with the reporter inert (logged once).
 - [ ] `anvil run` performs no reporting.
 - [ ] Reporter failures (bad socket, dead server, CLI errors) never
@@ -301,19 +307,19 @@ delivery = "herdr"
   tokens and would drop sub-agent permission dialogs (permission requests
   carry the child session ID) — defeating the notification goal. The pane
   is one process; its state is the process aggregate.
-- **Recompute-on-trigger over transition mapping.** Multiple independent
-  event channels have no cross-channel ordering guarantee; deriving state
-  from "last event" can stick the pane in a stale state. Snapshots
-  (pending-permission count + `IsBusy`) are authoritative.
+- **Polled snapshots over event triggers.** Multiple independent event
+  channels have no cross-channel ordering guarantee, and some transitions
+  (error-path run ends, permission prompts cancelled with their context)
+  publish no event at all. A cheap snapshot on every UI update plus a
+  250ms tick, debounced in the reporter, is authoritative and needs no
+  new pubsub events.
 - **Zero config (YAGNI).** No escape hatch option; outside Herdr the
   reporter cannot activate, and inside Herdr there is no known reason to
   disable it. Contingency: if a future Herdr changes CLI semantics such
   that the reporter *misreports* (rather than fails, which goes silently
   inert), an opt-out option is the planned escape hatch and can ship in a
   patch release.
-- **TUI-only for v1, client/server mode excluded.** `anvil run` reporting
-  deferred by choice. Client/server mode excluded because state lives in
-  a different process than the pane (see Activation §5).
+- **TUI-only for v1.** `anvil run` reporting deferred by choice.
 - **Restore is manual for v1.** No upstream contribution is needed:
   Herdr's CLI (0.9.3) accepts a resume command after `--` on
   `report-agent` / `report-agent-session`, e.g. `-- anvil --session <id>`;
@@ -329,13 +335,14 @@ delivery = "herdr"
 
 - `internal/hooks/hooks.go` — hook events (PreToolUse only; why hooks were
   rejected as the signal source)
-- `internal/cmd/root.go:243-268` — interactive wiring, client/server mode
-  detection (`ANVIL_CLIENT_SERVER`), `--session`/`--continue` resume flags
-- `internal/agent/agent.go:1534,1545` — `IsBusy`/`IsSessionBusy` snapshots
-- `internal/permission/permission.go:376` — `SubscribeNotifications`
-  (permission event trigger source)
-- `internal/pubsub/` — agent run event trigger source
-- `internal/ui/` — TUI wiring point (reporter lifecycle, teardown/release)
+- `internal/cmd/root.go:99-207` — interactive wiring (`ui.New`,
+  `SetRecoveryHandler`, `program.Run`, reload via `finishReload`)
+- `internal/reload/env.go` — `StartupEnv()` captured before `.env`
+- `internal/agent/coordinator.go:1543` — `IsBusy` snapshot
+- `internal/permission/permission.go:165-262` — `activeRequest`
+  storage, publish-before-clear in `Grant`/`Deny`
+- `internal/ui/model/ui.go` — `trackRecoverySession` (snapshot pattern),
+  `View` window title (~3582)
 - `plans/impl-2026-10-08-lsp-memory-reduction.md` — prior art discussed for
   resource-sharing concerns (concluded not applicable)
 
@@ -375,11 +382,7 @@ with a fake reporter script and the real Anvil binary.
 | Control characters in label | Accepted verbatim; newline stripped in rendering with artifacts |
 | Pane move within workspace | Pane ID kept, tab ID changes, name lost |
 
-**Implementation-time verifications (carry into the plan):**
-
-1. Exact pending-permission snapshot API available to the TUI process
-   (count + tool name of newest request).
-2. Concrete run-start/end trigger source: the app event fan-in
-   (`internal/app/app.go:479-487`) has no explicit run-lifecycle stream
-   and `agentNotifications` publishes only conditionally — determine
-   whether message-finish events suffice or a new pubsub event is needed.
+**Implementation-time verifications:** resolved during planning — the
+pending-permission snapshot is a new `PendingRequest()` getter on the
+permission service; run start/end needs no event source because state
+is polled (see State model).
