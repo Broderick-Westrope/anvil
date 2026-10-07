@@ -512,7 +512,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 	}
 	largeSelection, selectionErr := config.ResolveAgentModel(agentCfg, c.cfg.Config())
 	smallSelection := c.cfg.Config().Models[config.SelectedModelTypeSmall]
-	attachments = cloneAttachments(attachments)
+	attachments = slices.Clone(attachments)
 	state := &runState{}
 	return c.admission.submit(ctx, sessionID, submission{prompt: prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
 		if selectionErr != nil {

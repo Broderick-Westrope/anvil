@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -15,14 +14,6 @@ type runState struct {
 	acceptedUserID string
 	assistantIDs   []string
 	firstMessage   bool
-}
-
-func cloneAttachments(attachments []message.Attachment) []message.Attachment {
-	result := slices.Clone(attachments)
-	for i := range result {
-		result[i].Content = slices.Clone(result[i].Content)
-	}
-	return result
 }
 
 func (a *sessionAgent) restoreAttempt(ctx context.Context, sessionID string, state *runState) error {

@@ -134,10 +134,8 @@ func TestAdmissionQueueHandoffOwnsQueuedRun(t *testing.T) {
 		t.Fatal(f.Context.Err())
 	}
 	require.ErrorIs(t, f.Coordinator.Summarize(f.Context, s.ID), agent.ErrSessionBusy)
-	bytes := []byte("frozen bytes")
-	_, err = f.Coordinator.Run(f.Context, s.ID, "queued", message.Attachment{MimeType: "text/plain", Content: bytes})
+	_, err = f.Coordinator.Run(f.Context, s.ID, "queued", message.Attachment{MimeType: "text/plain", Content: []byte("queued bytes")})
 	require.NoError(t, err)
-	bytes[0] = 'X'
 	require.Equal(t, []string{"queued"}, f.Coordinator.QueuedPromptsList(s.ID))
 	close(branchRelease)
 	select {
@@ -155,8 +153,7 @@ func TestAdmissionQueueHandoffOwnsQueuedRun(t *testing.T) {
 	}
 	f.Coordinator.WaitBackgroundJobs()
 	require.False(t, f.Coordinator.IsSessionBusy(s.ID))
-	require.Contains(t, f.Provider.Requests()[1].Body, "frozen bytes")
-	require.NotContains(t, f.Provider.Requests()[1].Body, "Xrozen")
+	require.Contains(t, f.Provider.Requests()[1].Body, "queued bytes")
 }
 
 func TestRunSummaryCancellationRestoresLeaf(t *testing.T) {

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -246,7 +247,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		return nil, ErrSessionMissing
 	}
 
-	call.Attachments = cloneAttachments(call.Attachments)
+	call.Attachments = slices.Clone(call.Attachments)
 	if call.state == nil {
 		call.state = &runState{}
 	}
