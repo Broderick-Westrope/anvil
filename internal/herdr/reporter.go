@@ -159,6 +159,9 @@ func (r *Reporter) loop() {
 	failing := false
 	attempt := func() {
 		err := r.flush()
+		if r.ctx.Err() != nil {
+			return
+		}
 		if err == nil {
 			delay, failing = r.retry, false
 			return
