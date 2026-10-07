@@ -1,6 +1,6 @@
 # Herdr Integration Implementation Plan
 
-> **Status:** IN_PROGRESS
+> **Status:** COMPLETED
 
 Design spec: `plans/design-2026-10-08-herdr-integration.md` (read it first;
 its "Validated assumptions" table is the source of truth for Herdr 0.9.3
@@ -823,4 +823,27 @@ Review notes (devils-advocate, before approval):
   are small and only meaningful with the herdr package, and the work
   lands as a single PR on a personal fork. Tasks are ordered so each
   commit builds and passes tests.
+-->
+
+<!--
+Execution notes (2026-10-07):
+- All six tasks implemented; full suite passes under -race. Lint findings
+  remaining are pre-existing (ui.go ST1005, internal/cmd/session.go).
+- E2E in an isolated Herdr 0.9.3 session verified: immediate registration,
+  working -> done with toast, blocked on a permission prompt and back,
+  tab renamed to the session title, user-named and split tabs left alone,
+  release + tab restore on quit, cleanup after SIGKILL, no reports from
+  `anvil run`, nested-Anvil guard.
+- Fixed during E2E: the "New Session" placeholder title was reported as a
+  real title.
+- Review follow-ups: retry backoff (2s..30s), one 3s close deadline,
+  nil-safe Close, real-process runner tests, tick only while not idle,
+  shared ANSI-aware title sanitiser, README links, guide moved to
+  docs/herdr/README.md.
+- Observed, not caused by this work: the first herdr spawns from a freshly
+  built binary can take ~2-5s on macOS (retries cover it); SIGINT sent as a
+  signal (not the ctrl+c key) can deadlock Bubble Tea's shutdown
+  (handleSignals blocked sending on the msgs channel).
+- Known limitation: on the first turn of a new session Herdr's done toast
+  shows the tab number, because the title is generated after the turn ends.
 -->
