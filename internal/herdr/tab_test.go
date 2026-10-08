@@ -114,6 +114,26 @@ func TestTabLeavesUserNamedTab(t *testing.T) {
 	})
 }
 
+func TestTabClaimsLabelMatchingTitle(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := tabFake("Fix auth", 1)
+		r := newTestReporter(f)
+
+		r.Update(State{Status: StatusIdle, SessionID: "s1", SessionTitle: "Fix auth"})
+		synctest.Wait()
+		require.Empty(t, f.commands("tab rename"))
+
+		r.Update(State{Status: StatusIdle, SessionID: "s1", SessionTitle: "Fix login"})
+		settle()
+		require.Equal(t, [][]string{{"tab", "rename", "w1:t3", "Fix login"}}, f.commands("tab rename"))
+
+		f.set(func(f *fakeRunner) { f.out["tab get w1:t3"] = tabJSON("w1:t3", "Fix login", 3, 1) })
+		r.Close()
+		require.Equal(t, []string{"tab", "rename", "w1:t3", "3"}, f.recorded()[len(f.recorded())-1])
+	})
+}
+
 func TestTabClaimsEmptyLabel(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

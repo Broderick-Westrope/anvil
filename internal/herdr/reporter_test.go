@@ -139,7 +139,69 @@ func TestReporterFirstUpdateImmediate(t *testing.T) {
 		require.False(t, ok)
 		_, ok = flag(calls[0], "--message")
 		require.False(t, ok)
+		require.NotContains(t, calls[0], "--")
 	})
+}
+
+func TestReporterSendsResumeCommand(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := newFakeRunner()
+		r := newTestReporter(f)
+		defer r.Close()
+
+		r.Update(State{Status: StatusWorking, SessionID: "s1"})
+		synctest.Wait()
+
+		calls := f.commands("pane report-agent")
+		require.Len(t, calls, 1)
+		id, _ := flag(calls[0], "--agent-session-id")
+		require.Equal(t, "s1", id)
+		sep := slices.Index(calls[0], "--")
+		require.Positive(t, sep)
+		require.Equal(t, []string{"anvil", "--session", "s1", "--there"}, calls[0][sep+1:])
+	})
+}
+
+func TestReporterOmitsUnsafeResumeCommand(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := newFakeRunner()
+		r := newTestReporter(f)
+		defer r.Close()
+
+		r.Update(State{Status: StatusIdle, SessionID: "it's\n"})
+		synctest.Wait()
+
+		calls := f.commands("pane report-agent")
+		require.Len(t, calls, 1)
+		id, _ := flag(calls[0], "--agent-session-id")
+		require.Equal(t, "it's\n", id)
+		require.NotContains(t, calls[0], "--")
+	})
+}
+
+func TestResumeArgs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		sessionID string
+		want      []string
+	}{
+		{name: "empty", sessionID: "", want: nil},
+		{name: "uuid", sessionID: "8be521bc-b358-42c6-ad60-b85be4e1d890", want: []string{"anvil", "--session", "8be521bc-b358-42c6-ad60-b85be4e1d890", "--there"}},
+		{name: "apostrophe", sessionID: "it's", want: nil},
+		{name: "control character", sessionID: "a\x1bb", want: nil},
+		{name: "delete character", sessionID: "a\x7fb", want: nil},
+		{name: "too long", sessionID: strings.Repeat("a", maxResumeBytes), want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, resumeArgs(tt.sessionID))
+		})
+	}
 }
 
 func TestReporterIdenticalUpdatesReportOnce(t *testing.T) {
