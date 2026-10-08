@@ -265,6 +265,9 @@ func (r *Reporter) report(s State) (changed bool, err error) {
 	}
 	if s.SessionID != "" {
 		args = append(args, "--agent-session-id", s.SessionID)
+		if resume := resumeArgs(s.SessionID); resume != nil {
+			args = append(append(args, "--"), resume...)
+		}
 	}
 	if _, err := r.run.run(r.ctx, args...); err != nil {
 		return false, err

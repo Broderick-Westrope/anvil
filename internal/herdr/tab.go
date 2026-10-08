@@ -92,7 +92,9 @@ func (t *tabNamer) claim(ctx context.Context, run runner, want string) error {
 	if tab.PaneCount != 1 {
 		return nil
 	}
-	claimable := isDigits(tab.Label) || tab.Label == "" || tab.Label == t.ours[tabID]
+	// A label equal to the wanted one was set by an earlier Anvil in this
+	// pane, such as the one Herdr resumed this session from.
+	claimable := isDigits(tab.Label) || tab.Label == "" || tab.Label == t.ours[tabID] || tab.Label == want
 	if !claimable {
 		t.userNamed[tabID] = true
 		slog.Debug("Herdr tab named by user; leaving it alone", "tab", tabID)

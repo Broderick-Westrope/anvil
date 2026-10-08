@@ -352,6 +352,9 @@ delivery = "herdr"
   Herdr docs state resume takes effect from Herdr 0.10.0. Deferred to a
   follow-up (untested; argv rules: plain command name, no apostrophes, at
   most 64 args / 8 KiB).
+  *Update 2026-10-08:* shipped as a follow-up; the 0.10.0 note was wrong.
+  Herdr 0.9.3 resumes the command (current docs say 0.9.2+). See
+  "Follow-up: restore after a Herdr restart" below.
 - **Coalescing single-goroutine sender.** Guarantees at most one child
   process at a time; because each queued item is a freshly recomputed
   full state (not a delta), coalescing to the latest is always correct.
@@ -467,8 +470,7 @@ scripts/tui-test.sh --clean
 
 Deferred follow-ups:
 
-- Automatic restore: send `-- anvil --session <id>` as the resume command
-  with state reports (needs Herdr ≥ 0.10.0; see Design Decisions).
+- ~~Automatic restore~~: done; see the next section.
 - Wake the poll from agent/permission events instead of a 250ms tick
   while busy, if profiling shows the tick matters.
 - Cap tab labels by display width (CJK) rather than rune count.
@@ -489,3 +491,31 @@ Deferred follow-ups:
 - Reporting only `blocked`/`idle` from the existing desktop-notification
   call sites: cheaper, but misses background sessions and sub-agent
   prompts and gives no `working` state.
+
+**Follow-up: restore after a Herdr restart (2026-10-08):**
+
+Every `report-agent` carrying a session ID also carries
+`-- anvil --session <id> --there` (`internal/herdr/resume.go`), matching
+the exit hint. The command is dropped (state still sent) if Herdr would
+reject it, because a rejected `resume_argv` fails the whole report. A tab
+label equal to the wanted label is now claimable, so the resumed Anvil
+keeps owning the tab name Herdr restored.
+
+Validated against Herdr 0.9.3 in an isolated named session:
+
+| Assumption | Result |
+|---|---|
+| Custom resume command runs after `herdr session stop` + reattach | Yes; typed at the pane's shell prompt in the saved cwd, so shell aliases and PATH apply |
+| Command persists across later reports without `--` | Yes |
+| Server stop wipes the command via Anvil's `release-agent` | No; Anvil is killed without releasing and `session.json` keeps `agent_resume` |
+| Clean quit clears the command | Yes; pane restores as a plain shell |
+| Command on `PATH` checked at report time | No; only path-like names (`invalid_resume_argv`) and apostrophes are rejected |
+| `pane get` exposes the stored command | No (0.9.3); it is visible in `session.json` as `agent_resume` |
+| Tab custom name survives restart | Yes |
+| Resumed Anvil keeps owning the restored tab name | Yes (branch build); clean quit renames it back to its number |
+
+To repeat the test without the user's real `anvil`, start the throwaway
+Herdr server with `ZDOTDIR=/tmp/<dir>` holding a `.zshrc` that puts a
+wrapper named `anvil` first on `PATH`; the wrapper execs the sandboxed
+binary with the `tui-test.sh` env and `HERDR_BIN_PATH` pointing at a
+logging `herdr-wrap`. Run `command -v anvil` in the pane to confirm.
