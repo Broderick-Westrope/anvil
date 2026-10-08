@@ -48,13 +48,11 @@ func TestComposerFromMessage(t *testing.T) {
 	}
 }
 
-func TestComposerFromMessageCopiesAttachments(t *testing.T) {
+func TestComposerFromMessageAttachments(t *testing.T) {
 	t.Parallel()
-	file := []byte("file")
-	image := []byte("image")
 	msg := message.Message{Parts: []message.ContentPart{
-		message.BinaryContent{Path: "/tmp/file.txt", MIMEType: "text/plain", Data: file},
-		message.BinaryContent{Path: "/tmp/image.png", MIMEType: "image/png", Data: image},
+		message.BinaryContent{Path: "/tmp/file.txt", MIMEType: "text/plain", Data: []byte("file")},
+		message.BinaryContent{Path: "/tmp/image.png", MIMEType: "image/png", Data: []byte("image")},
 		message.ImageURLContent{URL: "https://example.com/image.png"},
 	}}
 	got := composerFromMessage(msg, nil, nil)
@@ -62,9 +60,6 @@ func TestComposerFromMessageCopiesAttachments(t *testing.T) {
 		{FilePath: "/tmp/file.txt", FileName: "file.txt", MimeType: "text/plain", Content: []byte("file")},
 		{FilePath: "/tmp/image.png", FileName: "image.png", MimeType: "image/png", Content: []byte("image")},
 	}}, got)
-	file[0], image[0] = 'X', 'X'
-	require.Equal(t, []byte("file"), got.attachments[0].Content)
-	require.Equal(t, []byte("image"), got.attachments[1].Content)
 }
 
 func composerRestoreUI(t *testing.T, text string) (*UI, *branchfixture.Fixture) {

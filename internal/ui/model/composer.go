@@ -34,7 +34,7 @@ func composerFromMessage(msg message.Message, lookup func(string) *skills.Skill,
 			FilePath: binary.Path,
 			FileName: composerAttachmentName(binary.Path),
 			MimeType: binary.MIMEType,
-			Content:  slices.Clone(binary.Data),
+			Content:  binary.Data,
 		})
 	}
 	return state
@@ -81,20 +81,15 @@ func composerAttachmentName(path string) string {
 	return name
 }
 
-func (c composerSnapshot) clone() composerSnapshot {
-	c.attachments = slices.Clone(c.attachments)
-	c.skills = slices.Clone(c.skills)
-	return c
-}
-
 func (m *UI) captureComposer() composerSnapshot {
-	return (composerSnapshot{
-		text: m.textarea.Value(), attachments: m.attachments.List(), skills: m.attachments.SkillList(),
-	}).clone()
+	return composerSnapshot{
+		text:        m.textarea.Value(),
+		attachments: slices.Clone(m.attachments.List()),
+		skills:      slices.Clone(m.attachments.SkillList()),
+	}
 }
 
 func (m *UI) restoreComposer(state composerSnapshot) {
-	state = state.clone()
 	m.textarea.SetValue(state.text)
 	m.textarea.MoveToEnd()
 	m.attachments.Reset()
