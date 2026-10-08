@@ -269,6 +269,10 @@ func (a *AssistantMessageItem) ID() string {
 	return a.message.ID
 }
 
+func (a *AssistantMessageItem) SourceMessage() message.Message {
+	return a.message.Clone()
+}
+
 // RawRender implements [MessageItem].
 func (a *AssistantMessageItem) RawRender(width int) string {
 	cappedWidth := cappedMessageWidth(width)

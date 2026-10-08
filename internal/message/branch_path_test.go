@@ -243,3 +243,19 @@ func TestGetBranchPathTail_EmptyLeaf(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, tail)
 }
+
+func TestGetBranchPathPreservesExplicitRootSibling(t *testing.T) {
+	t.Parallel()
+	svc, sessionID := newTestService(t)
+	original := createMsg(t, svc, sessionID, "original", "")
+	continuation := createMsg(t, svc, sessionID, "old continuation", original.ID)
+	replacement := createMsg(t, svc, sessionID, "replacement", "")
+	reply := createMsg(t, svc, sessionID, "new continuation", replacement.ID)
+	oldPath, err := svc.GetBranchPath(t.Context(), continuation.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{original.ID, continuation.ID}, extractIDs(oldPath))
+	newPath, err := svc.GetBranchPath(t.Context(), reply.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{replacement.ID, reply.ID}, extractIDs(newPath))
+	require.Empty(t, newPath[0].ParentMessageID)
+}

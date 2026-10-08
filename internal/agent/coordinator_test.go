@@ -759,7 +759,7 @@ func TestTrustedReadPathsIncludesCommandDirectories(t *testing.T) {
 	got := trustedReadPaths(cfg, plugins)
 	require.Contains(t, got, "/user/skills")
 	require.Contains(t, got, "/plugins/p1/skills")
-	require.Contains(t, got, "/project/.anvil/commands")
+	require.Contains(t, got, filepath.Join("/project/.anvil", "commands"))
 	require.Contains(t, got, "/plugins/p1/commands")
 }
 
@@ -934,6 +934,20 @@ func TestSkillsUsageParity(t *testing.T) {
 		})
 	}
 }
+
+func TestCoordinatorWaitBackgroundJobsForwards(t *testing.T) {
+	orch := &waitingSessionAgent{}
+	c := &coordinator{orchestrator: orch, admission: newAdmission(t.Context())}
+	c.WaitBackgroundJobs()
+	require.True(t, orch.waited)
+}
+
+type waitingSessionAgent struct {
+	mockSessionAgent
+	waited bool
+}
+
+func (a *waitingSessionAgent) WaitBackgroundJobs() { a.waited = true }
 
 func TestWithJobTools(t *testing.T) {
 	t.Parallel()

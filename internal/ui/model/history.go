@@ -6,13 +6,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 )
 
 // promptHistoryLoadedMsg is sent when prompt history is loaded.
 type promptHistoryLoadedMsg struct {
-	messages []string
+	messages []message.Message
 }
 
 // loadPromptHistory loads user messages for history navigation.
@@ -32,13 +31,7 @@ func (m *UI) loadPromptHistory() tea.Cmd {
 			return promptHistoryLoadedMsg{messages: nil}
 		}
 
-		texts := make([]string, 0, len(messages))
-		for _, msg := range messages {
-			if text := commands.CollapseExpansionXML(msg.Content().Text); text != "" {
-				texts = append(texts, text)
-			}
-		}
-		return promptHistoryLoadedMsg{messages: texts}
+		return promptHistoryLoadedMsg{messages: messages}
 	}
 }
 
@@ -92,8 +85,7 @@ func (m *UI) handleHistoryEscape(msg tea.Msg) tea.Cmd {
 	// Return to current draft when browsing history.
 	if m.promptHistory.index >= 0 {
 		m.promptHistory.index = -1
-		m.textarea.Reset()
-		m.textarea.InsertString(m.promptHistory.draft)
+		m.restoreComposer(m.promptHistory.draft)
 		return m.updateTextareaWithPrevHeight(nil, prevHeight)
 	}
 
@@ -104,7 +96,7 @@ func (m *UI) handleHistoryEscape(msg tea.Msg) tea.Cmd {
 // updateHistoryDraft updates history state when text is modified.
 func (m *UI) updateHistoryDraft(oldValue string) {
 	if m.textarea.Value() != oldValue {
-		m.promptHistory.draft = m.textarea.Value()
+		m.promptHistory.draft = m.captureComposer()
 		m.promptHistory.index = -1
 	}
 }
@@ -116,15 +108,14 @@ func (m *UI) historyPrev() bool {
 		return false
 	}
 	if m.promptHistory.index == -1 {
-		m.promptHistory.draft = m.textarea.Value()
+		m.promptHistory.draft = m.captureComposer()
 	}
 	nextIndex := m.promptHistory.index + 1
 	if nextIndex >= len(m.promptHistory.messages) {
 		return false
 	}
 	m.promptHistory.index = nextIndex
-	m.textarea.Reset()
-	m.textarea.InsertString(m.promptHistory.messages[nextIndex])
+	m.restoreComposer(m.promptHistory.messages[nextIndex])
 	m.textarea.MoveToBegin()
 	return true
 }
@@ -138,13 +129,11 @@ func (m *UI) historyNext() bool {
 	nextIndex := m.promptHistory.index - 1
 	if nextIndex < 0 {
 		m.promptHistory.index = -1
-		m.textarea.Reset()
-		m.textarea.InsertString(m.promptHistory.draft)
+		m.restoreComposer(m.promptHistory.draft)
 		return true
 	}
 	m.promptHistory.index = nextIndex
-	m.textarea.Reset()
-	m.textarea.InsertString(m.promptHistory.messages[nextIndex])
+	m.restoreComposer(m.promptHistory.messages[nextIndex])
 	return true
 }
 
@@ -152,7 +141,7 @@ func (m *UI) historyNext() bool {
 // it just sets the current draft to empty and the position in the history.
 func (m *UI) historyReset() {
 	m.promptHistory.index = -1
-	m.promptHistory.draft = ""
+	m.promptHistory.draft = composerSnapshot{}
 }
 
 // isAtEditorStart returns true if we are at the 0 line and 0 col in the textarea.

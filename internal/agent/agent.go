@@ -16,8 +16,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,6 +72,8 @@ var (
 )
 
 type SessionAgentCall struct {
+	retrySummary     func(context.Context, error) error
+	state            *runState
 	SessionID        string
 	Prompt           string
 	ProviderOptions  fantasy.ProviderOptions
@@ -81,12 +85,6 @@ type SessionAgentCall struct {
 	FrequencyPenalty *float64
 	PresencePenalty  *float64
 	NonInteractive   bool
-
-	// skipCreateMessage is set on retry to avoid creating a duplicate
-	// user message. When true, Run trims the already-persisted user
-	// message (and any empty assistant message) from history so the
-	// prompt is sent exactly once.
-	skipCreateMessage bool
 
 	// wake marks a run started by RunWake: it begins with a job notice
 	// instead of a user prompt.
@@ -132,15 +130,6 @@ type Model struct {
 	FlatRate   bool
 }
 
-// activeCancel wraps a context.CancelFunc with a unique pointer identity.
-// The pointer is used for compare-and-delete in the dispatch completion path:
-// when a finishing run's deferred cleanup fires, it must only remove its own
-// entry — not a newer run's entry that was installed in the window between
-// the explicit Del and the function return.
-type activeCancel struct {
-	cancel context.CancelFunc
-}
-
 type sessionAgent struct {
 	largeModel         *csync.Value[Model]
 	smallModel         *csync.Value[Model]
@@ -160,9 +149,8 @@ type sessionAgent struct {
 	providerConfig       *csync.Value[config.ProviderConfig]
 	jobEvents            *jobevents.Store
 
-	messageQueue   *csync.Map[string, []SessionAgentCall]
-	activeRequests *csync.Map[string, *activeCancel]
-	onIdle         func(sessionID string)
+	admission *admission
+	onIdle    func(sessionID string)
 
 	// dispatchLocks serialise, per session, the decisions that start,
 	// queue, or finish a run, so concurrent prompts, wakes, and
@@ -170,7 +158,7 @@ type sessionAgent struct {
 	// They are never held across model calls.
 	dispatchLocksMu sync.Mutex
 	dispatchLocks   map[string]*dispatchLock
-	summarizing     *csync.Map[string, *activeCancel] // The summary's active request.
+	summarizing     *csync.Map[string, *submissionOwner]
 	// wakeCounts counts consecutive wake runs since the last user run;
 	// wakeSuppressed marks sessions canceled since the last user run.
 	wakeCounts     *csync.Map[string, int]
@@ -198,6 +186,7 @@ func (a *sessionAgent) WaitBackgroundJobs() {
 }
 
 type SessionAgentOptions struct {
+	admission            *admission
 	LargeModel           Model
 	SmallModel           Model
 	SystemPromptPrefix   string
@@ -221,6 +210,9 @@ type SessionAgentOptions struct {
 func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
+	if opts.admission == nil {
+		opts.admission = newAdmission(context.Background())
+	}
 	return &sessionAgent{
 		largeModel:           csync.NewValue(opts.LargeModel),
 		smallModel:           csync.NewValue(opts.SmallModel),
@@ -237,12 +229,11 @@ func NewSessionAgent(
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
+		admission:            opts.admission,
 		jobEvents:            opts.JobEvents,
-		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
-		activeRequests:       csync.NewMap[string, *activeCancel](),
 		onIdle:               opts.OnIdle,
 		dispatchLocks:        make(map[string]*dispatchLock),
-		summarizing:          csync.NewMap[string, *activeCancel](),
+		summarizing:          csync.NewMap[string, *submissionOwner](),
 		wakeCounts:           csync.NewMap[string, int](),
 		wakeSuppressed:       csync.NewMap[string, bool](),
 	}
@@ -256,35 +247,31 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		return nil, ErrSessionMissing
 	}
 
-	// Queue the message if busy; otherwise register the run under the
-	// same lock so no other dispatch can start in between.
-	unlock := a.lockDispatch(call.SessionID)
-	if a.IsSessionBusy(call.SessionID) {
-		a.enqueueLocked(call)
-		unlock()
-		return nil, nil
+	call.Attachments = slices.Clone(call.Attachments)
+	if call.state == nil {
+		call.state = &runState{}
 	}
-	a.wakeCounts.Del(call.SessionID)
-	a.wakeSuppressed.Del(call.SessionID)
-	genCtx, cancel := context.WithCancel(ctx)
-	ac := &activeCancel{cancel: cancel}
-	a.activeRequests.Set(call.SessionID, ac)
-	unlock()
-
-	return a.runRegistered(ctx, genCtx, ac, call)
+	return a.admission.submit(ctx, call.SessionID, submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		return a.runOwned(ctx, call)
+	}})
 }
 
-// runRegistered runs call for a session whose active request ac (with
-// context genCtx, derived from ctx) is already registered.
-func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCancel, call SessionAgentCall) (*fantasy.AgentResult, error) {
-	cancel := ac.cancel
-	defer cancel()
-	// Conditional cleanup: only remove our entry if it hasn't been replaced
-	// by a newer run. Without this guard, the deferred Del fires after a
-	// concurrent run registers in the completion window, silently wiping
-	// the new run's cancel and breaking cancellation.
-	defer a.activeRequests.CompareAndDelete(call.SessionID, ac)
-
+func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	state := call.state
+	if !call.wake && state.acceptedUserID == "" {
+		unlock := a.lockDispatch(call.SessionID)
+		a.wakeCounts.Del(call.SessionID)
+		a.wakeSuppressed.Del(call.SessionID)
+		unlock()
+	}
+	if state.acceptedUserID != "" {
+		if err := a.restoreAttempt(ctx, call.SessionID, state); err != nil {
+			return nil, err
+		}
+	}
 	// Copy mutable fields under lock to avoid races with SetTools/SetModels.
 	agentTools := a.tools.Copy()
 	lazyMCPToolMap := a.lazyMCPToolMap.Copy()
@@ -298,7 +285,10 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 	sessionLock := sync.Mutex{}
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
 	if err != nil {
-		return a.abortRun(ctx, ac, call.SessionID, fmt.Errorf("failed to get session: %w", err))
+		return a.abortSetup(ctx, fmt.Errorf("failed to get session: %w", err))
+	}
+	if state.acceptedUserID != "" {
+		currentSession.LeafMessageID = state.acceptedUserID
 	}
 	currentLeaf := currentSession.LeafMessageID
 
@@ -316,7 +306,7 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 
 	msgs, raw, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
-		return a.abortRun(ctx, ac, call.SessionID, fmt.Errorf("failed to get session messages: %w", err))
+		return a.abortSetup(ctx, fmt.Errorf("failed to get session messages: %w", err))
 	}
 
 	// Derive the lazy MCP state from conversation history and inject
@@ -324,7 +314,6 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 	initialEnabled := deriveLazyMCPState(raw)
 	lazyState := tools.NewLazyMCPState(initialEnabled)
 	ctx = tools.WithLazyMCPState(ctx, lazyState)
-	genCtx = tools.WithLazyMCPState(genCtx, lazyState)
 
 	// Reconnect replayed-enabled deferred servers. This runs at Run
 	// start (not session load) so browsing history never triggers
@@ -370,41 +359,31 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 
 	// Capture before any messages are added so we can auto-regenerate the
 	// title after the first assistant response completes.
-	isFirstMessage := len(msgs) == 0
-
+	if state.acceptedUserID == "" {
+		state.firstMessage = len(msgs) == 0
+	}
+	isFirstMessage := state.firstMessage
 	if call.wake {
-		// A wake run starts from the job notice instead of a user
-		// prompt; the notice is the last history message.
 		noticeMsg, err := a.deliverJobEvents(ctx, call.SessionID, currentLeaf)
 		if err != nil {
 			a.refundWake(call.SessionID)
-			return a.abortRun(ctx, ac, call.SessionID, err)
+			return a.abortSetup(ctx, err)
 		}
 		if noticeMsg == nil {
 			a.refundWake(call.SessionID)
-			return a.abortRun(ctx, ac, call.SessionID, nil)
+			return nil, nil
 		}
 		msgs = append(msgs, *noticeMsg)
 		currentLeaf = noticeMsg.ID
-	} else if call.skipCreateMessage {
-		// On retry the user message already exists in the DB and
-		// appears in msgs. Trim it (plus any trailing empty assistant
-		// message from the failed PrepareStep) so the prompt is only
-		// sent once via the Prompt field.
-		msgs = a.cleanupFailedAttemptMessages(ctx, msgs)
-		// Refresh currentLeaf after cleanup — the deleted messages may
-		// have advanced the leaf, so it could point to a now-deleted
-		// message. Use the last remaining message in the branch path.
-		if len(msgs) > 0 {
-			currentLeaf = msgs[len(msgs)-1].ID
-		}
+	} else if state.acceptedUserID != "" {
+		msgs = slices.DeleteFunc(msgs, func(m message.Message) bool { return m.ID == state.acceptedUserID })
 	} else {
-		// Add the user message to the session.
 		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
 		if err != nil {
-			return a.abortRun(ctx, ac, call.SessionID, err)
+			return a.abortSetup(ctx, err)
 		}
 		currentLeaf = userMsg.ID
+		state.acceptedUserID = userMsg.ID
 	}
 
 	// Add the session to the context. Subagents run on their parent's tool
@@ -412,8 +391,6 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 	rootSessionID := cmp.Or(tools.GetRootSessionFromContext(ctx), call.SessionID)
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
 	ctx = context.WithValue(ctx, tools.RootSessionIDContextKey, rootSessionID)
-	genCtx = context.WithValue(genCtx, tools.SessionIDContextKey, call.SessionID)
-	genCtx = context.WithValue(genCtx, tools.RootSessionIDContextKey, rootSessionID)
 
 	// persistCtx survives cancellation and is used for persistence that must
 	// succeed even when the request is canceled (finish parts, error tool
@@ -424,6 +401,7 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 	// would keep spinning forever.
 	persistCtx := context.WithoutCancel(ctx)
 
+	genCtx := ctx
 	// Drain any debounced message updates before returning. message.Service
 	// already flushes synchronously on terminal updates, but a defer here
 	// guarantees the contract at every Run exit (success, error, panic
@@ -470,17 +448,6 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 			// Use latest tools (updated by SetTools when MCP tools change),
 			// filtering out lazy MCP tools that haven't been enabled.
 			prepared.Tools = filterLazyMCPTools(a.tools.Copy(), lazyMCPToolMap, lazyState)
-
-			for _, queued := range a.takeQueued(call.SessionID) {
-				userMessage, createErr := a.createUserMessage(callContext, queued, getLeaf())
-				if createErr != nil {
-					return callContext, prepared, createErr
-				}
-				setLeaf(userMessage.ID)
-				aiMessages := userMessage.ToAIMessage()
-				injected.add(options.Messages, aiMessages...)
-				prepared.Messages = append(prepared.Messages, aiMessages...)
-			}
 
 			if a.jobEvents != nil {
 				noticeMsg, deliverErr := a.deliverJobEvents(callContext, call.SessionID, getLeaf())
@@ -536,10 +503,12 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 			if err != nil {
 				return callContext, prepared, err
 			}
+			state.assistantIDs = append(state.assistantIDs, assistantMsg.ID)
 			setLeaf(assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
+			callContext = context.WithValue(callContext, ownerKey{}, struct{}{})
 			currentAssistant = &assistantMsg
 			return callContext, prepared, err
 		},
@@ -841,11 +810,16 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 	}
 
 	if shouldSummarize {
-		a.activeRequests.CompareAndDelete(call.SessionID, ac)
-		if summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
+		summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions)
+		if summarizeErr != nil && call.retrySummary != nil {
+			if refreshErr := call.retrySummary(genCtx, summarizeErr); refreshErr == nil {
+				summarizeErr = a.Summarize(genCtx, call.SessionID, call.ProviderOptions)
+			}
+		}
+		if summarizeErr != nil {
+			state.summaryFailed = true
 			return nil, summarizeErr
 		}
-		// If the agent wasn't done...
 		if len(currentAssistant.ToolCalls()) > 0 {
 			if call.wake {
 				call.wake = false
@@ -853,7 +827,8 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 			} else {
 				call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
 			}
-			a.enqueue(call)
+			call.state = nil
+			a.admission.enqueue(call.SessionID, submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) { return a.Run(ctx, call) }})
 		}
 	}
 
@@ -866,7 +841,7 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 		if sessErr != nil {
 			slog.Error("Failed to load session for title regeneration", "error", sessErr)
 		} else if !sess.TitleIsCustom {
-			titleMsgs, titleErr := a.messages.List(ctx, call.SessionID)
+			titleMsgs, titleErr := a.messages.GetBranchPath(ctx, getLeaf())
 			if titleErr != nil {
 				slog.Error("Failed to load messages for title regeneration", "error", titleErr)
 			} else {
@@ -879,29 +854,22 @@ func (a *sessionAgent) runRegistered(ctx, genCtx context.Context, ac *activeCanc
 		}
 	}
 
-	// Release active request before publishing the notification.
-	// TUI handlers poll IsSessionBusy() and only re-evaluate when a
-	// tea.Msg arrives, so the cleanup must precede the notify or
-	// subscribers see stale busy state at the moment of receipt.
-	a.activeRequests.CompareAndDelete(call.SessionID, ac)
-	cancel()
-
 	// Send notification that agent has finished its turn (skip for
 	// nested/non-interactive sessions).
 	if !call.NonInteractive && a.notify != nil {
-		a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
-			SessionID:    call.SessionID,
-			SessionTitle: currentSession.Title,
-			Type:         notify.TypeAgentFinished,
-		})
+		owner, ok := ctx.Value(ownerKey{}).(*submissionOwner)
+		if !ok || owner == nil || owner.sessionID != call.SessionID {
+			return nil, fmt.Errorf("missing submission owner for session %q", call.SessionID)
+		}
+		owner.onFinish = func() {
+			a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+				SessionID: call.SessionID, SessionTitle: currentSession.Title, Type: notify.TypeAgentFinished,
+			})
+		}
 	}
 
-	next, ok := a.popQueuedOrIdle(call.SessionID)
-	if !ok {
-		return result, err
-	}
-	// There are queued messages restart the loop.
-	return a.Run(ctx, next)
+	a.reportIdleWhenDone(ctx, call.SessionID)
+	return result, err
 }
 
 // RunWake implements SessionAgent.
@@ -910,27 +878,28 @@ func (a *sessionAgent) RunWake(ctx context.Context, call SessionAgentCall, eligi
 		return nil, ErrSessionMissing
 	}
 	unlock := a.lockDispatch(call.SessionID)
-	if a.IsSessionBusy(call.SessionID) {
+	owner, err := a.admission.claimIdle(ctx, call.SessionID, func() error {
+		if suppressed, _ := a.wakeSuppressed.Get(call.SessionID); suppressed ||
+			a.wakeCount(call.SessionID) >= maxConsecutiveWakes ||
+			(eligible != nil && !eligible()) {
+			return ErrWakeNotAllowed
+		}
+		return nil
+	})
+	if err != nil {
 		unlock()
-		return nil, ErrSessionBusy
-	}
-	if suppressed, _ := a.wakeSuppressed.Get(call.SessionID); suppressed ||
-		a.wakeCount(call.SessionID) >= maxConsecutiveWakes ||
-		(eligible != nil && !eligible()) {
-		unlock()
-		return nil, ErrWakeNotAllowed
+		return nil, err
 	}
 	a.wakeCounts.Set(call.SessionID, a.wakeCount(call.SessionID)+1)
-	genCtx, cancel := context.WithCancel(ctx)
-	ac := &activeCancel{cancel: cancel}
-	a.activeRequests.Set(call.SessionID, ac)
 	unlock()
 
 	call.wake = true
 	call.Prompt = ""
 	call.Attachments = nil
-	call.skipCreateMessage = false
-	return a.runRegistered(ctx, genCtx, ac, call)
+	call.state = &runState{}
+	return a.admission.execute(owner, submission{run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		return a.runOwned(ctx, call)
+	}})
 }
 
 func (a *sessionAgent) wakeCount(sessionID string) int {
@@ -973,89 +942,34 @@ func (a *sessionAgent) lockDispatch(sessionID string) (unlock func()) {
 	}
 }
 
-// enqueue queues call for the session's running request.
-func (a *sessionAgent) enqueue(call SessionAgentCall) {
-	unlock := a.lockDispatch(call.SessionID)
-	defer unlock()
-	a.enqueueLocked(call)
-}
-
-func (a *sessionAgent) enqueueLocked(call SessionAgentCall) {
-	existing, _ := a.messageQueue.Get(call.SessionID)
-	a.messageQueue.Set(call.SessionID, append(existing, call))
-}
-
-// takeQueued removes and returns every queued call for the session.
-func (a *sessionAgent) takeQueued(sessionID string) []SessionAgentCall {
-	unlock := a.lockDispatch(sessionID)
-	defer unlock()
-	queued, _ := a.messageQueue.Take(sessionID)
-	return queued
-}
-
-// popQueuedOrIdle removes the session's first queued call. When nothing
-// is queued it reports the session idle through OnIdle instead.
-func (a *sessionAgent) popQueuedOrIdle(sessionID string) (SessionAgentCall, bool) {
-	next, ok := a.popQueued(sessionID)
-	if !ok && a.onIdle != nil {
-		a.onIdle(sessionID)
-	}
-	return next, ok
-}
-
-// popQueued removes the session's first queued call, if any.
-func (a *sessionAgent) popQueued(sessionID string) (SessionAgentCall, bool) {
-	unlock := a.lockDispatch(sessionID)
-	defer unlock()
-	queued, _ := a.messageQueue.Get(sessionID)
-	if len(queued) == 0 {
-		a.messageQueue.Del(sessionID)
-		return SessionAgentCall{}, false
-	}
-	if len(queued) == 1 {
-		a.messageQueue.Del(sessionID)
-	} else {
-		a.messageQueue.Set(sessionID, queued[1:])
-	}
-	return queued[0], true
-}
-
-// abortRun ends a run that stopped before reaching the model and hands
-// the session to the calls queued meanwhile, which would otherwise wait
-// for an unrelated later run. It does not report the session idle: a
-// failing dependency would make every wake fail the same way. A queued
-// run's error is joined to err.
-func (a *sessionAgent) abortRun(ctx context.Context, ac *activeCancel, sessionID string, err error) (*fantasy.AgentResult, error) {
-	a.activeRequests.CompareAndDelete(sessionID, ac)
-	ac.cancel()
-	next, ok := a.popQueued(sessionID)
-	if !ok {
-		return nil, err
-	}
-	if err == nil {
-		return a.Run(ctx, next)
-	}
-	if _, nextErr := a.Run(ctx, next); nextErr != nil {
-		err = errors.Join(err, nextErr)
+func (a *sessionAgent) abortSetup(ctx context.Context, err error) (*fantasy.AgentResult, error) {
+	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil {
+		owner.handoffOnError = true
 	}
 	return nil, err
 }
 
-func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
-	unlock := a.lockDispatch(sessionID)
-	if a.IsSessionBusy(sessionID) {
-		unlock()
-		return ErrSessionBusy
+func (a *sessionAgent) reportIdleWhenDone(ctx context.Context, sessionID string) {
+	if a.onIdle == nil {
+		return
 	}
-	genCtx, cancel := context.WithCancel(ctx)
-	ac := &activeCancel{cancel: cancel}
-	a.activeRequests.Set(sessionID, ac)
-	a.summarizing.Set(sessionID, ac)
-	unlock()
-	defer a.activeRequests.CompareAndDelete(sessionID, ac)
-	defer cancel()
-	defer a.summarizing.CompareAndDelete(sessionID, ac)
+	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil && owner.sessionID == sessionID {
+		owner.onIdle = func() { a.onIdle(sessionID) }
+	}
+}
 
+func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
+	_, err := a.admission.submit(ctx, sessionID, submission{exclusive: true, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		return nil, a.summarizeOwned(ctx, sessionID, opts)
+	}})
+	return err
+}
+
+func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
+	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil {
+		a.summarizing.Set(sessionID, owner)
+		defer a.summarizing.CompareAndDelete(sessionID, owner)
+	}
 	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
 	systemPromptPrefix := a.systemPromptPrefix.Get()
@@ -1076,8 +990,11 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	aiMsgs, _ := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages)
 
+	genCtx := ctx
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+	defer cancel()
 	defer func() {
-		if flushErr := a.messages.FlushAll(ctx); flushErr != nil {
+		if flushErr := a.messages.FlushAll(persistCtx); flushErr != nil {
 			slog.Error("Failed to flush pending message updates after summarize", "error", flushErr)
 		}
 	}()
@@ -1147,21 +1064,19 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		},
 	})
 	if err != nil {
-		isCancelErr := errors.Is(err, context.Canceled)
-		if isCancelErr {
-			// User cancelled — restore the leaf to its pre-compaction
-			// position first, then remove the compaction placeholder.
-			// This order ensures the leaf never points to a deleted
-			// message if the second operation fails.
-			if moveErr := a.sessions.MoveLeaf(ctx, sessionID, compactionMsg.ParentMessageID); moveErr != nil {
-				return moveErr
+		var providerErr *fantasy.ProviderError
+		if errors.Is(err, context.Canceled) || genCtx.Err() != nil ||
+			(errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized) {
+			if moveErr := a.sessions.MoveLeaf(persistCtx, sessionID, compactionMsg.ParentMessageID); moveErr != nil {
+				return fmt.Errorf("restoring summary parent: %w", moveErr)
 			}
-			return a.messages.Delete(ctx, compactionMsg.ID)
+			if deleteErr := a.messages.Delete(persistCtx, compactionMsg.ID); deleteErr != nil {
+				return fmt.Errorf("deleting summary placeholder: %w", deleteErr)
+			}
+			return err
 		}
-		// Mark the compaction message as finished with an error so the
-		// UI stops spinning.
 		compactionMsg.AddFinish(message.FinishReasonError, "Summarization Error", err.Error())
-		if updateErr := a.messages.Update(ctx, compactionMsg); updateErr != nil {
+		if updateErr := a.messages.Update(persistCtx, compactionMsg); updateErr != nil {
 			return updateErr
 		}
 		return err
@@ -1184,7 +1099,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	// this write. Without this, the compaction message would retain
 	// its streaming TextContent instead of the final CompactionContent,
 	// silently losing all compacted history.
-	err = a.messages.Update(ctx, compactionMsg)
+	err = a.messages.Update(persistCtx, compactionMsg)
 	if err != nil {
 		return err
 	}
@@ -1214,19 +1129,8 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return err
 	}
 
-	// Release the active request before processing queued messages so that
-	// Run() does not see the session as busy.
-	a.summarizing.CompareAndDelete(sessionID, ac)
-	a.activeRequests.CompareAndDelete(sessionID, ac)
-	cancel()
-
-	// Process any messages that were queued while summarizing.
-	next, ok := a.popQueuedOrIdle(sessionID)
-	if !ok {
-		return nil
-	}
-	_, qErr := a.Run(ctx, next)
-	return qErr
+	a.reportIdleWhenDone(ctx, sessionID)
+	return nil
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
@@ -1244,69 +1148,6 @@ func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
 			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
 		},
 	}
-}
-
-// cleanupFailedAttemptMessages removes trailing messages left by a
-// failed Run attempt so the prompt is not duplicated on retry. It
-// strips any trailing empty assistant message (created by PrepareStep)
-// and the preceding user message (which will be re-sent via the Prompt
-// field). Removed assistant messages are also deleted from the DB so
-// they don't appear as stale error bubbles on session reopen. After
-// deletion, the session's leaf pointer is restored to the last
-// remaining message to prevent dangling references.
-func (a *sessionAgent) cleanupFailedAttemptMessages(ctx context.Context, msgs []message.Message) []message.Message {
-	before := len(msgs)
-	msgs, removedIDs := trimFailedAttemptMessages(msgs)
-	if len(msgs) == before {
-		slog.Warn("Retry cleanup did not find a trailing user message to remove")
-	}
-	for _, id := range removedIDs {
-		if err := a.messages.Delete(ctx, id); err != nil {
-			slog.Warn("Failed to delete stale assistant message from failed attempt", "id", id, "error", err)
-		}
-	}
-	// Restore the leaf pointer to the last remaining message. The
-	// deleted messages may have advanced the leaf via Create(), so it
-	// could point to a now-deleted message.
-	if len(removedIDs) > 0 && len(msgs) > 0 {
-		lastMsg := msgs[len(msgs)-1]
-		if lastMsg.SessionID != "" {
-			if err := a.sessions.MoveLeaf(ctx, lastMsg.SessionID, lastMsg.ID); err != nil {
-				slog.Warn("Failed to restore leaf after cleanup", "error", err)
-			}
-		}
-	}
-	return msgs
-}
-
-// trimFailedAttemptMessages removes trailing messages left by a failed
-// Run attempt. It strips any trailing empty assistant messages (created
-// by PrepareStep) and the preceding user message (which will be re-sent
-// via the Prompt field). Returns the trimmed slice and the IDs of
-// removed assistant messages.
-//
-// The assistant emptiness check mirrors preparePrompt's skip condition:
-// a Finish-only part does not count as content.
-func trimFailedAttemptMessages(msgs []message.Message) ([]message.Message, []string) {
-	var removedIDs []string
-	for len(msgs) > 0 {
-		last := msgs[len(msgs)-1]
-		if last.Role == message.Assistant &&
-			last.Content().Text == "" &&
-			len(last.ToolCalls()) == 0 &&
-			last.ReasoningContent().String() == "" {
-			if last.ID != "" {
-				removedIDs = append(removedIDs, last.ID)
-			}
-			msgs = msgs[:len(msgs)-1]
-			continue
-		}
-		if last.Role == message.User {
-			msgs = msgs[:len(msgs)-1]
-		}
-		break
-	}
-	return msgs, removedIDs
 }
 
 // sessionHeaders returns the HTTP headers we use for cache affinity on
@@ -1795,28 +1636,15 @@ func summaryCompletionTokens(usage fantasy.Usage, summaryMessage message.Message
 }
 
 func (a *sessionAgent) Cancel(sessionID string) {
-	// Cancel regular requests. Don't use Take() here - we need the entry to
-	// remain in activeRequests so IsBusy() returns true until the goroutine
-	// fully completes (including error handling that may access the DB).
-	// The defer in processRequest will clean up the entry.
-	// Summarize registers under the same plain sessionID key, so this
-	// single lookup also cancels an in-flight summarize.
-	if ac, ok := a.activeRequests.Get(sessionID); ok && ac != nil {
-		slog.Debug("Request cancellation initiated", "session_id", sessionID)
-		ac.cancel()
-	}
-
 	unlock := a.lockDispatch(sessionID)
 	a.wakeSuppressed.Set(sessionID, true)
 	unlock()
 
-	a.ClearQueue(sessionID)
+	a.admission.cancel(sessionID)
 }
 
 func (a *sessionAgent) ClearQueue(sessionID string) {
-	if queued := a.takeQueued(sessionID); len(queued) > 0 {
-		slog.Debug("Clearing queued prompts", "session_id", sessionID)
-	}
+	a.admission.clear(sessionID)
 }
 
 func (a *sessionAgent) IsSummarizing(sessionID string) bool {
@@ -1825,58 +1653,23 @@ func (a *sessionAgent) IsSummarizing(sessionID string) bool {
 }
 
 func (a *sessionAgent) CancelAll() {
-	if !a.IsBusy() {
-		return
-	}
-	for key := range a.activeRequests.Seq2() {
-		a.Cancel(key) // key is sessionID
-	}
-
-	timeout := time.After(5 * time.Second)
-	for a.IsBusy() {
-		select {
-		case <-timeout:
-			return
-		default:
-			time.Sleep(200 * time.Millisecond)
-		}
-	}
+	a.admission.cancelAll()
 }
 
 func (a *sessionAgent) IsBusy() bool {
-	var busy bool
-	for ac := range a.activeRequests.Seq() {
-		if ac != nil {
-			busy = true
-			break
-		}
-	}
-	return busy
+	return a.admission.busy("")
 }
 
 func (a *sessionAgent) IsSessionBusy(sessionID string) bool {
-	_, busy := a.activeRequests.Get(sessionID)
-	return busy
+	return a.admission.busy(sessionID)
 }
 
 func (a *sessionAgent) QueuedPrompts(sessionID string) int {
-	l, ok := a.messageQueue.Get(sessionID)
-	if !ok {
-		return 0
-	}
-	return len(l)
+	return len(a.admission.queued(sessionID))
 }
 
 func (a *sessionAgent) QueuedPromptsList(sessionID string) []string {
-	l, ok := a.messageQueue.Get(sessionID)
-	if !ok {
-		return nil
-	}
-	prompts := make([]string, len(l))
-	for i, call := range l {
-		prompts[i] = call.Prompt
-	}
-	return prompts
+	return a.admission.queued(sessionID)
 }
 
 func (a *sessionAgent) SetModels(large Model, small Model) {

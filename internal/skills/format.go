@@ -3,8 +3,30 @@ package skills
 import (
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 )
+
+var skillContentRe = regexp.MustCompile(`(?s)<skill_content name="([^"]+)">\n(.*?)\n</skill_content>`)
+
+type ContentXML struct {
+	Name         string
+	Instructions string
+}
+
+func ParseContentXML(text string) ([]ContentXML, string) {
+	var content []ContentXML
+	for {
+		match := skillContentRe.FindStringSubmatchIndex(text)
+		if match == nil || match[0] != 0 {
+			return content, text
+		}
+		content = append(content, ContentXML{
+			Name: text[match[2]:match[3]], Instructions: text[match[4]:match[5]],
+		})
+		text = strings.TrimPrefix(text[match[1]:], "\n\n")
+	}
+}
 
 // FormatContentXML formats a single skill's instructions as a
 // <skill_content> XML block for inclusion in a user message.

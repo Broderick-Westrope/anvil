@@ -87,6 +87,10 @@ type FocusableMessageItem interface {
 	list.Focusable
 }
 
+type SourceMessageProvider interface {
+	SourceMessage() message.Message
+}
+
 // SendMsg represents a message to send a chat message.
 type SendMsg struct {
 	Text        string
