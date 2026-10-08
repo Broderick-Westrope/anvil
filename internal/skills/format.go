@@ -28,14 +28,6 @@ func ParseContentXML(text string) ([]ContentXML, string) {
 	}
 }
 
-func StripContentXML(text string) ([]ContentXML, string) {
-	var content []ContentXML
-	for _, match := range skillContentRe.FindAllStringSubmatch(text, -1) {
-		content = append(content, ContentXML{Name: match[1], Instructions: match[2]})
-	}
-	return content, skillContentRe.ReplaceAllString(text, "")
-}
-
 // FormatContentXML formats a single skill's instructions as a
 // <skill_content> XML block for inclusion in a user message.
 func FormatContentXML(name, instructions string) string {

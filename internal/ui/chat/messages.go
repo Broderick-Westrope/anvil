@@ -171,17 +171,6 @@ type cacheClearable interface {
 	clearCache()
 }
 
-func cloneSourceMessage(msg *message.Message) message.Message {
-	clone := msg.Clone()
-	for i, part := range clone.Parts {
-		if bc, ok := part.(message.BinaryContent); ok {
-			bc.Data = append([]byte(nil), bc.Data...)
-			clone.Parts[i] = bc
-		}
-	}
-	return clone
-}
-
 // ClearItemCaches drops any cached rendered output on each item so the
 // next render uses the current styles. It also bumps each item's
 // version so the F6 list-level memo invalidates frozen entries on

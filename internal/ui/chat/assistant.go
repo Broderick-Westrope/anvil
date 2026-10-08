@@ -270,7 +270,7 @@ func (a *AssistantMessageItem) ID() string {
 }
 
 func (a *AssistantMessageItem) SourceMessage() message.Message {
-	return cloneSourceMessage(a.message)
+	return a.message.Clone()
 }
 
 // RawRender implements [MessageItem].

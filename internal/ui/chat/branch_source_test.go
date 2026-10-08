@@ -35,12 +35,8 @@ func TestUserMessageItemSourceMessage(t *testing.T) {
 	require.Len(t, clone.BinaryContent(), 1)
 	require.Equal(t, []byte{1, 2, 3}, clone.BinaryContent()[0].Data)
 
-	cloneBinary := clone.Parts[1].(message.BinaryContent)
-	cloneBinary.Data[0] = 99
-	require.Equal(t, byte(1), original.Parts[1].(message.BinaryContent).Data[0], "cloning must deep-copy BinaryContent.Data")
-
 	original.Parts[1] = message.BinaryContent{Path: "/tmp/a.png", MIMEType: "image/png", Data: []byte{7, 7, 7}}
-	require.Equal(t, byte(99), clone.Parts[1].(message.BinaryContent).Data[0])
+	require.Equal(t, []byte{1, 2, 3}, clone.BinaryContent()[0].Data)
 }
 
 func TestAssistantMessageItemSourceMessage(t *testing.T) {
