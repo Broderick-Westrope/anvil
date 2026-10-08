@@ -53,6 +53,7 @@ After pushing to a branch that has a pull request (including right after `gh pr 
 - Start one watcher straight away with run_in_background=true:
   `for i in $(seq 1 30); do gh pr checks <pr> --json name --jq length 2>/dev/null | grep -q '^[1-9]' && break; sleep 10; done; gh pr checks <pr> --watch --fail-fast --interval 30`
   The loop waits for checks to register; right after a push `gh pr checks` fails with "no checks reported".
+- Whenever you read the watcher with job_output, set tail_lines=20 or less. `--watch` reprints the whole checks table on every refresh, so everything before the last table is repeats.
 - Keep working on anything else that remains while it runs. You are notified when it exits: exit 0 means every check passed, non-zero means a check failed or the watch broke.
 {{- if .WakeOnJobEvents }}
 - When nothing else is left, end your turn instead of waiting so the user can keep talking to you. Say CI is still running, give the job ID, and say you'll pick up the result when it finishes. Don't block on it with job_output wait=true unless the user asked you to wait for CI.
