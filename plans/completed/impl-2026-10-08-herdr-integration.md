@@ -2,7 +2,7 @@
 
 > **Status:** COMPLETED
 
-Design spec: `plans/design-2026-10-08-herdr-integration.md` (read it first;
+Design spec: `plans/completed/design-2026-10-08-herdr-integration.md` (read it first;
 its "Validated assumptions" table is the source of truth for Herdr 0.9.3
 behaviour).
 
@@ -60,7 +60,7 @@ title. Zero configuration.
 _Run before starting any task:_
 
 ```bash
-read plans/design-2026-10-08-herdr-integration.md
+read plans/completed/design-2026-10-08-herdr-integration.md
 read AGENTS.md
 read internal/recovery/recovery.go          # small package wired from root.go: style template
 read internal/config/docker_mcp.go          # exec.CommandContext + timeout + injectable runner

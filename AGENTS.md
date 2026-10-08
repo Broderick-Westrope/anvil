@@ -110,8 +110,8 @@ internal/
   state in `UI.Update` (`internal/ui/model/herdr.go`); the reporter
   debounces and sends from one goroutine. Design, validated Herdr
   behaviour and the isolated-session test recipe live in
-  `plans/design-2026-10-08-herdr-integration.md`; never test against the
-  user's default Herdr session.
+  `plans/completed/design-2026-10-08-herdr-integration.md`; never test
+  against the user's default Herdr session.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 

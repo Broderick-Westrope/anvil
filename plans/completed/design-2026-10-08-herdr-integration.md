@@ -1,7 +1,7 @@
 # Herdr Integration Design Spec
 
 > **Status:** Implemented on main (2026-10-07). Implementation plan and
-> execution notes: `plans/impl-2026-10-08-herdr-integration.md`. User
+> execution notes: `plans/completed/impl-2026-10-08-herdr-integration.md`. User
 > guide: `docs/herdr/README.md`. Known issues and follow-ups are at the end
 > of this document.
 
