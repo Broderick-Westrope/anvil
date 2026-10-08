@@ -1,8 +1,6 @@
 package model
 
 import (
-	"context"
-
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
@@ -35,19 +33,30 @@ type branchReturnSnapshot struct {
 	originalViewport branchViewport
 }
 
-func (m *UI) captureBranchSnapshot() *branchReturnSnapshot {
-	history := m.promptHistory
-	history.messages = append([]composerSnapshot(nil), history.messages...)
-	for i := range history.messages {
-		history.messages[i] = history.messages[i].clone()
+type branchViewport struct {
+	selectedID    string
+	selectedIndex int
+	offset        int
+	follow        bool
+}
+
+func (m *Chat) branchViewport() branchViewport {
+	s := branchViewport{selectedIndex: m.list.Selected(), offset: m.list.Offset(), follow: m.follow}
+	if item, ok := m.SelectedItem().(chat.MessageItem); ok {
+		s.selectedID = item.ID()
 	}
-	history.draft = history.draft.clone()
-	return &branchReturnSnapshot{
-		sessionID:        m.session.ID,
-		originalDraft:    m.captureComposer(),
-		originalHistory:  history,
-		originalViewport: m.chat.branchViewport(),
+	return s
+}
+
+func (m *Chat) restoreBranchViewport(s branchViewport) {
+	index := s.selectedIndex
+	if i, ok := m.idInxMap[s.selectedID]; ok {
+		index = i
 	}
+	m.SetSelected(index)
+	m.list.ScrollToTop()
+	m.list.ScrollBy(s.offset)
+	m.follow = s.follow
 }
 
 func (m *UI) branchFromSelectedMessage() tea.Cmd {
@@ -86,84 +95,10 @@ func (m *UI) beginBranchReturn(pending bool) tea.Cmd {
 	return m.cancelThenNavigate(dialog.ActionNavigateTree{MessageID: snapshot.leafID})
 }
 
-func (m *UI) restoreBranchDraft(snapshot *branchReturnSnapshot) tea.Cmd {
-	prevHeight := m.textarea.Height()
-	m.restoreComposer(snapshot.originalDraft)
-	m.promptHistory.messages = snapshot.originalHistory.messages
-	m.promptHistory.index = snapshot.originalHistory.index
-	m.promptHistory.draft = snapshot.originalHistory.draft
-	m.focus = uiFocusEditor
-	heightCmd := m.handleTextareaHeightChange(prevHeight)
-	m.updateLayoutAndSize()
-	m.chat.restoreBranchViewport(snapshot.originalViewport)
-	return tea.Batch(m.textarea.Focus(), heightCmd)
-}
-
 func (m *UI) clearBranchState() {
 	m.pendingBranch = nil
 	m.branchReturn = nil
 	m.branchNavigation = nil
 	m.branchRestoreSnapshot = nil
 	m.branchRestoring = false
-}
-
-type treeNavErrorMsg struct {
-	err       error
-	snapshot  *branchReturnSnapshot
-	movedLeaf bool
-}
-
-func (m *UI) handleTreeNavError(msg treeNavErrorMsg) tea.Cmd {
-	m.navigating = false
-	if msg.movedLeaf && !m.branchRestoring && msg.snapshot != nil {
-		m.pendingBranch = msg.snapshot
-	}
-	m.branchNavigation = nil
-	m.branchRestoring = false
-	m.branchRestoreSnapshot = nil
-	return util.ReportError(msg.err)
-}
-
-func (m *UI) loadTreePoint(nav dialog.ActionNavigateTree, targetLeafID string) tea.Cmd {
-	ws := m.com.Workspace
-	sessionID := m.session.ID
-	snapshot := m.branchNavigation
-	restore := m.branchRestoreSnapshot
-	return func() tea.Msg {
-		ctx := context.Background()
-		if snapshot != nil {
-			source, err := ws.GetSession(ctx, sessionID)
-			if err != nil {
-				return treeNavErrorMsg{err: err}
-			}
-			saved := *snapshot
-			saved.leafID = source.LeafMessageID
-			snapshot = &saved
-		}
-		if err := ws.MoveLeaf(ctx, sessionID, targetLeafID); err != nil {
-			return treeNavErrorMsg{err: err, snapshot: snapshot}
-		}
-		fail := func(err error) tea.Msg {
-			return treeNavErrorMsg{err: err, snapshot: snapshot, movedLeaf: true}
-		}
-		sess, err := ws.GetSession(ctx, sessionID)
-		if err != nil {
-			return fail(err)
-		}
-		var msgs []message.Message
-		if targetLeafID != "" {
-			msgs, err = ws.GetBranchPath(ctx, targetLeafID)
-			if err != nil {
-				return fail(err)
-			}
-		}
-		nested, err := readBranchNested(ctx, ws, msgs)
-		if err != nil {
-			return fail(err)
-		}
-		return navigateTreeDoneMsg{
-			session: &sess, leafID: targetLeafID, messages: msgs, nested: nested,
-			source: nav.Source, role: nav.Role, snapshot: snapshot, restore: restore,
-		}
-	}
 }

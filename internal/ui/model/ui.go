@@ -1299,8 +1299,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.handleNavigateTreeDone(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	case treeNavErrorMsg:
-		cmds = append(cmds, m.handleTreeNavError(msg))
 	case tickElapsedTimeMsg:
 		// invalidateRunningAgentCaches performs a single pass per chat that
 		// both invalidates caches and reports whether any agent is still
@@ -5104,7 +5102,12 @@ func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
 	if m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty() {
 		return util.ReportWarn("Return to pre-branch conversation, then send or clear its draft before branching again.")
 	}
-	m.branchNavigation = m.captureBranchSnapshot()
+	m.branchNavigation = &branchReturnSnapshot{
+		sessionID:        m.session.ID,
+		originalDraft:    m.captureComposer(),
+		originalHistory:  m.promptHistory,
+		originalViewport: m.chat.branchViewport(),
+	}
 	return m.cancelThenNavigate(msg)
 }
 
@@ -5113,7 +5116,7 @@ func (m *UI) cancelThenNavigate(msg dialog.ActionNavigateTree) tea.Cmd {
 	// a turn on the branch being left.
 	m.navigating = true
 	m.syncComposerState()
-	if m.hasSession() && m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
+	if m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
 		sessionID := m.session.ID
 		m.com.Workspace.AgentCancel(sessionID)
 		return tea.Batch(
@@ -5150,7 +5153,7 @@ func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
 		return m.navigateToTreeNode(msg.nav)
 	}
 	if msg.attempt >= maxIdlePolls {
-		return m.handleTreeNavError(treeNavErrorMsg{err: fmt.Errorf("timed out waiting for agent to stop")})
+		return m.handleNavigateTreeDone(navigateTreeDoneMsg{err: fmt.Errorf("timed out waiting for agent to stop")})
 	}
 	return m.pollAgentIdle(msg.nav, msg.sessionID, msg.attempt+1)
 }
@@ -5165,22 +5168,69 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 	if msg.Role == message.User {
 		targetLeafID = msg.ParentMessageID
 	}
-	return m.loadTreePoint(msg, targetLeafID)
+
+	ws := m.com.Workspace
+	sessionID := m.session.ID
+	snapshot := m.branchNavigation
+	restore := m.branchRestoreSnapshot
+
+	return func() tea.Msg {
+		ctx := context.Background()
+		if snapshot != nil {
+			source, err := ws.GetSession(ctx, sessionID)
+			if err != nil {
+				return navigateTreeDoneMsg{err: err}
+			}
+			saved := *snapshot
+			saved.leafID = source.LeafMessageID
+			snapshot = &saved
+		}
+
+		// Move the leaf pointer.
+		if err := ws.MoveLeaf(ctx, sessionID, targetLeafID); err != nil {
+			return navigateTreeDoneMsg{err: err, snapshot: snapshot}
+		}
+
+		// Reload the session and branch path in the command (not in
+		// Update) to avoid doing IO in the Bubble Tea update loop.
+		sess, err := ws.GetSession(ctx, sessionID)
+		if err != nil {
+			return navigateTreeDoneMsg{err: err, snapshot: snapshot, movedLeaf: true}
+		}
+
+		var msgs []message.Message
+		if targetLeafID != "" {
+			msgs, err = ws.GetBranchPath(ctx, targetLeafID)
+			if err != nil {
+				return navigateTreeDoneMsg{err: err, snapshot: snapshot, movedLeaf: true}
+			}
+		}
+
+		return navigateTreeDoneMsg{
+			session:  &sess,
+			leafID:   targetLeafID,
+			messages: msgs,
+			source:   msg.Source,
+			role:     msg.Role,
+			snapshot: snapshot,
+			restore:  restore,
+		}
+	}
 }
 
 // navigateTreeDoneMsg is sent after the leaf pointer has been moved,
 // the session reloaded, and the branch path fetched. All IO happens
 // inside the command; Update only mutates state.
 type navigateTreeDoneMsg struct {
-	err      error // Set when the move or reload failed.
-	nested   map[string]branchNestedSnapshot
-	snapshot *branchReturnSnapshot
-	restore  *branchReturnSnapshot
-	session  *session.Session
-	leafID   string
-	messages []message.Message
-	source   message.Message
-	role     message.MessageRole
+	err       error // Set when the move or reload failed.
+	movedLeaf bool
+	snapshot  *branchReturnSnapshot
+	restore   *branchReturnSnapshot
+	session   *session.Session
+	leafID    string
+	messages  []message.Message
+	source    message.Message
+	role      message.MessageRole
 }
 
 // handleNavigateTreeDone rebuilds the chat view after the leaf pointer has
@@ -5188,7 +5238,13 @@ type navigateTreeDoneMsg struct {
 func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.navigating = false
 	if msg.err != nil {
-		return m.handleTreeNavError(treeNavErrorMsg{err: msg.err})
+		if msg.movedLeaf && !m.branchRestoring && msg.snapshot != nil {
+			m.pendingBranch = msg.snapshot
+		}
+		m.branchNavigation = nil
+		m.branchRestoring = false
+		m.branchRestoreSnapshot = nil
+		return util.ReportError(msg.err)
 	}
 
 	var cmds []tea.Cmd
@@ -5202,36 +5258,42 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.session = msg.session
 	m.clearDrillStack()
 
-	m.installBranchSnapshot(msg.messages, msg.nested)
-	if msg.restore != nil {
-		if m.pendingBranch == msg.restore {
-			m.pendingBranch = nil
-		}
-		if m.branchReturn == msg.restore {
-			m.branchReturn = nil
-		}
-		return m.restoreBranchDraft(msg.restore)
-	}
-	if msg.snapshot != nil {
-		m.pendingBranch = msg.snapshot
+	if cmd := m.setSessionMessages(msg.messages); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 
 	if len(msg.messages) == 0 {
 		m.lastUserMessageTime = 0
 	}
 
-	// Pre-fill editor for user messages.
-	if msg.role == message.User {
-		prevHeight := m.textarea.Height()
-		m.restoreComposer(composerFromMessage(msg.source, m.com.Workspace.ActiveSkillByName, m.customCommands))
-		if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
-			cmds = append(cmds, cmd)
+	prevHeight := m.textarea.Height()
+	switch {
+	case msg.restore != nil:
+		if m.pendingBranch == msg.restore {
+			m.pendingBranch = nil
 		}
+		if m.branchReturn == msg.restore {
+			m.branchReturn = nil
+		}
+		m.restoreComposer(msg.restore.originalDraft)
+		m.promptHistory = msg.restore.originalHistory
+	case msg.role == message.User:
+		// Pre-fill editor for user messages.
+		m.restoreComposer(composerFromMessage(msg.source, m.com.Workspace.ActiveSkillByName, m.customCommands))
+	}
+	if msg.restore == nil && msg.snapshot != nil {
+		m.pendingBranch = msg.snapshot
+	}
+	if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 
 	m.focus = uiFocusEditor
 	cmds = append(cmds, m.textarea.Focus())
 	m.updateLayoutAndSize()
+	if msg.restore != nil {
+		m.chat.restoreBranchViewport(msg.restore.originalViewport)
+	}
 
 	return tea.Batch(cmds...)
 }

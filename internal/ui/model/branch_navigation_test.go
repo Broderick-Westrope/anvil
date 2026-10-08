@@ -105,7 +105,7 @@ func TestBranchEscapeRestoresFullDraft(t *testing.T) {
 	require.NoError(t, err)
 	m.width, m.height = 100, 40
 	m.updateLayoutAndSize()
-	m.installBranchSnapshot(path, nil)
+	m.setSessionMessages(path)
 	m.chat.SetSelected(0)
 	m.chat.SetFollow(false)
 	viewport := m.chat.branchViewport()
@@ -117,7 +117,6 @@ func TestBranchEscapeRestoresFullDraft(t *testing.T) {
 	m.attachments.Update(message.Attachment{FileName: "replacement.txt", Content: []byte("replacement")})
 	m.textarea.SetValue("edited")
 	m.attachments.Reset()
-	m.promptHistory.messages[0].text = "changed"
 	require.Contains(t, fmt.Sprint(m.ShortHelp()), "return to previous branch")
 	require.Contains(t, fmt.Sprint(m.FullHelp()), "return to previous branch")
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -304,7 +303,7 @@ func TestBranchReturnConflictsAndFailures(t *testing.T) {
 		ws.failMove = fail == "move"
 		ws.failRead = fail == "read"
 		cmd := m.beginBranchReturn(false)
-		failure := cmd().(treeNavErrorMsg)
+		failure := cmd().(navigateTreeDoneMsg)
 		m.Update(failure)
 		require.NotNil(t, m.branchReturn)
 	}
@@ -383,7 +382,7 @@ func TestBranchEscapeFailureRetainsSnapshot(t *testing.T) {
 	m.com.Workspace = ws
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	require.Zero(t, ws.moves)
-	failure, ok := findMsg[treeNavErrorMsg](collectMsgs(cmd))
+	failure, ok := findMsg[navigateTreeDoneMsg](collectMsgs(cmd))
 	require.True(t, ok)
 	m.Update(failure)
 	require.Same(t, snapshot, m.pendingBranch)

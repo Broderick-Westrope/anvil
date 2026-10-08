@@ -88,7 +88,7 @@ func TestCommandComposerSkillRoundTrip(t *testing.T) {
 					for m.textarea.Value() != line && m.historyPrev() {
 					}
 				default:
-					m.installBranchSnapshot([]message.Message{source}, nil)
+					m.setSessionMessages([]message.Message{source})
 					m.chat.SelectLast()
 					if entry == "shift+b" {
 						pressBranch(t, m)
