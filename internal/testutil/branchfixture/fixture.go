@@ -52,7 +52,6 @@ type Provider struct {
 	responses []Response
 	requests  []Request
 	stopped   chan struct{}
-	stopOnce  sync.Once
 }
 
 func (p *Provider) Enqueue(responses ...Response) {
@@ -179,7 +178,6 @@ func New(t *testing.T) *Fixture {
 	provider := &Provider{stopped: make(chan struct{}), tokenPath: config.GlobalConfigData()}
 	server := httptest.NewServer(provider)
 	t.Cleanup(server.Close)
-	t.Cleanup(provider.Stop)
 	cfg.Config().Providers = csync.NewMap[string, config.ProviderConfig]()
 	cfg.Config().Providers.Set("anthropic", config.ProviderConfig{ID: "anthropic", Type: catwalk.TypeAnthropic, BaseURL: server.URL, APIKey: "local-key", Models: []catwalk.Model{{ID: "claude-local", ContextWindow: 200000, DefaultMaxTokens: 1024, SupportsImages: true}}})
 	cfg.Config().Models = map[config.SelectedModelType]config.SelectedModel{
@@ -208,12 +206,10 @@ func New(t *testing.T) *Fixture {
 	w := workspace.NewAppWorkspace(&app.App{Sessions: sessions, Messages: messages, Permissions: permissions, FileTracker: tracker, Queries: queries, LSPManager: manager, AgentCoordinator: coord}, cfg)
 	t.Cleanup(func() {
 		cancel()
-		provider.Stop()
+		close(provider.stopped)
 		coord.CancelAll()
 		coord.WaitBackgroundJobs()
 		require.NoError(t, messages.FlushAll(context.Background()))
 	})
 	return &Fixture{Conn: conn, Queries: queries, Messages: messages, Sessions: sessions, Coordinator: coord, Workspace: w, Config: cfg, Provider: provider, Context: ctx}
 }
-
-func (p *Provider) Stop() { p.stopOnce.Do(func() { close(p.stopped) }) }
