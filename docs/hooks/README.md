@@ -552,6 +552,24 @@ For a more practical example, see [`rtk-rewrite.sh`](./examples/rtk-rewrite.sh),
 which demonstrates how to rewrite tool input using
 [RTK](https://github.com/rtk-ai/rtk) to save tokens.
 
+[`ci-watch-reminder.sh`](./examples/ci-watch-reminder.sh) shows a hook that
+only injects context. After any `git push` or `gh pr create`, it reminds the
+agent to start a background CI watcher instead of sleep-polling:
+
+```jsonc
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^bash$",
+        "command": "/path/to/ci-watch-reminder.sh",
+        "timeout": 5
+      }
+    ]
+  }
+}
+```
+
 ### Using other languages
 
 Hooks aren't limited to shell scripts: any executable works. Here's the same
