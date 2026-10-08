@@ -131,13 +131,7 @@ func TestDialogCommandComposerSkills(t *testing.T) {
 		Name: "review", Content: "Review $ARGUMENTS", Skills: m.customCommands[0].Skills,
 	}))
 	m.handleDialogMsg(tea.KeyPressMsg{Code: 'a', Text: "args"})
-	for _, msg := range collectMsgs(m.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter})) {
-		if batch, ok := msg.(tea.BatchMsg); ok {
-			for _, cmd := range batch {
-				collectMsgs(cmd)
-			}
-		}
-	}
+	collectMsgs(m.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
 	stored, err := f.Workspace.ListUserMessages(f.Context, m.session.ID)
 	require.NoError(t, err)
 	require.Len(t, stored, 2)

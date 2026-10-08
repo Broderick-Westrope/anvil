@@ -232,18 +232,6 @@ func TestBranchEscapePrecedence(t *testing.T) {
 	}
 }
 
-func executeSend(cmd tea.Cmd) {
-	if cmd == nil {
-		return
-	}
-	result := cmd()
-	if batch, ok := result.(tea.BatchMsg); ok {
-		for _, child := range batch {
-			executeSend(child)
-		}
-	}
-}
-
 func TestBranchDoubleEnterAndPaletteReturn(t *testing.T) {
 	m, f, source := branchUI(t)
 	m.textarea.SetValue("original draft")
@@ -253,8 +241,8 @@ func TestBranchDoubleEnterAndPaletteReturn(t *testing.T) {
 	require.Nil(t, m.pendingBranch)
 	require.NotNil(t, m.branchReturn)
 	_, second := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	executeSend(first)
-	executeSend(second)
+	collectMsgs(first)
+	collectMsgs(second)
 	msgs, err := f.Workspace.GetAllSessionMessages(f.Context, m.session.ID)
 	require.NoError(t, err)
 	count := 0
@@ -335,7 +323,7 @@ func TestBranchSlashCommandIsNotSent(t *testing.T) {
 	pressBranch(t, m)
 	m.textarea.SetValue("/tree")
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	executeSend(cmd)
+	collectMsgs(cmd)
 	require.NotNil(t, m.pendingBranch)
 	require.Nil(t, m.branchReturn)
 	require.Empty(t, m.textarea.Value())
