@@ -80,7 +80,6 @@ var ErrBusy = errors.New("agent is busy")
 type PluginWarning = plugin.Warning
 
 type Coordinator interface {
-	WaitBackgroundJobs()
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)

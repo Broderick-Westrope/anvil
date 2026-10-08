@@ -46,7 +46,7 @@ func TestRunPersistsSelectedAncestry(t *testing.T) {
 			require.NoError(t, f.Sessions.MoveLeaf(f.Context, s.ID, wantParent))
 			_, err = f.Coordinator.Run(f.Context, s.ID, "replacement")
 			require.NoError(t, err)
-			f.Coordinator.WaitBackgroundJobs()
+			f.WaitBackgroundJobs()
 			accepted := acceptedUser(t, f, s.ID, "replacement")
 			require.Equal(t, wantParent, accepted.ParentMessageID)
 			current, err := f.Sessions.Get(f.Context, s.ID)
@@ -86,7 +86,7 @@ func TestRunAuthRetryRetainsAcceptedUser(t *testing.T) {
 			f.Provider.Enqueue(branchfixture.Response{Status: http.StatusUnauthorized}, branchfixture.Response{Text: "retried"})
 			_, err = f.Coordinator.Run(f.Context, s.ID, "unique request")
 			require.NoError(t, err)
-			f.Coordinator.WaitBackgroundJobs()
+			f.WaitBackgroundJobs()
 			accepted := acceptedUser(t, f, s.ID, "unique request")
 			current, err := f.Sessions.Get(f.Context, s.ID)
 			require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestAdmissionQueueHandoffOwnsQueuedRun(t *testing.T) {
 	case <-f.Context.Done():
 		t.Fatal(f.Context.Err())
 	}
-	f.Coordinator.WaitBackgroundJobs()
+	f.WaitBackgroundJobs()
 	require.False(t, f.Coordinator.IsSessionBusy(s.ID))
 	require.Contains(t, f.Provider.Requests()[1].Body, "queued bytes")
 }
@@ -307,7 +307,7 @@ func TestRunQueueCapturesModelSelection(t *testing.T) {
 	case <-f.Context.Done():
 		t.Fatal(f.Context.Err())
 	}
-	f.Coordinator.WaitBackgroundJobs()
+	f.WaitBackgroundJobs()
 	require.Len(t, f.Provider.Requests(), 2)
 }
 
@@ -335,7 +335,7 @@ func TestSummaryProviderErrorPersists(t *testing.T) {
 				_, err = f.Coordinator.Run(f.Context, s.ID, "branch")
 			}
 			require.ErrorContains(t, err, "scripted provider failure")
-			f.Coordinator.WaitBackgroundJobs()
+			f.WaitBackgroundJobs()
 			require.Len(t, f.Provider.Requests(), wantRequests)
 			require.False(t, f.Coordinator.IsSessionBusy(s.ID))
 			current, err := f.Sessions.Get(f.Context, s.ID)
@@ -396,7 +396,7 @@ func TestRunSummaryAuthRetry(t *testing.T) {
 	f.Provider.Enqueue(branchfixture.Response{ToolName: "todos", ToolInput: `{"todos":[]}`, InputTokens: 95}, branchfixture.Response{Status: http.StatusUnauthorized}, branchfixture.Response{Text: "summary"}, branchfixture.Response{Text: "continued"})
 	_, err = f.Coordinator.Run(f.Context, s.ID, "branch")
 	require.NoError(t, err)
-	f.Coordinator.WaitBackgroundJobs()
+	f.WaitBackgroundJobs()
 	current, err := f.Sessions.Get(f.Context, s.ID)
 	require.NoError(t, err)
 	path, err := f.Messages.GetBranchPath(f.Context, current.LeafMessageID)
@@ -479,7 +479,7 @@ func TestRunTitleFallbackUsesSelectedPath(t *testing.T) {
 	f.Provider.Enqueue(branchfixture.Response{Text: "branch response"}, branchfixture.Response{Status: http.StatusBadRequest}, branchfixture.Response{Text: "title fallback"})
 	_, err = f.Coordinator.Run(f.Context, s.ID, "replacement")
 	require.NoError(t, err)
-	f.Coordinator.WaitBackgroundJobs()
+	f.WaitBackgroundJobs()
 	requests := f.Provider.Requests()
 	require.Len(t, requests, 3)
 	for _, request := range requests {

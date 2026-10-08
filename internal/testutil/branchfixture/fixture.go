@@ -141,6 +141,10 @@ type Fixture struct {
 	Context     context.Context
 }
 
+func (f *Fixture) WaitBackgroundJobs() {
+	f.Coordinator.(interface{ WaitBackgroundJobs() }).WaitBackgroundJobs()
+}
+
 func New(t *testing.T) *Fixture {
 	t.Helper()
 	originalTransport := http.DefaultTransport
@@ -208,7 +212,7 @@ func New(t *testing.T) *Fixture {
 		cancel()
 		close(provider.stopped)
 		coord.CancelAll()
-		coord.WaitBackgroundJobs()
+		coord.(interface{ WaitBackgroundJobs() }).WaitBackgroundJobs()
 		require.NoError(t, messages.FlushAll(context.Background()))
 	})
 	return &Fixture{Conn: conn, Queries: queries, Messages: messages, Sessions: sessions, Coordinator: coord, Workspace: w, Config: cfg, Provider: provider, Context: ctx}
