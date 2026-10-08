@@ -22,7 +22,7 @@ ordinary flow; `1a761dec0` removes the unused core branch API. Later cleanup
 reads: navigation loads the transcript through main's `setSessionMessages` and
 reports failures through `navigateTreeDoneMsg.err`. Navigation regressions are in
 `branch_navigation_test.go` and composer restore in `composer_restore_test.go`;
-current usage is in the [session branching guide](../../docs/guides/session-branching.md).
+current usage is in the [session branching guide](../../../docs/guides/session-branching.md).
 
 > [!NOTE]
 > **Superseded history:** all sections below describe the pre-review UI and its

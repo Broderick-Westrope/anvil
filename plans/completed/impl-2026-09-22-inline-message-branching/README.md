@@ -48,7 +48,7 @@ navigate to the reply and leave the composer unchanged. Sending uses ordinary Ru
   removed. `WaitBackgroundJobs` is no longer on the `Coordinator` interface; tests
   reach it through `branchfixture.Fixture.WaitBackgroundJobs`.
 
-See the [session branching guide](../../docs/guides/session-branching.md) for current
+See the [session branching guide](../../../docs/guides/session-branching.md) for current
 usage. The phase files retain the implementation history with redesign notes.
 Current regression coverage includes `branch_navigation_test.go`,
 `composer_restore_test.go`, `run_integration_test.go` and `run_state_test.go`; the
