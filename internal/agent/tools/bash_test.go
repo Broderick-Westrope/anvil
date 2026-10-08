@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
@@ -195,7 +196,7 @@ func (m *recordingPermissionService) GrantForever(toolPattern string, inputPatte
 
 func newBashToolForTest(workingDir string) fantasy.AgentTool {
 	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
-	return NewBashTool(permissions, workingDir)
+	return NewBashTool(permissions, workingDir, nil)
 }
 
 func newBashToolWithRecordingPerms(workingDir string, allow bool) (fantasy.AgentTool, *recordingPermissionService) {
@@ -203,7 +204,35 @@ func newBashToolWithRecordingPerms(workingDir string, allow bool) (fantasy.Agent
 		Broker: pubsub.NewBroker[permission.PermissionRequest](),
 		allow:  allow,
 	}
-	return NewBashTool(perms, workingDir), perms
+	return NewBashTool(perms, workingDir, nil), perms
+}
+
+func TestBashTool_CIGuidanceFollowsJobWake(t *testing.T) {
+	t.Parallel()
+
+	const (
+		blockGuidance    = "When nothing else is left, block on it"
+		handBackGuidance = "end your turn instead of waiting"
+	)
+	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+
+	withoutWaker := NewBashTool(permissions, t.TempDir(), nil).Info().Description
+	require.Contains(t, withoutWaker, blockGuidance)
+	require.NotContains(t, withoutWaker, handBackGuidance)
+
+	var wake atomic.Bool
+	tool := NewBashTool(permissions, t.TempDir(), wake.Load)
+
+	asleep := tool.Info().Description
+	require.Equal(t, withoutWaker, asleep)
+
+	wake.Store(true)
+	awake := tool.Info()
+	require.Equal(t, BashToolName, awake.Name)
+	require.Contains(t, awake.Description, handBackGuidance)
+	require.Contains(t, awake.Description, "ask before pushing again")
+	require.NotContains(t, awake.Description, blockGuidance)
+	require.Contains(t, awake.Description, "<ci_checks>")
 }
 
 func TestBashTool_ChainedCommandsRequirePermission(t *testing.T) {

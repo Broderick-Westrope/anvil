@@ -54,8 +54,14 @@ After pushing to a branch that has a pull request (including right after `gh pr 
   `for i in $(seq 1 30); do gh pr checks <pr> --json name --jq length 2>/dev/null | grep -q '^[1-9]' && break; sleep 10; done; gh pr checks <pr> --watch --fail-fast --interval 30`
   The loop waits for checks to register; right after a push `gh pr checks` fails with "no checks reported".
 - Keep working on anything else that remains while it runs. You are notified when it exits: exit 0 means every check passed, non-zero means a check failed or the watch broke.
+{{- if .WakeOnJobEvents }}
+- When nothing else is left, end your turn instead of waiting so the user can keep talking to you. Say CI is still running, give the job ID, and say you'll pick up the result when it finishes. Don't block on it with job_output wait=true unless the user asked you to wait for CI.
+- The result reaches you either in a new turn started for you when the watcher exits while the session is idle, or alongside the user's next message. On a pass, report it in one line.
+- On failure, take the run ID from the failing check's link and read only what you need: `gh run view <run-id> --log-failed | tail -n 100`. If the failure is within the task you were given, fix it and run the checks you can locally. If the result arrived in a turn started without a new user message, report the failure and your fix and ask before pushing again; never push repeatedly while the user is away. After any new push, start a new watcher.
+{{- else }}
 - When nothing else is left, block on it with job_output wait=true (raise timeout_seconds for slow pipelines). Don't report the work as done while its CI is still running unless the user said not to wait.
 - On failure, take the run ID from the failing check's link and read only what you need: `gh run view <run-id> --log-failed | tail -n 100`. After pushing a fix, start a new watcher.
+{{- end }}
 - For pushes without a pull request (e.g. tags or main), get the run ID with `gh run list --branch <branch> --limit 1` and watch it the same way with `gh run watch <run-id> --exit-status --interval 30`.
 - NEVER poll CI with `sleep N; gh pr checks ...` or your own status-polling loops; the single background watcher above replaces them.
 - Skip this when the repository has no CI or the user said not to wait for it.

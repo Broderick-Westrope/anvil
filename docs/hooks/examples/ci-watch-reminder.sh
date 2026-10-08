@@ -31,5 +31,5 @@ if printf '%s' "$CMD" | grep -qE -- '--dry-run'; then
 fi
 
 cat <<'EOF'
-{"context": "CI reminder: if this push or PR creation succeeded and the branch has a pull request, start one background CI watcher now as described in <ci_checks> of the bash tool (run_in_background=true, gh pr checks <pr> --watch --fail-fast). Keep working while it runs; block on it with job_output wait=true only when nothing else is left. Skip this if a watcher for this PR is already running (check job_list) or the user said not to wait for CI."}
+{"context": "CI reminder: if this push or PR creation succeeded and the branch has a pull request, start one background CI watcher now as described in <ci_checks> of the bash tool (run_in_background=true, gh pr checks <pr> --watch --fail-fast). Keep working while it runs; when nothing else is left, follow <ci_checks> on whether to wait for it or end your turn. Skip this if a watcher for this PR is already running (check job_list) or the user said not to wait for CI."}
 EOF
