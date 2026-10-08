@@ -55,6 +55,10 @@ func (m *mockBashPermissionService) SubscribeNotifications(ctx context.Context) 
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }
 
+func (m *mockBashPermissionService) PendingRequest() (permission.PendingPermission, bool) {
+	return permission.PendingPermission{}, false
+}
+
 func (m *mockBashPermissionService) GrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {
 	return nil
 }
@@ -175,6 +179,10 @@ func (m *recordingPermissionService) ResetBouncerCache() {}
 
 func (m *recordingPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
+}
+
+func (m *recordingPermissionService) PendingRequest() (permission.PendingPermission, bool) {
+	return permission.PendingPermission{}, false
 }
 
 func (m *recordingPermissionService) GrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {

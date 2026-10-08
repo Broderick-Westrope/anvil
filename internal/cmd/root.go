@@ -143,6 +143,12 @@ anvil --continue --there
 		com := common.DefaultCommon(ws)
 		model := ui.New(com, sessionID, continueLast)
 
+		herdrReporter := startHerdrReporter()
+		defer herdrReporter.Close()
+		if herdrReporter != nil {
+			model.SetHerdrHandler(herdrReporter.Update)
+		}
+
 		handoffDir := reload.Dir(config.GlobalDataDir())
 		reload.Sweep(handoffDir, time.Now())
 		applyStartupHandoff(handoffDir, reload.StartupHandoffPath(), sessionID, ws, model)
@@ -194,7 +200,7 @@ anvil --continue --there
 			return finishReload(req, reloadDeps{
 				out:     cmd.OutOrStdout(),
 				tracker: tracker,
-				cleanup: cleanup,
+				cleanup: func() { herdrReporter.Close(); cleanup() },
 				exec:    execAnvil,
 				workDir: ws.WorkingDir(),
 				dataDir: absDataDir(cmd),

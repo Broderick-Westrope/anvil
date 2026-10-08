@@ -34,7 +34,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
-	"github.com/Broderick-Westrope/anvil/internal/home"
+	"github.com/Broderick-Westrope/anvil/internal/herdr"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -185,10 +185,14 @@ type (
 
 // UI represents the main user interface model.
 type UI struct {
-	recoveryHandler func(recovery.Entry)
-	recoveryEntry   recovery.Entry
-	com             *common.Common
-	session         *session.Session
+	recoveryHandler  func(recovery.Entry)
+	recoveryEntry    recovery.Entry
+	herdrHandler     func(herdr.State)
+	herdrState       herdr.State
+	herdrSent        bool
+	herdrTickPending bool
+	com              *common.Common
+	session          *session.Session
 
 	// composerSent is the composer state last reported to the workspace;
 	// navigating is set while a branch navigation moves the leaf, and
@@ -701,6 +705,12 @@ func (m *UI) activeChatArea() image.Rectangle {
 
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	m.trackHerdrState()
+	return model, tea.Batch(cmd, m.herdrTickCmd())
+}
+
+func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.trackRecoverySession()
 	defer m.syncComposerState()
 	var cmds []tea.Cmd
@@ -714,6 +724,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Update terminal capabilities
 	m.caps.Update(msg)
 	switch msg := msg.(type) {
+	case herdrTickMsg:
+		m.herdrTickPending = false
 	case tea.EnvMsg:
 		// Is this Windows Terminal?
 		if !m.sendProgressBar {
@@ -3599,7 +3611,11 @@ func (m *UI) View() tea.View {
 	}
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = m.caps.ReportFocusEvents
-	v.WindowTitle = "anvil " + home.Short(m.com.Workspace.WorkingDir())
+	var sessionTitle string
+	if m.hasSession() {
+		sessionTitle = headerSessionTitle(m.session)
+	}
+	v.WindowTitle = windowTitle(sessionTitle, m.com.Workspace.WorkingDir())
 
 	if m.canvas.RenderBuffer == nil || m.canvas.Bounds().Dx() != m.width || m.canvas.Bounds().Dy() != m.height {
 		m.canvas = uv.NewScreenBuffer(m.width, m.height)

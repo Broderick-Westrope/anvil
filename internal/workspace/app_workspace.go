@@ -259,6 +259,10 @@ func (w *AppWorkspace) PermissionDeny(perm permission.PermissionRequest, reason 
 	w.app.Permissions.Deny(perm, reason)
 }
 
+func (w *AppWorkspace) PermissionPending() (permission.PendingPermission, bool) {
+	return w.app.Permissions.PendingRequest()
+}
+
 func (w *AppWorkspace) PermissionYoloLevel() config.YoloLevel {
 	return w.app.Permissions.YoloLevel()
 }

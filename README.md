@@ -21,6 +21,7 @@
 - **Granular Permissions:** pattern-based allow/ask/deny rules per tool and per input (e.g. allow `git status *` but deny `rm *`), with chained-command analysis so dangerous commands can't ride along with allowed ones, editable patterns at the prompt, and session or forever grants ([details](#tool-permissions))
 - **Permission Bouncer:** an optional classifier that answers the prompts your rules leave open, letting routine calls in, turning dangerous ones away, and sending the uncertain ones to you, plus a triage command that turns repeated approvals into explicit rules so fewer calls need either ([details](#bouncer))
 - **Smart Session Titles:** finding old sessions is easier thanks to titles generated from the first real exchange (not your opening prompt); rename or regenerate them from the command palette — manual titles are never overwritten
+- **Herdr Integration:** inside a [Herdr](https://herdr.dev) pane, Anvil reports working/idle/blocked status and names its tab after the session so finished agents stand out across workspaces ([details](./docs/herdr/))
 - **Plugins:** bundle skills, slash commands, and custom agents into a single installable package with manifest-based discovery and auto-approved file access
 - **Quality of Life:** autocomplete for commands, skills, and builtins; Ctrl+C clears the entire input; Alt+Enter newline in Ghostty; paste no longer clobbers existing prompt text
 
@@ -410,6 +411,12 @@ branch and survives restarts.
 
 Anvil has preliminary support for hooks. For details, see
 [the hook guide](./docs/hooks/).
+
+### Herdr
+
+Inside a [Herdr](https://herdr.dev) pane, Anvil reports its status and
+names its tab after the session automatically. For details, see
+[the Herdr guide](./docs/herdr/).
 
 ### Ignoring Files
 

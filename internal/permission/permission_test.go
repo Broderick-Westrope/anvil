@@ -678,3 +678,94 @@ func TestResetBouncerCacheOrphansInFlightAllow(t *testing.T) {
 	require.True(t, r.Granted)
 	require.Equal(t, int32(2), fake.calls.Load(), "the repeat is assessed again rather than served from cache")
 }
+
+func TestPendingRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		resolve func(Service, PermissionRequest)
+		granted bool
+	}{
+		{"grant", func(s Service, p PermissionRequest) { s.Grant(p) }, true},
+		{"deny", func(s Service, p PermissionRequest) { s.Deny(p, "") }, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil)
+			events := service.Subscribe(t.Context())
+
+			_, ok := service.PendingRequest()
+			require.False(t, ok, "nothing is pending before a request")
+
+			var wg sync.WaitGroup
+			var result RequestResult
+			wg.Go(func() {
+				var err error
+				result, err = service.Request(t.Context(), CreatePermissionRequest{
+					SessionID: "s1",
+					ToolName:  "bash",
+					Action:    "execute",
+					Input:     "echo hello",
+				})
+				require.NoError(t, err)
+			})
+
+			event := <-events
+			pending, ok := service.PendingRequest()
+			require.True(t, ok)
+			require.Equal(t, PendingPermission{
+				ID:        event.Payload.ID,
+				SessionID: "s1",
+				ToolName:  "bash",
+			}, pending)
+
+			tt.resolve(service, event.Payload)
+			_, ok = service.PendingRequest()
+			require.False(t, ok, "nothing is pending once the request is resolved")
+
+			wg.Wait()
+			require.Equal(t, tt.granted, result.Granted)
+		})
+	}
+}
+
+func TestPendingRequestConcurrentWithReview(t *testing.T) {
+	t.Parallel()
+
+	reviewer := &fakeReviewer{
+		opinion: ReviewOpinion{Verdict: ReviewAllow, Quote: "open a PR for this"},
+		release: make(chan struct{}),
+	}
+	h := newBouncerHarness(t, &fakeBouncer{outcome: AssessEscalate}, BouncerEnforce, nil, nil,
+		reviewOption(reviewer, "please open a PR for this"))
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				h.svc.PendingRequest()
+			}
+		}
+	})
+
+	done := requestAsync(testCtx(t), h.svc, h.req("call", "gh pr create"))
+	perm := waitPrompt(t, h.events)
+	close(reviewer.release)
+	update := waitUpdate(t, h.events)
+
+	pending, ok := h.svc.PendingRequest()
+	require.True(t, ok)
+	require.Equal(t, perm.ID, pending.ID)
+
+	h.svc.Grant(update)
+	require.NoError(t, waitResult(t, done).err)
+	close(stop)
+	wg.Wait()
+}

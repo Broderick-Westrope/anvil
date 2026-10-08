@@ -43,6 +43,7 @@ internal/
     sql/                           Raw SQL queries (consumed by sqlc)
     migrations/                    Schema migrations
   lsp/                             LSP client manager, auto-discovery, on-demand startup, idle reaping
+  herdr/                           Reports TUI status and session to the Herdr multiplexer via its CLI
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
@@ -103,6 +104,14 @@ internal/
   `lsp_idle_timeout` minutes of inactivity (default 15, `0` disables) and
   restart on demand. Any code path that reads a client must call
   `Manager.Touch(name)` so active clients are never reaped.
+- **Herdr reporting**: inside a Herdr pane the interactive TUI reports
+  `idle`/`working`/`blocked` and names its tab via the `herdr` CLI
+  (`internal/herdr`, wired in `internal/cmd/root.go`). The UI snapshots
+  state in `UI.Update` (`internal/ui/model/herdr.go`); the reporter
+  debounces and sends from one goroutine. Design, validated Herdr
+  behaviour and the isolated-session test recipe live in
+  `plans/completed/design-2026-10-08-herdr-integration.md`; never test
+  against the user's default Herdr session.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
