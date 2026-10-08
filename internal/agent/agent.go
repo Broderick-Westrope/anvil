@@ -376,7 +376,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		msgs = append(msgs, *noticeMsg)
 		currentLeaf = noticeMsg.ID
 	} else if state.acceptedUserID != "" {
-		msgs = trimFailedAttemptMessages(msgs, state.acceptedUserID)
+		msgs = slices.DeleteFunc(msgs, func(m message.Message) bool { return m.ID == state.acceptedUserID })
 	} else {
 		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
 		if err != nil {
@@ -1148,15 +1148,6 @@ func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
 			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
 		},
 	}
-}
-
-func trimFailedAttemptMessages(msgs []message.Message, acceptedUserID string) []message.Message {
-	for i, m := range msgs {
-		if m.ID == acceptedUserID {
-			return append(msgs[:i:i], msgs[i+1:]...)
-		}
-	}
-	return msgs
 }
 
 // sessionHeaders returns the HTTP headers we use for cache affinity on
