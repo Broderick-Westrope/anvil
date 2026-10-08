@@ -1,5 +1,24 @@
 # Herdr Integration Design Spec
 
+> **Status:** Implemented on main (2026-10-07). Implementation plan and
+> execution notes: `plans/impl-2026-10-08-herdr-integration.md`. User
+> guide: `docs/herdr/README.md`. Known issues and follow-ups are at the end
+> of this document.
+
+**Motivation (user workflow):** the user runs Herdr with one workspace per
+topic or project (4–5 at once, work and personal), each holding 4–5 Anvil
+agents in tabs that stay unnamed (numbers). Anvil's compact header already
+shows the session title, so inside a pane identity is clear, but across
+panes and workspaces it is not: switching workspaces is slow, and Anvil's
+existing desktop notifications (`internal/ui/model/ui.go`, via `beeep`)
+all look alike, so it is hard to tell which agent finished and where.
+Desktop notifications already cover the *alert*; what this integration
+adds is a persistent, cross-workspace view in Herdr's Agent panel with an
+unread `done` state, `blocked` highlighting, jump-to-pane (`prefix+g`,
+filter `d`/`b`), and — via tab naming — toasts and rows that name the
+session. Without a reporter, Herdr treats Anvil panes as plain terminals
+and none of this works.
+
 **Problem:** Running Anvil inside [Herdr](https://herdr.dev) gives no rich
 agent status. Herdr has no screen manifest for Anvil (it is not a
 Herdr-known agent), so panes running Anvil show as plain terminals: no
@@ -393,3 +412,80 @@ with a fake reporter script and the real Anvil binary.
 pending-permission snapshot is a new `PendingRequest()` getter on the
 permission service; run start/end needs no event source because state
 is polled (see State model).
+
+**Testing against Herdr (recipe):**
+
+Never experiment in the user's `default` Herdr session. Use a throwaway
+named session with its own config, and delete it afterwards:
+
+```bash
+scripts/tui-test.sh                       # sandboxed Anvil binary + env
+HERDR_CONFIG_PATH=/tmp/herdr-validate/config.toml herdr --session anvil-validate
+# (drive the TUI through the terminal MCP; see the tui-manual-testing skill)
+export HERDR_SOCKET_PATH=~/.config/herdr/sessions/anvil-validate/herdr.sock
+herdr tab create --workspace w1 --cwd /tmp
+herdr pane run w1:p2 "HERDR_BIN_PATH=/tmp/herdr-validate/herdr-wrap <sandboxed anvil launch>"
+herdr agent list | jq '.result.agents[]'
+herdr session stop anvil-validate && herdr session delete anvil-validate
+scripts/tui-test.sh --clean
+```
+
+- `herdr-wrap` is a two-line script that appends `"$@"` to a log and
+  `exec`s the real binary; it shows exactly which commands Anvil sends.
+- `HERDR_CONFIG_PATH` overrides the config file; validate configs with
+  `herdr config check` and apply with `herdr server reload-config`.
+- `herdr --skill` prints Herdr's own agent guide; `herdr.dev/llms.txt`
+  indexes the raw docs for the installed version.
+- Do not probe commands with `--help` after positional args: `herdr tab
+  rename <id> --help` renames the tab to `--help`.
+- `herdr pane send-text` input may not reach an Anvil pane whose tab is
+  not visible in the attached client; drive the TUI through the terminal
+  MCP (focused tab) when a test depends on typing.
+
+**Known issues and follow-ups (as of 2026-10-07):**
+
+- *First-turn toast shows the tab number.* On a new session's first
+  prompt the `done` toast fires before the session title is generated, so
+  it names the tab by number; later turns show the title.
+- *Slow first `herdr` spawn.* The first CLI calls from a freshly built
+  binary took ~2–5s on macOS and two attempts hit the 5s timeout; the
+  backoff retry covered it. Registration can lag a few seconds on a cold
+  start. Not caused by Herdr (spawn from a test program takes ~8ms).
+- *Bubble Tea shutdown deadlock on signal SIGINT (pre-existing).* Sending
+  SIGINT as a signal (`pkill -INT`), not the ctrl+c key, once left the
+  TUI hung in `Program.shutdown`: `handleSignals` blocked sending on the
+  msgs channel while `StreamEvents` waited. Unrelated to Herdr; worth an
+  upstream look.
+- *Unexplained input hang (not reproduced).* Early in testing, one Anvil
+  instance stopped accepting input after its Herdr tab was hidden and
+  shown again (process alive, idle CPU). Several later attempts did not
+  reproduce it and no stack trace was captured. If it recurs, capture
+  `GOTRACEBACK=all` + `pkill -QUIT` output (stderr redirected to a file).
+- *Digit-only user tab names are claimed* (see Tab naming).
+- *Crash leaves the session name on the tab*, which the next Anvil then
+  treats as user-set.
+
+Deferred follow-ups:
+
+- Automatic restore: send `-- anvil --session <id>` as the resume command
+  with state reports (needs Herdr ≥ 0.10.0; see Design Decisions).
+- Wake the poll from agent/permission events instead of a 250ms tick
+  while busy, if profiling shows the tick matters.
+- Cap tab labels by display width (CJK) rather than rune count.
+- Optional defence in depth: check `HERDR_SOCKET_PATH` is owned by the
+  current uid.
+- Cache the sanitised session title instead of recomputing it on every
+  `Update`/`View`.
+- `anvil run` reporting and an opt-out option remain out of scope; add
+  the opt-out only if Herdr changes semantics so Anvil misreports.
+
+**Discarded alternatives (from the design conversation):**
+
+- `pane report-metadata --display-agent/--title`: display-only, expires
+  after at most 24h (needs TTL refresh), and does not change toast text.
+- Terminal title alone: Herdr exposes it as a sidebar token, but a
+  non-reporting pane never appears in the Agent panel, and toasts never
+  show it. Kept as a cheap complement, not the identity mechanism.
+- Reporting only `blocked`/`idle` from the existing desktop-notification
+  call sites: cheaper, but misses background sessions and sub-agent
+  prompts and gives no `working` state.

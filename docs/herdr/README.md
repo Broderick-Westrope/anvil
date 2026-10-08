@@ -40,6 +40,10 @@ On a clean exit (and before `/reload-instance`) the tab reverts to its
 position number. After a crash the session name stays, and the next Anvil
 in that tab treats it as a name you chose.
 
+On a new session's first prompt, the title is generated after the turn
+ends, so that turn's `done` toast shows the tab number. Later turns show
+the session title.
+
 ## Terminal Title
 
 Anvil sets the terminal title to `<session title> · anvil`, or
@@ -84,3 +88,20 @@ delivery = "herdr"
 
 Add `terminal_title_stripped` to a row if you want the session title shown
 for panes in split or user-named tabs.
+
+`delivery = "herdr"` shows in-app toasts, which were verified to show the
+workspace and tab name. `"system"` (OS notifications) and `"terminal"`
+are also available; their exact text has not been checked. Toasts are
+suppressed for the tab you are looking at.
+
+## Troubleshooting
+
+- **Pane not listed as an agent:** run `anvil logs` and look for "Herdr
+  status reporting inactive", which gives the reason. Check
+  `herdr agent list` from inside the pane.
+- **Status appears a few seconds late on first launch:** the first
+  `herdr` calls can be slow on a cold start; Anvil retries with backoff.
+- **Wrong or stale state after Anvil crashed:** Herdr clears the agent
+  once the pane is back at a shell prompt, usually within a few seconds.
+- **Tab not renamed:** the tab has another pane, carries a name you set,
+  or the session is still untitled.
