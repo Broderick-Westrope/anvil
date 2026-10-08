@@ -60,6 +60,8 @@ type Commands struct {
 	hasQueue   bool
 	selected   CommandType
 
+	branchReturnAvailable bool
+
 	spinner spinner.Model
 	loading bool
 
@@ -79,7 +81,7 @@ type Commands struct {
 var _ Dialog = (*Commands)(nil)
 
 // NewCommands creates a new commands dialog.
-func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, hasQueue bool, customCommands []commands.CustomCommand, mcpPrompts []commands.MCPPrompt) (*Commands, error) {
+func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, hasQueue, branchReturnAvailable bool, customCommands []commands.CustomCommand, mcpPrompts []commands.MCPPrompt) (*Commands, error) {
 	c := &Commands{
 		com:            com,
 		selected:       SystemCommands,
@@ -89,6 +91,8 @@ func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, has
 		hasQueue:       hasQueue,
 		customCommands: customCommands,
 		mcpPrompts:     mcpPrompts,
+
+		branchReturnAvailable: branchReturnAvailable,
 	}
 
 	help := help.New()
@@ -456,6 +460,10 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "switch_model", "Switch Model", "ctrl+l", ActionOpenDialog{ModelsID}),
 		NewCommandItem(c.com.Styles, "tree", "Session Tree", "", ActionOpenDialog{TreeID}),
 		NewCommandItem(c.com.Styles, "branch", "Branch From Message", "", ActionOpenDialog{BranchID}),
+	}
+
+	if c.branchReturnAvailable {
+		commands = append(commands, NewCommandItem(c.com.Styles, "branch_return", "Return to pre-branch conversation", "", ActionReturnToPreBranch{}))
 	}
 
 	// Only show compact command if there's an active session

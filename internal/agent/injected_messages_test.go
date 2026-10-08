@@ -142,11 +142,10 @@ func (m *scriptedModel) StreamObject(context.Context, fantasy.ObjectCall) (fanta
 func (m *scriptedModel) Provider() string { return "scripted" }
 func (m *scriptedModel) Model() string    { return "scripted" }
 
-// TestQueuedPromptVisibleInLaterSteps reproduces prompts that the user
-// sends while the agent is mid-run: the queued prompt must stay in the
-// model's input for every remaining step of the run, not just the step it
-// was injected in.
-func TestQueuedPromptVisibleInLaterSteps(t *testing.T) {
+// TestQueuedPromptRunsAfterCurrentRun reproduces prompts that the user
+// sends while the agent is mid-run: the queued prompt is not injected into
+// the running turn but starts its own run once the current one finishes.
+func TestQueuedPromptRunsAfterCurrentRun(t *testing.T) {
 	t.Parallel()
 
 	env := testEnv(t)
@@ -186,7 +185,7 @@ func TestQueuedPromptVisibleInLaterSteps(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Len(t, model.prompts, 4)
+	require.Len(t, model.prompts, 5)
 
 	countQueued := func(prompt []fantasy.Message) int {
 		n := 0
@@ -198,22 +197,12 @@ func TestQueuedPromptVisibleInLaterSteps(t *testing.T) {
 		return n
 	}
 
-	require.Zero(t, countQueued(model.prompts[0]), "prompt is queued during step 0's tool call")
-	for step := 1; step < len(model.prompts); step++ {
-		require.Equal(t, 1, countQueued(model.prompts[step]),
-			"queued prompt must appear exactly once in step %d", step)
+	for step := range 4 {
+		require.Zero(t, countQueued(model.prompts[step]),
+			"queued prompt must not be injected into the running turn at step %d", step)
 	}
-
-	// The queued prompt must stay at the position it was injected:
-	// directly after step 0's tool result.
-	last := model.prompts[len(model.prompts)-1]
-	idx := -1
-	for i, msg := range last {
-		if msg.Role == fantasy.MessageRoleUser && strings.Contains(textOf(msg), queuedText) {
-			idx = i
-		}
-	}
-	require.Positive(t, idx)
-	require.Equal(t, fantasy.MessageRoleTool, last[idx-1].Role)
-	require.Equal(t, fantasy.MessageRoleAssistant, last[idx+1].Role)
+	last := model.prompts[4]
+	require.Equal(t, 1, countQueued(last))
+	require.Equal(t, fantasy.MessageRoleUser, last[len(last)-1].Role)
+	require.Contains(t, textOf(last[len(last)-1]), queuedText)
 }

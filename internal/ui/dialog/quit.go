@@ -15,6 +15,7 @@ const QuitID = "quit"
 type Quit struct {
 	com        *common.Common
 	selectedNo bool // true if "No" button is selected
+	warning    string
 	keyMap     struct {
 		LeftRight,
 		EnterSpace,
@@ -29,10 +30,11 @@ type Quit struct {
 var _ Dialog = (*Quit)(nil)
 
 // NewQuit creates a new quit confirmation dialog.
-func NewQuit(com *common.Common) *Quit {
+func NewQuit(com *common.Common, warning string) *Quit {
 	q := &Quit{
 		com:        com,
 		selectedNo: true,
+		warning:    warning,
 	}
 	q.keyMap.LeftRight = key.NewBinding(
 		key.WithKeys("left", "right"),
@@ -109,15 +111,15 @@ func (q *Quit) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		{Text: "Nope", Selected: q.selectedNo, Padding: 3},
 	}
 	buttons := common.ButtonGroup(q.com.Styles, buttonOpts, " ")
+	lines := []string{question}
+	if q.warning != "" {
+		lines = append(lines, "", hintStyle.Render(q.warning))
+	}
+	lines = append(lines, "", buttons, "", hintStyle.Render(hintLineOne), hintStyle.Render(hintLineTwo))
 	content := baseStyle.Render(
 		lipgloss.JoinVertical(
 			lipgloss.Center,
-			question,
-			"",
-			buttons,
-			"",
-			hintStyle.Render(hintLineOne),
-			hintStyle.Render(hintLineTwo),
+			lines...,
 		),
 	)
 

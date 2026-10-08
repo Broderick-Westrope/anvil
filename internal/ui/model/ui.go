@@ -360,11 +360,7 @@ type UI struct {
 	lastClickTime time.Time
 
 	// Prompt history for up/down navigation through previous messages.
-	promptHistory struct {
-		messages []string
-		index    int
-		draft    string
-	}
+	promptHistory historySnapshot
 
 	// reloadHandoff is restored on Init, and reloadRequest is set once
 	// the user confirms /reload-instance.
@@ -383,7 +379,12 @@ type UI struct {
 	// canvas is the reusable screen buffer. It is reallocated only when the
 	// terminal dimensions change; screen.Clear resets every cell so stale
 	// frames cannot leak between reuses.
-	canvas uv.ScreenBuffer
+	canvas                uv.ScreenBuffer
+	pendingBranch         *branchReturnSnapshot
+	branchReturn          *branchReturnSnapshot
+	branchNavigation      *branchReturnSnapshot
+	branchRestoreSnapshot *branchReturnSnapshot
+	branchRestoring       bool
 }
 
 // drillInEntry represents one level of drill-in navigation into a subagent
@@ -744,6 +745,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case loadSessionMsg:
+		m.clearBranchState()
 		m.clearDrillStack()
 		if m.forceCompactMode {
 			m.isCompact = true
@@ -880,9 +882,15 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case promptHistoryLoadedMsg:
-		m.promptHistory.messages = msg.messages
+		m.promptHistory.messages = nil
+		for _, source := range msg.messages {
+			state := composerFromMessage(source, m.com.Workspace.ActiveSkillByName, m.customCommands)
+			if !state.isEmpty() {
+				m.promptHistory.messages = append(m.promptHistory.messages, state)
+			}
+		}
 		m.promptHistory.index = -1
-		m.promptHistory.draft = ""
+		m.promptHistory.draft = composerSnapshot{}
 
 	case closeDialogMsg:
 		m.dialog.CloseFrontDialog()
@@ -2575,6 +2583,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 
+	case dialog.ActionReturnToPreBranch:
+		m.dialog.CloseFrontDialog()
+		cmds = append(cmds, m.beginBranchReturn(false))
+
 	case dialog.ActionReloadConfig:
 		m.dialog.CloseDialog(dialog.CommandsID)
 		cmds = append(cmds, m.reloadConfig())
@@ -3025,6 +3037,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			if ok := m.attachments.Update(msg); ok {
 				return tea.Batch(cmds...)
 			}
+			if m.pendingBranch != nil && key.Matches(msg, m.keyMap.Editor.Escape) && !m.isAgentBusy() {
+				return m.beginBranchReturn(true)
+			}
 
 			switch {
 			case key.Matches(msg, m.keyMap.Editor.AddImage):
@@ -3042,6 +3057,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				cmds = append(cmds, m.pasteImageFromClipboard)
 
 			case key.Matches(msg, m.keyMap.Editor.SendMessage):
+				if m.branchNavigation != nil || m.branchRestoring {
+					return nil
+				}
 				prevHeight := m.textarea.Height()
 				value := m.textarea.Value()
 				if before, ok := strings.CutSuffix(value, "\\"); ok {
@@ -3265,6 +3283,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if cmd := m.newSession(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+			case key.Matches(msg, m.keyMap.Chat.Branch):
+				cmds = append(cmds, m.branchFromSelectedMessage())
 			case key.Matches(msg, m.keyMap.Chat.Expand):
 				m.activeChat().ToggleExpandedSelectedItem()
 			case key.Matches(msg, m.keyMap.Chat.Up):
@@ -3741,6 +3761,9 @@ func (m *UI) ShortHelp() []key.Binding {
 		k.Help,
 	)
 
+	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isAgentBusy() {
+		binds = append(binds, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch")))
+	}
 	return binds
 }
 
@@ -3905,6 +3928,12 @@ func (m *UI) FullHelp() [][]key.Binding {
 		},
 	)
 
+	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isAgentBusy() {
+		binds = append(binds, []key.Binding{key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch"))})
+	}
+	if m.focus == uiFocusMain && hasSession && m.session.ParentSessionID == "" && !m.isDrilledIn() {
+		binds = append(binds, []key.Binding{k.Chat.Branch})
+	}
 	return binds
 }
 
@@ -4722,6 +4751,11 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		return util.ReportError(fmt.Errorf("orchestrator agent is not initialized"))
 	}
 
+	if m.pendingBranch != nil {
+		m.branchReturn = m.pendingBranch
+		m.pendingBranch = nil
+	}
+
 	var cmds []tea.Cmd
 	if !m.hasSession() {
 		newSession, err := m.com.Workspace.CreateSession(context.Background(), "New Session")
@@ -5078,6 +5112,22 @@ func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
 	if !m.hasSession() {
 		return nil
 	}
+	if m.branchNavigation != nil || m.branchRestoring {
+		return util.ReportWarn("Please wait for navigation to finish.")
+	}
+	if m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty() {
+		return util.ReportWarn("Return to pre-branch conversation, then send or clear its draft before branching again.")
+	}
+	m.branchNavigation = &branchReturnSnapshot{
+		sessionID:        m.session.ID,
+		originalDraft:    m.captureComposer(),
+		originalHistory:  m.promptHistory,
+		originalViewport: m.chat.branchViewport(),
+	}
+	return m.cancelThenNavigate(msg)
+}
+
+func (m *UI) cancelThenNavigate(msg dialog.ActionNavigateTree) tea.Cmd {
 	// Report navigation before the async leaf move so no job wake starts
 	// a turn on the branch being left.
 	m.navigating = true
@@ -5110,6 +5160,8 @@ func (m *UI) pollAgentIdle(nav dialog.ActionNavigateTree, sessionID string, atte
 // cause a mismatch.
 func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
 	if !m.hasSession() || m.session.ID != msg.sessionID {
+		m.branchNavigation = nil
+		m.branchRestoring = false
 		m.navigating = false
 		return nil
 	}
@@ -5117,8 +5169,7 @@ func (m *UI) handleCheckAgentIdle(msg checkAgentIdleMsg) tea.Cmd {
 		return m.navigateToTreeNode(msg.nav)
 	}
 	if msg.attempt >= maxIdlePolls {
-		m.navigating = false
-		return util.ReportError(fmt.Errorf("timed out waiting for agent to stop"))
+		return m.handleNavigateTreeDone(navigateTreeDoneMsg{err: fmt.Errorf("timed out waiting for agent to stop")})
 	}
 	return m.pollAgentIdle(msg.nav, msg.sessionID, msg.attempt+1)
 }
@@ -5129,40 +5180,45 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 		m.navigating = false
 		return nil
 	}
-
-	// Determine target leaf. For user messages, move to the parent so the
-	// user can re-submit from that point. The ParentMessageID is passed
-	// directly from the dialog to avoid an extra DB fetch.
 	targetLeafID := msg.MessageID
-	if msg.Role == message.User && msg.ParentMessageID != "" {
+	if msg.Role == message.User {
 		targetLeafID = msg.ParentMessageID
 	}
 
 	ws := m.com.Workspace
 	sessionID := m.session.ID
-	content := msg.Content
-	role := msg.Role
+	snapshot := m.branchNavigation
+	restore := m.branchRestoreSnapshot
 
 	return func() tea.Msg {
 		ctx := context.Background()
+		if snapshot != nil {
+			source, err := ws.GetSession(ctx, sessionID)
+			if err != nil {
+				return navigateTreeDoneMsg{err: err}
+			}
+			saved := *snapshot
+			saved.leafID = source.LeafMessageID
+			snapshot = &saved
+		}
 
 		// Move the leaf pointer.
 		if err := ws.MoveLeaf(ctx, sessionID, targetLeafID); err != nil {
-			return navigateTreeDoneMsg{err: err}
+			return navigateTreeDoneMsg{err: err, snapshot: snapshot}
 		}
 
 		// Reload the session and branch path in the command (not in
 		// Update) to avoid doing IO in the Bubble Tea update loop.
 		sess, err := ws.GetSession(ctx, sessionID)
 		if err != nil {
-			return navigateTreeDoneMsg{err: err}
+			return navigateTreeDoneMsg{err: err, snapshot: snapshot, movedLeaf: true}
 		}
 
 		var msgs []message.Message
 		if targetLeafID != "" {
 			msgs, err = ws.GetBranchPath(ctx, targetLeafID)
 			if err != nil {
-				return navigateTreeDoneMsg{err: err}
+				return navigateTreeDoneMsg{err: err, snapshot: snapshot, movedLeaf: true}
 			}
 		}
 
@@ -5170,8 +5226,10 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 			session:  &sess,
 			leafID:   targetLeafID,
 			messages: msgs,
-			content:  content,
-			role:     role,
+			source:   msg.Source,
+			role:     msg.Role,
+			snapshot: snapshot,
+			restore:  restore,
 		}
 	}
 }
@@ -5180,12 +5238,15 @@ func (m *UI) navigateToTreeNode(msg dialog.ActionNavigateTree) tea.Cmd {
 // the session reloaded, and the branch path fetched. All IO happens
 // inside the command; Update only mutates state.
 type navigateTreeDoneMsg struct {
-	err      error // Set when the move or reload failed.
-	session  *session.Session
-	leafID   string
-	messages []message.Message
-	content  string
-	role     message.MessageRole
+	err       error // Set when the move or reload failed.
+	movedLeaf bool
+	snapshot  *branchReturnSnapshot
+	restore   *branchReturnSnapshot
+	session   *session.Session
+	leafID    string
+	messages  []message.Message
+	source    message.Message
+	role      message.MessageRole
 }
 
 // handleNavigateTreeDone rebuilds the chat view after the leaf pointer has
@@ -5193,10 +5254,22 @@ type navigateTreeDoneMsg struct {
 func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.navigating = false
 	if msg.err != nil {
+		if msg.movedLeaf && !m.branchRestoring && msg.snapshot != nil {
+			m.pendingBranch = msg.snapshot
+		}
+		m.branchNavigation = nil
+		m.branchRestoring = false
+		m.branchRestoreSnapshot = nil
 		return util.ReportError(msg.err)
 	}
 
 	var cmds []tea.Cmd
+	if !m.hasSession() || m.session.ID != msg.session.ID {
+		return nil
+	}
+	m.branchNavigation = nil
+	m.branchRestoring = false
+	m.branchRestoreSnapshot = nil
 
 	m.session = msg.session
 	m.clearDrillStack()
@@ -5209,19 +5282,34 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 		m.lastUserMessageTime = 0
 	}
 
-	// Pre-fill editor for user messages.
-	if msg.role == message.User && msg.content != "" {
-		prevHeight := m.textarea.Height()
-		m.textarea.SetValue(msg.content)
-		m.textarea.MoveToEnd()
-		if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
-			cmds = append(cmds, cmd)
+	prevHeight := m.textarea.Height()
+	switch {
+	case msg.restore != nil:
+		if m.pendingBranch == msg.restore {
+			m.pendingBranch = nil
 		}
+		if m.branchReturn == msg.restore {
+			m.branchReturn = nil
+		}
+		m.restoreComposer(msg.restore.originalDraft)
+		m.promptHistory = msg.restore.originalHistory
+	case msg.role == message.User:
+		// Pre-fill editor for user messages.
+		m.restoreComposer(composerFromMessage(msg.source, m.com.Workspace.ActiveSkillByName, m.customCommands))
+	}
+	if msg.restore == nil && msg.snapshot != nil {
+		m.pendingBranch = msg.snapshot
+	}
+	if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 
 	m.focus = uiFocusEditor
 	cmds = append(cmds, m.textarea.Focus())
 	m.updateLayoutAndSize()
+	if msg.restore != nil {
+		m.chat.restoreBranchViewport(msg.restore.originalViewport)
+	}
 
 	return tea.Batch(cmds...)
 }
@@ -5298,8 +5386,11 @@ func (m *UI) openQuitDialog() tea.Cmd {
 		}
 	}
 
-	quitDialog := dialog.NewQuit(m.com)
-	m.dialog.OpenDialog(quitDialog)
+	var warning string
+	if (m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty()) || (m.pendingBranch != nil && !m.pendingBranch.originalDraft.isEmpty()) {
+		warning = "A saved pre-branch draft will be lost."
+	}
+	m.dialog.OpenDialog(dialog.NewQuit(m.com, warning))
 	return nil
 }
 
@@ -5366,7 +5457,7 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 	hasTodos := hasSession && hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0
 
-	commands, err := dialog.NewCommands(m.com, sessionID, hasSession, hasTodos, hasQueue, m.customCommands, m.mcpPrompts)
+	commands, err := dialog.NewCommands(m.com, sessionID, hasSession, hasTodos, hasQueue, m.branchReturn != nil, m.customCommands, m.mcpPrompts)
 	if err != nil {
 		return util.ReportError(err)
 	}
@@ -5495,6 +5586,7 @@ func (m *UI) newSession() tea.Cmd {
 	}
 
 	m.clearDrillStack()
+	m.clearBranchState()
 	m.session = nil
 	m.sidebarOffset = 0
 	m.sessionFileReads = nil
