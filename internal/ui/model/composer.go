@@ -2,6 +2,7 @@ package model
 
 import (
 	"net/url"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -65,11 +66,11 @@ func commandAttachedSkills(content []skills.ContentXML, line string, customComma
 	return nil
 }
 
-func composerAttachmentName(path string) string {
-	name := filepath.Base(path)
-	if strings.Contains(path, "://") {
-		if uri, err := url.Parse(path); err == nil {
-			name = filepath.Base(uri.Path)
+func composerAttachmentName(filePath string) string {
+	name := filepath.Base(filePath)
+	if strings.Contains(filePath, "://") {
+		if uri, err := url.Parse(filePath); err == nil {
+			name = path.Base(uri.Path)
 			if name == "." || name == "/" {
 				name = uri.Hostname()
 			}
