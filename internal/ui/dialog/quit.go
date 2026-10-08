@@ -30,10 +30,11 @@ type Quit struct {
 var _ Dialog = (*Quit)(nil)
 
 // NewQuit creates a new quit confirmation dialog.
-func NewQuit(com *common.Common) *Quit {
+func NewQuit(com *common.Common, warning string) *Quit {
 	q := &Quit{
 		com:        com,
 		selectedNo: true,
+		warning:    warning,
 	}
 	q.keyMap.LeftRight = key.NewBinding(
 		key.WithKeys("left", "right"),
@@ -66,10 +67,6 @@ func NewQuit(com *common.Common) *Quit {
 // ID implements [Model].
 func (*Quit) ID() string {
 	return QuitID
-}
-
-func (q *Quit) SetWarning(warning string) {
-	q.warning = warning
 }
 
 // HandleMsg implements [Model].

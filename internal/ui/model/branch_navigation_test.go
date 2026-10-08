@@ -208,7 +208,7 @@ func TestBranchEscapePrecedence(t *testing.T) {
 			pressBranch(t, m)
 			switch mode {
 			case "dialog":
-				m.dialog.OpenDialog(dialog.NewQuit(m.com))
+				m.dialog.OpenDialog(dialog.NewQuit(m.com, ""))
 			case "completions":
 				m.completions = completions.New(lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle())
 				m.completions.SetItems([]completions.FileCompletionValue{{Path: "file"}}, nil)

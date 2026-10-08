@@ -5370,11 +5370,11 @@ func (m *UI) openQuitDialog() tea.Cmd {
 		}
 	}
 
-	quitDialog := dialog.NewQuit(m.com)
+	var warning string
 	if (m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty()) || (m.pendingBranch != nil && !m.pendingBranch.originalDraft.isEmpty()) {
-		quitDialog.SetWarning("A saved pre-branch draft will be lost.")
+		warning = "A saved pre-branch draft will be lost."
 	}
-	m.dialog.OpenDialog(quitDialog)
+	m.dialog.OpenDialog(dialog.NewQuit(m.com, warning))
 	return nil
 }
 
@@ -5441,12 +5441,11 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 	hasTodos := hasSession && hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0
 
-	commands, err := dialog.NewCommands(m.com, sessionID, hasSession, hasTodos, hasQueue, m.customCommands, m.mcpPrompts)
+	commands, err := dialog.NewCommands(m.com, sessionID, hasSession, hasTodos, hasQueue, m.branchReturn != nil, m.customCommands, m.mcpPrompts)
 	if err != nil {
 		return util.ReportError(err)
 	}
 
-	commands.SetBranchReturnAvailable(m.branchReturn != nil)
 	m.dialog.OpenDialog(commands)
 
 	return commands.InitialCmd()

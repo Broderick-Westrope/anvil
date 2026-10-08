@@ -81,7 +81,7 @@ type Commands struct {
 var _ Dialog = (*Commands)(nil)
 
 // NewCommands creates a new commands dialog.
-func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, hasQueue bool, customCommands []commands.CustomCommand, mcpPrompts []commands.MCPPrompt) (*Commands, error) {
+func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, hasQueue, branchReturnAvailable bool, customCommands []commands.CustomCommand, mcpPrompts []commands.MCPPrompt) (*Commands, error) {
 	c := &Commands{
 		com:            com,
 		selected:       SystemCommands,
@@ -91,6 +91,8 @@ func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, has
 		hasQueue:       hasQueue,
 		customCommands: customCommands,
 		mcpPrompts:     mcpPrompts,
+
+		branchReturnAvailable: branchReturnAvailable,
 	}
 
 	help := help.New()
@@ -637,13 +639,6 @@ func (c *Commands) SetCustomCommands(customCommands []commands.CustomCommand) {
 func (c *Commands) SetMCPPrompts(mcpPrompts []commands.MCPPrompt) {
 	c.mcpPrompts = mcpPrompts
 	if c.selected == MCPPrompts {
-		c.setCommandItems(c.selected)
-	}
-}
-
-func (c *Commands) SetBranchReturnAvailable(available bool) {
-	c.branchReturnAvailable = available
-	if c.selected == SystemCommands {
 		c.setCommandItems(c.selected)
 	}
 }
