@@ -9,16 +9,20 @@
 User review requested consistent entry points, no banner, normal commands and
 Escape/return recovery for every branch entry point. Decision A landed in `9ac0fbf4b`:
 Shift+B, `/branch` and `/tree` navigate immediately after stopping a running reply.
-User targets move to their parent with whitespace-collapsed text prefill; assistant
-targets keep the composer unchanged. Escape restores the previous point and draft
-before sending; after sending, palette return requires an empty composer.
+User targets move to their parent and restore the composer exactly as typed (raw
+text, `/command args`, skill pills and file attachments; `5836c7af8`, `a1f988549`);
+assistant targets keep the composer unchanged. Escape restores the previous point
+and draft before sending; after sending, palette return requires an empty composer.
 
-The UI keeps draft/history/viewport snapshots and nested-tool reconstruction, but
-removes the preview/banner, special send path, broad mutation exclusion, outcome
-channels, streaming reconciliation/watchdog and reload-retry action. Commands and
-sending use the ordinary flow; `1a761dec0` removes the unused core branch API.
-Navigation regressions are in `branch_navigation_test.go`; current usage is in the
-[session branching guide](../../docs/guides/session-branching.md).
+The UI keeps draft/history/viewport snapshots but removes the preview/banner,
+special send path, broad mutation exclusion, outcome channels, streaming
+reconciliation/watchdog and reload-retry action. Commands and sending use the
+ordinary flow; `1a761dec0` removes the unused core branch API. Later cleanup
+(`7006d35ff`) also removed the custom transcript installer and nested-tool snapshot
+reads: navigation loads the transcript through main's `setSessionMessages` and
+reports failures through `navigateTreeDoneMsg.err`. Navigation regressions are in
+`branch_navigation_test.go` and composer restore in `composer_restore_test.go`;
+current usage is in the [session branching guide](../../docs/guides/session-branching.md).
 
 > [!NOTE]
 > **Superseded history:** all sections below describe the pre-review UI and its

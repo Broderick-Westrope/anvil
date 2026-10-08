@@ -13,6 +13,9 @@ continuation and detached queue drain. Shared admission ownership, FIFO handling
 accepted-user retry ancestry, safe placeholder cleanup and the summary error bubble
 remain. Automatic first-exchange title regeneration now uses the selected path for
 all runs. Run regressions live in `run_integration_test.go` and `run_state_test.go`.
+Later cleanup replaced `trimFailedAttemptMessages` with `slices.DeleteFunc`, removed
+the fixture's `Stop`, and took `WaitBackgroundJobs` off the `Coordinator` interface;
+tests call `branchfixture.Fixture.WaitBackgroundJobs` instead.
 
 > [!NOTE]
 > **Superseded history:** all sections below describe the original phase and its

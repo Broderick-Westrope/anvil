@@ -11,7 +11,7 @@ and Escape/return recovery for all branching, not just the inline shortcut.
 **Decision A: navigation-based branching for every entry point.** Shift+B, the
 `/branch` picker and `/tree` all use `handleNavigateTree`. A running reply is canceled
 and allowed to stop before moving the persisted leaf. User targets navigate to their
-parent and prefill the first text part with whitespace collapsed; assistant targets
+parent and restore the composer exactly as the message was typed; assistant targets
 navigate to the reply and leave the composer unchanged. Sending uses ordinary Run.
 
 - **Recovery:** all entry points save the previous point and composer. Escape from
@@ -23,7 +23,12 @@ navigate to the reply and leave the composer unchanged. Sending uses ordinary Ru
   ancestry with safe placeholder cleanup, the summary error bubble, and automatic
   first-exchange title regeneration from the selected path. The core cleanup applies
   selected-path title input to ordinary runs too. Draft/history/viewport snapshots
-  and nested-tool reconstruction remain for navigation and return.
+  remain for navigation and return.
+- **Exact composer restore:** branch prefill and Up-arrow history restore raw text and
+  line breaks, `/command args` instead of command expansions, attached skills as
+  skill pills (skills a command declares are left to the command) and files as
+  attachments (`5836c7af8`, `a1f988549`). The `/branch` and `/tree` lists keep their
+  one-line labels.
 - **Removed:** read-only preview and banner, special literal-text submission,
   branch-specific busy rejection and mutation exclusion, acceptance/finish channels,
   streaming reconciliation/watchdog and reload-retry action. The send-from-message
@@ -32,12 +37,23 @@ navigate to the reply and leave the composer unchanged. Sending uses ordinary Ru
   drain were removed. Ordinary submission and streaming now handle branch sends.
 - **Commits:** `9ac0fbf4b` unified UI navigation and recoverable drafts;
   `1a761dec0` removed the unused send-from-message API and retained the core fixes.
+- **Helper cleanup** (`3cf4f5d47`..`9dba466cf`): removed single-use or unneeded
+  helpers. Navigation now loads the transcript through main's `setSessionMessages`
+  and reports errors through `navigateTreeDoneMsg.err`; the custom transcript
+  installer, nested-tool snapshot reads and `treeNavErrorMsg` are gone, so a failed
+  subagent-session read now shows the branch without that subagent's nested tool
+  calls instead of failing navigation, matching session load. Redundant attachment,
+  composer and message copies, `trimFailedAttemptMessages`, `skills.StripContentXML`,
+  the dialog setters (now constructor arguments) and the fixture's `Stop` were
+  removed. `WaitBackgroundJobs` is no longer on the `Coordinator` interface; tests
+  reach it through `branchfixture.Fixture.WaitBackgroundJobs`.
 
 See the [session branching guide](../../docs/guides/session-branching.md) for current
 usage. The phase files retain the implementation history with redesign notes.
 Current regression coverage includes `branch_navigation_test.go`,
-`run_integration_test.go` and `run_state_test.go`; the deleted preview/submission/
-reconciliation tests below are historical, not current coverage claims.
+`composer_restore_test.go`, `run_integration_test.go` and `run_state_test.go`; the
+deleted preview/submission/reconciliation tests below are historical, not current
+coverage claims.
 
 > [!NOTE]
 > **Superseded history:** every section below records the pre-review design and its
