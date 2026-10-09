@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,5 +68,17 @@ func TestRun_WtpBuiltinReportsFailureExitStatus(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "does-not-exist") {
 		t.Fatalf("stderr = %q, want it to mention the missing worktree", stderr.String())
+	}
+}
+
+func TestReaderOrEmpty(t *testing.T) {
+	data, err := io.ReadAll(readerOrEmpty(nil))
+	if err != nil || len(data) != 0 {
+		t.Fatalf("readerOrEmpty(nil) read %q, %v; want an empty stream so wtp never falls back to Anvil's own stdin", data, err)
+	}
+
+	in := strings.NewReader("piped")
+	if got := readerOrEmpty(in); got != in {
+		t.Fatalf("readerOrEmpty(r) = %v, want r itself", got)
 	}
 }
