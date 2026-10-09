@@ -14,9 +14,31 @@ configure. `anvil run` never reports.
   - `idle` otherwise. Herdr shows `done` when a run finishes while you are
     not looking at the pane.
 - **Session:** the ID of the session currently displayed, updated when you
-  switch sessions.
+  switch sessions, and the command that reopens it.
 
 On exit Anvil releases the pane, so Herdr stops listing it as an agent.
+
+## Restoring After a Herdr Restart
+
+When the Herdr server restarts (for example after `herdr server stop` or
+`herdr session stop`), Herdr reopens each Anvil pane in its saved
+directory and runs:
+
+```bash
+anvil --session <id> --there
+```
+
+So Anvil comes back on the session it was displaying, in that session's
+working directory, with the tab name kept. This needs Herdr 0.9.2 or
+later and `[session] resume_agents_on_restore`, which is on by default.
+
+- Herdr types the command at the pane's shell prompt, so `anvil` must
+  resolve there (an alias or shell function works).
+- Panes you quit cleanly come back as plain shells: quitting releases the
+  pane and clears the command.
+- A pane with no session yet (nothing sent) also comes back as a shell.
+- Detaching from Herdr (`ctrl+b q`) never stops Anvil, so nothing needs
+  restoring.
 
 ## Tab Naming
 
@@ -38,7 +60,10 @@ replaced. If Anvil's pane is moved to another tab, that tab is named too.
 
 On a clean exit (and before `/reload-instance`) the tab reverts to its
 position number. After a crash the session name stays, and the next Anvil
-in that tab treats it as a name you chose.
+in that tab treats it as a name you chose unless it displays a session
+with that same title (as when Herdr resumes it). For the same reason, a
+name you set that exactly matches the session's tab label is treated as
+Anvil's.
 
 On a new session's first prompt, the title is generated after the turn
 ends, so that turn's `done` toast shows the tab number. Later turns show
@@ -105,3 +130,6 @@ suppressed for the tab you are looking at.
   once the pane is back at a shell prompt, usually within a few seconds.
 - **Tab not renamed:** the tab has another pane, carries a name you set,
   or the session is still untitled.
+- **Pane came back as a shell after a Herdr restart:** Anvil had no
+  session yet, was quit before the restart, or `anvil` does not resolve
+  at the pane's prompt. A failed resume leaves its error in the pane.
