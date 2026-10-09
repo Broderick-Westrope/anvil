@@ -39,8 +39,8 @@ const (
 // bouncer's small-model reviewer (internal/app/bouncer.go).
 const reviewerAgentName = "reviewer"
 
-// turnPrefix is the history fingerprint of a turn step: how many
-// non-system messages it sent and their rolling hash.
+// turnPrefix is the history fingerprint of a turn step: how many history
+// entries it sent and their rolling hash.
 type turnPrefix struct {
 	count int
 	hash  string
@@ -93,7 +93,7 @@ func (c *stepCapture) comparePrefix(prev turnPrefix) {
 
 // turnPrefix returns the history fingerprint later steps compare against.
 func (c *stepCapture) turnPrefix() turnPrefix {
-	return turnPrefix{count: c.fp.MessageCount, hash: c.fp.HistoryHash}
+	return turnPrefix{count: c.fp.PrefixLen(), hash: c.fp.HistoryHash}
 }
 
 // captureCallbacks returns OnRetry and OnStreamFinish callbacks that count

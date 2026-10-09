@@ -18,6 +18,7 @@ import (
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/vercel"
+	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/stretchr/testify/require"
@@ -240,13 +241,15 @@ type usageModel struct {
 	name    string
 	mu      sync.Mutex
 	calls   int
+	prompts []fantasy.Prompt
 	respond func(call int) ([]fantasy.StreamPart, error)
 }
 
-func (m *usageModel) Stream(context.Context, fantasy.Call) (fantasy.StreamResponse, error) {
+func (m *usageModel) Stream(_ context.Context, c fantasy.Call) (fantasy.StreamResponse, error) {
 	m.mu.Lock()
 	call := m.calls
 	m.calls++
+	m.prompts = append(m.prompts, cloneFantasyMessages(c.Prompt))
 	m.mu.Unlock()
 	parts, err := m.respond(call)
 	if err != nil {
@@ -418,6 +421,89 @@ func TestStepUsageDetectsRewrittenHistory(t *testing.T) {
 	require.True(t, rows[2].prefixMatch.Valid)
 	require.Zero(t, rows[2].prefixMatch.Int64)
 	require.NotEqual(t, rows[0].runID, rows[1].runID)
+}
+
+func reasoningReply(id, text string, meta fantasy.ProviderMetadata) []fantasy.StreamPart {
+	return []fantasy.StreamPart{
+		{Type: fantasy.StreamPartTypeReasoningStart, ID: id, ProviderMetadata: meta},
+		{Type: fantasy.StreamPartTypeReasoningDelta, ID: id, Delta: text, ProviderMetadata: meta},
+		{Type: fantasy.StreamPartTypeReasoningEnd, ID: id, ProviderMetadata: meta},
+	}
+}
+
+// TestStepUsagePrefixMatchesAcrossRuns checks that the next run's first
+// request, rebuilt from the database, matches the history the previous
+// run last sent from fantasy's in-memory step messages.
+func TestStepUsagePrefixMatchesAcrossRuns(t *testing.T) {
+	t.Parallel()
+
+	encrypted := "encrypted"
+	variants := map[string]func(id string) fantasy.ProviderMetadata{
+		// The database drops Responses reasoning metadata: it is stored
+		// with fantasy's type wrapper and read back without it.
+		openai.Name: func(id string) fantasy.ProviderMetadata {
+			return fantasy.ProviderMetadata{openai.Name: &openai.ResponsesReasoningMetadata{
+				ItemID: id, EncryptedContent: &encrypted, Summary: []string{"thinking"},
+			}}
+		},
+		anthropic.Name: func(id string) fantasy.ProviderMetadata {
+			return fantasy.ProviderMetadata{anthropic.Name: &anthropic.ReasoningOptionMetadata{Signature: "sig-" + id}}
+		},
+	}
+	for name, meta := range variants {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			env := testEnv(t)
+			sess, err := env.sessions.Create(t.Context(), "Across runs", t.TempDir())
+			require.NoError(t, err)
+
+			echo := fantasy.NewAgentTool("echo", "Echoes.",
+				func(context.Context, struct{}, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+					return fantasy.NewTextResponse("echoed"), nil
+				},
+			)
+			usage := fantasy.Usage{InputTokens: 3, OutputTokens: 1}
+			model := &usageModel{name: name, respond: func(call int) ([]fantasy.StreamPart, error) {
+				switch call {
+				case 0:
+					// Two reasoning items, the second without a summary,
+					// then text and two tool calls in one step.
+					parts := reasoningReply("rs_0", "\nfirst thought", meta("rs_0"))
+					parts = append(parts, reasoningReply("rs_1", "", meta("rs_1"))...)
+					parts = append(parts, textReply("\nLooking. ", fantasy.FinishReasonToolCalls, usage)[:3]...)
+					parts = append(parts, toolCallReply("call_0", "echo", usage)[:3]...)
+					return append(parts, toolCallReply("call_1", "echo", usage)...), nil
+				case 1:
+					return append(reasoningReply("rs_2", "done thinking", meta("rs_2")),
+						textReply("done", fantasy.FinishReasonStop, usage)...), nil
+				default:
+					return textReply("again", fantasy.FinishReasonStop, usage), nil
+				}
+			}}
+			a := testSessionAgent(env, model, model, "system", echo)
+			for _, prompt := range []string{"first", "second"} {
+				_, err := a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: prompt, NonInteractive: true})
+				require.NoError(t, err)
+			}
+
+			require.Len(t, model.prompts, 3)
+			last := cacheusage.Compute(nil, model.prompts[1])
+			next := cacheusage.Compute(nil, model.prompts[2])
+			require.Empty(t, last.Err)
+			match, ok := next.PrefixMatches(last.PrefixLen(), last.HistoryHash)
+			require.True(t, ok)
+			require.True(t, match)
+
+			rows := stepUsageRows(t, env)
+			require.Len(t, rows, 3)
+			require.True(t, rows[1].prefixMatch.Valid)
+			require.Equal(t, int64(1), rows[1].prefixMatch.Int64)
+			require.NotEqual(t, rows[1].runID, rows[2].runID)
+			require.True(t, rows[2].prefixMatch.Valid)
+			require.Equal(t, int64(1), rows[2].prefixMatch.Int64)
+		})
+	}
 }
 
 func TestStepUsageNilRecorder(t *testing.T) {

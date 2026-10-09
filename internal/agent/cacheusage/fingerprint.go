@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,7 +24,8 @@ const hashHexLen = 16
 type Fingerprint struct {
 	ToolsHash, SystemHash, HistoryHash   string
 	ToolCount, SystemCount, MessageCount int
-	// prefix[i] is the rolling hash after non-system message i.
+	// prefix[i] is the rolling history hash after history entry i (see
+	// writeHistory).
 	prefix []string
 	Err    string
 }
@@ -50,8 +52,9 @@ func Compute(tools []fantasy.AgentTool, messages []fantasy.Message) Fingerprint 
 
 	sys := sha256.New()
 	sysOK := true
-	var prev []byte
+	history := sha256.New()
 	historyOK := true
+	var sum []byte
 	for i, msg := range messages {
 		if msg.Role == fantasy.MessageRoleSystem {
 			f.SystemCount++
@@ -72,17 +75,14 @@ func Compute(tools []fantasy.AgentTool, messages []fantasy.Message) Fingerprint 
 		if !historyOK {
 			continue
 		}
-		b, err := canonicalMessage(msg)
+		err := writeHistory(history, msg, func() {
+			sum = history.Sum(sum[:0])
+			f.prefix = append(f.prefix, truncate(sum))
+		})
 		if err != nil {
 			historyOK = false
 			errs = append(errs, fmt.Sprintf("message %d: %v", i, err))
-			continue
 		}
-		h := sha256.New()
-		h.Write(prev)
-		h.Write(b)
-		prev = h.Sum(prev[:0])
-		f.prefix = append(f.prefix, truncate(prev))
 	}
 
 	if sysOK {
@@ -97,14 +97,136 @@ func Compute(tools []fantasy.AgentTool, messages []fantasy.Message) Fingerprint 
 	return f
 }
 
-// PrefixMatches reports whether this request's first prevCount non-system
-// messages hash to prevHistoryHash. ok is false when prevCount is 0 or
-// exceeds MessageCount, or when the prefix could not be hashed.
-func (f Fingerprint) PrefixMatches(prevCount int, prevHistoryHash string) (match, ok bool) {
-	if prevCount <= 0 || prevCount > f.MessageCount || prevCount > len(f.prefix) || prevHistoryHash == "" {
+// PrefixLen is the number of history entries HistoryHash covers. Pass it
+// to a later request's PrefixMatches.
+func (f Fingerprint) PrefixLen() int {
+	return len(f.prefix)
+}
+
+// PrefixMatches reports whether this request's first prevLen history
+// entries hash to prevHistoryHash, where prevLen is the earlier request's
+// PrefixLen. ok is false when prevLen is 0 or exceeds this request's
+// entries, or when the prefix could not be hashed.
+func (f Fingerprint) PrefixMatches(prevLen int, prevHistoryHash string) (match, ok bool) {
+	if prevLen <= 0 || prevLen > len(f.prefix) || prevHistoryHash == "" {
 		return false, false
 	}
-	return f.prefix[prevCount-1] == prevHistoryHash, true
+	return f.prefix[prevLen-1] == prevHistoryHash, true
+}
+
+// History entry kinds.
+const (
+	entryReasoning  = "reasoning"
+	entryText       = "text"
+	entryFile       = "file"
+	entryToolCall   = "tool-call"
+	entryToolResult = "tool-result"
+	entryOther      = "other"
+)
+
+// writeHistory writes msg to h as a sequence of semantic entries and calls
+// mark after each one.
+//
+// The same history reaches Anvil in two shapes: within a run, fantasy
+// builds step messages from the streamed content; on the next run, Anvil
+// rebuilds them from the database (message.Message.ToAIMessage). These
+// differ in ways that do not change what the conversation says, so the
+// hash ignores them:
+//   - Provider options and metadata, at message and part level. Moving
+//     cache markers are not a content change, and reasoning metadata does
+//     not survive the database: OpenAI Responses reasoning metadata comes
+//     back empty, and Anvil keeps only one reasoning block per message.
+//   - Message grouping: entries carry their role but not message
+//     boundaries, so tool results grouped into one message or split
+//     across several hash the same.
+//   - Layout within a message: all reasoning text becomes one entry, then
+//     all text trimmed of surrounding whitespace, as ToAIMessage rebuilds
+//     them. Empty reasoning and text are dropped.
+//   - File names, which the database stores as paths.
+//
+// A provider-specific encoding change, such as a new reasoning signature,
+// therefore does not change the hash even if it busts the provider cache.
+func writeHistory(h hash.Hash, msg fantasy.Message, mark func()) error {
+	role := string(msg.Role)
+	var reasoning, text strings.Builder
+	for _, part := range msg.Content {
+		switch p := part.(type) {
+		case fantasy.ReasoningPart:
+			reasoning.WriteString(p.Text)
+		case fantasy.TextPart:
+			text.WriteString(p.Text)
+		}
+	}
+	if reasoning.Len() > 0 {
+		writeEntry(h, entryReasoning, role, reasoning.String())
+		mark()
+	}
+	if t := strings.TrimSpace(text.String()); t != "" {
+		writeEntry(h, entryText, role, t)
+		mark()
+	}
+
+	for _, part := range msg.Content {
+		switch p := part.(type) {
+		case fantasy.ReasoningPart, fantasy.TextPart:
+			continue
+		case fantasy.FilePart:
+			writeEntry(h, entryFile, role, p.MediaType, sampleMedia(string(p.Data)))
+		case fantasy.ToolCallPart:
+			writeEntry(h, entryToolCall, role, p.ToolCallID, p.ToolName, p.Input, strconv.FormatBool(p.ProviderExecuted))
+		case fantasy.ToolResultPart:
+			fields := append([]string{p.ToolCallID, strconv.FormatBool(p.ProviderExecuted)}, toolResultOutput(p.Output)...)
+			writeEntry(h, entryToolResult, role, fields...)
+		default:
+			b, err := json.Marshal(part)
+			if err != nil {
+				return err
+			}
+			writeEntry(h, entryOther, role, string(b))
+		}
+		mark()
+	}
+	return nil
+}
+
+// toolResultOutput returns the output's type and content as entry fields.
+func toolResultOutput(output fantasy.ToolResultOutputContent) []string {
+	switch o := output.(type) {
+	case fantasy.ToolResultOutputContentText:
+		return []string{string(o.GetType()), o.Text}
+	case fantasy.ToolResultOutputContentError:
+		var msg string
+		if o.Error != nil {
+			msg = o.Error.Error()
+		}
+		return []string{string(o.GetType()), msg}
+	case fantasy.ToolResultOutputContentMedia:
+		return []string{string(o.GetType()), o.MediaType, o.Text, sampleMedia(o.Data)}
+	case nil:
+		return nil
+	default:
+		return []string{fmt.Sprintf("%T", o), fmt.Sprintf("%v", o)}
+	}
+}
+
+// writeEntry writes one history entry as length-framed fields, so field
+// and entry boundaries change the hash.
+func writeEntry(h hash.Hash, kind, role string, fields ...string) {
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(2+len(fields)))
+	h.Write(n[:])
+	writeFramedString(h, kind)
+	writeFramedString(h, role)
+	for _, field := range fields {
+		writeFramedString(h, field)
+	}
+}
+
+func writeFramedString(h hash.Hash, s string) {
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(len(s)))
+	h.Write(n[:])
+	io.WriteString(h, s)
 }
 
 // hashTools hashes tools in the order passed. fantasy may later filter,
@@ -129,16 +251,13 @@ func hashTools(tools []fantasy.AgentTool) (string, error) {
 	return truncate(h.Sum(nil)), nil
 }
 
-// canonicalMessage marshals msg without its message-level provider
-// options. Anvil clears those and sets them only for cache-control markers
-// on the last system message and the last two messages
-// (internal/agent/agent.go:443-446, 467-481), so moving markers must not
-// look like a content change. Part-level options are kept: Anthropic
-// reasoning signatures live there and are sent to the provider
-// (fantasy@v0.43.2 providers/anthropic/anthropic.go:484-490, 1086).
+// canonicalMessage marshals a system message without its message-level
+// provider options. Anvil sets those only for the cache-control marker on
+// the last system message (internal/agent/agent.go), so moving the marker
+// must not look like a content change.
 func canonicalMessage(msg fantasy.Message) ([]byte, error) {
 	msg.ProviderOptions = nil
-	msg.Content = sampleMedia(msg.Content)
+	msg.Content = sampleParts(msg.Content)
 	return json.Marshal(msg)
 }
 
@@ -148,20 +267,21 @@ func canonicalMessage(msg fantasy.Message) ([]byte, error) {
 // replaced or re-encoded image.
 const mediaSampleSize = 4 << 10
 
-// sampleMedia returns parts with large media payloads replaced by their
-// length and first and last mediaSampleSize bytes. The input slice is
-// never modified; it is copied only when a payload is replaced.
-func sampleMedia(parts []fantasy.MessagePart) []fantasy.MessagePart {
+// sampleParts returns parts with large file payloads replaced by
+// sampleMedia. The input slice is never modified; it is copied only when a
+// payload is replaced.
+func sampleParts(parts []fantasy.MessagePart) []fantasy.MessagePart {
 	var out []fantasy.MessagePart
 	for i, part := range parts {
-		replaced, ok := samplePart(part)
-		if !ok {
+		p, ok := part.(fantasy.FilePart)
+		if !ok || len(p.Data) <= 2*mediaSampleSize {
 			continue
 		}
 		if out == nil {
 			out = slices.Clone(parts)
 		}
-		out[i] = replaced
+		p.Data = []byte(sampleMedia(string(p.Data)))
+		out[i] = p
 	}
 	if out == nil {
 		return parts
@@ -169,27 +289,12 @@ func sampleMedia(parts []fantasy.MessagePart) []fantasy.MessagePart {
 	return out
 }
 
-func samplePart(part fantasy.MessagePart) (fantasy.MessagePart, bool) {
-	switch p := part.(type) {
-	case fantasy.FilePart:
-		if len(p.Data) <= 2*mediaSampleSize {
-			return nil, false
-		}
-		p.Data = []byte(sampleString(string(p.Data)))
-		return p, true
-	case fantasy.ToolResultPart:
-		media, ok := p.Output.(fantasy.ToolResultOutputContentMedia)
-		if !ok || len(media.Data) <= 2*mediaSampleSize {
-			return nil, false
-		}
-		media.Data = sampleString(media.Data)
-		p.Output = media
-		return p, true
+// sampleMedia returns data, or for large payloads its length and first
+// and last mediaSampleSize bytes.
+func sampleMedia(data string) string {
+	if len(data) <= 2*mediaSampleSize {
+		return data
 	}
-	return nil, false
-}
-
-func sampleString(data string) string {
 	return strconv.Itoa(len(data)) + ":" + data[:mediaSampleSize] + data[len(data)-mediaSampleSize:]
 }
 
