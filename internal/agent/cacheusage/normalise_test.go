@@ -197,3 +197,72 @@ func TestNormaliseRawNullExtra(t *testing.T) {
 	require.NoError(t, json.Unmarshal(decoded["usage"], &usage))
 	require.Equal(t, reported, usage)
 }
+
+func TestNormaliseRawInvalidExtra(t *testing.T) {
+	t.Parallel()
+
+	reported := fantasy.Usage{InputTokens: 5}
+	_, raw := Normalise("openai", reported, openaiMeta(map[string]json.RawMessage{"bad": json.RawMessage(`{`)}))
+
+	var decoded map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(raw), &decoded))
+	require.JSONEq(t, "null", string(decoded["extra"]))
+	var usage fantasy.Usage
+	require.NoError(t, json.Unmarshal(decoded["usage"], &usage))
+	require.Equal(t, reported, usage)
+}
+
+func TestExtraFields(t *testing.T) {
+	t.Parallel()
+
+	extra := map[string]json.RawMessage{"k": json.RawMessage(`1`)}
+	tests := []struct {
+		name string
+		meta fantasy.ProviderMetadata
+		want map[string]json.RawMessage
+	}{
+		{name: "openai", meta: openaiMeta(extra), want: extra},
+		{name: "openai-compat", meta: fantasy.ProviderMetadata{openaicompat.Name: &openai.ProviderMetadata{ExtraFields: extra}}, want: extra},
+		{name: "nil metadata pointer", meta: fantasy.ProviderMetadata{openai.Name: (*openai.ProviderMetadata)(nil)}},
+		{
+			name: "empty openai falls back to openai-compat",
+			meta: fantasy.ProviderMetadata{
+				openai.Name:       &openai.ProviderMetadata{ExtraFields: map[string]json.RawMessage{}},
+				openaicompat.Name: &openai.ProviderMetadata{ExtraFields: extra},
+			},
+			want: extra,
+		},
+		{name: "other metadata type", meta: fantasy.ProviderMetadata{openai.Name: &openai.ResponsesReasoningMetadata{}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, extraFields(tt.meta))
+		})
+	}
+}
+
+func TestDeepSeekCacheHits(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		raw    string
+		want   int64
+		wantOK bool
+	}{
+		{raw: `1`, want: 1, wantOK: true},
+		{raw: `1e18`, want: 1e18, wantOK: true},
+		{raw: `0`},
+		{raw: `-1`},
+		{raw: `1.5`},
+		{raw: `9223372036854775807`},
+		{raw: `"5"`},
+	}
+	for _, tt := range tests {
+		got, ok := deepSeekCacheHits(map[string]json.RawMessage{deepSeekCacheHitField: json.RawMessage(tt.raw)})
+		require.Equal(t, tt.wantOK, ok, tt.raw)
+		require.Equal(t, tt.want, got, tt.raw)
+	}
+	_, ok := deepSeekCacheHits(nil)
+	require.False(t, ok)
+}

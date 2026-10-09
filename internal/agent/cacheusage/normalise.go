@@ -127,20 +127,20 @@ func deepSeekCacheHits(extra map[string]json.RawMessage) (int64, bool) {
 	if err := json.Unmarshal(value, &hits); err != nil {
 		return 0, false
 	}
-	if hits <= 0 || hits != math.Trunc(hits) || hits > math.MaxInt64 {
+	// float64(math.MaxInt64) rounds up to 2^63, which int64 cannot hold.
+	if hits <= 0 || hits != math.Trunc(hits) || hits >= math.MaxInt64 {
 		return 0, false
 	}
 	return int64(hits), true
 }
 
+// marshalRaw falls back to the reported usage alone when extra holds
+// invalid raw JSON.
 func marshalRaw(reported fantasy.Usage, extra map[string]json.RawMessage) string {
-	b, err := json.Marshal(rawUsage{Usage: reported, Extra: extra})
-	if err != nil {
-		// Invalid raw JSON in extra fields; keep the reported usage.
-		b, err = json.Marshal(rawUsage{Usage: reported})
-		if err != nil {
-			return "{}"
+	for _, raw := range []rawUsage{{Usage: reported, Extra: extra}, {Usage: reported}} {
+		if b, err := json.Marshal(raw); err == nil {
+			return string(b)
 		}
 	}
-	return string(b)
+	return "{}"
 }
