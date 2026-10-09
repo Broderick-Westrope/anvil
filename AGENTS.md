@@ -28,6 +28,7 @@ internal/
     hooked_tool.go                 Decorator that runs PreToolUse hooks before tool execution
     lazy_mcp.go                    Lazy MCP state derivation and tool filtering
     prompts.go                     Loads Go-template system prompts
+    cacheusage/                    Prompt-cache usage: async step_usage recorder, normalisation, fingerprints
     templates/                     System prompt templates (coder.md.tpl, task.md.tpl, etc.)
     tools/                         All built-in tools (bash, edit, view, grep, glob, etc.)
       enable_mcp.go                enable_mcp tool for agent-side lazy MCP activation
@@ -112,6 +113,16 @@ internal/
   behaviour and the isolated-session test recipe live in
   `plans/completed/design-2026-10-08-herdr-integration.md`; never test
   against the user's default Herdr session.
+- **Cache usage metrics**: every model response (turn steps, summaries,
+  titles, `CompleteSmall`) is recorded as a `step_usage` row with
+  normalised token counts, prices and hashed request fingerprints. The
+  recorder (`internal/agent/cacheusage`) writes on one background
+  goroutine and drops rows rather than block a model call; `Record` is
+  nil-safe, so a nil recorder disables recording. It is observation only:
+  nothing reads the table at runtime. Cache-miss classification lives in
+  SQL in the `anvil-cache-triage` skill
+  (`.agents/skills/anvil-cache-triage/references/classify.sql`), not in
+  Go. Rows older than 90 days are pruned at startup.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
