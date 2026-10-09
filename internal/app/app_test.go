@@ -307,6 +307,27 @@ func TestCloseLogsJoinsErrors(t *testing.T) {
 	require.NoError(t, closeLogs(t.Context(), ok, ok))
 }
 
+func TestInitFailure(t *testing.T) {
+	t.Parallel()
+
+	initErr := errors.New("init failed")
+	closed := false
+	ok := fakeLog{close: func(context.Context) error {
+		closed = true
+		return nil
+	}}
+
+	err := initFailure(t.Context(), initErr, ok)
+	require.ErrorIs(t, err, initErr)
+	require.EqualError(t, err, "failed to initialize orchestrator agent: init failed")
+	require.True(t, closed)
+
+	closeErr := errors.New("close failed")
+	err = initFailure(t.Context(), initErr, fakeLog{close: func(context.Context) error { return closeErr }})
+	require.ErrorIs(t, err, initErr)
+	require.ErrorIs(t, err, closeErr)
+}
+
 func TestStartupPrune(t *testing.T) {
 	t.Parallel()
 

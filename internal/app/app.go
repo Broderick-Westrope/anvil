@@ -205,10 +205,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		return app, nil
 	}
 	if err := app.InitOrchestratorAgent(ctx); err != nil {
-		if closeErr := closeLogs(ctx, recorder, cacheUsage); closeErr != nil {
-			slog.Warn("Failed to close logs after initialization error", "error", closeErr)
-		}
-		return nil, fmt.Errorf("failed to initialize orchestrator agent: %w", err)
+		return nil, initFailure(ctx, err, recorder, cacheUsage)
 	}
 
 	// Set up callback for LSP state updates.
@@ -778,6 +775,16 @@ func closeLogs(ctx context.Context, logs ...logCloser) error {
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// initFailure closes logs after orchestrator initialization fails and
+// returns the initialization error joined with any close error, so neither
+// is lost.
+func initFailure(ctx context.Context, err error, logs ...logCloser) error {
+	return errors.Join(
+		fmt.Errorf("failed to initialize orchestrator agent: %w", err),
+		closeLogs(ctx, logs...),
+	)
 }
 
 // backgroundJobsShutdownWait bounds how long shutdown waits for agent
