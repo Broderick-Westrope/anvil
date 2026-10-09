@@ -42,7 +42,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
-	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
@@ -193,6 +192,7 @@ type UI struct {
 	herdrTickPending bool
 	com              *common.Common
 	session          *session.Session
+	animClock        animClock
 
 	// sessionLoad buffers message events for a session whose transcript is
 	// being read off the event loop, so they can be replayed over the
@@ -716,7 +716,7 @@ func (m *UI) activeChatArea() image.Rectangle {
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
 	m.trackHerdrState()
-	return model, tea.Batch(cmd, m.herdrTickCmd())
+	return model, tea.Batch(cmd, m.ensureAnimating(), m.herdrTickCmd())
 }
 
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1081,9 +1081,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.updateLayoutAndSize()
 		if m.state == uiChat && m.activeChat().Follow() {
-			if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			m.activeChat().ScrollToBottom()
 		}
 	case tea.KeyboardEnhancementsMsg:
 		m.keyenh = msg
@@ -1146,24 +1144,16 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.state {
 		case uiChat:
 			if msg.Y <= 0 {
-				if cmd := m.activeChat().ScrollByAndAnimate(-1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(-1)
 				if !m.activeChat().SelectedItemInView() {
 					m.activeChat().SelectPrev()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					m.activeChat().ScrollToSelected()
 				}
 			} else if msg.Y >= m.activeChat().Height()-1 {
-				if cmd := m.activeChat().ScrollByAndAnimate(1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(1)
 				if !m.activeChat().SelectedItemInView() {
 					m.activeChat().SelectNext()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					m.activeChat().ScrollToSelected()
 				}
 			}
 
@@ -1226,9 +1216,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if lines == 0 {
 				break
 			}
-			if cmd := m.activeChat().ScrollByAndAnimate(lines); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			m.activeChat().ScrollBy(lines)
 			if !m.activeChat().SelectedItemInView() {
 				if lines < 0 {
 					m.activeChat().SelectPrev()
@@ -1237,28 +1225,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.activeChat().SelectNext()
 				}
-				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollToSelected()
 			}
 		}
-	case anim.StepMsg:
-		if m.state == uiChat {
-			// Dispatch animation steps to all chats, not just the active one,
-			// so animations don't freeze when navigating between levels.
-			if cmd := m.chat.Animate(msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			for _, entry := range m.drillStack {
-				if cmd := entry.chat.Animate(msg); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-			if m.activeChat().Follow() {
-				if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
+	case animTickMsg:
+		if cmd := m.handleAnimTick(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case chatWarmMsg:
 		// A resize has settled; warm the message cache one batch at a
@@ -1431,16 +1403,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items := m.messagesToChatItems(msg.messages)
 			m.drillStack[i].chat.SetMessages(items...)
 
-			// Start animations for all newly loaded items.
-			for _, item := range items {
-				if a, ok := item.(chat.Animatable); ok {
-					if cmd := a.StartAnimation(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-				}
-			}
-
-			// Update nested tool ID maps for animation routing.
+			// Map nested tool IDs to their containers.
 			for _, item := range items {
 				if _, ok := item.(chat.NestedToolContainer); ok {
 					if tmi, ok := item.(chat.ToolMessageItem); ok {
@@ -1567,27 +1530,16 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	// Load nested tool calls for agent/agentic_fetch tools.
 	m.loadNestedToolCalls(items)
 
-	// If the user switches between sessions while the agent is working we
-	// want to make sure the animations are shown. Gate on the agent actually
-	// being busy: a session that was killed mid-generation can persist an
-	// assistant message with no Finish part, which still reports isSpinning()
-	// even though nothing is running. Starting animations for it here would
-	// leave a ghost "working" spinner (and a second one alongside any tool
-	// spinner) after the session is reloaded.
-	if m.isAgentBusy() {
-		for _, item := range items {
-			if animatable, ok := item.(chat.Animatable); ok {
-				if cmd := animatable.StartAnimation(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-		}
-	}
-
 	m.chat.SetMessages(items...)
-	if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
-		cmds = append(cmds, cmd)
+	// A session killed mid-generation can persist an assistant message with
+	// no Finish part, which still reports spinning even though nothing is
+	// running. Unless the agent is busy, freeze what is spinning now so the
+	// reload does not show a ghost "working" spinner (and a second one
+	// alongside any tool spinner). Events for those messages unfreeze them.
+	if !m.isAgentBusy() {
+		m.chat.FreezeSpinners()
 	}
+	m.chat.ScrollToBottom()
 	m.chat.SelectLast()
 	return tea.Sequence(cmds...)
 }
@@ -1702,43 +1654,23 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
-		for _, item := range items {
-			if animatable, ok := item.(chat.Animatable); ok {
-				if cmd := animatable.StartAnimation(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-		}
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() {
-			if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			c.ScrollToBottom()
 		}
 	case message.Assistant:
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
-		for _, item := range items {
-			if animatable, ok := item.(chat.Animatable); ok {
-				if cmd := animatable.StartAnimation(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-		}
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() && c.Follow() {
-			if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			c.ScrollToBottom()
 		}
 		if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 			infoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 			c.AppendMessages(infoItem)
 			if c == m.activeChat() && c.Follow() {
-				if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				c.ScrollToBottom()
 			}
 		}
 	case message.Tool:
@@ -1762,9 +1694,7 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 				}
 				// Only auto-scroll if this chat is currently visible.
 				if c == m.activeChat() && c.Follow() {
-					if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					c.ScrollToBottom()
 				}
 			}
 		}
@@ -1829,15 +1759,16 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
 	existingItem := c.MessageItem(msg.ID)
 
+	// Activity on a message means it is live again, so a spinner frozen by
+	// a non-busy session reload may move.
+	c.UnfreezeSpinners(msg.ID)
+	for _, tc := range msg.ToolCalls() {
+		c.UnfreezeSpinners(tc.ID)
+	}
+
 	if existingItem != nil {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
-			// SetMessage returns a StartAnimation Cmd when the message
-			// transitions back to spinning (e.g. its streamed content was
-			// reset for a retry). Propagate it so the spinner re-arms
-			// instead of freezing.
-			if cmd := assistantItem.SetMessage(&msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			assistantItem.SetMessage(&msg)
 		}
 	}
 
@@ -1881,20 +1812,10 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 		}
 	}
 
-	for _, item := range items {
-		if animatable, ok := item.(chat.Animatable); ok {
-			if cmd := animatable.StartAnimation(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-	}
-
 	c.AppendMessages(items...)
 	// Only auto-scroll if this chat is currently visible.
 	if c == m.activeChat() && c.Follow() {
-		if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		c.ScrollToBottom()
 		c.SelectLast()
 	}
 
@@ -1971,6 +1892,8 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	if agentItem == nil {
 		return nil
 	}
+	// The subagent is producing messages, so its parent is live again.
+	m.chat.UnfreezeSpinners(toolCallID)
 
 	// Set the child session ID and mark that messages have arrived so the
 	// collapsed stats view and drill-in navigation can activate. This runs
@@ -2013,11 +1936,6 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 			if simplifiable, ok := nestedItem.(chat.Compactable); ok {
 				simplifiable.SetCompact(true)
 			}
-			if animatable, ok := nestedItem.(chat.Animatable); ok {
-				if cmd := animatable.StartAnimation(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
 			nestedTools = append(nestedTools, nestedItem)
 		}
 	}
@@ -2035,13 +1953,11 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	// Update the agent item with the new nested tools.
 	agentItem.SetNestedTools(nestedTools)
 
-	// Update the chat so it updates the index map for animations to work as expected
+	// Map the nested tool IDs to their container.
 	m.chat.UpdateNestedToolIDs(toolCallID)
 
 	if m.chat.Follow() {
-		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		m.chat.ScrollToBottom()
 		m.chat.SelectLast()
 	}
 
@@ -3312,64 +3228,40 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			case key.Matches(msg, m.keyMap.Chat.Expand):
 				m.activeChat().ToggleExpandedSelectedItem()
 			case key.Matches(msg, m.keyMap.Chat.Up):
-				if cmd := m.activeChat().ScrollByAndAnimate(-1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(-1)
 				if !m.activeChat().SelectedItemInView() {
 					m.activeChat().SelectPrev()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					m.activeChat().ScrollToSelected()
 				}
 			case key.Matches(msg, m.keyMap.Chat.Down):
-				if cmd := m.activeChat().ScrollByAndAnimate(1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(1)
 				if !m.activeChat().SelectedItemInView() {
 					m.activeChat().SelectNext()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					m.activeChat().ScrollToSelected()
 				}
 			case key.Matches(msg, m.keyMap.Chat.UpOneItem):
 				m.activeChat().SelectPrev()
-				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollToSelected()
 			case key.Matches(msg, m.keyMap.Chat.DownOneItem):
 				m.activeChat().SelectNext()
-				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollToSelected()
 			case key.Matches(msg, m.keyMap.Chat.HalfPageUp):
-				if cmd := m.activeChat().ScrollByAndAnimate(-m.activeChat().Height() / 2); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(-m.activeChat().Height() / 2)
 				m.activeChat().SelectFirstInView()
 			case key.Matches(msg, m.keyMap.Chat.HalfPageDown):
-				if cmd := m.activeChat().ScrollByAndAnimate(m.activeChat().Height() / 2); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(m.activeChat().Height() / 2)
 				m.activeChat().SelectLastInView()
 			case key.Matches(msg, m.keyMap.Chat.PageUp):
-				if cmd := m.activeChat().ScrollByAndAnimate(-m.activeChat().Height()); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(-m.activeChat().Height())
 				m.activeChat().SelectFirstInView()
 			case key.Matches(msg, m.keyMap.Chat.PageDown):
-				if cmd := m.activeChat().ScrollByAndAnimate(m.activeChat().Height()); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(m.activeChat().Height())
 				m.activeChat().SelectLastInView()
 			case key.Matches(msg, m.keyMap.Chat.Home):
-				if cmd := m.activeChat().ScrollToTopAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollToTop()
 				m.activeChat().SelectFirst()
 			case key.Matches(msg, m.keyMap.Chat.End):
-				if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollToBottom()
 				m.activeChat().SelectLast()
 			default:
 				if ok, cmd := m.activeChat().HandleKeyMsg(msg); ok {
@@ -4034,7 +3926,7 @@ func (m *UI) handleTextareaHeightChange(prevHeight int) tea.Cmd {
 	}
 	m.updateLayoutAndSize()
 	if m.state == uiChat && m.activeChat().Follow() {
-		return m.activeChat().ScrollToBottomAndAnimate()
+		m.activeChat().ScrollToBottom()
 	}
 	return nil
 }

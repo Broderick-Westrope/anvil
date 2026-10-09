@@ -2,280 +2,65 @@ package anim
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-// TestStartSupersedesPreviousChain verifies that calling Start() twice
-// does not result in two concurrent tick chains advancing the same Anim.
-// The second Start() bumps the generation, so ticks from the first chain
-// (carrying the old generation) are dropped by Animate().
-func TestStartSupersedesPreviousChain(t *testing.T) {
+func TestFrameInterval(t *testing.T) {
 	t.Parallel()
-
-	a := New(Settings{ID: "test", Size: 5})
-
-	// First chain.
-	cmd1 := a.Start()
-	gen1 := a.gen.Load()
-	require.Equal(t, int64(1), gen1)
-
-	// Second chain supersedes the first.
-	cmd2 := a.Start()
-	gen2 := a.gen.Load()
-	require.Equal(t, int64(2), gen2)
-
-	// Execute both commands to get their StepMsgs.
-	msg1 := cmd1().(StepMsg)
-	msg2 := cmd2().(StepMsg)
-
-	require.Equal(t, gen1, msg1.Gen, "first chain carries old generation")
-	require.Equal(t, gen2, msg2.Gen, "second chain carries new generation")
-
-	// The old-generation tick must be dropped.
-	framesBefore := a.framesSinceStart.Load()
-	next := a.Animate(msg1)
-	require.Nil(t, next, "old-generation tick must not schedule another step")
-	require.Equal(t, framesBefore, a.framesSinceStart.Load(),
-		"old-generation tick must not advance the frame")
-
-	// The new-generation tick must advance.
-	next = a.Animate(msg2)
-	require.NotNil(t, next, "current-generation tick must schedule another step")
-	require.Equal(t, framesBefore+1, a.framesSinceStart.Load(),
-		"current-generation tick must advance the frame")
+	require.Equal(t, 50*time.Millisecond, FrameInterval())
 }
 
-// TestStopKillsChain verifies that Stop() bumps the generation so any
-// in-flight tick chain is terminated.
-func TestStopKillsChain(t *testing.T) {
+// TestAdvanceMovesOneFrame pins that each Advance is exactly one frame: the
+// UI's shared clock calls it once per tick, so anything more would speed
+// spinners up.
+func TestAdvanceMovesOneFrame(t *testing.T) {
 	t.Parallel()
 
 	a := New(Settings{ID: "test", Size: 5})
-	cmd := a.Start()
-	msg := cmd().(StepMsg)
-
-	a.Stop()
-	require.NotEqual(t, msg.Gen, a.gen.Load(), "Stop must bump the generation")
-
-	// The in-flight tick must be dropped.
-	framesBefore := a.framesSinceStart.Load()
-	next := a.Animate(msg)
-	require.Nil(t, next, "tick after Stop must not schedule another step")
-	require.Equal(t, framesBefore, a.framesSinceStart.Load(),
-		"tick after Stop must not advance the frame")
-}
-
-// TestForeignIDStillDropped verifies that the existing ID gate still works
-// alongside the generation gate.
-func TestForeignIDStillDropped(t *testing.T) {
-	t.Parallel()
-
-	a := New(Settings{ID: "test", Size: 5})
-	cmd := a.Start()
-	msg := cmd().(StepMsg)
-
-	framesBefore := a.framesSinceStart.Load()
-	next := a.Animate(StepMsg{ID: "other", Gen: msg.Gen})
-	require.Nil(t, next)
-	require.Equal(t, framesBefore, a.framesSinceStart.Load(),
-		"foreign ID must not advance the frame")
-}
-
-// TestStepMsgCarriesGeneration verifies that Step() stamps the current
-// generation into the emitted StepMsg.
-func TestStepMsgCarriesGeneration(t *testing.T) {
-	t.Parallel()
-
-	a := New(Settings{ID: "test", Size: 5})
-	require.Equal(t, int64(0), a.gen.Load(), "fresh Anim starts at generation 0")
-
-	cmd := a.Step()
-	msg := cmd().(StepMsg)
-	require.Equal(t, int64(0), msg.Gen, "Step before Start carries gen 0")
-
-	a.Start()
-	cmd = a.Step()
-	msg = cmd().(StepMsg)
-	require.Equal(t, int64(1), msg.Gen, "Step after Start carries gen 1")
-}
-
-// TestAnimateSchedulesNextStep verifies the normal happy path: a matching
-// tick advances the frame and schedules the next step.
-func TestAnimateSchedulesNextStep(t *testing.T) {
-	t.Parallel()
-
-	a := New(Settings{ID: "test", Size: 5})
-	cmd := a.Start()
-	msg := cmd().(StepMsg)
-
-	next := a.Animate(msg)
-	require.NotNil(t, next, "matching tick must schedule the next step")
-
-	// The next command should also produce a StepMsg with the same gen.
-	nextMsg := next().(StepMsg)
-	require.Equal(t, msg.Gen, nextMsg.Gen, "chained tick must carry the same generation")
-	require.Equal(t, msg.ID, nextMsg.ID)
-}
-
-// TestSingleChainAdvances verifies that a single Start() produces a
-// working chain that advances frames on each tick.
-func TestSingleChainAdvances(t *testing.T) {
-	t.Parallel()
-
-	a := New(Settings{ID: "test", Size: 5})
-	cmd := a.Start()
-	require.NotNil(t, cmd)
-
-	msg := cmd().(StepMsg)
-	require.Equal(t, "test", msg.ID)
-	require.Equal(t, int64(1), msg.Gen)
-
-	// Advance a few frames.
-	for range 5 {
-		next := a.Animate(msg)
-		require.NotNil(t, next)
-		msg = next().(StepMsg)
+	for i := range 3 {
+		require.Equal(t, int64(i), a.framesSinceStart.Load())
+		a.Advance()
 	}
-	require.Equal(t, int64(5), a.framesSinceStart.Load())
+	require.Equal(t, int64(3), a.framesSinceStart.Load())
 }
 
-// TestConcurrentStartDoesNotDoubleAdvance simulates the bug scenario:
-// two Start() calls produce two chains, and both chains' ticks arrive.
-// Only the second chain's ticks should advance the frame.
-func TestConcurrentStartDoesNotDoubleAdvance(t *testing.T) {
+func TestAdvanceChangesRender(t *testing.T) {
 	t.Parallel()
 
-	a := New(Settings{ID: "test", Size: 5})
-
-	cmd1 := a.Start()
-	cmd2 := a.Start()
-
-	msg1 := cmd1().(StepMsg)
-	msg2 := cmd2().(StepMsg)
-
-	// Interleave ticks from both chains.
-	frames := int64(0)
-	for range 10 {
-		if next := a.Animate(msg1); next != nil {
-			frames++
-			msg1 = next().(StepMsg)
-		}
-		if next := a.Animate(msg2); next != nil {
-			frames++
-			msg2 = next().(StepMsg)
-		}
+	a := New(Settings{ID: "test", Size: 5, Label: "Working"})
+	seen := map[string]struct{}{a.Render(): {}}
+	for range maxBirthSteps + 2*ellipsisAnimSpeed {
+		a.Advance()
+		seen[a.Render()] = struct{}{}
 	}
-
-	// Only chain 2 should have advanced. Chain 1's ticks are all dropped
-	// after the first Start() supersedes it.
-	require.Equal(t, int64(10), a.framesSinceStart.Load(),
-		"only the latest chain should advance the frame")
-	require.Equal(t, frames, a.framesSinceStart.Load())
+	require.Greater(t, len(seen), 3, "advancing must change what is drawn")
+	require.True(t, a.initialized.Load(), "birth finishes after maxBirthSteps frames")
 }
 
-// TestMultipleAnimsIndependent verifies that two Anim instances with
-// different IDs don't interfere with each other.
-func TestMultipleAnimsIndependent(t *testing.T) {
+func TestAnimsAdvanceIndependently(t *testing.T) {
 	t.Parallel()
 
 	a1 := New(Settings{ID: "a1", Size: 5})
 	a2 := New(Settings{ID: "a2", Size: 5})
 
-	cmd1 := a1.Start()
-	cmd2 := a2.Start()
-
-	msg1 := cmd1().(StepMsg)
-	msg2 := cmd2().(StepMsg)
-
-	// Advance a1 only.
-	a1.Animate(msg1)
+	a1.Advance()
 	require.Equal(t, int64(1), a1.framesSinceStart.Load())
 	require.Equal(t, int64(0), a2.framesSinceStart.Load())
-
-	// Advance a2 only.
-	a2.Animate(msg2)
-	require.Equal(t, int64(1), a1.framesSinceStart.Load())
-	require.Equal(t, int64(1), a2.framesSinceStart.Load())
-
-	// Cross-talk: a1's tick must not advance a2.
-	a2.Animate(msg1)
-	require.Equal(t, int64(1), a2.framesSinceStart.Load())
 }
 
-// TestStopThenStart verifies that Stop() followed by Start() produces a
-// working chain with a fresh generation.
-func TestStopThenStart(t *testing.T) {
-	t.Parallel()
-
-	a := New(Settings{ID: "test", Size: 5})
-	cmd := a.Start()
-	msg := cmd().(StepMsg)
-
-	a.Stop()
-	genAfterStop := a.gen.Load()
-
-	cmd = a.Start()
-	msg2 := cmd().(StepMsg)
-	require.Equal(t, genAfterStop+1, msg2.Gen)
-
-	// Old tick must be dropped.
-	require.Nil(t, a.Animate(msg))
-
-	// New tick must work.
-	require.NotNil(t, a.Animate(msg2))
-}
-
-// TestAnimateWithoutStart verifies that Animate works on a fresh Anim
-// whose generation is still zero, matching a zero-gen StepMsg.
-func TestAnimateWithoutStart(t *testing.T) {
-	t.Parallel()
-
-	a := New(Settings{ID: "test", Size: 5})
-	msg := StepMsg{ID: "test", Gen: 0}
-	next := a.Animate(msg)
-	require.NotNil(t, next, "matching gen-0 tick must advance a fresh Anim")
-}
-
-// TestDuplicateIDInstancesDoNotCrossAdvance covers the drill-in tick storm:
-// the same tool-call ID backs distinct Anim instances in the root chat and
-// in each drill-in chat, and the UI broadcasts every StepMsg to every chat.
-// A tick emitted by one instance must be dropped by the other — if both
-// accept it, both schedule a next step and tick chains multiply every
-// frame (exponential growth that freezes the UI).
-func TestDuplicateIDInstancesDoNotCrossAdvance(t *testing.T) {
+// TestSameIDRendersIdentically pins the deterministic birth schedule: the
+// same tool call shown in the root chat and a drill-in chat looks the same
+// frame for frame.
+func TestSameIDRendersIdentically(t *testing.T) {
 	t.Parallel()
 
 	root := New(Settings{ID: "tool-1", Size: 5})
 	drill := New(Settings{ID: "tool-1", Size: 5})
-
-	rootMsg := root.Start()().(StepMsg)
-	drillMsg := drill.Start()().(StepMsg)
-
-	// A foreign instance's tick must be dropped, not adopted.
-	require.Nil(t, drill.Animate(rootMsg), "drill instance must drop root's tick")
-	require.Nil(t, root.Animate(drillMsg), "root instance must drop drill's tick")
-	require.Equal(t, int64(0), root.framesSinceStart.Load())
-	require.Equal(t, int64(0), drill.framesSinceStart.Load())
-
-	// Each instance's own chain still advances and stays 1:1 — one tick in,
-	// at most one tick out across both instances.
 	for range 5 {
-		nextRoot := root.Animate(rootMsg)
-		require.NotNil(t, nextRoot, "own tick must advance the root instance")
-		require.Nil(t, drill.Animate(rootMsg), "root's tick must never fan out to drill")
-		rootMsg = nextRoot().(StepMsg)
+		require.Equal(t, root.Render(), drill.Render())
+		root.Advance()
+		drill.Advance()
 	}
-	require.Equal(t, int64(5), root.framesSinceStart.Load())
-	require.Equal(t, int64(0), drill.framesSinceStart.Load())
-
-	// And symmetrically from the drill instance's perspective.
-	for range 5 {
-		nextDrill := drill.Animate(drillMsg)
-		require.NotNil(t, nextDrill, "own tick must advance the drill instance")
-		require.Nil(t, root.Animate(drillMsg), "drill's tick must never fan out to root")
-		drillMsg = nextDrill().(StepMsg)
-	}
-	require.Equal(t, int64(5), root.framesSinceStart.Load())
-	require.Equal(t, int64(5), drill.framesSinceStart.Load())
 }
