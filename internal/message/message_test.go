@@ -2,6 +2,7 @@ package message
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -718,4 +719,33 @@ func TestPendingState_PrunedAfterFinish(t *testing.T) {
 	msg.AppendContent("restarted")
 	require.NoError(t, svc.Update(t.Context(), msg))
 	require.Equal(t, 1, impl.PendingCount())
+}
+
+// TestPendingStateDoesNotRetainPayload guards the fix for the
+// unbounded heap growth reported in upstream #3162. Pending entries
+// survive non-terminal flushes, so once a delta is flushed they must hold
+// bookkeeping only, never the message parts.
+func TestPendingStateDoesNotRetainPayload(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t, WithDebounce(time.Millisecond))
+	s := svc.(*service)
+
+	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{
+		Role:  Assistant,
+		Parts: []ContentPart{},
+	})
+	require.NoError(t, err)
+
+	msg.AppendReasoningContent(strings.Repeat("x", 64*1024))
+	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Flush(t.Context(), msg.ID))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pending[msg.ID]
+	require.NotNil(t, p, "a non-terminal flush must keep the pending entry")
+	require.False(t, p.dirty)
+	require.Empty(t, p.latest.Parts, "flushed pending state still pins the message parts")
+	require.True(t, p.hasFlushed)
 }
