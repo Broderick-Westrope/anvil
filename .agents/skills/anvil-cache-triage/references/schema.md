@@ -105,7 +105,11 @@ All hashes are 16 hex characters (truncated SHA-256).
 
 ## View `step_usage_report`
 
-`step_usage.*` plus:
+`step_usage.*` plus the columns below. The generated Go struct
+`db.StepUsageReport` has wrong types for these (for example `ListCost
+int64`, `HitRate interface{}`) and nothing uses it; query the view with
+SQL. SQLite fixed `s.*` when the view was created, so a migration that
+adds a `step_usage` column must drop and recreate the view.
 
 | Column | Definition |
 |---|---|

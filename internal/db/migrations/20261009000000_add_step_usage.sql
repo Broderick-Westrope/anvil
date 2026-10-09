@@ -54,6 +54,11 @@ CREATE INDEX IF NOT EXISTS idx_step_usage_sequence
 -- +goose StatementBegin
 CREATE INDEX IF NOT EXISTS idx_step_usage_finished ON step_usage (response_finished_at);
 -- +goose StatementEnd
+-- SQLite expands s.* to the table's columns when the view is created, so
+-- a later ALTER TABLE step_usage ADD COLUMN does not reach the view. Any
+-- migration that adds a column must drop and recreate step_usage_report.
+-- sqlc's db.StepUsageReport types for the computed columns are wrong and
+-- the struct is unused; query the view with SQL.
 -- +goose StatementBegin
 CREATE VIEW IF NOT EXISTS step_usage_report AS
 SELECT
