@@ -171,12 +171,13 @@ func writeHistory(h hash.Hash, msg fantasy.Message, mark func()) error {
 		case fantasy.ReasoningPart, fantasy.TextPart:
 			continue
 		case fantasy.FilePart:
-			writeEntry(h, entryFile, role, p.MediaType, sampleMedia(string(p.Data)))
+			writeEntryHeader(h, entryFile, role, 2)
+			writeFramedString(h, p.MediaType)
+			writeFramedMediaBytes(h, p.Data)
 		case fantasy.ToolCallPart:
 			writeEntry(h, entryToolCall, role, p.ToolCallID, p.ToolName, p.Input, strconv.FormatBool(p.ProviderExecuted))
 		case fantasy.ToolResultPart:
-			fields := append([]string{p.ToolCallID, strconv.FormatBool(p.ProviderExecuted)}, toolResultOutput(p.Output)...)
-			writeEntry(h, entryToolResult, role, fields...)
+			writeToolResult(h, role, p)
 		default:
 			b, err := json.Marshal(part)
 			if err != nil {
@@ -189,7 +190,25 @@ func writeHistory(h hash.Hash, msg fantasy.Message, mark func()) error {
 	return nil
 }
 
-// toolResultOutput returns the output's type and content as entry fields.
+// writeToolResult writes a tool result entry. Media payloads are written
+// sampled, straight into the hash.
+func writeToolResult(h hash.Hash, role string, p fantasy.ToolResultPart) {
+	fields := []string{p.ToolCallID, strconv.FormatBool(p.ProviderExecuted)}
+	o, ok := p.Output.(fantasy.ToolResultOutputContentMedia)
+	if !ok {
+		writeEntry(h, entryToolResult, role, append(fields, toolResultOutput(p.Output)...)...)
+		return
+	}
+	fields = append(fields, string(o.GetType()), o.MediaType, o.Text)
+	writeEntryHeader(h, entryToolResult, role, len(fields)+1)
+	for _, field := range fields {
+		writeFramedString(h, field)
+	}
+	writeFramedMediaString(h, o.Data)
+}
+
+// toolResultOutput returns a non-media output's type and content as entry
+// fields.
 func toolResultOutput(output fantasy.ToolResultOutputContent) []string {
 	switch o := output.(type) {
 	case fantasy.ToolResultOutputContentText:
@@ -200,8 +219,6 @@ func toolResultOutput(output fantasy.ToolResultOutputContent) []string {
 			msg = o.Error.Error()
 		}
 		return []string{string(o.GetType()), msg}
-	case fantasy.ToolResultOutputContentMedia:
-		return []string{string(o.GetType()), o.MediaType, o.Text, sampleMedia(o.Data)}
 	case nil:
 		return nil
 	default:
@@ -212,14 +229,20 @@ func toolResultOutput(output fantasy.ToolResultOutputContent) []string {
 // writeEntry writes one history entry as length-framed fields, so field
 // and entry boundaries change the hash.
 func writeEntry(h hash.Hash, kind, role string, fields ...string) {
-	var n [8]byte
-	binary.BigEndian.PutUint64(n[:], uint64(2+len(fields)))
-	h.Write(n[:])
-	writeFramedString(h, kind)
-	writeFramedString(h, role)
+	writeEntryHeader(h, kind, role, len(fields))
 	for _, field := range fields {
 		writeFramedString(h, field)
 	}
+}
+
+// writeEntryHeader starts an entry with fieldCount fields after kind and
+// role. The caller writes each field framed.
+func writeEntryHeader(h hash.Hash, kind, role string, fieldCount int) {
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(2+fieldCount))
+	h.Write(n[:])
+	writeFramedString(h, kind)
+	writeFramedString(h, role)
 }
 
 func writeFramedString(h hash.Hash, s string) {
@@ -280,7 +303,7 @@ func sampleParts(parts []fantasy.MessagePart) []fantasy.MessagePart {
 		if out == nil {
 			out = slices.Clone(parts)
 		}
-		p.Data = []byte(sampleMedia(string(p.Data)))
+		p.Data = sampleMedia(p.Data)
 		out[i] = p
 	}
 	if out == nil {
@@ -290,12 +313,54 @@ func sampleParts(parts []fantasy.MessagePart) []fantasy.MessagePart {
 }
 
 // sampleMedia returns data, or for large payloads its length and first
-// and last mediaSampleSize bytes.
-func sampleMedia(data string) string {
+// and last mediaSampleSize bytes. It copies only the sample.
+func sampleMedia(data []byte) []byte {
 	if len(data) <= 2*mediaSampleSize {
 		return data
 	}
-	return strconv.Itoa(len(data)) + ":" + data[:mediaSampleSize] + data[len(data)-mediaSampleSize:]
+	out := mediaSampleHeader(len(data))
+	out = slices.Grow(out, 2*mediaSampleSize)
+	out = append(out, data[:mediaSampleSize]...)
+	return append(out, data[len(data)-mediaSampleSize:]...)
+}
+
+// mediaSampleHeader returns the length prefix of a sampled payload of n
+// bytes.
+func mediaSampleHeader(n int) []byte {
+	return append(strconv.AppendInt(nil, int64(n), 10), ':')
+}
+
+// writeFramedMediaBytes writes sampleMedia(data) framed, without copying
+// the payload.
+func writeFramedMediaBytes(h hash.Hash, data []byte) {
+	if len(data) <= 2*mediaSampleSize {
+		writeFramed(h, data)
+		return
+	}
+	writeMediaSampleHeader(h, len(data))
+	h.Write(data[:mediaSampleSize])
+	h.Write(data[len(data)-mediaSampleSize:])
+}
+
+// writeFramedMediaString is writeFramedMediaBytes for string payloads.
+func writeFramedMediaString(h hash.Hash, data string) {
+	if len(data) <= 2*mediaSampleSize {
+		writeFramedString(h, data)
+		return
+	}
+	writeMediaSampleHeader(h, len(data))
+	io.WriteString(h, data[:mediaSampleSize])
+	io.WriteString(h, data[len(data)-mediaSampleSize:])
+}
+
+// writeMediaSampleHeader writes the frame length and length prefix of a
+// sampled payload of n bytes.
+func writeMediaSampleHeader(h hash.Hash, n int) {
+	header := mediaSampleHeader(n)
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(header)+2*mediaSampleSize))
+	h.Write(size[:])
+	h.Write(header)
 }
 
 // writeFramed writes b with a length prefix so block boundaries change the

@@ -2,6 +2,7 @@ package cacheusage
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"testing"
 
@@ -470,4 +471,41 @@ func TestComputeEmpty(t *testing.T) {
 
 	_, ok := f.PrefixMatches(1, "abc")
 	require.False(t, ok)
+}
+
+func TestSampleMedia(t *testing.T) {
+	t.Parallel()
+
+	data := make([]byte, 2*mediaSampleSize+1)
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
+
+	small := data[:2*mediaSampleSize]
+	require.Equal(t, small, sampleMedia(small))
+
+	want := append([]byte("8193:"), data[:mediaSampleSize]...)
+	want = append(want, data[len(data)-mediaSampleSize:]...)
+	require.Equal(t, want, sampleMedia(data))
+}
+
+func TestWriteFramedMediaMatchesSample(t *testing.T) {
+	t.Parallel()
+
+	for _, size := range []int{0, 2 * mediaSampleSize, 2*mediaSampleSize + 1, 64 << 10} {
+		data := make([]byte, size)
+		for i := range data {
+			data[i] = byte(i % 251)
+		}
+		want := sha256.New()
+		writeFramed(want, sampleMedia(data))
+
+		fromBytes := sha256.New()
+		writeFramedMediaBytes(fromBytes, data)
+		require.Equal(t, want.Sum(nil), fromBytes.Sum(nil), size)
+
+		fromString := sha256.New()
+		writeFramedMediaString(fromString, string(data))
+		require.Equal(t, want.Sum(nil), fromString.Sum(nil), size)
+	}
 }
