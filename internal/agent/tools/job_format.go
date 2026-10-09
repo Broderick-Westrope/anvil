@@ -20,6 +20,9 @@ type JobToolOptions struct {
 	// Archive looks up persisted jobs that are no longer in memory. Nil
 	// disables fallbacks.
 	Archive JobArchive
+	// SpillDir is the data directory job_output spills oversized reads
+	// to; see [TruncateOutput].
+	SpillDir string
 }
 
 // JobArchive is the persisted job store as seen by the job tools.

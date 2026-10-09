@@ -116,6 +116,7 @@ func NewViewTool(
 	filetracker filetracker.Service,
 	skillTracker *skills.Tracker,
 	skillRegistry []*skills.Skill,
+	trustedReadDirs []string,
 	workingDir string,
 	skillsPaths ...string,
 ) fantasy.AgentTool {
@@ -140,7 +141,7 @@ func NewViewTool(
 				case skillLoadModeName:
 					return runSkillNameMode(ctx, call, ViewParams{SkillName: target.Name, Offset: params.Offset, Limit: params.Limit}, vt.registry, skillTracker, filetracker, permissions, workingDir, skillsPaths)
 				case skillLoadModePath:
-					return runPathMode(ctx, call, ViewParams{FilePath: target.Location, Offset: params.Offset, Limit: params.Limit}, lspManager, permissions, filetracker, skillTracker, workingDir, skillsPaths)
+					return runPathMode(ctx, call, ViewParams{FilePath: target.Location, Offset: params.Offset, Limit: params.Limit}, lspManager, permissions, filetracker, skillTracker, workingDir, skillsPaths, trustedReadDirs)
 				default:
 					return fantasy.NewTextErrorResponse(errSelectorRequired), nil
 				}
@@ -152,7 +153,7 @@ func NewViewTool(
 			case params.SkillName != "":
 				return runSkillNameMode(ctx, call, params, vt.registry, skillTracker, filetracker, permissions, workingDir, skillsPaths)
 			case params.FilePath != "":
-				return runPathMode(ctx, call, params, lspManager, permissions, filetracker, skillTracker, workingDir, skillsPaths)
+				return runPathMode(ctx, call, params, lspManager, permissions, filetracker, skillTracker, workingDir, skillsPaths, trustedReadDirs)
 			default:
 				return fantasy.NewTextErrorResponse(errSelectorRequired), nil
 			}
@@ -171,6 +172,7 @@ func runPathMode(
 	skillTracker *skills.Tracker,
 	workingDir string,
 	skillsPaths []string,
+	trustedReadDirs []string,
 ) (fantasy.ToolResponse, error) {
 	if strings.HasPrefix(params.FilePath, skills.BuiltinPrefix) {
 		return readBuiltinFile(params, skillTracker)
@@ -183,7 +185,7 @@ func runPathMode(
 		return fantasy.ToolResponse{}, fmt.Errorf("error resolving file path: %w", err)
 	}
 
-	resp, ok, err := ensureReadAllowed(ctx, call, ViewPermissionsParams(params), absFilePath, workingDir, skillsPaths, permissions)
+	resp, ok, err := ensureReadAllowed(ctx, call, ViewPermissionsParams(params), absFilePath, workingDir, skillsPaths, trustedReadDirs, permissions)
 	if err != nil {
 		return fantasy.ToolResponse{}, err
 	}
@@ -312,6 +314,7 @@ func ensureReadAllowed(
 	absPath string,
 	workingDir string,
 	skillsPaths []string,
+	trustedReadDirs []string,
 	permissions permission.Service,
 ) (fantasy.ToolResponse, bool, error) {
 	absWorkingDir, err := filepath.Abs(workingDir)
@@ -322,13 +325,14 @@ func ensureReadAllowed(
 	relPath, err := filepath.Rel(absWorkingDir, absPath)
 	isOutsideWorkDir := err != nil || strings.HasPrefix(relPath, "..")
 	isSkillFile := isInSkillsPath(absPath, skillsPaths)
+	isTrusted := isInSkillsPath(absPath, trustedReadDirs)
 
 	sessionID := GetSessionFromContext(ctx)
 	if sessionID == "" {
 		return fantasy.ToolResponse{}, false, fmt.Errorf("session ID is required for accessing files outside working directory")
 	}
 
-	if isOutsideWorkDir && !isSkillFile {
+	if isOutsideWorkDir && !isSkillFile && !isTrusted {
 		granted, permReqErr := permissions.Request(ctx,
 			permission.CreatePermissionRequest{
 				SessionID:   sessionID,
@@ -392,7 +396,7 @@ func runSkillNameMode(
 
 	permParams := ViewPermissionsParams(params)
 	permParams.FilePath = located.Location
-	resp, ok, err := ensureReadAllowed(ctx, call, permParams, located.Location, workingDir, skillsPaths, permissions)
+	resp, ok, err := ensureReadAllowed(ctx, call, permParams, located.Location, workingDir, skillsPaths, nil, permissions)
 	if err != nil {
 		return fantasy.ToolResponse{}, err
 	}

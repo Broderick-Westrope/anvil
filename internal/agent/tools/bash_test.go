@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -12,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -195,7 +198,7 @@ func (m *recordingPermissionService) GrantForever(toolPattern string, inputPatte
 
 func newBashToolForTest(workingDir string) fantasy.AgentTool {
 	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
-	return NewBashTool(permissions, workingDir)
+	return NewBashTool(permissions, workingDir, workingDir)
 }
 
 func newBashToolWithRecordingPerms(workingDir string, allow bool) (fantasy.AgentTool, *recordingPermissionService) {
@@ -203,7 +206,7 @@ func newBashToolWithRecordingPerms(workingDir string, allow bool) (fantasy.Agent
 		Broker: pubsub.NewBroker[permission.PermissionRequest](),
 		allow:  allow,
 	}
-	return NewBashTool(perms, workingDir), perms
+	return NewBashTool(perms, workingDir, workingDir), perms
 }
 
 func TestBashTool_ChainedCommandsRequirePermission(t *testing.T) {
@@ -282,7 +285,7 @@ func TestTruncateOutputValidUTF8(t *testing.T) {
 	// MaxOutputLength so TruncateOutput must truncate it.
 	content := strings.Repeat("你好世界", MaxOutputLength)
 
-	out := TruncateOutput(content)
+	out := TruncateOutput(content, t.TempDir())
 	require.True(t, utf8.ValidString(out), "truncated output must stay valid UTF-8")
 	require.Contains(t, out, "lines truncated")
 }
@@ -290,7 +293,7 @@ func TestTruncateOutputValidUTF8(t *testing.T) {
 func TestTruncateOutputShortContent(t *testing.T) {
 	t.Parallel()
 	content := "short output"
-	require.Equal(t, content, TruncateOutput(content))
+	require.Equal(t, content, TruncateOutput(content, t.TempDir()))
 }
 
 func TestTruncateOutputEmoji(t *testing.T) {
@@ -298,7 +301,7 @@ func TestTruncateOutputEmoji(t *testing.T) {
 	// Emoji with ZWJ sequences should not be split.
 	content := strings.Repeat("👨‍👩‍👧‍👦", MaxOutputLength)
 
-	out := TruncateOutput(content)
+	out := TruncateOutput(content, t.TempDir())
 	require.True(t, utf8.ValidString(out), "truncated output must stay valid UTF-8")
 	require.Contains(t, out, "lines truncated")
 }
@@ -338,4 +341,31 @@ func TestBashTool_AllowedCommandStillRequestsPermission(t *testing.T) {
 
 	require.Equal(t, 1, perms.requestCount)
 	require.Contains(t, resp.Content, "Permission denied")
+}
+
+func TestTruncateOutputSpillsFullOutput(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	content := "\x1b[31mred\x1b[0m\n" + strings.Repeat("line\n", MaxOutputLength)
+
+	out := TruncateOutput(content, dataDir)
+
+	_, rest, ok := strings.Cut(out, "full output: ")
+	require.True(t, ok, "marker must name the spill file: %q", out[:200])
+	path, _, ok := strings.Cut(rest, "] ...")
+	require.True(t, ok)
+	require.Equal(t, shell.SpillDir(dataDir), filepath.Dir(path))
+
+	spilled, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, ansi.Strip(content), string(spilled), "spill holds the complete output without ANSI")
+}
+
+func TestTruncateOutputShortContentDoesNotSpill(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+
+	require.Equal(t, "short", TruncateOutput("short", dataDir))
+
+	require.NoDirExists(t, shell.SpillDir(dataDir))
 }

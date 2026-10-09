@@ -81,7 +81,7 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 				if !found {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
 				}
-				return archivedJobOutput(opts.Archive, rec, params), nil
+				return archivedJobOutput(opts.Archive, rec, params, opts.SpillDir), nil
 			}
 
 			// The matcher is created before reading so an unread
@@ -113,7 +113,7 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 			}
 			now := time.Now()
 
-			output := formatJobReadOutput(res, params.TailLines)
+			output := formatJobReadOutput(res, params.TailLines, opts.SpillDir)
 			if output == "" {
 				output = BashNoOutput
 				if res.HadPrevious {
@@ -160,7 +160,7 @@ func jobWaitTimeout(seconds int) time.Duration {
 
 // formatJobReadOutput joins a read's streams and applies the reset note,
 // tail_lines, and truncation. It returns "" when there is no output.
-func formatJobReadOutput(res shell.ReadResult, tailLines int) string {
+func formatJobReadOutput(res shell.ReadResult, tailLines int, spillDir string) string {
 	body := joinOutput(res.Stdout, res.Stderr)
 
 	var prefix string
@@ -177,5 +177,5 @@ func formatJobReadOutput(res shell.ReadResult, tailLines int) string {
 	if body == "" {
 		return ""
 	}
-	return TruncateOutput(prefix + body)
+	return TruncateOutput(prefix+body, spillDir)
 }

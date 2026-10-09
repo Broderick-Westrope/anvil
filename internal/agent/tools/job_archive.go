@@ -53,7 +53,7 @@ func lookupArchivedJob(ctx context.Context, archive JobArchive, id string) (jobs
 // archivedJobOutput serves job_output for a persisted job. Waits return
 // immediately and patterns are ignored, since nothing in this process
 // writes to the job any more.
-func archivedJobOutput(archive JobArchive, rec jobstore.Record, params JobOutputParams) fantasy.ToolResponse {
+func archivedJobOutput(archive JobArchive, rec jobstore.Record, params JobOutputParams, spillDir string) fantasy.ToolResponse {
 	now := time.Now()
 	info := rec.Info
 	metadata := JobOutputResponseMetadata{
@@ -80,7 +80,7 @@ func archivedJobOutput(archive JobArchive, rec jobstore.Record, params JobOutput
 	}
 	res := readArchivedIncremental(archive, params.ShellID, stdout, stderr, params.Full)
 
-	output := formatJobReadOutput(res, params.TailLines)
+	output := formatJobReadOutput(res, params.TailLines, spillDir)
 	if output == "" {
 		output = BashNoOutput
 		if res.HadPrevious {

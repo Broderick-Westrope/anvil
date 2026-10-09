@@ -51,7 +51,7 @@ func TestViewToolSkillNameTracksBoundedBytes(t *testing.T) {
 	require.NoError(t, err)
 	registry := []*skills.Skill{{Name: "bounded", SkillFilePath: path}}
 	tracker := &boundedSkillTracker{}
-	tool := NewViewTool(nil, nil, tracker, nil, registry, dir)
+	tool := NewViewTool(nil, nil, tracker, nil, registry, nil, dir)
 	resp := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "bounded"})
 	require.False(t, resp.IsError)
 	require.False(t, tracker.reread, "RecordRead reopens the source with an unbounded os.ReadFile")
