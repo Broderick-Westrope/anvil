@@ -113,30 +113,20 @@ Use gh command for ALL GitHub tasks. When user asks to create PR:
 4. Push to remote with -u flag if needed
 
 5. Analyze changes in <pr_analysis> tags:
-   - List commits since diverging from main
-   - Summarize nature of changes
-   - Brainstorm purpose/motivation
-   - Assess project impact
-   - Don't use tools beyond git context
+   - List commits since diverging from main, and make sure the description accounts for all of them
+   - Work out why the change was made, and which choices a reviewer couldn't understand from the diff alone
    - Check for sensitive information
-   - Draft concise (1-2 bullet points) PR summary focusing on "why"
-   - Ensure summary reflects ALL changes since main divergence
-   - Clear, concise language
-   - Accurate reflection of changes and purpose
-   - Avoid generic summaries
    - Review draft
 
-6. Create PR with gh pr create using HEREDOC:
+6. Write the title and body. Follow the repository's PR conventions first: a PR template (e.g. `.github/pull_request_template.md`), a loaded PR skill, or memory file guidance. Otherwise:
+   - Title: one imperative line naming the change. It becomes the merge commit subject.
+   - Body: state the why. Give the motivation, and the reasoning behind anything that isn't immediately clear from the code. The diff shows what changed, so don't list files or restate it.
+   - Add a mermaid diagram only when it makes a flow or structure change easier to follow than prose would.
+   - Keep it short. Skip headings and test-plan checklists unless the repository uses them.
+
+   Create the PR with gh pr create using HEREDOC:
    gh pr create --title "title" --body "$(cat <<'EOF'
-
-   ## Summary
-
-   <1-3 bullet points>
-
-   ## Test plan
-
-   [Checklist of TODOs...]
-
+   <body>
    EOF
    )"
 
