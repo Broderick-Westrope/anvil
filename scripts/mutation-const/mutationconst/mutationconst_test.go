@@ -144,3 +144,18 @@ func TestRun(t *testing.T) {
 	require.Equal(t, 1, Run(strings.NewReader("a.go\t1\t1\tLIVED\tX\n"), failingWriter{}, &errOut))
 	require.Equal(t, "write failed\n", errOut.String())
 }
+
+func TestClassifySkipsBlankLinesAndNeedsOnlyStatus(t *testing.T) {
+	t.Parallel()
+
+	ranges := func(string) ([]lineRange, error) {
+		return []lineRange{{start: 3, end: 3}}, nil
+	}
+	// A blank line must not stop processing, and the mutation type column
+	// is optional: the status in the fourth field is enough.
+	in := "a.go\t3\t1\tNOT COVERED\tX\n\na.go\t3\t1\tNOT COVERED\n"
+
+	var out strings.Builder
+	require.NoError(t, classify(strings.NewReader(in), &out, ranges))
+	require.Equal(t, "const\ta.go\t3\t1\tNOT COVERED\tX\nconst\ta.go\t3\t1\tNOT COVERED\n", out.String())
+}
