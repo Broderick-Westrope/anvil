@@ -527,7 +527,7 @@ func unwrap(tokens []string, depth int) []string {
 // rather than a command or path.
 func isAssignment(tok string) bool {
 	eq := strings.Index(tok, "=")
-	if eq <= 0 {
+	if eq < 1 {
 		return false
 	}
 	name := tok[:eq]
