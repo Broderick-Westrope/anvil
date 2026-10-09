@@ -44,7 +44,7 @@ func TestRun_WtpBuiltinUsesShellDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v (stderr: %s)", err, stderr.String())
 	}
-	if got := strings.TrimSpace(stdout.String()); got != repo {
+	if got := filepath.FromSlash(strings.TrimSpace(stdout.String())); got != repo {
 		t.Fatalf("wtp cd @ = %q, want %q", got, repo)
 	}
 }
