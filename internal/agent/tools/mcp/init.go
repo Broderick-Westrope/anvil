@@ -25,7 +25,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func parseLevel(level mcp.LoggingLevel) slog.Level {
+func parseLevel(level mcp.LoggingLevel) slog.Level { //nolint:staticcheck
 	switch level {
 	case "info":
 		return slog.LevelInfo
@@ -768,7 +768,7 @@ func createSession(ctx context.Context, name string, m config.MCPConfig, resolve
 					Name: name,
 				})
 			},
-			LoggingMessageHandler: func(ctx context.Context, req *mcp.LoggingMessageRequest) {
+			LoggingMessageHandler: func(ctx context.Context, req *mcp.LoggingMessageRequest) { //nolint:staticcheck
 				level := parseLevel(req.Params.Level)
 				slog.Log(ctx, level, "MCP log", "name", name, "logger", req.Params.Logger, "data", req.Params.Data)
 			},

@@ -197,7 +197,9 @@ func plainWords(arg *syntax.Word, printed string) []string {
 	if strings.Contains(printed, "{") {
 		clone := &syntax.Word{Parts: slices.Clone(arg.Parts)}
 		if syntax.SplitBraces(clone) && braceWords(clone.Parts) <= maxBraceWords {
-			words = expand.Braces(clone)
+			if expanded, ok := expandBraces(clone); ok {
+				words = expanded
+			}
 		}
 	}
 	out := make([]string, 0, len(words))
@@ -209,6 +211,17 @@ func plainWords(arg *syntax.Word, printed string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func expandBraces(word *syntax.Word) ([]*syntax.Word, bool) {
+	var words []*syntax.Word
+	for w, err := range expand.BracesSeq(nil, word) {
+		if err != nil {
+			return nil, false
+		}
+		words = append(words, w)
+	}
+	return words, true
 }
 
 // braceWords returns how many words parts expand to, or a value above
