@@ -1,6 +1,6 @@
 # Phase 3: Triage Skill and End-to-End Verification
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Part of `README.md`. Depends on Phase 2. Create a PR for human review, or
 > continue on the same branch.
 

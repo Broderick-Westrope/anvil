@@ -34,6 +34,12 @@ Conclusions that shaped these proposals:
 
 ## 1. Measure prompt-cache hit rate
 
+> **Update:** measurement shipped in
+> `plans/impl-2026-10-09-cache-usage-metrics/`. Every LLM response writes
+> a `step_usage` row; triage with the project skill
+> `.agents/skills/anvil-cache-triage`. Fixes remain open pending a week of
+> data.
+
 ### Why
 
 Providers cache the request prefix (tools, system, messages). Any byte change

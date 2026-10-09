@@ -1,6 +1,6 @@
 # Phase 2: Instrumentation
 
-> **Status:** DRAFT
+> **Status:** COMPLETED
 > Part of `README.md`. Depends on Phase 1. Create a PR for human review, or
 > continue on the same branch.
 
