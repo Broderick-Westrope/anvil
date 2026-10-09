@@ -641,14 +641,18 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		// critical tool error that is a network error); both responses
 		// were billed, so both rows are real.
 		OnStreamFinish: func(usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata) error {
+			finished := time.Now()
 			sessionLock.Lock()
-			defer sessionLock.Unlock()
 			if capture == nil {
+				sessionLock.Unlock()
 				return nil
 			}
-			a.usageRecorder.Record(a.newRow(capture, usage, reason, meta, time.Now()))
-			prevTurn, havePrevTurn = capture.turnPrefix(), true
+			// Snapshot the capture so the row is built outside the lock.
+			snapshot := *capture
+			prevTurn, havePrevTurn = snapshot.turnPrefix(), true
 			a.lastTurn.Set(call.SessionID, prevTurn)
+			sessionLock.Unlock()
+			a.usageRecorder.Record(a.newRow(&snapshot, usage, reason, meta, finished))
 			return nil
 		},
 		// ModelProvider is re-read on each attempt so a stream retried
