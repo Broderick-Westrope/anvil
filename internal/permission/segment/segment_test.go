@@ -426,24 +426,24 @@ func TestGeneralize(t *testing.T) {
 			want:    "go test *",
 		},
 		{
-			name:    "leading assignments keep the variable name",
+			name:    "leading assignments are kept verbatim",
 			segment: "LD_PRELOAD=/tmp/x.so ls -la",
-			want:    "LD_PRELOAD=* ls *",
+			want:    "LD_PRELOAD=/tmp/x.so ls *",
 		},
 		{
 			name:    "several assignments",
 			segment: "GOOS=linux GOARCH=arm64 go build ./...",
-			want:    "GOOS=* GOARCH=* go build *",
+			want:    "GOOS=linux GOARCH=arm64 go build *",
 		},
 		{
 			name:    "pure assignment",
 			segment: "PATH=/tmp/evil",
-			want:    "PATH=*",
+			want:    "PATH=/tmp/evil",
 		},
 		{
-			name:    "export keeps the variable name",
+			name:    "export is kept verbatim",
 			segment: "export LD_PRELOAD=/tmp/x.so",
-			want:    "export LD_PRELOAD=*",
+			want:    "export LD_PRELOAD=/tmp/x.so",
 		},
 		{
 			name:    "flags are not subcommands",
@@ -529,6 +529,21 @@ func TestGeneralizeMatchesSourceSegment(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, ok, "pattern %q should match segment %q", pattern, seg)
 		})
+	}
+}
+
+func TestGeneralizedAssignmentDoesNotCoverOtherVariables(t *testing.T) {
+	t.Parallel()
+
+	pattern := Generalize("GOOS=linux go build ./...")
+	for _, seg := range []string{
+		"GOOS=linux LD_PRELOAD=/tmp/x.so go build ./...",
+		"GOOS=darwin go build ./...",
+		"go build ./...",
+	} {
+		ok, err := match.Match(pattern, seg)
+		require.NoError(t, err)
+		require.False(t, ok, "pattern %q must not match %q", pattern, seg)
 	}
 }
 

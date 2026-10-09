@@ -708,13 +708,12 @@ func Generalize(segment string) string {
 		return segment
 	}
 
-	// Leading assignments keep their variable name but not their value,
-	// so approving "GOOS=linux go build" suggests "GOOS=* go build *"
-	// rather than a rule that ignores the environment entirely.
+	// Leading assignments are kept verbatim. A "NAME=*" pattern would be
+	// unsafe: "*" also matches spaces, so "GOOS=* go build *" would
+	// approve "GOOS=x LD_PRELOAD=/evil go build" too.
 	var assigns []string
 	for len(tokens) > 0 && isAssignment(tokens[0]) {
-		name, _, _ := strings.Cut(tokens[0], "=")
-		assigns = append(assigns, name+"=*")
+		assigns = append(assigns, tokens[0])
 		tokens = tokens[1:]
 	}
 	if len(tokens) == 0 {
@@ -723,8 +722,7 @@ func Generalize(segment string) string {
 
 	prefix := tokens[0]
 	if _, ok := declBuiltins[prefix]; ok && len(tokens) > 1 && isAssignment(tokens[1]) {
-		name, _, _ := strings.Cut(tokens[1], "=")
-		return prefix + " " + name + "=*"
+		return strings.Join(tokens, " ")
 	}
 	if len(tokens) > 1 && subcommandRe.MatchString(tokens[1]) {
 		prefix += " " + tokens[1]
