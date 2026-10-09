@@ -435,10 +435,15 @@ func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) erro
 		if err == nil {
 			p.baseline = newFlushBaseline(&snap)
 			p.hasFlushed = true
-			// Prune terminal entries that are no longer dirty.
-			// A concurrent Update may have re-dirtied the entry during
-			// the SQL write; in that case, leave it for the next flush.
-			if isTerminal && !p.dirty {
+			// Prune entries for finished messages that are no longer
+			// dirty. Structural events mid-stream (tool call added or
+			// finished, reasoning ended) must keep the entry, because
+			// dropping the baseline makes every later delta look
+			// structural and defeats debouncing for the rest of the
+			// stream. A concurrent Update may have re-dirtied the entry
+			// during the SQL write; in that case, leave it for the next
+			// flush.
+			if snap.IsFinished() && !p.dirty {
 				if p.timer != nil {
 					p.timer.Stop()
 				}
