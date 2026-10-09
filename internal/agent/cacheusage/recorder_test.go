@@ -3,6 +3,7 @@ package cacheusage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -82,6 +83,8 @@ func TestRecorderWritesAndFlushes(t *testing.T) {
 	r.Record(Row{Kind: "after-close", Provider: "p", ProviderType: "p", Model: "m"})
 	require.NoError(t, r.Close(t.Context()))
 
+	require.Zero(t, r.failed.Load())
+
 	rows := listRows(t, conn)
 	require.Len(t, rows, 2)
 	require.NotEmpty(t, rows[0].id)
@@ -100,6 +103,28 @@ func TestRecorderWritesAndFlushes(t *testing.T) {
 	require.Equal(t, "small", rows[1].kind)
 	require.Equal(t, "{}", rows[1].rawUsage)
 	require.False(t, rows[1].prefixMatch.Valid)
+}
+
+// failingQuerier fails every step usage insert.
+type failingQuerier struct{ db.Querier }
+
+func (failingQuerier) InsertStepUsage(context.Context, db.InsertStepUsageParams) error {
+	return errors.New("disk full")
+}
+
+func TestRecorderCountsFailedWrites(t *testing.T) {
+	t.Parallel()
+	r := New(failingQuerier{})
+	r.Record(Row{Kind: "turn"})
+	r.Record(Row{Kind: "turn"})
+	require.NoError(t, r.Close(t.Context()))
+	require.Equal(t, int64(2), r.failed.Load())
+}
+
+func TestRecorderDurations(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, 2160*time.Hour, Retention)
+	require.Equal(t, 500*time.Millisecond, writeTimeout)
 }
 
 func TestRecorderFullDoesNotBlock(t *testing.T) {

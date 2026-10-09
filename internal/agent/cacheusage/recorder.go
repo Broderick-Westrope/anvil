@@ -86,6 +86,8 @@ type Recorder struct {
 	closed bool
 	// dropped counts rows dropped because the buffer was full.
 	dropped atomic.Int64
+	// failed counts rows whose insert failed.
+	failed atomic.Int64
 }
 
 // New starts a recorder. Call Close to flush queued writes and stop it.
@@ -202,7 +204,7 @@ func (r *Recorder) write(row Row) {
 		FingerprintError:   row.FingerprintError,
 	})
 	if err != nil {
-		slog.Warn("Failed to record step usage", "error", err)
+		slog.Warn("Failed to record step usage", "error", err, "failed", r.failed.Add(1))
 	}
 }
 
