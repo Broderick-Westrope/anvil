@@ -47,6 +47,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/version"
+	"github.com/google/uuid"
 )
 
 const (
@@ -311,6 +312,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		currentSession.LeafMessageID = state.acceptedUserID
 	}
 	currentLeaf := currentSession.LeafMessageID
+	parentSessionID := currentSession.ParentSessionID
 
 	// getLeaf and setLeaf provide thread-safe access to currentLeaf.
 	getLeaf := func() string {
@@ -447,6 +449,17 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	if call.MaxOutputTokens > 0 {
 		maxOutputTokens = &call.MaxOutputTokens
 	}
+
+	// Usage capture state, guarded by sessionLock. capture is the current
+	// step's request; prevTurn is the history of the run's previous step,
+	// or of the session's last recorded turn step before this run.
+	runID := uuid.NewString()
+	var capture *stepCapture
+	var prevTurn turnPrefix
+	var havePrevTurn bool
+	if a.usageRecorder != nil {
+		prevTurn, havePrevTurn = a.lastTurn.Get(call.SessionID)
+	}
 	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
 		Files:            files,
@@ -512,6 +525,17 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			stepMessages = cloneFantasyMessages(prepared.Messages)
 			sessionLock.Unlock()
 
+			var stepUsage *stepCapture
+			if a.usageRecorder != nil {
+				stepUsage = a.newCapture(usageKindTurn, runID, call.SessionID, parentSessionID, largeModel, prepared.Tools, prepared.Messages)
+				stepUsage.stepIndex = options.StepNumber
+				sessionLock.Lock()
+				if havePrevTurn {
+					stepUsage.comparePrefix(prevTurn)
+				}
+				sessionLock.Unlock()
+			}
+
 			var assistantMsg message.Message
 			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
 				Role:            message.Assistant,
@@ -525,6 +549,12 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			}
 			state.assistantIDs = append(state.assistantIDs, assistantMsg.ID)
 			setLeaf(assistantMsg.ID)
+			if stepUsage != nil {
+				stepUsage.messageID = assistantMsg.ID
+				sessionLock.Lock()
+				capture = stepUsage
+				sessionLock.Unlock()
+			}
 			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
@@ -585,6 +615,11 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
+			sessionLock.Lock()
+			if capture != nil {
+				capture.retries++
+			}
+			sessionLock.Unlock()
 			// Reset streamed content so the retried response doesn't
 			// concatenate with partial content from the failed attempt.
 			// On the final attempt (no more retries), any partial content
@@ -595,6 +630,27 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			}
 		},
 		OnAuthRefresh: call.OnAuthRefresh,
+		// OnStreamFinish fires as soon as the provider reports usage, before
+		// tools run, so steps whose tools later fail are still recorded.
+		// fantasy calls it from processStepStream on the finish part
+		// (fantasy@v0.43.2 agent.go:1646-1653), inside the per-step retry
+		// closure (agent.go:1036-1055). A retried attempt that failed
+		// before its finish part never reaches it, so a retried request is
+		// recorded once, by the attempt that finished. An attempt is only
+		// recorded twice if it finished and then failed retryably (a
+		// critical tool error that is a network error); both responses
+		// were billed, so both rows are real.
+		OnStreamFinish: func(usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata) error {
+			sessionLock.Lock()
+			defer sessionLock.Unlock()
+			if capture == nil {
+				return nil
+			}
+			a.usageRecorder.Record(a.newRow(capture, usage, reason, meta, time.Now()))
+			prevTurn, havePrevTurn = capture.turnPrefix(), true
+			a.lastTurn.Set(call.SessionID, prevTurn)
+			return nil
+		},
 		// ModelProvider is re-read on each attempt so a stream retried
 		// after OnAuthRefresh picks up the model rebuilt against the
 		// refreshed credentials rather than the stale one.
