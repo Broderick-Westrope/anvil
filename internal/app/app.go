@@ -21,6 +21,7 @@ import (
 	"charm.land/fantasy"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
@@ -67,6 +68,10 @@ type App struct {
 
 	LSPManager *lsp.Manager
 
+	// cacheUsage records per-call prompt-cache usage. It is closed by the
+	// shutdown cleanup after agents have been cancelled.
+	cacheUsage *cacheusage.Recorder
+
 	config *config.ConfigStore
 	// bouncer is the same Bouncer the permission service assesses with,
 	// kept so ApplyConfig can swap its thresholds. Nil when unconfigured.
@@ -100,6 +105,14 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		defer cancel()
 		if err := decisionlog.Prune(pruneCtx, q, time.Now()); err != nil {
 			slog.Warn("Failed to prune permission decisions", "error", err)
+		}
+	}()
+	cacheUsage := cacheusage.New(q)
+	go func() {
+		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := cacheusage.Prune(pruneCtx, q, time.Now()); err != nil {
+			slog.Warn("Failed to prune step usage", "error", err)
 		}
 	}()
 	store.SetBouncerValidator(func(b *config.Bouncer) error {
@@ -137,6 +150,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		FileTracker: filetracker.NewService(q),
 		Queries:     q,
 		LSPManager:  lsp.NewManager(store),
+		cacheUsage:  cacheUsage,
 
 		globalCtx: ctx,
 
@@ -179,14 +193,22 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Release the shared database connection on shutdown. The pool
 	// closes the underlying *sql.DB when the last reference is released.
-	// Cleanup funcs run concurrently, so the decision log is flushed here
-	// first. If the flush times out the connection is left open, since
-	// the recorder is still writing and the process is exiting anyway.
+	// Cleanup funcs run concurrently, so the decision log and step usage
+	// recorder are flushed here first. If a flush times out the connection
+	// is left open, since that recorder is still writing and the process
+	// is exiting anyway.
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
 		func(ctx context.Context) error {
+			var errs []error
 			if err := recorder.Close(ctx); err != nil {
-				return fmt.Errorf("permission decision log did not flush before shutdown: %w", err)
+				errs = append(errs, fmt.Errorf("permission decision log did not flush before shutdown: %w", err))
+			}
+			if err := cacheUsage.Close(ctx); err != nil {
+				errs = append(errs, fmt.Errorf("step usage log did not flush before shutdown: %w", err))
+			}
+			if len(errs) > 0 {
+				return errors.Join(errs...)
 			}
 			return db.ReleaseGlobal()
 		},
@@ -201,6 +223,9 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	if err := app.InitOrchestratorAgent(ctx); err != nil {
 		if closeErr := recorder.Close(ctx); closeErr != nil {
 			slog.Warn("Failed to close permission decision log after initialization error", "error", closeErr)
+		}
+		if closeErr := cacheUsage.Close(ctx); closeErr != nil {
+			slog.Warn("Failed to close step usage log after initialization error", "error", closeErr)
 		}
 		return nil, fmt.Errorf("failed to initialize orchestrator agent: %w", err)
 	}
