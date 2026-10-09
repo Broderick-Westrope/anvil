@@ -19,7 +19,7 @@ func initGitRepo(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
-	cmd := exec.Command("git", "init", "-q", dir)
+	cmd := exec.CommandContext(t.Context(), "git", "init", "-q", dir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
