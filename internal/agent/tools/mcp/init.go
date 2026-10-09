@@ -643,13 +643,34 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 func pingSession(ctx context.Context, s *ClientSession, timeout time.Duration) error {
 	pingCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	err := s.Ping(pingCtx, nil)
+	err := s.Ping(pingCtx, pingParams(s))
 	// MethodNotFound means the server answered; it just doesn't implement ping.
 	var wireErr *jsonrpc.Error
 	if errors.As(err, &wireErr) && wireErr.Code == jsonrpc.CodeMethodNotFound {
 		return nil
 	}
 	return err
+}
+
+// statelessProtocolVersion is the first MCP protocol revision (SEP-2575)
+// that requires per-request _meta on every call.
+const statelessProtocolVersion = "2026-07-28"
+
+// pingParams adds the SEP-2575 per-request _meta to a ping on a session that
+// negotiated the stateless protocol. go-sdk v1.8.0 adds it to list and call
+// requests but not to Ping, so servers reject a bare ping with -32602 and the
+// healthy session would be torn down and rebuilt on every tool call. Ping
+// carries no capability-dependent behaviour, so empty client capabilities
+// satisfy the required field.
+func pingParams(s *ClientSession) *mcp.PingParams {
+	res := s.InitializeResult()
+	if res == nil || res.ProtocolVersion < statelessProtocolVersion {
+		return nil
+	}
+	return &mcp.PingParams{Meta: mcp.Meta{
+		mcp.MetaKeyProtocolVersion:    res.ProtocolVersion,
+		mcp.MetaKeyClientCapabilities: map[string]any{},
+	}}
 }
 
 // closeSession closes an MCP session, logging only unexpected errors. EOF,

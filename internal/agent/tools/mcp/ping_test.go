@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -71,4 +73,29 @@ func TestPingSession_ClosedSessionStillFails(t *testing.T) {
 	require.NoError(t, sess.Close())
 
 	require.Error(t, pingSession(context.Background(), sess, time.Second))
+}
+
+// TestPingSession_NewProtocol pins pings on sessions that negotiated the
+// stateless 2026-07-28 protocol. Servers reject any call there that lacks the
+// SEP-2575 _meta fields, and go-sdk v1.8.0's Ping doesn't add them, so a bare
+// ping failed and every tool call rebuilt a healthy session.
+func TestPingSession_NewProtocol(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "new-protocol"}, nil)
+	handler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server },
+		&mcp.StreamableHTTPOptions{Stateless: true},
+	)
+	httpServer := httptest.NewServer(handler)
+	t.Cleanup(httpServer.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := mcp.NewClient(&mcp.Implementation{Name: "anvil-test"}, nil)
+	clientSession, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
+	require.NoError(t, err)
+	sess := &ClientSession{ClientSession: clientSession, cancel: cancel}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	require.GreaterOrEqual(t, sess.InitializeResult().ProtocolVersion, "2026-07-28",
+		"the test must exercise the new protocol")
+	require.NoError(t, pingSession(context.Background(), sess, time.Second))
 }
