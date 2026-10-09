@@ -68,10 +68,10 @@ func (s *SkillPickerItem) SetMatch(m fuzzy.Match) {
 
 // sourceLabel returns a human-readable label for the skill source.
 func (s *SkillPickerItem) sourceLabel() string {
-	switch {
-	case s.skill.Source == skills.SourceBuiltin:
+	switch s.skill.Source {
+	case skills.SourceBuiltin:
 		return "builtin"
-	case s.skill.Source == "":
+	case "":
 		return "user"
 	default:
 		return s.skill.Source

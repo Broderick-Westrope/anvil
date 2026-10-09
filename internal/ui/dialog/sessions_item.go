@@ -137,7 +137,7 @@ func (s *SessionItem) Render(width int) string {
 	// sessionItems on reload), so the per-width cache stays valid.
 	title := s.Title
 	m := &s.m
-	if s.Session.Pinned {
+	if s.Pinned {
 		marker := styles.PinIcon + " "
 		title = marker + title
 		if len(s.m.MatchedIndexes) > 0 {

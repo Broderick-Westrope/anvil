@@ -1542,16 +1542,16 @@ func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCf
 	}
 
 	return Model{
-			Model:      largeModel,
-			CatwalkCfg: *largeCatwalkModel,
-			ModelCfg:   largeModelCfg,
-			FlatRate:   largeProviderCfg.FlatRate,
-		}, Model{
-			Model:      smallModel,
-			CatwalkCfg: *smallCatwalkModel,
-			ModelCfg:   smallModelCfg,
-			FlatRate:   smallProviderCfg.FlatRate,
-		}, nil
+		Model:      largeModel,
+		CatwalkCfg: *largeCatwalkModel,
+		ModelCfg:   largeModelCfg,
+		FlatRate:   largeProviderCfg.FlatRate,
+	}, Model{
+		Model:      smallModel,
+		CatwalkCfg: *smallCatwalkModel,
+		ModelCfg:   smallModelCfg,
+		FlatRate:   smallProviderCfg.FlatRate,
+	}, nil
 }
 
 func isExactoSupported(modelID string) bool {

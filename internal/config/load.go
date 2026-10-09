@@ -297,8 +297,8 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 			Models:             p.Models,
 		}
 
-		switch {
-		case p.ID == catwalk.InferenceProviderAnthropic:
+		switch p.ID {
+		case catwalk.InferenceProviderAnthropic:
 			configureAnthropicAuth(&prepared, config.AuthMode)
 		}
 

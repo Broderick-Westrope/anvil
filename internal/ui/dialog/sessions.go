@@ -271,7 +271,7 @@ func (s *Session) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		rc.TitleGradientToColor = t.Dialog.Sessions.DeletingTitleGradientToColor
 		rc.ViewStyle = t.Dialog.Sessions.DeletingView
 		deleteMsg := "Delete this session?"
-		if item := s.selectedSessionItem(); item != nil && item.Session.Pinned {
+		if item := s.selectedSessionItem(); item != nil && item.Pinned {
 			deleteMsg = "This session is pinned. Delete anyway?"
 		}
 		rc.AddPart(t.Dialog.Sessions.DeletingMessage.Render(deleteMsg))

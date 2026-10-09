@@ -25,7 +25,7 @@ func startCallbackServer(ctx context.Context, addr string) (net.Listener, <-chan
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
-	listener, err := net.Listen("tcp", addr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		return nil, nil, fmt.Errorf(
 			"failed to start OAuth callback listener on %s "+

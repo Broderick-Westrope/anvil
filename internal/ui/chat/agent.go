@@ -204,7 +204,7 @@ func NewAgentToolMessageItem(
 ) *AgentToolMessageItem {
 	t := &AgentToolMessageItem{}
 	t.baseToolMessageItem = newBaseToolMessageItem(sty, toolCall, result, &AgentToolRenderContext{agent: t}, canceled)
-	t.drillableAgentState.clearFunc = t.baseToolMessageItem.clearCache
+	t.clearFunc = t.clearCache
 	// Expose the observed child model to the copy path so copied text
 	// matches the rendered header when no explicit override was passed.
 	t.modelFunc = func() string { return t.model }
@@ -521,7 +521,7 @@ func NewAgenticFetchToolMessageItem(
 	// The embedded drillableAgentState.model field is populated by generic
 	// DrillableAgent callers but intentionally not displayed: agentic fetch
 	// renders a fixed "Agentic Fetch" title without a model identifier.
-	t.drillableAgentState.clearFunc = t.baseToolMessageItem.clearCache
+	t.clearFunc = t.clearCache
 	// For the agentic fetch tool we keep spinning until the tool call is finished.
 	t.spinningFunc = func(state SpinningState) bool {
 		return !state.HasResult() && !state.IsCanceled()
