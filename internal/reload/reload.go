@@ -48,8 +48,11 @@ func Args(o Options) []string {
 	if o.Debug {
 		args = append(args, "--debug")
 	}
-	// Mirrors config.ParseYoloLevel: a bare --yolo means "true".
+	// Mirrors config.ParseYoloLevel: a bare --yolo means "true". Off is
+	// passed explicitly so a yolo default in config can't override it.
 	switch o.Yolo {
+	case config.YoloOff:
+		args = append(args, "--yolo=false")
 	case config.YoloStandard:
 		args = append(args, "--yolo")
 	case config.YoloFull:
