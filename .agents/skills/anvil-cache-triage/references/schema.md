@@ -40,7 +40,7 @@ tokens**; token counts are per call.
 
 | Column | Meaning |
 |---|---|
-| `request_started_at` | When `PrepareStep` built this request (after the previous step's tools ran). |
+| `request_started_at` | End of `PrepareStep` for this request, just before fantasy sends it: after the previous step's tools ran and, for turns, after the assistant message was created and the request fingerprinted. |
 | `response_finished_at` | When the provider reported usage (`OnStreamFinish`), before this step's tools run. |
 | `retry_count` | `OnRetry` calls during this step (failed attempts before the one that finished). |
 | `finish_reason` | fantasy finish reason (`stop`, `tool-calls`, `length`, ...). |

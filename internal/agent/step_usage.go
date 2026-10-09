@@ -69,8 +69,11 @@ type stepCapture struct {
 }
 
 // newCapture starts a capture for one request. It fingerprints tools and
-// messages, so call it only when a.usageRecorder is non-nil.
+// messages, so call it only when a.usageRecorder is non-nil. Call it last
+// in PrepareStep: started is taken after fingerprinting, as close to the
+// provider request as Anvil can see.
 func (a *sessionAgent) newCapture(kind, runID, sessionID, parentID string, model Model, tools []fantasy.AgentTool, messages []fantasy.Message) *stepCapture {
+	fp := cacheusage.Compute(tools, messages)
 	return &stepCapture{
 		runID:     runID,
 		kind:      kind,
@@ -79,7 +82,7 @@ func (a *sessionAgent) newCapture(kind, runID, sessionID, parentID string, model
 		parentID:  parentID,
 		model:     model,
 		started:   time.Now(),
-		fp:        cacheusage.Compute(tools, messages),
+		fp:        fp,
 		messages:  messages,
 	}
 }

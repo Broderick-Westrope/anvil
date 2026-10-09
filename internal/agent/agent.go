@@ -525,17 +525,6 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			stepMessages = cloneFantasyMessages(prepared.Messages)
 			sessionLock.Unlock()
 
-			var stepUsage *stepCapture
-			if a.usageRecorder != nil {
-				stepUsage = a.newCapture(usageKindTurn, runID, call.SessionID, parentSessionID, largeModel, prepared.Tools, prepared.Messages)
-				stepUsage.stepIndex = options.StepNumber
-				sessionLock.Lock()
-				if havePrevTurn {
-					stepUsage.comparePrefix(prevTurn)
-				}
-				sessionLock.Unlock()
-			}
-
 			var assistantMsg message.Message
 			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
 				Role:            message.Assistant,
@@ -549,9 +538,17 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			}
 			state.assistantIDs = append(state.assistantIDs, assistantMsg.ID)
 			setLeaf(assistantMsg.ID)
-			if stepUsage != nil {
+			// The capture starts after the message is created so
+			// request_started_at is as close to the provider request as
+			// PrepareStep allows.
+			if a.usageRecorder != nil {
+				stepUsage := a.newCapture(usageKindTurn, runID, call.SessionID, parentSessionID, largeModel, prepared.Tools, prepared.Messages)
+				stepUsage.stepIndex = options.StepNumber
 				stepUsage.messageID = assistantMsg.ID
 				sessionLock.Lock()
+				if havePrevTurn {
+					stepUsage.comparePrefix(prevTurn)
+				}
 				capture = stepUsage
 				sessionLock.Unlock()
 			}
