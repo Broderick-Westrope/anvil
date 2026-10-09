@@ -26,7 +26,7 @@ adaptations) goes in the **Plan** section at the bottom.
 |---|---|---|---|---|
 | A1 | `63829edf` | Always emit tool results right after their calls. Without this, sessions get permanently stuck on strict-adjacency providers (Kimi, DeepSeek). | Take | **done** (`7ae9d90b`). Conflict: replaced our `filterOrphanedToolResults` / `syntheticToolResultsForOrphanedCalls` with upstream's `toolResultsForCalls`. Tests now pass the local 3-arg `sessions.Create`. |
 | A2 | `80ebee41` | Fix reasoning effort being dropped. | Take | **done** (`5f9c7695`). Hand-applied, since upstream sits on top of A3. The test uses an explicit provider list because `discover.RegisteredProviderTypes` came from a skipped schema commit. |
-| A3 | `8e5b708d` | Keep `top_k` for known custom providers. | Take | pending |
+| A3 | `8e5b708d` | Keep `top_k` for known custom providers. | Take | **done** (`42f9a4ad`). Merged on top of A2's reasoning-effort block; kept our sub-agent `Run` (upstream's has a Hyper notify branch). `callTopK` also added to the local-only `RunWake` call site. |
 | A4 | `a98394ff` | Count Anthropic cache-creation tokens. `agent.go` already uses `CacheCreationTokens` in places, so check for overlap. | Take after checking | pending |
 | A5 | `b8e93d11`, `afb55f03` | Truncated bash / `job_output` output is written to a file so the agent can read it back. | Take | pending |
 | A6 | `945c518f`, `059ba81f` | Security fixes to the bash safe-command matcher: four auto-approval gaps (for example `env LD_PRELOAD=... ls`), and the read-only git filter/remote forms kept auto-approved. Skip the parser rewrite and its revert (`1fdb081d`, `07e05446`, `d73a6e42`). | Take | pending |
