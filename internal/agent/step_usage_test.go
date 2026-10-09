@@ -378,6 +378,84 @@ func TestStepUsageRecordsEveryTitleAttempt(t *testing.T) {
 	require.Equal(t, "Short title", renamed.Title)
 }
 
+// retryOnce makes call 0 fail retryably; later calls reply with text.
+func retryOnce(call int) ([]fantasy.StreamPart, error) {
+	if call == 0 {
+		// retry-after-ms keeps fantasy's backoff short.
+		return nil, &fantasy.ProviderError{
+			Title:           "overloaded",
+			Message:         "try again",
+			StatusCode:      http.StatusServiceUnavailable,
+			ResponseHeaders: map[string]string{"retry-after-ms": "1"},
+		}
+	}
+	return textReply("allow", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 4, OutputTokens: 1}), nil
+}
+
+func TestStepUsageRecordsSmallCalls(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	large := &usageModel{name: "large", respond: func(int) ([]fantasy.StreamPart, error) {
+		return nil, errors.New("large model must not be called")
+	}}
+	small := &usageModel{name: "small", respond: retryOnce}
+	a := testSessionAgent(env, large, small, "system").(*sessionAgent)
+
+	reply, _, err := a.completeSmall(t.Context(), "review", "is this safe?")
+	require.NoError(t, err)
+	require.Equal(t, "allow", reply)
+
+	rows := stepUsageRows(t, env)
+	require.Len(t, rows, 1)
+	require.Equal(t, usageKindSmall, rows[0].kind)
+	require.Equal(t, reviewerAgentName, rows[0].agent)
+	require.Empty(t, rows[0].sessionID)
+	require.Empty(t, rows[0].messageID)
+	require.NotEmpty(t, rows[0].runID)
+	require.Equal(t, "small", rows[0].provider)
+	require.Equal(t, int64(1), rows[0].retryCount)
+	require.Equal(t, int64(4), rows[0].input)
+}
+
+func TestStepUsageRecordsSummary(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Summary", t.TempDir())
+	require.NoError(t, err)
+
+	large := &usageModel{name: "large", respond: func(call int) ([]fantasy.StreamPart, error) {
+		if call == 0 {
+			return textReply("done", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 3, OutputTokens: 1}), nil
+		}
+		return retryOnce(call - 1)
+	}}
+	small := &usageModel{name: "small", respond: func(int) ([]fantasy.StreamPart, error) {
+		return textReply("Title", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 2, OutputTokens: 1}), nil
+	}}
+	a := testSessionAgent(env, large, small, "system").(*sessionAgent)
+	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+	require.NoError(t, err)
+	a.WaitBackgroundJobs()
+	require.NoError(t, a.Summarize(t.Context(), sess.ID, nil))
+
+	msgs, err := env.messages.List(t.Context(), sess.ID)
+	require.NoError(t, err)
+	idx := slices.IndexFunc(msgs, func(m message.Message) bool {
+		return m.MessageType == message.MessageTypeCompaction
+	})
+	require.GreaterOrEqual(t, idx, 0)
+
+	summaries := filterUsageRows(stepUsageRows(t, env), usageKindSummary)
+	require.Len(t, summaries, 1)
+	require.Equal(t, msgs[idx].ID, summaries[0].messageID)
+	require.Equal(t, sess.ID, summaries[0].sessionID)
+	require.Equal(t, "orchestrator", summaries[0].agent)
+	require.Equal(t, int64(1), summaries[0].retryCount)
+	require.False(t, summaries[0].prefixMatch.Valid)
+}
+
 func TestStepUsageDetectsRewrittenHistory(t *testing.T) {
 	t.Parallel()
 
