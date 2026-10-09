@@ -749,3 +749,85 @@ func TestPendingStateDoesNotRetainPayload(t *testing.T) {
 	require.Empty(t, p.latest.Parts, "flushed pending state still pins the message parts")
 	require.True(t, p.hasFlushed)
 }
+
+// TestShouldFlushNow_AgainstCompactBaseline pins terminal detection to the
+// projection stored in flushBaseline rather than to a full Message snapshot.
+//
+// The existing structural tests all assert the positive direction, which a
+// broken projection would still satisfy: an empty baseline yields a tool-call
+// length mismatch, so it flushes for the wrong reason. The load-bearing case
+// is the negative one — after a flush, a delta that changes nothing structural
+// must stay buffered. That only holds if the baseline carries the prior
+// finished flags and reasoning finish time accurately.
+func TestShouldFlushNow_AgainstCompactBaseline(t *testing.T) {
+	t.Parallel()
+
+	setup := func(t *testing.T) (Service, Message) {
+		t.Helper()
+		svc, sessionID := newTestService(t, WithDebounce(time.Hour))
+		msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+		require.NoError(t, err)
+
+		// Land a baseline: one unfinished tool call, reasoning still open.
+		msg.AppendReasoningContent("thinking")
+		msg.AddToolCall(ToolCall{ID: "tc1", Name: "view", Finished: false})
+		require.NoError(t, svc.Update(t.Context(), msg))
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Len(t, got.ToolCalls(), 1)
+		require.False(t, got.ToolCalls()[0].Finished)
+		return svc, msg
+	}
+
+	t.Run("non-structural delta stays buffered", func(t *testing.T) {
+		t.Parallel()
+		svc, msg := setup(t)
+
+		// Same tool call, same finished flag, reasoning still open. A
+		// baseline that lost the projection would see a length or flag
+		// mismatch here and flush.
+		msg.AppendReasoningContent(" some more")
+		require.NoError(t, svc.Update(t.Context(), msg))
+
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Equal(t, "thinking", got.ReasoningContent().Thinking,
+			"a non-structural delta must not trigger a sync flush against the compact baseline")
+	})
+
+	t.Run("finished flip flushes", func(t *testing.T) {
+		t.Parallel()
+		svc, msg := setup(t)
+
+		msg.AddToolCall(ToolCall{ID: "tc1", Name: "view", Input: "{}", Finished: true})
+		require.NoError(t, svc.Update(t.Context(), msg))
+
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.True(t, got.ToolCalls()[0].Finished)
+	})
+
+	t.Run("new tool call flushes", func(t *testing.T) {
+		t.Parallel()
+		svc, msg := setup(t)
+
+		msg.AddToolCall(ToolCall{ID: "tc2", Name: "bash", Finished: false})
+		require.NoError(t, svc.Update(t.Context(), msg))
+
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Len(t, got.ToolCalls(), 2)
+	})
+
+	t.Run("reasoning end flushes", func(t *testing.T) {
+		t.Parallel()
+		svc, msg := setup(t)
+
+		msg.FinishThinking()
+		require.NoError(t, svc.Update(t.Context(), msg))
+
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.NotZero(t, got.ReasoningContent().FinishedAt)
+	})
+}
