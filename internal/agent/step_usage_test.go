@@ -506,6 +506,31 @@ func TestStepUsagePrefixMatchesAcrossRuns(t *testing.T) {
 	}
 }
 
+func TestStepUsageForgetsSubagentSessions(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
+	require.NoError(t, err)
+	child, err := env.sessions.CreateTaskSession(t.Context(), "tool-call", parent.ID, "Child")
+	require.NoError(t, err)
+
+	model := &usageModel{name: "scripted", respond: func(int) ([]fantasy.StreamPart, error) {
+		return textReply("done", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 3, OutputTokens: 1}), nil
+	}}
+	a := testSessionAgent(env, model, model, "system").(*sessionAgent)
+	for _, id := range []string{parent.ID, child.ID} {
+		_, err := a.Run(t.Context(), SessionAgentCall{SessionID: id, Prompt: "go", NonInteractive: true})
+		require.NoError(t, err)
+	}
+
+	_, ok := a.lastTurn.Get(parent.ID)
+	require.True(t, ok)
+	_, ok = a.lastTurn.Get(child.ID)
+	require.False(t, ok)
+	require.Len(t, filterUsageRows(stepUsageRows(t, env), usageKindTurn), 2)
+}
+
 func TestStepUsageNilRecorder(t *testing.T) {
 	t.Parallel()
 

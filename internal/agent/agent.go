@@ -161,7 +161,10 @@ type sessionAgent struct {
 	workingDir    string
 	// lastTurn holds each session's most recent turn-step history
 	// fingerprint, so a run's first step can be compared with the previous
-	// run. It lives in memory only.
+	// run. It lives in memory only. Subagent sessions are created per tool
+	// call and run once, so their entries are deleted when the run ends.
+	// Top-level entries stay for the life of the process; they are small
+	// and bounded by the sessions used in it.
 	lastTurn *csync.Map[string, turnPrefix]
 
 	// dispatchLocks serialise, per session, the decisions that start,
@@ -459,6 +462,9 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	var havePrevTurn bool
 	if a.usageRecorder != nil {
 		prevTurn, havePrevTurn = a.lastTurn.Get(call.SessionID)
+		if parentSessionID != "" {
+			defer a.lastTurn.Del(call.SessionID)
+		}
 	}
 	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
