@@ -102,7 +102,20 @@ func TestSegmentwiseAdversarial(t *testing.T) {
 		{"env with assignment cannot launder deny", "env FOO=bar rm -rf /", config.PermissionDeny},
 		{"env with flag cannot launder deny", "env -i rm -rf /", config.PermissionDeny},
 		{"xargs cannot launder deny", "cat files.txt | xargs rm", config.PermissionDeny},
-		{"env still allows an allowed payload", "env FOO=bar go test ./...", config.PermissionAllow},
+		{"env payload still asks when it sets variables", "env FOO=bar go test ./...", config.PermissionAsk},
+		{"env without assignments allows an allowed payload", "env -i go test ./...", config.PermissionAllow},
+
+		// Environment assignments steer a command (LD_PRELOAD, PATH,
+		// GIT_EXTERNAL_DIFF), so a "cmd *" allow must not cover them.
+		{"inline LD_PRELOAD cannot ride an allowed command", "LD_PRELOAD=/tmp/x.so ls", config.PermissionAsk},
+		{"inline PATH cannot ride an allowed command", "PATH=/tmp/evil:$PATH go test ./...", config.PermissionAsk},
+		{"env LD_PRELOAD cannot ride an allowed command", "env LD_PRELOAD=/tmp/x.so ls", config.PermissionAsk},
+		{"assignment inside a pipeline", "ls | LD_PRELOAD=/tmp/x.so sort", config.PermissionAsk},
+		{"assignment inside a subshell", "(LD_PRELOAD=/tmp/x.so ls)", config.PermissionAsk},
+		{"export before an allowed command", "export LD_PRELOAD=/tmp/x.so; ls", config.PermissionAsk},
+		{"declare -x before an allowed command", "declare -x LD_PRELOAD=/tmp/x.so && ls", config.PermissionAsk},
+		{"pure assignment before an allowed command", "PATH=/tmp/evil; ls", config.PermissionAsk},
+		{"inline assignment cannot launder deny", "FOO=bar rm -rf /", config.PermissionDeny},
 
 		// find -exec runs its body, so the body is evaluated too.
 		{"find exec body is evaluated", `find . -exec rm {} \;`, config.PermissionDeny},
