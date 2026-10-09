@@ -134,6 +134,28 @@ internal/
   it through the `terminal` MCP to confirm the change works in a real
   session. This applies to any behaviour change, not just UI. Load the
   `tui-manual-testing` skill for how.
+- **Mutation test**: `task test:mutation` (or `task test:mutation --
+  <base-ref>`). Runs [gremlins](https://gremlins.dev) on the Go lines
+  changed since `origin/main` and lists every mutant no test caught. Run it
+  before pushing any change to non-test Go code. It takes a minute or two.
+
+## Merge Gates
+
+`main` has a ruleset that blocks merging until these checks pass: `build`
+and `lint` on Ubuntu, macOS and Windows, and `mutation`. Never bypass a
+failing check, merge with `--admin`, or change the ruleset to get a PR in.
+
+The `mutation` check fails when a mutant on a changed line is `LIVED` (a
+test runs the line but none fails when it changes) or `NOT COVERED` (no
+test runs the line). Fix it by adding or tightening tests until each
+listed mutant makes a test fail. Don't weaken the code or the config to
+dodge it.
+
+Some mutants can't be killed because they don't change behaviour, such as
+a boundary flip that both sides of the comparison handle the same. Only
+then, ask the user before adding the `mutation-exempt` label to the PR,
+and explain in the PR description which mutants are left and why each is
+equivalent. The check still runs and reports them, but passes.
 
 ## Code Style Guidelines
 
