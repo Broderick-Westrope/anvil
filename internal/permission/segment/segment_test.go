@@ -488,3 +488,37 @@ func TestTrailingStarMatchesBarePrefix(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 }
+
+func TestSimpleCommand(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		command string
+		argv    []string
+		ok      bool
+	}{
+		{"ls -la", []string{"ls", "-la"}, true},
+		{`git log "--output=x"`, []string{"git", "log", "--output=x"}, true},
+		{`git log --out\put=x`, []string{"git", "log", "--output=x"}, true},
+		{"echo 'a b' c", []string{"echo", "a b", "c"}, true},
+		{"echo $HOME", nil, false},
+		{"echo $(id)", nil, false},
+		{"FOO=bar ls", nil, false},
+		{"ls > out", nil, false},
+		{"ls &", nil, false},
+		{"! ls", nil, false},
+		{"ls; pwd", nil, false},
+		{"ls | wc", nil, false},
+		{"(ls)", nil, false},
+		{"", nil, false},
+		{"ls '", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			argv, ok := SimpleCommand(tt.command)
+			require.Equal(t, tt.ok, ok)
+			require.Equal(t, tt.argv, argv)
+		})
+	}
+}

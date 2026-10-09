@@ -270,6 +270,35 @@ func scriptPayload(words []string) (string, bool) {
 	return "", false
 }
 
+// SimpleCommand returns the argument vector of command when it is exactly
+// one simple command with no redirections, environment assignments,
+// background, or negation, and every word is static: quotes and escapes
+// are resolved, and any word with a variable, command substitution, or
+// other runtime expansion makes it report false.
+func SimpleCommand(command string) ([]string, bool) {
+	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	if err != nil || len(file.Stmts) != 1 {
+		return nil, false
+	}
+	stmt := file.Stmts[0]
+	if stmt.Background || stmt.Coprocess || stmt.Negated || len(stmt.Redirs) > 0 {
+		return nil, false
+	}
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Assigns) > 0 || len(call.Args) == 0 {
+		return nil, false
+	}
+	argv := make([]string, 0, len(call.Args))
+	for _, word := range call.Args {
+		value, ok := staticWord(word)
+		if !ok {
+			return nil, false
+		}
+		argv = append(argv, value)
+	}
+	return argv, true
+}
+
 // staticWord returns the value a word expands to when it contains only
 // literal text and quoting. It reports false for any word whose value
 // depends on runtime state.
