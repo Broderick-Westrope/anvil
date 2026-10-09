@@ -90,6 +90,8 @@ func TestOrchestratorAgent(t *testing.T) {
 				assert.Equal(t, len(msgs), 2)
 			})
 			t.Run("read a file", func(t *testing.T) {
+				// The usage checks below expect Anthropic cache markers.
+				t.Setenv("ANVIL_DISABLE_ANTHROPIC_CACHE", "")
 				agent, env := setupAgent(t, pair)
 
 				session, err := env.sessions.Create(t.Context(), "New Session", t.TempDir())

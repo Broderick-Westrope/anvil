@@ -161,6 +161,7 @@ func TestNewRowEstimatesZeroUsage(t *testing.T) {
 }
 
 func TestCachePolicy(t *testing.T) {
+	t.Setenv("ANVIL_DISABLE_ANTHROPIC_CACHE", "")
 	cases := map[string]string{
 		anthropic.Name:    cachePolicyAnthropicEphemeral,
 		bedrock.Name:      cachePolicyAnthropicEphemeral,
