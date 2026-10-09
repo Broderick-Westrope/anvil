@@ -56,14 +56,14 @@ func TestSplit(t *testing.T) {
 			want:    []string{"false", "echo hi"},
 		},
 		{
-			name:    "env prefix stripped",
+			name:    "env prefix kept as an extra segment",
 			command: "FOO=bar go test",
-			want:    []string{"go test"},
+			want:    []string{"go test", "FOO=bar go test"},
 		},
 		{
-			name:    "pure assignment skipped",
+			name:    "pure assignment is a segment",
 			command: "FOO=bar",
-			want:    nil,
+			want:    []string{"FOO=bar"},
 		},
 		{
 			name:    "fd duplication stays inline",
@@ -123,7 +123,7 @@ func TestSplit(t *testing.T) {
 		{
 			name:    "wrapper skips assignments",
 			command: "env FOO=bar go test ./...",
-			want:    []string{"env FOO=bar go test ./...", "go test ./..."},
+			want:    []string{"env FOO=bar go test ./...", "go test ./...", "FOO=bar go test ./..."},
 		},
 		{
 			name:    "wrapper skips flags",
@@ -178,7 +178,7 @@ func TestSplit(t *testing.T) {
 		{
 			name:    "complex real-world",
 			command: "cd /foo && GOFLAGS=-count=1 go test ./internal/... 2>&1 | tail -20",
-			want:    []string{"cd /foo", "go test ./internal/... 2>&1", "tail -20"},
+			want:    []string{"cd /foo", "go test ./internal/... 2>&1", "GOFLAGS=-count=1 go test ./internal/... 2>&1", "tail -20"},
 		},
 		{
 			name:    "process substitution traversed",
@@ -397,7 +397,7 @@ func TestNormalized(t *testing.T) {
 		{"'rm' -rf x && /bin/ls", []string{"rm -rf x", "ls"}},
 		{"ls > '/tmp/out'", []string{"ls", "> /tmp/out"}},
 		{"sudo 'rm' x", []string{"sudo rm x", "rm x"}},
-		{"FOO=bar", nil},
+		{"FOO=bar", []string{"FOO=bar"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
@@ -424,6 +424,26 @@ func TestGeneralize(t *testing.T) {
 			name:    "go test",
 			segment: "go test ./...",
 			want:    "go test *",
+		},
+		{
+			name:    "leading assignments keep the variable name",
+			segment: "LD_PRELOAD=/tmp/x.so ls -la",
+			want:    "LD_PRELOAD=* ls *",
+		},
+		{
+			name:    "several assignments",
+			segment: "GOOS=linux GOARCH=arm64 go build ./...",
+			want:    "GOOS=* GOARCH=* go build *",
+		},
+		{
+			name:    "pure assignment",
+			segment: "PATH=/tmp/evil",
+			want:    "PATH=*",
+		},
+		{
+			name:    "export keeps the variable name",
+			segment: "export LD_PRELOAD=/tmp/x.so",
+			want:    "export LD_PRELOAD=*",
 		},
 		{
 			name:    "flags are not subcommands",
@@ -495,6 +515,10 @@ func TestGeneralizeMatchesSourceSegment(t *testing.T) {
 		"> /tmp/out.txt",
 		">> /tmp/out.txt",
 		"2> /tmp/err",
+		"LD_PRELOAD=/tmp/x.so ls -la",
+		"GOOS=linux GOARCH=arm64 go build ./...",
+		"PATH=/tmp/evil",
+		"export LD_PRELOAD=/tmp/x.so",
 	}
 
 	for _, seg := range segments {
@@ -522,4 +546,29 @@ func TestTrailingStarMatchesBarePrefix(t *testing.T) {
 	ok, err = match.Match("git status *", "git status --short")
 	require.NoError(t, err)
 	require.True(t, ok)
+}
+
+func TestSplitKeepsEnvironment(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		command string
+		want    []string
+	}{
+		{"LD_PRELOAD=/x.so ls", []string{"ls", "LD_PRELOAD=/x.so ls"}},
+		{"env LD_PRELOAD=/x.so ls", []string{"env LD_PRELOAD=/x.so ls", "ls", "LD_PRELOAD=/x.so ls"}},
+		{"env FOO=1 timeout 5 BAR=2 ls", []string{"env FOO=1 timeout 5 BAR=2 ls", "ls", "FOO=1 BAR=2 ls"}},
+		{"sudo LD_PRELOAD=/x ls", []string{"sudo LD_PRELOAD=/x ls", "ls", "LD_PRELOAD=/x ls"}},
+		{"export LD_PRELOAD=/x.so; ls", []string{"export LD_PRELOAD=/x.so", "ls"}},
+		{"declare -x FOO=bar && ls", []string{"declare -x FOO=bar", "ls"}},
+		{"(FOO=bar ls)", []string{"ls", "FOO=bar ls"}},
+		{"FOO='a b' ls", []string{"ls", "FOO='a b' ls", "FOO=a b ls"}},
+		{"PATH=/evil:$PATH ls", []string{"ls", "PATH=/evil:$PATH ls"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, Split(tt.command))
+		})
+	}
 }
