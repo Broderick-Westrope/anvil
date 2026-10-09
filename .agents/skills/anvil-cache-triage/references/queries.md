@@ -128,8 +128,9 @@ LIMIT 10
 
 ## 5. One session's timeline
 
-Replace `SESSION_ID`. Rows with the same `run_id` and `step_index` are one
-logical step recorded twice (see `schema.md`):
+Replace `SESSION_ID`. Rows with the same `run_id` and `step_index` would
+be one logical step recorded twice, which should not happen with fantasy
+v0.45.2; report any as a recording bug (see `schema.md`):
 
 ```sql
 SELECT started_utc, agent, kind, run_id, step_index, model,
@@ -276,7 +277,9 @@ GROUP BY provider, model, hour
 ORDER BY retries DESC
 ```
 
-Logical steps recorded twice (finished, then failed retryably):
+Logical steps recorded twice. With fantasy v0.45.2 tool errors are no
+longer retried, so this should return nothing; any row is a recording bug
+worth reporting:
 
 ```sql
 SELECT session_id, run_id, step_index, COUNT(*) AS rows,

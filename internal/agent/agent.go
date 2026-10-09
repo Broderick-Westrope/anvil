@@ -636,13 +636,14 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		// OnStreamFinish fires as soon as the provider reports usage, before
 		// tools run, so steps whose tools later fail are still recorded.
 		// fantasy calls it from processStepStream on the finish part
-		// (fantasy@v0.43.2 agent.go:1646-1653), inside the per-step retry
+		// (fantasy@v0.45.2 agent.go:1646-1653), inside the per-step retry
 		// closure (agent.go:1036-1055). A retried attempt that failed
 		// before its finish part never reaches it, so a retried request is
-		// recorded once, by the attempt that finished. An attempt is only
-		// recorded twice if it finished and then failed retryably (a
-		// critical tool error that is a network error); both responses
-		// were billed, so both rows are real.
+		// recorded once, by the attempt that finished. A critical tool
+		// error is wrapped in ToolExecutionError (agent.go:1686, 1702),
+		// which isRetryableError rejects (retry.go:184-193), so a finished
+		// step is not retried and is recorded once. The triage skill still
+		// checks for duplicates defensively.
 		OnStreamFinish: func(usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata) error {
 			finished := time.Now()
 			sessionLock.Lock()

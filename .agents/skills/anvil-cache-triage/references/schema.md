@@ -52,7 +52,7 @@ tokens**; token counts are per call.
 | `input_tokens` | Uncached input. **Never includes** cache reads or writes. |
 | `cache_read_tokens` | Tokens served from cache. |
 | `cache_write_tokens` | Tokens written to cache (Anthropic-style only; 0 for automatic caching). |
-| `output_tokens`, `reasoning_tokens` | As reported. |
+| `output_tokens`, `reasoning_tokens` | As reported. From fantasy v0.45.2, `output_tokens` includes reasoning tokens for Google and OpenAI-family providers even when the provider reports them separately (fantasy folds them in), so never add `reasoning_tokens` to `output_tokens`. |
 | `estimated` | 1 when the provider reported all-zero usage. `input_tokens` is then a rough estimate from message text and all cache columns are 0. Exclude from hit rates. |
 | `raw_usage` | JSON `{"usage": {...}, "extra": {...} or null}` as reported, before normalisation. `usage` keys: `input_tokens`, `output_tokens`, `total_tokens`, `reasoning_tokens`, `cache_creation_tokens`, `cache_read_tokens`. `extra` holds OpenAI-style usage fields fantasy did not map (`openai.ProviderMetadata.ExtraFields`). |
 
@@ -70,7 +70,7 @@ Caveats:
 
 - **Google streaming may over-count cache reads.** fantasy sums
   `CacheReadTokens` across usage chunks but keeps the first chunk's input
-  (suspected bug, `fantasy@v0.43.2 providers/google/google.go:857,1134`).
+  (suspected bug, `fantasy@v0.45.2 providers/google/google.go:857,1134`).
   Google hit rates may be inflated and normalised input clamped to 0.
   Compare `raw_usage` before trusting a Google hit rate.
 - An `openai-compat` provider whose cache field has another name reports 0
@@ -139,7 +139,7 @@ Temp view over `step_usage_report`, only `turn` and `summary` rows with a
 | `prev_cached_prefix` | Previous row's `cache_read + cache_write`. |
 | `prev_prompt_tokens` | Previous row's `prompt_tokens`. |
 | `model_max_read` | Max `cache_read_tokens` over all classified rows of this provider and model. |
-| `reuse_gap_ms` | `request_started_at - prev_finished_at`: how long the cached prefix sat idle. Negative for a duplicate row of the same step. |
+| `reuse_gap_ms` | `request_started_at - prev_finished_at`: how long the cached prefix sat idle. Negative for a duplicate row of the same step (unexpected; see Known recording gaps). |
 | `after_summary` | 1 if a summary of this session finished in that gap. |
 | `baseline` | Tokens this call should have read. `anthropic_ephemeral`: `prev_cached_prefix`, except `prev_prompt_tokens` for `provider_type = 'vercel'` (see the Vercel caveat). `automatic` and `disabled`: `prev_prompt_tokens`. NULL for summary rows, `none` policy and first rows. |
 | `suspected_miss` | NULL (not judged: no baseline, baseline under 1024, or this or the previous row estimated), 0 (read at least half the baseline), 1 (miss). |
@@ -152,10 +152,11 @@ Temp view over `step_usage_report`, only `turn` and `summary` rows with a
 
 - Responses that never reported usage (cancelled or failed before finish)
   have no row.
-- A step that finished and then failed retryably (a critical tool error
-  that is a network error) is recorded twice: same `run_id`,
-  `step_index` and `request_started_at`, higher `retry_count` on the
-  second. Both responses were billed.
+- With fantasy v0.45.2 a step should never be recorded twice: tool
+  errors are no longer retried, so a step that finished is not re-run.
+  A duplicate (same `run_id`, `step_index` and `request_started_at`) is
+  unexpected; if query 12 finds any, treat it as a recording bug worth
+  reporting.
 - Rows are written asynchronously. At shutdown Anvil waits up to 2
   seconds for detached title calls, then closes the recorder; a title call
   that outlives that wait loses its row (logged at debug level). Queued

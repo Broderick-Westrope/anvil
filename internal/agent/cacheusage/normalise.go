@@ -35,7 +35,7 @@ type rawUsage struct {
 // null>}.
 //
 // Provider() returns the provider's configured name, which defaults to the
-// package Name constant (fantasy@v0.43.2 providers/anthropic/anthropic.go:161,
+// package Name constant (fantasy@v0.45.2 providers/anthropic/anthropic.go:188,
 // providers/openai/openai.go:56, providers/google/google.go:65). Wrappers
 // override it: bedrock (providers/bedrock/bedrock.go:32), azure
 // (providers/azure/azure.go:51), openrouter
@@ -60,20 +60,20 @@ func Normalise(providerType string, reported fantasy.Usage, meta fantasy.Provide
 	case anthropic.Name, bedrock.Name:
 		// Anthropic reports input_tokens excluding cache reads and writes
 		// and fantasy copies the fields through
-		// (fantasy@v0.43.2 providers/anthropic/anthropic.go:1419-1423,
-		// 1692-1696). Bedrock uses the Anthropic language model.
+		// (fantasy@v0.45.2 providers/anthropic/anthropic.go:1446-1450,
+		// 1731-1735). Bedrock uses the Anthropic language model.
 	case openai.Name, azure.Name:
 		// fantasy subtracts cached tokens from the prompt count for chat
-		// completions (providers/openai/language_model_hooks.go:233, 262)
+		// completions (providers/openai/language_model_hooks.go:246, 280)
 		// and the Responses API (providers/openai/responses_language_model.go:411).
 		// Azure uses the same language models.
 	case openrouter.Name:
-		// providers/openrouter/language_model_hooks.go:459, 498.
+		// providers/openrouter/language_model_hooks.go:459, 503.
 	case vercel.Name:
-		// providers/vercel/language_model_hooks.go:507, 542.
+		// providers/vercel/language_model_hooks.go:518, 564.
 	case google.Name:
 		// InputTokens is PromptTokenCount, which includes cached content
-		// (fantasy@v0.43.2 providers/google/google.go:1481, 1486).
+		// (fantasy@v0.45.2 providers/google/google.go:1511, 1516).
 		//
 		// Streaming sums CacheReadTokens across usage chunks while keeping
 		// the first chunk's InputTokens (providers/google/google.go:857,
@@ -82,10 +82,10 @@ func Normalise(providerType string, reported fantasy.Usage, meta fantasy.Provide
 		tokens.Input = max(tokens.Input-tokens.CacheRead, 0)
 	case openaicompat.Name:
 		// openai-compat uses fantasy's default OpenAI usage functions
-		// (providers/openai/language_model_hooks.go:233, 262), which only
+		// (providers/openai/language_model_hooks.go:246, 280), which only
 		// read prompt_tokens_details.cached_tokens. DeepSeek reports hits in
 		// prompt_cache_hit_tokens instead, left in ExtraFields
-		// (providers/openai/language_model_hooks.go:234, 281). Its
+		// (providers/openai/language_model_hooks.go:252, 304). Its
 		// prompt_tokens still includes the hits.
 		if tokens.CacheRead == 0 {
 			if hits, ok := deepSeekCacheHits(extra); ok {
@@ -103,7 +103,7 @@ func Normalise(providerType string, reported fantasy.Usage, meta fantasy.Provide
 
 // extraFields returns the OpenAI usage ExtraFields from meta. fantasy keys
 // the metadata by openai.Name even for openai-compat
-// (fantasy@v0.43.2 providers/openai/language_model_hooks.go:284); the
+// (fantasy@v0.45.2 providers/openai/language_model_hooks.go:307); the
 // openai-compat key is checked as a fallback.
 func extraFields(meta fantasy.ProviderMetadata) map[string]json.RawMessage {
 	for _, key := range []string{openai.Name, openaicompat.Name} {

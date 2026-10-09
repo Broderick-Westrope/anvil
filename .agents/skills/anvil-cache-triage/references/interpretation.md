@@ -48,5 +48,7 @@ change keeps only the tools part.
   a `first_call` looks like plain input and hits are judged against the
   previous row's whole prompt. Do not read a Vercel row's 0 writes as
   "nothing was cached".
-- Duplicate rows for one step (same `run_id` and `step_index`) are both
-  billed; the second shows a negative `reuse_gap_ms`.
+- Duplicate rows for one step (same `run_id` and `step_index`, the
+  second with a negative `reuse_gap_ms`) should not occur with fantasy
+  v0.45.2, since tool errors are no longer retried. If query 12 finds
+  any, treat them as a recording bug worth reporting.
