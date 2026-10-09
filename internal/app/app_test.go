@@ -30,8 +30,7 @@ func TestSetupSubscriber_NormalFlow(t *testing.T) {
 	var wg sync.WaitGroup
 	setupSubscriber(ctx, &wg, "test", src.Subscribe, out)
 
-	// Yield so the subscriber goroutine can call src.Subscribe before we publish.
-	time.Sleep(10 * time.Millisecond)
+	require.Eventually(t, func() bool { return src.GetSubscriberCount() == 1 }, 5*time.Second, time.Millisecond)
 
 	src.Publish(pubsub.CreatedEvent, "hello")
 	src.Publish(pubsub.CreatedEvent, "world")
@@ -75,9 +74,7 @@ func TestSetupSubscriber_PreservesMustDeliver(t *testing.T) {
 	var wg sync.WaitGroup
 	setupSubscriber(ctx, &wg, "test", src.Subscribe, out)
 
-	// Yield so the subscriber goroutine can call src.Subscribe
-	// before we publish.
-	time.Sleep(10 * time.Millisecond)
+	require.Eventually(t, func() bool { return src.GetSubscriberCount() == 1 }, 5*time.Second, time.Millisecond)
 
 	// Fill the output buffer (capacity 1) with a lossy event that
 	// nobody consumes yet.

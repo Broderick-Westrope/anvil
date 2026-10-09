@@ -148,8 +148,6 @@ func TestDiffView(t *testing.T) {
 				t.Run(behaviorName, func(t *testing.T) {
 					for themeName, themeFunc := range ThemeFuncs {
 						t.Run(themeName, func(t *testing.T) {
-							t.Parallel()
-
 							dv := diffview.New()
 							dv = layoutFunc(dv)
 							dv = themeFunc(dv)
@@ -221,8 +219,6 @@ func TestDiffViewWidth(t *testing.T) {
 				}
 
 				t.Run(fmt.Sprintf("WidthOf%03d", width), func(t *testing.T) {
-					t.Parallel()
-
 					dv := diffview.New().
 						Before("main.go", TestMultipleHunksBefore).
 						After("main.go", TestMultipleHunksAfter).
@@ -246,8 +242,6 @@ func TestDiffViewHeight(t *testing.T) {
 		t.Run(layoutName, func(t *testing.T) {
 			for height := 1; height <= 20; height++ {
 				t.Run(fmt.Sprintf("HeightOf%03d", height), func(t *testing.T) {
-					t.Parallel()
-
 					dv := diffview.New().
 						Before("main.go", TestMultipleHunksBefore).
 						After("main.go", TestMultipleHunksAfter).
@@ -269,8 +263,6 @@ func TestDiffViewXOffset(t *testing.T) {
 		t.Run(layoutName, func(t *testing.T) {
 			for xOffset := range 21 {
 				t.Run(fmt.Sprintf("XOffsetOf%02d", xOffset), func(t *testing.T) {
-					t.Parallel()
-
 					dv := diffview.New().
 						Before("main.go", TestDefaultBefore).
 						After("main.go", TestDefaultAfter).
@@ -295,8 +287,6 @@ func TestDiffViewYOffset(t *testing.T) {
 		t.Run(layoutName, func(t *testing.T) {
 			for yOffset := range 17 {
 				t.Run(fmt.Sprintf("YOffsetOf%02d", yOffset), func(t *testing.T) {
-					t.Parallel()
-
 					dv := diffview.New().
 						Before("main.go", TestMultipleHunksBefore).
 						After("main.go", TestMultipleHunksAfter).
@@ -319,8 +309,6 @@ func TestDiffViewYOffsetInfinite(t *testing.T) {
 		t.Run(layoutName, func(t *testing.T) {
 			for yOffset := range 17 {
 				t.Run(fmt.Sprintf("YOffsetOf%02d", yOffset), func(t *testing.T) {
-					t.Parallel()
-
 					dv := diffview.New().
 						Before("main.go", TestMultipleHunksBefore).
 						After("main.go", TestMultipleHunksAfter).
