@@ -11,7 +11,7 @@ fingerprint logic. Nothing calls the recorder yet.
 
 ```bash
 read AGENTS.md
-read plans/impl-2026-10-09-cache-usage-metrics/README.md
+read plans/completed/impl-2026-10-09-cache-usage-metrics/README.md
 read internal/permission/decisionlog/recorder.go
 read internal/app/app.go                       # decisionlog wiring ~90-205, shutdown ~754-807
 read internal/db/migrations/20260930000000_add_permission_decisions.sql

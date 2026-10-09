@@ -12,7 +12,7 @@ revised without code changes.
 
 ```bash
 read AGENTS.md
-read plans/impl-2026-10-09-cache-usage-metrics/README.md
+read plans/completed/impl-2026-10-09-cache-usage-metrics/README.md
 read .agents/skills/tui-manual-testing/SKILL.md      # skill format, isolated-session testing
 read internal/db/migrations/20261009000000_add_step_usage.sql
 read internal/agent/cacheusage/normalise.go

@@ -12,7 +12,7 @@ in-process comparison: whether the history prefix matches.
 
 ```bash
 read AGENTS.md
-read plans/impl-2026-10-09-cache-usage-metrics/README.md
+read plans/completed/impl-2026-10-09-cache-usage-metrics/README.md
 read internal/agent/cacheusage/                  # Phase 1 output
 read internal/agent/agent.go   # SessionAgentOptions ~188; Run: PrepareStep ~442-513, OnRetry ~566, OnStepFinish ~638-690,
                                # title goroutine ~840-856; summarize ~968-1130; getCacheControlOptions ~1136;
