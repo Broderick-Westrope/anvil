@@ -101,11 +101,10 @@ func TestStreamingOpenFence_ContentPreserved(t *testing.T) {
 
 	var sm streamingMarkdown
 	content := doc.String()
-	var out string
 	for i := 512; i < len(content); i += 512 {
-		out = sm.Render(content[:i], width, renderer)
+		sm.Render(content[:i], width, renderer)
 	}
-	out = sm.Render(content, width, renderer)
+	out := sm.Render(content, width, renderer)
 	require.True(t, sm.forced)
 
 	for _, i := range []int{0, 100, 150, 299} {

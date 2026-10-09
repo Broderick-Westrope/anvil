@@ -100,7 +100,7 @@ func TestShellQuoteRoundTrip(t *testing.T) {
 		t.Skip("POSIX quoting")
 	}
 	args := []string{"plain", "with space", "it's", "", "$(touch x)", "a\nb", `back\slash`}
-	out, err := exec.Command("sh", "-c", `eval "set -- $1"; for a in "$@"; do printf '%s\0' "$a"; done`, "sh", ShellQuote(args)).Output()
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", `eval "set -- $1"; for a in "$@"; do printf '%s\0' "$a"; done`, "sh", ShellQuote(args)).Output()
 	require.NoError(t, err)
 	got := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
 	require.Equal(t, args, got)
@@ -150,7 +150,7 @@ func buildFakeBin(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	out, err := exec.Command("go", "build", "-o", bin, "./testdata/fakebin").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "./testdata/fakebin").CombinedOutput()
 	require.NoError(t, err, string(out))
 	return bin
 }
