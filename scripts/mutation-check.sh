@@ -45,7 +45,7 @@ survivors=$(jq -r '
 # mutants are always NOT COVERED however well the values are tested. Set
 # them aside, but list them so they stay visible.
 if [ -n "$survivors" ]; then
-    classified=$(printf '%s\n' "$survivors" | go run "$(dirname "$0")/mutation-const")
+    classified=$(printf '%s\n' "$survivors" | go run "$(cd "$(dirname "$0")" && pwd)/mutation-const")
     consts=$(printf '%s\n' "$classified" | grep $'^const\t' | cut -f2- || true)
     survivors=$(printf '%s\n' "$classified" | grep $'^keep\t' | cut -f2- || true)
     if [ -n "$consts" ]; then
