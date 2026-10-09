@@ -192,7 +192,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				Tools:                fetchTools,
 				JobEvents:            c.jobEvents,
 				UsageRecorder:        c.usageRecorder,
-				AgentName:            "agentic_fetch",
+				AgentName:            config.AgenticFetchAgentID,
 				WorkingDir:           c.cfg.WorkingDir(),
 			})
 
