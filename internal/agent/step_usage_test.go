@@ -1,6 +1,12 @@
 package agent
 
 import (
+	"context"
+	"database/sql"
+	"errors"
+	"net/http"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +19,7 @@ import (
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/vercel"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/stretchr/testify/require"
 )
 
@@ -179,4 +186,257 @@ func TestCachePolicy(t *testing.T) {
 		require.Equal(t, cachePolicyAutomatic, cachePolicy(openai.Name))
 		require.Equal(t, cachePolicyNone, cachePolicy("kronk"))
 	})
+}
+
+// usageRow is the subset of a step_usage_report row the tests check.
+type usageRow struct {
+	kind, runID, agent, sessionID, messageID string
+	provider, model, finishReason            string
+	toolsHash, systemHash, cachePolicy       string
+	stepIndex, attempt, retryCount           int64
+	input, cacheRead, cacheWrite, estimated  int64
+	prefixMatch                              sql.NullInt64
+}
+
+// stepUsageRows flushes env's recorder and returns step_usage_report rows
+// in the order they were recorded.
+func stepUsageRows(t *testing.T, env fakeEnv) []usageRow {
+	t.Helper()
+	require.NoError(t, env.usage.Close(t.Context()))
+	rows, err := env.conn.QueryContext(t.Context(), `SELECT r.kind, r.run_id, r.agent, r.session_id,
+		r.message_id, r.provider, r.model, r.finish_reason, r.tools_hash, r.system_hash,
+		r.cache_policy, r.step_index, r.attempt, r.retry_count, r.input_tokens,
+		r.cache_read_tokens, r.cache_write_tokens, r.estimated, r.history_prefix_match
+		FROM step_usage_report r JOIN step_usage s ON s.id = r.id ORDER BY s.rowid`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var out []usageRow
+	for rows.Next() {
+		var r usageRow
+		require.NoError(t, rows.Scan(&r.kind, &r.runID, &r.agent, &r.sessionID, &r.messageID,
+			&r.provider, &r.model, &r.finishReason, &r.toolsHash, &r.systemHash, &r.cachePolicy,
+			&r.stepIndex, &r.attempt, &r.retryCount, &r.input, &r.cacheRead, &r.cacheWrite,
+			&r.estimated, &r.prefixMatch))
+		out = append(out, r)
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+func filterUsageRows(rows []usageRow, kind string) []usageRow {
+	var out []usageRow
+	for _, r := range rows {
+		if r.kind == kind {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// usageModel is a fantasy.LanguageModel whose replies are scripted per
+// call by respond, which receives the 0-based call number.
+type usageModel struct {
+	fantasy.LanguageModel
+	name    string
+	mu      sync.Mutex
+	calls   int
+	respond func(call int) ([]fantasy.StreamPart, error)
+}
+
+func (m *usageModel) Stream(context.Context, fantasy.Call) (fantasy.StreamResponse, error) {
+	m.mu.Lock()
+	call := m.calls
+	m.calls++
+	m.mu.Unlock()
+	parts, err := m.respond(call)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Values(parts), nil
+}
+
+func (m *usageModel) Provider() string { return m.name }
+func (m *usageModel) Model() string    { return m.name + "-model" }
+
+func textReply(text string, reason fantasy.FinishReason, usage fantasy.Usage) []fantasy.StreamPart {
+	return []fantasy.StreamPart{
+		{Type: fantasy.StreamPartTypeTextStart, ID: "text"},
+		{Type: fantasy.StreamPartTypeTextDelta, ID: "text", Delta: text},
+		{Type: fantasy.StreamPartTypeTextEnd, ID: "text"},
+		{Type: fantasy.StreamPartTypeFinish, FinishReason: reason, Usage: usage},
+	}
+}
+
+func toolCallReply(id, toolName string, usage fantasy.Usage) []fantasy.StreamPart {
+	return []fantasy.StreamPart{
+		{Type: fantasy.StreamPartTypeToolInputStart, ID: id, ToolCallName: toolName},
+		{Type: fantasy.StreamPartTypeToolInputEnd, ID: id},
+		{Type: fantasy.StreamPartTypeToolCall, ID: id, ToolCallName: toolName, ToolCallInput: "{}"},
+		{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls, Usage: usage},
+	}
+}
+
+func TestStepUsageRecordedWhenToolFailsStep(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Tool error", t.TempDir())
+	require.NoError(t, err)
+
+	failing := fantasy.NewAgentTool("explode", "Fails the step.",
+		func(context.Context, struct{}, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, errors.New("tool exploded")
+		},
+	)
+	model := &usageModel{name: "scripted", respond: func(int) ([]fantasy.StreamPart, error) {
+		return toolCallReply("call_0", "explode", fantasy.Usage{InputTokens: 10, CacheReadTokens: 90, OutputTokens: 5}), nil
+	}}
+	a := testSessionAgent(env, model, model, "system", failing)
+
+	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+	require.ErrorContains(t, err, "tool exploded")
+
+	rows := stepUsageRows(t, env)
+	require.Len(t, rows, 1)
+	require.Equal(t, usageKindTurn, rows[0].kind)
+	require.Equal(t, string(fantasy.FinishReasonToolCalls), rows[0].finishReason)
+	require.Equal(t, int64(10), rows[0].input)
+	require.Equal(t, int64(90), rows[0].cacheRead)
+	require.Equal(t, sess.ID, rows[0].sessionID)
+	require.Equal(t, "orchestrator", rows[0].agent)
+}
+
+func TestStepUsageRecordsRetriedRequestOnce(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Retry", t.TempDir())
+	require.NoError(t, err)
+
+	model := &usageModel{name: "scripted", respond: func(call int) ([]fantasy.StreamPart, error) {
+		if call == 0 {
+			// retry-after-ms keeps fantasy's backoff short.
+			return nil, &fantasy.ProviderError{
+				Title:           "overloaded",
+				Message:         "try again",
+				StatusCode:      http.StatusServiceUnavailable,
+				ResponseHeaders: map[string]string{"retry-after-ms": "1"},
+			}
+		}
+		return textReply("done", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 3, OutputTokens: 1}), nil
+	}}
+	a := testSessionAgent(env, model, model, "system")
+
+	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+	require.NoError(t, err)
+
+	rows := stepUsageRows(t, env)
+	require.Len(t, rows, 1)
+	require.Equal(t, int64(1), rows[0].retryCount)
+	require.Equal(t, int64(3), rows[0].input)
+}
+
+func TestStepUsageRecordsEveryTitleAttempt(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Title", t.TempDir())
+	require.NoError(t, err)
+
+	small := &usageModel{name: "small", respond: func(int) ([]fantasy.StreamPart, error) {
+		return textReply("A title that never", fantasy.FinishReasonLength, fantasy.Usage{InputTokens: 20, OutputTokens: 40}), nil
+	}}
+	large := &usageModel{name: "large", respond: func(int) ([]fantasy.StreamPart, error) {
+		return textReply("Short title", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 20, OutputTokens: 3}), nil
+	}}
+	a := testSessionAgent(env, large, small, "system").(*sessionAgent)
+
+	a.generateTitle(t.Context(), sess.ID, []message.Message{{
+		Role:  message.User,
+		Parts: []message.ContentPart{message.TextContent{Text: "Help me name this"}},
+	}})
+
+	rows := stepUsageRows(t, env)
+	require.Len(t, rows, 2)
+	for i, row := range rows {
+		require.Equal(t, usageKindTitle, row.kind)
+		require.Equal(t, int64(i), row.attempt)
+		require.Equal(t, rows[0].runID, row.runID)
+		require.Equal(t, sess.ID, row.sessionID)
+	}
+	require.Equal(t, "small", rows[0].provider)
+	require.Equal(t, string(fantasy.FinishReasonLength), rows[0].finishReason)
+	require.Equal(t, "large", rows[1].provider)
+	require.Equal(t, string(fantasy.FinishReasonStop), rows[1].finishReason)
+
+	renamed, err := env.sessions.Get(t.Context(), sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Short title", renamed.Title)
+}
+
+func TestStepUsageDetectsRewrittenHistory(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Prefix", t.TempDir())
+	require.NoError(t, err)
+
+	model := &usageModel{name: "scripted", respond: func(int) ([]fantasy.StreamPart, error) {
+		return textReply("done", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 3, OutputTokens: 1}), nil
+	}}
+	a := testSessionAgent(env, model, model, "system")
+	run := func(prompt string) {
+		t.Helper()
+		_, err := a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: prompt, NonInteractive: true})
+		require.NoError(t, err)
+	}
+
+	run("first")
+	run("second")
+
+	msgs, err := env.messages.List(t.Context(), sess.ID)
+	require.NoError(t, err)
+	idx := slices.IndexFunc(msgs, func(m message.Message) bool {
+		return m.Role == message.User && m.Content().Text == "first"
+	})
+	require.GreaterOrEqual(t, idx, 0)
+	first := msgs[idx]
+	first.Parts = []message.ContentPart{message.TextContent{Text: "first, rewritten"}}
+	require.NoError(t, env.messages.Update(t.Context(), first))
+	require.NoError(t, env.messages.FlushAll(t.Context()))
+
+	run("third")
+
+	rows := stepUsageRows(t, env)
+	require.Len(t, rows, 3)
+	// No earlier turn in this process.
+	require.False(t, rows[0].prefixMatch.Valid)
+	// The second run extends the first run's history.
+	require.True(t, rows[1].prefixMatch.Valid)
+	require.Equal(t, int64(1), rows[1].prefixMatch.Int64)
+	// The third run's history no longer starts with what was sent before.
+	require.True(t, rows[2].prefixMatch.Valid)
+	require.Zero(t, rows[2].prefixMatch.Int64)
+	require.NotEqual(t, rows[0].runID, rows[1].runID)
+}
+
+func TestStepUsageNilRecorder(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Nil recorder", t.TempDir())
+	require.NoError(t, err)
+
+	model := &usageModel{name: "scripted", respond: func(int) ([]fantasy.StreamPart, error) {
+		return textReply("done", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 3, OutputTokens: 1}), nil
+	}}
+	a := NewSessionAgent(SessionAgentOptions{
+		LargeModel: Model{Model: model},
+		SmallModel: Model{Model: model},
+		Sessions:   env.sessions,
+		Messages:   env.messages,
+	})
+	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+	require.NoError(t, err)
+	require.Empty(t, stepUsageRows(t, env))
 }

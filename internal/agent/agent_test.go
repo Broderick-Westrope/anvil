@@ -128,6 +128,37 @@ func TestOrchestratorAgent(t *testing.T) {
 					}
 				}
 				require.True(t, foundFile)
+
+				// Usage rows match the cassette's reported usage.
+				agent.(interface{ WaitBackgroundJobs() }).WaitBackgroundJobs()
+				rows := stepUsageRows(t, env)
+				turns := filterUsageRows(rows, usageKindTurn)
+				require.Len(t, turns, 3)
+				for i, row := range turns {
+					require.Equal(t, int64(i), row.stepIndex)
+					require.Equal(t, turns[0].runID, row.runID)
+					require.Equal(t, session.ID, row.sessionID)
+					require.NotEmpty(t, row.messageID)
+					require.NotEmpty(t, row.toolsHash)
+					require.NotEmpty(t, row.systemHash)
+					require.Equal(t, turns[0].toolsHash, row.toolsHash)
+					require.Equal(t, turns[0].systemHash, row.systemHash)
+					require.Zero(t, row.estimated)
+					require.Equal(t, cachePolicyAnthropicEphemeral, row.cachePolicy)
+				}
+				require.NotEmpty(t, turns[0].runID)
+				require.Equal(t, int64(9100), turns[0].cacheWrite)
+				require.Zero(t, turns[0].cacheRead)
+				require.Equal(t, int64(9100), turns[1].cacheRead)
+				require.Equal(t, int64(9279), turns[2].cacheRead)
+				require.False(t, turns[0].prefixMatch.Valid)
+				for _, row := range turns[1:] {
+					require.True(t, row.prefixMatch.Valid)
+					require.Equal(t, int64(1), row.prefixMatch.Int64)
+				}
+				titles := filterUsageRows(rows, usageKindTitle)
+				require.Len(t, titles, 1)
+				require.Zero(t, titles[0].attempt)
 			})
 			t.Run("update a file", func(t *testing.T) {
 				agent, env := setupAgent(t, pair)
