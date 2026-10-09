@@ -509,3 +509,102 @@ func TestWriteFramedMediaMatchesSample(t *testing.T) {
 		require.Equal(t, want.Sum(nil), fromString.Sum(nil), size)
 	}
 }
+
+func goldenMessages() []fantasy.Message {
+	big := make([]byte, 3*mediaSampleSize)
+	for i := range big {
+		big[i] = byte(i % 251)
+	}
+	return []fantasy.Message{
+		fantasy.NewSystemMessage("you are anvil"),
+		{Role: fantasy.MessageRoleSystem, Content: []fantasy.MessagePart{
+			fantasy.FilePart{Data: big, MediaType: "image/png"},
+		}},
+		fantasy.NewUserMessage("hello", fantasy.FilePart{Data: big, MediaType: "image/png"}),
+		{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{
+			fantasy.ReasoningPart{Text: "think"},
+			fantasy.TextPart{Text: "answer"},
+			toolCall("call-1"),
+		}},
+		{Role: fantasy.MessageRoleTool, Content: []fantasy.MessagePart{
+			toolResult("call-1", "result"),
+			fantasy.ToolResultPart{ToolCallID: "call-2", Output: fantasy.ToolResultOutputContentError{Error: errors.New("boom")}},
+			fantasy.ToolResultPart{ToolCallID: "call-3", Output: fantasy.ToolResultOutputContentMedia{Data: string(big), MediaType: "image/png", Text: "caption"}},
+		}},
+	}
+}
+
+// TestComputeGolden pins the hash encoding. Stored hashes are compared
+// across rows, so an encoding change must be deliberate.
+func TestComputeGolden(t *testing.T) {
+	t.Parallel()
+
+	f := Compute([]fantasy.AgentTool{newStubTool("view")}, goldenMessages())
+	require.Empty(t, f.Err)
+	require.Equal(t, "394b263b9d2d23e7", f.ToolsHash)
+	require.Equal(t, "dd91815c9e0c8a07", f.SystemHash)
+	require.Equal(t, "866825cb40a35f34", f.HistoryHash)
+	require.Equal(t, 8, f.PrefixLen())
+}
+
+func TestComputeSystemErrorKeepsCounting(t *testing.T) {
+	t.Parallel()
+
+	bad := fantasy.Message{Role: fantasy.MessageRoleSystem, Content: []fantasy.MessagePart{otherPart{Value: make(chan int)}}}
+	f := Compute(nil, []fantasy.Message{
+		bad,
+		fantasy.NewSystemMessage("ok"),
+		bad,
+		fantasy.NewUserMessage("hello"),
+	})
+	require.Equal(t, "system message 0: json: unsupported type: chan int", f.Err)
+	require.Empty(t, f.SystemHash)
+	require.Equal(t, 3, f.SystemCount)
+	require.Equal(t, 1, f.MessageCount)
+	require.NotEmpty(t, f.HistoryHash)
+}
+
+func TestComputeHistoryErrorKeepsCounting(t *testing.T) {
+	t.Parallel()
+
+	bad := fantasy.Message{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{otherPart{Value: make(chan int)}}}
+	f := Compute(nil, []fantasy.Message{
+		fantasy.NewUserMessage("first"),
+		bad,
+		fantasy.NewUserMessage("second"),
+		fantasy.NewUserMessage("third"),
+		fantasy.NewSystemMessage("late system"),
+	})
+	require.Contains(t, f.Err, "message 1")
+	require.Empty(t, f.HistoryHash)
+	require.Equal(t, 4, f.MessageCount)
+	require.Equal(t, 1, f.SystemCount)
+	require.NotEmpty(t, f.SystemHash)
+}
+
+func TestSampleParts(t *testing.T) {
+	t.Parallel()
+
+	small := make([]byte, 2*mediaSampleSize)
+	big := make([]byte, 2*mediaSampleSize+1)
+	for i := range big {
+		big[i] = byte(i % 251)
+	}
+
+	unchanged := []fantasy.MessagePart{
+		fantasy.TextPart{Text: "x"},
+		fantasy.FilePart{Data: small, MediaType: "image/png"},
+	}
+	got := sampleParts(unchanged)
+	require.Same(t, &unchanged[0], &got[0], "parts without large media are not copied")
+
+	parts := []fantasy.MessagePart{
+		fantasy.FilePart{Data: small, MediaType: "image/png"},
+		fantasy.TextPart{Text: "x"},
+		fantasy.FilePart{Data: big, MediaType: "image/gif"},
+	}
+	got = sampleParts(parts)
+	require.Equal(t, parts[:2], got[:2])
+	require.Equal(t, fantasy.FilePart{Data: sampleMedia(big), MediaType: "image/gif"}, got[2])
+	require.Len(t, parts[2].(fantasy.FilePart).Data, len(big), "input is not modified")
+}

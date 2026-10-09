@@ -91,9 +91,7 @@ func Compute(tools []fantasy.AgentTool, messages []fantasy.Message) Fingerprint 
 	if historyOK && len(f.prefix) > 0 {
 		f.HistoryHash = f.prefix[len(f.prefix)-1]
 	}
-	if len(errs) > 0 {
-		f.Err = strings.Join(errs, "; ")
-	}
+	f.Err = strings.Join(errs, "; ")
 	return f
 }
 
@@ -318,9 +316,7 @@ func sampleMedia(data []byte) []byte {
 	if len(data) <= 2*mediaSampleSize {
 		return data
 	}
-	out := mediaSampleHeader(len(data))
-	out = slices.Grow(out, 2*mediaSampleSize)
-	out = append(out, data[:mediaSampleSize]...)
+	out := append(mediaSampleHeader(len(data)), data[:mediaSampleSize]...)
 	return append(out, data[len(data)-mediaSampleSize:]...)
 }
 
