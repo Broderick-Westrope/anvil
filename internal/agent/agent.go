@@ -34,6 +34,7 @@ import (
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
+	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
@@ -152,6 +153,16 @@ type sessionAgent struct {
 	admission *admission
 	onIdle    func(sessionID string)
 
+	// usageRecorder receives one row per model response; nil disables
+	// recording. agentName and workingDir are copied onto each row.
+	usageRecorder *cacheusage.Recorder
+	agentName     string
+	workingDir    string
+	// lastTurn holds each session's most recent turn-step history
+	// fingerprint, so a run's first step can be compared with the previous
+	// run. It lives in memory only.
+	lastTurn *csync.Map[string, turnPrefix]
+
 	// dispatchLocks serialise, per session, the decisions that start,
 	// queue, or finish a run, so concurrent prompts, wakes, and
 	// summaries never start two runs at once or lose a queued prompt.
@@ -205,6 +216,11 @@ type SessionAgentOptions struct {
 	// OnIdle, when non-nil, is called after a run or summary finishes
 	// with nothing queued for the session. It must not block.
 	OnIdle func(sessionID string)
+	// UsageRecorder records per-response cache usage; nil disables it.
+	UsageRecorder *cacheusage.Recorder
+	// AgentName and WorkingDir label recorded usage rows.
+	AgentName  string
+	WorkingDir string
 }
 
 func NewSessionAgent(
@@ -232,6 +248,10 @@ func NewSessionAgent(
 		admission:            opts.admission,
 		jobEvents:            opts.JobEvents,
 		onIdle:               opts.OnIdle,
+		usageRecorder:        opts.UsageRecorder,
+		agentName:            opts.AgentName,
+		workingDir:           opts.WorkingDir,
+		lastTurn:             csync.NewMap[string, turnPrefix](),
 		dispatchLocks:        make(map[string]*dispatchLock),
 		summarizing:          csync.NewMap[string, *submissionOwner](),
 		wakeCounts:           csync.NewMap[string, int](),

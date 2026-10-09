@@ -866,6 +866,7 @@ func TestNewCoordinatorDoesNotBlockOnMCPInit(t *testing.T) {
 			nil, // jobArchive — no persisted job fallbacks.
 			nil, // onIdle — no waker.
 			nil, // jobWakeEnabled — never wakes.
+			nil, // usageRecorder — no usage rows.
 		)
 		done <- coordinatorResult{c, buildErr}
 	}()
@@ -1070,7 +1071,7 @@ func newReloadTestCoordinator(t *testing.T, env fakeEnv) (*coordinator, string) 
 	cfg.Config().Plugins = []config.PluginConfig{{Path: pluginDir}}
 
 	coord, err := NewCoordinator(t.Context(), cfg, env.sessions, env.messages, env.permissions,
-		*env.filetracker, nil, nil, nil, nil, nil, nil)
+		*env.filetracker, nil, nil, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 	c := coord.(*coordinator)
 	require.Contains(t, c.agentConfigs, "helper")

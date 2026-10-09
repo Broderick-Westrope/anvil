@@ -655,6 +655,7 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.jobArchive(),
 		app.jobWaker.trigger,
 		app.jobWaker.enabled.Load,
+		app.cacheUsage,
 	)
 	if err != nil {
 		slog.Error("Failed to create orchestrator agent", "err", err)

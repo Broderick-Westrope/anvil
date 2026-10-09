@@ -191,6 +191,9 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				Messages:             c.messages,
 				Tools:                fetchTools,
 				JobEvents:            c.jobEvents,
+				UsageRecorder:        c.usageRecorder,
+				AgentName:            "agentic_fetch",
+				WorkingDir:           c.cfg.WorkingDir(),
 			})
 
 			return c.runSubAgent(ctx, subAgentParams{
