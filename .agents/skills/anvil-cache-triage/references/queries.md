@@ -1,12 +1,10 @@
 # Triage Queries
 
-Run every query through the classified-view pattern from `SKILL.md`, from
-the repo root:
+Run every query through the `classified` CTE pattern from `SKILL.md`, in one
+bash call from the repo root:
 
 ```bash
-DB=~/.local/share/anvil/anvil.db
-SQL=.agents/skills/anvil-cache-triage/references/classify.sql
-sqlite3 -readonly -header -column "$DB" "CREATE TEMP VIEW classified AS $(cat "$SQL"); <QUERY>"
+cd <anvil repo root> && DB=~/.local/share/anvil/anvil.db && SQL=.agents/skills/anvil-cache-triage/references/classify.sql && sqlite3 -cmd "PRAGMA query_only=ON" -header -column "$DB" "WITH classified AS ($(cat "$SQL")) <QUERY>"
 ```
 
 Paste a query below in place of `<QUERY>`. The queries contain no double

@@ -92,7 +92,7 @@ FROM based;
 
 2. [ ] Agents reuse it as a temp view in the same `sqlite3` invocation,
    for example
-   `sqlite3 -readonly -header "$DB" "CREATE TEMP VIEW classified AS <query>; SELECT ... FROM classified"`.
+   `sqlite3 -cmd "PRAGMA query_only=ON" "$DB" "WITH classified AS (<query>) SELECT ... FROM classified"`. (Revised during execution: `-readonly` fails on a WAL DB with no `-shm` file, which is the normal state when Anvil is not running, and `query_only` blocks temp views, so the query is wrapped as a CTE.)
    This was confirmed during planning: on sqlite 3.51, the migration and
    this draft ran against sample rows, `-readonly` allowed the temp view,
    and the output was `first_call` → hit → `tools_changed` with 9279
