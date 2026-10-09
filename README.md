@@ -537,6 +537,21 @@ rules and the [bouncer](#bouncer). Be very, very careful with these.
 editor gutter shows the current level: an amber ` ! ` for standard and a red
 `!!!` for full.
 
+To start every session at a level without passing the flag, set `yolo` in
+your **user-level** config (`~/.config/anvil/anvil.json`). Like the bouncer,
+it is ignored in project and workspace configs, so a cloned repo can't switch
+it on.
+
+```json
+{
+  "yolo": "standard"
+}
+```
+
+Values are `off` (the default), `standard` and `full`. `--yolo`,
+`--yolo=full` and `--yolo=false` override it for one run, and `anvil run`
+ignores it.
+
 #### Bouncer
 
 The bouncer is an optional classifier that answers permission prompts on

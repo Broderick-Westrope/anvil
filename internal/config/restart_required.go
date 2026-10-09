@@ -25,6 +25,8 @@ import (
 //     removing the block is reported here too.
 //   - bouncer.mode: the runtime mode (ctrl+q) wins over config after
 //     startup, so a change is never applied.
+//   - yolo: the runtime level (ctrl+y) wins over config after startup, so
+//     a change is never applied.
 //   - options.project_directory: a reload keeps the existing directory,
 //     so the raw configured values are compared.
 //   - options.tui: only compact_mode and transparent are captured at UI
@@ -44,6 +46,9 @@ func RestartRequired(startup, cur *Config, startupB, curB *TrustedBouncer, start
 		labels = append(labels, "lsp")
 	}
 	labels = append(labels, bouncerRestartLabels(trustedBouncerConfig(startupB), trustedBouncerConfig(curB))...)
+	if cmp.Or(startup.Yolo, YoloModeOff) != cmp.Or(cur.Yolo, YoloModeOff) {
+		labels = append(labels, "yolo")
+	}
 	if startupRaw != curRaw {
 		labels = append(labels, "options.project_directory")
 	}

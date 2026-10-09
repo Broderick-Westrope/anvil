@@ -38,7 +38,7 @@ func init() {
 	rootCmd.PersistentFlags().StringP("data-dir", "D", "", "Custom anvil data directory")
 	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Debug")
 	rootCmd.Flags().BoolP("help", "h", false, "Help")
-	rootCmd.Flags().StringP("yolo", "y", "", "Permission bypass level: --yolo (standard) or --yolo=full")
+	rootCmd.Flags().StringP("yolo", "y", "", "Permission bypass level: --yolo (standard), --yolo=full, or --yolo=false; overrides the yolo config default")
 	rootCmd.Flags().Lookup("yolo").NoOptDefVal = "true"
 	rootCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
 	rootCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
@@ -295,11 +295,25 @@ func setupWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
 	return setupLocalWorkspace(cmd)
 }
 
+// resolveYoloLevel returns the level set by --yolo when it was passed, and
+// otherwise the yolo default from user-level config. Commands without a
+// --yolo flag, such as run, always start with yolo off.
+func resolveYoloLevel(cmd *cobra.Command, cfg *config.Config) (config.YoloLevel, error) {
+	flag := cmd.Flags().Lookup("yolo")
+	switch {
+	case flag == nil:
+		return config.YoloOff, nil
+	case flag.Changed:
+		return config.ParseYoloLevel(flag.Value.String())
+	default:
+		return cfg.Yolo.Level()
+	}
+}
+
 // setupLocalWorkspace creates an in-process app.App and wraps it in an
 // AppWorkspace.
 func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
 	debug, _ := cmd.Flags().GetBool("debug")
-	yoloStr, _ := cmd.Flags().GetString("yolo")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	ctx := cmd.Context()
 
@@ -314,7 +328,7 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 	}
 
 	cfg := store.Config()
-	yoloLevel, err := config.ParseYoloLevel(yoloStr)
+	yoloLevel, err := resolveYoloLevel(cmd, cfg)
 	if err != nil {
 		return nil, nil, err
 	}

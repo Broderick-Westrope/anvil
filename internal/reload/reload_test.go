@@ -23,12 +23,12 @@ func TestArgs(t *testing.T) {
 		{
 			name: "session",
 			opts: Options{SessionID: "abc", WorkDir: "/w"},
-			want: []string{"--session", "abc", "--there"},
+			want: []string{"--session", "abc", "--there", "--yolo=false"},
 		},
 		{
 			name: "no session",
 			opts: Options{WorkDir: "/w"},
-			want: []string{"--cwd", "/w"},
+			want: []string{"--cwd", "/w", "--yolo=false"},
 		},
 		{
 			name: "all flags standard yolo",
@@ -43,7 +43,7 @@ func TestArgs(t *testing.T) {
 		{
 			name: "yolo off",
 			opts: Options{WorkDir: "/w", Yolo: config.YoloOff},
-			want: []string{"--cwd", "/w"},
+			want: []string{"--cwd", "/w", "--yolo=false"},
 		},
 	}
 	for _, tt := range tests {

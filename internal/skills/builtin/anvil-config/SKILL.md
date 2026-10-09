@@ -402,7 +402,10 @@ A tool rule whose sub-rules all miss falls through to earlier matches — add a
 `"*"` sub-rule to make a tool's rules exhaustive.
 
 `--yolo` promotes `ask` to `allow` but honours `deny`; `--yolo=full` bypasses
-everything.
+everything. To start every interactive session at a level without the flag,
+set top-level `"yolo": "off" | "standard" | "full"` in the user-level config
+(`~/.config/anvil/anvil.json`). It is ignored in project and workspace
+configs, `--yolo` / `--yolo=false` override it, and `anvil run` ignores it.
 
 `permissions.allowed_tools` is deprecated (each entry becomes an `allow`
 rule) and cannot be combined with the rule format.

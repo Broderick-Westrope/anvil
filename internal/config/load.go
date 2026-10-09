@@ -44,6 +44,10 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	trustedYolo, err := loadTrustedYolo(trustedPaths)
+	if err != nil {
+		return nil, err
+	}
 
 	configPaths := lookupConfigs(workingDir)
 
@@ -89,6 +93,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	}
 
 	cfg.applyTrustedBouncer(trustedBouncer)
+	cfg.applyTrustedYolo(trustedYolo)
 
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.

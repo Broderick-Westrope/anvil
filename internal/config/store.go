@@ -1286,6 +1286,12 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	}
 	cfg.applyTrustedBouncer(trustedBouncer)
 
+	trustedYolo, err := loadTrustedYolo(s.trustedPaths)
+	if err != nil {
+		return fmt.Errorf("failed to reload config: %w", err)
+	}
+	cfg.applyTrustedYolo(trustedYolo)
+
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
 	if err := cfg.ValidateHooks(); err != nil {

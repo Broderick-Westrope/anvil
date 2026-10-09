@@ -245,6 +245,16 @@
           "$ref": "#/$defs/Bouncer",
           "description": "Classifier that answers permission prompts. Only read from user-level config files"
         },
+        "yolo": {
+          "type": "string",
+          "enum": [
+            "off",
+            "standard",
+            "full"
+          ],
+          "description": "Yolo level new sessions start at when --yolo is not passed. Only read from user-level config files",
+          "default": "off"
+        },
         "tools": {
           "$ref": "#/$defs/Tools",
           "description": "Tool configurations"

@@ -776,6 +776,8 @@ type Config struct {
 	// the permissions keys are tool-name globs.
 	Bouncer *Bouncer `json:"bouncer,omitempty" jsonschema:"description=Classifier that answers permission prompts. Only read from user-level config files"`
 
+	Yolo YoloMode `json:"yolo,omitempty" jsonschema:"description=Yolo level new sessions start at when --yolo is not passed. Only read from user-level config files,enum=off,enum=standard,enum=full,default=off"`
+
 	Tools Tools `json:"tools,omitzero" jsonschema:"description=Tool configurations"`
 
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
