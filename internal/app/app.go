@@ -764,6 +764,28 @@ func (app *App) Subscribe(program *tea.Program) {
 	}
 }
 
+// backgroundJobsShutdownWait bounds how long shutdown waits for agent
+// background jobs such as title generation.
+const backgroundJobsShutdownWait = 2 * time.Second
+
+// waitWithTimeout runs wait and reports whether it returned within timeout.
+// On timeout wait keeps running in the background.
+func waitWithTimeout(wait func(), timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 // Shutdown performs a graceful shutdown of the application.
 func (app *App) Shutdown() {
 	start := time.Now()
@@ -781,6 +803,14 @@ func (app *App) Shutdown() {
 	// before closing the DB so agents can finish writing their state.
 	if app.AgentCoordinator != nil {
 		app.AgentCoordinator.CancelAll()
+		// Title generation outlives cancellation. Give it a short window
+		// to land its title and usage rows before the recorder and DB
+		// close, but never hold up shutdown for long.
+		if w, ok := app.AgentCoordinator.(interface{ WaitBackgroundJobs() }); ok {
+			if !waitWithTimeout(w.WaitBackgroundJobs, backgroundJobsShutdownWait) {
+				slog.Warn("Timed out waiting for agent background jobs to finish")
+			}
+		}
 	}
 
 	// Shared shutdown context for all timeout-bounded cleanup.

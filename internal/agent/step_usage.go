@@ -96,6 +96,25 @@ func (c *stepCapture) turnPrefix() turnPrefix {
 	return turnPrefix{count: c.fp.MessageCount, hash: c.fp.HistoryHash}
 }
 
+// captureCallbacks returns OnRetry and OnStreamFinish callbacks that count
+// retries on, and record, whichever capture *capture points to when they
+// fire. They are for calls whose callbacks all run on one goroutine.
+// Recording never fails the stream.
+func (a *sessionAgent) captureCallbacks(capture **stepCapture) (fantasy.OnRetryCallback, fantasy.OnStreamFinishFunc) {
+	onRetry := func(*fantasy.ProviderError, time.Duration) {
+		if *capture != nil {
+			(*capture).retries++
+		}
+	}
+	onStreamFinish := func(usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata) error {
+		if *capture != nil {
+			a.usageRecorder.Record(a.newRow(*capture, usage, reason, meta, time.Now()))
+		}
+		return nil
+	}
+	return onRetry, onStreamFinish
+}
+
 func (a *sessionAgent) newRow(c *stepCapture, usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata, finished time.Time) cacheusage.Row {
 	var providerType, modelID string
 	if c.model.Model != nil {

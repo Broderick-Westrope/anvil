@@ -250,3 +250,13 @@ func testNConsumers(t *testing.T, n int) {
 	}
 	wg.Wait()
 }
+
+func TestWaitWithTimeout(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, waitWithTimeout(func() {}, time.Second))
+
+	release := make(chan struct{})
+	defer close(release)
+	require.False(t, waitWithTimeout(func() { <-release }, 10*time.Millisecond))
+}
