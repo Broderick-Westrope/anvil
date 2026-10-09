@@ -7,7 +7,7 @@ Common shell builtins and core utils available on Windows.
 </cross_platform>
 
 <execution_steps>
-1. Directory Verification: If creating directories/files, use LS tool to verify parent exists
+1. Directory Verification: If creating directories/files, use the ls tool to verify parent exists
 2. Security Check: Banned commands ({{ .BannedCommands }}) return error - explain to user. Safe read-only commands execute without prompts
 3. Command Execution: Execute with proper quoting, capture output
 4. Auto-Background: Commands exceeding 1 minute (default) automatically move to background and return shell ID; for commands known to be slow whose result you need before continuing, raise the threshold up to 600 seconds via `auto_background_after`
@@ -17,7 +17,7 @@ Common shell builtins and core utils available on Windows.
 
 <usage_notes>
 - Command required, working_dir optional (defaults to current directory)
-- IMPORTANT: Use Grep/Glob/Agent tools instead of 'find'/'grep'. Use View/LS tools instead of 'cat'/'head'/'tail'/'ls'
+- IMPORTANT: Use the grep and glob tools (or the task tool for broad searches) instead of 'find'/'grep'. Use the view and ls tools instead of 'cat'/'head'/'tail'/'ls'
 - Chain with ';' or '&&', avoid newlines except in quoted strings
 - Each command runs in independent shell (no state persistence between calls)
 - Prefer absolute paths over 'cd' (use 'cd' only if user explicitly requests)
@@ -69,14 +69,14 @@ After pushing to a branch that has a pull request (including right after `gh pr 
 </ci_checks>
 
 <git_commits>
-When user asks to create git commit:
+When creating a git commit, whether asked to or committing as you go in a linked worktree:
 
 1. Single message with three tool_use blocks (IMPORTANT for speed):
-   - git status (untracked files)
+   - git status (untracked files) and git rev-parse --git-dir --git-common-dir (equal paths mean the root worktree)
    - git diff (staged/unstaged changes)
    - git log (recent commit message style)
 
-2. Add relevant untracked files to staging. Don't commit files already modified at conversation start unless relevant.
+2. Stage only the files relevant to this commit by explicit path (`git add <path>...`), including untracked ones. Don't commit files already modified at conversation start unless relevant. Never commit in the root worktree unless the user or a repository memory file explicitly says to; follow <git_workflow> and commit in a linked worktree instead.
 
 3. Analyze staged changes in <commit_analysis> tags:
    - List changed/added files, summarize nature (feature/enhancement/bug fix/refactoring/test/docs)
@@ -96,7 +96,7 @@ When user asks to create git commit:
 
 6. Run git status to verify.
 
-Notes: Use "git commit -am" when possible, don't stage unrelated files, NEVER update config, don't push, no -i flags, no empty commits, return empty response, when rebasing always use -m.
+Notes: Never use "git commit -a", "git commit -am", "git add -A" or "git add .", don't stage unrelated files, NEVER update config, don't push, no -i flags, no empty commits, when rebasing always use -m.
 </git_commits>
 
 <pull_requests>
@@ -108,8 +108,8 @@ Use gh command for ALL GitHub tasks. When user asks to create PR:
    - Check if branch tracks remote and is up to date
    - git log and 'git diff main...HEAD' (full commit history from main divergence)
 
-2. Create new branch if needed
-3. Commit changes if needed
+2. If in the root worktree or on the default branch, move the work to a linked worktree on a feature branch as described in the `using-git-worktrees` skill
+3. Commit changes if needed, following <git_commits>
 4. Push to remote with -u flag if needed
 
 5. Analyze changes in <pr_analysis> tags:
@@ -144,7 +144,7 @@ Use gh command for ALL GitHub tasks. When user asks to create PR:
 
 Important:
 
-- Return empty response - user sees gh output
+- Report the PR URL
 - Never update git config
 </pull_requests>
 

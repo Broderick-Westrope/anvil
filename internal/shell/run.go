@@ -184,7 +184,7 @@ func standardHandlers(blockFuncs []BlockFunc) []func(next interp.ExecHandlerFunc
 }
 
 // builtinHandler returns middleware that dispatches recognized Anvil
-// builtins to their in-process Go implementations. Currently: jq.
+// builtins to their in-process Go implementations. Currently: jq and wtp.
 func builtinHandler() func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
@@ -195,6 +195,8 @@ func builtinHandler() func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 			case "jq":
 				hc := interp.HandlerCtx(ctx)
 				return handleJQ(ctx, args, hc.Stdin, hc.Stdout, hc.Stderr)
+			case "wtp":
+				return handleWTP(ctx, args)
 			default:
 				return next(ctx, args)
 			}

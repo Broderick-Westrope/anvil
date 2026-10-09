@@ -98,7 +98,7 @@ type ProviderConfig struct {
 	// The provider's API endpoint.
 	BaseURL string `json:"base_url,omitempty" jsonschema:"description=Base URL for the provider's API,format=uri,example=https://api.openai.com/v1"`
 	// The provider type, e.g. "openai", "anthropic", etc. if empty it defaults to openai.
-	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,enum=openai,enum=openai-compat,enum=anthropic,enum=gemini,enum=azure,enum=vertexai,default=openai"`
+	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,enum=openai,enum=openai-compat,enum=openrouter,enum=vercel,enum=anthropic,enum=google,enum=azure,enum=bedrock,enum=google-vertex,enum=llamacpp,enum=omlx,enum=lmstudio,enum=litellm,enum=ollama,default=openai"`
 	// Authentication mode: "oauth", "api-key", or "" (auto-detect,
 	// default). When empty, OAuth is preferred over API key for
 	// providers that support it (e.g. Anthropic).
