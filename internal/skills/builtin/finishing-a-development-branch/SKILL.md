@@ -59,7 +59,7 @@ git -C "$path" push -u origin <branch>
 cd "$path" && gh pr create --title "<title>" --body "<body>"
 ```
 
-Follow the repository's PR conventions for the title and body. Keep the worktree: the PR may need more commits.
+Write the title and body as described in `<pull_requests>`, which defers to the repository's PR conventions. Keep the worktree: the PR may need more commits.
 
 ### Option 3: Keep As-Is
 
