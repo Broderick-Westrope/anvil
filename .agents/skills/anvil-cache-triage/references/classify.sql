@@ -34,7 +34,11 @@ based AS (
     -- cache markers, tools or prefix check, so they get no baseline.
     CASE WHEN seq.kind = 'turn' THEN
       CASE seq.cache_policy
-        WHEN 'anthropic_ephemeral' THEN seq.prev_cached_prefix
+        -- fantasy's Vercel usage mapping fills cache reads but never cache
+        -- writes, so prev_cached_prefix undercounts; use the whole prompt.
+        WHEN 'anthropic_ephemeral' THEN
+          CASE WHEN seq.provider_type = 'vercel' THEN seq.prev_prompt_tokens
+               ELSE seq.prev_cached_prefix END
         WHEN 'automatic' THEN seq.prev_prompt_tokens
         WHEN 'disabled' THEN seq.prev_prompt_tokens
       END

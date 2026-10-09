@@ -43,5 +43,10 @@ change keeps only the tools part.
   previous prompt. A row counts as a hit when it reads at least half its
   `baseline`.
 - Google hit rates may be inflated (see `schema.md`, Google caveat).
+- Vercel rows never report cache writes (see `schema.md`, Vercel caveat):
+  `cache_write_tokens` is always 0 and written tokens count as input, so
+  a `first_call` looks like plain input and hits are judged against the
+  previous row's whole prompt. Do not read a Vercel row's 0 writes as
+  "nothing was cached".
 - Duplicate rows for one step (same `run_id` and `step_index`) are both
   billed; the second shows a negative `reuse_gap_ms`.

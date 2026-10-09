@@ -75,6 +75,14 @@ Caveats:
   Compare `raw_usage` before trusting a Google hit rate.
 - An `openai-compat` provider whose cache field has another name reports 0
   reads. Look in `raw_usage.extra`.
+- **Vercel never reports cache writes.** fantasy's Vercel usage mapping
+  fills only `CacheReadTokens` from `prompt_tokens_details.cached_tokens`
+  (`languageModelUsage` and `languageModelStreamUsage` in
+  `fantasy providers/vercel/language_model_hooks.go`), so
+  `cache_write_tokens` is always 0 and tokens written to cache are counted
+  as input. Vercel rows use the `anthropic_ephemeral` policy, so
+  `classify.sql` judges them against `prev_prompt_tokens` instead of
+  `prev_cached_prefix`, and their write cost is not visible.
 
 ### Prices (catwalk, at call time)
 
@@ -133,7 +141,7 @@ Temp view over `step_usage_report`, only `turn` and `summary` rows with a
 | `model_max_read` | Max `cache_read_tokens` over all classified rows of this provider and model. |
 | `reuse_gap_ms` | `request_started_at - prev_finished_at`: how long the cached prefix sat idle. Negative for a duplicate row of the same step. |
 | `after_summary` | 1 if a summary of this session finished in that gap. |
-| `baseline` | Tokens this call should have read. `anthropic_ephemeral`: `prev_cached_prefix`. `automatic` and `disabled`: `prev_prompt_tokens`. NULL for summary rows, `none` policy and first rows. |
+| `baseline` | Tokens this call should have read. `anthropic_ephemeral`: `prev_cached_prefix`, except `prev_prompt_tokens` for `provider_type = 'vercel'` (see the Vercel caveat). `automatic` and `disabled`: `prev_prompt_tokens`. NULL for summary rows, `none` policy and first rows. |
 | `suspected_miss` | NULL (not judged: no baseline, baseline under 1024, or this or the previous row estimated), 0 (read at least half the baseline), 1 (miss). |
 | `changes` | `first_call`, or space-separated differences from the previous row: `model`, `tools`, `system`, `summary`, `history` (prefix match 0). |
 | `suspected_cause` | `first_call`; empty if not a miss; else the first match of `cache_disabled`, `no_reads_reported`, `model_changed`, `tools_changed`, `system_changed`, `after_summary`, `history_rewritten`, `likely_ttl_expired` (gap over 5 min), `unknown_after_restart` (prefix match NULL), `unexplained`. |
