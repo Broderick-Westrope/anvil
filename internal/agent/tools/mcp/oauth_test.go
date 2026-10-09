@@ -173,7 +173,10 @@ func TestOAuthRoundTripper_NoToken_ReturnsErrNeedsAuth(t *testing.T) {
 		http.MethodGet, "http://127.0.0.1:1", nil)
 	require.NoError(t, err)
 
-	_, err = rt.RoundTrip(req)
+	resp, err := rt.RoundTrip(req)
+	if resp != nil {
+		resp.Body.Close()
+	}
 	require.Error(t, err)
 	require.True(t, NeedsAuth(err),
 		"RoundTrip with no token must return ErrNeedsAuth")

@@ -59,6 +59,7 @@ func TestNoTruncateVisual(t *testing.T) {
 // TestNoTruncateStripped renders NoTruncate diffs with ANSI stripped so
 // the visual layout can be inspected in test output.
 func TestNoTruncateStripped(t *testing.T) {
+	t.Parallel()
 	before := "package main\n\nfunc example() string {\n\treturn \"short line\"\n}\n"
 	after := "package main\n\nfunc example() string {\n\treturn \"this is a very long string that definitely exceeds the column width and should demonstrate wrapping behavior properly\"\n}\n"
 

@@ -5959,7 +5959,7 @@ func (m *UI) toggleAnthropicAuthMode() tea.Msg {
 	}
 	anthropicCfg, ok := cfg.Providers.Get("anthropic")
 	if !ok {
-		return util.ReportError(errors.New("Anthropic provider not configured"))()
+		return util.ReportError(errors.New("Anthropic provider not configured"))() //nolint:staticcheck
 	}
 
 	var newMode config.AuthMode

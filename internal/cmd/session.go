@@ -116,9 +116,6 @@ func sessionSetup(cmd *cobra.Command) (context.Context, *sessionServices, func()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to initialize config: %w", err)
 	}
-	if dataDir == "" {
-		dataDir = cfg.Config().Options.ProjectDirectory
-	}
 	conn, err := db.ConnectGlobal(ctx)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -632,12 +629,12 @@ func sessionWriter(ctx context.Context, contentHeight int) (io.Writer, func(), b
 	}
 
 	return &colorprofile.Writer{
-			Forward: pipe,
-			Profile: profile,
-		}, func() {
-			pipe.Close()
-			_ = cmd.Wait()
-		}, true
+		Forward: pipe,
+		Profile: profile,
+	}, func() {
+		pipe.Close()
+		_ = cmd.Wait()
+	}, true
 }
 
 type sessionShowMeta struct {
