@@ -24,7 +24,7 @@ adaptations) goes in the **Plan** section at the bottom.
 
 | ID | Commits | Summary | Recommendation | Decision |
 |---|---|---|---|---|
-| A1 | `63829edf` | Always emit tool results right after their calls. Without this, sessions get permanently stuck on strict-adjacency providers (Kimi, DeepSeek). | Take | pending |
+| A1 | `63829edf` | Always emit tool results right after their calls. Without this, sessions get permanently stuck on strict-adjacency providers (Kimi, DeepSeek). | Take | **done** (`7ae9d90b`). Conflict: replaced our `filterOrphanedToolResults` / `syntheticToolResultsForOrphanedCalls` with upstream's `toolResultsForCalls`. Tests now pass the local 3-arg `sessions.Create`. |
 | A2 | `80ebee41` | Fix reasoning effort being dropped. | Take | pending |
 | A3 | `8e5b708d` | Keep `top_k` for known custom providers. | Take | pending |
 | A4 | `a98394ff` | Count Anthropic cache-creation tokens. `agent.go` already uses `CacheCreationTokens` in places, so check for overlap. | Take after checking | pending |
