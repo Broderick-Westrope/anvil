@@ -41,6 +41,22 @@ survivors=$(jq -r '
     | [$file.file_name, .line, .column, .status, .type] | @tsv
 ' "$report")
 
+# Go coverage never instruments package-level const declarations, so their
+# mutants are always NOT COVERED however well the values are tested. Set
+# them aside, but list them so they stay visible.
+if [ -n "$survivors" ]; then
+    classified=$(printf '%s\n' "$survivors" | go run "$(dirname "$0")/mutation-const")
+    consts=$(printf '%s\n' "$classified" | grep $'^const\t' | cut -f2- || true)
+    survivors=$(printf '%s\n' "$classified" | grep $'^keep\t' | cut -f2- || true)
+    if [ -n "$consts" ]; then
+        echo
+        echo "Ignoring mutants on package-level constants (Go coverage cannot reach them):"
+        while IFS=$'\t' read -r file line column status mutation; do
+            echo "  $file:$line:$column  $status  $mutation"
+        done <<<"$consts"
+    fi
+fi
+
 if [ -z "$survivors" ]; then
     echo "Every mutant on changed lines was killed."
     exit 0
