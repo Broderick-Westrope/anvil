@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -413,4 +415,32 @@ func TestGetOrRenewClient_RestoresPromptsAndResources(t *testing.T) {
 	require.Equal(t, StateConnected, info.State)
 	require.Equal(t, Counts{Tools: 1, Prompts: 1, Resources: 1}, info.Counts,
 		"reported counts must match the restored registries")
+}
+
+// TestMaybeStdioErr_SurfacesChildOutput pins that a stdio server which dies
+// during startup reports the child's output instead of a bare EOF.
+func TestMaybeStdioErr_SurfacesChildOutput(t *testing.T) {
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "echo 'startup failed: bad config'; exit 3")
+
+	got := maybeStdioErr(io.EOF, &mcp.CommandTransport{Command: cmd})
+	require.Error(t, got)
+	require.NotEqual(t, io.EOF, got)
+	require.ErrorContains(t, got, "startup failed: bad config",
+		"the re-executed child's output must surface in the error")
+}
+
+// TestStdioCheck_DoesNotDuplicateArgv0 pins the argv0 handling in the
+// diagnostic re-run. exec.Cmd.Args carries argv0 as its first element and
+// exec.CommandContext prepends Path as argv0 itself, so passing Args through
+// whole re-ran "sh sh -c ..." and the error reported that malformed
+// command's failure instead of the child's real startup output.
+func TestStdioCheck_DoesNotDuplicateArgv0(t *testing.T) {
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "echo 'real startup error'; exit 3")
+
+	err := stdioCheck(cmd)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "real startup error",
+		"the re-run must execute the original command, not a duplicated argv0")
+	require.NotContains(t, err.Error(), "cannot execute binary file",
+		"a duplicated argv0 makes the shell try to exec itself as a script")
 }
