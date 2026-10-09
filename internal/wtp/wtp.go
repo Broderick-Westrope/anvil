@@ -30,7 +30,10 @@ func Run(ctx context.Context, args []string, env Env) error { //nolint:gocritic 
 }
 
 func self() []string {
-	exe, err := os.Executable()
+	return selfFrom(os.Executable())
+}
+
+func selfFrom(exe string, err error) []string {
 	if err != nil {
 		exe = "anvil"
 	}
@@ -38,7 +41,10 @@ func self() []string {
 }
 
 var version = sync.OnceValue(func() string {
-	info, ok := debug.ReadBuildInfo()
+	return moduleVersion(debug.ReadBuildInfo())
+})
+
+func moduleVersion(info *debug.BuildInfo, ok bool) string {
 	if !ok {
 		return ""
 	}
@@ -52,4 +58,4 @@ var version = sync.OnceValue(func() string {
 		return dep.Version
 	}
 	return ""
-})
+}
