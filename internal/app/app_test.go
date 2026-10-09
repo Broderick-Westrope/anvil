@@ -306,3 +306,19 @@ func TestCloseLogsJoinsErrors(t *testing.T) {
 	require.ErrorIs(t, err, errB)
 	require.NoError(t, closeLogs(t.Context(), ok, ok))
 }
+
+func TestStartupPrune(t *testing.T) {
+	t.Parallel()
+
+	var deadline time.Time
+	require.NoError(t, startupPrune(t.Context(), "rows", func(ctx context.Context) error {
+		var ok bool
+		deadline, ok = ctx.Deadline()
+		require.True(t, ok)
+		return nil
+	}))
+	require.WithinDuration(t, time.Now().Add(30*time.Second), deadline, 5*time.Second)
+
+	errPrune := errors.New("locked")
+	require.ErrorIs(t, startupPrune(t.Context(), "rows", func(context.Context) error { return errPrune }), errPrune)
+}

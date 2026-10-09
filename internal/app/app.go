@@ -98,23 +98,14 @@ type App struct {
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
 	recorder := decisionlog.New(q)
-	// Prune old decisions once at startup in the background. Failure only
-	// means the table keeps extra rows until the next start.
-	go func() {
-		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := decisionlog.Prune(pruneCtx, q, time.Now()); err != nil {
-			slog.Warn("Failed to prune permission decisions", "error", err)
-		}
-	}()
 	cacheUsage := cacheusage.New(q)
-	go func() {
-		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := cacheusage.Prune(pruneCtx, q, time.Now()); err != nil {
-			slog.Warn("Failed to prune step usage", "error", err)
-		}
-	}()
+	// Prune old rows once at startup in the background.
+	go startupPrune(ctx, "permission decisions", func(ctx context.Context) error {
+		return decisionlog.Prune(ctx, q, time.Now())
+	})
+	go startupPrune(ctx, "step usage", func(ctx context.Context) error {
+		return cacheusage.Prune(ctx, q, time.Now())
+	})
 	store.SetBouncerValidator(func(b *config.Bouncer) error {
 		return BouncerThresholds(b).Validate()
 	})
@@ -752,6 +743,19 @@ func (app *App) Subscribe(program *tea.Program) {
 			program.Send(ev.Payload)
 		}
 	}
+}
+
+// startupPrune runs prune with a 30 second deadline and logs failure,
+// which only means the table keeps extra rows until the next start. It
+// returns prune's error.
+func startupPrune(ctx context.Context, what string, prune func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := prune(ctx); err != nil {
+		slog.Warn("Failed to prune "+what, "error", err)
+		return err
+	}
+	return nil
 }
 
 // logCloser is an asynchronous log writer such as the permission decision
