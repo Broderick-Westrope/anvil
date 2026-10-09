@@ -933,7 +933,14 @@ func mcpTimeout(m config.MCPConfig) time.Duration {
 func stdioCheck(old *exec.Cmd) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, old.Path, old.Args...)
+	// old.Args includes argv0 as the first element; exec.CommandContext
+	// prepends old.Path as argv0, so we must skip it to avoid duplication
+	// (e.g. "npx npx -y pkg" instead of "npx -y pkg").
+	args := old.Args
+	if len(args) > 0 {
+		args = args[1:]
+	}
+	cmd := exec.CommandContext(ctx, old.Path, args...)
 	cmd.Env = old.Env
 	out, err := cmd.CombinedOutput()
 	if err == nil || errors.Is(ctx.Err(), context.DeadlineExceeded) {
