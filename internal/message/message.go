@@ -754,6 +754,13 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 	return json.Marshal(wrappedParts)
 }
 
+// rawPartWrapper is [partWrapper] for decoding: the payload stays encoded
+// until the type tag says what to decode it into.
+type rawPartWrapper struct {
+	Type partType        `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
 // partDecoders decodes the data of each stored part type.
 var partDecoders = map[partType]func(json.RawMessage) (ContentPart, error){
 	reasoningType:           decodePart[ReasoningContent],
@@ -780,29 +787,20 @@ func decodePart[T ContentPart](data json.RawMessage) (ContentPart, error) {
 }
 
 func unmarshalParts(data []byte) ([]ContentPart, error) {
-	temp := []json.RawMessage{}
-
-	if err := json.Unmarshal(data, &temp); err != nil {
+	// One pass gets every type tag and its still-encoded payload. Splitting
+	// into []json.RawMessage first would walk the same bytes twice.
+	var wrapped []rawPartWrapper
+	if err := json.Unmarshal(data, &wrapped); err != nil {
 		return nil, err
 	}
 
-	parts := make([]ContentPart, 0)
-
-	for _, rawPart := range temp {
-		var wrapper struct {
-			Type partType        `json:"type"`
-			Data json.RawMessage `json:"data"`
-		}
-
-		if err := json.Unmarshal(rawPart, &wrapper); err != nil {
-			return nil, err
-		}
-
-		decode, ok := partDecoders[wrapper.Type]
+	parts := make([]ContentPart, 0, len(wrapped))
+	for _, w := range wrapped {
+		decode, ok := partDecoders[w.Type]
 		if !ok {
-			return nil, fmt.Errorf("unknown part type: %s", wrapper.Type)
+			return nil, fmt.Errorf("unknown part type: %s", w.Type)
 		}
-		part, err := decode(wrapper.Data)
+		part, err := decode(w.Data)
 		if err != nil {
 			return nil, err
 		}
