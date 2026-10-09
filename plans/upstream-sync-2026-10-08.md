@@ -91,10 +91,10 @@ adaptations) goes in the **Plan** section at the bottom.
 
 | ID | Commits | Summary | Notes | Decision |
 |---|---|---|---|---|
-| F1 | `1648f10a`, `eb845a9e`, `9636af64` | Plan mode | Large. Touches the server/backend/proto packages we deleted, so it needs adapting. | pending |
+| F1 | `1648f10a`, `eb845a9e`, `9636af64` | Plan mode | Large. Touches the server/backend/proto packages we deleted, so it needs adapting. | skip (not needed) |
 | F2 | `f38b7947`, `a88b5735`, `56abdfa7`, `5f295a6f` | Theme support | +4.4K LOC. Conflicts with our TokyoNight-only styles. | pending |
 | F3 | `a9a257c4`, `1f3827bc` | Toggle MCPs on and off | Competes with our lazy MCP palette toggle. Probably skip. | pending |
-| F4 | `2da6f781`, `f2d66d28`, `08984f59`, `2fbaa90b`, `f2674806`, `65865e01` | Show the git branch in the TUI | Small. `2fbaa90b` (read the branch in the prompt without spawning a shell) is worth taking on its own. | pending |
+| F4 | `2da6f781`, `f2d66d28`, `08984f59`, `2fbaa90b`, `f2674806`, `65865e01` | Show the git branch in the TUI | Small. `2fbaa90b` (read the branch in the prompt without spawning a shell) depends on the new `gitutil` package. The prompt still spawns a shell for `git status` and `git log`, so the saving is small. | skip (not needed, including `2fbaa90b`) |
 | F5 | `b82d7d05` | Restore the last provider/model when resuming a session | Drop the proto/server hunks. | pending |
 | F6 | `90b48cda`, `36a4f79a`, `ed15da4c` | Bash syntax highlighting; drop the redundant `cd` prefix | Small UX improvement. | pending |
 | F7 | `08552fb9` | Text selection in the textarea | Small. | pending |
