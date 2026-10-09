@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
@@ -17,6 +18,9 @@ const Retention = 90 * 24 * time.Hour
 const (
 	bufferSize   = 512
 	writeTimeout = 500 * time.Millisecond
+	// dropLogInterval rate-limits the buffer-full warning: the first drop
+	// is logged, then every dropLogInterval-th.
+	dropLogInterval = 100
 )
 
 // Row is one model call. It mirrors db.InsertStepUsageParams without the
@@ -80,6 +84,8 @@ type Recorder struct {
 	done   chan struct{}
 	mu     sync.RWMutex
 	closed bool
+	// dropped counts rows dropped because the buffer was full.
+	dropped atomic.Int64
 }
 
 // New starts a recorder. Call Close to flush queued writes and stop it.
@@ -98,13 +104,21 @@ func (r *Recorder) Record(row Row) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.closed {
+		slog.Debug("Step usage recorder closed; dropping row", "session_id", row.SessionID, "kind", row.Kind)
 		return
 	}
 	select {
 	case r.ch <- row:
 	default:
-		slog.Warn("Step usage buffer full; dropping row", "session_id", row.SessionID, "kind", row.Kind)
+		if n := r.dropped.Add(1); shouldLogDrop(n) {
+			slog.Warn("Step usage buffer full; dropping row", "session_id", row.SessionID, "kind", row.Kind, "dropped", n)
+		}
 	}
+}
+
+// shouldLogDrop reports whether the nth buffer-full drop is logged.
+func shouldLogDrop(n int64) bool {
+	return n == 1 || n%dropLogInterval == 0
 }
 
 // Close stops accepting rows and waits for queued writes.

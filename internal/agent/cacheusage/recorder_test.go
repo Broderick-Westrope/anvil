@@ -115,9 +115,21 @@ func TestRecorderFullDoesNotBlock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Record blocked on a full buffer")
 	}
+	r.Record(Row{Kind: "dropped"})
+	require.Equal(t, int64(2), r.dropped.Load())
 	require.Len(t, r.ch, bufferSize)
 	for range bufferSize {
 		require.Equal(t, "turn", (<-r.ch).Kind)
+	}
+}
+
+func TestShouldLogDrop(t *testing.T) {
+	t.Parallel()
+	for _, n := range []int64{1, 100, 200, 1000} {
+		require.True(t, shouldLogDrop(n), n)
+	}
+	for _, n := range []int64{2, 99, 101, 199} {
+		require.False(t, shouldLogDrop(n), n)
 	}
 }
 

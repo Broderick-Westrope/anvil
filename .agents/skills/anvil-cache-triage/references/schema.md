@@ -144,7 +144,10 @@ Temp view over `step_usage_report`, only `turn` and `summary` rows with a
   that is a network error) is recorded twice: same `run_id`,
   `step_index` and `request_started_at`, higher `retry_count` on the
   second. Both responses were billed.
-- Rows are written asynchronously; rows still buffered at shutdown (for
-  example detached title calls) can be lost, and rows are dropped with a
-  log warning if the buffer is full.
+- Rows are written asynchronously. At shutdown Anvil waits up to 2
+  seconds for detached title calls, then closes the recorder; a title call
+  that outlives that wait loses its row (logged at debug level). Queued
+  rows that do not flush within the shutdown deadline are also lost.
+- Rows are dropped if the 512-row buffer is full. The first drop and then
+  every 100th are logged as a warning with the running `dropped` count.
 - The System One bouncer (`internal/systemone`) is not recorded.
