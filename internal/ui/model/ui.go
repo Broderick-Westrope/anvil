@@ -534,8 +534,6 @@ func (m *UI) Init() tea.Cmd {
 	}
 	// load the user commands async
 	cmds = append(cmds, m.loadCustomCommands())
-	// load prompt history async
-	cmds = append(cmds, m.loadPromptHistory())
 	// load initial LSP state
 	m.lspStates = app.GetLSPStates()
 	// Load initial MCP state. Like skills and LSPs, MCP clients that
@@ -543,9 +541,14 @@ func (m *UI) Init() tea.Cmd {
 	// this model subscribes, so without a seed the sidebar and MCP
 	// palette report no servers until the next state change.
 	m.mcpStates = m.com.Workspace.MCPGetStates()
-	// load initial session if specified
+	// load initial session if specified. loadSessionMsg reloads prompt
+	// history for the session that arrives, so history is only loaded here
+	// when no session is coming; otherwise the no-session query would be
+	// discarded and would hold the single connection the load waits on.
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
+	} else {
+		cmds = append(cmds, m.loadPromptHistory())
 	}
 	// Check once whether to nudge the user to run permission triage.
 	cmds = append(cmds, m.checkTriageNudge())
@@ -567,7 +570,8 @@ func (m *UI) loadInitialSession() tea.Cmd {
 		return func() tea.Msg {
 			sessions, err := m.com.Workspace.ListSessions(context.Background(), m.com.Workspace.WorkingDir())
 			if err != nil || len(sessions) == 0 {
-				return nil
+				// No session to continue, so nothing will load history.
+				return m.loadPromptHistory()()
 			}
 			return continueSessionMsg{sessionID: sessions[0].ID}
 		}
@@ -958,6 +962,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loadSessionFailedMsg:
 		m.takeSessionLoadEvents(msg.sessionID)
 		cmds = append(cmds, util.ReportError(msg.err))
+		// A failed startup load leaves no session, and Init skipped history
+		// expecting the load to bring it.
+		if m.session == nil {
+			cmds = append(cmds, m.loadPromptHistory())
+		}
 	case pubsub.Event[message.Message]:
 		m.bufferSessionLoadEvent(msg)
 		// Check if this is a child session message for an agent tool.
