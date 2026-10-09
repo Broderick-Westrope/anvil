@@ -103,7 +103,7 @@ func newSkillHookedTool(t *testing.T, registry []*skills.Skill, workingDir strin
 	require.NoError(t, cfg.ValidateHooks())
 	runner := hooks.NewRunner(cfg.Hooks[hooks.EventPreToolUse], workingDir, workingDir)
 
-	viewTool := tools.NewViewTool(nil, permissions, fakeHookFileTracker{}, skills.NewTracker(registry), registry, workingDir)
+	viewTool := tools.NewViewTool(nil, permissions, fakeHookFileTracker{}, skills.NewTracker(registry), registry, nil, workingDir)
 	return newHookedTool(viewTool, runner), logDir
 }
 
@@ -402,7 +402,7 @@ func TestHookedTool_InvalidSelectorsAndNameRewrites(t *testing.T) {
 			log := filepath.Join(dir, "passes")
 			tool, _ := newSkillHookedTool(t, registry, dir, permissions,
 				`echo pass >> `+shellQuote(log)+`; echo `+shellQuote(output))
-			tool.inner = tools.NewViewTool(nil, permissions, tracker, skillTracker, registry, dir)
+			tool.inner = tools.NewViewTool(nil, permissions, tracker, skillTracker, registry, nil, dir)
 			params := tc.params
 			if params.FilePath != "" {
 				params.FilePath = path
@@ -585,7 +585,7 @@ func TestHookedTool_SkillName_AuthorizationMatrix(t *testing.T) {
 			if tc.exempt {
 				paths = []string{outside}
 			}
-			inner := tools.NewViewTool(nil, permissions, tracker, skills.NewTracker(registry), registry, dir, paths...)
+			inner := tools.NewViewTool(nil, permissions, tracker, skills.NewTracker(registry), registry, nil, dir, paths...)
 			var hookConfigs []config.HookConfig
 			for i, command := range []string{guard, rewrite, gate} {
 				script := filepath.Join(dir, fmt.Sprintf("hook-%d.sh", i))

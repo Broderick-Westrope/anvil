@@ -1615,6 +1615,7 @@ func TestConnectDeferredMCP(t *testing.T) {
 	_, err = c.connectDeferredMCP(t.Context(), connected)
 	require.ErrorIs(t, err, errOrchestratorAgentNotConfigured, "a connected server goes on to refresh the tools")
 }
+
 func TestGetProviderOptionsTopKExtraBody(t *testing.T) {
 	// "ollama" has a registered discover.Enricher, so it is treated as a
 	// known custom provider speaking openai-compat.

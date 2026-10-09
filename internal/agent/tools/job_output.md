@@ -8,6 +8,9 @@ Read output from a background job by ID; returns only new output since the previ
 - stdout is shown first, then stderr
 - "(no new output)" means nothing new since the last read; "no output"
   means the job has not printed anything yet
+- Very long output keeps its start and end; the truncation marker names a
+  file holding the complete text - read it with the view tool when the
+  omitted middle matters
 </usage>
 
 <parameters>

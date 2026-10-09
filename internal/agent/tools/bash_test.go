@@ -18,6 +18,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -197,7 +198,7 @@ func (m *recordingPermissionService) GrantForever(toolPattern string, inputPatte
 
 func newBashToolForTest(workingDir string) fantasy.AgentTool {
 	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
-	return NewBashTool(permissions, workingDir, nil)
+	return NewBashTool(permissions, workingDir, workingDir, nil)
 }
 
 func newBashToolWithRecordingPerms(workingDir string, allow bool) (fantasy.AgentTool, *recordingPermissionService) {
@@ -205,7 +206,7 @@ func newBashToolWithRecordingPerms(workingDir string, allow bool) (fantasy.Agent
 		Broker: pubsub.NewBroker[permission.PermissionRequest](),
 		allow:  allow,
 	}
-	return NewBashTool(perms, workingDir, nil), perms
+	return NewBashTool(perms, workingDir, workingDir, nil), perms
 }
 
 func TestBashTool_CIGuidanceFollowsJobWake(t *testing.T) {
@@ -217,12 +218,12 @@ func TestBashTool_CIGuidanceFollowsJobWake(t *testing.T) {
 	)
 	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
 
-	withoutWaker := NewBashTool(permissions, t.TempDir(), nil).Info().Description
+	withoutWaker := NewBashTool(permissions, t.TempDir(), t.TempDir(), nil).Info().Description
 	require.Contains(t, withoutWaker, blockGuidance)
 	require.NotContains(t, withoutWaker, handBackGuidance)
 
 	var wake atomic.Bool
-	tool := NewBashTool(permissions, t.TempDir(), wake.Load)
+	tool := NewBashTool(permissions, t.TempDir(), t.TempDir(), wake.Load)
 
 	asleep := tool.Info().Description
 	require.Equal(t, withoutWaker, asleep)
@@ -312,7 +313,7 @@ func TestTruncateOutputValidUTF8(t *testing.T) {
 	// MaxOutputLength so TruncateOutput must truncate it.
 	content := strings.Repeat("你好世界", MaxOutputLength)
 
-	out := TruncateOutput(content)
+	out := TruncateOutput(content, t.TempDir())
 	require.True(t, utf8.ValidString(out), "truncated output must stay valid UTF-8")
 	require.Contains(t, out, "lines truncated")
 }
@@ -320,7 +321,7 @@ func TestTruncateOutputValidUTF8(t *testing.T) {
 func TestTruncateOutputShortContent(t *testing.T) {
 	t.Parallel()
 	content := "short output"
-	require.Equal(t, content, TruncateOutput(content))
+	require.Equal(t, content, TruncateOutput(content, t.TempDir()))
 }
 
 func TestTruncateOutputEmoji(t *testing.T) {
@@ -328,7 +329,7 @@ func TestTruncateOutputEmoji(t *testing.T) {
 	// Emoji with ZWJ sequences should not be split.
 	content := strings.Repeat("👨‍👩‍👧‍👦", MaxOutputLength)
 
-	out := TruncateOutput(content)
+	out := TruncateOutput(content, t.TempDir())
 	require.True(t, utf8.ValidString(out), "truncated output must stay valid UTF-8")
 	require.Contains(t, out, "lines truncated")
 }
@@ -800,7 +801,7 @@ func TestBashTool_PermissionRequestErrorIsReturned(t *testing.T) {
 			return permission.RequestResult{}, requestErr
 		},
 	}
-	tool := NewBashTool(perms, t.TempDir(), nil)
+	tool := NewBashTool(perms, t.TempDir(), t.TempDir(), nil)
 
 	_, err := tool.Run(sessionCtx(), fantasy.ToolCall{
 		ID:    "test-call",
@@ -952,4 +953,31 @@ func TestBashTool_CancelledWhileWaitingKillsCommand(t *testing.T) {
 		_, statErr := os.Stat(filepath.Join(workingDir, "finished"))
 		return statErr == nil
 	}, 1500*time.Millisecond, 100*time.Millisecond, "cancelled command must be killed")
+}
+
+func TestTruncateOutputSpillsFullOutput(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	content := "\x1b[31mred\x1b[0m\n" + strings.Repeat("line\n", MaxOutputLength)
+
+	out := TruncateOutput(content, dataDir)
+
+	_, rest, ok := strings.Cut(out, "full output: ")
+	require.True(t, ok, "marker must name the spill file: %q", out[:200])
+	path, _, ok := strings.Cut(rest, "] ...")
+	require.True(t, ok)
+	require.Equal(t, shell.SpillDir(dataDir), filepath.Dir(path))
+
+	spilled, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, ansi.Strip(content), string(spilled), "spill holds the complete output without ANSI")
+}
+
+func TestTruncateOutputShortContentDoesNotSpill(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+
+	require.Equal(t, "short", TruncateOutput("short", dataDir))
+
+	require.NoDirExists(t, shell.SpillDir(dataDir))
 }

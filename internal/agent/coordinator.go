@@ -1021,15 +1021,17 @@ func (c *coordinator) buildToolsWithState(
 	if err != nil {
 		return nil, nil, err
 	}
+	spillDataDir := config.GlobalDataDir()
+	jobOpts := tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive, SpillDir: spillDataDir}
 	candidateTools = append(
 		candidateTools,
 		agenticFetch,
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.jobWakeEnabled),
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), spillDataDir, c.jobWakeEnabled),
 		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker),
 		tools.NewAnvilLogsTool(logFile),
-		tools.NewJobOutputTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
-		tools.NewJobKillTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
-		tools.NewJobListTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
+		tools.NewJobOutputTool(jobOpts),
+		tools.NewJobKillTool(jobOpts),
+		tools.NewJobListTool(jobOpts),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
@@ -1039,7 +1041,7 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, c.cfg.WorkingDir(), trustedReadPaths(c.cfg.Config(), plugins)...),
+		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, []string{shell.SpillDir(spillDataDir)}, c.cfg.WorkingDir(), trustedReadPaths(c.cfg.Config(), plugins)...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 	)
 
