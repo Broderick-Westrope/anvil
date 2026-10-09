@@ -564,19 +564,7 @@ func (s *service) GetBranchPath(ctx context.Context, leafMessageID string) ([]Me
 	}
 	messages := make([]Message, len(dbMessages))
 	for i, dbMessage := range dbMessages {
-		messages[i], err = s.fromDBItem(db.Message{
-			ID:              dbMessage.ID,
-			SessionID:       dbMessage.SessionID,
-			Role:            dbMessage.Role,
-			Parts:           dbMessage.Parts,
-			Model:           dbMessage.Model,
-			Provider:        dbMessage.Provider,
-			FinishedAt:      dbMessage.FinishedAt,
-			ParentMessageID: dbMessage.ParentMessageID,
-			MessageType:     dbMessage.MessageType,
-			CreatedAt:       dbMessage.CreatedAt,
-			UpdatedAt:       dbMessage.UpdatedAt,
-		})
+		messages[i], err = s.fromDBItem(db.Message(dbMessage))
 		if err != nil {
 			return nil, err
 		}
@@ -597,19 +585,7 @@ func (s *service) GetBranchPathTail(ctx context.Context, leafMessageID string, l
 	}
 	messages := make([]Message, len(dbMessages))
 	for i, dbMessage := range dbMessages {
-		messages[i], err = s.fromDBItem(db.Message{
-			ID:              dbMessage.ID,
-			SessionID:       dbMessage.SessionID,
-			Role:            dbMessage.Role,
-			Parts:           dbMessage.Parts,
-			Model:           dbMessage.Model,
-			Provider:        dbMessage.Provider,
-			FinishedAt:      dbMessage.FinishedAt,
-			ParentMessageID: dbMessage.ParentMessageID,
-			MessageType:     dbMessage.MessageType,
-			CreatedAt:       dbMessage.CreatedAt,
-			UpdatedAt:       dbMessage.UpdatedAt,
-		})
+		messages[i], err = s.fromDBItem(db.Message(dbMessage))
 		if err != nil {
 			return nil, err
 		}

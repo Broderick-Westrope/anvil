@@ -461,9 +461,7 @@ func nestedCommands(tokens []string) []string {
 	if inner := unwrap(tokens, 0); len(inner) > 0 {
 		out = append(out, strings.Join(inner, " "))
 	}
-	for _, clause := range execClauses(tokens) {
-		out = append(out, clause)
-	}
+	out = append(out, execClauses(tokens)...)
 	return out
 }
 
@@ -537,7 +535,8 @@ func isAssignment(tok string) bool {
 		c := name[i]
 		isAlpha := c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 		isDigit := c >= '0' && c <= '9'
-		if !isAlpha && !(isDigit && i > 0) {
+		valid := isAlpha || (isDigit && i > 0)
+		if !valid {
 			return false
 		}
 	}

@@ -4,10 +4,15 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: read
+
 jobs:
   lint:
     uses: charmbracelet/meta/.github/workflows/lint.yml@main
     with:
       golangci_path: .golangci.yml
-      golangci_version: v2.10
+      golangci_version: v2.14
       timeout: 10m

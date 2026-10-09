@@ -244,7 +244,7 @@ func (w *AppWorkspace) PermissionGrant(perm permission.PermissionRequest) {
 }
 
 func (w *AppWorkspace) PermissionGrantPersistent(perm permission.PermissionRequest) {
-	w.app.Permissions.GrantPersistent(perm)
+	w.app.Permissions.GrantPersistent(perm) //nolint:staticcheck
 }
 
 func (w *AppWorkspace) PermissionGrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {

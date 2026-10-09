@@ -177,6 +177,7 @@ func TestComposerResourceLabels(t *testing.T) {
 		{"", "attachment"},
 	} {
 		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
 			state := composerFromMessage(message.Message{Parts: []message.ContentPart{message.BinaryContent{Path: tt.path}}}, nil, nil)
 			require.Equal(t, tt.want, state.attachments[0].FileName)
 			require.Equal(t, tt.path, state.attachments[0].FilePath)

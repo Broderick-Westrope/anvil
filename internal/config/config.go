@@ -1048,51 +1048,49 @@ func (c *Config) applyAgentOverrides(userAgents map[string]Agent) {
 // applyOverrides overlays non-zero fields from userAgents onto agents and
 // removes disabled agents. It returns the modified map.
 func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabledAgents []string) map[string]Agent {
-	if userAgents != nil {
-		for name, userAgent := range userAgents {
-			def, ok := agents[name]
-			if !ok {
-				// User defined an agent not in the defaults; add it as-is.
-				// Ensure ID and Name are set from the map key if not provided.
-				if userAgent.ID == "" {
-					userAgent.ID = name
-				}
-				if userAgent.Name == "" {
-					userAgent.Name = name
-				}
-				agents[name] = userAgent
-				continue
+	for name, userAgent := range userAgents {
+		def, ok := agents[name]
+		if !ok {
+			// User defined an agent not in the defaults; add it as-is.
+			// Ensure ID and Name are set from the map key if not provided.
+			if userAgent.ID == "" {
+				userAgent.ID = name
 			}
-			// Overlay non-zero fields from the user config onto the default.
-			if userAgent.Model != "" {
-				def.Model = userAgent.Model
+			if userAgent.Name == "" {
+				userAgent.Name = name
 			}
-			if userAgent.Variant != "" {
-				def.Variant = userAgent.Variant
-			}
-			if userAgent.ReasoningEffort != "" {
-				def.ReasoningEffort = userAgent.ReasoningEffort
-			}
-			if userAgent.Think != nil {
-				def.Think = userAgent.Think
-			}
-			if userAgent.AllowedTools != nil {
-				def.AllowedTools = userAgent.AllowedTools
-			}
-			if userAgent.AllowedSkills != nil {
-				def.AllowedSkills = userAgent.AllowedSkills
-			}
-			if userAgent.AllowedMCP != nil {
-				def.AllowedMCP = userAgent.AllowedMCP
-			}
-			if userAgent.AppendPrompt != "" {
-				def.AppendPrompt = userAgent.AppendPrompt
-			}
-			if userAgent.Disabled {
-				def.Disabled = true
-			}
-			agents[name] = def
+			agents[name] = userAgent
+			continue
 		}
+		// Overlay non-zero fields from the user config onto the default.
+		if userAgent.Model != "" {
+			def.Model = userAgent.Model
+		}
+		if userAgent.Variant != "" {
+			def.Variant = userAgent.Variant
+		}
+		if userAgent.ReasoningEffort != "" {
+			def.ReasoningEffort = userAgent.ReasoningEffort
+		}
+		if userAgent.Think != nil {
+			def.Think = userAgent.Think
+		}
+		if userAgent.AllowedTools != nil {
+			def.AllowedTools = userAgent.AllowedTools
+		}
+		if userAgent.AllowedSkills != nil {
+			def.AllowedSkills = userAgent.AllowedSkills
+		}
+		if userAgent.AllowedMCP != nil {
+			def.AllowedMCP = userAgent.AllowedMCP
+		}
+		if userAgent.AppendPrompt != "" {
+			def.AppendPrompt = userAgent.AppendPrompt
+		}
+		if userAgent.Disabled {
+			def.Disabled = true
+		}
+		agents[name] = def
 	}
 
 	// Remove any agents whose names appear in disabledAgents and agents

@@ -836,8 +836,7 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 			ln = ansi.Truncate(ln, codeWidth-sty.Tool.ContentCodeLine.GetHorizontalPadding(), "…")
 		}
 
-		var codeLine string
-		codeLine = sty.Tool.ContentCodeLine.
+		codeLine := sty.Tool.ContentCodeLine.
 			Width(codeWidth).
 			Render(ln)
 

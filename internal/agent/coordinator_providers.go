@@ -74,7 +74,7 @@ func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map
 
 	// Build the HTTP transport chain. Debug logging is innermost so that
 	// the logged URL reflects the final ?beta=true mutation.
-	var transport http.RoundTripper = http.DefaultTransport
+	transport := http.DefaultTransport
 	if c.cfg.Config().Options.Debug {
 		transport = &log.HTTPRoundTripLogger{Transport: transport}
 	}
