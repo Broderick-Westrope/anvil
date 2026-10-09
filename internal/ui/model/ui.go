@@ -194,6 +194,11 @@ type UI struct {
 	com              *common.Common
 	session          *session.Session
 
+	// sessionLoad buffers message events for a session whose transcript is
+	// being read off the event loop, so they can be replayed over the
+	// snapshot once it lands.
+	sessionLoad *pendingSessionLoad
+
 	// composerSent is the composer state last reported to the workspace;
 	// navigating is set while a branch navigation moves the leaf, and
 	// composerClosed once the TUI exits.
@@ -564,7 +569,7 @@ func (m *UI) loadInitialSession() tea.Cmd {
 			if err != nil || len(sessions) == 0 {
 				return nil
 			}
-			return m.loadSession(sessions[0].ID)()
+			return continueSessionMsg{sessionID: sessions[0].ID}
 		}
 	default:
 		return nil
@@ -768,21 +773,18 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = msg.session
 		m.sidebarOffset = 0
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
-		var msgs []message.Message
-		var err error
-		if m.session.LeafMessageID != "" {
-			msgs, err = m.com.Workspace.GetBranchPath(context.Background(), m.session.LeafMessageID)
-		} else {
-			msgs, err = m.com.Workspace.ListMessages(context.Background(), m.session.ID)
-		}
-		if err != nil {
-			cmds = append(cmds, util.ReportError(err))
-			break
-		}
+		msgs := msg.messages
 		if cmd := m.setSessionMessages(msgs); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		m.deriveEnabledLazyMCPs(msgs)
+		// The snapshot was read off the event loop; replay what arrived for
+		// this session since, or it would be lost under the snapshot.
+		for _, event := range m.takeSessionLoadEvents(m.session.ID) {
+			if cmd := m.applySessionMessageEvent(event); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 		if hasInProgressTodo(m.session.Todos) {
 			// only start spinner if there is an in-progress todo
 			if m.isAgentBusy() {
@@ -951,7 +953,13 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.renderPills()
 			}
 		}
+	case continueSessionMsg:
+		cmds = append(cmds, m.loadSession(msg.sessionID))
+	case loadSessionFailedMsg:
+		m.takeSessionLoadEvents(msg.sessionID)
+		cmds = append(cmds, util.ReportError(msg.err))
 	case pubsub.Event[message.Message]:
+		m.bufferSessionLoadEvent(msg)
 		// Check if this is a child session message for an agent tool.
 		if m.session == nil {
 			break
@@ -994,21 +1002,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
-		switch msg.Type {
-		case pubsub.CreatedEvent:
-			cmds = append(cmds, m.appendSessionMessage(msg.Payload))
-			m.applyLazyMCPMessageParts(msg.Payload)
-			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		case pubsub.UpdatedEvent:
-			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
-			m.applyLazyMCPMessageParts(msg.Payload)
-			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		case pubsub.DeletedEvent:
-			m.chat.RemoveMessage(msg.Payload.ID)
+		if cmd := m.applySessionMessageEvent(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 		// start the spinner if there is a new message
 		if hasInProgressTodo(m.session.Todos) && m.isAgentBusy() && !m.todoIsSpinning {
@@ -1845,6 +1840,26 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 		m.activeChat().Focus()
 	}
 	return cmd
+}
+
+// applySessionMessageEvent applies a message event for the current session to
+// the root chat. Re-applying an event is harmless: creates skip messages the
+// chat already holds and updates overwrite with the event's state.
+func (m *UI) applySessionMessageEvent(event pubsub.Event[message.Message]) tea.Cmd {
+	var cmds []tea.Cmd
+	switch event.Type {
+	case pubsub.CreatedEvent:
+		cmds = append(cmds, m.appendSessionMessage(event.Payload))
+		m.applyLazyMCPMessageParts(event.Payload)
+		cmds = append(cmds, m.startElapsedTickForBackgroundResult(event.Payload))
+	case pubsub.UpdatedEvent:
+		cmds = append(cmds, m.updateSessionMessage(event.Payload))
+		m.applyLazyMCPMessageParts(event.Payload)
+		cmds = append(cmds, m.startElapsedTickForBackgroundResult(event.Payload))
+	case pubsub.DeletedEvent:
+		m.chat.RemoveMessage(event.Payload.ID)
+	}
+	return tea.Batch(cmds...)
 }
 
 // updateSessionMessage updates an existing message in the root session chat.
