@@ -142,8 +142,17 @@ internal/
 ## Merge Gates
 
 `main` has a ruleset that blocks merging until these checks pass: `build`
-and `lint` on Ubuntu, macOS and Windows, and `mutation`. Never bypass a
-failing check, merge with `--admin`, or change the ruleset to get a PR in.
+and `lint` on Ubuntu, macOS and Windows, `mutation`, and `govulncheck`.
+Never bypass a failing check, merge with `--admin`, or change the ruleset
+to get a PR in.
+
+`govulncheck` fails when our code calls a function with a known
+vulnerability, including in the Go standard library. It can start failing
+on a PR that didn't cause it, when a new advisory is published. Fix it by
+upgrading the affected module (or the Go version in `go.mod`) to the
+release the output lists under "Fixed in", in its own PR if it's unrelated
+to the change. Run `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`
+to reproduce it locally.
 
 The `mutation` check fails when a mutant on a changed line is `LIVED` (a
 test runs the line but none fails when it changes) or `NOT COVERED` (no
