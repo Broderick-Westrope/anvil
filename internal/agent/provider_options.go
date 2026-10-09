@@ -67,13 +67,18 @@ var providerOptionsBuilders = map[catwalk.Type]providerOptionsBuilder{
 }
 
 // knownCustomProviderOptions serves the known custom providers (litellm,
-// ollama, omlx), which are openai-compat under the hood but get the
-// user's options unchanged.
+// llamacpp, lmstudio, ollama, omlx), which are openai-compat under the
+// hood.
 var knownCustomProviderOptions = providerOptionsBuilder{
-	name: openaicompat.Name,
-	build: func(opts map[string]any, _ reasoningRequest) (fantasy.ProviderOptionsData, error) {
-		return parsedOptions(openaicompat.ParseOptions(opts))
-	},
+	name:  openaicompat.Name,
+	build: knownCustomOptions,
+}
+
+func knownCustomOptions(opts map[string]any, r reasoningRequest) (fantasy.ProviderOptionsData, error) {
+	if r.wantsEffort(opts, "reasoning_effort") {
+		opts["reasoning_effort"] = r.effort
+	}
+	return parsedOptions(openaicompat.ParseOptions(opts))
 }
 
 func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {

@@ -24,6 +24,7 @@ import (
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/discover"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -800,6 +801,41 @@ func TestTrustedReadPathsIncludesCommandDirectories(t *testing.T) {
 	require.Contains(t, got, "/plugins/p1/skills")
 	require.Contains(t, got, filepath.Join("/project/.anvil", "commands"))
 	require.Contains(t, got, "/plugins/p1/commands")
+}
+
+func TestGetProviderOptionsReasoningEffortCustomProvider(t *testing.T) {
+	t.Parallel()
+	// Custom local providers (lmstudio, ollama, omlx, litellm, llamacpp)
+	// go through the OpenAI-compat client and must receive the selected
+	// reasoning effort like any other OpenAI-compatible provider.
+	for _, providerType := range []string{"litellm", "llamacpp", "lmstudio", "ollama", "omlx"} {
+		t.Run(providerType, func(t *testing.T) {
+			t.Parallel()
+			require.True(t, discover.IsKnownCustomProvider(providerType))
+			model := Model{
+				CatwalkCfg: catwalk.Model{
+					ID:              "qwen/qwen3-8b",
+					CanReason:       true,
+					ReasoningLevels: []string{"low", "medium", "high"},
+				},
+				ModelCfg: config.SelectedModel{
+					Provider:        "local",
+					Model:           "qwen/qwen3-8b",
+					ReasoningEffort: "high",
+				},
+			}
+			providerCfg := config.ProviderConfig{ID: "local", Type: catwalk.Type(providerType)}
+
+			opts := getProviderOptions(model, providerCfg)
+
+			raw, ok := opts[openaicompat.Name]
+			require.True(t, ok, "options should be keyed under openaicompat.Name for type %q", providerType)
+			parsed, ok := raw.(*openaicompat.ProviderOptions)
+			require.True(t, ok)
+			require.NotNil(t, parsed.ReasoningEffort)
+			assert.Equal(t, "high", string(*parsed.ReasoningEffort))
+		})
+	}
 }
 
 func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
