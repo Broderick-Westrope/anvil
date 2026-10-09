@@ -1,4 +1,4 @@
-package main
+package mutationconst
 
 import (
 	"errors"
@@ -130,4 +130,17 @@ func TestClassifyReturnsWriteErrors(t *testing.T) {
 
 	err := classify(strings.NewReader("a.go\t1\t1\tLIVED\tX\n"), failingWriter{}, constRanges)
 	require.EqualError(t, err, "write failed")
+}
+
+func TestRun(t *testing.T) {
+	t.Parallel()
+
+	var out, errOut strings.Builder
+	require.Equal(t, 0, Run(strings.NewReader("a.go\t1\t1\tLIVED\tX\n"), &out, &errOut))
+	require.Equal(t, "keep\ta.go\t1\t1\tLIVED\tX\n", out.String())
+	require.Empty(t, errOut.String())
+
+	errOut.Reset()
+	require.Equal(t, 1, Run(strings.NewReader("a.go\t1\t1\tLIVED\tX\n"), failingWriter{}, &errOut))
+	require.Equal(t, "write failed\n", errOut.String())
 }

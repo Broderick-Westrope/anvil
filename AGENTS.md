@@ -174,7 +174,7 @@ dodge it.
 Mutants on package-level `const` declarations are listed but don't fail
 the check: Go's coverage tool never instruments them, so gremlins reports
 them NOT COVERED however well the values are tested
-(`scripts/mutation-const`). Pin such values with a test anyway.
+(`scripts/mutation-const/mutationconst`). Pin such values with a test anyway.
 
 Some mutants can't be killed because they don't change behaviour, such as
 a boundary flip that both sides of the comparison handle the same. Only
