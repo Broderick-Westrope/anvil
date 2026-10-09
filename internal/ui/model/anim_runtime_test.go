@@ -348,6 +348,21 @@ func TestAnimation_SpinnersAnimate(t *testing.T) {
 	}
 }
 
+// TestAnimation_CostDoesNotScaleWithSpinners pins the reason for a shared
+// clock: eight spinners must not mean eight full Update+View passes per
+// frame.
+func TestAnimation_CostDoesNotScaleWithSpinners(t *testing.T) {
+	t.Parallel()
+	s := newSpinScene(t)
+	s.start()
+	s.r.run(200 * time.Millisecond) // Settle startup traffic.
+
+	counts := s.r.run(time.Second)
+	// One clock at 20 fps, plus slack for the elapsed-time tick and timer
+	// jitter. Per-spinner timers would be ~160.
+	require.LessOrEqual(t, sum(counts), 32, "updates in 1s: %s", describe(counts))
+}
+
 // TestAnimation_StopsWhenNothingSpins pins that finishing a turn leaves no
 // timer behind: the UI goes quiet and every command goroutine returns.
 func TestAnimation_StopsWhenNothingSpins(t *testing.T) {
@@ -424,6 +439,7 @@ func TestAnimation_DrillIn(t *testing.T) {
 	}
 	require.LessOrEqual(t, sum(second), sum(first)*3/2+3,
 		"tick rate must not grow: first %s second %s", describe(first), describe(second))
+	require.LessOrEqual(t, sum(first)+sum(second), 32, "updates in 1s drilled in: %s %s", describe(first), describe(second))
 
 	s.r.send(tea.KeyPressMsg{Code: tea.KeyLeft})
 	require.False(t, s.u.isDrilledIn())
@@ -433,7 +449,7 @@ func TestAnimation_DrillIn(t *testing.T) {
 }
 
 func drillIn(sessionID string) tea.Msg {
-	return util.DrillInMsg{SessionID: sessionID, Label: "agent"}
+	return util.AgentDrillInMsg{SessionID: sessionID, Label: "agent"}
 }
 
 func (*animWorkspace) AgentQueuedPrompts(string) int          { return 0 }

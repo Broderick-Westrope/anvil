@@ -11,7 +11,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
-	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
@@ -30,10 +29,17 @@ type Identifiable interface {
 	ID() string
 }
 
-// Animatable is an interface for items that support animation.
+// Animatable is an interface for items that support animation. Items never
+// schedule their own frames: the UI runs a single animation clock and calls
+// Advance on every visible item that reports Spinning.
 type Animatable interface {
-	StartAnimation() tea.Cmd
-	Animate(msg anim.StepMsg) tea.Cmd
+	// Spinning reports whether the item shows a running animation and so
+	// needs clock ticks.
+	Spinning() bool
+	// Advance moves the animation forward by one frame and reports whether
+	// the rendered output changed. Implementations must bump their version
+	// when it did, so the list cache re-renders the item.
+	Advance() bool
 }
 
 // Expandable is an interface for items that can be expanded or collapsed.

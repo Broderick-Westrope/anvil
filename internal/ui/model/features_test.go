@@ -10,7 +10,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
-	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
@@ -343,7 +342,7 @@ func TestAPaletteCommandNoFeatureRunsLeavesThePaletteToUpstream(t *testing.T) {
 func TestFeaturesIgnoreHighFrequencyMessagesWithoutAllocating(t *testing.T) {
 	f := newWorkflowUIFixture(t)
 	f.event(started("demo", "sess-1"))
-	msgs := []tea.Msg{spinner.TickMsg{}, anim.StepMsg{}, tea.MouseMotionMsg{}}
+	msgs := []tea.Msg{spinner.TickMsg{}, animTickMsg{}, tea.MouseMotionMsg{}}
 	allocs := testing.AllocsPerRun(100, func() {
 		for _, msg := range msgs {
 			f.u.features.observe(msg)
@@ -360,7 +359,7 @@ func BenchmarkFeaturesIgnoreHighFrequencyMessages(b *testing.B) {
 	u.keyMap = DefaultKeyMap()
 	u.dialog = dialog.NewOverlay()
 	u.features.register(newWorkflowFeature(uiHost{u}, u.com, ws))
-	msgs := []tea.Msg{spinner.TickMsg{}, anim.StepMsg{}, tea.MouseMotionMsg{}}
+	msgs := []tea.Msg{spinner.TickMsg{}, animTickMsg{}, tea.MouseMotionMsg{}}
 	b.ReportAllocs()
 	for b.Loop() {
 		for _, msg := range msgs {
