@@ -148,8 +148,6 @@ func TestDiffView(t *testing.T) {
 				t.Run(behaviorName, func(t *testing.T) {
 					for themeName, themeFunc := range ThemeFuncs {
 						t.Run(themeName, func(t *testing.T) {
-							t.Parallel()
-
 							dv := diffview.New()
 							dv = layoutFunc(dv)
 							dv = themeFunc(dv)
