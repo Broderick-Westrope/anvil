@@ -67,6 +67,10 @@ type bashDescriptionData struct {
 	BannedCommands  string
 	MaxOutputLength int
 	RgAvailable     bool
+	// WakeOnJobEvents reports whether an idle session is woken when its
+	// background jobs finish, so the agent can end its turn instead of
+	// blocking on a long-running job such as a CI watcher.
+	WakeOnJobEvents bool
 }
 
 var bannedCommands = []string{
@@ -142,13 +146,14 @@ var bannedCommands = []string{
 	"ufw",
 }
 
-func bashDescription() string {
+func bashDescription(wakeOnJobEvents bool) string {
 	bannedCommandsStr := strings.Join(bannedCommands, ", ")
 	var out bytes.Buffer
 	if err := bashDescriptionTpl.Execute(&out, bashDescriptionData{
 		BannedCommands:  bannedCommandsStr,
 		MaxOutputLength: MaxOutputLength,
 		RgAvailable:     getRg() != "",
+		WakeOnJobEvents: wakeOnJobEvents,
 	}); err != nil {
 		// this should never happen.
 		panic("failed to execute bash description template: " + err.Error())
@@ -206,10 +211,42 @@ func blockedSegment(command string) (string, bool) {
 	return "", false
 }
 
-func NewBashTool(permissions permission.Service, workingDir string) fantasy.AgentTool {
+// bashTool picks its description on every request, because whether job
+// events wake an idle session is only known once the TUI starts, after
+// the tool is built.
+type bashTool struct {
+	fantasy.AgentTool
+	wakeOnJobEvents func() bool
+	wakeDescription string
+}
+
+func (t *bashTool) Info() fantasy.ToolInfo {
+	info := t.AgentTool.Info()
+	if t.wakeOnJobEvents() {
+		info.Description = t.wakeDescription
+	}
+	return info
+}
+
+// NewBashTool builds the bash tool. wakeOnJobEvents, when non-nil,
+// reports whether finished background jobs wake an idle session; nil
+// means they never do.
+func NewBashTool(permissions permission.Service, workingDir string, wakeOnJobEvents func() bool) fantasy.AgentTool {
+	tool := newBashTool(permissions, workingDir)
+	if wakeOnJobEvents == nil {
+		return tool
+	}
+	return &bashTool{
+		AgentTool:       tool,
+		wakeOnJobEvents: wakeOnJobEvents,
+		wakeDescription: bashDescription(true),
+	}
+}
+
+func newBashTool(permissions permission.Service, workingDir string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
-		string(bashDescription()),
+		bashDescription(false),
 		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.Command == "" {
 				return fantasy.NewTextErrorResponse("missing command"), nil

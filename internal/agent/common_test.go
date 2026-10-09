@@ -149,7 +149,7 @@ func orchestratorAgent(r *vcr.Recorder, env fakeEnv, large, small fantasy.Langua
 	}
 
 	allTools := []fantasy.AgentTool{
-		tools.NewBashTool(env.permissions, env.workingDir),
+		tools.NewBashTool(env.permissions, env.workingDir, nil),
 		tools.NewDownloadTool(env.permissions, env.workingDir, r.GetDefaultClient()),
 		tools.NewEditTool(nil, env.permissions, *env.filetracker, env.workingDir),
 		tools.NewMultiEditTool(nil, env.permissions, *env.filetracker, env.workingDir),

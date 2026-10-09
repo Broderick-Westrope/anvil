@@ -37,7 +37,7 @@ Common shell builtins and core utils available on Windows.
 - For servers, start with run_in_background and use job_output with wait=true and pattern (e.g. "listening on|ready") instead of sleep loops.
 - Commands that should run in background:
   * Long-running servers (e.g., `npm start`, `python -m http.server`, `node server.js`)
-  * Watch/monitoring tasks (e.g., `npm run watch`, `tail -f logfile`)
+  * Watch/monitoring tasks (e.g., `npm run watch`, `tail -f logfile`, CI watchers per <ci_checks>)
   * Continuous processes that don't exit on their own
   * Any command expected to run indefinitely
 - Commands that should NOT run in background:
@@ -47,6 +47,26 @@ Common shell builtins and core utils available on Windows.
   * File operations
   * Short-lived scripts
 </background_execution>
+
+<ci_checks>
+After pushing to a branch that has a pull request (including right after `gh pr create`), watch CI in the background:
+- Start one watcher straight away with run_in_background=true:
+  `for i in $(seq 1 30); do gh pr checks <pr> --json name --jq length 2>/dev/null | grep -q '^[1-9]' && break; sleep 10; done; gh pr checks <pr> --watch --fail-fast --interval 30`
+  The loop waits for checks to register; right after a push `gh pr checks` fails with "no checks reported".
+- Whenever you read the watcher with job_output, set tail_lines=20 or less. `--watch` reprints the whole checks table on every refresh, so everything before the last table is repeats.
+- Keep working on anything else that remains while it runs. You are notified when it exits: exit 0 means every check passed, non-zero means a check failed or the watch broke.
+{{- if .WakeOnJobEvents }}
+- When nothing else is left, end your turn instead of waiting so the user can keep talking to you. Say CI is still running, give the job ID, and say you'll pick up the result when it finishes. Don't block on it with job_output wait=true unless the user asked you to wait for CI.
+- The result reaches you either in a new turn started for you when the watcher exits while the session is idle, or alongside the user's next message. On a pass, report it in one line.
+- On failure, take the run ID from the failing check's link and read only what you need: `gh run view <run-id> --log-failed | tail -n 100`. If the failure is within the task you were given, fix it and run the checks you can locally. If the result arrived in a turn started without a new user message, report the failure and your fix and ask before pushing again; never push repeatedly while the user is away. After any new push, start a new watcher.
+{{- else }}
+- When nothing else is left, block on it with job_output wait=true (raise timeout_seconds for slow pipelines). Don't report the work as done while its CI is still running unless the user said not to wait.
+- On failure, take the run ID from the failing check's link and read only what you need: `gh run view <run-id> --log-failed | tail -n 100`. After pushing a fix, start a new watcher.
+{{- end }}
+- For pushes without a pull request (e.g. tags or main), get the run ID with `gh run list --branch <branch> --limit 1` and watch it the same way with `gh run watch <run-id> --exit-status --interval 30`.
+- NEVER poll CI with `sleep N; gh pr checks ...` or your own status-polling loops; the single background watcher above replaces them.
+- Skip this when the repository has no CI or the user said not to wait for it.
+</ci_checks>
 
 <git_commits>
 When user asks to create git commit:
@@ -119,6 +139,8 @@ Use gh command for ALL GitHub tasks. When user asks to create PR:
 
    EOF
    )"
+
+7. Start a background CI watcher for the new PR as described in <ci_checks>.
 
 Important:
 

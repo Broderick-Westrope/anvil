@@ -131,6 +131,9 @@ type coordinator struct {
 	jobEvents   *jobevents.Store // Nil disables job notifications.
 	jobArchive  tools.JobArchive // Nil disables persisted job fallbacks.
 	onIdle      func(sessionID string)
+	// jobWakeEnabled reports whether job events wake idle sessions; nil
+	// means they never do.
+	jobWakeEnabled func() bool
 
 	// orchestrator is the eagerly-built top-level agent. Protected by orchestratorMu.
 	// Do NOT use csync.Value[SessionAgent] — it panics on interface types backed by pointers.
@@ -190,6 +193,7 @@ func NewCoordinator(
 	jobEvents *jobevents.Store,
 	jobArchive tools.JobArchive,
 	onIdle func(sessionID string),
+	jobWakeEnabled func() bool,
 ) (Coordinator, error) {
 	// Discover plugins once for both skills and agents.
 	plugins := plugin.DiscoverAll(cfg.Config().Plugins, nil)
@@ -198,23 +202,24 @@ func NewCoordinator(
 	skillTracker := skills.NewTracker(activeSkills)
 
 	c := &coordinator{
-		admission:    newAdmission(ctx),
-		cfg:          cfg,
-		sessions:     sessions,
-		messages:     messages,
-		permissions:  permissions,
-		filetracker:  filetracker,
-		lspManager:   lspManager,
-		notify:       notify,
-		jobEvents:    jobEvents,
-		jobArchive:   jobArchive,
-		onIdle:       onIdle,
-		allSkills:    allSkills,
-		activeSkills: activeSkills,
-		skillStates:  skillStates,
-		skillTracker: skillTracker,
-		plugins:      plugins,
-		agents:       csync.NewMap[string, SessionAgent](),
+		admission:      newAdmission(ctx),
+		cfg:            cfg,
+		sessions:       sessions,
+		messages:       messages,
+		permissions:    permissions,
+		filetracker:    filetracker,
+		lspManager:     lspManager,
+		notify:         notify,
+		jobEvents:      jobEvents,
+		jobArchive:     jobArchive,
+		onIdle:         onIdle,
+		jobWakeEnabled: jobWakeEnabled,
+		allSkills:      allSkills,
+		activeSkills:   activeSkills,
+		skillStates:    skillStates,
+		skillTracker:   skillTracker,
+		plugins:        plugins,
+		agents:         csync.NewMap[string, SessionAgent](),
 	}
 
 	// Enable MCP OAuth tool-name rename when the Anthropic provider uses
@@ -1268,7 +1273,7 @@ func (c *coordinator) buildToolsWithState(
 	candidateTools = append(
 		candidateTools,
 		agenticFetch,
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir()),
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.jobWakeEnabled),
 		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker),
 		tools.NewAnvilLogsTool(logFile),
 		tools.NewJobOutputTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
