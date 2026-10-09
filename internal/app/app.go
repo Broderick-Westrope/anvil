@@ -200,15 +200,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
 		func(ctx context.Context) error {
-			var errs []error
-			if err := recorder.Close(ctx); err != nil {
-				errs = append(errs, fmt.Errorf("permission decision log did not flush before shutdown: %w", err))
-			}
-			if err := cacheUsage.Close(ctx); err != nil {
-				errs = append(errs, fmt.Errorf("step usage log did not flush before shutdown: %w", err))
-			}
-			if len(errs) > 0 {
-				return errors.Join(errs...)
+			if err := closeLogs(ctx, recorder, cacheUsage); err != nil {
+				return fmt.Errorf("logs did not flush before shutdown: %w", err)
 			}
 			return db.ReleaseGlobal()
 		},
@@ -221,11 +214,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		return app, nil
 	}
 	if err := app.InitOrchestratorAgent(ctx); err != nil {
-		if closeErr := recorder.Close(ctx); closeErr != nil {
-			slog.Warn("Failed to close permission decision log after initialization error", "error", closeErr)
-		}
-		if closeErr := cacheUsage.Close(ctx); closeErr != nil {
-			slog.Warn("Failed to close step usage log after initialization error", "error", closeErr)
+		if closeErr := closeLogs(ctx, recorder, cacheUsage); closeErr != nil {
+			slog.Warn("Failed to close logs after initialization error", "error", closeErr)
 		}
 		return nil, fmt.Errorf("failed to initialize orchestrator agent: %w", err)
 	}
@@ -762,6 +752,28 @@ func (app *App) Subscribe(program *tea.Program) {
 			program.Send(ev.Payload)
 		}
 	}
+}
+
+// logCloser is an asynchronous log writer such as the permission decision
+// log or the step usage recorder.
+type logCloser interface {
+	Close(ctx context.Context) error
+}
+
+// closeLogs flushes and closes logs concurrently, so a slow log cannot use
+// up ctx before the others get to flush. It joins their errors.
+func closeLogs(ctx context.Context, logs ...logCloser) error {
+	errs := make([]error, len(logs))
+	var wg sync.WaitGroup
+	for i, l := range logs {
+		wg.Go(func() {
+			if err := l.Close(ctx); err != nil {
+				errs[i] = fmt.Errorf("%T: %w", l, err)
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 // backgroundJobsShutdownWait bounds how long shutdown waits for agent

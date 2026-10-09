@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -259,4 +260,49 @@ func TestWaitWithTimeout(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	require.False(t, waitWithTimeout(func() { <-release }, 10*time.Millisecond))
+}
+
+type fakeLog struct {
+	close func(ctx context.Context) error
+}
+
+func (f fakeLog) Close(ctx context.Context) error { return f.close(ctx) }
+
+func TestCloseLogsRunsConcurrently(t *testing.T) {
+	t.Parallel()
+
+	// The first log waits for the second to start, so closing them one
+	// after the other would time out.
+	started := make(chan struct{})
+	first := fakeLog{close: func(ctx context.Context) error {
+		select {
+		case <-started:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	second := fakeLog{close: func(context.Context) error {
+		close(started)
+		return nil
+	}}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, closeLogs(ctx, first, second))
+}
+
+func TestCloseLogsJoinsErrors(t *testing.T) {
+	t.Parallel()
+
+	errA, errB := errors.New("a failed"), errors.New("b failed")
+	ok := fakeLog{close: func(context.Context) error { return nil }}
+	err := closeLogs(t.Context(),
+		fakeLog{close: func(context.Context) error { return errA }},
+		ok,
+		fakeLog{close: func(context.Context) error { return errB }},
+	)
+	require.ErrorIs(t, err, errA)
+	require.ErrorIs(t, err, errB)
+	require.NoError(t, closeLogs(t.Context(), ok, ok))
 }

@@ -132,6 +132,18 @@ func TestRecorderCloseCancelled(t *testing.T) {
 	require.NoError(t, r.Close(t.Context()))
 }
 
+func TestRecorderCloseFinishedIgnoresDoneContext(t *testing.T) {
+	t.Parallel()
+	r := &Recorder{ch: make(chan Row), done: make(chan struct{})}
+	close(r.done)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	// Repeat so a random select between done and ctx would fail.
+	for range 50 {
+		require.NoError(t, r.Close(ctx))
+	}
+}
+
 func TestNilRecorderIsNoop(t *testing.T) {
 	t.Parallel()
 	var r *Recorder

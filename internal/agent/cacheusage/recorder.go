@@ -118,6 +118,13 @@ func (r *Recorder) Close(ctx context.Context) error {
 		close(r.ch)
 	}
 	r.mu.Unlock()
+	// A finished recorder succeeds even if ctx is already done; select
+	// alone would pick between the two at random.
+	select {
+	case <-r.done:
+		return nil
+	default:
+	}
 	select {
 	case <-r.done:
 		return nil
