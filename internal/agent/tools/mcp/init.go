@@ -278,6 +278,7 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 	dbQueries = queries
 	setSessionParentCtx(ctx)
 	slog.Info("Initializing MCP clients")
+	start := time.Now()
 	var wg sync.WaitGroup
 	// Initialize states for all configured MCPs
 	for name, m := range cfg.Config().MCP {
@@ -315,13 +316,20 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 				}
 			}()
 
-			if err := initClient(ctx, cfg, name, m, cfg.Resolver(), queries); err != nil {
-				slog.Debug("Failed to initialize MCP client", "name", name, "error", err)
-			}
+			start := time.Now()
+			err := initClient(ctx, cfg, name, m, cfg.Resolver(), queries)
+			slog.Debug("MCP client initialization finished",
+				"name", name,
+				"duration", time.Since(start).Truncate(time.Millisecond).String(),
+				"error", err,
+			)
 		}(name, m)
 	}
 	wg.Wait()
 	initOnce.Do(func() { close(initDone) })
+	// The first prompt waits for this to finish, so the total is the floor
+	// on its latency. Lazy servers are excluded; they connect on demand.
+	slog.Debug("Finished initializing MCP clients", "duration", time.Since(start).Truncate(time.Millisecond).String())
 }
 
 // WaitForInit blocks until MCP initialization is complete, i.e. until
