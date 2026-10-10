@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -19,15 +20,26 @@ type ThinkingDetailItem struct {
 
 	sty    *styles.Styles
 	source *AssistantMessageItem
-	// seenSourceVersion is the source version the current version
-	// reflects; see Version.
-	seenSourceVersion uint64
 
 	streaming streamingMarkdown
-	// rendered caches the markdown render keyed on the thinking text and
-	// whether it's complete, so answer streaming and focus changes on the
-	// source don't re-render long thinking.
-	rendered assistantSection
+
+	// The markdown render, reused while the thinking text, completion and
+	// width are unchanged, so answer streaming and spinner ticks on the
+	// source don't re-render long thinking. Comparing renderedFor with the
+	// current text is cheap when it's unchanged, because both share the
+	// same backing array.
+	rendered         string
+	renderedHeight   int
+	renderedFor      string
+	renderedWidth    int
+	renderedComplete bool
+
+	// The focus-prefixed render, reused while rendered and focus are
+	// unchanged.
+	prefixed        string
+	prefixedFrom    string
+	prefixedWidth   int
+	prefixedFocused bool
 }
 
 // NewThinkingDetailItem returns a drill-in item for the thinking text of
@@ -48,20 +60,16 @@ func (t *ThinkingDetailItem) ID() string {
 	return "thinking-detail:" + t.source.ID()
 }
 
-// Version implements list.Item. The source changes without telling this
-// item, so it bumps its own version whenever the source's version differs
-// from what it last saw.
+// Version implements list.Item. It adds the source's version to this
+// item's own, since the thinking text lives on the source. Both counters
+// only grow, so the sum changes whenever either does.
 func (t *ThinkingDetailItem) Version() uint64 {
-	if t.source.Version() != t.seenSourceVersion {
-		t.seenSourceVersion = t.source.Version()
-		t.Bump()
-	}
-	return t.Versioned.Version()
+	return t.Versioned.Version() + t.source.Version()
 }
 
 // Finished implements list.Item.
 func (t *ThinkingDetailItem) Finished() bool {
-	return t.thinkingComplete()
+	return t.source.thinkingFinished()
 }
 
 // SelectionSource implements list.SourceSelectable.
@@ -73,35 +81,44 @@ func (t *ThinkingDetailItem) SelectionSource() string {
 func (t *ThinkingDetailItem) RawRender(width int) string {
 	cappedWidth := cappedMessageWidth(width)
 	thinking := t.thinking()
-	srcHash := fnv64(thinking)
-	var complete uint64
-	if t.thinkingComplete() {
-		complete = 1
-	}
-	if !t.rendered.hit(cappedWidth, srcHash, complete) {
+	complete := t.source.thinkingFinished()
+	if t.rendered == "" || thinking != t.renderedFor || complete != t.renderedComplete || cappedWidth != t.renderedWidth {
 		renderer := common.MarkdownRenderer(t.sty, cappedWidth)
-		var out string
-		if complete == 1 {
-			out = t.streaming.RenderFinal(thinking, cappedWidth, renderer)
+		if complete {
+			t.rendered = t.streaming.RenderFinal(thinking, cappedWidth, renderer)
 		} else {
-			out = t.streaming.Render(thinking, cappedWidth, renderer)
+			t.rendered = t.streaming.Render(thinking, cappedWidth, renderer)
 		}
-		t.rendered.store(cappedWidth, srcHash, complete, out, 0)
+		t.renderedHeight = lipgloss.Height(t.rendered)
+		t.renderedFor = thinking
+		t.renderedComplete = complete
+		t.renderedWidth = cappedWidth
 	}
-	return t.renderHighlighted(t.rendered.out, cappedWidth, t.rendered.h)
+	return t.renderHighlighted(t.rendered, cappedWidth, t.renderedHeight)
 }
 
 // Render implements list.Item.
 func (t *ThinkingDetailItem) Render(width int) string {
+	raw := t.RawRender(width)
+	if !t.isHighlighted() && raw == t.prefixedFrom && width == t.prefixedWidth && t.focused == t.prefixedFocused {
+		return t.prefixed
+	}
 	prefix := t.sty.Messages.AssistantBlurred.Render()
 	if t.focused {
 		prefix = t.sty.Messages.AssistantFocused.Render()
 	}
-	lines := strings.Split(t.RawRender(width), "\n")
+	lines := strings.Split(raw, "\n")
 	for i, line := range lines {
 		lines[i] = prefix + line
 	}
-	return strings.Join(lines, "\n")
+	out := strings.Join(lines, "\n")
+	if !t.isHighlighted() {
+		t.prefixed = out
+		t.prefixedFrom = raw
+		t.prefixedWidth = width
+		t.prefixedFocused = t.focused
+	}
+	return out
 }
 
 // HandleKeyEvent implements KeyEventHandler.
@@ -116,13 +133,10 @@ func (t *ThinkingDetailItem) thinking() string {
 	return t.source.message.ReasoningContent().Thinking
 }
 
-// thinkingComplete reports whether no more thinking text will stream in.
-func (t *ThinkingDetailItem) thinkingComplete() bool {
-	return t.source.thinkingFinished()
-}
-
 // clearCache implements cacheClearable so a style change re-renders.
 func (t *ThinkingDetailItem) clearCache() {
 	t.streaming.Reset()
-	t.rendered.reset()
+	t.rendered = ""
+	t.prefixed = ""
+	t.prefixedFrom = ""
 }

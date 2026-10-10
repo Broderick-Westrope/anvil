@@ -125,7 +125,7 @@ func TestThinkingDetailItemReusesRenderWhenThinkingIsUnchanged(t *testing.T) {
 
 	// Stomp the cached render so a cache hit is observable, then change
 	// only the answer and the selection.
-	detail.rendered.out = "CACHED"
+	detail.rendered = "CACHED"
 	source.SetMessage(thinkingMessage("m1", thinkingDetailText, "first and second"))
 	detail.SetFocused(true)
 
