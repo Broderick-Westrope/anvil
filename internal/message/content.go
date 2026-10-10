@@ -618,22 +618,7 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 		var parts []fantasy.MessagePart
 		reasoning := m.ReasoningContent()
 		if reasoning.Thinking != "" {
-			reasoningPart := fantasy.ReasoningPart{Text: reasoning.Thinking, ProviderOptions: fantasy.ProviderOptions{}}
-			if reasoning.Signature != "" {
-				reasoningPart.ProviderOptions[anthropic.Name] = &anthropic.ReasoningOptionMetadata{
-					Signature: reasoning.Signature,
-				}
-			}
-			if reasoning.ResponsesData != nil {
-				reasoningPart.ProviderOptions[openai.Name] = reasoning.ResponsesData
-			}
-			if reasoning.ThoughtSignature != "" {
-				reasoningPart.ProviderOptions[google.Name] = &google.ReasoningMetadata{
-					Signature: reasoning.ThoughtSignature,
-					ToolID:    reasoning.ToolID,
-				}
-			}
-			parts = append(parts, reasoningPart)
+			parts = append(parts, reasoning.aiPart())
 		}
 		text := strings.TrimSpace(m.Content().Text)
 		if text != "" {
@@ -654,30 +639,9 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 	case Tool:
 		var parts []fantasy.MessagePart
 		for _, result := range m.ToolResults() {
-			var content fantasy.ToolResultOutputContent
-			if result.IsError {
-				content = fantasy.ToolResultOutputContentError{
-					Error: errors.New(result.Content),
-				}
-			} else if result.Data != "" {
-				if stringext.IsValidBase64(result.Data) {
-					content = fantasy.ToolResultOutputContentMedia{
-						Data:      result.Data,
-						MediaType: result.MIMEType,
-					}
-				} else {
-					content = fantasy.ToolResultOutputContentText{
-						Text: mediaLoadFailedPlaceholder,
-					}
-				}
-			} else {
-				content = fantasy.ToolResultOutputContentText{
-					Text: result.Content,
-				}
-			}
 			parts = append(parts, fantasy.ToolResultPart{
 				ToolCallID: result.ToolCallID,
-				Output:     content,
+				Output:     result.aiOutput(),
 			})
 		}
 		messages = append(messages, fantasy.Message{
@@ -686,4 +650,50 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 		})
 	}
 	return messages
+}
+
+// aiPart returns the reasoning as a model request part, carrying each
+// provider's reasoning signature in its provider options.
+func (r ReasoningContent) aiPart() fantasy.ReasoningPart {
+	part := fantasy.ReasoningPart{Text: r.Thinking, ProviderOptions: fantasy.ProviderOptions{}}
+	if r.Signature != "" {
+		part.ProviderOptions[anthropic.Name] = &anthropic.ReasoningOptionMetadata{
+			Signature: r.Signature,
+		}
+	}
+	if r.ResponsesData != nil {
+		part.ProviderOptions[openai.Name] = r.ResponsesData
+	}
+	if r.ThoughtSignature != "" {
+		part.ProviderOptions[google.Name] = &google.ReasoningMetadata{
+			Signature: r.ThoughtSignature,
+			ToolID:    r.ToolID,
+		}
+	}
+	return part
+}
+
+// aiOutput returns the tool result as model request output. Media that
+// can't be decoded is replaced with a placeholder so a corrupted
+// session still replays.
+func (tr ToolResult) aiOutput() fantasy.ToolResultOutputContent {
+	if tr.IsError {
+		return fantasy.ToolResultOutputContentError{
+			Error: errors.New(tr.Content),
+		}
+	}
+	if tr.Data == "" {
+		return fantasy.ToolResultOutputContentText{
+			Text: tr.Content,
+		}
+	}
+	if !stringext.IsValidBase64(tr.Data) {
+		return fantasy.ToolResultOutputContentText{
+			Text: mediaLoadFailedPlaceholder,
+		}
+	}
+	return fantasy.ToolResultOutputContentMedia{
+		Data:      tr.Data,
+		MediaType: tr.MIMEType,
+	}
 }
