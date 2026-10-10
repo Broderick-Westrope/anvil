@@ -111,9 +111,6 @@ linters:
       - path: internal/agent/agent\.go
         text: 'func `(\(\*sessionAgent\)\.generateTitle|\(\*sessionAgent\)\.preparePrompt|\(\*sessionAgent\)\.summarizeOwned)`'
         linters: [gocognit]
-      - path: internal/agent/agentic_fetch_tool\.go
-        text: 'func `(\(\*coordinator\)\.agenticFetchTool)`'
-        linters: [gocognit]
       - path: internal/agent/tools/anvil_info\.go
         text: 'func `(writeLSP|writeMCP)`'
         linters: [gocognit]
