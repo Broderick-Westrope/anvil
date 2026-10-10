@@ -13,6 +13,13 @@ type KeyMap struct {
 		MentionFile key.Binding
 		Commands    key.Binding
 
+		// Selection and clipboard. SelectAll is handled by the textarea
+		// itself; it is listed here for help.
+		PasteText     key.Binding
+		SelectAll     key.Binding
+		CopySelection key.Binding
+		CutSelection  key.Binding
+
 		// Attachments key maps
 		AttachmentDeleteMode key.Binding
 		Escape               key.Binding
@@ -163,6 +170,22 @@ func DefaultKeyMap() KeyMap {
 	km.Editor.PasteImage = key.NewBinding(
 		key.WithKeys("ctrl+v"),
 		key.WithHelp("ctrl+v", "paste image from clipboard"),
+	)
+	km.Editor.PasteText = key.NewBinding(
+		key.WithKeys("ctrl+shift+v"),
+		key.WithHelp("ctrl+shift+v", "paste text"),
+	)
+	km.Editor.SelectAll = key.NewBinding(
+		key.WithKeys(editorSelectAllKey),
+		key.WithHelp(editorSelectAllKey, "select all"),
+	)
+	km.Editor.CopySelection = key.NewBinding(
+		key.WithKeys("ctrl+shift+c"),
+		key.WithHelp("ctrl+shift+c", "copy selection"),
+	)
+	km.Editor.CutSelection = key.NewBinding(
+		key.WithKeys("ctrl+shift+x"),
+		key.WithHelp("ctrl+shift+x", "cut selection"),
 	)
 	km.Editor.MentionFile = key.NewBinding(
 		key.WithKeys("@"),
