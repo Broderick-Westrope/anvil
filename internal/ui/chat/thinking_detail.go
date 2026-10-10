@@ -19,9 +19,8 @@ type ThinkingDetailItem struct {
 
 	sty    *styles.Styles
 	source *AssistantMessageItem
-	// seenSource and seenSourceVersion record the source state the
-	// current version reflects; see Version.
-	seenSource        *AssistantMessageItem
+	// seenSourceVersion is the source version the current version
+	// reflects; see Version.
 	seenSourceVersion uint64
 
 	streaming streamingMarkdown
@@ -49,26 +48,11 @@ func (t *ThinkingDetailItem) ID() string {
 	return "thinking-detail:" + t.source.ID()
 }
 
-// SourceID returns the ID of the assistant message whose thinking this
-// shows.
-func (t *ThinkingDetailItem) SourceID() string {
-	return t.source.ID()
-}
-
-// SetSource points the item at a replacement for its source, such as when
-// a subagent session finishes loading and rebuilds its items.
-func (t *ThinkingDetailItem) SetSource(source *AssistantMessageItem) {
-	t.source = source
-	t.streaming.Reset()
-	t.rendered.reset()
-}
-
 // Version implements list.Item. The source changes without telling this
-// item, so it bumps its own version whenever the source, or the source's
-// version, differs from what it last saw.
+// item, so it bumps its own version whenever the source's version differs
+// from what it last saw.
 func (t *ThinkingDetailItem) Version() uint64 {
-	if t.source != t.seenSource || t.source.Version() != t.seenSourceVersion {
-		t.seenSource = t.source
+	if t.source.Version() != t.seenSourceVersion {
 		t.seenSourceVersion = t.source.Version()
 		t.Bump()
 	}

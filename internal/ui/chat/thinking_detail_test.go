@@ -5,7 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
-	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
@@ -127,23 +126,4 @@ func TestThinkingDetailItemReusesRenderWhenThinkingIsUnchanged(t *testing.T) {
 
 	source.SetMessage(thinkingMessage("m1", thinkingDetailText+" More.", "first and second"))
 	require.Contains(t, ansi.Strip(detail.RawRender(80)), "More.")
-}
-
-func TestThinkingDetailItemSetSourceInvalidatesListCache(t *testing.T) {
-	t.Parallel()
-
-	sty := styles.TokyoNight()
-	old := NewAssistantMessageItem(&sty, thinkingMessage("m1", "old reasoning", "")).(*AssistantMessageItem)
-	old.Bump()
-	old.Bump()
-	detail := NewThinkingDetailItem(&sty, old).(*ThinkingDetailItem)
-	l := list.NewList(detail)
-	l.SetSize(80, 10)
-	require.Contains(t, ansi.Strip(l.Render()), "old reasoning")
-
-	replacement := NewAssistantMessageItem(&sty, thinkingMessage("m1", "new reasoning", "")).(*AssistantMessageItem)
-	replacement.Bump()
-	detail.SetSource(replacement)
-
-	require.Contains(t, ansi.Strip(l.Render()), "new reasoning")
 }
