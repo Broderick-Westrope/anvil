@@ -192,8 +192,8 @@ func (t *tally) add(e *evidence, c Candidate, example string) {
 // candidates returns the groups that are frequent and safe enough to
 // propose, that no evidence contradicts, and that the current rules do
 // not already cover.
-func (t *tally) candidates(a *analyzer, ix *evidenceIndex) (allow, deny []Candidate) {
-	allow, deny = []Candidate{}, []Candidate{}
+func (t *tally) candidates(a *analyzer, ix *evidenceIndex) ([]Candidate, []Candidate) {
+	allow, deny := []Candidate{}, []Candidate{}
 	for _, g := range t.groups {
 		if g.unsafe || g.candidate.Count < t.opts.MinCount {
 			continue
