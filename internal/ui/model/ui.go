@@ -3093,15 +3093,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 			switch {
 			case key.Matches(msg, m.keyMap.Editor.AddImage):
-				if !m.currentModelSupportsImages() {
-					break
-				}
 				if cmd := m.openFilesDialog(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 
 			case key.Matches(msg, m.keyMap.Editor.PasteImage):
 				if !m.currentModelSupportsImages() {
+					cmds = append(cmds, util.ReportWarn(common.NoVisionWarning))
 					break
 				}
 				cmds = append(cmds, m.pasteImageFromClipboard)
@@ -4564,8 +4562,13 @@ func (m *UI) insertFileCompletion(path string) tea.Cmd {
 		return nil
 	}
 	heightCmd := m.handleTextareaHeightChange(prevHeight)
+	supportsImages := m.currentModelSupportsImages()
 
 	fileCmd := func() tea.Msg {
+		if !supportsImages && common.IsImagePath(path) {
+			return util.NewWarnMsg(common.NoVisionWarning)
+		}
+
 		absPath, _ := filepath.Abs(path)
 
 		if m.hasSession() {
@@ -4609,6 +4612,7 @@ func (m *UI) insertMCPResourceCompletion(item completions.ResourceCompletionValu
 		return nil
 	}
 	heightCmd := m.handleTextareaHeightChange(prevHeight)
+	supportsImages := m.currentModelSupportsImages()
 
 	resourceCmd := func() tea.Msg {
 		contents, err := m.com.Workspace.ReadMCPResource(
@@ -4641,6 +4645,10 @@ func (m *UI) insertMCPResourceCompletion(item completions.ResourceCompletionValu
 		}
 		if mimeType == "" {
 			mimeType = "text/plain"
+		}
+
+		if !supportsImages && strings.HasPrefix(mimeType, "image/") {
+			return util.NewWarnMsg(common.NoVisionWarning)
 		}
 
 		return message.Attachment{
@@ -5531,6 +5539,9 @@ func (m *UI) openSessionsDialog() tea.Cmd {
 
 // openFilesDialog opens the file picker dialog.
 func (m *UI) openFilesDialog() tea.Cmd {
+	if !m.currentModelSupportsImages() {
+		return util.ReportWarn(common.NoVisionWarning)
+	}
 	if m.dialog.ContainsDialog(dialog.FilePickerID) {
 		// Bring to front
 		m.dialog.BringToFront(dialog.FilePickerID)
@@ -5672,16 +5683,7 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 			if _, err := os.Stat(path); os.IsNotExist(err) {
 				return false
 			}
-
-			lowerPath := strings.ToLower(path)
-			isValid := false
-			for _, ext := range common.AllowedImageTypes {
-				if strings.HasSuffix(lowerPath, ext) {
-					isValid = true
-					break
-				}
-			}
-			if !isValid {
+			if !common.IsImagePath(path) {
 				return false
 			}
 		}
@@ -5691,6 +5693,15 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 		m.closeSlashAC(true)
 		prevHeight := m.textarea.Height()
 		return m.updateTextareaWithPrevHeight(msg, prevHeight)
+	}
+	if !m.currentModelSupportsImages() {
+		// Keep the pasted paths as text so nothing the user pasted is lost.
+		m.closeSlashAC(true)
+		prevHeight := m.textarea.Height()
+		return tea.Batch(
+			m.updateTextareaWithPrevHeight(msg, prevHeight),
+			util.ReportWarn(common.NoVisionWarning),
+		)
 	}
 
 	var cmds []tea.Cmd
@@ -5779,15 +5790,7 @@ func (m *UI) pasteImageFromClipboard() tea.Msg {
 		return nil // Clipboard does not contain an image or valid file path
 	}
 
-	lowerPath := strings.ToLower(path)
-	isAllowed := false
-	for _, ext := range common.AllowedImageTypes {
-		if strings.HasSuffix(lowerPath, ext) {
-			isAllowed = true
-			break
-		}
-	}
-	if !isAllowed {
+	if !common.IsImagePath(path) {
 		return util.NewInfoMsg("File type is not a supported image format")
 	}
 
