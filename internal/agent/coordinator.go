@@ -84,6 +84,10 @@ type Coordinator interface {
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+	// RunTurn runs prompt in sessionID and waits for that turn's own result.
+	// If the session is busy, the turn queues behind the work in progress;
+	// messages queued after it run once it finishes.
+	RunTurn(ctx context.Context, sessionID, prompt string) (*fantasy.AgentResult, error)
 	// RunWake starts a turn for an idle session to deliver its pending
 	// job events. See SessionAgent.RunWake.
 	RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error)
@@ -225,6 +229,16 @@ func NewCoordinator(
 		skillTracker:   skillTracker,
 		plugins:        plugins,
 		agents:         csync.NewMap[string, SessionAgent](),
+	}
+	// An awaited turn on an idle session runs on its own goroutine, and so
+	// does any queued work after it, so it must count as active for Pause.
+	c.admission.spawn = func(run func()) {
+		go func() {
+			if release, err := c.admit(ctx); err == nil {
+				defer release()
+			}
+			run()
+		}()
 	}
 
 	// Enable MCP OAuth tool-name rename when the Anthropic provider uses
@@ -529,6 +543,30 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		}
 		ctx = context.WithValue(ctx, modelSelectionKey{}, modelSelection{large: largeSelection, small: smallSelection})
 		return c.runOwned(ctx, sessionID, prompt, state, attachments)
+	}})
+}
+
+// RunTurn implements Coordinator.
+func (c *coordinator) RunTurn(ctx context.Context, sessionID, prompt string) (*fantasy.AgentResult, error) {
+	if sessionID == "" {
+		return nil, ErrSessionMissing
+	}
+	if prompt == "" {
+		return nil, ErrEmptyPrompt
+	}
+	agentCfg, ok := c.orchestratorConfig()
+	if !ok {
+		return nil, errOrchestratorAgentNotConfigured
+	}
+	largeSelection, selectionErr := config.ResolveAgentModel(agentCfg, c.cfg.Config())
+	smallSelection := c.cfg.Config().Models[config.SelectedModelTypeSmall]
+	state := &runState{}
+	return c.admission.submitAwait(ctx, sessionID, submission{prompt: prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		if selectionErr != nil {
+			return nil, selectionErr
+		}
+		ctx = context.WithValue(ctx, modelSelectionKey{}, modelSelection{large: largeSelection, small: smallSelection})
+		return c.runOwned(ctx, sessionID, prompt, state, nil)
 	}})
 }
 

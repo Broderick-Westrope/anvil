@@ -19,12 +19,29 @@ type submissionOwner struct {
 	sessionID      string
 	ctx            context.Context
 	cancel         context.CancelFunc
+	// parent is the context the owner was claimed with; a continuation of
+	// an awaited submission runs under it too.
+	parent context.Context
+	// done receives the result of an awaited submission. A continuation
+	// takes it over, so the submitter gets the result of the finished work.
+	done chan<- submissionResult
 }
 
 type submission struct {
 	prompt    string
 	exclusive bool
 	run       func(context.Context) (*fantasy.AgentResult, error)
+	// done is set for awaited submissions, which receive their own result
+	// here rather than whatever ran last in the session.
+	done chan<- submissionResult
+	// ctx is the submitter's context for an awaited submission, so the
+	// run can be cancelled by its submitter even after it was queued.
+	ctx context.Context
+}
+
+type submissionResult struct {
+	result *fantasy.AgentResult
+	err    error
 }
 
 type admission struct {
@@ -32,18 +49,108 @@ type admission struct {
 	owners   map[string]*submissionOwner
 	queues   map[string][]submission
 	lifetime context.Context
+	// spawn starts an awaited submission's run on its own goroutine. The
+	// coordinator wraps it so the run counts as active for Pause.
+	spawn func(func())
 }
 
 func newAdmission(ctx context.Context) *admission {
-	return &admission{owners: make(map[string]*submissionOwner), queues: make(map[string][]submission), lifetime: ctx}
+	return &admission{
+		owners:   make(map[string]*submissionOwner),
+		queues:   make(map[string][]submission),
+		lifetime: ctx,
+		spawn:    func(f func()) { go f() },
+	}
 }
 
 func (a *admission) claim(ctx context.Context, id string) *submissionOwner {
+	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
-	owner := &submissionOwner{sessionID: id, cancel: cancel}
+	owner := &submissionOwner{sessionID: id, cancel: cancel, parent: parent}
 	owner.ctx = context.WithValue(ctx, ownerKey{}, owner)
 	a.owners[id] = owner
 	return owner
+}
+
+// claimFor claims the session for a queued job, under the job's own
+// context when it has one.
+func (a *admission) claimFor(job submission, id string) *submissionOwner {
+	ctx := a.lifetime
+	if job.ctx != nil {
+		ctx = job.ctx
+	}
+	return a.claim(ctx, id)
+}
+
+// submitAwait submits job and waits for its own result. If the session is
+// busy the job queues behind earlier work; work queued after it runs once
+// it finishes, without delaying the result. Unlike submit, it never
+// returns early for a queued job.
+func (a *admission) submitAwait(ctx context.Context, id string, job submission) (*fantasy.AgentResult, error) {
+	done := make(chan submissionResult, 1)
+	job.done, job.ctx = done, ctx
+	a.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		a.mu.Unlock()
+		return nil, err
+	}
+	if a.owners[id] != nil || len(a.queues[id]) > 0 {
+		a.queues[id] = append(a.queues[id], job)
+		if a.owners[id] == nil {
+			job = a.queues[id][0]
+			a.queues[id] = a.queues[id][1:]
+			owner := a.claimFor(job, id)
+			a.mu.Unlock()
+			a.spawn(func() { _, _ = a.execute(owner, job) })
+		} else {
+			a.mu.Unlock()
+		}
+	} else {
+		owner := a.claim(ctx, id)
+		a.mu.Unlock()
+		a.spawn(func() { _, _ = a.execute(owner, job) })
+	}
+	select {
+	case res := <-done:
+		return res.result, res.err
+	case <-ctx.Done():
+		if a.withdraw(id, done) {
+			return nil, ctx.Err()
+		}
+		// Already running: its context is ours, so it ends promptly.
+		res := <-done
+		return res.result, res.err
+	}
+}
+
+// withdraw removes a still-queued awaited submission.
+func (a *admission) withdraw(id string, done chan<- submissionResult) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i, job := range a.queues[id] {
+		if job.done == done {
+			a.queues[id] = append(a.queues[id][:i:i], a.queues[id][i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// continueWith queues job to continue the owner's work after it finishes,
+// such as resuming after auto-compaction. If the owner's submission is
+// awaited, the continuation runs next and its submitter gets the
+// continuation's result instead.
+func (a *admission) continueWith(ctx context.Context, id string, job submission) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	owner, ok := ctx.Value(ownerKey{}).(*submissionOwner)
+	if !ok || owner == nil || owner.sessionID != id || owner.done == nil {
+		a.queues[id] = append(a.queues[id], job)
+		return
+	}
+	job.done, job.ctx = owner.done, owner.parent
+	owner.done = nil
+	a.queues[id] = append([]submission{job}, a.queues[id]...)
 }
 
 func (a *admission) submit(ctx context.Context, id string, job submission) (*fantasy.AgentResult, error) {
@@ -94,6 +201,10 @@ func (a *admission) claimIdle(ctx context.Context, id string, check func() error
 }
 
 func (a *admission) execute(owner *submissionOwner, job submission) (result *fantasy.AgentResult, err error) {
+	a.mu.Lock()
+	owner.done = job.done
+	awaited := job.done != nil
+	a.mu.Unlock()
 	defer func() {
 		a.mu.Lock()
 		if a.owners[owner.sessionID] == owner {
@@ -108,14 +219,19 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	var queued submission
 	if a.owners[owner.sessionID] == owner {
 		delete(a.owners, owner.sessionID)
-		if (err == nil || owner.handoffOnError) && owner.ctx.Err() == nil && len(a.queues[owner.sessionID]) > 0 {
-			queued = a.queues[owner.sessionID][0]
-			a.queues[owner.sessionID] = a.queues[owner.sessionID][1:]
-			next = a.claim(a.lifetime, owner.sessionID)
+		if q := a.queues[owner.sessionID]; len(q) > 0 && a.shouldHandOff(owner, awaited, err, q[0]) {
+			queued = q[0]
+			a.queues[owner.sessionID] = q[1:]
+			next = a.claimFor(queued, owner.sessionID)
 		}
 	}
+	done := owner.done
+	owner.done = nil
 	a.mu.Unlock()
 	owner.cancel()
+	if done != nil {
+		done <- submissionResult{result: result, err: err}
+	}
 	if err == nil && owner.onFinish != nil {
 		owner.onFinish()
 	}
@@ -134,10 +250,15 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	return nil, err
 }
 
-func (a *admission) enqueue(id string, job submission) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.queues[id] = append(a.queues[id], job)
+// shouldHandOff decides whether the next queued job runs after owner's
+// job. A failed or cancelled user turn holds back the queue, but neither a
+// script's turn failing nor a user's turn failing strands awaited work: a
+// workflow can't send a follow-up message to unblock it.
+func (a *admission) shouldHandOff(owner *submissionOwner, awaited bool, err error, next submission) bool {
+	if awaited || next.done != nil {
+		return a.lifetime.Err() == nil
+	}
+	return (err == nil || owner.handoffOnError) && owner.ctx.Err() == nil
 }
 
 func (a *admission) busy(id string) bool {
@@ -161,17 +282,31 @@ func (a *admission) queued(id string) []string {
 
 func (a *admission) clear(id string) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	dropped := a.queues[id]
 	delete(a.queues, id)
+	a.mu.Unlock()
+	cancelAwaited(dropped)
 }
 
 func (a *admission) cancel(id string) {
 	a.mu.Lock()
 	owner := a.owners[id]
+	dropped := a.queues[id]
 	delete(a.queues, id)
 	a.mu.Unlock()
+	cancelAwaited(dropped)
 	if owner != nil {
 		owner.cancel()
+	}
+}
+
+// cancelAwaited tells the submitters of dropped awaited jobs that their
+// work was cancelled.
+func cancelAwaited(dropped []submission) {
+	for _, job := range dropped {
+		if job.done != nil {
+			job.done <- submissionResult{err: context.Canceled}
+		}
 	}
 }
 
@@ -181,8 +316,13 @@ func (a *admission) cancelAll() {
 	for _, owner := range a.owners {
 		owners = append(owners, owner)
 	}
+	var dropped []submission
+	for _, q := range a.queues {
+		dropped = append(dropped, q...)
+	}
 	clear(a.queues)
 	a.mu.Unlock()
+	cancelAwaited(dropped)
 	for _, owner := range owners {
 		owner.cancel()
 	}
