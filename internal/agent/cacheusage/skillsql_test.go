@@ -199,6 +199,7 @@ func TestSkillQueriesRun(t *testing.T) {
 	for i, block := range blocks {
 		query := strings.ReplaceAll(block[1], "SESSION_ID", "s1")
 		t.Run(fmt.Sprintf("block %d", i+1), func(t *testing.T) {
+			t.Parallel()
 			drain(t, conn, skillQuery(t, query))
 		})
 	}
