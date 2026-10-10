@@ -65,14 +65,15 @@ Out of scope (later sub-projects):
   remove worktree and branch, clean up tmpdirs and stray files).
 - `parallel()` over anything other than `agent` descriptors.
 - Workflows invoking other workflows.
-- Per-session working directories. Every session and agent in a run uses
-  the Anvil process's working directory, so creating or switching worktrees
-  from a workflow (and the `/merge` workflow) waits for a sub-project that
-  binds workspaces to sessions. v1 `/build` must be invoked from inside its
-  worktree.
+- Per-session working directories. Sessions stay rooted in the Anvil
+  process's working directory. A workflow works in a worktree the same way
+  an agent does today (see *Worktrees* under Design Decisions), without
+  sessions moving into it.
 - Binding a non-orchestrator agent to a long-lived session.
   `session.new()` creates an orchestrator session. Specialists run through
-  `agent()`.
+  `agent()`. This same binding would let you type into a subagent session
+  to continue it (e.g. resuming an errored subagent instead of starting a
+  new one), so that's deferred with it.
 - Running workflows under `anvil run` (non-interactive).
 - A skip-step control.
 - Showing the `COMMAND.md` body as a UI preview.
@@ -138,8 +139,9 @@ Out of scope (later sub-projects):
       the build note and the base branch, and it shares no conversation
       with the builder or earlier DA rounds. The DA still gets the normal
       specialist system prompt, including recent commits, so this is
-      prompt-level isolation, not information isolation. A rebuild resets
-      the branch to the base and runs in a fresh session. The final review
+      prompt-level isolation, not information isolation. `/build` creates
+      its worktree itself, and a rebuild removes that worktree and branch
+      and recreates them from the base, with a fresh session. The final review
       runs three reviewers in parallel and audits their findings before the
       builder sees them.
 
@@ -269,7 +271,9 @@ Out of scope (later sub-projects):
   machinery.
 - `status(step, detail)` updates the progress panel. It's a label only; the
   engine has no notion of steps.
-- `bash(cmd, {cwd?, check?})` returns `{stdout, stderr, exitCode}`. A
+- `bash(cmd, {cwd?, check?})` returns `{stdout, stderr, exitCode}`. It runs
+  in Anvil's embedded shell (`internal/shell`), the same one as the agent's
+  `bash` tool, so builtins like `wtp` and `jq` exist on every platform. A
   non-zero exit throws `BashError` (carrying all three) unless
   `check: false`, so an ignored failure can't silently feed the next step.
   It doesn't go through the permission system (see Trust), appears in the
@@ -283,6 +287,20 @@ Out of scope (later sub-projects):
   without a user turn writing in between. Holds are meant to be short, and
   the progress panel shows one while it's active. This is a narrow
   exception to "don't constrain the user", not a general lock.
+
+*Worktrees*
+- **A workflow uses worktrees the way an agent does today.** The script
+  creates one with `bash("wtp add ...")`, runs its own commands there with
+  `bash(cmd, {cwd: path})`, and tells agents to work there through their
+  prompts (absolute paths under the worktree, `cd` into it in `bash`), as
+  `/build` already instructs fixers. Sessions stay rooted in Anvil's
+  working directory. As today, tool defaults, LSP and the environment block
+  in system prompts still describe the root directory, so agents working
+  in the worktree rely on their prompt. Declined for v1: binding sessions
+  or agents to a workspace, which would change how tools, prompts,
+  permissions and LSP resolve paths.
+- Worktrees the run created are recorded in `workflow_events` (via the
+  `bash` calls), so a later `/merge` workflow can find them.
 
 *Structured output*
 - **`agent()` with a schema** gets a `submit_result` tool whose input schema
@@ -402,51 +420,50 @@ requires({
 })
 
 function main(input) {
-  const { doc, base } = resolveInputs(input.raw)  // bash + ask, see main(input)
-  const baseSha = bash("git rev-parse " + q(base)).stdout.trim()  // immutable
-  assertDisposableBranch()  // feature branch, clean tree, no commits past baseSha; else ask
+  const { doc, base, branch } = resolveInputs(input.raw)  // bash + ask, see main(input)
   const notePath = workflow.tmpdir() + "/build-note.md"
   const lessons = []
   let builder = session.current()
+  let wt = createWorktree(branch, base)  // bash("wtp add -b " + q(branch) + " --stay " + q(base))
 
   for (let approach = 1; approach <= 3; approach++) {  // first build + two rebuilds
     status("build", "approach " + approach + "/3")
-    builder.turn(buildPrompt(doc, notePath), { skills: ["go-style", "build-tdd"] })
+    builder.turn(buildPrompt(doc, wt, notePath), { skills: ["go-style", "build-tdd"] })
 
     let verdict
     for (let round = 1; ; round++) {
       status("devils-advocate", "approach " + approach + ", round " + round + "/3")
-      verdict = agent("devils-advocate", daPrompt(doc, readFile(notePath), base),
+      verdict = agent("devils-advocate", daPrompt(doc, readFile(notePath), base, wt),
         { schema: DAVerdict })
       if (verdict.kind !== "changes") break
       if (round === 3)
         return ask("DA still objecting after 3 rounds:\n" + fmt(verdict.findings))
-      builder.turn(refinePrompt(verdict.findings, notePath))
+      builder.turn(refinePrompt(verdict.findings, wt, notePath))
     }
-    if (verdict.kind === "clean") return review(builder, base, notePath)
+    if (verdict.kind === "clean") return review(builder, base, wt, notePath)
 
     // verdict.kind === "wrong-approach"
     lessons.push(builder.turn(lessonPrompt(verdict, doc), { schema: Lesson }))
     if (approach === 3) break
     workflow.exclusive(() => {
-      // Re-check now: you may have changed things since the run started.
-      if (!onlyBuildChangesSince(baseSha) && ask("Discard everything since "
-          + baseSha + ", including changes not made by this run?",
-          { options: ["discard", "stop"] }) === "stop")
+      // The run created this worktree, but you may have edited it since.
+      if (hasChangesNotFromRun(wt) && ask("Discard " + wt + ", including changes "
+          + "not made by this run?", { options: ["discard", "stop"] }) === "stop")
         throw new Error("stopped before rebuild")
-      bash("git reset --hard " + q(baseSha) + " && git clean -fd")  // throws on failure
+      bash("wtp remove --force --force-branch " + q(branch))  // throws on failure
     })
-    builder = session.new({ seed: seedFrom(doc, lessons), skills: ["go-style", "build-tdd"] })
+    wt = createWorktree(branch, base)
+    builder = session.new({ seed: seedFrom(doc, lessons, wt), skills: ["go-style", "build-tdd"] })
     workflow.focus(builder)
   }
   return ask("Two rebuilds without a clean DA review. What each approach taught:\n"
     + fmt(lessons))
 }
 
-function review(builder, base, notePath) {
+function review(builder, base, wt, notePath) {
   for (let pass = 1; pass <= 3; pass++) {  // pass cap is illustrative
     status("review", "pass " + pass)
-    const prompt = reviewPrompt(base)
+    const prompt = reviewPrompt(base, wt)
     const results = parallel(REVIEWERS.map(r =>
       ({ agent: r.agent, model: r.model, prompt, schema: Findings })))
     if (!results.some(r => r.ok))
