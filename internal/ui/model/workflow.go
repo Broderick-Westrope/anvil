@@ -81,9 +81,9 @@ func (r *workflowRun) agentEvent(ev host.Event) {
 	}
 }
 
-// latestAgent returns the most recently started subagent still listed.
-func (r *workflowRun) latestAgent() (workflowEntry, bool) {
-	for _, e := range slices.Backward(r.entries) {
+// latestAgent returns the most recently started subagent in entries.
+func latestAgent(entries []workflowEntry) (workflowEntry, bool) {
+	for _, e := range slices.Backward(entries) {
 		if e.sessionID != "" {
 			return e, true
 		}
@@ -247,7 +247,7 @@ func (m *UI) handleWorkflowKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 // read-only like a task tool's session, or returns nil when it has none.
 // The subagent's messages live only in that session.
 func (m *UI) openWorkflowAgent(run *workflowRun) tea.Cmd {
-	e, ok := run.latestAgent()
+	e, ok := latestAgent(run.entries)
 	if !ok {
 		return nil
 	}
@@ -268,7 +268,7 @@ func (m *UI) workflowControls() *dialog.WorkflowControls {
 	if run == nil {
 		return nil
 	}
-	_, hasAgent := run.latestAgent()
+	_, hasAgent := latestAgent(run.entries)
 	return &dialog.WorkflowControls{
 		SessionID:     invoker,
 		Command:       run.command,
@@ -550,20 +550,15 @@ func renderWorkflowPanel(t *styles.Styles, p workflowPanel, width int) string {
 		warning := t.Pills.WorkflowWarning.Render(fmt.Sprintf("workflow /%s is running in %s", p.command, p.elsewhere))
 		lines = append(lines, ansi.Truncate(warning+"  "+hint(p.goKey, "go there"), width, "…"))
 	}
-	latestAgent := -1
-	for i, e := range p.entries {
-		if e.sessionID != "" {
-			latestAgent = i
-		}
-	}
-	for i, e := range p.entries {
+	latest, _ := latestAgent(p.entries)
+	for _, e := range p.entries {
 		var entry string
 		if e.sessionID == "" {
 			entry = "  " + t.Pills.HelpKey.Render("?") + " " + t.Pills.HelpText.Render(firstLine(e.question)) +
 				" " + t.Pills.HelpText.Render("→") + " " + t.Pills.TodoProgress.Render(firstLine(e.answer))
 		} else {
 			entry = "  " + renderWorkflowAgent(t, p.command, e)
-			if i == latestAgent {
+			if e.sessionID == latest.sessionID {
 				entry += "  " + hint(p.agentKey, "open")
 			}
 		}
