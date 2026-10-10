@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -60,28 +61,15 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse("missing shell_id"), nil
 			}
 
-			var re *regexp.Regexp
-			if params.Pattern != "" {
-				if params.Full {
-					return fantasy.NewTextErrorResponse("pattern cannot be combined with full=true"), nil
-				}
-				var err error
-				if re, err = regexp.Compile(params.Pattern); err != nil {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("invalid pattern: %v", err)), nil
-				}
+			re, err := jobOutputPattern(params)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
 			bgManager := shell.GetBackgroundShellManager()
 			bgShell, ok := bgManager.Get(params.ShellID)
 			if !ok {
-				rec, found, err := lookupArchivedJob(ctx, opts.Archive, params.ShellID)
-				if err != nil {
-					return fantasy.NewTextErrorResponse(err.Error()), nil
-				}
-				if !found {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
-				}
-				return archivedJobOutput(opts.Archive, rec, params), nil
+				return unloadedJobOutput(ctx, opts.Archive, params), nil
 			}
 
 			// The matcher is created before reading so an unread
@@ -146,6 +134,35 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 			}
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
 		})
+}
+
+// jobOutputPattern compiles the pattern to wait or watch for, or returns
+// nil without one. Its errors are shown to the model as they are.
+func jobOutputPattern(params JobOutputParams) (*regexp.Regexp, error) {
+	if params.Pattern == "" {
+		return nil, nil
+	}
+	if params.Full {
+		return nil, errors.New("pattern cannot be combined with full=true")
+	}
+	re, err := regexp.Compile(params.Pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid pattern: %v", err)
+	}
+	return re, nil
+}
+
+// unloadedJobOutput serves job_output for a job that is not in memory:
+// from the archive if it was persisted there, otherwise as not found.
+func unloadedJobOutput(ctx context.Context, archive JobArchive, params JobOutputParams) fantasy.ToolResponse {
+	rec, found, err := lookupArchivedJob(ctx, archive, params.ShellID)
+	if err != nil {
+		return fantasy.NewTextErrorResponse(err.Error())
+	}
+	if !found {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID))
+	}
+	return archivedJobOutput(archive, rec, params)
 }
 
 func jobWaitTimeout(seconds int) time.Duration {
