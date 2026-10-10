@@ -636,11 +636,24 @@ func (m *UI) activeChat() *Chat {
 	return m.chat
 }
 
-// viewedSessionID returns the session ID currently being viewed. Returns the
-// top drill-stack entry's session ID, or the root session ID when not drilled in.
+// viewedSessionEntry returns the drill-stack entry of the subagent session
+// being viewed: the topmost entry with a session ID. Thinking and tool
+// drill-ins show part of the session beneath them, so they're skipped. It
+// reports false when the viewed session is the root session.
+func (m *UI) viewedSessionEntry() (drillInEntry, bool) {
+	for i := len(m.drillStack) - 1; i >= 0; i-- {
+		if m.drillStack[i].sessionID != "" {
+			return m.drillStack[i], true
+		}
+	}
+	return drillInEntry{}, false
+}
+
+// viewedSessionID returns the ID of the session currently being viewed:
+// the subagent session from viewedSessionEntry, or the root session.
 func (m *UI) viewedSessionID() string {
-	if len(m.drillStack) > 0 {
-		return m.drillStack[len(m.drillStack)-1].sessionID
+	if entry, ok := m.viewedSessionEntry(); ok {
+		return entry.sessionID
 	}
 	if m.session != nil {
 		return m.session.ID
@@ -1316,7 +1329,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
+		shouldContinue := anyRunning || m.isViewedSubagentRunning() || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
@@ -3484,10 +3497,8 @@ func (m *UI) drawHeader(scr uv.Screen, area uv.Rectangle) {
 	// Use the viewed session's stats when drilled in so the context
 	// percentage reflects the subagent, not the root session.
 	sess := m.session
-	if m.isDrilledIn() {
-		if entry := m.drillStack[len(m.drillStack)-1]; entry.session != nil {
-			sess = entry.session
-		}
+	if entry, ok := m.viewedSessionEntry(); ok && entry.session != nil {
+		sess = entry.session
 	}
 	m.header.drawHeader(
 		scr,

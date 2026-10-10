@@ -184,3 +184,31 @@ func TestSubagentLoadKeepsNewerLiveMessages(t *testing.T) {
 	require.Same(t, live, u.drillStack[0].chat.MessageItem("sub-a"), "the live item must be kept")
 	require.Contains(t, ansi.Strip(u.drillStack[1].chat.ItemAt(0).Render(80)), "final step")
 }
+
+func TestThinkingDrillInOnRootDoesNotShowSubagentStats(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	item := newThinkingItem(u, "reasoning", true)
+	u.chat.SetMessages(item)
+	u.Update(util.ThinkingDrillInMsg{Source: item, Label: "Thinking"})
+
+	u.updateSidebarScrollState()
+
+	require.NotContains(t, ansi.Strip(u.sidebarContent), "turns ·",
+		"a thinking drill-in on the root session isn't a subagent session")
+	require.Equal(t, "s1", u.viewedSessionID())
+}
+
+func TestThinkingDrillInOnSubagentKeepsItsSession(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
+	first := childThinkingEvent("step", false).Payload
+	sub := chat.NewAssistantMessageItem(u.com.Styles, &first)
+	u.drillStack[0].chat.SetMessages(sub)
+	u.Update(util.ThinkingDrillInMsg{Source: sub, Label: "Thinking"})
+
+	require.Equal(t, "child", u.viewedSessionID())
+}
