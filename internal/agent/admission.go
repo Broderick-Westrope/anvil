@@ -56,9 +56,11 @@ type admission struct {
 	// session, waking holds waiting for in-flight runs to finish.
 	ownerGone chan struct{}
 	lifetime  context.Context
-	// spawn starts an awaited submission's run on its own goroutine. The
-	// coordinator wraps it so the run counts as active for Pause.
-	spawn func(func())
+	// gate admits a run started on its own goroutine (an awaited
+	// submission on an idle session, or queued work after a hold). The
+	// coordinator uses it so those runs count as active for Pause. It
+	// must return once ctx ends.
+	gate func(ctx context.Context) (release func(), err error)
 }
 
 func newAdmission(ctx context.Context) *admission {
@@ -67,7 +69,7 @@ func newAdmission(ctx context.Context) *admission {
 		queues:   make(map[string][]submission),
 		held:     make(map[string]int),
 		lifetime: ctx,
-		spawn:    func(f func()) { go f() },
+		gate:     func(context.Context) (func(), error) { return func() {}, nil },
 	}
 }
 
@@ -121,14 +123,14 @@ func (a *admission) submitAwait(ctx context.Context, id string, job submission) 
 			a.queues[id] = a.queues[id][1:]
 			owner := a.claimFor(job, id)
 			a.mu.Unlock()
-			a.spawn(func() { _, _ = a.execute(owner, job) })
+			a.start(owner, job)
 		} else {
 			a.mu.Unlock()
 		}
 	} else {
 		owner := a.claim(ctx, id)
 		a.mu.Unlock()
-		a.spawn(func() { _, _ = a.execute(owner, job) })
+		a.start(owner, job)
 	}
 	select {
 	case res := <-done:
@@ -141,6 +143,23 @@ func (a *admission) submitAwait(ctx context.Context, id string, job submission) 
 		res := <-done
 		return res.result, res.err
 	}
+}
+
+// start runs an already claimed job on its own goroutine once the gate
+// admits it. If the owner's context ends first, the job completes with
+// that error through execute, so its submitter hears back, the session is
+// released and the queue moves on as after any other failed run.
+func (a *admission) start(owner *submissionOwner, job submission) {
+	go func() {
+		release, err := a.gate(owner.ctx)
+		if err != nil {
+			job.run = func(context.Context) (*fantasy.AgentResult, error) { return nil, err }
+			_, _ = a.execute(owner, job)
+			return
+		}
+		defer release()
+		_, _ = a.execute(owner, job)
+	}()
 }
 
 // withdraw removes a still-queued awaited submission.
@@ -268,7 +287,7 @@ func (a *admission) unhold(ids []string) {
 	}
 	a.mu.Unlock()
 	for _, s := range starts {
-		a.spawn(func() { _, _ = a.execute(s.owner, s.job) })
+		a.start(s.owner, s.job)
 	}
 }
 

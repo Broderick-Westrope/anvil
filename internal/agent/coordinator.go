@@ -240,16 +240,9 @@ func NewCoordinator(
 		plugins:        plugins,
 		agents:         csync.NewMap[string, SessionAgent](),
 	}
-	// An awaited turn on an idle session runs on its own goroutine, and so
-	// does any queued work after it, so it must count as active for Pause.
-	c.admission.spawn = func(run func()) {
-		go func() {
-			if release, err := c.admit(ctx); err == nil {
-				defer release()
-			}
-			run()
-		}()
-	}
+	// Runs the admission queue starts on their own goroutines count as
+	// active for Pause, but a cancelled submission stops waiting for one.
+	c.admission.gate = c.admit
 
 	// Enable MCP OAuth tool-name rename when the Anthropic provider uses
 	// OAuth credentials. This must happen once during coordinator

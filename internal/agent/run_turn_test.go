@@ -1,6 +1,7 @@
 package agent_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -58,4 +59,30 @@ func TestRunTurnReturnsItsOwnResultWhileUserMessagesQueue(t *testing.T) {
 	close(laterRelease)
 	f.WaitBackgroundJobs()
 	require.Eventually(t, func() bool { return !f.Coordinator.IsSessionBusy(s.ID) }, 5*time.Second, 5*time.Millisecond)
+}
+
+func TestRunTurnCancelledWhilePausedReleasesSession(t *testing.T) {
+	f := branchfixture.New(t)
+	s, err := f.Workspace.CreateSession(f.Context, "source")
+	require.NoError(t, err)
+	resume, err := f.Coordinator.Pause(f.Context, time.Second)
+	require.NoError(t, err)
+	defer resume()
+
+	ctx, cancel := context.WithCancel(f.Context)
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.Coordinator.RunTurn(ctx, s.ID, "script turn")
+		done <- err
+	}()
+	require.Eventually(t, func() bool { return f.Coordinator.IsSessionBusy(s.ID) }, 5*time.Second, 5*time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunTurn stayed blocked behind the pause after cancel")
+	}
+	require.Eventually(t, func() bool { return !f.Coordinator.IsSessionBusy(s.ID) }, 5*time.Second, 5*time.Millisecond)
+	require.Empty(t, f.Provider.Requests())
 }
