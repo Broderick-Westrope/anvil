@@ -132,9 +132,6 @@ linters:
       - path: internal/agent/tools/search\.go
         text: 'func `(parseLiteSearchResults)`'
         linters: [gocognit]
-      - path: internal/agent/tools/todos\.go
-        text: 'func `(NewTodosTool)`'
-        linters: [gocognit]
       - path: internal/app/app\.go
         text: 'func `(\(\*App\)\.RunNonInteractive)`'
         linters: [gocognit]
