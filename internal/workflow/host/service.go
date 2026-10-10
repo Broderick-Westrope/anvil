@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -137,7 +138,14 @@ type Service struct {
 	mu       sync.Mutex
 	stopping bool
 	runs     map[string]*activeRun // Keyed by invoking session.
-	pending  map[string]chan string
+	pending  map[string]pendingRequest
+}
+
+// pendingRequest is an approval or ask awaiting Respond. A non-empty
+// options restricts the answers Respond accepts.
+type pendingRequest struct {
+	reply   chan string
+	options []string
 }
 
 type activeRun struct {
@@ -154,7 +162,7 @@ func NewService(lifetime context.Context, deps Deps) *Service {
 		stop:     stop,
 		events:   pubsub.NewBroker[Event](),
 		runs:     map[string]*activeRun{},
-		pending:  map[string]chan string{},
+		pending:  map[string]pendingRequest{},
 	}
 }
 
@@ -363,7 +371,7 @@ func (s *Service) request(ctx context.Context, ev Event) (string, error) {
 	ev.RequestID = uuid.NewString()
 	reply := make(chan string, 1)
 	s.mu.Lock()
-	s.pending[ev.RequestID] = reply
+	s.pending[ev.RequestID] = pendingRequest{reply: reply, options: ev.Options}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -395,16 +403,20 @@ func (s *Service) request(ctx context.Context, ev Event) (string, error) {
 // is published again.
 const defaultRepublishInterval = 2 * time.Second
 
-// Respond answers an approval ("approve" or "deny") or an ask().
+// Respond answers an approval ("approve" or "deny") or an ask(). An ask
+// with options accepts only one of them.
 func (s *Service) Respond(requestID, answer string) error {
 	s.mu.Lock()
-	reply, ok := s.pending[requestID]
+	req, ok := s.pending[requestID]
 	s.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("no pending workflow request %s", requestID)
 	}
+	if len(req.options) > 0 && !slices.Contains(req.options, answer) {
+		return fmt.Errorf("answer %q isn't one of %s", answer, strings.Join(req.options, ", "))
+	}
 	select {
-	case reply <- answer:
+	case req.reply <- answer:
 	default:
 	}
 	return nil

@@ -129,6 +129,22 @@ func TestServiceAsksForApprovalUntilScriptChanges(t *testing.T) {
 	require.Empty(t, done.RunID, "a denied script never gets a run")
 }
 
+func TestServiceRespondAcceptsOnlyOfferedAnswers(t *testing.T) {
+	h := newServiceHarness(t, false)
+	path := h.write(t, `function main() { return ask("which?", {options: ["a", "b"]}) }`)
+	h.start(t, path, "")
+
+	approval := h.next(t, host.EventApproval)
+	require.Error(t, h.svc.Respond(approval.RequestID, "yes"))
+	require.NoError(t, h.svc.Respond(approval.RequestID, "approve"))
+
+	ask := h.next(t, host.EventAsk)
+	require.Error(t, h.svc.Respond(ask.RequestID, "c"))
+	require.NoError(t, h.svc.Respond(ask.RequestID, "b"))
+	done := h.next(t, host.EventFinished)
+	require.JSONEq(t, `"b"`, string(done.Result))
+}
+
 func TestServiceRefusesMissingRequirementsBeforeRunning(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `requires({agents: ["ghost"]}); function main() { bash("touch should-not-exist") }`)
