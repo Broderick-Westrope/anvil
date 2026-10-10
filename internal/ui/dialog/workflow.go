@@ -30,9 +30,10 @@ func WorkflowRequestDialogID(requestID string) string {
 	return "workflow_request:" + requestID
 }
 
-// WorkflowApproval asks the user to approve a workflow script before it
-// first runs or after it changed. It shows the full source on first
-// approval and a diff against the last approved version otherwise.
+// WorkflowApproval asks the user to approve a workflow before it first
+// runs or after any file in its directory changed. It lists every file:
+// added files in full, changed files as a diff against the last approved
+// version, and removed and unchanged files by name.
 type WorkflowApproval struct {
 	com     *common.Common
 	ev      host.Event
@@ -111,41 +112,66 @@ func (d *WorkflowApproval) answer(approve bool) Action {
 	return ActionWorkflowRespond{RequestID: d.ev.RequestID, Answer: answer}
 }
 
-func (d *WorkflowApproval) changed() bool {
-	return d.ev.Approval != nil && approvalScript(d.ev.Approval).PreviousSource != ""
-}
-
-// approvalScript is the script's entry in the approval, which comes first.
-func approvalScript(req *host.ApprovalRequest) host.ApprovalFile {
-	if len(req.Files) == 0 {
-		return host.ApprovalFile{}
+// fileCounts reports how many of the approval's files changed since the
+// last approval, and how many there are.
+func (d *WorkflowApproval) fileCounts() (changed, total int) {
+	if d.ev.Approval == nil {
+		return 0, 0
 	}
-	return req.Files[0]
+	for _, f := range d.ev.Approval.Files {
+		if f.Status != host.FileUnchanged {
+			changed++
+		}
+	}
+	return changed, len(d.ev.Approval.Files)
 }
 
-// renderSource renders the script, or its diff against the last approved
-// version, at width.
-func (d *WorkflowApproval) renderSource(width int) string {
+// firstRun reports whether nothing was approved before: every file is new.
+func (d *WorkflowApproval) firstRun() bool {
+	if d.ev.Approval == nil {
+		return true
+	}
+	for _, f := range d.ev.Approval.Files {
+		if f.Status != host.FileAdded {
+			return false
+		}
+	}
+	return true
+}
+
+// renderFiles renders every file of the approval at width. Long lines
+// wrap rather than truncate, so nothing is approved unseen.
+func (d *WorkflowApproval) renderFiles(width int) string {
 	req := d.ev.Approval
 	if req == nil {
 		return ""
 	}
 	t := d.com.Styles
-	script := approvalScript(req)
-	if d.changed() {
-		return common.DiffFormatter(t).
-			Before("approved", script.PreviousSource).
-			After(fsext.PrettyPath(req.ScriptPath), script.Source).
-			Width(width).
-			NoTruncate().
-			Unified().
-			String()
+	sections := make([]string, 0, len(req.Files))
+	for _, f := range req.Files {
+		heading := lipgloss.NewStyle().Width(width).Render(
+			t.Dialog.Permissions.KeyText.Render(f.Path) + t.Dialog.Permissions.ValueText.Render(" "+string(f.Status)))
+		switch f.Status {
+		case host.FileAdded:
+			source := strings.TrimRight(f.Source, "\n")
+			if highlighted, err := common.SyntaxHighlight(t, source, f.Path, t.Dialog.Permissions.ParamsBg); err == nil {
+				source = strings.TrimRight(highlighted, "\n")
+			}
+			sections = append(sections, heading+"\n"+t.Dialog.ContentPanel.Width(width).Render(source))
+		case host.FileChanged:
+			diff := common.DiffFormatter(t).
+				Before(f.Path, f.PreviousSource).
+				After(f.Path, f.Source).
+				Width(width).
+				NoTruncate().
+				Unified().
+				String()
+			sections = append(sections, heading+"\n"+strings.TrimRight(diff, "\n"))
+		default:
+			sections = append(sections, heading)
+		}
 	}
-	source := strings.TrimRight(script.Source, "\n")
-	if highlighted, err := common.SyntaxHighlight(t, source, "workflow.js", t.Dialog.Permissions.ParamsBg); err == nil {
-		source = strings.TrimRight(highlighted, "\n")
-	}
-	return t.Dialog.ContentPanel.Width(width).Render(source)
+	return strings.Join(sections, "\n\n")
 }
 
 func (d *WorkflowApproval) renderHeader(width int) string {
@@ -166,9 +192,17 @@ func (d *WorkflowApproval) renderHeader(width int) string {
 			kv("Requires", requiresSummary(req)),
 		)
 	}
-	note := "First run: review the whole script. Once approved, its bash commands run without permission prompts."
-	if d.changed() {
-		note = "Changed since you last approved it: review the diff."
+	changed, total := d.fileCounts()
+	var note string
+	switch {
+	case d.firstRun() && total == 1:
+		note = "First run: review the whole script. Once approved, its bash commands run without permission prompts."
+	case d.firstRun():
+		note = fmt.Sprintf("First run: review all %d files. Once approved, its bash commands run without permission prompts.", total)
+	case total == 1:
+		note = "1 of 1 file changed since you last approved it: review the changes."
+	default:
+		note = fmt.Sprintf("%d of %d files changed since you last approved it: review the changes.", changed, total)
 	}
 	lines = append(lines, "", t.Dialog.Permissions.ValueText.Width(width).Render(note))
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
@@ -210,7 +244,7 @@ func (d *WorkflowApproval) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	viewportWidth := contentWidth - 1 // Reserve a column for the scrollbar.
 	if d.renderedWidth != viewportWidth {
 		d.viewport.SetWidth(viewportWidth)
-		d.viewport.SetContent(d.renderSource(viewportWidth))
+		d.viewport.SetContent(d.renderFiles(viewportWidth))
 		d.renderedWidth = viewportWidth
 	}
 	contentHeight := d.viewport.TotalLineCount()

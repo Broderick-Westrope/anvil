@@ -28,13 +28,17 @@ func drawDialog(d Dialog, width, height int) string {
 }
 
 func approvalEvent(previous string) host.Event {
+	status := host.FileAdded
+	if previous != "" {
+		status = host.FileChanged
+	}
 	return host.Event{
 		Kind: host.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "s1",
 		Approval: &host.ApprovalRequest{
 			ScriptPath: "/proj/.anvil/commands/demo/workflow.js",
 			Origin:     "project",
 			Files: []host.ApprovalFile{{
-				Path: "workflow.js", Source: "function main() {\n  return 2\n}\n", PreviousSource: previous,
+				Path: "workflow.js", Source: "function main() {\n  return 2\n}\n", PreviousSource: previous, Status: status,
 			}},
 			Requires: workflow.Requirements{
 				Skills: []string{"go-style"}, Agents: []string{"reviewer"},
@@ -104,7 +108,7 @@ func TestWorkflowApprovalShowsDiffWhenChanged(t *testing.T) {
 	t.Parallel()
 
 	out := drawDialog(NewWorkflowApproval(workflowCommon(), approvalEvent("function main() {\n  return 1\n}\n")), 120, 40)
-	require.Contains(t, out, "Changed since you last approved it")
+	require.Contains(t, out, "1 of 1 file changed since you last approved it")
 	require.Contains(t, out, "return 1")
 	require.Contains(t, out, "return 2")
 }
@@ -125,6 +129,73 @@ func TestWorkflowApprovalScrolls(t *testing.T) {
 	require.NotContains(t, drawDialog(d, 120, 40), "the end")
 	d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnd})
 	require.Contains(t, drawDialog(d, 120, 40), "the end")
+}
+
+// bundleEvent is an approval for a workflow with a reference file, where
+// the script has status script and the reference has status ref.
+func bundleEvent(script, ref host.FileStatus) host.Event {
+	ev := approvalEvent("")
+	file := func(path, prev, src string, status host.FileStatus) host.ApprovalFile {
+		f := host.ApprovalFile{Path: path, Status: status}
+		switch status {
+		case host.FileAdded:
+			f.Source = src
+		case host.FileChanged:
+			f.Source, f.PreviousSource = src, prev
+		case host.FileUnchanged:
+			f.Source, f.PreviousSource = src, src
+		case host.FileRemoved:
+			f.PreviousSource = prev
+		}
+		return f
+	}
+	ev.Approval.Files = []host.ApprovalFile{
+		file("workflow.js", "function main() {\n  return 1\n}\n", "function main() {\n  return 2\n}\n", script),
+		file("references/da.md", "# Review\n\nBe kind.\n", "# Review\n\nBe thorough.\n", ref),
+	}
+	ev.Approval.Requires.References = []string{"references/da.md"}
+	return ev
+}
+
+func TestWorkflowApprovalShowsEveryFile(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		ev      host.Event
+		want    []string
+		notWant []string
+	}{
+		"first run shows every file in full": {
+			ev:   bundleEvent(host.FileAdded, host.FileAdded),
+			want: []string{"First run: review all 2 files", "workflow.js", "return 2", "references/da.md", "Be thorough."},
+		},
+		"changed reference shows its diff": {
+			ev:      bundleEvent(host.FileUnchanged, host.FileChanged),
+			want:    []string{"1 of 2 files changed", "references/da.md", "Be kind.", "Be thorough.", "workflow.js", "unchanged"},
+			notWant: []string{"return 2"},
+		},
+		"removed reference is noted": {
+			ev:      bundleEvent(host.FileUnchanged, host.FileRemoved),
+			want:    []string{"1 of 2 files changed", "references/da.md", "removed"},
+			notWant: []string{"Be kind.", "return 2"},
+		},
+		"added reference shows its source": {
+			ev:   bundleEvent(host.FileUnchanged, host.FileAdded),
+			want: []string{"1 of 2 files changed", "references/da.md", "added", "Be thorough."},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			out := drawAllScrolled(NewWorkflowApproval(workflowCommon(), tc.ev), 120, 50)
+			for _, w := range tc.want {
+				require.True(t, strings.Contains(out, w), "want %q on screen", w)
+			}
+			for _, w := range tc.notWant {
+				require.False(t, strings.Contains(out, w), "don't want %q on screen", w)
+			}
+		})
+	}
 }
 
 // drawAllScrolled draws d, then scrolls it a line at a time to the bottom,
@@ -309,9 +380,15 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 		"approval_changed":   {dialog: NewWorkflowApproval(workflowCommon(), changed), width: 120, height: 30},
 		"approval_refs_only": {dialog: NewWorkflowApproval(workflowCommon(), withRefs), width: 100, height: 30},
 		"approval_small":     {dialog: NewWorkflowApproval(workflowCommon(), approvalEvent("")), width: 60, height: 20},
-		"ask_options":        {dialog: selected, width: 100, height: 20},
-		"ask_free_text":      {dialog: NewWorkflowAsk(workflowCommon(), askEvent()), width: 100, height: 20},
-		"ask_narrow":         {dialog: NewWorkflowAsk(workflowCommon(), askEvent("a", "b")), width: 50, height: 12},
+		"approval_first_run_with_reference": {
+			dialog: NewWorkflowApproval(workflowCommon(), bundleEvent(host.FileAdded, host.FileAdded)), width: 100, height: 40,
+		},
+		"approval_reference_changed": {
+			dialog: NewWorkflowApproval(workflowCommon(), bundleEvent(host.FileUnchanged, host.FileChanged)), width: 100, height: 40,
+		},
+		"ask_options":   {dialog: selected, width: 100, height: 20},
+		"ask_free_text": {dialog: NewWorkflowAsk(workflowCommon(), askEvent()), width: 100, height: 20},
+		"ask_narrow":    {dialog: NewWorkflowAsk(workflowCommon(), askEvent("a", "b")), width: 50, height: 12},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
