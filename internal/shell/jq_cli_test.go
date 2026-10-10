@@ -235,7 +235,7 @@ func TestJQBuiltin_Help(t *testing.T) {
 			require.Equal(t, 0, got.code)
 			require.Empty(t, got.stderr)
 			require.True(t, strings.HasPrefix(got.stdout, "jq - Go implementation of jq"), "stdout = %q", got.stdout)
-			require.Contains(t, got.stdout, "%% echo '{\"foo\": 128}' | jq '.foo'")
+			require.Contains(t, got.stdout, "\n  % echo '{\"foo\": 128}' | jq '.foo'")
 			require.True(t, strings.HasSuffix(got.stdout, "  -h, --help                    display this help\n"))
 		})
 	}

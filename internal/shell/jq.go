@@ -15,7 +15,7 @@ import (
 const jqUsage = `jq - Go implementation of jq (gojq 0.12.19 builtin)
 
 Synopsis:
-  %% echo '{"foo": 128}' | jq '.foo'
+  % echo '{"foo": 128}' | jq '.foo'
 
 Usage:
   jq [OPTIONS] [FILTER] [FILE...]
