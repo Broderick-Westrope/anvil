@@ -863,11 +863,11 @@ func waitWithTimeout(wait func(), timeout time.Duration) bool {
 	}
 }
 
-// Shutdown performs a graceful shutdown of the application.
 // workflowShutdownWait bounds how long shutdown waits for workflow runs
 // to record that they were interrupted.
 const workflowShutdownWait = 3 * time.Second
 
+// Shutdown performs a graceful shutdown of the application.
 func (app *App) Shutdown() {
 	start := time.Now()
 	defer func() { slog.Debug("Shutdown took " + time.Since(start).String()) }()
