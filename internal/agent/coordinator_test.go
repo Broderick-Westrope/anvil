@@ -1039,6 +1039,122 @@ func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 	}
 }
 
+func TestBuildToolsTaskToolFollowsDelegates(t *testing.T) {
+	t.Parallel()
+	withDelegates := map[string]prompt.AgentMD{"fixer": {Name: "fixer", DelegatesTo: []string{"explorer"}}}
+	withoutDelegates := map[string]prompt.AgentMD{"fixer": {Name: "fixer"}}
+	tests := map[string]struct {
+		agentID  string
+		depth    int
+		agentMDs map[string]prompt.AgentMD
+		want     bool
+	}{
+		"orchestrator at depth 3":          {agentID: config.AgentOrchestrator, depth: 3, want: true},
+		"orchestrator at depth 2":          {agentID: config.AgentOrchestrator, depth: 2, want: true},
+		"orchestrator at depth 1":          {agentID: config.AgentOrchestrator, depth: 1},
+		"specialist with delegates":        {agentID: "fixer", depth: 2, agentMDs: withDelegates, want: true},
+		"specialist with delegates deep":   {agentID: "fixer", depth: 1, agentMDs: withDelegates},
+		"specialist without delegates":     {agentID: "fixer", depth: 2, agentMDs: withoutDelegates},
+		"specialist without an agent file": {agentID: "fixer", depth: 2},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+			require.NoError(t, err)
+			cfg.Config().MCP = nil
+			c := &coordinator{cfg: cfg}
+			agentCfg := config.Agent{ID: tt.agentID, AllowedTools: []string{TaskToolName, tools.ViewToolName}}
+			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, tt.depth, nil, nil, nil, tt.agentMDs, nil)
+			require.NoError(t, err)
+			var names []string
+			for _, tool := range builtTools {
+				names = append(names, tool.Info().Name)
+			}
+			if tt.want {
+				require.Equal(t, []string{TaskToolName, tools.ViewToolName}, names)
+			} else {
+				require.Equal(t, []string{tools.ViewToolName}, names)
+			}
+		})
+	}
+}
+
+// TestBuildToolsAppliesAllowedMCP connects real MCP servers, so it must not
+// run in parallel.
+func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
+	const (
+		eager     = "test-tools-eager"
+		lazy      = "test-tools-lazy"
+		eagerPing = "mcp_" + eager + "_ping"
+		lazyPing  = "mcp_" + lazy + "_ping"
+	)
+	cfg := connectMCPServers(t, map[string]string{eager: "", lazy: ""}, lazy)
+	c := &coordinator{cfg: cfg}
+	tests := map[string]struct {
+		allowedMCP map[string][]string
+		want       []string
+		wantLazy   map[string]string
+	}{
+		"no restrictions": {
+			want:     []string{tools.EnableMCPToolName, eagerPing, lazyPing, tools.ViewToolName},
+			wantLazy: map[string]string{lazyPing: lazy},
+		},
+		"none allowed": {
+			allowedMCP: map[string][]string{},
+			want:       []string{tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"whole eager server": {
+			allowedMCP: map[string][]string{eager: nil},
+			want:       []string{eagerPing, tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"listed eager tool": {
+			allowedMCP: map[string][]string{eager: {"ping"}},
+			want:       []string{eagerPing, tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"other eager tool": {
+			allowedMCP: map[string][]string{eager: {"other"}},
+			want:       []string{tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"listed lazy tool": {
+			allowedMCP: map[string][]string{lazy: {"ping"}},
+			want:       []string{tools.EnableMCPToolName, lazyPing, tools.ViewToolName},
+			wantLazy:   map[string]string{lazyPing: lazy},
+		},
+		"other lazy tool": {
+			allowedMCP: map[string][]string{lazy: {"other"}},
+			want:       []string{tools.EnableMCPToolName, tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"unknown server": {
+			allowedMCP: map[string][]string{"missing": nil},
+			want:       []string{tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			agentCfg := config.Agent{ID: "fixer", AllowedTools: []string{tools.ViewToolName}, AllowedMCP: tt.allowedMCP}
+			builtTools, lazyMap, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil)
+			require.NoError(t, err)
+			var names []string
+			for _, tool := range builtTools {
+				names = append(names, tool.Info().Name)
+				if tool.Info().Name == tools.EnableMCPToolName {
+					require.Contains(t, tool.Info().Description, lazy)
+					require.NotContains(t, tool.Info().Description, eager)
+				}
+			}
+			require.Equal(t, tt.want, names)
+			require.Equal(t, tt.wantLazy, lazyMap)
+		})
+	}
+}
+
 const (
 	reloadTestProvider = "openai-compat-test"
 	reloadTestModel    = "test-model"
