@@ -29,6 +29,10 @@ func Run(ctx context.Context, args []string, env Env) error { //nolint:gocritic 
 	return wtpcli.Run(ctx, args, env)
 }
 
+// Command is how to run the embedded wtp as a separate process: this
+// binary with the wtp subcommand.
+func Command() []string { return self() }
+
 func self() []string {
 	return selfFrom(os.Executable())
 }
