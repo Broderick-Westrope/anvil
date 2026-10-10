@@ -44,15 +44,19 @@ anvil run --session {session-id} "Follow up on your last response"
 # Continue the most recent session
 anvil run --continue "Follow up on your last response"
 
+# Use a specific reasoning effort for this run only
+anvil run --reasoning-effort high "Review this design"
+
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var (
-			quiet, _      = cmd.Flags().GetBool("quiet")
-			verbose, _    = cmd.Flags().GetBool("verbose")
-			largeModel, _ = cmd.Flags().GetString("model")
-			smallModel, _ = cmd.Flags().GetString("small-model")
-			sessionID, _  = cmd.Flags().GetString("session")
-			useLast, _    = cmd.Flags().GetBool("continue")
+			quiet, _           = cmd.Flags().GetBool("quiet")
+			verbose, _         = cmd.Flags().GetBool("verbose")
+			largeModel, _      = cmd.Flags().GetString("model")
+			smallModel, _      = cmd.Flags().GetString("small-model")
+			reasoningEffort, _ = cmd.Flags().GetString("reasoning-effort")
+			sessionID, _       = cmd.Flags().GetString("session")
+			useLast, _         = cmd.Flags().GetBool("continue")
 		)
 
 		// Cancel on SIGINT or SIGTERM.
@@ -95,7 +99,7 @@ anvil run --continue "Follow up on your last response"
 			sessionID = sess.ID
 		}
 
-		return appWs.App().RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, quiet || verbose, sessionID, useLast)
+		return appWs.App().RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, reasoningEffort, quiet || verbose, sessionID, useLast)
 	},
 }
 
@@ -104,6 +108,7 @@ func init() {
 	runCmd.Flags().BoolP("verbose", "v", false, "Show logs")
 	runCmd.Flags().StringP("model", "m", "", "Model to use. Accepts 'model' or 'provider/model' to disambiguate models with the same name across providers")
 	runCmd.Flags().String("small-model", "", "Small model to use. If not provided, uses the default small model for the provider")
+	runCmd.Flags().String("reasoning-effort", "", "Reasoning effort for this run (e.g. low, medium, high). Levels depend on the model; unsupported values are rejected with the accepted values listed")
 	runCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
 	runCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
 	runCmd.MarkFlagsMutuallyExclusive("session", "continue")

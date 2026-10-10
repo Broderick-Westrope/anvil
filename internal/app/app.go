@@ -290,7 +290,7 @@ func (app *App) resolveSession(ctx context.Context, continueSessionID string, us
 
 // RunNonInteractive runs the application in non-interactive mode with the
 // given prompt, printing to stdout.
-func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel string, hideSpinner bool, continueSessionID string, useLast bool) error {
+func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel, reasoningEffort string, hideSpinner bool, continueSessionID string, useLast bool) error {
 	slog.Info("Running in non-interactive mode")
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -299,6 +299,11 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	if largeModel != "" || smallModel != "" {
 		if err := app.overrideModelsForNonInteractive(ctx, largeModel, smallModel); err != nil {
 			return fmt.Errorf("failed to override models: %w", err)
+		}
+	}
+	if reasoningEffort != "" {
+		if err := app.overrideReasoningEffort(ctx, reasoningEffort); err != nil {
+			return err
 		}
 	}
 
@@ -463,6 +468,24 @@ func (app *App) UpdateAgentModel(ctx context.Context) error {
 	if app.AgentCoordinator == nil {
 		return fmt.Errorf("agent configuration is missing")
 	}
+	return app.AgentCoordinator.UpdateModels(ctx)
+}
+
+// overrideReasoningEffort sets the large model's reasoning effort for this
+// run only, after checking the model supports it, then rebuilds the agent.
+func (app *App) overrideReasoningEffort(ctx context.Context, effort string) error {
+	cfg := app.config.Config()
+	selected, ok := cfg.Models[config.SelectedModelTypeLarge]
+	if !ok {
+		return fmt.Errorf("no large model selected; set one with --model")
+	}
+	if err := cfg.ValidateReasoningEffort(selected.Provider, selected.Model, effort); err != nil {
+		return err
+	}
+	selected.ReasoningEffort = effort
+	slog.Info("Overriding reasoning effort for non-interactive run",
+		"provider", selected.Provider, "model", selected.Model, "reasoning_effort", effort)
+	app.config.OverridePreferredModel(config.SelectedModelTypeLarge, selected)
 	return app.AgentCoordinator.UpdateModels(ctx)
 }
 
