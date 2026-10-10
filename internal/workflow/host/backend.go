@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
-
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -89,16 +87,16 @@ func (b *backend) NewSession(ctx context.Context, title string) (string, error) 
 	return s.ID, nil
 }
 
-// Agent runs a subagent in a child session whose ID is published before
-// it starts, so the UI can open it while it runs. Its messages stay in
-// that session and never reach the invoking one.
+// Agent runs a subagent in a child session whose ID is published once the
+// session exists, so the UI can open it while it runs. Its messages stay
+// in that session and never reach the invoking one. An agent that fails
+// before its session exists is published only as failed, with no session.
 func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.AgentResult, error) {
 	wc := agent.WorkflowAgentCall{
 		ParentSessionID: call.ParentSessionID,
 		Agent:           call.Agent,
 		Prompt:          b.withSkills(call.Skills, call.Prompt),
 		Title:           "/" + b.base.Command + ": " + call.Agent,
-		SessionID:       uuid.NewString(),
 		Tools:           call.Tools,
 		Model:           call.Model,
 	}
@@ -109,11 +107,14 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 		}
 		wc.Schema, wc.Validate = call.Schema, schema.Validate
 	}
-	started := Event{Kind: EventAgent, Step: call.Agent, Detail: call.Model, Target: wc.SessionID, Status: StatusRunning}
-	b.publishState(ctx, started)
+	ended := Event{Kind: EventAgent, Step: call.Agent, Detail: call.Model, Status: StatusCompleted}
+	wc.OnSession = func(sessionID string) {
+		started := ended
+		started.Target, started.Status = sessionID, StatusRunning
+		b.publishState(ctx, started)
+		ended.Target = sessionID
+	}
 	res, err := b.runAgent(ctx, wc)
-	ended := started
-	ended.Status = StatusCompleted
 	if err != nil {
 		ended.Status, ended.Message = StatusFailed, err.Error()
 	}

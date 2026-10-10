@@ -44,6 +44,9 @@ type WorkflowAgentCall struct {
 	// input schema. Validate checks each submission.
 	Schema   json.RawMessage
 	Validate func(json.RawMessage) error
+	// OnSession, when set, is called with the child session's ID once the
+	// session exists, before the agent runs in it.
+	OnSession func(sessionID string)
 }
 
 // WorkflowAgentOutput is what a workflow subagent produced. Output is nil
@@ -99,6 +102,9 @@ func (c *coordinator) RunWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 	session, err := c.sessions.CreateTaskSession(ctx, sessionID, call.ParentSessionID, title)
 	if err != nil {
 		return WorkflowAgentOutput{}, fmt.Errorf("create session: %w", err)
+	}
+	if call.OnSession != nil {
+		call.OnSession(session.ID)
 	}
 	defer func() {
 		if inventory := handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, call.ParentSessionID); inventory != "" {

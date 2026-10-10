@@ -923,6 +923,23 @@ func TestWorkflowAgentEndWithoutStartListsNothing(t *testing.T) {
 	require.Equal(t, 1, f.u.pillsAreaHeight(), "an end without a start lists nothing")
 }
 
+func TestWorkflowAgentThatFailedWithoutASessionIsListedButNotOpened(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
+	f.event(agentEvent("reviewer", "child-1", host.StatusCompleted))
+	failed := agentEvent("critic", "", host.StatusFailed)
+	failed.Message = "unknown model"
+	f.event(failed)
+	require.Contains(t, f.panel(), "/demo: critic · failed: unknown model")
+
+	f.press(tea.KeyPressMsg{Code: 'o', Mod: tea.ModAlt})
+	require.True(t, f.u.isDrilledIn())
+	require.Equal(t, "child-1", f.u.drillStack[len(f.u.drillStack)-1].sessionID, "an agent without a session is skipped")
+}
+
 func TestWorkflowPanelDropsFinishedEntriesBeforeRunningAgents(t *testing.T) {
 	t.Parallel()
 

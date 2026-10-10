@@ -80,11 +80,14 @@ func (r *workflowRun) panelEntries() []dialog.WorkflowEntry {
 	return entries
 }
 
-// agentEvent records a subagent starting, or updates it when it ends.
+// agentEvent records a subagent starting, or updates it when it ends. A
+// subagent that failed before it had a session never started, so it's
+// recorded as it ends, with no session to open.
 func (r *workflowRun) agentEvent(ev host.Event) {
-	if ev.Status == host.StatusRunning {
+	if ev.Status == host.StatusRunning || ev.Target == "" {
 		r.show(r.record(dialog.WorkflowEntry{
-			Kind: dialog.WorkflowEntryAgent, Agent: ev.Step, Model: ev.Detail, SessionID: ev.Target, Status: ev.Status,
+			Kind: dialog.WorkflowEntryAgent, Agent: ev.Step, Model: ev.Detail, SessionID: ev.Target,
+			Status: ev.Status, Err: ev.Message,
 		}))
 		return
 	}
@@ -96,10 +99,11 @@ func (r *workflowRun) agentEvent(ev host.Event) {
 	}
 }
 
-// latestAgent returns the most recently started subagent in entries.
+// latestAgent returns the most recently started subagent in entries that
+// has a session to open.
 func latestAgent(entries []dialog.WorkflowEntry) (dialog.WorkflowEntry, bool) {
 	for _, e := range slices.Backward(entries) {
-		if e.Kind == dialog.WorkflowEntryAgent {
+		if e.Kind == dialog.WorkflowEntryAgent && e.SessionID != "" {
 			return e, true
 		}
 	}

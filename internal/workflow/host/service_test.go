@@ -529,7 +529,8 @@ function main() { return agent("reviewer", "review") }`)
 	require.Equal(t, "reviewer", start.Step)
 	require.Empty(t, start.Detail, "no model was pinned")
 	require.Equal(t, host.StatusRunning, start.Status)
-	require.NotEmpty(t, start.Target)
+	_, err := h.fixture.Workspace.GetSession(h.fixture.Context, start.Target)
+	require.NoError(t, err, "the session exists when it's published")
 
 	end := h.next(t, host.EventAgent)
 	require.Equal(t, start.Target, end.Target)
@@ -549,12 +550,11 @@ func TestServiceAgentPublishesFailure(t *testing.T) {
 function main() { return agent("reviewer", "review", {model: "nope/nope"}) }`)
 	h.start(t, path, "")
 
-	start := h.next(t, host.EventAgent)
-	require.Equal(t, "nope/nope", start.Detail)
-	end := h.next(t, host.EventAgent)
-	require.Equal(t, start.Target, end.Target)
-	require.Equal(t, host.StatusFailed, end.Status)
-	require.Contains(t, end.Message, "nope/nope")
+	failed := h.next(t, host.EventAgent)
+	require.Equal(t, "nope/nope", failed.Detail)
+	require.Equal(t, host.StatusFailed, failed.Status, "an agent that never got a session never shows as running")
+	require.Empty(t, failed.Target, "it has no session to open")
+	require.Contains(t, failed.Message, "nope/nope")
 	require.Equal(t, host.StatusFailed, h.next(t, host.EventFinished).Status)
 }
 
