@@ -532,3 +532,46 @@ func TestExclusiveCanAskToStopJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []bool{true}, h.backend.stopJobs)
 }
+
+func TestCancellingExecuteContextInterruptsPureJSLoop(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	run := h.newRun(t, `function main() { status("spin", ""); while (true) {} }`)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := run.Execute(ctx, workflow.Input{})
+		done <- err
+	}()
+	require.Eventually(t, func() bool { return len(h.recorder.primitives(workflow.PhaseCompleted)) == 1 },
+		5*time.Second, 10*time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, workflow.ErrAborted)
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the context did not stop the script")
+	}
+}
+
+func TestCancelledContextStopsTopLevelLoop(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	run := h.newRun(t, `while (true) {}
+function main() {}`)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := run.Execute(ctx, workflow.Input{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, workflow.ErrAborted)
+	case <-time.After(5 * time.Second):
+		t.Fatal("top-level loop outlived its context")
+	}
+}

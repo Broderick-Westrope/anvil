@@ -284,8 +284,21 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 		Tmpdir:            s.deps.Store.Tmpdir(runID),
 	})
 	s.mu.Lock()
-	s.runs[inv.SessionID] = &activeRun{id: runID, run: run}
+	stopping := s.stopping
+	if !stopping {
+		s.runs[inv.SessionID] = &activeRun{id: runID, run: run}
+	}
 	s.mu.Unlock()
+	if stopping {
+		// Shutdown began after this run was recorded but before it could
+		// be registered for Shutdown to abort; it never starts.
+		msg := "interrupted: Anvil shut down"
+		if ferr := s.deps.Store.FinishRun(context.WithoutCancel(ctx), runID, StatusInterrupted, nil, msg); ferr != nil {
+			slog.Warn("Failed to record workflow run outcome", "run", runID, "error", ferr)
+		}
+		finish(runID, StatusInterrupted, nil, msg)
+		return
+	}
 	started := base
 	started.Kind = EventState
 	s.events.Publish(pubsub.UpdatedEvent, started)

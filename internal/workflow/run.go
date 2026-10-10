@@ -96,6 +96,10 @@ func (r *Run) Execute(ctx context.Context, input Input) (json.RawMessage, error)
 		return nil, ErrAborted
 	}
 	defer r.releaseHold()
+	// A script stuck in pure JS never reaches a primitive to notice its
+	// context ended, so cancellation interrupts the VM directly.
+	stop := context.AfterFunc(ctx, func() { vm.Interrupt(ErrAborted) })
+	defer stop()
 
 	if err := vm.Set("__native", r.native); err != nil {
 		return nil, err
