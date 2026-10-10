@@ -12,6 +12,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
 	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 )
@@ -293,4 +294,28 @@ func TestServiceShutdownInterruptsRunsAndRefusesNewOnes(t *testing.T) {
 	require.Error(t, h.svc.Respond(ask.RequestID, "late"))
 	err = h.svc.Start(h.fixture.Context, host.Invocation{CommandID: "x", ScriptPath: path, SessionID: h.session})
 	require.ErrorIs(t, err, host.ErrShuttingDown)
+}
+
+func TestServiceExclusiveRefusesThenStopsSessionJobs(t *testing.T) {
+	h := newServiceHarness(t, true)
+	mgr := shell.GetBackgroundShellManager()
+	bs, err := mgr.Start(h.fixture.Context, h.dir, nil, "sleep 30", "watcher")
+	require.NoError(t, err)
+	jobID, err := mgr.Publish(h.fixture.Context, bs.ID(), shell.PublishOptions{SessionID: h.session, Origin: shell.OriginExplicit})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mgr.Kill(jobID) })
+
+	path := h.write(t, `function main() {
+  let refused
+  try { workflow.exclusive(() => 1) } catch (e) { refused = e instanceof JobsRunning && e.jobs[0].command }
+  workflow.exclusive(() => 1, {stopJobs: true})
+  return refused
+}`)
+	h.start(t, path, "")
+	done := h.next(t, host.EventFinished)
+	require.Equal(t, host.StatusCompleted, done.Status, done.Message)
+	require.JSONEq(t, `"sleep 30"`, string(done.Result))
+	for _, job := range mgr.ListBySession(h.session) {
+		require.True(t, job.Done, "job %s still running", job.ID)
+	}
 }

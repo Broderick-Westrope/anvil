@@ -276,11 +276,14 @@ type errorInfo struct {
 func describeError(err error, aborted bool) errorInfo {
 	var bashErr *BashError
 	var schemaErr *SchemaError
+	var jobsErr *JobsRunningError
 	switch {
 	case errors.As(err, &bashErr):
 		return errorInfo{Name: "BashError", Message: err.Error(), Fields: map[string]any{
 			"stdout": bashErr.Stdout, "stderr": bashErr.Stderr, "exitCode": bashErr.ExitCode,
 		}}
+	case errors.As(err, &jobsErr):
+		return errorInfo{Name: "JobsRunning", Message: err.Error(), Fields: map[string]any{"jobs": jobsErr.Jobs}}
 	case errors.As(err, &schemaErr):
 		return errorInfo{Name: "SchemaError", Message: err.Error(), Fields: map[string]any{"raw": schemaErr.Raw}}
 	case errors.Is(err, context.Canceled) && !aborted:

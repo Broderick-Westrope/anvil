@@ -28,8 +28,11 @@ type Backend interface {
 	// Warn shows a non-fatal problem, such as undeclared use of a skill.
 	Warn(msg string)
 	// Hold stops new runs from starting in the given sessions and waits for
-	// in-flight ones to finish. The returned release lifts the hold.
-	Hold(ctx context.Context, sessionIDs []string) (release func(), err error)
+	// in-flight ones to finish. Background jobs the sessions own could still
+	// write to the workspace, so it fails with *JobsRunningError while any
+	// run, unless StopJobs asks it to stop them first. The returned release
+	// lifts the hold.
+	Hold(ctx context.Context, call HoldCall) (release func(), err error)
 }
 
 // SkillContent is a resolved skill.
@@ -97,4 +100,27 @@ type BashError struct {
 
 func (e *BashError) Error() string {
 	return fmt.Sprintf("command exited %d: %s", e.ExitCode, e.Cmd)
+}
+
+// HoldCall holds a run's sessions for workflow.exclusive.
+type HoldCall struct {
+	SessionIDs []string
+	StopJobs   bool
+}
+
+// Job is a background job that blocks a hold.
+type Job struct {
+	ID        string `json:"id"`
+	Command   string `json:"command"`
+	SessionID string `json:"sessionId"`
+}
+
+// JobsRunningError refuses a hold while background jobs owned by the held
+// sessions are still running.
+type JobsRunningError struct {
+	Jobs []Job
+}
+
+func (e *JobsRunningError) Error() string {
+	return fmt.Sprintf("%d background job(s) still running in the workflow's sessions", len(e.Jobs))
 }

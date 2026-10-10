@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 
@@ -168,9 +169,16 @@ func (b *backend) Warn(msg string) {
 	b.publish(Event{Kind: EventWarn, Message: msg})
 }
 
-func (b *backend) Hold(ctx context.Context, sessionIDs []string) (func(), error) {
-	release, err := b.svc.deps.Coordinator.Hold(ctx, sessionIDs)
+func (b *backend) Hold(ctx context.Context, call workflow.HoldCall) (func(), error) {
+	release, err := b.svc.deps.Coordinator.Hold(ctx, call.SessionIDs)
 	if err != nil {
+		return nil, err
+	}
+	// The hold has waited out in-flight runs, so subagents have handed
+	// their surviving jobs to these sessions; what's left can still write
+	// to the workspace the script is about to change.
+	if err := settleJobs(call.SessionIDs, call.StopJobs); err != nil {
+		release()
 		return nil, err
 	}
 	b.publish(Event{Kind: EventState, Held: true})
@@ -178,4 +186,31 @@ func (b *backend) Hold(ctx context.Context, sessionIDs []string) (func(), error)
 		release()
 		b.publish(Event{Kind: EventState, Held: false})
 	}, nil
+}
+
+// settleJobs refuses with *workflow.JobsRunningError while the sessions own
+// running background jobs, or kills them when stop is set.
+func settleJobs(sessionIDs []string, stop bool) error {
+	mgr := shell.GetBackgroundShellManager()
+	var running []workflow.Job
+	for _, id := range sessionIDs {
+		for _, job := range mgr.ListBySession(id) {
+			if !job.Done {
+				running = append(running, workflow.Job{ID: job.ID, Command: job.Command, SessionID: job.SessionID})
+			}
+		}
+	}
+	if len(running) == 0 {
+		return nil
+	}
+	if !stop {
+		return &workflow.JobsRunningError{Jobs: running}
+	}
+	var errs []error
+	for _, job := range running {
+		if err := mgr.Kill(job.ID); err != nil {
+			errs = append(errs, fmt.Errorf("stop job %s: %w", job.ID, err))
+		}
+	}
+	return errors.Join(errs...)
 }

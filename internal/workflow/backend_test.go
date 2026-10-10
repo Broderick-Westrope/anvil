@@ -33,7 +33,16 @@ type fakeBackend struct {
 	focused     []string
 	warnings    []string
 	holds       [][]string
+	stopJobs    []bool
+	holdErr     error
 	released    int
+	bashed      []string
+}
+
+func (f *fakeBackend) bashCmds() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.bashed
 }
 
 func (f *fakeBackend) HasSkill(name string) bool { return slices.Contains(f.skills, name) }
@@ -72,6 +81,9 @@ func (f *fakeBackend) Agent(ctx context.Context, call workflow.AgentCall) (workf
 }
 
 func (f *fakeBackend) Bash(ctx context.Context, call workflow.BashCall) (workflow.BashResult, error) {
+	f.mu.Lock()
+	f.bashed = append(f.bashed, call.Cmd)
+	f.mu.Unlock()
 	if f.bashFn == nil {
 		return workflow.BashResult{Stdout: "ran " + call.Cmd}, nil
 	}
@@ -103,10 +115,14 @@ func (f *fakeBackend) Warn(msg string) {
 	f.warnings = append(f.warnings, msg)
 }
 
-func (f *fakeBackend) Hold(_ context.Context, sessionIDs []string) (func(), error) {
+func (f *fakeBackend) Hold(_ context.Context, call workflow.HoldCall) (func(), error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.holds = append(f.holds, slices.Clone(sessionIDs))
+	if f.holdErr != nil {
+		return nil, f.holdErr
+	}
+	f.holds = append(f.holds, slices.Clone(call.SessionIDs))
+	f.stopJobs = append(f.stopJobs, call.StopJobs)
 	return func() {
 		f.mu.Lock()
 		defer f.mu.Unlock()

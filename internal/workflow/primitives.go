@@ -353,14 +353,20 @@ func primFocus(r *Run, _ int, args json.RawMessage) (any, error) {
 	return nil, nil
 }
 
-func primHold(r *Run, _ int, _ json.RawMessage) (any, error) {
+func primHold(r *Run, _ int, args json.RawMessage) (any, error) {
+	in, err := decode[struct {
+		StopJobs bool `json:"stopJobs"`
+	}](args)
+	if err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	held := r.release != nil
 	r.mu.Unlock()
 	if held {
 		return nil, errors.New("workflow.exclusive can't be nested")
 	}
-	release, err := r.backend.Hold(r.ctx, r.Sessions())
+	release, err := r.backend.Hold(r.ctx, HoldCall{SessionIDs: r.Sessions(), StopJobs: in.StopJobs})
 	if err != nil {
 		return nil, err
 	}

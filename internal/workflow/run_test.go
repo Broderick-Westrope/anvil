@@ -509,3 +509,26 @@ func TestWorkflowDirIsTheScriptDirectory(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, h.dir, got)
 }
+
+func TestExclusiveRefusesWhileBackgroundJobsRun(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.backend.holdErr = &workflow.JobsRunningError{Jobs: []workflow.Job{{ID: "J1", Command: "npm run dev", SessionID: "invoker"}}}
+	got, err := h.run(t, `function main() {
+  try { workflow.exclusive(() => bash("rm -rf wt")) }
+  catch (e) { return [e instanceof JobsRunning, e.jobs[0].id, e.jobs[0].command] }
+}`, "")
+	require.NoError(t, err)
+	require.Equal(t, []any{true, "J1", "npm run dev"}, got)
+	require.Empty(t, h.backend.bashCmds())
+}
+
+func TestExclusiveCanAskToStopJobs(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	_, err := h.run(t, `function main() { workflow.exclusive(() => 1, {stopJobs: true}) }`, "")
+	require.NoError(t, err)
+	require.Equal(t, []bool{true}, h.backend.stopJobs)
+}

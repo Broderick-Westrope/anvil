@@ -12,7 +12,10 @@
   class Interrupted extends Error {
     constructor(message) { super(message); this.name = "Interrupted"; }
   }
-  const errorTypes = { BashError, SchemaError, Cancelled, Interrupted };
+  class JobsRunning extends Error {
+    constructor(message) { super(message); this.name = "JobsRunning"; }
+  }
+  const errorTypes = { BashError, SchemaError, Cancelled, Interrupted, JobsRunning };
   const native = global.__native;
   delete global.__native;
 
@@ -38,7 +41,7 @@
   const random = () => invoke("random");
 
   Object.assign(global, {
-    BashError, SchemaError, Cancelled, Interrupted,
+    BashError, SchemaError, Cancelled, Interrupted, JobsRunning,
     requires() {},
     now, random,
     bash: (cmd, opts) => invoke("bash", Object.assign({}, opts, { cmd })),
@@ -59,8 +62,8 @@
       tmpdir: () => invoke("workflow.tmpdir"),
       dir: () => invoke("workflow.dir"),
       focus: (s) => { invoke("workflow.focus", { session: s.id }); },
-      exclusive: (fn) => {
-        invoke("workflow.hold");
+      exclusive: (fn, opts) => {
+        invoke("workflow.hold", { stopJobs: !!(opts && opts.stopJobs) });
         try {
           return fn();
         } finally {
