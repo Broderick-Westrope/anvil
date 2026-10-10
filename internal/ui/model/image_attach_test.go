@@ -234,7 +234,7 @@ func TestPasteImageKeyWarnsWithoutVision(t *testing.T) {
 	u.keyMap = DefaultKeyMap()
 	sty := u.com.Styles.Attachments
 	u.attachments = attachments.New(
-		attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove),
+		attachments.NewRenderer(sty),
 		attachments.Keymap{},
 	)
 

@@ -15,14 +15,7 @@ import (
 
 // testAttachments creates an Attachments instance with plain styles for use in tests.
 func testAttachments() *Attachments {
-	r := NewRenderer(
-		lipgloss.NewStyle(),
-		lipgloss.NewStyle(),
-		lipgloss.NewStyle(),
-		lipgloss.NewStyle(),
-		lipgloss.NewStyle(),
-		lipgloss.NewStyle(),
-	)
+	r := NewRenderer(styles.AttachmentStyles{})
 	km := Keymap{
 		DeleteMode: key.NewBinding(key.WithKeys("ctrl+r")),
 		DeleteAll:  key.NewBinding(key.WithKeys("a")),
@@ -150,14 +143,7 @@ func TestUpdate_DeleteDigit_OutOfRange(t *testing.T) {
 
 func newTestRenderer() *Renderer {
 	sty := styles.TokyoNight()
-	return NewRenderer(
-		sty.Attachments.Normal,
-		sty.Attachments.Deleting,
-		sty.Attachments.Image,
-		sty.Attachments.Text,
-		sty.Attachments.Skill,
-		sty.Attachments.Remove,
-	)
+	return NewRenderer(sty.Attachments)
 }
 
 func TestRender_IncludesRemoveButton(t *testing.T) {
@@ -217,8 +203,8 @@ func TestRender_ShowRemoveFalseKeepsGapBetweenChips(t *testing.T) {
 		{FileName: "alpha.txt"},
 		{FileName: "beta.txt"},
 	}
-	bare := lipgloss.Width(r.textStyle.String()+r.normalStyle.Render("alpha.txt")) +
-		lipgloss.Width(r.textStyle.String()+r.normalStyle.Render("beta.txt"))
+	bare := lipgloss.Width(r.styles.Text.String()+r.styles.Normal.Render("alpha.txt")) +
+		lipgloss.Width(r.styles.Text.String()+r.styles.Normal.Render("beta.txt"))
 
 	got := lipgloss.Width(r.Render(atts, nil, false, false, 200))
 	require.Equal(t, bare+2, got,

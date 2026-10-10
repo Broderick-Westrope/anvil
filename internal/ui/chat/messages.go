@@ -402,14 +402,7 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 		if item, ok := NewWorkflowTurnMessageItem(sty, msg); ok {
 			return []MessageItem{item}
 		}
-		r := attachments.NewRenderer(
-			sty.Attachments.Normal,
-			sty.Attachments.Deleting,
-			sty.Attachments.Image,
-			sty.Attachments.Text,
-			sty.Attachments.Skill,
-			sty.Attachments.Remove,
-		)
+		r := attachments.NewRenderer(sty.Attachments)
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:
 		var items []MessageItem
