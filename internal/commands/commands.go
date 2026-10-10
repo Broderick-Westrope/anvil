@@ -341,14 +341,14 @@ func loadCommand(path, prefix string) (CustomCommand, error) {
 // arg "FOO"). Longer names are tried first, so $FOOBAR is never read as
 // $FOO followed by "BAR".
 func SubstituteArgs(content string, args map[string]string, rawArguments string) string {
-	values := make(map[string]string, len(args)+1)
+	values := make(map[string]string)
 	maps.Copy(values, args)
 	values["ARGUMENTS"] = rawArguments
 
 	names := slices.SortedFunc(maps.Keys(values), func(a, b string) int {
 		return cmp.Or(cmp.Compare(len(b), len(a)), strings.Compare(a, b))
 	})
-	pairs := make([]string, 0, len(names)*2)
+	var pairs []string
 	for _, name := range names {
 		pairs = append(pairs, "$"+name, values[name])
 	}
