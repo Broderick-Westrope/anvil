@@ -35,12 +35,15 @@ type workflowWorkspace struct {
 	created  []string
 	runs     []string
 
-	starts   []host.Invocation
-	startErr error
-	responds [][2]string
-	controls []string
-	missing  map[string][]string
-	loadErr  map[string]error
+	starts     []host.Invocation
+	startErr   error
+	responds   [][2]string
+	respondErr error
+	// noSessionID makes CreateSession return a session without an ID.
+	noSessionID bool
+	controls    []string
+	missing     map[string][]string
+	loadErr     map[string]error
 }
 
 func newWorkflowWorkspace() *workflowWorkspace {
@@ -92,6 +95,9 @@ func (w *workflowWorkspace) GetSession(_ context.Context, id string) (session.Se
 
 func (w *workflowWorkspace) CreateSession(_ context.Context, title string) (session.Session, error) {
 	s := session.Session{ID: "new-session", Title: title}
+	if w.noSessionID {
+		return session.Session{Title: title}, nil
+	}
 	w.sessions[s.ID] = s
 	w.created = append(w.created, s.ID)
 	return s, nil
@@ -109,7 +115,7 @@ func (w *workflowWorkspace) WorkflowStart(_ context.Context, inv host.Invocation
 
 func (w *workflowWorkspace) WorkflowRespond(requestID, answer string) error {
 	w.responds = append(w.responds, [2]string{requestID, answer})
-	return nil
+	return w.respondErr
 }
 
 func (w *workflowWorkspace) WorkflowPause(id string) error {
@@ -335,6 +341,78 @@ func TestWorkflowApprovalOpensDialogAndResponds(t *testing.T) {
 	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: "approve"}))
 	require.Equal(t, [][2]string{{"req-1", "approve"}}, f.ws.responds)
 	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("req-1")))
+}
+
+func TestWorkflowRequestReopensWhenItsAnswerFailed(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.respondErr = errors.New("no pending workflow request")
+	f.event(started("demo", "sess-1"))
+	ask := host.Event{Kind: host.EventAsk, RunID: "run-1", RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
+	f.event(ask)
+
+	infos := f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"}))
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeError, infos[0].Type)
+	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")))
+
+	f.event(ask)
+	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")), "the republished request is asked again")
+}
+
+func TestWorkflowAskDialogAbortsWithTheKeymapsAbortKey(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.keyMap.WorkflowAbort = key.NewBinding(key.WithKeys("f2"), key.WithHelp("f2", "abort"))
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{Kind: host.EventAsk, RunID: "run-1", RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"})
+
+	// The dialog opens with a grace period that swallows keys, so the keys
+	// go to it directly.
+	ask := f.u.dialog.Dialog(dialog.WorkflowRequestDialogID("ask-1"))
+	require.Nil(t, ask.HandleMsg(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt}))
+	require.Equal(t, dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowAbort},
+		ask.HandleMsg(tea.KeyPressMsg{Code: tea.KeyF2}))
+}
+
+func TestWorkflowEventOfAnotherRunStartsANewRecord(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]host.Event{
+		"state":    started("demo", "sess-1"),
+		"finished": {Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted},
+	}
+	for name, ev := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			f.event(host.Event{Kind: host.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Step: "first run"})
+
+			// run-1's finish was dropped; the next event is run-2's.
+			ev.RunID = "run-2"
+			f.event(ev)
+			run := f.u.workflows["sess-1"]
+			require.Equal(t, "run-2", run.log.RunID)
+			for _, e := range run.log.Entries {
+				require.NotContains(t, e.Text, "first run")
+			}
+		})
+	}
+}
+
+func TestWorkflowCommandReportsASessionThatWasNotCreated(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.session = nil
+	f.ws.noSessionID = true
+	infos := f.run(f.u.tryExecuteSlashCommand("/demo"))
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeError, infos[0].Type)
+	require.Empty(t, f.ws.starts)
 }
 
 func TestWorkflowAskOpensDialog(t *testing.T) {

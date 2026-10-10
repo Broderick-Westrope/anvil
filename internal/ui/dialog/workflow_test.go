@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -294,6 +295,9 @@ func TestWorkflowApprovalShowsAnOmittedFileBySizeAndHash(t *testing.T) {
 	}
 }
 
+// testAbortKey is the default workflow abort binding.
+var testAbortKey = key.NewBinding(key.WithKeys("alt+x"), key.WithHelp("alt+x", "abort"))
+
 func askEvent(options ...string) host.Event {
 	return host.Event{
 		Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "s1",
@@ -304,7 +308,7 @@ func askEvent(options ...string) host.Event {
 func TestWorkflowAskWithOptions(t *testing.T) {
 	t.Parallel()
 
-	d := NewWorkflowAsk(workflowCommon(), askEvent("left", "right"))
+	d := NewWorkflowAsk(workflowCommon(), askEvent("left", "right"), testAbortKey)
 	out := drawDialog(d, 100, 30)
 	require.Contains(t, out, "Which way?")
 	require.Contains(t, out, "left")
@@ -317,7 +321,7 @@ func TestWorkflowAskWithOptions(t *testing.T) {
 func TestWorkflowAskFreeText(t *testing.T) {
 	t.Parallel()
 
-	d := NewWorkflowAsk(workflowCommon(), askEvent())
+	d := NewWorkflowAsk(workflowCommon(), askEvent(), testAbortKey)
 	d.HandleMsg(press("h"))
 	d.HandleMsg(press("i"))
 	require.Equal(t, ActionWorkflowRespond{RequestID: "ask-1", Answer: "hi"}, d.HandleMsg(press("enter")))
@@ -326,7 +330,7 @@ func TestWorkflowAskFreeText(t *testing.T) {
 func TestWorkflowAskEscKeepsItOpen(t *testing.T) {
 	t.Parallel()
 
-	d := NewWorkflowAsk(workflowCommon(), askEvent("yes"))
+	d := NewWorkflowAsk(workflowCommon(), askEvent("yes"), testAbortKey)
 	require.Nil(t, d.HandleMsg(press("esc")))
 	require.Equal(t, ActionWorkflowControl{SessionID: "s1", Control: WorkflowAbort}, d.HandleMsg(press("alt+x")))
 }
@@ -334,10 +338,10 @@ func TestWorkflowAskEscKeepsItOpen(t *testing.T) {
 func TestWorkflowDialogIDsAreUniquePerRequest(t *testing.T) {
 	t.Parallel()
 
-	a := NewWorkflowAsk(workflowCommon(), askEvent())
+	a := NewWorkflowAsk(workflowCommon(), askEvent(), testAbortKey)
 	ev := askEvent()
 	ev.RequestID = "ask-2"
-	b := NewWorkflowAsk(workflowCommon(), ev)
+	b := NewWorkflowAsk(workflowCommon(), ev, testAbortKey)
 	require.NotEqual(t, a.ID(), b.ID())
 	require.Equal(t, WorkflowRequestDialogID("ask-1"), a.ID())
 	require.Equal(t, WorkflowRequestDialogID("req-1"), NewWorkflowApproval(workflowCommon(), approvalEvent("")).ID())
@@ -432,7 +436,7 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 	withRefs := approvalEvent("")
 	withRefs.Approval.Requires.References = []string{"references/da.md"}
 	withRefs.Approval.Requires.Skills = nil
-	selected := NewWorkflowAsk(workflowCommon(), askEvent("left", "right"))
+	selected := NewWorkflowAsk(workflowCommon(), askEvent("left", "right"), testAbortKey)
 	selected.HandleMsg(press("down"))
 
 	long := approvalEvent("")
@@ -442,12 +446,12 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 	fits := askEvent("yes")
 	// 24 rows leave room for exactly 12 question lines with one option.
 	fits.Question = strings.TrimSuffix(strings.Repeat("question line\n", 12), "\n")
-	scrolled := NewWorkflowAsk(workflowCommon(), longAskEvent("yes", "no"))
+	scrolled := NewWorkflowAsk(workflowCommon(), longAskEvent("yes", "no"), testAbortKey)
 	drawDialog(scrolled, 100, 24)
 	for range 5 {
 		scrolled.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	}
-	longAnswer := NewWorkflowAsk(workflowCommon(), askEvent())
+	longAnswer := NewWorkflowAsk(workflowCommon(), askEvent(), testAbortKey)
 	drawDialog(longAnswer, 100, 20) // Typing happens after the dialog is on screen.
 	for range 120 {
 		longAnswer.HandleMsg(press("w"))
@@ -458,8 +462,8 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 		width, height int
 	}{
 		"approval_long":      {dialog: NewWorkflowApproval(workflowCommon(), long), width: 100, height: 40},
-		"ask_long_question":  {dialog: NewWorkflowAsk(workflowCommon(), longQuestion), width: 100, height: 24},
-		"ask_question_fits":  {dialog: NewWorkflowAsk(workflowCommon(), fits), width: 100, height: 24},
+		"ask_long_question":  {dialog: NewWorkflowAsk(workflowCommon(), longQuestion, testAbortKey), width: 100, height: 24},
+		"ask_question_fits":  {dialog: NewWorkflowAsk(workflowCommon(), fits, testAbortKey), width: 100, height: 24},
 		"ask_long_scrolled":  {dialog: scrolled, width: 100, height: 24},
 		"ask_long_answer":    {dialog: longAnswer, width: 100, height: 20},
 		"approval_first_run": {dialog: NewWorkflowApproval(workflowCommon(), approvalEvent("")), width: 100, height: 30},
@@ -473,8 +477,8 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 			dialog: NewWorkflowApproval(workflowCommon(), bundleEvent(host.FileUnchanged, host.FileChanged)), width: 100, height: 40,
 		},
 		"ask_options":   {dialog: selected, width: 100, height: 20},
-		"ask_free_text": {dialog: NewWorkflowAsk(workflowCommon(), askEvent()), width: 100, height: 20},
-		"ask_narrow":    {dialog: NewWorkflowAsk(workflowCommon(), askEvent("a", "b")), width: 50, height: 12},
+		"ask_free_text": {dialog: NewWorkflowAsk(workflowCommon(), askEvent(), testAbortKey), width: 100, height: 20},
+		"ask_narrow":    {dialog: NewWorkflowAsk(workflowCommon(), askEvent("a", "b"), testAbortKey), width: 50, height: 12},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -509,7 +513,7 @@ func TestWorkflowAskLongQuestionScrolls(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			d := NewWorkflowAsk(workflowCommon(), longAskEvent(tc.options...))
+			d := NewWorkflowAsk(workflowCommon(), longAskEvent(tc.options...), testAbortKey)
 			out := drawDialog(d, 100, 24)
 			require.Contains(t, out, "FIRST")
 			require.NotContains(t, out, "LAST")
@@ -532,7 +536,7 @@ func TestWorkflowAskLongQuestionScrolls(t *testing.T) {
 func TestWorkflowAskScrollsBackUp(t *testing.T) {
 	t.Parallel()
 
-	d := NewWorkflowAsk(workflowCommon(), longAskEvent("yes"))
+	d := NewWorkflowAsk(workflowCommon(), longAskEvent("yes"), testAbortKey)
 	drawDialog(d, 100, 24)
 	for range 3 {
 		d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown})
@@ -552,13 +556,13 @@ func TestWorkflowAskScrollsBackUp(t *testing.T) {
 func TestWorkflowAskScrollKeysDontTypeOrChoose(t *testing.T) {
 	t.Parallel()
 
-	d := NewWorkflowAsk(workflowCommon(), longAskEvent())
+	d := NewWorkflowAsk(workflowCommon(), longAskEvent(), testAbortKey)
 	drawDialog(d, 100, 24)
 	require.Nil(t, d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown}))
 	require.Nil(t, d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}))
 	require.Equal(t, ActionWorkflowRespond{RequestID: "ask-1", Answer: ""}, d.HandleMsg(press("enter")))
 
-	opts := NewWorkflowAsk(workflowCommon(), longAskEvent("a", "b"))
+	opts := NewWorkflowAsk(workflowCommon(), longAskEvent("a", "b"), testAbortKey)
 	drawDialog(opts, 100, 24)
 	opts.HandleMsg(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
 	require.Equal(t, ActionWorkflowRespond{RequestID: "ask-1", Answer: "a"}, opts.HandleMsg(press("enter")))
@@ -567,14 +571,14 @@ func TestWorkflowAskScrollKeysDontTypeOrChoose(t *testing.T) {
 func TestWorkflowAskShortQuestionHasNoScrollHint(t *testing.T) {
 	t.Parallel()
 
-	out := drawDialog(NewWorkflowAsk(workflowCommon(), askEvent("yes")), 100, 24)
+	out := drawDialog(NewWorkflowAsk(workflowCommon(), askEvent("yes"), testAbortKey), 100, 24)
 	require.NotContains(t, out, "pgup/pgdn")
 }
 
 func TestWorkflowAskCursorSitsInTheInput(t *testing.T) {
 	t.Parallel()
 
-	d := NewWorkflowAsk(workflowCommon(), askEvent())
+	d := NewWorkflowAsk(workflowCommon(), askEvent(), testAbortKey)
 	d.HandleMsg(press("h"))
 	out, cur := drawDialogANSI(d, 100, 20)
 	require.NotNil(t, cur)
@@ -588,7 +592,7 @@ func TestWorkflowAskCursorSitsInTheInput(t *testing.T) {
 func TestWorkflowAskOptionsWrapAround(t *testing.T) {
 	t.Parallel()
 
-	d := NewWorkflowAsk(workflowCommon(), askEvent("a", "b", "c"))
+	d := NewWorkflowAsk(workflowCommon(), askEvent("a", "b", "c"), testAbortKey)
 	require.Nil(t, d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyUp}))
 	require.Equal(t, ActionWorkflowRespond{RequestID: "ask-1", Answer: "c"}, d.HandleMsg(press("enter")))
 	d.HandleMsg(press("down"))
@@ -599,7 +603,7 @@ func TestWorkflowAskOptionsWrapAround(t *testing.T) {
 func TestWorkflowAskTypingReturnsNoAction(t *testing.T) {
 	t.Parallel()
 
-	d := NewWorkflowAsk(workflowCommon(), askEvent())
+	d := NewWorkflowAsk(workflowCommon(), askEvent(), testAbortKey)
 	require.Nil(t, d.HandleMsg(press("h")))
 }
 
@@ -610,7 +614,7 @@ func TestWorkflowAskQuestionThatExactlyFitsDoesNotScroll(t *testing.T) {
 	// dialog's content is 76 columns wide.
 	ev := askEvent("yes")
 	ev.Question = strings.Repeat("line\n", 11) + strings.Repeat("x", 73) + "END"
-	out := drawDialog(NewWorkflowAsk(workflowCommon(), ev), 100, 24)
+	out := drawDialog(NewWorkflowAsk(workflowCommon(), ev, testAbortKey), 100, 24)
 	require.Contains(t, out, strings.Repeat("x", 73)+"END", "the full-width line isn't wrapped for a scrollbar")
 	require.NotContains(t, out, "pgup/pgdn")
 }

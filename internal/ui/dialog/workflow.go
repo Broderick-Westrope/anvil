@@ -296,7 +296,7 @@ func (d *WorkflowApproval) FullHelp() [][]key.Binding {
 // WorkflowAsk shows a question from a workflow's ask(): a list of options
 // to pick from, or a free-text answer when there are none. Esc doesn't
 // answer, since the script would carry on with an answer you never gave;
-// alt+x aborts the run instead.
+// the workflow abort key aborts the run instead.
 type WorkflowAsk struct {
 	com      *common.Common
 	ev       host.Event
@@ -318,8 +318,9 @@ type WorkflowAsk struct {
 
 var _ Dialog = (*WorkflowAsk)(nil)
 
-// NewWorkflowAsk creates the dialog for an EventAsk.
-func NewWorkflowAsk(com *common.Common, ev host.Event) *WorkflowAsk {
+// NewWorkflowAsk creates the dialog for an EventAsk. abort is the
+// keymap's workflow abort binding.
+func NewWorkflowAsk(com *common.Common, ev host.Event, abort key.Binding) *WorkflowAsk {
 	d := &WorkflowAsk{com: com, ev: ev, question: viewport.New()}
 	d.help = help.New()
 	d.help.Styles = com.Styles.DialogHelpStyles()
@@ -331,7 +332,7 @@ func NewWorkflowAsk(com *common.Common, ev host.Event) *WorkflowAsk {
 	d.keyMap.Up = key.NewBinding(key.WithKeys("up", "ctrl+p"), key.WithHelp("↑/↓", "choose"))
 	d.keyMap.Down = key.NewBinding(key.WithKeys("down", "ctrl+n"))
 	d.keyMap.Submit = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "answer"))
-	d.keyMap.Abort = key.NewBinding(key.WithKeys("alt+x"), key.WithHelp("alt+x", "abort workflow"))
+	d.keyMap.Abort = key.NewBinding(key.WithKeys(abort.Keys()...), key.WithHelp(abort.Help().Key, "abort workflow"))
 	d.keyMap.Close = key.NewBinding(key.WithKeys("esc", "alt+esc"))
 	// Plain arrows choose an option and letters type an answer, so the
 	// question scrolls with keys neither uses.

@@ -170,6 +170,9 @@ func (m *UI) startWorkflowCommand(name string, cmd commands.CustomCommand, raw s
 	if err != nil {
 		return util.ReportError(err)
 	}
+	if !m.hasSession() {
+		return tea.Batch(loadCmd, util.ReportError(errors.New("workflow needs a session")))
+	}
 	inv := host.Invocation{
 		CommandID:   cmd.ID,
 		CommandName: name,
@@ -199,13 +202,15 @@ func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
 		m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
 		req := m.workflowRequests[action.RequestID]
 		delete(m.workflowRequests, action.RequestID)
+		// A request whose answer didn't arrive stays unanswered, so its
+		// republish opens it again rather than leaving the run waiting.
+		if err := m.com.Workspace.WorkflowRespond(action.RequestID, action.Answer); err != nil {
+			return util.ReportError(err)
+		}
 		if m.workflowAnswered == nil {
 			m.workflowAnswered = map[string]bool{}
 		}
 		m.workflowAnswered[action.RequestID] = true
-		if err := m.com.Workspace.WorkflowRespond(action.RequestID, action.Answer); err != nil {
-			return util.ReportError(err)
-		}
 		if req.Kind == host.EventAsk {
 			return m.keepWorkflowAnswer(req, action.Answer)
 		}
@@ -366,7 +371,7 @@ func (m *UI) handleWorkflowEvent(ev host.Event) tea.Cmd {
 		if run := m.ensureWorkflowRun(ev); run != nil {
 			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ev.RequestID, Question: ev.Question})
 		}
-		m.dialog.OpenDialogWithGrace(dialog.NewWorkflowAsk(m.com, ev))
+		m.dialog.OpenDialogWithGrace(dialog.NewWorkflowAsk(m.com, ev, m.keyMap.WorkflowAbort))
 		return m.sendNotification(notification.Notification{
 			Title:   "Anvil is waiting...",
 			Message: fmt.Sprintf("Workflow /%s has a question", ev.Command),
@@ -465,11 +470,11 @@ func (m *UI) keepWorkflowAnswer(ask host.Event, answer string) tea.Cmd {
 }
 
 // ensureWorkflowRun returns the run ev belongs to, starting one when the
-// session has none or ev starts a new run after a finished one. It
-// returns nil for a late event of a finished run.
+// session has none or ev belongs to another run. It returns nil for a late
+// event of a finished run.
 func (m *UI) ensureWorkflowRun(ev host.Event) *workflowRun {
 	run := m.workflows[ev.SessionID]
-	if run != nil && run.log.Finished {
+	if run != nil && (run.log.Finished || otherWorkflowRun(run, ev)) {
 		if ev.RunID == "" || ev.RunID == run.log.RunID {
 			return nil
 		}
@@ -485,6 +490,13 @@ func (m *UI) ensureWorkflowRun(ev host.Event) *workflowRun {
 		run.log.RunID = ev.RunID
 	}
 	return run
+}
+
+// otherWorkflowRun reports whether ev belongs to a run other than run. A
+// session runs one workflow at a time, so this means run ended, perhaps
+// with its finish dropped, and must not absorb the next run's events.
+func otherWorkflowRun(run *workflowRun, ev host.Event) bool {
+	return ev.RunID != "" && run.log.RunID != "" && ev.RunID != run.log.RunID
 }
 
 // newWorkflowRun starts tracking a run in ev's session, replacing any
@@ -557,7 +569,7 @@ func (m *UI) handleWorkflowFocus(msg workflowFocusMsg) tea.Cmd {
 // the session runs another workflow.
 func (m *UI) finishWorkflow(ev host.Event) tea.Cmd {
 	run := m.workflows[ev.SessionID]
-	if run == nil || run.log.Finished {
+	if run == nil || run.log.Finished || otherWorkflowRun(run, ev) {
 		run = m.newWorkflowRun(ev)
 	}
 	if ev.Command != "" {
