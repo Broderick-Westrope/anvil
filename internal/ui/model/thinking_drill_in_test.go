@@ -41,7 +41,7 @@ func TestChatClickOnThinkingFooterDrillsIn(t *testing.T) {
 
 	require.True(t, handled)
 	require.NotNil(t, cmd)
-	require.Equal(t, util.ThinkingDrillInMsg{Source: item, Label: "Thinking"}, cmd())
+	require.Equal(t, util.ThinkingDrillInMsg{Source: item}, cmd())
 }
 
 func TestThinkingDrillInMsgOpensThinkingView(t *testing.T) {
@@ -62,7 +62,7 @@ func TestThinkingDrillInMsgOpensThinkingView(t *testing.T) {
 			item := newThinkingItem(u, "full reasoning text", tc.done)
 			u.chat.SetMessages(item)
 
-			u.Update(util.ThinkingDrillInMsg{Source: item, Label: "Thinking"})
+			u.Update(util.ThinkingDrillInMsg{Source: item})
 
 			require.Len(t, u.drillStack, 1)
 			entry := u.drillStack[0]
@@ -99,7 +99,7 @@ func TestSubagentThinkingDrillInKeepsStreaming(t *testing.T) {
 	first := childThinkingEvent("first step", false).Payload
 	sub := chat.NewAssistantMessageItem(u.com.Styles, &first)
 	u.drillStack[0].chat.SetMessages(sub)
-	u.Update(util.ThinkingDrillInMsg{Source: sub, Label: "Thinking"})
+	u.Update(util.ThinkingDrillInMsg{Source: sub})
 	require.Len(t, u.drillStack, 2)
 
 	u.Update(childThinkingEvent("first step\n\nsecond step", false))
@@ -117,7 +117,7 @@ func TestThinkingDrillInFollowsAfterContentStarts(t *testing.T) {
 	first := childThinkingEvent("step", false).Payload
 	sub := chat.NewAssistantMessageItem(u.com.Styles, &first)
 	u.drillStack[0].chat.SetMessages(sub)
-	u.Update(util.ThinkingDrillInMsg{Source: sub, Label: "Thinking"})
+	u.Update(util.ThinkingDrillInMsg{Source: sub})
 	detail := u.drillStack[1].chat
 
 	long := strings.TrimSpace(strings.Repeat("more reasoning\n\n", 60)) + "\n\nlatest step"
@@ -138,7 +138,7 @@ func TestThinkingDrillInSurvivesSubagentLoad(t *testing.T) {
 	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: childThinkingEvent("first step", false).Payload})
 	live, ok := u.drillStack[0].chat.MessageItem("sub-a").(*chat.AssistantMessageItem)
 	require.True(t, ok)
-	u.Update(util.ThinkingDrillInMsg{Source: live, Label: "Thinking"})
+	u.Update(util.ThinkingDrillInMsg{Source: live})
 
 	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{childThinkingEvent("first step", false).Payload}})
 	u.Update(childThinkingEvent("first step\n\nsecond step", false))
@@ -156,7 +156,7 @@ func TestSubagentLoadKeepsLiveMessagesMissingFromItsSnapshot(t *testing.T) {
 	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: childThinkingEvent("first step", false).Payload})
 	live, ok := u.drillStack[0].chat.MessageItem("sub-a").(*chat.AssistantMessageItem)
 	require.True(t, ok)
-	u.Update(util.ThinkingDrillInMsg{Source: live, Label: "Thinking"})
+	u.Update(util.ThinkingDrillInMsg{Source: live})
 
 	// The snapshot was read before sub-a was created.
 	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{{
@@ -179,7 +179,7 @@ func TestSubagentLoadKeepsNewerLiveMessages(t *testing.T) {
 	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: childThinkingEvent("first step", false).Payload})
 	live, ok := u.drillStack[0].chat.MessageItem("sub-a").(*chat.AssistantMessageItem)
 	require.True(t, ok)
-	u.Update(util.ThinkingDrillInMsg{Source: live, Label: "Thinking"})
+	u.Update(util.ThinkingDrillInMsg{Source: live})
 	u.Update(childThinkingEvent("first step\n\nfinal step", false))
 
 	// A stale snapshot lands after the last update, with no event after it.
@@ -195,13 +195,14 @@ func TestThinkingDrillInOnRootDoesNotShowSubagentStats(t *testing.T) {
 	u, _ := newJobsTestUI(nil)
 	item := newThinkingItem(u, "reasoning", true)
 	u.chat.SetMessages(item)
-	u.Update(util.ThinkingDrillInMsg{Source: item, Label: "Thinking"})
+	u.Update(util.ThinkingDrillInMsg{Source: item})
 
 	u.updateSidebarScrollState()
 
 	require.NotContains(t, ansi.Strip(u.sidebarContent), "turns ·",
 		"a thinking drill-in on the root session isn't a subagent session")
-	require.Equal(t, "s1", u.viewedSessionID())
+	_, viewingSubagent := u.viewedSessionEntry()
+	require.False(t, viewingSubagent)
 }
 
 func TestThinkingDrillInOnSubagentKeepsItsSession(t *testing.T) {
@@ -212,9 +213,11 @@ func TestThinkingDrillInOnSubagentKeepsItsSession(t *testing.T) {
 	first := childThinkingEvent("step", false).Payload
 	sub := chat.NewAssistantMessageItem(u.com.Styles, &first)
 	u.drillStack[0].chat.SetMessages(sub)
-	u.Update(util.ThinkingDrillInMsg{Source: sub, Label: "Thinking"})
+	u.Update(util.ThinkingDrillInMsg{Source: sub})
 
-	require.Equal(t, "child", u.viewedSessionID())
+	entry, ok := u.viewedSessionEntry()
+	require.True(t, ok)
+	require.Equal(t, "child", entry.sessionID)
 }
 
 // fakeAgentItem is a minimal agent item that drills into sessionID.
@@ -278,7 +281,7 @@ func TestThinkingDrillInMsgIgnoresOtherSources(t *testing.T) {
 
 	u, _ := newJobsTestUI(nil)
 
-	u.Update(util.ThinkingDrillInMsg{Source: "not an item", Label: "Thinking"})
+	u.Update(util.ThinkingDrillInMsg{Source: "not an item"})
 
 	require.Empty(t, u.drillStack)
 }

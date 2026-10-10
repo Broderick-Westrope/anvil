@@ -96,7 +96,7 @@ func TestAssistantMessageItemDrillsIntoThinking(t *testing.T) {
 			handled, cmd := item.HandleKeyEvent(key)
 
 			require.True(t, handled)
-			require.Equal(t, util.ThinkingDrillInMsg{Source: item, Label: "Thinking"}, cmd())
+			require.Equal(t, util.ThinkingDrillInMsg{Source: item}, cmd())
 		})
 	}
 }

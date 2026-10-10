@@ -658,18 +658,6 @@ func (m *UI) viewedSession() *session.Session {
 	return m.session
 }
 
-// viewedSessionID returns the ID of the session currently being viewed:
-// the subagent session from viewedSessionEntry, or the root session.
-func (m *UI) viewedSessionID() string {
-	if entry, ok := m.viewedSessionEntry(); ok {
-		return entry.sessionID
-	}
-	if m.session != nil {
-		return m.session.ID
-	}
-	return ""
-}
-
 // isDrilledIn returns true when the user is viewing a subagent session rather
 // than the root session.
 func (m *UI) isDrilledIn() bool {
@@ -1453,7 +1441,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newChat.SelectLast()
 		m.drillStack = append(m.drillStack, drillInEntry{
 			chat:  newChat,
-			label: msg.Label,
+			label: "Thinking",
 		})
 		m.textarea.Blur()
 		m.focus = uiFocusMain

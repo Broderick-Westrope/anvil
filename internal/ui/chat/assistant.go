@@ -483,7 +483,7 @@ func (a *AssistantMessageItem) renderSpinning() string {
 	var label string
 	if a.message.MessageType == message.MessageTypeCompaction {
 		label = "Summarizing"
-	} else if a.message.ReasoningContent().Thinking != "" && !a.thinkingFinished() {
+	} else if strings.TrimSpace(a.message.ReasoningContent().Thinking) != "" && !a.thinkingFinished() {
 		label = "Thinking"
 	}
 	if label != a.spinnerLabel {
@@ -571,17 +571,13 @@ func (a *AssistantMessageItem) clearCache() {
 	a.streamingContent.Reset()
 }
 
-// HandleMouseClick implements MouseClickable. It signals (via a true return)
-// that the click lies on the thinking box so the caller can invoke
-// [AssistantMessageItem.ToggleExpanded] through the generic [Expandable]
-// path. Toggling here directly would double-toggle because the caller always
-// runs the generic path after a handled click.
+// HandleMouseClick implements MouseClickable. It reports whether a left
+// click landed on the "Thought for" line, which the caller turns into a
+// thinking drill-in. The rest of the message isn't clickable.
 func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) bool {
 	if btn != ansi.MouseLeft {
 		return false
 	}
-	// Only the thinking box is clickable; other regions of the assistant
-	// message should not trigger expansion.
 	return y < a.thinkingFooterHeight
 }
 
@@ -592,7 +588,7 @@ func (a *AssistantMessageItem) ThinkingDrillIn() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		return util.ThinkingDrillInMsg{Source: a, Label: "Thinking"}
+		return util.ThinkingDrillInMsg{Source: a}
 	}
 }
 

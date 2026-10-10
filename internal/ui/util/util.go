@@ -88,7 +88,6 @@ type (
 	// thinking text.
 	ThinkingDrillInMsg struct {
 		Source any // *chat.AssistantMessageItem
-		Label  string
 	}
 )
 

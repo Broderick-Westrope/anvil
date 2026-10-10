@@ -67,13 +67,6 @@ type ToolDrillInHandler interface {
 	ToolDrillInLabel() string
 }
 
-// ThinkingDrillInHandler is implemented by items whose thinking text can
-// be opened in a drill-in view. ThinkingDrillIn returns nil when there is
-// no thinking to show.
-type ThinkingDrillInHandler interface {
-	ThinkingDrillIn() tea.Cmd
-}
-
 // MessageItem represents a [message.Message] item that can be displayed in the
 // UI and be part of a [list.List] identifiable by a unique ID.
 type MessageItem interface {
