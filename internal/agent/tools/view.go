@@ -20,6 +20,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/filepathext"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
+	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -325,8 +326,7 @@ func ensureReadAllowed(
 		return fantasy.ToolResponse{}, false, fmt.Errorf("error resolving working directory: %w", err)
 	}
 
-	relPath, err := filepath.Rel(absWorkingDir, absPath)
-	isOutsideWorkDir := err != nil || strings.HasPrefix(relPath, "..")
+	isOutsideWorkDir := !fsext.HasPrefix(absPath, absWorkingDir)
 	isSkillFile := isInSkillsPath(absPath, skillsPaths)
 
 	sessionID := GetSessionFromContext(ctx)
@@ -335,7 +335,7 @@ func ensureReadAllowed(
 	}
 
 	if isOutsideWorkDir && !isSkillFile {
-		granted, permReqErr := permissions.Request(ctx,
+		return requestPermission(ctx, permissions,
 			permission.CreatePermissionRequest{
 				SessionID:   sessionID,
 				Path:        absPath,
@@ -347,12 +347,6 @@ func ensureReadAllowed(
 				Input:       absPath,
 			},
 		)
-		if permReqErr != nil {
-			return fantasy.ToolResponse{}, false, permReqErr
-		}
-		if !granted.Granted {
-			return NewPermissionDeniedResponse(granted.Reason), false, nil
-		}
 	}
 
 	return fantasy.ToolResponse{}, true, nil
