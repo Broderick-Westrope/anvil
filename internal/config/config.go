@@ -881,6 +881,26 @@ func (c *Config) IsConfigured() bool {
 	return len(c.EnabledProviders()) > 0
 }
 
+// ValidateReasoningEffort checks that effort is a reasoning level the
+// given provider/model supports. It returns an error listing the accepted
+// levels when the model cannot use it.
+func (c *Config) ValidateReasoningEffort(provider, modelID, effort string) error {
+	model := c.GetModel(provider, modelID)
+	if model == nil {
+		return fmt.Errorf("model %q not found for provider %q", modelID, provider)
+	}
+	if len(model.ReasoningLevels) == 0 {
+		return fmt.Errorf("model %q does not support reasoning effort", modelID)
+	}
+	if slices.Contains(model.ReasoningLevels, effort) {
+		return nil
+	}
+	return fmt.Errorf(
+		"model %q does not support reasoning effort %q, accepted values: %s",
+		modelID, effort, strings.Join(model.ReasoningLevels, ", "),
+	)
+}
+
 func (c *Config) GetModel(provider, model string) *catwalk.Model {
 	if providerConfig, ok := c.Providers.Get(provider); ok {
 		for _, m := range providerConfig.Models {
