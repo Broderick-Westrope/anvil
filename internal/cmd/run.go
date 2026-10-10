@@ -7,9 +7,16 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 
+	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
+	"github.com/Broderick-Westrope/anvil/internal/ui/spinner"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
+	"github.com/charmbracelet/x/exp/charmtone"
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
 
@@ -95,7 +102,29 @@ anvil run --continue "Follow up on your last response"
 			sessionID = sess.ID
 		}
 
-		return appWs.App().RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, quiet || verbose, sessionID, useLast)
+		stopSpinner := func() {}
+		if !quiet && !verbose && term.IsTerminal(os.Stderr.Fd()) {
+			t := styles.TokyoNight()
+			// Without the background check the label is unreadable in
+			// light terminals.
+			hasDarkBG := true
+			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
+				hasDarkBG = lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
+			}
+			s := spinner.New(ctx, cancel, anim.Settings{
+				Size:        10,
+				Label:       "Generating",
+				LabelColor:  lipgloss.LightDark(hasDarkBG)(charmtone.Pepper, t.WorkingLabelColor),
+				GradColorA:  t.WorkingGradFromColor,
+				GradColorB:  t.WorkingGradToColor,
+				CycleColors: true,
+			})
+			s.Start()
+			stopSpinner = sync.OnceFunc(s.Stop)
+		}
+		defer stopSpinner()
+
+		return appWs.App().RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, stopSpinner, sessionID, useLast)
 	},
 }
 

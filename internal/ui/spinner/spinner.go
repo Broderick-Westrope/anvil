@@ -1,4 +1,6 @@
-package format
+// Package spinner shows an animated spinner on stderr while a
+// non-interactive run waits for its first output.
+package spinner
 
 import (
 	"context"
@@ -41,8 +43,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// NewSpinner creates a new spinner with the given message
-func NewSpinner(ctx context.Context, cancel context.CancelFunc, animSettings anim.Settings) *Spinner {
+// New creates a spinner. Pressing ctrl+c or esc while it runs calls cancel.
+func New(ctx context.Context, cancel context.CancelFunc, animSettings anim.Settings) *Spinner {
 	m := model{
 		anim:   anim.New(animSettings),
 		cancel: cancel,
