@@ -60,7 +60,7 @@ adaptations) goes in the **Plan** section at the bottom.
 
 | ID | Commits | Summary | Recommendation | Decision |
 |---|---|---|---|---|
-| D1 | `75962c48` | Fix odd indentation in code blocks. | Take | pending |
+| D1 | `75962c48` | Fix odd indentation in code blocks. | Take | **done** (`1e6d1b12`). Clean pick. `TestFormatterPreservesIndentationAfterComments` fails with `renderLines` reverted to `s.Render`. Tests pass for `xchroma`, `chat` and `common`. No live-TUI check: the test drives the real Chroma formatter. |
 | D2 | `460a877f` | Keep first-line indentation in tool call previews. | Take | pending |
 | D3 | `7b38a40e` | Keep single line breaks in submitted user messages. | Take | pending |
 | D4 | `8f63ee59`, `a0fe47b6` | Wrapped messages counted as newlines; return to the start of the line. | Take | pending |
