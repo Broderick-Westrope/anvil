@@ -948,17 +948,22 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateAgentItemStats(msg.Payload.SessionID, msg)
 		}
 
-		// Route to the drilled-in Chat when the user is viewing a subagent.
+		// Route to every drilled-in subagent Chat for this session, not just
+		// the visible one: a thinking or tool drill-in on top of a subagent
+		// reads from that subagent's items, so they must keep updating.
 		// Fall through afterwards so handleChildSessionMessage still updates
 		// the collapsed view on the root chat.
-		if m.isDrilledIn() && msg.Payload.SessionID == m.viewedSessionID() {
+		for _, entry := range m.drillStack {
+			if entry.sessionID == "" || entry.sessionID != msg.Payload.SessionID {
+				continue
+			}
 			switch msg.Type {
 			case pubsub.CreatedEvent:
-				cmds = append(cmds, m.appendSessionMessageToChat(m.activeChat(), msg.Payload))
+				cmds = append(cmds, m.appendSessionMessageToChat(entry.chat, msg.Payload))
 			case pubsub.UpdatedEvent:
-				cmds = append(cmds, m.updateSessionMessageToChat(m.activeChat(), msg.Payload))
+				cmds = append(cmds, m.updateSessionMessageToChat(entry.chat, msg.Payload))
 			case pubsub.DeletedEvent:
-				m.activeChat().RemoveMessage(msg.Payload.ID)
+				entry.chat.RemoveMessage(msg.Payload.ID)
 			}
 		}
 

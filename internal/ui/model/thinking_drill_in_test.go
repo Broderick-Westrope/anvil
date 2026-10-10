@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
@@ -67,3 +68,38 @@ func TestThinkingDrillInMsgOpensThinkingView(t *testing.T) {
 		})
 	}
 }
+
+func childThinkingEvent(thinking string, withContent bool) pubsub.Event[message.Message] {
+	parts := []message.ContentPart{message.ReasoningContent{Thinking: thinking, StartedAt: 1_700_000_000}}
+	if withContent {
+		parts = append(parts, message.TextContent{Text: "partial answer"})
+	}
+	return pubsub.Event[message.Message]{
+		Type: pubsub.UpdatedEvent,
+		Payload: message.Message{
+			ID:        "sub-a",
+			Role:      message.Assistant,
+			SessionID: "child",
+			Parts:     parts,
+		},
+	}
+}
+
+func TestSubagentThinkingDrillInKeepsStreaming(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.updateLayoutAndSize()
+	u.Update(util.DrillInMsg{SessionID: "child", Label: "Explorer"})
+	first := childThinkingEvent("first step", false).Payload
+	sub := chat.NewAssistantMessageItem(u.com.Styles, &first)
+	u.drillStack[0].chat.SetMessages(sub)
+	u.Update(util.ThinkingDrillInMsg{Source: sub, Label: "Thinking"})
+	require.Len(t, u.drillStack, 2)
+
+	u.Update(childThinkingEvent("first step\n\nsecond step", false))
+
+	require.Contains(t, ansi.Strip(u.drillStack[1].chat.ItemAt(0).Render(80)), "second step",
+		"the subagent's thinking must keep streaming into the drill-in")
+}
+
