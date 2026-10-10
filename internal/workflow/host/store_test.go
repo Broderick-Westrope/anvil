@@ -220,3 +220,46 @@ func TestStore_ApprovalIsPerScriptPath(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 }
+
+func TestStore_MarkInterrupted(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		owner      string
+		heartbeat  time.Duration // How long ago the owner last heartbeat; 0 means no instance row.
+		finish     bool
+		wantStatus host.Status
+	}{
+		"own run without instance row": {owner: testInstance, wantStatus: host.StatusRunning},
+		"live instance":                {owner: "live", heartbeat: time.Second, wantStatus: host.StatusRunning},
+		"stale instance":               {owner: "stale", heartbeat: 10 * time.Minute, wantStatus: host.StatusInterrupted},
+		"missing instance":             {owner: "gone", wantStatus: host.StatusInterrupted},
+		"finished run of missing instance": {
+			owner: "gone", finish: true, wantStatus: host.StatusCompleted,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, q, dataDir := newTestStore(t)
+			if tc.heartbeat > 0 {
+				hb := time.Now().Add(-tc.heartbeat).UnixMilli()
+				require.NoError(t, q.UpsertAnvilInstance(t.Context(), db.UpsertAnvilInstanceParams{
+					ID: tc.owner, Pid: 1, StartedAt: hb, HeartbeatAt: hb,
+				}))
+			}
+			owner := host.NewStore(q, dataDir, tc.owner)
+			require.NoError(t, owner.StartRun(t.Context(), testRun("run-1", time.Now())))
+			if tc.finish {
+				require.NoError(t, owner.FinishRun(t.Context(), "run-1", host.StatusCompleted, nil, ""))
+			}
+
+			require.NoError(t, s.MarkInterrupted(t.Context()))
+
+			got, ok, err := s.GetRun(t.Context(), "run-1")
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, tc.wantStatus, got.Status)
+			require.Equal(t, tc.wantStatus == host.StatusRunning, got.FinishedAt.IsZero())
+		})
+	}
+}

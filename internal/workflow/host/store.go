@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
 
@@ -236,6 +237,39 @@ func (s *Store) Approve(ctx context.Context, scriptPath, hash, source, origin st
 		ApprovedAt: s.now().UnixMilli(),
 	}); err != nil {
 		return fmt.Errorf("approve workflow %s: %w", scriptPath, err)
+	}
+	return nil
+}
+
+// MarkInterrupted marks running runs as interrupted when the Anvil
+// instance that owns them is no longer live: its heartbeat is stale or
+// its instance row is gone. Runs of this instance are left alone.
+func (s *Store) MarkInterrupted(ctx context.Context) error {
+	instances, err := s.q.ListAnvilInstances(ctx)
+	if err != nil {
+		return fmt.Errorf("list anvil instances: %w", err)
+	}
+	now := s.now()
+	live := map[string]bool{s.instanceID: true}
+	for _, inst := range instances {
+		if now.Sub(time.UnixMilli(inst.HeartbeatAt)) < jobstore.InstanceLiveWindow {
+			live[inst.ID] = true
+		}
+	}
+	running, err := s.q.ListRunningWorkflowRuns(ctx)
+	if err != nil {
+		return fmt.Errorf("list running workflow runs: %w", err)
+	}
+	for _, run := range running {
+		if live[run.InstanceID] {
+			continue
+		}
+		if err := s.q.MarkWorkflowRunInterrupted(ctx, db.MarkWorkflowRunInterruptedParams{
+			FinishedAt: sql.NullInt64{Int64: now.UnixMilli(), Valid: true},
+			ID:         run.ID,
+		}); err != nil {
+			return fmt.Errorf("mark workflow run %s interrupted: %w", run.ID, err)
+		}
 	}
 	return nil
 }
