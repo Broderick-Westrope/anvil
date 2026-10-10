@@ -450,21 +450,10 @@ type discoveryResult struct {
 	err    error
 }
 
-// needsModelDiscovery reports whether models should be discovered for an
-// enabled custom provider with an endpoint: when discover_models is
-// explicitly true, or when the models list is empty (auto-trigger, unless
-// opted out).
-func needsModelDiscovery(pc ProviderConfig) bool {
-	if pc.Disable || pc.BaseURL == "" {
-		return false
-	}
-	wantsDiscovery := pc.AutoDiscoverModels != nil && *pc.AutoDiscoverModels
-	autoTrigger := len(pc.Models) == 0 && (pc.AutoDiscoverModels == nil || *pc.AutoDiscoverModels)
-	return wantsDiscovery || autoTrigger
-}
-
 // discoverCustomProviderModels discovers models concurrently for the
-// custom providers that need it, keyed by provider ID.
+// custom providers that need it, keyed by provider ID. A provider needs
+// discovery when discover_models is explicitly true, or when the models
+// list is empty (auto-trigger, unless opted out).
 func (c *Config) discoverCustomProviderModels(ctx context.Context, knownProviderNames map[string]bool, resolver VariableResolver) map[string]*discoveryResult {
 	discoveryResults := make(map[string]*discoveryResult)
 	var mu sync.Mutex
@@ -473,32 +462,41 @@ func (c *Config) discoverCustomProviderModels(ctx context.Context, knownProvider
 	discoverCtx, discoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer discoverCancel()
 	for id, pc := range c.Providers.Seq2() {
-		if !knownProviderNames[id] && needsModelDiscovery(pc) {
-			providerID := cmp.Or(pc.ID, id)
-			cfg := discover.Config{
-				ID:             providerID,
-				BaseURL:        pc.BaseURL,
-				APIKey:         pc.APIKey,
-				ExtraHeaders:   pc.ExtraHeaders,
-				ExistingModels: pc.Models,
-			}
-			providerType := cmp.Or(pc.Type, catwalk.TypeOpenAICompat)
-			wg.Go(func() {
-				models, err := discover.DiscoverModels(discoverCtx, cfg, resolver)
-				if err == nil && len(models) > 0 {
-					if enricher := discover.GetEnricher(string(providerType)); enricher != nil {
-						var enrichErr error
-						models, enrichErr = enricher.EnrichModels(discoverCtx, cfg, resolver, models)
-						if enrichErr != nil {
-							slog.Debug("Model enrichment failed", "provider", id, "error", enrichErr)
-						}
+		if knownProviderNames[id] {
+			continue
+		}
+		if pc.Disable || pc.BaseURL == "" {
+			continue
+		}
+		wantsDiscovery := pc.AutoDiscoverModels != nil && *pc.AutoDiscoverModels
+		autoTrigger := len(pc.Models) == 0 && (pc.AutoDiscoverModels == nil || *pc.AutoDiscoverModels)
+		if !wantsDiscovery && !autoTrigger {
+			continue
+		}
+		providerID := cmp.Or(pc.ID, id)
+		cfg := discover.Config{
+			ID:             providerID,
+			BaseURL:        pc.BaseURL,
+			APIKey:         pc.APIKey,
+			ExtraHeaders:   pc.ExtraHeaders,
+			ExistingModels: pc.Models,
+		}
+		providerType := cmp.Or(pc.Type, catwalk.TypeOpenAICompat)
+		wg.Go(func() {
+			models, err := discover.DiscoverModels(discoverCtx, cfg, resolver)
+			if err == nil && len(models) > 0 {
+				if enricher := discover.GetEnricher(string(providerType)); enricher != nil {
+					var enrichErr error
+					models, enrichErr = enricher.EnrichModels(discoverCtx, cfg, resolver, models)
+					if enrichErr != nil {
+						slog.Debug("Model enrichment failed", "provider", id, "error", enrichErr)
 					}
 				}
-				mu.Lock()
-				discoveryResults[id] = &discoveryResult{models: models, err: err}
-				mu.Unlock()
-			})
-		}
+			}
+			mu.Lock()
+			discoveryResults[id] = &discoveryResult{models: models, err: err}
+			mu.Unlock()
+		})
 	}
 	wg.Wait()
 	return discoveryResults
