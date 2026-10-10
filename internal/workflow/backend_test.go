@@ -118,8 +118,9 @@ func (f *fakeBackend) Warn(msg string) {
 func (f *fakeBackend) Hold(_ context.Context, call workflow.HoldCall) (func(), error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.holdErr != nil {
-		return nil, f.holdErr
+	if err := f.holdErr; err != nil {
+		f.holdErr = nil
+		return nil, err
 	}
 	f.holds = append(f.holds, slices.Clone(call.SessionIDs))
 	f.stopJobs = append(f.stopJobs, call.StopJobs)
