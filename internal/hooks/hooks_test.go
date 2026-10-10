@@ -587,6 +587,23 @@ func TestAggregationUpdatedInput(t *testing.T) {
 		)
 	})
 
+	t.Run("new keys keep the patch's order", func(t *testing.T) {
+		t.Parallel()
+		agg := aggregate([]HookResult{
+			{Decision: DecisionAllow, UpdatedInput: `{"zeta":1,"alpha":2,"command":"new","mid":3}`},
+		}, `{"command":"ls"}`)
+		require.Equal(t, `{"command":"new","zeta":1,"alpha":2,"mid":3}`, agg.UpdatedInput)
+	})
+
+	t.Run("patch with an unsettable key is ignored", func(t *testing.T) {
+		t.Parallel()
+		agg := aggregate([]HookResult{
+			{Decision: DecisionAllow, UpdatedInput: `{"":1}`},
+			{Decision: DecisionAllow, UpdatedInput: `{"command":"good"}`},
+		}, `{"command":"orig"}`)
+		require.Equal(t, `{"command":"good"}`, agg.UpdatedInput)
+	})
+
 	t.Run("deny still reports merged input (caller ignores it)", func(t *testing.T) {
 		t.Parallel()
 		agg := aggregate([]HookResult{

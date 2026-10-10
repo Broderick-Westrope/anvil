@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -174,17 +175,24 @@ func shallowMerge(base, patch string) (string, error) {
 	if _, ok := baseAny.(map[string]any); !ok {
 		return "", errNotObject("tool_input")
 	}
-	var patchMap map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(patch), &patchMap); err != nil {
+	if !gjson.Valid(patch) || !gjson.Parse(patch).IsObject() {
 		return "", errNotObject("updated_input")
 	}
+	// Apply keys in the patch's own order, so new keys land in the same
+	// order every time.
 	out := base
-	for k, v := range patchMap {
-		next, err := sjson.SetRawBytes([]byte(out), k, v)
+	var setErr error
+	gjson.Parse(patch).ForEach(func(key, value gjson.Result) bool {
+		next, err := sjson.SetRawBytes([]byte(out), key.String(), []byte(value.Raw))
 		if err != nil {
-			return "", err
+			setErr = err
+			return false
 		}
 		out = string(next)
+		return true
+	})
+	if setErr != nil {
+		return "", setErr
 	}
 	return out, nil
 }
