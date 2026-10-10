@@ -19,6 +19,10 @@ func TestStripBashDisplayPrefix(t *testing.T) {
 		{"keeps a bare cd", "cd /repo", "/repo", "cd /repo"},
 		{"keeps a cd that is not at the start", "ls && cd /repo && ls", "/repo", "ls && cd /repo && ls"},
 		{"no working dir leaves the command alone", "cd  && ls", "", "cd  && ls"},
+		{"strips a double-quoted path with spaces", `cd "/my repo" && ls`, "/my repo", "ls"},
+		{"strips a single-quoted path with spaces", `cd '/my repo' && ls`, "/my repo", "ls"},
+		{"keeps a quoted cd into another dir", `cd "/other" && ls`, "/repo", `cd "/other" && ls`},
+		{"keeps mismatched quotes", `cd "/repo' && ls`, "/repo", `cd "/repo' && ls`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
