@@ -134,8 +134,6 @@ func TestAssistantSectionCache_ThinkingChangeDoesNotInvalidateContent(t *testing
 
 	require.Equal(t, first.content, second.content,
 		"thinking streaming must not invalidate the content section render")
-	require.NotEqual(t, first.thinking, second.thinking,
-		"thinking text changed; thinking section must have re-rendered")
 }
 
 // TestAssistantSectionCache_HashKeyDiscrimination asserts that two
@@ -149,11 +147,6 @@ func TestAssistantSectionCache_HashKeyDiscrimination(t *testing.T) {
 	itemA := NewAssistantMessageItem(&sty, msgA).(*AssistantMessageItem)
 	itemB := NewAssistantMessageItem(&sty, msgB).(*AssistantMessageItem)
 
-	thinkSrcA, _ := itemA.thinkingKey()
-	thinkSrcB, _ := itemB.thinkingKey()
-	require.NotEqual(t, thinkSrcA, thinkSrcB,
-		"distinct thinking text must produce distinct FNV-64 source hashes")
-
 	contentSrcA, _ := itemA.contentKey()
 	contentSrcB, _ := itemB.contentKey()
 	require.NotEqual(t, contentSrcA, contentSrcB,
@@ -162,9 +155,7 @@ func TestAssistantSectionCache_HashKeyDiscrimination(t *testing.T) {
 	// Identical source text on a fresh item must produce the same
 	// hashes — keying invariant for cache hits.
 	itemAClone := NewAssistantMessageItem(&sty, thinkingMessage("a3", "thinking A", "content A")).(*AssistantMessageItem)
-	thinkSrcAClone, _ := itemAClone.thinkingKey()
 	contentSrcAClone, _ := itemAClone.contentKey()
-	require.Equal(t, thinkSrcA, thinkSrcAClone)
 	require.Equal(t, contentSrcA, contentSrcAClone)
 }
 
@@ -191,7 +182,8 @@ func TestAssistantSectionCache_CloneRoundTrip(t *testing.T) {
 }
 
 // TestAssistantSectionCache_ResizeInvalidatesAll asserts that a width
-// change forces a re-render of every section.
+// change forces a re-render of every width-dependent section. The
+// thinking footer doesn't depend on width.
 func TestAssistantSectionCache_ResizeInvalidatesAll(t *testing.T) {
 	sty := styles.TokyoNight()
 	msg := errorMessage("a5", "boom", strings.Repeat("detail line\n", 5))
@@ -215,7 +207,6 @@ func TestAssistantSectionCache_ResizeInvalidatesAll(t *testing.T) {
 	_ = item.RawRender(117)
 	second := snapshot(item)
 
-	require.NotEqual(t, first.thinking, second.thinking, "resize must re-render the thinking section")
 	require.NotEqual(t, first.content, second.content, "resize must re-render the content section")
 	require.NotEqual(t, first.errSec, second.errSec, "resize must re-render the error section")
 }
@@ -443,45 +434,28 @@ func TestAssistantSectionCache_PrefixCacheInvalidatesOnCompositionOnlyChange(t *
 		"cached output must equal a fresh render of the same final state")
 }
 
-// TestAssistantSectionCache_ThinkingBoxHeightSurvivesCacheHit guards
-// click-detection geometry across thinking-section cache hits. The
-// thinking box height feeds HandleMouseClick; it is recomputed
-// inside renderThinking and must be restored from
-// assistantSection.aux when the thinking cache hits. We render once
-// to capture the original height, trigger a content-only change so
-// thinkingKey stays identical (thinking text, expanded flag, and
-// footer state all unchanged), render again, and assert the
-// thinkingBoxHeight field is preserved.
-func TestAssistantSectionCache_ThinkingBoxHeightSurvivesCacheHit(t *testing.T) {
+// TestAssistantSectionCache_ThinkingFooterHeightSurvivesCacheHit guards
+// click-detection geometry across thinking-section cache hits. The footer
+// height feeds HandleMouseClick and must be restored from
+// assistantSection.aux when the thinking cache hits.
+func TestAssistantSectionCache_ThinkingFooterHeightSurvivesCacheHit(t *testing.T) {
 	sty := styles.TokyoNight()
 	const width = 71
 
-	thinking := strings.Join([]string{
-		"Considering the request.",
-		"Looking at the relevant files.",
-		"Drafting a plan.",
-		"Verifying constraints.",
-	}, "\n")
-	msg := thinkingMessage("hbox", thinking, "initial answer")
+	msg := thinkingMessage("hbox", "Considering the request.", "initial answer")
 	item := NewAssistantMessageItem(&sty, msg).(*AssistantMessageItem)
-	item.thinkingViewMode = thinkingFullExpanded
 
 	_ = item.RawRender(width)
-	originalHeight := item.thinkingBoxHeight
-	require.Greater(t, originalHeight, 0,
-		"thinking box height must be populated after first render")
+	originalHeight := item.thinkingFooterHeight
+	require.Positive(t, originalHeight,
+		"thinking footer height must be populated after first render")
 
-	// Stomp the field so a stale read (cache hit that fails to
-	// restore aux) is detectable. Then trigger a content-only
-	// change: thinkingKey is byte-identical between renders, so
-	// the thinking section cache must hit and restore the
-	// preserved height via assistantSection.aux.
-	item.thinkingBoxHeight = -1
-	updated := thinkingMessage("hbox", thinking, "initial answer with more streamed text")
-	item.SetMessage(updated)
+	// Stomp the field so a stale read is detectable, then trigger a
+	// content-only change so the thinking section cache hits.
+	item.thinkingFooterHeight = -1
+	item.SetMessage(thinkingMessage("hbox", "Considering the request.", "initial answer with more streamed text"))
 	_ = item.RawRender(width)
 
-	require.Equal(t, originalHeight, item.thinkingBoxHeight,
-		"thinkingBoxHeight must be preserved across thinking section cache hits "+
-			"so HandleMouseClick keeps targeting the right rows")
+	require.Equal(t, originalHeight, item.thinkingFooterHeight,
+		"thinkingFooterHeight must be preserved across thinking section cache hits")
 }
