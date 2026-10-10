@@ -116,7 +116,8 @@ func Analyze(records []Record, rules []config.PermissionRule, opts Options) (all
 type tally struct {
 	opts   Options
 	groups map[string]*group
-	// allowPatterns caches allowPattern by input.
+	// allowPatterns memoises allowPattern, which tries every command
+	// family, because the same segment recurs across many records.
 	allowPatterns map[string]allowProposal
 }
 
