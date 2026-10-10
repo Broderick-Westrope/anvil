@@ -114,9 +114,6 @@ linters:
       - path: internal/agent/agentic_fetch_tool\.go
         text: 'func `(\(\*coordinator\)\.agenticFetchTool)`'
         linters: [gocognit]
-      - path: internal/agent/lazy_mcp\.go
-        text: 'func `(deriveLazyMCPState)`'
-        linters: [gocognit]
       - path: internal/agent/task_tool\.go
         text: 'func `(\(\*coordinator\)\.taskTool)`'
         linters: [gocognit]
