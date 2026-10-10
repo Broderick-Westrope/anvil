@@ -180,6 +180,8 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 			// the user's hooks N times per delegated turn.
 
 			agent := NewSessionAgent(SessionAgentOptions{
+				admission:            c.admission,
+				IsSubAgent:           true,
 				LargeModel:           fetchModel,
 				SmallModel:           smallModel,
 				ProviderConfig:       fetchProviderCfg,

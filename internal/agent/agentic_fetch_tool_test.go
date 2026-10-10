@@ -97,6 +97,10 @@ func TestAgenticFetchModelSelection(t *testing.T) {
 			}
 			requests := make(chan request, 1)
 			var count atomic.Int32
+			// The fetch sub-agent must run under the coordinator's shared
+			// admission, so CancelAll reaches it.
+			var shared atomic.Pointer[admission]
+			var sharedBusy atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/messages" || r.Method != http.MethodPost {
 					t.Errorf("Unexpected provider request: %s %s", r.Method, r.URL)
@@ -115,6 +119,7 @@ func TestAgenticFetchModelSelection(t *testing.T) {
 					return
 				}
 				requests <- body
+				sharedBusy.Store(shared.Load().busy(""))
 				if tt.oauthMode != "" && r.Header.Get("Authorization") != "Bearer dummy-oauth-token" {
 					t.Errorf("Unexpected authorization: %q", r.Header.Get("Authorization"))
 				}
@@ -156,6 +161,8 @@ func TestAgenticFetchModelSelection(t *testing.T) {
 				},
 				Tools: config.Tools{AgenticFetch: config.ToolAgenticFetch{Model: tt.model}},
 			})
+			c.admission = newAdmission(t.Context())
+			shared.Store(c.admission)
 			tool, err := c.agenticFetchTool(ctx, server.Client())
 			require.NoError(t, err)
 			result, err := tool.Run(ctx, fantasy.ToolCall{ID: "fetch_call", Name: tools.AgenticFetchToolName, Input: `{"prompt":"Find the model selection sentinel."}`})
@@ -178,6 +185,8 @@ func TestAgenticFetchModelSelection(t *testing.T) {
 			}
 			systemText := strings.Join(systemTexts, "\n")
 			userText := strings.Join(userTexts, "\n")
+			require.True(t, sharedBusy.Load(), "fetch sub-agent must run under the shared admission")
+			require.NotContains(t, userText, "todo list", "fetch sub-agent has no todos tool")
 			require.Equal(t, 1, strings.Count(systemText+userText, tt.wantPrefix))
 			require.NotContains(t, systemText+userText, tt.forbiddenPrefix)
 			if tt.oauthMode == SystemModeB {
@@ -384,9 +393,8 @@ func TestAgenticFetchAnthropicOAuth(t *testing.T) {
 							require.Len(t, systemTexts, 2)
 							require.Contains(t, userText, prefix)
 							require.Contains(t, userText, "You are a web content analysis agent.")
-							require.Len(t, userTexts, 3)
-							require.Contains(t, userTexts[1], "<system_reminder>")
-							require.Contains(t, userTexts[2], userPrompt)
+							require.Len(t, userTexts, 2)
+							require.Contains(t, userTexts[1], userPrompt)
 							require.Equal(t, anthropicoauth.BuildBillingValue(strings.Join(userTexts[:2], "")), systemTexts[0])
 						} else {
 							require.Equal(t, prefix, systemTexts[2])
