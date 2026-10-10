@@ -259,27 +259,13 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 			// Determine working directory
 			execWorkingDir := cmp.Or(params.WorkingDir, workingDir)
 
-			isSafeReadOnly := false
-			cmdLower := strings.ToLower(params.Command)
-
-			if !containsCommandChaining(params.Command) {
-				for _, safe := range safeCommands {
-					if strings.HasPrefix(cmdLower, safe) {
-						if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
-							isSafeReadOnly = true
-							break
-						}
-					}
-				}
-			}
-
 			sessionID := GetSessionFromContext(ctx)
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for executing shell command")
 			}
 			rootSessionEnv := []string{"ANVIL_ROOT_SESSION_ID=" + cmp.Or(GetRootSessionFromContext(ctx), sessionID)}
-			if !isSafeReadOnly {
-				p, err := permissions.Request(ctx,
+			if !isSafeReadOnly(params.Command) {
+				denied, granted, err := requestPermission(ctx, permissions,
 					permission.CreatePermissionRequest{
 						SessionID:     sessionID,
 						Path:          execWorkingDir,
@@ -292,77 +278,12 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 						InputSegments: segment.Split(params.Command),
 					},
 				)
-				if err != nil {
-					return fantasy.ToolResponse{}, err
-				}
-				if !p.Granted {
-					return NewPermissionDeniedResponse(p.Reason), nil
+				if !granted {
+					return denied, err
 				}
 			}
 
-			// If explicitly requested as background, start immediately with detached context
-			if params.RunInBackground {
-				startTime := time.Now()
-				bgManager := shell.GetBackgroundShellManager()
-				bgManager.Cleanup()
-				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description, rootSessionEnv...)
-				if err != nil {
-					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
-				}
-
-				// Wait a short time to detect fast failures (blocked commands, syntax errors, etc.)
-				time.Sleep(1 * time.Second)
-				stdout, stderr, done, execErr := bgShell.GetOutput()
-
-				if done {
-					// Command failed or completed very quickly
-					bgManager.Remove(bgShell.ID())
-
-					interrupted := shell.IsInterrupt(execErr)
-					exitCode := shell.ExitCode(execErr)
-					if exitCode == 0 && !interrupted && execErr != nil {
-						return fantasy.ToolResponse{}, fmt.Errorf("error executing command: %w", execErr)
-					}
-
-					stdout = formatOutput(stdout, stderr, execErr)
-
-					metadata := BashResponseMetadata{
-						StartTime:        startTime.UnixMilli(),
-						EndTime:          time.Now().UnixMilli(),
-						Output:           stdout,
-						Description:      params.Description,
-						Background:       params.RunInBackground,
-						WorkingDirectory: bgShell.WorkingDir,
-					}
-					if stdout == "" {
-						return fantasy.WithResponseMetadata(fantasy.NewTextResponse(BashNoOutput), metadata), nil
-					}
-					stdout += fmt.Sprintf("\n\n<cwd>%s</cwd>", normalizeWorkingDir(bgShell.WorkingDir))
-					return fantasy.WithResponseMetadata(fantasy.NewTextResponse(stdout), metadata), nil
-				}
-
-				// Still running after fast-failure check - return as background job
-				jobID, err := bgManager.Publish(ctx, bgShell.ID(), shell.PublishOptions{SessionID: sessionID, Origin: shell.OriginExplicit})
-				if err != nil {
-					_ = bgManager.Kill(bgShell.ID())
-					return fantasy.ToolResponse{}, fmt.Errorf("publishing background job: %w", err)
-				}
-				metadata := BashResponseMetadata{
-					StartTime:        startTime.UnixMilli(),
-					EndTime:          time.Now().UnixMilli(),
-					Description:      params.Description,
-					WorkingDirectory: bgShell.WorkingDir,
-					Background:       true,
-					ShellID:          jobID,
-				}
-				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", jobID)
-				response += fallbackJobWarning(jobID)
-				response += otherRunningJobsNote(bgManager, sessionID, jobID)
-				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
-			}
-
-			// Start synchronous execution with auto-background support
+			launch := newBashLaunch(params)
 			startTime := time.Now()
 
 			// Start with detached context so it can survive if moved to background
@@ -370,42 +291,19 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 			bgManager.Cleanup()
 			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description, rootSessionEnv...)
 			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
+				return fantasy.ToolResponse{}, fmt.Errorf("%s: %w", launch.startErr, err)
 			}
 
-			// Wait for either completion, auto-background threshold, or context cancellation
-			ticker := time.NewTicker(100 * time.Millisecond)
-			defer ticker.Stop()
-
-			autoBackgroundAfter := cmp.Or(params.AutoBackgroundAfter, DefaultAutoBackgroundAfter)
-			autoBackgroundThreshold := time.Duration(autoBackgroundAfter) * time.Second
-			timeout := time.After(autoBackgroundThreshold)
-
-			var stdout, stderr string
-			var done bool
-			var execErr error
-
-		waitLoop:
-			for {
-				select {
-				case <-ticker.C:
-					stdout, stderr, done, execErr = bgShell.GetOutput()
-					if done {
-						break waitLoop
-					}
-				case <-timeout:
-					stdout, stderr, done, execErr = bgShell.GetOutput()
-					break waitLoop
-				case <-ctx.Done():
-					// Incoming context was cancelled before we moved to background
-					// Kill the shell and return error
-					bgManager.Kill(bgShell.ID())
-					return fantasy.ToolResponse{}, ctx.Err()
-				}
+			if err := launch.wait(ctx, bgShell); err != nil {
+				// Incoming context was cancelled before we moved to background
+				// Kill the shell and return error
+				bgManager.Kill(bgShell.ID())
+				return fantasy.ToolResponse{}, err
 			}
+			stdout, stderr, done, execErr := bgShell.GetOutput()
 
 			if done {
-				// Command completed within threshold - return synchronously
+				// Command finished while we waited - return its output directly
 				// Remove from background manager since we're returning directly
 				// Don't call Kill() as it cancels the context and corrupts the exit code
 				bgManager.Remove(bgShell.ID())
@@ -434,7 +332,7 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 			}
 
 			// Still running - keep as background job
-			jobID, err := bgManager.Publish(ctx, bgShell.ID(), shell.PublishOptions{SessionID: sessionID, Origin: shell.OriginAuto})
+			jobID, err := bgManager.Publish(ctx, bgShell.ID(), shell.PublishOptions{SessionID: sessionID, Origin: launch.origin})
 			if err != nil {
 				_ = bgManager.Kill(bgShell.ID())
 				return fantasy.ToolResponse{}, fmt.Errorf("publishing background job: %w", err)
@@ -447,11 +345,92 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				Background:       true,
 				ShellID:          jobID,
 			}
-			response := formatAutoBackgroundResponse(jobID, time.Since(startTime), joinOutput(stdout, stderr))
+			response := launch.handover(jobID, time.Since(startTime), stdout, stderr)
 			response += fallbackJobWarning(jobID)
 			response += otherRunningJobsNote(bgManager, sessionID, jobID)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		})
+}
+
+// isSafeReadOnly reports whether command is a single read-only command
+// that runs without asking for permission.
+func isSafeReadOnly(command string) bool {
+	if containsCommandChaining(command) {
+		return false
+	}
+	cmdLower := strings.ToLower(command)
+	for _, safe := range safeCommands {
+		if strings.HasPrefix(cmdLower, safe) {
+			if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bashLaunch is how a bash call waits on its command before handing it
+// over as a job. An explicit background request waits briefly to catch
+// fast failures; a foreground command waits up to its auto-background
+// threshold. Both return the output directly if the command finished.
+type bashLaunch struct {
+	origin   shell.JobOrigin
+	startErr string
+	// wait returns once the call should stop waiting, or with ctx's
+	// error if the call was cancelled first.
+	wait func(ctx context.Context, bgShell *shell.BackgroundShell) error
+	// handover renders the response for a command still running after
+	// wait, which is now the job jobID.
+	handover func(jobID string, elapsed time.Duration, stdout, stderr string) string
+}
+
+func newBashLaunch(params BashParams) bashLaunch {
+	if params.RunInBackground {
+		return bashLaunch{
+			origin:   shell.OriginExplicit,
+			startErr: "error starting background shell",
+			wait: func(context.Context, *shell.BackgroundShell) error {
+				// Wait a short time to detect fast failures (blocked commands, syntax errors, etc.)
+				time.Sleep(1 * time.Second)
+				return nil
+			},
+			handover: func(jobID string, _ time.Duration, _, _ string) string {
+				return fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", jobID)
+			},
+		}
+	}
+	autoBackgroundAfter := cmp.Or(params.AutoBackgroundAfter, DefaultAutoBackgroundAfter)
+	autoBackgroundThreshold := time.Duration(autoBackgroundAfter) * time.Second
+	return bashLaunch{
+		origin:   shell.OriginAuto,
+		startErr: "error starting shell",
+		wait: func(ctx context.Context, bgShell *shell.BackgroundShell) error {
+			return waitForAutoBackground(ctx, bgShell, autoBackgroundThreshold)
+		},
+		handover: func(jobID string, elapsed time.Duration, stdout, stderr string) string {
+			return formatAutoBackgroundResponse(jobID, elapsed, joinOutput(stdout, stderr))
+		},
+	}
+}
+
+// waitForAutoBackground waits for either completion, the auto-background
+// threshold, or context cancellation.
+func waitForAutoBackground(ctx context.Context, bgShell *shell.BackgroundShell, threshold time.Duration) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(threshold)
+	for {
+		select {
+		case <-ticker.C:
+			if bgShell.IsDone() {
+				return nil
+			}
+		case <-timeout:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // formatAutoBackgroundResponse renders the response for a command moved

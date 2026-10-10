@@ -60,9 +60,9 @@ A user-defined shell command in `anvil.json` that runs before a tool call and ca
 
 ## Job
 
-A long-running shell command moved to the background, with output the agent can read later.
+A long-running shell command moved to the background, with output the agent can read later. Its **origin** says how it got there: **explicit** when the agent asked for `run_in_background`, **auto** when a foreground command was still running at its auto-background threshold.
 
-- **Code:** `internal/shell/background.go`, persisted by `internal/jobstore`
+- **Code:** `internal/shell/background.go`, persisted by `internal/jobstore`; origins are `shell.JobOrigin`, and `bashLaunch` (`internal/agent/tools/bash.go`) holds how the bash tool waits for each before the handover
 - **Not:** task. A task is a subagent run.
 
 ## Known Provider
