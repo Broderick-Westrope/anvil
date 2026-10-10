@@ -329,16 +329,16 @@ func sweepArtifacts(root string) error {
 	for _, file := range files {
 		sweep.temporaryFile(file)
 	}
-	return errors.Join(sweep.errors...)
+	return errors.Join(sweep.failures...)
 }
 
 // artifactSweep is one pass of [sweepArtifacts]. Every lock file is visited
 // before any temporary file, so active names each owner that may still be
 // running by the time temporary files are judged.
 type artifactSweep struct {
-	root   string
-	active map[string]bool
-	errors []error
+	root     string
+	active   map[string]bool
+	failures []error
 }
 
 // lockFile removes file when it is a lock nobody holds for a record that is
@@ -356,13 +356,13 @@ func (sweep *artifactSweep) lockFile(file os.DirEntry) {
 	}
 	if err != nil {
 		sweep.active[owner] = true
-		sweep.errors = append(sweep.errors, err)
+		sweep.failures = append(sweep.failures, err)
 		return
 	}
 	release()
 	if _, err := os.Stat(filepath.Join(sweep.root, owner+".json")); errors.Is(err, os.ErrNotExist) {
 		if err := removeRecord(path); err != nil {
-			sweep.errors = append(sweep.errors, err)
+			sweep.failures = append(sweep.failures, err)
 		}
 	}
 }
@@ -385,7 +385,7 @@ func (sweep *artifactSweep) temporaryFile(file os.DirEntry) {
 	if legacy {
 		info, err := file.Info()
 		if err != nil {
-			sweep.errors = append(sweep.errors, err)
+			sweep.failures = append(sweep.failures, err)
 			return
 		}
 		if len(sweep.active) > 0 || info.ModTime().After(time.Now().Add(-24*time.Hour)) {
@@ -393,6 +393,6 @@ func (sweep *artifactSweep) temporaryFile(file os.DirEntry) {
 		}
 	}
 	if err := removeRecord(filepath.Join(sweep.root, file.Name())); err != nil {
-		sweep.errors = append(sweep.errors, err)
+		sweep.failures = append(sweep.failures, err)
 	}
 }
