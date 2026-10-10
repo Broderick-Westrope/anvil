@@ -446,6 +446,37 @@ func TestPauseHoldsNextPrimitiveUntilResume(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
+func TestPauseInsideExclusiveStillReleasesTheHold(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	run := h.newRun(t, `function main() { workflow.exclusive(() => bash("one")); bash("two") }`)
+	ran := make(chan string, 2)
+	release := make(chan struct{})
+	h.backend.bashFn = func(_ context.Context, call workflow.BashCall) (workflow.BashResult, error) {
+		ran <- call.Cmd
+		if call.Cmd == "one" {
+			<-release
+		}
+		return workflow.BashResult{}, nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := run.Execute(t.Context(), workflow.Input{})
+		done <- err
+	}()
+	require.Equal(t, "one", <-ran)
+	run.Pause()
+	close(release)
+	require.Eventually(t, func() bool { return h.backend.releases() == 1 }, 5*time.Second, time.Millisecond,
+		"a paused run kept its sessions held")
+	require.Contains(t, h.recorder.primitives(workflow.PhaseCompleted), "workflow.release")
+	require.Empty(t, h.backend.bashCmds()[1:], "bash ran while paused")
+	run.Resume()
+	require.Equal(t, "two", <-ran)
+	require.NoError(t, <-done)
+}
+
 func TestAbortCancelsInFlightWork(t *testing.T) {
 	t.Parallel()
 

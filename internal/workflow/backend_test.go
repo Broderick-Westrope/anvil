@@ -45,6 +45,12 @@ func (f *fakeBackend) bashCmds() []string {
 	return f.bashed
 }
 
+func (f *fakeBackend) releases() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.released
+}
+
 func (f *fakeBackend) HasSkill(name string) bool { return slices.Contains(f.skills, name) }
 func (f *fakeBackend) HasAgent(name string) bool { return slices.Contains(f.agents, name) }
 

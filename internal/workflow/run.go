@@ -232,8 +232,12 @@ func (r *Run) native(name, args string) string {
 	if !ok {
 		return encodeEnvelope(nil, fmt.Errorf("unknown primitive %q", name), false)
 	}
-	if err := r.waitUnpaused(); err != nil {
-		return encodeEnvelope(nil, err, r.aborted.Load())
+	// Releasing a hold never waits behind pause: a run paused inside
+	// workflow.exclusive would otherwise keep its sessions held.
+	if name != "workflow.release" {
+		if err := r.waitUnpaused(); err != nil {
+			return encodeEnvelope(nil, err, r.aborted.Load())
+		}
 	}
 	value, err := r.call(r.ctx, 0, 0, name, json.RawMessage(args), func(seq int) (any, error) {
 		return prim(r, seq, json.RawMessage(args))
