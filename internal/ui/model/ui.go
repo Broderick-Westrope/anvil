@@ -1500,10 +1500,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Thinking and tool drill-ins render items that live in another chat,
-	// so message updates never scroll them. Keep the visible chat pinned
-	// to the bottom after any message event while it follows.
-	if _, ok := msg.(pubsub.Event[message.Message]); ok && m.activeChat().Follow() {
+	// A thinking drill-in renders an item that lives in another chat, so
+	// message updates never scroll it. Keep a following drill-in pinned to
+	// the bottom after each message event. Root and subagent chats scroll
+	// themselves when their own items change.
+	if _, ok := msg.(pubsub.Event[message.Message]); ok && m.isDrilledIn() && m.activeChat().Follow() {
 		m.activeChat().ScrollToBottom()
 	}
 
@@ -2150,20 +2151,33 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 	}
 }
 
-// mergeLiveItems replaces each loaded assistant item with the one c already
-// holds for the same message ID, and appends items in c the snapshot lacks.
-// Events reach c from the moment of the drill-in, so its assistant items
-// are never older than a snapshot read after that, and keeping them
-// preserves the identity that thinking drill-ins point at. Other loaded
-// items win: a live tool item can be created by an assistant update before
-// it has seen a result the snapshot already holds.
+// missesLoadedResult reports whether live is a tool item without a result
+// that loaded has.
+func missesLoadedResult(live, loaded chat.MessageItem) bool {
+	liveTool, ok := live.(chat.ToolMessageItem)
+	if !ok {
+		return false
+	}
+	loadedTool, ok := loaded.(chat.ToolMessageItem)
+	return ok && loadedTool.HasResult() && !liveTool.HasResult()
+}
+
+// mergeLiveItems replaces each loaded item with the one c already holds
+// for the same message ID, and appends items in c the snapshot lacks.
+// Events reach c from the moment of the drill-in, so its items are never
+// older than a snapshot read after that, and keeping them preserves the
+// identity that thinking and tool drill-ins point at. The one exception is
+// a live tool item without a result when the loaded one has it: an
+// assistant update can create the tool item after its result was saved.
 func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
 	ids := make(map[string]struct{}, len(loaded))
 	for k, item := range loaded {
 		ids[item.ID()] = struct{}{}
-		if live, ok := c.MessageItem(item.ID()).(*chat.AssistantMessageItem); ok {
-			loaded[k] = live
+		live := c.MessageItem(item.ID())
+		if live == nil || missesLoadedResult(live, item) {
+			continue
 		}
+		loaded[k] = live
 	}
 	for _, item := range c.MessageItems() {
 		if _, ok := ids[item.ID()]; !ok {

@@ -327,7 +327,7 @@ func TestChildEventsReachOnlyTheirSubagentChat(t *testing.T) {
 	require.NotNil(t, child.MessageItem("sub-a"))
 }
 
-func TestMessageEventsRepinAFollowingChat(t *testing.T) {
+func TestMessageEventsRepinAFollowingDrillIn(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -335,7 +335,7 @@ func TestMessageEventsRepinAFollowingChat(t *testing.T) {
 		follow     bool
 		wantBottom bool
 	}{
-		"message event while following":   {msg: childThinkingEvent("step", false), follow: true, wantBottom: true},
+		"message event while following":  {msg: childThinkingEvent("step", false), follow: true, wantBottom: true},
 		"message event while scrolled up": {msg: childThinkingEvent("step", false), follow: false},
 		"other message while following":   {msg: util.InfoMsg{Msg: "hi"}, follow: true},
 	}
@@ -344,21 +344,42 @@ func TestMessageEventsRepinAFollowingChat(t *testing.T) {
 			t.Parallel()
 
 			u, _ := newJobsTestUI(nil)
-			u.updateLayoutAndSize()
 			long := strings.TrimSpace(strings.Repeat("line\n\n", 200))
-			u.chat.SetMessages(chat.NewAssistantMessageItem(u.com.Styles, &message.Message{
-				ID: "a", Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: long}},
-			}))
-			u.chat.ScrollToTop()
-			u.chat.SetFollow(tc.follow)
+			item := chat.NewAssistantMessageItem(u.com.Styles, &message.Message{
+				ID: "a", Role: message.Assistant, Parts: []message.ContentPart{
+					message.ReasoningContent{Thinking: long, StartedAt: 1_700_000_000, FinishedAt: 1_700_000_002},
+				},
+			})
+			u.chat.SetMessages(item)
+			u.Update(util.ThinkingDrillInMsg{Source: item})
+			detail := u.drillStack[0].chat
+			detail.ScrollToTop()
+			detail.SetFollow(tc.follow)
 
 			u.Update(tc.msg)
 
-			require.Equal(t, tc.wantBottom, u.chat.AtBottom())
+			require.Equal(t, tc.wantBottom, detail.AtBottom())
 		})
 	}
 }
 
+func TestMessageEventsLeaveTheRootChatToItsOwnScrolling(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.updateLayoutAndSize()
+	long := strings.TrimSpace(strings.Repeat("line\n\n", 200))
+	u.chat.SetMessages(chat.NewAssistantMessageItem(u.com.Styles, &message.Message{
+		ID: "a", Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: long}},
+	}))
+	u.chat.ScrollToTop()
+	u.chat.SetFollow(true)
+
+	// A child-session event doesn't touch the root chat's items.
+	u.Update(childThinkingEvent("step", false))
+
+	require.False(t, u.chat.AtBottom())
+}
 func TestPermissionNotificationReachesSubagentUnderADrillIn(t *testing.T) {
 	t.Parallel()
 
@@ -368,7 +389,7 @@ func TestPermissionNotificationReachesSubagentUnderADrillIn(t *testing.T) {
 	sub.SetMessages(tool)
 	u.drillStack = []drillInEntry{{sessionID: "child", chat: sub}, {chat: NewChat(u.com)}}
 
-	u.handlePermissionNotification(permission.PermissionNotification{ToolCallID: "tc1"})
+	u.Update(pubsub.Event[permission.PermissionNotification]{Payload: permission.PermissionNotification{ToolCallID: "tc1"}})
 
 	require.Equal(t, chat.ToolStatusAwaitingPermission, tool.Status())
 }
@@ -394,4 +415,26 @@ func TestSubagentLoadKeepsSnapshotToolResults(t *testing.T) {
 	tool, ok := u.drillStack[0].chat.MessageItem("tc1").(chat.ToolMessageItem)
 	require.True(t, ok)
 	require.True(t, tool.HasResult(), "the snapshot's tool result must not be lost to a live item")
+}
+
+func TestSubagentLoadKeepsLiveToolItems(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
+	call := message.ToolCall{ID: "tc1", Name: "bash", Input: "{}", Finished: true}
+	assistant := message.Message{ID: "sub-a", Role: message.Assistant, SessionID: "child", Parts: []message.ContentPart{call}}
+	result := message.Message{ID: "res", Role: message.Tool, SessionID: "child", Parts: []message.ContentPart{
+		message.ToolResult{ToolCallID: "tc1", Name: "bash", Content: "done"},
+	}}
+	// The tool and its result both arrive live, after the snapshot was read.
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.UpdatedEvent, Payload: assistant})
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: result})
+	live := u.drillStack[0].chat.MessageItem("tc1")
+	require.True(t, live.(chat.ToolMessageItem).HasResult())
+
+	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{assistant}})
+
+	require.Same(t, live, u.drillStack[0].chat.MessageItem("tc1"),
+		"a live tool item that has its result must survive a snapshot without it")
 }
