@@ -88,6 +88,8 @@ type Coordinator interface {
 	// If the session is busy, the turn queues behind the work in progress;
 	// messages queued after it run once it finishes.
 	RunTurn(ctx context.Context, sessionID, prompt string) (*fantasy.AgentResult, error)
+	// RunWorkflowAgent runs a fresh, isolated subagent for a workflow.
+	RunWorkflowAgent(ctx context.Context, call WorkflowAgentCall) (WorkflowAgentOutput, error)
 	// RunWake starts a turn for an idle session to deliver its pending
 	// job events. See SessionAgent.RunWake.
 	RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error)
@@ -1938,57 +1940,14 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (r
 		params.SessionSetup(session.ID)
 	}
 
-	// Get model configuration
-	model := params.Agent.Model()
-	maxTokens := model.CatwalkCfg.DefaultMaxTokens
-	if model.ModelCfg.MaxTokens != 0 {
-		maxTokens = model.ModelCfg.MaxTokens
+	call, err := c.subAgentCall(ctx, params.Agent, session.ID, params.Prompt)
+	if errors.Is(err, errRefreshSubAgentModels) {
+		return fantasy.NewTextErrorResponse("Failed to " + err.Error()), nil
 	}
-
-	providerCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
-	if !ok {
-		return fantasy.ToolResponse{}, errModelProviderNotConfigured
+	if err != nil {
+		return fantasy.ToolResponse{}, err
 	}
-
-	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
-		slog.Error("Failed to refresh OAuth2 token before sub-agent execution. Proceeding with existing token.", "provider", providerCfg.ID, "error", err)
-	}
-	updatedProviderCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
-	if !ok {
-		return fantasy.ToolResponse{}, errModelProviderNotConfigured
-	}
-	if updatedProviderCfg.OAuthToken != providerCfg.OAuthToken || updatedProviderCfg.APIKey != providerCfg.APIKey {
-		if err := c.refreshSubAgentModels(ctx, params.Agent); err != nil {
-			return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to refresh sub-agent models: %s", err)), nil
-		}
-	}
-	providerCfg = updatedProviderCfg
-
-	authRefresh := c.makeAuthRefreshCallback(providerCfg)
-	if authRefresh != nil {
-		refreshCredentials := authRefresh
-		authRefresh = func(ctx context.Context, providerErr *fantasy.ProviderError) error {
-			if err := refreshCredentials(ctx, providerErr); err != nil {
-				return err
-			}
-			return c.refreshSubAgentModels(ctx, params.Agent)
-		}
-	}
-
-	// Run the agent
-	result, err := params.Agent.Run(ctx, SessionAgentCall{
-		SessionID:        session.ID,
-		Prompt:           params.Prompt,
-		MaxOutputTokens:  maxTokens,
-		ProviderOptions:  getProviderOptions(model, providerCfg),
-		Temperature:      model.ModelCfg.Temperature,
-		TopP:             model.ModelCfg.TopP,
-		TopK:             model.ModelCfg.TopK,
-		FrequencyPenalty: model.ModelCfg.FrequencyPenalty,
-		PresencePenalty:  model.ModelCfg.PresencePenalty,
-		NonInteractive:   true,
-		OnAuthRefresh:    authRefresh,
-	})
+	result, err := params.Agent.Run(ctx, call)
 	if err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to generate response: %s", err)), nil
 	}
@@ -2008,6 +1967,62 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (r
 		return fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output."), nil
 	}
 	return fantasy.NewTextResponse(output), nil
+}
+
+var errRefreshSubAgentModels = errors.New("refresh sub-agent models")
+
+// subAgentCall prepares a non-interactive run of agent in a sub-session,
+// refreshing credentials and the agent's models first when they changed.
+func (c *coordinator) subAgentCall(ctx context.Context, agent SessionAgent, sessionID, prompt string) (SessionAgentCall, error) {
+	model := agent.Model()
+	maxTokens := model.CatwalkCfg.DefaultMaxTokens
+	if model.ModelCfg.MaxTokens != 0 {
+		maxTokens = model.ModelCfg.MaxTokens
+	}
+
+	providerCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
+	if !ok {
+		return SessionAgentCall{}, errModelProviderNotConfigured
+	}
+
+	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
+		slog.Error("Failed to refresh OAuth2 token before sub-agent execution. Proceeding with existing token.", "provider", providerCfg.ID, "error", err)
+	}
+	updatedProviderCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
+	if !ok {
+		return SessionAgentCall{}, errModelProviderNotConfigured
+	}
+	if updatedProviderCfg.OAuthToken != providerCfg.OAuthToken || updatedProviderCfg.APIKey != providerCfg.APIKey {
+		if err := c.refreshSubAgentModels(ctx, agent); err != nil {
+			return SessionAgentCall{}, fmt.Errorf("%w: %w", errRefreshSubAgentModels, err)
+		}
+	}
+	providerCfg = updatedProviderCfg
+
+	authRefresh := c.makeAuthRefreshCallback(providerCfg)
+	if authRefresh != nil {
+		refreshCredentials := authRefresh
+		authRefresh = func(ctx context.Context, providerErr *fantasy.ProviderError) error {
+			if err := refreshCredentials(ctx, providerErr); err != nil {
+				return err
+			}
+			return c.refreshSubAgentModels(ctx, agent)
+		}
+	}
+
+	return SessionAgentCall{
+		SessionID:        sessionID,
+		Prompt:           prompt,
+		MaxOutputTokens:  maxTokens,
+		ProviderOptions:  getProviderOptions(model, providerCfg),
+		Temperature:      model.ModelCfg.Temperature,
+		TopP:             model.ModelCfg.TopP,
+		TopK:             model.ModelCfg.TopK,
+		FrequencyPenalty: model.ModelCfg.FrequencyPenalty,
+		PresencePenalty:  model.ModelCfg.PresencePenalty,
+		NonInteractive:   true,
+		OnAuthRefresh:    authRefresh,
+	}, nil
 }
 
 // withJobTools adds the job tools to an allowed set that contains bash,
