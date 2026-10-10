@@ -240,6 +240,15 @@ func newBaseToolMessageItem(
 	return t
 }
 
+// ToolItemOptions configures how tool message items render.
+type ToolItemOptions struct {
+	// ExpandedPatterns lists the tools that render expanded by default.
+	ExpandedPatterns []string
+	// WorkingDir is the project directory. Bash commands that only cd into
+	// it before running have that prefix hidden.
+	WorkingDir string
+}
+
 // NewToolMessageItem creates a new [ToolMessageItem] based on the tool call name.
 //
 // It returns a specific tool message item type if implemented, otherwise it
@@ -251,12 +260,12 @@ func NewToolMessageItem(
 	toolCall message.ToolCall,
 	result *message.ToolResult,
 	canceled bool,
-	expandedPatterns []string,
+	opts ToolItemOptions,
 ) ToolMessageItem {
 	var item ToolMessageItem
 	switch toolCall.Name {
 	case tools.BashToolName:
-		item = NewBashToolMessageItem(sty, toolCall, result, canceled)
+		item = NewBashToolMessageItem(sty, toolCall, result, canceled, opts.WorkingDir)
 	case tools.JobOutputToolName:
 		item = NewJobOutputToolMessageItem(sty, toolCall, result, canceled)
 	case tools.JobKillToolName:
@@ -312,7 +321,7 @@ func NewToolMessageItem(
 	case tools.TodosToolName, agent.TaskToolName, tools.AgenticFetchToolName:
 		// Keep current (expanded) behavior.
 	default:
-		compact := !config.IsToolExpanded(expandedPatterns, toolCall.Name)
+		compact := !config.IsToolExpanded(opts.ExpandedPatterns, toolCall.Name)
 		if compactable, ok := item.(Compactable); ok {
 			compactable.SetCompact(compact)
 		}

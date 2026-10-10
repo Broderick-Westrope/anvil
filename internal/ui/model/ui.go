@@ -1551,6 +1551,14 @@ func (m *UI) trackRecoverySession() {
 
 // expandedToolPatterns returns the expanded_tools glob patterns from
 // config, or nil when the config is unavailable.
+// toolItemOptions returns the options used to build tool message items.
+func (m *UI) toolItemOptions() chat.ToolItemOptions {
+	return chat.ToolItemOptions{
+		ExpandedPatterns: m.expandedToolPatterns(),
+		WorkingDir:       m.com.Workspace.WorkingDir(),
+	}
+}
+
 func (m *UI) expandedToolPatterns() []string {
 	cfg := m.com.Config()
 	if cfg == nil || cfg.Options == nil {
@@ -1578,15 +1586,15 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 		switch msg.Role {
 		case message.User:
 			m.lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
 		}
 	}
 
@@ -1641,7 +1649,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// Extract nested tool items.
 		var nestedTools []chat.ToolMessageItem
 		for _, nestedMsg := range nestedMsgPtrs {
-			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.expandedToolPatterns())
+			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.toolItemOptions())
 			for _, nestedItem := range nestedItems {
 				if nestedToolItem, ok := nestedItem.(chat.ToolMessageItem); ok {
 					// Mark nested tools as simple (compact) rendering.
@@ -1716,14 +1724,14 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	switch msg.Role {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions())
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() {
 			c.ScrollToBottom()
 		}
 	case message.Assistant:
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions())
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() && c.Follow() {
@@ -1869,7 +1877,7 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			}
 		}
 		if existingToolItem == nil {
-			item := chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.expandedToolPatterns())
+			item := chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.toolItemOptions())
 			chat.SetToolCallStartedAt(item, msg.CreatedAt)
 			items = append(items, item)
 		}
@@ -1994,7 +2002,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		}
 		if !found {
 			// Create a new nested tool item.
-			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false, m.expandedToolPatterns())
+			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false, m.toolItemOptions())
 			chat.SetToolCallStartedAt(nestedItem, event.Payload.CreatedAt)
 			if simplifiable, ok := nestedItem.(chat.Compactable); ok {
 				simplifiable.SetCompact(true)
@@ -2191,9 +2199,9 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 		switch msg.Role {
 		case message.User:
 			lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(
 					m.com.Styles, msg, m.com.Config(),
@@ -2202,7 +2210,7 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
 		}
 	}
 

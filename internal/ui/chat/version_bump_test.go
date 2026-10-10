@@ -127,7 +127,7 @@ func TestBaseToolMessageItem_MutatorsBumpVersion(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	tc := message.ToolCall{ID: "tc1", Name: "bash", Input: "{}", Finished: false}
-	item := NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
+	item := NewToolMessageItem(&sty, "msg", tc, nil, false, ToolItemOptions{})
 
 	v := item.(versionedItem)
 
@@ -281,7 +281,7 @@ func TestAgentToolMessageItem_NestedToolMutatorsBumpVersion(t *testing.T) {
 
 	mkChild := func(id string) ToolMessageItem {
 		tc := message.ToolCall{ID: id, Name: "bash", Input: `{}`, Finished: false}
-		return NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
+		return NewToolMessageItem(&sty, "msg", tc, nil, false, ToolItemOptions{})
 	}
 
 	// AddNestedTool always bumps.
@@ -318,7 +318,7 @@ func TestAgenticFetchToolMessageItem_NestedToolMutatorsBumpVersion(t *testing.T)
 
 	mkChild := func(id string) ToolMessageItem {
 		tc := message.ToolCall{ID: id, Name: "fetch", Input: `{}`, Finished: false}
-		return NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
+		return NewToolMessageItem(&sty, "msg", tc, nil, false, ToolItemOptions{})
 	}
 
 	requireBump(t, "AddNestedTool", item, func() {
@@ -355,7 +355,7 @@ func TestAgentToolMessageItem_NestedChildInPlaceMutationBumpsParent(t *testing.T
 	item := NewAgentToolMessageItem(&sty, parent, nil, false)
 
 	childTC := message.ToolCall{ID: "c1", Name: "bash", Input: `{}`, Finished: false}
-	child := NewToolMessageItem(&sty, "msg", childTC, nil, false, nil)
+	child := NewToolMessageItem(&sty, "msg", childTC, nil, false, ToolItemOptions{})
 	item.AddNestedTool(child)
 
 	v0 := item.Version()
@@ -384,7 +384,7 @@ func TestAgenticFetchToolMessageItem_NestedChildInPlaceMutationBumpsParent(t *te
 	item := NewAgenticFetchToolMessageItem(&sty, parent, nil, false)
 
 	childTC := message.ToolCall{ID: "c1", Name: "fetch", Input: `{}`, Finished: false}
-	child := NewToolMessageItem(&sty, "msg", childTC, nil, false, nil)
+	child := NewToolMessageItem(&sty, "msg", childTC, nil, false, ToolItemOptions{})
 	item.AddNestedTool(child)
 
 	v0 := item.Version()
@@ -423,7 +423,7 @@ func TestBaseToolMessageItem_AdvanceBumpsVersion(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	tc := message.ToolCall{ID: "tc-spin", Name: "bash", Input: "{}", Finished: false}
-	item := NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
+	item := NewToolMessageItem(&sty, "msg", tc, nil, false, ToolItemOptions{})
 	v := item.(versionedItem)
 	a, ok := item.(Animatable)
 	require.True(t, ok, "base tool message item must implement Animatable")
@@ -478,7 +478,7 @@ func TestAgentToolMessageItem_AdvanceBumpsVersion(t *testing.T) {
 	parent := NewAgentToolMessageItem(&sty, parentTC, nil, false)
 
 	childTC := message.ToolCall{ID: "agent-child", Name: "bash", Input: `{}`, Finished: false}
-	child := NewToolMessageItem(&sty, "msg", childTC, nil, false, nil)
+	child := NewToolMessageItem(&sty, "msg", childTC, nil, false, ToolItemOptions{})
 	parent.AddNestedTool(child)
 
 	requireNestedAdvance(t, parent, child, parentTC.ID)
@@ -492,7 +492,7 @@ func TestAgenticFetchToolMessageItem_AdvanceBumpsVersion(t *testing.T) {
 	parent := NewAgenticFetchToolMessageItem(&sty, parentTC, nil, false)
 
 	childTC := message.ToolCall{ID: "fetch-child", Name: "fetch", Input: `{}`, Finished: false}
-	child := NewToolMessageItem(&sty, "msg", childTC, nil, false, nil)
+	child := NewToolMessageItem(&sty, "msg", childTC, nil, false, ToolItemOptions{})
 	parent.AddNestedTool(child)
 
 	requireNestedAdvance(t, parent, child, parentTC.ID)
@@ -554,7 +554,7 @@ func TestBaseToolMessageItem_FinishedTransition(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	tc := message.ToolCall{ID: "tc-fin", Name: "bash", Input: "{}", Finished: false}
-	item := NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
+	item := NewToolMessageItem(&sty, "msg", tc, nil, false, ToolItemOptions{})
 	require.False(t, item.Finished(), "running tool must not be Finished()")
 
 	tcFinished := tc
@@ -565,6 +565,6 @@ func TestBaseToolMessageItem_FinishedTransition(t *testing.T) {
 
 	// Canceled tool with no result is also Finished.
 	tcCanceled := message.ToolCall{ID: "tc-cancel", Name: "bash", Input: "{}", Finished: false}
-	canceled := NewToolMessageItem(&sty, "msg", tcCanceled, nil, true, nil)
+	canceled := NewToolMessageItem(&sty, "msg", tcCanceled, nil, true, ToolItemOptions{})
 	require.True(t, canceled.Finished(), "canceled tool must be Finished()")
 }
