@@ -126,3 +126,33 @@ func BenchmarkFindBoundaryAfter(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkStreamingProseNoBlankLines streams a reasoning trace that
+// never holds a blank line, one line per op, so the blank-line boundary
+// never fires and the trailing partial is bounded only by the relaxed
+// and forced cuts. Run with a fixed -benchtime=Nx so every run streams
+// the same trace length.
+func BenchmarkStreamingProseNoBlankLines(b *testing.B) {
+	sty := styles.TokyoNight()
+	width := 80
+
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStyles(sty.Markdown),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var sm streamingMarkdown
+	var doc strings.Builder
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; b.Loop(); i++ {
+		if i > 0 {
+			doc.WriteByte('\n')
+		}
+		fmt.Fprintf(&doc, "Let me reconsider step %d: the constraint holds for every branch here.", i)
+		_ = sm.Render(doc.String(), width, renderer)
+	}
+}
