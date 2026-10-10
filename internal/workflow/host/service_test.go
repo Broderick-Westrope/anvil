@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
 	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
@@ -190,4 +191,21 @@ func TestServiceBashRunsInEmbeddedShellWithCwd(t *testing.T) {
 	out, err = filepath.EvalSymlinks(out)
 	require.NoError(t, err)
 	require.Equal(t, got, out)
+}
+
+func TestServiceTurnIsRecordedAsWorkflowTurn(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "ok"})
+	path := h.write(t, `function main() { return session.current().turn("do the thing") }`)
+	h.start(t, path, "")
+	done := h.next(t, host.EventFinished)
+	require.Equal(t, host.StatusCompleted, done.Status, done.Message)
+
+	msgs, err := h.fixture.Workspace.ListUserMessages(h.fixture.Context, h.session)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	command, prompt, ok := commands.ParseWorkflowTurnXML(msgs[0].Content().Text)
+	require.True(t, ok, msgs[0].Content().Text)
+	require.Equal(t, "/demo", command)
+	require.Equal(t, "do the thing", prompt)
 }

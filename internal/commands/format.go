@@ -43,3 +43,23 @@ func CollapseExpansionXML(text string) string {
 		return strings.ReplaceAll(line, "&amp;", "&")
 	})
 }
+
+// FormatWorkflowTurnXML wraps a prompt a workflow script sends to a
+// session in a <workflow_turn> element naming the command, so the chat can
+// show it as the engine's message rather than the user's.
+func FormatWorkflowTurnXML(command, prompt string) string {
+	return fmt.Sprintf("<workflow_turn command=\"/%s\">\n%s\n</workflow_turn>", escapeAttr(command), prompt)
+}
+
+var workflowTurnRe = regexp.MustCompile(`(?s)\A<workflow_turn command="([^"]*)">\n(.*)\n</workflow_turn>\z`)
+
+// ParseWorkflowTurnXML reports whether text is a whole <workflow_turn>
+// element and returns its command line (e.g. "/build") and prompt.
+func ParseWorkflowTurnXML(text string) (command, prompt string, ok bool) {
+	m := workflowTurnRe.FindStringSubmatch(text)
+	if m == nil {
+		return "", "", false
+	}
+	command = strings.ReplaceAll(m[1], "&quot;", `"`)
+	return strings.ReplaceAll(command, "&amp;", "&"), m[2], true
+}

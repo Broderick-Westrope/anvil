@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -53,7 +54,8 @@ func (b *backend) withSkills(names []string, prompt string) string {
 
 func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, error) {
 	b.publish(Event{Kind: EventStep, Step: "turn", Target: call.SessionID})
-	result, err := b.coord.RunTurn(ctx, call.SessionID, b.withSkills(call.Skills, call.Prompt))
+	prompt := commands.FormatWorkflowTurnXML(b.base.Command, b.withSkills(call.Skills, call.Prompt))
+	result, err := b.coord.RunTurn(ctx, call.SessionID, prompt)
 	if err != nil {
 		return "", err
 	}

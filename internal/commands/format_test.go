@@ -96,3 +96,40 @@ func TestCollapseExpansionXML_WithLocation(t *testing.T) {
 	wrapped := FormatExpansionXML("/wtp-pruning eucalyptusvc", "/cmds/wtp-pruning/COMMAND.md", "body")
 	require.Equal(t, "/wtp-pruning eucalyptusvc", CollapseExpansionXML(wrapped))
 }
+
+func TestParseWorkflowTurnXML(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		text        string
+		wantCommand string
+		wantBody    string
+		wantOK      bool
+	}{
+		"round trip": {
+			text:        FormatWorkflowTurnXML("build", "Build it.\nCarefully."),
+			wantCommand: "/build",
+			wantBody:    "Build it.\nCarefully.",
+			wantOK:      true,
+		},
+		"escaped command": {
+			text:        FormatWorkflowTurnXML(`a"b&c`, "x"),
+			wantCommand: `/a"b&c`,
+			wantBody:    "x",
+			wantOK:      true,
+		},
+		"plain user text": {text: "hello"},
+		"text around the element": {
+			text: "before " + FormatWorkflowTurnXML("build", "x"),
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			command, body, ok := ParseWorkflowTurnXML(tc.text)
+			require.Equal(t, tc.wantOK, ok)
+			require.Equal(t, tc.wantCommand, command)
+			require.Equal(t, tc.wantBody, body)
+		})
+	}
+}
