@@ -91,6 +91,9 @@ func (s *SkillPickerItem) Render(width int) string {
 
 // SkillPicker is a dialog that shows available skills for attachment.
 type SkillPicker struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com    *common.Common
 	keyMap struct {
 		Select,
@@ -168,6 +171,9 @@ func (sp *SkillPicker) ID() string {
 
 // HandleMsg implements Dialog.
 func (sp *SkillPicker) HandleMsg(msg tea.Msg) Action {
+	if action, ok := sp.mouse.handle(msg, sp.list, nil, nil, func() Action { return sp.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
@@ -242,10 +248,11 @@ func (sp *SkillPicker) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	inputView := t.Dialog.InputPrompt.Render(sp.input.View())
 	rc.AddPart(inputView)
 	listView := t.Dialog.List.Height(sp.list.Height()).Render(sp.list.Render())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, sp.list.Width(), sp.list.Height())
 	rc.Help = sp.help.View(sp)
 
 	view := rc.Render()
+	sp.mouse.setArea(rc.ListBounds, centerRect(area, view))
 
 	cur := sp.Cursor()
 	DrawCenterCursor(scr, area, view, cur)
