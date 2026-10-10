@@ -582,3 +582,20 @@ func TestAnvilInfo_Hooks_NoHooks(t *testing.T) {
 	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
 	require.NotContains(t, output, "[hooks]")
 }
+
+func TestAnvilInfo_Skills_Unlisted(t *testing.T) {
+	t.Parallel()
+
+	allSkills := []*skills.Skill{
+		{Name: "design-twice", Unlisted: true},
+		{Name: "my-skill"},
+	}
+	tracker := skills.NewTracker(allSkills)
+
+	cfg := config.NewTestStore(&config.Config{
+		Providers: csync.NewMap[string, config.ProviderConfig](),
+	})
+	output := buildAnvilInfo(cfg, nil, allSkills, allSkills, tracker)
+	require.Contains(t, output, "design-twice = user, unlisted, unloaded")
+	require.Contains(t, output, "my-skill = user, unloaded")
+}
