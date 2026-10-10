@@ -26,12 +26,14 @@ func (c catalog) HasAgent(name string) bool { return c.coord.HasAgent(name) }
 
 // backend implements workflow.Backend for one run.
 type backend struct {
-	catalog
 	svc  *Service
 	base Event
 }
 
 var _ workflow.Backend = (*backend)(nil)
+
+func (b *backend) HasSkill(name string) bool { return b.svc.Catalog().HasSkill(name) }
+func (b *backend) HasAgent(name string) bool { return b.svc.Catalog().HasAgent(name) }
 
 func (b *backend) publish(ev Event) {
 	ev.RunID, ev.Command, ev.SessionID = b.base.RunID, b.base.Command, b.base.SessionID
@@ -66,7 +68,7 @@ func (b *backend) withSkills(names []string, prompt string) string {
 func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, error) {
 	b.publish(Event{Kind: EventStep, Step: "turn", Target: call.SessionID})
 	prompt := commands.FormatWorkflowTurnXML(b.base.Command, b.withSkills(call.Skills, call.Prompt))
-	result, err := b.coord.RunTurn(ctx, call.SessionID, prompt)
+	result, err := b.svc.deps.Coordinator.RunTurn(ctx, call.SessionID, prompt)
 	if err != nil {
 		return "", err
 	}

@@ -339,7 +339,7 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 		return
 	}
 	base.RunID = runID
-	b := &backend{catalog: catalog{s.deps.Coordinator}, svc: s, base: base}
+	b := &backend{svc: s, base: base}
 	run := workflow.NewRun(script, b, s.deps.Store.Recorder(runID), workflow.Options{
 		InvokingSessionID: inv.SessionID,
 		Tmpdir:            s.deps.Store.Tmpdir(runID),
