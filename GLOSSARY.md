@@ -69,7 +69,7 @@ A long-running shell command moved to the background, with output the agent can 
 
 A provider from the Catwalk catalog. The user's config for it can override its endpoint, API key and models, and it is used only when it has the credentials its kind needs (an API key, OAuth, AWS or Vertex credentials, or an Azure endpoint).
 
-- **Code:** `prepareKnownProvider`, `knownProviderCredentials` (`internal/config/load.go`)
+- **Code:** `prepareKnownProvider`, `knownProviderCompletions` (`internal/config/load.go`)
 - **Not:** catalog provider, default provider, custom provider.
 
 ## Lazy MCP

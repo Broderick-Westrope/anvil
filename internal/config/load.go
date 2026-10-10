@@ -266,7 +266,7 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 // prepareKnownProvider builds the config for a known provider. The user's
 // config for it may override its endpoint, API key and models, and add
 // headers. When the provider lacks the credentials its kind needs (see
-// knownProviderCredentials), it returns a non-nil function that logs why;
+// knownProviderCompletions), it returns a non-nil function that logs why;
 // the caller calls it only when the user configured the provider.
 func prepareKnownProvider(p catwalk.Provider, config ProviderConfig, env env.Env, resolver VariableResolver) (ProviderConfig, func(), error) {
 	p.APIEndpoint = cmp.Or(config.BaseURL, p.APIEndpoint)
@@ -310,30 +310,30 @@ func prepareKnownProvider(p catwalk.Provider, config ProviderConfig, env env.Env
 		Models:             p.Models,
 	}
 
-	check, ok := knownProviderCredentials[p.ID]
+	complete, ok := knownProviderCompletions[p.ID]
 	if !ok {
-		check = checkAPIKeyCredentials
+		complete = completeAPIKeyProvider
 	}
-	return prepared, check(&prepared, env, resolver), nil
+	return prepared, complete(&prepared, env, resolver), nil
 }
 
-// credentialCheck reports whether a known provider has the credentials its
-// kind needs, completing prepared with any settings specific to that kind.
-// When the provider can't be used, it returns a non-nil function that logs
-// why at its own call site.
-type credentialCheck func(prepared *ProviderConfig, env env.Env, resolver VariableResolver) func()
+// providerCompletion completes prepared with the settings its kind of
+// known provider needs, which may mean reading the environment or the
+// keychain. When the provider lacks the credentials to be used, it returns
+// a non-nil function that logs why at its own call site.
+type providerCompletion func(prepared *ProviderConfig, env env.Env, resolver VariableResolver) func()
 
-// knownProviderCredentials holds the credential check for each known
-// provider that needs more than an API key.
-var knownProviderCredentials = map[catwalk.InferenceProvider]credentialCheck{
-	catwalk.InferenceProviderAnthropic:     checkAnthropicCredentials,
-	catwalk.InferenceProviderVertexAI:      checkVertexAICredentials,
-	catwalk.InferenceProviderAzure:         checkAzureCredentials,
-	catwalk.InferenceProviderBedrock:       checkBedrockCredentials,
-	catwalk.InferenceProviderBedrockEurope: checkBedrockCredentials,
+// knownProviderCompletions holds the completion for each known provider
+// that needs more than an API key.
+var knownProviderCompletions = map[catwalk.InferenceProvider]providerCompletion{
+	catwalk.InferenceProviderAnthropic:     completeAnthropicProvider,
+	catwalk.InferenceProviderVertexAI:      completeVertexAIProvider,
+	catwalk.InferenceProviderAzure:         completeAzureProvider,
+	catwalk.InferenceProviderBedrock:       completeBedrockProvider,
+	catwalk.InferenceProviderBedrockEurope: completeBedrockProvider,
 }
 
-func checkAPIKeyCredentials(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
+func completeAPIKeyProvider(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
 	if !hasAPIKey(resolver, prepared.APIKey) {
 		return func() {
 			slog.Warn("Skipping provider due to missing API key", "provider", prepared.ID)
@@ -342,7 +342,7 @@ func checkAPIKeyCredentials(prepared *ProviderConfig, _ env.Env, resolver Variab
 	return nil
 }
 
-func checkAnthropicCredentials(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
+func completeAnthropicProvider(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
 	configureAnthropicAuth(prepared, prepared.AuthMode)
 	switch prepared.AuthMode {
 	case AuthModeOAuth:
@@ -381,7 +381,7 @@ func checkAnthropicCredentials(prepared *ProviderConfig, _ env.Env, resolver Var
 	return nil
 }
 
-func checkVertexAICredentials(prepared *ProviderConfig, env env.Env, _ VariableResolver) func() {
+func completeVertexAIProvider(prepared *ProviderConfig, env env.Env, _ VariableResolver) func() {
 	var (
 		project  = env.Get("VERTEXAI_PROJECT")
 		location = env.Get("VERTEXAI_LOCATION")
@@ -396,7 +396,7 @@ func checkVertexAICredentials(prepared *ProviderConfig, env env.Env, _ VariableR
 	return nil
 }
 
-func checkAzureCredentials(prepared *ProviderConfig, env env.Env, resolver VariableResolver) func() {
+func completeAzureProvider(prepared *ProviderConfig, env env.Env, resolver VariableResolver) func() {
 	endpoint, err := resolver.ResolveValue(prepared.BaseURL)
 	if err != nil || endpoint == "" {
 		return func() {
@@ -408,7 +408,7 @@ func checkAzureCredentials(prepared *ProviderConfig, env env.Env, resolver Varia
 	return nil
 }
 
-func checkBedrockCredentials(prepared *ProviderConfig, env env.Env, _ VariableResolver) func() {
+func completeBedrockProvider(prepared *ProviderConfig, env env.Env, _ VariableResolver) func() {
 	if prepared.APIKey == "" && !hasAWSCredentials(env) {
 		return func() {
 			slog.Warn("Skipping Bedrock provider due to missing AWS credentials")
@@ -589,7 +589,7 @@ func configureAnthropicAuthWith(prepared *ProviderConfig, mode AuthMode, readCre
 	}
 
 	// AuthModeOAuth and AuthModeAuto both try OAuth here. The difference
-	// between them is enforced by checkAnthropicCredentials: oauth skips
+	// between them is enforced by completeAnthropicProvider: oauth skips
 	// the provider when no credentials are found, while auto falls back to
 	// the API key check.
 	if prepared.OAuthToken != nil {
