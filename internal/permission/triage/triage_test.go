@@ -255,3 +255,12 @@ func TestBouncerDenialsNeverProposeDenyRules(t *testing.T) {
 	require.Empty(t, a)
 	require.Empty(t, d)
 }
+
+func TestAnalyzeCountsRecordsNotSegments(t *testing.T) {
+	t.Parallel()
+	a, _ := Analyze(repeated("git status && git status --short", "allow"), nil, Options{})
+	require.Len(t, a, 1)
+	require.Equal(t, "git status *", a[0].InputPattern)
+	require.Equal(t, 6, a[0].Count)
+	require.Equal(t, []string{"git status", "git status --short"}, a[0].Examples)
+}
