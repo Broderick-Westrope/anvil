@@ -21,7 +21,7 @@ type Env = wtpcli.Env
 // Version default to re-invoking `anvil wtp` and the embedded module version.
 func Run(ctx context.Context, args []string, env Env) error { //nolint:gocritic // Env is an API value type
 	if env.Self == nil {
-		env.Self = self()
+		env.Self = Command()
 	}
 	if env.Version == "" {
 		env.Version = version()
@@ -31,9 +31,7 @@ func Run(ctx context.Context, args []string, env Env) error { //nolint:gocritic 
 
 // Command is how to run the embedded wtp as a separate process: this
 // binary with the wtp subcommand.
-func Command() []string { return self() }
-
-func self() []string {
+func Command() []string {
 	return selfFrom(os.Executable())
 }
 
