@@ -375,6 +375,21 @@ func TestFilterBranchPathForContext_CompactionBoundaries(t *testing.T) {
 			},
 			want: []message.Message{summary("sum"), text("k", "kept")},
 		},
+		"duplicate kept entry ID keeps from the first match": {
+			path: []message.Message{
+				text("a", "first"),
+				text("k", "kept once"),
+				text("b", "between"),
+				text("k", "kept twice"),
+				compaction("c", message.CompactionContent{Summary: "sum", FirstKeptEntryID: "k"}),
+			},
+			want: []message.Message{
+				summary("sum"),
+				text("k", "kept once"),
+				text("b", "between"),
+				text("k", "kept twice"),
+			},
+		},
 		"compaction at the root keeps everything after it": {
 			path: []message.Message{
 				compaction("c", message.CompactionContent{Summary: "sum"}),
