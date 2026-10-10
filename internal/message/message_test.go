@@ -196,6 +196,43 @@ func TestUpdate_ToolCallStructuralChangeFlushes(t *testing.T) {
 	require.True(t, got.ToolCalls()[0].Finished)
 }
 
+// TestUpdate_DeltaAfterStructuralFlushDebounces guards against pruning
+// the pending entry on every structural flush. Pruning drops the
+// last-flushed baseline, so every later delta compared against an empty
+// message and flushed synchronously.
+func TestUpdate_DeltaAfterStructuralFlushDebounces(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(*Message){
+		"tool call added":    func(m *Message) { m.AddToolCall(ToolCall{ID: "tc1", Name: "view"}) },
+		"reasoning finished": func(m *Message) { m.AppendReasoningContent("hmm"); m.FinishThinking() },
+	}
+
+	for name, structural := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			svc, sessionID := newTestService(t, WithDebounce(time.Hour))
+			impl := svc.(*service)
+
+			msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+			require.NoError(t, err)
+			structural(&msg)
+			require.NoError(t, svc.Update(t.Context(), msg))
+			require.Equal(t, 1, impl.PendingCount(), "an unfinished message keeps its baseline")
+
+			// The structural change is already on disk, so a text delta
+			// stays in the debounce buffer.
+			msg.AppendContent("delta")
+			require.NoError(t, svc.Update(t.Context(), msg))
+
+			got, err := svc.Get(t.Context(), msg.ID)
+			require.NoError(t, err)
+			require.Empty(t, got.Content().Text, "delta should still be in the debounce buffer")
+		})
+	}
+}
+
 func TestUpdate_ReasoningEndFlushes(t *testing.T) {
 	t.Parallel()
 

@@ -409,10 +409,12 @@ func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) erro
 		if err == nil {
 			p.lastFlushed = snap
 			p.hasFlushed = true
-			// Prune terminal entries that are no longer dirty.
+			// Prune finished entries that are no longer dirty. Other
+			// terminal flushes keep the entry: it is the baseline that
+			// stops later deltas from looking structural again.
 			// A concurrent Update may have re-dirtied the entry during
 			// the SQL write; in that case, leave it for the next flush.
-			if isTerminal && !p.dirty {
+			if snap.IsFinished() && !p.dirty {
 				if p.timer != nil {
 					p.timer.Stop()
 				}
