@@ -236,3 +236,34 @@ func TestAwaitFromInsideItsOwnRunExecutesDirectly(t *testing.T) {
 		t.Fatal("nested awaited submission deadlocked")
 	}
 }
+
+func TestAwaitBehindQueuedUserWorkRunsAfterUserTurnFails(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	entered, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		_, _ = a.submit(t.Context(), "s", submission{prompt: "A", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			close(entered)
+			<-release
+			return nil, errors.New("user turn failed")
+		}})
+	}()
+	<-entered
+	_, err := a.submit(t.Context(), "s", submission{prompt: "B", run: instantRun("B")})
+	require.NoError(t, err)
+	awaited := make(chan string, 1)
+	go func() {
+		r, err := a.submitAwait(t.Context(), "s", submission{prompt: "C", run: instantRun("C")})
+		require.NoError(t, err)
+		awaited <- resultText(r)
+	}()
+	require.Eventually(t, func() bool { return len(a.queued("s")) == 2 }, time.Second, time.Millisecond)
+	close(release)
+	select {
+	case got := <-awaited:
+		require.Equal(t, "C", got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("awaited submission stranded behind queued user work")
+	}
+}

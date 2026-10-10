@@ -306,7 +306,7 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	var queued submission
 	if a.owners[owner.sessionID] == owner {
 		a.releaseOwner(owner.sessionID)
-		if q := a.queues[owner.sessionID]; len(q) > 0 && a.held[owner.sessionID] == 0 && a.shouldHandOff(owner, awaited, err, q[0]) {
+		if q := a.queues[owner.sessionID]; len(q) > 0 && a.held[owner.sessionID] == 0 && a.shouldHandOff(owner, awaited, err, q) {
 			queued = q[0]
 			a.queues[owner.sessionID] = q[1:]
 			next = a.claimFor(queued, owner.sessionID)
@@ -337,12 +337,13 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	return nil, err
 }
 
-// shouldHandOff decides whether the next queued job runs after owner's
-// job. A failed or cancelled user turn holds back the queue, but neither a
-// script's turn failing nor a user's turn failing strands awaited work: a
-// workflow can't send a follow-up message to unblock it.
-func (a *admission) shouldHandOff(owner *submissionOwner, awaited bool, err error, next submission) bool {
-	if awaited || next.done != nil {
+// shouldHandOff decides whether the queue continues after owner's job. A
+// failed or cancelled user turn normally holds back the queue, but never
+// while awaited work is queued anywhere in it: a workflow can't send a
+// follow-up message to unblock itself, so the work queued ahead of its
+// turn runs and then its turn does.
+func (a *admission) shouldHandOff(owner *submissionOwner, awaited bool, err error, queue []submission) bool {
+	if awaited || slices.ContainsFunc(queue, func(job submission) bool { return job.done != nil }) {
 		return a.lifetime.Err() == nil
 	}
 	return (err == nil || owner.handoffOnError) && owner.ctx.Err() == nil
