@@ -2172,7 +2172,7 @@ func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
 	ids := make(map[string]struct{}, len(loaded))
 	for k, item := range loaded {
 		ids[item.ID()] = struct{}{}
-		if live := c.MessageItem(item.ID()); live != nil {
+		if live, ok := c.MessageItem(item.ID()).(*chat.AssistantMessageItem); ok {
 			loaded[k] = live
 		}
 	}

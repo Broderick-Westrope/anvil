@@ -370,3 +370,25 @@ func TestPermissionNotificationReachesSubagentUnderADrillIn(t *testing.T) {
 	require.Equal(t, chat.ToolStatusAwaitingPermission, tool.Status())
 }
 
+func TestSubagentLoadKeepsSnapshotToolResults(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
+	call := message.ToolCall{ID: "tc1", Name: "bash", Input: "{}", Finished: true}
+	assistant := message.Message{ID: "sub-a", Role: message.Assistant, SessionID: "child", Parts: []message.ContentPart{call}}
+	// A live update for the assistant arrives before the load, creating a
+	// tool item that hasn't seen its result.
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.UpdatedEvent, Payload: assistant})
+
+	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{
+		assistant,
+		{ID: "res", Role: message.Tool, SessionID: "child", Parts: []message.ContentPart{
+			message.ToolResult{ToolCallID: "tc1", Name: "bash", Content: "done"},
+		}},
+	}})
+
+	tool, ok := u.drillStack[0].chat.MessageItem("tc1").(chat.ToolMessageItem)
+	require.True(t, ok)
+	require.True(t, tool.HasResult(), "the snapshot's tool result must not be lost to a live item")
+}
