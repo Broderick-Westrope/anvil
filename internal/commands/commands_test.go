@@ -587,3 +587,23 @@ func TestLoadCommand_BrokenWorkflowStillLoads(t *testing.T) {
 	require.Len(t, cmds, 1)
 	require.NotEmpty(t, cmds[0].Warnings)
 }
+
+func TestDisplayDescriptionMarksBrokenCommands(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cmd  CustomCommand
+		want string
+	}{
+		"healthy":              {cmd: CustomCommand{Description: "Build it"}, want: "Build it"},
+		"broken with desc":     {cmd: CustomCommand{Description: "Build it", Warnings: []string{"x"}}, want: "Build it (broken)"},
+		"broken without desc":  {cmd: CustomCommand{Warnings: []string{"x"}}, want: "(broken)"},
+		"healthy without desc": {cmd: CustomCommand{}, want: ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, tc.cmd.DisplayDescription())
+		})
+	}
+}

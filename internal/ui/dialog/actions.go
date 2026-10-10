@@ -18,6 +18,17 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 )
 
+// WorkflowControl is a control the user applies to a workflow run.
+type WorkflowControl int
+
+const (
+	WorkflowPause WorkflowControl = iota
+	WorkflowResume
+	WorkflowAbort
+	// WorkflowGoToActive opens the session the run is driving.
+	WorkflowGoToActive
+)
+
 // ActionClose is a message to close the current dialog.
 type ActionClose struct{}
 
@@ -91,6 +102,12 @@ type (
 		Skills    []string          // Skill names to preload.
 		Location  string            // Path to the command's COMMAND.md.
 		Args      map[string]string // Actual argument values
+		// CommandID, Source, Workflow and Warnings describe a workflow
+		// command; Workflow is empty for prompt commands.
+		CommandID string
+		Source    string
+		Workflow  string
+		Warnings  []string
 	}
 	// ActionRunMCPPrompt is a message to run a custom command.
 	ActionRunMCPPrompt struct {
@@ -100,6 +117,17 @@ type (
 		ClientID    string
 		Arguments   []commands.Argument
 		Args        map[string]string // Actual argument values
+	}
+	// ActionWorkflowRespond answers a workflow approval or ask() request.
+	ActionWorkflowRespond struct {
+		RequestID string
+		Answer    string
+	}
+	// ActionWorkflowControl controls the workflow run involving a
+	// session.
+	ActionWorkflowControl struct {
+		SessionID string
+		Control   WorkflowControl
 	}
 	// ActionEnableDockerMCP is a message to enable Docker MCP.
 	ActionEnableDockerMCP struct{}

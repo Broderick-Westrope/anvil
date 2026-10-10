@@ -86,6 +86,16 @@ type commandFrontmatter struct {
 	Workflow     string   `yaml:"workflow,omitempty"`
 }
 
+// DisplayDescription is the description shown in autocomplete and the
+// command palette, marked "(broken)" when the command has warnings and
+// won't run.
+func (c *CustomCommand) DisplayDescription() string {
+	if len(c.Warnings) == 0 {
+		return c.Description
+	}
+	return strings.TrimSpace(c.Description + " (broken)")
+}
+
 // ItemName returns the logical command name for collision detection.
 func (c *CustomCommand) ItemName() string { return commandCollisionName(c) }
 

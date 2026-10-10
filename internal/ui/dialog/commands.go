@@ -73,6 +73,7 @@ type Commands struct {
 
 	customCommands []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
+	workflow       *WorkflowControls
 
 	dockerMCPAvailable     *bool
 	dockerMCPCheckInFlight bool
@@ -421,14 +422,18 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 				Arguments: cmd.Arguments,
 				Skills:    cmd.Skills,
 				Location:  cmd.Location,
+				CommandID: cmd.ID,
+				Source:    cmd.Source,
+				Workflow:  cmd.Workflow,
+				Warnings:  cmd.Warnings,
 			}
 			title := name
 			if cmd.ArgumentHint != "" {
 				title += " " + cmd.ArgumentHint
 			}
 			item := NewCommandItem(c.com.Styles, "custom_"+cmd.ID, title, "", action)
-			if cmd.Description != "" {
-				item = item.WithDescription(cmd.Description)
+			if desc := cmd.DisplayDescription(); desc != "" {
+				item = item.WithDescription(desc)
 			}
 			commandItems = append(commandItems, item)
 		}
@@ -590,6 +595,22 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		}
 	}
 
+	if w := c.workflow; w != nil {
+		pause := NewCommandItem(c.com.Styles, "workflow_pause", "Pause Workflow /"+w.Command, "ctrl+x",
+			ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowPause})
+		if w.Paused {
+			pause = NewCommandItem(c.com.Styles, "workflow_pause", "Resume Workflow /"+w.Command, "ctrl+x",
+				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowResume})
+		}
+		commands = append(commands, pause,
+			NewCommandItem(c.com.Styles, "workflow_abort", "Abort Workflow /"+w.Command, "alt+x",
+				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowAbort}))
+		if w.CanGoToActive {
+			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_goto", "Go to Workflow Session", "alt+g",
+				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowGoToActive}))
+		}
+	}
+
 	commands = append(commands,
 		NewCommandItem(c.com.Styles, "browse_skills", "Browse Skills", "", ActionOpenDialog{SkillPickerID}),
 		NewCommandItem(c.com.Styles, "mcp_servers", "MCP Servers", "", ActionOpenDialog{MCPPaletteID}),
@@ -624,6 +645,26 @@ func nextBouncerMode(mode permission.BouncerMode) permission.BouncerMode {
 		return permission.BouncerOff
 	default:
 		return permission.BouncerShadow
+	}
+}
+
+// WorkflowControls describes the workflow run involving the current
+// session, for the palette's pause, resume, abort and go-to entries.
+type WorkflowControls struct {
+	SessionID string
+	Command   string
+	Paused    bool
+	// CanGoToActive is set when the run is driving a session other than
+	// the one shown.
+	CanGoToActive bool
+}
+
+// SetWorkflowControls shows controls for the workflow run involving the
+// current session, or hides them when w is nil.
+func (c *Commands) SetWorkflowControls(w *WorkflowControls) {
+	c.workflow = w
+	if c.selected == SystemCommands {
+		c.setCommandItems(c.selected)
 	}
 }
 
