@@ -122,6 +122,13 @@ One recorded model response with its normalised token counts, price and request 
 
 - **Code:** `step_usage` table, `internal/agent/cacheusage`
 
+## Tool Access
+
+Which tools an agent may use: built-in tools by its `allowed_tools` filter and the global `disabled_tools` list, MCP tools and lazy MCPs by its `allowed_mcp` map. The job tools come with bash.
+
+- **Code:** `toolAccess` (`internal/agent/tool_access.go`)
+- **Not:** permissions. Tool access decides which tools the model sees; the permission service decides whether one call may run.
+
 ## Workspace
 
 The set of operations a frontend (the TUI or the CLI) performs against a running Anvil instance.

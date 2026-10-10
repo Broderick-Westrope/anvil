@@ -6,7 +6,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -950,41 +949,6 @@ type waitingSessionAgent struct {
 }
 
 func (a *waitingSessionAgent) WaitBackgroundJobs() { a.waited = true }
-
-func TestWithJobTools(t *testing.T) {
-	t.Parallel()
-	all := []string{"bash", "view", "job_output", "job_kill", "job_list"}
-	tests := map[string]struct {
-		filter, allowed, want []string
-	}{
-		"include with bash": {
-			filter:  []string{"bash", "view"},
-			allowed: []string{"bash", "view"},
-			want:    []string{"bash", "view", "job_output", "job_kill", "job_list"},
-		},
-		"include without bash": {
-			filter:  []string{"view"},
-			allowed: []string{"view"},
-			want:    []string{"view"},
-		},
-		"exclude job_kill": {
-			filter:  []string{"!job_kill"},
-			allowed: []string{"bash", "view", "job_output", "job_list"},
-			want:    []string{"bash", "view", "job_output", "job_list"},
-		},
-		"nil filter": {
-			filter:  nil,
-			allowed: all,
-			want:    all,
-		},
-	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, withJobTools(tt.filter, slices.Clone(tt.allowed)))
-		})
-	}
-}
 
 func TestJobToolNamesCoversRegisteredJobTools(t *testing.T) {
 	t.Parallel()

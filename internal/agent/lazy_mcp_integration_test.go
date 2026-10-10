@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 )
 
@@ -157,7 +158,14 @@ func TestLazyMCPIntegration_AllowedMCPFiltering(t *testing.T) {
 		"linear":  nil,
 	}
 
-	filtered := filterAllowedLazyMCPs(lazyMCPs, allowed)
+	access, err := newToolAccess(config.Agent{AllowedMCP: allowed}, nil)
+	require.NoError(t, err)
+	filtered := make(map[string]string)
+	for name, desc := range lazyMCPs {
+		if access.allowsMCPServer(name) {
+			filtered[name] = desc
+		}
+	}
 	require.Len(t, filtered, 2)
 	require.Contains(t, filtered, "datadog")
 	require.Contains(t, filtered, "linear")

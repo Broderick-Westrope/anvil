@@ -307,44 +307,6 @@ func TestDeriveLazyMCPState_ErroredThenSuccessful(t *testing.T) {
 	require.True(t, result["datadog"])
 }
 
-func TestFilterAllowedLazyMCPs_NilAllowsAll(t *testing.T) {
-	t.Parallel()
-	lazyMCPs := map[string]string{
-		"datadog": "Observability tools",
-		"github":  "GitHub integration",
-	}
-	result := filterAllowedLazyMCPs(lazyMCPs, nil)
-	require.Equal(t, lazyMCPs, result)
-}
-
-func TestFilterAllowedLazyMCPs_EmptyBlocksAll(t *testing.T) {
-	t.Parallel()
-	lazyMCPs := map[string]string{
-		"datadog": "Observability tools",
-		"github":  "GitHub integration",
-	}
-	result := filterAllowedLazyMCPs(lazyMCPs, map[string][]string{})
-	require.Nil(t, result)
-}
-
-func TestFilterAllowedLazyMCPs_FilteredList(t *testing.T) {
-	t.Parallel()
-	lazyMCPs := map[string]string{
-		"datadog": "Observability tools",
-		"github":  "GitHub integration",
-		"sentry":  "Error tracking",
-	}
-	allowed := map[string][]string{
-		"datadog": nil,
-		"sentry":  {"create_issue"},
-	}
-	result := filterAllowedLazyMCPs(lazyMCPs, allowed)
-	require.Len(t, result, 2)
-	require.Equal(t, "Observability tools", result["datadog"])
-	require.Equal(t, "Error tracking", result["sentry"])
-	require.Empty(t, result["github"])
-}
-
 // mockAgentTool is a minimal fantasy.AgentTool for testing.
 type mockAgentTool struct {
 	name string

@@ -825,11 +825,9 @@ func (c *coordinator) buildPromptWithState(
 		prompt.WithAvailableSkills(activeSkills),
 	}
 
-	hasView := config.FilterAllows(agentCfg.AllowedTools, tools.ViewToolName)
-	if opts := c.cfg.Config().Options; opts != nil && slices.Contains(opts.DisabledTools, tools.ViewToolName) {
-		hasView = false
-	}
-	opts = append(opts, prompt.WithViewToolAvailable(hasView))
+	// buildTools reports an invalid AllowedTools filter.
+	access, _ := newToolAccess(agentCfg, c.cfg.Config().Options)
+	opts = append(opts, prompt.WithViewToolAvailable(access.allowsTool(tools.ViewToolName)))
 
 	if agentName == config.AgentOrchestrator {
 		// Build agents block and delegation workflow from parsed .md files.
@@ -995,21 +993,12 @@ func (c *coordinator) buildToolsWithState(
 	var candidateTools []fantasy.AgentTool
 
 	// Add the task delegation tool if depth allows and the agent has delegates.
-	if depth > 1 {
-		callerName := agent.ID
-		hasDelegates := callerName == config.AgentOrchestrator
-		if !hasDelegates {
-			if md, ok := agentMDs[callerName]; ok && len(md.DelegatesTo) > 0 {
-				hasDelegates = true
-			}
+	if depth > 1 && (agent.ID == config.AgentOrchestrator || len(agentMDs[agent.ID].DelegatesTo) > 0) {
+		taskTool, err := c.taskTool(ctx, agent.ID, depth)
+		if err != nil {
+			return nil, nil, err
 		}
-		if hasDelegates {
-			taskTool, err := c.taskTool(ctx, callerName, depth)
-			if err != nil {
-				return nil, nil, err
-			}
-			candidateTools = append(candidateTools, taskTool)
-		}
+		candidateTools = append(candidateTools, taskTool)
 	}
 
 	// Add the agentic_fetch tool to the candidate set; filtering via AllowedTools applies below.
@@ -1061,44 +1050,13 @@ func (c *coordinator) buildToolsWithState(
 		)
 	}
 
-	// Build the full list of candidate tool names for ParseFilterList.
-	allToolNames := make([]string, 0, len(candidateTools))
-	for _, t := range candidateTools {
-		allToolNames = append(allToolNames, t.Info().Name)
-	}
-
-	// Resolve allowed tool names using ParseFilterList.
-	allowedNames, err := config.ParseFilterList(agent.AllowedTools, allToolNames)
+	access, err := newToolAccess(agent, c.cfg.Config().Options)
 	if err != nil {
 		slog.Warn("Invalid AllowedTools filter for agent; falling back to all tools", "agent", agent.Name, "error", err)
-		allowedNames = allToolNames
 	}
-	allowedNames = withJobTools(agent.AllowedTools, slices.Clone(allowedNames))
-
-	// Apply the global DisabledTools exclusion so that tools disabled at the
-	// top level are removed regardless of per-agent AllowedTools config.
-	if opts := c.cfg.Config().Options; opts != nil && len(opts.DisabledTools) > 0 {
-		disabled := make(map[string]struct{}, len(opts.DisabledTools))
-		for _, d := range opts.DisabledTools {
-			disabled[d] = struct{}{}
-		}
-		filtered := allowedNames[:0]
-		for _, n := range allowedNames {
-			if _, ok := disabled[n]; !ok {
-				filtered = append(filtered, n)
-			}
-		}
-		allowedNames = filtered
-	}
-
-	allowedSet := make(map[string]bool, len(allowedNames))
-	for _, n := range allowedNames {
-		allowedSet[n] = true
-	}
-
 	var filteredTools []fantasy.AgentTool
 	for _, t := range candidateTools {
-		if allowedSet[t.Info().Name] {
+		if access.allowsTool(t.Info().Name) {
 			filteredTools = append(filteredTools, t)
 		}
 	}
@@ -1106,26 +1064,8 @@ func (c *coordinator) buildToolsWithState(
 	cfg := c.cfg.Config()
 	lazyMCPToolMap := make(map[string]string)
 	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
-		allowed := false
-		if agent.AllowedMCP == nil {
-			// No MCP restrictions.
-			allowed = true
-		} else if len(agent.AllowedMCP) == 0 {
-			// No MCPs allowed.
-			slog.Debug("No MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
-		} else {
-			for mcp, mcpTools := range agent.AllowedMCP {
-				if mcp != tool.MCP() {
-					continue
-				}
-				if len(mcpTools) == 0 || slices.Contains(mcpTools, tool.MCPToolName()) {
-					allowed = true
-					break
-				}
-				slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
-			}
-		}
-		if !allowed {
+		if !access.allowsMCPTool(tool.MCP(), tool.MCPToolName()) {
+			slog.Debug("MCP tool not allowed", "tool", tool.Name(), "agent", agent.Name)
 			continue
 		}
 		filteredTools = append(filteredTools, tool)
@@ -1136,26 +1076,15 @@ func (c *coordinator) buildToolsWithState(
 		}
 	}
 
-	// Collect lazy MCPs with their descriptions and apply AllowedMCP
-	// filtering so the enable_mcp tool only exposes permitted servers.
+	// The enable_mcp tool only exposes the lazy MCPs the agent may use.
 	lazyMCPs := make(map[string]string)
 	for name, mcpCfg := range cfg.MCP {
-		if mcpCfg.IsLazy() {
+		if mcpCfg.IsLazy() && access.allowsMCPServer(name) {
 			lazyMCPs[name] = mcpCfg.LazyDescription
 		}
 	}
-	lazyMCPs = filterAllowedLazyMCPs(lazyMCPs, agent.AllowedMCP)
 	if len(lazyMCPs) > 0 {
-		// Inject a synchronous connect callback that connects a deferred
-		// MCP and rebuilds the tool list so the same run's next
-		// PrepareStep sees the newly registered tools.
-		connectFn := func(ctx context.Context, name string) (int, error) {
-			if err := toolsmcp.ConnectDeferred(ctx, name, c.cfg); err != nil {
-				return 0, err
-			}
-			return c.refreshMCPTools(ctx, name)
-		}
-		filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs, connectFn))
+		filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs, c.connectDeferredMCP))
 	}
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
@@ -1367,17 +1296,22 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 
 	// Inject the connect callback so the agent can reconnect replayed
 	// deferred servers at Run start.
-	orch.SetConnectFn(func(ctx context.Context, name string) (int, error) {
-		if err := toolsmcp.ConnectDeferred(ctx, name, c.cfg); err != nil {
-			return 0, err
-		}
-		return c.refreshMCPTools(ctx, name)
-	})
+	orch.SetConnectFn(c.connectDeferredMCP)
 
 	// Invalidate lazily-built agents so they rebuild with new model config.
 	c.agents.Reset(make(map[string]SessionAgent))
 
 	return nil
+}
+
+// connectDeferredMCP connects the deferred MCP server name and rebuilds the
+// tool list, so the same run's next PrepareStep sees the newly registered
+// tools. It returns the number of tools registered for the server.
+func (c *coordinator) connectDeferredMCP(ctx context.Context, name string) (int, error) {
+	if err := toolsmcp.ConnectDeferred(ctx, name, c.cfg); err != nil {
+		return 0, err
+	}
+	return c.refreshMCPTools(ctx, name)
 }
 
 // refreshMCPTools rebuilds the orchestrator's tool list and lazy MCP
@@ -1709,27 +1643,6 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (r
 		return fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output."), nil
 	}
 	return fantasy.NewTextResponse(output), nil
-}
-
-// withJobTools adds the job tools to an allowed set that contains bash,
-// because bash can move any command to the background. Tools excluded
-// explicitly in exclude mode ("!job_kill") are not re-added.
-func withJobTools(filter, allowed []string) []string {
-	if !slices.Contains(allowed, tools.BashToolName) {
-		return allowed
-	}
-	excluded := make(map[string]bool)
-	for _, item := range filter {
-		if name, ok := strings.CutPrefix(item, "!"); ok {
-			excluded[name] = true
-		}
-	}
-	for _, name := range tools.JobToolNames() {
-		if !excluded[name] && !slices.Contains(allowed, name) {
-			allowed = append(allowed, name)
-		}
-	}
-	return allowed
 }
 
 func (c *coordinator) refreshSubAgentModels(ctx context.Context, agent SessionAgent) error {

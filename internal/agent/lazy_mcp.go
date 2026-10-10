@@ -83,30 +83,6 @@ func deriveLazyMCPState(messages []message.Message) map[string]bool {
 	return enabled
 }
 
-// filterAllowedLazyMCPs applies the agent's AllowedMCP restrictions to the
-// set of lazy MCPs discovered from config. The rules are:
-//   - allowedMCP == nil → no restrictions, keep all lazy MCPs
-//   - len(allowedMCP) == 0 → remove all lazy MCPs
-//   - otherwise → keep only lazy MCPs whose name is a key in allowedMCP
-func filterAllowedLazyMCPs(lazyMCPs map[string]string, allowedMCP map[string][]string) map[string]string {
-	if allowedMCP == nil {
-		return lazyMCPs
-	}
-	if len(allowedMCP) == 0 {
-		return nil
-	}
-	filtered := make(map[string]string, len(lazyMCPs))
-	for name, desc := range lazyMCPs {
-		if _, ok := allowedMCP[name]; ok {
-			filtered[name] = desc
-		}
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return filtered
-}
-
 // filterLazyMCPTools returns a subset of agentTools that excludes tools
 // belonging to lazy MCP servers unless the server is enabled in the given
 // LazyMCPState. Tools not present in lazyMCPToolMap pass through unchanged.
