@@ -20,34 +20,6 @@ import (
 //go:embed templates/agentic_fetch.md
 var agenticFetchToolDescription string
 
-// agenticFetchValidationResult holds the validated parameters from the tool call context.
-type agenticFetchValidationResult struct {
-	SessionID      string
-	AgentMessageID string
-}
-
-// validateAgenticFetchParams validates the tool call parameters and extracts required context values.
-func validateAgenticFetchParams(ctx context.Context, params tools.AgenticFetchParams) (agenticFetchValidationResult, error) {
-	if params.Prompt == "" {
-		return agenticFetchValidationResult{}, errors.New("prompt is required")
-	}
-
-	sessionID := tools.GetSessionFromContext(ctx)
-	if sessionID == "" {
-		return agenticFetchValidationResult{}, errors.New("session id missing from context")
-	}
-
-	agentMessageID := tools.GetMessageFromContext(ctx)
-	if agentMessageID == "" {
-		return agenticFetchValidationResult{}, errors.New("agent message id missing from context")
-	}
-
-	return agenticFetchValidationResult{
-		SessionID:      sessionID,
-		AgentMessageID: agentMessageID,
-	}, nil
-}
-
 //go:embed templates/agentic_fetch_prompt.md.tpl
 var agenticFetchPromptTmpl []byte
 
@@ -68,7 +40,10 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 		tools.AgenticFetchToolName,
 		agenticFetchToolDescription,
 		func(ctx context.Context, params tools.AgenticFetchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			validationResult, err := validateAgenticFetchParams(ctx, params)
+			if params.Prompt == "" {
+				return fantasy.NewTextErrorResponse("prompt is required"), nil
+			}
+			sessionID, agentMessageID, err := subAgentOrigin(ctx)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
@@ -83,7 +58,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 
 			p, err := c.permissions.Request(ctx,
 				permission.CreatePermissionRequest{
-					SessionID:   validationResult.SessionID,
+					SessionID:   sessionID,
 					Path:        c.cfg.WorkingDir(),
 					ToolCallID:  call.ID,
 					ToolName:    tools.AgenticFetchToolName,
@@ -106,37 +81,9 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 			}
 			defer os.RemoveAll(tmpDir)
 
-			var fullPrompt string
-
-			if params.URL != "" {
-				// URL mode: fetch the URL content first.
-				content, err := tools.FetchURLAndConvert(ctx, client, params.URL)
-				if err != nil {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to fetch URL: %s", err)), nil
-				}
-
-				hasLargeContent := len(content) > tools.LargeContentThreshold
-
-				if hasLargeContent {
-					tempFile, err := os.CreateTemp(tmpDir, "page-*.md")
-					if err != nil {
-						return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to create temporary file: %s", err)), nil
-					}
-					tempFilePath := tempFile.Name()
-
-					if _, err := tempFile.WriteString(content); err != nil {
-						tempFile.Close()
-						return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to write content to file: %s", err)), nil
-					}
-					tempFile.Close()
-
-					fullPrompt = fmt.Sprintf("%s\n\nThe web page from %s has been saved to: %s\n\nUse the view and grep tools to analyze this file and extract the requested information.", params.Prompt, params.URL, tempFilePath)
-				} else {
-					fullPrompt = fmt.Sprintf("%s\n\nWeb page URL: %s\n\n<webpage_content>\n%s\n</webpage_content>", params.Prompt, params.URL, content)
-				}
-			} else {
-				// Search mode: let the sub-agent search and fetch as needed.
-				fullPrompt = fmt.Sprintf("%s\n\nUse the web_search tool to find relevant information. Break down the question into smaller, focused searches if needed. After searching, use web_fetch to get detailed content from the most relevant results.", params.Prompt)
+			fullPrompt, err := agenticFetchPrompt(ctx, client, tmpDir, params)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to %s", err)), nil
 			}
 
 			promptOpts := []prompt.Option{
@@ -200,8 +147,8 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 
 			return c.runSubAgent(ctx, subAgentParams{
 				Agent:          agent,
-				SessionID:      validationResult.SessionID,
-				AgentMessageID: validationResult.AgentMessageID,
+				SessionID:      sessionID,
+				AgentMessageID: agentMessageID,
 				ToolCallID:     call.ID,
 				Prompt:         fullPrompt,
 				SessionTitle:   "Fetch Analysis",
@@ -210,4 +157,30 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				},
 			})
 		}), nil
+}
+
+// agenticFetchPrompt returns the fetch sub-agent's task. For a URL it
+// fetches the page first: a small page goes inline, and a large one is
+// saved in dir for the sub-agent to search. Without a URL the sub-agent
+// searches the web itself. Errors name the step that failed.
+func agenticFetchPrompt(ctx context.Context, client *http.Client, dir string, params tools.AgenticFetchParams) (string, error) {
+	if params.URL == "" {
+		return fmt.Sprintf("%s\n\nUse the web_search tool to find relevant information. Break down the question into smaller, focused searches if needed. After searching, use web_fetch to get detailed content from the most relevant results.", params.Prompt), nil
+	}
+	content, err := tools.FetchURLAndConvert(ctx, client, params.URL)
+	if err != nil {
+		return "", fmt.Errorf("fetch URL: %w", err)
+	}
+	if len(content) <= tools.LargeContentThreshold {
+		return fmt.Sprintf("%s\n\nWeb page URL: %s\n\n<webpage_content>\n%s\n</webpage_content>", params.Prompt, params.URL, content), nil
+	}
+	tempFile, err := os.CreateTemp(dir, "page-*.md")
+	if err != nil {
+		return "", fmt.Errorf("create temporary file: %w", err)
+	}
+	defer tempFile.Close()
+	if _, err := tempFile.WriteString(content); err != nil {
+		return "", fmt.Errorf("write content to file: %w", err)
+	}
+	return fmt.Sprintf("%s\n\nThe web page from %s has been saved to: %s\n\nUse the view and grep tools to analyze this file and extract the requested information.", params.Prompt, params.URL, tempFile.Name()), nil
 }
