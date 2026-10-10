@@ -61,7 +61,7 @@ adaptations) goes in the **Plan** section at the bottom.
 | ID | Commits | Summary | Recommendation | Decision |
 |---|---|---|---|---|
 | D1 | `75962c48` | Fix odd indentation in code blocks. | Take | **done** (`1e6d1b12`). Clean pick. `TestFormatterPreservesIndentationAfterComments` fails with `renderLines` reverted to `s.Render`. Tests pass for `xchroma`, `chat` and `common`. No live-TUI check: the test drives the real Chroma formatter. |
-| D2 | `460a877f` | Keep first-line indentation in tool call previews. | Take | pending |
+| D2 | `460a877f` | Keep first-line indentation in tool call previews. | Take | **done** (`ce2fa689`). Clean pick. Callers are the same as upstream's (`ui/chat/tools.go` plain/code/markdown output, `ui/list/highlight.go` selection and highlight, which both normalize the same way, so they stay consistent). Trailing spaces on the last line are now kept; they're invisible. `TestNormalizeSpace` fails with `TrimSpace` restored. Tests pass for `stringext`, `ui/chat`, `ui/list`, `ui/model` with goldens unchanged. |
 | D3 | `7b38a40e` | Keep single line breaks in submitted user messages. | Take | pending |
 | D4 | `8f63ee59`, `a0fe47b6` | Wrapped messages counted as newlines; return to the start of the line. | Take | pending |
 | D5 | `46469e2c`, `3429749e` | Pin the selected list item to the top; keep `AtBottom` correct when the top item is taller than the viewport. | Take | pending |
