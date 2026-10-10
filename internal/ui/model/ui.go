@@ -2161,11 +2161,13 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 	}
 }
 
-// mergeLiveItems replaces each loaded item with the item c already holds
-// for the same message ID, and appends items in c the snapshot lacks.
-// Events reach c from the moment of the drill-in, so its items are never
-// older than a snapshot read after that, and keeping them preserves the
-// item identity that thinking and tool drill-ins point at.
+// mergeLiveItems replaces each loaded assistant item with the one c already
+// holds for the same message ID, and appends items in c the snapshot lacks.
+// Events reach c from the moment of the drill-in, so its assistant items
+// are never older than a snapshot read after that, and keeping them
+// preserves the identity that thinking drill-ins point at. Other loaded
+// items win: a live tool item can be created by an assistant update before
+// it has seen a result the snapshot already holds.
 func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
 	ids := make(map[string]struct{}, len(loaded))
 	for k, item := range loaded {
@@ -5614,11 +5616,9 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 
 // handlePermissionNotification updates tool items when permission state changes.
 func (m *UI) handlePermissionNotification(notification permission.PermissionNotification) {
-	toolItem := m.chat.MessageItem(notification.ToolCallID)
-	if toolItem == nil && m.isDrilledIn() {
-		// Fall back to the active drill-in chat when not found in root.
-		toolItem = m.activeChat().MessageItem(notification.ToolCallID)
-	}
+	// Search every drill-in chat, not just the visible one: a subagent's
+	// tool may sit under a thinking or tool drill-in.
+	toolItem := m.findMessageItem(notification.ToolCallID)
 	if toolItem == nil {
 		return
 	}

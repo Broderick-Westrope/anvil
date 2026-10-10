@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
@@ -354,3 +355,18 @@ func TestMessageEventsRepinAFollowingChat(t *testing.T) {
 		})
 	}
 }
+
+func TestPermissionNotificationReachesSubagentUnderADrillIn(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	sub := NewChat(u.com)
+	tool := chat.NewToolMessageItem(u.com.Styles, "sub-a", message.ToolCall{ID: "tc1", Name: "bash", Input: "{}"}, nil, false, nil)
+	sub.SetMessages(tool)
+	u.drillStack = []drillInEntry{{sessionID: "child", chat: sub}, {chat: NewChat(u.com)}}
+
+	u.handlePermissionNotification(permission.PermissionNotification{ToolCallID: "tc1"})
+
+	require.Equal(t, chat.ToolStatusAwaitingPermission, tool.Status())
+}
+
