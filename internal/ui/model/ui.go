@@ -260,6 +260,9 @@ type UI struct {
 
 	// Editor components
 	textarea textarea.Model
+	// textareaMouseSelecting is true while a mouse drag that started in the
+	// textarea is selecting text.
+	textareaMouseSelecting bool
 
 	// Attachment list
 	attachments *attachments.Attachments
@@ -410,14 +413,7 @@ type ToolDetailView struct {
 // New creates a new instance of the [UI] model.
 func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	// Editor components
-	ta := textarea.New()
-	ta.SetStyles(com.Styles.Editor.Textarea)
-	ta.ShowLineNumbers = false
-	ta.CharLimit = -1
-	ta.SetVirtualCursor(false)
-	ta.DynamicHeight = true
-	ta.MinHeight = TextareaMinHeight
-	ta.MaxHeight = TextareaMaxHeight
+	ta := newEditorTextarea(com.Styles)
 	ta.Focus()
 
 	ch := NewChat(com)
@@ -1127,6 +1123,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if m.handleTextareaMouse(msg) {
+			return m, tea.Batch(cmds...)
+		}
+
 		switch m.state {
 		case uiChat:
 			chatArea := m.activeChatArea()
@@ -1148,6 +1148,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pass mouse events to dialogs first if any are open.
 		if m.dialog.HasDialogs() {
 			m.dialog.Update(msg)
+			return m, tea.Batch(cmds...)
+		}
+
+		// A drag that started in the textarea selects there and must not
+		// edge-scroll or highlight the chat.
+		if m.handleTextareaMouse(msg) {
 			return m, tea.Batch(cmds...)
 		}
 
@@ -1179,6 +1185,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pass mouse events to dialogs first if any are open.
 		if m.dialog.HasDialogs() {
 			m.dialog.Update(msg)
+			return m, tea.Batch(cmds...)
+		}
+
+		if m.handleTextareaMouse(msg) {
 			return m, tea.Batch(cmds...)
 		}
 
@@ -3002,6 +3012,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 				cmds = append(cmds, m.pasteImageFromClipboard)
 
+			case key.Matches(msg, m.keyMap.Editor.PasteText):
+				cmds = append(cmds, m.pasteTextFromClipboard)
+
 			case key.Matches(msg, m.keyMap.Editor.SendMessage):
 				if m.branchNavigation != nil || m.branchRestoring {
 					return nil
@@ -3108,6 +3121,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.textarea.InsertRune('\n')
 				m.closeCompletions()
 				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
+			case key.Matches(msg, m.keyMap.Editor.CopySelection) && m.textarea.HasSelection():
+				cmds = append(cmds, m.copyEditorSelection(false))
+			case key.Matches(msg, m.keyMap.Editor.CutSelection) && m.textarea.HasSelection():
+				cmds = append(cmds, m.copyEditorSelection(true))
 			case key.Matches(msg, m.keyMap.Editor.HistoryPrev):
 				cmd := m.handleHistoryUp(msg)
 				if cmd != nil {
@@ -3517,7 +3534,7 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		if m.textarea.Focused() {
 			cur := m.textarea.Cursor()
 
-			cur.Y += m.layout.editor.Min.Y + 1 // Offset for attachments row
+			cur.Y += m.layout.editor.Min.Y + editorAttachmentsRow
 			return cur
 		}
 	}
@@ -3747,6 +3764,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 				k.Editor.Newline,
 				k.Editor.MentionFile,
 				k.Editor.OpenEditor,
+				k.Editor.PasteText,
+				k.Editor.SelectAll,
+				k.Editor.CopySelection,
+				k.Editor.CutSelection,
 			}
 			if m.currentModelSupportsImages() {
 				editorBinds = append(editorBinds, k.Editor.AddImage, k.Editor.PasteImage)
@@ -3824,6 +3845,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 				k.Editor.Newline,
 				k.Editor.MentionFile,
 				k.Editor.OpenEditor,
+				k.Editor.PasteText,
+				k.Editor.SelectAll,
+				k.Editor.CopySelection,
+				k.Editor.CutSelection,
 			}
 			if m.currentModelSupportsImages() {
 				editorBinds = append(editorBinds, k.Editor.AddImage, k.Editor.PasteImage)

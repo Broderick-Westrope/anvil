@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"charm.land/bubbles/v2/textarea"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
@@ -32,14 +31,7 @@ var _ chat.MessageItem = testMessageItem{}
 func newTestUI() *UI {
 	com := common.DefaultCommon(nil)
 
-	ta := textarea.New()
-	ta.SetStyles(com.Styles.Editor.Textarea)
-	ta.ShowLineNumbers = false
-	ta.CharLimit = -1
-	ta.SetVirtualCursor(false)
-	ta.DynamicHeight = true
-	ta.MinHeight = TextareaMinHeight
-	ta.MaxHeight = TextareaMaxHeight
+	ta := newEditorTextarea(com.Styles)
 	ta.Focus()
 
 	u := &UI{
