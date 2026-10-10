@@ -109,7 +109,7 @@ func (sr *sessionRecover) run(command *cobra.Command, _ []string) error {
 	}
 	groups := recovery.GroupByInterruption(entries)
 	hidden := 0
-	if !sr.all && len(groups) > 1 {
+	if !sr.all && len(groups) > 0 {
 		for _, group := range groups[1:] {
 			hidden += len(group)
 		}
