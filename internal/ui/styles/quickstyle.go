@@ -106,6 +106,7 @@ func quickStyle(o quickStyleOpts) Styles {
 			CursorLineNumber: base.Foreground(o.fgMostSubtle),
 			Placeholder:      base.Foreground(o.fgMostSubtle),
 			Prompt:           base.Foreground(o.accent),
+			Selection:        base.Foreground(o.onPrimary).Background(o.secondary),
 		},
 		Blurred: textarea.StyleState{
 			Base:             base,
@@ -115,6 +116,7 @@ func quickStyle(o quickStyleOpts) Styles {
 			CursorLineNumber: base.Foreground(o.fgMoreSubtle),
 			Placeholder:      base.Foreground(o.fgMostSubtle),
 			Prompt:           base.Foreground(o.fgMoreSubtle),
+			Selection:        base.Foreground(o.onPrimary).Background(o.secondary),
 		},
 		Cursor: textarea.CursorStyle{
 			Color: o.secondary,
