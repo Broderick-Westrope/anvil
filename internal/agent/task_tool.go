@@ -45,69 +45,14 @@ func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDep
 				return fantasy.NewTextErrorResponse("subagent_type is required"), nil
 			}
 
-			// Snapshot what's needed under orchestratorMu, which
-			// ReloadPlugins holds while swapping these maps.
-			c.orchestratorMu.RLock()
-			_, configured := c.agentConfigs[params.SubagentType]
-			var validTypes []string
-			if !configured {
-				validTypes = make([]string, 0, len(c.agentConfigs))
-				for name := range c.agentConfigs {
-					if name != config.AgentOrchestrator {
-						validTypes = append(validTypes, name)
-					}
-				}
+			if refusal := c.delegationRefusal(callerName, params.SubagentType); refusal != "" {
+				return fantasy.NewTextErrorResponse(refusal), nil
 			}
-			callerMD, hasMD := c.agentMDs[callerName]
-			c.orchestratorMu.RUnlock()
+			params.Model = c.usableModelOverride(params.SubagentType, params.Model)
 
-			// Validate that the requested agent type is configured.
-			if !configured {
-				slices.Sort(validTypes)
-				return fantasy.NewTextErrorResponse(
-					fmt.Sprintf("unknown subagent_type %q; valid types: %s",
-						params.SubagentType, strings.Join(validTypes, ", ")),
-				), nil
-			}
-
-			// Enforce delegation rules: non-orchestrator callers may only delegate
-			// to agents listed in their delegates_to frontmatter.
-			if callerName != config.AgentOrchestrator {
-				if hasMD && !slices.Contains(callerMD.DelegatesTo, params.SubagentType) {
-					return fantasy.NewTextErrorResponse(
-						fmt.Sprintf("agent %q is not allowed to delegate to %q; allowed: %s",
-							callerName, params.SubagentType,
-							strings.Join(callerMD.DelegatesTo, ", ")),
-					), nil
-				}
-			}
-
-			// Validate an optional model override before it reaches
-			// getOrBuildAgent. An unresolvable override (typically a
-			// hallucinated model ID) would otherwise fall through to the
-			// global large model, silently promoting a cheap specialist onto
-			// the most expensive model available. Dropping the override
-			// instead keeps the agent on its configured default.
-			if params.Model != "" {
-				candidate := config.Agent{ID: params.SubagentType, Model: params.Model}
-				if _, err := config.ResolveAgentModel(candidate, c.cfg.Config()); err != nil {
-					slog.Warn("Ignoring invalid model override; using the agent's configured model",
-						"agent", params.SubagentType,
-						"model_override", params.Model,
-						"error", err,
-					)
-					params.Model = ""
-				}
-			}
-
-			sessionID := tools.GetSessionFromContext(ctx)
-			if sessionID == "" {
-				return fantasy.ToolResponse{}, errors.New("session id missing from context")
-			}
-
-			agentMessageID := tools.GetMessageFromContext(ctx)
-			if agentMessageID == "" {
-				return fantasy.ToolResponse{}, errors.New("agent message id missing from context")
+			sessionID, agentMessageID, err := subAgentOrigin(ctx)
+			if err != nil {
+				return fantasy.ToolResponse{}, err
 			}
 
 			// Lazily build (or reuse) the target agent at depth-1.
@@ -138,4 +83,72 @@ func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDep
 				SessionTitle:   params.Description,
 			})
 		}), nil
+}
+
+// delegationRefusal returns why callerName may not delegate to target, or
+// "" when it may. The target must be a configured agent, and callers other
+// than the orchestrator may only delegate to the agents listed in their
+// delegates_to frontmatter.
+func (c *coordinator) delegationRefusal(callerName, target string) string {
+	// Snapshot what's needed under orchestratorMu, which ReloadPlugins
+	// holds while swapping these maps.
+	c.orchestratorMu.RLock()
+	_, configured := c.agentConfigs[target]
+	var validTypes []string
+	if !configured {
+		validTypes = make([]string, 0, len(c.agentConfigs))
+		for name := range c.agentConfigs {
+			if name != config.AgentOrchestrator {
+				validTypes = append(validTypes, name)
+			}
+		}
+	}
+	callerMD, hasMD := c.agentMDs[callerName]
+	c.orchestratorMu.RUnlock()
+
+	if !configured {
+		slices.Sort(validTypes)
+		return fmt.Sprintf("unknown subagent_type %q; valid types: %s", target, strings.Join(validTypes, ", "))
+	}
+	if callerName != config.AgentOrchestrator && hasMD && !slices.Contains(callerMD.DelegatesTo, target) {
+		return fmt.Sprintf("agent %q is not allowed to delegate to %q; allowed: %s",
+			callerName, target, strings.Join(callerMD.DelegatesTo, ", "))
+	}
+	return ""
+}
+
+// usableModelOverride returns the model override for agent, or "" when it
+// doesn't resolve. An unresolvable override (typically a hallucinated
+// model ID) would otherwise fall through to the global large model,
+// silently promoting a cheap specialist onto the most expensive model
+// available. Dropping it instead keeps the agent on its configured
+// default.
+func (c *coordinator) usableModelOverride(agent, model string) string {
+	if model == "" {
+		return ""
+	}
+	candidate := config.Agent{ID: agent, Model: model}
+	if _, err := config.ResolveAgentModel(candidate, c.cfg.Config()); err != nil {
+		slog.Warn("Ignoring invalid model override; using the agent's configured model",
+			"agent", agent,
+			"model_override", model,
+			"error", err,
+		)
+		return ""
+	}
+	return model
+}
+
+// subAgentOrigin returns the session and assistant message a sub-agent
+// tool call came from. The sub-agent's child session hangs off them.
+func subAgentOrigin(ctx context.Context) (sessionID, agentMessageID string, err error) {
+	sessionID = tools.GetSessionFromContext(ctx)
+	if sessionID == "" {
+		return "", "", errors.New("session id missing from context")
+	}
+	agentMessageID = tools.GetMessageFromContext(ctx)
+	if agentMessageID == "" {
+		return "", "", errors.New("agent message id missing from context")
+	}
+	return sessionID, agentMessageID, nil
 }
