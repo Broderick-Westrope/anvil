@@ -227,8 +227,8 @@ func TestSessionUpdateLeavesPillsCollapsed(t *testing.T) {
 			})
 
 			require.False(t, u.pillsExpanded)
-			// The collapsed pill still takes its one-row footprint, which
-			// proves the update reached the pills panel.
+			// Collapsed must still mean visible: the pill keeps its
+			// bordered one-row footprint.
 			require.Equal(t, pillHeightWithBorder, u.pillsAreaHeight())
 		})
 	}
