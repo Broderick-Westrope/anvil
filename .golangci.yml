@@ -201,9 +201,6 @@ linters:
       - path: internal/permission/permission\.go
         text: 'func `(\(\*permissionService\)\.Request)`'
         linters: [gocognit]
-      - path: internal/permission/segment/segment\.go
-        text: 'func `(split)`'
-        linters: [gocognit]
       - path: internal/permission/triage/triage\.go
         text: 'func `(Analyze)`'
         linters: [gocognit]
