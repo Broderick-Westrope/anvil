@@ -99,6 +99,10 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	q := db.New(conn)
 	recorder := decisionlog.New(q)
 	cacheUsage := cacheusage.New(q)
+	logs := []namedLog{
+		{name: "permission decision log", log: recorder},
+		{name: "cache usage log", log: cacheUsage},
+	}
 	// Prune old rows once at startup in the background.
 	go startupPrune(ctx, "permission decisions", func(ctx context.Context) error {
 		return decisionlog.Prune(ctx, q, time.Now())
@@ -191,7 +195,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
 		func(ctx context.Context) error {
-			if err := closeLogs(ctx, recorder, cacheUsage); err != nil {
+			if err := closeLogs(ctx, logs...); err != nil {
 				return fmt.Errorf("logs did not flush before shutdown: %w", err)
 			}
 			return db.ReleaseGlobal()
@@ -205,7 +209,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		return app, nil
 	}
 	if err := app.InitOrchestratorAgent(ctx); err != nil {
-		return nil, initFailure(ctx, err, recorder, cacheUsage)
+		return nil, initFailure(ctx, err, logs...)
 	}
 
 	// Set up callback for LSP state updates.
@@ -761,15 +765,21 @@ type logCloser interface {
 	Close(ctx context.Context) error
 }
 
+// namedLog pairs a log with the name its close errors are reported under.
+type namedLog struct {
+	name string
+	log  logCloser
+}
+
 // closeLogs flushes and closes logs concurrently, so a slow log cannot use
 // up ctx before the others get to flush. It joins their errors.
-func closeLogs(ctx context.Context, logs ...logCloser) error {
+func closeLogs(ctx context.Context, logs ...namedLog) error {
 	errs := make([]error, len(logs))
 	var wg sync.WaitGroup
 	for i, l := range logs {
 		wg.Go(func() {
-			if err := l.Close(ctx); err != nil {
-				errs[i] = fmt.Errorf("%T: %w", l, err)
+			if err := l.log.Close(ctx); err != nil {
+				errs[i] = fmt.Errorf("%s: %w", l.name, err)
 			}
 		})
 	}
@@ -780,7 +790,7 @@ func closeLogs(ctx context.Context, logs ...logCloser) error {
 // initFailure closes logs after orchestrator initialization fails and
 // returns the initialization error joined with any close error, so neither
 // is lost.
-func initFailure(ctx context.Context, err error, logs ...logCloser) error {
+func initFailure(ctx context.Context, err error, logs ...namedLog) error {
 	return errors.Join(
 		fmt.Errorf("failed to initialize orchestrator agent: %w", err),
 		closeLogs(ctx, logs...),

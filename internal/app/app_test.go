@@ -289,7 +289,7 @@ func TestCloseLogsRunsConcurrently(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	require.NoError(t, closeLogs(ctx, first, second))
+	require.NoError(t, closeLogs(ctx, namedLog{"first", first}, namedLog{"second", second}))
 }
 
 func TestCloseLogsJoinsErrors(t *testing.T) {
@@ -298,13 +298,14 @@ func TestCloseLogsJoinsErrors(t *testing.T) {
 	errA, errB := errors.New("a failed"), errors.New("b failed")
 	ok := fakeLog{close: func(context.Context) error { return nil }}
 	err := closeLogs(t.Context(),
-		fakeLog{close: func(context.Context) error { return errA }},
-		ok,
-		fakeLog{close: func(context.Context) error { return errB }},
+		namedLog{"log a", fakeLog{close: func(context.Context) error { return errA }}},
+		namedLog{"log ok", ok},
+		namedLog{"log b", fakeLog{close: func(context.Context) error { return errB }}},
 	)
 	require.ErrorIs(t, err, errA)
 	require.ErrorIs(t, err, errB)
-	require.NoError(t, closeLogs(t.Context(), ok, ok))
+	require.EqualError(t, err, "log a: a failed\nlog b: b failed")
+	require.NoError(t, closeLogs(t.Context(), namedLog{"ok", ok}, namedLog{"ok", ok}))
 }
 
 func TestInitFailure(t *testing.T) {
@@ -317,15 +318,16 @@ func TestInitFailure(t *testing.T) {
 		return nil
 	}}
 
-	err := initFailure(t.Context(), initErr, ok)
+	err := initFailure(t.Context(), initErr, namedLog{"ok", ok})
 	require.ErrorIs(t, err, initErr)
 	require.EqualError(t, err, "failed to initialize orchestrator agent: init failed")
 	require.True(t, closed)
 
 	closeErr := errors.New("close failed")
-	err = initFailure(t.Context(), initErr, fakeLog{close: func(context.Context) error { return closeErr }})
+	err = initFailure(t.Context(), initErr, namedLog{"cache usage log", fakeLog{close: func(context.Context) error { return closeErr }}})
 	require.ErrorIs(t, err, initErr)
 	require.ErrorIs(t, err, closeErr)
+	require.ErrorContains(t, err, "cache usage log: close failed")
 }
 
 func TestStartupPrune(t *testing.T) {
