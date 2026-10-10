@@ -997,3 +997,25 @@ func TestWorkflowRunFromPalette(t *testing.T) {
 	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowShowRun}))
 	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRunID))
 }
+
+func TestWorkflowRepublishedRequestIsShownOnce(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	ask := host.Event{Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
+	f.event(ask)
+	f.event(ask)
+	asks := 0
+	for _, e := range f.u.workflows["sess-1"].log.Entries {
+		if e.Kind == dialog.WorkflowEntryAsk {
+			asks++
+		}
+	}
+	require.Equal(t, 1, asks)
+
+	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"}))
+	f.event(ask)
+	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")), "an answered request must not reopen")
+	require.Equal(t, [][2]string{{"ask-1", "yes"}}, f.ws.responds)
+}

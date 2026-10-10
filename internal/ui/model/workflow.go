@@ -188,6 +188,10 @@ func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
 		m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
 		req := m.workflowRequests[action.RequestID]
 		delete(m.workflowRequests, action.RequestID)
+		if m.workflowAnswered == nil {
+			m.workflowAnswered = map[string]bool{}
+		}
+		m.workflowAnswered[action.RequestID] = true
 		if err := m.com.Workspace.WorkflowRespond(action.RequestID, action.Answer); err != nil {
 			return util.ReportError(err)
 		}
@@ -325,6 +329,11 @@ func (m *UI) goToSession(sessionID string) tea.Cmd {
 // handleWorkflowEvent applies a workflow event to the UI.
 func (m *UI) handleWorkflowEvent(ev host.Event) tea.Cmd {
 	defer m.updateLayoutAndSize()
+	if (ev.Kind == host.EventApproval || ev.Kind == host.EventAsk) && m.seenWorkflowRequest(ev.RequestID) {
+		// The host republishes requests until answered, in case one was
+		// dropped; one already shown or answered needs nothing more.
+		return nil
+	}
 	switch ev.Kind {
 	case host.EventApproval:
 		m.trackWorkflowRequest(ev)
@@ -402,6 +411,12 @@ func (m *UI) handleWorkflowEvent(ev host.Event) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// seenWorkflowRequest reports whether a request is open or was answered.
+func (m *UI) seenWorkflowRequest(id string) bool {
+	_, open := m.workflowRequests[id]
+	return open || m.workflowAnswered[id]
 }
 
 func (m *UI) trackWorkflowRequest(ev host.Event) {

@@ -342,6 +342,9 @@ type UI struct {
 	workflowTitles map[string]string
 	// workflowRequests holds the open approval and ask requests by ID.
 	workflowRequests map[string]host.Event
+	// workflowAnswered remembers answered requests so a republished copy
+	// doesn't reopen its dialog.
+	workflowAnswered map[string]bool
 	// workflowFollow is a session a workflow focused while the editor had
 	// text; the go key follows it.
 	workflowFollow string

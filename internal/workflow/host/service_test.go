@@ -27,12 +27,12 @@ type serviceHarness struct {
 	yolo    bool
 }
 
-func newServiceHarness(t *testing.T, yolo bool) *serviceHarness {
+func newServiceHarness(t *testing.T, yolo bool, opts ...func(*host.Deps)) *serviceHarness {
 	t.Helper()
 	f := branchfixture.New(t, branchfixture.WithAgents("reviewer"))
 	store := host.NewStore(f.Queries, t.TempDir(), "inst-test")
 	h := &serviceHarness{fixture: f, store: store, dir: t.TempDir(), yolo: yolo}
-	h.svc = host.NewService(f.Context, host.Deps{
+	deps := host.Deps{
 		Coordinator: f.Coordinator,
 		Sessions:    f.Sessions,
 		Store:       store,
@@ -40,7 +40,11 @@ func newServiceHarness(t *testing.T, yolo bool) *serviceHarness {
 		SkipApproval: func() bool {
 			return h.yolo
 		},
-	})
+	}
+	for _, opt := range opts {
+		opt(&deps)
+	}
+	h.svc = host.NewService(f.Context, deps)
 	h.events = h.svc.Subscribe(f.Context)
 	s, err := f.Workspace.CreateSession(f.Context, "invoker")
 	require.NoError(t, err)
@@ -317,5 +321,22 @@ func TestServiceExclusiveRefusesThenStopsSessionJobs(t *testing.T) {
 	require.JSONEq(t, `"sleep 30"`, string(done.Result))
 	for _, job := range mgr.ListBySession(h.session) {
 		require.True(t, job.Done, "job %s still running", job.ID)
+	}
+}
+
+func TestServiceRepublishesUnansweredRequestsUntilAnswered(t *testing.T) {
+	h := newServiceHarness(t, true, func(d *host.Deps) { d.RepublishInterval = 20 * time.Millisecond })
+	path := h.write(t, `function main() { return ask("still there?") }`)
+	h.start(t, path, "")
+	first := h.next(t, host.EventAsk)
+	again := h.next(t, host.EventAsk)
+	require.Equal(t, first.RequestID, again.RequestID)
+	require.NoError(t, h.svc.Respond(first.RequestID, "yes"))
+	done := h.next(t, host.EventFinished)
+	require.JSONEq(t, `"yes"`, string(done.Result))
+	select {
+	case ev := <-h.events:
+		require.NotEqual(t, host.EventAsk, ev.Payload.Kind, "answered request was republished")
+	case <-time.After(100 * time.Millisecond):
 	}
 }

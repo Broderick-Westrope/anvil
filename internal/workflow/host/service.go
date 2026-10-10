@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -120,6 +121,9 @@ type Deps struct {
 	WorkingDir  string
 	// SkipApproval reports whether approval is skipped (--yolo).
 	SkipApproval func() bool
+	// RepublishInterval is how often unanswered requests are published
+	// again; zero means the default.
+	RepublishInterval time.Duration
 }
 
 // Service starts workflow runs and connects them to the UI.
@@ -348,14 +352,30 @@ func (s *Service) request(ctx context.Context, ev Event) (string, error) {
 		delete(s.pending, ev.RequestID)
 		s.mu.Unlock()
 	}()
-	s.events.PublishMustDeliver(ctx, pubsub.UpdatedEvent, ev)
-	select {
-	case answer := <-reply:
-		return answer, nil
-	case <-ctx.Done():
-		return "", ctx.Err()
+	// Delivery can drop an event (a slow subscriber, a full buffer), and a
+	// question nobody sees would block the run forever, so it's published
+	// again until answered. The UI ignores repeats of a request it shows.
+	every := s.deps.RepublishInterval
+	if every <= 0 {
+		every = defaultRepublishInterval
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		s.events.PublishMustDeliver(ctx, pubsub.UpdatedEvent, ev)
+		select {
+		case answer := <-reply:
+			return answer, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }
+
+// defaultRepublishInterval is how often an unanswered approval or question
+// is published again.
+const defaultRepublishInterval = 2 * time.Second
 
 // Respond answers an approval ("approve" or "deny") or an ask().
 func (s *Service) Respond(requestID, answer string) error {
