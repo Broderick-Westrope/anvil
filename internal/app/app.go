@@ -667,6 +667,14 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 // and forwards its events to the TUI. It runs whenever the coordinator is
 // rebuilt, so a service never drives a coordinator that was replaced.
 func (app *App) startWorkflows() {
+	if old := app.Workflows; old != nil {
+		// Runs of the old service drive a coordinator that's gone.
+		ctx, cancel := context.WithTimeout(context.Background(), workflowShutdownWait)
+		if err := old.Shutdown(ctx); err != nil {
+			slog.Warn("Previous workflows did not stop in time", "error", err)
+		}
+		cancel()
+	}
 	app.Workflows = host.NewService(app.globalCtx, host.Deps{
 		Coordinator:  app.AgentCoordinator,
 		Sessions:     app.Sessions,
@@ -856,6 +864,10 @@ func waitWithTimeout(wait func(), timeout time.Duration) bool {
 }
 
 // Shutdown performs a graceful shutdown of the application.
+// workflowShutdownWait bounds how long shutdown waits for workflow runs
+// to record that they were interrupted.
+const workflowShutdownWait = 3 * time.Second
+
 func (app *App) Shutdown() {
 	start := time.Now()
 	defer func() { slog.Debug("Shutdown took " + time.Since(start).String()) }()
@@ -867,6 +879,17 @@ func (app *App) Shutdown() {
 	}
 	mgr := shell.GetBackgroundShellManager()
 	mgr.BeginShutdown()
+
+	// Stop workflows before agents: a script can catch a cancelled turn
+	// and carry on, or be running bash or waiting on a question with no
+	// agent to cancel. Their outcomes must land before the DB closes.
+	if app.Workflows != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), workflowShutdownWait)
+		if err := app.Workflows.Shutdown(ctx); err != nil {
+			slog.Warn("Workflows did not stop in time", "error", err)
+		}
+		cancel()
+	}
 
 	// First, cancel all agents and wait for them to finish. This must complete
 	// before closing the DB so agents can finish writing their state.

@@ -1,6 +1,7 @@
 package host_test
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -271,4 +272,25 @@ function main() { parallel([{agent: "reviewer", prompt: "a"}, {agent: "reviewer"
 	require.Len(t, running, 2)
 	require.Equal(t, running, ended)
 	require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status)
+}
+
+func TestServiceShutdownInterruptsRunsAndRefusesNewOnes(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `function main() { try { ask("wait") } catch (e) {} ; bash("echo after") }`)
+	h.start(t, path, "")
+	ask := h.next(t, host.EventAsk)
+
+	ctx, cancel := context.WithTimeout(h.fixture.Context, 5*time.Second)
+	defer cancel()
+	require.NoError(t, h.svc.Shutdown(ctx))
+
+	done := h.next(t, host.EventFinished)
+	require.Equal(t, host.StatusInterrupted, done.Status)
+	run, ok, err := h.store.GetRun(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, host.StatusInterrupted, run.Status)
+	require.Error(t, h.svc.Respond(ask.RequestID, "late"))
+	err = h.svc.Start(h.fixture.Context, host.Invocation{CommandID: "x", ScriptPath: path, SessionID: h.session})
+	require.ErrorIs(t, err, host.ErrShuttingDown)
 }

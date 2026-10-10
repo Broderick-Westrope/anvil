@@ -26,6 +26,9 @@ const StatusDenied Status = "denied"
 // has one running.
 var ErrRunInProgress = errors.New("a workflow is already running in this session")
 
+// ErrShuttingDown refuses new workflows once Anvil is shutting down.
+var ErrShuttingDown = errors.New("anvil is shutting down")
+
 // ErrNoRun is returned by controls when the session has no workflow run.
 var ErrNoRun = errors.New("no workflow is running in this session")
 
@@ -123,11 +126,14 @@ type Deps struct {
 type Service struct {
 	deps     Deps
 	lifetime context.Context
+	stop     context.CancelFunc
 	events   *pubsub.Broker[Event]
+	wg       sync.WaitGroup
 
-	mu      sync.Mutex
-	runs    map[string]*activeRun // Keyed by invoking session.
-	pending map[string]chan string
+	mu       sync.Mutex
+	stopping bool
+	runs     map[string]*activeRun // Keyed by invoking session.
+	pending  map[string]chan string
 }
 
 type activeRun struct {
@@ -137,9 +143,11 @@ type activeRun struct {
 
 // NewService creates a Service. Runs live as long as lifetime.
 func NewService(lifetime context.Context, deps Deps) *Service {
+	lifetime, stop := context.WithCancel(lifetime)
 	return &Service{
 		deps:     deps,
 		lifetime: lifetime,
+		stop:     stop,
 		events:   pubsub.NewBroker[Event](),
 		runs:     map[string]*activeRun{},
 		pending:  map[string]chan string{},
@@ -170,16 +178,60 @@ func (s *Service) Start(ctx context.Context, inv Invocation) error {
 		return fmt.Errorf("workflow %s can't run: %s", inv.CommandName, strings.Join(missing, "; "))
 	}
 	s.mu.Lock()
+	if s.stopping {
+		s.mu.Unlock()
+		return ErrShuttingDown
+	}
 	if s.runs[inv.SessionID] != nil {
 		s.mu.Unlock()
 		return ErrRunInProgress
 	}
 	// Reserve the session until the run is registered or refused.
 	s.runs[inv.SessionID] = &activeRun{}
+	s.wg.Add(1)
 	s.mu.Unlock()
 
-	go s.invoke(inv, script)
+	go func() {
+		defer s.wg.Done()
+		s.invoke(inv, script)
+	}()
 	return nil
+}
+
+// Shutdown refuses new workflows, ends pending approvals and questions,
+// aborts running scripts and waits, up to ctx, for them to record their
+// outcome. Runs it ends are recorded as interrupted, not aborted.
+func (s *Service) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	s.stopping = true
+	var runs []*workflow.Run
+	for _, active := range s.runs {
+		if active.run != nil {
+			runs = append(runs, active.run)
+		}
+	}
+	s.mu.Unlock()
+	s.stop()
+	for _, run := range runs {
+		run.Abort()
+	}
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait for workflows to stop: %w", ctx.Err())
+	}
+}
+
+func (s *Service) isStopping() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopping
 }
 
 func (s *Service) invoke(inv Invocation, script *workflow.Script) {
@@ -193,7 +245,7 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	finish := func(runID string, status Status, result json.RawMessage, msg string) {
 		ev := base
 		ev.Kind, ev.RunID, ev.Status, ev.Result, ev.Message = EventFinished, runID, status, result, msg
-		s.events.PublishMustDeliver(ctx, pubsub.UpdatedEvent, ev)
+		s.events.PublishMustDeliver(context.WithoutCancel(ctx), pubsub.UpdatedEvent, ev)
 	}
 
 	approved, err := s.approve(ctx, inv, script)
@@ -237,6 +289,8 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	result, err := run.Execute(ctx, workflow.Input{Raw: inv.Raw})
 	status, msg := StatusCompleted, ""
 	switch {
+	case err != nil && s.isStopping():
+		status, msg = StatusInterrupted, "interrupted: Anvil shut down"
 	case errors.Is(err, workflow.ErrAborted):
 		status, msg = StatusAborted, "aborted"
 	case err != nil:
