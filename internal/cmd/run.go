@@ -118,14 +118,15 @@ func init() {
 
 // refuseWorkflowCommand stops `anvil run` from sending a workflow command
 // to the model as plain text: workflows need the TUI for approval, ask()
-// and focus, and run without their script they'd skip its gates.
+// and focus, and run without their script they'd skip its gates. A slash
+// prompt is refused when commands can't load, since it might be one.
 func refuseWorkflowCommand(cfg *config.Config, prompt string) error {
 	if !strings.HasPrefix(prompt, "/") {
 		return nil
 	}
 	cmds, err := commands.LoadAllCommands(cfg, nil)
 	if err != nil {
-		return nil
+		return fmt.Errorf("load commands to check %s isn't a workflow: %w", strings.Fields(prompt)[0], err)
 	}
 	if cmd, ok := commands.MatchSlash(cmds, prompt); ok && cmd.Workflow != "" {
 		return fmt.Errorf("/%s is a workflow command; run it in the interactive TUI (anvil)", cmd.ItemName())
