@@ -224,34 +224,36 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 	for _, p := range knownProviders {
 		knownProviderNames[string(p.ID)] = true
 		config, configExists := c.Providers.Get(string(p.ID))
-		prepared, skip, err := prepareKnownProvider(p, config, env, resolver)
+		prepared, warnSkip, err := prepareKnownProvider(p, config, env, resolver)
 		if err != nil {
 			return err
 		}
-		if skip == nil {
-			c.Providers.Set(string(p.ID), prepared)
-		} else if configExists {
-			skip.log()
-			c.Providers.Del(string(p.ID))
+		if warnSkip != nil {
+			if configExists {
+				warnSkip()
+				c.Providers.Del(string(p.ID))
+			}
+			continue
 		}
+		c.Providers.Set(string(p.ID), prepared)
 	}
 
 	discoveryResults := c.discoverCustomProviderModels(ctx, knownProviderNames, resolver)
 
 	// Validate the custom providers.
 	for id, providerConfig := range c.Providers.Seq2() {
-		if !knownProviderNames[id] {
-			prepared, skip, err := prepareCustomProvider(id, providerConfig, discoveryResults[id], resolver)
-			if err != nil {
-				return err
-			}
-			if skip == nil {
-				c.Providers.Set(id, prepared)
-			} else {
-				skip.log()
-				c.Providers.Del(id)
-			}
+		if knownProviderNames[id] {
+			continue
 		}
+		prepared, ok, err := prepareCustomProvider(id, providerConfig, discoveryResults[id], resolver)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			c.Providers.Del(id)
+			continue
+		}
+		c.Providers.Set(id, prepared)
 	}
 
 	if c.Providers.Len() == 0 && c.Options.DisableDefaultProviders {
@@ -261,27 +263,12 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 	return nil
 }
 
-// providerSkip is why a configured provider is left out of the provider
-// map, held as the log line that reports it.
-type providerSkip struct {
-	level slog.Level
-	msg   string
-	args  []any
-}
-
-func skipWarn(msg string, args ...any) *providerSkip {
-	return &providerSkip{level: slog.LevelWarn, msg: msg, args: args}
-}
-
-func (s *providerSkip) log() {
-	slog.Log(context.Background(), s.level, s.msg, s.args...)
-}
-
-// prepareKnownProvider builds the config for a provider from the Catwalk
-// catalog. The user's config for it may override its endpoint, API key and
-// models, and add headers. It returns a skip when the provider lacks the
-// credentials its kind needs (see knownProviderCredentials).
-func prepareKnownProvider(p catwalk.Provider, config ProviderConfig, env env.Env, resolver VariableResolver) (ProviderConfig, *providerSkip, error) {
+// prepareKnownProvider builds the config for a known provider. The user's
+// config for it may override its endpoint, API key and models, and add
+// headers. When the provider lacks the credentials its kind needs (see
+// knownProviderCredentials), it returns a non-nil function that logs why;
+// the caller calls it only when the user configured the provider.
+func prepareKnownProvider(p catwalk.Provider, config ProviderConfig, env env.Env, resolver VariableResolver) (ProviderConfig, func(), error) {
 	p.APIEndpoint = cmp.Or(config.BaseURL, p.APIEndpoint)
 	p.APIKey = cmp.Or(config.APIKey, p.APIKey)
 	// The user's models come first and win over catalog models with the
@@ -330,12 +317,13 @@ func prepareKnownProvider(p catwalk.Provider, config ProviderConfig, env env.Env
 	return prepared, check(&prepared, env, resolver), nil
 }
 
-// credentialCheck reports whether a catalog provider has the credentials
-// its kind needs, completing prepared with any settings specific to that
-// kind. It returns a skip when the provider can't be used.
-type credentialCheck func(prepared *ProviderConfig, env env.Env, resolver VariableResolver) *providerSkip
+// credentialCheck reports whether a known provider has the credentials its
+// kind needs, completing prepared with any settings specific to that kind.
+// When the provider can't be used, it returns a non-nil function that logs
+// why at its own call site.
+type credentialCheck func(prepared *ProviderConfig, env env.Env, resolver VariableResolver) func()
 
-// knownProviderCredentials holds the credential check for each catalog
+// knownProviderCredentials holds the credential check for each known
 // provider that needs more than an API key.
 var knownProviderCredentials = map[catwalk.InferenceProvider]credentialCheck{
 	catwalk.InferenceProviderAnthropic:     checkAnthropicCredentials,
@@ -345,72 +333,86 @@ var knownProviderCredentials = map[catwalk.InferenceProvider]credentialCheck{
 	catwalk.InferenceProviderBedrockEurope: checkBedrockCredentials,
 }
 
-func checkAPIKeyCredentials(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) *providerSkip {
+func checkAPIKeyCredentials(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
 	if !hasAPIKey(resolver, prepared.APIKey) {
-		return skipWarn("Skipping provider due to missing API key", "provider", prepared.ID)
+		return func() {
+			slog.Warn("Skipping provider due to missing API key", "provider", prepared.ID)
+		}
 	}
 	return nil
 }
 
-func checkAnthropicCredentials(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) *providerSkip {
+func checkAnthropicCredentials(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
 	configureAnthropicAuth(prepared, prepared.AuthMode)
 	switch prepared.AuthMode {
 	case AuthModeOAuth:
 		if prepared.OAuthToken == nil {
-			return skipWarn(
-				"Skipping Anthropic provider — auth_mode is \"oauth\" "+
-					"but no OAuth credentials found. Run `claude /login` "+
-					"to authenticate.",
-				"provider", prepared.ID,
-			)
+			return func() {
+				slog.Warn(
+					"Skipping Anthropic provider — auth_mode is \"oauth\" "+
+						"but no OAuth credentials found. Run `claude /login` "+
+						"to authenticate.",
+					"provider", prepared.ID,
+				)
+			}
 		}
 	case AuthModeAPIKey:
 		if !hasAPIKey(resolver, prepared.APIKeyTemplate) {
-			return skipWarn(
-				"Skipping Anthropic provider — auth_mode is \"api-key\" "+
-					"but no API key found. Set ANTHROPIC_API_KEY.",
-				"provider", prepared.ID,
-			)
+			return func() {
+				slog.Warn(
+					"Skipping Anthropic provider — auth_mode is \"api-key\" "+
+						"but no API key found. Set ANTHROPIC_API_KEY.",
+					"provider", prepared.ID,
+				)
+			}
 		}
 	default:
 		if prepared.OAuthToken == nil && !hasAPIKey(resolver, prepared.APIKeyTemplate) {
-			return skipWarn(
-				"Skipping Anthropic provider — no OAuth credentials or "+
-					"API key found. Run `claude /login` to authenticate, "+
-					"or set ANTHROPIC_API_KEY.",
-				"provider", prepared.ID,
-			)
+			return func() {
+				slog.Warn(
+					"Skipping Anthropic provider — no OAuth credentials or "+
+						"API key found. Run `claude /login` to authenticate, "+
+						"or set ANTHROPIC_API_KEY.",
+					"provider", prepared.ID,
+				)
+			}
 		}
 	}
 	return nil
 }
 
-func checkVertexAICredentials(prepared *ProviderConfig, env env.Env, _ VariableResolver) *providerSkip {
+func checkVertexAICredentials(prepared *ProviderConfig, env env.Env, _ VariableResolver) func() {
 	var (
 		project  = env.Get("VERTEXAI_PROJECT")
 		location = env.Get("VERTEXAI_LOCATION")
 	)
 	if project == "" || location == "" {
-		return skipWarn("Skipping Vertex AI provider due to missing credentials")
+		return func() {
+			slog.Warn("Skipping Vertex AI provider due to missing credentials")
+		}
 	}
 	prepared.ExtraParams["project"] = project
 	prepared.ExtraParams["location"] = location
 	return nil
 }
 
-func checkAzureCredentials(prepared *ProviderConfig, env env.Env, resolver VariableResolver) *providerSkip {
+func checkAzureCredentials(prepared *ProviderConfig, env env.Env, resolver VariableResolver) func() {
 	endpoint, err := resolver.ResolveValue(prepared.BaseURL)
 	if err != nil || endpoint == "" {
-		return skipWarn("Skipping Azure provider due to missing API endpoint", "provider", prepared.ID, "error", err)
+		return func() {
+			slog.Warn("Skipping Azure provider due to missing API endpoint", "provider", prepared.ID, "error", err)
+		}
 	}
 	prepared.BaseURL = endpoint
 	prepared.ExtraParams["apiVersion"] = env.Get("AZURE_OPENAI_API_VERSION")
 	return nil
 }
 
-func checkBedrockCredentials(prepared *ProviderConfig, env env.Env, _ VariableResolver) *providerSkip {
+func checkBedrockCredentials(prepared *ProviderConfig, env env.Env, _ VariableResolver) func() {
 	if prepared.APIKey == "" && !hasAWSCredentials(env) {
-		return skipWarn("Skipping Bedrock provider due to missing AWS credentials")
+		return func() {
+			slog.Warn("Skipping Bedrock provider due to missing AWS credentials")
+		}
 	}
 	return nil
 }
@@ -504,9 +506,9 @@ func (c *Config) discoverCustomProviderModels(ctx context.Context, knownProvider
 
 // prepareCustomProvider validates a user-defined provider and fills in its
 // defaults and any models discovery found for it (discovered is nil when
-// discovery didn't run). It returns a skip when the provider can't be
-// used.
-func prepareCustomProvider(id string, providerConfig ProviderConfig, discovered *discoveryResult, resolver VariableResolver) (ProviderConfig, *providerSkip, error) {
+// discovery didn't run). It logs why and returns false when the provider
+// can't be used.
+func prepareCustomProvider(id string, providerConfig ProviderConfig, discovered *discoveryResult, resolver VariableResolver) (ProviderConfig, bool, error) {
 	// Make sure the provider ID is set.
 	providerConfig.ID = id
 	providerConfig.Name = cmp.Or(providerConfig.Name, id) // Use ID as name if not set
@@ -514,24 +516,28 @@ func prepareCustomProvider(id string, providerConfig ProviderConfig, discovered 
 	providerConfig.Type = cmp.Or(providerConfig.Type, catwalk.TypeOpenAICompat)
 	if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) &&
 		!discover.IsKnownCustomProvider(string(providerConfig.Type)) {
-		return providerConfig, skipWarn("Skipping custom provider due to unsupported provider type", "provider", id), nil
+		slog.Warn("Skipping custom provider due to unsupported provider type", "provider", id)
+		return providerConfig, false, nil
 	}
 
 	if providerConfig.Disable {
-		return providerConfig, &providerSkip{level: slog.LevelDebug, msg: "Skipping custom provider due to disable flag", args: []any{"provider", id}}, nil
+		slog.Debug("Skipping custom provider due to disable flag", "provider", id)
+		return providerConfig, false, nil
 	}
 	if providerConfig.APIKey == "" {
 		slog.Warn("Provider is missing API key, this might be OK for local providers", "provider", id)
 	}
 	if providerConfig.BaseURL == "" {
-		return providerConfig, skipWarn("Skipping custom provider due to missing API endpoint", "provider", id), nil
+		slog.Warn("Skipping custom provider due to missing API endpoint", "provider", id)
+		return providerConfig, false, nil
 	}
 
 	if discovered != nil {
 		if discovered.err != nil {
 			slog.Warn("Model discovery failed", "provider", id, "error", discovered.err)
 			if len(providerConfig.Models) == 0 {
-				return providerConfig, skipWarn("Skipping provider with no models after failed discovery", "provider", id), nil
+				slog.Warn("Skipping provider with no models after failed discovery", "provider", id)
+				return providerConfig, false, nil
 			}
 		} else if len(discovered.models) > 0 {
 			providerConfig.Models = discovered.models
@@ -540,7 +546,8 @@ func prepareCustomProvider(id string, providerConfig ProviderConfig, discovered 
 	}
 
 	if len(providerConfig.Models) == 0 {
-		return providerConfig, skipWarn("Skipping custom provider because the provider has no models", "provider", id), nil
+		slog.Warn("Skipping custom provider because the provider has no models", "provider", id)
+		return providerConfig, false, nil
 	}
 
 	apiKey, err := resolver.ResolveValue(providerConfig.APIKey)
@@ -549,13 +556,14 @@ func prepareCustomProvider(id string, providerConfig ProviderConfig, discovered 
 	}
 	baseURL, err := resolver.ResolveValue(providerConfig.BaseURL)
 	if baseURL == "" || err != nil {
-		return providerConfig, skipWarn("Skipping custom provider due to missing API endpoint", "provider", id, "error", err), nil
+		slog.Warn("Skipping custom provider due to missing API endpoint", "provider", id, "error", err)
+		return providerConfig, false, nil
 	}
 
 	if err := resolveProviderHeaders(id, providerConfig.ExtraHeaders, resolver); err != nil {
-		return providerConfig, nil, err
+		return providerConfig, false, err
 	}
-	return providerConfig, nil, nil
+	return providerConfig, true, nil
 }
 
 // configureAnthropicAuth sets up Anthropic authentication on prepared based

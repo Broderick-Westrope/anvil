@@ -21,7 +21,8 @@ import (
 )
 
 // Messages configureProviders logs about the providers it keeps, drops or
-// discovers. Each case asserts the exact count of every one of them.
+// discovers. Each case asserts the exact count of every one of them, and
+// every line is checked against its level in configureProvidersLogs.
 const (
 	logMissingKey            = "Skipping provider due to missing API key"
 	logAnthropicOAuthMissing = "Skipping Anthropic provider — auth_mode is \"oauth\" but no OAuth credentials found. Run `claude /login` to authenticate."
@@ -41,12 +42,23 @@ const (
 	logEnrichmentFailed      = "Model enrichment failed"
 )
 
-var configureProvidersLogs = []string{
-	logMissingKey, logAnthropicOAuthMissing, logAnthropicKeyMissing,
-	logAnthropicNoAuth, logVertexMissing, logAzureMissing, logBedrockMissing,
-	logUnsupportedType, logCustomDisabled, logCustomMissingKey,
-	logCustomMissingURL, logDiscoveryFailed, logNoModelsAfterFailure,
-	logDiscovered, logNoModels, logEnrichmentFailed,
+var configureProvidersLogs = map[string]slog.Level{
+	logMissingKey:            slog.LevelWarn,
+	logAnthropicOAuthMissing: slog.LevelWarn,
+	logAnthropicKeyMissing:   slog.LevelWarn,
+	logAnthropicNoAuth:       slog.LevelWarn,
+	logVertexMissing:         slog.LevelWarn,
+	logAzureMissing:          slog.LevelWarn,
+	logBedrockMissing:        slog.LevelWarn,
+	logUnsupportedType:       slog.LevelWarn,
+	logCustomDisabled:        slog.LevelDebug,
+	logCustomMissingKey:      slog.LevelWarn,
+	logCustomMissingURL:      slog.LevelWarn,
+	logDiscoveryFailed:       slog.LevelWarn,
+	logNoModelsAfterFailure:  slog.LevelWarn,
+	logDiscovered:            slog.LevelInfo,
+	logNoModels:              slog.LevelWarn,
+	logEnrichmentFailed:      slog.LevelDebug,
 }
 
 // testCatalog is the Catwalk catalog the characterization cases draw their
@@ -170,7 +182,8 @@ func (s *discoveryServer) takeHits() map[string]int {
 }
 
 // captureLogs routes slog through a JSON handler at debug level and
-// returns a function that counts each of configureProvidersLogs.
+// returns a function that counts each of configureProvidersLogs, failing
+// the test when one is logged at a level other than its own.
 func captureLogs(t *testing.T) func() map[string]int {
 	t.Helper()
 	var mu sync.Mutex
@@ -182,18 +195,20 @@ func captureLogs(t *testing.T) func() map[string]int {
 		mu.Lock()
 		defer mu.Unlock()
 		counts := make(map[string]int, len(configureProvidersLogs))
-		for _, msg := range configureProvidersLogs {
+		for msg := range configureProvidersLogs {
 			counts[msg] = 0
 		}
 		scanner := bufio.NewScanner(bytes.NewReader(buf.Bytes()))
 		for scanner.Scan() {
 			var line struct {
-				Msg string `json:"msg"`
+				Level string `json:"level"`
+				Msg   string `json:"msg"`
 			}
 			if json.Unmarshal(scanner.Bytes(), &line) != nil {
 				continue
 			}
-			if _, watched := counts[line.Msg]; watched {
+			if level, watched := configureProvidersLogs[line.Msg]; watched {
+				require.Equalf(t, level.String(), line.Level, "level of %q", line.Msg)
 				counts[line.Msg]++
 			}
 		}
@@ -695,7 +710,7 @@ func TestConfigureProviders_Characterization(t *testing.T) {
 			require.Equal(t, want, got)
 
 			wantLogs := make(map[string]int, len(configureProvidersLogs))
-			for _, msg := range configureProvidersLogs {
+			for msg := range configureProvidersLogs {
 				wantLogs[msg] = tc.wantLogs[msg]
 			}
 			require.Equal(t, wantLogs, countLogs())
