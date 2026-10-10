@@ -638,3 +638,21 @@ func TestMatchSlashFindsCommandByInvokedName(t *testing.T) {
 		})
 	}
 }
+
+func TestSlashNamePrefersDisplayName(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cmd  CustomCommand
+		want string
+	}{
+		"logical name": {cmd: CustomCommand{Name: "project:build", Source: "project"}, want: "build"},
+		"display name": {cmd: CustomCommand{Name: "user:review", DisplayName: "review (user)"}, want: "review (user)"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, tc.cmd.SlashName())
+		})
+	}
+}
