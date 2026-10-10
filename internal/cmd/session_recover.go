@@ -150,20 +150,25 @@ func (sr *sessionRecover) resumable(command *cobra.Command, directory string) ([
 	if sr.openSessions == nil || len(entries) == 0 {
 		return entries, nil
 	}
-	if err := func() error {
-		lookup, closeSessions, err := sr.openSessions(command)
-		if err != nil {
-			return fmt.Errorf("opening session store: %w", err)
-		}
-		defer closeSessions()
-		entries, err = currentRecoveredSessions(command.Context(), entries, lookup)
-		return err
-	}(); err != nil {
+	entries, err = sr.storedSessions(command, entries)
+	if err != nil {
 		if _, writeErr := fmt.Fprintf(command.ErrOrStderr(), "Warning: some sessions could not be checked, so they are listed as recorded: %v\n", err); writeErr != nil {
 			return nil, writeErr
 		}
 	}
 	return entries, nil
+}
+
+// storedSessions opens the session store for the duration of
+// [currentRecoveredSessions]. When the store cannot be opened, entries are
+// returned unchanged alongside the error.
+func (sr *sessionRecover) storedSessions(command *cobra.Command, entries []recovery.Entry) ([]recovery.Entry, error) {
+	lookup, closeSessions, err := sr.openSessions(command)
+	if err != nil {
+		return entries, fmt.Errorf("opening session store: %w", err)
+	}
+	defer closeSessions()
+	return currentRecoveredSessions(command.Context(), entries, lookup)
 }
 
 func writeRecoveryGroups(out io.Writer, groups [][]recovery.Entry, hidden int) error {
