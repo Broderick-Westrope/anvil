@@ -171,9 +171,6 @@ linters:
       - path: internal/cmd/session_recover\.go
         text: 'func `(newSessionRecoverCommand)`'
         linters: [gocognit]
-      - path: internal/lsp/util/edit\.go
-        text: 'func `(applyDocumentChange)`'
-        linters: [gocognit]
       - path: internal/mcpauth/authorize\.go
         text: 'func `(Authorize)`'
         linters: [gocognit]
