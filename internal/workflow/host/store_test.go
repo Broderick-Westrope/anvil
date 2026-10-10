@@ -2,6 +2,7 @@ package host_test
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -262,4 +263,82 @@ func TestStore_MarkInterrupted(t *testing.T) {
 			require.Equal(t, tc.wantStatus == host.StatusRunning, got.FinishedAt.IsZero())
 		})
 	}
+}
+
+func TestStore_PruneRunDirs(t *testing.T) {
+	t.Parallel()
+	const day = 24 * time.Hour
+	now := time.UnixMilli(1_760_000_000_000)
+	tests := map[string]struct {
+		hasRow    bool
+		age       time.Duration // Run start time for rows, directory mtime otherwise.
+		finish    bool
+		wantExist bool
+	}{
+		"old finished run":    {hasRow: true, age: 15 * day, finish: true, wantExist: false},
+		"recent finished run": {hasRow: true, age: 13 * day, finish: true, wantExist: true},
+		"old running run":     {hasRow: true, age: 15 * day, wantExist: true},
+		"old orphan dir":      {age: 15 * day, wantExist: false},
+		"recent orphan dir":   {age: 13 * day, wantExist: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, _, _ := newTestStore(t)
+			if tc.hasRow {
+				require.NoError(t, s.StartRun(t.Context(), testRun("run-1", now.Add(-tc.age))))
+				if tc.finish {
+					require.NoError(t, s.FinishRun(t.Context(), "run-1", host.StatusCompleted, nil, ""))
+				}
+			} else {
+				require.NoError(t, os.MkdirAll(s.Tmpdir("run-1"), 0o700))
+				mtime := now.Add(-tc.age)
+				require.NoError(t, os.Chtimes(s.RunDir("run-1"), mtime, mtime))
+			}
+
+			require.NoError(t, s.PruneRunDirs(t.Context(), now))
+
+			_, err := os.Stat(s.RunDir("run-1"))
+			if tc.wantExist {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
+		})
+	}
+}
+
+func TestStore_PruneRunDirsWithoutWorkflowsDir(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestStore(t)
+
+	require.NoError(t, s.PruneRunDirs(t.Context(), time.Now()))
+}
+
+func TestStore_PruneRunDirsKeepsOtherRuns(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, s.StartRun(t.Context(), testRun("old", now.Add(-30*24*time.Hour))))
+	require.NoError(t, s.FinishRun(t.Context(), "old", host.StatusFailed, nil, "x"))
+	require.NoError(t, s.StartRun(t.Context(), testRun("new", now)))
+
+	require.NoError(t, s.PruneRunDirs(t.Context(), now))
+
+	require.NoDirExists(t, s.RunDir("old"))
+	require.DirExists(t, s.Tmpdir("new"))
+}
+
+func TestStore_PruneRunDirsIgnoresFiles(t *testing.T) {
+	t.Parallel()
+	s, _, dataDir := newTestStore(t)
+	path := filepath.Join(dataDir, "workflows", "notes.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("keep"), 0o600))
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(path, old, old))
+
+	require.NoError(t, s.PruneRunDirs(t.Context(), time.Now()))
+
+	require.FileExists(t, path)
 }

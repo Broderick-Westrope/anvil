@@ -274,6 +274,57 @@ func (s *Store) MarkInterrupted(ctx context.Context) error {
 	return nil
 }
 
+// RunDirRetention is how long a finished run's directory is kept after
+// the run started.
+const RunDirRetention = 14 * 24 * time.Hour
+
+// PruneRunDirs deletes the directories of runs that aren't running and
+// started more than [RunDirRetention] before now, and directories with no
+// run row whose mtime is that old. Run rows and event logs are kept. It
+// carries on past a directory it can't prune and returns the joined
+// errors.
+func (s *Store) PruneRunDirs(ctx context.Context, now time.Time) error {
+	root := filepath.Join(s.dataDir, "workflows")
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read workflow run directories: %w", err)
+	}
+	cutoff := now.Add(-RunDirRetention)
+	var errs []error
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		id := entry.Name()
+		run, ok, err := s.GetRun(ctx, id)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		var expired bool
+		if ok {
+			expired = run.Status != StatusRunning && run.StartedAt.Before(cutoff)
+		} else {
+			info, err := entry.Info()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("stat workflow run directory %s: %w", id, err))
+				continue
+			}
+			expired = info.ModTime().Before(cutoff)
+		}
+		if !expired {
+			continue
+		}
+		if err := os.RemoveAll(s.RunDir(id)); err != nil {
+			errs = append(errs, fmt.Errorf("remove workflow run directory %s: %w", id, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func nullJSON(raw json.RawMessage) sql.NullString {
 	if raw == nil {
 		return sql.NullString{}
