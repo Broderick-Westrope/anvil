@@ -257,15 +257,16 @@ func (r *Run) call(ctx context.Context, parent, index int, name string, args jso
 	}
 	value, err := fn(seq)
 	done := Event{Seq: seq, Parent: parent, Index: index, Primitive: name, At: r.opts.Now()}
+	if err == nil {
+		if done.Result, err = json.Marshal(value); err != nil {
+			value, done.Result, err = nil, nil, fmt.Errorf("encode %s result: %w", name, err)
+		}
+	}
 	if err != nil {
 		done.Phase = PhaseFailed
 		done.Error, _ = json.Marshal(describeError(err, r.aborted.Load()))
 	} else {
 		done.Phase = PhaseCompleted
-		done.Result, err = json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("encode %s result: %w", name, err)
-		}
 	}
 	// Recording the outcome uses a context that survives abort, so an
 	// aborted call still leaves a complete log.

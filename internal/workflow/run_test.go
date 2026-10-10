@@ -239,6 +239,22 @@ function main() {
 	require.Equal(t, []any{"plain", "clean"}, got)
 }
 
+func TestUnencodableResultIsRecordedAsFailed(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.backend.agentFn = func(context.Context, workflow.AgentCall) (workflow.AgentResult, error) {
+		return workflow.AgentResult{Output: []byte(`not json`)}, nil
+	}
+	got, err := h.run(t, `requires({agents: ["reviewer"]})
+function main() {
+  try { agent("reviewer", "x", {schema: {type: "object"}}) } catch (e) { return e.message }
+}`, "")
+	require.NoError(t, err)
+	require.Contains(t, got, "encode agent result")
+	require.Equal(t, []string{"agent"}, h.recorder.primitives(workflow.PhaseFailed))
+}
+
 func TestAgentMissingThrowsAndUndeclaredWarns(t *testing.T) {
 	t.Parallel()
 
