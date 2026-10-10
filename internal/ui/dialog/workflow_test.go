@@ -1,6 +1,7 @@
 package dialog
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -230,6 +231,11 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 	fits := askEvent("yes")
 	// 24 rows leave room for exactly 11 question lines with one option.
 	fits.Question = strings.TrimSuffix(strings.Repeat("question line\n", 11), "\n")
+	scrolled := NewWorkflowAsk(workflowCommon(), longAskEvent("yes", "no"))
+	drawDialog(scrolled, 100, 24)
+	for range 5 {
+		scrolled.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	}
 	longAnswer := NewWorkflowAsk(workflowCommon(), askEvent())
 	drawDialog(longAnswer, 100, 20) // Typing happens after the dialog is on screen.
 	for range 120 {
@@ -243,6 +249,7 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 		"approval_long":      {dialog: NewWorkflowApproval(workflowCommon(), long), width: 100, height: 40},
 		"ask_long_question":  {dialog: NewWorkflowAsk(workflowCommon(), longQuestion), width: 100, height: 24},
 		"ask_question_fits":  {dialog: NewWorkflowAsk(workflowCommon(), fits), width: 100, height: 24},
+		"ask_long_scrolled":  {dialog: scrolled, width: 100, height: 24},
 		"ask_long_answer":    {dialog: longAnswer, width: 100, height: 20},
 		"approval_first_run": {dialog: NewWorkflowApproval(workflowCommon(), approvalEvent("")), width: 100, height: 30},
 		"approval_changed":   {dialog: NewWorkflowApproval(workflowCommon(), changed), width: 120, height: 30},
@@ -261,15 +268,90 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 	}
 }
 
-func TestWorkflowAskLongQuestionIsClipped(t *testing.T) {
+func longAskEvent(options ...string) host.Event {
+	ev := askEvent(options...)
+	ev.Question = "FIRST\n" + strings.Repeat("line\n", 40) + "LAST"
+	return ev
+}
+
+func TestWorkflowAskLongQuestionScrolls(t *testing.T) {
 	t.Parallel()
 
-	ev := askEvent("yes")
-	ev.Question = strings.Repeat("line\n", 40) + "LAST"
-	out := drawDialog(NewWorkflowAsk(workflowCommon(), ev), 100, 24)
-	require.NotContains(t, out, "LAST")
-	require.Contains(t, out, "…")
-	require.Contains(t, out, "yes", "the options stay visible")
+	tests := map[string]struct {
+		options []string
+		keys    []tea.KeyPressMsg
+	}{
+		"page down with options": {
+			options: []string{"yes"},
+			keys:    []tea.KeyPressMsg{{Code: tea.KeyPgDown}, {Code: tea.KeyPgDown}, {Code: tea.KeyPgDown}},
+		},
+		"shift down with free text": {
+			keys: slices.Repeat([]tea.KeyPressMsg{{Code: tea.KeyDown, Mod: tea.ModShift}}, 40),
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			d := NewWorkflowAsk(workflowCommon(), longAskEvent(tc.options...))
+			out := drawDialog(d, 100, 24)
+			require.Contains(t, out, "FIRST")
+			require.NotContains(t, out, "LAST")
+			require.Contains(t, out, "pgup/pgdn", "the help says how to scroll")
+			for _, k := range tc.keys {
+				d.HandleMsg(k)
+			}
+			out = drawDialog(d, 100, 24)
+			require.Contains(t, out, "LAST")
+			require.NotContains(t, out, "FIRST")
+			if len(tc.options) > 0 {
+				require.Contains(t, out, "yes", "the options stay visible")
+			} else {
+				require.Contains(t, out, "Type your answer", "the input stays visible")
+			}
+		})
+	}
+}
+
+func TestWorkflowAskScrollsBackUp(t *testing.T) {
+	t.Parallel()
+
+	d := NewWorkflowAsk(workflowCommon(), longAskEvent("yes"))
+	drawDialog(d, 100, 24)
+	for range 3 {
+		d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	}
+	require.NotContains(t, drawDialog(d, 100, 24), "FIRST")
+	for range 3 {
+		d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	}
+	require.Contains(t, drawDialog(d, 100, 24), "FIRST")
+	d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	for range 40 {
+		d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
+	}
+	require.Contains(t, drawDialog(d, 100, 24), "FIRST")
+}
+
+func TestWorkflowAskScrollKeysDontTypeOrChoose(t *testing.T) {
+	t.Parallel()
+
+	d := NewWorkflowAsk(workflowCommon(), longAskEvent())
+	drawDialog(d, 100, 24)
+	require.Nil(t, d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown}))
+	require.Nil(t, d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}))
+	require.Equal(t, ActionWorkflowRespond{RequestID: "ask-1", Answer: ""}, d.HandleMsg(press("enter")))
+
+	opts := NewWorkflowAsk(workflowCommon(), longAskEvent("a", "b"))
+	drawDialog(opts, 100, 24)
+	opts.HandleMsg(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+	require.Equal(t, ActionWorkflowRespond{RequestID: "ask-1", Answer: "a"}, opts.HandleMsg(press("enter")))
+}
+
+func TestWorkflowAskShortQuestionHasNoScrollHint(t *testing.T) {
+	t.Parallel()
+
+	out := drawDialog(NewWorkflowAsk(workflowCommon(), askEvent("yes")), 100, 24)
+	require.NotContains(t, out, "pgup/pgdn")
 }
 
 func TestWorkflowAskCursorSitsInTheInput(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -21,8 +22,19 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// workflowResultMaxWidth bounds a run's result in the status line.
-const workflowResultMaxWidth = 80
+const (
+	// workflowResultMaxWidth bounds a run's result in the status line.
+	workflowResultMaxWidth = 80
+	// workflowPanelEntries is how many of a run's latest entries the
+	// progress panel lists below its progress line.
+	workflowPanelEntries = 4
+)
+
+// workflowEntry is something a run did that the progress panel lists: a
+// question the user answered.
+type workflowEntry struct {
+	question, answer string
+}
 
 // workflowRun is what the UI knows about one running workflow, keyed by
 // its invoking session. It is built from host events only.
@@ -37,6 +49,14 @@ type workflowRun struct {
 	// turn runs elsewhere or the script calls focus().
 	active   string
 	sessions map[string]bool // Every session the run has used.
+	entries  []workflowEntry // The latest, oldest first.
+}
+
+func (r *workflowRun) addEntry(e workflowEntry) {
+	r.entries = append(r.entries, e)
+	if extra := len(r.entries) - workflowPanelEntries; extra > 0 {
+		r.entries = slices.Delete(r.entries, 0, extra)
+	}
 }
 
 // workflowSessionTitleMsg carries the title of a session a workflow uses,
@@ -119,9 +139,13 @@ func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
 		}, "")
 	case dialog.ActionWorkflowRespond:
 		m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
+		req := m.workflowRequests[action.RequestID]
 		delete(m.workflowRequests, action.RequestID)
 		if err := m.com.Workspace.WorkflowRespond(action.RequestID, action.Answer); err != nil {
 			return util.ReportError(err)
+		}
+		if req.Kind == host.EventAsk {
+			return m.keepWorkflowAnswer(req, action.Answer)
 		}
 	case dialog.ActionWorkflowControl:
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -266,9 +290,20 @@ func (m *UI) handleWorkflowEvent(ev host.Event) tea.Cmd {
 
 func (m *UI) trackWorkflowRequest(ev host.Event) {
 	if m.workflowRequests == nil {
-		m.workflowRequests = map[string]string{}
+		m.workflowRequests = map[string]host.Event{}
 	}
-	m.workflowRequests[ev.RequestID] = ev.SessionID
+	m.workflowRequests[ev.RequestID] = ev
+}
+
+// keepWorkflowAnswer lists an answered question in the progress panel and
+// reports it, so the exchange stays visible once its dialog closes.
+func (m *UI) keepWorkflowAnswer(ask host.Event, answer string) tea.Cmd {
+	question := firstLine(ask.Question)
+	if run := m.workflows[ask.SessionID]; run != nil {
+		run.addEntry(workflowEntry{question: question, answer: answer})
+		m.updateLayoutAndSize()
+	}
+	return util.ReportInfo(fmt.Sprintf("Workflow /%s asked: %s → %s", ask.Command, question, firstLine(answer)))
 }
 
 func (m *UI) ensureWorkflowRun(ev host.Event) *workflowRun {
@@ -329,8 +364,8 @@ func (m *UI) handleWorkflowFocus(msg workflowFocusMsg) tea.Cmd {
 
 func (m *UI) finishWorkflow(ev host.Event) tea.Cmd {
 	delete(m.workflows, ev.SessionID)
-	for req, invoker := range m.workflowRequests {
-		if invoker == ev.SessionID {
+	for req, pending := range m.workflowRequests {
+		if pending.SessionID == ev.SessionID {
 			m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(req))
 			delete(m.workflowRequests, req)
 		}
@@ -373,6 +408,7 @@ type workflowPanel struct {
 	// elsewhere is the title of the session the run is driving when it
 	// isn't the one on screen.
 	elsewhere string
+	entries   []workflowEntry
 	pauseKey  string
 	abortKey  string
 	goKey     string
@@ -389,7 +425,7 @@ func (m *UI) currentWorkflowPanel() (workflowPanel, bool) {
 	}
 	p := workflowPanel{
 		command: run.command, step: run.step, detail: run.detail, activity: run.activity,
-		paused: run.paused, held: run.held,
+		paused: run.paused, held: run.held, entries: run.entries,
 		pauseKey: m.keyMap.WorkflowPause.Help().Key,
 		abortKey: m.keyMap.WorkflowAbort.Help().Key,
 		goKey:    m.keyMap.WorkflowGo.Help().Key,
@@ -405,10 +441,11 @@ func (m *UI) workflowPanelHeight() int {
 	if !ok {
 		return 0
 	}
+	height := 1 + len(p.entries)
 	if p.elsewhere != "" {
-		return 2
+		height++
 	}
-	return 1
+	return height
 }
 
 // renderWorkflowPanel renders the progress line, plus a warning when the
@@ -448,6 +485,11 @@ func renderWorkflowPanel(t *styles.Styles, p workflowPanel, width int) string {
 	if p.elsewhere != "" {
 		warning := t.Pills.WorkflowWarning.Render(fmt.Sprintf("workflow /%s is running in %s", p.command, p.elsewhere))
 		lines = append(lines, ansi.Truncate(warning+"  "+hint(p.goKey, "go there"), width, "…"))
+	}
+	for _, e := range p.entries {
+		entry := "  " + t.Pills.HelpKey.Render("?") + " " + t.Pills.HelpText.Render(firstLine(e.question)) +
+			" " + t.Pills.HelpText.Render("→") + " " + t.Pills.TodoProgress.Render(firstLine(e.answer))
+		lines = append(lines, ansi.Truncate(entry, width, "…"))
 	}
 	return strings.Join(lines, "\n")
 }

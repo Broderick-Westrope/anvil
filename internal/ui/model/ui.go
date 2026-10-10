@@ -340,9 +340,8 @@ type UI struct {
 	workflows map[string]*workflowRun
 	// workflowTitles caches the titles of sessions workflows drive.
 	workflowTitles map[string]string
-	// workflowRequests maps open approval and ask requests to their
-	// invoking session.
-	workflowRequests map[string]string
+	// workflowRequests holds the open approval and ask requests by ID.
+	workflowRequests map[string]host.Event
 	// workflowFollow is a session a workflow focused while the editor had
 	// text; the go key follows it.
 	workflowFollow string

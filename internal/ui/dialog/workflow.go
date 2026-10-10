@@ -233,9 +233,16 @@ type WorkflowAsk struct {
 	selected int
 	input    textinput.Model
 
+	// The question scrolls, since workflows ask with long hand-overs and
+	// findings; the options or input stay below it.
+	question       viewport.Model
+	questionWidth  int
+	questionScroll bool // Whether the question is taller than its area.
+
 	help   help.Model
 	keyMap struct {
-		Up, Down, Submit, Abort, Close key.Binding
+		Up, Down, Submit, Abort, Close,
+		ScrollUp, ScrollDown, PageUp, PageDown key.Binding
 	}
 }
 
@@ -243,7 +250,7 @@ var _ Dialog = (*WorkflowAsk)(nil)
 
 // NewWorkflowAsk creates the dialog for an EventAsk.
 func NewWorkflowAsk(com *common.Common, ev host.Event) *WorkflowAsk {
-	d := &WorkflowAsk{com: com, ev: ev}
+	d := &WorkflowAsk{com: com, ev: ev, question: viewport.New()}
 	d.help = help.New()
 	d.help.Styles = com.Styles.DialogHelpStyles()
 	d.input = textinput.New()
@@ -256,6 +263,12 @@ func NewWorkflowAsk(com *common.Common, ev host.Event) *WorkflowAsk {
 	d.keyMap.Submit = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "answer"))
 	d.keyMap.Abort = key.NewBinding(key.WithKeys("alt+x"), key.WithHelp("alt+x", "abort workflow"))
 	d.keyMap.Close = key.NewBinding(key.WithKeys("esc", "alt+esc"))
+	// Plain arrows choose an option and letters type an answer, so the
+	// question scrolls with keys neither uses.
+	d.keyMap.PageUp = key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup/pgdn", "scroll"))
+	d.keyMap.PageDown = key.NewBinding(key.WithKeys("pgdown"))
+	d.keyMap.ScrollUp = key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("shift+↑/↓", "line"))
+	d.keyMap.ScrollDown = key.NewBinding(key.WithKeys("shift+down"))
 	return d
 }
 
@@ -271,6 +284,18 @@ func (d *WorkflowAsk) HandleMsg(msg tea.Msg) Action {
 			return nil
 		case key.Matches(keyMsg, d.keyMap.Abort):
 			return ActionWorkflowControl{SessionID: d.ev.SessionID, Control: WorkflowAbort}
+		case key.Matches(keyMsg, d.keyMap.ScrollUp):
+			d.question.ScrollUp(1)
+			return nil
+		case key.Matches(keyMsg, d.keyMap.ScrollDown):
+			d.question.ScrollDown(1)
+			return nil
+		case key.Matches(keyMsg, d.keyMap.PageUp):
+			d.question.PageUp()
+			return nil
+		case key.Matches(keyMsg, d.keyMap.PageDown):
+			d.question.PageDown()
+			return nil
 		case key.Matches(keyMsg, d.keyMap.Submit):
 			answer := d.input.Value()
 			if len(d.ev.Options) > 0 {
@@ -305,11 +330,22 @@ func (d *WorkflowAsk) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	title := t.Dialog.Title.Render(common.DialogTitle(t, fmt.Sprintf("Workflow /%s asks", d.ev.Command),
 		contentWidth-t.Dialog.Title.GetHorizontalFrameSize(), t.Dialog.TitleGradFromColor, t.Dialog.TitleGradToColor))
-	question := t.Dialog.Permissions.ValueText.Width(contentWidth).Render(d.ev.Question)
-	maxQuestion := max(area.Dy()-expandedVerticalMargin-len(d.ev.Options)-8, 3)
-	if lipgloss.Height(question) > maxQuestion {
-		question = strings.Join(strings.Split(question, "\n")[:maxQuestion-1], "\n") + "\n…"
+	answerHeight := max(len(d.ev.Options), 1)
+	maxQuestion := max(area.Dy()-expandedVerticalMargin-answerHeight-7, 3)
+	questionWidth := contentWidth
+	if lipgloss.Height(t.Dialog.Permissions.ValueText.Width(contentWidth).Render(d.ev.Question)) > maxQuestion {
+		questionWidth-- // Reserve a column for the scrollbar.
 	}
+	if d.questionWidth != questionWidth {
+		d.question.SetWidth(questionWidth)
+		d.question.SetContent(t.Dialog.Permissions.ValueText.Width(questionWidth).Render(d.ev.Question))
+		d.questionWidth = questionWidth
+	}
+	total := d.question.TotalLineCount()
+	height := min(total, maxQuestion)
+	d.question.SetHeight(height)
+	d.questionScroll = total > height
+	question := joinScrollbar(t, d.question.View(), height, total, height, d.question.YOffset())
 	parts := []string{title, "", question, ""}
 	var cur *tea.Cursor
 	if len(d.ev.Options) > 0 {
@@ -340,10 +376,14 @@ func (d *WorkflowAsk) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 // ShortHelp implements [help.KeyMap].
 func (d *WorkflowAsk) ShortHelp() []key.Binding {
+	bindings := []key.Binding{d.keyMap.Submit, d.keyMap.Abort}
 	if len(d.ev.Options) > 0 {
-		return []key.Binding{d.keyMap.Up, d.keyMap.Submit, d.keyMap.Abort}
+		bindings = append([]key.Binding{d.keyMap.Up}, bindings...)
 	}
-	return []key.Binding{d.keyMap.Submit, d.keyMap.Abort}
+	if d.questionScroll {
+		bindings = append(bindings, d.keyMap.PageUp, d.keyMap.ScrollUp)
+	}
+	return bindings
 }
 
 // FullHelp implements [help.KeyMap].

@@ -540,6 +540,14 @@ func TestRenderWorkflowPanelGolden(t *testing.T) {
 		"narrow": {
 			command: "build", step: "review", detail: "pass 1 with a very long detail that cannot fit",
 			activity: "$ a long command",
+			entries:  []workflowEntry{{question: "A long question that will not fit in fifty columns", answer: "an answer"}},
+		},
+		"with_questions": {
+			command: "build", step: "escalate",
+			entries: []workflowEntry{
+				{question: "Ship approach 2?\nIt failed review twice.", answer: "yes"},
+				{question: "Anything to add for the hand-over?", answer: "keep the retry loop\nand log it"},
+			},
 		},
 	}
 	for name, p := range tests {
@@ -659,4 +667,54 @@ func TestWorkflowPanelSharesThePillsArea(t *testing.T) {
 	require.Equal(t, 2+pillHeightWithBorder, f.u.pillsAreaHeight())
 	require.Contains(t, f.panel(), "/demo")
 	require.Contains(t, f.panel(), "2 Queued")
+}
+
+func askFor(id, question string) host.Event {
+	return host.Event{Kind: host.EventAsk, RequestID: id, Command: "demo", SessionID: "sess-1", Question: question}
+}
+
+func TestWorkflowAnsweredQuestionIsKept(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(askFor("ask-1", "Ship it?\nThe devil's advocate found two problems."))
+	infos := f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"}))
+
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeInfo, infos[0].Type)
+	require.Equal(t, "Workflow /demo asked: Ship it? → yes", infos[0].Msg)
+	require.Contains(t, f.panel(), "? Ship it? → yes")
+	require.Equal(t, 2, f.u.pillsAreaHeight())
+}
+
+func TestWorkflowApprovalIsNotKeptAsAQuestion(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{
+		Kind: host.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "sess-1",
+		Approval: &host.ApprovalRequest{Source: "function main() {}"},
+	})
+	infos := f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: "approve"}))
+	require.Empty(t, infos)
+	require.Equal(t, 1, f.u.pillsAreaHeight())
+}
+
+func TestWorkflowPanelKeepsTheLatestEntries(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	for i := range workflowPanelEntries + 1 {
+		id := string(rune('a' + i))
+		f.event(askFor(id, "question "+id))
+		f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: id, Answer: "ok"}))
+	}
+	panel := f.panel()
+	require.NotContains(t, panel, "question a ")
+	require.Contains(t, panel, "question b")
+	require.Contains(t, panel, "question "+string(rune('a'+workflowPanelEntries)))
+	require.Equal(t, 1+workflowPanelEntries, f.u.pillsAreaHeight())
 }
