@@ -258,6 +258,10 @@ type UI struct {
 	// caps hold different terminal capabilities that we query for.
 	caps common.Capabilities
 
+	// mouseEnabled is false when options.tui.mouse turns mouse capture off,
+	// leaving selection, copy and scrolling to the terminal or tmux.
+	mouseEnabled bool
+
 	// Editor components
 	textarea textarea.Model
 	// textareaMouseSelecting is true while a mouse drag that started in the
@@ -509,6 +513,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.progressBarEnabled = opts.Progress == nil || *opts.Progress
 	// enable transparent mode
 	ui.isTransparent = opts.TUI.Transparent != nil && *opts.TUI.Transparent
+	ui.mouseEnabled = mouseEnabledByConfig(opts)
 
 	return ui
 }
@@ -2431,6 +2436,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return util.NewInfoMsg("Transparent background " + status)
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionToggleMouseSupport:
+		cmds = append(cmds, m.toggleMouseSupport())
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleAnthropicAuthMode:
 		cmds = append(cmds, m.toggleAnthropicAuthMode)
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -3644,6 +3652,39 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	return nil
 }
 
+// toggleMouseSupport flips mouse capture and saves options.tui.mouse. It
+// runs synchronously, like the notifications toggle, and only flips the UI
+// once the setting is saved, so the palette label (read from config) never
+// disagrees with the live mouse mode.
+func (m *UI) toggleMouseSupport() tea.Cmd {
+	newValue := !m.mouseEnabled
+	if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.mouse", newValue); err != nil {
+		return util.ReportError(err)
+	}
+	m.mouseEnabled = newValue
+	// A drag in progress can never see its release once capture is off.
+	m.textareaMouseSelecting = false
+	status := "disabled"
+	if newValue {
+		status = "enabled"
+	}
+	return util.CmdHandler(util.NewInfoMsg("Mouse support " + status))
+}
+
+// mouseEnabledByConfig reports whether options.tui.mouse leaves mouse
+// capture on. It defaults to on.
+func mouseEnabledByConfig(opts *config.Options) bool {
+	return opts == nil || opts.TUI == nil || opts.TUI.Mouse == nil || *opts.TUI.Mouse
+}
+
+// mouseMode is the mouse reporting mode for the view.
+func mouseMode(enabled bool) tea.MouseMode {
+	if !enabled {
+		return tea.MouseModeNone
+	}
+	return tea.MouseModeCellMotion
+}
+
 // View renders the UI model's view.
 func (m *UI) View() tea.View {
 	var v tea.View
@@ -3651,7 +3692,7 @@ func (m *UI) View() tea.View {
 	if !m.isTransparent {
 		v.BackgroundColor = m.com.Styles.Background
 	}
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = mouseMode(m.mouseEnabled)
 	v.ReportFocus = m.caps.ReportFocusEvents
 	var sessionTitle string
 	if m.hasSession() {
