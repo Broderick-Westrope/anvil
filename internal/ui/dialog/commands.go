@@ -595,7 +595,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		}
 	}
 
-	if w := c.workflow; w != nil {
+	if w := c.workflow; w != nil && w.Finished {
+		commands = append(commands,
+			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, "alt+w",
+				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowShowRun}),
+			NewCommandItem(c.com.Styles, "workflow_dismiss", "Dismiss Workflow Run /"+w.Command, "",
+				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowDismiss}))
+	} else if w != nil {
 		pause := NewCommandItem(c.com.Styles, "workflow_pause", "Pause Workflow /"+w.Command, "ctrl+x",
 			ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowPause})
 		if w.Paused {
@@ -604,7 +610,9 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		}
 		commands = append(commands, pause,
 			NewCommandItem(c.com.Styles, "workflow_abort", "Abort Workflow /"+w.Command, "alt+x",
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowAbort}))
+				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowAbort}),
+			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, "alt+w",
+				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowShowRun}))
 		if w.CanGoToActive {
 			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_goto", "Go to Workflow Session", "alt+g",
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowGoToActive}))
@@ -658,6 +666,9 @@ type WorkflowControls struct {
 	SessionID string
 	Command   string
 	Paused    bool
+	// Finished is set when the run has ended but hasn't been dismissed,
+	// so it can only be shown or dismissed.
+	Finished bool
 	// CanGoToActive is set when the run is driving a session other than
 	// the one shown.
 	CanGoToActive bool

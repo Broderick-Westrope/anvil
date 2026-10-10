@@ -213,6 +213,20 @@ func TestDefaultCommandsWorkflowControls(t *testing.T) {
 	goTo := findCommandItem(paused, "workflow_goto")
 	require.NotNil(t, goTo)
 	require.Equal(t, ActionWorkflowControl{SessionID: "s1", Control: WorkflowGoToActive}, goTo.Action())
+
+	show := findCommandItem(running, "workflow_run")
+	require.NotNil(t, show)
+	require.Contains(t, show.Filter(), "Show Workflow Run /demo")
+	require.Equal(t, ActionWorkflowControl{SessionID: "s1", Control: WorkflowShowRun}, show.Action())
+	require.Nil(t, findCommandItem(running, "workflow_dismiss"), "a running run can't be dismissed")
+
+	finished := newCommands(&WorkflowControls{SessionID: "s1", Command: "demo", Finished: true}).defaultCommands()
+	require.NotNil(t, findCommandItem(finished, "workflow_run"))
+	dismiss := findCommandItem(finished, "workflow_dismiss")
+	require.NotNil(t, dismiss)
+	require.Equal(t, ActionWorkflowControl{SessionID: "s1", Control: WorkflowDismiss}, dismiss.Action())
+	require.Nil(t, findCommandItem(finished, "workflow_pause"), "a finished run has no controls")
+	require.Nil(t, findCommandItem(finished, "workflow_abort"))
 }
 
 func drawDialogANSI(d Dialog, width, height int) (string, *tea.Cursor) {
