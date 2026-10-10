@@ -1580,6 +1580,12 @@ func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCf
 		return Model{}, Model{}, err
 	}
 
+	// Bound every request so a hung provider fails instead of blocking the
+	// session. Applied per request, so each retry gets a fresh budget.
+	requestTimeout := c.cfg.Config().Options.GetRequestTimeout()
+	largeModel = newRequestTimeoutModel(largeModel, requestTimeout)
+	smallModel = newRequestTimeoutModel(smallModel, requestTimeout)
+
 	return Model{
 		Model:      largeModel,
 		CatwalkCfg: *largeCatwalkModel,

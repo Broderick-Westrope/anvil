@@ -780,9 +780,14 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		}
 		var fantasyErr *fantasy.Error
 		var providerErr *fantasy.ProviderError
+		var timeoutErr *requestTimeoutError
 		const defaultTitle = "Provider Error"
 		if isCancelErr {
 			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
+		} else if errors.As(err, &timeoutErr) {
+			// Before the provider branches, so our own deadline is never
+			// reported as a provider error.
+			currentAssistant.AddFinish(message.FinishReasonError, "Request timed out", timeoutErr.userMessage())
 		} else if errors.As(err, &providerErr) {
 			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message)
 		} else if errors.As(err, &fantasyErr) {
