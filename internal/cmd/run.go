@@ -3,11 +3,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
@@ -15,6 +17,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/spinner"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
@@ -102,13 +105,18 @@ anvil run --continue "Follow up on your last response"
 			sessionID = sess.ID
 		}
 
+		tty := detectRunTerminal()
+		if tty.showProgress(ws.Config().Options.Progress) {
+			defer startProgressBar(os.Stderr)()
+		}
+
 		stopSpinner := func() {}
-		if !quiet && !verbose && term.IsTerminal(os.Stderr.Fd()) {
+		if tty.showSpinner(quiet, verbose) {
 			t := styles.TokyoNight()
 			// Without the background check the label is unreadable in
 			// light terminals.
 			hasDarkBG := true
-			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
+			if tty.canDetectBackground() {
 				hasDarkBG = lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
 			}
 			s := spinner.New(ctx, cancel, anim.Settings{
@@ -126,6 +134,68 @@ anvil run --continue "Follow up on your last response"
 
 		return appWs.App().RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, stopSpinner, sessionID, useLast)
 	},
+}
+
+// runTerminal records which standard streams are terminals. It decides
+// what `anvil run` draws on stderr around the model's output.
+type runTerminal struct {
+	stdin, stdout, stderr bool
+}
+
+func detectRunTerminal() runTerminal {
+	return runTerminal{
+		stdin:  term.IsTerminal(os.Stdin.Fd()),
+		stdout: term.IsTerminal(os.Stdout.Fd()),
+		stderr: term.IsTerminal(os.Stderr.Fd()),
+	}
+}
+
+// showSpinner reports whether to draw the "Generating" spinner. Quiet hides
+// it, and verbose hides it so it doesn't garble the logs.
+func (rt runTerminal) showSpinner(quiet, verbose bool) bool {
+	return rt.stderr && !quiet && !verbose
+}
+
+// showProgress reports whether to draw the terminal progress bar. The
+// progress option defaults to on.
+func (rt runTerminal) showProgress(progress *bool) bool {
+	return rt.stderr && (progress == nil || *progress)
+}
+
+// canDetectBackground reports whether the terminal can be asked for its
+// background colour, which needs a terminal on both stdin and stdout.
+func (rt runTerminal) canDetectBackground() bool {
+	return rt.stdin && rt.stdout
+}
+
+// progressRefresh is how often the progress bar is redrawn. Terminals hide
+// an indeterminate progress bar that isn't refreshed.
+const progressRefresh = time.Second
+
+// startProgressBar shows an indeterminate progress bar on w until the
+// returned stop function is called.
+func startProgressBar(w io.Writer) (stop func()) {
+	_, _ = io.WriteString(w, ansi.SetIndeterminateProgressBar)
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(progressRefresh)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				_, _ = io.WriteString(w, ansi.SetIndeterminateProgressBar)
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-finished
+		_, _ = io.WriteString(w, ansi.ResetProgressBar)
+	}
 }
 
 func init() {

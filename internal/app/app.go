@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -41,8 +40,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/update"
 	"github.com/Broderick-Westrope/anvil/internal/version"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/term"
 )
 
 // UpdateAvailableMsg is sent when a new version is available.
@@ -305,9 +302,6 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 		}
 	}
 
-	stderrTTY := term.IsTerminal(os.Stderr.Fd())
-	progress := app.config.Config().Options.Progress == nil || *app.config.Config().Options.Progress
-
 	// Wait for MCP initialization to complete before reading MCP tools.
 	if err := mcp.WaitForInit(ctx); err != nil {
 		return fmt.Errorf("failed to wait for MCP initialization: %w", err)
@@ -357,22 +351,12 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	var printed bool
 
 	defer func() {
-		if progress && stderrTTY {
-			_, _ = fmt.Fprintf(os.Stderr, ansi.ResetProgressBar)
-		}
-
 		// Always print a newline at the end. If output is a TTY this will
 		// prevent the prompt from overwriting the last line of output.
 		_, _ = fmt.Fprintln(output)
 	}()
 
 	for {
-		if progress && stderrTTY {
-			// HACK: Reinitialize the terminal progress bar on every iteration
-			// so it doesn't get hidden by the terminal due to inactivity.
-			_, _ = fmt.Fprintf(os.Stderr, ansi.SetIndeterminateProgressBar)
-		}
-
 		select {
 		case result := <-done:
 			onResponse()
