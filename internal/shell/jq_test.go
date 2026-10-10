@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mvdan.cc/sh/v3/interp"
 )
 
 // TestJQ_CtxCancel verifies that handleJQ polls ctx during iteration and
@@ -207,5 +209,102 @@ func TestJQ_Success(t *testing.T) {
 	}
 	if got := stdout.String(); got != "1\n" {
 		t.Fatalf("stdout = %q, want %q", got, "1\n")
+	}
+}
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }
+
+// TestJQ_ReadError verifies that a non-cancellation read failure is
+// reported as an input error (exit 2) rather than returned verbatim.
+func TestJQ_ReadError(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	err := handleJQ(t.Context(), []string{"jq", "."},
+		errReader{err: errors.New("boom")}, io.Discard, &stderr)
+
+	if code, ok := errors.AsType[interp.ExitStatus](err); !ok || code != 2 {
+		t.Fatalf("expected exit status 2, got %v", err)
+	}
+	if got := stderr.String(); got != "jq: boom\n" {
+		t.Fatalf("stderr = %q, want %q", got, "jq: boom\n")
+	}
+}
+
+// cancelAtEOFReader serves its data, then cancels ctx as it reports EOF,
+// so cancellation is first observable after io.ReadAll has returned.
+type cancelAtEOFReader struct {
+	data   *strings.Reader
+	cancel context.CancelFunc
+}
+
+func (r cancelAtEOFReader) Read(p []byte) (int, error) {
+	n, err := r.data.Read(p)
+	if errors.Is(err, io.EOF) {
+		r.cancel()
+	}
+	return n, err
+}
+
+// TestJQ_CtxCancel_AfterRead verifies that a cancellation observed while
+// splitting or decoding already-read input surfaces as ctx.Err() with no
+// output, even when the input itself is invalid.
+func TestJQ_CtxCancel_AfterRead(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		args  []string
+		input string
+	}{
+		"json":         {args: []string{"jq", "."}, input: "1 2 3"},
+		"invalid json": {args: []string{"jq", "."}, input: "{"},
+		"raw":          {args: []string{"jq", "-R", "."}, input: "a\nb"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			reader := cancelAtEOFReader{data: strings.NewReader(tc.input), cancel: cancel}
+			var stdout, stderr bytes.Buffer
+
+			err := handleJQ(ctx, tc.args, reader, &stdout, &stderr)
+
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected context.Canceled, got %v", err)
+			}
+			if stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("stdout = %q, stderr = %q, want both empty", stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+type errWriter struct{ err error }
+
+func (w errWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// TestJQ_WriteError verifies that an output write failure is returned
+// verbatim for both raw and JSON output.
+func TestJQ_WriteError(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string][]string{
+		"json": {"jq", "."},
+		"raw":  {"jq", "-r", "."},
+	}
+	for name, args := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("disk full")
+
+			err := handleJQ(t.Context(), args, strings.NewReader(`"x"`), errWriter{err: want}, io.Discard)
+
+			if !errors.Is(err, want) {
+				t.Fatalf("expected write error, got %v", err)
+			}
+		})
 	}
 }
