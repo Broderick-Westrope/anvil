@@ -599,3 +599,143 @@ func TestAnvilInfo_Skills_Unlisted(t *testing.T) {
 	require.Contains(t, output, "design-twice = user, unlisted, unloaded")
 	require.Contains(t, output, "my-skill = user, unloaded")
 }
+
+func TestAnvilInfo_LSPConfiguredServers(t *testing.T) {
+	t.Parallel()
+
+	newManager := func(running ...string) *lsp.Manager {
+		mgr := lsp.NewManager(config.NewTestStore(&config.Config{
+			Providers: csync.NewMap[string, config.ProviderConfig](),
+		}))
+		for _, name := range running {
+			client := &lsp.Client{}
+			client.SetServerState(lsp.StateReady)
+			mgr.Clients().Set(name, client)
+		}
+		return mgr
+	}
+	tests := map[string]struct {
+		manager    *lsp.Manager
+		configured config.LSPs
+		want       string
+	}{
+		"running servers are not listed as configured": {
+			manager: newManager("gopls"),
+			configured: config.LSPs{
+				"zls":     {},
+				"gopls":   {},
+				"pyright": {Disabled: true},
+				"alpha":   {},
+			},
+			want: "[lsp]\ngopls = ready\n\n[lsp_configured]\nalpha = not_started\npyright = disabled\nzls = not_started\n\n",
+		},
+		"without a manager every configured server is listed": {
+			configured: config.LSPs{"gopls": {}, "pyright": {Disabled: true}},
+			want:       "[lsp_configured]\ngopls = not_started\npyright = disabled\n\n",
+		},
+		"manager without clients writes no runtime section": {
+			manager:    newManager(),
+			configured: config.LSPs{"gopls": {}},
+			want:       "[lsp_configured]\ngopls = not_started\n\n",
+		},
+		"every configured server running": {
+			manager:    newManager("gopls"),
+			configured: config.LSPs{"gopls": {}},
+			want:       "[lsp]\ngopls = ready\n\n",
+		},
+		"nothing configured or running": {
+			manager: newManager(),
+			want:    "",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.NewTestStore(&config.Config{
+				Providers: csync.NewMap[string, config.ProviderConfig](),
+				LSP:       tc.configured,
+			})
+
+			var b strings.Builder
+			writeLSP(&b, tc.manager, cfg)
+
+			require.Equal(t, tc.want, b.String())
+		})
+	}
+}
+
+func TestAnvilInfo_MCPRuntimeStates(t *testing.T) {
+	t.Parallel()
+
+	connectedAt := time.Date(2025, 1, 15, 15, 4, 5, 0, time.UTC)
+	states := map[string]mcp.ClientInfo{
+		"a-since":    {State: mcp.StateConnected, Counts: mcp.Counts{Tools: 3, Resources: 4}, ConnectedAt: connectedAt},
+		"b-plain":    {State: mcp.StateConnected, Counts: mcp.Counts{Tools: 5, Resources: 6}},
+		"c-err":      {State: mcp.StateError, Error: errors.New("boom")},
+		"d-bare-err": {State: mcp.StateError},
+		"e-lazy":     {State: mcp.StateLazy},
+		"f-starting": {State: mcp.StateStarting, Counts: mcp.Counts{Tools: 9}, ConnectedAt: connectedAt},
+		"g-deferred": {State: mcp.StateDeferred},
+	}
+	cfg := config.NewTestStore(&config.Config{Providers: csync.NewMap[string, config.ProviderConfig]()})
+
+	var b strings.Builder
+	writeMCP(&b, states, cfg)
+
+	require.Equal(t, "[mcp]\n"+
+		"a-since = connected (3 tools, 4 resources) since 15:04:05\n"+
+		"b-plain = connected (5 tools, 6 resources)\n"+
+		"c-err = error: boom\n"+
+		"d-bare-err = error\n"+
+		"e-lazy = lazy (connected but not enabled)\n"+
+		"f-starting = starting\n"+
+		"g-deferred = deferred\n"+
+		"\n", b.String())
+}
+
+func TestAnvilInfo_MCPConfiguredServers(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		states     map[string]mcp.ClientInfo
+		configured config.MCPs
+		want       string
+	}{
+		"running servers are not listed as configured": {
+			states: map[string]mcp.ClientInfo{"github": {State: mcp.StateLazy}},
+			configured: config.MCPs{
+				"zeta":   {},
+				"github": {},
+				"fs":     {Disabled: true},
+				"alpha":  {},
+			},
+			want: "[mcp]\ngithub = lazy (connected but not enabled)\n\n[mcp_configured]\nalpha = not_started\nfs = disabled\nzeta = not_started\n\n",
+		},
+		"without states every configured server is listed": {
+			configured: config.MCPs{"github": {}, "fs": {Disabled: true}},
+			want:       "[mcp_configured]\nfs = disabled\ngithub = not_started\n\n",
+		},
+		"every configured server running": {
+			states:     map[string]mcp.ClientInfo{"github": {State: mcp.StateLazy}},
+			configured: config.MCPs{"github": {}},
+			want:       "[mcp]\ngithub = lazy (connected but not enabled)\n\n",
+		},
+		"nothing configured or running": {
+			want: "",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.NewTestStore(&config.Config{
+				Providers: csync.NewMap[string, config.ProviderConfig](),
+				MCP:       tc.configured,
+			})
+
+			var b strings.Builder
+			writeMCP(&b, tc.states, cfg)
+
+			require.Equal(t, tc.want, b.String())
+		})
+	}
+}
