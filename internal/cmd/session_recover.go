@@ -64,81 +64,106 @@ func currentRecoveredSessions(ctx context.Context, entries []recovery.Entry, loo
 // recoveryTimeLayout dates an interruption in the listing header.
 const recoveryTimeLayout = "2006-01-02 15:04 MST"
 
+// sessionRecover holds the recover command's inputs and flags.
+type sessionRecover struct {
+	root          string
+	openSessions  openSessionLookup
+	asJSON        bool
+	clearRecords  bool
+	all           bool
+	printCommands bool
+}
+
 func newSessionRecoverCommand(root string, openSessions openSessionLookup) *cobra.Command {
-	var asJSON, clearRecords, all, printCommands bool
+	sr := &sessionRecover{root: root, openSessions: openSessions}
 	command := &cobra.Command{
 		Use: "recover", Short: "List sessions left open after an interrupted exit",
 		Long: "List working directories, full session IDs, and titles from Anvil windows that were open when Anvil last stopped without being closed, such as during a restart. Windows lost together are grouped, and only the most recent group is shown unless --all is given. Running windows and sessions with no messages are excluded. Nothing is resumed automatically; use --print-commands for commands that resume each session.",
 		Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			directory := root
-			if directory == "" {
-				directory = filepath.Join(config.GlobalDataDir(), "recovery")
-			}
-			if clearRecords {
-				if err := recovery.Clear(directory); err != nil {
-					return err
-				}
-				_, err := fmt.Fprintln(command.OutOrStdout(), "Cleared interrupted-session recovery records. Conversations were not deleted.")
-				return err
-			}
-			entries, err := recovery.List(directory)
-			if err != nil {
-				if entries == nil {
-					return err
-				}
-				if _, writeErr := fmt.Fprintf(command.ErrOrStderr(), "Warning: some recovery records could not be read: %v\n", err); writeErr != nil {
-					return writeErr
-				}
-			}
-			if openSessions != nil && len(entries) > 0 {
-				if err := func() error {
-					lookup, closeSessions, err := openSessions(command)
-					if err != nil {
-						return fmt.Errorf("opening session store: %w", err)
-					}
-					defer closeSessions()
-					entries, err = currentRecoveredSessions(command.Context(), entries, lookup)
-					return err
-				}(); err != nil {
-					if _, writeErr := fmt.Fprintf(command.ErrOrStderr(), "Warning: some sessions could not be checked, so they are listed as recorded: %v\n", err); writeErr != nil {
-						return writeErr
-					}
-				}
-			}
-			groups := recovery.GroupByInterruption(entries)
-			hidden := 0
-			if !all && len(groups) > 1 {
-				for _, group := range groups[1:] {
-					hidden += len(group)
-				}
-				groups = groups[:1]
-			}
-			if asJSON {
-				shown := make([]recovery.Entry, 0, len(entries))
-				for _, group := range groups {
-					shown = append(shown, group...)
-				}
-				return json.NewEncoder(command.OutOrStdout()).Encode(shown)
-			}
-			if printCommands {
-				if hidden > 0 {
-					if _, err := fmt.Fprintf(command.ErrOrStderr(), "%s from earlier interruptions not shown. Use --all to include them.\n", countSessions(hidden)); err != nil {
-						return err
-					}
-				}
-				return writeRecoveryCommands(command.OutOrStdout(), groups)
-			}
-			return writeRecoveryGroups(command.OutOrStdout(), groups, hidden)
-		},
+		RunE: sr.run,
 	}
-	command.Flags().BoolVar(&asJSON, "json", false, "Output recovery records as JSON")
-	command.Flags().BoolVar(&clearRecords, "clear", false, "Dismiss interrupted-session records without deleting conversations")
-	command.Flags().BoolVar(&all, "all", false, "Include sessions from earlier interruptions")
-	command.Flags().BoolVar(&printCommands, "print-commands", false, "Print one resume command per session, for pasting into new terminals")
+	command.Flags().BoolVar(&sr.asJSON, "json", false, "Output recovery records as JSON")
+	command.Flags().BoolVar(&sr.clearRecords, "clear", false, "Dismiss interrupted-session records without deleting conversations")
+	command.Flags().BoolVar(&sr.all, "all", false, "Include sessions from earlier interruptions")
+	command.Flags().BoolVar(&sr.printCommands, "print-commands", false, "Print one resume command per session, for pasting into new terminals")
 	command.MarkFlagsMutuallyExclusive("json", "clear", "print-commands")
 	command.MarkFlagsMutuallyExclusive("all", "clear")
 	return command
+}
+
+func (sr *sessionRecover) run(command *cobra.Command, _ []string) error {
+	directory := sr.root
+	if directory == "" {
+		directory = filepath.Join(config.GlobalDataDir(), "recovery")
+	}
+	if sr.clearRecords {
+		if err := recovery.Clear(directory); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(command.OutOrStdout(), "Cleared interrupted-session recovery records. Conversations were not deleted.")
+		return err
+	}
+	entries, err := sr.resumable(command, directory)
+	if err != nil {
+		return err
+	}
+	groups := recovery.GroupByInterruption(entries)
+	hidden := 0
+	if !sr.all && len(groups) > 1 {
+		for _, group := range groups[1:] {
+			hidden += len(group)
+		}
+		groups = groups[:1]
+	}
+	if sr.asJSON {
+		shown := make([]recovery.Entry, 0, len(entries))
+		for _, group := range groups {
+			shown = append(shown, group...)
+		}
+		return json.NewEncoder(command.OutOrStdout()).Encode(shown)
+	}
+	if sr.printCommands {
+		if hidden > 0 {
+			if _, err := fmt.Fprintf(command.ErrOrStderr(), "%s from earlier interruptions not shown. Use --all to include them.\n", countSessions(hidden)); err != nil {
+				return err
+			}
+		}
+		return writeRecoveryCommands(command.OutOrStdout(), groups)
+	}
+	return writeRecoveryGroups(command.OutOrStdout(), groups, hidden)
+}
+
+// resumable lists the recovery records in directory and, when a session
+// store is available, narrows them with [currentRecoveredSessions]. Records
+// that cannot be read or checked are reported as warnings, so the error is
+// only set when nothing could be listed or a warning could not be written.
+func (sr *sessionRecover) resumable(command *cobra.Command, directory string) ([]recovery.Entry, error) {
+	entries, err := recovery.List(directory)
+	if err != nil {
+		if entries == nil {
+			return nil, err
+		}
+		if _, writeErr := fmt.Fprintf(command.ErrOrStderr(), "Warning: some recovery records could not be read: %v\n", err); writeErr != nil {
+			return nil, writeErr
+		}
+	}
+	if sr.openSessions == nil || len(entries) == 0 {
+		return entries, nil
+	}
+	if err := func() error {
+		lookup, closeSessions, err := sr.openSessions(command)
+		if err != nil {
+			return fmt.Errorf("opening session store: %w", err)
+		}
+		defer closeSessions()
+		entries, err = currentRecoveredSessions(command.Context(), entries, lookup)
+		return err
+	}(); err != nil {
+		if _, writeErr := fmt.Fprintf(command.ErrOrStderr(), "Warning: some sessions could not be checked, so they are listed as recorded: %v\n", err); writeErr != nil {
+			return nil, writeErr
+		}
+	}
+	return entries, nil
 }
 
 func writeRecoveryGroups(out io.Writer, groups [][]recovery.Entry, hidden int) error {
