@@ -1,14 +1,11 @@
 package agent
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -30,7 +27,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
-	"github.com/Broderick-Westrope/anvil/internal/discover"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
@@ -46,15 +42,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"golang.org/x/sync/errgroup"
 
-	"charm.land/fantasy/providers/anthropic"
-	"charm.land/fantasy/providers/azure"
-	"charm.land/fantasy/providers/bedrock"
-	"charm.land/fantasy/providers/google"
-	"charm.land/fantasy/providers/openai"
-	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
-	"charm.land/fantasy/providers/vercel"
-	"github.com/qjebbs/go-jsons"
 )
 
 //go:embed all:templates/agents
@@ -700,255 +688,6 @@ func effectiveReasoningEffort(model Model) string {
 		return model.CatwalkCfg.ReasoningLevels[0]
 	}
 	return ""
-}
-
-func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
-	options := fantasy.ProviderOptions{}
-
-	cfgOpts := []byte("{}")
-	providerCfgOpts := []byte("{}")
-	catwalkOpts := []byte("{}")
-
-	if model.ModelCfg.ProviderOptions != nil {
-		data, err := json.Marshal(model.ModelCfg.ProviderOptions)
-		if err == nil {
-			cfgOpts = data
-		}
-	}
-
-	if providerCfg.ProviderOptions != nil {
-		data, err := json.Marshal(providerCfg.ProviderOptions)
-		if err == nil {
-			providerCfgOpts = data
-		}
-	}
-
-	if model.CatwalkCfg.Options.ProviderOptions != nil {
-		data, err := json.Marshal(model.CatwalkCfg.Options.ProviderOptions)
-		if err == nil {
-			catwalkOpts = data
-		}
-	}
-
-	readers := []io.Reader{
-		bytes.NewReader(catwalkOpts),
-		bytes.NewReader(providerCfgOpts),
-		bytes.NewReader(cfgOpts),
-	}
-
-	got, err := jsons.Merge(readers)
-	if err != nil {
-		slog.Error("Could not merge call config", "err", err)
-		return options
-	}
-
-	mergedOptions := make(map[string]any)
-
-	err = json.Unmarshal([]byte(got), &mergedOptions)
-	if err != nil {
-		slog.Error("Could not create config for call", "err", err)
-		return options
-	}
-
-	reasoningEffort := effectiveReasoningEffort(model)
-	shouldSetEffort := model.CatwalkCfg.CanReason &&
-		reasoningEffort != "" &&
-		slices.Contains(model.CatwalkCfg.ReasoningLevels, reasoningEffort)
-
-	switch providerCfg.Type {
-	case openai.Name, azure.Name:
-		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
-		if !hasReasoningEffort && shouldSetEffort {
-			mergedOptions["reasoning_effort"] = reasoningEffort
-		}
-		if openai.IsResponsesModel(model.CatwalkCfg.ID) {
-			if openai.IsResponsesReasoningModel(model.CatwalkCfg.ID) {
-				mergedOptions["reasoning_summary"] = "auto"
-				mergedOptions["include"] = []openai.IncludeType{openai.IncludeReasoningEncryptedContent}
-			}
-			parsed, err := openai.ParseResponsesOptions(mergedOptions)
-			if err == nil {
-				options[openai.Name] = parsed
-			}
-		} else {
-			parsed, err := openai.ParseOptions(mergedOptions)
-			if err == nil {
-				options[openai.Name] = parsed
-			}
-		}
-	case anthropic.Name, bedrock.Name:
-		var (
-			_, hasEffort = mergedOptions["effort"]
-			_, hasThink  = mergedOptions["thinking"]
-			extraBody    = make(map[string]any)
-		)
-
-		switch providerCfg.ID {
-		case string(catwalk.InferenceProviderAlibabaSingapore), string(catwalk.InferenceProviderAlibabaUS):
-			switch {
-			case !hasEffort && shouldSetEffort:
-				extraBody["reasoning_effort"] = reasoningEffort
-			case !hasThink && model.CatwalkCfg.CanReason:
-				if model.ModelCfg.Think {
-					extraBody["thinking"] = map[string]any{"type": "enabled"}
-				} else {
-					extraBody["thinking"] = map[string]any{"type": "disabled"}
-				}
-			}
-			mergedOptions["extra_body"] = extraBody
-
-		default:
-			switch {
-			case !hasEffort && shouldSetEffort:
-				mergedOptions["effort"] = reasoningEffort
-			case !hasThink && model.ModelCfg.Think:
-				mergedOptions["thinking"] = map[string]any{"budget_tokens": 2000}
-			}
-		}
-
-		parsed, err := anthropic.ParseOptions(mergedOptions)
-		if err == nil {
-			options[anthropic.Name] = parsed
-		}
-
-	case openrouter.Name:
-		_, hasReasoning := mergedOptions["reasoning"]
-		if !hasReasoning && shouldSetEffort {
-			mergedOptions["reasoning"] = map[string]any{
-				"enabled": true,
-				"effort":  reasoningEffort,
-			}
-		}
-		parsed, err := openrouter.ParseOptions(mergedOptions)
-		if err == nil {
-			options[openrouter.Name] = parsed
-		}
-	case vercel.Name:
-		_, hasReasoning := mergedOptions["reasoning"]
-		if !hasReasoning && shouldSetEffort {
-			mergedOptions["reasoning"] = map[string]any{
-				"enabled": true,
-				"effort":  reasoningEffort,
-			}
-		}
-		parsed, err := vercel.ParseOptions(mergedOptions)
-		if err == nil {
-			options[vercel.Name] = parsed
-		}
-	case google.Name:
-		_, hasReasoning := mergedOptions["thinking_config"]
-		if !hasReasoning {
-			if strings.HasPrefix(model.CatwalkCfg.ID, "gemini-2") {
-				mergedOptions["thinking_config"] = map[string]any{
-					"thinking_budget":  2000,
-					"include_thoughts": true,
-				}
-			} else {
-				mergedOptions["thinking_config"] = map[string]any{
-					"thinking_level":   reasoningEffort,
-					"include_thoughts": true,
-				}
-			}
-		}
-		parsed, err := google.ParseOptions(mergedOptions)
-		if err == nil {
-			options[google.Name] = parsed
-		}
-	case openaicompat.Name:
-		extraBody := make(map[string]any)
-
-		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
-		if !hasReasoningEffort && shouldSetEffort {
-			switch providerCfg.ID {
-			case string(catwalk.InferenceProviderIoNet):
-				extraBody["reasoning"] = map[string]string{"effort": reasoningEffort}
-			case string(catwalk.InferenceProviderOpenCodeGo), string(catwalk.InferenceProviderOpenCodeZen):
-				// MiniMax models use the "thinking" parameter instead of
-				// "reasoning_effort". Other models on these providers still
-				// use the standard field.
-				if !strings.HasPrefix(strings.ToLower(model.CatwalkCfg.ID), "minimax") {
-					mergedOptions["reasoning_effort"] = reasoningEffort
-				}
-			default:
-				mergedOptions["reasoning_effort"] = reasoningEffort
-			}
-		}
-
-		// "reasoning effort" is a standard OpenAI field, but "thinking" is not.
-		// Setting it in the right way for each provider.
-		// TODO: Abstract this in Fantasy somehow?
-		// TODO: Allow custom providers to specify how to set this?
-		switch providerCfg.ID {
-		case string(catwalk.InferenceProviderIoNet):
-			if _, ok := extraBody["reasoning"]; !ok && model.CatwalkCfg.CanReason {
-				if model.ModelCfg.Think {
-					extraBody["reasoning"] = map[string]string{"effort": "medium"}
-				} else {
-					extraBody["reasoning"] = map[string]string{"effort": "none"}
-				}
-			}
-		case string(catwalk.InferenceProviderZAI), string(catwalk.InferenceProviderDeepSeek):
-			if model.ModelCfg.Think || reasoningEffort != "" {
-				extraBody["thinking"] = map[string]any{
-					"type": "enabled",
-				}
-			} else {
-				extraBody["thinking"] = map[string]any{
-					"type": "disabled",
-				}
-			}
-		case string(catwalk.InferenceProviderFireworks):
-			// NOTE: Fireworks break if we set both `reasoning_effort` and `thinking`.
-			if model.ModelCfg.ReasoningEffort == "" {
-				if model.ModelCfg.Think {
-					extraBody["thinking"] = map[string]any{"type": "enabled"}
-				} else {
-					extraBody["thinking"] = map[string]any{"type": "disabled"}
-				}
-			}
-
-		case string(catwalk.InferenceProviderBaseten):
-			extraBody["chat_template_args"] = map[string]any{
-				"enable_thinking": model.ModelCfg.Think || reasoningEffort != "" && reasoningEffort != "none",
-			}
-
-		case string(catwalk.InferenceProviderOpenCodeGo), string(catwalk.InferenceProviderOpenCodeZen):
-			// MiniMax M3 uses the "thinking" parameter to control reasoning.
-			// "reasoning_split" must be true so thinking content is returned
-			// in the "reasoning_content" field instead of inline in "content".
-			if strings.HasPrefix(strings.ToLower(model.CatwalkCfg.ID), "minimax") {
-				if model.CatwalkCfg.CanReason && (model.ModelCfg.Think || reasoningEffort != "") {
-					extraBody["thinking"] = map[string]any{"type": "adaptive"}
-					extraBody["reasoning_split"] = true
-				} else {
-					extraBody["thinking"] = map[string]any{"type": "disabled"}
-				}
-			}
-
-		case string(catwalk.InferenceProviderAlibabaSingapore), string(catwalk.InferenceProviderAlibabaUS):
-			if model.CatwalkCfg.CanReason {
-				extraBody["enable_thinking"] = model.ModelCfg.Think || reasoningEffort != ""
-			}
-		}
-
-		mergedOptions["extra_body"] = extraBody
-
-		parsed, err := openaicompat.ParseOptions(mergedOptions)
-		if err == nil {
-			options[openaicompat.Name] = parsed
-		}
-	default:
-		// Known custom providers (litellm, ollama, omlx) are
-		// openai-compat under the hood.
-		if discover.IsKnownCustomProvider(string(providerCfg.Type)) {
-			parsed, err := openaicompat.ParseOptions(mergedOptions)
-			if err == nil {
-				options[openaicompat.Name] = parsed
-			}
-		}
-	}
-
-	return options
 }
 
 func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderOptions, *float64, *float64, *int64, *float64, *float64) {
