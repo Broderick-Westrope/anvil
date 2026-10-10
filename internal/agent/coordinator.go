@@ -1112,6 +1112,7 @@ func (c *coordinator) buildToolsWithState(
 	// hooks N times per delegated turn. The top-level invocation of the
 	// sub-agent tool itself is still wrapped from the orchestrator's side.
 	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent)
+	filteredTools = wrapToolsWithErrorResults(filteredTools)
 
 	return filteredTools, lazyMCPToolMap, nil
 }
