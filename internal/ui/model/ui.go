@@ -2151,33 +2151,35 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 	}
 }
 
-// missesLoadedResult reports whether live is a tool item without a result
-// that loaded has.
-func missesLoadedResult(live, loaded chat.MessageItem) bool {
-	liveTool, ok := live.(chat.ToolMessageItem)
-	if !ok {
-		return false
-	}
-	loadedTool, ok := loaded.(chat.ToolMessageItem)
-	return ok && loadedTool.HasResult() && !liveTool.HasResult()
-}
-
-// mergeLiveItems replaces each loaded item with the one c already holds
-// for the same message ID, and appends items in c the snapshot lacks.
-// Events reach c from the moment of the drill-in, so its items are never
-// older than a snapshot read after that, and keeping them preserves the
-// identity that thinking and tool drill-ins point at. The one exception is
-// a live tool item without a result when the loaded one has it: an
-// assistant update can create the tool item after its result was saved.
+// mergeLiveItems builds a subagent chat's items from a load snapshot and
+// the items c already holds. Events reach c from the moment of the
+// drill-in, so its items can be newer than the snapshot:
+//   - Live assistant items are kept, since thinking drill-ins point at them.
+//   - A live tool item that has a result the snapshot lacks is kept, unless
+//     it's an agent: only the snapshot fills in an agent's nested tools and
+//     child session.
+//   - Every other loaded item comes from the snapshot.
+//
+// Items in c the snapshot lacks are appended, since they arrived after it.
 func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
 	ids := make(map[string]struct{}, len(loaded))
 	for k, item := range loaded {
 		ids[item.ID()] = struct{}{}
 		live := c.MessageItem(item.ID())
-		if live == nil || missesLoadedResult(live, item) {
+		if assistant, ok := live.(*chat.AssistantMessageItem); ok {
+			loaded[k] = assistant
 			continue
 		}
-		loaded[k] = live
+		liveTool, ok := live.(chat.ToolMessageItem)
+		if !ok || !liveTool.HasResult() {
+			continue
+		}
+		if _, isAgent := live.(chat.NestedToolContainer); isAgent {
+			continue
+		}
+		if loadedTool, ok := item.(chat.ToolMessageItem); ok && !loadedTool.HasResult() {
+			loaded[k] = liveTool
+		}
 	}
 	for _, item := range c.MessageItems() {
 		if _, ok := ids[item.ID()]; !ok {

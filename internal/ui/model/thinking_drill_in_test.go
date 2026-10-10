@@ -1,10 +1,12 @@
 package model
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -438,4 +440,40 @@ func TestSubagentLoadKeepsLiveToolItems(t *testing.T) {
 
 	require.Same(t, live, u.drillStack[0].chat.MessageItem("tc1"),
 		"a live tool item that has its result must survive a snapshot without it")
+}
+
+// nestedAgentWorkspace serves one nested message for any agent tool
+// session, so a snapshot load fills in a nested agent's state.
+type nestedAgentWorkspace struct {
+	*jobsWorkspace
+}
+
+func (*nestedAgentWorkspace) CreateAgentToolSessionID(messageID, toolCallID string) string {
+	return messageID + "$$" + toolCallID
+}
+
+func (*nestedAgentWorkspace) ListMessages(_ context.Context, sessionID string) ([]message.Message, error) {
+	return []message.Message{{
+		ID: "nested", Role: message.Assistant, SessionID: sessionID,
+		Parts: []message.ContentPart{message.ToolCall{ID: "nested-tc", Name: "bash", Input: "{}", Finished: true}},
+	}}, nil
+}
+
+func TestSubagentLoadKeepsNestedAgentState(t *testing.T) {
+	t.Parallel()
+
+	u, jobs := newJobsTestUI(nil)
+	u.com.Workspace = &nestedAgentWorkspace{jobsWorkspace: jobs}
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
+	call := message.ToolCall{ID: "agent1", Name: agent.TaskToolName, Input: `{"prompt":"look"}`, Finished: true}
+	assistant := message.Message{ID: "sub-a", Role: message.Assistant, SessionID: "child", Parts: []message.ContentPart{call}}
+	// A live update creates the nested agent item before the load lands.
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.UpdatedEvent, Payload: assistant})
+
+	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{assistant}})
+
+	nested, ok := u.drillStack[0].chat.MessageItem("agent1").(chat.NestedToolContainer)
+	require.True(t, ok)
+	require.NotEmpty(t, nested.NestedTools(), "the load's nested tools must not be lost to the live item")
+	require.Equal(t, "sub-a$$agent1", nested.(chat.AgentDrillInHandler).AgentDrillIn())
 }
