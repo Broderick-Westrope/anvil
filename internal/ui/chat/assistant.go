@@ -316,6 +316,8 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	var footer string
 	if a.hasThinking() {
 		footer = a.cachedThinkingFooter(width)
+	} else {
+		a.thinkingFooterHeight = 0
 	}
 	if footer != "" {
 		messageParts = append(messageParts, footer)

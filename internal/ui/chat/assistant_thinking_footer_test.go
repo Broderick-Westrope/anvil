@@ -176,3 +176,19 @@ func TestAssistantMessageItemFooterWithoutThinkingEndShowsNoDuration(t *testing.
 	require.Contains(t, out, "Thought")
 	require.NotContains(t, out, "Thought for", "a turn that never marked thinking done has no meaningful duration")
 }
+
+func TestAssistantMessageItemClickTargetGoesWithTheFooter(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	item := NewAssistantMessageItem(&sty, thinkingMessage("m1", "reasoning", "answer")).(*AssistantMessageItem)
+	item.Render(80)
+	require.True(t, item.HandleMouseClick(ansi.MouseLeft, 0, 0))
+
+	// A retry resets the message without thinking.
+	item.SetMessage(&message.Message{ID: "m1", Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: "answer"}}})
+	item.Render(80)
+
+	require.False(t, item.HandleMouseClick(ansi.MouseLeft, 0, 0),
+		"with no footer, a click on the first line must not be swallowed")
+}
