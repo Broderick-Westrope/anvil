@@ -40,14 +40,33 @@ func (s *Schema) Validate(doc json.RawMessage) error {
 	return s.resolved.Validate(v)
 }
 
+const jsonFence = "```json"
+
 var jsonBlock = regexp.MustCompile("(?s)```json\\s*\\n(.*?)```")
 
-// lastJSONBlock extracts the final ```json fenced block from a reply, or
-// the whole reply when it has none.
+// lastJSONBlock extracts the ```json fenced block that ends a reply. The
+// block's JSON can itself contain fences, so it is the latest opener
+// whose text up to the reply's closing fence is valid JSON. A reply that
+// doesn't end with a fence falls back to its last ```json block, and one
+// with none to the whole reply.
 func lastJSONBlock(reply string) json.RawMessage {
+	trimmed := strings.TrimSpace(reply)
+	if body, ok := strings.CutSuffix(trimmed, "```"); ok {
+		for end := len(body); ; {
+			i := strings.LastIndex(body[:end], jsonFence)
+			if i < 0 {
+				break
+			}
+			doc := strings.TrimSpace(body[i+len(jsonFence):])
+			if json.Valid([]byte(doc)) {
+				return json.RawMessage(doc)
+			}
+			end = i
+		}
+	}
 	matches := jsonBlock.FindAllStringSubmatch(reply, -1)
 	if len(matches) == 0 {
-		return json.RawMessage(strings.TrimSpace(reply))
+		return json.RawMessage(trimmed)
 	}
 	return json.RawMessage(strings.TrimSpace(matches[len(matches)-1][1]))
 }

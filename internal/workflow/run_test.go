@@ -154,6 +154,41 @@ function main() { return session.current().turn("judge", {schema: S}).kind }`, "
 	require.Equal(t, "clean", got)
 }
 
+func TestTurnWithSchemaReadsTheBlockThatEndsTheReply(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		reply string
+		want  string
+	}{
+		"fence inside a string": {
+			reply: "Draft:\n```json\n{\"code\": \"```go\\nx := 1\\n```\"}\n```",
+			want:  "```go\nx := 1\n```",
+		},
+		"json fence inside a string": {
+			reply: "```json\n{\"code\": \"see ```json\\n{}\\n```\"}\n```\n",
+			want:  "see ```json\n{}\n```",
+		},
+		"earlier example block": {
+			reply: "Example:\n```json\n{\"code\": \"old\"}\n```\nFinal:\n```json\n{\"code\": \"new\"}\n```",
+			want:  "new",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t)
+			h.backend.turnFn = func(context.Context, workflow.TurnCall) (string, error) { return tc.reply, nil }
+			got, err := h.run(t, `const S = {type: "object", properties: {code: {type: "string"}}, required: ["code"]}
+function main() { return session.current().turn("x", {schema: S}).code }`, "")
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+			require.Len(t, h.backend.turns, 1, "no corrective turn")
+		})
+	}
+}
+
 func TestTurnWithSchemaRetriesOnceVisibly(t *testing.T) {
 	t.Parallel()
 
