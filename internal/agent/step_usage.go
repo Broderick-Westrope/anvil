@@ -3,19 +3,14 @@ package agent
 import (
 	"cmp"
 	"database/sql"
-	"os"
-	"strconv"
 	"time"
 
 	"charm.land/fantasy"
-	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/azure"
-	"charm.land/fantasy/providers/bedrock"
 	"charm.land/fantasy/providers/google"
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
-	"charm.land/fantasy/providers/vercel"
 	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 )
 
@@ -195,12 +190,13 @@ func (a *sessionAgent) newRow(c *stepCapture, usage fantasy.Usage, reason fantas
 // while OpenAI-style providers and Google cache automatically and ignore
 // the markers and the override.
 func cachePolicy(providerType string) string {
-	switch providerType {
-	case anthropic.Name, bedrock.Name, vercel.Name:
-		if disabled, _ := strconv.ParseBool(os.Getenv("ANVIL_DISABLE_ANTHROPIC_CACHE")); disabled {
+	if usesAnthropicCacheMarkers(providerType) {
+		if anthropicCacheDisabled() {
 			return cachePolicyDisabled
 		}
 		return cachePolicyAnthropicEphemeral
+	}
+	switch providerType {
 	case openai.Name, azure.Name, openaicompat.Name, openrouter.Name, google.Name:
 		return cachePolicyAutomatic
 	default:

@@ -1228,21 +1228,34 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	return nil
 }
 
+// anthropicCacheProviders are the provider types that take explicit
+// Anthropic ephemeral cache markers.
+var anthropicCacheProviders = []string{anthropic.Name, bedrock.Name, vercel.Name}
+
+// usesAnthropicCacheMarkers reports whether providerType takes explicit
+// Anthropic ephemeral cache markers.
+func usesAnthropicCacheMarkers(providerType string) bool {
+	return slices.Contains(anthropicCacheProviders, providerType)
+}
+
+// anthropicCacheDisabled reports whether ANVIL_DISABLE_ANTHROPIC_CACHE
+// turns Anthropic cache markers off.
+func anthropicCacheDisabled() bool {
+	disabled, _ := strconv.ParseBool(os.Getenv("ANVIL_DISABLE_ANTHROPIC_CACHE"))
+	return disabled
+}
+
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
-	if t, _ := strconv.ParseBool(os.Getenv("ANVIL_DISABLE_ANTHROPIC_CACHE")); t {
+	if anthropicCacheDisabled() {
 		return fantasy.ProviderOptions{}
 	}
-	return fantasy.ProviderOptions{
-		anthropic.Name: &anthropic.ProviderCacheControlOptions{
+	opts := make(fantasy.ProviderOptions, len(anthropicCacheProviders))
+	for _, name := range anthropicCacheProviders {
+		opts[name] = &anthropic.ProviderCacheControlOptions{
 			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
-		},
-		bedrock.Name: &anthropic.ProviderCacheControlOptions{
-			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
-		},
-		vercel.Name: &anthropic.ProviderCacheControlOptions{
-			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
-		},
+		}
 	}
+	return opts
 }
 
 // sessionHeaders returns the HTTP headers we use for cache affinity on

@@ -190,6 +190,21 @@ func TestCachePolicy(t *testing.T) {
 	})
 }
 
+func TestGetCacheControlOptions(t *testing.T) {
+	t.Setenv("ANVIL_DISABLE_ANTHROPIC_CACHE", "")
+	a := &sessionAgent{}
+	opts := a.getCacheControlOptions()
+	require.Len(t, opts, 3)
+	for _, name := range []string{anthropic.Name, bedrock.Name, vercel.Name} {
+		require.Equal(t, &anthropic.ProviderCacheControlOptions{
+			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
+		}, opts[name], name)
+	}
+
+	t.Setenv("ANVIL_DISABLE_ANTHROPIC_CACHE", "1")
+	require.Empty(t, a.getCacheControlOptions())
+}
+
 // usageRow is the subset of a step_usage row the tests check.
 type usageRow struct {
 	kind, runID, agent, sessionID, messageID string
