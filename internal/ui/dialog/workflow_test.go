@@ -198,6 +198,13 @@ func TestDefaultCommandsWorkflowControls(t *testing.T) {
 	require.NotNil(t, abort)
 	require.Equal(t, ActionWorkflowControl{SessionID: "s1", Control: WorkflowAbort}, abort.Action())
 	require.Nil(t, findCommandItem(running, "workflow_goto"))
+	require.Nil(t, findCommandItem(running, "workflow_agent"))
+
+	withAgent := newCommands(&WorkflowControls{SessionID: "s1", Command: "demo", CanOpenAgent: true}).defaultCommands()
+	openAgent := findCommandItem(withAgent, "workflow_agent")
+	require.NotNil(t, openAgent)
+	require.Contains(t, openAgent.Filter(), "Open Workflow Agent Session")
+	require.Equal(t, ActionWorkflowControl{SessionID: "s1", Control: WorkflowOpenAgent}, openAgent.Action())
 
 	paused := newCommands(&WorkflowControls{SessionID: "s1", Command: "demo", Paused: true, CanGoToActive: true}).defaultCommands()
 	resume := findCommandItem(paused, "workflow_pause")

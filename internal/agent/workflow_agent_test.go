@@ -118,3 +118,30 @@ func TestWorkflowAgentRejectsUnknownAgentAndModel(t *testing.T) {
 	require.ErrorContains(t, err, "nope/nope")
 	require.Empty(t, f.Provider.Requests())
 }
+
+func TestWorkflowAgentUsesTheGivenSessionID(t *testing.T) {
+	f := branchfixture.New(t, branchfixture.WithAgents("reviewer"))
+	parent := newParent(t, f)
+	f.Provider.Enqueue(branchfixture.Response{Text: "done"})
+	out, err := f.Coordinator.RunWorkflowAgent(f.Context, agent.WorkflowAgentCall{
+		ParentSessionID: parent, Agent: "reviewer", Prompt: "look", SessionID: "child-123",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "child-123", out.SessionID)
+	child, err := f.Workspace.GetSession(f.Context, "child-123")
+	require.NoError(t, err)
+	require.Equal(t, parent, child.ParentSessionID)
+}
+
+func TestWorkflowAgentGeneratesASessionIDByDefault(t *testing.T) {
+	f := branchfixture.New(t, branchfixture.WithAgents("reviewer"))
+	parent := newParent(t, f)
+	f.Provider.Enqueue(branchfixture.Response{Text: "done"}, branchfixture.Response{Text: "done"})
+	call := agent.WorkflowAgentCall{ParentSessionID: parent, Agent: "reviewer", Prompt: "look"}
+	first, err := f.Coordinator.RunWorkflowAgent(f.Context, call)
+	require.NoError(t, err)
+	second, err := f.Coordinator.RunWorkflowAgent(f.Context, call)
+	require.NoError(t, err)
+	require.NotEmpty(t, first.SessionID)
+	require.NotEqual(t, first.SessionID, second.SessionID)
+}

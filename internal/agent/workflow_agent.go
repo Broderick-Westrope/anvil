@@ -30,6 +30,9 @@ type WorkflowAgentCall struct {
 	Agent           string
 	Prompt          string
 	Title           string
+	// SessionID, when set, is the ID of the child session, so a caller can
+	// point at it before the agent finishes. Otherwise one is generated.
+	SessionID string
 	// Tools, when non-nil, is the exact tool set (built-in and MCP). An
 	// unknown name or one the agent can't use is an error, never a
 	// fallback to the full set.
@@ -84,7 +87,11 @@ func (c *coordinator) RunWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 		title = "workflow: " + call.Agent
 	}
 	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
-	session, err := c.sessions.CreateTaskSession(ctx, uuid.NewString(), call.ParentSessionID, title)
+	sessionID := call.SessionID
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	}
+	session, err := c.sessions.CreateTaskSession(ctx, sessionID, call.ParentSessionID, title)
 	if err != nil {
 		return WorkflowAgentOutput{}, fmt.Errorf("create session: %w", err)
 	}

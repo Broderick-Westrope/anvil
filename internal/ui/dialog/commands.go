@@ -609,6 +609,10 @@ func (c *Commands) defaultCommands() []*CommandItem {
 			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_goto", "Go to Workflow Session", "alt+g",
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowGoToActive}))
 		}
+		if w.CanOpenAgent {
+			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_agent", "Open Workflow Agent Session", "alt+o",
+				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowOpenAgent}))
+		}
 	}
 
 	commands = append(commands,
@@ -657,6 +661,8 @@ type WorkflowControls struct {
 	// CanGoToActive is set when the run is driving a session other than
 	// the one shown.
 	CanGoToActive bool
+	// CanOpenAgent is set when the run has a subagent session to open.
+	CanOpenAgent bool
 }
 
 // SetWorkflowControls shows controls for the workflow run involving the

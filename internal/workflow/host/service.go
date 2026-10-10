@@ -49,6 +49,10 @@ const (
 	// EventState reports a run starting, pausing, resuming or holding
 	// sessions.
 	EventState EventKind = "state"
+	// EventAgent reports a subagent starting (Status running) and ending
+	// (completed or failed, with Message). Step is the agent, Detail its
+	// pinned model and Target its child session.
+	EventAgent EventKind = "agent"
 	// EventFinished ends an invocation.
 	EventFinished EventKind = "finished"
 )
@@ -70,8 +74,9 @@ type Event struct {
 	Step    string
 	Detail  string
 	Message string
-	// Target is the session for EventFocus, and the session a turn runs in
-	// for an EventStep with Step "turn".
+	// Target is the session for EventFocus, the session a turn runs in
+	// for an EventStep with Step "turn", and the child session for
+	// EventAgent.
 	Target string
 
 	Paused bool

@@ -58,6 +58,10 @@ func (*workflowWorkspace) ListSessionJobs(string) []shell.JobInfo    { return ni
 func (*workflowWorkspace) LSPGetStates() map[string]workspace.LSPClientInfo {
 	return nil
 }
+
+func (*workflowWorkspace) ParseAgentToolSessionID(string) (string, string, bool) {
+	return "", "", false
+}
 func (*workflowWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
 func (*workflowWorkspace) PermissionBouncerConfigured() bool     { return false }
 func (*workflowWorkspace) Config() *config.Config {
@@ -168,7 +172,7 @@ func (f *workflowFixture) run(cmd tea.Cmd) []util.InfoMsg {
 		switch msg := msg.(type) {
 		case util.InfoMsg:
 			infos = append(infos, msg)
-		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg:
+		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg, util.DrillInMsg:
 			_, next := f.u.Update(msg)
 			queue = append(queue, cmdMsgs(next)...)
 		}
@@ -529,7 +533,7 @@ func TestPromptHistorySkipsWorkflowTurns(t *testing.T) {
 func TestRenderWorkflowPanelGolden(t *testing.T) {
 	t.Parallel()
 
-	keys := workflowPanel{pauseKey: "ctrl+x", abortKey: "alt+x", goKey: "alt+g"}
+	keys := workflowPanel{pauseKey: "ctrl+x", abortKey: "alt+x", goKey: "alt+g", agentKey: "alt+o"}
 	tests := map[string]workflowPanel{
 		"running": {
 			command: "build", step: "devils-advocate", detail: "approach 1, round 2/3",
@@ -542,6 +546,15 @@ func TestRenderWorkflowPanelGolden(t *testing.T) {
 			activity: "$ a long command",
 			entries:  []workflowEntry{{question: "A long question that will not fit in fifty columns", answer: "an answer"}},
 		},
+		"with_agents": {
+			command: "build", step: "review", detail: "approach 2/3",
+			entries: []workflowEntry{
+				{agent: "builder", model: "anthropic/claude-sonnet", sessionID: "c1", status: host.StatusCompleted},
+				{agent: "reviewer", sessionID: "c2", status: host.StatusFailed, err: "submit_result never called\nsecond line"},
+				{question: "Ship it?", answer: "yes"},
+				{agent: "devils-advocate", sessionID: "c3", status: host.StatusRunning},
+			},
+		},
 		"with_questions": {
 			command: "build", step: "escalate",
 			entries: []workflowEntry{
@@ -553,7 +566,7 @@ func TestRenderWorkflowPanelGolden(t *testing.T) {
 	for name, p := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			p.pauseKey, p.abortKey, p.goKey = keys.pauseKey, keys.abortKey, keys.goKey
+			p.pauseKey, p.abortKey, p.goKey, p.agentKey = keys.pauseKey, keys.abortKey, keys.goKey, keys.agentKey
 			width := 100
 			if name == "narrow" {
 				width = 50
@@ -717,4 +730,100 @@ func TestWorkflowPanelKeepsTheLatestEntries(t *testing.T) {
 	require.Contains(t, panel, "question b")
 	require.Contains(t, panel, "question "+string(rune('a'+workflowPanelEntries)))
 	require.Equal(t, 1+workflowPanelEntries, f.u.pillsAreaHeight())
+}
+
+func agentEvent(agent, child string, status host.Status) host.Event {
+	return host.Event{Kind: host.EventAgent, Command: "demo", SessionID: "sess-1", Step: agent, Target: child, Status: status}
+}
+
+func TestWorkflowPanelListsAgentCalls(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
+	panel := f.panel()
+	require.Contains(t, panel, "/demo: reviewer")
+	require.Contains(t, panel, "running")
+	require.Contains(t, panel, "alt+o open")
+	require.Equal(t, 2, f.u.pillsAreaHeight())
+
+	failed := agentEvent("reviewer", "child-1", host.StatusFailed)
+	failed.Message = "model overloaded"
+	f.event(failed)
+	f.event(agentEvent("devils-advocate", "child-2", host.StatusRunning))
+	f.event(agentEvent("devils-advocate", "child-2", host.StatusCompleted))
+	panel = f.panel()
+	require.Contains(t, panel, "/demo: reviewer · failed: model overloaded")
+	require.Contains(t, panel, "/demo: devils-advocate · done")
+	require.NotContains(t, panel, "running")
+	require.Equal(t, 3, f.u.pillsAreaHeight())
+}
+
+func TestWorkflowAgentEndWithoutStartListsNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(agentEvent("reviewer", "unknown", host.StatusCompleted))
+	require.Equal(t, 1, f.u.pillsAreaHeight(), "an end without a start lists nothing")
+}
+
+func TestWorkflowPanelDropsFinishedEntriesBeforeRunningAgents(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	answer := func(id string) {
+		f.event(askFor(id, "question "+id))
+		f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: id, Answer: "ok"}))
+	}
+	answer("q1")
+	f.event(agentEvent("first", "child-1", host.StatusRunning))
+	answer("q2")
+	answer("q3")
+	f.event(agentEvent("second", "child-2", host.StatusRunning))
+	f.event(agentEvent("third", "child-3", host.StatusRunning))
+
+	panel := f.panel()
+	require.Contains(t, panel, "/demo: first")
+	require.NotContains(t, panel, "question q1")
+	require.NotContains(t, panel, "question q2")
+	require.Contains(t, panel, "question q3")
+	require.Contains(t, panel, "/demo: third")
+}
+
+func TestWorkflowAgentKeyOpensTheLatestAgentSession(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.press(tea.KeyPressMsg{Code: 'o', Mod: tea.ModAlt})
+	require.False(t, f.u.isDrilledIn(), "nothing to open before an agent runs")
+
+	f.event(agentEvent("reviewer", "child-1", host.StatusCompleted))
+	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
+	f.event(agentEvent("devils-advocate", "child-2", host.StatusRunning))
+	f.press(tea.KeyPressMsg{Code: 'o', Mod: tea.ModAlt})
+
+	require.True(t, f.u.isDrilledIn())
+	top := f.u.drillStack[len(f.u.drillStack)-1]
+	require.Equal(t, "child-2", top.sessionID)
+	require.Equal(t, "/demo: devils-advocate", top.label)
+	require.Equal(t, "sess-1", f.u.session.ID, "the invoking session stays open underneath")
+	require.Empty(t, f.panel(), "the panel hides while drilled in")
+}
+
+func TestWorkflowAgentFromPalette(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	require.False(t, f.u.workflowControls().CanOpenAgent)
+
+	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
+	require.True(t, f.u.workflowControls().CanOpenAgent)
+	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowOpenAgent}))
+	require.True(t, f.u.isDrilledIn())
+	require.Equal(t, "child-1", f.u.drillStack[0].sessionID)
 }

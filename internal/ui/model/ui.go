@@ -2886,7 +2886,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case key.Matches(msg, m.keyMap.CycleBouncer):
 			cmds = append(cmds, m.handleCycleBouncerKey())
 			return true
-		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort, m.keyMap.WorkflowGo):
+		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort, m.keyMap.WorkflowGo, m.keyMap.WorkflowAgent):
 			if cmd, ok := m.handleWorkflowKey(msg); ok {
 				cmds = append(cmds, cmd)
 				return true

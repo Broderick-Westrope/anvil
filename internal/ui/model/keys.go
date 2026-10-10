@@ -70,6 +70,8 @@ type KeyMap struct {
 	WorkflowPause key.Binding
 	WorkflowAbort key.Binding
 	WorkflowGo    key.Binding
+	// WorkflowAgent opens the session of the run's latest subagent.
+	WorkflowAgent key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -121,6 +123,10 @@ func DefaultKeyMap() KeyMap {
 		WorkflowGo: key.NewBinding(
 			key.WithKeys("alt+g"),
 			key.WithHelp("alt+g", "go to workflow session"),
+		),
+		WorkflowAgent: key.NewBinding(
+			key.WithKeys("alt+o"),
+			key.WithHelp("alt+o", "open workflow agent"),
 		),
 	}
 

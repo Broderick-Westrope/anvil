@@ -209,3 +209,66 @@ func TestServiceTurnIsRecordedAsWorkflowTurn(t *testing.T) {
 	require.Equal(t, "/demo", command)
 	require.Equal(t, "do the thing", prompt)
 }
+
+func TestServiceAgentPublishesItsSession(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "looks fine"})
+	path := h.write(t, `requires({agents: ["reviewer"]})
+function main() { return agent("reviewer", "review") }`)
+	h.start(t, path, "")
+
+	start := h.next(t, host.EventAgent)
+	require.Equal(t, "demo", start.Command)
+	require.Equal(t, h.session, start.SessionID)
+	require.Equal(t, "reviewer", start.Step)
+	require.Empty(t, start.Detail, "no model was pinned")
+	require.Equal(t, host.StatusRunning, start.Status)
+	require.NotEmpty(t, start.Target)
+
+	end := h.next(t, host.EventAgent)
+	require.Equal(t, start.Target, end.Target)
+	require.Equal(t, "reviewer", end.Step)
+	require.Equal(t, host.StatusCompleted, end.Status)
+	require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status)
+
+	child, err := h.fixture.Workspace.GetSession(h.fixture.Context, start.Target)
+	require.NoError(t, err)
+	require.Equal(t, h.session, child.ParentSessionID)
+	require.Equal(t, "/demo: reviewer", child.Title)
+}
+
+func TestServiceAgentPublishesFailure(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `requires({agents: ["reviewer"]})
+function main() { return agent("reviewer", "review", {model: "nope/nope"}) }`)
+	h.start(t, path, "")
+
+	start := h.next(t, host.EventAgent)
+	require.Equal(t, "nope/nope", start.Detail)
+	end := h.next(t, host.EventAgent)
+	require.Equal(t, start.Target, end.Target)
+	require.Equal(t, host.StatusFailed, end.Status)
+	require.Contains(t, end.Message, "nope/nope")
+	require.Equal(t, host.StatusFailed, h.next(t, host.EventFinished).Status)
+}
+
+func TestServiceParallelAgentsEachPublishTheirSession(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "a"}, branchfixture.Response{Text: "b"})
+	path := h.write(t, `requires({agents: ["reviewer"]})
+function main() { parallel([{agent: "reviewer", prompt: "a"}, {agent: "reviewer", prompt: "b"}]) }`)
+	h.start(t, path, "")
+
+	running, ended := map[string]bool{}, map[string]bool{}
+	for range 4 {
+		ev := h.next(t, host.EventAgent)
+		if ev.Status == host.StatusRunning {
+			running[ev.Target] = true
+		} else {
+			ended[ev.Target] = true
+		}
+	}
+	require.Len(t, running, 2)
+	require.Equal(t, running, ended)
+	require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status)
+}

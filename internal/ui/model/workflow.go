@@ -31,9 +31,13 @@ const (
 )
 
 // workflowEntry is something a run did that the progress panel lists: a
-// question the user answered.
+// question the user answered, or a subagent call.
 type workflowEntry struct {
 	question, answer string
+
+	agent, model, sessionID string
+	status                  host.Status
+	err                     string
 }
 
 // workflowRun is what the UI knows about one running workflow, keyed by
@@ -52,11 +56,39 @@ type workflowRun struct {
 	entries  []workflowEntry // The latest, oldest first.
 }
 
+// addEntry lists e, making room by dropping the oldest finished entry so
+// running agents stay listed, or the oldest entry when all are running.
 func (r *workflowRun) addEntry(e workflowEntry) {
 	r.entries = append(r.entries, e)
-	if extra := len(r.entries) - workflowPanelEntries; extra > 0 {
-		r.entries = slices.Delete(r.entries, 0, extra)
+	for len(r.entries) > workflowPanelEntries {
+		drop := max(slices.IndexFunc(r.entries, func(e workflowEntry) bool {
+			return e.status != host.StatusRunning
+		}), 0)
+		r.entries = slices.Delete(r.entries, drop, drop+1)
 	}
+}
+
+// agentEvent lists a subagent starting, or updates it when it ends.
+func (r *workflowRun) agentEvent(ev host.Event) {
+	if ev.Status == host.StatusRunning {
+		r.addEntry(workflowEntry{agent: ev.Step, model: ev.Detail, sessionID: ev.Target, status: ev.Status})
+		return
+	}
+	for i := range r.entries {
+		if r.entries[i].sessionID == ev.Target {
+			r.entries[i].status, r.entries[i].err = ev.Status, ev.Message
+		}
+	}
+}
+
+// latestAgent returns the most recently started subagent still listed.
+func (r *workflowRun) latestAgent() (workflowEntry, bool) {
+	for _, e := range slices.Backward(r.entries) {
+		if e.sessionID != "" {
+			return e, true
+		}
+	}
+	return workflowEntry{}, false
 }
 
 // workflowSessionTitleMsg carries the title of a session a workflow uses,
@@ -168,6 +200,10 @@ func (m *UI) controlWorkflow(sessionID string, control dialog.WorkflowControl) t
 		if _, run := m.workflowFor(sessionID); run != nil {
 			return m.goToSession(run.active)
 		}
+	case dialog.WorkflowOpenAgent:
+		if _, run := m.workflowFor(sessionID); run != nil {
+			return m.openWorkflowAgent(run)
+		}
 	}
 	if err != nil {
 		return util.ReportError(err)
@@ -199,8 +235,30 @@ func (m *UI) handleWorkflowKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		if run.active != m.session.ID {
 			return m.goToSession(run.active), true
 		}
+	case key.Matches(msg, m.keyMap.WorkflowAgent):
+		if cmd := m.openWorkflowAgent(run); cmd != nil {
+			return cmd, true
+		}
 	}
 	return nil, false
+}
+
+// openWorkflowAgent drills into the session of the run's latest subagent,
+// read-only like a task tool's session, or returns nil when it has none.
+// The subagent's messages live only in that session.
+func (m *UI) openWorkflowAgent(run *workflowRun) tea.Cmd {
+	e, ok := run.latestAgent()
+	if !ok {
+		return nil
+	}
+	m.clearDrillStack()
+	return util.CmdHandler(util.DrillInMsg{SessionID: e.sessionID, Label: workflowAgentLabel(run.command, e.agent)})
+}
+
+// workflowAgentLabel names a workflow's subagent the way its session is
+// titled.
+func workflowAgentLabel(command, agent string) string {
+	return "/" + command + ": " + agent
 }
 
 // workflowControls describes the run involving the session on screen for
@@ -210,11 +268,13 @@ func (m *UI) workflowControls() *dialog.WorkflowControls {
 	if run == nil {
 		return nil
 	}
+	_, hasAgent := run.latestAgent()
 	return &dialog.WorkflowControls{
 		SessionID:     invoker,
 		Command:       run.command,
 		Paused:        run.paused,
 		CanGoToActive: run.active != m.session.ID,
+		CanOpenAgent:  hasAgent,
 	}
 }
 
@@ -273,6 +333,8 @@ func (m *UI) handleWorkflowEvent(ev host.Event) tea.Cmd {
 			run.sessions[ev.Target] = true
 			return m.fetchWorkflowTitle(ev.Target)
 		}
+	case host.EventAgent:
+		run.agentEvent(ev)
 	case host.EventFocus:
 		run.active = ev.Target
 		run.sessions[ev.Target] = true
@@ -412,6 +474,7 @@ type workflowPanel struct {
 	pauseKey  string
 	abortKey  string
 	goKey     string
+	agentKey  string
 }
 
 // currentWorkflowPanel returns the panel for the session on screen.
@@ -429,6 +492,7 @@ func (m *UI) currentWorkflowPanel() (workflowPanel, bool) {
 		pauseKey: m.keyMap.WorkflowPause.Help().Key,
 		abortKey: m.keyMap.WorkflowAbort.Help().Key,
 		goKey:    m.keyMap.WorkflowGo.Help().Key,
+		agentKey: m.keyMap.WorkflowAgent.Help().Key,
 	}
 	if run.active != m.session.ID {
 		p.elsewhere = m.workflowTitle(run.active)
@@ -486,12 +550,42 @@ func renderWorkflowPanel(t *styles.Styles, p workflowPanel, width int) string {
 		warning := t.Pills.WorkflowWarning.Render(fmt.Sprintf("workflow /%s is running in %s", p.command, p.elsewhere))
 		lines = append(lines, ansi.Truncate(warning+"  "+hint(p.goKey, "go there"), width, "…"))
 	}
-	for _, e := range p.entries {
-		entry := "  " + t.Pills.HelpKey.Render("?") + " " + t.Pills.HelpText.Render(firstLine(e.question)) +
-			" " + t.Pills.HelpText.Render("→") + " " + t.Pills.TodoProgress.Render(firstLine(e.answer))
+	latestAgent := -1
+	for i, e := range p.entries {
+		if e.sessionID != "" {
+			latestAgent = i
+		}
+	}
+	for i, e := range p.entries {
+		var entry string
+		if e.sessionID == "" {
+			entry = "  " + t.Pills.HelpKey.Render("?") + " " + t.Pills.HelpText.Render(firstLine(e.question)) +
+				" " + t.Pills.HelpText.Render("→") + " " + t.Pills.TodoProgress.Render(firstLine(e.answer))
+		} else {
+			entry = "  " + renderWorkflowAgent(t, p.command, e)
+			if i == latestAgent {
+				entry += "  " + hint(p.agentKey, "open")
+			}
+		}
 		lines = append(lines, ansi.Truncate(entry, width, "…"))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderWorkflowAgent(t *styles.Styles, command string, e workflowEntry) string {
+	label := t.Pills.TodoLabel.Render(workflowAgentLabel(command, e.agent))
+	if e.model != "" {
+		label += " " + t.Pills.HelpText.Render("("+e.model+")")
+	}
+	sep := t.Pills.HelpText.Render(" · ")
+	switch e.status {
+	case host.StatusRunning:
+		return t.Tool.IconPending.String() + " " + label + sep + t.Pills.TodoProgress.Render("running")
+	case host.StatusCompleted:
+		return t.Tool.IconSuccess.String() + " " + label + sep + t.Pills.HelpText.Render("done")
+	default:
+		return t.Tool.IconError.String() + " " + label + sep + t.Pills.HelpText.Render("failed: "+firstLine(e.err))
+	}
 }
 
 func firstLine(s string) string {

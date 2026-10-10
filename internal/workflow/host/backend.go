@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
+
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -32,6 +34,13 @@ var _ workflow.Backend = (*backend)(nil)
 func (b *backend) publish(ev Event) {
 	ev.RunID, ev.Command, ev.SessionID = b.base.RunID, b.base.Command, b.base.SessionID
 	b.svc.events.Publish(pubsub.UpdatedEvent, ev)
+}
+
+// publishState publishes an event the UI keeps as state, which a dropped
+// event would leave stale.
+func (b *backend) publishState(ctx context.Context, ev Event) {
+	ev.RunID, ev.Command, ev.SessionID = b.base.RunID, b.base.Command, b.base.SessionID
+	b.svc.events.PublishMustDeliver(context.WithoutCancel(ctx), pubsub.UpdatedEvent, ev)
 }
 
 func (b *backend) Skill(name string) (workflow.SkillContent, bool) {
@@ -76,12 +85,16 @@ func (b *backend) NewSession(ctx context.Context, title string) (string, error) 
 	return s.ID, nil
 }
 
+// Agent runs a subagent in a child session whose ID is published before
+// it starts, so the UI can open it while it runs. Its messages stay in
+// that session and never reach the invoking one.
 func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.AgentResult, error) {
 	wc := agent.WorkflowAgentCall{
 		ParentSessionID: call.ParentSessionID,
 		Agent:           call.Agent,
 		Prompt:          b.withSkills(call.Skills, call.Prompt),
 		Title:           "/" + b.base.Command + ": " + call.Agent,
+		SessionID:       uuid.NewString(),
 		Tools:           call.Tools,
 		Model:           call.Model,
 	}
@@ -92,11 +105,24 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 		}
 		wc.Schema, wc.Validate = call.Schema, schema.Validate
 	}
+	started := Event{Kind: EventAgent, Step: call.Agent, Detail: call.Model, Target: wc.SessionID, Status: StatusRunning}
+	b.publishState(ctx, started)
+	res, err := b.runAgent(ctx, wc)
+	ended := started
+	ended.Status = StatusCompleted
+	if err != nil {
+		ended.Status, ended.Message = StatusFailed, err.Error()
+	}
+	b.publishState(ctx, ended)
+	return res, err
+}
+
+func (b *backend) runAgent(ctx context.Context, wc agent.WorkflowAgentCall) (workflow.AgentResult, error) {
 	out, err := b.svc.deps.Coordinator.RunWorkflowAgent(ctx, wc)
 	if err != nil {
 		return workflow.AgentResult{}, err
 	}
-	if call.Schema != nil && out.Output == nil {
+	if wc.Schema != nil && out.Output == nil {
 		return workflow.AgentResult{}, &workflow.SchemaError{
 			Raw: out.Text, Reason: "the agent never called " + agent.SubmitResultToolName + " with a valid result",
 		}

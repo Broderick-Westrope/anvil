@@ -27,6 +27,8 @@ const (
 	WorkflowAbort
 	// WorkflowGoToActive opens the session the run is driving.
 	WorkflowGoToActive
+	// WorkflowOpenAgent opens the session of the run's latest subagent.
+	WorkflowOpenAgent
 )
 
 // ActionClose is a message to close the current dialog.
