@@ -49,3 +49,7 @@ These are always available without user configuration.
 | `anvil-config` | `builtin/anvil-config/` | Anvil configuration help                   |
 | `anvil-hooks`  | `builtin/anvil-hooks/`  | Authoring, configuring and debugging hooks |
 | `jq`           | `builtin/jq/`           | jq JSON processor usage guide              |
+| `choosing-extension-types` | `builtin/choosing-extension-types/` | Skill vs unlisted skill vs command vs agent |
+
+Set `unlisted: true` in a builtin's frontmatter when only specific commands,
+agents or skills should load it. See `choosing-extension-types` for when.

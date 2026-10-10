@@ -320,6 +320,57 @@ func TestToPromptXMLEmpty(t *testing.T) {
 	require.Empty(t, ToPromptXML([]*Skill{}))
 }
 
+func TestToPromptXMLSkipsUnlisted(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		skills []*Skill
+		want   string
+	}{
+		"mixed": {
+			skills: []*Skill{
+				{Name: "hidden", Description: "Hidden.", Unlisted: true},
+				{Name: "shown", Description: "Shown."},
+			},
+			want: "<available_skills>\n  <skill>\n    <name>shown</name>\n    <description>Shown.</description>\n  </skill>\n</available_skills>",
+		},
+		"all unlisted": {
+			skills: []*Skill{{Name: "hidden", Description: "Hidden.", Unlisted: true}},
+			want:   "",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, ToPromptXML(tc.skills))
+		})
+	}
+}
+
+func TestParseContentUnlisted(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		frontmatter string
+		want        bool
+	}{
+		"unlisted true":  {frontmatter: "unlisted: true\n", want: true},
+		"unlisted false": {frontmatter: "unlisted: false\n", want: false},
+		"omitted":        {frontmatter: "", want: false},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			content := "---\nname: my-skill\ndescription: A test skill.\n" + tc.frontmatter + "---\n\nBody."
+			skill, err := ParseContent([]byte(content))
+			require.NoError(t, err)
+			require.Equal(t, tc.want, skill.Unlisted)
+		})
+	}
+}
+
 func TestEscape(t *testing.T) {
 	t.Parallel()
 
@@ -436,6 +487,18 @@ func TestDiscoverBuiltin(t *testing.T) {
 		}
 	}
 	require.True(t, foundHooks, "anvil-hooks builtin skill not found")
+
+	var foundExtensionTypes bool
+	for _, s := range discovered {
+		if s.Name == "choosing-extension-types" {
+			foundExtensionTypes = true
+			require.Equal(t, "anvil://skills/choosing-extension-types/SKILL.md", s.SkillFilePath)
+			require.NotEmpty(t, s.Description)
+			require.NotEmpty(t, s.Instructions)
+			require.False(t, s.Unlisted)
+		}
+	}
+	require.True(t, foundExtensionTypes, "choosing-extension-types builtin skill not found")
 }
 
 func TestDeduplicate(t *testing.T) {

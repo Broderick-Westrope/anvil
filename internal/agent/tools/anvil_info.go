@@ -339,6 +339,9 @@ func writeSkills(b *strings.Builder, allSkills []*skills.Skill, activeSkills []*
 		if tracker.IsLoaded(s.Name) {
 			state = "loaded"
 		}
+		if s.Unlisted {
+			state = "unlisted, " + state
+		}
 		origin := originMap[s.Name]
 		entries = append(entries, entry{name: s.EffectiveName(), origin: origin, state: state})
 	}
