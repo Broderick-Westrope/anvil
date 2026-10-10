@@ -21,7 +21,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/discover"
 	"github.com/Broderick-Westrope/anvil/internal/log"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
-	openaisdk "github.com/openai/openai-go/v3/option"
+	openaisdk "github.com/charmbracelet/openai-go/option"
 )
 
 // OpenCode models that use Anthropic Messages API instead of Chat Completions.
