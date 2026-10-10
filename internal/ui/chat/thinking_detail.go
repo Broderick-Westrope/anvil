@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -22,6 +21,10 @@ type ThinkingDetailItem struct {
 	source *AssistantMessageItem
 
 	streaming streamingMarkdown
+	// rendered caches the markdown render keyed on the thinking text and
+	// whether it's complete, so answer streaming and focus changes on the
+	// source don't re-render long thinking.
+	rendered assistantSection
 }
 
 // NewThinkingDetailItem returns a drill-in item for the thinking text of
@@ -62,14 +65,23 @@ func (t *ThinkingDetailItem) SelectionSource() string {
 // RawRender implements MessageItem.
 func (t *ThinkingDetailItem) RawRender(width int) string {
 	cappedWidth := cappedMessageWidth(width)
-	renderer := common.MarkdownRenderer(t.sty, cappedWidth)
-	var rendered string
+	thinking := t.thinking()
+	srcHash := fnv64(thinking)
+	var complete uint64
 	if t.thinkingComplete() {
-		rendered = t.streaming.RenderFinal(t.thinking(), cappedWidth, renderer)
-	} else {
-		rendered = t.streaming.Render(t.thinking(), cappedWidth, renderer)
+		complete = 1
 	}
-	return t.renderHighlighted(rendered, cappedWidth, lipgloss.Height(rendered))
+	if !t.rendered.hit(cappedWidth, srcHash, complete) {
+		renderer := common.MarkdownRenderer(t.sty, cappedWidth)
+		var out string
+		if complete == 1 {
+			out = t.streaming.RenderFinal(thinking, cappedWidth, renderer)
+		} else {
+			out = t.streaming.Render(thinking, cappedWidth, renderer)
+		}
+		t.rendered.store(cappedWidth, srcHash, complete, out, 0)
+	}
+	return t.renderHighlighted(t.rendered.out, cappedWidth, t.rendered.h)
 }
 
 // Render implements list.Item.
@@ -105,4 +117,5 @@ func (t *ThinkingDetailItem) thinkingComplete() bool {
 // clearCache implements cacheClearable so a style change re-renders.
 func (t *ThinkingDetailItem) clearCache() {
 	t.streaming.Reset()
+	t.rendered.reset()
 }

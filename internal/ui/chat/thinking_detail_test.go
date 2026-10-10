@@ -107,3 +107,23 @@ func TestAssistantMessageItemWithoutThinkingDoesNotDrillIn(t *testing.T) {
 	require.Nil(t, cmd)
 	require.Nil(t, item.ThinkingDrillIn())
 }
+
+func TestThinkingDetailItemReusesRenderWhenThinkingIsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := NewAssistantMessageItem(&sty, thinkingMessage("m1", thinkingDetailText, "first")).(*AssistantMessageItem)
+	detail := NewThinkingDetailItem(&sty, source).(*ThinkingDetailItem)
+	detail.RawRender(80)
+
+	// Stomp the cached render so a cache hit is observable, then change
+	// only the answer and the selection.
+	detail.rendered.out = "CACHED"
+	source.SetMessage(thinkingMessage("m1", thinkingDetailText, "first and second"))
+	detail.SetFocused(true)
+
+	require.Equal(t, "CACHED", detail.RawRender(80))
+
+	source.SetMessage(thinkingMessage("m1", thinkingDetailText+" More.", "first and second"))
+	require.Contains(t, ansi.Strip(detail.RawRender(80)), "More.")
+}
