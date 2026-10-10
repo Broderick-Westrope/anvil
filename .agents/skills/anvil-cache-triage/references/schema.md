@@ -53,7 +53,7 @@ tokens**; token counts are per call.
 | `cache_read_tokens` | Tokens served from cache. |
 | `cache_write_tokens` | Tokens written to cache (Anthropic-style only; 0 for automatic caching). |
 | `output_tokens`, `reasoning_tokens` | As reported. From fantasy v0.45.2, `output_tokens` includes reasoning tokens for Google and OpenAI-family providers even when the provider reports them separately (fantasy folds them in), so never add `reasoning_tokens` to `output_tokens`. |
-| `estimated` | 1 when the provider reported all-zero usage. `input_tokens` is then a rough estimate from message text and all cache columns are 0. Exclude from hit rates. |
+| `estimated` | 1 when the provider reported all-zero usage. Only `input_tokens` is estimated, roughly, from message text; `output_tokens` and all cache columns are 0 (the stream finish carries no step content to estimate output from), so `list_cost` is understated for these rows. Exclude from hit rates. |
 | `raw_usage` | JSON `{"usage": {...}, "extra": {...} or null}` as reported, before normalisation. `usage` keys: `input_tokens`, `output_tokens`, `total_tokens`, `reasoning_tokens`, `cache_creation_tokens`, `cache_read_tokens`. `extra` holds OpenAI-style usage fields fantasy did not map (`openai.ProviderMetadata.ExtraFields`). |
 
 Normalisation per `provider_type` (`cacheusage.Normalise`):

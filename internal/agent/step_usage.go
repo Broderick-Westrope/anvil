@@ -121,6 +121,8 @@ func (a *sessionAgent) newRow(c *stepCapture, usage fantasy.Usage, reason fantas
 	}
 	tokens, raw := cacheusage.Normalise(providerType, usage, meta)
 
+	// Only input is estimated: OnStreamFinish carries no step content, so
+	// output_tokens stays 0 and list_cost is understated for these rows.
 	var estimated int64
 	if usageIsZero(usage) {
 		estimated = 1
