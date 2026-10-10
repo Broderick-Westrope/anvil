@@ -520,6 +520,17 @@ func TestBashTool_CompletedCommandOutput(t *testing.T) {
 			wantContent: func(cwd string) string { return "hi\n\n\n<cwd>" + cwd + "</cwd>" },
 			wantOutput:  "hi\n",
 		},
+		"foreground completion after the first poll": {
+			command:     "sleep 0.3; echo hi",
+			wantContent: func(cwd string) string { return "hi\n\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "hi\n",
+		},
+		"background completion within the fast-failure window": {
+			command:     "sleep 0.3; echo hi",
+			background:  true,
+			wantContent: func(cwd string) string { return "hi\n\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "hi\n",
+		},
 		"background fast completion no output": {
 			command:     "true",
 			background:  true,
