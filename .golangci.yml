@@ -180,9 +180,6 @@ linters:
       - path: internal/recovery/recovery\.go
         text: 'func `(scan|sweepArtifacts)`'
         linters: [gocognit]
-      - path: internal/shell/jq\.go
-        text: 'func `(handleJQ|readInputs)`'
-        linters: [gocognit]
       - path: internal/ui/anim/anim\.go
         text: 'func `(New)`'
         linters: [gocognit]
