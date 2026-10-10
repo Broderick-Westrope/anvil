@@ -117,9 +117,6 @@ linters:
       - path: internal/agent/tools/grep\.go
         text: 'func `(NewGrepTool)`'
         linters: [gocognit]
-      - path: internal/agent/tools/job_output\.go
-        text: 'func `(NewJobOutputTool)`'
-        linters: [gocognit]
       - path: internal/agent/tools/lsp_call_hierarchy\.go
         text: 'func `(NewCallHierarchyTool)`'
         linters: [gocognit]
