@@ -134,7 +134,7 @@ func (t *ThinkingDetailItem) thinking() string {
 
 // thinkingComplete reports whether no more thinking text will stream in.
 func (t *ThinkingDetailItem) thinkingComplete() bool {
-	return t.source.message.ReasoningContent().FinishedAt != 0 || t.source.message.IsFinished()
+	return t.source.thinkingFinished()
 }
 
 // clearCache implements cacheClearable so a style change re-renders.

@@ -70,3 +70,75 @@ func TestAssistantMessageItemSelectionSourceExcludesThinking(t *testing.T) {
 
 	require.Equal(t, "final answer", item.(*AssistantMessageItem).SelectionSource())
 }
+
+func TestAssistantMessageItemThinkingLifecycle(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		finishedAt  int64
+		content     string
+		wantFooter  bool
+		wantSpinner string
+	}{
+		"still thinking": {
+			wantSpinner: "Thinking",
+		},
+		"answer streams while thinking continues": {
+			content: "partial answer",
+		},
+		"thinking done before the answer starts": {
+			finishedAt: testFinishedAt,
+			wantFooter: true,
+		},
+		"thinking done and answer streaming": {
+			finishedAt: testFinishedAt,
+			content:    "partial answer",
+			wantFooter: true,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sty := styles.TokyoNight()
+			parts := []message.ContentPart{message.ReasoningContent{
+				Thinking:   "reasoning",
+				StartedAt:  testStartedAt,
+				FinishedAt: tc.finishedAt,
+			}}
+			if tc.content != "" {
+				parts = append(parts, message.TextContent{Text: tc.content})
+			}
+			item := NewAssistantMessageItem(&sty, &message.Message{ID: "m1", Role: message.Assistant, Parts: parts})
+
+			out := ansi.Strip(item.Render(80))
+
+			if tc.wantFooter {
+				require.Contains(t, out, "Thought for 5s")
+			} else {
+				require.NotContains(t, out, "Thought")
+			}
+			if tc.wantSpinner != "" {
+				require.Contains(t, out, tc.wantSpinner)
+			} else {
+				require.NotContains(t, out, "Thinking")
+			}
+		})
+	}
+}
+
+func TestAssistantMessageItemSpinnerDropsThinkingLabelWhenThinkingFinishes(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	reasoning := message.ReasoningContent{Thinking: "reasoning", StartedAt: testStartedAt}
+	item := NewAssistantMessageItem(&sty, &message.Message{ID: "m1", Role: message.Assistant, Parts: []message.ContentPart{reasoning}}).(*AssistantMessageItem)
+	require.Contains(t, ansi.Strip(item.Render(80)), "Thinking")
+
+	reasoning.FinishedAt = testFinishedAt
+	item.SetMessage(&message.Message{ID: "m1", Role: message.Assistant, Parts: []message.ContentPart{reasoning}})
+
+	out := ansi.Strip(item.Render(80))
+	require.NotContains(t, out, "Thinking")
+	require.Contains(t, out, "Thought for 5s")
+}

@@ -109,6 +109,10 @@ type AssistantMessageItem struct {
 	message *message.Message
 	sty     *styles.Styles
 	anim    *anim.Anim
+	// spinnerLabel is the label last set on anim, so it's only re-rendered
+	// when it changes.
+	spinnerLabel string
+
 	// thinkingFooterHeight is the rendered height of the "Thought for"
 	// line, which is the click target for drilling into the thinking.
 	thinkingFooterHeight int
@@ -351,7 +355,7 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
 	var done byte
 	var durationStr string
-	if a.thinkingDone() {
+	if a.thinkingFinished() {
 		done = 1
 		durationStr = a.message.ThinkingDuration().String()
 	}
@@ -434,7 +438,7 @@ func (a *AssistantMessageItem) cachedError(width int) string {
 // under a second. While the model is still thinking it renders nothing
 // and the spinner shows instead.
 func (a *AssistantMessageItem) renderThinkingFooter() string {
-	if !a.thinkingDone() {
+	if !a.thinkingFinished() {
 		return ""
 	}
 	duration := a.message.ThinkingDuration()
@@ -445,9 +449,11 @@ func (a *AssistantMessageItem) renderThinkingFooter() string {
 		a.sty.Messages.ThinkingFooterDuration.Render(duration.String())
 }
 
-// thinkingDone reports whether the model has moved past thinking.
-func (a *AssistantMessageItem) thinkingDone() bool {
-	return !a.message.IsThinking() || len(a.message.ToolCalls()) > 0
+// thinkingFinished reports whether the thinking is complete: the model
+// marked it done, or the turn ended. The footer, the spinner label and
+// the thinking drill-in all use this one rule.
+func (a *AssistantMessageItem) thinkingFinished() bool {
+	return a.message.ReasoningContent().FinishedAt != 0 || a.message.IsFinished()
 }
 
 // renderMarkdown renders content as markdown. F8 routes the call
@@ -470,10 +476,16 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 }
 
 func (a *AssistantMessageItem) renderSpinning() string {
-	if a.message.IsThinking() {
-		a.anim.SetLabel("Thinking")
-	} else if a.message.MessageType == message.MessageTypeCompaction {
-		a.anim.SetLabel("Summarizing")
+	var label string
+	switch {
+	case a.message.MessageType == message.MessageTypeCompaction:
+		label = "Summarizing"
+	case a.message.ReasoningContent().Thinking != "" && !a.thinkingFinished():
+		label = "Thinking"
+	}
+	if label != a.spinnerLabel {
+		a.spinnerLabel = label
+		a.anim.SetLabel(label)
 	}
 	return a.anim.Render()
 }
