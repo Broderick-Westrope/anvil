@@ -2162,12 +2162,14 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 
 // mergeLiveItems builds a subagent chat's items from a load snapshot and
 // the items c already holds. Events reach c from the moment of the
-// drill-in, so its items can be newer than the snapshot:
-//   - Live assistant items are kept, since thinking drill-ins point at them.
-//   - A live tool item that has a result the snapshot lacks is kept, unless
-//     it's an agent: only the snapshot fills in an agent's nested tools and
-//     child session.
-//   - Every other loaded item comes from the snapshot.
+// drill-in, so its items are never older than the snapshot, and keeping
+// them preserves the identity that thinking and tool drill-ins point at,
+// plus live-only state such as a tool awaiting permission. Two kinds of
+// loaded item still win:
+//   - Agents: only the snapshot fills in their nested tools and child
+//     session.
+//   - Tools whose result the live item lacks: an assistant update can
+//     create the live tool item after its result was saved.
 //
 // Items in c the snapshot lacks are appended, since they arrived after it.
 func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
@@ -2175,20 +2177,18 @@ func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
 	for k, item := range loaded {
 		ids[item.ID()] = struct{}{}
 		live := c.MessageItem(item.ID())
-		if assistant, ok := live.(*chat.AssistantMessageItem); ok {
-			loaded[k] = assistant
-			continue
-		}
-		liveTool, ok := live.(chat.ToolMessageItem)
-		if !ok || !liveTool.HasResult() {
+		if live == nil {
 			continue
 		}
 		if _, isAgent := live.(chat.NestedToolContainer); isAgent {
 			continue
 		}
-		if loadedTool, ok := item.(chat.ToolMessageItem); ok && !loadedTool.HasResult() {
-			loaded[k] = liveTool
+		if loadedTool, ok := item.(chat.ToolMessageItem); ok && loadedTool.HasResult() {
+			if liveTool, ok := live.(chat.ToolMessageItem); ok && !liveTool.HasResult() {
+				continue
+			}
 		}
+		loaded[k] = live
 	}
 	for _, item := range c.MessageItems() {
 		if _, ok := ids[item.ID()]; !ok {

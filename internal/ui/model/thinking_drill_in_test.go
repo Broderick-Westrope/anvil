@@ -466,3 +466,20 @@ func TestSubagentLoadKeepsNestedAgentState(t *testing.T) {
 	require.NotEmpty(t, nested.NestedTools(), "the load's nested tools must not be lost to the live item")
 	require.Equal(t, "sub-a$$agent1", nested.(chat.AgentDrillInHandler).AgentDrillIn())
 }
+
+func TestSubagentLoadKeepsLiveToolPermissionState(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
+	call := message.ToolCall{ID: "tc1", Name: "bash", Input: "{}", Finished: true}
+	assistant := message.Message{ID: "sub-a", Role: message.Assistant, SessionID: "child", Parts: []message.ContentPart{call}}
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.UpdatedEvent, Payload: assistant})
+	u.Update(pubsub.Event[permission.PermissionNotification]{Payload: permission.PermissionNotification{ToolCallID: "tc1"}})
+
+	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{assistant}})
+
+	tool, ok := u.drillStack[0].chat.MessageItem("tc1").(chat.ToolMessageItem)
+	require.True(t, ok)
+	require.Equal(t, chat.ToolStatusAwaitingPermission, tool.Status())
+}
