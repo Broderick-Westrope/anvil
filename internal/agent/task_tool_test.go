@@ -28,6 +28,9 @@ func TestTaskTool(t *testing.T) {
 	c.agentConfigs["fixer"] = helperCfg
 	c.agentConfigs["explorer"] = helperCfg
 	c.agentMDs["fixer"] = prompt.AgentMD{Name: "fixer", DelegatesTo: []string{"explorer"}}
+	// The orchestrator may delegate to anyone, even with an agent file
+	// that lists no delegates.
+	c.agentMDs[config.AgentOrchestrator] = prompt.AgentMD{Name: config.AgentOrchestrator}
 	c.orchestratorMu.Unlock()
 	reply := func(text string) *mockSessionAgent {
 		return newMockAgent(reloadTestProvider, 1000, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
