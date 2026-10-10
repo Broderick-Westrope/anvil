@@ -357,6 +357,8 @@ func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
 	var durationStr string
 	if a.thinkingFinished() {
 		done = 1
+	}
+	if a.message.ReasoningContent().FinishedAt != 0 {
 		durationStr = a.message.ThinkingDuration().String()
 	}
 	return 0, fnvFields([]byte{done}, []byte(durationStr))
@@ -441,8 +443,10 @@ func (a *AssistantMessageItem) renderThinkingFooter() string {
 	if !a.thinkingFinished() {
 		return ""
 	}
+	// Without an end time the duration would run to now, so it's only
+	// shown once the model marked the thinking done.
 	duration := a.message.ThinkingDuration()
-	if duration.String() == "0s" {
+	if a.message.ReasoningContent().FinishedAt == 0 || duration.String() == "0s" {
 		return a.sty.Messages.ThinkingFooterTitle.Render("Thought")
 	}
 	return a.sty.Messages.ThinkingFooterTitle.Render("Thought for ") +

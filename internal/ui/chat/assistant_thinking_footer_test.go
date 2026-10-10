@@ -159,3 +159,20 @@ func TestAssistantMessageItemCompactionSpinnerSaysSummarizing(t *testing.T) {
 	require.Contains(t, out, "Summarizing")
 	require.NotContains(t, out, "Thinking")
 }
+
+func TestAssistantMessageItemFooterWithoutThinkingEndShowsNoDuration(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	msg := &message.Message{
+		ID:    "m1",
+		Role:  message.Assistant,
+		Parts: []message.ContentPart{message.ReasoningContent{Thinking: "reasoning", StartedAt: testStartedAt}},
+	}
+	msg.AddFinish(message.FinishReasonCanceled, "", "")
+
+	out := ansi.Strip(NewAssistantMessageItem(&sty, msg).Render(80))
+
+	require.Contains(t, out, "Thought")
+	require.NotContains(t, out, "Thought for", "a turn that never marked thinking done has no meaningful duration")
+}
