@@ -115,7 +115,7 @@ linters:
         text: 'func `(\(\*coordinator\)\.agenticFetchTool)`'
         linters: [gocognit]
       - path: internal/agent/coordinator\.go
-        text: 'func `(\(\*coordinator\)\.buildToolsWithState|getProviderOptions)`'
+        text: 'func `(\(\*coordinator\)\.buildToolsWithState)`'
         linters: [gocognit]
       - path: internal/agent/lazy_mcp\.go
         text: 'func `(deriveLazyMCPState)`'
