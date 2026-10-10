@@ -847,86 +847,11 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 
 	largeModelSelected, largeModelConfigured := cfg.Models[SelectedModelTypeLarge]
 	if largeModelConfigured {
-		if largeModelSelected.Model != "" {
-			large.Model = largeModelSelected.Model
-		}
-		if largeModelSelected.Provider != "" {
-			large.Provider = largeModelSelected.Provider
-		}
-		model := cfg.GetModel(large.Provider, large.Model)
-		if model == nil {
-			large = defaultLarge
-			result.LargeFallback = true
-		} else {
-			if largeModelSelected.MaxTokens > 0 {
-				large.MaxTokens = largeModelSelected.MaxTokens
-			} else {
-				large.MaxTokens = model.DefaultMaxTokens
-			}
-			if largeModelSelected.ReasoningEffort != "" {
-				large.ReasoningEffort = largeModelSelected.ReasoningEffort
-			} else {
-				large.ReasoningEffort = model.DefaultReasoningEffort
-			}
-			large.Think = largeModelSelected.Think
-			if largeModelSelected.Temperature != nil {
-				large.Temperature = largeModelSelected.Temperature
-			}
-			if largeModelSelected.TopP != nil {
-				large.TopP = largeModelSelected.TopP
-			}
-			if largeModelSelected.TopK != nil {
-				large.TopK = largeModelSelected.TopK
-			}
-			if largeModelSelected.FrequencyPenalty != nil {
-				large.FrequencyPenalty = largeModelSelected.FrequencyPenalty
-			}
-			if largeModelSelected.PresencePenalty != nil {
-				large.PresencePenalty = largeModelSelected.PresencePenalty
-			}
-		}
+		large, result.LargeFallback = resolveSelectedModel(cfg, defaultLarge, largeModelSelected)
 	}
 	smallModelSelected, smallModelConfigured := cfg.Models[SelectedModelTypeSmall]
 	if smallModelConfigured {
-		if smallModelSelected.Model != "" {
-			small.Model = smallModelSelected.Model
-		}
-		if smallModelSelected.Provider != "" {
-			small.Provider = smallModelSelected.Provider
-		}
-
-		model := cfg.GetModel(small.Provider, small.Model)
-		if model == nil {
-			small = defaultSmall
-			result.SmallFallback = true
-		} else {
-			if smallModelSelected.MaxTokens > 0 {
-				small.MaxTokens = smallModelSelected.MaxTokens
-			} else {
-				small.MaxTokens = model.DefaultMaxTokens
-			}
-			if smallModelSelected.ReasoningEffort != "" {
-				small.ReasoningEffort = smallModelSelected.ReasoningEffort
-			} else {
-				small.ReasoningEffort = model.DefaultReasoningEffort
-			}
-			if smallModelSelected.Temperature != nil {
-				small.Temperature = smallModelSelected.Temperature
-			}
-			if smallModelSelected.TopP != nil {
-				small.TopP = smallModelSelected.TopP
-			}
-			if smallModelSelected.TopK != nil {
-				small.TopK = smallModelSelected.TopK
-			}
-			if smallModelSelected.FrequencyPenalty != nil {
-				small.FrequencyPenalty = smallModelSelected.FrequencyPenalty
-			}
-			if smallModelSelected.PresencePenalty != nil {
-				small.PresencePenalty = smallModelSelected.PresencePenalty
-			}
-			small.Think = smallModelSelected.Think
-		}
+		small, result.SmallFallback = resolveSelectedModel(cfg, defaultSmall, smallModelSelected)
 	}
 
 	// When small isn't explicitly configured and the provider isn't a
@@ -934,13 +859,9 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 	// prevents two different models from being requested concurrently
 	// for local/openai-compat providers.
 	if !smallModelConfigured {
-		isKnownProvider := false
-		for _, kp := range knownProviders {
-			if string(kp.ID) == small.Provider {
-				isKnownProvider = true
-				break
-			}
-		}
+		isKnownProvider := slices.ContainsFunc(knownProviders, func(kp catwalk.Provider) bool {
+			return string(kp.ID) == small.Provider
+		})
 		if !isKnownProvider {
 			slog.Warn("Using large model as small model for unknown provider", "provider", large.Provider, "model", large.Model)
 			small = large
@@ -950,6 +871,32 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 	result.Large = large
 	result.Small = small
 	return result, nil
+}
+
+// resolveSelectedModel lays a configured model selection over the default
+// one for its type, taking any setting the selection leaves unset from the
+// default or the model. It returns the default and fallback true when the
+// selected model isn't one of its provider's models.
+func resolveSelectedModel(cfg *Config, def, selected SelectedModel) (resolved SelectedModel, fallback bool) {
+	resolved = def
+	resolved.Model = cmp.Or(selected.Model, resolved.Model)
+	resolved.Provider = cmp.Or(selected.Provider, resolved.Provider)
+	model := cfg.GetModel(resolved.Provider, resolved.Model)
+	if model == nil {
+		return def, true
+	}
+	resolved.MaxTokens = model.DefaultMaxTokens
+	if selected.MaxTokens > 0 {
+		resolved.MaxTokens = selected.MaxTokens
+	}
+	resolved.ReasoningEffort = cmp.Or(selected.ReasoningEffort, model.DefaultReasoningEffort)
+	resolved.Think = selected.Think
+	resolved.Temperature = cmp.Or(selected.Temperature, resolved.Temperature)
+	resolved.TopP = cmp.Or(selected.TopP, resolved.TopP)
+	resolved.TopK = cmp.Or(selected.TopK, resolved.TopK)
+	resolved.FrequencyPenalty = cmp.Or(selected.FrequencyPenalty, resolved.FrequencyPenalty)
+	resolved.PresencePenalty = cmp.Or(selected.PresencePenalty, resolved.PresencePenalty)
+	return resolved, false
 }
 
 // lookupConfigs searches config files starting at cwd and walking up
