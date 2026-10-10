@@ -230,6 +230,44 @@ func TestWorkflowApprovalShowsAllOfALongLine(t *testing.T) {
 	}
 }
 
+func TestWorkflowApprovalShowsControlCharactersAsEscapes(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		status host.FileStatus
+	}{
+		"added":   {status: host.FileAdded},
+		"changed": {status: host.FileChanged},
+		"removed": {status: host.FileRemoved},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			hidden := "ok\x1b[2K\rhidden\x07\x7f\u009b"
+			ev := approvalEvent("")
+			f := host.ApprovalFile{Path: "evil\x1b[31m.md", Status: tc.status}
+			switch tc.status {
+			case host.FileAdded:
+				f.Source = hidden
+			case host.FileChanged:
+				f.Source, f.PreviousSource = hidden, "before"+hidden
+			case host.FileRemoved:
+				f.PreviousSource = hidden
+			}
+			ev.Approval.Files = append(ev.Approval.Files, f)
+			out := drawAllScrolled(NewWorkflowApproval(workflowCommon(), ev), 120, 40)
+			require.Contains(t, out, `evil\x1b[31m.md`)
+			require.NotContains(t, out, "\x07")
+			require.NotContains(t, out, "\x7f")
+			require.NotContains(t, out, "\r")
+			require.NotContains(t, out, "\u009b")
+			if tc.status != host.FileRemoved {
+				require.Contains(t, out, `ok\x1b[2K\x0dhidden\x07\x7f\u009b`)
+			}
+		})
+	}
+}
+
 func askEvent(options ...string) host.Event {
 	return host.Event{
 		Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "s1",

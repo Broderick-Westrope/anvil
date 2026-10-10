@@ -3,6 +3,7 @@ package dialog
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -149,6 +150,7 @@ func (d *WorkflowApproval) renderFiles(width int) string {
 	t := d.com.Styles
 	sections := make([]string, 0, len(req.Files))
 	for _, f := range req.Files {
+		f.Path, f.Source, f.PreviousSource = visibleControls(f.Path), visibleControls(f.Source), visibleControls(f.PreviousSource)
 		heading := lipgloss.NewStyle().Width(width).Render(
 			t.Dialog.Permissions.KeyText.Render(f.Path) + t.Dialog.Permissions.ValueText.Render(" "+string(f.Status)))
 		switch f.Status {
@@ -181,7 +183,7 @@ func (d *WorkflowApproval) renderHeader(width int) string {
 	kv := func(k, v string) string {
 		keyStr := t.Dialog.Permissions.KeyText.Render(k)
 		return lipgloss.JoinHorizontal(lipgloss.Left, keyStr,
-			t.Dialog.Permissions.ValueText.Width(max(width-lipgloss.Width(keyStr), 1)).Render(" "+v))
+			t.Dialog.Permissions.ValueText.Width(max(width-lipgloss.Width(keyStr), 1)).Render(" "+visibleControls(v)))
 	}
 	lines := []string{title, ""}
 	lines = append(lines, kv("Command", "/"+d.ev.Command))
@@ -206,6 +208,25 @@ func (d *WorkflowApproval) renderHeader(width int) string {
 	}
 	lines = append(lines, "", t.Dialog.Permissions.ValueText.Width(width).Render(note))
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// visibleControls shows control characters as Go escapes (\x1b, \u009b),
+// keeping newlines and tabs. A terminal acts on control characters
+// instead of showing them, so a file could otherwise hide or rewrite what
+// the approval dialog shows.
+func visibleControls(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\t' || !unicode.IsControl(r):
+			b.WriteRune(r)
+		case r <= 0x7f:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		default:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		}
+	}
+	return b.String()
 }
 
 // requiresSummary lists what a script declares in requires().
