@@ -712,6 +712,23 @@ func (m *UI) findParentMessageItem(id string) chat.MessageItem {
 	return nil
 }
 
+// applyChatScroll scrolls the active chat by lines and, if the selection is
+// then outside the viewport, moves it to the nearest visible edge. The
+// selection is moved rather than scrolled to so a large coalesced delta is
+// applied in full instead of being rewound to the selected item.
+func (m *UI) applyChatScroll(lines int) {
+	c := m.activeChat()
+	c.ScrollBy(lines)
+	if c.SelectedItemInView() {
+		return
+	}
+	if lines > 0 && c.AtBottom() {
+		c.SelectLast()
+		return
+	}
+	c.SelectNearestInView(lines < 0)
+}
+
 // activeChatArea returns the rectangle the active chat is drawn into. When
 // drilled into a subagent, the top of the main area is occupied by the
 // breadcrumb line plus a one-line margin (see Draw), so the chat starts two
@@ -1231,17 +1248,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if lines == 0 {
 				break
 			}
-			m.activeChat().ScrollBy(lines)
-			if !m.activeChat().SelectedItemInView() {
-				if lines < 0 {
-					m.activeChat().SelectPrev()
-				} else if m.activeChat().AtBottom() {
-					m.activeChat().SelectLast()
-				} else {
-					m.activeChat().SelectNext()
-				}
-				m.activeChat().ScrollToSelected()
-			}
+			m.applyChatScroll(lines)
 		}
 	case animTickMsg:
 		if cmd := m.handleAnimTick(msg); cmd != nil {

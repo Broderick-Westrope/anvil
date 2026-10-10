@@ -660,6 +660,29 @@ func (m *Chat) SelectLastInView() {
 	}
 }
 
+// SelectNearestInView moves an out-of-view selection to the visible edge
+// nearest to it: the top row when the selection is above the viewport, the
+// bottom row when it is below. With no selection, scrolledUp picks the
+// bottom row (the content the user is moving towards) and otherwise the
+// top row.
+func (m *Chat) SelectNearestInView(scrolledUp bool) {
+	startIdx, _ := m.list.VisibleItemIndices()
+	sel := m.list.Selected()
+	if sel < 0 {
+		if scrolledUp {
+			m.SelectLastInView()
+		} else {
+			m.SelectFirstInView()
+		}
+		return
+	}
+	if sel < startIdx {
+		m.SelectFirstInView()
+		return
+	}
+	m.SelectLastInView()
+}
+
 // ClearMessages removes all messages from the chat list.
 func (m *Chat) ClearMessages() {
 	m.idInxMap = make(map[string]int)
