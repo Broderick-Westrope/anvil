@@ -116,5 +116,3 @@ sessions or dominates `tokens_not_reused`.
 - `list_cost` uses catwalk list prices stored per row; it is notional for
   `flat_rate = 1` rows and 0 when prices are unknown.
 - Google cache reads may be over-counted (see `schema.md`).
-- `agent = 'reviewer'` is both the small-call reviewer and a specialist;
-  filter by `kind` too.

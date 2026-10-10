@@ -21,7 +21,7 @@ tokens**; token counts are per call.
 | `parent_session_id` | Parent session for specialist subagents and `agentic_fetch`. Empty for top-level sessions and for `title` rows (even in child sessions). |
 | `working_dir` | Working directory of the Anvil process. Use it to split repos. |
 | `message_id` | Assistant message (turn) or compaction message (summary). Empty for title and small. |
-| `agent` | `orchestrator`, a specialist name (`fixer`, `explorer`, `reviewer`, ...), `agentic_fetch`, or `reviewer` for `small` rows. A specialist called `reviewer` also exists, so always pair `agent` with `kind`. Title rows carry the session's agent. |
+| `agent` | `orchestrator`, a specialist name (`fixer`, `explorer`, `reviewer`, ...), `agentic_fetch`, or `bouncer_reviewer` for `small` rows. Title rows carry the session's agent. |
 | `kind` | `turn` (agent loop step), `summary` (compaction), `title` (session title), `small` (`CompleteSmall`, the bouncer's small-model reviewer). |
 | `depth` | Remaining delegation depth of the recording agent, not nesting level: orchestrator 3, each delegation level one less (specialist called by the orchestrator 2). `agentic_fetch` is 0. Use `parent_session_id`, not `depth`, to find subagents. |
 | `run_id` | Groups the steps of one agent Run, one summary call or one title call. |

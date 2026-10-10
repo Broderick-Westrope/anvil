@@ -424,7 +424,7 @@ func TestStepUsageRecordsSmallCalls(t *testing.T) {
 	rows := stepUsageRows(t, env)
 	require.Len(t, rows, 1)
 	require.Equal(t, usageKindSmall, rows[0].kind)
-	require.Equal(t, reviewerAgentName, rows[0].agent)
+	require.Equal(t, "bouncer_reviewer", rows[0].agent)
 	require.Empty(t, rows[0].sessionID)
 	require.Empty(t, rows[0].messageID)
 	require.NotEmpty(t, rows[0].runID)

@@ -1541,7 +1541,7 @@ func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string)
 			}
 			if a.usageRecorder != nil {
 				capture = a.newCapture(usageKindSmall, runID, "", "", small, nil, prepared.Messages)
-				capture.agent = reviewerAgentName
+				capture.agent = bouncerReviewerAgentName
 				capture.stepIndex = opts.StepNumber
 			}
 			return callCtx, prepared, nil

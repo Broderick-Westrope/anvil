@@ -249,8 +249,8 @@ ORDER BY calls DESC
 
 ## 11. Reviewer and title calls
 
-`small` rows are the bouncer's small-model reviewer, with an empty
-`session_id`:
+`small` rows are the bouncer's small-model reviewer (`agent =
+'bouncer_reviewer'`), with an empty `session_id`:
 
 ```sql
 SELECT kind, model, date(request_started_at / 1000, 'unixepoch') AS day,

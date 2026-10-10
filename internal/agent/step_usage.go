@@ -30,9 +30,9 @@ const (
 	cachePolicyNone               = "none"
 )
 
-// reviewerAgentName labels CompleteSmall rows; its only caller is the
-// bouncer's small-model reviewer (internal/app/bouncer.go).
-const reviewerAgentName = "reviewer"
+// bouncerReviewerAgentName labels CompleteSmall rows; its only caller is
+// the bouncer's small-model reviewer (internal/app/bouncer.go).
+const bouncerReviewerAgentName = "bouncer_reviewer"
 
 // turnPrefix is the history fingerprint of a turn step: how many history
 // entries it sent and their rolling hash.
