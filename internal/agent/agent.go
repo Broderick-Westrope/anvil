@@ -693,19 +693,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		return err
 	}
 
-	var openrouterCost *float64
-	for _, step := range resp.Steps {
-		stepCost := a.openrouterCost(step.ProviderMetadata)
-		if stepCost != nil {
-			newCost := *stepCost
-			if openrouterCost != nil {
-				newCost += *openrouterCost
-			}
-			openrouterCost = &newCost
-		}
-	}
-
-	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, openrouterCost, false)
+	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
 
 	// Update session usage. The leaf already points to the compaction
 	// message (advanced atomically by Create() above).
@@ -1121,34 +1109,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 	title = cmp.Or(title, DefaultSessionName)
 
 	// Calculate usage and cost.
-	var openrouterCost *float64
-	for _, step := range resp.Steps {
-		stepCost := a.openrouterCost(step.ProviderMetadata)
-		if stepCost != nil {
-			newCost := *stepCost
-			if openrouterCost != nil {
-				newCost += *openrouterCost
-			}
-			openrouterCost = &newCost
-		}
-	}
-
-	modelConfig := model.CatwalkCfg
-	cost := modelConfig.CostPer1MInCached/1e6*float64(resp.TotalUsage.CacheCreationTokens) +
-		modelConfig.CostPer1MOutCached/1e6*float64(resp.TotalUsage.CacheReadTokens) +
-		modelConfig.CostPer1MIn/1e6*float64(resp.TotalUsage.InputTokens) +
-		modelConfig.CostPer1MOut/1e6*float64(resp.TotalUsage.OutputTokens)
-
-	// Use override cost if available (e.g., from OpenRouter).
-	if openrouterCost != nil {
-		cost = *openrouterCost
-	}
-
-	// Skip cost accumulation
-	if model.FlatRate {
-		cost = 0
-	}
-
+	cost := usageCost(model, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
 	promptTokens := resp.TotalUsage.InputTokens + resp.TotalUsage.CacheCreationTokens
 	completionTokens := resp.TotalUsage.OutputTokens
 
@@ -1175,32 +1136,45 @@ func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float6
 	return &opts.Usage.Cost
 }
 
+// openrouterRunCost sums the cost OpenRouter reported for each step of a
+// run, or returns nil when it reported none.
+func (a *sessionAgent) openrouterRunCost(steps []fantasy.StepResult) *float64 {
+	var total *float64
+	for _, step := range steps {
+		if stepCost := a.openrouterCost(step.ProviderMetadata); stepCost != nil {
+			sum := *stepCost
+			if total != nil {
+				sum += *total
+			}
+			total = &sum
+		}
+	}
+	return total
+}
+
+// usageCost prices usage at the model's catwalk rates. An override cost
+// (e.g. from OpenRouter) replaces the rates, and flat-rate models and
+// estimated usage cost nothing.
+func usageCost(model Model, usage fantasy.Usage, overrideCost *float64, estimated bool) float64 {
+	if estimated || model.FlatRate {
+		return 0
+	}
+	if overrideCost != nil {
+		return *overrideCost
+	}
+	modelConfig := model.CatwalkCfg
+	return modelConfig.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
+		modelConfig.CostPer1MOutCached/1e6*float64(usage.CacheReadTokens) +
+		modelConfig.CostPer1MIn/1e6*float64(usage.InputTokens) +
+		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
+}
+
 func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) {
 	if !usageIsZero(usage) {
 		session.EstimatedUsage = estimated
 	}
 
-	modelConfig := model.CatwalkCfg
-	cost := modelConfig.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
-		modelConfig.CostPer1MOutCached/1e6*float64(usage.CacheReadTokens) +
-		modelConfig.CostPer1MIn/1e6*float64(usage.InputTokens) +
-		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
-
-	if estimated {
-		cost = 0
-	} else {
-		// Use override cost if available (e.g., from OpenRouter).
-		if overrideCost != nil {
-			cost = *overrideCost
-		}
-
-		// Skip cost accumulation
-		if model.FlatRate {
-			cost = 0
-		}
-	}
-
-	session.Cost += cost
+	session.Cost += usageCost(model, usage, overrideCost, estimated)
 	updateSessionTokenCounters(session, usage)
 }
 

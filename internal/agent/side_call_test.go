@@ -385,3 +385,49 @@ func TestCompleteSmall(t *testing.T) {
 		require.Equal(t, "small-id", modelID)
 	})
 }
+
+func TestUsageCost(t *testing.T) {
+	t.Parallel()
+	usage := fantasy.Usage{InputTokens: 1_000_000, CacheCreationTokens: 2_000_000, CacheReadTokens: 3_000_000, OutputTokens: 4_000_000}
+	priced := Model{CatwalkCfg: catwalk.Model{CostPer1MIn: 1, CostPer1MInCached: 10, CostPer1MOutCached: 100, CostPer1MOut: 1000}}
+	flat := priced
+	flat.FlatRate = true
+	tests := map[string]struct {
+		model     Model
+		override  *float64
+		estimated bool
+		want      float64
+	}{
+		"catwalk rates":      {model: priced, want: 1*1 + 2*10 + 3*100 + 4*1000},
+		"override":           {model: priced, override: new(0.5), want: 0.5},
+		"flat rate":          {model: flat},
+		"flat rate override": {model: flat, override: new(0.5)},
+		"estimated":          {model: priced, estimated: true},
+		"estimated override": {model: priced, override: new(0.5), estimated: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.InDelta(t, tt.want, usageCost(tt.model, usage, tt.override, tt.estimated), 1e-9)
+		})
+	}
+}
+
+func TestOpenrouterRunCost(t *testing.T) {
+	t.Parallel()
+	step := func(cost *float64) fantasy.StepResult {
+		var r fantasy.StepResult
+		if cost != nil {
+			r.ProviderMetadata = fantasy.ProviderMetadata{
+				openrouter.Name: &openrouter.ProviderMetadata{Usage: openrouter.UsageAccounting{Cost: *cost}},
+			}
+		}
+		return r
+	}
+	a := &sessionAgent{}
+	require.Nil(t, a.openrouterRunCost(nil))
+	require.Nil(t, a.openrouterRunCost([]fantasy.StepResult{step(nil)}))
+	got := a.openrouterRunCost([]fantasy.StepResult{step(new(0.25)), step(nil), step(new(0.5))})
+	require.NotNil(t, got)
+	require.InDelta(t, 0.75, *got, 1e-9)
+}
