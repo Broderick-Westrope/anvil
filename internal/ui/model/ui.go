@@ -283,9 +283,9 @@ type UI struct {
 	// Chat components
 	chat *Chat
 
-	// drillStack holds entries for each level of drill-in navigation. When
-	// non-empty, the user is viewing a subagent session instead of the root
-	// session. m.chat and m.session always refer to the root session.
+	// drillStack holds entries for each level of drill-in navigation into
+	// a subagent session, a tool's detail or an assistant's thinking.
+	// m.chat and m.session always refer to the root session.
 	drillStack []drillInEntry
 
 	// elapsedTickRunning tracks whether the elapsed-time tick command is
@@ -386,10 +386,11 @@ type UI struct {
 	branchRestoring       bool
 }
 
-// drillInEntry represents one level of drill-in navigation into a subagent
-// session.
+// drillInEntry represents one level of drill-in navigation. Subagent
+// session entries have a sessionID; tool and thinking entries don't, and
+// show part of the session beneath them.
 type drillInEntry struct {
-	sessionID string           // child session being viewed
+	sessionID string           // child session being viewed, if any
 	chat      *Chat            // Chat instance for this level
 	label     string           // breadcrumb label, e.g. "Explorer: Search auth"
 	session   *session.Session // cached session for sidebar stats
@@ -658,8 +659,8 @@ func (m *UI) viewedSession() *session.Session {
 	return m.session
 }
 
-// isDrilledIn returns true when the user is viewing a subagent session rather
-// than the root session.
+// isDrilledIn returns true when any drill-in view is open on top of the
+// root chat.
 func (m *UI) isDrilledIn() bool {
 	return len(m.drillStack) > 0
 }
@@ -2173,8 +2174,8 @@ func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
 }
 
 // loadAgentDrillInSession asynchronously loads the messages and session
-// metadata for a drilled-in child session. It never does IO in Update — all work
-// happens inside the returned tea.Cmd.
+// metadata for a drilled-in child session. It never does IO in Update —
+// all work happens inside the returned tea.Cmd.
 func (m *UI) loadAgentDrillInSession(sessionID string) tea.Cmd {
 	// Capture workspace reference locally to avoid holding a pointer to
 	// the full UI model inside the command closure.

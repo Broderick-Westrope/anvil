@@ -775,7 +775,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Messages.AssistantBlurred = s.Messages.NoContent.PaddingLeft(2)
 	s.Messages.AssistantFocused = s.Messages.NoContent.PaddingLeft(1).BorderLeft(true).
 		BorderForeground(o.successMostSubtle).BorderStyle(messageFocussedBorder)
-	s.Messages.Thinking = lipgloss.NewStyle().MaxHeight(10)
 	s.Messages.ErrorTag = lipgloss.NewStyle().Padding(0, 1).
 		Background(o.destructive).Foreground(o.onPrimary)
 	s.Messages.ErrorTitle = lipgloss.NewStyle().Foreground(o.fgSubtle)

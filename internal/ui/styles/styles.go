@@ -243,7 +243,6 @@ type Styles struct {
 		AssistantBlurred lipgloss.Style
 		AssistantFocused lipgloss.Style
 		NoContent        lipgloss.Style
-		Thinking         lipgloss.Style
 		ErrorTag         lipgloss.Style
 		ErrorTitle       lipgloss.Style
 		ErrorDetails     lipgloss.Style

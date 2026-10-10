@@ -18,10 +18,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// assistantMessageTruncateFormat is the text shown when an assistant message is
-// truncated in the collapsed state.
-const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to expand]"
-
 // Default copy for a provider-refusal banner. The agent persists only
 // the FinishReasonContentFilter reason; the TUI owns this text and
 // fills it in when the finish part carries no message/details (the
@@ -38,11 +34,11 @@ const (
 // streaming a section does not invalidate a different — often more
 // expensive — section's cached render. srcHash is an FNV-64 of the
 // section's source text; extra captures any other state that changes
-// the rendered output (e.g. thinkingExpanded, the thinking footer
-// inputs). valid disambiguates a real cache hit from the zero value
-// when both source text and extras hash to zero. aux carries any
-// per-section side data that the caller needs to recover on a hit
-// (e.g. the thinking box height for click detection).
+// the rendered output (e.g. the thinking footer inputs). valid
+// disambiguates a real cache hit from the zero value when both source
+// text and extras hash to zero. aux carries any per-section side data
+// that the caller needs to recover on a hit (e.g. the thinking footer
+// height for click detection).
 type assistantSection struct {
 	width   int
 	srcHash uint64

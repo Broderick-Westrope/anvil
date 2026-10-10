@@ -26,6 +26,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// truncatedLinesFormat is the hint shown below truncated tool output.
+const truncatedLinesFormat = "… (%d lines hidden) [click or space to expand]"
+
 // responseContextHeight limits the number of lines displayed in tool output.
 const responseContextHeight = 10
 
@@ -548,7 +551,7 @@ func (t *baseToolMessageItem) SetSpinningFunc(fn SpinningFunc) {
 	t.spinningFunc = fn
 }
 
-// ToggleExpanded toggles the expanded state of the thinking box.
+// ToggleExpanded toggles whether the tool's content is shown in full.
 func (t *baseToolMessageItem) ToggleExpanded() bool {
 	t.expandedContent = !t.expandedContent
 	t.clearCache()
@@ -793,7 +796,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 	if !expanded && wasTruncated {
 		out = append(out, sty.Tool.ContentTruncation.
 			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
+			Render(fmt.Sprintf(truncatedLinesFormat, len(lines)-responseContextHeight)))
 	}
 
 	return strings.Join(out, "\n")
@@ -848,7 +851,7 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 		out = append(
 			out, sty.Tool.ContentCodeTruncation.
 				Width(width).
-				Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
+				Render(fmt.Sprintf(truncatedLinesFormat, len(lines)-maxLines)),
 		)
 	}
 
@@ -1108,7 +1111,7 @@ func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent stri
 	if len(lines) > maxLines && !expanded {
 		truncMsg := sty.Tool.DiffTruncation.
 			Width(bodyWidth).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))
+			Render(fmt.Sprintf(truncatedLinesFormat, len(lines)-maxLines))
 		formatted = strings.Join(lines[:maxLines], "\n") + "\n" + truncMsg
 	}
 
@@ -1162,7 +1165,7 @@ func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.
 	if len(lines) > maxLines && !expanded {
 		truncMsg := sty.Tool.DiffTruncation.
 			Width(bodyWidth).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))
+			Render(fmt.Sprintf(truncatedLinesFormat, len(lines)-maxLines))
 		formatted = truncMsg + "\n" + strings.Join(lines[:maxLines], "\n")
 	}
 
@@ -1226,7 +1229,7 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 		out = append(
 			out, sty.Tool.ContentTruncation.
 				Width(width).
-				Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
+				Render(fmt.Sprintf(truncatedLinesFormat, len(lines)-maxLines)),
 		)
 	}
 

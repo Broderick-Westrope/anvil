@@ -144,7 +144,7 @@ func TestThinkingDrillInSurvivesSubagentLoad(t *testing.T) {
 	u.Update(childThinkingEvent("first step\n\nsecond step", false))
 
 	require.Contains(t, ansi.Strip(u.drillStack[1].chat.ItemAt(0).Render(80)), "second step",
-		"the thinking drill-in must follow the item the load put in its place")
+		"the thinking drill-in must keep following its live source after the load")
 }
 
 func TestSubagentLoadKeepsLiveMessagesMissingFromItsSnapshot(t *testing.T) {

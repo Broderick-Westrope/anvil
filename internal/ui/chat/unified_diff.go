@@ -164,7 +164,7 @@ func toolOutputDiffContentFromUnified(sty *styles.Styles, content string, width 
 	if len(lines) > maxLines && !expanded {
 		truncMsg := sty.Tool.DiffTruncation.
 			Width(bodyWidth).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))
+			Render(fmt.Sprintf(truncatedLinesFormat, len(lines)-maxLines))
 		combined = strings.Join(lines[:maxLines], "\n") + "\n" + truncMsg
 	}
 	return sty.Tool.Body.Render(combined)
