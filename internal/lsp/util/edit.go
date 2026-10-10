@@ -170,81 +170,106 @@ func applyTextEdit(lines []string, edit protocol.TextEdit, encoding powernap.Off
 // applyDocumentChange applies a DocumentChange (create/rename/delete operations)
 func applyDocumentChange(change protocol.DocumentChange, encoding powernap.OffsetEncoding) error {
 	if change.CreateFile != nil {
-		path, err := change.CreateFile.URI.Path()
-		if err != nil {
-			return fmt.Errorf("invalid URI: %w", err)
-		}
-
-		if change.CreateFile.Options != nil {
-			if change.CreateFile.Options.Overwrite {
-				// Proceed with overwrite
-			} else if change.CreateFile.Options.IgnoreIfExists {
-				if _, err := os.Stat(path); err == nil {
-					return nil // File exists and we're ignoring it
-				}
-			}
-		}
-		if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
-			return fmt.Errorf("failed to create file: %w", err)
+		if err := applyCreateFile(change.CreateFile); err != nil {
+			return err
 		}
 	}
 
 	if change.DeleteFile != nil {
-		path, err := change.DeleteFile.URI.Path()
-		if err != nil {
-			return fmt.Errorf("invalid URI: %w", err)
-		}
-
-		if change.DeleteFile.Options != nil && change.DeleteFile.Options.Recursive {
-			if err := os.RemoveAll(path); err != nil {
-				return fmt.Errorf("failed to delete directory recursively: %w", err)
-			}
-		} else {
-			if err := os.Remove(path); err != nil {
-				return fmt.Errorf("failed to delete file: %w", err)
-			}
+		if err := applyDeleteFile(change.DeleteFile); err != nil {
+			return err
 		}
 	}
 
 	if change.RenameFile != nil {
-		var newPath, oldPath string
-		var err error
-
-		oldPath, err = change.RenameFile.OldURI.Path()
-		if err != nil {
+		if err := applyRenameFile(change.RenameFile); err != nil {
 			return err
-		}
-
-		newPath, err = change.RenameFile.NewURI.Path()
-		if err != nil {
-			return err
-		}
-
-		if change.RenameFile.Options != nil {
-			if !change.RenameFile.Options.Overwrite {
-				if _, err := os.Stat(newPath); err == nil {
-					return fmt.Errorf("target file already exists and overwrite is not allowed: %s", newPath)
-				}
-			}
-		}
-		if err := os.Rename(oldPath, newPath); err != nil {
-			return fmt.Errorf("failed to rename file: %w", err)
 		}
 	}
 
 	if change.TextDocumentEdit != nil {
-		textEdits := make([]protocol.TextEdit, len(change.TextDocumentEdit.Edits))
-		for i, edit := range change.TextDocumentEdit.Edits {
-			var err error
-			textEdits[i], err = edit.AsTextEdit()
-			if err != nil {
-				return fmt.Errorf("invalid edit type: %w", err)
-			}
-		}
-		return applyTextEdits(change.TextDocumentEdit.TextDocument.URI, textEdits, encoding)
+		return applyTextDocumentEdit(change.TextDocumentEdit, encoding)
 	}
 
 	return nil
+}
+
+func applyCreateFile(op *protocol.CreateFile) error {
+	path, err := op.URI.Path()
+	if err != nil {
+		return fmt.Errorf("invalid URI: %w", err)
+	}
+
+	if op.Options != nil {
+		if op.Options.Overwrite {
+			// Proceed with overwrite
+		} else if op.Options.IgnoreIfExists {
+			if _, err := os.Stat(path); err == nil {
+				return nil // File exists and we're ignoring it
+			}
+		}
+	}
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	return nil
+}
+
+func applyDeleteFile(op *protocol.DeleteFile) error {
+	path, err := op.URI.Path()
+	if err != nil {
+		return fmt.Errorf("invalid URI: %w", err)
+	}
+
+	if op.Options != nil && op.Options.Recursive {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("failed to delete directory recursively: %w", err)
+		}
+	} else {
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("failed to delete file: %w", err)
+		}
+	}
+	return nil
+}
+
+func applyRenameFile(op *protocol.RenameFile) error {
+	var newPath, oldPath string
+	var err error
+
+	oldPath, err = op.OldURI.Path()
+	if err != nil {
+		return err
+	}
+
+	newPath, err = op.NewURI.Path()
+	if err != nil {
+		return err
+	}
+
+	if op.Options != nil {
+		if !op.Options.Overwrite {
+			if _, err := os.Stat(newPath); err == nil {
+				return fmt.Errorf("target file already exists and overwrite is not allowed: %s", newPath)
+			}
+		}
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return fmt.Errorf("failed to rename file: %w", err)
+	}
+	return nil
+}
+
+func applyTextDocumentEdit(op *protocol.TextDocumentEdit, encoding powernap.OffsetEncoding) error {
+	textEdits := make([]protocol.TextEdit, len(op.Edits))
+	for i, edit := range op.Edits {
+		var err error
+		textEdits[i], err = edit.AsTextEdit()
+		if err != nil {
+			return fmt.Errorf("invalid edit type: %w", err)
+		}
+	}
+	return applyTextEdits(op.TextDocument.URI, textEdits, encoding)
 }
 
 // utf32ToByteOffset converts a UTF-32 codepoint offset to a byte offset.
