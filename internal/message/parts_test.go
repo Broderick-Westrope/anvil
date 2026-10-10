@@ -1,39 +1,17 @@
 package message_test
 
 import (
-	"database/sql"
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/message"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
-
-// newPartsTestStore returns a message service plus the querier behind
-// it, so tests can write raw parts JSON that the service must decode.
-func newPartsTestStore(t *testing.T) (message.Service, db.Querier, string) {
-	t.Helper()
-
-	dataDir := t.TempDir()
-	conn, err := db.Connect(t.Context(), dataDir)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Release(dataDir) })
-
-	q := db.New(conn)
-	sess, err := q.CreateSession(t.Context(), db.CreateSessionParams{
-		ID:    uuid.New().String(),
-		Title: "test session",
-	})
-	require.NoError(t, err)
-
-	return message.NewService(q, message.WithConn(conn)), q, sess.ID
-}
 
 func TestStoredParts_RoundTripEveryPartType(t *testing.T) {
 	t.Parallel()
 
-	svc, _, sessionID := newPartsTestStore(t)
+	svc, _, sessionID := newTestService(t)
 	parts := []message.ContentPart{
 		message.ReasoningContent{
 			Thinking:         "thinking",
@@ -72,7 +50,7 @@ func TestStoredParts_RoundTripEveryPartType(t *testing.T) {
 func TestStoredParts_EmptyArrayDecodesToEmptyParts(t *testing.T) {
 	t.Parallel()
 
-	svc, q, sessionID := newPartsTestStore(t)
+	svc, q, sessionID := newTestService(t)
 	created, err := svc.Create(t.Context(), sessionID, message.CreateMessageParams{Role: message.Assistant})
 	require.NoError(t, err)
 	require.NoError(t, q.UpdateMessage(t.Context(), db.UpdateMessageParams{ID: created.ID, Parts: "[]"}))
@@ -101,13 +79,12 @@ func TestStoredParts_RejectsMalformedJSON(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			svc, q, sessionID := newPartsTestStore(t)
+			svc, q, sessionID := newTestService(t)
 			created, err := svc.Create(t.Context(), sessionID, message.CreateMessageParams{Role: message.Assistant})
 			require.NoError(t, err)
 			require.NoError(t, q.UpdateMessage(t.Context(), db.UpdateMessageParams{
-				ID:         created.ID,
-				Parts:      tc.raw,
-				FinishedAt: sql.NullInt64{},
+				ID:    created.ID,
+				Parts: tc.raw,
 			}))
 
 			_, err = svc.Get(t.Context(), created.ID)
