@@ -119,13 +119,24 @@ type workflowFocusMsg struct {
 }
 
 // workflowFor returns the run involving sessionID, if any.
+// A session the user invoked a run from wins, then a running run that
+// used it, so a finished run's leftovers never shadow the live one.
 func (m *UI) workflowFor(sessionID string) (invoker string, run *workflowRun) {
+	if run := m.workflows[sessionID]; run != nil {
+		return sessionID, run
+	}
+	var finishedInvoker string
+	var finished *workflowRun
 	for invoker, run := range m.workflows {
-		if invoker == sessionID || run.sessions[sessionID] {
+		if !run.sessions[sessionID] {
+			continue
+		}
+		if !run.log.Finished {
 			return invoker, run
 		}
+		finishedInvoker, finished = invoker, run
 	}
-	return "", nil
+	return finishedInvoker, finished
 }
 
 // currentWorkflow returns the run involving the session on screen.

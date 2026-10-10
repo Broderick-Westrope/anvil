@@ -1019,3 +1019,18 @@ func TestWorkflowRepublishedRequestIsShownOnce(t *testing.T) {
 	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")), "an answered request must not reopen")
 	require.Equal(t, [][2]string{{"ask-1", "yes"}}, f.ws.responds)
 }
+
+func TestWorkflowForPrefersTheRunASessionInvokedOverAFinishedOneThatUsedIt(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(host.Event{Kind: host.EventState, RunID: "run-a", Command: "old", SessionID: "sess-0"})
+	f.event(host.Event{Kind: host.EventFocus, RunID: "run-a", Command: "old", SessionID: "sess-0", Target: "sess-1"})
+	f.event(host.Event{Kind: host.EventFinished, RunID: "run-a", Command: "old", SessionID: "sess-0", Status: host.StatusCompleted})
+	f.event(host.Event{Kind: host.EventState, RunID: "run-b", Command: "new", SessionID: "sess-1"})
+	for range 20 {
+		invoker, run := f.u.workflowFor("sess-1")
+		require.Equal(t, "sess-1", invoker)
+		require.Equal(t, "new", run.command)
+	}
+}
