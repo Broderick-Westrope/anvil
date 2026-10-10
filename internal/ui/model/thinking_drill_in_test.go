@@ -12,7 +12,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
-	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -205,42 +204,38 @@ func TestThinkingDrillInOnRootDoesNotShowSubagentStats(t *testing.T) {
 		"a thinking drill-in on the root session isn't a subagent session")
 }
 
-// fakeAgentItem is a minimal agent item that drills into sessionID.
-type fakeAgentItem struct {
-	*list.Versioned
-	sessionID string
-}
-
-func (*fakeAgentItem) ID() string                { return "agent" }
-func (*fakeAgentItem) Render(int) string         { return "agent" }
-func (*fakeAgentItem) RawRender(int) string      { return "agent" }
-func (*fakeAgentItem) Finished() bool            { return true }
-func (f *fakeAgentItem) AgentDrillIn() string    { return f.sessionID }
-func (*fakeAgentItem) AgentDrillInLabel() string { return "Explorer" }
-
 func TestChatClickOnAgentDrillsIntoItsSession(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
 		sessionID string
-		wantMsg   tea.Msg
+		wantDrill bool
 	}{
-		"agent with a session": {sessionID: "child", wantMsg: util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"}},
-		"agent without one":    {sessionID: ""},
+		"agent with a session": {sessionID: "child", wantDrill: true},
+		"agent without one":    {},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			u := newTestUI()
-			u.chat.SetMessages(&fakeAgentItem{Versioned: list.NewVersioned(), sessionID: tc.sessionID})
+			call := message.ToolCall{ID: "agent1", Name: agent.TaskToolName, Input: `{"prompt":"look"}`, Finished: true}
+			item := chat.NewAgentToolMessageItem(u.com.Styles, call, nil, false)
+			item.SetChildSessionID(tc.sessionID)
+			u.chat.SetMessages(item)
 			u.chat.SetSelected(0)
 
-			handled, cmd := u.chat.HandleDelayedClick(DelayedClickMsg{ClickID: u.chat.pendingClickID})
+			_, cmd := u.chat.HandleDelayedClick(DelayedClickMsg{ClickID: u.chat.pendingClickID})
 
-			require.Equal(t, tc.wantMsg != nil, handled)
-			if tc.wantMsg != nil {
-				require.Equal(t, tc.wantMsg, cmd())
+			var msg tea.Msg
+			if cmd != nil {
+				msg = cmd()
+			}
+			if tc.wantDrill {
+				require.Equal(t, util.AgentDrillInMsg{SessionID: "child", Label: item.AgentDrillInLabel()}, msg)
+			} else {
+				_, isDrill := msg.(util.AgentDrillInMsg)
+				require.False(t, isDrill, "an agent without a session must not drill in")
 			}
 		})
 	}
