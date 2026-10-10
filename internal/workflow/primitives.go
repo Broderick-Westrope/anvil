@@ -29,6 +29,7 @@ var primitives = map[string]primitive{
 	"session.current":  primSessionCurrent,
 	"session.new":      primSessionNew,
 	"workflow.tmpdir":  primTmpdir,
+	"workflow.dir":     primDir,
 	"workflow.focus":   primFocus,
 	"workflow.hold":    primHold,
 	"workflow.release": primRelease,
@@ -330,6 +331,12 @@ func primTmpdir(r *Run, _ int, _ json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return r.opts.Tmpdir, nil
+}
+
+// primDir returns the workflow's directory, so a script can point agents
+// at files it bundles.
+func primDir(r *Run, _ int, _ json.RawMessage) (any, error) {
+	return r.script.Dir(), nil
 }
 
 func primFocus(r *Run, _ int, args json.RawMessage) (any, error) {

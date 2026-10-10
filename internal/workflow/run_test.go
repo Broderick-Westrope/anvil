@@ -500,3 +500,12 @@ func TestTurnInsideExclusiveThrows(t *testing.T) {
 	require.Empty(t, h.backend.turns)
 	require.Equal(t, 1, h.backend.released)
 }
+
+func TestWorkflowDirIsTheScriptDirectory(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	got, err := h.run(t, `function main() { return workflow.dir() }`, "")
+	require.NoError(t, err)
+	require.Equal(t, h.dir, got)
+}
