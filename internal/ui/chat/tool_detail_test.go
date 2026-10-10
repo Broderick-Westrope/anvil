@@ -20,7 +20,7 @@ func helperToolItem(t *testing.T, name, input string, result *message.ToolResult
 		Input:    input,
 		Finished: status != ToolStatusRunning,
 	}
-	item := NewToolMessageItem(&sty, "msg-test", tc, result, false, nil)
+	item := NewToolMessageItem(&sty, "msg-test", tc, result, false, ToolItemOptions{})
 	item.SetStatus(status)
 	return item
 }

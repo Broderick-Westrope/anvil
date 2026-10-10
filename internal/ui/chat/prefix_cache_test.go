@@ -196,7 +196,7 @@ func TestBaseToolMessageItemRender_PrefixCacheCompactFocusKey(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	tc := message.ToolCall{ID: "tc-cache", Name: "bash", Input: `{"command":"echo hello"}`, Finished: true}
-	item := NewToolMessageItem(&sty, "msg", tc, &message.ToolResult{ToolCallID: "tc-cache", Content: "hello\nworld\ndone"}, false, nil)
+	item := NewToolMessageItem(&sty, "msg", tc, &message.ToolResult{ToolCallID: "tc-cache", Content: "hello\nworld\ndone"}, false, ToolItemOptions{})
 
 	// NewToolMessageItem defaults most tools to compact; start
 	// non-compact so the 4-state matrix exercises both directions.

@@ -11,6 +11,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -32,12 +33,15 @@ func NewBashToolMessageItem(
 	toolCall message.ToolCall,
 	result *message.ToolResult,
 	canceled bool,
+	workingDir string,
 ) ToolMessageItem {
-	return newBaseToolMessageItem(sty, toolCall, result, &BashToolRenderContext{}, canceled)
+	return newBaseToolMessageItem(sty, toolCall, result, &BashToolRenderContext{workingDir: workingDir}, canceled)
 }
 
 // BashToolRenderContext renders bash tool messages.
-type BashToolRenderContext struct{}
+type BashToolRenderContext struct {
+	workingDir string
+}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
@@ -68,11 +72,7 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	// raw command with newlines preserved.
 	mainParam := params.Description
 	if mainParam == "" || opts.ExpandedContent {
-		mainParam = params.Command
-		if !opts.ExpandedContent {
-			mainParam = strings.ReplaceAll(mainParam, "\n", " ")
-		}
-		mainParam = strings.ReplaceAll(mainParam, "\t", "    ")
+		mainParam = b.displayCommand(sty, params, opts.ExpandedContent)
 	}
 	toolParams := []string{mainParam}
 	if params.RunInBackground {
@@ -103,6 +103,26 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	bodyWidth := width - toolBodyLeftPaddingTotal
 	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, output, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 	return joinToolParts(header, body)
+}
+
+// displayCommand returns the command as shown in the header: syntax
+// highlighted, and without a "cd <project> && " prefix when the command runs
+// from the project directory anyway.
+func (b *BashToolRenderContext) displayCommand(sty *styles.Styles, params tools.BashParams, expanded bool) string {
+	cmd := params.Command
+	if !expanded {
+		cmd = strings.ReplaceAll(cmd, "\n", " ")
+	}
+	cmd = strings.ReplaceAll(cmd, "\t", "    ")
+	// Each call starts in params.WorkingDir when set, so a cd into the
+	// project is only redundant when the call has no other directory.
+	if params.WorkingDir == "" || params.WorkingDir == b.workingDir {
+		cmd = common.StripBashDisplayPrefix(cmd, b.workingDir)
+	}
+	if highlighted, err := common.SyntaxHighlight(sty, cmd, "command.sh", nil); err == nil {
+		cmd = strings.TrimRight(highlighted, "\n")
+	}
+	return cmd
 }
 
 // -----------------------------------------------------------------------------

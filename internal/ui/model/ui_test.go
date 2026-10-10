@@ -188,3 +188,24 @@ func TestExtractSlashArgs(t *testing.T) {
 		})
 	}
 }
+
+type workingDirWorkspace struct {
+	testWorkspace
+	dir string
+}
+
+func (w *workingDirWorkspace) WorkingDir() string { return w.dir }
+
+func TestToolItemOptions(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Options: &config.Options{ExpandedTools: []string{"bash"}}}
+	ui := &UI{com: &common.Common{
+		Workspace: &workingDirWorkspace{testWorkspace: testWorkspace{cfg: cfg}, dir: "/repo"},
+	}}
+
+	opts := ui.toolItemOptions()
+
+	require.Equal(t, "/repo", opts.WorkingDir)
+	require.Equal(t, []string{"bash"}, opts.ExpandedPatterns)
+}

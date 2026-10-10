@@ -18,7 +18,7 @@ func TestStatus_ResultAware(t *testing.T) {
 	sty := styles.TokyoNight()
 	newItem := func() ToolMessageItem {
 		tc := message.ToolCall{ID: "tc-status", Name: "bash", Input: `{}`, Finished: true}
-		return NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
+		return NewToolMessageItem(&sty, "msg", tc, nil, false, ToolItemOptions{})
 	}
 
 	t.Run("running until result arrives", func(t *testing.T) {

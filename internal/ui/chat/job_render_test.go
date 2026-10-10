@@ -105,7 +105,7 @@ func TestJobOutputItem(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	tc := message.ToolCall{ID: "tc-wait", Name: tools.JobOutputToolName, Input: `{"shell_id":"001","wait":true}`, Finished: true}
-	item := NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
+	item := NewToolMessageItem(&sty, "msg", tc, nil, false, ToolItemOptions{})
 	SetToolCallStartedAt(item, time.Now().Add(-90*time.Second).Unix())
 
 	wait, ok := item.(*JobOutputToolMessageItem)
@@ -116,7 +116,7 @@ func TestJobOutputItem(t *testing.T) {
 	item.SetResult(&message.ToolResult{ToolCallID: "tc-wait", Content: "done"})
 	require.False(t, wait.isSpinning())
 
-	noWait := NewToolMessageItem(&sty, "msg", message.ToolCall{ID: "tc-nowait", Name: tools.JobOutputToolName, Input: `{"shell_id":"001"}`, Finished: true}, nil, false, nil)
+	noWait := NewToolMessageItem(&sty, "msg", message.ToolCall{ID: "tc-nowait", Name: tools.JobOutputToolName, Input: `{"shell_id":"001"}`, Finished: true}, nil, false, ToolItemOptions{})
 	require.False(t, noWait.(*JobOutputToolMessageItem).isSpinning())
 }
 
