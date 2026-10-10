@@ -138,6 +138,43 @@ func TestRunSubAgent(t *testing.T) {
 		assert.False(t, resp.IsError)
 	})
 
+	t.Run("sampling falls back to catwalk defaults", func(t *testing.T) {
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, providerCfg)
+
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
+		require.NoError(t, err)
+
+		var got SessionAgentCall
+		agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+			got = call
+			return agentResultWithText("done"), nil
+		})
+		agent.model.CatwalkCfg.Options = catwalk.ModelOptions{
+			Temperature:      new(0.3),
+			TopP:             new(0.8),
+			TopK:             new(int64(40)),
+			FrequencyPenalty: new(0.1),
+			PresencePenalty:  new(0.2),
+		}
+		agent.model.ModelCfg.TopP = new(0.9)
+
+		_, err = coord.runSubAgent(t.Context(), subAgentParams{
+			Agent:          agent,
+			SessionID:      parentSession.ID,
+			AgentMessageID: "msg-1",
+			ToolCallID:     "call-1",
+			Prompt:         "do something",
+			SessionTitle:   "Test Session",
+		})
+		require.NoError(t, err)
+		require.Equal(t, new(0.3), got.Temperature)
+		require.Equal(t, new(0.9), got.TopP)
+		require.Equal(t, new(int64(40)), got.TopK)
+		require.Equal(t, new(0.1), got.FrequencyPenalty)
+		require.Equal(t, new(0.2), got.PresencePenalty)
+	})
+
 	t.Run("cost update failure preserves output", func(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)

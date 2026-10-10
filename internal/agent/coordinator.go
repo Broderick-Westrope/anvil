@@ -1611,16 +1611,17 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (r
 	}
 
 	// Run the agent
+	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
 	result, err := params.Agent.Run(ctx, SessionAgentCall{
 		SessionID:        session.ID,
 		Prompt:           params.Prompt,
 		MaxOutputTokens:  maxTokens,
-		ProviderOptions:  getProviderOptions(model, providerCfg),
-		Temperature:      model.ModelCfg.Temperature,
-		TopP:             model.ModelCfg.TopP,
-		TopK:             model.ModelCfg.TopK,
-		FrequencyPenalty: model.ModelCfg.FrequencyPenalty,
-		PresencePenalty:  model.ModelCfg.PresencePenalty,
+		ProviderOptions:  mergedOptions,
+		Temperature:      temp,
+		TopP:             topP,
+		TopK:             topK,
+		FrequencyPenalty: freqPenalty,
+		PresencePenalty:  presPenalty,
 		NonInteractive:   true,
 		OnAuthRefresh:    authRefresh,
 	})
