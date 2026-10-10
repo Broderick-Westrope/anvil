@@ -127,12 +127,15 @@ func (b *Branch) HandleMsg(msg tea.Msg) Action {
 			b.list.ScrollToSelectedWithMargin(listScrollMargin)
 
 		default:
+			prevValue := b.input.Value()
 			var cmd tea.Cmd
 			b.input, cmd = b.input.Update(msg)
 			value := b.input.Value()
-			b.list.SetFilter(value)
-			b.list.ScrollToTop()
-			b.list.SetSelected(0)
+			if value != prevValue {
+				b.list.SetFilter(value)
+				b.list.ScrollToTop()
+				b.list.SetSelected(0)
+			}
 			return ActionCmd{cmd}
 		}
 	}

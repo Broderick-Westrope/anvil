@@ -420,12 +420,16 @@ func (t *Tree) handleFilterKey(msg tea.KeyPressMsg) Action {
 		// Same as above.
 
 	default:
+		prevValue := t.input.Value()
 		var cmd tea.Cmd
 		t.input, cmd = t.input.Update(msg)
-		t.list.SetFilter(t.input.Value())
-		t.setItemsFiltered(t.input.Value() != "")
-		t.list.ScrollToTop()
-		t.list.SetSelected(0)
+		value := t.input.Value()
+		if value != prevValue {
+			t.list.SetFilter(value)
+			t.setItemsFiltered(value != "")
+			t.list.ScrollToTop()
+			t.list.SetSelected(0)
+		}
 		return ActionCmd{cmd}
 	}
 	return nil
