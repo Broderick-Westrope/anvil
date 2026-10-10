@@ -332,7 +332,7 @@ func quickStyle(o quickStyleOpts) Styles {
 		},
 	}
 
-	// QuietMarkdown style - dimmed colors for thinking content.
+	// QuietMarkdown style - dimmed colors for markdown tool output.
 	plainFg := hex(o.fgMostSubtle)
 	s.QuietMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
@@ -775,7 +775,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Messages.AssistantBlurred = s.Messages.NoContent.PaddingLeft(2)
 	s.Messages.AssistantFocused = s.Messages.NoContent.PaddingLeft(1).BorderLeft(true).
 		BorderForeground(o.successMostSubtle).BorderStyle(messageFocussedBorder)
-	s.Messages.Thinking = lipgloss.NewStyle().MaxHeight(10)
 	s.Messages.ErrorTag = lipgloss.NewStyle().Padding(0, 1).
 		Background(o.destructive).Foreground(o.onPrimary)
 	s.Messages.ErrorTitle = lipgloss.NewStyle().Foreground(o.fgSubtle)
@@ -797,13 +796,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Messages.AssistantCanceled = lipgloss.NewStyle().Foreground(o.fgSubtle).Italic(true)
 
 	// Thinking section styles
-	s.Messages.ThinkingBox = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(o.bgMostVisible).
-		Padding(0, 1)
-	s.Messages.ThinkingLine = lipgloss.NewStyle().Italic(true).Foreground(o.fgMostSubtle)
-	s.Messages.ThinkingLabel = lipgloss.NewStyle().Italic(true).Foreground(o.primary)
-	s.Messages.ThinkingTruncationHint = muted
 	s.Messages.ThinkingFooterTitle = muted
 	s.Messages.ThinkingFooterDuration = subtle
 

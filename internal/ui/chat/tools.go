@@ -26,6 +26,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// assistantMessageTruncateFormat is the hint shown for truncated tool
+// output. The name predates the thinking drill-in, when assistant thinking
+// used it too.
+const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to expand]"
+
 // responseContextHeight limits the number of lines displayed in tool output.
 const responseContextHeight = 10
 
@@ -548,7 +553,7 @@ func (t *baseToolMessageItem) SetSpinningFunc(fn SpinningFunc) {
 	t.spinningFunc = fn
 }
 
-// ToggleExpanded toggles the expanded state of the thinking box.
+// ToggleExpanded toggles whether the tool's content is shown in full.
 func (t *baseToolMessageItem) ToggleExpanded() bool {
 	t.expandedContent = !t.expandedContent
 	t.clearCache()

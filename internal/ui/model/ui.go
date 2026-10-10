@@ -155,9 +155,9 @@ type (
 	// copyChatHighlightMsg is sent to copy the current chat highlight to clipboard.
 	copyChatHighlightMsg struct{}
 
-	// drillInSessionLoadedMsg is sent when a drilled-in session's messages and
-	// metadata have been loaded asynchronously.
-	drillInSessionLoadedMsg struct {
+	// agentDrillInSessionLoadedMsg is sent when a drilled-in subagent
+	// session's messages and metadata have been loaded asynchronously.
+	agentDrillInSessionLoadedMsg struct {
 		sessionID string
 		messages  []message.Message
 		session   *session.Session
@@ -283,9 +283,9 @@ type UI struct {
 	// Chat components
 	chat *Chat
 
-	// drillStack holds entries for each level of drill-in navigation. When
-	// non-empty, the user is viewing a subagent session instead of the root
-	// session. m.chat and m.session always refer to the root session.
+	// drillStack holds entries for each level of drill-in navigation into
+	// a subagent session, a tool's detail or an assistant's thinking.
+	// m.chat and m.session always refer to the root session.
 	drillStack []drillInEntry
 
 	// elapsedTickRunning tracks whether the elapsed-time tick command is
@@ -386,10 +386,11 @@ type UI struct {
 	branchRestoring       bool
 }
 
-// drillInEntry represents one level of drill-in navigation into a subagent
-// session.
+// drillInEntry represents one level of drill-in navigation. Subagent
+// session entries have a sessionID; tool and thinking entries don't, and
+// show part of the session beneath them.
 type drillInEntry struct {
-	sessionID string           // child session being viewed
+	sessionID string           // child session being viewed, if any
 	chat      *Chat            // Chat instance for this level
 	label     string           // breadcrumb label, e.g. "Explorer: Search auth"
 	session   *session.Session // cached session for sidebar stats
@@ -636,20 +637,41 @@ func (m *UI) activeChat() *Chat {
 	return m.chat
 }
 
-// viewedSessionID returns the session ID currently being viewed. Returns the
-// top drill-stack entry's session ID, or the root session ID when not drilled in.
-func (m *UI) viewedSessionID() string {
-	if len(m.drillStack) > 0 {
-		return m.drillStack[len(m.drillStack)-1].sessionID
+// viewedSessionEntry returns the drill-stack entry of the subagent session
+// being viewed: the topmost entry with a session ID. Thinking and tool
+// drill-ins show part of the session beneath them, so they're skipped. It
+// reports false when the viewed session is the root session.
+func (m *UI) viewedSessionEntry() (drillInEntry, bool) {
+	i := m.viewedSessionIndex()
+	if i < 0 {
+		return drillInEntry{}, false
 	}
-	if m.session != nil {
-		return m.session.ID
-	}
-	return ""
+	return m.drillStack[i], true
 }
 
-// isDrilledIn returns true when the user is viewing a subagent session rather
-// than the root session.
+// viewedSessionIndex returns the drill-stack index of viewedSessionEntry,
+// or -1 when the viewed session is the root session.
+func (m *UI) viewedSessionIndex() int {
+	for i := len(m.drillStack) - 1; i >= 0; i-- {
+		if m.drillStack[i].sessionID != "" {
+			return i
+		}
+	}
+	return -1
+}
+
+// viewedSession returns the session whose stats the header and sidebar
+// show: the viewed subagent session once loaded, otherwise the root.
+func (m *UI) viewedSession() *session.Session {
+	// The zero entry returned for the root session has no session either.
+	if entry, _ := m.viewedSessionEntry(); entry.session != nil {
+		return entry.session
+	}
+	return m.session
+}
+
+// isDrilledIn returns true when any drill-in view is open on top of the
+// root chat.
 func (m *UI) isDrilledIn() bool {
 	return len(m.drillStack) > 0
 }
@@ -673,15 +695,14 @@ func (m *UI) findMessageItem(id string) chat.MessageItem {
 	return nil
 }
 
-// findParentMessageItem searches the root chat and drill-stack chats
-// (excluding the top entry) for an item matching the given ID. This is
-// used when the top entry is the viewed session and we need the parent
-// agent item that owns it.
+// findParentMessageItem searches the root chat and the drill-stack chats
+// below the viewed subagent session for an item matching the given ID. The
+// viewed session's parent agent item lives in one of those.
 func (m *UI) findParentMessageItem(id string) chat.MessageItem {
 	if item := m.chat.MessageItem(id); item != nil {
 		return item
 	}
-	for i := len(m.drillStack) - 2; i >= 0; i-- {
+	for i := m.viewedSessionIndex() - 1; i >= 0; i-- {
 		if item := m.drillStack[i].chat.MessageItem(id); item != nil {
 			return item
 		}
@@ -948,17 +969,22 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateAgentItemStats(msg.Payload.SessionID, msg)
 		}
 
-		// Route to the drilled-in Chat when the user is viewing a subagent.
+		// Route to every drilled-in subagent Chat for this session, not just
+		// the visible one: a thinking or tool drill-in on top of a subagent
+		// reads from that subagent's items, so they must keep updating.
 		// Fall through afterwards so handleChildSessionMessage still updates
 		// the collapsed view on the root chat.
-		if m.isDrilledIn() && msg.Payload.SessionID == m.viewedSessionID() {
+		for _, entry := range m.drillStack {
+			if entry.sessionID != msg.Payload.SessionID {
+				continue
+			}
 			switch msg.Type {
 			case pubsub.CreatedEvent:
-				cmds = append(cmds, m.appendSessionMessageToChat(m.activeChat(), msg.Payload))
+				cmds = append(cmds, m.appendSessionMessageToChat(entry.chat, msg.Payload))
 			case pubsub.UpdatedEvent:
-				cmds = append(cmds, m.updateSessionMessageToChat(m.activeChat(), msg.Payload))
+				cmds = append(cmds, m.updateSessionMessageToChat(entry.chat, msg.Payload))
 			case pubsub.DeletedEvent:
-				m.activeChat().RemoveMessage(msg.Payload.ID)
+				entry.chat.RemoveMessage(msg.Payload.ID)
 			}
 		}
 
@@ -1359,7 +1385,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"response", string(msg.Payload),
 				"options", msg.Options)
 		}
-	case util.DrillInMsg:
+	case util.AgentDrillInMsg:
 		if msg.SessionID == "" {
 			break
 		}
@@ -1377,7 +1403,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Recalculate layout so editor height becomes 0 and main area
 		// expands. This also correctly sizes the new chat.
 		m.updateLayoutAndSize()
-		cmds = append(cmds, m.loadDrillInSession(msg.SessionID))
+		cmds = append(cmds, m.loadAgentDrillInSession(msg.SessionID))
 		// Start the elapsed tick if the viewed subagent is running.
 		if !m.elapsedTickRunning && m.isViewedSubagentRunning() {
 			m.elapsedTickRunning = true
@@ -1410,7 +1436,34 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// expands. This also correctly sizes the new chat.
 		m.updateLayoutAndSize()
 
-	case drillInSessionLoadedMsg:
+	case util.ThinkingDrillInMsg:
+		source, ok := msg.Source.(*chat.AssistantMessageItem)
+		if !ok {
+			break
+		}
+		detail := chat.NewThinkingDetailItem(m.com.Styles, source)
+		newChat := NewChat(m.com)
+		// Follow while the thinking still streams; otherwise start at the
+		// top.
+		follow := !detail.Finished()
+		newChat.SetFollow(follow)
+		newChat.Focus()
+		newChat.SetMessages(detail)
+		newChat.SelectLast()
+		m.drillStack = append(m.drillStack, drillInEntry{
+			chat:  newChat,
+			label: "Thinking",
+		})
+		m.textarea.Blur()
+		m.focus = uiFocusMain
+		m.updateLayoutAndSize()
+		// Sizing a new chat pins it to the bottom, so scroll to the top
+		// afterwards.
+		if !follow {
+			newChat.ScrollToTop()
+		}
+
+	case agentDrillInSessionLoadedMsg:
 		// Find the matching entry and populate it.
 		for i := range m.drillStack {
 			if m.drillStack[i].sessionID != msg.sessionID {
@@ -1418,8 +1471,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.drillStack[i].session = msg.session
 
-			// Convert messages to chat items using the shared helper.
-			items := m.messagesToChatItems(msg.messages)
+			// Convert messages to chat items using the shared helper, then
+			// prefer the live items: they have had every event since the
+			// drill-in, so they're never older than the snapshot.
+			items := mergeLiveItems(m.messagesToChatItems(msg.messages), m.drillStack[i].chat)
 			m.drillStack[i].chat.SetMessages(items...)
 
 			// Start animations for all newly loaded items.
@@ -1453,6 +1508,14 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
+	}
+
+	// A thinking drill-in renders an item that lives in another chat, so
+	// message updates never scroll it. Keep whichever drill-in is visible
+	// pinned to the bottom after each message event while it follows; for
+	// agent drill-ins this repeats a scroll their own updates already did.
+	if _, ok := msg.(pubsub.Event[message.Message]); ok && m.isDrilledIn() && m.activeChat().Follow() {
+		m.activeChat().ScrollToBottom()
 	}
 
 	// This logic gets triggered on any message type, but should it?
@@ -2098,10 +2161,48 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 	}
 }
 
-// loadDrillInSession asynchronously loads the messages and session metadata
-// for a drilled-in child session. It never does IO in Update — all work
-// happens inside the returned tea.Cmd.
-func (m *UI) loadDrillInSession(sessionID string) tea.Cmd {
+// mergeLiveItems builds a subagent chat's items from a load snapshot and
+// the items c already holds. Events reach c from the moment of the
+// drill-in, so its items are never older than the snapshot, and keeping
+// them preserves the identity that thinking and tool drill-ins point at,
+// plus live-only state such as a tool awaiting permission. Two kinds of
+// loaded item still win:
+//   - Agents: only the snapshot fills in their nested tools and child
+//     session.
+//   - Tools whose result the live item lacks: an assistant update can
+//     create the live tool item after its result was saved.
+//
+// Items in c the snapshot lacks are appended, since they arrived after it.
+func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
+	ids := make(map[string]struct{}, len(loaded))
+	for k, item := range loaded {
+		ids[item.ID()] = struct{}{}
+		live := c.MessageItem(item.ID())
+		if live == nil {
+			continue
+		}
+		if _, isAgent := live.(chat.NestedToolContainer); isAgent {
+			continue
+		}
+		if loadedTool, ok := item.(chat.ToolMessageItem); ok && loadedTool.HasResult() {
+			if liveTool, ok := live.(chat.ToolMessageItem); ok && !liveTool.HasResult() {
+				continue
+			}
+		}
+		loaded[k] = live
+	}
+	for _, item := range c.MessageItems() {
+		if _, ok := ids[item.ID()]; !ok {
+			loaded = append(loaded, item)
+		}
+	}
+	return loaded
+}
+
+// loadAgentDrillInSession asynchronously loads the messages and session
+// metadata for a drilled-in child session. It never does IO in Update —
+// all work happens inside the returned tea.Cmd.
+func (m *UI) loadAgentDrillInSession(sessionID string) tea.Cmd {
 	// Capture workspace reference locally to avoid holding a pointer to
 	// the full UI model inside the command closure.
 	ws := m.com.Workspace
@@ -2113,12 +2214,12 @@ func (m *UI) loadDrillInSession(sessionID string) tea.Cmd {
 		sess, err := ws.GetSession(context.Background(), sessionID)
 		if err != nil {
 			// Non-fatal — session metadata (tokens/cost) won't be available.
-			return drillInSessionLoadedMsg{
+			return agentDrillInSessionLoadedMsg{
 				sessionID: sessionID,
 				messages:  msgs,
 			}
 		}
-		return drillInSessionLoadedMsg{
+		return agentDrillInSessionLoadedMsg{
 			sessionID: sessionID,
 			messages:  msgs,
 			session:   &sess,
@@ -3417,12 +3518,7 @@ func (m *UI) renderBreadcrumb(width int) string {
 func (m *UI) drawHeader(scr uv.Screen, area uv.Rectangle) {
 	// Use the viewed session's stats when drilled in so the context
 	// percentage reflects the subagent, not the root session.
-	sess := m.session
-	if m.isDrilledIn() {
-		if entry := m.drillStack[len(m.drillStack)-1]; entry.session != nil {
-			sess = entry.session
-		}
-	}
+	sess := m.viewedSession()
 	m.header.drawHeader(
 		scr,
 		area,
@@ -5538,11 +5634,9 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 
 // handlePermissionNotification updates tool items when permission state changes.
 func (m *UI) handlePermissionNotification(notification permission.PermissionNotification) {
-	toolItem := m.chat.MessageItem(notification.ToolCallID)
-	if toolItem == nil && m.isDrilledIn() {
-		// Fall back to the active drill-in chat when not found in root.
-		toolItem = m.activeChat().MessageItem(notification.ToolCallID)
-	}
+	// Search the root and every drill-in chat, not just the visible one:
+	// a subagent's tool may sit under a thinking or tool drill-in.
+	toolItem := m.findMessageItem(notification.ToolCallID)
 	if toolItem == nil {
 		return
 	}
