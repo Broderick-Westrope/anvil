@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -45,10 +46,16 @@ type submissionResult struct {
 }
 
 type admission struct {
-	mu       sync.Mutex
-	owners   map[string]*submissionOwner
-	queues   map[string][]submission
-	lifetime context.Context
+	mu     sync.Mutex
+	owners map[string]*submissionOwner
+	queues map[string][]submission
+	// held counts the active holds on each session. While a session is
+	// held, no new run starts in it; submissions queue instead.
+	held map[string]int
+	// ownerGone is closed, and reset, whenever an owner releases its
+	// session, waking holds waiting for in-flight runs to finish.
+	ownerGone chan struct{}
+	lifetime  context.Context
 	// spawn starts an awaited submission's run on its own goroutine. The
 	// coordinator wraps it so the run counts as active for Pause.
 	spawn func(func())
@@ -58,6 +65,7 @@ func newAdmission(ctx context.Context) *admission {
 	return &admission{
 		owners:   make(map[string]*submissionOwner),
 		queues:   make(map[string][]submission),
+		held:     make(map[string]int),
 		lifetime: ctx,
 		spawn:    func(f func()) { go f() },
 	}
@@ -94,9 +102,9 @@ func (a *admission) submitAwait(ctx context.Context, id string, job submission) 
 		a.mu.Unlock()
 		return nil, err
 	}
-	if a.owners[id] != nil || len(a.queues[id]) > 0 {
+	if a.owners[id] != nil || len(a.queues[id]) > 0 || a.held[id] > 0 {
 		a.queues[id] = append(a.queues[id], job)
-		if a.owners[id] == nil {
+		if a.owners[id] == nil && a.held[id] == 0 {
 			job = a.queues[id][0]
 			a.queues[id] = a.queues[id][1:]
 			owner := a.claimFor(job, id)
@@ -167,13 +175,13 @@ func (a *admission) submit(ctx context.Context, id string, job submission) (*fan
 		a.mu.Unlock()
 		return nil, err
 	}
-	if a.owners[id] != nil || len(a.queues[id]) > 0 {
+	if a.owners[id] != nil || len(a.queues[id]) > 0 || a.held[id] > 0 {
 		if job.exclusive {
 			a.mu.Unlock()
 			return nil, fmt.Errorf("admitting submission: %w", ErrSessionBusy)
 		}
 		a.queues[id] = append(a.queues[id], job)
-		if a.owners[id] != nil {
+		if a.owners[id] != nil || a.held[id] > 0 {
 			a.mu.Unlock()
 			return nil, nil
 		}
@@ -185,13 +193,80 @@ func (a *admission) submit(ctx context.Context, id string, job submission) (*fan
 	return a.execute(owner, job)
 }
 
+// hold stops new runs from starting in each of ids, then waits until none
+// of them has a run in flight. Holds nest. The returned release lifts the
+// hold and starts work that queued behind it.
+func (a *admission) hold(ctx context.Context, ids []string) (release func(), err error) {
+	a.mu.Lock()
+	for _, id := range ids {
+		a.held[id]++
+	}
+	a.mu.Unlock()
+	var once sync.Once
+	release = func() { once.Do(func() { a.unhold(ids) }) }
+	for {
+		a.mu.Lock()
+		busy := slices.ContainsFunc(ids, func(id string) bool { return a.owners[id] != nil })
+		if !busy {
+			a.mu.Unlock()
+			return release, nil
+		}
+		if a.ownerGone == nil {
+			a.ownerGone = make(chan struct{})
+		}
+		gone := a.ownerGone
+		a.mu.Unlock()
+		select {
+		case <-gone:
+		case <-ctx.Done():
+			release()
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// releaseOwner removes the session's owner and wakes waiting holds. The
+// caller must hold a.mu.
+func (a *admission) releaseOwner(id string) {
+	delete(a.owners, id)
+	if a.ownerGone != nil {
+		close(a.ownerGone)
+		a.ownerGone = nil
+	}
+}
+
+func (a *admission) unhold(ids []string) {
+	type start struct {
+		owner *submissionOwner
+		job   submission
+	}
+	var starts []start
+	a.mu.Lock()
+	for _, id := range ids {
+		if a.held[id]--; a.held[id] > 0 {
+			continue
+		}
+		delete(a.held, id)
+		if a.owners[id] != nil || len(a.queues[id]) == 0 {
+			continue
+		}
+		job := a.queues[id][0]
+		a.queues[id] = a.queues[id][1:]
+		starts = append(starts, start{owner: a.claimFor(job, id), job: job})
+	}
+	a.mu.Unlock()
+	for _, s := range starts {
+		a.spawn(func() { _, _ = a.execute(s.owner, s.job) })
+	}
+}
+
 func (a *admission) claimIdle(ctx context.Context, id string, check func() error) (*submissionOwner, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if a.owners[id] != nil {
+	if a.owners[id] != nil || a.held[id] > 0 {
 		return nil, ErrSessionBusy
 	}
 	if err := check(); err != nil {
@@ -208,7 +283,7 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	defer func() {
 		a.mu.Lock()
 		if a.owners[owner.sessionID] == owner {
-			delete(a.owners, owner.sessionID)
+			a.releaseOwner(owner.sessionID)
 		}
 		a.mu.Unlock()
 		owner.cancel()
@@ -218,8 +293,8 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	var next *submissionOwner
 	var queued submission
 	if a.owners[owner.sessionID] == owner {
-		delete(a.owners, owner.sessionID)
-		if q := a.queues[owner.sessionID]; len(q) > 0 && a.shouldHandOff(owner, awaited, err, q[0]) {
+		a.releaseOwner(owner.sessionID)
+		if q := a.queues[owner.sessionID]; len(q) > 0 && a.held[owner.sessionID] == 0 && a.shouldHandOff(owner, awaited, err, q[0]) {
 			queued = q[0]
 			a.queues[owner.sessionID] = q[1:]
 			next = a.claimFor(queued, owner.sessionID)
