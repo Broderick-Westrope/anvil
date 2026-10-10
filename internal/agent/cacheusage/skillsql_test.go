@@ -35,10 +35,11 @@ func skillQuery(t *testing.T, query string) string {
 		"), classified AS (" + readSkillFile(t, "classify.sql") + ") " + query
 }
 
-// insertSkillRows inserts one session whose turn rows exercise first_call,
-// tools_changed, a hit and history_shortened, plus summary, title and
-// small rows. Timestamps are recent so the queries' 7-day filter keeps
-// them.
+// insertSkillRows inserts session s1, whose turn rows exercise
+// first_call, tools_changed, a hit and history_shortened, plus summary,
+// title and small rows, a child session and session s3, whose miss has no
+// cache read price. Timestamps are recent so the queries' 7-day filter
+// keeps them.
 func insertSkillRows(t *testing.T, q *db.Queries) {
 	t.Helper()
 	base := time.Now().Add(-time.Hour).UnixMilli()
@@ -71,7 +72,15 @@ func insertSkillRows(t *testing.T, q *db.Queries) {
 			SystemHash:         "sys",
 		}
 	}
+	unpricedFirst := turn("unpriced-first", 50_000, "tools-a", 2, 0, 5000)
+	unpricedMiss := turn("unpriced-miss", 60_000, "tools-b", 4, 0, 5000)
+	for _, r := range []*db.InsertStepUsageParams{&unpricedFirst, &unpricedMiss} {
+		r.SessionID = "s3"
+		r.PriceCacheRead = 0
+	}
 	rows := []db.InsertStepUsageParams{
+		unpricedFirst,
+		unpricedMiss,
 		turn("first", 0, "tools-a", 2, 0, 5000),
 		turn("tools", 10_000, "tools-b", 4, 0, 5000),
 		turn("hit", 20_000, "tools-b", 6, 5000, 500),
@@ -147,23 +156,36 @@ func TestSkillClassifySQL(t *testing.T) {
 	insertSkillRows(t, q)
 
 	rows, err := conn.QueryContext(t.Context(), skillQuery(t,
-		"SELECT id, suspected_cause, changes FROM classified WHERE session_id = 's1' AND kind = 'turn'"))
+		"SELECT id, suspected_cause, changes, excess_cost FROM classified WHERE session_id IN ('s1', 's3') AND kind = 'turn'"))
 	require.NoError(t, err)
 	defer rows.Close()
-	type result struct{ cause, changes string }
+	// excess is excess_cost in micro-dollars, or "NULL".
+	type result struct{ cause, changes, excess string }
 	got := map[string]result{}
 	for rows.Next() {
 		var id string
 		var r result
-		require.NoError(t, rows.Scan(&id, &r.cause, &r.changes))
+		var excess sql.NullFloat64
+		require.NoError(t, rows.Scan(&id, &r.cause, &r.changes, &excess))
+		r.excess = "NULL"
+		if excess.Valid {
+			r.excess = fmt.Sprintf("%.0f", excess.Float64*1e6)
+		}
 		got[id] = r
 	}
 	require.NoError(t, rows.Err())
+
+	// Misses re-wrote the prefix at the write price (3.75) instead of
+	// reading it (0.3): 5000 tokens after the tools change, 5500 after the
+	// shorter history.
 	require.Equal(t, map[string]result{
-		"first":     {"first_call", "first_call"},
-		"tools":     {"tools_changed", "tools"},
-		"hit":       {"", ""},
-		"shortened": {"history_shortened", "shortened"},
+		"first":          {"first_call", "first_call", "0"},
+		"tools":          {"tools_changed", "tools", "17250"},
+		"hit":            {"", "", "0"},
+		"shortened":      {"history_shortened", "shortened", "18975"},
+		"unpriced-first": {"first_call", "first_call", "0"},
+		// An unknown read price leaves the excess cost unknown.
+		"unpriced-miss": {"tools_changed", "tools", "NULL"},
 	}, got)
 }
 

@@ -82,8 +82,10 @@ SELECT judged.*,
   END AS suspected_cause,
   CASE WHEN suspected_miss = 1 THEN MAX(baseline - cache_read_tokens, 0) ELSE 0 END AS tokens_not_reused,
   -- Extra list cost of re-sending the prefix: billed as a cache write (or
-  -- input) instead of a cache read.
-  CASE WHEN suspected_miss = 1 THEN
+  -- input) instead of a cache read. NULL when the read price is unknown
+  -- (0), since charging the full input price would overstate it.
+  CASE WHEN suspected_miss = 1 AND price_cache_read = 0 THEN NULL
+       WHEN suspected_miss = 1 THEN
     MAX(baseline - cache_read_tokens, 0)
     * (CASE WHEN cache_policy = 'anthropic_ephemeral' AND price_cache_write > 0
             THEN price_cache_write ELSE price_input END

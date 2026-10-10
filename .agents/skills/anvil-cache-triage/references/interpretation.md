@@ -35,7 +35,9 @@ change keeps only the tools part.
 
 - Rank causes by `tokens_not_reused`, then check `excess_cost`; a few
   `model_changed` misses on an expensive model can cost more than many
-  cheap misses.
+  cheap misses. `excess_cost` is NULL on misses with an unknown cache read
+  price (`price_cache_read = 0`), so sums of it exclude those rows; check
+  `unpriced_misses` (queries.md section 2) before comparing costs.
 - `suspected_miss` is NULL for prefixes under 1024 tokens (below
   Anthropic's minimum cacheable size) and for estimated rows. Do not count
   these as hits or misses.

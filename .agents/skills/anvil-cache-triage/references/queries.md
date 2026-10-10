@@ -67,11 +67,13 @@ WHERE request_started_at >= (strftime('%s','now') - 7*86400) * 1000
 ```
 
 On suspected misses. `excess_cost` is what re-sending the prefix cost over
-reading it from cache:
+reading it from cache. It is NULL for misses with an unknown cache read
+price, so the sum excludes them; `unpriced_misses` counts them:
 
 ```sql
 SELECT COUNT(*) AS misses, ROUND(SUM(list_cost), 4) AS miss_list_cost,
   ROUND(SUM(excess_cost), 4) AS excess_cost,
+  SUM(excess_cost IS NULL) AS unpriced_misses,
   SUM(tokens_not_reused) AS tokens_not_reused
 FROM classified
 WHERE suspected_miss = 1

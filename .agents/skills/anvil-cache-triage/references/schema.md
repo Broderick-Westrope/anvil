@@ -145,7 +145,7 @@ CTE over `step_usage_report`, only `turn` and `summary` rows with a
 | `changes` | `first_call`, or space-separated differences from the previous row: `model`, `tools`, `system`, `summary`, `history` (prefix match 0), `shortened` (`message_count` lower than the previous row's). |
 | `suspected_cause` | `first_call`; empty if not a miss; else the first match of `cache_disabled`, `no_reads_reported`, `model_changed`, `tools_changed`, `system_changed`, `after_summary`, `history_rewritten`, `history_shortened` (`message_count` dropped with no summary between; `history_prefix_match` is NULL then), `likely_ttl_expired` (gap over 5 min), `unknown_after_restart` (prefix match NULL), `unexplained`. |
 | `tokens_not_reused` | Misses only: `baseline - cache_read`, floored at 0. |
-| `excess_cost` | Misses only: `tokens_not_reused` times (write price for `anthropic_ephemeral`, else input price, minus read price), in USD. |
+| `excess_cost` | Misses only: `tokens_not_reused` times (write price for `anthropic_ephemeral`, else input price, minus read price), in USD. NULL on misses whose `price_cache_read` is 0 (unknown), so `SUM(excess_cost)` excludes those rows; count them with `SUM(suspected_miss = 1 AND excess_cost IS NULL)`. 0 on non-misses. |
 
 ## Known recording gaps
 
