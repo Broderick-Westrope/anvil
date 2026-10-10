@@ -305,6 +305,12 @@ func loadFromSource(source commandSource) ([]CustomCommand, error) {
 	return commands, nil
 }
 
+// LoadCommand parses the COMMAND.md at path without a name prefix or
+// source, for tools that inspect one command outside discovery.
+func LoadCommand(path string) (CustomCommand, error) {
+	return loadCommand(path, "")
+}
+
 // loadCommand parses the COMMAND.md at path. The command is named after the
 // directory holding it.
 func loadCommand(path, prefix string) (CustomCommand, error) {
