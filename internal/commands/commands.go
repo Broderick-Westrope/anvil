@@ -2,7 +2,6 @@ package commands
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -11,11 +10,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/entrydir"
 	"github.com/Broderick-Westrope/anvil/internal/home"
@@ -151,38 +148,6 @@ func LoadPluginCommands(plugins []*plugin.Plugin) ([]CustomCommand, error) {
 		all = append(all, cmds...)
 	}
 	return all, nil
-}
-
-// LoadMCPPrompts loads custom commands from available MCP servers.
-func LoadMCPPrompts() ([]MCPPrompt, error) {
-	var commands []MCPPrompt
-	for mcpName, prompts := range mcp.Prompts() {
-		for _, prompt := range prompts {
-			key := mcpName + ":" + prompt.Name
-			var args []Argument
-			for _, arg := range prompt.Arguments {
-				title := arg.Title
-				if title == "" {
-					title = arg.Name
-				}
-				args = append(args, Argument{
-					ID:          arg.Name,
-					Title:       title,
-					Description: arg.Description,
-					Required:    arg.Required,
-				})
-			}
-			commands = append(commands, MCPPrompt{
-				ID:          key,
-				Title:       prompt.Title,
-				Description: prompt.Description,
-				PromptID:    prompt.Name,
-				ClientID:    mcpName,
-				Arguments:   args,
-			})
-		}
-	}
-	return commands, nil
 }
 
 func commandCollisionName(cmd *CustomCommand) string {
@@ -418,17 +383,4 @@ func hasEntryFile(path string) bool {
 	}
 	name := filepath.Base(path)
 	return slices.ContainsFunc(entries, func(entry fs.DirEntry) bool { return entry.Name() == name })
-}
-
-func GetMCPPrompt(cfg *config.ConfigStore, clientID, promptID string, args map[string]string) (string, error) {
-	// Create a context with timeout since tea.Cmd doesn't support context passing.
-	// The MCP client has its own timeout, but this provides an additional safeguard.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	result, err := mcp.GetPromptMessages(ctx, cfg, clientID, promptID, args)
-	if err != nil {
-		return "", err
-	}
-	return strings.Join(result, " "), nil
 }
