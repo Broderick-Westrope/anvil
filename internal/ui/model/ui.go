@@ -347,7 +347,6 @@ type UI struct {
 
 	// pills state
 	pillsExpanded      bool
-	pillsAutoExpanded  bool
 	focusedPillSection pillSection
 	promptQueue        int
 	pillsView          string
@@ -769,9 +768,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		m.deriveEnabledLazyMCPs(msgs)
-		if cmd := m.autoExpandPillsIfReasonable(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
 		if hasInProgressTodo(m.session.Todos) {
 			// only start spinner if there is an in-progress todo
 			if m.isAgentBusy() {
@@ -939,7 +935,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.renderPills()
 			}
-			m.autoExpandPillsIfReasonable()
 		}
 	case pubsub.Event[message.Message]:
 		// Check if this is a child session message for an agent tool.
@@ -5596,7 +5591,6 @@ func (m *UI) newSession() tea.Cmd {
 	m.chat.ClearMessages()
 	m.attachments.Reset()
 	m.pillsExpanded = false
-	m.pillsAutoExpanded = false
 	m.promptQueue = 0
 	m.pillsView = ""
 	m.historyReset()
