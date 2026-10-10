@@ -12,6 +12,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/google/uuid"
 
+	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
@@ -140,6 +141,12 @@ func (c *coordinator) runWorkflowTurn(ctx context.Context, sub SessionAgent, ses
 // buildWorkflowAgent builds an uncached agent whose tools are restricted to
 // call.Tools (when set) plus submit_result (when a schema is set).
 func (c *coordinator) buildWorkflowAgent(ctx context.Context, call WorkflowAgentCall, agentCfg config.Agent) (SessionAgent, *submitResultTool, error) {
+	// MCP servers register their tools during initialisation; listing tools
+	// before it finishes would reject valid MCP tool names and snapshot an
+	// incomplete set.
+	if err := toolsmcp.WaitForInit(ctx); err != nil {
+		return nil, nil, fmt.Errorf("wait for MCP initialization: %w", err)
+	}
 	available, _, err := c.buildTools(ctx, agentCfg, workflowAgentDepth)
 	if err != nil {
 		return nil, nil, err
