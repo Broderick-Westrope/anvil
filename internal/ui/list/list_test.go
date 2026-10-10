@@ -954,3 +954,23 @@ func TestList_AtBottom_TallFirstVisibleItem(t *testing.T) {
 		require.True(t, l.AtBottom(), "gap=%d: back at bottom after scrolling down", gap)
 	}
 }
+
+// TestList_ScrollToSelected_BeforeSized covers dialogs that set their
+// selection before the first Draw sizes the list: with no viewport height,
+// ScrollToSelected must keep the selected item in view instead of
+// scrolling past it.
+func TestList_ScrollToSelected_BeforeSized(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 20)
+	for i := range items {
+		items[i] = newTrackedItem(strconv.Itoa(i), "body", true)
+	}
+	l := NewList(items...)
+	l.SetSelected(12)
+	l.ScrollToSelected()
+
+	l.SetSize(40, 5)
+	require.Equal(t, 12, l.Offset())
+	require.True(t, l.SelectedItemInView())
+}
