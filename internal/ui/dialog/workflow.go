@@ -153,6 +153,11 @@ func (d *WorkflowApproval) renderFiles(width int) string {
 		f.Path, f.Source, f.PreviousSource = visibleControls(f.Path), visibleControls(f.Source), visibleControls(f.PreviousSource)
 		heading := lipgloss.NewStyle().Width(width).Render(
 			t.Dialog.Permissions.KeyText.Render(f.Path) + t.Dialog.Permissions.ValueText.Render(" "+string(f.Status)))
+		if f.Omitted != "" && f.Status != host.FileUnchanged {
+			info := fmt.Sprintf("%s · %d bytes\nsha256 %s", f.Omitted, f.Size, f.Hash)
+			sections = append(sections, heading+"\n"+t.Dialog.Permissions.ValueText.Width(width).Render(info))
+			continue
+		}
 		switch f.Status {
 		case host.FileAdded:
 			source := strings.TrimRight(f.Source, "\n")

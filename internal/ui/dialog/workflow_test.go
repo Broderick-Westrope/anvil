@@ -268,6 +268,32 @@ func TestWorkflowApprovalShowsControlCharactersAsEscapes(t *testing.T) {
 	}
 }
 
+func TestWorkflowApprovalShowsAnOmittedFileBySizeAndHash(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		status host.FileStatus
+	}{
+		"added":   {status: host.FileAdded},
+		"changed": {status: host.FileChanged},
+		"removed": {status: host.FileRemoved},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ev := approvalEvent("")
+			ev.Approval.Files = append(ev.Approval.Files, host.ApprovalFile{
+				Path: "tool.bin", Status: tc.status, Size: 2048, Omitted: "binary",
+				Hash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			})
+			out := drawAllScrolled(NewWorkflowApproval(workflowCommon(), ev), 120, 40)
+			require.Contains(t, out, "tool.bin "+string(tc.status))
+			require.Contains(t, out, "binary · 2048 bytes")
+			require.Contains(t, out, "sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+		})
+	}
+}
+
 func askEvent(options ...string) host.Event {
 	return host.Event{
 		Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "s1",

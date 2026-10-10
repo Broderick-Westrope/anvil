@@ -2,9 +2,12 @@ package host_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -284,6 +287,52 @@ func TestServiceRefusesAScriptSymlinkedOutsideItsDirectory(t *testing.T) {
 	require.Equal(t, host.StatusFailed, done.Status)
 	require.Contains(t, done.Message, "doesn't contain the script")
 	require.Empty(t, done.RunID)
+}
+
+func TestServiceApprovalShowsLargeAndBinaryFilesByHashOnly(t *testing.T) {
+	h := newServiceHarness(t, false)
+	big := strings.Repeat("x", 256*1024+1)
+	atLimit := strings.Repeat("y", 256*1024)
+	writeFile(t, filepath.Join(h.dir, "big.txt"), big)
+	writeFile(t, filepath.Join(h.dir, "limit.txt"), atLimit)
+	writeFile(t, filepath.Join(h.dir, "tool.bin"), "ELF\x00one")
+	path := h.write(t, `function main() { return 1 }`)
+	sha := func(s string) string {
+		sum := sha256.Sum256([]byte(s))
+		return hex.EncodeToString(sum[:])
+	}
+
+	h.start(t, path, "")
+	req := h.next(t, host.EventApproval)
+	got := map[string]host.ApprovalFile{}
+	for _, f := range req.Approval.Files {
+		got[f.Path] = f
+	}
+	require.Empty(t, got["big.txt"].Source)
+	require.Equal(t, int64(len(big)), got["big.txt"].Size)
+	require.Equal(t, sha(big), got["big.txt"].Hash)
+	require.Equal(t, "over 256 KiB", got["big.txt"].Omitted)
+	require.Empty(t, got["tool.bin"].Source)
+	require.Equal(t, sha("ELF\x00one"), got["tool.bin"].Hash)
+	require.Equal(t, "binary", got["tool.bin"].Omitted)
+	require.Equal(t, atLimit, got["limit.txt"].Source)
+	require.Empty(t, got["limit.txt"].Omitted)
+	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
+	require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status)
+
+	writeFile(t, filepath.Join(h.dir, "tool.bin"), "ELF\x00two")
+	h.start(t, path, "")
+	req = h.next(t, host.EventApproval)
+	for _, f := range req.Approval.Files {
+		if f.Path == "tool.bin" {
+			require.Equal(t, host.FileChanged, f.Status)
+			require.Equal(t, sha("ELF\x00two"), f.Hash)
+		} else {
+			require.Equal(t, host.FileUnchanged, f.Status, f.Path)
+		}
+	}
+	require.NoError(t, h.svc.Respond(req.RequestID, "deny"))
+	require.Equal(t, host.StatusDenied, h.next(t, host.EventFinished).Status)
 }
 
 func TestServiceRefusesMissingRequirementsBeforeRunning(t *testing.T) {

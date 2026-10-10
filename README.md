@@ -929,7 +929,8 @@ from the command palette.
 
 The first time a workflow runs, and whenever any file in its command
 directory changes, Anvil shows you every file (as a diff once approved) and
-asks you to approve it. `reference(path)` reads the files as they were when
+asks you to approve it. Binary files and files over 256 KiB are shown by
+size and hash only, and `reference()` can't read them. `reference(path)` reads the files as they were when
 the run started, never an edit made during it, and can't read through a
 symlink that leads outside the directory. `--yolo=full` skips approval. Workflows need the
 TUI, so `anvil run` refuses them. Check a script without running it with
