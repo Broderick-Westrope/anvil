@@ -60,9 +60,10 @@ func TestCheckWorkflow(t *testing.T) {
 			wantErr:   true,
 			wantLines: []string{"error: parse workflow"},
 		},
-		"non-literal requires is a warning": {
+		"non-literal requires fails": {
 			script:    "requires(deps)\nfunction main(input) {}\n",
 			catalog:   &fullCatalog,
+			wantErr:   true,
 			wantLines: []string{"warning: requires() must be a literal"},
 		},
 		"no catalog skips skills and agents": {

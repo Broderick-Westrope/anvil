@@ -31,7 +31,7 @@ var workflowCheckCmd = &cobra.Command{
 
 <path> is a workflow script, or a command directory or COMMAND.md with a workflow: field.
 Skills and agents are checked against what Anvil discovers with the current config.
-Exits non-zero if the script doesn't parse or a requirement is missing.`,
+Exits non-zero if the script doesn't parse, has a warning, or a requirement is missing.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -93,7 +93,7 @@ func checkWorkflow(w io.Writer, path string, cat workflow.Catalog) error {
 	for _, m := range missing {
 		fmt.Fprintln(w, "missing: "+m)
 	}
-	if len(missing) > 0 {
+	if len(missing) > 0 || len(script.Warnings) > 0 {
 		return errWorkflowCheckFailed
 	}
 	return nil

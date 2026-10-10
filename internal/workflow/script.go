@@ -30,8 +30,10 @@ type Script struct {
 	Source   string
 	Hash     string
 	Requires Requirements
-	// Warnings are problems with the script's shape that don't stop it from
-	// running, such as a requires() call that isn't a literal.
+	// Warnings are problems with the script's shape, such as a requires()
+	// call that isn't a literal, that leave its requirements unknown. Parse
+	// still returns the script so the problems can be shown, but a script
+	// with warnings must not run, and checking it fails.
 	Warnings []string
 }
 

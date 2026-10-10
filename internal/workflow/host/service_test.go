@@ -136,6 +136,13 @@ func TestServiceRefusesMissingRequirementsBeforeRunning(t *testing.T) {
 	require.ErrorContains(t, err, `agent "ghost" not found`)
 }
 
+func TestServiceRefusesAScriptWithWarnings(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `requires(deps); function main() { bash("touch should-not-exist") }`)
+	err := h.svc.Start(h.fixture.Context, host.Invocation{CommandID: "x", CommandName: "x", ScriptPath: path, SessionID: h.session})
+	require.ErrorContains(t, err, "requires() must be a literal")
+}
+
 func TestServiceAllowsOneRunPerSession(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `function main() { return ask("continue?") }`)
