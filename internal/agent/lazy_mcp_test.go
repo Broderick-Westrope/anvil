@@ -522,3 +522,61 @@ func TestReconnectDeferredServers_SkipsNonDeferred(t *testing.T) {
 
 	require.False(t, connectCalled, "connected servers must not trigger connectFn")
 }
+
+func TestDeriveLazyMCPState_IgnoresCallsThatCannotEnable(t *testing.T) {
+	t.Parallel()
+	enableCall := func(id, input string, finished bool) message.ToolCall {
+		return message.ToolCall{ID: id, Name: tools.EnableMCPToolName, Input: input, Finished: finished}
+	}
+	tests := map[string]struct {
+		parts []message.ContentPart
+		want  map[string]bool
+	}{
+		"unfinished call": {
+			parts: []message.ContentPart{enableCall("tc1", `{"server_name":"datadog"}`, false), successResult("tc1")},
+			want:  map[string]bool{},
+		},
+		"other tool": {
+			parts: []message.ContentPart{
+				message.ToolCall{ID: "tc1", Name: "view", Input: `{"server_name":"datadog"}`, Finished: true},
+				successResult("tc1"),
+			},
+			want: map[string]bool{},
+		},
+		"empty server name": {
+			parts: []message.ContentPart{enableCall("tc1", `{"server_name":""}`, true), successResult("tc1")},
+			want:  map[string]bool{},
+		},
+		"empty call ID": {
+			parts: []message.ContentPart{enableCall("", `{"server_name":"datadog"}`, true), successResult("")},
+			want:  map[string]bool{},
+		},
+		"result in the same message": {
+			parts: []message.ContentPart{enableCall("tc1", `{"server_name":"datadog"}`, true), successResult("tc1")},
+			want:  map[string]bool{"datadog": true},
+		},
+		"toggle off then enable": {
+			parts: []message.ContentPart{
+				message.MCPToggleContent{ServerName: "datadog", Enabled: false},
+				enableCall("tc1", `{"server_name":"datadog"}`, true),
+				successResult("tc1"),
+			},
+			want: map[string]bool{"datadog": true},
+		},
+		"failed enable after toggle on": {
+			parts: []message.ContentPart{
+				message.MCPToggleContent{ServerName: "datadog", Enabled: true},
+				enableCall("tc1", `{"server_name":"datadog"}`, true),
+				errorResult("tc1"),
+			},
+			want: map[string]bool{"datadog": true},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := deriveLazyMCPState([]message.Message{{Role: message.Assistant, Parts: tt.parts}})
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
