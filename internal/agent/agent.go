@@ -573,8 +573,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	}
 	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
-	systemPromptPrefix := a.systemPromptPrefix.Get()
-	providerCfg := a.providerConfig.Get()
+	call := a.newSideCall(usageKindSummary, sessionID, largeModel)
 
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
@@ -628,53 +627,31 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		return err
 	}
 
-	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
-
-	runID := uuid.NewString()
-	var capture *stepCapture
-	onRetry, onStreamFinish := a.captureCallbacks(&capture)
-
-	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
-		Prompt:          summaryPromptText,
-		Messages:        aiMsgs,
-		Headers:         sessionHeaders(sessionID),
-		ProviderOptions: opts,
-		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = options.Messages
-			if systemPromptPrefix != "" {
-				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(systemPromptPrefix)}, prepared.Messages...)
+	call.parentID = currentSession.ParentSessionID
+	call.messageID = compactionMsg.ID
+	streamCall := call.streamCall(buildSummaryPrompt(currentSession.Todos))
+	streamCall.Messages = aiMsgs
+	streamCall.Headers = sessionHeaders(sessionID)
+	streamCall.ProviderOptions = opts
+	streamCall.OnReasoningDelta = func(id string, text string) error {
+		compactionMsg.AppendReasoningContent(text)
+		return a.messages.Update(genCtx, compactionMsg)
+	}
+	streamCall.OnReasoningEnd = func(id string, reasoning fantasy.ReasoningContent) error {
+		// Handle anthropic signature.
+		if anthropicData, ok := reasoning.ProviderMetadata["anthropic"]; ok {
+			if signature, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok && signature.Signature != "" {
+				compactionMsg.AppendReasoningSignature(signature.Signature)
 			}
-			if isAnthropicOAuth(providerCfg) {
-				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
-			}
-			if a.usageRecorder != nil {
-				capture = a.newCapture(usageKindSummary, runID, sessionID, currentSession.ParentSessionID, largeModel, nil, prepared.Messages)
-				capture.stepIndex = options.StepNumber
-				capture.messageID = compactionMsg.ID
-			}
-			return callContext, prepared, nil
-		},
-		OnRetry:        onRetry,
-		OnStreamFinish: onStreamFinish,
-		OnReasoningDelta: func(id string, text string) error {
-			compactionMsg.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, compactionMsg)
-		},
-		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
-			// Handle anthropic signature.
-			if anthropicData, ok := reasoning.ProviderMetadata["anthropic"]; ok {
-				if signature, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok && signature.Signature != "" {
-					compactionMsg.AppendReasoningSignature(signature.Signature)
-				}
-			}
-			compactionMsg.FinishThinking()
-			return a.messages.Update(genCtx, compactionMsg)
-		},
-		OnTextDelta: func(id, text string) error {
-			compactionMsg.AppendContent(text)
-			return a.messages.Update(genCtx, compactionMsg)
-		},
-	})
+		}
+		compactionMsg.FinishThinking()
+		return a.messages.Update(genCtx, compactionMsg)
+	}
+	streamCall.OnTextDelta = func(id, text string) error {
+		compactionMsg.AppendContent(text)
+		return a.messages.Update(genCtx, compactionMsg)
+	}
+	resp, err := agent.Stream(genCtx, streamCall)
 	if err != nil {
 		var providerErr *fantasy.ProviderError
 		if errors.Is(err, context.Canceled) || genCtx.Err() != nil ||
@@ -1038,9 +1015,6 @@ func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string)
 	if small.Model == nil {
 		return "", "", errors.New("small model not configured")
 	}
-	systemPromptPrefix := a.systemPromptPrefix.Get()
-	providerCfg := a.providerConfig.Get()
-
 	tok := int64(completeSmallMaxTokens)
 	if small.CatwalkCfg.CanReason {
 		tok = max(tok, small.CatwalkCfg.DefaultMaxTokens)
@@ -1050,31 +1024,9 @@ func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string)
 		fantasy.WithMaxOutputTokens(tok),
 		fantasy.WithUserAgent(userAgent),
 	)
-	runID := uuid.NewString()
-	var capture *stepCapture
-	onRetry, onStreamFinish := a.captureCallbacks(&capture)
-	resp, err := agent.Stream(ctx, fantasy.AgentStreamCall{
-		Prompt: prompt,
-		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = opts.Messages
-			if systemPromptPrefix != "" {
-				prepared.Messages = append([]fantasy.Message{
-					fantasy.NewSystemMessage(systemPromptPrefix),
-				}, prepared.Messages...)
-			}
-			if isAnthropicOAuth(providerCfg) {
-				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
-			}
-			if a.usageRecorder != nil {
-				capture = a.newCapture(usageKindSmall, runID, "", "", small, nil, prepared.Messages)
-				capture.agent = bouncerReviewerAgentName
-				capture.stepIndex = opts.StepNumber
-			}
-			return callCtx, prepared, nil
-		},
-		OnRetry:        onRetry,
-		OnStreamFinish: onStreamFinish,
-	})
+	call := a.newSideCall(usageKindSmall, "", small)
+	call.agentName = bouncerReviewerAgentName
+	resp, err := agent.Stream(ctx, call.streamCall(prompt))
 	if err != nil {
 		return "", small.ModelCfg.Model, fmt.Errorf("small model: %w", err)
 	}
@@ -1104,8 +1056,10 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 
 	smallModel := a.smallModel.Get()
 	largeModel := a.largeModel.Get()
-	systemPromptPrefix := a.systemPromptPrefix.Get()
-	providerCfg := a.providerConfig.Get()
+	// The fallback loop below sets the call's attempt and model before each
+	// attempt so every attempt that reports usage is recorded against the
+	// model that made it.
+	call := a.newSideCall(usageKindTitle, sessionID, Model{})
 
 	newAgent := func(m fantasy.LanguageModel, p []byte, tok int64) fantasy.Agent {
 		return fantasy.NewAgent(m,
@@ -1115,37 +1069,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 		)
 	}
 
-	// The fallback loop below sets attemptIndex and attemptModel before
-	// each attempt so every attempt that reports usage is recorded against
-	// the model that made it.
-	runID := uuid.NewString()
-	var capture *stepCapture
-	var attemptIndex int
-	var attemptModel Model
-	onRetry, onStreamFinish := a.captureCallbacks(&capture)
-
-	streamCall := fantasy.AgentStreamCall{
-		Prompt: fmt.Sprintf("Generate a concise title for the following conversation:\n\n%s\n <think>\n\n</think>", conversationText),
-		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = opts.Messages
-			if systemPromptPrefix != "" {
-				prepared.Messages = append([]fantasy.Message{
-					fantasy.NewSystemMessage(systemPromptPrefix),
-				}, prepared.Messages...)
-			}
-			if isAnthropicOAuth(providerCfg) {
-				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
-			}
-			if a.usageRecorder != nil {
-				capture = a.newCapture(usageKindTitle, runID, sessionID, "", attemptModel, nil, prepared.Messages)
-				capture.attempt = attemptIndex
-				capture.stepIndex = opts.StepNumber
-			}
-			return callCtx, prepared, nil
-		},
-		OnRetry:        onRetry,
-		OnStreamFinish: onStreamFinish,
-	}
+	streamCall := call.streamCall(fmt.Sprintf("Generate a concise title for the following conversation:\n\n%s\n <think>\n\n</think>", conversationText))
 
 	type modelAttempt struct {
 		name  string
@@ -1161,7 +1085,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 	var model Model
 	var success bool
 	for i, attempt := range attempts {
-		attemptIndex, attemptModel = i, attempt.model
+		call.attempt, call.model = i, attempt.model
 		tok := int64(40)
 		if attempt.model.CatwalkCfg.CanReason {
 			tok = attempt.model.CatwalkCfg.DefaultMaxTokens

@@ -102,6 +102,13 @@ A conversation between the user and an agent, stored with its message tree, usag
 - **Code:** `session.Session` (`internal/session`)
 - **Not:** chat, thread, conversation.
 
+## Side Call
+
+A model request made beside a session's turns: a summary, a session title, or a one-shot small-model completion such as a bouncer review. Its request is framed like a turn's and its step usage is recorded, but it has no tools.
+
+- **Code:** `sideCall` (`internal/agent/side_call.go`)
+- **Not:** turn, sub-agent run. A sub-agent runs full turns in a child session.
+
 ## Skill
 
 Knowledge or a procedure in a `SKILL.md` file that an agent loads into its conversation when needed. An **unlisted** skill (`unlisted: true`) is left out of the agent's catalog and loads only when something names it.
