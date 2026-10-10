@@ -26,7 +26,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// truncatedLinesFormat is the hint shown below truncated tool output.
+// truncatedLinesFormat is the hint shown for truncated tool output.
 const truncatedLinesFormat = "… (%d lines hidden) [click or space to expand]"
 
 // responseContextHeight limits the number of lines displayed in tool output.

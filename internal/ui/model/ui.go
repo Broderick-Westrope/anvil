@@ -642,12 +642,22 @@ func (m *UI) activeChat() *Chat {
 // drill-ins show part of the session beneath them, so they're skipped. It
 // reports false when the viewed session is the root session.
 func (m *UI) viewedSessionEntry() (drillInEntry, bool) {
+	i := m.viewedSessionIndex()
+	if i < 0 {
+		return drillInEntry{}, false
+	}
+	return m.drillStack[i], true
+}
+
+// viewedSessionIndex returns the drill-stack index of viewedSessionEntry,
+// or -1 when the viewed session is the root session.
+func (m *UI) viewedSessionIndex() int {
 	for i := len(m.drillStack) - 1; i >= 0; i-- {
 		if m.drillStack[i].sessionID != "" {
-			return m.drillStack[i], true
+			return i
 		}
 	}
-	return drillInEntry{}, false
+	return -1
 }
 
 // viewedSession returns the session whose stats the header and sidebar
@@ -684,15 +694,14 @@ func (m *UI) findMessageItem(id string) chat.MessageItem {
 	return nil
 }
 
-// findParentMessageItem searches the root chat and drill-stack chats
-// (excluding the top entry) for an item matching the given ID. This is
-// used when the top entry is the viewed session and we need the parent
-// agent item that owns it.
+// findParentMessageItem searches the root chat and the drill-stack chats
+// below the viewed subagent session for an item matching the given ID. The
+// viewed session's parent agent item lives in one of those.
 func (m *UI) findParentMessageItem(id string) chat.MessageItem {
 	if item := m.chat.MessageItem(id); item != nil {
 		return item
 	}
-	for i := len(m.drillStack) - 2; i >= 0; i-- {
+	for i := m.viewedSessionIndex() - 1; i >= 0; i-- {
 		if item := m.drillStack[i].chat.MessageItem(id); item != nil {
 			return item
 		}
@@ -1501,9 +1510,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// A thinking drill-in renders an item that lives in another chat, so
-	// message updates never scroll it. Keep a following drill-in pinned to
-	// the bottom after each message event. Root and subagent chats scroll
-	// themselves when their own items change.
+	// message updates never scroll it. Keep whichever drill-in is visible
+	// pinned to the bottom after each message event while it follows; for
+	// agent drill-ins this repeats a scroll their own updates already did.
 	if _, ok := msg.(pubsub.Event[message.Message]); ok && m.isDrilledIn() && m.activeChat().Follow() {
 		m.activeChat().ScrollToBottom()
 	}
@@ -5621,8 +5630,8 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 
 // handlePermissionNotification updates tool items when permission state changes.
 func (m *UI) handlePermissionNotification(notification permission.PermissionNotification) {
-	// Search every drill-in chat, not just the visible one: a subagent's
-	// tool may sit under a thinking or tool drill-in.
+	// Search the root and every drill-in chat, not just the visible one:
+	// a subagent's tool may sit under a thinking or tool drill-in.
 	toolItem := m.findMessageItem(notification.ToolCallID)
 	if toolItem == nil {
 		return

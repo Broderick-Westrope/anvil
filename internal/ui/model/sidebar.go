@@ -49,11 +49,8 @@ func (m *UI) modelInfo(width int) string {
 	}
 
 	// Use the drilled-in session's stats when applicable; fall back to root.
-	activeSession := m.session
-	viewedEntry, viewingSubagent := m.viewedSessionEntry()
-	if viewedEntry.session != nil {
-		activeSession = viewedEntry.session
-	}
+	activeSession := m.viewedSession()
+	_, viewingSubagent := m.viewedSessionEntry()
 
 	var modelContext *common.ModelContextInfo
 	if model != nil && activeSession != nil {

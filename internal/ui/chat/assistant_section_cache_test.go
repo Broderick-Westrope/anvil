@@ -380,7 +380,7 @@ func TestAssistantSectionCache_ByteIdenticalToFreshRender(t *testing.T) {
 
 // stripAnimSuffix removes the trailing animation line from a
 // RawRender output. When spinning, RawRender appends "\n\n<anim>"
-// after the thinking box; we strip from the last "\n\n" onward.
+// after the thinking footer; we strip from the last "\n\n" onward.
 func stripAnimSuffix(s string) string {
 	if i := strings.LastIndex(s, "\n\n"); i >= 0 {
 		return s[:i]
