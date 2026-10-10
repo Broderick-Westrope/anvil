@@ -6,6 +6,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,7 +21,12 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
+	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 )
+
+// ErrWorkflowsUnavailable is returned by workflow operations when the
+// workspace can't run workflows, such as before the agent is initialized.
+var ErrWorkflowsUnavailable = errors.New("workflows are not available until the agent is initialized")
 
 // ReloadReport is the outcome of [Workspace.ReloadConfigAndPlugins].
 type ReloadReport struct {
@@ -161,6 +167,25 @@ type Workspace interface {
 	ListSessionJobs(sessionID string) []shell.JobInfo
 	// RunningJobs returns the jobs still running, across all sessions.
 	RunningJobs() []shell.JobInfo
+
+	// Workflows
+
+	// WorkflowStart validates a workflow command and runs it in the
+	// background. Later outcomes arrive as host events.
+	WorkflowStart(ctx context.Context, inv host.Invocation) error
+	// WorkflowRespond answers a workflow approval or ask() request.
+	WorkflowRespond(requestID, answer string) error
+	// WorkflowPause, WorkflowResume and WorkflowAbort control the run
+	// involving sessionID: its invoking session or one it created.
+	WorkflowPause(sessionID string) error
+	WorkflowResume(sessionID string) error
+	WorkflowAbort(sessionID string) error
+	// WorkflowRunning reports the invoking session of the run involving
+	// sessionID, if any.
+	WorkflowRunning(sessionID string) (invoker string, ok bool)
+	// WorkflowMissing loads a workflow script and lists the requirements
+	// it declares that don't exist.
+	WorkflowMissing(scriptPath string) ([]string, error)
 
 	// Config (read-only data)
 	Config() *config.Config

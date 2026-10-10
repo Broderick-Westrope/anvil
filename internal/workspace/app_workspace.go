@@ -21,6 +21,8 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
+	"github.com/Broderick-Westrope/anvil/internal/workflow"
+	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -615,3 +617,58 @@ func (w *AppWorkspace) Store() *config.ConfigStore {
 
 // Compile-time check that AppWorkspace implements Workspace.
 var _ Workspace = (*AppWorkspace)(nil)
+
+// -- Workflows --
+
+func (w *AppWorkspace) WorkflowStart(ctx context.Context, inv host.Invocation) error {
+	if w.app.Workflows == nil {
+		return ErrWorkflowsUnavailable
+	}
+	return w.app.Workflows.Start(ctx, inv)
+}
+
+func (w *AppWorkspace) WorkflowRespond(requestID, answer string) error {
+	if w.app.Workflows == nil {
+		return ErrWorkflowsUnavailable
+	}
+	return w.app.Workflows.Respond(requestID, answer)
+}
+
+func (w *AppWorkspace) WorkflowPause(sessionID string) error {
+	if w.app.Workflows == nil {
+		return ErrWorkflowsUnavailable
+	}
+	return w.app.Workflows.Pause(sessionID)
+}
+
+func (w *AppWorkspace) WorkflowResume(sessionID string) error {
+	if w.app.Workflows == nil {
+		return ErrWorkflowsUnavailable
+	}
+	return w.app.Workflows.Resume(sessionID)
+}
+
+func (w *AppWorkspace) WorkflowAbort(sessionID string) error {
+	if w.app.Workflows == nil {
+		return ErrWorkflowsUnavailable
+	}
+	return w.app.Workflows.Abort(sessionID)
+}
+
+func (w *AppWorkspace) WorkflowRunning(sessionID string) (string, bool) {
+	if w.app.Workflows == nil {
+		return "", false
+	}
+	return w.app.Workflows.Running(sessionID)
+}
+
+func (w *AppWorkspace) WorkflowMissing(scriptPath string) ([]string, error) {
+	if w.app.Workflows == nil {
+		return nil, ErrWorkflowsUnavailable
+	}
+	script, err := workflow.Load(scriptPath)
+	if err != nil {
+		return nil, err
+	}
+	return script.Missing(w.app.Workflows.Catalog()), nil
+}

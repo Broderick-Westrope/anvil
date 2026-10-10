@@ -49,6 +49,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
+	"github.com/google/uuid"
 )
 
 // UpdateAvailableMsg is sent when a new version is available.
@@ -66,6 +67,9 @@ type App struct {
 	Queries     db.Querier
 
 	AgentCoordinator agent.Coordinator
+	// Workflows runs workflow commands. It is nil until the orchestrator
+	// agent exists.
+	Workflows *host.Service
 
 	LSPManager *lsp.Manager
 
@@ -93,6 +97,7 @@ type App struct {
 	jobEvents          *jobevents.Store
 	jobWaker           *jobWaker
 	jobs               *jobLifecycle // Nil when job persistence is unavailable.
+	workflowStore      *host.Store
 }
 
 // New initializes a new application instance.
@@ -163,13 +168,19 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	mgr := shell.GetBackgroundShellManager()
 	app.startJobPersistence(ctx, q, mgr)
 	app.jobEvents = jobevents.NewStore(app.jobOwner(mgr))
+	// Without job persistence this process has no registered instance, so
+	// its workflow runs get an ID no other instance will consider live.
+	workflowInstance := uuid.NewString()
+	if app.jobs != nil {
+		workflowInstance = app.jobs.store.InstanceID()
+	}
+	app.workflowStore = host.NewStore(q, config.GlobalDataDir(), workflowInstance)
 	if app.jobs != nil {
 		if err := app.jobEvents.Persist(ctx, q, app.jobs.store.InstanceID()); err != nil {
 			slog.Warn("Failed to load background job events; new events will not survive a restart", "error", err)
 		}
-		workflows := host.NewStore(q, config.GlobalDataDir(), app.jobs.store.InstanceID())
 		go startupPrune(ctx, "workflow runs", func(ctx context.Context) error {
-			return errors.Join(workflows.MarkInterrupted(ctx), workflows.PruneRunDirs(ctx, time.Now()))
+			return errors.Join(app.workflowStore.MarkInterrupted(ctx), app.workflowStore.PruneRunDirs(ctx, time.Now()))
 		})
 	}
 	mgr.SetEventSink(app.jobEvents)
@@ -650,7 +661,26 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 	}
 	app.jobWaker.setAgent(app.AgentCoordinator)
 	app.reviewCompleter.set(app.AgentCoordinator)
+	app.startWorkflows()
 	return nil
+}
+
+// startWorkflows builds the workflow service for the current coordinator
+// and forwards its events to the TUI. It runs whenever the coordinator is
+// rebuilt, so a service never drives a coordinator that was replaced.
+func (app *App) startWorkflows() {
+	app.Workflows = host.NewService(app.globalCtx, host.Deps{
+		Coordinator: app.AgentCoordinator,
+		Sessions:    app.Sessions,
+		Store:       app.workflowStore,
+		WorkingDir:  app.config.WorkingDir(),
+		// Approval guards running a script's own shell commands, so only
+		// the level that bypasses every permission check skips it.
+		SkipApproval: func() bool {
+			return app.Permissions.YoloLevel() == config.YoloFull
+		},
+	})
+	setupSubscriber(app.eventsCtx, app.serviceEventsWG, "workflows", app.Workflows.Subscribe, app.events)
 }
 
 // startJobPersistence persists published jobs in the global database
