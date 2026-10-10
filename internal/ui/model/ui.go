@@ -1450,10 +1450,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.drillStack[i].session = msg.session
 
-			// Convert messages to chat items using the shared helper. Keep
-			// items that live events added after the snapshot was read.
-			items := m.messagesToChatItems(msg.messages)
-			items = appendLiveOnlyItems(items, m.drillStack[i].chat)
+			// Convert messages to chat items using the shared helper, then
+			// prefer the live items: they have had every event since the
+			// drill-in, so they're never older than the snapshot.
+			items := mergeLiveItems(m.messagesToChatItems(msg.messages), m.drillStack[i].chat)
 			m.drillStack[i].chat.SetMessages(items...)
 
 			// Start animations for all newly loaded items.
@@ -1478,7 +1478,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.drillStack[i].chat.ScrollToBottom()
 			}
 			m.drillStack[i].chat.SelectLast()
-			m.repointThinkingDrillIns(i)
 			break
 		}
 
@@ -2140,16 +2139,21 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 	}
 }
 
-// appendLiveOnlyItems appends the items in c whose IDs aren't among
-// loaded, so a load result doesn't drop messages that arrived as live
-// events after its snapshot was read.
-func appendLiveOnlyItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
+// mergeLiveItems replaces each loaded item with the item c already holds
+// for the same message ID, and appends items in c the snapshot lacks.
+// Events reach c from the moment of the drill-in, so its items are never
+// older than a snapshot read after that, and keeping them preserves the
+// item identity that thinking and tool drill-ins point at.
+func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
 	ids := make(map[string]struct{}, len(loaded))
-	for _, item := range loaded {
+	for k, item := range loaded {
 		ids[item.ID()] = struct{}{}
+		if live := c.MessageItem(item.ID()); live != nil {
+			loaded[k] = live
+		}
 	}
-	for i := range c.Len() {
-		item, ok := c.ItemAt(i).(chat.MessageItem)
+	for k := range c.Len() {
+		item, ok := c.ItemAt(k).(chat.MessageItem)
 		if !ok {
 			continue
 		}
@@ -2158,22 +2162,6 @@ func appendLiveOnlyItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem 
 		}
 	}
 	return loaded
-}
-
-// repointThinkingDrillIns points thinking drill-ins stacked above entry i
-// at the items that entry's chat now holds, after its items were rebuilt.
-func (m *UI) repointThinkingDrillIns(i int) {
-	for _, entry := range m.drillStack[i+1:] {
-		for j := range entry.chat.Len() {
-			detail, ok := entry.chat.ItemAt(j).(*chat.ThinkingDetailItem)
-			if !ok {
-				continue
-			}
-			if source, ok := m.drillStack[i].chat.MessageItem(detail.SourceID()).(*chat.AssistantMessageItem); ok {
-				detail.SetSource(source)
-			}
-		}
-	}
 }
 
 // loadAgentDrillInSession asynchronously loads the messages and session

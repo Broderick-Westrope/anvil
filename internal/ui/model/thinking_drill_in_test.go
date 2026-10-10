@@ -165,3 +165,22 @@ func TestSubagentLoadKeepsLiveMessagesMissingFromItsSnapshot(t *testing.T) {
 	require.NotNil(t, u.drillStack[0].chat.MessageItem("sub-a"), "the live message must survive the load")
 	require.Contains(t, ansi.Strip(u.drillStack[1].chat.ItemAt(0).Render(80)), "second step")
 }
+
+func TestSubagentLoadKeepsNewerLiveMessages(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.updateLayoutAndSize()
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: childThinkingEvent("first step", false).Payload})
+	live, ok := u.drillStack[0].chat.MessageItem("sub-a").(*chat.AssistantMessageItem)
+	require.True(t, ok)
+	u.Update(util.ThinkingDrillInMsg{Source: live, Label: "Thinking"})
+	u.Update(childThinkingEvent("first step\n\nfinal step", false))
+
+	// A stale snapshot lands after the last update, with no event after it.
+	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{childThinkingEvent("first step", false).Payload}})
+
+	require.Same(t, live, u.drillStack[0].chat.MessageItem("sub-a"), "the live item must be kept")
+	require.Contains(t, ansi.Strip(u.drillStack[1].chat.ItemAt(0).Render(80)), "final step")
+}
