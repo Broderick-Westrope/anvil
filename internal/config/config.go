@@ -1053,28 +1053,16 @@ func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabl
 		if !ok {
 			// User defined an agent not in the defaults; add it as-is.
 			// Ensure ID and Name are set from the map key if not provided.
-			if userAgent.ID == "" {
-				userAgent.ID = name
-			}
-			if userAgent.Name == "" {
-				userAgent.Name = name
-			}
+			userAgent.ID = cmp.Or(userAgent.ID, name)
+			userAgent.Name = cmp.Or(userAgent.Name, name)
 			agents[name] = userAgent
 			continue
 		}
 		// Overlay non-zero fields from the user config onto the default.
-		if userAgent.Model != "" {
-			def.Model = userAgent.Model
-		}
-		if userAgent.Variant != "" {
-			def.Variant = userAgent.Variant
-		}
-		if userAgent.ReasoningEffort != "" {
-			def.ReasoningEffort = userAgent.ReasoningEffort
-		}
-		if userAgent.Think != nil {
-			def.Think = userAgent.Think
-		}
+		def.Model = cmp.Or(userAgent.Model, def.Model)
+		def.Variant = cmp.Or(userAgent.Variant, def.Variant)
+		def.ReasoningEffort = cmp.Or(userAgent.ReasoningEffort, def.ReasoningEffort)
+		def.Think = cmp.Or(userAgent.Think, def.Think)
 		if userAgent.AllowedTools != nil {
 			def.AllowedTools = userAgent.AllowedTools
 		}
@@ -1084,9 +1072,7 @@ func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabl
 		if userAgent.AllowedMCP != nil {
 			def.AllowedMCP = userAgent.AllowedMCP
 		}
-		if userAgent.AppendPrompt != "" {
-			def.AppendPrompt = userAgent.AppendPrompt
-		}
+		def.AppendPrompt = cmp.Or(userAgent.AppendPrompt, def.AppendPrompt)
 		if userAgent.Disabled {
 			def.Disabled = true
 		}
