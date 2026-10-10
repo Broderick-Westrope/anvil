@@ -54,6 +54,40 @@ internal/
   filetracker/                     Tracks files touched per session
 ```
 
+### Package Layers
+
+Packages in `internal/` form layers. A package may import its own layer or
+any layer below it, never one above:
+
+1. `cmd`: CLI entry points. Only `main.go` imports it.
+2. `ui`: the Bubble Tea TUI. It may use `app` directly through
+   `common.Common`.
+3. `workspace`: the interface the UI drives.
+4. `app`: wires services together and runs agents.
+5. `agent`: sessions, the coordinator, tools and prompts.
+6. Everything else (`config`, `session`, `message`, `permission`, `hooks`,
+   `skills`, `lsp`, `shell`, `db`, `pubsub`, ...): services and libraries
+   that know nothing about the layers above.
+
+`internal/testutil` is test-only and may import any layer.
+
+`depguard` in `.golangci.yml` enforces this. When a lower package needs
+something from a higher one, pass it in from the caller or move the code
+down; don't add an exclusion. The exclusions listed there predate the rule
+and should shrink.
+
+`gocognit` caps the cognitive complexity of new functions at 30. A long
+function that reads top to bottom as one concern stays under it; one that
+mixes concerns or grows a branch per feature doesn't. Fix it with a
+different shape (a lookup table, a state machine, a type that owns the
+rules), not by splitting it into single-use helpers. Functions already over
+the limit are listed in `.golangci.yml`; remove an entry when you bring its
+function under the limit, and never add one.
+
+Terms with a specific meaning in this codebase are defined in
+`GLOSSARY.md`. Hard-to-reverse design decisions are recorded in
+`docs/adr/`.
+
 ### Key Dependency Roles
 
 - **`charm.land/fantasy`**: LLM provider abstraction layer. Handles protocol
@@ -78,9 +112,8 @@ internal/
 - **Persistence**: SQLite + sqlc. A single global database at
   `~/.local/share/anvil/anvil.db` stores all sessions, messages, files,
   and OAuth tokens. All queries live in `internal/db/sql/`, generated
-  code in `internal/db/`. Migrations in `internal/db/migrations/`.
-  Per-project databases are migrated to the global DB on first startup
-  (`internal/migrate/`).
+  code in `internal/db/`. Migrations in `internal/db/migrations/`. See
+  `docs/adr/0001-global-database.md`.
 - **Pub/sub**: `internal/pubsub` for decoupled communication between agent,
   UI, and services.
 - **Hooks**: User-defined shell commands in `anvil.json` that fire before
@@ -88,16 +121,18 @@ internal/
   and agent — it takes inputs, runs commands, returns decisions. The
   `hookedTool` decorator in `internal/agent/hooked_tool.go` wraps tools at
   the coordinator level. Hooks run before permission checks. See
-  `HOOKS.md` for the user-facing protocol.
+  `docs/hooks/README.md` for the user-facing protocol.
 - **Lazy MCPs**: MCP servers with `lazy_description` set in `anvil.json`
-  connect eagerly but have their tools excluded from the LLM context until
-  explicitly enabled. The `enable_mcp` built-in tool lets the agent activate
+  don't connect at startup, and their tools are excluded from the LLM
+  context until explicitly enabled; the first enable connects them. The
+  `enable_mcp` built-in tool lets the agent activate
   them; humans toggle via the MCP palette dialog (Ctrl+P → "MCP Servers").
   Enabled state is branch-scoped — derived from message history
   (`deriveLazyMCPState` in `internal/agent/lazy_mcp.go`) so it persists
   across restarts and survives compaction. `PrepareStep` filters the tool
   list on every turn. The `LazyMCPState` type in
   `internal/agent/tools/lazy_mcp_state.go` holds the per-Run enabled set.
+  See `docs/adr/0002-lazy-mcp-state-from-messages.md`.
 - **LSP memory management**: auto-configured gopls runs with `-remote=auto`
   so concurrent Anvil processes share one gopls daemon
   (`applyGoplsDaemonDefaults` in `internal/lsp/manager.go`); user-configured
