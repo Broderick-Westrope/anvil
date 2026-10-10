@@ -1450,8 +1450,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.drillStack[i].session = msg.session
 
-			// Convert messages to chat items using the shared helper.
+			// Convert messages to chat items using the shared helper. Keep
+			// items that live events added after the snapshot was read.
 			items := m.messagesToChatItems(msg.messages)
+			items = appendLiveOnlyItems(items, m.drillStack[i].chat)
 			m.drillStack[i].chat.SetMessages(items...)
 
 			// Start animations for all newly loaded items.
@@ -2136,6 +2138,26 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 			da.SetFinishedAt(time.Unix(s.UpdatedAt, 0))
 		}
 	}
+}
+
+// appendLiveOnlyItems appends the items in c whose IDs aren't among
+// loaded, so a load result doesn't drop messages that arrived as live
+// events after its snapshot was read.
+func appendLiveOnlyItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
+	ids := make(map[string]struct{}, len(loaded))
+	for _, item := range loaded {
+		ids[item.ID()] = struct{}{}
+	}
+	for i := range c.Len() {
+		item, ok := c.ItemAt(i).(chat.MessageItem)
+		if !ok {
+			continue
+		}
+		if _, ok := ids[item.ID()]; !ok {
+			loaded = append(loaded, item)
+		}
+	}
+	return loaded
 }
 
 // repointThinkingDrillIns points thinking drill-ins stacked above entry i
