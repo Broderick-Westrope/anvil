@@ -122,3 +122,23 @@ func TestThinkingDrillInFollowsAfterContentStarts(t *testing.T) {
 	require.True(t, detail.Follow())
 	require.True(t, detail.AtBottom(), "a following thinking drill-in must stay pinned as thinking grows")
 }
+
+func TestThinkingDrillInSurvivesSubagentLoad(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.updateLayoutAndSize()
+	u.Update(util.DrillInMsg{SessionID: "child", Label: "Explorer"})
+	// A live event arrives before the subagent session finishes loading,
+	// and the user drills into its thinking.
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: childThinkingEvent("first step", false).Payload})
+	live, ok := u.drillStack[0].chat.MessageItem("sub-a").(*chat.AssistantMessageItem)
+	require.True(t, ok)
+	u.Update(util.ThinkingDrillInMsg{Source: live, Label: "Thinking"})
+
+	u.Update(drillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{childThinkingEvent("first step", false).Payload}})
+	u.Update(childThinkingEvent("first step\n\nsecond step", false))
+
+	require.Contains(t, ansi.Strip(u.drillStack[1].chat.ItemAt(0).Render(80)), "second step",
+		"the thinking drill-in must follow the item the load put in its place")
+}

@@ -1476,6 +1476,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.drillStack[i].chat.ScrollToBottom()
 			}
 			m.drillStack[i].chat.SelectLast()
+			m.repointThinkingDrillIns(i)
 			break
 		}
 
@@ -2133,6 +2134,22 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 		}
 		if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && s.UpdatedAt > s.CreatedAt {
 			da.SetFinishedAt(time.Unix(s.UpdatedAt, 0))
+		}
+	}
+}
+
+// repointThinkingDrillIns points thinking drill-ins stacked above entry i
+// at the items that entry's chat now holds, after its items were rebuilt.
+func (m *UI) repointThinkingDrillIns(i int) {
+	for _, entry := range m.drillStack[i+1:] {
+		for j := range entry.chat.Len() {
+			detail, ok := entry.chat.ItemAt(j).(*chat.ThinkingDetailItem)
+			if !ok {
+				continue
+			}
+			if source, ok := m.drillStack[i].chat.MessageItem(detail.SourceID()).(*chat.AssistantMessageItem); ok {
+				detail.SetSource(source)
+			}
 		}
 	}
 }

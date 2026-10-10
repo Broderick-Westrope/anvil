@@ -45,6 +45,21 @@ func (t *ThinkingDetailItem) ID() string {
 	return "thinking-detail:" + t.source.ID()
 }
 
+// SourceID returns the ID of the assistant message whose thinking this
+// shows.
+func (t *ThinkingDetailItem) SourceID() string {
+	return t.source.ID()
+}
+
+// SetSource points the item at a replacement for its source, such as when
+// a subagent session finishes loading and rebuilds its items.
+func (t *ThinkingDetailItem) SetSource(source *AssistantMessageItem) {
+	t.source = source
+	t.streaming.Reset()
+	t.rendered.reset()
+	t.Bump()
+}
+
 // Version implements list.Item. It folds in the source's version so the
 // list re-renders when the source's thinking changes. Both counters only
 // grow, so the sum changes whenever either does.
