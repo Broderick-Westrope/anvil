@@ -601,6 +601,21 @@ func TestServiceShutdownInterruptsRunsAndRefusesNewOnes(t *testing.T) {
 	require.ErrorIs(t, err, host.ErrShuttingDown)
 }
 
+func TestServiceShutdownInterruptsAPendingApproval(t *testing.T) {
+	h := newServiceHarness(t, false)
+	path := h.write(t, `function main() { return 1 }`)
+	h.start(t, path, "")
+	h.next(t, host.EventApproval)
+
+	ctx, cancel := context.WithTimeout(h.fixture.Context, 5*time.Second)
+	defer cancel()
+	require.NoError(t, h.svc.Shutdown(ctx, "agents reloaded"))
+
+	done := h.next(t, host.EventFinished)
+	require.Equal(t, host.StatusInterrupted, done.Status)
+	require.Equal(t, "interrupted: agents reloaded", done.Message)
+}
+
 func TestServiceShutdownClosesSubscriptions(t *testing.T) {
 	h := newServiceHarness(t, true)
 	ctx, cancel := context.WithTimeout(h.fixture.Context, 5*time.Second)

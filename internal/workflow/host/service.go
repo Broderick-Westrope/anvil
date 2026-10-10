@@ -312,7 +312,9 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	}
 	approved, err := s.approve(ctx, inv, script, current)
 	if err != nil {
-		finish("", StatusFailed, nil, err.Error())
+		stopping, reason := s.stopped()
+		status, msg := runOutcome(err, stopping, reason)
+		finish("", status, nil, msg)
 		return
 	}
 	if !approved {
