@@ -628,7 +628,8 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	switch a.thinkingViewMode {
 	case thinkingCollapsed:
 		totalLines = renderedLines
-		if totalLines > maxCollapsedThinkingHeight {
+		// Avoid hiding a single line; showing it beats the hint.
+		if totalLines > maxCollapsedThinkingHeight+1 {
 			tail, hidden := tailLines(rendered, maxCollapsedThinkingHeight, totalLines)
 			hint := a.sty.Messages.ThinkingTruncationHint.Render(
 				fmt.Sprintf(assistantMessageTruncateFormat, hidden),
@@ -639,7 +640,7 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		}
 	case thinkingTailWindow:
 		totalLines = renderedLines
-		if totalLines > maxExpandedThinkingTailLines {
+		if totalLines > maxExpandedThinkingTailLines+1 {
 			tail, hidden := tailLines(rendered, maxExpandedThinkingTailLines, totalLines)
 			hint := a.sty.Messages.ThinkingTruncationHint.Render(
 				fmt.Sprintf(assistantMessageTailWindowFormat, hidden),
@@ -843,7 +844,8 @@ func (a *AssistantMessageItem) ToggleExpanded() bool {
 // equalled the cap skip the tail-window step.
 func (a *AssistantMessageItem) tailWindowWouldTruncate() bool {
 	lineCount := 1 + strings.Count(a.message.ReasoningContent().Thinking, "\n")
-	return lineCount > maxExpandedThinkingTailLines
+	// Matches renderThinking, which shows one line over the cap in full.
+	return lineCount > maxExpandedThinkingTailLines+1
 }
 
 // HandleMouseClick implements MouseClickable. It signals (via a true return)

@@ -75,25 +75,27 @@ func TestAssistantMessageItemExpandableEmptyThinkingNoOp(t *testing.T) {
 
 // TestAssistantMessageItemTailWindowBoundary guards the B1 fix: the
 // tail-window heuristic must compare logical line counts (1 +
-// newline count) against the cap, not raw newline counts. A source
-// whose logical line count exactly equals the cap must NOT trip the
-// tail-window step (full render still fits cleanly under the cap),
-// while one logical line over the cap must trip it.
+// newline count) against the cap, not raw newline counts. The tail
+// window shows one line over the cap in full rather than hiding a
+// single line, so a source with up to N+1 logical lines must NOT trip
+// the tail-window step (it would render the same as full), while N+2
+// lines must trip it.
 func TestAssistantMessageItemTailWindowBoundary(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
 
-	atCap := buildLines(maxExpandedThinkingTailLines)
-	overCap := buildLines(maxExpandedThinkingTailLines + 1)
-
-	atItem := NewAssistantMessageItem(&sty, thinkingMessage("at-cap", atCap, "")).(*AssistantMessageItem)
-	require.False(t, atItem.tailWindowWouldTruncate(),
-		"a source with exactly N logical lines must not trip the tail-window step")
-
-	overItem := NewAssistantMessageItem(&sty, thinkingMessage("over-cap", overCap, "")).(*AssistantMessageItem)
-	require.True(t, overItem.tailWindowWouldTruncate(),
-		"a source with N+1 logical lines must trip the tail-window step")
+	for _, tc := range []struct {
+		lines int
+		want  bool
+	}{
+		{maxExpandedThinkingTailLines, false},
+		{maxExpandedThinkingTailLines + 1, false},
+		{maxExpandedThinkingTailLines + 2, true},
+	} {
+		item := NewAssistantMessageItem(&sty, thinkingMessage("boundary", buildLines(tc.lines), "")).(*AssistantMessageItem)
+		require.Equal(t, tc.want, item.tailWindowWouldTruncate(), "lines=%d", tc.lines)
+	}
 }
 
 // buildLines returns a string of n logical lines (n-1 newlines). Each
