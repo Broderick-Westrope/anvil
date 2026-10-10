@@ -1508,3 +1508,20 @@ func TestReloadPluginsReportsPluginWarnings(t *testing.T) {
 	require.NotContains(t, c.agentConfigs, "broken")
 	require.Contains(t, c.cfg.Config().Agents, "helper")
 }
+
+// TestConnectDeferredMCP seeds the global MCP state, so it must not run in
+// parallel.
+func TestConnectDeferredMCP(t *testing.T) {
+	cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+	require.NoError(t, err)
+	c := &coordinator{cfg: cfg, agentConfigs: map[string]config.Agent{}}
+
+	_, err = c.connectDeferredMCP(t.Context(), "test-connect-missing")
+	require.ErrorContains(t, err, "not found in state registry")
+
+	const connected = "test-connect-connected"
+	toolsmcp.SetStateForTest(connected, toolsmcp.StateConnected)
+	t.Cleanup(func() { toolsmcp.DeleteStateForTest(connected) })
+	_, err = c.connectDeferredMCP(t.Context(), connected)
+	require.ErrorIs(t, err, errOrchestratorAgentNotConfigured, "a connected server goes on to refresh the tools")
+}
