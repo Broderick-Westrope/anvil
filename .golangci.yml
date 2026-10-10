@@ -181,7 +181,7 @@ linters:
         text: 'func `(\(\*Message\)\.ToAIMessage)`'
         linters: [gocognit]
       - path: internal/message/message\.go
-        text: 'func `(\(\*service\)\.flushOne|unmarshalParts)`'
+        text: 'func `(\(\*service\)\.flushOne)`'
         linters: [gocognit]
       - path: internal/recovery/recovery\.go
         text: 'func `(scan|sweepArtifacts)`'
