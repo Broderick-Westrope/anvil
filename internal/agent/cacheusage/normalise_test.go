@@ -69,10 +69,16 @@ func TestNormalise(t *testing.T) {
 			want:     Tokens{Input: 200, CacheRead: 800, Output: 3},
 		},
 		{
-			name:     "google clamps at zero",
+			name:     "google caps cache reads at the prompt",
 			provider: "google",
 			usage:    fantasy.Usage{InputTokens: 100, CacheReadTokens: 300},
-			want:     Tokens{Input: 0, CacheRead: 300},
+			want:     Tokens{Input: 0, CacheRead: 100},
+		},
+		{
+			name:     "google reads equal to the prompt",
+			provider: "google",
+			usage:    fantasy.Usage{InputTokens: 100, CacheReadTokens: 100},
+			want:     Tokens{Input: 0, CacheRead: 100},
 		},
 		{
 			name:     "deepseek extra present",
@@ -181,6 +187,20 @@ func TestNormaliseRawRoundTrips(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(raw), &decoded))
 	require.Equal(t, reported, decoded.Usage)
 	require.Equal(t, extra, decoded.Extra)
+}
+
+func TestNormaliseGoogleRawKeepsReportedReads(t *testing.T) {
+	t.Parallel()
+
+	reported := fantasy.Usage{InputTokens: 100, CacheReadTokens: 300}
+	tokens, raw := Normalise("google", reported, nil)
+	require.Equal(t, int64(100), tokens.CacheRead)
+
+	var decoded struct {
+		Usage fantasy.Usage `json:"usage"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &decoded))
+	require.Equal(t, reported, decoded.Usage)
 }
 
 func TestNormaliseRawNullExtra(t *testing.T) {

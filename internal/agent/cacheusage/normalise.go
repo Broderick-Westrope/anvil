@@ -78,8 +78,10 @@ func Normalise(providerType string, reported fantasy.Usage, meta fantasy.Provide
 		// Streaming sums CacheReadTokens across usage chunks while keeping
 		// the first chunk's InputTokens (providers/google/google.go:857,
 		// 1134), so CacheRead can exceed the real count when Gemini repeats
-		// usage on several chunks. raw keeps the reported values for triage.
-		tokens.Input = max(tokens.Input-tokens.CacheRead, 0)
+		// usage on several chunks. Cached tokens cannot exceed the prompt,
+		// so CacheRead is capped at it. raw keeps the reported values.
+		tokens.CacheRead = min(tokens.CacheRead, reported.InputTokens)
+		tokens.Input -= tokens.CacheRead
 	case openaicompat.Name:
 		// openai-compat uses fantasy's default OpenAI usage functions
 		// (providers/openai/language_model_hooks.go:246, 280), which only

@@ -62,7 +62,7 @@ Normalisation per `provider_type` (`cacheusage.Normalise`):
 |---|---|
 | `anthropic`, `bedrock` | Copied through; Anthropic already excludes cache from input. |
 | `openai`, `azure`, `openrouter`, `vercel` | Copied through; fantasy already subtracts cached tokens from input. |
-| `google` | `input = input - cache_read` (Gemini's prompt count includes cached content). |
+| `google` | `cache_read = min(cache_read, input)`, then `input = input - cache_read` (Gemini's prompt count includes cached content). |
 | `openai-compat` | If `cache_read` is 0 and `extra.prompt_cache_hit_tokens` (DeepSeek) is set, it becomes `cache_read` and is subtracted from input. Other vendor fields are not mapped. |
 | other | Assumed OpenAI semantics, copied through. |
 
@@ -71,8 +71,10 @@ Caveats:
 - **Google streaming may over-count cache reads.** fantasy sums
   `CacheReadTokens` across usage chunks but keeps the first chunk's input
   (suspected bug, `fantasy@v0.45.2 providers/google/google.go:857,1134`).
-  Google hit rates may be inflated and normalised input clamped to 0.
-  Compare `raw_usage` before trusting a Google hit rate.
+  `cache_read_tokens` is now capped at the reported prompt size, so a
+  Google row never reads more than its prompt, but a capped row shows a
+  100% hit rate with `input_tokens` 0. Compare `raw_usage` (which keeps
+  the uncapped count) before trusting a Google hit rate.
 - An `openai-compat` provider whose cache field has another name reports 0
   reads. Look in `raw_usage.extra`.
 - **Vercel never reports cache writes.** fantasy's Vercel usage mapping
