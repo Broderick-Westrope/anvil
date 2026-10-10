@@ -265,11 +265,11 @@ func TestRender_FitsEveryChipThatFits(t *testing.T) {
 func TestRender_SkillsShareTheRowAndTheCount(t *testing.T) {
 	t.Parallel()
 
-	r := newTestRenderer()
 	skills := []SkillAttachment{{Name: "go-style"}, {Name: "writer"}}
 
 	t.Run("a file and a skill that fit are both drawn", func(t *testing.T) {
 		t.Parallel()
+		r := newTestRenderer()
 		out := ansi.Strip(r.Render([]message.Attachment{textFile("a.go")}, skills[:1], false, true, 60))
 		require.Contains(t, out, "a.go")
 		require.Contains(t, out, "go-style")
@@ -278,6 +278,7 @@ func TestRender_SkillsShareTheRowAndTheCount(t *testing.T) {
 
 	t.Run("skills left out are counted in the hint", func(t *testing.T) {
 		t.Parallel()
+		r := newTestRenderer()
 		files := overflowFixture()[:2]
 		width := chipWidth(r, "file-0.txt")*2 + lipgloss.Width(r.more(2))
 		out := r.Render(files, skills, false, true, width)
@@ -289,6 +290,7 @@ func TestRender_SkillsShareTheRowAndTheCount(t *testing.T) {
 
 	t.Run("skills alone overflow with a hint", func(t *testing.T) {
 		t.Parallel()
+		r := newTestRenderer()
 		many := []SkillAttachment{{Name: "one"}, {Name: "two"}, {Name: "three"}, {Name: "four"}}
 		out := r.Render(nil, many, false, true, 25)
 		require.Contains(t, ansi.Strip(out), "one")
@@ -298,12 +300,14 @@ func TestRender_SkillsShareTheRowAndTheCount(t *testing.T) {
 
 	t.Run("delete mode numbers skills after files", func(t *testing.T) {
 		t.Parallel()
+		r := newTestRenderer()
 		out := ansi.Strip(r.Render([]message.Attachment{textFile("a.go")}, skills[:1], true, true, 80))
 		require.Equal(t, []string{"≡", "a.go", "0", "1", "go-style"}, strings.Fields(out))
 	})
 
 	t.Run("skill chips carry no remove button", func(t *testing.T) {
 		t.Parallel()
+		r := newTestRenderer()
 		_ = r.Render(nil, skills, false, true, 80)
 		require.Empty(t, r.bounds)
 	})
