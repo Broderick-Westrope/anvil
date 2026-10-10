@@ -1089,6 +1089,11 @@ func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
 		eagerPing = "mcp_" + eager + "_ping"
 		lazyPing  = "mcp_" + lazy + "_ping"
 	)
+	// An Anthropic OAuth coordinator built by an earlier test turns on the
+	// PascalCase tool names globally.
+	renamed := toolsmcp.OAuthRenameEnabled()
+	toolsmcp.SetOAuthRename(false)
+	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
 	cfg := connectMCPServers(t, map[string]string{eager: "", lazy: ""}, lazy)
 	c := &coordinator{cfg: cfg}
 	tests := map[string]struct {
