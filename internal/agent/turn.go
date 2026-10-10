@@ -110,8 +110,7 @@ func (t *turn) newAgent(agentTools []fantasy.AgentTool, systemPrompt string) fan
 // accepted. It reports false when a wake has no notices to deliver.
 func (t *turn) start(ctx context.Context, msgs []message.Message) ([]message.Message, bool, error) {
 	a, call, state := t.a, t.call, t.call.state
-	switch {
-	case call.wake:
+	if call.wake {
 		noticeMsg, err := a.deliverJobEvents(ctx, call.SessionID, t.leaf)
 		if err != nil {
 			a.refundWake(call.SessionID)
@@ -123,17 +122,17 @@ func (t *turn) start(ctx context.Context, msgs []message.Message) ([]message.Mes
 		}
 		t.leaf = noticeMsg.ID
 		return append(msgs, *noticeMsg), true, nil
-	case state.acceptedUserID != "":
-		return slices.DeleteFunc(msgs, func(m message.Message) bool { return m.ID == state.acceptedUserID }), true, nil
-	default:
-		userMsg, err := a.createUserMessage(ctx, call, t.leaf)
-		if err != nil {
-			return nil, false, err
-		}
-		t.leaf = userMsg.ID
-		state.acceptedUserID = userMsg.ID
-		return msgs, true, nil
 	}
+	if state.acceptedUserID != "" {
+		return slices.DeleteFunc(msgs, func(m message.Message) bool { return m.ID == state.acceptedUserID }), true, nil
+	}
+	userMsg, err := a.createUserMessage(ctx, call, t.leaf)
+	if err != nil {
+		return nil, false, err
+	}
+	t.leaf = userMsg.ID
+	state.acceptedUserID = userMsg.ID
+	return msgs, true, nil
 }
 
 func (t *turn) streamCall(history []fantasy.Message, files []fantasy.FilePart) fantasy.AgentStreamCall {
@@ -566,17 +565,18 @@ func failureFinish(err error) (reason message.FinishReason, title, detail string
 	const defaultTitle = "Provider Error"
 	var fantasyErr *fantasy.Error
 	var providerErr *fantasy.ProviderError
-	switch {
-	case errors.Is(err, context.Canceled):
+	if errors.Is(err, context.Canceled) {
 		return message.FinishReasonCanceled, "User canceled request", ""
-	case errors.As(err, &providerErr):
+	}
+	if errors.As(err, &providerErr) {
 		return message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message
-	case errors.As(err, &fantasyErr):
+	}
+	if errors.As(err, &fantasyErr) {
 		return message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), defaultTitle), fantasyErr.Message
-	case fantasy.IsTransportError(err):
+	}
+	if fantasy.IsTransportError(err) {
 		wrapped := fantasy.NewTransportError(err)
 		return message.FinishReasonError, stringext.Capitalize(wrapped.Title), wrapped.Message
-	default:
-		return message.FinishReasonError, defaultTitle, err.Error()
 	}
+	return message.FinishReasonError, defaultTitle, err.Error()
 }
