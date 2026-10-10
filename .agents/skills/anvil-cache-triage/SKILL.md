@@ -89,8 +89,9 @@ the second number is the one to compare with the bar.
 
 If that hit rate is about 85% or more and the remaining misses are
 explained by expected causes (`first_call`, `model_changed`,
-`after_summary`, a branch switch, or an occasional `tools_changed` that
-lines up with one `enable_mcp`), the cache is healthy. Say so and
+`after_summary`, a branch switch or rewind (`history_rewritten` or
+`history_shortened`), or an occasional `tools_changed` that lines up
+with one `enable_mcp`), the cache is healthy. Say so and
 recommend nothing. Escalate `tools_changed` only when it recurs within
 sessions or dominates `tokens_not_reused`.
 

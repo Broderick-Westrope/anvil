@@ -13,6 +13,7 @@ WITH seq AS (
     LAG(r.prompt_tokens)         OVER w AS prev_prompt_tokens,
     LAG(r.response_finished_at)  OVER w AS prev_finished_at,
     LAG(r.estimated)             OVER w AS prev_estimated,
+    LAG(r.message_count)         OVER w AS prev_message_count,
     MAX(r.cache_read_tokens) OVER (PARTITION BY r.provider, r.model) AS model_max_read
   FROM step_usage_report r
   WHERE r.session_id != '' AND r.kind IN ('turn', 'summary')
@@ -60,7 +61,8 @@ SELECT judged.*,
     || CASE WHEN prev_tools_hash != tools_hash THEN 'tools ' ELSE '' END
     || CASE WHEN prev_system_hash != system_hash THEN 'system ' ELSE '' END
     || CASE WHEN after_summary = 1 THEN 'summary ' ELSE '' END
-    || CASE WHEN history_prefix_match = 0 THEN 'history ' ELSE '' END)
+    || CASE WHEN history_prefix_match = 0 THEN 'history ' ELSE '' END
+    || CASE WHEN message_count < prev_message_count THEN 'shortened ' ELSE '' END)
   END AS changes,
   CASE
     WHEN prev_finished_at IS NULL THEN 'first_call'
@@ -72,6 +74,7 @@ SELECT judged.*,
     WHEN prev_system_hash != system_hash THEN 'system_changed'
     WHEN after_summary = 1 THEN 'after_summary'
     WHEN history_prefix_match = 0 THEN 'history_rewritten'
+    WHEN message_count < prev_message_count THEN 'history_shortened'
     WHEN reuse_gap_ms > 300000 THEN 'likely_ttl_expired'
     WHEN history_prefix_match IS NULL THEN 'unknown_after_restart'
     ELSE 'unexplained'

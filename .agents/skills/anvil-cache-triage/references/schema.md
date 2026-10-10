@@ -108,7 +108,7 @@ read).
 | `tools_hash` | Hash of tools in the order Anvil passed them (name, description, parameters, required). Empty-list hash for summary, title and small. |
 | `system_hash` | Hash of all system messages, block boundaries included. |
 | `history_hash` | Rolling hash over the semantic content of all non-system messages, flattened into entries: per message, all reasoning text as one entry, all text (trimmed) as one entry, then each tool call (id, name, input), tool result (id, output text, error or media) and file (media type, data) in order, each tagged with its role. Ignored: provider options and metadata at message and part level (cache markers, reasoning signatures, OpenAI Responses reasoning metadata), message grouping (one combined tool message hashes the same as one per result), empty reasoning and text, and file names. Large media is sampled (length plus first and last 4 KB). |
-| `history_prefix_match` | Turn rows only. 1 if this request's first N history entries (see `history_hash`) hash the same as the previous recorded turn step of this session in **this process**, where N is the number of entries that step sent (not its `message_count`); 0 if they differ. It compares semantic content only, so it matches across runs even though the previous run's last request came from fantasy's in-memory messages and this run's from the database. A provider-specific encoding change that busts the cache, such as a changed reasoning signature, therefore leaves it at 1 and the miss shows as `unexplained`, not `history_rewritten`. **NULL** when: first turn of the session seen by this agent instance (new session, Anvil restart, or a reload that rebuilt the agent); the history got shorter than the previous step's (summarisation, switching to a shorter branch); a fingerprint error; and always for summary, title and small rows. |
+| `history_prefix_match` | Turn rows only. 1 if this request's first N history entries (see `history_hash`) hash the same as the previous recorded turn step of this session in **this process**, where N is the number of entries that step sent (not its `message_count`); 0 if they differ. It compares semantic content only, so it matches across runs even though the previous run's last request came from fantasy's in-memory messages and this run's from the database. A provider-specific encoding change that busts the cache, such as a changed reasoning signature, therefore leaves it at 1 and the miss shows as `unexplained`, not `history_rewritten`. **NULL** when: first turn of the session seen by this agent instance (new session, Anvil restart, or a reload that rebuilt the agent); the history got shorter than the previous step's (summarisation, a rewind or switching to a shorter branch; such misses show as `after_summary` or `history_shortened`); a fingerprint error; and always for summary, title and small rows. |
 | `fingerprint_error` | Non-empty when hashing failed; hashes may then be empty. |
 
 All hashes are 16 hex characters (truncated SHA-256).
@@ -137,7 +137,7 @@ Temp view over `step_usage_report`, only `turn` and `summary` rows with a
 
 | Column | Meaning |
 |---|---|
-| `prev_*` | Previous row's id, provider, model, hashes, finish time, estimated flag. |
+| `prev_*` | Previous row's id, provider, model, hashes, finish time, estimated flag, `message_count`. |
 | `prev_cached_prefix` | Previous row's `cache_read + cache_write`. |
 | `prev_prompt_tokens` | Previous row's `prompt_tokens`. |
 | `model_max_read` | Max `cache_read_tokens` over all classified rows of this provider and model. |
@@ -145,8 +145,8 @@ Temp view over `step_usage_report`, only `turn` and `summary` rows with a
 | `after_summary` | 1 if a summary of this session finished in that gap. |
 | `baseline` | Tokens this call should have read. `anthropic_ephemeral`: `prev_cached_prefix`, except `prev_prompt_tokens` for `provider_type = 'vercel'` (see the Vercel caveat). `automatic` and `disabled`: `prev_prompt_tokens`. NULL for summary rows, `none` policy and first rows. |
 | `suspected_miss` | NULL (not judged: no baseline, baseline under 1024, or this or the previous row estimated), 0 (read at least half the baseline), 1 (miss). |
-| `changes` | `first_call`, or space-separated differences from the previous row: `model`, `tools`, `system`, `summary`, `history` (prefix match 0). |
-| `suspected_cause` | `first_call`; empty if not a miss; else the first match of `cache_disabled`, `no_reads_reported`, `model_changed`, `tools_changed`, `system_changed`, `after_summary`, `history_rewritten`, `likely_ttl_expired` (gap over 5 min), `unknown_after_restart` (prefix match NULL), `unexplained`. |
+| `changes` | `first_call`, or space-separated differences from the previous row: `model`, `tools`, `system`, `summary`, `history` (prefix match 0), `shortened` (`message_count` lower than the previous row's). |
+| `suspected_cause` | `first_call`; empty if not a miss; else the first match of `cache_disabled`, `no_reads_reported`, `model_changed`, `tools_changed`, `system_changed`, `after_summary`, `history_rewritten`, `history_shortened` (`message_count` dropped with no summary between; `history_prefix_match` is NULL then), `likely_ttl_expired` (gap over 5 min), `unknown_after_restart` (prefix match NULL), `unexplained`. |
 | `tokens_not_reused` | Misses only: `baseline - cache_read`, floored at 0. |
 | `excess_cost` | Misses only: `tokens_not_reused` times (write price for `anthropic_ephemeral`, else input price, minus read price), in USD. |
 
