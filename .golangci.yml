@@ -109,7 +109,7 @@ linters:
       # function must stay under it. Delete an entry once its function is
       # back under the limit.
       - path: internal/agent/agent\.go
-        text: 'func `(\(\*sessionAgent\)\.generateTitle|\(\*sessionAgent\)\.summarizeOwned)`'
+        text: 'func `(\(\*sessionAgent\)\.summarizeOwned)`'
         linters: [gocognit]
       - path: internal/agent/tools/anvil_info\.go
         text: 'func `(writeLSP|writeMCP)`'
