@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"regexp"
 	"slices"
@@ -633,42 +632,13 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	streamCall.Messages = aiMsgs
 	streamCall.Headers = sessionHeaders(sessionID)
 	streamCall.ProviderOptions = opts
-	streamCall.OnReasoningDelta = func(id string, text string) error {
-		compactionMsg.AppendReasoningContent(text)
-		return a.messages.Update(genCtx, compactionMsg)
-	}
-	streamCall.OnReasoningEnd = func(id string, reasoning fantasy.ReasoningContent) error {
-		// Handle anthropic signature.
-		if anthropicData, ok := reasoning.ProviderMetadata["anthropic"]; ok {
-			if signature, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok && signature.Signature != "" {
-				compactionMsg.AppendReasoningSignature(signature.Signature)
-			}
-		}
-		compactionMsg.FinishThinking()
-		return a.messages.Update(genCtx, compactionMsg)
-	}
-	streamCall.OnTextDelta = func(id, text string) error {
-		compactionMsg.AppendContent(text)
-		return a.messages.Update(genCtx, compactionMsg)
-	}
+	run := &summaryRun{a: a, sessionID: sessionID, genCtx: genCtx, persistCtx: persistCtx, msg: &compactionMsg}
+	streamCall.OnReasoningDelta = run.onReasoningDelta
+	streamCall.OnReasoningEnd = run.onReasoningEnd
+	streamCall.OnTextDelta = run.onTextDelta
 	resp, err := agent.Stream(genCtx, streamCall)
 	if err != nil {
-		var providerErr *fantasy.ProviderError
-		if errors.Is(err, context.Canceled) || genCtx.Err() != nil ||
-			(errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized) {
-			if moveErr := a.sessions.MoveLeaf(persistCtx, sessionID, compactionMsg.ParentMessageID); moveErr != nil {
-				return fmt.Errorf("restoring summary parent: %w", moveErr)
-			}
-			if deleteErr := a.messages.Delete(persistCtx, compactionMsg.ID); deleteErr != nil {
-				return fmt.Errorf("deleting summary placeholder: %w", deleteErr)
-			}
-			return err
-		}
-		compactionMsg.AddFinish(message.FinishReasonError, "Summarization Error", err.Error())
-		if updateErr := a.messages.Update(persistCtx, compactionMsg); updateErr != nil {
-			return updateErr
-		}
-		return err
+		return run.recordFailure(err)
 	}
 
 	// Populate the CompactionContent part with the generated summary.
