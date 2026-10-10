@@ -90,6 +90,14 @@ type Coordinator interface {
 	RunTurn(ctx context.Context, sessionID, prompt string) (*fantasy.AgentResult, error)
 	// RunWorkflowAgent runs a fresh, isolated subagent for a workflow.
 	RunWorkflowAgent(ctx context.Context, call WorkflowAgentCall) (WorkflowAgentOutput, error)
+	// HasAgent reports whether name is a configured agent other than the
+	// orchestrator.
+	HasAgent(name string) bool
+	// Hold stops new runs from starting in sessionIDs and waits for their
+	// in-flight runs to finish. Messages sent meanwhile queue; exclusive
+	// work such as summarizing is refused. Holds nest. The idempotent
+	// release lifts the hold and starts work queued behind it.
+	Hold(ctx context.Context, sessionIDs []string) (release func(), err error)
 	// RunWake starts a turn for an idle session to deliver its pending
 	// job events. See SessionAgent.RunWake.
 	RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error)
@@ -1627,6 +1635,19 @@ func (c *coordinator) ClearQueue(sessionID string) {
 
 func (c *coordinator) IsBusy() bool {
 	return c.getOrchestrator().IsBusy()
+}
+
+// HasAgent implements Coordinator.
+func (c *coordinator) HasAgent(name string) bool {
+	c.orchestratorMu.RLock()
+	defer c.orchestratorMu.RUnlock()
+	_, ok := c.agentConfigs[name]
+	return ok && name != config.AgentOrchestrator
+}
+
+// Hold implements Coordinator.
+func (c *coordinator) Hold(ctx context.Context, sessionIDs []string) (release func(), err error) {
+	return c.admission.hold(ctx, sessionIDs)
 }
 
 func (c *coordinator) IsSessionBusy(sessionID string) bool {
