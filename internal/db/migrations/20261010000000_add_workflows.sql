@@ -19,9 +19,6 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
 );
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE INDEX IF NOT EXISTS idx_workflow_runs_session ON workflow_runs (invoking_session_id);
--- +goose StatementEnd
--- +goose StatementBegin
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_running ON workflow_runs (instance_id) WHERE status = 'running';
 -- +goose StatementEnd
 -- +goose StatementBegin
@@ -65,9 +62,6 @@ DROP TABLE IF EXISTS workflow_events;
 -- +goose StatementEnd
 -- +goose StatementBegin
 DROP INDEX IF EXISTS idx_workflow_runs_running;
--- +goose StatementEnd
--- +goose StatementBegin
-DROP INDEX IF EXISTS idx_workflow_runs_session;
 -- +goose StatementEnd
 -- +goose StatementBegin
 DROP TABLE IF EXISTS workflow_runs;
