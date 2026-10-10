@@ -71,6 +71,17 @@ func TestRunExecutesOnce(t *testing.T) {
 	require.Equal(t, []string{"once"}, h.backend.bashCmds())
 }
 
+func TestScriptsSeeOnlyErrorClassesTheRuntimeThrows(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	got, err := h.run(t, `function main() {
+  return [typeof BashError, typeof SchemaError, typeof Cancelled, typeof JobsRunning, typeof Interrupted]
+}`, "")
+	require.NoError(t, err)
+	require.Equal(t, []any{"function", "function", "function", "function", "undefined"}, got)
+}
+
 func TestUncaughtErrorFailsRun(t *testing.T) {
 	t.Parallel()
 

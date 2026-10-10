@@ -9,13 +9,10 @@
   class Cancelled extends Error {
     constructor(message) { super(message); this.name = "Cancelled"; }
   }
-  class Interrupted extends Error {
-    constructor(message) { super(message); this.name = "Interrupted"; }
-  }
   class JobsRunning extends Error {
     constructor(message) { super(message); this.name = "JobsRunning"; }
   }
-  const errorTypes = { BashError, SchemaError, Cancelled, Interrupted, JobsRunning };
+  const errorTypes = { BashError, SchemaError, Cancelled, JobsRunning };
   const native = global.__native;
   delete global.__native;
 
@@ -41,7 +38,7 @@
   const random = () => invoke("random");
 
   Object.assign(global, {
-    BashError, SchemaError, Cancelled, Interrupted, JobsRunning,
+    BashError, SchemaError, Cancelled, JobsRunning,
     requires() {},
     now, random,
     bash: (cmd, opts) => invoke("bash", Object.assign({}, opts, { cmd })),
