@@ -95,6 +95,18 @@ func (a *admission) claimFor(job submission, id string) *submissionOwner {
 // it finishes, without delaying the result. Unlike submit, it never
 // returns early for a queued job.
 func (a *admission) submitAwait(ctx context.Context, id string, job submission) (*fantasy.AgentResult, error) {
+	a.mu.Lock()
+	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok {
+		// Already running as this session's owner, e.g. the coordinator's
+		// run calling the session agent: run in place, as submit does.
+		valid := owner.sessionID == id && a.owners[id] == owner
+		a.mu.Unlock()
+		if !valid {
+			return nil, fmt.Errorf("invalid submission owner: %w", ErrSessionBusy)
+		}
+		return job.run(ctx)
+	}
+	a.mu.Unlock()
 	done := make(chan submissionResult, 1)
 	job.done, job.ctx = done, ctx
 	a.mu.Lock()

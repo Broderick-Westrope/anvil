@@ -129,6 +129,7 @@ func (c *coordinator) runWorkflowTurn(ctx context.Context, sub SessionAgent, ses
 	if err != nil {
 		return "", err
 	}
+	call.Await = true
 	result, err := sub.Run(ctx, call)
 	if err != nil {
 		return "", err

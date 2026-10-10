@@ -216,3 +216,23 @@ func TestAwaitedRunUsesItsOwnContext(t *testing.T) {
 	release <- struct{}{}
 	require.Equal(t, "script", <-got)
 }
+
+func TestAwaitFromInsideItsOwnRunExecutesDirectly(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	done := make(chan string, 1)
+	go func() {
+		r, err := a.submitAwait(t.Context(), "s", submission{run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			return a.submitAwait(ctx, "s", submission{run: instantRun("nested")})
+		}})
+		require.NoError(t, err)
+		done <- resultText(r)
+	}()
+	select {
+	case got := <-done:
+		require.Equal(t, "nested", got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("nested awaited submission deadlocked")
+	}
+}

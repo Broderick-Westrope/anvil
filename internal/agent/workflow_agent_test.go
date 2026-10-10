@@ -1,10 +1,12 @@
 package agent_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -144,4 +146,41 @@ func TestWorkflowAgentGeneratesASessionIDByDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, first.SessionID)
 	require.NotEqual(t, first.SessionID, second.SessionID)
+}
+
+func TestWorkflowAgentCancelStopsContinuationAfterCompaction(t *testing.T) {
+	f := branchfixture.New(t, branchfixture.WithAgents("reviewer"))
+	provider, _ := f.Config.Config().Providers.Get("anthropic")
+	provider.Models[0].ContextWindow = 100
+	f.Config.Config().Providers.Set("anthropic", provider)
+	parent := newParent(t, f)
+	continued := make(chan struct{})
+	f.Provider.Enqueue(
+		branchfixture.Response{ToolName: "grep", ToolInput: `{"pattern":"x"}`, InputTokens: 95},
+		branchfixture.Response{Text: "summary"},
+		branchfixture.Response{Started: continued, Release: make(chan struct{})},
+	)
+	ctx, cancel := context.WithCancel(f.Context)
+	defer cancel()
+	sessionID := "workflow-agent-compaction"
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.Coordinator.RunWorkflowAgent(ctx, agent.WorkflowAgentCall{
+			ParentSessionID: parent, Agent: "reviewer", Prompt: "review", SessionID: sessionID,
+		})
+		done <- err
+	}()
+	select {
+	case <-continued:
+	case <-f.Context.Done():
+		t.Fatal("continuation never started")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunWorkflowAgent kept waiting after cancel")
+	}
+	require.Eventually(t, func() bool { return !f.Coordinator.IsSessionBusy(sessionID) }, 5*time.Second, 10*time.Millisecond)
 }

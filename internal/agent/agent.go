@@ -87,6 +87,10 @@ type SessionAgentCall struct {
 	FrequencyPenalty *float64
 	PresencePenalty  *float64
 	NonInteractive   bool
+	// Await makes the caller wait for this call's own result, with its
+	// context governing the run even after it queues or continues past
+	// auto-compaction.
+	Await bool
 
 	// wake marks a run started by RunWake: it begins with a job notice
 	// instead of a user prompt.
@@ -275,9 +279,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if call.state == nil {
 		call.state = &runState{}
 	}
-	return a.admission.submit(ctx, call.SessionID, submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+	job := submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
 		return a.runOwned(ctx, call)
-	}})
+	}}
+	if call.Await {
+		return a.admission.submitAwait(ctx, call.SessionID, job)
+	}
+	return a.admission.submit(ctx, call.SessionID, job)
 }
 
 func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
