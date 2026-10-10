@@ -213,3 +213,20 @@ func TestWorkflowCatalog(t *testing.T) {
 	require.False(t, cat.HasAgent(config.AgentOrchestrator), "workflows can't run the orchestrator as an agent")
 	require.False(t, cat.HasAgent("nope"))
 }
+
+func TestRunRefusesWorkflowCommands(t *testing.T) {
+	global, project := t.TempDir(), t.TempDir()
+	t.Setenv("ANVIL_GLOBAL_CONFIG", global)
+	t.Setenv("ANVIL_GLOBAL_DATA", global)
+	t.Setenv("ANVIL_DISABLE_PROVIDER_AUTO_UPDATE", "1")
+	dataDir := filepath.Join(project, ".anvil")
+	writeTestFile(t, filepath.Join(dataDir, "commands", "demo", "COMMAND.md"), "---\nworkflow: workflow.js\n---\n")
+	writeTestFile(t, filepath.Join(dataDir, "commands", "demo", "workflow.js"), "function main() {}\n")
+	writeTestFile(t, filepath.Join(dataDir, "commands", "plain", "COMMAND.md"), "Say hi.\n")
+	store, err := config.Load(project, dataDir, false)
+	require.NoError(t, err)
+
+	require.ErrorContains(t, refuseWorkflowCommand(store.Config(), "/demo some args"), "workflow command")
+	require.NoError(t, refuseWorkflowCommand(store.Config(), "/plain"))
+	require.NoError(t, refuseWorkflowCommand(store.Config(), "demo please"))
+}

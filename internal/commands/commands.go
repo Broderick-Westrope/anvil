@@ -474,3 +474,22 @@ func GetMCPPrompt(cfg *config.ConfigStore, clientID, promptID string, args map[s
 	}
 	return strings.Join(result, " "), nil
 }
+
+// MatchSlash finds the command a "/name args" line invokes, by its display
+// name when collisions gave it one, else its logical name.
+func MatchSlash(cmds []CustomCommand, line string) (CustomCommand, bool) {
+	if !strings.HasPrefix(line, "/") {
+		return CustomCommand{}, false
+	}
+	for _, cmd := range cmds {
+		name := cmd.ItemName()
+		if cmd.DisplayName != "" {
+			name = cmd.DisplayName
+		}
+		prefix := "/" + name
+		if line == prefix || strings.HasPrefix(line, prefix+" ") {
+			return cmd, true
+		}
+	}
+	return CustomCommand{}, false
+}

@@ -8,6 +8,9 @@ import (
 	"os/signal"
 	"strings"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+
 	"charm.land/log/v2"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/spf13/cobra"
@@ -77,6 +80,10 @@ anvil run --continue "Follow up on your last response"
 		}
 		defer cleanup()
 
+		if err := refuseWorkflowCommand(ws.Config(), prompt); err != nil {
+			return err
+		}
+
 		if !ws.Config().IsConfigured() {
 			return fmt.Errorf("no providers configured - please run 'anvil' to set up a provider interactively")
 		}
@@ -107,4 +114,21 @@ func init() {
 	runCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
 	runCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
 	runCmd.MarkFlagsMutuallyExclusive("session", "continue")
+}
+
+// refuseWorkflowCommand stops `anvil run` from sending a workflow command
+// to the model as plain text: workflows need the TUI for approval, ask()
+// and focus, and run without their script they'd skip its gates.
+func refuseWorkflowCommand(cfg *config.Config, prompt string) error {
+	if !strings.HasPrefix(prompt, "/") {
+		return nil
+	}
+	cmds, err := commands.LoadAllCommands(cfg, nil)
+	if err != nil {
+		return nil
+	}
+	if cmd, ok := commands.MatchSlash(cmds, prompt); ok && cmd.Workflow != "" {
+		return fmt.Errorf("/%s is a workflow command; run it in the interactive TUI (anvil)", cmd.ItemName())
+	}
+	return nil
 }

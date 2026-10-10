@@ -607,3 +607,34 @@ func TestDisplayDescriptionMarksBrokenCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchSlashFindsCommandByInvokedName(t *testing.T) {
+	t.Parallel()
+
+	cmds := []CustomCommand{
+		{ID: "project:build", Name: "project:build", Source: "project", Workflow: "/w/build/workflow.js"},
+		{ID: "user:review", Name: "user:review", DisplayName: "review (user)"},
+	}
+	tests := map[string]struct {
+		line   string
+		want   string
+		wantOK bool
+	}{
+		"with args":    {line: "/build plans/x.md", want: "project:build", wantOK: true},
+		"bare":         {line: "/build", want: "project:build", wantOK: true},
+		"prefix only":  {line: "/builder", wantOK: false},
+		"display name": {line: "/review (user) now", want: "user:review", wantOK: true},
+		"not a slash":  {line: "build it", wantOK: false},
+		"unknown":      {line: "/nope", wantOK: false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := MatchSlash(cmds, tc.line)
+			require.Equal(t, tc.wantOK, ok)
+			if ok {
+				require.Equal(t, tc.want, got.ID)
+			}
+		})
+	}
+}
