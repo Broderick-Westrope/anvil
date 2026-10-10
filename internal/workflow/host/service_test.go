@@ -196,6 +196,30 @@ func TestServiceApprovalCoversTheWholeCommandDirectory(t *testing.T) {
 	require.Equal(t, host.StatusDenied, h.next(t, host.EventFinished).Status)
 }
 
+func TestServiceApprovalFollowsASymlinkedCommandDirectory(t *testing.T) {
+	h := newServiceHarness(t, false)
+	target := t.TempDir()
+	writeFile(t, filepath.Join(target, "workflow.js"), `function main() { return 1 }`)
+	link := filepath.Join(h.dir, "linked")
+	require.NoError(t, os.Symlink(target, link))
+	path := filepath.Join(link, "workflow.js")
+
+	h.start(t, path, "")
+	req := h.next(t, host.EventApproval)
+	require.Len(t, req.Approval.Files, 1)
+	require.Equal(t, "workflow.js", req.Approval.Files[0].Path)
+	require.Contains(t, req.Approval.Files[0].Source, "return 1")
+	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
+	require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status)
+
+	writeFile(t, filepath.Join(target, "workflow.js"), `function main() { return 2 }`)
+	h.start(t, path, "")
+	req = h.next(t, host.EventApproval)
+	require.Equal(t, host.FileChanged, req.Approval.Files[0].Status)
+	require.NoError(t, h.svc.Respond(req.RequestID, "deny"))
+	require.Equal(t, host.StatusDenied, h.next(t, host.EventFinished).Status)
+}
+
 func TestServiceRefusesMissingRequirementsBeforeRunning(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `requires({agents: ["ghost"]}); function main() { bash("touch should-not-exist") }`)

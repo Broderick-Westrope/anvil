@@ -50,11 +50,18 @@ type bundle []bundleFile
 // loadBundle reads every regular file under the script's directory,
 // following symlinked files but not symlinked directories, and skipping
 // dot directories and node_modules. The script's entry is its parsed
-// source.
+// source. The directory itself may be a symlink. It fails if the bundle
+// doesn't contain the script, so approval never covers a bundle that
+// misses what runs.
 func loadBundle(script *workflow.Script) (bundle, error) {
-	root := script.Dir()
+	root, err := filepath.EvalSymlinks(script.Dir())
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow directory %s: %w", script.Dir(), err)
+	}
+	scriptPath := filepath.Join(root, filepath.Base(script.Path))
 	var b bundle
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	hasScript := false
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -72,9 +79,10 @@ func loadBundle(script *workflow.Script) (bundle, error) {
 		if err != nil {
 			return err
 		}
-		if path == filepath.Clean(script.Path) {
+		if path == scriptPath {
 			// The script as parsed, which is what runs, even if the file
 			// changed since.
+			hasScript = true
 			b = append(b, bundleFile{Path: rel, Source: script.Source})
 			return nil
 		}
@@ -87,6 +95,9 @@ func loadBundle(script *workflow.Script) (bundle, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("read workflow bundle %s: %w", root, err)
+	}
+	if !hasScript {
+		return nil, fmt.Errorf("read workflow bundle %s: it doesn't contain the script %s", root, script.Path)
 	}
 	slices.SortFunc(b, func(x, y bundleFile) int { return strings.Compare(x.Path, y.Path) })
 	return b, nil
