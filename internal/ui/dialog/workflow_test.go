@@ -10,6 +10,8 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
 	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/exp/golden"
 	"github.com/stretchr/testify/require"
 )
 
@@ -203,4 +205,84 @@ func TestDefaultCommandsWorkflowControls(t *testing.T) {
 	goTo := findCommandItem(paused, "workflow_goto")
 	require.NotNil(t, goTo)
 	require.Equal(t, ActionWorkflowControl{SessionID: "s1", Control: WorkflowGoToActive}, goTo.Action())
+}
+
+func drawDialogANSI(d Dialog, width, height int) (string, *tea.Cursor) {
+	scr := uv.NewScreenBuffer(width, height)
+	cur := d.Draw(scr, uv.Rect(0, 0, width, height))
+	return scr.Render(), cur
+}
+
+func TestWorkflowDialogsGolden(t *testing.T) {
+	t.Parallel()
+
+	changed := approvalEvent("function main() {\n  return 1\n}\n")
+	withRefs := approvalEvent("")
+	withRefs.Approval.Requires.References = []string{"references/da.md"}
+	withRefs.Approval.Requires.Skills = nil
+	selected := NewWorkflowAsk(workflowCommon(), askEvent("left", "right"))
+	selected.HandleMsg(press("down"))
+
+	tests := map[string]struct {
+		dialog        Dialog
+		width, height int
+	}{
+		"approval_first_run": {dialog: NewWorkflowApproval(workflowCommon(), approvalEvent("")), width: 100, height: 30},
+		"approval_changed":   {dialog: NewWorkflowApproval(workflowCommon(), changed), width: 120, height: 30},
+		"approval_refs_only": {dialog: NewWorkflowApproval(workflowCommon(), withRefs), width: 100, height: 30},
+		"approval_small":     {dialog: NewWorkflowApproval(workflowCommon(), approvalEvent("")), width: 60, height: 20},
+		"ask_options":        {dialog: selected, width: 100, height: 20},
+		"ask_free_text":      {dialog: NewWorkflowAsk(workflowCommon(), askEvent()), width: 100, height: 20},
+		"ask_narrow":         {dialog: NewWorkflowAsk(workflowCommon(), askEvent("a", "b")), width: 50, height: 12},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			out, _ := drawDialogANSI(tc.dialog, tc.width, tc.height)
+			golden.RequireEqual(t, []byte(out))
+		})
+	}
+}
+
+func TestWorkflowAskLongQuestionIsClipped(t *testing.T) {
+	t.Parallel()
+
+	ev := askEvent("yes")
+	ev.Question = strings.Repeat("line\n", 40) + "LAST"
+	out := drawDialog(NewWorkflowAsk(workflowCommon(), ev), 100, 24)
+	require.NotContains(t, out, "LAST")
+	require.Contains(t, out, "…")
+	require.Contains(t, out, "yes", "the options stay visible")
+}
+
+func TestWorkflowAskCursorSitsInTheInput(t *testing.T) {
+	t.Parallel()
+
+	d := NewWorkflowAsk(workflowCommon(), askEvent())
+	d.HandleMsg(press("h"))
+	out, cur := drawDialogANSI(d, 100, 20)
+	require.NotNil(t, cur)
+	lines := strings.Split(drawDialog(d, 100, 20), "\n")
+	require.Less(t, cur.Y, len(lines))
+	require.Contains(t, lines[cur.Y], "> h", out)
+	before, _, _ := strings.Cut(lines[cur.Y], "> h")
+	require.Equal(t, ansi.StringWidth(before+"> h"), cur.X)
+}
+
+func TestWorkflowAskOptionsWrapAround(t *testing.T) {
+	t.Parallel()
+
+	d := NewWorkflowAsk(workflowCommon(), askEvent("a", "b", "c"))
+	require.Nil(t, d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyUp}))
+	require.Equal(t, ActionWorkflowRespond{RequestID: "ask-1", Answer: "c"}, d.HandleMsg(press("enter")))
+	d.HandleMsg(press("down"))
+	require.Equal(t, ActionWorkflowRespond{RequestID: "ask-1", Answer: "a"}, d.HandleMsg(press("enter")))
+	require.Nil(t, d.HandleMsg(press("x")), "typing does nothing when there are options")
+}
+
+func TestWorkflowAskTypingReturnsNoAction(t *testing.T) {
+	t.Parallel()
+
+	d := NewWorkflowAsk(workflowCommon(), askEvent())
+	require.Nil(t, d.HandleMsg(press("h")))
 }

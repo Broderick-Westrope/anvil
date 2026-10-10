@@ -510,7 +510,7 @@ func TestPromptHistorySkipsWorkflowTurns(t *testing.T) {
 	f := newWorkflowFixture(t)
 	user := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "mine"}}}
 	turn := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: commands.FormatWorkflowTurnXML("demo", "engine")}}}
-	f.u.Update(promptHistoryLoadedMsg{messages: []message.Message{user, turn}})
+	f.u.Update(promptHistoryLoadedMsg{messages: []message.Message{turn, user}})
 	require.Len(t, f.u.promptHistory.messages, 1)
 	require.Equal(t, "mine", f.u.promptHistory.messages[0].text)
 }
@@ -547,4 +547,46 @@ func TestRenderWorkflowPanelGolden(t *testing.T) {
 			golden.RequireEqual(t, []byte(out))
 		})
 	}
+}
+
+func TestConfigReloadWarnsAboutBrokenWorkflows(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		report   workspace.ReloadReport
+		wantType util.InfoType
+	}{
+		"reloaded":      {wantType: util.InfoTypeWarn},
+		"config failed": {report: workspace.ReloadReport{ConfigErr: errors.New("bad json")}, wantType: util.InfoTypeError},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			infos := f.run(f.u.handleConfigReloaded(configReloadedMsg{
+				Report: tc.report,
+				CustomCommands: []commands.CustomCommand{
+					{Name: "demo", Workflow: "/w.js", Warnings: []string{`agent "ghost" not found`}},
+				},
+			}))
+			require.Len(t, infos, 1)
+			require.Equal(t, tc.wantType, infos[0].Type)
+			require.Contains(t, infos[0].Msg, `/demo: agent "ghost" not found`)
+		})
+	}
+}
+
+func TestWorkflowCommandFromPaletteDialogStarts(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.dialog.OpenDialog(&stubDialog{id: dialog.CommandsID, action: dialog.ActionRunCustomCommand{
+		Name: "demo", Content: "BODY $ARGUMENTS", CommandID: "project:demo",
+		Source: "project", Workflow: "/proj/demo/workflow.js",
+	}})
+	f.run(f.u.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
+
+	require.False(t, f.u.dialog.HasDialogs(), "the palette closes and no arguments dialog opens")
+	require.Len(t, f.ws.starts, 1)
+	require.Empty(t, f.ws.runs)
 }
