@@ -20,6 +20,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/entrydir"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
+	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
 
 var namedArgPattern = regexp.MustCompile(`\$([A-Z][A-Z0-9_]*)`)
@@ -68,6 +69,13 @@ type CustomCommand struct {
 	// Location is the path to the command's COMMAND.md, so the agent can
 	// resolve the files it bundles.
 	Location string
+	// Workflow is the absolute path to the command's workflow script, empty
+	// for prompt commands. A workflow command's body isn't injected.
+	Workflow string
+	// Warnings are problems found while loading, such as a workflow script
+	// that is missing or doesn't parse. A command with warnings still loads
+	// so it can be shown as broken.
+	Warnings []string
 }
 
 // commandFrontmatter is the YAML structure expected in command .md files.
@@ -75,6 +83,7 @@ type commandFrontmatter struct {
 	Description  string   `yaml:"description,omitempty"`
 	ArgumentHint string   `yaml:"argument_hint,omitempty"`
 	Skills       []string `yaml:"skills,omitempty"`
+	Workflow     string   `yaml:"workflow,omitempty"`
 }
 
 // ItemName returns the logical command name for collision detection.
@@ -364,7 +373,24 @@ func loadCommand(path, prefix string) (CustomCommand, error) {
 	cmd.ArgumentHint = fm.ArgumentHint
 	cmd.Skills = fm.Skills
 	cmd.Content = body
-	cmd.Arguments = extractArgNames(body)
+	if fm.Workflow == "" {
+		cmd.Arguments = extractArgNames(body)
+		return cmd, nil
+	}
+	// A workflow script is only parsed here, never run: discovery must not
+	// execute code from a command it found on disk.
+	if filepath.IsAbs(fm.Workflow) || !filepath.IsLocal(fm.Workflow) {
+		cmd.Warnings = append(cmd.Warnings,
+			fmt.Sprintf("workflow %q is outside the command directory", fm.Workflow))
+		return cmd, nil
+	}
+	cmd.Workflow = filepath.Join(filepath.Dir(path), fm.Workflow)
+	script, err := workflow.Load(cmd.Workflow)
+	if err != nil {
+		cmd.Warnings = append(cmd.Warnings, err.Error())
+		return cmd, nil
+	}
+	cmd.Warnings = append(cmd.Warnings, script.Warnings...)
 	return cmd, nil
 }
 
