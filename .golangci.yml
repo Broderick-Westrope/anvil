@@ -2,8 +2,10 @@ version: "2"
 linters:
   enable:
     - bodyclose
+    - depguard
     # - exhaustive
     # - goconst
+    - gocognit
     # - godot
     # - godox
     # - gomoddirectives
@@ -25,6 +27,70 @@ linters:
     # - unparam
     - whitespace
     # - wrapcheck
+  settings:
+    # Layers, top to bottom: cmd, ui, workspace, app, agent, then everything
+    # else in internal/. A package may import its own layer or any layer
+    # below it. See "Package Layers" in AGENTS.md.
+    depguard:
+      rules:
+        core:
+          files:
+            - "**/internal/**"
+            - "!**/internal/agent/**"
+            - "!**/internal/app/**"
+            - "!**/internal/workspace/**"
+            - "!**/internal/ui/**"
+            - "!**/internal/cmd/**"
+            - "!**/internal/testutil/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/agent
+              desc: core packages sit below the agent layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/app
+              desc: core packages sit below the app layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/workspace
+              desc: core packages sit below the workspace layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/ui
+              desc: core packages sit below the ui layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+        agent:
+          files:
+            - "**/internal/agent/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/app
+              desc: agent sits below the app layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/workspace
+              desc: agent sits below the workspace layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/ui
+              desc: agent sits below the ui layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+        app:
+          files:
+            - "**/internal/app/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/workspace
+              desc: app sits below the workspace layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/ui
+              desc: app sits below the ui layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+        workspace:
+          files:
+            - "**/internal/workspace/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/ui
+              desc: workspace sits below the ui layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+        ui:
+          files:
+            - "**/internal/ui/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+    gocognit:
+      min-complexity: 30
   disable:
     - errcheck
     - ineffassign
@@ -37,6 +103,168 @@ linters:
       - text: '(slog|log)\.\w+'
         linters:
           - noctx
+      # Layer violations that predate the depguard rules. Fix and delete.
+      - path: internal/app/app\.go
+        text: 'internal/ui/(anim|styles)'
+        linters: [depguard]
+      - path: internal/format/spinner\.go
+        text: 'internal/ui/anim'
+        linters: [depguard]
+      - path: internal/commands/commands\.go
+        text: 'internal/agent/tools/mcp'
+        linters: [depguard]
+      - path: _test\.go
+        linters: [gocognit]
+      # Functions over the gocognit limit when it was enabled. Each new
+      # function must stay under it. Delete an entry once its function is
+      # back under the limit.
+      - path: internal/agent/agent\.go
+        text: 'func `(\(\*sessionAgent\)\.generateTitle|\(\*sessionAgent\)\.preparePrompt|\(\*sessionAgent\)\.runOwned|\(\*sessionAgent\)\.summarizeOwned)`'
+        linters: [gocognit]
+      - path: internal/agent/agentic_fetch_tool\.go
+        text: 'func `(\(\*coordinator\)\.agenticFetchTool)`'
+        linters: [gocognit]
+      - path: internal/agent/coordinator\.go
+        text: 'func `(\(\*coordinator\)\.buildToolsWithState|getProviderOptions)`'
+        linters: [gocognit]
+      - path: internal/agent/lazy_mcp\.go
+        text: 'func `(deriveLazyMCPState)`'
+        linters: [gocognit]
+      - path: internal/agent/task_tool\.go
+        text: 'func `(\(\*coordinator\)\.taskTool)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/anvil_info\.go
+        text: 'func `(writeLSP|writeMCP)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/anvil_logs\.go
+        text: 'func `(readLastLines)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/bash\.go
+        text: 'func `(newBashTool)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/download\.go
+        text: 'func `(NewDownloadTool)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/fetch\.go
+        text: 'func `(NewFetchTool)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/grep\.go
+        text: 'func `(NewGrepTool)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/job_output\.go
+        text: 'func `(NewJobOutputTool)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/lsp_call_hierarchy\.go
+        text: 'func `(NewCallHierarchyTool)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/lsp_rename\.go
+        text: 'func `(NewRenameTool)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/search\.go
+        text: 'func `(parseLiteSearchResults)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/todos\.go
+        text: 'func `(NewTodosTool)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/view\.go
+        text: 'func `(runPathMode)`'
+        linters: [gocognit]
+      - path: internal/agent/tools/write\.go
+        text: 'func `(NewWriteTool)`'
+        linters: [gocognit]
+      - path: internal/app/app\.go
+        text: 'func `(\(\*App\)\.RunNonInteractive)`'
+        linters: [gocognit]
+      - path: internal/app/memlog\.go
+        text: 'func `(\(\*App\)\.startMemoryMonitor)`'
+        linters: [gocognit]
+      - path: internal/cmd/permissions\.go
+        text: 'func `(applyPermissionCandidates)`'
+        linters: [gocognit]
+      - path: internal/cmd/session_recover\.go
+        text: 'func `(newSessionRecoverCommand)`'
+        linters: [gocognit]
+      - path: internal/config/config\.go
+        text: 'func `(applyOverrides)`'
+        linters: [gocognit]
+      - path: internal/config/load\.go
+        text: 'func `(\(\*Config\)\.configureProviders|resolveSelectedModels)`'
+        linters: [gocognit]
+      - path: internal/lsp/util/edit\.go
+        text: 'func `(applyDocumentChange)`'
+        linters: [gocognit]
+      - path: internal/mcpauth/authorize\.go
+        text: 'func `(Authorize)`'
+        linters: [gocognit]
+      - path: internal/message/content\.go
+        text: 'func `(\(\*Message\)\.ToAIMessage)`'
+        linters: [gocognit]
+      - path: internal/message/message\.go
+        text: 'func `(\(\*service\)\.flushOne|unmarshalParts)`'
+        linters: [gocognit]
+      - path: internal/message/tree\.go
+        text: 'func `(FilterBranchPathForContext)`'
+        linters: [gocognit]
+      - path: internal/permission/decisionlog/analytics\.go
+        text: 'func `(ComputeStats)`'
+        linters: [gocognit]
+      - path: internal/permission/permission\.go
+        text: 'func `(\(\*permissionService\)\.Request)`'
+        linters: [gocognit]
+      - path: internal/permission/segment/segment\.go
+        text: 'func `(split)`'
+        linters: [gocognit]
+      - path: internal/permission/triage/triage\.go
+        text: 'func `(Analyze)`'
+        linters: [gocognit]
+      - path: internal/recovery/recovery\.go
+        text: 'func `(scan|sweepArtifacts)`'
+        linters: [gocognit]
+      - path: internal/shell/jq\.go
+        text: 'func `(handleJQ|readInputs)`'
+        linters: [gocognit]
+      - path: internal/ui/anim/anim\.go
+        text: 'func `(New)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/docker_mcp\.go
+        text: 'func `(\(\*DockerMCPToolRenderContext\)\.RenderTool)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/todos\.go
+        text: 'func `(\(\*TodosToolRenderContext\)\.RenderTool)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/tools\.go
+        text: 'func `(\(\*baseToolMessageItem\)\.formatParametersForCopy)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/unified_diff\.go
+        text: 'func `(parseUnifiedDiff)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/commands\.go
+        text: 'func `(\(\*Commands\)\.defaultCommands|\(\*Commands\)\.HandleMsg)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/mcp_palette\.go
+        text: 'func `(\(\*MCPPalette\)\.handleNavKey)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/models\.go
+        text: 'func `(\(\*Models\)\.setProviderItems)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/sessions\.go
+        text: 'func `(\(\*Session\)\.HandleMsg)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/tree\.go
+        text: 'func `(NewTree)`'
+        linters: [gocognit]
+      - path: internal/ui/diffview/diffview\.go
+        text: 'func `(\(\*DiffView\)\.renderSplit|\(\*DiffView\)\.renderUnified)`'
+        linters: [gocognit]
+      - path: internal/ui/list/highlight\.go
+        text: 'func `(HighlightBuffer)`'
+        linters: [gocognit]
+      - path: internal/ui/model/sidebar\.go
+        text: 'func `(\(\*UI\)\.modelInfo)`'
+        linters: [gocognit]
+      - path: internal/ui/model/ui\.go
+        text: 'func `(\(\*UI\)\.appendSessionMessageToChat|\(\*UI\)\.deriveEnabledLazyMCPs|\(\*UI\)\.Draw|\(\*UI\)\.FullHelp|\(\*UI\)\.handleChildSessionMessage|\(\*UI\)\.handleDialogMsg|\(\*UI\)\.handleKeyPressMsg|\(\*UI\)\.loadNestedToolCalls|\(\*UI\)\.update|\(\*UI\)\.updateSessionMessageToChat)`'
+        linters: [gocognit]
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
