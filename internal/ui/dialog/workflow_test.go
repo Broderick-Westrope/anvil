@@ -223,10 +223,27 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 	selected := NewWorkflowAsk(workflowCommon(), askEvent("left", "right"))
 	selected.HandleMsg(press("down"))
 
+	long := approvalEvent("")
+	long.Approval.Source = strings.Repeat("// filler line\n", 60)
+	longQuestion := askEvent("yes")
+	longQuestion.Question = strings.TrimSuffix(strings.Repeat("question line\n", 40), "\n")
+	fits := askEvent("yes")
+	// 24 rows leave room for exactly 11 question lines with one option.
+	fits.Question = strings.TrimSuffix(strings.Repeat("question line\n", 11), "\n")
+	longAnswer := NewWorkflowAsk(workflowCommon(), askEvent())
+	drawDialog(longAnswer, 100, 20) // Typing happens after the dialog is on screen.
+	for range 120 {
+		longAnswer.HandleMsg(press("w"))
+	}
+
 	tests := map[string]struct {
 		dialog        Dialog
 		width, height int
 	}{
+		"approval_long":      {dialog: NewWorkflowApproval(workflowCommon(), long), width: 100, height: 40},
+		"ask_long_question":  {dialog: NewWorkflowAsk(workflowCommon(), longQuestion), width: 100, height: 24},
+		"ask_question_fits":  {dialog: NewWorkflowAsk(workflowCommon(), fits), width: 100, height: 24},
+		"ask_long_answer":    {dialog: longAnswer, width: 100, height: 20},
 		"approval_first_run": {dialog: NewWorkflowApproval(workflowCommon(), approvalEvent("")), width: 100, height: 30},
 		"approval_changed":   {dialog: NewWorkflowApproval(workflowCommon(), changed), width: 120, height: 30},
 		"approval_refs_only": {dialog: NewWorkflowApproval(workflowCommon(), withRefs), width: 100, height: 30},

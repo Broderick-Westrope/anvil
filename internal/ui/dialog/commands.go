@@ -663,9 +663,7 @@ type WorkflowControls struct {
 // current session, or hides them when w is nil.
 func (c *Commands) SetWorkflowControls(w *WorkflowControls) {
 	c.workflow = w
-	if c.selected == SystemCommands {
-		c.setCommandItems(c.selected)
-	}
+	c.setCommandItems(c.selected)
 }
 
 // SetCustomCommands sets the custom commands and refreshes the view if user commands are currently displayed.

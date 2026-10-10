@@ -168,21 +168,19 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	mgr := shell.GetBackgroundShellManager()
 	app.startJobPersistence(ctx, q, mgr)
 	app.jobEvents = jobevents.NewStore(app.jobOwner(mgr))
-	// Without job persistence this process has no registered instance, so
-	// its workflow runs get an ID no other instance will consider live.
-	workflowInstance := uuid.NewString()
-	if app.jobs != nil {
-		workflowInstance = app.jobs.store.InstanceID()
-	}
-	app.workflowStore = host.NewStore(q, config.GlobalDataDir(), workflowInstance)
 	if app.jobs != nil {
 		if err := app.jobEvents.Persist(ctx, q, app.jobs.store.InstanceID()); err != nil {
 			slog.Warn("Failed to load background job events; new events will not survive a restart", "error", err)
 		}
+		workflows := host.NewStore(q, config.GlobalDataDir(), app.jobs.store.InstanceID())
+		app.workflowStore = workflows
 		go startupPrune(ctx, "workflow runs", func(ctx context.Context) error {
-			return errors.Join(app.workflowStore.MarkInterrupted(ctx), app.workflowStore.PruneRunDirs(ctx, time.Now()))
+			return errors.Join(workflows.MarkInterrupted(ctx), workflows.PruneRunDirs(ctx, time.Now()))
 		})
 	}
+	// Without job persistence this process has no registered instance, so
+	// its workflow runs get an ID no other instance will consider live.
+	app.workflowStore = cmp.Or(app.workflowStore, host.NewStore(q, config.GlobalDataDir(), uuid.NewString()))
 	mgr.SetEventSink(app.jobEvents)
 	app.jobWaker = newJobWaker(app.jobEvents, sessions)
 	go app.jobWaker.run(ctx)
@@ -670,17 +668,20 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 // rebuilt, so a service never drives a coordinator that was replaced.
 func (app *App) startWorkflows() {
 	app.Workflows = host.NewService(app.globalCtx, host.Deps{
-		Coordinator: app.AgentCoordinator,
-		Sessions:    app.Sessions,
-		Store:       app.workflowStore,
-		WorkingDir:  app.config.WorkingDir(),
-		// Approval guards running a script's own shell commands, so only
-		// the level that bypasses every permission check skips it.
-		SkipApproval: func() bool {
-			return app.Permissions.YoloLevel() == config.YoloFull
-		},
+		Coordinator:  app.AgentCoordinator,
+		Sessions:     app.Sessions,
+		Store:        app.workflowStore,
+		WorkingDir:   app.config.WorkingDir(),
+		SkipApproval: app.skipWorkflowApproval,
 	})
 	setupSubscriber(app.eventsCtx, app.serviceEventsWG, "workflows", app.Workflows.Subscribe, app.events)
+}
+
+// skipWorkflowApproval reports whether workflow scripts run without
+// approval. Approval guards a script's own shell commands, so only the
+// yolo level that bypasses every permission check skips it.
+func (app *App) skipWorkflowApproval() bool {
+	return app.Permissions.YoloLevel() == config.YoloFull
 }
 
 // startJobPersistence persists published jobs in the global database

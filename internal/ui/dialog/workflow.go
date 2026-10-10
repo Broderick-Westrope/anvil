@@ -277,15 +277,15 @@ func (d *WorkflowAsk) HandleMsg(msg tea.Msg) Action {
 				answer = d.ev.Options[d.selected]
 			}
 			return ActionWorkflowRespond{RequestID: d.ev.RequestID, Answer: answer}
-		case len(d.ev.Options) > 0 && key.Matches(keyMsg, d.keyMap.Up):
-			d.selected = (d.selected + len(d.ev.Options) - 1) % len(d.ev.Options)
-			return nil
-		case len(d.ev.Options) > 0 && key.Matches(keyMsg, d.keyMap.Down):
-			d.selected = (d.selected + 1) % len(d.ev.Options)
-			return nil
 		}
 	}
-	if len(d.ev.Options) > 0 {
+	if n := len(d.ev.Options); n > 0 {
+		if isKey && key.Matches(keyMsg, d.keyMap.Up) {
+			d.selected = (d.selected + n - 1) % n
+		}
+		if isKey && key.Matches(keyMsg, d.keyMap.Down) {
+			d.selected = (d.selected + 1) % n
+		}
 		return nil
 	}
 	var cmd tea.Cmd
@@ -328,9 +328,10 @@ func (d *WorkflowAsk) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	parts = append(parts, "", shortHelpLine(&d.help, d.ShortHelp(), contentWidth))
 	view := dialogStyle.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	if cur != nil {
-		// The input sits after the title, blank, question and blank lines,
-		// inside the dialog's border and padding.
-		cur.Y += lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, parts[:4]...)) + dialogStyle.GetBorderTopSize() + dialogStyle.GetPaddingTop()
+		// The input is one line after the title, blank, question and blank
+		// lines, inside the dialog's top border; the dialog has no
+		// vertical padding.
+		cur.Y = lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, parts[:4]...)) + dialogStyle.GetBorderTopSize()
 		cur.X += dialogStyle.GetBorderLeftSize() + dialogStyle.GetPaddingLeft()
 	}
 	DrawCenterCursor(scr, area, view, cur)

@@ -262,22 +262,31 @@ func TestAnnotateWorkflowCommands(t *testing.T) {
 	ws := newWorkflowWorkspace()
 	ws.missing = map[string][]string{"/a/workflow.js": {`agent "ghost" not found`}}
 	ws.loadErr = map[string]error{"/c/workflow.js": errors.New("parse error")}
+	ws.loadErr["/e/workflow.js"] = workspace.ErrWorkflowsUnavailable
 	cmds := []commands.CustomCommand{
+		{Name: "first-prompt"},
 		{Name: "a", Workflow: "/a/workflow.js"},
 		{Name: "b", Workflow: "/b/workflow.js"},
 		{Name: "c", Workflow: "/c/workflow.js"},
 		{Name: "d", Workflow: "/d/workflow.js", Warnings: []string{"already broken"}},
 		{Name: "prompt"},
+		{Name: "e", Workflow: "/e/workflow.js"},
 	}
 
 	got := annotateWorkflowCommands(ws, cmds)
 
-	require.Equal(t, []string{`agent "ghost" not found`}, got[0].Warnings)
-	require.Empty(t, got[1].Warnings)
-	require.Equal(t, []string{"parse error"}, got[2].Warnings)
-	require.Equal(t, []string{"already broken"}, got[3].Warnings, "a script that didn't load isn't checked again")
-	require.Empty(t, got[4].Warnings)
-	require.Empty(t, cmds[0].Warnings, "the input is not modified")
+	require.Len(t, got, len(cmds))
+	for i := range cmds {
+		require.Equal(t, cmds[i].Name, got[i].Name)
+	}
+	require.Empty(t, got[0].Warnings)
+	require.Equal(t, []string{`agent "ghost" not found`}, got[1].Warnings)
+	require.Empty(t, got[2].Warnings)
+	require.Equal(t, []string{"parse error"}, got[3].Warnings)
+	require.Equal(t, []string{"already broken"}, got[4].Warnings, "a script that didn't load isn't checked again")
+	require.Empty(t, got[5].Warnings)
+	require.Empty(t, got[6].Warnings, "workflows aren't broken just because the agent isn't ready")
+	require.Empty(t, cmds[1].Warnings, "the input is not modified")
 }
 
 func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
@@ -285,8 +294,9 @@ func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	_, cmd := f.u.Update(userCommandsLoadedMsg{Commands: []commands.CustomCommand{
-		{ID: "project:demo", Name: "demo", Description: "Demo", Workflow: "/w.js", Warnings: []string{`skill "x" not found`}},
 		{ID: "ok", Name: "ok", Workflow: "/ok.js"},
+		{ID: "prompt", Name: "prompt", Warnings: []string{"prompt commands aren't workflows"}},
+		{ID: "project:demo", Name: "demo", Description: "Demo", Workflow: "/w.js", Warnings: []string{`skill "x" not found`}},
 	}})
 	infos := f.run(cmd)
 
@@ -295,6 +305,7 @@ func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
 	require.Contains(t, infos[0].Msg, "/demo")
 	require.Contains(t, infos[0].Msg, `skill "x" not found`)
 	require.NotContains(t, infos[0].Msg, "/ok")
+	require.NotContains(t, infos[0].Msg, "/prompt")
 
 	var desc string
 	for _, item := range f.u.buildSlashACItems() {
@@ -572,6 +583,7 @@ func TestConfigReloadWarnsAboutBrokenWorkflows(t *testing.T) {
 			require.Len(t, infos, 1)
 			require.Equal(t, tc.wantType, infos[0].Type)
 			require.Contains(t, infos[0].Msg, `/demo: agent "ghost" not found`)
+			require.Contains(t, infos[0].Msg, "reload")
 		})
 	}
 }
@@ -589,4 +601,62 @@ func TestWorkflowCommandFromPaletteDialogStarts(t *testing.T) {
 	require.False(t, f.u.dialog.HasDialogs(), "the palette closes and no arguments dialog opens")
 	require.Len(t, f.ws.starts, 1)
 	require.Empty(t, f.ws.runs)
+}
+
+func TestWorkflowControlsDescribeTheCurrentRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	require.Nil(t, f.u.workflowControls())
+
+	f.event(started("demo", "sess-1"))
+	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo"}, f.u.workflowControls())
+
+	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", Paused: true})
+	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Paused: true, CanGoToActive: true}, f.u.workflowControls())
+}
+
+func TestWorkflowGoToActiveFromPalette(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	require.Nil(t, f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowGoToActive}),
+		"the active session is already open")
+
+	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowGoToActive}))
+	require.Equal(t, "sess-2", f.u.session.ID)
+
+	require.Nil(t, f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "gone", Control: dialog.WorkflowGoToActive}))
+}
+
+func TestWorkflowFocusOnTheOpenSessionIsQuiet(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.textarea.SetValue("draft")
+	f.event(started("demo", "sess-1"))
+	infos := f.event(host.Event{Kind: host.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-1"})
+	require.Empty(t, infos)
+	require.Empty(t, f.u.workflowFollow)
+}
+
+func TestWorkflowPanelSharesThePillsArea(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	require.Equal(t, 1, f.u.pillsAreaHeight())
+	require.NotContains(t, f.panel(), "ctrl+t", "no pills without todos or a queue")
+
+	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	require.Equal(t, 2, f.u.pillsAreaHeight())
+
+	f.u.promptQueue = 2
+	f.u.updateLayoutAndSize()
+	require.Equal(t, 2+pillHeightWithBorder, f.u.pillsAreaHeight())
+	require.Contains(t, f.panel(), "/demo")
+	require.Contains(t, f.panel(), "2 Queued")
 }

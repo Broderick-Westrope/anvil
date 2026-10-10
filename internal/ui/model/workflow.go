@@ -469,12 +469,10 @@ func annotateWorkflowCommands(ws workspace.Workspace, cmds []commands.CustomComm
 			continue
 		}
 		missing, err := ws.WorkflowMissing(cmd.Workflow)
-		switch {
-		case errors.Is(err, workspace.ErrWorkflowsUnavailable):
-		case err != nil:
-			out[i].Warnings = []string{err.Error()}
-		default:
+		if err == nil {
 			out[i].Warnings = missing
+		} else if !errors.Is(err, workspace.ErrWorkflowsUnavailable) {
+			out[i].Warnings = []string{err.Error()}
 		}
 	}
 	return out
