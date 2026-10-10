@@ -175,19 +175,49 @@ func TestCachePolicy(t *testing.T) {
 		"":                cachePolicyNone,
 	}
 	for provider, want := range cases {
-		require.Equal(t, want, cachePolicy(provider), provider)
+		require.Equal(t, want, cachePolicy(provider, true), provider)
 	}
+
+	t.Run("no markers", func(t *testing.T) {
+		// Summary, title and small requests send no markers, so
+		// Anthropic-style providers do not cache them; automatic caching
+		// needs no markers.
+		require.Equal(t, cachePolicyNone, cachePolicy(anthropic.Name, false))
+		require.Equal(t, cachePolicyNone, cachePolicy(bedrock.Name, false))
+		require.Equal(t, cachePolicyNone, cachePolicy(vercel.Name, false))
+		require.Equal(t, cachePolicyAutomatic, cachePolicy(openai.Name, false))
+		require.Equal(t, cachePolicyAutomatic, cachePolicy(google.Name, false))
+		require.Equal(t, cachePolicyNone, cachePolicy("kronk", false))
+	})
 
 	t.Run("env override", func(t *testing.T) {
 		t.Setenv("ANVIL_DISABLE_ANTHROPIC_CACHE", "true")
-		require.Equal(t, cachePolicyDisabled, cachePolicy(anthropic.Name))
-		require.Equal(t, cachePolicyDisabled, cachePolicy(bedrock.Name))
-		require.Equal(t, cachePolicyDisabled, cachePolicy(vercel.Name))
+		require.Equal(t, cachePolicyDisabled, cachePolicy(anthropic.Name, true))
+		require.Equal(t, cachePolicyDisabled, cachePolicy(bedrock.Name, true))
+		require.Equal(t, cachePolicyDisabled, cachePolicy(vercel.Name, true))
+		require.Equal(t, cachePolicyNone, cachePolicy(anthropic.Name, false))
 		// The override only removes Anthropic-style markers; automatic
 		// caching is unaffected.
-		require.Equal(t, cachePolicyAutomatic, cachePolicy(openai.Name))
-		require.Equal(t, cachePolicyNone, cachePolicy("kronk"))
+		require.Equal(t, cachePolicyAutomatic, cachePolicy(openai.Name, true))
+		require.Equal(t, cachePolicyNone, cachePolicy("kronk", true))
 	})
+}
+
+func TestNewRowCachePolicyByKind(t *testing.T) {
+	t.Setenv("ANVIL_DISABLE_ANTHROPIC_CACHE", "")
+	a := &sessionAgent{}
+	model := Model{Model: providerModel{provider: anthropic.Name, model: "claude"}}
+	usage := fantasy.Usage{InputTokens: 1}
+	want := map[string]string{
+		usageKindTurn:    cachePolicyAnthropicEphemeral,
+		usageKindSummary: cachePolicyNone,
+		usageKindTitle:   cachePolicyNone,
+		usageKindSmall:   cachePolicyNone,
+	}
+	for kind, policy := range want {
+		row := a.newRow(&stepCapture{kind: kind, model: model}, usage, fantasy.FinishReasonStop, nil, time.Now())
+		require.Equal(t, policy, row.CachePolicy, kind)
+	}
 }
 
 func TestGetCacheControlOptions(t *testing.T) {

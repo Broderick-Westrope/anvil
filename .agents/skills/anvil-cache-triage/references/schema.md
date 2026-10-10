@@ -103,7 +103,7 @@ read).
 
 | Column | Meaning |
 |---|---|
-| `cache_policy` | `anthropic_ephemeral` (explicit breakpoints: anthropic, bedrock, vercel), `disabled` (those providers with `ANVIL_DISABLE_ANTHROPIC_CACHE` set), `automatic` (openai, azure, openai-compat, openrouter, google cache prefixes themselves), `none` (other). Recorded per row, but summary, title and small requests send no cache markers whatever the policy. |
+| `cache_policy` | `anthropic_ephemeral` (explicit breakpoints: anthropic, bedrock, vercel), `disabled` (those providers with `ANVIL_DISABLE_ANTHROPIC_CACHE` set), `automatic` (openai, azure, openai-compat, openrouter, google cache prefixes themselves), `none` (other providers, and summary, title and small rows on anthropic, bedrock and vercel, since those requests send no cache markers). |
 | `message_count`, `system_count`, `tool_count` | Non-system messages, system messages and tools sent. |
 | `tools_hash` | Hash of tools in the order Anvil passed them (name, description, parameters, required). Empty-list hash for summary, title and small. |
 | `system_hash` | Hash of all system messages, block boundaries included. |

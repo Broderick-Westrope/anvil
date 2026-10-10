@@ -173,7 +173,7 @@ func (a *sessionAgent) newRow(c *stepCapture, usage fantasy.Usage, reason fantas
 		PriceCacheRead:     cw.CostPer1MOutCached,
 		PriceCacheWrite:    cw.CostPer1MInCached,
 		FlatRate:           flatRate,
-		CachePolicy:        cachePolicy(providerType),
+		CachePolicy:        cachePolicy(providerType, c.kind == usageKindTurn),
 		MessageCount:       int64(c.fp.MessageCount),
 		SystemCount:        int64(c.fp.SystemCount),
 		ToolCount:          int64(c.fp.ToolCount),
@@ -188,9 +188,14 @@ func (a *sessionAgent) newRow(c *stepCapture, usage fantasy.Usage, reason fantas
 // cachePolicy mirrors getCacheControlOptions: Anthropic-style providers get
 // explicit ephemeral markers unless ANVIL_DISABLE_ANTHROPIC_CACHE is set,
 // while OpenAI-style providers and Google cache automatically and ignore
-// the markers and the override.
-func cachePolicy(providerType string) string {
+// the markers and the override. markers reports whether the request kind
+// sends cache markers at all; only turns do, so other kinds on
+// Anthropic-style providers record none.
+func cachePolicy(providerType string, markers bool) string {
 	if usesAnthropicCacheMarkers(providerType) {
+		if !markers {
+			return cachePolicyNone
+		}
 		if anthropicCacheDisabled() {
 			return cachePolicyDisabled
 		}
