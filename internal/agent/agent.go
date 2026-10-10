@@ -361,7 +361,8 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		}
 	}()
 
-	history, files := a.preparePrompt(msgs, t.largeModel.CatwalkCfg.SupportsImages, call.Attachments...)
+	history := a.preparePrompt(msgs, t.largeModel.CatwalkCfg.SupportsImages)
+	files := attachmentFiles(call.Attachments)
 
 	// prevTurn is the history of the session's last recorded turn step
 	// before this run; the turn updates it after each step.
@@ -588,7 +589,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		return nil
 	}
 
-	aiMsgs, _ := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages)
+	aiMsgs := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages)
 
 	genCtx := ctx
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
@@ -805,7 +806,7 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	return msg, nil
 }
 
-func (a *sessionAgent) preparePrompt(msgs []message.Message, supportsImages bool, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
+func (a *sessionAgent) preparePrompt(msgs []message.Message, supportsImages bool) []fantasy.Message {
 	var history []fantasy.Message
 	if !a.isSubAgent {
 		history = append(history, fantasy.NewUserMessage(
@@ -816,24 +817,7 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			),
 		))
 	}
-	// Collect all tool call IDs present in assistant messages and all tool
-	// result IDs present in tool messages. This lets us detect both orphaned
-	// tool results (result without a call) and orphaned tool calls (call
-	// without a result).
-	knownToolCallIDs := make(map[string]struct{})
-	knownToolResultIDs := make(map[string]struct{})
-	for _, m := range msgs {
-		switch m.Role {
-		case message.Assistant:
-			for _, tc := range m.ToolCalls() {
-				knownToolCallIDs[tc.ID] = struct{}{}
-			}
-		case message.Tool:
-			for _, tr := range m.ToolResults() {
-				knownToolResultIDs[tr.ToolCallID] = struct{}{}
-			}
-		}
-	}
+	knownToolCallIDs, knownToolResultIDs := knownToolIDs(msgs)
 
 	for _, m := range msgs {
 		if len(m.Parts) == 0 {
@@ -865,7 +849,34 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			}
 		}
 	}
+	return history
+}
 
+// knownToolIDs collects all tool call IDs present in assistant messages and
+// all tool result IDs present in tool messages. This lets us detect both
+// orphaned tool results (result without a call) and orphaned tool calls
+// (call without a result).
+func knownToolIDs(msgs []message.Message) (callIDs, resultIDs map[string]struct{}) {
+	callIDs = make(map[string]struct{})
+	resultIDs = make(map[string]struct{})
+	for _, m := range msgs {
+		switch m.Role {
+		case message.Assistant:
+			for _, tc := range m.ToolCalls() {
+				callIDs[tc.ID] = struct{}{}
+			}
+		case message.Tool:
+			for _, tr := range m.ToolResults() {
+				resultIDs[tr.ToolCallID] = struct{}{}
+			}
+		}
+	}
+	return callIDs, resultIDs
+}
+
+// attachmentFiles returns the binary attachments as file parts. Text
+// attachments are sent in the prompt text instead.
+func attachmentFiles(attachments []message.Attachment) []fantasy.FilePart {
 	var files []fantasy.FilePart
 	for _, attachment := range attachments {
 		if attachment.IsText() {
@@ -877,8 +888,7 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			MediaType: attachment.MimeType,
 		})
 	}
-
-	return history, files
+	return files
 }
 
 // filterFileParts removes fantasy.FilePart entries from a slice of message
