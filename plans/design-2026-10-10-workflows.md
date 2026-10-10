@@ -123,6 +123,10 @@ Out of scope (later sub-projects):
       the active one show a warning and a shortcut to the active session.
 - [ ] Every primitive call and its result is in `workflow_events`, and the
       run row records the script hash and tmpdir path.
+- [ ] `workflow.exclusive(fn)` holds new runs in the run's sessions until
+      `fn` returns, and waits for in-flight runs before starting `fn`.
+- [ ] Resume refuses a run whose recorded working directory differs from
+      Anvil's current one.
 - [ ] Tmpdirs of runs older than 14 days are pruned at startup.
 - [ ] Discovering a workflow, and `anvil workflow check`, never execute any
       of its code. `requires()` is read from the parsed AST.
@@ -271,6 +275,14 @@ Out of scope (later sub-projects):
   It doesn't go through the permission system (see Trust), appears in the
   UI as a workflow step, and is logged.
 - `workflow.tmpdir()`, plus recorded `now()` and `random()`.
+- `workflow.exclusive(fn)` runs `fn` with the run's sessions held: Anvil
+  waits for in-flight runs in them to finish, and any message you send to
+  them meanwhile queues instead of starting, until `fn` returns. It exists
+  for destructive transitions (e.g. `/build` resetting the branch on a
+  rebuild), so the script can re-check workspace state and act on it
+  without a user turn writing in between. Holds are meant to be short, and
+  the progress panel shows one while it's active. This is a narrow
+  exception to "don't constrain the user", not a general lock.
 
 *Structured output*
 - **`agent()` with a schema** gets a `submit_result` tool whose input schema
@@ -326,7 +338,8 @@ Out of scope (later sub-projects):
 
 *State*
 - **`workflow_runs`** (id, command and its source, invoking session, the
-  invocation input passed to `main`, script hash, status: running,
+  invocation input passed to `main`, the canonical working directory the
+  run executes in, script hash, status: running,
   completed, failed, aborted or interrupted, tmpdir, timestamps)
   and **`workflow_events`** (run id, sequence number, primitive, arguments,
   result or error, timestamps). Every primitive call is logged from v1, for
@@ -342,7 +355,10 @@ Out of scope (later sub-projects):
   the primitive and argument hash match the logged event (a mismatch means
   the run diverged, so refuse), and return the logged result. Continue live
   once the log runs out. Resume refuses to run if the script hash has
-  changed. A call with `started` but no `completed` (Anvil died during the
+  changed, or if Anvil isn't running in the run's recorded working
+  directory (sessions can be reopened elsewhere, and relative paths and
+  default `cwd` would then hit the wrong repository). A call with `started`
+  but no `completed` (Anvil died during the
   side effect) is never silently re-run or skipped: resume stops and `ask`s
   you to re-run it, treat it as done (supplying nothing; the script gets
   `Interrupted`), or abandon the run. For `parallel`, recovery works per
@@ -412,9 +428,14 @@ function main(input) {
     // verdict.kind === "wrong-approach"
     lessons.push(builder.turn(lessonPrompt(verdict, doc), { schema: Lesson }))
     if (approach === 3) break
-    // Discard the rejected implementation: commits and new files. Safe only
-    // because assertDisposableBranch() proved the branch held nothing else.
-    bash("git reset --hard " + q(baseSha) + " && git clean -fd")  // throws on failure
+    workflow.exclusive(() => {
+      // Re-check now: you may have changed things since the run started.
+      if (!onlyBuildChangesSince(baseSha) && ask("Discard everything since "
+          + baseSha + ", including changes not made by this run?",
+          { options: ["discard", "stop"] }) === "stop")
+        throw new Error("stopped before rebuild")
+      bash("git reset --hard " + q(baseSha) + " && git clean -fd")  // throws on failure
+    })
     builder = session.new({ seed: seedFrom(doc, lessons), skills: ["go-style", "build-tdd"] })
     workflow.focus(builder)
   }
