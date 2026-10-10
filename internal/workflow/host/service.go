@@ -43,7 +43,8 @@ const (
 	EventFocus EventKind = "focus"
 	// EventWarn is a non-fatal problem, such as undeclared use.
 	EventWarn EventKind = "warn"
-	// EventStep is a bash command the script ran, shown as a workflow step.
+	// EventStep is a bash command or turn the script started, shown as a
+	// workflow step.
 	EventStep EventKind = "step"
 	// EventState reports a run starting, pausing, resuming or holding
 	// sessions.
@@ -69,7 +70,8 @@ type Event struct {
 	Step    string
 	Detail  string
 	Message string
-	// Target is the session for EventFocus.
+	// Target is the session for EventFocus, and the session a turn runs in
+	// for an EventStep with Step "turn".
 	Target string
 
 	Paused bool

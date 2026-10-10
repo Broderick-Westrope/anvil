@@ -52,6 +52,7 @@ func (b *backend) withSkills(names []string, prompt string) string {
 }
 
 func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, error) {
+	b.publish(Event{Kind: EventStep, Step: "turn", Target: call.SessionID})
 	result, err := b.coord.RunTurn(ctx, call.SessionID, b.withSkills(call.Skills, call.Prompt))
 	if err != nil {
 		return "", err
