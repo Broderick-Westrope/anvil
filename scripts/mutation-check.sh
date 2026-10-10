@@ -20,9 +20,43 @@ done
 
 gremlins_version="v0.6.0"
 config=".gremlins.yaml"
-report="$(mktemp "${TMPDIR:-/tmp}/gremlins-report.XXXXXX")"
-scoped_config="$(mktemp "${TMPDIR:-/tmp}/gremlins-config.XXXXXX")"
-trap 'rm -f "$report" "$scoped_config"' EXIT
+legacy_tmp="${TMPDIR:-/tmp}"
+legacy_tmp="${legacy_tmp%/}"
+# Tests under gremlins inherit the run's TMPDIR, and macOS caps Unix socket
+# paths at 104 bytes, which nesting under macOS's long per-user TMPDIR
+# exceeds. /tmp keeps those paths short.
+tmp_root="/tmp"
+
+# Every mutant is new source, so its build output is never reused, and
+# gremlins builds in copies of the module whose paths differ from the
+# checkout's. Left in the shared Go build cache, which only evicts entries
+# unused for five days, that output fills the disk. Each run therefore gets
+# its own cache and temp directory, deleted on exit.
+#
+# Runs killed before their EXIT trap fires leave their directory behind, so
+# sweep those first. Skip directories whose run is still alive, and ones too
+# new to have written their pid yet.
+for stale in "$tmp_root"/anvil-mut.*; do
+    [ -d "$stale" ] || continue
+    pid=$(cat "$stale/pid" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        continue
+    fi
+    if [ -z "$pid" ] && [ -z "$(find "$stale" -maxdepth 0 -mmin +1)" ]; then
+        continue
+    fi
+    rm -rf "$stale"
+done
+# Runs from before this isolation left gremlins work directories straight in
+# the temp directory. No run lasts a day, so older ones are abandoned.
+find "$legacy_tmp" -maxdepth 1 -type d -name 'gremlins-*' -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
+
+run_dir="$(mktemp -d "$tmp_root/anvil-mut.XXXXXX")"
+echo $$ >"$run_dir/pid"
+trap 'rm -rf "$run_dir"' EXIT
+mkdir "$run_dir/tmp"
+report="$run_dir/report.json"
+scoped_config="$run_dir/gremlins.yaml"
 
 if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
     echo "Base ref '$base' not found. Fetch it first (CI needs fetch-depth: 0)." >&2
@@ -79,7 +113,8 @@ if [ "${#scope[@]}" -gt 0 ]; then
     fi
 fi
 
-go clean -testcache
+# Build gremlins itself with the shared cache, where it is reused across runs.
+GOBIN="$run_dir/bin" go install "github.com/go-gremlins/gremlins/cmd/gremlins@${gremlins_version}"
 
 # By default gremlins starts one worker per CPU and each worker's go test uses
 # every CPU too, which saturates a laptop. Keep a quarter of the CPUs busy
@@ -93,7 +128,7 @@ if [ "$test_procs" -ne 0 ]; then
 fi
 
 gremlins_status=0
-nice -n "${MUTATION_NICE:-10}" go run "github.com/go-gremlins/gremlins/cmd/gremlins@${gremlins_version}" \
+GOCACHE="$run_dir/gocache" TMPDIR="$run_dir/tmp" nice -n "${MUTATION_NICE:-10}" "$run_dir/bin/gremlins" \
     unleash --config "$config" --workers "$workers" --diff "$base" --output "$report" . ||
     gremlins_status=$?
 if [ "$gremlins_status" -ne 0 ]; then

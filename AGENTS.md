@@ -154,7 +154,10 @@ internal/
   check runs it over the whole diff and is the final gate. It runs at low
   priority on a quarter of the CPUs; set `MUTATION_WORKERS`,
   `MUTATION_GOMAXPROCS` (`0` for gremlins' defaults) or `MUTATION_NICE` to
-  change that. Coverage gathering alone takes about a minute.
+  change that. Coverage gathering alone takes about a minute. Each run
+  builds in its own Go cache and temp directory under `/tmp`, deleted
+  when it exits, because mutant builds are never reused and would otherwise
+  fill the shared build cache.
 
 ## Merge Gates
 
