@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -103,3 +104,21 @@ func TestSubagentThinkingDrillInKeepsStreaming(t *testing.T) {
 		"the subagent's thinking must keep streaming into the drill-in")
 }
 
+func TestThinkingDrillInFollowsAfterContentStarts(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.updateLayoutAndSize()
+	u.Update(util.DrillInMsg{SessionID: "child", Label: "Explorer"})
+	first := childThinkingEvent("step", false).Payload
+	sub := chat.NewAssistantMessageItem(u.com.Styles, &first)
+	u.drillStack[0].chat.SetMessages(sub)
+	u.Update(util.ThinkingDrillInMsg{Source: sub, Label: "Thinking"})
+	detail := u.drillStack[1].chat
+
+	long := strings.TrimSpace(strings.Repeat("more reasoning\n\n", 60)) + "\n\nlatest step"
+	u.Update(childThinkingEvent(long, true))
+
+	require.True(t, detail.Follow())
+	require.True(t, detail.AtBottom(), "a following thinking drill-in must stay pinned as thinking grows")
+}

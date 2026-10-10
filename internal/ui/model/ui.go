@@ -1487,6 +1487,13 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Thinking and tool drill-ins render items that live in another chat,
+	// so message updates never scroll them. Keep the visible drill-in
+	// pinned to the bottom while it follows.
+	if _, ok := msg.(pubsub.Event[message.Message]); ok && m.isDrilledIn() && m.activeChat().Follow() {
+		m.activeChat().ScrollToBottom()
+	}
+
 	// This logic gets triggered on any message type, but should it?
 	switch m.focus {
 	case uiFocusMain:
