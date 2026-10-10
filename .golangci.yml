@@ -114,9 +114,6 @@ linters:
       - path: internal/agent/tools/anvil_logs\.go
         text: 'func `(readLastLines)`'
         linters: [gocognit]
-      - path: internal/agent/tools/bash\.go
-        text: 'func `(newBashTool)`'
-        linters: [gocognit]
       - path: internal/agent/tools/download\.go
         text: 'func `(NewDownloadTool)`'
         linters: [gocognit]
