@@ -247,10 +247,15 @@ type Styles struct {
 		ErrorTag         lipgloss.Style
 		ErrorTitle       lipgloss.Style
 		ErrorDetails     lipgloss.Style
-		ToolCallFocused  lipgloss.Style
-		ToolCallCompact  lipgloss.Style
-		ToolCallBlurred  lipgloss.Style
-		SectionHeader    lipgloss.Style
+		// Workflow* style turns a workflow script sent to a session.
+		WorkflowBlurred lipgloss.Style
+		WorkflowFocused lipgloss.Style
+		WorkflowTag     lipgloss.Style
+		WorkflowTitle   lipgloss.Style
+		ToolCallFocused lipgloss.Style
+		ToolCallCompact lipgloss.Style
+		ToolCallBlurred lipgloss.Style
+		SectionHeader   lipgloss.Style
 
 		// Thinking section styles
 		ThinkingBox            lipgloss.Style // Left-border container for thinking content

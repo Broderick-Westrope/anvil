@@ -780,6 +780,13 @@ func quickStyle(o quickStyleOpts) Styles {
 		Background(o.destructive).Foreground(o.onPrimary)
 	s.Messages.ErrorTitle = lipgloss.NewStyle().Foreground(o.fgSubtle)
 	s.Messages.ErrorDetails = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+	s.Messages.WorkflowBlurred = s.Messages.NoContent.PaddingLeft(1).BorderLeft(true).
+		BorderForeground(o.secondary).BorderStyle(lipgloss.NormalBorder())
+	s.Messages.WorkflowFocused = s.Messages.NoContent.PaddingLeft(1).BorderLeft(true).
+		BorderForeground(o.secondary).BorderStyle(messageFocussedBorder)
+	s.Messages.WorkflowTag = lipgloss.NewStyle().Padding(0, 1).
+		Background(o.secondary).Foreground(o.onPrimary)
+	s.Messages.WorkflowTitle = lipgloss.NewStyle().Foreground(o.fgSubtle)
 
 	// Message item styles
 	s.Messages.ToolCallFocused = muted.PaddingLeft(1).
