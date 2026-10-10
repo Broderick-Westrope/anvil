@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -119,6 +121,67 @@ func TestRecorderCountsFailedWrites(t *testing.T) {
 	r.Record(Row{Kind: "turn"})
 	require.NoError(t, r.Close(t.Context()))
 	require.Equal(t, int64(2), r.failed.Load())
+}
+
+// blockedQuerier holds the first insert until release is closed.
+type blockedQuerier struct {
+	db.Querier
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (q *blockedQuerier) InsertStepUsage(ctx context.Context, params db.InsertStepUsageParams) error {
+	q.once.Do(func() { close(q.started); <-q.release })
+	return q.Querier.InsertStepUsage(ctx, params)
+}
+
+func TestRecorderConcurrentClose(t *testing.T) {
+	t.Parallel()
+	q, conn := testDB(t)
+	blocked := &blockedQuerier{Querier: q, started: make(chan struct{}), release: make(chan struct{})}
+	r := New(blocked)
+	var release sync.Once
+	t.Cleanup(func() {
+		release.Do(func() { close(blocked.release) })
+		require.NoError(t, r.Close(context.Background()))
+	})
+	r.Record(Row{SessionID: "first", Kind: "turn"})
+	<-blocked.started
+	start := make(chan struct{})
+	var ready, writers sync.WaitGroup
+	ready.Add(8)
+	for i := range 8 {
+		writers.Go(func() {
+			r.Record(Row{SessionID: fmt.Sprintf("%d-first", i), Kind: "turn"})
+			ready.Done()
+			<-start
+			for j := range 32 {
+				r.Record(Row{SessionID: fmt.Sprintf("%d-%d", i, j), Kind: "turn"})
+			}
+		})
+	}
+	ready.Wait()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	closed := make(chan error, 1)
+	go func() { <-start; closed <- r.Close(ctx) }()
+	close(start)
+	writers.Wait()
+	require.Eventually(t, func() bool {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		return r.closed
+	}, time.Second, time.Millisecond)
+	accepted := len(r.ch) + 1
+	require.GreaterOrEqual(t, accepted, 9)
+	release.Do(func() { close(blocked.release) })
+	require.NoError(t, <-closed)
+
+	// Every accepted row was either written or counted as failed.
+	var written int
+	require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM step_usage`).Scan(&written))
+	require.Equal(t, accepted, written+int(r.failed.Load()))
 }
 
 func TestRecorderDurations(t *testing.T) {
