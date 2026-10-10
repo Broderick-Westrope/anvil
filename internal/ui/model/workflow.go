@@ -768,11 +768,7 @@ func brokenWorkflowsWarning(cmds []commands.CustomCommand) string {
 		if cmd.Workflow == "" || len(cmd.Warnings) == 0 {
 			continue
 		}
-		name := cmd.ItemName()
-		if cmd.DisplayName != "" {
-			name = cmd.DisplayName
-		}
-		problems = append(problems, fmt.Sprintf("/%s: %s", name, strings.Join(cmd.Warnings, "; ")))
+		problems = append(problems, fmt.Sprintf("/%s: %s", cmd.SlashName(), strings.Join(cmd.Warnings, "; ")))
 	}
 	if len(problems) == 0 {
 		return ""

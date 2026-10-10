@@ -412,10 +412,7 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 		}
 	case UserCommands:
 		for _, cmd := range c.customCommands {
-			name := cmd.ItemName()
-			if cmd.DisplayName != "" {
-				name = cmd.DisplayName
-			}
+			name := cmd.SlashName()
 			action := ActionRunCustomCommand{
 				Name:      name,
 				Content:   cmd.Content,

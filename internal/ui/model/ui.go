@@ -4380,13 +4380,7 @@ func (m *UI) buildSlashACItems() []autocomplete.Item {
 	}
 
 	for _, cmd := range m.customCommands {
-		// Use DisplayName if set (collision-resolved), otherwise fall back
-		// to ItemName() which strips the source prefix (e.g., "greet" not
-		// "plugin:test-plugin:greet").
-		displayName := cmd.ItemName()
-		if cmd.DisplayName != "" {
-			displayName = cmd.DisplayName
-		}
+		displayName := cmd.SlashName()
 		items = append(items, autocomplete.Item{
 			Name:         displayName,
 			DisplayName:  displayName,
@@ -4430,63 +4424,53 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		return cmd
 	}
 
-	for _, cmd := range m.customCommands {
-		argName := cmd.ItemName()
-		if cmd.DisplayName != "" {
-			argName = cmd.DisplayName
-		}
-		rawArgs := extractSlashArgs(value, argName)
-		prefix := "/" + argName
-		// Check for exact prefix match (the value must start with
-		// "/name" followed by a space or end of string).
-		if !strings.HasPrefix(value, prefix) {
-			continue
-		}
-		if len(value) > len(prefix) && value[len(prefix)] != ' ' {
-			continue
-		}
-
-		// A workflow command runs its script with the raw arguments; it
-		// never sends its body.
-		if cmd.Workflow != "" {
-			return m.startWorkflowCommand(argName, cmd, rawArgs)
-		}
-
-		// Command matched. If it has named arguments and none were
-		// provided inline, open the argument dialog.
-		if len(cmd.Arguments) > 0 && rawArgs == "" {
-			action := dialog.ActionRunCustomCommand{
-				Name:      argName,
-				Content:   cmd.Content,
-				Arguments: cmd.Arguments,
-				Skills:    cmd.Skills,
-				Location:  cmd.Location,
-			}
-			return func() tea.Msg { return action }
-		}
-
-		content := cmd.Content
-		if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
-			content = commands.SubstituteArgs(content, nil, rawArgs)
-		}
-		commandLine := prefix
-		if rawArgs != "" {
-			commandLine += " " + rawArgs
-		}
-		content = commands.FormatExpansionXML(commandLine, cmd.Location, content)
-		if resolved := skills.ResolveContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
-			content = resolved + "\n\n" + content
-		}
-
-		// Include any user-attached skill chips so they are not
-		// silently dropped when submitting via a slash command.
-		for _, sa := range m.attachments.SkillList() {
-			content = skills.FormatContentXML(sa.Name, sa.Instructions) + "\n\n" + content
-		}
-
-		return m.sendMessage(content)
+	cmd, ok := commands.MatchSlash(m.customCommands, value)
+	if !ok {
+		return nil
 	}
-	return nil
+	argName := cmd.SlashName()
+	rawArgs := extractSlashArgs(value, argName)
+	prefix := "/" + argName
+
+	// A workflow command runs its script with the raw arguments; it
+	// never sends its body.
+	if cmd.Workflow != "" {
+		return m.startWorkflowCommand(argName, cmd, rawArgs)
+	}
+
+	// Command matched. If it has named arguments and none were
+	// provided inline, open the argument dialog.
+	if len(cmd.Arguments) > 0 && rawArgs == "" {
+		action := dialog.ActionRunCustomCommand{
+			Name:      argName,
+			Content:   cmd.Content,
+			Arguments: cmd.Arguments,
+			Skills:    cmd.Skills,
+			Location:  cmd.Location,
+		}
+		return func() tea.Msg { return action }
+	}
+
+	content := cmd.Content
+	if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
+		content = commands.SubstituteArgs(content, nil, rawArgs)
+	}
+	commandLine := prefix
+	if rawArgs != "" {
+		commandLine += " " + rawArgs
+	}
+	content = commands.FormatExpansionXML(commandLine, cmd.Location, content)
+	if resolved := skills.ResolveContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
+		content = resolved + "\n\n" + content
+	}
+
+	// Include any user-attached skill chips so they are not
+	// silently dropped when submitting via a slash command.
+	for _, sa := range m.attachments.SkillList() {
+		content = skills.FormatContentXML(sa.Name, sa.Instructions) + "\n\n" + content
+	}
+
+	return m.sendMessage(content)
 }
 
 // builtinDef defines a single builtin slash command. This is the single

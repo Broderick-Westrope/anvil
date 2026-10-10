@@ -48,11 +48,7 @@ func commandAttachedSkills(content []skills.ContentXML, line string, customComma
 	}
 	name, _, _ := strings.Cut(line, " ")
 	for _, cmd := range customCommands {
-		commandName := cmd.ItemName()
-		if cmd.DisplayName != "" {
-			commandName = cmd.DisplayName
-		}
-		if name != commandName {
+		if name != cmd.SlashName() {
 			continue
 		}
 		end := len(content)
