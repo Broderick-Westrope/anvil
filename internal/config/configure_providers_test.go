@@ -254,7 +254,7 @@ func TestConfigureProviders_Characterization(t *testing.T) {
 		wantLogs map[string]int
 		wantHits map[string]int
 	}{
-		"catalog provider with its key set is prepared from the catalog": {
+		"known provider with its key set is prepared from the catalog": {
 			catalog: []catwalk.InferenceProvider{catwalk.InferenceProviderOpenAI},
 			config:  `{}`,
 			env:     map[string]string{"OPENAI_API_KEY": "k", "OPENAI_ORG": "org"},
@@ -276,7 +276,7 @@ func TestConfigureProviders_Characterization(t *testing.T) {
 				},
 			},
 		},
-		"user config overrides the catalog endpoint, key, models and headers": {
+		"user config overrides the known provider endpoint, key, models and headers": {
 			catalog: []catwalk.InferenceProvider{catwalk.InferenceProviderOpenAI},
 			config: `{"providers": {"openai": {
 				"base_url": "https://proxy.example/v1",
@@ -308,18 +308,18 @@ func TestConfigureProviders_Characterization(t *testing.T) {
 				},
 			},
 		},
-		"missing key removes a configured catalog provider": {
+		"missing key removes a configured known provider": {
 			catalog:  []catwalk.InferenceProvider{catwalk.InferenceProviderOpenAI},
 			config:   `{"providers": {"openai": {"base_url": "https://proxy.example/v1"}}}`,
 			want:     map[string]ProviderConfig{},
 			wantLogs: map[string]int{logMissingKey: 1},
 		},
-		"missing key leaves an unconfigured catalog provider out silently": {
+		"missing key leaves an unconfigured known provider out silently": {
 			catalog: []catwalk.InferenceProvider{catwalk.InferenceProviderOpenAI},
 			config:  `{}`,
 			want:    map[string]ProviderConfig{},
 		},
-		"catalog provider header that fails to resolve fails the load": {
+		"known provider header that fails to resolve fails the load": {
 			catalog: []catwalk.InferenceProvider{catwalk.InferenceProviderOpenAI},
 			config:  `{"providers": {"openai": {"extra_headers": {"X-Broken": "$(false)"}}}}`,
 			env:     map[string]string{"OPENAI_API_KEY": "k"},
@@ -478,7 +478,7 @@ func TestConfigureProviders_Characterization(t *testing.T) {
 				},
 			},
 		},
-		"disabling default providers ignores the catalog and treats catalog ids as custom": {
+		"disabling default providers ignores known providers and treats their ids as custom": {
 			catalog: []catwalk.InferenceProvider{catwalk.InferenceProviderOpenAI},
 			config: `{"options": {"disable_default_providers": true}, "providers": {"openai": {
 				"base_url": "https://own.example/v1", "api_key": "k", "models": [{"id": "m"}]

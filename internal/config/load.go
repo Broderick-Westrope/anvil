@@ -271,8 +271,8 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 func prepareKnownProvider(p catwalk.Provider, config ProviderConfig, env env.Env, resolver VariableResolver) (ProviderConfig, func(), error) {
 	p.APIEndpoint = cmp.Or(config.BaseURL, p.APIEndpoint)
 	p.APIKey = cmp.Or(config.APIKey, p.APIKey)
-	// The user's models come first and win over catalog models with the
-	// same ID.
+	// The user's models come first and win over the known provider's models
+	// with the same ID.
 	if len(config.Models) > 0 {
 		models := []catwalk.Model{}
 		seen := make(map[string]bool)
@@ -428,8 +428,7 @@ func hasAPIKey(resolver VariableResolver, key string) bool {
 // headers use the same error contract as MCP headers: a failing $(...)
 // aborts the provider load with a clear message, and a header that
 // resolves to the empty string (unset bare $VAR under lenient nounset,
-// $(echo), or literal "") is dropped from the outgoing request. See
-// PLAN.md Phase 2 design decisions #14 and #18.
+// $(echo), or literal "") is dropped from the outgoing request.
 func resolveProviderHeaders(id string, headers map[string]string, resolver VariableResolver) error {
 	for k, v := range headers {
 		resolved, err := resolver.ResolveValue(v)
@@ -507,10 +506,8 @@ func (c *Config) discoverCustomProviderModels(ctx context.Context, knownProvider
 // discovery didn't run). It logs why and returns false when the provider
 // can't be used.
 func prepareCustomProvider(id string, providerConfig ProviderConfig, discovered *discoveryResult, resolver VariableResolver) (ProviderConfig, bool, error) {
-	// Make sure the provider ID is set.
 	providerConfig.ID = id
 	providerConfig.Name = cmp.Or(providerConfig.Name, id) // Use ID as name if not set
-	// Default to OpenAI if not set.
 	providerConfig.Type = cmp.Or(providerConfig.Type, catwalk.TypeOpenAICompat)
 	if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) &&
 		!discover.IsKnownCustomProvider(string(providerConfig.Type)) {
