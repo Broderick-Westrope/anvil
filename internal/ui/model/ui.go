@@ -1402,8 +1402,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newChat.SetFollow(toolItem.Status() == chat.ToolStatusRunning)
 		newChat.Focus()
 		newChat.SetMessages(detailItems...)
-		newChat.ScrollToBottom()
-		newChat.SelectLast()
+		newChat.ScrollToBottomAndSelectLast()
 		m.drillStack = append(m.drillStack, drillInEntry{
 			chat:     newChat,
 			label:    msg.Label,
@@ -1613,8 +1612,7 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	if !m.isAgentBusy() {
 		m.chat.FreezeSpinners()
 	}
-	m.chat.ScrollToBottom()
-	m.chat.SelectLast()
+	m.chat.ScrollToBottomAndSelectLast()
 	return tea.Sequence(cmds...)
 }
 
@@ -1889,8 +1887,7 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	c.AppendMessages(items...)
 	// Only auto-scroll if this chat is currently visible.
 	if c == m.activeChat() && c.Follow() {
-		c.ScrollToBottom()
-		c.SelectLast()
+		c.ScrollToBottomAndSelectLast()
 	}
 
 	return tea.Sequence(cmds...)
@@ -2031,8 +2028,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	m.chat.UpdateNestedToolIDs(toolCallID)
 
 	if m.chat.Follow() {
-		m.chat.ScrollToBottom()
-		m.chat.SelectLast()
+		m.chat.ScrollToBottomAndSelectLast()
 	}
 
 	// Start the elapsed-time tick when the first child session message arrives.
@@ -2875,6 +2871,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			m.detailsOpen = !m.detailsOpen
 			m.updateLayoutAndSize()
 			return true
+		case key.Matches(msg, m.keyMap.Chat.EndFollow):
+			if m.state == uiChat && m.hasSession() {
+				m.activeChat().ScrollToBottomAndSelectLast()
+				return true
+			}
 		case key.Matches(msg, m.keyMap.Chat.ToggleSidebar):
 			if m.canToggleSidebar() {
 				cmds = append(cmds, m.toggleCompactMode())
@@ -3392,8 +3393,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.activeChat().ScrollToTop()
 				m.activeChat().SelectFirst()
 			case key.Matches(msg, m.keyMap.Chat.End):
-				m.activeChat().ScrollToBottom()
-				m.activeChat().SelectLast()
+				m.activeChat().ScrollToBottomAndSelectLast()
 			default:
 				if ok, cmd := m.activeChat().HandleKeyMsg(msg); ok {
 					cmds = append(cmds, cmd)
@@ -3860,7 +3860,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 			mainBinds = append(mainBinds, k.CycleBouncer)
 		}
 		if hasSession {
-			mainBinds = append(mainBinds, k.Chat.NewSession)
+			mainBinds = append(mainBinds, k.Chat.NewSession, k.Chat.EndFollow)
 		}
 		if m.canToggleSidebar() {
 			mainBinds = append(mainBinds, k.Chat.ToggleSidebar)

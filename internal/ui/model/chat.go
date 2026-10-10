@@ -620,6 +620,13 @@ func (m *Chat) SelectFirst() {
 	}
 }
 
+// ScrollToBottomAndSelectLast scrolls to the bottom, which turns follow
+// mode back on, and selects the last item.
+func (m *Chat) ScrollToBottomAndSelectLast() {
+	m.ScrollToBottom()
+	m.SelectLast()
+}
+
 // SelectLast selects the last message in the chat list.
 func (m *Chat) SelectLast() {
 	if !m.list.SelectLast() {
