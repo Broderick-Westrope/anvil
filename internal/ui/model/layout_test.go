@@ -6,6 +6,10 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/textarea"
+	"github.com/stretchr/testify/require"
+
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 )
@@ -185,5 +189,47 @@ func TestSetSize_NoFollowDoesNotAnchor(t *testing.T) {
 	}
 	if u.chat.AtBottom() {
 		t.Fatal("expected chat NOT to be at bottom after SetSize without follow mode")
+	}
+}
+
+func TestSessionUpdateLeavesPillsCollapsed(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		todos       []session.Todo
+		promptQueue int
+	}{
+		"new todos": {
+			todos: []session.Todo{
+				{Status: session.TodoStatusInProgress, Content: "do work"},
+				{Status: session.TodoStatusPending, Content: "do more"},
+			},
+		},
+		"queued prompts": {
+			promptQueue: 2,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			u := newTestUI()
+			u.com.Workspace = &testWorkspace{}
+			u.height = 60
+			u.session = &session.Session{ID: "s1"}
+			u.promptQueue = tc.promptQueue
+			u.updateLayoutAndSize()
+
+			u.update(pubsub.Event[session.Session]{
+				Type:    pubsub.UpdatedEvent,
+				Payload: session.Session{ID: "s1", Todos: tc.todos},
+			})
+
+			require.False(t, u.pillsExpanded)
+			// The collapsed pill still takes its one-row footprint, which
+			// proves the update reached the pills panel.
+			require.Equal(t, pillHeightWithBorder, u.pillsAreaHeight())
+		})
 	}
 }
