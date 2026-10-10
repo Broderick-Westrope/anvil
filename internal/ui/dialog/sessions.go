@@ -31,6 +31,9 @@ const (
 
 // Session is a session selector dialog.
 type Session struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com                *common.Common
 	help               help.Model
 	list               *list.FilterableList
@@ -147,7 +150,16 @@ func (s *Session) ID() string {
 }
 
 // HandleMsg implements Dialog.
+// isClickableRow reports whether clicks may select rows: not while a
+// delete or rename prompt is open.
+func (s *Session) isClickableRow(int) bool {
+	return s.sessionsMode == sessionsModeNormal
+}
+
 func (s *Session) HandleMsg(msg tea.Msg) Action {
+	if action, ok := s.mouse.handle(msg, s.list, s.isClickableRow, nil, func() Action { return s.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch s.sessionsMode {
@@ -255,7 +267,7 @@ func (s *Session) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	start, end := s.list.VisibleItemIndices()
 
 	// if selected index is outside visible range, scroll to it
-	if s.selectedSessionInx < start || s.selectedSessionInx > end {
+	if !s.mouse.scrolled && (s.selectedSessionInx < start || s.selectedSessionInx > end) {
 		s.list.ScrollToSelectedWithMargin(listScrollMargin)
 	}
 
@@ -329,10 +341,11 @@ func (s *Session) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	}
 	listView := t.Dialog.List.Height(s.list.Height()).Render(s.list.Render())
 	listView = joinScrollbar(t, listView, listHeight, listTotalHeight, listHeight, s.list.Offset())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, s.list.Width(), s.list.Height())
 	rc.Help = renderDialogHelp(t, &s.help, s, innerWidth)
 
 	view := rc.Render()
+	s.mouse.setArea(rc.ListBounds, centerRect(area, view))
 
 	DrawCenterCursor(scr, area, view, cur)
 	return cur

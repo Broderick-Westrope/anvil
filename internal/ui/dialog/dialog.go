@@ -265,15 +265,30 @@ func (d *Overlay) StopLoading() {
 	}
 }
 
+// clampedSize is view's size, clamped to area so oversized dialogs don't
+// draw outside its bounds.
+func clampedSize(area uv.Rectangle, view string) (int, int) {
+	width, height := lipgloss.Size(view)
+	return min(width, area.Dx()), min(height, area.Dy())
+}
+
+// centerRect is where DrawCenterCursor draws view.
+func centerRect(area uv.Rectangle, view string) uv.Rectangle {
+	width, height := clampedSize(area, view)
+	return common.CenterRect(area, width, height)
+}
+
+// onboardingRect is where DrawOnboardingCursor draws view.
+func onboardingRect(area uv.Rectangle, view string) uv.Rectangle {
+	width, height := clampedSize(area, view)
+	return common.BottomLeftRect(area, width, height)
+}
+
 // DrawCenterCursor draws the given string view centered in the screen area and
 // adjusts the cursor position accordingly. Content larger than the area is
 // clamped to fit.
 func DrawCenterCursor(scr uv.Screen, area uv.Rectangle, view string, cur *tea.Cursor) {
-	width, height := lipgloss.Size(view)
-	// Clamp to available area so oversized dialogs don't draw outside bounds.
-	width = min(width, area.Dx())
-	height = min(height, area.Dy())
-	center := common.CenterRect(area, width, height)
+	center := centerRect(area, view)
 	if cur != nil {
 		cur.X += center.Min.X
 		cur.Y += center.Min.Y
@@ -294,11 +309,7 @@ func DrawOnboarding(scr uv.Screen, area uv.Rectangle, view string) {
 // DrawOnboardingCursor draws the given string view positioned at the bottom
 // left area of the screen. Content larger than the area is clamped to fit.
 func DrawOnboardingCursor(scr uv.Screen, area uv.Rectangle, view string, cur *tea.Cursor) {
-	width, height := lipgloss.Size(view)
-	// Clamp to available area so oversized dialogs don't draw outside bounds.
-	width = min(width, area.Dx())
-	height = min(height, area.Dy())
-	bottomLeft := common.BottomLeftRect(area, width, height)
+	bottomLeft := onboardingRect(area, view)
 	if cur != nil {
 		cur.X += bottomLeft.Min.X
 		cur.Y += bottomLeft.Min.Y

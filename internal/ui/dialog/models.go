@@ -73,6 +73,9 @@ const defaultModelsDialogMaxWidth = 73
 
 // Models represents a model selection dialog.
 type Models struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com          *common.Common
 	isOnboarding bool
 
@@ -161,7 +164,16 @@ func (m *Models) ID() string {
 }
 
 // HandleMsg implements Dialog.
+// isModelRow reports whether row i is a model rather than a group header.
+func (m *Models) isModelRow(i int) bool {
+	_, ok := m.list.ItemAt(i).(*ModelItem)
+	return ok
+}
+
 func (m *Models) HandleMsg(msg tea.Msg) Action {
+	if action, ok := m.mouse.handle(msg, m.list, m.isModelRow, nil, func() Action { return m.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
@@ -280,7 +292,7 @@ func (m *Models) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	listView := t.Dialog.List.Height(m.list.Height()).Render(m.list.Render())
 	listView = joinScrollbar(t, listView, listHeight, listTotalHeight, listHeight, m.list.Offset())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, m.list.Width(), m.list.Height())
 
 	rc.Help = renderDialogHelp(t, &m.help, m, innerWidth)
 
@@ -291,10 +303,12 @@ func (m *Models) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		rc.TitleInfo = ""
 		rc.IsOnboarding = true
 		view := rc.Render()
+		m.mouse.setArea(rc.ListBounds, onboardingRect(area, view))
 		cur = adjustOnboardingInputCursor(t, cur)
 		DrawOnboardingCursor(scr, area, view, cur)
 	} else {
 		view := rc.Render()
+		m.mouse.setArea(rc.ListBounds, centerRect(area, view))
 		DrawCenterCursor(scr, area, view, cur)
 	}
 	return cur

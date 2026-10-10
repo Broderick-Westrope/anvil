@@ -43,6 +43,9 @@ type dockerMCPAvailabilityCheckedMsg struct {
 }
 
 type Commands struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com    *common.Common
 	keyMap struct {
 		Select,
@@ -162,6 +165,9 @@ func (c *Commands) ID() string {
 
 // HandleMsg implements [Dialog].
 func (c *Commands) HandleMsg(msg tea.Msg) Action {
+	if action, ok := c.mouse.handle(msg, c.list, nil, nil, func() Action { return c.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case dockerMCPAvailabilityCheckedMsg:
 		c.dockerMCPAvailable = &msg.available
@@ -326,7 +332,7 @@ func (c *Commands) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	inputView := t.Dialog.InputPrompt.Render(c.input.View())
 	rc.AddPart(inputView)
 	listView := t.Dialog.List.Height(c.list.Height()).Render(c.list.Render())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, c.list.Width(), c.list.Height())
 	rc.Help = renderDialogHelp(t, &c.help, c, innerWidth)
 
 	if c.loading {
@@ -334,6 +340,7 @@ func (c *Commands) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	}
 
 	view := rc.Render()
+	c.mouse.setArea(rc.ListBounds, centerRect(area, view))
 
 	cur := c.Cursor()
 	DrawCenterCursor(scr, area, view, cur)

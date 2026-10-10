@@ -2,6 +2,7 @@ package dialog
 
 import (
 	"cmp"
+	"image"
 	"image/color"
 	"strings"
 
@@ -255,6 +256,15 @@ type RenderContext struct {
 	// onboarding flow. This means that the content will be rendered at the
 	// bottom left of the screen.
 	IsOnboarding bool
+
+	// listPart is the index in Parts of the part added with AddList, or -1.
+	listPart int
+	// listStyle and listSize describe the list inside that part.
+	listStyle lipgloss.Style
+	listSize  image.Point
+	// ListBounds is set by Render to the list's cells relative to the
+	// dialog's top-left corner, or empty when no list was added.
+	ListBounds image.Rectangle
 }
 
 // NewRenderContext creates a new RenderContext with the provided styles and width.
@@ -267,7 +277,21 @@ func NewRenderContext(t *styles.Styles, width int) *RenderContext {
 		TitleGradientToColor:   t.Dialog.TitleGradToColor,
 		Width:                  width,
 		Parts:                  []string{},
+		listPart:               -1,
 	}
+}
+
+// AddList adds the part holding the dialog's list: view is the list
+// rendered through style, and width and height are the list's own size.
+// Render then sets ListBounds so mouse events can be mapped to list rows.
+func (rc *RenderContext) AddList(view string, style lipgloss.Style, width, height int) {
+	if len(view) == 0 {
+		return
+	}
+	rc.listPart = len(rc.Parts)
+	rc.listStyle = style
+	rc.listSize = image.Pt(width, height)
+	rc.Parts = append(rc.Parts, view)
 }
 
 // AddPart adds a rendered part to the dialog.
@@ -275,6 +299,15 @@ func (rc *RenderContext) AddPart(part string) {
 	if len(part) > 0 {
 		rc.Parts = append(rc.Parts, part)
 	}
+}
+
+// linesIn counts the rows parts occupy once joined with newlines.
+func linesIn(parts []string) int {
+	n := 0
+	for _, p := range parts {
+		n += lipgloss.Height(p)
+	}
+	return n
 }
 
 // Render renders the dialog using the provided context.
@@ -308,17 +341,36 @@ func (rc *RenderContext) Render() string {
 		}
 	}
 
-	if rc.Gap <= 0 {
-		parts = append(parts, rc.Parts...)
-	} else {
-		for i, p := range rc.Parts {
-			if len(p) > 0 {
-				parts = append(parts, p)
-			}
-			if i < len(rc.Parts)-1 {
-				parts = append(parts, make([]string, rc.Gap)...)
-			}
+	listLine := -1
+	for i, p := range rc.Parts {
+		if i == rc.listPart {
+			listLine = linesIn(parts)
 		}
+		if rc.Gap <= 0 {
+			parts = append(parts, p)
+			continue
+		}
+		if len(p) > 0 {
+			parts = append(parts, p)
+		}
+		if i < len(rc.Parts)-1 {
+			parts = append(parts, make([]string, rc.Gap)...)
+		}
+	}
+	rc.ListBounds = image.Rectangle{}
+	if listLine >= 0 {
+		frame := image.Pt(0, 0)
+		if !rc.IsOnboarding {
+			frame = image.Pt(
+				dialogStyle.GetMarginLeft()+dialogStyle.GetBorderLeftSize()+dialogStyle.GetPaddingLeft(),
+				dialogStyle.GetMarginTop()+dialogStyle.GetBorderTopSize()+dialogStyle.GetPaddingTop(),
+			)
+		}
+		minPt := frame.Add(image.Pt(
+			rc.listStyle.GetMarginLeft()+rc.listStyle.GetBorderLeftSize()+rc.listStyle.GetPaddingLeft(),
+			listLine+rc.listStyle.GetMarginTop()+rc.listStyle.GetBorderTopSize()+rc.listStyle.GetPaddingTop(),
+		))
+		rc.ListBounds = image.Rectangle{Min: minPt, Max: minPt.Add(rc.listSize)}
 	}
 
 	if len(rc.Help) > 0 {

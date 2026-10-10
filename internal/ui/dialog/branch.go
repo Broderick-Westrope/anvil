@@ -18,6 +18,9 @@ var _ Dialog = (*Branch)(nil)
 // Branch is a branch picker dialog that shows user messages on the current
 // branch path for quick branching.
 type Branch struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com   *common.Common
 	list  *list.FilterableList
 	input textinput.Model
@@ -91,6 +94,9 @@ func (b *Branch) ID() string {
 
 // HandleMsg implements [Dialog].
 func (b *Branch) HandleMsg(msg tea.Msg) Action {
+	if action, ok := b.mouse.handle(msg, b.list, nil, nil, func() Action { return b.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
@@ -167,9 +173,10 @@ func (b *Branch) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	rc.AddPart(inputView)
 
 	listView := t.Dialog.List.Height(b.list.Height()).Render(b.list.Render())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, b.list.Width(), b.list.Height())
 
 	view := rc.Render()
+	b.mouse.setArea(rc.ListBounds, centerRect(area, view))
 	DrawCenterCursor(scr, area, view, cur)
 	return cur
 }
