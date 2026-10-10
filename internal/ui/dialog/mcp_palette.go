@@ -341,11 +341,15 @@ func (mp *MCPPalette) handleFilterKey(msg tea.KeyPressMsg) Action {
 		mp.filtering = false
 		mp.input.Blur()
 	default:
+		prevValue := mp.input.Value()
 		var cmd tea.Cmd
 		mp.input, cmd = mp.input.Update(msg)
-		mp.list.SetFilter(mp.input.Value())
-		mp.list.ScrollToTop()
-		mp.list.SetSelected(0)
+		value := mp.input.Value()
+		if value != prevValue {
+			mp.list.SetFilter(value)
+			mp.list.ScrollToTop()
+			mp.list.SetSelected(0)
+		}
 		return ActionCmd{cmd}
 	}
 	return nil

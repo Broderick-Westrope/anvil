@@ -206,12 +206,15 @@ func (sp *SkillPicker) HandleMsg(msg tea.Msg) Action {
 				}
 			}
 		default:
+			prevValue := sp.input.Value()
 			var cmd tea.Cmd
 			sp.input, cmd = sp.input.Update(msg)
 			value := sp.input.Value()
-			sp.list.SetFilter(value)
-			sp.list.ScrollToTop()
-			sp.list.SetSelected(0)
+			if value != prevValue {
+				sp.list.SetFilter(value)
+				sp.list.ScrollToTop()
+				sp.list.SetSelected(0)
+			}
 			return ActionCmd{cmd}
 		}
 	}
