@@ -159,11 +159,11 @@ func WithAgents(names ...string) Option {
 }
 
 func New(t *testing.T, opts ...Option) *Fixture {
+	t.Helper()
 	var o options
 	for _, opt := range opts {
 		opt(&o)
 	}
-	t.Helper()
 	originalTransport := http.DefaultTransport
 	transport := originalTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
