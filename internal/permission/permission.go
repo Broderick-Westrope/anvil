@@ -299,7 +299,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		return s.finishPolicy(opts, p, nil), nil
 	}
 
-	r := &inflightRequest{s: s, opts: opts, perm: PermissionRequest{
+	r := &inflightRequest{perm: PermissionRequest{
 		ID:            uuid.New().String(),
 		Path:          s.requestDir(opts.Path),
 		SessionID:     opts.SessionID,
@@ -315,18 +315,17 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// The bouncer runs without requestMu so concurrent requests are
 	// classified in parallel rather than queued behind a human prompt.
 	if s.shouldAssess(p) {
-		if res, decided, err := r.assess(ctx); decided {
+		res, decided, err := s.consultBouncer(ctx, opts, r)
+		if decided {
 			return res, err
 		}
 	}
-	return r.prompt(ctx)
+	return s.promptHuman(ctx, opts, r)
 }
 
-// inflightRequest is a request the policy layers left unresolved, on its
-// way through the bouncer to the human prompt.
+// inflightRequest is the state of a request the policy layers left
+// unresolved, carried from the bouncer to the human prompt.
 type inflightRequest struct {
-	s    *permissionService
-	opts CreatePermissionRequest
 	perm PermissionRequest
 	// details is the bouncer's assessment, recorded with the decision.
 	details json.RawMessage
@@ -338,11 +337,10 @@ type inflightRequest struct {
 	review        *pendingReview
 }
 
-// assess asks the bouncer about the request. It reports decided when
-// the bouncer, a rule added during the call, or yolo settles the request
+// consultBouncer asks the bouncer about r. It reports decided when the
+// bouncer, a rule added during the call, or yolo settles the request
 // without a prompt.
-func (r *inflightRequest) assess(ctx context.Context) (res RequestResult, decided bool, err error) {
-	s, opts := r.s, r.opts
+func (s *permissionService) consultBouncer(ctx context.Context, opts CreatePermissionRequest, r *inflightRequest) (RequestResult, bool, error) {
 	key := allowCacheKey(opts)
 	cache := s.allowCache.Load()
 	if s.currentBouncerMode() == BouncerEnforce {
@@ -398,10 +396,9 @@ func (r *inflightRequest) assess(ctx context.Context) (res RequestResult, decide
 	return RequestResult{}, false, nil
 }
 
-// prompt waits for the prompt slot, then asks the human unless a grant,
-// rule, or yolo settles the request first.
-func (r *inflightRequest) prompt(ctx context.Context) (RequestResult, error) {
-	s, opts, review := r.s, r.opts, r.review
+// promptHuman waits for the prompt slot, then asks the human about r
+// unless a grant, rule, or yolo settles the request first.
+func (s *permissionService) promptHuman(ctx context.Context, opts CreatePermissionRequest, r *inflightRequest) (RequestResult, error) {
 	if s.beforePromptLock != nil {
 		s.beforePromptLock(opts)
 	}
@@ -409,8 +406,8 @@ func (r *inflightRequest) prompt(ctx context.Context) (RequestResult, error) {
 	defer s.requestMu.Unlock()
 
 	if ctx.Err() != nil {
-		review.stop()
-		s.recordReviewed(opts, VerdictCancelled, r.details, review)
+		r.review.stop()
+		s.recordReviewed(opts, VerdictCancelled, r.details, r.review)
 		return RequestResult{}, ctx.Err()
 	}
 
@@ -419,12 +416,12 @@ func (r *inflightRequest) prompt(ctx context.Context) (RequestResult, error) {
 	// Requests resolved here never reach the human, so their review has
 	// nothing to be compared with and is dropped.
 	if p3 := s.evaluatePolicy(opts); p3.resolved {
-		review.stop()
+		r.review.stop()
 		return s.finishPolicy(opts, p3, r.details), nil
 	} else if p3.yolo && !r.bouncerDenied {
 		// The bouncer was switched on after this request skipped it;
 		// yolo never prompts.
-		review.stop()
+		r.review.stop()
 		return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", r.details, ""), nil
 	}
 
@@ -437,7 +434,7 @@ func (r *inflightRequest) prompt(ctx context.Context) (RequestResult, error) {
 	defer s.pendingRequests.Del(r.perm.ID)
 
 	// Publish the request.
-	s.publishWithReview(&r.perm, review)
+	s.publishWithReview(&r.perm, r.review)
 
 	select {
 	case <-ctx.Done():
@@ -446,15 +443,15 @@ func (r *inflightRequest) prompt(ctx context.Context) (RequestResult, error) {
 			s.activeRequest = nil
 		}
 		s.activeRequestMu.Unlock()
-		review.stop()
-		s.recordReviewed(opts, VerdictCancelled, r.details, review)
+		r.review.stop()
+		s.recordReviewed(opts, VerdictCancelled, r.details, r.review)
 		return RequestResult{}, ctx.Err()
 	case resp := <-respCh:
 		verdict := VerdictDeny
 		if resp.Granted {
 			verdict = VerdictAllow
 		}
-		s.recordReviewed(opts, verdict, r.details, review)
+		s.recordReviewed(opts, verdict, r.details, r.review)
 		reason := resp.Reason
 		if !resp.Granted && r.bouncerDenied && reason == "" {
 			reason = "the user confirmed the permission bouncer's block (" + r.denyReason + "). Do not retry this or work around it; tell the user what you were trying to do."
