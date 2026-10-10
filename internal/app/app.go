@@ -45,6 +45,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/update"
 	"github.com/Broderick-Westrope/anvil/internal/version"
+	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
@@ -166,6 +167,10 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		if err := app.jobEvents.Persist(ctx, q, app.jobs.store.InstanceID()); err != nil {
 			slog.Warn("Failed to load background job events; new events will not survive a restart", "error", err)
 		}
+		workflows := host.NewStore(q, config.GlobalDataDir(), app.jobs.store.InstanceID())
+		go startupPrune(ctx, "workflow runs", func(ctx context.Context) error {
+			return errors.Join(workflows.MarkInterrupted(ctx), workflows.PruneRunDirs(ctx, time.Now()))
+		})
 	}
 	mgr.SetEventSink(app.jobEvents)
 	app.jobWaker = newJobWaker(app.jobEvents, sessions)
