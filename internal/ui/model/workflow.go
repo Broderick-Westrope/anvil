@@ -157,8 +157,8 @@ func (m *UI) workflowTitle(sessionID string) string {
 // startWorkflowCommand runs a workflow command. A workflow never sends
 // its command body: the script gets the raw arguments instead.
 func (m *UI) startWorkflowCommand(name string, cmd commands.CustomCommand, raw string) tea.Cmd {
-	if len(cmd.Warnings) > 0 {
-		return util.ReportError(fmt.Errorf("workflow /%s can't run: %s", name, strings.Join(cmd.Warnings, "; ")))
+	if len(cmd.Problems) > 0 {
+		return util.ReportError(fmt.Errorf("workflow /%s can't run: %s", name, strings.Join(cmd.Problems, "; ")))
 	}
 	if m.reloading {
 		return util.ReportWarn(reloadInProgressMsg)
@@ -193,7 +193,7 @@ func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
 	case dialog.ActionRunCustomCommand:
 		m.dialog.CloseDialog(dialog.CommandsID)
 		return m.startWorkflowCommand(action.Name, commands.CustomCommand{
-			ID: action.CommandID, Source: action.Source, Workflow: action.Workflow, Warnings: action.Warnings,
+			ID: action.CommandID, Source: action.Source, Workflow: action.Workflow, Problems: action.Problems,
 		}, "")
 	case dialog.ActionWorkflowRespond:
 		m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
@@ -748,21 +748,21 @@ func firstLine(s string) string {
 }
 
 // annotateWorkflowCommands adds the missing requirements of each workflow
-// command to its warnings, so a command that can't run is shown as broken.
+// command to its problems, so a command that can't run is shown as broken.
 // Scripts that already failed to load aren't checked again. It does IO, so
 // call it from a command.
 func annotateWorkflowCommands(ws workspace.Workspace, cmds []commands.CustomCommand) []commands.CustomCommand {
 	out := make([]commands.CustomCommand, len(cmds))
 	for i, cmd := range cmds {
 		out[i] = cmd
-		if cmd.Workflow == "" || len(cmd.Warnings) > 0 {
+		if cmd.Workflow == "" || len(cmd.Problems) > 0 {
 			continue
 		}
 		missing, err := ws.WorkflowMissing(cmd.Workflow)
 		if err == nil {
-			out[i].Warnings = missing
+			out[i].Problems = missing
 		} else if !errors.Is(err, workspace.ErrWorkflowsUnavailable) {
-			out[i].Warnings = []string{err.Error()}
+			out[i].Problems = []string{err.Error()}
 		}
 	}
 	return out
@@ -773,10 +773,10 @@ func annotateWorkflowCommands(ws workspace.Workspace, cmds []commands.CustomComm
 func brokenWorkflowsWarning(cmds []commands.CustomCommand) string {
 	var problems []string
 	for _, cmd := range cmds {
-		if cmd.Workflow == "" || len(cmd.Warnings) == 0 {
+		if cmd.Workflow == "" || len(cmd.Problems) == 0 {
 			continue
 		}
-		problems = append(problems, fmt.Sprintf("/%s: %s", cmd.SlashName(), strings.Join(cmd.Warnings, "; ")))
+		problems = append(problems, fmt.Sprintf("/%s: %s", cmd.SlashName(), strings.Join(cmd.Problems, "; ")))
 	}
 	if len(problems) == 0 {
 		return ""

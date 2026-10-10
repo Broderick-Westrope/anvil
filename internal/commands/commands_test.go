@@ -483,7 +483,7 @@ func TestLoadCommand_Workflow(t *testing.T) {
 		workflow     string
 		files        map[string]string
 		wantWorkflow string
-		wantWarning  string
+		wantProblem  string
 	}{
 		"valid script": {
 			workflow:     "workflow.js",
@@ -498,28 +498,28 @@ func TestLoadCommand_Workflow(t *testing.T) {
 		"path escapes the command directory": {
 			workflow:    "../workflow.js",
 			files:       map[string]string{"../workflow.js": validScript},
-			wantWarning: "outside the command directory",
+			wantProblem: "outside the command directory",
 		},
 		"absolute path": {
 			workflow:    "/tmp/workflow.js",
-			wantWarning: "outside the command directory",
+			wantProblem: "outside the command directory",
 		},
 		"missing file": {
 			workflow:     "workflow.js",
 			wantWorkflow: "workflow.js",
-			wantWarning:  "read workflow",
+			wantProblem:  "read workflow",
 		},
 		"parse error": {
 			workflow:     "workflow.js",
 			files:        map[string]string{"workflow.js": "function main( {"},
 			wantWorkflow: "workflow.js",
-			wantWarning:  "parse workflow",
+			wantProblem:  "parse workflow",
 		},
 		"non-literal requires": {
 			workflow:     "workflow.js",
 			files:        map[string]string{"workflow.js": "requires(deps)\n" + validScript},
 			wantWorkflow: "workflow.js",
-			wantWarning:  "requires() must be a literal",
+			wantProblem:  "requires() must be a literal",
 		},
 	}
 	for name, tc := range tests {
@@ -541,12 +541,12 @@ func TestLoadCommand_Workflow(t *testing.T) {
 			} else {
 				require.Equal(t, filepath.Join(cmdDir, tc.wantWorkflow), cmd.Workflow)
 			}
-			if tc.wantWarning == "" {
-				require.Empty(t, cmd.Warnings)
+			if tc.wantProblem == "" {
+				require.Empty(t, cmd.Problems)
 				return
 			}
-			require.Len(t, cmd.Warnings, 1)
-			require.Contains(t, cmd.Warnings[0], tc.wantWarning)
+			require.Len(t, cmd.Problems, 1)
+			require.Contains(t, cmd.Problems[0], tc.wantProblem)
 		})
 	}
 }
@@ -585,7 +585,7 @@ func TestLoadCommand_BrokenWorkflowStillLoads(t *testing.T) {
 	cmds, err := loadFromSource(commandSource{path: dir, prefix: userCommandPrefix})
 	require.NoError(t, err)
 	require.Len(t, cmds, 1)
-	require.NotEmpty(t, cmds[0].Warnings)
+	require.NotEmpty(t, cmds[0].Problems)
 }
 
 func TestDisplayDescriptionMarksBrokenCommands(t *testing.T) {
@@ -596,8 +596,8 @@ func TestDisplayDescriptionMarksBrokenCommands(t *testing.T) {
 		want string
 	}{
 		"healthy":              {cmd: CustomCommand{Description: "Build it"}, want: "Build it"},
-		"broken with desc":     {cmd: CustomCommand{Description: "Build it", Warnings: []string{"x"}}, want: "Build it (broken)"},
-		"broken without desc":  {cmd: CustomCommand{Warnings: []string{"x"}}, want: "(broken)"},
+		"broken with desc":     {cmd: CustomCommand{Description: "Build it", Problems: []string{"x"}}, want: "Build it (broken)"},
+		"broken without desc":  {cmd: CustomCommand{Problems: []string{"x"}}, want: "(broken)"},
 		"healthy without desc": {cmd: CustomCommand{}, want: ""},
 	}
 	for name, tc := range tests {

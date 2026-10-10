@@ -62,7 +62,7 @@ func TestWorkflowCheck(t *testing.T) {
 		"non-literal requires fails": {
 			script:    "requires(deps)\nfunction main(input) {}\n",
 			wantErr:   true,
-			wantLines: []string{"warning: requires() must be a literal"},
+			wantLines: []string{"error: requires() must be a literal"},
 		},
 	}
 	for name, tc := range tests {

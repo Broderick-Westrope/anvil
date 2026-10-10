@@ -108,12 +108,12 @@ type (
 		Skills    []string          // Skill names to preload.
 		Location  string            // Path to the command's COMMAND.md.
 		Args      map[string]string // Actual argument values
-		// CommandID, Source, Workflow and Warnings describe a workflow
+		// CommandID, Source, Workflow and Problems describe a workflow
 		// command; Workflow is empty for prompt commands.
 		CommandID string
 		Source    string
 		Workflow  string
-		Warnings  []string
+		Problems  []string
 	}
 	// ActionRunMCPPrompt is a message to run a custom command.
 	ActionRunMCPPrompt struct {

@@ -33,11 +33,11 @@ type Script struct {
 	Source   string
 	Hash     string
 	Requires Requirements
-	// Warnings are problems with the script's shape, such as a requires()
+	// Problems are faults in the script's shape, such as a requires()
 	// call that isn't a literal, that leave its requirements unknown. Parse
-	// still returns the script so the problems can be shown, but a script
-	// with warnings must not run, and checking it fails.
-	Warnings []string
+	// still returns the script so they can be shown, but a script with
+	// problems must not run, and checking it fails.
+	Problems []string
 }
 
 // Dir is the directory references resolve against.
@@ -79,12 +79,12 @@ func Parse(path string, src []byte) (*Script, error) {
 			}
 			requiresCalls++
 			if requiresCalls > 1 {
-				script.Warnings = append(script.Warnings, "requires() must be called once")
+				script.Problems = append(script.Problems, "requires() must be called once")
 				continue
 			}
 			reqs, err := literalRequirements(call)
 			if err != nil {
-				script.Warnings = append(script.Warnings, "requires() must be a literal: "+err.Error())
+				script.Problems = append(script.Problems, "requires() must be a literal: "+err.Error())
 				continue
 			}
 			script.Requires = reqs

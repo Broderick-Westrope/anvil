@@ -30,7 +30,7 @@ function main(input) { return input.raw }
 		Agents:     []string{"devils-advocate"},
 		References: []string{"references/da.md"},
 	}, script.Requires)
-	require.Empty(t, script.Warnings)
+	require.Empty(t, script.Problems)
 	require.Len(t, script.Hash, 64)
 }
 
@@ -49,7 +49,7 @@ func TestParseWarnsOnNonLiteralRequires(t *testing.T) {
 			t.Parallel()
 			script, err := workflow.Parse("workflow.js", []byte(src))
 			require.NoError(t, err)
-			require.NotEmpty(t, script.Warnings)
+			require.NotEmpty(t, script.Problems)
 		})
 	}
 }

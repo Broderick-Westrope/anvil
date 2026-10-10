@@ -935,7 +935,8 @@ the run started, never an edit made during it, and can't read through a
 symlink that leads outside the directory. `--yolo=full` skips approval. Workflows need the
 TUI, so `anvil run` refuses them. Check a script without running it with
 `anvil workflow check <path>`, which exits non-zero on a parse error, a
-warning or a missing requirement; `--no-catalog` skips loading your config
+problem with the script's shape (printed as `error:`) or a missing
+requirement; `--no-catalog` skips loading your config
 and checks only parsing and references.
 
 ### Desktop notifications

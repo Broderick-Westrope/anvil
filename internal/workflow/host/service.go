@@ -204,8 +204,8 @@ func (s *Service) Start(ctx context.Context, inv Invocation) error {
 	if err != nil {
 		return err
 	}
-	if len(script.Warnings) > 0 {
-		return fmt.Errorf("workflow %s can't run: %s", inv.CommandName, strings.Join(script.Warnings, "; "))
+	if len(script.Problems) > 0 {
+		return fmt.Errorf("workflow %s can't run: %s", inv.CommandName, strings.Join(script.Problems, "; "))
 	}
 	if missing := script.Missing(s.Catalog()); len(missing) > 0 {
 		return fmt.Errorf("workflow %s can't run: %s", inv.CommandName, strings.Join(missing, "; "))

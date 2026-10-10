@@ -72,10 +72,10 @@ type CustomCommand struct {
 	// Workflow is the absolute path to the command's workflow script, empty
 	// for prompt commands. A workflow command's body isn't injected.
 	Workflow string
-	// Warnings are problems found while loading, such as a workflow script
-	// that is missing or doesn't parse. A command with warnings still loads
-	// so it can be shown as broken.
-	Warnings []string
+	// Problems are faults found while loading, such as a workflow script
+	// that is missing or doesn't parse. A command with problems still
+	// loads so it can be shown as broken, but it won't run.
+	Problems []string
 }
 
 // commandFrontmatter is the YAML structure expected in command .md files.
@@ -87,10 +87,10 @@ type commandFrontmatter struct {
 }
 
 // DisplayDescription is the description shown in autocomplete and the
-// command palette, marked "(broken)" when the command has warnings and
+// command palette, marked "(broken)" when the command has problems and
 // won't run.
 func (c *CustomCommand) DisplayDescription() string {
-	if len(c.Warnings) == 0 {
+	if len(c.Problems) == 0 {
 		return c.Description
 	}
 	return strings.TrimSpace(c.Description + " (broken)")
@@ -405,17 +405,17 @@ func loadCommand(path, prefix string) (CustomCommand, error) {
 	// A workflow script is only parsed here, never run: discovery must not
 	// execute code from a command it found on disk.
 	if filepath.IsAbs(fm.Workflow) || !filepath.IsLocal(fm.Workflow) {
-		cmd.Warnings = append(cmd.Warnings,
+		cmd.Problems = append(cmd.Problems,
 			fmt.Sprintf("workflow %q is outside the command directory", fm.Workflow))
 		return cmd, nil
 	}
 	cmd.Workflow = filepath.Join(filepath.Dir(path), fm.Workflow)
 	script, err := workflow.Load(cmd.Workflow)
 	if err != nil {
-		cmd.Warnings = append(cmd.Warnings, err.Error())
+		cmd.Problems = append(cmd.Problems, err.Error())
 		return cmd, nil
 	}
-	cmd.Warnings = append(cmd.Warnings, script.Warnings...)
+	cmd.Problems = append(cmd.Problems, script.Problems...)
 	return cmd, nil
 }
 

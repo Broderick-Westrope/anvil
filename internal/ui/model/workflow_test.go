@@ -213,7 +213,7 @@ func TestBrokenWorkflowCommandDoesNotStart(t *testing.T) {
 	t.Parallel()
 
 	f := newWorkflowFixture(t)
-	f.u.customCommands[0].Warnings = []string{`skill "nope" not found`}
+	f.u.customCommands[0].Problems = []string{`skill "nope" not found`}
 	infos := f.run(f.u.tryExecuteSlashCommand("/demo"))
 
 	require.Empty(t, f.ws.starts)
@@ -274,7 +274,7 @@ func TestAnnotateWorkflowCommands(t *testing.T) {
 		{Name: "a", Workflow: "/a/workflow.js"},
 		{Name: "b", Workflow: "/b/workflow.js"},
 		{Name: "c", Workflow: "/c/workflow.js"},
-		{Name: "d", Workflow: "/d/workflow.js", Warnings: []string{"already broken"}},
+		{Name: "d", Workflow: "/d/workflow.js", Problems: []string{"already broken"}},
 		{Name: "prompt"},
 		{Name: "e", Workflow: "/e/workflow.js"},
 	}
@@ -285,14 +285,14 @@ func TestAnnotateWorkflowCommands(t *testing.T) {
 	for i := range cmds {
 		require.Equal(t, cmds[i].Name, got[i].Name)
 	}
-	require.Empty(t, got[0].Warnings)
-	require.Equal(t, []string{`agent "ghost" not found`}, got[1].Warnings)
-	require.Empty(t, got[2].Warnings)
-	require.Equal(t, []string{"parse error"}, got[3].Warnings)
-	require.Equal(t, []string{"already broken"}, got[4].Warnings, "a script that didn't load isn't checked again")
-	require.Empty(t, got[5].Warnings)
-	require.Empty(t, got[6].Warnings, "workflows aren't broken just because the agent isn't ready")
-	require.Empty(t, cmds[1].Warnings, "the input is not modified")
+	require.Empty(t, got[0].Problems)
+	require.Equal(t, []string{`agent "ghost" not found`}, got[1].Problems)
+	require.Empty(t, got[2].Problems)
+	require.Equal(t, []string{"parse error"}, got[3].Problems)
+	require.Equal(t, []string{"already broken"}, got[4].Problems, "a script that didn't load isn't checked again")
+	require.Empty(t, got[5].Problems)
+	require.Empty(t, got[6].Problems, "workflows aren't broken just because the agent isn't ready")
+	require.Empty(t, cmds[1].Problems, "the input is not modified")
 }
 
 func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
@@ -301,8 +301,8 @@ func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
 	f := newWorkflowFixture(t)
 	_, cmd := f.u.Update(userCommandsLoadedMsg{Commands: []commands.CustomCommand{
 		{ID: "ok", Name: "ok", Workflow: "/ok.js"},
-		{ID: "prompt", Name: "prompt", Warnings: []string{"prompt commands aren't workflows"}},
-		{ID: "project:demo", Name: "demo", Description: "Demo", Workflow: "/w.js", Warnings: []string{`skill "x" not found`}},
+		{ID: "prompt", Name: "prompt", Problems: []string{"prompt commands aren't workflows"}},
+		{ID: "project:demo", Name: "demo", Description: "Demo", Workflow: "/w.js", Problems: []string{`skill "x" not found`}},
 	}})
 	infos := f.run(cmd)
 
@@ -655,7 +655,7 @@ func TestConfigReloadWarnsAboutBrokenWorkflows(t *testing.T) {
 			infos := f.run(f.u.handleConfigReloaded(configReloadedMsg{
 				Report: tc.report,
 				CustomCommands: []commands.CustomCommand{
-					{Name: "demo", Workflow: "/w.js", Warnings: []string{`agent "ghost" not found`}},
+					{Name: "demo", Workflow: "/w.js", Problems: []string{`agent "ghost" not found`}},
 				},
 			}))
 			require.Len(t, infos, 1)

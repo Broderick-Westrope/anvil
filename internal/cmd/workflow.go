@@ -34,7 +34,7 @@ func newWorkflowCheckCmd() *cobra.Command {
 
 <path> is a workflow script, or a command directory or COMMAND.md with a workflow: field.
 Skills and agents are checked against what Anvil discovers with the current config.
-Exits non-zero if the script doesn't parse, has a warning, or a requirement is missing.`,
+Exits non-zero if the script doesn't parse, has a problem, or a requirement is missing.`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -84,8 +84,8 @@ func checkWorkflow(w io.Writer, path string, cat workflow.Catalog) error {
 	printRequirement(w, "skills", script.Requires.Skills)
 	printRequirement(w, "agents", script.Requires.Agents)
 	printRequirement(w, "references", script.Requires.References)
-	for _, warning := range script.Warnings {
-		fmt.Fprintln(w, "warning: "+warning)
+	for _, problem := range script.Problems {
+		fmt.Fprintln(w, "error: "+problem)
 	}
 
 	if cat == nil {
@@ -96,7 +96,7 @@ func checkWorkflow(w io.Writer, path string, cat workflow.Catalog) error {
 	for _, m := range missing {
 		fmt.Fprintln(w, "missing: "+m)
 	}
-	if len(missing) > 0 || len(script.Warnings) > 0 {
+	if len(missing) > 0 || len(script.Problems) > 0 {
 		return errWorkflowCheckFailed
 	}
 	return nil
@@ -128,8 +128,8 @@ func resolveWorkflowPath(path string) (string, []string) {
 	if cmd.Workflow != "" {
 		return cmd.Workflow, nil
 	}
-	if len(cmd.Warnings) > 0 {
-		return "", cmd.Warnings
+	if len(cmd.Problems) > 0 {
+		return "", cmd.Problems
 	}
 	return "", []string{commandFile + " has no workflow: field"}
 }

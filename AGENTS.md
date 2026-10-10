@@ -129,7 +129,9 @@ internal/
 - **Workflows**: a command whose `COMMAND.md` sets `workflow:` runs a
   JavaScript script (see `plans/design-2026-10-10-workflows.md`).
   `internal/workflow` is the engine: it parses `requires()` without running
-  anything, runs `main` in goja, and records every primitive call as
+  anything (a malformed one is a `Script.Problems` entry, which, like
+  `CustomCommand.Problems`, blocks running and fails `anvil workflow
+  check`), runs `main` in goja, and records every primitive call as
   started/completed/failed events. It knows nothing about Anvil; every side
   effect goes through the `workflow.Backend` interface, the seam tests fake.
   `internal/workflow/host` implements that Backend against the coordinator
