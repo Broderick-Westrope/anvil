@@ -1,0 +1,550 @@
+package model
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
+	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
+	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
+	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
+	"github.com/Broderick-Westrope/anvil/internal/workspace"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/exp/golden"
+	"github.com/stretchr/testify/require"
+)
+
+// workflowWorkspace records the workflow calls the UI makes.
+type workflowWorkspace struct {
+	workspace.Workspace
+
+	sessions map[string]session.Session
+	created  []string
+	runs     []string
+
+	starts   []host.Invocation
+	startErr error
+	responds [][2]string
+	controls []string
+	missing  map[string][]string
+	loadErr  map[string]error
+}
+
+func newWorkflowWorkspace() *workflowWorkspace {
+	return &workflowWorkspace{sessions: map[string]session.Session{
+		"sess-1": {ID: "sess-1", Title: "Invoker"},
+		"sess-2": {ID: "sess-2", Title: "Builder"},
+	}}
+}
+
+func (*workflowWorkspace) AgentIsReady() bool                        { return true }
+func (*workflowWorkspace) AgentIsSessionBusy(string) bool            { return false }
+func (*workflowWorkspace) AgentIsBusy() bool                         { return false }
+func (*workflowWorkspace) AgentQueuedPrompts(string) int             { return 0 }
+func (*workflowWorkspace) WorkingDir() string                        { return "/work" }
+func (*workflowWorkspace) SetComposerState(string, bool, bool, bool) {}
+func (*workflowWorkspace) ListSessionJobs(string) []shell.JobInfo    { return nil }
+func (*workflowWorkspace) LSPGetStates() map[string]workspace.LSPClientInfo {
+	return nil
+}
+func (*workflowWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
+func (*workflowWorkspace) PermissionBouncerConfigured() bool     { return false }
+func (*workflowWorkspace) Config() *config.Config {
+	return &config.Config{Options: &config.Options{}}
+}
+
+func (*workflowWorkspace) FileTrackerListReadFiles(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+func (*workflowWorkspace) ListMessages(context.Context, string) ([]message.Message, error) {
+	return nil, nil
+}
+
+func (*workflowWorkspace) ListUserMessages(context.Context, string) ([]message.Message, error) {
+	return nil, nil
+}
+
+func (w *workflowWorkspace) GetSession(_ context.Context, id string) (session.Session, error) {
+	s, ok := w.sessions[id]
+	if !ok {
+		return session.Session{}, errors.New("no session " + id)
+	}
+	return s, nil
+}
+
+func (w *workflowWorkspace) CreateSession(_ context.Context, title string) (session.Session, error) {
+	s := session.Session{ID: "new-session", Title: title}
+	w.sessions[s.ID] = s
+	w.created = append(w.created, s.ID)
+	return s, nil
+}
+
+func (w *workflowWorkspace) AgentRun(_ context.Context, _ string, prompt string, _ ...message.Attachment) error {
+	w.runs = append(w.runs, prompt)
+	return nil
+}
+
+func (w *workflowWorkspace) WorkflowStart(_ context.Context, inv host.Invocation) error {
+	w.starts = append(w.starts, inv)
+	return w.startErr
+}
+
+func (w *workflowWorkspace) WorkflowRespond(requestID, answer string) error {
+	w.responds = append(w.responds, [2]string{requestID, answer})
+	return nil
+}
+
+func (w *workflowWorkspace) WorkflowPause(id string) error {
+	w.controls = append(w.controls, "pause:"+id)
+	return nil
+}
+
+func (w *workflowWorkspace) WorkflowResume(id string) error {
+	w.controls = append(w.controls, "resume:"+id)
+	return nil
+}
+
+func (w *workflowWorkspace) WorkflowAbort(id string) error {
+	w.controls = append(w.controls, "abort:"+id)
+	return nil
+}
+
+func (w *workflowWorkspace) WorkflowMissing(path string) ([]string, error) {
+	return w.missing[path], w.loadErr[path]
+}
+
+type workflowFixture struct {
+	u  *UI
+	ws *workflowWorkspace
+}
+
+func newWorkflowFixture(t *testing.T) *workflowFixture {
+	t.Helper()
+	ws := newWorkflowWorkspace()
+	u := newTestUI()
+	u.com.Workspace = ws
+	u.keyMap = DefaultKeyMap()
+	u.dialog = dialog.NewOverlay()
+	sty := u.com.Styles.Attachments
+	renderer := attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove)
+	u.attachments = attachments.New(renderer, attachments.Keymap{})
+	u.slashAC = autocomplete.New(nil, 10)
+	sess := ws.sessions["sess-1"]
+	u.session = &sess
+	u.customCommands = []commands.CustomCommand{{
+		ID: "project:demo", Name: "demo", Source: "project",
+		Content: "BODY $ARGUMENTS", Workflow: "/proj/demo/workflow.js",
+	}}
+	u.updateLayoutAndSize()
+	return &workflowFixture{u: u, ws: ws}
+}
+
+// event delivers a workflow event and runs the commands it returns,
+// feeding UI messages back through Update. It returns the status
+// messages.
+func (f *workflowFixture) event(ev host.Event) []util.InfoMsg {
+	_, cmd := f.u.Update(pubsub.Event[host.Event]{Type: pubsub.UpdatedEvent, Payload: ev})
+	return f.run(cmd)
+}
+
+func (f *workflowFixture) run(cmd tea.Cmd) []util.InfoMsg {
+	var infos []util.InfoMsg
+	queue := cmdMsgs(cmd)
+	for len(queue) > 0 {
+		msg := queue[0]
+		queue = queue[1:]
+		switch msg := msg.(type) {
+		case util.InfoMsg:
+			infos = append(infos, msg)
+		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg:
+			_, next := f.u.Update(msg)
+			queue = append(queue, cmdMsgs(next)...)
+		}
+	}
+	return infos
+}
+
+func (f *workflowFixture) press(k tea.KeyPressMsg) []util.InfoMsg {
+	_, cmd := f.u.Update(k)
+	return f.run(cmd)
+}
+
+func (f *workflowFixture) panel() string {
+	return ansi.Strip(f.u.pillsView)
+}
+
+func started(command, invoker string) host.Event {
+	return host.Event{Kind: host.EventState, RunID: "run-1", Command: command, SessionID: invoker}
+}
+
+func TestWorkflowCommandStartsWithoutSendingBody(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	infos := f.run(f.u.tryExecuteSlashCommand("/demo some args"))
+
+	require.Empty(t, infos)
+	require.Empty(t, f.ws.runs, "a workflow command never sends its body")
+	require.Equal(t, []host.Invocation{{
+		CommandID: "project:demo", CommandName: "demo", Source: "project",
+		ScriptPath: "/proj/demo/workflow.js", SessionID: "sess-1", Raw: "some args",
+	}}, f.ws.starts)
+}
+
+func TestBrokenWorkflowCommandDoesNotStart(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.customCommands[0].Warnings = []string{`skill "nope" not found`}
+	infos := f.run(f.u.tryExecuteSlashCommand("/demo"))
+
+	require.Empty(t, f.ws.starts)
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeError, infos[0].Type)
+	require.Contains(t, infos[0].Msg, `skill "nope" not found`)
+}
+
+func TestWorkflowStartErrorIsReported(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.startErr = errors.New(`workflow demo can't run: agent "ghost" not found`)
+	infos := f.run(f.u.tryExecuteSlashCommand("/demo"))
+
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeError, infos[0].Type)
+	require.Contains(t, infos[0].Msg, `agent "ghost" not found`)
+}
+
+func TestWorkflowCommandFromPaletteSkipsArgumentsDialog(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	cmd := f.u.handleWorkflowAction(dialog.ActionRunCustomCommand{
+		Name: "demo", Content: "BODY $ARGUMENTS", CommandID: "project:demo",
+		Source: "project", Workflow: "/proj/demo/workflow.js",
+	})
+	f.run(cmd)
+
+	require.False(t, f.u.dialog.ContainsDialog(dialog.ArgumentsID))
+	require.Empty(t, f.ws.runs)
+	require.Len(t, f.ws.starts, 1)
+	require.Empty(t, f.ws.starts[0].Raw)
+}
+
+func TestWorkflowCommandCreatesSessionWhenNone(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.session = nil
+	f.run(f.u.tryExecuteSlashCommand("/demo"))
+
+	require.Equal(t, []string{"new-session"}, f.ws.created)
+	require.Len(t, f.ws.starts, 1)
+	require.Equal(t, "new-session", f.ws.starts[0].SessionID)
+}
+
+func TestAnnotateWorkflowCommands(t *testing.T) {
+	t.Parallel()
+
+	ws := newWorkflowWorkspace()
+	ws.missing = map[string][]string{"/a/workflow.js": {`agent "ghost" not found`}}
+	ws.loadErr = map[string]error{"/c/workflow.js": errors.New("parse error")}
+	cmds := []commands.CustomCommand{
+		{Name: "a", Workflow: "/a/workflow.js"},
+		{Name: "b", Workflow: "/b/workflow.js"},
+		{Name: "c", Workflow: "/c/workflow.js"},
+		{Name: "d", Workflow: "/d/workflow.js", Warnings: []string{"already broken"}},
+		{Name: "prompt"},
+	}
+
+	got := annotateWorkflowCommands(ws, cmds)
+
+	require.Equal(t, []string{`agent "ghost" not found`}, got[0].Warnings)
+	require.Empty(t, got[1].Warnings)
+	require.Equal(t, []string{"parse error"}, got[2].Warnings)
+	require.Equal(t, []string{"already broken"}, got[3].Warnings, "a script that didn't load isn't checked again")
+	require.Empty(t, got[4].Warnings)
+	require.Empty(t, cmds[0].Warnings, "the input is not modified")
+}
+
+func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	_, cmd := f.u.Update(userCommandsLoadedMsg{Commands: []commands.CustomCommand{
+		{ID: "project:demo", Name: "demo", Description: "Demo", Workflow: "/w.js", Warnings: []string{`skill "x" not found`}},
+		{ID: "ok", Name: "ok", Workflow: "/ok.js"},
+	}})
+	infos := f.run(cmd)
+
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
+	require.Contains(t, infos[0].Msg, "/demo")
+	require.Contains(t, infos[0].Msg, `skill "x" not found`)
+	require.NotContains(t, infos[0].Msg, "/ok")
+
+	var desc string
+	for _, item := range f.u.buildSlashACItems() {
+		if item.Name == "demo" {
+			desc = item.Description
+		}
+	}
+	require.Equal(t, "Demo (broken)", desc)
+}
+
+func TestWorkflowApprovalOpensDialogAndResponds(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(host.Event{
+		Kind: host.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "sess-1",
+		Approval: &host.ApprovalRequest{ScriptPath: "/proj/demo/workflow.js", Origin: "project", Source: "function main() {}"},
+	})
+	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("req-1")))
+
+	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: "approve"}))
+	require.Equal(t, [][2]string{{"req-1", "approve"}}, f.ws.responds)
+	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("req-1")))
+}
+
+func TestWorkflowAskOpensDialog(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"})
+	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")))
+
+	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"}))
+	require.Equal(t, [][2]string{{"ask-1", "yes"}}, f.ws.responds)
+}
+
+func TestWorkflowFinishClosesItsDialogs(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"})
+	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusAborted})
+	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")))
+}
+
+func TestWorkflowPanelShowsProgress(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	require.Empty(t, f.panel())
+
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{Kind: host.EventStatus, Command: "demo", SessionID: "sess-1", Step: "build", Detail: "approach 1/3"})
+	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "bash", Detail: "git status"})
+
+	panel := f.panel()
+	require.Contains(t, panel, "/demo · build · approach 1/3")
+	require.Contains(t, panel, "$ git status")
+	require.Contains(t, panel, "ctrl+x pause")
+	require.Contains(t, panel, "alt+x abort")
+}
+
+func TestWorkflowPanelShowsPausedAndHeld(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", Paused: true})
+	require.Contains(t, f.panel(), "paused")
+	require.Contains(t, f.panel(), "ctrl+x resume")
+
+	f.event(host.Event{Kind: host.EventState, RunID: "run-1", Command: "demo", SessionID: "sess-1", Held: true})
+	require.Contains(t, f.panel(), "paused", "a hold doesn't clear the pause")
+	require.Contains(t, f.panel(), "holding sessions")
+}
+
+func TestWorkflowPanelHiddenForUnrelatedSession(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "elsewhere"))
+	require.Empty(t, f.panel())
+}
+
+func TestWorkflowPanelWarnsWhenAnotherSessionIsActive(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+
+	require.Contains(t, f.panel(), "workflow /demo is running in Builder")
+	require.Contains(t, f.panel(), "alt+g")
+
+	f.press(tea.KeyPressMsg{Code: 'g', Mod: tea.ModAlt})
+	require.Equal(t, "sess-2", f.u.session.ID)
+	require.NotContains(t, f.panel(), "is running in", "the active session shows no warning")
+	require.Contains(t, f.panel(), "/demo")
+}
+
+func TestWorkflowFocusMovesWhenEditorEmpty(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	infos := f.event(host.Event{Kind: host.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-2"})
+
+	require.Empty(t, infos)
+	require.Equal(t, "sess-2", f.u.session.ID)
+}
+
+func TestWorkflowFocusWaitsWhileEditorHasText(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.textarea.SetValue("half a thought")
+	f.event(started("demo", "sess-1"))
+	infos := f.event(host.Event{Kind: host.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-2"})
+
+	require.Equal(t, "sess-1", f.u.session.ID)
+	require.Len(t, infos, 1)
+	require.Equal(t, "workflow moved to Builder, press alt+g to follow", infos[0].Msg)
+
+	f.press(tea.KeyPressMsg{Code: 'g', Mod: tea.ModAlt})
+	require.Equal(t, "sess-2", f.u.session.ID)
+	require.Equal(t, "half a thought", f.u.textarea.Value())
+}
+
+func TestWorkflowControlKeys(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	require.Empty(t, f.ws.controls, "the keys do nothing without a run")
+
+	f.event(started("demo", "sess-1"))
+	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", Paused: true})
+	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt})
+	require.Equal(t, []string{"pause:sess-1", "resume:sess-1", "abort:sess-1"}, f.ws.controls)
+}
+
+func TestWorkflowControlFromPalette(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowAbort}))
+	require.Equal(t, []string{"abort:sess-1"}, f.ws.controls)
+}
+
+func TestWorkflowFinishReportsOutcome(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		ev       host.Event
+		wantType util.InfoType
+		wantMsg  string
+	}{
+		"completed": {
+			ev:       host.Event{Status: host.StatusCompleted, Result: []byte(`"done"`)},
+			wantType: util.InfoTypeSuccess, wantMsg: `Workflow /demo completed: "done"`,
+		},
+		"completed without result": {
+			ev:       host.Event{Status: host.StatusCompleted, Result: []byte(`null`)},
+			wantType: util.InfoTypeSuccess, wantMsg: "Workflow /demo completed",
+		},
+		"failed": {
+			ev:       host.Event{Status: host.StatusFailed, Message: "BashError: exit 1"},
+			wantType: util.InfoTypeError, wantMsg: "Workflow /demo failed: BashError: exit 1",
+		},
+		"denied": {
+			ev:       host.Event{Status: host.StatusDenied},
+			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo was not approved",
+		},
+		"aborted": {
+			ev:       host.Event{Status: host.StatusAborted},
+			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo aborted",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			ev := tc.ev
+			ev.Kind, ev.Command, ev.SessionID = host.EventFinished, "demo", "sess-1"
+			infos := f.event(ev)
+			require.Len(t, infos, 1)
+			require.Equal(t, tc.wantType, infos[0].Type)
+			require.Equal(t, tc.wantMsg, infos[0].Msg)
+			require.Empty(t, f.panel())
+		})
+	}
+}
+
+func TestWorkflowWarnIsReported(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	infos := f.event(host.Event{Kind: host.EventWarn, Command: "demo", SessionID: "sess-1", Message: "undeclared: add `x` to requires()"})
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
+	require.Equal(t, "Workflow /demo: undeclared: add `x` to requires()", infos[0].Msg)
+}
+
+func TestPromptHistorySkipsWorkflowTurns(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	user := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "mine"}}}
+	turn := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: commands.FormatWorkflowTurnXML("demo", "engine")}}}
+	f.u.Update(promptHistoryLoadedMsg{messages: []message.Message{user, turn}})
+	require.Len(t, f.u.promptHistory.messages, 1)
+	require.Equal(t, "mine", f.u.promptHistory.messages[0].text)
+}
+
+func TestRenderWorkflowPanelGolden(t *testing.T) {
+	t.Parallel()
+
+	keys := workflowPanel{pauseKey: "ctrl+x", abortKey: "alt+x", goKey: "alt+g"}
+	tests := map[string]workflowPanel{
+		"running": {
+			command: "build", step: "devils-advocate", detail: "approach 1, round 2/3",
+			activity: "$ git diff main...HEAD",
+		},
+		"paused_and_held": {command: "build", step: "rebuild", paused: true, held: true},
+		"elsewhere":       {command: "build", step: "build", detail: "approach 2/3", activity: "turn", elsewhere: "Rebuild approach 2"},
+		"narrow": {
+			command: "build", step: "review", detail: "pass 1 with a very long detail that cannot fit",
+			activity: "$ a long command",
+		},
+	}
+	for name, p := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			p.pauseKey, p.abortKey, p.goKey = keys.pauseKey, keys.abortKey, keys.goKey
+			width := 100
+			if name == "narrow" {
+				width = 50
+			}
+			sty := styles.TokyoNight()
+			out := renderWorkflowPanel(&sty, p, width)
+			for line := range strings.SplitSeq(out, "\n") {
+				require.LessOrEqual(t, ansi.StringWidth(line), width)
+			}
+			golden.RequireEqual(t, []byte(out))
+		})
+	}
+}

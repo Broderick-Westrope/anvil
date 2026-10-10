@@ -1,0 +1,507 @@
+package model
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
+	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
+	"github.com/Broderick-Westrope/anvil/internal/workspace"
+	"github.com/charmbracelet/x/ansi"
+)
+
+// workflowResultMaxWidth bounds a run's result in the status line.
+const workflowResultMaxWidth = 80
+
+// workflowRun is what the UI knows about one running workflow, keyed by
+// its invoking session. It is built from host events only.
+type workflowRun struct {
+	command  string
+	step     string
+	detail   string
+	activity string // The latest bash command or turn.
+	paused   bool
+	held     bool
+	// active is the session the script is driving: the invoker until a
+	// turn runs elsewhere or the script calls focus().
+	active   string
+	sessions map[string]bool // Every session the run has used.
+}
+
+// workflowSessionTitleMsg carries the title of a session a workflow uses,
+// for the progress panel's warning.
+type workflowSessionTitleMsg struct {
+	id, title string
+}
+
+// workflowFocusMsg is a focus() request, resolved with the target's
+// title.
+type workflowFocusMsg struct {
+	target, title string
+}
+
+// workflowFor returns the run involving sessionID, if any.
+func (m *UI) workflowFor(sessionID string) (invoker string, run *workflowRun) {
+	for invoker, run := range m.workflows {
+		if invoker == sessionID || run.sessions[sessionID] {
+			return invoker, run
+		}
+	}
+	return "", nil
+}
+
+// currentWorkflow returns the run involving the session on screen.
+func (m *UI) currentWorkflow() (invoker string, run *workflowRun) {
+	if !m.hasSession() {
+		return "", nil
+	}
+	return m.workflowFor(m.session.ID)
+}
+
+func (m *UI) workflowTitle(sessionID string) string {
+	if title := m.workflowTitles[sessionID]; title != "" {
+		return title
+	}
+	return "another session"
+}
+
+// startWorkflowCommand runs a workflow command. A workflow never sends
+// its command body: the script gets the raw arguments instead.
+func (m *UI) startWorkflowCommand(name string, cmd commands.CustomCommand, raw string) tea.Cmd {
+	if len(cmd.Warnings) > 0 {
+		return util.ReportError(fmt.Errorf("workflow /%s can't run: %s", name, strings.Join(cmd.Warnings, "; ")))
+	}
+	if m.reloading {
+		return util.ReportWarn(reloadInProgressMsg)
+	}
+	if !m.com.Workspace.AgentIsReady() {
+		return util.ReportError(errors.New("orchestrator agent is not initialized"))
+	}
+	loadCmd, err := m.ensureSession()
+	if err != nil {
+		return util.ReportError(err)
+	}
+	inv := host.Invocation{
+		CommandID:   cmd.ID,
+		CommandName: name,
+		Source:      cmd.Source,
+		ScriptPath:  cmd.Workflow,
+		SessionID:   m.session.ID,
+		Raw:         raw,
+	}
+	ws := m.com.Workspace
+	return tea.Batch(loadCmd, func() tea.Msg {
+		if err := ws.WorkflowStart(context.Background(), inv); err != nil {
+			return util.NewErrorMsg(err)
+		}
+		return nil
+	})
+}
+
+// handleWorkflowAction handles the dialog actions that drive workflows.
+func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
+	switch action := action.(type) {
+	case dialog.ActionRunCustomCommand:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		return m.startWorkflowCommand(action.Name, commands.CustomCommand{
+			ID: action.CommandID, Source: action.Source, Workflow: action.Workflow, Warnings: action.Warnings,
+		}, "")
+	case dialog.ActionWorkflowRespond:
+		m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
+		delete(m.workflowRequests, action.RequestID)
+		if err := m.com.Workspace.WorkflowRespond(action.RequestID, action.Answer); err != nil {
+			return util.ReportError(err)
+		}
+	case dialog.ActionWorkflowControl:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		return m.controlWorkflow(action.SessionID, action.Control)
+	}
+	return nil
+}
+
+func (m *UI) controlWorkflow(sessionID string, control dialog.WorkflowControl) tea.Cmd {
+	ws := m.com.Workspace
+	var err error
+	switch control {
+	case dialog.WorkflowPause:
+		err = ws.WorkflowPause(sessionID)
+	case dialog.WorkflowResume:
+		err = ws.WorkflowResume(sessionID)
+	case dialog.WorkflowAbort:
+		err = ws.WorkflowAbort(sessionID)
+	case dialog.WorkflowGoToActive:
+		if _, run := m.workflowFor(sessionID); run != nil {
+			return m.goToSession(run.active)
+		}
+	}
+	if err != nil {
+		return util.ReportError(err)
+	}
+	return nil
+}
+
+// handleWorkflowKey handles the workflow keys. It reports false when
+// there is nothing for the key to act on, so the key falls through.
+func (m *UI) handleWorkflowKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	if key.Matches(msg, m.keyMap.WorkflowGo) && m.workflowFollow != "" {
+		target := m.workflowFollow
+		m.workflowFollow = ""
+		return m.goToSession(target), true
+	}
+	invoker, run := m.currentWorkflow()
+	if run == nil {
+		return nil, false
+	}
+	switch {
+	case key.Matches(msg, m.keyMap.WorkflowPause):
+		if run.paused {
+			return m.controlWorkflow(invoker, dialog.WorkflowResume), true
+		}
+		return m.controlWorkflow(invoker, dialog.WorkflowPause), true
+	case key.Matches(msg, m.keyMap.WorkflowAbort):
+		return m.controlWorkflow(invoker, dialog.WorkflowAbort), true
+	case key.Matches(msg, m.keyMap.WorkflowGo):
+		if run.active != m.session.ID {
+			return m.goToSession(run.active), true
+		}
+	}
+	return nil, false
+}
+
+// workflowControls describes the run involving the session on screen for
+// the command palette, or nil when there is none.
+func (m *UI) workflowControls() *dialog.WorkflowControls {
+	invoker, run := m.currentWorkflow()
+	if run == nil {
+		return nil
+	}
+	return &dialog.WorkflowControls{
+		SessionID:     invoker,
+		Command:       run.command,
+		Paused:        run.paused,
+		CanGoToActive: run.active != m.session.ID,
+	}
+}
+
+func (m *UI) goToSession(sessionID string) tea.Cmd {
+	if m.session != nil && m.session.ID == sessionID {
+		return nil
+	}
+	m.clearDrillStack()
+	return m.loadSession(sessionID)
+}
+
+// handleWorkflowEvent applies a workflow event to the UI.
+func (m *UI) handleWorkflowEvent(ev host.Event) tea.Cmd {
+	defer m.updateLayoutAndSize()
+	switch ev.Kind {
+	case host.EventApproval:
+		m.trackWorkflowRequest(ev)
+		m.dialog.OpenDialogWithGrace(dialog.NewWorkflowApproval(m.com, ev))
+		return m.sendNotification(notification.Notification{
+			Title:   "Anvil is waiting...",
+			Message: fmt.Sprintf("Workflow /%s needs approval", ev.Command),
+		})
+	case host.EventAsk:
+		m.trackWorkflowRequest(ev)
+		m.dialog.OpenDialogWithGrace(dialog.NewWorkflowAsk(m.com, ev))
+		return m.sendNotification(notification.Notification{
+			Title:   "Anvil is waiting...",
+			Message: fmt.Sprintf("Workflow /%s has a question", ev.Command),
+		})
+	case host.EventWarn:
+		return util.ReportWarn(fmt.Sprintf("Workflow /%s: %s", ev.Command, ev.Message))
+	case host.EventFinished:
+		return m.finishWorkflow(ev)
+	}
+
+	run := m.ensureWorkflowRun(ev)
+	switch ev.Kind {
+	case host.EventState:
+		// Pause controls publish without a command; holds and the start
+		// carry one and say nothing about pausing.
+		if ev.Command == "" {
+			run.paused = ev.Paused
+		} else {
+			run.held = ev.Held
+		}
+	case host.EventStatus:
+		run.step, run.detail = ev.Step, ev.Detail
+	case host.EventStep:
+		if ev.Step == "bash" {
+			run.activity = "$ " + ev.Detail
+			return nil
+		}
+		run.activity = ev.Step
+		if ev.Target != "" {
+			run.active = ev.Target
+			run.sessions[ev.Target] = true
+			return m.fetchWorkflowTitle(ev.Target)
+		}
+	case host.EventFocus:
+		run.active = ev.Target
+		run.sessions[ev.Target] = true
+		ws := m.com.Workspace
+		return func() tea.Msg {
+			msg := workflowFocusMsg{target: ev.Target}
+			if s, err := ws.GetSession(context.Background(), ev.Target); err == nil {
+				msg.title = s.Title
+			}
+			return msg
+		}
+	}
+	return nil
+}
+
+func (m *UI) trackWorkflowRequest(ev host.Event) {
+	if m.workflowRequests == nil {
+		m.workflowRequests = map[string]string{}
+	}
+	m.workflowRequests[ev.RequestID] = ev.SessionID
+}
+
+func (m *UI) ensureWorkflowRun(ev host.Event) *workflowRun {
+	if m.workflows == nil {
+		m.workflows = map[string]*workflowRun{}
+	}
+	run := m.workflows[ev.SessionID]
+	if run == nil {
+		run = &workflowRun{active: ev.SessionID, sessions: map[string]bool{ev.SessionID: true}}
+		m.workflows[ev.SessionID] = run
+	}
+	if ev.Command != "" {
+		run.command = ev.Command
+	}
+	return run
+}
+
+func (m *UI) fetchWorkflowTitle(sessionID string) tea.Cmd {
+	if _, ok := m.workflowTitles[sessionID]; ok {
+		return nil
+	}
+	ws := m.com.Workspace
+	return func() tea.Msg {
+		s, err := ws.GetSession(context.Background(), sessionID)
+		if err != nil {
+			return nil
+		}
+		return workflowSessionTitleMsg{id: sessionID, title: s.Title}
+	}
+}
+
+func (m *UI) setWorkflowTitle(id, title string) {
+	if m.workflowTitles == nil {
+		m.workflowTitles = map[string]string{}
+	}
+	m.workflowTitles[id] = title
+	m.updateLayoutAndSize()
+}
+
+// handleWorkflowFocus moves to the session a script focused, unless you
+// have unsent text, in which case it tells you how to follow.
+func (m *UI) handleWorkflowFocus(msg workflowFocusMsg) tea.Cmd {
+	if msg.title != "" {
+		m.setWorkflowTitle(msg.target, msg.title)
+	}
+	if m.session != nil && m.session.ID == msg.target {
+		m.workflowFollow = ""
+		return nil
+	}
+	if m.textarea.Value() == "" && !m.attachments.HasContent() {
+		m.workflowFollow = ""
+		return m.goToSession(msg.target)
+	}
+	m.workflowFollow = msg.target
+	return util.ReportInfo(fmt.Sprintf("workflow moved to %s, press %s to follow",
+		m.workflowTitle(msg.target), m.keyMap.WorkflowGo.Help().Key))
+}
+
+func (m *UI) finishWorkflow(ev host.Event) tea.Cmd {
+	delete(m.workflows, ev.SessionID)
+	for req, invoker := range m.workflowRequests {
+		if invoker == ev.SessionID {
+			m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(req))
+			delete(m.workflowRequests, req)
+		}
+	}
+	name := "/" + ev.Command
+	switch ev.Status {
+	case host.StatusCompleted:
+		text := "Workflow " + name + " completed"
+		if result := compactResult(ev.Result); result != "" {
+			text += ": " + ansi.Truncate(result, workflowResultMaxWidth, "…")
+		}
+		return util.CmdHandler(util.InfoMsg{Type: util.InfoTypeSuccess, Msg: text})
+	case host.StatusDenied:
+		return util.ReportWarn("Workflow " + name + " was not approved")
+	case host.StatusAborted:
+		return util.ReportWarn("Workflow " + name + " aborted")
+	default:
+		return util.CmdHandler(util.InfoMsg{Type: util.InfoTypeError, Msg: "Workflow " + name + " failed: " + ev.Message})
+	}
+}
+
+// compactResult renders a run's JSON result on one line, or "" when it
+// returned nothing.
+func compactResult(raw json.RawMessage) string {
+	var buf bytes.Buffer
+	if len(raw) == 0 || json.Compact(&buf, raw) != nil || buf.String() == "null" {
+		return ""
+	}
+	return buf.String()
+}
+
+// workflowPanel is what the progress panel shows for one run.
+type workflowPanel struct {
+	command  string
+	step     string
+	detail   string
+	activity string
+	paused   bool
+	held     bool
+	// elsewhere is the title of the session the run is driving when it
+	// isn't the one on screen.
+	elsewhere string
+	pauseKey  string
+	abortKey  string
+	goKey     string
+}
+
+// currentWorkflowPanel returns the panel for the session on screen.
+func (m *UI) currentWorkflowPanel() (workflowPanel, bool) {
+	if m.isDrilledIn() {
+		return workflowPanel{}, false
+	}
+	_, run := m.currentWorkflow()
+	if run == nil {
+		return workflowPanel{}, false
+	}
+	p := workflowPanel{
+		command: run.command, step: run.step, detail: run.detail, activity: run.activity,
+		paused: run.paused, held: run.held,
+		pauseKey: m.keyMap.WorkflowPause.Help().Key,
+		abortKey: m.keyMap.WorkflowAbort.Help().Key,
+		goKey:    m.keyMap.WorkflowGo.Help().Key,
+	}
+	if run.active != m.session.ID {
+		p.elsewhere = m.workflowTitle(run.active)
+	}
+	return p, true
+}
+
+func (m *UI) workflowPanelHeight() int {
+	p, ok := m.currentWorkflowPanel()
+	if !ok {
+		return 0
+	}
+	if p.elsewhere != "" {
+		return 2
+	}
+	return 1
+}
+
+// renderWorkflowPanel renders the progress line, plus a warning when the
+// run is driving another session, within width.
+func renderWorkflowPanel(t *styles.Styles, p workflowPanel, width int) string {
+	sep := t.Pills.HelpText.Render(" · ")
+	hint := func(k, text string) string {
+		return t.Pills.HelpKey.Render(k) + " " + t.Pills.HelpText.Render(text)
+	}
+
+	progress := t.Messages.WorkflowTag.Render("Workflow") + " " + t.Pills.TodoLabel.Render("/"+p.command)
+	for _, part := range []string{p.step, p.detail} {
+		if part != "" {
+			progress += sep + t.Pills.TodoProgress.Render(part)
+		}
+	}
+	if p.paused {
+		progress += sep + t.Pills.QueueLabel.Render("paused")
+	}
+	if p.held {
+		progress += sep + t.Pills.QueueLabel.Render("holding sessions")
+	}
+	if p.activity != "" {
+		progress += "  " + t.Pills.TodoCurrentTask.Render(firstLine(p.activity))
+	}
+
+	pauseText := "pause"
+	if p.paused {
+		pauseText = "resume"
+	}
+	hints := hint(p.pauseKey, pauseText) + sep + hint(p.abortKey, "abort")
+	available := width - lipgloss.Width(hints) - 2
+	line := ansi.Truncate(progress, max(available, 0), "…")
+	line += strings.Repeat(" ", max(available-lipgloss.Width(line), 0)) + "  " + hints
+	lines := []string{ansi.Truncate(line, width, "…")}
+
+	if p.elsewhere != "" {
+		warning := t.Pills.WorkflowWarning.Render(fmt.Sprintf("workflow /%s is running in %s", p.command, p.elsewhere))
+		lines = append(lines, ansi.Truncate(warning+"  "+hint(p.goKey, "go there"), width, "…"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}
+
+// annotateWorkflowCommands adds the missing requirements of each workflow
+// command to its warnings, so a command that can't run is shown as broken.
+// Scripts that already failed to load aren't checked again. It does IO, so
+// call it from a command.
+func annotateWorkflowCommands(ws workspace.Workspace, cmds []commands.CustomCommand) []commands.CustomCommand {
+	out := make([]commands.CustomCommand, len(cmds))
+	for i, cmd := range cmds {
+		out[i] = cmd
+		if cmd.Workflow == "" || len(cmd.Warnings) > 0 {
+			continue
+		}
+		missing, err := ws.WorkflowMissing(cmd.Workflow)
+		switch {
+		case errors.Is(err, workspace.ErrWorkflowsUnavailable):
+		case err != nil:
+			out[i].Warnings = []string{err.Error()}
+		default:
+			out[i].Warnings = missing
+		}
+	}
+	return out
+}
+
+// brokenWorkflowsWarning describes the workflow commands that won't run,
+// or returns "" when there are none.
+func brokenWorkflowsWarning(cmds []commands.CustomCommand) string {
+	var problems []string
+	for _, cmd := range cmds {
+		if cmd.Workflow == "" || len(cmd.Warnings) == 0 {
+			continue
+		}
+		name := cmd.ItemName()
+		if cmd.DisplayName != "" {
+			name = cmd.DisplayName
+		}
+		problems = append(problems, fmt.Sprintf("/%s: %s", name, strings.Join(cmd.Warnings, "; ")))
+	}
+	if len(problems) == 0 {
+		return ""
+	}
+	return "Broken workflow commands: " + strings.Join(problems, " · ")
+}
+
+// isWorkflowTurn reports whether text is a turn a workflow script sent.
+func isWorkflowTurn(text string) bool {
+	_, _, ok := commands.ParseWorkflowTurnXML(strings.TrimSpace(text))
+	return ok
+}
