@@ -52,6 +52,9 @@ internal/
   event/                           Telemetry (PostHog)
   pubsub/                          Internal pub/sub for cross-component messaging
   filetracker/                     Tracks files touched per session
+  commands/                        Custom slash commands (COMMAND.md), incl. workflow: frontmatter
+  workflow/                        Workflow script runtime (goja): parsing, primitives, event log
+    host/                          Runs workflows for the app: Service, Backend, Store, approvals
 ```
 
 ### Key Dependency Roles
@@ -123,6 +126,26 @@ internal/
   SQL in the `anvil-cache-triage` skill
   (`.agents/skills/anvil-cache-triage/references/classify.sql`), not in
   Go. Rows older than 90 days are pruned at startup.
+- **Workflows**: a command whose `COMMAND.md` sets `workflow:` runs a
+  JavaScript script (see `plans/design-2026-10-10-workflows.md`).
+  `internal/workflow` is the engine: it parses `requires()` without running
+  anything, runs `main` in goja, and records every primitive call as
+  started/completed/failed events. It knows nothing about Anvil; every side
+  effect goes through the `workflow.Backend` interface, the seam tests fake.
+  `internal/workflow/host` implements that Backend against the coordinator
+  and owns runs: `Service` (start, approval, ask, pause/abort, events for
+  the UI) and `Store` (run rows, event log, approvals). Approval covers a
+  bundle of every file under the script's directory (skipping dot
+  directories and `node_modules`), hashed together, so editing a bundled
+  reference asks again; `--yolo=full` skips it. `workflow.exclusive` holds
+  the run's sessions (`Coordinator.Hold`): no new run starts in them and
+  the hold waits out in-flight ones. Script turns are awaited submissions
+  (`admission.submitAwait`): they queue behind user work and return their
+  own result, including through a compaction continuation. `agent()` runs a
+  workflow subagent (`RunWorkflowAgent`) in a child session, with optional
+  tool restriction, pinned model and a `submit_result` tool for schemas.
+  Startup marks runs of dead instances interrupted and prunes run
+  directories older than 14 days (`Store.PruneRunDirs`).
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
