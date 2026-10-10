@@ -43,11 +43,12 @@ type Run struct {
 	rec     Recorder
 	opts    Options
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	vm      *goja.Runtime
-	inMain  bool
-	aborted atomic.Bool
+	ctx      context.Context
+	cancel   context.CancelFunc
+	vm       *goja.Runtime
+	inMain   bool
+	aborted  atomic.Bool
+	executed atomic.Bool
 
 	mu       sync.Mutex
 	paused   bool
@@ -84,8 +85,12 @@ func NewRun(script *Script, backend Backend, rec Recorder, opts Options) *Run {
 }
 
 // Execute runs the script's top-level code and then main(input), returning
-// main's result as JSON. It returns ErrAborted if the run was aborted.
+// main's result as JSON. It returns ErrAborted if the run was aborted, and
+// an error without running anything if the run already executed.
 func (r *Run) Execute(ctx context.Context, input Input) (json.RawMessage, error) {
+	if r.executed.Swap(true) {
+		return nil, errors.New("workflow run already executed")
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	vm := goja.New()

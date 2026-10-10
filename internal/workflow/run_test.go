@@ -59,6 +59,18 @@ func TestBashCheckFalseReturnsFailure(t *testing.T) {
 	require.Equal(t, float64(1), got)
 }
 
+func TestRunExecutesOnce(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	run := h.newRun(t, `function main() { bash("once") }`)
+	_, err := run.Execute(t.Context(), workflow.Input{})
+	require.NoError(t, err)
+	_, err = run.Execute(t.Context(), workflow.Input{})
+	require.ErrorContains(t, err, "already executed")
+	require.Equal(t, []string{"once"}, h.backend.bashCmds())
+}
+
 func TestUncaughtErrorFailsRun(t *testing.T) {
 	t.Parallel()
 
