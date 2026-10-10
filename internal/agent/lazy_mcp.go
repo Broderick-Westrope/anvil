@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
@@ -169,4 +170,24 @@ func reconnectDeferredServers(
 			lazyState.Disable(name)
 		}
 	}
+}
+
+// mcpInstructions joins the instructions of connected MCP servers, leaving
+// out lazy servers that aren't enabled.
+func mcpInstructions(lazyMCPToolMap map[string]string, lazyState *tools.LazyMCPState) string {
+	lazyServers := lazyServerNames(lazyMCPToolMap)
+	var instructions strings.Builder
+	for name, server := range mcp.GetStates() {
+		if server.State != mcp.StateConnected && server.State != mcp.StateLazy {
+			continue
+		}
+		if lazyServers[name] && !lazyState.IsEnabled(name) {
+			continue
+		}
+		if s := server.Client.InitializeResult().Instructions; s != "" {
+			instructions.WriteString(s)
+			instructions.WriteString("\n\n")
+		}
+	}
+	return instructions.String()
 }

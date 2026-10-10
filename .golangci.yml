@@ -109,7 +109,7 @@ linters:
       # function must stay under it. Delete an entry once its function is
       # back under the limit.
       - path: internal/agent/agent\.go
-        text: 'func `(\(\*sessionAgent\)\.generateTitle|\(\*sessionAgent\)\.preparePrompt|\(\*sessionAgent\)\.runOwned|\(\*sessionAgent\)\.summarizeOwned)`'
+        text: 'func `(\(\*sessionAgent\)\.generateTitle|\(\*sessionAgent\)\.preparePrompt|\(\*sessionAgent\)\.summarizeOwned)`'
         linters: [gocognit]
       - path: internal/agent/agentic_fetch_tool\.go
         text: 'func `(\(\*coordinator\)\.agenticFetchTool)`'

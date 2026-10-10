@@ -30,14 +30,11 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
-	"charm.land/fantasy/providers/google"
-	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
 	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
-	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/jobevents"
@@ -285,28 +282,23 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		return nil, err
 	}
 	state := call.state
-	if !call.wake && state.acceptedUserID == "" {
-		unlock := a.lockDispatch(call.SessionID)
-		a.wakeCounts.Del(call.SessionID)
-		a.wakeSuppressed.Del(call.SessionID)
-		unlock()
-	}
-	if state.acceptedUserID != "" {
-		if err := a.restoreAttempt(ctx, call.SessionID, state); err != nil {
-			return nil, err
-		}
+	if err := a.beginAttempt(ctx, call); err != nil {
+		return nil, err
 	}
 	// Copy mutable fields under lock to avoid races with SetTools/SetModels.
 	agentTools := a.tools.Copy()
-	lazyMCPToolMap := a.lazyMCPToolMap.Copy()
-	largeModel := a.largeModel.Get()
-	systemPrompt := a.systemPrompt.Get()
-	promptPrefix := a.systemPromptPrefix.Get()
-	providerCfg := a.providerConfig.Get()
+	t := &turn{
+		a:              a,
+		call:           call,
+		largeModel:     a.largeModel.Get(),
+		providerCfg:    a.providerConfig.Get(),
+		promptPrefix:   a.systemPromptPrefix.Get(),
+		lazyMCPToolMap: a.lazyMCPToolMap.Copy(),
+		injected:       newInjectedMessages(),
+		runID:          uuid.NewString(),
+		sanitized:      make(map[string]bool),
+	}
 
-	// sessionLock protects currentSession and currentLeaf from concurrent
-	// access across agent callbacks (e.g. parallel OnToolResult calls).
-	sessionLock := sync.Mutex{}
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
 	if err != nil {
 		return a.abortSetup(ctx, fmt.Errorf("failed to get session: %w", err))
@@ -314,20 +306,9 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	if state.acceptedUserID != "" {
 		currentSession.LeafMessageID = state.acceptedUserID
 	}
-	currentLeaf := currentSession.LeafMessageID
-	parentSessionID := currentSession.ParentSessionID
-
-	// getLeaf and setLeaf provide thread-safe access to currentLeaf.
-	getLeaf := func() string {
-		sessionLock.Lock()
-		defer sessionLock.Unlock()
-		return currentLeaf
-	}
-	setLeaf := func(id string) {
-		sessionLock.Lock()
-		defer sessionLock.Unlock()
-		currentLeaf = id
-	}
+	t.session = currentSession
+	t.leaf = currentSession.LeafMessageID
+	t.parentSessionID = currentSession.ParentSessionID
 
 	msgs, raw, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
@@ -337,50 +318,16 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	// Derive the lazy MCP state from conversation history and inject
 	// into the context so tool handlers can query it.
 	initialEnabled := deriveLazyMCPState(raw)
-	lazyState := tools.NewLazyMCPState(initialEnabled)
-	ctx = tools.WithLazyMCPState(ctx, lazyState)
+	t.lazyState = tools.NewLazyMCPState(initialEnabled)
+	ctx = tools.WithLazyMCPState(ctx, t.lazyState)
 
 	// Reconnect replayed-enabled deferred servers. This runs at Run
 	// start (not session load) so browsing history never triggers
 	// connections. Failures are non-fatal: the server is downgraded
 	// to not-enabled for this run.
-	reconnectDeferredServers(ctx, a.connectFn.Get(), initialEnabled, lazyState)
+	reconnectDeferredServers(ctx, a.connectFn.Get(), initialEnabled, t.lazyState)
 
-	// Filter lazy MCP tools from the initial tool set.
-	agentTools = filterLazyMCPTools(agentTools, lazyMCPToolMap, lazyState)
-
-	// Build MCP instructions, skipping lazy servers not yet enabled.
-	lazyServers := lazyServerNames(lazyMCPToolMap)
-	var instructions strings.Builder
-
-	for name, server := range mcp.GetStates() {
-		if server.State != mcp.StateConnected && server.State != mcp.StateLazy {
-			continue
-		}
-		if lazyServers[name] && !lazyState.IsEnabled(name) {
-			continue
-		}
-		if s := server.Client.InitializeResult().Instructions; s != "" {
-			instructions.WriteString(s)
-			instructions.WriteString("\n\n")
-		}
-	}
-
-	if s := instructions.String(); s != "" {
-		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
-	}
-
-	if len(agentTools) > 0 {
-		// Add Anthropic caching to the last tool.
-		agentTools[len(agentTools)-1].SetProviderOptions(a.getCacheControlOptions())
-	}
-
-	agent := fantasy.NewAgent(
-		largeModel.Model,
-		fantasy.WithSystemPrompt(systemPrompt),
-		fantasy.WithTools(agentTools...),
-		fantasy.WithUserAgent(userAgent),
-	)
+	agent := t.newAgent(agentTools, a.systemPrompt.Get())
 
 	// Capture before any messages are added so we can auto-regenerate the
 	// title after the first assistant response completes.
@@ -388,27 +335,12 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		state.firstMessage = len(msgs) == 0
 	}
 	isFirstMessage := state.firstMessage
-	if call.wake {
-		noticeMsg, err := a.deliverJobEvents(ctx, call.SessionID, currentLeaf)
-		if err != nil {
-			a.refundWake(call.SessionID)
-			return a.abortSetup(ctx, err)
-		}
-		if noticeMsg == nil {
-			a.refundWake(call.SessionID)
-			return nil, nil
-		}
-		msgs = append(msgs, *noticeMsg)
-		currentLeaf = noticeMsg.ID
-	} else if state.acceptedUserID != "" {
-		msgs = slices.DeleteFunc(msgs, func(m message.Message) bool { return m.ID == state.acceptedUserID })
-	} else {
-		userMsg, err := a.createUserMessage(ctx, call, currentLeaf)
-		if err != nil {
-			return a.abortSetup(ctx, err)
-		}
-		currentLeaf = userMsg.ID
-		state.acceptedUserID = userMsg.ID
+	msgs, started, err := t.start(ctx, msgs)
+	if err != nil {
+		return a.abortSetup(ctx, err)
+	}
+	if !started {
+		return nil, nil
 	}
 
 	// Add the session to the context. Subagents run on their parent's tool
@@ -416,543 +348,128 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	rootSessionID := cmp.Or(tools.GetRootSessionFromContext(ctx), call.SessionID)
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
 	ctx = context.WithValue(ctx, tools.RootSessionIDContextKey, rootSessionID)
+	t.genCtx = ctx
+	t.persistCtx = context.WithoutCancel(ctx)
 
-	// persistCtx survives cancellation and is used for persistence that must
-	// succeed even when the request is canceled (finish parts, error tool
-	// results, leaf sync). Using the plain parent ctx is not enough: for
-	// subagents the parent ctx is the root session's generation context,
-	// which is canceled by the same escape press — writes would fail, the
-	// child's messages would never be marked canceled, and drilled-in views
-	// would keep spinning forever.
-	persistCtx := context.WithoutCancel(ctx)
-
-	genCtx := ctx
 	// Drain any debounced message updates before returning. message.Service
 	// already flushes synchronously on terminal updates, but a defer here
 	// guarantees the contract at every Run exit (success, error, panic
 	// recovery upstream) without callers needing to know.
 	defer func() {
-		if flushErr := a.messages.FlushAll(persistCtx); flushErr != nil {
+		if flushErr := a.messages.FlushAll(t.persistCtx); flushErr != nil {
 			slog.Error("Failed to flush pending message updates after run", "error", flushErr)
 		}
 	}()
 
-	history, files := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages, call.Attachments...)
+	history, files := a.preparePrompt(msgs, t.largeModel.CatwalkCfg.SupportsImages, call.Attachments...)
 
-	var currentAssistant *message.Message
-	var stepMessages []fantasy.Message
-	injected := newInjectedMessages()
-	var shouldSummarize bool
-	sanitizedToolCalls := make(map[string]bool)
-	// OnToolCall writes this map while OnToolResult reads it, and tool
-	// execution may run in parallel goroutines, so guard both sides.
-	var sanitizedMu sync.Mutex
-	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
-	var maxOutputTokens *int64
-	if call.MaxOutputTokens > 0 {
-		maxOutputTokens = &call.MaxOutputTokens
-	}
-
-	// Usage capture state, guarded by sessionLock. capture is the current
-	// step's request; prevTurn is the history of the run's previous step,
-	// or of the session's last recorded turn step before this run.
-	runID := uuid.NewString()
-	var capture *stepCapture
-	var prevTurn turnPrefix
-	var havePrevTurn bool
+	// prevTurn is the history of the session's last recorded turn step
+	// before this run; the turn updates it after each step.
 	if a.usageRecorder != nil {
-		prevTurn, havePrevTurn = a.lastTurn.Get(call.SessionID)
-		if parentSessionID != "" {
+		t.prevTurn, t.havePrevTurn = a.lastTurn.Get(call.SessionID)
+		if t.parentSessionID != "" {
 			defer a.lastTurn.Del(call.SessionID)
 		}
 	}
-	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
-		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
-		Files:            files,
-		Messages:         history,
-		Headers:          sessionHeaders(call.SessionID),
-		ProviderOptions:  call.ProviderOptions,
-		MaxOutputTokens:  maxOutputTokens,
-		TopP:             call.TopP,
-		Temperature:      call.Temperature,
-		PresencePenalty:  call.PresencePenalty,
-		TopK:             call.TopK,
-		FrequencyPenalty: call.FrequencyPenalty,
-		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = injected.apply(options.Messages)
-			for i := range prepared.Messages {
-				prepared.Messages[i].ProviderOptions = nil
-			}
-
-			// Use latest tools (updated by SetTools when MCP tools change),
-			// filtering out lazy MCP tools that haven't been enabled.
-			prepared.Tools = filterLazyMCPTools(a.tools.Copy(), lazyMCPToolMap, lazyState)
-
-			if a.jobEvents != nil {
-				noticeMsg, deliverErr := a.deliverJobEvents(callContext, call.SessionID, getLeaf())
-				if deliverErr != nil {
-					return callContext, prepared, deliverErr
-				}
-				if noticeMsg != nil {
-					setLeaf(noticeMsg.ID)
-					aiMessages := noticeMsg.ToAIMessage()
-					injected.add(options.Messages, aiMessages...)
-					prepared.Messages = append(prepared.Messages, aiMessages...)
-				}
-			}
-
-			prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, largeModel)
-
-			lastSystemRoleInx := 0
-			systemMessageUpdated := false
-			for i, msg := range prepared.Messages {
-				// Only add cache control to the last message.
-				if msg.Role == fantasy.MessageRoleSystem {
-					lastSystemRoleInx = i
-				} else if !systemMessageUpdated {
-					prepared.Messages[lastSystemRoleInx].ProviderOptions = a.getCacheControlOptions()
-					systemMessageUpdated = true
-				}
-				// Than add cache control to the last 2 messages.
-				if i > len(prepared.Messages)-3 {
-					prepared.Messages[i].ProviderOptions = a.getCacheControlOptions()
-				}
-			}
-
-			if promptPrefix != "" {
-				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(promptPrefix)}, prepared.Messages...)
-			}
-
-			if isAnthropicOAuth(providerCfg) {
-				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
-			}
-
-			sessionLock.Lock()
-			stepMessages = cloneFantasyMessages(prepared.Messages)
-			sessionLock.Unlock()
-
-			var assistantMsg message.Message
-			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
-				Role:            message.Assistant,
-				Parts:           []message.ContentPart{},
-				Model:           largeModel.ModelCfg.Model,
-				Provider:        largeModel.ModelCfg.Provider,
-				ParentMessageID: getLeaf(),
-			})
-			if err != nil {
-				return callContext, prepared, err
-			}
-			state.assistantIDs = append(state.assistantIDs, assistantMsg.ID)
-			setLeaf(assistantMsg.ID)
-			// The capture starts after the message is created so
-			// request_started_at is as close to the provider request as
-			// PrepareStep allows.
-			if a.usageRecorder != nil {
-				stepUsage := a.newCapture(usageKindTurn, runID, call.SessionID, parentSessionID, largeModel, prepared.Tools, prepared.Messages)
-				stepUsage.stepIndex = options.StepNumber
-				stepUsage.messageID = assistantMsg.ID
-				sessionLock.Lock()
-				if havePrevTurn {
-					stepUsage.comparePrefix(prevTurn)
-				}
-				capture = stepUsage
-				sessionLock.Unlock()
-			}
-			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
-			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
-			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
-			callContext = context.WithValue(callContext, ownerKey{}, struct{}{})
-			currentAssistant = &assistantMsg
-			return callContext, prepared, err
-		},
-		OnReasoningStart: func(id string, reasoning fantasy.ReasoningContent) error {
-			currentAssistant.AppendReasoningContent(reasoning.Text)
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnReasoningDelta: func(id string, text string) error {
-			currentAssistant.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
-			// handle anthropic signature
-			if anthropicData, ok := reasoning.ProviderMetadata[anthropic.Name]; ok {
-				if reasoning, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok {
-					currentAssistant.AppendReasoningSignature(reasoning.Signature)
-				}
-			}
-			if googleData, ok := reasoning.ProviderMetadata[google.Name]; ok {
-				if reasoning, ok := googleData.(*google.ReasoningMetadata); ok {
-					currentAssistant.AppendThoughtSignature(reasoning.Signature, reasoning.ToolID)
-				}
-			}
-			if openaiData, ok := reasoning.ProviderMetadata[openai.Name]; ok {
-				if reasoning, ok := openaiData.(*openai.ResponsesReasoningMetadata); ok {
-					currentAssistant.SetReasoningResponsesData(reasoning)
-				}
-			}
-			currentAssistant.FinishThinking()
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnTextDelta: func(id string, text string) error {
-			// Strip leading newline from initial text content. This is is
-			// particularly important in non-interactive mode where leading
-			// newlines are very visible.
-			if len(currentAssistant.Parts) == 0 {
-				text = strings.TrimPrefix(text, "\n")
-			}
-
-			currentAssistant.AppendContent(text)
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnToolInputStart: func(id string, toolName string) error {
-			toolCall := message.ToolCall{
-				ID:               id,
-				Name:             toolName,
-				ProviderExecuted: false,
-				Finished:         false,
-			}
-			currentAssistant.AddToolCall(toolCall)
-			// Use persistCtx so the update succeeds even if the request is
-			// canceled mid-stream.
-			return a.messages.Update(persistCtx, *currentAssistant)
-		},
-		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
-			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
-			sessionLock.Lock()
-			if capture != nil {
-				capture.retries++
-			}
-			sessionLock.Unlock()
-			// Reset streamed content so the retried response doesn't
-			// concatenate with partial content from the failed attempt.
-			// On the final attempt (no more retries), any partial content
-			// stays in the message as useful context beneath the error.
-			currentAssistant.ResetStreamedContent()
-			if updateErr := a.messages.Update(genCtx, *currentAssistant); updateErr != nil {
-				slog.Error("Failed to reset message on retry", "error", updateErr)
-			}
-		},
-		OnAuthRefresh: call.OnAuthRefresh,
-		// OnStreamFinish fires as soon as the provider reports usage, before
-		// tools run, so steps whose tools later fail are still recorded.
-		// fantasy (v0.45.2) calls it from its agent processStepStream on
-		// the finish part, inside the per-step retry closure in its agent
-		// Stream. A retried attempt that failed before its finish part
-		// never reaches it, so a retried request is recorded once, by the
-		// attempt that finished. A critical tool error is wrapped in
-		// ToolExecutionError (processStepStream), which isRetryableError
-		// rejects, so a finished step is not retried and is recorded once.
-		// The triage skill still checks for duplicates defensively.
-		OnStreamFinish: func(usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata) error {
-			finished := time.Now()
-			sessionLock.Lock()
-			if capture == nil {
-				sessionLock.Unlock()
-				return nil
-			}
-			// Snapshot the capture so the row is built outside the lock.
-			snapshot := *capture
-			prevTurn, havePrevTurn = snapshot.turnPrefix(), true
-			a.lastTurn.Set(call.SessionID, prevTurn)
-			sessionLock.Unlock()
-			a.usageRecorder.Record(a.newRow(&snapshot, usage, reason, meta, finished))
-			return nil
-		},
-		// ModelProvider is re-read on each attempt so a stream retried
-		// after OnAuthRefresh picks up the model rebuilt against the
-		// refreshed credentials rather than the stale one.
-		ModelProvider: func() fantasy.LanguageModel {
-			return a.largeModel.Get().Model
-		},
-		OnToolCall: func(tc fantasy.ToolCallContent) error {
-			input, wasSanitized := sanitizeToolInput(tc.ToolName, tc.ToolCallID, tc.Input)
-			if wasSanitized {
-				sanitizedMu.Lock()
-				sanitizedToolCalls[tc.ToolCallID] = true
-				sanitizedMu.Unlock()
-			}
-			toolCall := message.ToolCall{
-				ID:               tc.ToolCallID,
-				Name:             tc.ToolName,
-				Input:            input,
-				ProviderExecuted: false,
-				Finished:         true,
-			}
-			currentAssistant.AddToolCall(toolCall)
-			// Use persistCtx so the update succeeds even if the request is
-			// canceled mid-stream.
-			return a.messages.Update(persistCtx, *currentAssistant)
-		},
-		OnToolResult: func(result fantasy.ToolResultContent) error {
-			toolResult := a.convertToToolResult(result)
-			sanitizedMu.Lock()
-			wasSanitized := sanitizedToolCalls[result.ToolCallID]
-			sanitizedMu.Unlock()
-			if wasSanitized {
-				toolResult.Content = "Tool call failed: arguments were not valid JSON. Please check your tool call format and try again."
-				toolResult.IsError = true
-			}
-			// Hold sessionLock across the entire read→create→update
-			// sequence. OnToolResult may be called from parallel
-			// tool-execution goroutines; without the lock two goroutines
-			// could read the same leaf and create sibling messages
-			// (an unintended fork).
-			sessionLock.Lock()
-			defer sessionLock.Unlock()
-			// Use persistCtx: a completed tool result must be recorded
-			// even when cancellation races the tool goroutine, or the
-			// error path would misrecord the success as a canceled call.
-			toolMsg, createMsgErr := a.messages.Create(persistCtx, currentAssistant.SessionID, message.CreateMessageParams{
-				Role: message.Tool,
-				Parts: []message.ContentPart{
-					toolResult,
-				},
-				ParentMessageID: currentLeaf,
-			})
-			if createMsgErr != nil {
-				return createMsgErr
-			}
-			currentLeaf = toolMsg.ID
-			if a.jobEvents != nil && !toolResult.IsError {
-				a.observeJobResult(result.ToolName, toolResult.Metadata)
-			}
-			return nil
-		},
-		OnStepFinish: func(stepResult fantasy.StepResult) error {
-			for _, w := range stepResult.Warnings {
-				slog.Warn("Provider warning", "type", w.Type, "message", w.Message)
-			}
-			finishReason := message.FinishReasonUnknown
-			switch stepResult.FinishReason {
-			case fantasy.FinishReasonLength:
-				finishReason = message.FinishReasonMaxTokens
-			case fantasy.FinishReasonStop:
-				finishReason = message.FinishReasonEndTurn
-			case fantasy.FinishReasonToolCalls:
-				finishReason = message.FinishReasonToolUse
-			case fantasy.FinishReasonContentFilter:
-				// Provider safety classifier stopped the model
-				// (Anthropic stop_reason=refusal, OpenAI content_filter).
-				// The TUI owns the display copy; we only persist the
-				// reason so the UI can show a REFUSED banner.
-				finishReason = message.FinishReasonContentFilter
-				slog.Warn("Provider content filter stopped the model",
-					"session_id", call.SessionID,
-					"finish_reason", string(stepResult.FinishReason),
-				)
-			}
-			// If a tool result halted the turn (e.g. a hook halt or a
-			// permission denial), the step ends on FinishReasonToolCalls but
-			// the model will not be called again. Treat it as the end of the
-			// turn so the UI can render the assistant footer.
-			if finishReason == message.FinishReasonToolUse {
-				for _, tr := range stepResult.Content.ToolResults() {
-					if tr.StopTurn {
-						finishReason = message.FinishReasonEndTurn
-						break
-					}
-				}
-			}
-			currentAssistant.AddFinish(finishReason, "", "")
-			sessionLock.Lock()
-			defer sessionLock.Unlock()
-
-			updatedSession, getSessionErr := a.sessions.Get(ctx, call.SessionID)
-			if getSessionErr != nil {
-				return getSessionErr
-			}
-			usage, estimated := fallbackStepUsage(stepMessages, stepResult)
-			a.updateSessionUsage(largeModel, &updatedSession, usage, a.openrouterCost(stepResult.ProviderMetadata), estimated)
-			_, sessionErr := a.sessions.Save(ctx, updatedSession)
-			if sessionErr != nil {
-				return sessionErr
-			}
-			currentSession = updatedSession
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		StopWhen: []fantasy.StopCondition{
-			func(_ []fantasy.StepResult) bool {
-				cw := int64(largeModel.CatwalkCfg.ContextWindow)
-				// If context window is unknown (0), skip auto-summarize
-				// to avoid immediately truncating custom/local models.
-				if cw == 0 {
-					return false
-				}
-				tokens := currentSession.PromptTokens
-				remaining := cw - tokens
-				var threshold int64
-				if cw >= largeContextWindowThreshold {
-					threshold = largeContextWindowBuffer
-				} else {
-					threshold = int64(float64(cw) * smallContextWindowRatio)
-				}
-				if (remaining <= threshold) && !a.disableAutoSummarize {
-					shouldSummarize = true
-					return true
-				}
-				return false
-			},
-			func(steps []fantasy.StepResult) bool {
-				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
-			},
-		},
-	})
+	result, err := agent.Stream(ctx, t.streamCall(history, files))
 	if err != nil {
-		isCancelErr := errors.Is(err, context.Canceled)
-		if currentAssistant == nil {
+		if t.assistant == nil {
 			return result, err
 		}
-		// Ensure we finish thinking on error to close the reasoning state.
-		currentAssistant.FinishThinking()
-		toolCalls := currentAssistant.ToolCalls()
-		// Use persistCtx: genCtx has been canceled, and for subagents the
-		// parent ctx is canceled too.
-		msgs, createErr := a.messages.List(persistCtx, currentAssistant.SessionID)
-		if createErr != nil {
-			return nil, createErr
-		}
-		for _, tc := range toolCalls {
-			if !tc.Finished {
-				tc.Finished = true
-				tc.Input = "{}"
-				currentAssistant.AddToolCall(tc)
-				updateErr := a.messages.Update(persistCtx, *currentAssistant)
-				if updateErr != nil {
-					return nil, updateErr
-				}
-			}
-
-			found := false
-			for _, msg := range msgs {
-				if msg.Role == message.Tool {
-					for _, tr := range msg.ToolResults() {
-						if tr.ToolCallID == tc.ID {
-							found = true
-							break
-						}
-					}
-				}
-				if found {
-					break
-				}
-			}
-			if found {
-				continue
-			}
-			content := "There was an error while executing the tool"
-			if isCancelErr {
-				content = "Error: user cancelled assistant tool calling"
-			}
-			toolResult := message.ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-				Content:    content,
-				IsError:    true,
-			}
-			errToolMsg, createErr := a.messages.Create(persistCtx, currentAssistant.SessionID, message.CreateMessageParams{
-				Role: message.Tool,
-				Parts: []message.ContentPart{
-					toolResult,
-				},
-				ParentMessageID: getLeaf(),
-			})
-			if createErr != nil {
-				return nil, createErr
-			}
-			setLeaf(errToolMsg.ID)
-		}
-		var fantasyErr *fantasy.Error
-		var providerErr *fantasy.ProviderError
-		const defaultTitle = "Provider Error"
-		if isCancelErr {
-			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
-		} else if errors.As(err, &providerErr) {
-			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message)
-		} else if errors.As(err, &fantasyErr) {
-			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), defaultTitle), fantasyErr.Message)
-		} else if fantasy.IsTransportError(err) {
-			wrapped := fantasy.NewTransportError(err)
-			currentAssistant.AddFinish(message.FinishReasonError, stringext.Capitalize(wrapped.Title), wrapped.Message)
-		} else {
-			currentAssistant.AddFinish(message.FinishReasonError, defaultTitle, err.Error())
-		}
-		// Use persistCtx: genCtx has been canceled, and for subagents the
-		// parent ctx is canceled too.
-		updateErr := a.messages.Update(persistCtx, *currentAssistant)
-		if updateErr != nil {
-			return nil, updateErr
-		}
-		// Ensure the session's leaf pointer is synced and published so
-		// the UI reflects the current position (e.g. branch dialog).
-		// message.Create already advanced the DB leaf, but no session
-		// pubsub event was fired because OnStepFinish never ran.
-		if moveErr := a.sessions.MoveLeaf(persistCtx, call.SessionID, getLeaf()); moveErr != nil {
-			slog.Warn("Failed to sync session leaf after error", "err", moveErr)
+		if recordErr := t.recordFailure(err); recordErr != nil {
+			return nil, recordErr
 		}
 		return nil, err
 	}
-
-	if shouldSummarize {
-		summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions)
-		if summarizeErr != nil && call.retrySummary != nil {
-			if refreshErr := call.retrySummary(genCtx, summarizeErr); refreshErr == nil {
-				summarizeErr = a.Summarize(genCtx, call.SessionID, call.ProviderOptions)
-			}
-		}
-		if summarizeErr != nil {
-			state.summaryFailed = true
-			return nil, summarizeErr
-		}
-		if len(currentAssistant.ToolCalls()) > 0 {
-			if call.wake {
-				call.wake = false
-				call.Prompt = "The previous session was interrupted because it got too long while handling background job updates. Continue from the summary."
-			} else {
-				call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
-			}
-			call.state = nil
-			a.admission.enqueue(call.SessionID, submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) { return a.Run(ctx, call) }})
+	if t.shouldSummarize {
+		if err := a.summarizeAndResume(ctx, call, len(t.assistant.ToolCalls()) > 0); err != nil {
+			return nil, err
 		}
 	}
 
-	// Auto-regenerate title after the first assistant response. The
-	// assistant reply is already persisted at this point so we load
-	// fresh messages from the DB. Skip for non-interactive (task)
+	// Retitle after the first reply, except in non-interactive (task)
 	// sub-sessions.
 	if isFirstMessage && !call.NonInteractive {
-		sess, sessErr := a.sessions.Get(ctx, call.SessionID)
-		if sessErr != nil {
-			slog.Error("Failed to load session for title regeneration", "error", sessErr)
-		} else if !sess.TitleIsCustom {
-			titleMsgs, titleErr := a.messages.GetBranchPath(ctx, getLeaf())
-			if titleErr != nil {
-				slog.Error("Failed to load messages for title regeneration", "error", titleErr)
-			} else {
-				a.backgroundJobs.Add(1)
-				go func() {
-					defer a.backgroundJobs.Done()
-					a.generateTitle(context.WithoutCancel(ctx), call.SessionID, titleMsgs)
-				}()
-			}
-		}
+		a.retitleFromFirstReply(ctx, call.SessionID, t.currentLeaf())
 	}
 
-	// Send notification that agent has finished its turn (skip for
-	// nested/non-interactive sessions).
+	// Notify when the turn finishes, except in nested and non-interactive
+	// sessions.
 	if !call.NonInteractive && a.notify != nil {
-		owner, ok := ctx.Value(ownerKey{}).(*submissionOwner)
-		if !ok || owner == nil || owner.sessionID != call.SessionID {
-			return nil, fmt.Errorf("missing submission owner for session %q", call.SessionID)
-		}
-		owner.onFinish = func() {
-			a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
-				SessionID: call.SessionID, SessionTitle: currentSession.Title, Type: notify.TypeAgentFinished,
-			})
+		if err := a.notifyWhenFinished(ctx, call.SessionID, t.sessionTitle); err != nil {
+			return nil, err
 		}
 	}
 
 	a.reportIdleWhenDone(ctx, call.SessionID)
 	return result, err
+}
+
+// notifyWhenFinished publishes an agent-finished notification once the
+// session's submission completes, so the title is read after any rename.
+func (a *sessionAgent) notifyWhenFinished(ctx context.Context, sessionID string, title func() string) error {
+	owner, ok := ctx.Value(ownerKey{}).(*submissionOwner)
+	if !ok || owner == nil || owner.sessionID != sessionID {
+		return fmt.Errorf("missing submission owner for session %q", sessionID)
+	}
+	owner.onFinish = func() {
+		a.notify.Publish(pubsub.CreatedEvent, notify.Notification{
+			SessionID: sessionID, SessionTitle: title(), Type: notify.TypeAgentFinished,
+		})
+	}
+	return nil
+}
+
+// summarizeAndResume compacts the session after a turn stopped because the
+// context window was nearly full. If the turn was cut off mid tool use, it
+// queues a new run that picks up from the summary.
+func (a *sessionAgent) summarizeAndResume(ctx context.Context, call SessionAgentCall, interrupted bool) error {
+	err := a.Summarize(ctx, call.SessionID, call.ProviderOptions)
+	if err != nil && call.retrySummary != nil {
+		if refreshErr := call.retrySummary(ctx, err); refreshErr == nil {
+			err = a.Summarize(ctx, call.SessionID, call.ProviderOptions)
+		}
+	}
+	if err != nil {
+		call.state.summaryFailed = true
+		return err
+	}
+	if !interrupted {
+		return nil
+	}
+	if call.wake {
+		call.wake = false
+		call.Prompt = "The previous session was interrupted because it got too long while handling background job updates. Continue from the summary."
+	} else {
+		call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
+	}
+	call.state = nil
+	a.admission.enqueue(call.SessionID, submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) { return a.Run(ctx, call) }})
+	return nil
+}
+
+// retitleFromFirstReply regenerates the session title in the background
+// from the branch ending at leaf, unless the user set the title. The
+// assistant reply is already persisted, so the branch is loaded fresh.
+func (a *sessionAgent) retitleFromFirstReply(ctx context.Context, sessionID, leaf string) {
+	sess, err := a.sessions.Get(ctx, sessionID)
+	if err != nil {
+		slog.Error("Failed to load session for title regeneration", "error", err)
+		return
+	}
+	if sess.TitleIsCustom {
+		return
+	}
+	msgs, err := a.messages.GetBranchPath(ctx, leaf)
+	if err != nil {
+		slog.Error("Failed to load messages for title regeneration", "error", err)
+		return
+	}
+	a.backgroundJobs.Add(1)
+	go func() {
+		defer a.backgroundJobs.Done()
+		a.generateTitle(context.WithoutCancel(ctx), sessionID, msgs)
+	}()
 }
 
 // RunWake implements SessionAgent.

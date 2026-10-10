@@ -16,6 +16,22 @@ type runState struct {
 	firstMessage   bool
 }
 
+// beginAttempt prepares the session for a run. A fresh user prompt resets
+// the wake budget; a retry of an accepted prompt first removes what the
+// failed attempt wrote.
+func (a *sessionAgent) beginAttempt(ctx context.Context, call SessionAgentCall) error {
+	if call.state.acceptedUserID != "" {
+		return a.restoreAttempt(ctx, call.SessionID, call.state)
+	}
+	if !call.wake {
+		unlock := a.lockDispatch(call.SessionID)
+		a.wakeCounts.Del(call.SessionID)
+		a.wakeSuppressed.Del(call.SessionID)
+		unlock()
+	}
+	return nil
+}
+
 func (a *sessionAgent) restoreAttempt(ctx context.Context, sessionID string, state *runState) error {
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
