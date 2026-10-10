@@ -281,11 +281,7 @@ func NewCoordinator(
 	// the agent roster, replacing the hardcoded non-orchestrator defaults set
 	// during config loading with values sourced from the .md frontmatter.
 	// The store keeps them so later config reloads retain plugin agents.
-	mdDefaults := make(map[string]config.Agent, len(agentMDs))
-	for name, md := range agentMDs {
-		mdDefaults[name] = agentConfigFromMD(name, md)
-	}
-	cfg.SetAgentDefaults(mdDefaults)
+	cfg.SetAgentDefaults(agentDefaultsFromMDs(agentMDs))
 	c.agentConfigs = cfg.Config().Agents
 
 	// Build the orchestrator eagerly at depth=3.
@@ -305,6 +301,16 @@ func NewCoordinator(
 	c.orchestratorMu.Unlock()
 
 	return c, nil
+}
+
+// agentDefaultsFromMDs converts every agent .md file into its config.Agent
+// default.
+func agentDefaultsFromMDs(agentMDs map[string]prompt.AgentMD) map[string]config.Agent {
+	defaults := make(map[string]config.Agent, len(agentMDs))
+	for name, md := range agentMDs {
+		defaults[name] = agentConfigFromMD(name, md)
+	}
+	return defaults
 }
 
 // agentConfigFromMD converts the capability and model fields of a parsed
@@ -2155,10 +2161,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) ([]PluginWarning, error
 	// 4. Re-apply .md defaults to produce new agent configs.
 	// SetupAgentsWithDefaults is pure; cfg.Agents is not mutated until
 	// the atomic swap below.
-	mdDefaults := make(map[string]config.Agent, len(newAgentMDs))
-	for name, md := range newAgentMDs {
-		mdDefaults[name] = agentConfigFromMD(name, md)
-	}
+	mdDefaults := agentDefaultsFromMDs(newAgentMDs)
 	// SetupAgentsWithDefaults is a pure function; it returns a new map
 	// without touching cfg.Agents. The defaults are only committed to the
 	// store after every fallible step below has succeeded.
