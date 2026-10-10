@@ -174,3 +174,49 @@ func TestStore_ListEventsOfOtherRunIsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, got)
 }
+
+func TestStore_Approval(t *testing.T) {
+	t.Parallel()
+	const path = "/repo/.anvil/commands/build/workflow.js"
+	tests := map[string]struct {
+		approvals  [][3]string // Hash, source, origin.
+		wantOK     bool
+		wantHash   string
+		wantSource string
+	}{
+		"never approved": {},
+		"approved once": {
+			approvals: [][3]string{{"h1", "main()", "project"}},
+			wantOK:    true, wantHash: "h1", wantSource: "main()",
+		},
+		"re-approval replaces the previous version": {
+			approvals: [][3]string{{"h1", "main()", "project"}, {"h2", "main(2)", "project"}},
+			wantOK:    true, wantHash: "h2", wantSource: "main(2)",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, _, _ := newTestStore(t)
+			for _, a := range tc.approvals {
+				require.NoError(t, s.Approve(t.Context(), path, a[0], a[1], a[2]))
+			}
+
+			hash, source, ok, err := s.Approval(t.Context(), path)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantOK, ok)
+			require.Equal(t, tc.wantHash, hash)
+			require.Equal(t, tc.wantSource, source)
+		})
+	}
+}
+
+func TestStore_ApprovalIsPerScriptPath(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestStore(t)
+	require.NoError(t, s.Approve(t.Context(), "/a/workflow.js", "h1", "main()", "project"))
+
+	_, _, ok, err := s.Approval(t.Context(), "/b/workflow.js")
+	require.NoError(t, err)
+	require.False(t, ok)
+}

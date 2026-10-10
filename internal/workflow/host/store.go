@@ -212,6 +212,34 @@ func (s *Store) ListEvents(ctx context.Context, runID string) ([]workflow.Event,
 	return events, nil
 }
 
+// Approval returns the hash and source of the last approved version of
+// a script, reporting false when it was never approved.
+func (s *Store) Approval(ctx context.Context, scriptPath string) (hash, source string, ok bool, err error) {
+	row, err := s.q.GetWorkflowApproval(ctx, scriptPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("get workflow approval of %s: %w", scriptPath, err)
+	}
+	return row.ScriptHash, row.Source, true, nil
+}
+
+// Approve records a script version as approved, replacing any earlier
+// approval of the same path.
+func (s *Store) Approve(ctx context.Context, scriptPath, hash, source, origin string) error {
+	if err := s.q.UpsertWorkflowApproval(ctx, db.UpsertWorkflowApprovalParams{
+		ScriptPath: scriptPath,
+		ScriptHash: hash,
+		Source:     source,
+		Origin:     origin,
+		ApprovedAt: s.now().UnixMilli(),
+	}); err != nil {
+		return fmt.Errorf("approve workflow %s: %w", scriptPath, err)
+	}
+	return nil
+}
+
 func nullJSON(raw json.RawMessage) sql.NullString {
 	if raw == nil {
 		return sql.NullString{}
