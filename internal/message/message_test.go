@@ -2,6 +2,7 @@ package message
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -718,4 +719,168 @@ func TestPendingState_PrunedAfterFinish(t *testing.T) {
 	msg.AppendContent("restarted")
 	require.NoError(t, svc.Update(t.Context(), msg))
 	require.Equal(t, 1, impl.PendingCount())
+}
+
+// failingUpdateQuerier wraps a [db.Querier] and fails UpdateMessage
+// while fail is set.
+type failingUpdateQuerier struct {
+	db.Querier
+	fail atomic.Bool
+}
+
+var errUpdateFailed = errors.New("update failed")
+
+func (f *failingUpdateQuerier) UpdateMessage(ctx context.Context, arg db.UpdateMessageParams) error {
+	if f.fail.Load() {
+		return errUpdateFailed
+	}
+	return f.Querier.UpdateMessage(ctx, arg)
+}
+
+func TestFlush_UnknownIDIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	require.NoError(t, svc.Flush(t.Context(), "missing"))
+}
+
+func TestFlush_FailedWriteIsRetriedByNextFlush(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+	require.NoError(t, err)
+
+	failing := &failingUpdateQuerier{Querier: q}
+	svc := NewService(failing, WithConn(conn), WithDebounce(time.Hour))
+	subCtx, cancelSub := context.WithCancel(t.Context())
+	defer cancelSub()
+	collector := collect(subCtx, svc.Subscribe(subCtx))
+
+	msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+	require.NoError(t, err)
+	msg.AppendContent("payload")
+	require.NoError(t, svc.Update(t.Context(), msg))
+
+	failing.fail.Store(true)
+	require.ErrorIs(t, svc.Flush(t.Context(), msg.ID), errUpdateFailed)
+	got, err := svc.Get(t.Context(), msg.ID)
+	require.NoError(t, err)
+	require.Empty(t, got.Content().Text, "failed write must not land")
+
+	failing.fail.Store(false)
+	require.NoError(t, svc.Flush(t.Context(), msg.ID))
+	got, err = svc.Get(t.Context(), msg.ID)
+	require.NoError(t, err)
+	require.Equal(t, "payload", got.Content().Text, "next flush must retry the failed write")
+
+	require.Eventually(t, func() bool {
+		return len(collector.snapshot()) == 2
+	}, time.Second, 5*time.Millisecond)
+	events := collector.snapshot()
+	require.Equal(t, pubsub.CreatedEvent, events[0].Type)
+	require.Equal(t, pubsub.UpdatedEvent, events[1].Type, "only the successful write publishes")
+	require.Equal(t, "payload", events[1].Payload.Content().Text)
+}
+
+func TestFlush_FailedTerminalWriteKeepsPendingState(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+	require.NoError(t, err)
+
+	failing := &failingUpdateQuerier{Querier: q}
+	svc := NewService(failing, WithConn(conn), WithDebounce(time.Hour))
+	impl := svc.(*service)
+
+	msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+	require.NoError(t, err)
+	msg.AppendContent("done")
+	msg.AddFinish(FinishReasonEndTurn, "", "")
+
+	failing.fail.Store(true)
+	require.ErrorIs(t, svc.Update(t.Context(), msg), errUpdateFailed)
+	require.Equal(t, 1, impl.PendingCount(), "a failed terminal write must stay pending")
+
+	failing.fail.Store(false)
+	require.NoError(t, svc.Flush(t.Context(), msg.ID))
+	require.Equal(t, 0, impl.PendingCount(), "a landed terminal write is pruned")
+	got, err := svc.Get(t.Context(), msg.ID)
+	require.NoError(t, err)
+	require.True(t, got.IsFinished())
+}
+
+// TestFlush_PicksUpDeltaArrivingDuringWrite asserts a sync Flush loops
+// to write an Update that landed while its own SQL write was in flight.
+func TestFlush_PicksUpDeltaArrivingDuringWrite(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+	require.NoError(t, err)
+
+	slow := &slowUpdateQuerier{
+		Querier: q,
+		release: make(chan struct{}),
+		started: make(chan struct{}),
+	}
+	svc := NewService(slow, WithConn(conn), WithDebounce(time.Hour))
+	impl := svc.(*service)
+	subCtx, cancelSub := context.WithCancel(t.Context())
+	defer cancelSub()
+	collector := collect(subCtx, svc.Subscribe(subCtx))
+
+	msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+	require.NoError(t, err)
+	msg.AppendContent("first")
+	require.NoError(t, svc.Update(t.Context(), msg))
+
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- svc.Flush(t.Context(), msg.ID) }()
+	select {
+	case <-slow.started:
+	case <-time.After(time.Second):
+		t.Fatal("flush never reached UpdateMessage")
+	}
+
+	// A delta lands while the write is in flight. It must not schedule
+	// its own flush; the in-flight sync flusher owns it.
+	msg.AppendContent(" second")
+	require.NoError(t, svc.Update(t.Context(), msg))
+
+	close(slow.release)
+	select {
+	case err := <-flushDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Flush did not return after the write completed")
+	}
+
+	got, err := svc.Get(t.Context(), msg.ID)
+	require.NoError(t, err)
+	require.Equal(t, "first second", got.Content().Text, "sync flush must write the mid-flight delta")
+	require.Equal(t, 1, impl.PendingCount(), "a non-terminal write keeps the entry")
+
+	require.Eventually(t, func() bool {
+		return len(collector.snapshot()) == 3
+	}, time.Second, 5*time.Millisecond)
+	events := collector.snapshot()
+	require.Equal(t, "first", events[1].Payload.Content().Text)
+	require.Equal(t, "first second", events[2].Payload.Content().Text)
 }
