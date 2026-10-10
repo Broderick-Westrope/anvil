@@ -885,8 +885,8 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 // one for its type, taking any setting the selection leaves unset from the
 // default or the model. It returns the default and fallback true when the
 // selected model isn't one of its provider's models.
-func resolveSelectedModel(cfg *Config, def, selected SelectedModel) (resolved SelectedModel, fallback bool) {
-	resolved = def
+func resolveSelectedModel(cfg *Config, def, selected SelectedModel) (SelectedModel, bool) {
+	resolved := def
 	resolved.Model = cmp.Or(selected.Model, resolved.Model)
 	resolved.Provider = cmp.Or(selected.Provider, resolved.Provider)
 	model := cfg.GetModel(resolved.Provider, resolved.Model)
