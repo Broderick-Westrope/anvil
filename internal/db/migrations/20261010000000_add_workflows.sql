@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     command_source TEXT NOT NULL,      -- "" (user), project or plugin:<name>.
     script_path TEXT NOT NULL,
     script_hash TEXT NOT NULL,
+    bundle_hash TEXT NOT NULL,         -- Hash of the bundle of files the run read.
     invoking_session_id TEXT NOT NULL,
     input TEXT NOT NULL,               -- Raw argument string passed to main.
     working_dir TEXT NOT NULL,         -- Canonical working directory.
@@ -43,8 +44,8 @@ CREATE INDEX IF NOT EXISTS idx_workflow_events_run_seq ON workflow_events (run_i
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS workflow_approvals (
     script_path TEXT PRIMARY KEY,
-    script_hash TEXT NOT NULL,         -- Hash of the approved bundle.
-    source TEXT NOT NULL,              -- Approved bundle: JSON [{path, source}] of every file in the workflow's directory, for diffing.
+    bundle_hash TEXT NOT NULL,         -- Hash of the approved bundle.
+    bundle TEXT NOT NULL,              -- Approved bundle: JSON [{path, source, size, hash, omitted}] of every file in the workflow's directory, for diffing.
     origin TEXT NOT NULL,
     approved_at INTEGER NOT NULL       -- Unix milliseconds.
 );

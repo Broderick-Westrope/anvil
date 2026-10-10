@@ -335,6 +335,68 @@ func TestServiceApprovalShowsLargeAndBinaryFilesByHashOnly(t *testing.T) {
 	require.Equal(t, host.StatusDenied, h.next(t, host.EventFinished).Status)
 }
 
+func TestServiceRecordsTheBundleHashOfEachRun(t *testing.T) {
+	h := newServiceHarness(t, true)
+	writeFile(t, filepath.Join(h.dir, "guide.md"), "one")
+	path := h.write(t, `function main() { return 1 }`)
+	runOnce := func() host.RunRecord {
+		h.start(t, path, "")
+		done := h.next(t, host.EventFinished)
+		require.Equal(t, host.StatusCompleted, done.Status, done.Message)
+		run, ok, err := h.store.GetRun(h.fixture.Context, done.RunID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		return run
+	}
+
+	first := runOnce()
+	require.NotEmpty(t, first.BundleHash)
+	writeFile(t, filepath.Join(h.dir, "guide.md"), "two")
+	second := runOnce()
+	require.Equal(t, first.ScriptHash, second.ScriptHash)
+	require.NotEqual(t, first.BundleHash, second.BundleHash)
+}
+
+func TestServiceReapprovalReplacesThePreviousApproval(t *testing.T) {
+	h := newServiceHarness(t, false)
+	approveRun := func(path string) host.Event {
+		h.start(t, path, "")
+		req := h.next(t, host.EventApproval)
+		require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
+		require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status)
+		return req
+	}
+	path := h.write(t, `function main() { return 1 }`)
+	approveRun(path)
+	path = h.write(t, `function main() { return 2 }`)
+	approveRun(path)
+
+	path = h.write(t, `function main() { return 1 }`)
+	req := approveRun(path)
+	require.Equal(t, host.FileChanged, req.Approval.Files[0].Status)
+	require.Contains(t, req.Approval.Files[0].PreviousSource, "return 2")
+}
+
+func TestServiceApprovalIsPerScript(t *testing.T) {
+	h := newServiceHarness(t, false)
+	src := `function main() { return 1 }`
+	a := filepath.Join(h.dir, "a", "workflow.js")
+	b := filepath.Join(h.dir, "b", "workflow.js")
+	writeFile(t, a, src)
+	writeFile(t, b, src)
+
+	h.start(t, a, "")
+	req := h.next(t, host.EventApproval)
+	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
+	require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status)
+
+	h.start(t, b, "")
+	req = h.next(t, host.EventApproval)
+	require.Equal(t, host.FileAdded, req.Approval.Files[0].Status)
+	require.NoError(t, h.svc.Respond(req.RequestID, "deny"))
+	require.Equal(t, host.StatusDenied, h.next(t, host.EventFinished).Status)
+}
+
 func TestServiceRefusesMissingRequirementsBeforeRunning(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `requires({agents: ["ghost"]}); function main() { bash("touch should-not-exist") }`)

@@ -174,8 +174,8 @@ type StepUsage struct {
 
 type WorkflowApproval struct {
 	ScriptPath string `json:"script_path"`
-	ScriptHash string `json:"script_hash"`
-	Source     string `json:"source"`
+	BundleHash string `json:"bundle_hash"`
+	Bundle     string `json:"bundle"`
 	Origin     string `json:"origin"`
 	ApprovedAt int64  `json:"approved_at"`
 }
@@ -201,6 +201,7 @@ type WorkflowRun struct {
 	CommandSource     string         `json:"command_source"`
 	ScriptPath        string         `json:"script_path"`
 	ScriptHash        string         `json:"script_hash"`
+	BundleHash        string         `json:"bundle_hash"`
 	InvokingSessionID string         `json:"invoking_session_id"`
 	Input             string         `json:"input"`
 	WorkingDir        string         `json:"working_dir"`

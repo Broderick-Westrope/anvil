@@ -5,6 +5,7 @@ INSERT INTO workflow_runs (
     command_source,
     script_path,
     script_hash,
+    bundle_hash,
     invoking_session_id,
     input,
     working_dir,
@@ -13,7 +14,7 @@ INSERT INTO workflow_runs (
     instance_id,
     started_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?
 );
 
 -- name: FinishWorkflowRun :execrows
@@ -74,15 +75,15 @@ WHERE script_path = ? LIMIT 1;
 -- name: UpsertWorkflowApproval :exec
 INSERT INTO workflow_approvals (
     script_path,
-    script_hash,
-    source,
+    bundle_hash,
+    bundle,
     origin,
     approved_at
 ) VALUES (
     ?, ?, ?, ?, ?
 )
 ON CONFLICT (script_path) DO UPDATE SET
-    script_hash = excluded.script_hash,
-    source = excluded.source,
+    bundle_hash = excluded.bundle_hash,
+    bundle = excluded.bundle,
     origin = excluded.origin,
     approved_at = excluded.approved_at;

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -138,24 +137,6 @@ func (b bundle) hash() string {
 		field(f.Hash)
 	}
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func (b bundle) encode() (string, error) {
-	data, err := json.Marshal(b)
-	if err != nil {
-		return "", fmt.Errorf("encode workflow bundle: %w", err)
-	}
-	return string(data), nil
-}
-
-// decodeBundle reads a stored bundle. One that doesn't decode is treated
-// as empty, so every file shows as added.
-func decodeBundle(stored string) bundle {
-	var b bundle
-	if err := json.Unmarshal([]byte(stored), &b); err != nil {
-		return nil
-	}
-	return b
 }
 
 // approvalFiles compares the current bundle with the last approved one:

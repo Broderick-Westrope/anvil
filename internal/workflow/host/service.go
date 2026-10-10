@@ -327,6 +327,7 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 		CommandSource:     inv.Source,
 		ScriptPath:        script.Path,
 		ScriptHash:        script.Hash,
+		BundleHash:        current.hash(),
 		InvokingSessionID: inv.SessionID,
 		Input:             inv.Raw,
 		WorkingDir:        canonicalDir(s.deps.WorkingDir),
@@ -375,17 +376,12 @@ func (s *Service) approve(ctx context.Context, inv Invocation, script *workflow.
 	if s.deps.SkipApproval != nil && s.deps.SkipApproval() {
 		return true, nil
 	}
-	hash := current.hash()
-	approvedHash, stored, ok, err := s.deps.Store.Approval(ctx, script.Path)
+	previous, ok, err := s.deps.Store.approval(ctx, script.Path)
 	if err != nil {
 		return false, err
 	}
-	if ok && approvedHash == hash {
+	if ok && previous.hash() == current.hash() {
 		return true, nil
-	}
-	var previous bundle
-	if ok {
-		previous = decodeBundle(stored)
 	}
 	origin := inv.Source
 	if origin == "" {
@@ -405,11 +401,7 @@ func (s *Service) approve(ctx context.Context, inv Invocation, script *workflow.
 	if answer != "approve" {
 		return false, nil
 	}
-	encoded, err := current.encode()
-	if err != nil {
-		return false, err
-	}
-	return true, s.deps.Store.Approve(ctx, script.Path, hash, encoded, origin)
+	return true, s.deps.Store.approve(ctx, script.Path, current, origin)
 }
 
 // request publishes ev with a fresh request ID and waits for Respond.

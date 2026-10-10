@@ -17,6 +17,7 @@ INSERT INTO workflow_runs (
     command_source,
     script_path,
     script_hash,
+    bundle_hash,
     invoking_session_id,
     input,
     working_dir,
@@ -25,7 +26,7 @@ INSERT INTO workflow_runs (
     instance_id,
     started_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?
 )
 `
 
@@ -35,6 +36,7 @@ type CreateWorkflowRunParams struct {
 	CommandSource     string `json:"command_source"`
 	ScriptPath        string `json:"script_path"`
 	ScriptHash        string `json:"script_hash"`
+	BundleHash        string `json:"bundle_hash"`
 	InvokingSessionID string `json:"invoking_session_id"`
 	Input             string `json:"input"`
 	WorkingDir        string `json:"working_dir"`
@@ -50,6 +52,7 @@ func (q *Queries) CreateWorkflowRun(ctx context.Context, arg CreateWorkflowRunPa
 		arg.CommandSource,
 		arg.ScriptPath,
 		arg.ScriptHash,
+		arg.BundleHash,
 		arg.InvokingSessionID,
 		arg.Input,
 		arg.WorkingDir,
@@ -93,7 +96,7 @@ func (q *Queries) FinishWorkflowRun(ctx context.Context, arg FinishWorkflowRunPa
 }
 
 const getWorkflowApproval = `-- name: GetWorkflowApproval :one
-SELECT script_path, script_hash, source, origin, approved_at
+SELECT script_path, bundle_hash, bundle, origin, approved_at
 FROM workflow_approvals
 WHERE script_path = ? LIMIT 1
 `
@@ -103,8 +106,8 @@ func (q *Queries) GetWorkflowApproval(ctx context.Context, scriptPath string) (W
 	var i WorkflowApproval
 	err := row.Scan(
 		&i.ScriptPath,
-		&i.ScriptHash,
-		&i.Source,
+		&i.BundleHash,
+		&i.Bundle,
 		&i.Origin,
 		&i.ApprovedAt,
 	)
@@ -112,7 +115,7 @@ func (q *Queries) GetWorkflowApproval(ctx context.Context, scriptPath string) (W
 }
 
 const getWorkflowRun = `-- name: GetWorkflowRun :one
-SELECT id, command, command_source, script_path, script_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at
+SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at
 FROM workflow_runs
 WHERE id = ? LIMIT 1
 `
@@ -126,6 +129,7 @@ func (q *Queries) GetWorkflowRun(ctx context.Context, id string) (WorkflowRun, e
 		&i.CommandSource,
 		&i.ScriptPath,
 		&i.ScriptHash,
+		&i.BundleHash,
 		&i.InvokingSessionID,
 		&i.Input,
 		&i.WorkingDir,
@@ -190,7 +194,7 @@ func (q *Queries) InsertWorkflowEvent(ctx context.Context, arg InsertWorkflowEve
 }
 
 const listRunningWorkflowRuns = `-- name: ListRunningWorkflowRuns :many
-SELECT id, command, command_source, script_path, script_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at
+SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at
 FROM workflow_runs
 WHERE status = 'running'
 ORDER BY started_at ASC
@@ -211,6 +215,7 @@ func (q *Queries) ListRunningWorkflowRuns(ctx context.Context) ([]WorkflowRun, e
 			&i.CommandSource,
 			&i.ScriptPath,
 			&i.ScriptHash,
+			&i.BundleHash,
 			&i.InvokingSessionID,
 			&i.Input,
 			&i.WorkingDir,
@@ -299,24 +304,24 @@ func (q *Queries) MarkWorkflowRunInterrupted(ctx context.Context, arg MarkWorkfl
 const upsertWorkflowApproval = `-- name: UpsertWorkflowApproval :exec
 INSERT INTO workflow_approvals (
     script_path,
-    script_hash,
-    source,
+    bundle_hash,
+    bundle,
     origin,
     approved_at
 ) VALUES (
     ?, ?, ?, ?, ?
 )
 ON CONFLICT (script_path) DO UPDATE SET
-    script_hash = excluded.script_hash,
-    source = excluded.source,
+    bundle_hash = excluded.bundle_hash,
+    bundle = excluded.bundle,
     origin = excluded.origin,
     approved_at = excluded.approved_at
 `
 
 type UpsertWorkflowApprovalParams struct {
 	ScriptPath string `json:"script_path"`
-	ScriptHash string `json:"script_hash"`
-	Source     string `json:"source"`
+	BundleHash string `json:"bundle_hash"`
+	Bundle     string `json:"bundle"`
 	Origin     string `json:"origin"`
 	ApprovedAt int64  `json:"approved_at"`
 }
@@ -324,8 +329,8 @@ type UpsertWorkflowApprovalParams struct {
 func (q *Queries) UpsertWorkflowApproval(ctx context.Context, arg UpsertWorkflowApprovalParams) error {
 	_, err := q.exec(ctx, q.upsertWorkflowApprovalStmt, upsertWorkflowApproval,
 		arg.ScriptPath,
-		arg.ScriptHash,
-		arg.Source,
+		arg.BundleHash,
+		arg.Bundle,
 		arg.Origin,
 		arg.ApprovedAt,
 	)

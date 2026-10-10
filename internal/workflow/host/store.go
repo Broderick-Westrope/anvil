@@ -30,11 +30,14 @@ const (
 
 // RunRecord is a persisted workflow run.
 type RunRecord struct {
-	ID                string
-	Command           string // Command ID, e.g. project:build.
-	CommandSource     string // "" for user commands, project or plugin:<name>.
-	ScriptPath        string
-	ScriptHash        string
+	ID            string
+	Command       string // Command ID, e.g. project:build.
+	CommandSource string // "" for user commands, project or plugin:<name>.
+	ScriptPath    string
+	ScriptHash    string
+	// BundleHash identifies the files the run read: the script and every
+	// file approved with it.
+	BundleHash        string
 	InvokingSessionID string
 	Input             string // Raw argument string passed to main.
 	WorkingDir        string // Canonical working directory.
@@ -95,6 +98,7 @@ func (s *Store) StartRun(ctx context.Context, rec RunRecord) error {
 		CommandSource:     rec.CommandSource,
 		ScriptPath:        rec.ScriptPath,
 		ScriptHash:        rec.ScriptHash,
+		BundleHash:        rec.BundleHash,
 		InvokingSessionID: rec.InvokingSessionID,
 		Input:             rec.Input,
 		WorkingDir:        rec.WorkingDir,
@@ -142,6 +146,7 @@ func (s *Store) GetRun(ctx context.Context, id string) (RunRecord, bool, error) 
 		CommandSource:     row.CommandSource,
 		ScriptPath:        row.ScriptPath,
 		ScriptHash:        row.ScriptHash,
+		BundleHash:        row.BundleHash,
 		InvokingSessionID: row.InvokingSessionID,
 		Input:             row.Input,
 		WorkingDir:        row.WorkingDir,
@@ -213,26 +218,35 @@ func (s *Store) ListEvents(ctx context.Context, runID string) ([]workflow.Event,
 	return events, nil
 }
 
-// Approval returns the hash and the encoded bundle of files last approved
-// for a script, reporting false when it was never approved.
-func (s *Store) Approval(ctx context.Context, scriptPath string) (hash, bundle string, ok bool, err error) {
+// approval returns the bundle last approved for a script, reporting false
+// when it was never approved. A stored bundle that doesn't decode is
+// returned empty, so every file shows as added and its hash never
+// matches.
+func (s *Store) approval(ctx context.Context, scriptPath string) (approved bundle, ok bool, err error) {
 	row, err := s.q.GetWorkflowApproval(ctx, scriptPath)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return "", "", false, fmt.Errorf("get workflow approval of %s: %w", scriptPath, err)
+		return nil, false, fmt.Errorf("get workflow approval of %s: %w", scriptPath, err)
 	}
-	return row.ScriptHash, row.Source, true, nil
+	if err := json.Unmarshal([]byte(row.Bundle), &approved); err != nil {
+		return nil, true, nil
+	}
+	return approved, true, nil
 }
 
-// Approve records the bundle of files approved for a script, with its hash,
-// replacing any earlier approval of the same path.
-func (s *Store) Approve(ctx context.Context, scriptPath, hash, bundle, origin string) error {
+// approve records the bundle approved for a script, replacing any earlier
+// approval of the same path.
+func (s *Store) approve(ctx context.Context, scriptPath string, approved bundle, origin string) error {
+	encoded, err := json.Marshal(approved)
+	if err != nil {
+		return fmt.Errorf("encode workflow bundle of %s: %w", scriptPath, err)
+	}
 	if err := s.q.UpsertWorkflowApproval(ctx, db.UpsertWorkflowApprovalParams{
 		ScriptPath: scriptPath,
-		ScriptHash: hash,
-		Source:     bundle,
+		BundleHash: approved.hash(),
+		Bundle:     string(encoded),
 		Origin:     origin,
 		ApprovedAt: s.now().UnixMilli(),
 	}); err != nil {
