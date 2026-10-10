@@ -2,29 +2,100 @@
 
 set -euo pipefail
 
+# Usage: mutation-check.sh [base-ref] [dir...]
+# Directories, when given, limit mutation to changed lines under them.
 base="${1:-origin/main}"
+shift || true
+scope=()
+for dir in "$@"; do
+    dir="${dir%/...}"
+    dir="${dir#./}"
+    dir="${dir%/}"
+    if [ ! -d "$dir" ]; then
+        echo "Scope '$dir' is not a directory." >&2
+        exit 1
+    fi
+    scope+=("${dir:-.}")
+done
+
 gremlins_version="v0.6.0"
+config=".gremlins.yaml"
 report="$(mktemp "${TMPDIR:-/tmp}/gremlins-report.XXXXXX")"
-trap 'rm -f "$report"' EXIT
+scoped_config="$(mktemp "${TMPDIR:-/tmp}/gremlins-config.XXXXXX")"
+trap 'rm -f "$report" "$scoped_config"' EXIT
 
 if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
     echo "Base ref '$base' not found. Fetch it first (CI needs fetch-depth: 0)." >&2
     exit 1
 fi
 
-added_lines=$(git diff --merge-base "$base" -U0 -- '*.go' ':(exclude)*_test.go' |
+pathspecs=('*.go')
+if [ "${#scope[@]}" -gt 0 ]; then
+    pathspecs=()
+    for dir in "${scope[@]}"; do
+        if [ "$dir" = "." ]; then
+            pathspecs+=('*.go')
+        else
+            pathspecs+=(":(glob)$dir/**/*.go")
+        fi
+    done
+fi
+
+added_lines=$(git diff --merge-base "$base" -U0 -- "${pathspecs[@]}" ':(exclude)*_test.go' |
     grep -E '^\+' | grep -cv '^+++ ' || true)
 if [ "$added_lines" -eq 0 ]; then
-    echo "No changed Go lines outside tests since $base; nothing to mutate."
+    echo "No changed Go lines outside tests since $base${scope:+ under ${scope[*]}}; nothing to mutate."
     exit 0
 fi
-echo "Mutating $added_lines changed Go lines since $base."
+echo "Mutating $added_lines changed Go lines since $base${scope:+ under ${scope[*]}}."
+
+# Gremlins matches its diff against paths relative to the directory it runs
+# in, so pointing it at a subdirectory mutates nothing. Run it on the whole
+# module instead and exclude every package directory outside the scope.
+if [ "${#scope[@]}" -gt 0 ]; then
+    alternation=$(git ls-files '*.go' | xargs -n1 dirname | sort -u |
+        while IFS= read -r dir; do
+            for want in "${scope[@]}"; do
+                if [ "$want" = "." ] || [ "$dir" = "$want" ] || [[ "$dir" == "$want"/* ]]; then
+                    continue 2
+                fi
+            done
+            if [ "$dir" = "." ]; then
+                printf '%s\n' '[^/]+'
+            else
+                printf '%s/[^/]+\n' "$(printf '%s' "$dir" | sed 's/[][\.*^$()+?{}|]/\\&/g')"
+            fi
+        done | paste -sd '|' -)
+    if [ -n "$alternation" ]; then
+        SCOPE_EXCLUDE="^($alternation)\$" awk '
+            { print }
+            /^  exclude-files:$/ { print "    - '\''" ENVIRON["SCOPE_EXCLUDE"] "'\''"; found = 1 }
+            END { exit !found }
+        ' "$config" >"$scoped_config" || {
+            echo "No unleash.exclude-files list in $config to extend." >&2
+            exit 1
+        }
+        config="$scoped_config"
+    fi
+fi
 
 go clean -testcache
 
+# By default gremlins starts one worker per CPU and each worker's go test uses
+# every CPU too, which saturates a laptop. Keep a quarter of the CPUs busy
+# with two cores per worker unless overridden; 0 restores gremlins' defaults.
+cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+workers="${MUTATION_WORKERS:-$((cpus / 4 > 0 ? cpus / 4 : 1))}"
+test_procs="${MUTATION_GOMAXPROCS:-2}"
+if [ "$test_procs" -ne 0 ]; then
+    export GOMAXPROCS="$test_procs"
+    export GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=$test_procs"
+fi
+
 gremlins_status=0
-go run "github.com/go-gremlins/gremlins/cmd/gremlins@${gremlins_version}" \
-    unleash --diff "$base" --output "$report" . || gremlins_status=$?
+nice -n "${MUTATION_NICE:-10}" go run "github.com/go-gremlins/gremlins/cmd/gremlins@${gremlins_version}" \
+    unleash --config "$config" --workers "$workers" --diff "$base" --output "$report" . ||
+    gremlins_status=$?
 if [ "$gremlins_status" -ne 0 ]; then
     echo "gremlins exited with status $gremlins_status." >&2
     exit "$gremlins_status"

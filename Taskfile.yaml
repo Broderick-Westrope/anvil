@@ -85,7 +85,7 @@ tasks:
       - go test -race -failfast ./... {{.CLI_ARGS}}
 
   test:mutation:
-    desc: Mutation-test Go lines changed since a base ref (default origin/main)
+    desc: Mutation-test Go lines changed since a base ref (default origin/main), optionally only under the given dirs
     cmds:
       - scripts/mutation-check.sh {{.CLI_ARGS | default "origin/main"}}
 
