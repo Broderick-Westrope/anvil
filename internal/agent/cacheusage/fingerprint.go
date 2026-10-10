@@ -251,9 +251,8 @@ func writeFramedString(h hash.Hash, s string) {
 }
 
 // hashTools hashes tools in the order passed. fantasy may later filter,
-// reorder or normalise schemas before sending
-// (fantasy@v0.45.2 agent.go:1117-1143), so this hash is "as Anvil passed
-// it".
+// reorder or normalise schemas before sending (fantasy's agent
+// prepareTools), so this hash is "as Anvil passed it".
 func hashTools(tools []fantasy.AgentTool) (string, error) {
 	h := sha256.New()
 	for _, tool := range tools {

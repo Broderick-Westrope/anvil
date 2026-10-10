@@ -70,7 +70,7 @@ Caveats:
 
 - **Google streaming may over-count cache reads.** fantasy sums
   `CacheReadTokens` across usage chunks but keeps the first chunk's input
-  (suspected bug, `fantasy@v0.45.2 providers/google/google.go:857,1134`).
+  (suspected bug in fantasy v0.45.2's google `languageModel.Stream`).
   `cache_read_tokens` is now capped at the reported prompt size, so a
   Google row never reads more than its prompt, but a capped row shows a
   100% hit rate with `input_tokens` 0. Compare `raw_usage` (which keeps
