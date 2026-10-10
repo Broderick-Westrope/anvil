@@ -267,20 +267,20 @@ func TestAnalyzeCountsRecordsNotSegments(t *testing.T) {
 
 func TestAnalyzeWarnings(t *testing.T) {
 	t.Parallel()
-	tests := map[string]struct {
-		input, verdict, warning string
+	tests := []struct {
+		name, input, verdict, warning string
 	}{
-		"curated allow":   {"git status --short", "allow", ""},
-		"uncurated allow": {"go test ./...", "allow", "Uncurated command: review every argument this pattern permits"},
-		"deny":            {"gh pr merge 42", "deny", "Review the scope of this permanent denial"},
+		{"curated allow", "git status --short", "allow", ""},
+		{"uncurated allow", "go test ./...", "allow", "Uncurated command: review every argument this pattern permits"},
+		{"deny", "gh pr merge 42", "deny", "Review the scope of this permanent denial"},
 	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			a, d := Analyze(repeated(tc.input, tc.verdict), nil, Options{})
+			a, d := Analyze(repeated(tt.input, tt.verdict), nil, Options{})
 			got := slices.Concat(a, d)
 			require.Len(t, got, 1)
-			require.Equal(t, tc.warning, got[0].Warning)
+			require.Equal(t, tt.warning, got[0].Warning)
 		})
 	}
 }
