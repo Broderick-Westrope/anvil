@@ -221,6 +221,11 @@ func TestSplit(t *testing.T) {
 			want:    []string{`$'\x72m' -rf x`, "rm -rf x"},
 		},
 		{
+			name:    "ANSI-C control characters become spaces",
+			command: `echo $'a\tb\nc'`,
+			want:    []string{`echo $'a\tb\nc'`, "echo a b c"},
+		},
+		{
 			name:    "command path is reduced to its base name",
 			command: "/bin/rm -rf x",
 			want:    []string{"/bin/rm -rf x", "rm -rf x"},
