@@ -236,8 +236,8 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 	longQuestion := askEvent("yes")
 	longQuestion.Question = strings.TrimSuffix(strings.Repeat("question line\n", 40), "\n")
 	fits := askEvent("yes")
-	// 24 rows leave room for exactly 11 question lines with one option.
-	fits.Question = strings.TrimSuffix(strings.Repeat("question line\n", 11), "\n")
+	// 24 rows leave room for exactly 12 question lines with one option.
+	fits.Question = strings.TrimSuffix(strings.Repeat("question line\n", 12), "\n")
 	scrolled := NewWorkflowAsk(workflowCommon(), longAskEvent("yes", "no"))
 	drawDialog(scrolled, 100, 24)
 	for range 5 {
@@ -391,4 +391,16 @@ func TestWorkflowAskTypingReturnsNoAction(t *testing.T) {
 
 	d := NewWorkflowAsk(workflowCommon(), askEvent())
 	require.Nil(t, d.HandleMsg(press("h")))
+}
+
+func TestWorkflowAskQuestionThatExactlyFitsDoesNotScroll(t *testing.T) {
+	t.Parallel()
+
+	// 24 rows leave room for 12 question lines with one option, and the
+	// dialog's content is 76 columns wide.
+	ev := askEvent("yes")
+	ev.Question = strings.Repeat("line\n", 11) + strings.Repeat("x", 73) + "END"
+	out := drawDialog(NewWorkflowAsk(workflowCommon(), ev), 100, 24)
+	require.Contains(t, out, strings.Repeat("x", 73)+"END", "the full-width line isn't wrapped for a scrollbar")
+	require.NotContains(t, out, "pgup/pgdn")
 }
