@@ -64,9 +64,9 @@ func loadBundle(script *workflow.Script) (bundle, error) {
 			}
 			return nil
 		}
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
-			return nil //nolint:nilerr // A dangling symlink or special file isn't bundled.
+		// A dangling symlink or a special file isn't bundled.
+		if info, statErr := os.Stat(path); statErr != nil || !info.Mode().IsRegular() {
+			return nil
 		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
