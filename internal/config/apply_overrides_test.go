@@ -75,6 +75,11 @@ func TestApplyOverrides_Characterization(t *testing.T) {
 				AppendPrompt:    "be quick",
 			}},
 		},
+		"user can turn off thinking the default turns on": {
+			defaults: map[string]Agent{"fixer": {ID: "fixer", Think: ptr(true)}},
+			user:     map[string]Agent{"fixer": {Think: ptr(false)}},
+			want:     map[string]Agent{"fixer": {ID: "fixer", Think: ptr(false)}},
+		},
 		"fields the user leaves unset keep the default": {
 			defaults: map[string]Agent{"fixer": fixer()},
 			user:     map[string]Agent{"fixer": {}},

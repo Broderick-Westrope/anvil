@@ -559,6 +559,11 @@ func TestConfigureProviders_Characterization(t *testing.T) {
 			want:     map[string]ProviderConfig{},
 			wantLogs: map[string]int{logCustomMissingURL: 1},
 		},
+		"custom provider without a base url is removed before discovery": {
+			config:   `{"providers": {"c": {"api_key": "k"}}}`,
+			want:     map[string]ProviderConfig{},
+			wantLogs: map[string]int{logCustomMissingURL: 1},
+		},
 		"custom base url that resolves empty removes the provider": {
 			config:   `{"providers": {"c": {"base_url": "$UNSET_URL", "api_key": "k", "models": [{"id": "m"}]}}}`,
 			want:     map[string]ProviderConfig{},
