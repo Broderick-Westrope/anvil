@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -82,4 +83,24 @@ func TestSkillsViewAvailableByDefault(t *testing.T) {
 	built, err := p.Build(t.Context(), "test", "test", store)
 	require.NoError(t, err)
 	require.Equal(t, "true", built)
+}
+
+func TestPromptBuildKeepsContextPathOrder(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	names := []string{"ZETA.md", "alpha.md", "Mid.md", "beta.md"}
+	for _, name := range names {
+		require.NoError(t, os.WriteFile(filepath.Join(workingDir, name), []byte("content of "+name), 0o644))
+	}
+	store, err := config.Init(workingDir, t.TempDir(), false)
+	require.NoError(t, err)
+	store.Config().Options.ContextPaths = []string{"ZETA.md", "alpha.md", "zeta.md", "Mid.md", "beta.md"}
+
+	p, err := NewPrompt("test", `{{range .ContextFiles}}{{.Content}};{{end}}`, WithAvailableSkills(nil))
+	require.NoError(t, err)
+
+	built, err := p.Build(t.Context(), "test", "test", store)
+	require.NoError(t, err)
+	require.Equal(t, "content of ZETA.md;content of alpha.md;content of Mid.md;content of beta.md;", built)
 }

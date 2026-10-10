@@ -617,15 +617,7 @@ func (m *UI) loadCustomCommands() tea.Cmd {
 
 // loadMCPrompts loads the MCP prompts asynchronously.
 func (m *UI) loadMCPrompts() tea.Msg {
-	prompts, err := commands.LoadMCPPrompts()
-	if err != nil {
-		slog.Error("Failed to load MCP prompts", "error", err)
-	}
-	if prompts == nil {
-		// flag them as loaded even if there is none or an error
-		prompts = []commands.MCPPrompt{}
-	}
-	return mcpPromptsLoadedMsg{Prompts: prompts}
+	return mcpPromptsLoadedMsg{Prompts: mcp.PromptCommands()}
 }
 
 // activeChat returns the currently visible Chat — the top of the drill stack,

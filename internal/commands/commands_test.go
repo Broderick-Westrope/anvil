@@ -130,6 +130,18 @@ func TestSubstituteArgs(t *testing.T) {
 		result := SubstituteArgs("$ARGUMENTS and $FOO", map[string]string{"FOO": "bar"}, "raw input")
 		require.Equal(t, "raw input and bar", result)
 	})
+
+	t.Run("prefers the longest name when one is a prefix of another", func(t *testing.T) {
+		t.Parallel()
+
+		result := SubstituteArgs("$FOO $FOOBAR $FOOBARBAZ $ARG $ARGUMENTS", map[string]string{
+			"FOO":       "1",
+			"FOOBAR":    "2",
+			"FOOBARBAZ": "3",
+			"ARG":       "4",
+		}, "raw")
+		require.Equal(t, "1 2 3 4 raw", result)
+	})
 }
 
 func TestLoadFromSource_FrontmatterParsed(t *testing.T) {

@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
+	"slices"
+	"strings"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
@@ -169,4 +172,28 @@ func reconnectDeferredServers(
 			lazyState.Disable(name)
 		}
 	}
+}
+
+// mcpInstructions joins the instructions of connected MCP servers in name
+// order, leaving out lazy servers that aren't enabled. The order is fixed so
+// the system prompt is identical across runs and its prompt cache stays
+// valid.
+func mcpInstructions(lazyMCPToolMap map[string]string, lazyState *tools.LazyMCPState) string {
+	lazyServers := lazyServerNames(lazyMCPToolMap)
+	states := mcp.GetStates()
+	var instructions strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(states)) {
+		server := states[name]
+		if server.State != mcp.StateConnected && server.State != mcp.StateLazy {
+			continue
+		}
+		if lazyServers[name] && !lazyState.IsEnabled(name) {
+			continue
+		}
+		if s := server.Client.InitializeResult().Instructions; s != "" {
+			instructions.WriteString(s)
+			instructions.WriteString("\n\n")
+		}
+	}
+	return instructions.String()
 }

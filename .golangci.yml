@@ -103,23 +103,13 @@ linters:
       - text: '(slog|log)\.\w+'
         linters:
           - noctx
-      # Layer violations that predate the depguard rules. Fix and delete.
-      - path: internal/app/app\.go
-        text: 'internal/ui/(anim|styles)'
-        linters: [depguard]
-      - path: internal/format/spinner\.go
-        text: 'internal/ui/anim'
-        linters: [depguard]
-      - path: internal/commands/commands\.go
-        text: 'internal/agent/tools/mcp'
-        linters: [depguard]
       - path: _test\.go
         linters: [gocognit]
       # Functions over the gocognit limit when it was enabled. Each new
       # function must stay under it. Delete an entry once its function is
       # back under the limit.
       - path: internal/agent/agent\.go
-        text: 'func `(\(\*sessionAgent\)\.generateTitle|\(\*sessionAgent\)\.preparePrompt|\(\*sessionAgent\)\.runOwned|\(\*sessionAgent\)\.summarizeOwned)`'
+        text: 'func `(\(\*sessionAgent\)\.generateTitle|\(\*sessionAgent\)\.preparePrompt|\(\*sessionAgent\)\.summarizeOwned)`'
         linters: [gocognit]
       - path: internal/agent/agentic_fetch_tool\.go
         text: 'func `(\(\*coordinator\)\.agenticFetchTool)`'

@@ -73,8 +73,7 @@ any layer below it, never one above:
 
 `depguard` in `.golangci.yml` enforces this. When a lower package needs
 something from a higher one, pass it in from the caller or move the code
-down; don't add an exclusion. The exclusions listed there predate the rule
-and should shrink.
+down; don't add an exclusion.
 
 `gocognit` caps the cognitive complexity of new functions at 30. A long
 function that reads top to bottom as one concern stays under it; one that
