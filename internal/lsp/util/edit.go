@@ -194,19 +194,17 @@ func applyDocumentChange(change protocol.DocumentChange, encoding powernap.Offse
 	return nil
 }
 
+// applyCreateFile creates an empty file, truncating an existing one unless
+// IgnoreIfExists is set without Overwrite.
 func applyCreateFile(op *protocol.CreateFile) error {
 	path, err := op.URI.Path()
 	if err != nil {
 		return fmt.Errorf("invalid URI: %w", err)
 	}
 
-	if op.Options != nil {
-		if op.Options.Overwrite {
-			// Proceed with overwrite
-		} else if op.Options.IgnoreIfExists {
-			if _, err := os.Stat(path); err == nil {
-				return nil // File exists and we're ignoring it
-			}
+	if op.Options != nil && !op.Options.Overwrite && op.Options.IgnoreIfExists {
+		if _, err := os.Stat(path); err == nil {
+			return nil // File exists and we're ignoring it
 		}
 	}
 	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
@@ -215,6 +213,8 @@ func applyCreateFile(op *protocol.CreateFile) error {
 	return nil
 }
 
+// applyDeleteFile removes a file, or a whole directory tree when Recursive is
+// set. A missing path is an error only when Recursive is not set.
 func applyDeleteFile(op *protocol.DeleteFile) error {
 	path, err := op.URI.Path()
 	if err != nil {
@@ -233,16 +233,15 @@ func applyDeleteFile(op *protocol.DeleteFile) error {
 	return nil
 }
 
+// applyRenameFile moves a file, replacing an existing target unless options
+// are given without Overwrite.
 func applyRenameFile(op *protocol.RenameFile) error {
-	var newPath, oldPath string
-	var err error
-
-	oldPath, err = op.OldURI.Path()
+	oldPath, err := op.OldURI.Path()
 	if err != nil {
 		return err
 	}
 
-	newPath, err = op.NewURI.Path()
+	newPath, err := op.NewURI.Path()
 	if err != nil {
 		return err
 	}
@@ -260,6 +259,8 @@ func applyRenameFile(op *protocol.RenameFile) error {
 	return nil
 }
 
+// applyTextDocumentEdit applies the edits to one document, dropping change
+// annotations, and leaves the file untouched if any edit is malformed.
 func applyTextDocumentEdit(op *protocol.TextDocumentEdit, encoding powernap.OffsetEncoding) error {
 	textEdits := make([]protocol.TextEdit, len(op.Edits))
 	for i, edit := range op.Edits {
