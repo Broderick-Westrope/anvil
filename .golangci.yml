@@ -178,7 +178,7 @@ linters:
         text: 'func `(applyOverrides)`'
         linters: [gocognit]
       - path: internal/config/load\.go
-        text: 'func `(\(\*Config\)\.configureProviders|resolveSelectedModels)`'
+        text: 'func `(resolveSelectedModels)`'
         linters: [gocognit]
       - path: internal/lsp/util/edit\.go
         text: 'func `(applyDocumentChange)`'
