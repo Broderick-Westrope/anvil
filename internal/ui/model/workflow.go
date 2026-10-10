@@ -316,8 +316,15 @@ func (m *UI) workflowControls() *dialog.WorkflowControls {
 	if run == nil {
 		return nil
 	}
+	keys := dialog.WorkflowKeys{
+		Pause: m.keyMap.WorkflowPause.Help().Key,
+		Abort: m.keyMap.WorkflowAbort.Help().Key,
+		GoTo:  m.keyMap.WorkflowGo.Help().Key,
+		Agent: m.keyMap.WorkflowAgent.Help().Key,
+		Run:   m.keyMap.WorkflowRun.Help().Key,
+	}
 	if run.log.Finished {
-		return &dialog.WorkflowControls{SessionID: invoker, Command: run.command, Finished: true}
+		return &dialog.WorkflowControls{SessionID: invoker, Command: run.command, Finished: true, Keys: keys}
 	}
 	_, hasAgent := latestAgent(run.log.Entries)
 	return &dialog.WorkflowControls{
@@ -326,6 +333,7 @@ func (m *UI) workflowControls() *dialog.WorkflowControls {
 		Paused:        run.paused,
 		CanGoToActive: run.active != m.session.ID,
 		CanOpenAgent:  hasAgent,
+		Keys:          keys,
 	}
 }
 

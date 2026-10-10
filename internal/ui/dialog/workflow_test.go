@@ -333,6 +333,28 @@ func TestDefaultCommandsWorkflowControls(t *testing.T) {
 	require.Nil(t, findCommandItem(finished, "workflow_abort"))
 }
 
+func TestDefaultCommandsWorkflowShortcutsComeFromKeys(t *testing.T) {
+	t.Parallel()
+
+	keys := WorkflowKeys{Pause: "f1", Abort: "f2", GoTo: "f3", Agent: "f4", Run: "f5"}
+	newCommands := func(w *WorkflowControls) []*CommandItem {
+		s := styles.TokyoNight()
+		com := &common.Common{Styles: &s, Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig()}}
+		return (&Commands{com: com, workflow: w}).defaultCommands()
+	}
+
+	running := newCommands(&WorkflowControls{SessionID: "s1", Command: "demo", CanGoToActive: true, CanOpenAgent: true, Keys: keys})
+	for id, want := range map[string]string{
+		"workflow_pause": "f1", "workflow_abort": "f2", "workflow_goto": "f3", "workflow_agent": "f4", "workflow_run": "f5",
+	} {
+		require.Equal(t, want, findCommandItem(running, id).Shortcut(), id)
+	}
+	paused := newCommands(&WorkflowControls{SessionID: "s1", Command: "demo", Paused: true, Keys: keys})
+	require.Equal(t, "f1", findCommandItem(paused, "workflow_pause").Shortcut())
+	finished := newCommands(&WorkflowControls{SessionID: "s1", Command: "demo", Finished: true, Keys: keys})
+	require.Equal(t, "f5", findCommandItem(finished, "workflow_run").Shortcut())
+}
+
 func drawDialogANSI(d Dialog, width, height int) (string, *tea.Cursor) {
 	scr := uv.NewScreenBuffer(width, height)
 	cur := d.Draw(scr, uv.Rect(0, 0, width, height))

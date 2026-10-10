@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -686,12 +687,31 @@ func TestWorkflowControlsDescribeTheCurrentRun(t *testing.T) {
 	f := newWorkflowFixture(t)
 	require.Nil(t, f.u.workflowControls())
 
+	keys := dialog.WorkflowKeys{Pause: "ctrl+x", Abort: "alt+x", GoTo: "alt+g", Agent: "alt+o", Run: "alt+w"}
 	f.event(started("demo", "sess-1"))
-	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo"}, f.u.workflowControls())
+	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Keys: keys}, f.u.workflowControls())
 
 	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", State: host.StatePaused})
 	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
-	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Paused: true, CanGoToActive: true}, f.u.workflowControls())
+	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Paused: true, CanGoToActive: true, Keys: keys}, f.u.workflowControls())
+}
+
+func TestWorkflowControlsFollowReboundKeys(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	rebind := func(b *key.Binding, k string) { *b = key.NewBinding(key.WithKeys(k), key.WithHelp(k, b.Help().Desc)) }
+	rebind(&f.u.keyMap.WorkflowPause, "f1")
+	rebind(&f.u.keyMap.WorkflowAbort, "f2")
+	rebind(&f.u.keyMap.WorkflowGo, "f3")
+	rebind(&f.u.keyMap.WorkflowAgent, "f4")
+	rebind(&f.u.keyMap.WorkflowRun, "f5")
+	want := dialog.WorkflowKeys{Pause: "f1", Abort: "f2", GoTo: "f3", Agent: "f4", Run: "f5"}
+
+	f.event(started("demo", "sess-1"))
+	require.Equal(t, want, f.u.workflowControls().Keys)
+	f.event(host.Event{Kind: host.EventFinished, RunID: "run-1", Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted})
+	require.Equal(t, want, f.u.workflowControls().Keys, "a finished run's controls use the keymap too")
 }
 
 func TestWorkflowGoToActiveFromPalette(t *testing.T) {
@@ -945,7 +965,10 @@ func TestWorkflowRunOutlivesTheRun(t *testing.T) {
 	require.Contains(t, panel, "/demo · failed: BashError: exit 1")
 	require.Contains(t, panel, "alt+w details")
 	require.Equal(t, 1, f.u.pillsAreaHeight())
-	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Finished: true}, f.u.workflowControls())
+	controls := f.u.workflowControls()
+	require.NotNil(t, controls)
+	controls.Keys = dialog.WorkflowKeys{}
+	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Finished: true}, controls)
 
 	f.press(showRunKey)
 	out := f.runDialog()

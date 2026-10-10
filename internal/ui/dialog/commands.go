@@ -594,28 +594,28 @@ func (c *Commands) defaultCommands() []*CommandItem {
 
 	if w := c.workflow; w != nil && w.Finished {
 		commands = append(commands,
-			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, "alt+w",
+			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, w.Keys.Run,
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowShowRun}),
 			NewCommandItem(c.com.Styles, "workflow_dismiss", "Dismiss Workflow Run /"+w.Command, "",
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowDismiss}))
 	} else if w != nil {
-		pause := NewCommandItem(c.com.Styles, "workflow_pause", "Pause Workflow /"+w.Command, "ctrl+x",
+		pause := NewCommandItem(c.com.Styles, "workflow_pause", "Pause Workflow /"+w.Command, w.Keys.Pause,
 			ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowPause})
 		if w.Paused {
-			pause = NewCommandItem(c.com.Styles, "workflow_pause", "Resume Workflow /"+w.Command, "ctrl+x",
+			pause = NewCommandItem(c.com.Styles, "workflow_pause", "Resume Workflow /"+w.Command, w.Keys.Pause,
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowResume})
 		}
 		commands = append(commands, pause,
-			NewCommandItem(c.com.Styles, "workflow_abort", "Abort Workflow /"+w.Command, "alt+x",
+			NewCommandItem(c.com.Styles, "workflow_abort", "Abort Workflow /"+w.Command, w.Keys.Abort,
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowAbort}),
-			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, "alt+w",
+			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, w.Keys.Run,
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowShowRun}))
 		if w.CanGoToActive {
-			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_goto", "Go to Workflow Session", "alt+g",
+			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_goto", "Go to Workflow Session", w.Keys.GoTo,
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowGoToActive}))
 		}
 		if w.CanOpenAgent {
-			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_agent", "Open Workflow Agent Session", "alt+o",
+			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_agent", "Open Workflow Agent Session", w.Keys.Agent,
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowOpenAgent}))
 		}
 	}
@@ -671,6 +671,14 @@ type WorkflowControls struct {
 	CanGoToActive bool
 	// CanOpenAgent is set when the run has a subagent session to open.
 	CanOpenAgent bool
+	// Keys are the shortcuts shown beside each control.
+	Keys WorkflowKeys
+}
+
+// WorkflowKeys are the help keys of the workflow control bindings, so the
+// palette shows whatever they are bound to.
+type WorkflowKeys struct {
+	Pause, Abort, GoTo, Agent, Run string
 }
 
 // SetWorkflowControls shows controls for the workflow run involving the
