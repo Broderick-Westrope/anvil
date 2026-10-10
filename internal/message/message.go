@@ -710,6 +710,31 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 	return json.Marshal(wrappedParts)
 }
 
+// partDecoders decodes the data of each stored part type.
+var partDecoders = map[partType]func(json.RawMessage) (ContentPart, error){
+	reasoningType:           decodePart[ReasoningContent],
+	textType:                decodePart[TextContent],
+	imageURLType:            decodePart[ImageURLContent],
+	binaryType:              decodePart[BinaryContent],
+	toolCallType:            decodePart[ToolCall],
+	toolResultType:          decodePart[ToolResult],
+	finishType:              decodePart[Finish],
+	compactionType:          decodePart[CompactionContent],
+	branchSummaryType:       decodePart[BranchSummaryContent],
+	labelType:               decodePart[LabelContent],
+	modelChangeType:         decodePart[ModelChangeContent],
+	thinkingLevelChangeType: decodePart[ThinkingLevelChangeContent],
+	mcpToggleType:           decodePart[MCPToggleContent],
+}
+
+func decodePart[T ContentPart](data json.RawMessage) (ContentPart, error) {
+	var part T
+	if err := json.Unmarshal(data, &part); err != nil {
+		return nil, err
+	}
+	return part, nil
+}
+
 func unmarshalParts(data []byte) ([]ContentPart, error) {
 	temp := []json.RawMessage{}
 
@@ -729,88 +754,15 @@ func unmarshalParts(data []byte) ([]ContentPart, error) {
 			return nil, err
 		}
 
-		switch wrapper.Type {
-		case reasoningType:
-			part := ReasoningContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case textType:
-			part := TextContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case imageURLType:
-			part := ImageURLContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case binaryType:
-			part := BinaryContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case toolCallType:
-			part := ToolCall{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case toolResultType:
-			part := ToolResult{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case finishType:
-			part := Finish{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case compactionType:
-			part := CompactionContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case branchSummaryType:
-			part := BranchSummaryContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case labelType:
-			part := LabelContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case modelChangeType:
-			part := ModelChangeContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case thinkingLevelChangeType:
-			part := ThinkingLevelChangeContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case mcpToggleType:
-			part := MCPToggleContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		default:
+		decode, ok := partDecoders[wrapper.Type]
+		if !ok {
 			return nil, fmt.Errorf("unknown part type: %s", wrapper.Type)
 		}
+		part, err := decode(wrapper.Data)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
 	}
 
 	return parts, nil
