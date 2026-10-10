@@ -575,3 +575,16 @@ function main() {}`)
 		t.Fatal("top-level loop outlived its context")
 	}
 }
+
+func TestUncaughtBashErrorNamesStderrAndScriptLine(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.backend.bashFn = func(context.Context, workflow.BashCall) (workflow.BashResult, error) {
+		return workflow.BashResult{ExitCode: 1, Stderr: "no 'origin' remote found\n"}, nil
+	}
+	_, err := h.run(t, "function main() {\n  bash(\"wtp add\")\n}", "")
+	require.ErrorContains(t, err, "no 'origin' remote found")
+	require.ErrorContains(t, err, "workflow.js:2")
+	require.NotContains(t, err.Error(), "prelude.js")
+}

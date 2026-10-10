@@ -134,6 +134,18 @@ func (r *Run) scriptError(err error) error {
 	if r.aborted.Load() || errors.As(err, &interrupted) {
 		return ErrAborted
 	}
+	var ex *goja.Exception
+	if errors.As(err, &ex) {
+		// Point at the script's own line, not the prelude frame that threw.
+		where := r.script.Path
+		for _, frame := range ex.Stack() {
+			if frame.SrcName() == r.script.Path {
+				where = frame.Position().String()
+				break
+			}
+		}
+		return fmt.Errorf("%s: %s", where, ex.Value().String())
+	}
 	return fmt.Errorf("workflow %s: %w", r.script.Path, err)
 }
 

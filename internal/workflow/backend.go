@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Backend implements the primitives that reach outside the script: models,
@@ -99,7 +100,13 @@ type BashError struct {
 }
 
 func (e *BashError) Error() string {
-	return fmt.Sprintf("command exited %d: %s", e.ExitCode, e.Cmd)
+	msg := fmt.Sprintf("command exited %d: %s", e.ExitCode, e.Cmd)
+	if stderr := strings.TrimSpace(e.Stderr); stderr != "" {
+		// The tail of stderr is usually the reason; keep the message short.
+		lines := strings.Split(stderr, "\n")
+		msg += ": " + lines[len(lines)-1]
+	}
+	return msg
 }
 
 // HoldCall holds a run's sessions for workflow.exclusive.
