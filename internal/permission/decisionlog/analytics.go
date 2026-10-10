@@ -207,7 +207,22 @@ func (v *versionStats) add(row db.PermissionDecision, a *permission.AssessmentRe
 		addComparison(&s.Shadow, a.Outcome, row.Verdict)
 	}
 	if a.Mode == "enforce" {
-		s.Enforce.add(row, a)
+		s.Enforce.Samples++
+		if row.DecidedBy == string(permission.DecisionSourceBouncer) {
+			s.Enforce.Bouncer[row.Verdict]++
+		}
+		if row.DecidedBy == string(permission.DecisionSourceHuman) {
+			addComparison(&s.Enforce.Human, a.Outcome, row.Verdict)
+			if a.Outcome == "escalate" {
+				if len(a.Triggers) == 0 {
+					if row.Verdict == string(permission.VerdictAllow) || row.Verdict == string(permission.VerdictDeny) {
+						s.Enforce.UntriggeredEscalations++
+					}
+				} else {
+					addEscalationAxes(s.Enforce.EscalationAxes, a.Triggers, row.Verdict)
+				}
+			}
+		}
 	}
 	if a.Review != nil && row.DecidedBy == string(permission.DecisionSourceHuman) && row.Verdict != string(permission.VerdictCancelled) {
 		if a.Review.Error != "" {
@@ -242,26 +257,4 @@ func (v *versionStats) finish() AssessmentStats {
 		u.P95LatencyMS = v.latencies[int(math.Ceil(0.95*float64(len(v.latencies))))-1]
 	}
 	return v.stats
-}
-
-// add counts one decision made while the bouncer was enforcing.
-func (e *Enforcement) add(row db.PermissionDecision, a *permission.AssessmentRecord) {
-	e.Samples++
-	if row.DecidedBy == string(permission.DecisionSourceBouncer) {
-		e.Bouncer[row.Verdict]++
-	}
-	if row.DecidedBy != string(permission.DecisionSourceHuman) {
-		return
-	}
-	addComparison(&e.Human, a.Outcome, row.Verdict)
-	if a.Outcome != "escalate" {
-		return
-	}
-	if len(a.Triggers) > 0 {
-		addEscalationAxes(e.EscalationAxes, a.Triggers, row.Verdict)
-		return
-	}
-	if row.Verdict == string(permission.VerdictAllow) || row.Verdict == string(permission.VerdictDeny) {
-		e.UntriggeredEscalations++
-	}
 }
