@@ -244,3 +244,16 @@ func TestStatsEscalations(t *testing.T) {
 	require.Equal(t, 2, e.UntriggeredEscalations)
 	require.Equal(t, map[string]map[string]int{"remote_exec": {"allow": 1}}, e.EscalationAxes)
 }
+
+func TestStatsGroupWithoutUsage(t *testing.T) {
+	t.Parallel()
+	stats := ComputeStats([]db.PermissionDecision{
+		assessmentRow(t, 1, "v1", "shadow", "error", "human", "allow", 10),
+		assessmentRow(t, 1, "v1", "shadow", "skipped", "human", "deny", 20),
+	})
+	require.Len(t, stats.Groups, 1)
+	g := stats.Groups[0]
+	require.Equal(t, 2, g.Total)
+	require.Equal(t, map[string]int{"human": 2}, g.ByDecidedBy)
+	require.Equal(t, UsageStats{}, g.Usage)
+}
