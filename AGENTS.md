@@ -136,7 +136,10 @@ internal/
   - Update specific package:
     `go test ./internal/tui/components/core -update` (in this case,
     we're updating "core")
-- **Lint**: `task lint:fix`
+- **Lint**: `task lint` (check) or `task lint:fix`. golangci-lint is pinned
+  as a Go tool in its own modfile, so nothing needs installing; bump it with
+  `go get -tool -modfile=tools/golangci-lint.mod
+  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<version>`.
 - **Format**: `task fmt` (`gofumpt -w .`)
 - **Modernize**: `task modernize` (runs `modernize` which makes code
   simplifications)
