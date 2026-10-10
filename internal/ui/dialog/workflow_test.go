@@ -127,6 +127,38 @@ func TestWorkflowApprovalScrolls(t *testing.T) {
 	require.Contains(t, drawDialog(d, 120, 40), "the end")
 }
 
+// drawAllScrolled draws d, then scrolls it a line at a time to the bottom,
+// returning every frame so a test can check what was ever on screen.
+func drawAllScrolled(d Dialog, width, height int) string {
+	frames := []string{drawDialog(d, width, height)}
+	for range 400 {
+		d.HandleMsg(press("j"))
+		frames = append(frames, drawDialog(d, width, height))
+	}
+	return strings.Join(frames, "\n")
+}
+
+func TestWorkflowApprovalShowsAllOfALongLine(t *testing.T) {
+	t.Parallel()
+
+	long := `const x = "` + strings.Repeat("ab ", 110) + `TAILMARKER";` + "\n"
+	tests := map[string]struct {
+		previous string
+	}{
+		"first run": {},
+		"changed":   {previous: "const x = 1;\n"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ev := approvalEvent(tc.previous)
+			ev.Approval.Files[0].Source = long
+			out := drawAllScrolled(NewWorkflowApproval(workflowCommon(), ev), 120, 40)
+			require.True(t, strings.Contains(out, "TAILMARKER"), "the end of the long line is never on screen")
+		})
+	}
+}
+
 func askEvent(options ...string) host.Event {
 	return host.Event{
 		Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "s1",

@@ -137,6 +137,7 @@ func (d *WorkflowApproval) renderSource(width int) string {
 			Before("approved", script.PreviousSource).
 			After(fsext.PrettyPath(req.ScriptPath), script.Source).
 			Width(width).
+			NoTruncate().
 			Unified().
 			String()
 	}
