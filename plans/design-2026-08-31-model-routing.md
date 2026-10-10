@@ -780,6 +780,26 @@ Two things to fix while in there:
   defaults only. With Phase 0 assigning models to every agent, this silently
   becomes load-bearing. It should inherit non-model fields from `models.large`.
 
+**Upstream prior art (declined in the 2026-10 sync, item F5).** Crush
+`b82d7d05` restores the provider/model of a session's last assistant message
+when it is loaded or continued (TUI and `run --continue`). It was not ported
+because it writes `ScopeGlobal` (opening an old session changes the default
+for every later session and every other pane), writes only `provider`/`model`
+(reasoning effort, `think`, variant and `max_tokens` reset), and switches
+silently. Two pieces are worth reusing here:
+
+- **Availability guard.** Its `Config.IsModelAvailable(provider, model)`
+  rejects a disabled provider or a model gone from the catalog. Phase 1 needs
+  the same check before honouring a derived session model, falling back to
+  `models.large` when it fails.
+- **Coverage of `run --continue`.** It also restores in the non-interactive
+  continue path. Phase 1 step 3 covers this via `coordinator.Run`, but test it
+  explicitly.
+
+Sessions created before Phase 1 have no `MessageTypeModelChange` entry for
+their starting model. Falling back to the last assistant message's
+`Provider`/`Model` (what upstream reads) would cover them.
+
 ### Phase 2 — escalation without a router
 
 **Option A (recommended): ship nothing. Escalation is already delegation.**
