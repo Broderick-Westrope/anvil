@@ -2,9 +2,11 @@ package commands
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -336,12 +338,19 @@ func loadCommand(path, prefix string) (CustomCommand, error) {
 // SubstituteArgs replaces $ARGUMENTS and named $ARG_NAME placeholders in
 // content using a single-pass replacer to prevent double-substitution (e.g.
 // a rawArguments value containing "$FOO" won't be re-expanded by a named
-// arg "FOO").
+// arg "FOO"). Longer names are tried first, so $FOOBAR is never read as
+// $FOO followed by "BAR".
 func SubstituteArgs(content string, args map[string]string, rawArguments string) string {
-	pairs := make([]string, 0, (len(args)+1)*2)
-	pairs = append(pairs, "$ARGUMENTS", rawArguments)
-	for name, value := range args {
-		pairs = append(pairs, "$"+name, value)
+	values := make(map[string]string, len(args)+1)
+	maps.Copy(values, args)
+	values["ARGUMENTS"] = rawArguments
+
+	names := slices.SortedFunc(maps.Keys(values), func(a, b string) int {
+		return cmp.Or(cmp.Compare(len(b), len(a)), strings.Compare(a, b))
+	})
+	pairs := make([]string, 0, len(names)*2)
+	for _, name := range names {
+		pairs = append(pairs, "$"+name, values[name])
 	}
 	return strings.NewReplacer(pairs...).Replace(content)
 }
