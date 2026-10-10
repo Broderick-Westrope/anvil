@@ -631,6 +631,14 @@ func TestAggregationUpdatedInput(t *testing.T) {
 		require.JSONEq(t, `{"command":"good"}`, agg.UpdatedInput)
 	})
 
+	t.Run("empty array patch is rejected, not applied as a no-op", func(t *testing.T) {
+		t.Parallel()
+		agg := aggregate([]HookResult{
+			{Decision: DecisionAllow, UpdatedInput: `[]`},
+		}, `{"command":"orig"}`)
+		require.Empty(t, agg.UpdatedInput)
+	})
+
 	t.Run("malformed patch JSON is ignored and merge continues", func(t *testing.T) {
 		t.Parallel()
 		agg := aggregate([]HookResult{
