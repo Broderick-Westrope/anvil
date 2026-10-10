@@ -138,8 +138,12 @@ internal/
   and owns runs: `Service` (start, approval, ask, pause/abort, events for
   the UI) and `Store` (run rows, event log, approvals). Approval covers a
   bundle of every file under the script's directory (skipping dot
-  directories and `node_modules`), hashed together, so editing a bundled
-  reference asks again; `--yolo=full` skips it. `workflow.exclusive` holds
+  directories and `node_modules`, and symlinks that lead outside it),
+  hashed together, so editing a bundled reference asks again;
+  `--yolo=full` skips it. The bundle is read once per run, before
+  approval: `reference()` serves it, not the disk, and the run row records
+  its `bundle_hash`. Binary files and files over 256 KiB are approved by
+  size and hash only. `workflow.exclusive` holds
   the run's sessions (`Coordinator.Hold`): no new run starts in them and
   the hold waits out in-flight ones. Script turns are awaited submissions
   (`admission.submitAwait`): they queue behind user work and return their
