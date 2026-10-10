@@ -174,3 +174,86 @@ func TestThinkingDetailItemFinishedRenderReplacesStreamingSeams(t *testing.T) {
 		"finished thinking must render cleanly, without streaming seams")
 	require.NotEqual(t, streamed, detail.RawRender(120), "sanity: the stream must have been seamed")
 }
+
+func TestThinkingDetailItemReRendersWhenItsInputsChange(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		// stomp marks which cache is made stale before the change.
+		stomp  func(detail *ThinkingDetailItem)
+		change func(detail *ThinkingDetailItem, source *AssistantMessageItem) string
+	}{
+		"markdown on width": {
+			stomp: func(d *ThinkingDetailItem) { d.rendered = "STALE" },
+			change: func(d *ThinkingDetailItem, _ *AssistantMessageItem) string {
+				return d.RawRender(60)
+			},
+		},
+		"markdown on completion": {
+			stomp: func(d *ThinkingDetailItem) { d.rendered = "STALE" },
+			change: func(d *ThinkingDetailItem, source *AssistantMessageItem) string {
+				source.SetMessage(thinkingMessage("m1", thinkingDetailText, ""))
+				return d.RawRender(80)
+			},
+		},
+		"prefix on width": {
+			stomp: func(d *ThinkingDetailItem) { d.prefixed = "STALE" },
+			change: func(d *ThinkingDetailItem, _ *AssistantMessageItem) string {
+				return d.Render(81)
+			},
+		},
+		"prefix on focus": {
+			stomp: func(d *ThinkingDetailItem) { d.prefixed = "STALE" },
+			change: func(d *ThinkingDetailItem, _ *AssistantMessageItem) string {
+				d.SetFocused(true)
+				return d.Render(80)
+			},
+		},
+		"prefix on highlight": {
+			stomp: func(d *ThinkingDetailItem) { d.prefixed = "STALE" },
+			change: func(d *ThinkingDetailItem, _ *AssistantMessageItem) string {
+				d.SetHighlight(0, 0, 0, 3)
+				return d.Render(80)
+			},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sty := styles.TokyoNight()
+			streaming := &message.Message{
+				ID:    "m1",
+				Role:  message.Assistant,
+				Parts: []message.ContentPart{message.ReasoningContent{Thinking: thinkingDetailText, StartedAt: testStartedAt}},
+			}
+			source := NewAssistantMessageItem(&sty, streaming).(*AssistantMessageItem)
+			detail := NewThinkingDetailItem(&sty, source).(*ThinkingDetailItem)
+			detail.Render(80)
+			tc.stomp(detail)
+
+			require.NotContains(t, tc.change(detail, source), "STALE")
+		})
+	}
+}
+
+func TestThinkingDetailItemReusesPrefixWhileUnchanged(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := NewAssistantMessageItem(&sty, thinkingMessage("m1", thinkingDetailText, "answer")).(*AssistantMessageItem)
+	detail := NewThinkingDetailItem(&sty, source).(*ThinkingDetailItem)
+	detail.Render(80)
+	detail.prefixed = "CACHED"
+
+	require.Equal(t, "CACHED", detail.Render(80))
+}
+
+func TestThinkingDetailItemCopiesTrimmedThinking(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := NewAssistantMessageItem(&sty, thinkingMessage("m1", "\n  reasoning  \n\n", "answer")).(*AssistantMessageItem)
+
+	require.Equal(t, "reasoning", NewThinkingDetailItem(&sty, source).(*ThinkingDetailItem).SelectionSource())
+}

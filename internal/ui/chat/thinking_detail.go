@@ -141,7 +141,7 @@ func (t *ThinkingDetailItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (t *ThinkingDetailItem) thinking() string {
-	return t.source.message.ReasoningContent().Thinking
+	return strings.TrimSpace(t.source.message.ReasoningContent().Thinking)
 }
 
 // clearCache implements cacheClearable so a style change re-renders.
