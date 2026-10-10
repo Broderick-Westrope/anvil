@@ -174,41 +174,13 @@ func writeLSP(b *strings.Builder, lspManager *lsp.Manager, cfg *config.ConfigSto
 	}
 
 	// Write configured but not running LSP servers
-	c := cfg.Config()
-	if len(c.LSP) > 0 {
-		runtimeNames := make(map[string]bool)
-		if lspManager != nil {
-			for name := range lspManager.Clients().Seq2() {
-				runtimeNames[name] = true
-			}
-		}
-
-		type configuredEntry struct {
-			name   string
-			status string
-		}
-		var entries []configuredEntry
-		for name, lspCfg := range c.LSP {
-			// Skip if already in runtime
-			if runtimeNames[name] {
-				continue
-			}
-			status := "not_started"
-			if lspCfg.Disabled {
-				status = "disabled"
-			}
-			entries = append(entries, configuredEntry{name: name, status: status})
-		}
-
-		if len(entries) > 0 {
-			slices.SortFunc(entries, func(a, b configuredEntry) int { return strings.Compare(a.name, b.name) })
-			b.WriteString("[lsp_configured]\n")
-			for _, e := range entries {
-				fmt.Fprintf(b, "%s = %s\n", e.name, e.status)
-			}
-			b.WriteString("\n")
+	runtimeNames := make(map[string]bool)
+	if lspManager != nil {
+		for name := range lspManager.Clients().Seq2() {
+			runtimeNames[name] = true
 		}
 	}
+	writeConfiguredServers(b, "[lsp_configured]", cfg.Config().LSP, runtimeNames, func(c config.LSPConfig) bool { return c.Disabled })
 }
 
 func writeMCP(b *strings.Builder, states map[string]mcp.ClientInfo, cfg *config.ConfigStore) {
