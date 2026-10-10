@@ -4360,13 +4360,16 @@ func (m *UI) buildSlashACItems() []autocomplete.Item {
 			continue
 		}
 		desc := ""
+		unlisted := false
 		if skill := m.com.Workspace.ActiveSkillByName(ss.Name); skill != nil {
 			desc = skill.Description
+			unlisted = skill.Unlisted
 		}
 		items = append(items, autocomplete.Item{
 			Name:        ss.Name,
 			Description: desc,
 			Type:        autocomplete.SkillItem,
+			Unlisted:    unlisted,
 			ID:          "skill:" + ss.Name,
 		})
 	}
