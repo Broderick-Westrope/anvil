@@ -186,7 +186,9 @@ func (s *Service) Start(ctx context.Context, inv Invocation) error {
 		s.mu.Unlock()
 		return ErrShuttingDown
 	}
-	if s.runs[inv.SessionID] != nil {
+	// A session belongs to at most one run, so controls and holds always
+	// know which run they mean.
+	if _, active := s.findLocked(inv.SessionID); active != nil || s.runs[inv.SessionID] != nil {
 		s.mu.Unlock()
 		return ErrRunInProgress
 	}
@@ -443,6 +445,11 @@ func (s *Service) Running(sessionID string) (invoker string, ok bool) {
 func (s *Service) find(sessionID string) (string, *activeRun) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.findLocked(sessionID)
+}
+
+// findLocked is find for callers holding s.mu.
+func (s *Service) findLocked(sessionID string) (string, *activeRun) {
 	for invoker, active := range s.runs {
 		if active.run == nil {
 			continue

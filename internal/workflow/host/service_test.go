@@ -340,3 +340,15 @@ func TestServiceRepublishesUnansweredRequestsUntilAnswered(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestServiceRefusesAWorkflowFromASessionAnotherRunUses(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `function main() { const s = session.new({}); workflow.focus(s); return ask("hold on") }`)
+	h.start(t, path, "")
+	focus := h.next(t, host.EventFocus)
+	ask := h.next(t, host.EventAsk)
+	err := h.svc.Start(h.fixture.Context, host.Invocation{CommandID: "x", ScriptPath: path, SessionID: focus.Target})
+	require.ErrorIs(t, err, host.ErrRunInProgress)
+	require.NoError(t, h.svc.Respond(ask.RequestID, "ok"))
+	h.next(t, host.EventFinished)
+}
