@@ -21,6 +21,7 @@ import (
 	"charm.land/fantasy"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
@@ -67,6 +68,10 @@ type App struct {
 
 	LSPManager *lsp.Manager
 
+	// cacheUsage records per-call prompt-cache usage. It is closed by the
+	// shutdown cleanup after agents have been cancelled.
+	cacheUsage *cacheusage.Recorder
+
 	config *config.ConfigStore
 	// bouncer is the same Bouncer the permission service assesses with,
 	// kept so ApplyConfig can swap its thresholds. Nil when unconfigured.
@@ -93,15 +98,18 @@ type App struct {
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
 	recorder := decisionlog.New(q)
-	// Prune old decisions once at startup in the background. Failure only
-	// means the table keeps extra rows until the next start.
-	go func() {
-		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := decisionlog.Prune(pruneCtx, q, time.Now()); err != nil {
-			slog.Warn("Failed to prune permission decisions", "error", err)
-		}
-	}()
+	cacheUsage := cacheusage.New(q)
+	logs := []namedLog{
+		{name: "permission decision log", log: recorder},
+		{name: "cache usage log", log: cacheUsage},
+	}
+	// Prune old rows once at startup in the background.
+	go startupPrune(ctx, "permission decisions", func(ctx context.Context) error {
+		return decisionlog.Prune(ctx, q, time.Now())
+	})
+	go startupPrune(ctx, "step usage", func(ctx context.Context) error {
+		return cacheusage.Prune(ctx, q, time.Now())
+	})
 	store.SetBouncerValidator(func(b *config.Bouncer) error {
 		return BouncerThresholds(b).Validate()
 	})
@@ -137,6 +145,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		FileTracker: filetracker.NewService(q),
 		Queries:     q,
 		LSPManager:  lsp.NewManager(store),
+		cacheUsage:  cacheUsage,
 
 		globalCtx: ctx,
 
@@ -179,14 +188,15 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Release the shared database connection on shutdown. The pool
 	// closes the underlying *sql.DB when the last reference is released.
-	// Cleanup funcs run concurrently, so the decision log is flushed here
-	// first. If the flush times out the connection is left open, since
-	// the recorder is still writing and the process is exiting anyway.
+	// Cleanup funcs run concurrently, so the decision log and step usage
+	// recorder are flushed here first. If a flush times out the connection
+	// is left open, since that recorder is still writing and the process
+	// is exiting anyway.
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
 		func(ctx context.Context) error {
-			if err := recorder.Close(ctx); err != nil {
-				return fmt.Errorf("permission decision log did not flush before shutdown: %w", err)
+			if err := closeLogs(ctx, logs...); err != nil {
+				return fmt.Errorf("logs did not flush before shutdown: %w", err)
 			}
 			return db.ReleaseGlobal()
 		},
@@ -199,10 +209,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		return app, nil
 	}
 	if err := app.InitOrchestratorAgent(ctx); err != nil {
-		if closeErr := recorder.Close(ctx); closeErr != nil {
-			slog.Warn("Failed to close permission decision log after initialization error", "error", closeErr)
-		}
-		return nil, fmt.Errorf("failed to initialize orchestrator agent: %w", err)
+		return nil, initFailure(ctx, err, logs...)
 	}
 
 	// Set up callback for LSP state updates.
@@ -630,6 +637,7 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.jobArchive(),
 		app.jobWaker.trigger,
 		app.jobWaker.enabled.Load,
+		app.cacheUsage,
 	)
 	if err != nil {
 		slog.Error("Failed to create orchestrator agent", "err", err)
@@ -738,6 +746,79 @@ func (app *App) Subscribe(program *tea.Program) {
 	}
 }
 
+// startupPrune runs prune with a 30 second deadline and logs failure,
+// which only means the table keeps extra rows until the next start. It
+// returns prune's error.
+func startupPrune(ctx context.Context, what string, prune func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := prune(ctx); err != nil {
+		slog.Warn("Failed to prune "+what, "error", err)
+		return err
+	}
+	return nil
+}
+
+// logCloser is an asynchronous log writer such as the permission decision
+// log or the step usage recorder.
+type logCloser interface {
+	Close(ctx context.Context) error
+}
+
+// namedLog pairs a log with the name its close errors are reported under.
+type namedLog struct {
+	name string
+	log  logCloser
+}
+
+// closeLogs flushes and closes logs concurrently, so a slow log cannot use
+// up ctx before the others get to flush. It joins their errors.
+func closeLogs(ctx context.Context, logs ...namedLog) error {
+	errs := make([]error, len(logs))
+	var wg sync.WaitGroup
+	for i, l := range logs {
+		wg.Go(func() {
+			if err := l.log.Close(ctx); err != nil {
+				errs[i] = fmt.Errorf("%s: %w", l.name, err)
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+// initFailure closes logs after orchestrator initialization fails and
+// returns the initialization error joined with any close error, so neither
+// is lost.
+func initFailure(ctx context.Context, err error, logs ...namedLog) error {
+	return errors.Join(
+		fmt.Errorf("failed to initialize orchestrator agent: %w", err),
+		closeLogs(ctx, logs...),
+	)
+}
+
+// backgroundJobsShutdownWait bounds how long shutdown waits for agent
+// background jobs such as title generation.
+const backgroundJobsShutdownWait = 2 * time.Second
+
+// waitWithTimeout runs wait and reports whether it returned within timeout.
+// On timeout wait keeps running in the background.
+func waitWithTimeout(wait func(), timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 // Shutdown performs a graceful shutdown of the application.
 func (app *App) Shutdown() {
 	start := time.Now()
@@ -755,6 +836,14 @@ func (app *App) Shutdown() {
 	// before closing the DB so agents can finish writing their state.
 	if app.AgentCoordinator != nil {
 		app.AgentCoordinator.CancelAll()
+		// Title generation outlives cancellation. Give it a short window
+		// to land its title and usage rows before the recorder and DB
+		// close, but never hold up shutdown for long.
+		if w, ok := app.AgentCoordinator.(interface{ WaitBackgroundJobs() }); ok {
+			if !waitWithTimeout(w.WaitBackgroundJobs, backgroundJobsShutdownWait) {
+				slog.Warn("Timed out waiting for agent background jobs to finish")
+			}
+		}
 	}
 
 	// Shared shutdown context for all timeout-bounded cleanup.

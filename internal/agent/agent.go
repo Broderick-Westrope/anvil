@@ -34,6 +34,7 @@ import (
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
+	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
@@ -46,6 +47,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
 	"github.com/Broderick-Westrope/anvil/internal/version"
+	"github.com/google/uuid"
 )
 
 const (
@@ -152,6 +154,19 @@ type sessionAgent struct {
 	admission *admission
 	onIdle    func(sessionID string)
 
+	// usageRecorder receives one row per model response; nil disables
+	// recording. agentName and workingDir are copied onto each row.
+	usageRecorder *cacheusage.Recorder
+	agentName     string
+	workingDir    string
+	// lastTurn holds each session's most recent turn-step history
+	// fingerprint, so a run's first step can be compared with the previous
+	// run. It lives in memory only. Subagent sessions are created per tool
+	// call and run once, so their entries are deleted when the run ends.
+	// Top-level entries stay for the life of the process; they are small
+	// and bounded by the sessions used in it.
+	lastTurn *csync.Map[string, turnPrefix]
+
 	// dispatchLocks serialise, per session, the decisions that start,
 	// queue, or finish a run, so concurrent prompts, wakes, and
 	// summaries never start two runs at once or lose a queued prompt.
@@ -205,6 +220,11 @@ type SessionAgentOptions struct {
 	// OnIdle, when non-nil, is called after a run or summary finishes
 	// with nothing queued for the session. It must not block.
 	OnIdle func(sessionID string)
+	// UsageRecorder records per-response cache usage; nil disables it.
+	UsageRecorder *cacheusage.Recorder
+	// AgentName and WorkingDir label recorded usage rows.
+	AgentName  string
+	WorkingDir string
 }
 
 func NewSessionAgent(
@@ -232,6 +252,10 @@ func NewSessionAgent(
 		admission:            opts.admission,
 		jobEvents:            opts.JobEvents,
 		onIdle:               opts.OnIdle,
+		usageRecorder:        opts.UsageRecorder,
+		agentName:            opts.AgentName,
+		workingDir:           opts.WorkingDir,
+		lastTurn:             csync.NewMap[string, turnPrefix](),
 		dispatchLocks:        make(map[string]*dispatchLock),
 		summarizing:          csync.NewMap[string, *submissionOwner](),
 		wakeCounts:           csync.NewMap[string, int](),
@@ -291,6 +315,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		currentSession.LeafMessageID = state.acceptedUserID
 	}
 	currentLeaf := currentSession.LeafMessageID
+	parentSessionID := currentSession.ParentSessionID
 
 	// getLeaf and setLeaf provide thread-safe access to currentLeaf.
 	getLeaf := func() string {
@@ -427,6 +452,20 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	if call.MaxOutputTokens > 0 {
 		maxOutputTokens = &call.MaxOutputTokens
 	}
+
+	// Usage capture state, guarded by sessionLock. capture is the current
+	// step's request; prevTurn is the history of the run's previous step,
+	// or of the session's last recorded turn step before this run.
+	runID := uuid.NewString()
+	var capture *stepCapture
+	var prevTurn turnPrefix
+	var havePrevTurn bool
+	if a.usageRecorder != nil {
+		prevTurn, havePrevTurn = a.lastTurn.Get(call.SessionID)
+		if parentSessionID != "" {
+			defer a.lastTurn.Del(call.SessionID)
+		}
+	}
 	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
 		Files:            files,
@@ -505,6 +544,20 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			}
 			state.assistantIDs = append(state.assistantIDs, assistantMsg.ID)
 			setLeaf(assistantMsg.ID)
+			// The capture starts after the message is created so
+			// request_started_at is as close to the provider request as
+			// PrepareStep allows.
+			if a.usageRecorder != nil {
+				stepUsage := a.newCapture(usageKindTurn, runID, call.SessionID, parentSessionID, largeModel, prepared.Tools, prepared.Messages)
+				stepUsage.stepIndex = options.StepNumber
+				stepUsage.messageID = assistantMsg.ID
+				sessionLock.Lock()
+				if havePrevTurn {
+					stepUsage.comparePrefix(prevTurn)
+				}
+				capture = stepUsage
+				sessionLock.Unlock()
+			}
 			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
@@ -565,6 +618,11 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
+			sessionLock.Lock()
+			if capture != nil {
+				capture.retries++
+			}
+			sessionLock.Unlock()
 			// Reset streamed content so the retried response doesn't
 			// concatenate with partial content from the failed attempt.
 			// On the final attempt (no more retries), any partial content
@@ -575,6 +633,31 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			}
 		},
 		OnAuthRefresh: call.OnAuthRefresh,
+		// OnStreamFinish fires as soon as the provider reports usage, before
+		// tools run, so steps whose tools later fail are still recorded.
+		// fantasy (v0.45.2) calls it from its agent processStepStream on
+		// the finish part, inside the per-step retry closure in its agent
+		// Stream. A retried attempt that failed before its finish part
+		// never reaches it, so a retried request is recorded once, by the
+		// attempt that finished. A critical tool error is wrapped in
+		// ToolExecutionError (processStepStream), which isRetryableError
+		// rejects, so a finished step is not retried and is recorded once.
+		// The triage skill still checks for duplicates defensively.
+		OnStreamFinish: func(usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata) error {
+			finished := time.Now()
+			sessionLock.Lock()
+			if capture == nil {
+				sessionLock.Unlock()
+				return nil
+			}
+			// Snapshot the capture so the row is built outside the lock.
+			snapshot := *capture
+			prevTurn, havePrevTurn = snapshot.turnPrefix(), true
+			a.lastTurn.Set(call.SessionID, prevTurn)
+			sessionLock.Unlock()
+			a.usageRecorder.Record(a.newRow(&snapshot, usage, reason, meta, finished))
+			return nil
+		},
 		// ModelProvider is re-read on each attempt so a stream retried
 		// after OnAuthRefresh picks up the model rebuilt against the
 		// refreshed credentials rather than the stale one.
@@ -1029,6 +1112,10 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 
 	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
 
+	runID := uuid.NewString()
+	var capture *stepCapture
+	onRetry, onStreamFinish := a.captureCallbacks(&capture)
+
 	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:          summaryPromptText,
 		Messages:        aiMsgs,
@@ -1042,8 +1129,15 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 			if isAnthropicOAuth(providerCfg) {
 				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
 			}
+			if a.usageRecorder != nil {
+				capture = a.newCapture(usageKindSummary, runID, sessionID, currentSession.ParentSessionID, largeModel, nil, prepared.Messages)
+				capture.stepIndex = options.StepNumber
+				capture.messageID = compactionMsg.ID
+			}
 			return callContext, prepared, nil
 		},
+		OnRetry:        onRetry,
+		OnStreamFinish: onStreamFinish,
 		OnReasoningDelta: func(id string, text string) error {
 			compactionMsg.AppendReasoningContent(text)
 			return a.messages.Update(genCtx, compactionMsg)
@@ -1133,21 +1227,34 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	return nil
 }
 
+// anthropicCacheProviders are the provider types that take explicit
+// Anthropic ephemeral cache markers.
+var anthropicCacheProviders = []string{anthropic.Name, bedrock.Name, vercel.Name}
+
+// usesAnthropicCacheMarkers reports whether providerType takes explicit
+// Anthropic ephemeral cache markers.
+func usesAnthropicCacheMarkers(providerType string) bool {
+	return slices.Contains(anthropicCacheProviders, providerType)
+}
+
+// anthropicCacheDisabled reports whether ANVIL_DISABLE_ANTHROPIC_CACHE
+// turns Anthropic cache markers off.
+func anthropicCacheDisabled() bool {
+	disabled, _ := strconv.ParseBool(os.Getenv("ANVIL_DISABLE_ANTHROPIC_CACHE"))
+	return disabled
+}
+
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
-	if t, _ := strconv.ParseBool(os.Getenv("ANVIL_DISABLE_ANTHROPIC_CACHE")); t {
+	if anthropicCacheDisabled() {
 		return fantasy.ProviderOptions{}
 	}
-	return fantasy.ProviderOptions{
-		anthropic.Name: &anthropic.ProviderCacheControlOptions{
+	opts := make(fantasy.ProviderOptions, len(anthropicCacheProviders))
+	for _, name := range anthropicCacheProviders {
+		opts[name] = &anthropic.ProviderCacheControlOptions{
 			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
-		},
-		bedrock.Name: &anthropic.ProviderCacheControlOptions{
-			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
-		},
-		vercel.Name: &anthropic.ProviderCacheControlOptions{
-			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
-		},
+		}
 	}
+	return opts
 }
 
 // sessionHeaders returns the HTTP headers we use for cache affinity on
@@ -1416,6 +1523,9 @@ func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string)
 		fantasy.WithMaxOutputTokens(tok),
 		fantasy.WithUserAgent(userAgent),
 	)
+	runID := uuid.NewString()
+	var capture *stepCapture
+	onRetry, onStreamFinish := a.captureCallbacks(&capture)
 	resp, err := agent.Stream(ctx, fantasy.AgentStreamCall{
 		Prompt: prompt,
 		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
@@ -1428,8 +1538,15 @@ func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string)
 			if isAnthropicOAuth(providerCfg) {
 				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
 			}
+			if a.usageRecorder != nil {
+				capture = a.newCapture(usageKindSmall, runID, "", "", small, nil, prepared.Messages)
+				capture.agent = bouncerReviewerAgentName
+				capture.stepIndex = opts.StepNumber
+			}
 			return callCtx, prepared, nil
 		},
+		OnRetry:        onRetry,
+		OnStreamFinish: onStreamFinish,
 	})
 	if err != nil {
 		return "", small.ModelCfg.Model, fmt.Errorf("small model: %w", err)
@@ -1471,6 +1588,15 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 		)
 	}
 
+	// The fallback loop below sets attemptIndex and attemptModel before
+	// each attempt so every attempt that reports usage is recorded against
+	// the model that made it.
+	runID := uuid.NewString()
+	var capture *stepCapture
+	var attemptIndex int
+	var attemptModel Model
+	onRetry, onStreamFinish := a.captureCallbacks(&capture)
+
 	streamCall := fantasy.AgentStreamCall{
 		Prompt: fmt.Sprintf("Generate a concise title for the following conversation:\n\n%s\n <think>\n\n</think>", conversationText),
 		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
@@ -1483,8 +1609,15 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 			if isAnthropicOAuth(providerCfg) {
 				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
 			}
+			if a.usageRecorder != nil {
+				capture = a.newCapture(usageKindTitle, runID, sessionID, "", attemptModel, nil, prepared.Messages)
+				capture.attempt = attemptIndex
+				capture.stepIndex = opts.StepNumber
+			}
 			return callCtx, prepared, nil
 		},
+		OnRetry:        onRetry,
+		OnStreamFinish: onStreamFinish,
 	}
 
 	type modelAttempt struct {
@@ -1500,7 +1633,8 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 	var err error
 	var model Model
 	var success bool
-	for _, attempt := range attempts {
+	for i, attempt := range attempts {
+		attemptIndex, attemptModel = i, attempt.model
 		tok := int64(40)
 		if attempt.model.CatwalkCfg.CanReason {
 			tok = attempt.model.CatwalkCfg.DefaultMaxTokens

@@ -22,6 +22,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
@@ -134,6 +135,8 @@ type coordinator struct {
 	// jobWakeEnabled reports whether job events wake idle sessions; nil
 	// means they never do.
 	jobWakeEnabled func() bool
+	// usageRecorder records per-response cache usage; nil disables it.
+	usageRecorder *cacheusage.Recorder
 
 	// orchestrator is the eagerly-built top-level agent. Protected by orchestratorMu.
 	// Do NOT use csync.Value[SessionAgent] — it panics on interface types backed by pointers.
@@ -194,6 +197,7 @@ func NewCoordinator(
 	jobArchive tools.JobArchive,
 	onIdle func(sessionID string),
 	jobWakeEnabled func() bool,
+	usageRecorder *cacheusage.Recorder,
 ) (Coordinator, error) {
 	// Discover plugins once for both skills and agents.
 	plugins := plugin.DiscoverAll(cfg.Config().Plugins, nil)
@@ -214,6 +218,7 @@ func NewCoordinator(
 		jobArchive:     jobArchive,
 		onIdle:         onIdle,
 		jobWakeEnabled: jobWakeEnabled,
+		usageRecorder:  usageRecorder,
 		allSkills:      allSkills,
 		activeSkills:   activeSkills,
 		skillStates:    skillStates,
@@ -1002,6 +1007,9 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		ProviderConfig:       largeProviderCfg,
 		JobEvents:            c.jobEvents,
 		OnIdle:               onIdle,
+		UsageRecorder:        c.usageRecorder,
+		AgentName:            agentName,
+		WorkingDir:           c.cfg.WorkingDir(),
 	})
 
 	// Capture values needed in goroutines.
