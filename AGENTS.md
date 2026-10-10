@@ -145,10 +145,16 @@ internal/
   it through the `terminal` MCP to confirm the change works in a real
   session. This applies to any behaviour change, not just UI. Load the
   `tui-manual-testing` skill for how.
-- **Mutation test**: `task test:mutation` (or `task test:mutation --
-  <base-ref>`). Runs [gremlins](https://gremlins.dev) on the Go lines
-  changed since `origin/main` and lists every mutant no test caught. Run it
-  before pushing any change to non-test Go code. It takes a minute or two.
+- **Mutation test**: `task test:mutation -- <base-ref> [dir...]`, e.g.
+  `task test:mutation -- origin/main ./internal/agent/cacheusage`. Runs
+  [gremlins](https://gremlins.dev) on the Go lines changed since the base
+  ref (under the given directories, if any) and lists every mutant no test
+  caught. After writing tests for changed non-test Go code, run it scoped to
+  the packages you touched to find gaps before pushing; the CI `mutation`
+  check runs it over the whole diff and is the final gate. It runs at low
+  priority on a quarter of the CPUs; set `MUTATION_WORKERS`,
+  `MUTATION_GOMAXPROCS` (`0` for gremlins' defaults) or `MUTATION_NICE` to
+  change that. Coverage gathering alone takes about a minute.
 
 ## Merge Gates
 
