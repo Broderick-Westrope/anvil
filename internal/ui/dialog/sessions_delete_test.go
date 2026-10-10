@@ -85,3 +85,41 @@ func TestSessionsDelete_EnterDoesNotConfirm(t *testing.T) {
 	require.Len(t, s.sessions, 5)
 	require.Equal(t, sessionsModeDeleting, s.sessionsMode)
 }
+
+// typeFilter types q into the dialog's search input.
+func typeFilter(s *Session, q string) {
+	for _, r := range q {
+		s.HandleMsg(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+}
+
+// Ctrl+X and y can be handled in the same frame (key repeat, macros), so
+// the confirm must act on the filtered selection without a Render between
+// the two keys.
+func TestSessionsDelete_FilteredDeletesHighlightedSession(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newSessionsDeleteDialog(t, 30, 0)
+	typeFilter(s, "Session 25")
+	require.Equal(t, "sess-25", s.selectedSessionItem().ID())
+
+	deleteSelectedSession(t, s)
+
+	ids := make([]string, len(s.sessions))
+	for i, sess := range s.sessions {
+		ids[i] = sess.ID
+	}
+	require.NotContains(t, ids, "sess-25")
+	require.Contains(t, ids, "sess-00")
+}
+
+func TestSessionsRename_FilteredTargetsHighlightedSession(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newSessionsDeleteDialog(t, 30, 0)
+	typeFilter(s, "Session 25")
+
+	s.HandleMsg(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	require.Equal(t, sessionsModeUpdating, s.sessionsMode)
+	require.Equal(t, "sess-25", s.selectedSessionItem().ID())
+}
