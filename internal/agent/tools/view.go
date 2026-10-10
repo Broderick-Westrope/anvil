@@ -195,29 +195,7 @@ func runPathMode(
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			dir := filepath.Dir(filePath)
-			base := filepath.Base(filePath)
-
-			dirEntries, dirErr := os.ReadDir(dir)
-			if dirErr == nil {
-				var suggestions []string
-				for _, entry := range dirEntries {
-					if strings.Contains(strings.ToLower(entry.Name()), strings.ToLower(base)) ||
-						strings.Contains(strings.ToLower(base), strings.ToLower(entry.Name())) {
-						suggestions = append(suggestions, filepath.Join(dir, entry.Name()))
-						if len(suggestions) >= 3 {
-							break
-						}
-					}
-				}
-
-				if len(suggestions) > 0 {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("File not found: %s\n\nDid you mean one of these?\n%s",
-						filePath, strings.Join(suggestions, "\n"))), nil
-				}
-			}
-
-			return fantasy.NewTextErrorResponse(fmt.Sprintf("File not found: %s", filePath)), nil
+			return fileNotFoundResponse(filePath), nil
 		}
 		return fantasy.ToolResponse{}, fmt.Errorf("error accessing file: %w", err)
 	}
@@ -303,6 +281,34 @@ func runPathMode(
 		fantasy.NewTextResponse(output),
 		meta,
 	), nil
+}
+
+// fileNotFoundResponse reports that filePath does not exist, suggesting up
+// to three entries in its directory whose names overlap with its name.
+func fileNotFoundResponse(filePath string) fantasy.ToolResponse {
+	dir := filepath.Dir(filePath)
+	base := filepath.Base(filePath)
+
+	dirEntries, dirErr := os.ReadDir(dir)
+	if dirErr == nil {
+		var suggestions []string
+		for _, entry := range dirEntries {
+			if strings.Contains(strings.ToLower(entry.Name()), strings.ToLower(base)) ||
+				strings.Contains(strings.ToLower(base), strings.ToLower(entry.Name())) {
+				suggestions = append(suggestions, filepath.Join(dir, entry.Name()))
+				if len(suggestions) >= 3 {
+					break
+				}
+			}
+		}
+
+		if len(suggestions) > 0 {
+			return fantasy.NewTextErrorResponse(fmt.Sprintf("File not found: %s\n\nDid you mean one of these?\n%s",
+				filePath, strings.Join(suggestions, "\n")))
+		}
+	}
+
+	return fantasy.NewTextErrorResponse(fmt.Sprintf("File not found: %s", filePath))
 }
 
 func ensureReadAllowed(
