@@ -270,16 +270,16 @@ func primReference(r *Run, _ int, args json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	path, err := r.script.referencePath(in.Path)
+	key, err := referenceKey(in.Path)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	content, ok := r.opts.References[key]
+	if !ok {
 		return nil, fmt.Errorf("reference %q not found", in.Path)
 	}
 	r.warnUndeclared("reference", in.Path, r.script.Requires.References)
-	return string(data), nil
+	return content, nil
 }
 
 func primReadFile(_ *Run, _ int, args json.RawMessage) (any, error) {

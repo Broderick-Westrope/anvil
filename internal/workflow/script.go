@@ -8,8 +8,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/dop251/goja/ast"
 	"github.com/dop251/goja/parser"
@@ -177,24 +180,98 @@ func (s *Script) Missing(cat Catalog) []string {
 			missing = append(missing, fmt.Sprintf("agent %q not found", name))
 		}
 	}
+	if len(s.Requires.References) == 0 {
+		return missing
+	}
+	bundled := map[string]bool{}
+	files, err := s.Bundled()
+	if err != nil {
+		return append(missing, err.Error())
+	}
+	for _, f := range files {
+		bundled[f.Rel] = true
+	}
 	for _, ref := range s.Requires.References {
-		path, err := s.referencePath(ref)
+		key, err := referenceKey(ref)
 		if err != nil {
 			missing = append(missing, err.Error())
 			continue
 		}
-		if info, err := os.Stat(path); err != nil || info.IsDir() {
+		if !bundled[key] {
 			missing = append(missing, fmt.Sprintf("reference %q not found", ref))
 		}
 	}
 	return missing
 }
 
-// referencePath resolves ref against the workflow directory, refusing
-// paths that escape it.
-func (s *Script) referencePath(ref string) (string, error) {
+// referenceKey is the bundled path, as in [BundledFile.Rel], a reference
+// names. It refuses paths that escape the workflow directory.
+func referenceKey(ref string) (string, error) {
 	if filepath.IsAbs(ref) || !filepath.IsLocal(ref) {
 		return "", fmt.Errorf("reference %q is outside the workflow directory", ref)
 	}
-	return filepath.Join(s.Dir(), ref), nil
+	return filepath.Clean(filepath.FromSlash(ref)), nil
+}
+
+// BundledFile is a file bundled with a script.
+type BundledFile struct {
+	// Rel is the file's path relative to the script's directory.
+	Rel string
+	// Path is where to read it, with every symlink resolved.
+	Path string
+}
+
+// Bundled lists the files bundled with the script, sorted by Rel: every
+// regular file under its directory, which may itself be a symlink,
+// skipping dot directories and node_modules. Symlinked files are followed
+// when they resolve inside the directory; symlinked directories, and
+// symlinks that resolve outside it, are left out. It fails if the script
+// itself isn't bundled, so approval never covers a bundle that misses what
+// runs.
+func (s *Script) Bundled() ([]BundledFile, error) {
+	root, err := filepath.EvalSymlinks(s.Dir())
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow directory %s: %w", s.Dir(), err)
+	}
+	scriptRel := filepath.Base(s.Path)
+	var files []BundledFile
+	hasScript := false
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != root && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			// A dangling symlink isn't bundled.
+			return nil
+		}
+		if within, relErr := filepath.Rel(root, real); relErr != nil || !filepath.IsLocal(within) {
+			return nil
+		}
+		// A symlinked directory or a special file isn't bundled.
+		if info, statErr := os.Stat(real); statErr != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		hasScript = hasScript || rel == scriptRel
+		files = append(files, BundledFile{Rel: rel, Path: real})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read workflow bundle %s: %w", root, err)
+	}
+	if !hasScript {
+		return nil, fmt.Errorf("read workflow bundle %s: it doesn't contain the script %s", root, s.Path)
+	}
+	slices.SortFunc(files, func(x, y BundledFile) int { return strings.Compare(x.Rel, y.Rel) })
+	return files, nil
 }

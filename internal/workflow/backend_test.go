@@ -166,6 +166,8 @@ type harness struct {
 	backend  *fakeBackend
 	recorder *memRecorder
 	dir      string
+	// references are the approved files reference() serves.
+	references map[string]string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -186,6 +188,7 @@ func (h *harness) newRun(t *testing.T, src string) *workflow.Run {
 	return workflow.NewRun(script, h.backend, h.recorder, workflow.Options{
 		InvokingSessionID: "invoker",
 		Tmpdir:            filepath.Join(h.dir, "tmp"),
+		References:        h.references,
 	})
 }
 

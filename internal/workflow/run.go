@@ -32,8 +32,12 @@ type Options struct {
 	InvokingSessionID string
 	// Tmpdir is the run's scratch directory, created on first use.
 	Tmpdir string
-	Now    func() time.Time
-	Rand   func() float64
+	// References are the files reference() reads, by [BundledFile.Rel]:
+	// the contents approved before the run, so an edit made during it,
+	// or a file outside the bundle, is never read.
+	References map[string]string
+	Now        func() time.Time
+	Rand       func() float64
 }
 
 // Run is one execution of a script. A Run executes once.

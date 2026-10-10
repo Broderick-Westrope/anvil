@@ -111,3 +111,26 @@ function main() {}`
 		`reference "../escape.md" is outside the workflow directory`,
 	}, missing)
 }
+
+func TestMissingReportsReferencesSymlinkedOutsideTheWorkflowDir(t *testing.T) {
+	t.Parallel()
+
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "x.md"), []byte("secret"), 0o644))
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inside.md"), []byte("ok"), 0o644))
+	require.NoError(t, os.Symlink(filepath.Join(dir, "inside.md"), filepath.Join(dir, "alias.md")))
+	require.NoError(t, os.Symlink(filepath.Join(outside, "x.md"), filepath.Join(dir, "escape.md")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "linkdir")))
+	src := `requires({references: ["alias.md", "escape.md", "linkdir/x.md"]})
+function main() {}`
+	path := filepath.Join(dir, "workflow.js")
+	require.NoError(t, os.WriteFile(path, []byte(src), 0o644))
+	script, err := workflow.Load(path)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{
+		`reference "escape.md" not found`,
+		`reference "linkdir/x.md" not found`,
+	}, script.Missing(catalog{}))
+}

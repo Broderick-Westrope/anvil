@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -419,15 +420,20 @@ func TestAskReturnsAnswer(t *testing.T) {
 	require.Equal(t, "go?:a,b", got)
 }
 
-func TestReferenceReadsInsideWorkflowDir(t *testing.T) {
+func TestReferenceServesTheApprovedFiles(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	writeFile(t, h.dir, "references/da.md", "DA PROMPT")
+	h.references = map[string]string{filepath.Join("references", "da.md"): "DA PROMPT"}
+	writeFile(t, h.dir, "references/da.md", "EDITED SINCE APPROVAL")
+	writeFile(t, h.dir, "unapproved.md", "NOT IN THE BUNDLE")
 	got, err := h.run(t, `requires({references: ["references/da.md"]})
 function main() { return reference("references/da.md") }`, "")
 	require.NoError(t, err)
 	require.Equal(t, "DA PROMPT", got)
+
+	_, err = h.run(t, `function main() { return reference("unapproved.md") }`, "")
+	require.ErrorContains(t, err, `reference "unapproved.md" not found`)
 
 	_, err = h.run(t, `function main() { return reference("../secret") }`, "")
 	require.ErrorContains(t, err, "outside the workflow directory")

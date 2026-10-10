@@ -303,7 +303,14 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 		s.events.PublishMustDeliver(context.WithoutCancel(ctx), pubsub.UpdatedEvent, ev)
 	}
 
-	approved, err := s.approve(ctx, inv, script)
+	// The bundle is read once, before approval, and the run reads its
+	// references from it, so what runs is what was approved.
+	current, err := loadBundle(script)
+	if err != nil {
+		finish("", StatusFailed, nil, err.Error())
+		return
+	}
+	approved, err := s.approve(ctx, inv, script, current)
 	if err != nil {
 		finish("", StatusFailed, nil, err.Error())
 		return
@@ -333,6 +340,7 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	run := workflow.NewRun(script, b, s.deps.Store.Recorder(runID), workflow.Options{
 		InvokingSessionID: inv.SessionID,
 		Tmpdir:            s.deps.Store.Tmpdir(runID),
+		References:        current.references(),
 	})
 	s.mu.Lock()
 	stopping, reason := s.stopping, s.stopReason
@@ -361,15 +369,11 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	finish(runID, status, result, msg)
 }
 
-// approve asks the user to approve the workflow unless this exact bundle
-// of files was approved before or approval is skipped.
-func (s *Service) approve(ctx context.Context, inv Invocation, script *workflow.Script) (bool, error) {
+// approve asks the user to approve the current bundle unless this exact
+// bundle was approved before or approval is skipped.
+func (s *Service) approve(ctx context.Context, inv Invocation, script *workflow.Script, current bundle) (bool, error) {
 	if s.deps.SkipApproval != nil && s.deps.SkipApproval() {
 		return true, nil
-	}
-	current, err := loadBundle(script)
-	if err != nil {
-		return false, err
 	}
 	hash := current.hash()
 	approvedHash, stored, ok, err := s.deps.Store.Approval(ctx, script.Path)

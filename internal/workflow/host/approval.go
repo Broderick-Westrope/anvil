@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -47,60 +46,39 @@ type bundleFile struct {
 // they can change after it was approved.
 type bundle []bundleFile
 
-// loadBundle reads every regular file under the script's directory,
-// following symlinked files but not symlinked directories, and skipping
-// dot directories and node_modules. The script's entry is its parsed
-// source. The directory itself may be a symlink. It fails if the bundle
-// doesn't contain the script, so approval never covers a bundle that
-// misses what runs.
+// loadBundle reads the files bundled with the script, as
+// [workflow.Script.Bundled] lists them. The script's entry is its parsed
+// source.
 func loadBundle(script *workflow.Script) (bundle, error) {
-	root, err := filepath.EvalSymlinks(script.Dir())
+	files, err := script.Bundled()
 	if err != nil {
-		return nil, fmt.Errorf("resolve workflow directory %s: %w", script.Dir(), err)
+		return nil, err
 	}
-	scriptPath := filepath.Join(root, filepath.Base(script.Path))
-	var b bundle
-	hasScript := false
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if path != root && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		// A dangling symlink or a special file isn't bundled.
-		if info, statErr := os.Stat(path); statErr != nil || !info.Mode().IsRegular() {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if path == scriptPath {
+	scriptRel := filepath.Base(script.Path)
+	b := make(bundle, 0, len(files))
+	for _, f := range files {
+		if f.Rel == scriptRel {
 			// The script as parsed, which is what runs, even if the file
 			// changed since.
-			hasScript = true
-			b = append(b, bundleFile{Path: rel, Source: script.Source})
-			return nil
+			b = append(b, bundleFile{Path: f.Rel, Source: script.Source})
+			continue
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(f.Path)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("read workflow bundle file %s: %w", f.Path, err)
 		}
-		b = append(b, bundleFile{Path: rel, Source: string(data)})
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("read workflow bundle %s: %w", root, err)
+		b = append(b, bundleFile{Path: f.Rel, Source: string(data)})
 	}
-	if !hasScript {
-		return nil, fmt.Errorf("read workflow bundle %s: it doesn't contain the script %s", root, script.Path)
-	}
-	slices.SortFunc(b, func(x, y bundleFile) int { return strings.Compare(x.Path, y.Path) })
 	return b, nil
+}
+
+// references are the bundle's files by path, for reference() to serve.
+func (b bundle) references() map[string]string {
+	refs := make(map[string]string, len(b))
+	for _, f := range b {
+		refs[f.Path] = f.Source
+	}
+	return refs
 }
 
 // hash identifies the bundle's exact paths and contents. Each field is

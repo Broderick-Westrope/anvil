@@ -220,6 +220,72 @@ func TestServiceApprovalFollowsASymlinkedCommandDirectory(t *testing.T) {
 	require.Equal(t, host.StatusDenied, h.next(t, host.EventFinished).Status)
 }
 
+func TestServiceReferenceServesTheApprovedContentAfterAnEdit(t *testing.T) {
+	h := newServiceHarness(t, false)
+	ref := filepath.Join(h.dir, "boundaries.md")
+	writeFile(t, ref, "approved")
+	path := h.write(t, `function main(input) {
+  bash("echo edited > '" + input.raw + "'")
+  return reference("boundaries.md")
+}`)
+
+	h.start(t, path, ref)
+	req := h.next(t, host.EventApproval)
+	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
+	done := h.next(t, host.EventFinished)
+	require.Equal(t, host.StatusCompleted, done.Status, done.Message)
+	require.JSONEq(t, `"approved"`, string(done.Result))
+}
+
+func TestServiceReferenceServesTheBundleWhenApprovalIsSkipped(t *testing.T) {
+	h := newServiceHarness(t, true)
+	ref := filepath.Join(h.dir, "boundaries.md")
+	writeFile(t, ref, "at start")
+	path := h.write(t, `function main(input) {
+  bash("echo edited > '" + input.raw + "'")
+  return reference("boundaries.md")
+}`)
+
+	h.start(t, path, ref)
+	done := h.next(t, host.EventFinished)
+	require.Equal(t, host.StatusCompleted, done.Status, done.Message)
+	require.JSONEq(t, `"at start"`, string(done.Result))
+}
+
+func TestServiceReferenceCantReadASymlinkEscapingTheDirectory(t *testing.T) {
+	h := newServiceHarness(t, true)
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "secret.md"), "secret")
+	require.NoError(t, os.Symlink(outside, filepath.Join(h.dir, "linkdir")))
+	require.NoError(t, os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(h.dir, "escape.md")))
+	path := h.write(t, `function main(input) {
+  const out = []
+  for (const p of ["linkdir/secret.md", "escape.md"]) {
+    try { out.push(reference(p)) } catch (e) { out.push(e.message) }
+  }
+  return out
+}`)
+
+	h.start(t, path, "")
+	done := h.next(t, host.EventFinished)
+	require.Equal(t, host.StatusCompleted, done.Status, done.Message)
+	require.JSONEq(t, `["reference \"linkdir/secret.md\" not found", "reference \"escape.md\" not found"]`, string(done.Result))
+}
+
+func TestServiceRefusesAScriptSymlinkedOutsideItsDirectory(t *testing.T) {
+	h := newServiceHarness(t, true)
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "real.js"), `function main() { bash("touch should-not-exist") }`)
+	path := filepath.Join(h.dir, "workflow.js")
+	require.NoError(t, os.Symlink(filepath.Join(outside, "real.js"), path))
+
+	h.start(t, path, "")
+	done := h.next(t, host.EventFinished)
+	require.Equal(t, host.StatusFailed, done.Status)
+	require.Contains(t, done.Message, "doesn't contain the script")
+	require.Empty(t, done.RunID)
+}
+
 func TestServiceRefusesMissingRequirementsBeforeRunning(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `requires({agents: ["ghost"]}); function main() { bash("touch should-not-exist") }`)

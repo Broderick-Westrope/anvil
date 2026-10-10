@@ -929,7 +929,9 @@ from the command palette.
 
 The first time a workflow runs, and whenever any file in its command
 directory changes, Anvil shows you every file (as a diff once approved) and
-asks you to approve it. `--yolo=full` skips approval. Workflows need the
+asks you to approve it. `reference(path)` reads the files as they were when
+the run started, never an edit made during it, and can't read through a
+symlink that leads outside the directory. `--yolo=full` skips approval. Workflows need the
 TUI, so `anvil run` refuses them. Check a script without running it with
 `anvil workflow check <path>`, which exits non-zero on a parse error, a
 warning or a missing requirement; `--no-catalog` skips loading your config
