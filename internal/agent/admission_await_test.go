@@ -292,8 +292,9 @@ func TestContinuationRegisteredAfterCancelNeverRuns(t *testing.T) {
 			} else {
 				_, _ = a.submit(t.Context(), "s", submission{run: run})
 			}
-			require.Eventually(t, func() bool { return !a.busy("s") }, time.Second, time.Millisecond)
-			time.Sleep(20 * time.Millisecond)
+			// Both submit paths return only after any continuation the run
+			// handed off to has finished, so no wait is needed.
+			require.False(t, a.busy("s"))
 			require.False(t, continued.Load())
 			require.Empty(t, a.queued("s"))
 		})
