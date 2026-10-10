@@ -515,3 +515,25 @@ func TestSubagentLoadMergesEachItemKindByItsOwnRule(t *testing.T) {
 	require.Same(t, liveThinking, c.MessageItem("a3"), "a live assistant item is kept")
 	require.Len(t, c.MessageItems(), 4, "no item is duplicated")
 }
+
+func TestSubagentLoadKeepsALiveToolThatAlreadyHasItsResult(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
+	call := message.Message{ID: "a1", Role: message.Assistant, SessionID: "child", Parts: []message.ContentPart{
+		message.ToolCall{ID: "tc1", Name: "bash", Input: "{}", Finished: true},
+	}}
+	result := message.Message{ID: "r1", Role: message.Tool, SessionID: "child", Parts: []message.ContentPart{
+		message.ToolResult{ToolCallID: "tc1", Name: "bash", Content: "done"},
+	}}
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: call})
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: result})
+	live := u.drillStack[0].chat.MessageItem("tc1")
+	require.True(t, live.(chat.ToolMessageItem).HasResult())
+
+	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{call, result}})
+
+	require.Same(t, live, u.drillStack[0].chat.MessageItem("tc1"),
+		"when both copies have the result, the live item keeps its identity")
+}
