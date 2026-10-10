@@ -168,9 +168,6 @@ linters:
       - path: internal/app/memlog\.go
         text: 'func `(\(\*App\)\.startMemoryMonitor)`'
         linters: [gocognit]
-      - path: internal/cmd/session_recover\.go
-        text: 'func `(newSessionRecoverCommand)`'
-        linters: [gocognit]
       - path: internal/mcpauth/authorize\.go
         text: 'func `(Authorize)`'
         linters: [gocognit]
