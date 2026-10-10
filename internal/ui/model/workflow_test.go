@@ -191,7 +191,7 @@ func (f *workflowFixture) panel() string {
 }
 
 func started(command, invoker string) host.Event {
-	return host.Event{Kind: host.EventState, RunID: "run-1", Command: command, SessionID: invoker}
+	return host.Event{Kind: host.EventState, RunID: "run-1", Command: command, SessionID: invoker, State: host.StateStarted}
 }
 
 func TestWorkflowCommandStartsWithoutSendingBody(t *testing.T) {
@@ -387,6 +387,50 @@ func TestWorkflowPanelShowsPausedAndHeld(t *testing.T) {
 	f.event(host.Event{Kind: host.EventState, RunID: "run-1", Command: "demo", SessionID: "sess-1", State: host.StateHeld})
 	require.Contains(t, f.panel(), "paused", "a hold doesn't clear the pause")
 	require.Contains(t, f.panel(), "holding sessions")
+}
+
+func TestWorkflowStateChangesSetPausedAndHeld(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		states               []host.RunState
+		wantPaused, wantHeld bool
+	}{
+		"started":                     {states: []host.RunState{host.StateStarted}},
+		"paused":                      {states: []host.RunState{host.StatePaused}, wantPaused: true},
+		"resumed":                     {states: []host.RunState{host.StatePaused, host.StateResumed}},
+		"held":                        {states: []host.RunState{host.StateHeld}, wantHeld: true},
+		"released":                    {states: []host.RunState{host.StateHeld, host.StateReleased}},
+		"resume keeps the hold":       {states: []host.RunState{host.StateHeld, host.StatePaused, host.StateResumed}, wantHeld: true},
+		"release keeps the pause":     {states: []host.RunState{host.StatePaused, host.StateHeld, host.StateReleased}, wantPaused: true},
+		"an unknown state is ignored": {states: []host.RunState{host.StatePaused, host.StateHeld, ""}, wantPaused: true, wantHeld: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			for _, s := range tc.states {
+				f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", State: s})
+			}
+			run := f.u.workflows["sess-1"]
+			require.NotNil(t, run)
+			require.Equal(t, tc.wantPaused, run.paused)
+			require.Equal(t, tc.wantHeld, run.held)
+		})
+	}
+}
+
+func TestWorkflowStartedRegistersTheRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	run := f.u.workflows["sess-1"]
+	require.NotNil(t, run)
+	require.Equal(t, "run-1", run.log.RunID)
+	require.Equal(t, "demo", run.command)
+	require.Contains(t, f.panel(), "/demo")
 }
 
 func TestWorkflowPanelHiddenForUnrelatedSession(t *testing.T) {
