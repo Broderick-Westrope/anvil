@@ -39,31 +39,19 @@ func NewFilterableList(items ...FilterableItem) *FilterableList {
 // SetItems sets the list items and updates the filtered items.
 func (f *FilterableList) SetItems(items ...FilterableItem) {
 	f.items = items
-	fitems := make([]Item, len(items))
-	for i, item := range items {
-		fitems[i] = item
-	}
-	f.List.SetItems(fitems...)
+	f.List.SetItems(f.FilteredItems()...)
 }
 
 // AppendItems appends items to the list and updates the filtered items.
 func (f *FilterableList) AppendItems(items ...FilterableItem) {
 	f.items = append(f.items, items...)
-	itms := make([]Item, len(f.items))
-	for i, item := range f.items {
-		itms[i] = item
-	}
-	f.List.SetItems(itms...)
+	f.List.SetItems(f.FilteredItems()...)
 }
 
 // PrependItems prepends items to the list and updates the filtered items.
 func (f *FilterableList) PrependItems(items ...FilterableItem) {
 	f.items = append(items, f.items...)
-	itms := make([]Item, len(f.items))
-	for i, item := range f.items {
-		itms[i] = item
-	}
-	f.List.SetItems(itms...)
+	f.List.SetItems(f.FilteredItems()...)
 }
 
 // Items returns the unfiltered source items.
