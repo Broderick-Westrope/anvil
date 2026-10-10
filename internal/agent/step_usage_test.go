@@ -190,7 +190,7 @@ func TestCachePolicy(t *testing.T) {
 	})
 }
 
-// usageRow is the subset of a step_usage_report row the tests check.
+// usageRow is the subset of a step_usage row the tests check.
 type usageRow struct {
 	kind, runID, agent, sessionID, messageID string
 	provider, model, finishReason            string
@@ -200,16 +200,16 @@ type usageRow struct {
 	prefixMatch                              sql.NullInt64
 }
 
-// stepUsageRows flushes env's recorder and returns step_usage_report rows
+// stepUsageRows flushes env's recorder and returns step_usage rows
 // in the order they were recorded.
 func stepUsageRows(t *testing.T, env fakeEnv) []usageRow {
 	t.Helper()
 	require.NoError(t, env.usage.Close(t.Context()))
-	rows, err := env.conn.QueryContext(t.Context(), `SELECT r.kind, r.run_id, r.agent, r.session_id,
-		r.message_id, r.provider, r.model, r.finish_reason, r.tools_hash, r.system_hash,
-		r.cache_policy, r.step_index, r.attempt, r.retry_count, r.input_tokens,
-		r.cache_read_tokens, r.cache_write_tokens, r.estimated, r.history_prefix_match
-		FROM step_usage_report r JOIN step_usage s ON s.id = r.id ORDER BY s.rowid`)
+	rows, err := env.conn.QueryContext(t.Context(), `SELECT kind, run_id, agent, session_id,
+		message_id, provider, model, finish_reason, tools_hash, system_hash,
+		cache_policy, step_index, attempt, retry_count, input_tokens,
+		cache_read_tokens, cache_write_tokens, estimated, history_prefix_match
+		FROM step_usage ORDER BY rowid`)
 	require.NoError(t, err)
 	defer rows.Close()
 	var out []usageRow

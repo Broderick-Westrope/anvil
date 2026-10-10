@@ -113,13 +113,10 @@ read).
 
 All hashes are 16 hex characters (truncated SHA-256).
 
-## View `step_usage_report`
+## CTE `step_usage_report` (from `report.sql`)
 
-`step_usage.*` plus the columns below. The generated Go struct
-`db.StepUsageReport` has wrong types for these (for example `ListCost
-int64`, `HitRate interface{}`) and nothing uses it; query the view with
-SQL. SQLite fixed `s.*` when the view was created, so a migration that
-adds a `step_usage` column must drop and recreate the view.
+`step_usage.*` plus the columns below. It is not stored in the database;
+wrap it as a CTE as shown in `SKILL.md`.
 
 | Column | Definition |
 |---|---|
@@ -129,9 +126,9 @@ adds a `step_usage` column must drop and recreate the view.
 | `hit_rate` | `cache_read / prompt_tokens`, NULL when 0. |
 | `list_cost` | USD from the stored per-row prices. |
 
-## View `classified` (from `classify.sql`)
+## CTE `classified` (from `classify.sql`)
 
-Temp view over `step_usage_report`, only `turn` and `summary` rows with a
+CTE over `step_usage_report`, only `turn` and `summary` rows with a
 `session_id`. Rows are compared with the previous row of the same
 `(session_id, agent, kind)` ordered by `request_started_at`. Adds:
 

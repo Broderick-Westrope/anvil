@@ -14,8 +14,10 @@ References (next to this file):
 
 - `references/schema.md`: every column, units, normalisation, NULL rules,
   recording gaps. Read before interpreting numbers.
-- `references/classify.sql`: the `classified` view (miss judgement and
-  suspected cause per row).
+- `references/report.sql`: `step_usage` plus derived columns
+  (`step_usage_report`: `prompt_tokens`, `hit_rate`, `list_cost`, ...).
+- `references/classify.sql`: the `classified` query over
+  `step_usage_report` (miss judgement and suspected cause per row).
 - `references/queries.md`: copy-paste queries for each procedure step.
 - `references/interpretation.md`: what each cause means, file references
   and candidate fixes.
@@ -36,13 +38,15 @@ References (next to this file):
 
 ## Running queries
 
-`classified` is a CTE wrapped around `classify.sql` (a temp view would be
-a write, which `query_only` blocks). Each bash call is a fresh shell, so
-set the variables and `cd` to the repo root in the same call, or give
-`SQL` as an absolute path to this skill's `references/classify.sql`:
+`step_usage_report` and `classified` are CTEs wrapped around
+`report.sql` and `classify.sql` (a temp view would be a write, which
+`query_only` blocks). Each bash call is a fresh shell, so set the
+variables and `cd` to the repo root in the same call, or give `R` and `C`
+as absolute paths to this skill's `references/report.sql` and
+`references/classify.sql`:
 
 ```bash
-cd <anvil repo root> && DB=~/.local/share/anvil/anvil.db && SQL=.agents/skills/anvil-cache-triage/references/classify.sql && sqlite3 -cmd "PRAGMA query_only=ON" -header -column "$DB" "WITH classified AS ($(cat "$SQL")) SELECT suspected_cause, COUNT(*) FROM classified WHERE suspected_miss = 1 GROUP BY 1"
+cd <anvil repo root> && DB=~/.local/share/anvil/anvil.db && R=.agents/skills/anvil-cache-triage/references/report.sql && C=.agents/skills/anvil-cache-triage/references/classify.sql && sqlite3 -cmd "PRAGMA query_only=ON" -header -column "$DB" "WITH step_usage_report AS ($(cat "$R")), classified AS ($(cat "$C")) SELECT suspected_cause, COUNT(*) FROM classified WHERE suspected_miss = 1 GROUP BY 1"
 ```
 
 Replace the trailing `SELECT` with any query from `queries.md` (they all

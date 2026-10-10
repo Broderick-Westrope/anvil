@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS step_usage (
     provider_type TEXT NOT NULL,                  -- fantasy LanguageModel.Provider().
     model TEXT NOT NULL,
     -- Timing.
-    request_started_at INTEGER NOT NULL,          -- PrepareStep for this step.
-    response_finished_at INTEGER NOT NULL,        -- OnStreamFinish.
+    request_started_at INTEGER NOT NULL,          -- Unix milliseconds; PrepareStep for this step.
+    response_finished_at INTEGER NOT NULL,        -- Unix milliseconds; OnStreamFinish.
     retry_count INTEGER NOT NULL DEFAULT 0,       -- OnRetry calls during this step.
     finish_reason TEXT NOT NULL DEFAULT '',
     -- Tokens, normalised so input excludes cache reads and writes.
@@ -54,33 +54,8 @@ CREATE INDEX IF NOT EXISTS idx_step_usage_sequence
 -- +goose StatementBegin
 CREATE INDEX IF NOT EXISTS idx_step_usage_finished ON step_usage (response_finished_at);
 -- +goose StatementEnd
--- SQLite expands s.* to the table's columns when the view is created, so
--- a later ALTER TABLE step_usage ADD COLUMN does not reach the view. Any
--- migration that adds a column must drop and recreate step_usage_report.
--- sqlc's db.StepUsageReport types for the computed columns are wrong and
--- the struct is unused; query the view with SQL.
--- +goose StatementBegin
-CREATE VIEW IF NOT EXISTS step_usage_report AS
-SELECT
-    s.*,
-    datetime(s.request_started_at / 1000, 'unixepoch') AS started_utc,
-    s.response_finished_at - s.request_started_at AS model_ms,
-    s.input_tokens + s.cache_read_tokens + s.cache_write_tokens AS prompt_tokens,
-    CASE WHEN s.input_tokens + s.cache_read_tokens + s.cache_write_tokens > 0
-         THEN CAST(s.cache_read_tokens AS REAL)
-              / (s.input_tokens + s.cache_read_tokens + s.cache_write_tokens)
-    END AS hit_rate,
-    (s.input_tokens * s.price_input
-     + s.cache_read_tokens * s.price_cache_read
-     + s.cache_write_tokens * s.price_cache_write
-     + s.output_tokens * s.price_output) / 1e6 AS list_cost
-FROM step_usage s;
--- +goose StatementEnd
 
 -- +goose Down
--- +goose StatementBegin
-DROP VIEW IF EXISTS step_usage_report;
--- +goose StatementEnd
 -- +goose StatementBegin
 DROP INDEX IF EXISTS idx_step_usage_finished;
 -- +goose StatementEnd

@@ -1,7 +1,8 @@
--- Classifies turn and summary rows of step_usage_report. Each row is
--- compared with the previous row of the same (session_id, agent, kind)
--- sequence. Suspected causes are heuristics, not ground truth. No trailing
--- semicolon, so it can be embedded as WITH classified AS (...) SELECT ...
+-- Classifies turn and summary rows of step_usage_report (report.sql). Each
+-- row is compared with the previous row of the same (session_id, agent,
+-- kind) sequence. Suspected causes are heuristics, not ground truth. No
+-- trailing semicolon, so it can be embedded as
+-- WITH step_usage_report AS (<report.sql>), classified AS (...) SELECT ...
 WITH seq AS (
   SELECT r.*,
     LAG(r.id)                    OVER w AS prev_id,

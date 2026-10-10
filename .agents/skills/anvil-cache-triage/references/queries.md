@@ -1,16 +1,16 @@
 # Triage Queries
 
-Run every query through the `classified` CTE pattern from `SKILL.md`, in one
-bash call from the repo root:
+Run every query through the CTE pattern from `SKILL.md`, in one bash call
+from the repo root:
 
 ```bash
-cd <anvil repo root> && DB=~/.local/share/anvil/anvil.db && SQL=.agents/skills/anvil-cache-triage/references/classify.sql && sqlite3 -cmd "PRAGMA query_only=ON" -header -column "$DB" "WITH classified AS ($(cat "$SQL")) <QUERY>"
+cd <anvil repo root> && DB=~/.local/share/anvil/anvil.db && R=.agents/skills/anvil-cache-triage/references/report.sql && C=.agents/skills/anvil-cache-triage/references/classify.sql && sqlite3 -cmd "PRAGMA query_only=ON" -header -column "$DB" "WITH step_usage_report AS ($(cat "$R")), classified AS ($(cat "$C")) <QUERY>"
 ```
 
 Paste a query below in place of `<QUERY>`. The queries contain no double
 quotes, `$` or backticks, so they are safe inside the double-quoted
-argument. Queries that only read `step_usage_report` work without the view
-too.
+argument. Queries that only read `step_usage_report` work without the
+`classified` CTE too.
 
 Every query filters to the last 7 days with
 `request_started_at >= (strftime('%s','now') - 7*86400) * 1000`. Change the
