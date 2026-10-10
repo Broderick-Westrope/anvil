@@ -177,9 +177,6 @@ linters:
       - path: internal/mcpauth/authorize\.go
         text: 'func `(Authorize)`'
         linters: [gocognit]
-      - path: internal/message/message\.go
-        text: 'func `(\(\*service\)\.flushOne)`'
-        linters: [gocognit]
       - path: internal/recovery/recovery\.go
         text: 'func `(scan|sweepArtifacts)`'
         linters: [gocognit]
