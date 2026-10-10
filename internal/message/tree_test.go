@@ -375,6 +375,13 @@ func TestFilterBranchPathForContext_CompactionBoundaries(t *testing.T) {
 			},
 			want: []message.Message{summary("sum"), text("k", "kept")},
 		},
+		"compaction at the root keeps everything after it": {
+			path: []message.Message{
+				compaction("c", message.CompactionContent{Summary: "sum"}),
+				text("b", "after"),
+			},
+			want: []message.Message{summary("sum"), text("b", "after")},
+		},
 		"compaction as the last entry emits only its summary": {
 			path: []message.Message{
 				text("a", "first"),
