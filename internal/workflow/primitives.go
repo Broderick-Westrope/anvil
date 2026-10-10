@@ -74,6 +74,13 @@ func primTurn(r *Run, _ int, args json.RawMessage) (any, error) {
 	if !slices.Contains(r.Sessions(), in.Session) {
 		return nil, fmt.Errorf("session %q doesn't belong to this run", in.Session)
 	}
+	r.mu.Lock()
+	held := r.release != nil
+	r.mu.Unlock()
+	if held {
+		// The run's sessions are held, so the turn could never start.
+		return nil, errors.New("turn() can't run inside workflow.exclusive")
+	}
 	if err := r.checkSkills(in.Skills); err != nil {
 		return nil, err
 	}

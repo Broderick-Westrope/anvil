@@ -490,3 +490,13 @@ func TestAbortInterruptsPureJSLoop(t *testing.T) {
 		t.Fatal("abort did not interrupt the loop")
 	}
 }
+
+func TestTurnInsideExclusiveThrows(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	_, err := h.run(t, `function main() { workflow.exclusive(() => session.current().turn("x")) }`, "")
+	require.ErrorContains(t, err, "exclusive")
+	require.Empty(t, h.backend.turns)
+	require.Equal(t, 1, h.backend.released)
+}
