@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -180,4 +181,56 @@ func TestHoldCancelledWhileWaitingLiftsHold(t *testing.T) {
 	close(finish)
 	<-firstDone
 	<-nextRan
+}
+
+func TestHoldWaitsForCompactionContinuationButNotNewWork(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	entered, release := make(chan struct{}), make(chan struct{})
+	contEntered, contRelease := make(chan struct{}), make(chan struct{})
+	var userRan atomic.Bool
+	go func() {
+		_, _ = a.submit(t.Context(), "s", submission{prompt: "user", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			close(entered)
+			<-release
+			a.continueWith(ctx, "s", submission{prompt: "continue", run: func(context.Context) (*fantasy.AgentResult, error) {
+				close(contEntered)
+				<-contRelease
+				return nil, nil
+			}})
+			return nil, nil
+		}})
+	}()
+	<-entered
+
+	held := make(chan func(), 1)
+	go func() {
+		rel, err := a.hold(t.Context(), []string{"s"})
+		require.NoError(t, err)
+		held <- rel
+	}()
+	require.Eventually(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.held["s"] == 1 }, time.Second, time.Millisecond)
+	_, err := a.submit(t.Context(), "s", submission{prompt: "new", run: func(context.Context) (*fantasy.AgentResult, error) {
+		userRan.Store(true)
+		return nil, nil
+	}})
+	require.NoError(t, err)
+
+	close(release)
+	select {
+	case <-contEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("continuation didn't run while the hold was pending")
+	}
+	select {
+	case <-held:
+		t.Fatal("hold granted while the continuation was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(contRelease)
+	rel := <-held
+	require.False(t, userRan.Load(), "new work must stay queued while held")
+	rel()
+	require.Eventually(t, userRan.Load, time.Second, time.Millisecond)
 }

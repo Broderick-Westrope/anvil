@@ -26,6 +26,10 @@ type submissionOwner struct {
 	// done receives the result of an awaited submission. A continuation
 	// takes it over, so the submitter gets the result of the finished work.
 	done chan<- submissionResult
+	// continued is set when the owner's work queued a continuation, which
+	// runs next even while the session is held: it's the same logical
+	// work, so a hold waits for it rather than cutting it off.
+	continued bool
 }
 
 type submission struct {
@@ -38,6 +42,8 @@ type submission struct {
 	// ctx is the submitter's context for an awaited submission, so the
 	// run can be cancelled by its submitter even after it was queued.
 	ctx context.Context
+	// continuation marks work queued by continueWith.
+	continuation bool
 }
 
 type submissionResult struct {
@@ -182,7 +188,11 @@ func (a *admission) withdraw(id string, done chan<- submissionResult) bool {
 func (a *admission) continueWith(ctx context.Context, id string, job submission) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	job.continuation = true
 	owner, ok := ctx.Value(ownerKey{}).(*submissionOwner)
+	if ok && owner != nil && owner.sessionID == id {
+		owner.continued = true
+	}
 	if !ok || owner == nil || owner.sessionID != id || owner.done == nil {
 		a.queues[id] = append(a.queues[id], job)
 		return
@@ -325,7 +335,14 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	var queued submission
 	if a.owners[owner.sessionID] == owner {
 		a.releaseOwner(owner.sessionID)
-		if q := a.queues[owner.sessionID]; len(q) > 0 && a.held[owner.sessionID] == 0 && a.shouldHandOff(owner, awaited, err, q) {
+		q := a.queues[owner.sessionID]
+		if i := slices.IndexFunc(q, func(job submission) bool { return job.continuation }); owner.continued && i >= 0 && a.held[owner.sessionID] > 0 {
+			// A hold is waiting for this work to finish, which includes
+			// its continuation; new submissions stay queued.
+			queued = q[i]
+			a.queues[owner.sessionID] = append(q[:i:i], q[i+1:]...)
+			next = a.claimFor(queued, owner.sessionID)
+		} else if len(q) > 0 && a.held[owner.sessionID] == 0 && a.shouldHandOff(owner, awaited, err, q) {
 			queued = q[0]
 			a.queues[owner.sessionID] = q[1:]
 			next = a.claimFor(queued, owner.sessionID)
