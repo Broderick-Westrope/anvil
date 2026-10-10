@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -138,7 +140,12 @@ func (b *backend) Bash(ctx context.Context, call workflow.BashCall) (workflow.Ba
 	}
 	b.publish(Event{Kind: EventStep, Step: "bash", Detail: call.Cmd})
 	sh := shell.NewShell(&shell.Options{WorkingDir: cwd})
-	stdout, stderr, err := sh.Exec(ctx, call.Cmd)
+	type output struct{ stdout, stderr string }
+	out, err := untilCancelled(ctx, bashCancelGrace, func() (output, error) {
+		stdout, stderr, err := sh.Exec(ctx, call.Cmd)
+		return output{stdout, stderr}, err
+	})
+	stdout, stderr := out.stdout, out.stderr
 	if err != nil && shell.IsInterrupt(err) {
 		return workflow.BashResult{}, err
 	}
@@ -213,4 +220,40 @@ func settleJobs(sessionIDs []string, stop bool) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// bashCancelGrace is how long a cancelled workflow command gets to exit
+// before the workflow stops waiting for it.
+const bashCancelGrace = 3 * time.Second
+
+// untilCancelled runs fn, but once ctx ends it waits at most grace for fn
+// to return before giving up with ctx's error. Some commands ignore
+// cancellation (the embedded wtp runs repository hooks without a
+// context), and abort and shutdown must not hang on them; the abandoned
+// work finishes on its own.
+func untilCancelled[T any](ctx context.Context, grace time.Duration, fn func() (T, error)) (T, error) {
+	type result struct {
+		value T
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		v, err := fn()
+		done <- result{v, err}
+	}()
+	select {
+	case r := <-done:
+		return r.value, r.err
+	case <-ctx.Done():
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.value, r.err
+	case <-timer.C:
+		var zero T
+		slog.Warn("Abandoned a workflow command that ignored cancellation")
+		return zero, ctx.Err()
+	}
 }
