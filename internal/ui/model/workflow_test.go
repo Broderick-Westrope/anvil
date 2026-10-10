@@ -327,7 +327,7 @@ func TestWorkflowApprovalOpensDialogAndResponds(t *testing.T) {
 	f := newWorkflowFixture(t)
 	f.event(host.Event{
 		Kind: host.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "sess-1",
-		Approval: &host.ApprovalRequest{ScriptPath: "/proj/demo/workflow.js", Origin: "project", Source: "function main() {}"},
+		Approval: &host.ApprovalRequest{ScriptPath: "/proj/demo/workflow.js", Origin: "project", Files: []host.ApprovalFile{{Path: "workflow.js", Source: "function main() {}"}}},
 	})
 	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("req-1")))
 
@@ -720,7 +720,7 @@ func TestWorkflowApprovalIsNotKeptAsAQuestion(t *testing.T) {
 	f.event(started("demo", "sess-1"))
 	f.event(host.Event{
 		Kind: host.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "sess-1",
-		Approval: &host.ApprovalRequest{Source: "function main() {}"},
+		Approval: &host.ApprovalRequest{Files: []host.ApprovalFile{{Path: "workflow.js", Source: "function main() {}"}}},
 	})
 	infos := f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: "approve"}))
 	require.Empty(t, infos)

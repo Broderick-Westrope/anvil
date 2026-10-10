@@ -43,8 +43,8 @@ CREATE INDEX IF NOT EXISTS idx_workflow_events_run_seq ON workflow_events (run_i
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS workflow_approvals (
     script_path TEXT PRIMARY KEY,
-    script_hash TEXT NOT NULL,
-    source TEXT NOT NULL,              -- Approved script text, for diffing.
+    script_hash TEXT NOT NULL,         -- Hash of the approved bundle.
+    source TEXT NOT NULL,              -- Approved bundle: JSON [{path, source}] of every file in the workflow's directory, for diffing.
     origin TEXT NOT NULL,
     approved_at INTEGER NOT NULL       -- Unix milliseconds.
 );

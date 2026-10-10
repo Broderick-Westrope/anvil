@@ -31,10 +31,11 @@ func approvalEvent(previous string) host.Event {
 	return host.Event{
 		Kind: host.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "s1",
 		Approval: &host.ApprovalRequest{
-			ScriptPath:     "/proj/.anvil/commands/demo/workflow.js",
-			Origin:         "project",
-			Source:         "function main() {\n  return 2\n}\n",
-			PreviousSource: previous,
+			ScriptPath: "/proj/.anvil/commands/demo/workflow.js",
+			Origin:     "project",
+			Files: []host.ApprovalFile{{
+				Path: "workflow.js", Source: "function main() {\n  return 2\n}\n", PreviousSource: previous,
+			}},
 			Requires: workflow.Requirements{
 				Skills: []string{"go-style"}, Agents: []string{"reviewer"},
 			},
@@ -119,7 +120,7 @@ func TestWorkflowApprovalScrolls(t *testing.T) {
 		b.WriteString("\n")
 	}
 	b.WriteString("// the end\n")
-	ev.Approval.Source = b.String()
+	ev.Approval.Files[0].Source = b.String()
 	d := NewWorkflowApproval(workflowCommon(), ev)
 	require.NotContains(t, drawDialog(d, 120, 40), "the end")
 	d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnd})
@@ -246,7 +247,7 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 	selected.HandleMsg(press("down"))
 
 	long := approvalEvent("")
-	long.Approval.Source = strings.Repeat("// filler line\n", 60)
+	long.Approval.Files[0].Source = strings.Repeat("// filler line\n", 60)
 	longQuestion := askEvent("yes")
 	longQuestion.Question = strings.TrimSuffix(strings.Repeat("question line\n", 40), "\n")
 	fits := askEvent("yes")

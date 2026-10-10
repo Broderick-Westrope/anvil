@@ -112,7 +112,15 @@ func (d *WorkflowApproval) answer(approve bool) Action {
 }
 
 func (d *WorkflowApproval) changed() bool {
-	return d.ev.Approval != nil && d.ev.Approval.PreviousSource != ""
+	return d.ev.Approval != nil && approvalScript(d.ev.Approval).PreviousSource != ""
+}
+
+// approvalScript is the script's entry in the approval, which comes first.
+func approvalScript(req *host.ApprovalRequest) host.ApprovalFile {
+	if len(req.Files) == 0 {
+		return host.ApprovalFile{}
+	}
+	return req.Files[0]
 }
 
 // renderSource renders the script, or its diff against the last approved
@@ -123,15 +131,16 @@ func (d *WorkflowApproval) renderSource(width int) string {
 		return ""
 	}
 	t := d.com.Styles
+	script := approvalScript(req)
 	if d.changed() {
 		return common.DiffFormatter(t).
-			Before("approved", req.PreviousSource).
-			After(fsext.PrettyPath(req.ScriptPath), req.Source).
+			Before("approved", script.PreviousSource).
+			After(fsext.PrettyPath(req.ScriptPath), script.Source).
 			Width(width).
 			Unified().
 			String()
 	}
-	source := strings.TrimRight(req.Source, "\n")
+	source := strings.TrimRight(script.Source, "\n")
 	if highlighted, err := common.SyntaxHighlight(t, source, "workflow.js", t.Dialog.Permissions.ParamsBg); err == nil {
 		source = strings.TrimRight(highlighted, "\n")
 	}

@@ -111,8 +111,11 @@ func TestServiceAsksForApprovalUntilScriptChanges(t *testing.T) {
 
 	h.start(t, path, "")
 	req := h.next(t, host.EventApproval)
-	require.Empty(t, req.Approval.PreviousSource)
-	require.Contains(t, req.Approval.Source, "function main")
+	require.Len(t, req.Approval.Files, 1)
+	require.Equal(t, "workflow.js", req.Approval.Files[0].Path)
+	require.Equal(t, host.FileAdded, req.Approval.Files[0].Status)
+	require.Empty(t, req.Approval.Files[0].PreviousSource)
+	require.Contains(t, req.Approval.Files[0].Source, "function main")
 	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
 	require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status)
 
@@ -122,7 +125,8 @@ func TestServiceAsksForApprovalUntilScriptChanges(t *testing.T) {
 	path = h.write(t, `function main() { return 2 }`)
 	h.start(t, path, "")
 	req = h.next(t, host.EventApproval)
-	require.Contains(t, req.Approval.PreviousSource, "return 1")
+	require.Equal(t, host.FileChanged, req.Approval.Files[0].Status)
+	require.Contains(t, req.Approval.Files[0].PreviousSource, "return 1")
 	require.NoError(t, h.svc.Respond(req.RequestID, "deny"))
 	done := h.next(t, host.EventFinished)
 	require.Equal(t, host.StatusDenied, done.Status)
@@ -143,6 +147,53 @@ func TestServiceRespondAcceptsOnlyOfferedAnswers(t *testing.T) {
 	require.NoError(t, h.svc.Respond(ask.RequestID, "b"))
 	done := h.next(t, host.EventFinished)
 	require.JSONEq(t, `"b"`, string(done.Result))
+}
+
+func TestServiceApprovalCoversTheWholeCommandDirectory(t *testing.T) {
+	h := newServiceHarness(t, false)
+	writeFile(t, filepath.Join(h.dir, "references", "guide.md"), "be careful")
+	writeFile(t, filepath.Join(h.dir, "a-first.md"), "sorted before the script")
+	writeFile(t, filepath.Join(h.dir, ".git", "HEAD"), "ref: main")
+	writeFile(t, filepath.Join(h.dir, "node_modules", "dep", "index.js"), "module.exports = 1")
+	path := h.write(t, `function main() { return reference("references/guide.md") }`)
+
+	h.start(t, path, "")
+	req := h.next(t, host.EventApproval)
+	var paths []string
+	for _, f := range req.Approval.Files {
+		paths = append(paths, f.Path)
+		require.Equal(t, host.FileAdded, f.Status, f.Path)
+	}
+	require.Equal(t, []string{"workflow.js", "a-first.md", filepath.Join("references", "guide.md")}, paths,
+		"script first, then the rest by path, skipping dot directories and node_modules")
+	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
+	require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status)
+
+	writeFile(t, filepath.Join(h.dir, ".git", "HEAD"), "ref: other")
+	writeFile(t, filepath.Join(h.dir, "node_modules", "dep", "index.js"), "module.exports = 2")
+	h.start(t, path, "")
+	require.Equal(t, host.StatusCompleted, h.next(t, host.EventFinished).Status, "an unchanged bundle runs without asking")
+
+	writeFile(t, filepath.Join(h.dir, "references", "guide.md"), "be reckless")
+	require.NoError(t, os.Remove(filepath.Join(h.dir, "a-first.md")))
+	writeFile(t, filepath.Join(h.dir, "new.sh"), "rm -rf /")
+	h.start(t, path, "")
+	req = h.next(t, host.EventApproval)
+	got := map[string]host.ApprovalFile{}
+	for _, f := range req.Approval.Files {
+		got[f.Path] = f
+	}
+	require.Equal(t, "workflow.js", req.Approval.Files[0].Path)
+	require.Equal(t, host.FileUnchanged, got["workflow.js"].Status)
+	require.Equal(t, host.FileRemoved, got["a-first.md"].Status)
+	require.Equal(t, "sorted before the script", got["a-first.md"].PreviousSource)
+	require.Equal(t, host.FileAdded, got["new.sh"].Status)
+	guide := got[filepath.Join("references", "guide.md")]
+	require.Equal(t, host.FileChanged, guide.Status)
+	require.Equal(t, "be careful", guide.PreviousSource)
+	require.Equal(t, "be reckless", guide.Source)
+	require.NoError(t, h.svc.Respond(req.RequestID, "deny"))
+	require.Equal(t, host.StatusDenied, h.next(t, host.EventFinished).Status)
 }
 
 func TestServiceRefusesMissingRequirementsBeforeRunning(t *testing.T) {
@@ -413,4 +464,10 @@ func TestServiceRefusesAWorkflowFromASessionAnotherRunUses(t *testing.T) {
 	require.ErrorIs(t, err, host.ErrRunInProgress)
 	require.NoError(t, h.svc.Respond(ask.RequestID, "ok"))
 	h.next(t, host.EventFinished)
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }

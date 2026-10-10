@@ -213,9 +213,9 @@ func (s *Store) ListEvents(ctx context.Context, runID string) ([]workflow.Event,
 	return events, nil
 }
 
-// Approval returns the hash and source of the last approved version of
-// a script, reporting false when it was never approved.
-func (s *Store) Approval(ctx context.Context, scriptPath string) (hash, source string, ok bool, err error) {
+// Approval returns the hash and the encoded bundle of files last approved
+// for a script, reporting false when it was never approved.
+func (s *Store) Approval(ctx context.Context, scriptPath string) (hash, bundle string, ok bool, err error) {
 	row, err := s.q.GetWorkflowApproval(ctx, scriptPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", false, nil
@@ -226,13 +226,13 @@ func (s *Store) Approval(ctx context.Context, scriptPath string) (hash, source s
 	return row.ScriptHash, row.Source, true, nil
 }
 
-// Approve records a script version as approved, replacing any earlier
-// approval of the same path.
-func (s *Store) Approve(ctx context.Context, scriptPath, hash, source, origin string) error {
+// Approve records the bundle of files approved for a script, with its hash,
+// replacing any earlier approval of the same path.
+func (s *Store) Approve(ctx context.Context, scriptPath, hash, bundle, origin string) error {
 	if err := s.q.UpsertWorkflowApproval(ctx, db.UpsertWorkflowApprovalParams{
 		ScriptPath: scriptPath,
 		ScriptHash: hash,
-		Source:     source,
+		Source:     bundle,
 		Origin:     origin,
 		ApprovedAt: s.now().UnixMilli(),
 	}); err != nil {

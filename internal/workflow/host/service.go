@@ -105,15 +105,15 @@ type Event struct {
 	Result json.RawMessage
 }
 
-// ApprovalRequest is what the user reviews before a script first runs or
-// after it changes.
+// ApprovalRequest is what the user reviews before a workflow first runs
+// or after any file in its directory changes.
 type ApprovalRequest struct {
 	ScriptPath string
 	Origin     string
-	Source     string
-	// PreviousSource is the last approved version, empty on first run.
-	PreviousSource string
-	Requires       workflow.Requirements
+	// Files is every file in the workflow's directory, the script first,
+	// plus files removed since the last approval.
+	Files    []ApprovalFile
+	Requires workflow.Requirements
 }
 
 // Invocation is a workflow command the user ran.
@@ -361,18 +361,27 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	finish(runID, status, result, msg)
 }
 
-// approve asks the user to approve the script unless this exact version
-// was approved before or approval is skipped.
+// approve asks the user to approve the workflow unless this exact bundle
+// of files was approved before or approval is skipped.
 func (s *Service) approve(ctx context.Context, inv Invocation, script *workflow.Script) (bool, error) {
 	if s.deps.SkipApproval != nil && s.deps.SkipApproval() {
 		return true, nil
 	}
-	hash, previous, ok, err := s.deps.Store.Approval(ctx, script.Path)
+	current, err := loadBundle(script)
 	if err != nil {
 		return false, err
 	}
-	if ok && hash == script.Hash {
+	hash := current.hash()
+	approvedHash, stored, ok, err := s.deps.Store.Approval(ctx, script.Path)
+	if err != nil {
+		return false, err
+	}
+	if ok && approvedHash == hash {
 		return true, nil
+	}
+	var previous bundle
+	if ok {
+		previous = decodeBundle(stored)
 	}
 	origin := inv.Source
 	if origin == "" {
@@ -381,8 +390,8 @@ func (s *Service) approve(ctx context.Context, inv Invocation, script *workflow.
 	answer, err := s.request(ctx, Event{
 		Kind: EventApproval, Command: inv.CommandName, SessionID: inv.SessionID,
 		Approval: &ApprovalRequest{
-			ScriptPath: script.Path, Origin: origin, Source: script.Source,
-			PreviousSource: previous, Requires: script.Requires,
+			ScriptPath: script.Path, Origin: origin, Requires: script.Requires,
+			Files: approvalFiles(filepath.Base(script.Path), current, previous),
 		},
 		Options: []string{"approve", "deny"},
 	})
@@ -392,7 +401,11 @@ func (s *Service) approve(ctx context.Context, inv Invocation, script *workflow.
 	if answer != "approve" {
 		return false, nil
 	}
-	return true, s.deps.Store.Approve(ctx, script.Path, script.Hash, script.Source, origin)
+	encoded, err := current.encode()
+	if err != nil {
+		return false, err
+	}
+	return true, s.deps.Store.Approve(ctx, script.Path, hash, encoded, origin)
 }
 
 // request publishes ev with a fresh request ID and waits for Respond.
