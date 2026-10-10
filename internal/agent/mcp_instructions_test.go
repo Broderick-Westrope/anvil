@@ -2,10 +2,8 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"charm.land/fantasy"
@@ -53,49 +51,37 @@ func connectMCPServers(t *testing.T, instructions map[string]string, lazy ...str
 	}
 }
 
-// splitInstructions returns the instruction blocks mcpInstructions joined.
-func splitInstructions(t *testing.T, s string) []string {
-	t.Helper()
-	if s == "" {
-		return nil
-	}
-	require.True(t, strings.HasSuffix(s, "\n\n"), "instructions %q don't end in a blank line", s)
-	return strings.Split(strings.TrimSuffix(s, "\n\n"), "\n\n")
-}
-
 func TestMCPInstructions(t *testing.T) {
+	// Names sort so every skipped server comes before an included one; a
+	// loop that stopped at the first skipped server would drop the rest.
 	connectMCPServers(t, map[string]string{
-		"test-instr-plain": "Use plain.",
-		"test-instr-lazy":  "Use lazy.",
-		"test-instr-quiet": "",
-	}, "test-instr-lazy")
-	mcp.SetStateWithErrorForTest("test-instr-broken", mcp.StateError, context.DeadlineExceeded)
-	t.Cleanup(func() { mcp.DeleteStateForTest("test-instr-broken") })
-	// More entries spread the servers over more of the state map, so the
-	// order mcpInstructions visits them in varies more between calls.
-	for i := range 8 {
-		name := fmt.Sprintf("test-instr-deferred-%d", i)
-		mcp.SetStateForTest(name, mcp.StateDeferred)
-		t.Cleanup(func() { mcp.DeleteStateForTest(name) })
-	}
+		"test-instr-c-lazy":  "Use lazy.",
+		"test-instr-d-quiet": "",
+		"test-instr-e-plain": "Use plain.",
+		"test-instr-f-other": "Use other.",
+	}, "test-instr-c-lazy")
+	mcp.SetStateWithErrorForTest("test-instr-a-broken", mcp.StateError, context.DeadlineExceeded)
+	t.Cleanup(func() { mcp.DeleteStateForTest("test-instr-a-broken") })
+	mcp.SetStateForTest("test-instr-b-deferred", mcp.StateDeferred)
+	t.Cleanup(func() { mcp.DeleteStateForTest("test-instr-b-deferred") })
 
-	lazyMap := map[string]string{"mcp_test-instr-lazy_ping": "test-instr-lazy"}
+	lazyMap := map[string]string{"mcp_test-instr-c-lazy_ping": "test-instr-c-lazy"}
 	tests := map[string]struct {
 		lazyMap map[string]string
 		enabled []string
-		want    []string
+		want    string
 	}{
 		"no lazy tools": {
-			want: []string{"Use plain.", "Use lazy."},
+			want: "Use lazy.\n\nUse plain.\n\nUse other.\n\n",
 		},
 		"lazy server not enabled": {
 			lazyMap: lazyMap,
-			want:    []string{"Use plain."},
+			want:    "Use plain.\n\nUse other.\n\n",
 		},
 		"lazy server enabled": {
 			lazyMap: lazyMap,
-			enabled: []string{"test-instr-lazy"},
-			want:    []string{"Use plain.", "Use lazy."},
+			enabled: []string{"test-instr-c-lazy"},
+			want:    "Use lazy.\n\nUse plain.\n\nUse other.\n\n",
 		},
 	}
 	for name, tc := range tests {
@@ -104,12 +90,7 @@ func TestMCPInstructions(t *testing.T) {
 			for _, server := range tc.enabled {
 				state.Enable(server)
 			}
-			// Map iteration only rotates a fixed order, so it takes many
-			// calls to be sure a skipped server is visited before an
-			// included one.
-			for range 500 {
-				require.ElementsMatch(t, tc.want, splitInstructions(t, mcpInstructions(tc.lazyMap, state)))
-			}
+			require.Equal(t, tc.want, mcpInstructions(tc.lazyMap, state))
 		})
 	}
 }

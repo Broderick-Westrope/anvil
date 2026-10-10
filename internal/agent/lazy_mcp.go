@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 
 	"charm.land/fantasy"
@@ -172,12 +174,16 @@ func reconnectDeferredServers(
 	}
 }
 
-// mcpInstructions joins the instructions of connected MCP servers, leaving
-// out lazy servers that aren't enabled.
+// mcpInstructions joins the instructions of connected MCP servers in name
+// order, leaving out lazy servers that aren't enabled. The order is fixed so
+// the system prompt is identical across runs and its prompt cache stays
+// valid.
 func mcpInstructions(lazyMCPToolMap map[string]string, lazyState *tools.LazyMCPState) string {
 	lazyServers := lazyServerNames(lazyMCPToolMap)
+	states := mcp.GetStates()
 	var instructions strings.Builder
-	for name, server := range mcp.GetStates() {
+	for _, name := range slices.Sorted(maps.Keys(states)) {
+		server := states[name]
 		if server.State != mcp.StateConnected && server.State != mcp.StateLazy {
 			continue
 		}
