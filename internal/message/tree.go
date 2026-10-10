@@ -47,8 +47,10 @@ func FilterBranchPathForContext(path []Message) []Message {
 
 		start = compactionIdx
 		if compaction.FirstKeptEntryID != "" {
-			isFirstKept := func(msg Message) bool { return msg.ID == compaction.FirstKeptEntryID }
-			if kept := slices.IndexFunc(path[:compactionIdx], isFirstKept); kept >= 0 {
+			kept := slices.IndexFunc(path[:compactionIdx], func(msg Message) bool {
+				return msg.ID == compaction.FirstKeptEntryID
+			})
+			if kept >= 0 {
 				start = kept
 			}
 		}
