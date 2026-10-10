@@ -70,12 +70,13 @@ func (c *coordinator) RunWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 	}
 
 	// Restrictions and schemas build their own instance rather than using
-	// the shared agent cache, so they can't leak between calls.
+	// the shared agent cache, so they can't leak between calls. A pinned
+	// model is part of the cache key, so it can share.
 	var sub SessionAgent
 	var submit *submitResultTool
 	var err error
-	if call.Tools == nil && call.Schema == nil && call.Model == "" {
-		sub, err = c.getOrBuildAgent(ctx, call.Agent, workflowAgentDepth, "")
+	if call.Tools == nil && call.Schema == nil {
+		sub, err = c.getOrBuildAgent(ctx, call.Agent, workflowAgentDepth, call.Model)
 	} else {
 		sub, submit, err = c.buildWorkflowAgent(ctx, call, agentCfg)
 	}
@@ -87,6 +88,9 @@ func (c *coordinator) RunWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 	if title == "" {
 		title = "workflow: " + call.Agent
 	}
+	// Detach from any submission owner ctx carries, as runSubAgent does:
+	// the child session's turns must be admitted as their own submissions,
+	// not run in place as, or rejected as, the parent's owner.
 	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
 	sessionID := call.SessionID
 	if sessionID == "" {
