@@ -45,7 +45,8 @@ change keeps only the tools part.
   then 128-token steps), so a hit reads slightly less than the whole
   previous prompt. A row counts as a hit when it reads at least half its
   `baseline`.
-- Google hit rates may be inflated (see `schema.md`, Google caveat).
+- Google hit rates may be inflated, up to 100% since reads are capped at
+  the prompt size (see `schema.md`, Google caveat).
 - Vercel rows never report cache writes (see `schema.md`, Vercel caveat):
   `cache_write_tokens` is always 0 and written tokens count as input, so
   a `first_call` looks like plain input and hits are judged against the

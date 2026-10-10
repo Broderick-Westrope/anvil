@@ -115,4 +115,5 @@ sessions or dominates `tokens_not_reused`.
   the average of per-row `hit_rate`.
 - `list_cost` uses catwalk list prices stored per row; it is notional for
   `flat_rate = 1` rows and 0 when prices are unknown.
-- Google cache reads may be over-counted (see `schema.md`).
+- Google cache reads may be over-counted, though never above the prompt
+  size (see `schema.md`).
