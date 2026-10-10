@@ -3,6 +3,7 @@ package agent
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/x/vcr"
+	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -36,6 +38,10 @@ type fakeEnv struct {
 	permissions permission.Service
 	filetracker *filetracker.Service
 	lspClients  *csync.Map[string, *lsp.Client]
+	conn        *sql.DB
+	// usage records step usage rows into conn. Close it before querying
+	// step_usage so queued rows are written.
+	usage *cacheusage.Recorder
 }
 
 type builderFunc func(t *testing.T, r *vcr.Recorder) (fantasy.LanguageModel, error)
@@ -76,19 +82,23 @@ func testEnv(t *testing.T) fakeEnv {
 	permissions := permission.NewPermissionService(workingDir, config.YoloStandard, nil, nil)
 	filetrackerService := filetracker.NewService(q)
 	lspClients := csync.NewMap[string, *lsp.Client]()
+	usage := cacheusage.New(q)
 
 	t.Cleanup(func() {
+		require.NoError(t, usage.Close(context.Background()))
 		conn.Close()
 		os.RemoveAll(workingDir)
 	})
 
 	return fakeEnv{
-		workingDir,
-		sessions,
-		messages,
-		permissions,
-		&filetrackerService,
-		lspClients,
+		workingDir:  workingDir,
+		sessions:    sessions,
+		messages:    messages,
+		permissions: permissions,
+		filetracker: &filetrackerService,
+		lspClients:  lspClients,
+		conn:        conn,
+		usage:       usage,
 	}
 }
 
@@ -108,13 +118,16 @@ func testSessionAgent(env fakeEnv, large, small fantasy.LanguageModel, systemPro
 		},
 	}
 	agent := NewSessionAgent(SessionAgentOptions{
-		LargeModel:   largeModel,
-		SmallModel:   smallModel,
-		SystemPrompt: systemPrompt,
-		IsYolo:       true,
-		Sessions:     env.sessions,
-		Messages:     env.messages,
-		Tools:        tools,
+		LargeModel:    largeModel,
+		SmallModel:    smallModel,
+		SystemPrompt:  systemPrompt,
+		IsYolo:        true,
+		Sessions:      env.sessions,
+		Messages:      env.messages,
+		Tools:         tools,
+		UsageRecorder: env.usage,
+		AgentName:     "orchestrator",
+		WorkingDir:    env.workingDir,
 	})
 	return agent
 }

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -249,4 +250,98 @@ func testNConsumers(t *testing.T, n int) {
 		})
 	}
 	wg.Wait()
+}
+
+func TestWaitWithTimeout(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, waitWithTimeout(func() {}, time.Second))
+
+	release := make(chan struct{})
+	defer close(release)
+	require.False(t, waitWithTimeout(func() { <-release }, 10*time.Millisecond))
+}
+
+type fakeLog struct {
+	close func(ctx context.Context) error
+}
+
+func (f fakeLog) Close(ctx context.Context) error { return f.close(ctx) }
+
+func TestCloseLogsRunsConcurrently(t *testing.T) {
+	t.Parallel()
+
+	// The first log waits for the second to start, so closing them one
+	// after the other would time out.
+	started := make(chan struct{})
+	first := fakeLog{close: func(ctx context.Context) error {
+		select {
+		case <-started:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	second := fakeLog{close: func(context.Context) error {
+		close(started)
+		return nil
+	}}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, closeLogs(ctx, namedLog{"first", first}, namedLog{"second", second}))
+}
+
+func TestCloseLogsJoinsErrors(t *testing.T) {
+	t.Parallel()
+
+	errA, errB := errors.New("a failed"), errors.New("b failed")
+	ok := fakeLog{close: func(context.Context) error { return nil }}
+	err := closeLogs(t.Context(),
+		namedLog{"log a", fakeLog{close: func(context.Context) error { return errA }}},
+		namedLog{"log ok", ok},
+		namedLog{"log b", fakeLog{close: func(context.Context) error { return errB }}},
+	)
+	require.ErrorIs(t, err, errA)
+	require.ErrorIs(t, err, errB)
+	require.EqualError(t, err, "log a: a failed\nlog b: b failed")
+	require.NoError(t, closeLogs(t.Context(), namedLog{"ok", ok}, namedLog{"ok", ok}))
+}
+
+func TestInitFailure(t *testing.T) {
+	t.Parallel()
+
+	initErr := errors.New("init failed")
+	closed := false
+	ok := fakeLog{close: func(context.Context) error {
+		closed = true
+		return nil
+	}}
+
+	err := initFailure(t.Context(), initErr, namedLog{"ok", ok})
+	require.ErrorIs(t, err, initErr)
+	require.EqualError(t, err, "failed to initialize orchestrator agent: init failed")
+	require.True(t, closed)
+
+	closeErr := errors.New("close failed")
+	err = initFailure(t.Context(), initErr, namedLog{"cache usage log", fakeLog{close: func(context.Context) error { return closeErr }}})
+	require.ErrorIs(t, err, initErr)
+	require.ErrorIs(t, err, closeErr)
+	require.ErrorContains(t, err, "cache usage log: close failed")
+}
+
+func TestStartupPrune(t *testing.T) {
+	t.Parallel()
+
+	var deadline time.Time
+	require.NoError(t, startupPrune(t.Context(), "rows", func(ctx context.Context) error {
+		var ok bool
+		deadline, ok = ctx.Deadline()
+		require.True(t, ok)
+		return nil
+	}))
+	require.WithinDuration(t, time.Now().Add(30*time.Second), deadline, 5*time.Second)
+
+	errPrune := errors.New("locked")
+	require.ErrorIs(t, startupPrune(t.Context(), "rows", func(context.Context) error { return errPrune }), errPrune)
 }
