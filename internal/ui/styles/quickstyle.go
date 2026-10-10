@@ -797,13 +797,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Messages.AssistantCanceled = lipgloss.NewStyle().Foreground(o.fgSubtle).Italic(true)
 
 	// Thinking section styles
-	s.Messages.ThinkingBox = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(o.bgMostVisible).
-		Padding(0, 1)
-	s.Messages.ThinkingLine = lipgloss.NewStyle().Italic(true).Foreground(o.fgMostSubtle)
-	s.Messages.ThinkingLabel = lipgloss.NewStyle().Italic(true).Foreground(o.primary)
-	s.Messages.ThinkingTruncationHint = muted
 	s.Messages.ThinkingFooterTitle = muted
 	s.Messages.ThinkingFooterDuration = subtle
 
