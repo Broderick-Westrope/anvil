@@ -974,3 +974,21 @@ func TestList_ScrollToSelected_BeforeSized(t *testing.T) {
 	require.Equal(t, 12, l.Offset())
 	require.True(t, l.SelectedItemInView())
 }
+
+func TestList_ItemTopAboveView(t *testing.T) {
+	t.Parallel()
+
+	l := NewList(newTallItem(5), newTallItem(20), newTallItem(5))
+	l.SetSize(40, 10)
+
+	require.False(t, l.ItemTopAboveView(0), "top of list")
+	require.False(t, l.ItemTopAboveView(1))
+
+	l.ScrollBy(5)
+	require.True(t, l.ItemTopAboveView(0), "first item scrolled past")
+	require.False(t, l.ItemTopAboveView(1), "second item starts at the top row")
+
+	l.ScrollBy(1)
+	require.True(t, l.ItemTopAboveView(1), "one line into the second item")
+	require.False(t, l.ItemTopAboveView(2))
+}

@@ -230,6 +230,12 @@ func (l *List) Overflows(height int) bool {
 	return false
 }
 
+// ItemTopAboveView reports whether the first line of the item at idx is
+// scrolled above the top of the viewport.
+func (l *List) ItemTopAboveView(idx int) bool {
+	return idx < l.offsetIdx || (idx == l.offsetIdx && l.offsetLine > 0)
+}
+
 // Offset returns the current scroll offset in lines from the top.
 func (l *List) Offset() int {
 	offset := 0
