@@ -112,7 +112,10 @@ Out of scope (later sub-projects):
 - [ ] `parallel()` runs agent descriptors concurrently and returns settled
       results in order.
 - [ ] `s.turn()` returns the result of its own run, never another queued
-      run's, even when you queue messages in the same session meanwhile.
+      run's, even when you queue messages in the same session meanwhile and
+      even when the turn auto-compacts and continues.
+- [ ] `agent(..., {tools})` gives the subagent only the listed tools
+      (built-in and MCP), and throws on an unknown tool name.
 - [ ] Cancelling a turn with Esc makes `s.turn()` throw `Cancelled`. Pause
       takes effect at the next primitive boundary. Abort cancels in-flight
       work and ends the run as `aborted`.
@@ -218,7 +221,11 @@ Out of scope (later sub-projects):
   result, and cancelling clears queued work without telling its submitters
   (`internal/agent/admission.go`). Admission gains per-submission IDs, with
   completion, result and cancellation delivered to each submitter. If the
-  session is busy, the turn queues and waits for its own run.
+  session is busy, the turn queues and waits for its own run. A submission
+  keeps ownership across automatic continuation after auto-compaction
+  (`internal/agent/agent.go`, which today enqueues that continuation as a
+  separate submission), so `s.turn()` returns only once the requested work
+  is actually finished, and your queued messages run after it.
 - **Messages you send while a workflow turn runs** are queued and run as
   their own turn afterwards (current behaviour; queued prompts aren't
   injected into the running turn). They're extra context for the session
@@ -234,6 +241,13 @@ Out of scope (later sub-projects):
 - `agent(name, prompt, {schema?, skills?, tools?, model?})` runs a fresh,
   isolated subagent (`runSubAgent`). `tools` restricts its tool set, and
   `model` pins a `provider/model`. Neither affects any other session's cache.
+  A call with `tools`, `schema` or `model` builds its own agent instance
+  rather than reusing the coordinator's agent cache (keyed by agent name and
+  model, `getOrBuildAgent`), so restrictions can't leak between calls. The
+  `tools` filter **fails closed**: it applies to built-in and MCP tools
+  alike, and an unknown tool name throws at the call rather than falling
+  back to the full tool set (today's agent `tools` filter fails open,
+  `buildToolsWithState`).
 - `parallel([{agent, prompt, schema?, skills?, tools?, model?}, ...])` runs
   the descriptors concurrently in Go and returns
   `[{ok: true, value} | {ok: false, error}]` in input order. Results are
@@ -251,9 +265,11 @@ Out of scope (later sub-projects):
   machinery.
 - `status(step, detail)` updates the progress panel. It's a label only; the
   engine has no notion of steps.
-- `bash(cmd, {cwd?})` returns `{stdout, stderr, exitCode}`. It doesn't go
-  through the permission system (see Trust), appears in the UI as a workflow
-  step, and is logged.
+- `bash(cmd, {cwd?, check?})` returns `{stdout, stderr, exitCode}`. A
+  non-zero exit throws `BashError` (carrying all three) unless
+  `check: false`, so an ignored failure can't silently feed the next step.
+  It doesn't go through the permission system (see Trust), appears in the
+  UI as a workflow step, and is logged.
 - `workflow.tmpdir()`, plus recorded `now()` and `random()`.
 
 *Structured output*
@@ -309,8 +325,9 @@ Out of scope (later sub-projects):
   through permissions (it brings back the reviews this design removes).
 
 *State*
-- **`workflow_runs`** (id, command, invoking session, script hash, status:
-  running, completed, failed, aborted or interrupted, tmpdir, timestamps)
+- **`workflow_runs`** (id, command and its source, invoking session, the
+  invocation input passed to `main`, script hash, status: running,
+  completed, failed, aborted or interrupted, tmpdir, timestamps)
   and **`workflow_events`** (run id, sequence number, primitive, arguments,
   result or error, timestamps). Every primitive call is logged from v1, for
   the UI history, for debugging ("what exactly did the DA see?") and as the
@@ -328,8 +345,12 @@ Out of scope (later sub-projects):
   changed. A call with `started` but no `completed` (Anvil died during the
   side effect) is never silently re-run or skipped: resume stops and `ask`s
   you to re-run it, treat it as done (supplying nothing; the script gets
-  `Interrupted`), or abandon the run. A run interrupted by Anvil exiting is
-  marked `interrupted`. In v1 you finish it by hand from its sessions.
+  `Interrupted`), or abandon the run. For `parallel`, recovery works per
+  child: completed children return their logged results without re-running,
+  unfinished children go through the same started-but-not-completed policy,
+  and the parent completes once every child is resolved. A run interrupted
+  by Anvil exiting is marked `interrupted`. In v1 you finish it by hand from
+  its sessions.
 - **The tmpdir** is `<data dir>/workflows/<run-id>/tmp`. It is kept after a
   run ends in any state, so `/build`'s build note can become the PR body.
   Startup prunes run directories older than 14 days. A future `/merge`
@@ -341,8 +362,11 @@ Out of scope (later sub-projects):
   sequencing, `parallel` settling, schema retries, cancel, pause, abort,
   requirement warnings and event logging without model calls. They're
   followed by a real run driven through the `terminal` MCP.
-- **Authors** get `anvil workflow check <path>` in v1 (parse, evaluate the top
-  level, validate `requires()`), which is cheap to run in a plugin repo's CI.
+- **Authors** get `anvil workflow check <path>` in v1 (parse only, read
+  `requires()` from the AST and validate it, never execute), which is cheap
+  to run in a plugin repo's CI. A host test proves that a top-level
+  `while (true) {}` or side-effecting statement doesn't run during discovery
+  or `check`.
   The fast-follow is `anvil workflow test --fixture`, which runs `main`
   against a recorded or hand-written event log, e.g. "the DA rejects three
   times" to check the cap logic.
@@ -363,6 +387,8 @@ requires({
 
 function main(input) {
   const { doc, base } = resolveInputs(input.raw)  // bash + ask, see main(input)
+  const baseSha = bash("git rev-parse " + q(base)).stdout.trim()  // immutable
+  assertDisposableBranch()  // feature branch, clean tree, no commits past baseSha; else ask
   const notePath = workflow.tmpdir() + "/build-note.md"
   const lessons = []
   let builder = session.current()
@@ -386,7 +412,9 @@ function main(input) {
     // verdict.kind === "wrong-approach"
     lessons.push(builder.turn(lessonPrompt(verdict, doc), { schema: Lesson }))
     if (approach === 3) break
-    bash("git reset --hard " + q(base))  // discard the rejected implementation
+    // Discard the rejected implementation: commits and new files. Safe only
+    // because assertDisposableBranch() proved the branch held nothing else.
+    bash("git reset --hard " + q(baseSha) + " && git clean -fd")  // throws on failure
     builder = session.new({ seed: seedFrom(doc, lessons), skills: ["go-style", "build-tdd"] })
     workflow.focus(builder)
   }
@@ -400,11 +428,20 @@ function review(builder, base, notePath) {
     const prompt = reviewPrompt(base)
     const results = parallel(REVIEWERS.map(r =>
       ({ agent: r.agent, model: r.model, prompt, schema: Findings })))
-    const raw = results.filter(r => r.ok).flatMap(r => r.value.findings)
-    const audited = agent("verifier", auditPrompt(raw), { schema: Findings, tools: READ_ONLY })
-    const blocking = audited.findings.filter(f => f.severity !== "minor")
+    if (!results.some(r => r.ok))
+      return ask("All reviewers failed:\n" + fmt(results.map(r => r.error)))
+    // Give every finding a stable id and its reviewer label; keep failures
+    // visible so the hand-over can say which reviews didn't complete.
+    const raw = results.flatMap((r, i) =>
+      r.ok ? withIds(r.value.findings, REVIEWERS[i].label) : [])
+    const failed = REVIEWERS.filter((_, i) => !results[i].ok).map(r => r.label)
+    const audit = agent("verifier", auditPrompt(raw), { schema: Audit, tools: READ_ONLY })
+    // Schemas can't enforce "one disposition per input", so the script does.
+    requireOneDispositionEach(raw, audit.dispositions)  // throws if any id is missing
+    const blocking = audit.dispositions
+      .filter(d => d.verdict === "confirmed" && d.severity !== "minor")
     if (blocking.length === 0)
-      return ask("Ready for your review. Draft PR body:\n" + readFile(notePath))
+      return ask(handOver(readFile(notePath), failed))  // names any failed reviewers
     builder.turn(fixPrompt(blocking))  // the builder only ever sees audited findings
   }
   return ask("Review still requesting changes after 3 passes.")
