@@ -399,14 +399,7 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 		if msg.MessageType == message.MessageTypeJobEvent {
 			return []MessageItem{NewJobEventMessageItem(sty, msg)}
 		}
-		r := attachments.NewRenderer(
-			sty.Attachments.Normal,
-			sty.Attachments.Deleting,
-			sty.Attachments.Image,
-			sty.Attachments.Text,
-			sty.Attachments.Skill,
-			sty.Attachments.Remove,
-		)
+		r := attachments.NewRenderer(sty.Attachments)
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:
 		var items []MessageItem

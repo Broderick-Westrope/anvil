@@ -13,7 +13,7 @@ func TestUserMessageItemSourceMessage(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	renderer := attachments.NewRenderer(sty.Attachments.Normal, sty.Attachments.Deleting, sty.Attachments.Image, sty.Attachments.Text, sty.Attachments.Skill, sty.Attachments.Remove)
+	renderer := attachments.NewRenderer(sty.Attachments)
 
 	rawText := "<skill_content name=\"foo\">\ninstructions\n</skill_content>\n\n/review please"
 	original := &message.Message{
