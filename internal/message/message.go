@@ -91,8 +91,8 @@ type pendingState struct {
 	flushing bool
 
 	// timer is the active debounce timer, or nil if no flush is
-	// scheduled. Stopped and reset when a terminal update preempts
-	// the debounce window.
+	// scheduled. beginFlush stops and clears it whenever a flush claims
+	// the buffer, so the next delta schedules a fresh one.
 	timer *time.Timer
 
 	// lastFlushed is the snapshot most recently written to SQL. Used
@@ -119,13 +119,13 @@ func (p *pendingState) isTerminal(next *Message) bool {
 // any scheduled flush. It reports whether the snapshot is terminal,
 // judged now because that compares against what is on disk before the
 // write. The caller must hold service.mu and finish with endFlush.
-func (p *pendingState) beginFlush() (snap Message, terminal bool) {
+func (p *pendingState) beginFlush() (Message, bool) {
 	if p.timer != nil {
 		p.timer.Stop()
 		p.timer = nil
 	}
-	snap = p.latest
-	terminal = p.isTerminal(&snap)
+	snap := p.latest
+	terminal := p.isTerminal(&snap)
 	p.flushing = true
 	p.dirty = false
 	return snap, terminal
@@ -138,7 +138,7 @@ func (p *pendingState) beginFlush() (snap Message, terminal bool) {
 // during the write. Unfinished entries are kept as the baseline that
 // stops later deltas from looking structural again. The caller must
 // hold service.mu.
-func (p *pendingState) endFlush(snap Message, err error) (done bool) {
+func (p *pendingState) endFlush(snap Message, err error) bool {
 	p.flushing = false
 	if err != nil {
 		p.dirty = true
