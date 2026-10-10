@@ -921,3 +921,90 @@ func TestFlush_PicksUpDeltaArrivingDuringWrite(t *testing.T) {
 	require.Equal(t, "first", events[1].Payload.Content().Text)
 	require.Equal(t, "first second", events[2].Payload.Content().Text)
 }
+
+// TestUpdate_DeltaAfterFlushSchedulesFreshTimer asserts a sync Flush
+// clears the debounce timer it cancels, so the next delta is flushed by
+// a timer of its own rather than waiting for another explicit flush.
+func TestUpdate_DeltaAfterFlushSchedulesFreshTimer(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t, WithDebounce(10*time.Millisecond))
+
+	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+	require.NoError(t, err)
+	msg.AppendContent("first")
+	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Flush(t.Context(), msg.ID))
+
+	msg.AppendContent(" second")
+	require.NoError(t, svc.Update(t.Context(), msg))
+
+	require.Eventually(t, func() bool {
+		got, err := svc.Get(t.Context(), msg.ID)
+		return err == nil && got.Content().Text == "first second"
+	}, time.Second, 5*time.Millisecond, "the debounce timer must flush the delta after an explicit Flush")
+}
+
+// TestFlush_FinishedMessageRedirtiedDuringWriteIsNotPruned asserts a
+// finished message that an Update re-dirties mid-write keeps its pending
+// entry until that delta is written too.
+func TestFlush_FinishedMessageRedirtiedDuringWriteIsNotPruned(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+	require.NoError(t, err)
+
+	slow := &slowUpdateQuerier{
+		Querier: q,
+		release: make(chan struct{}),
+		started: make(chan struct{}),
+	}
+	svc := NewService(slow, WithConn(conn), WithDebounce(time.Hour))
+	impl := svc.(*service)
+
+	msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+	require.NoError(t, err)
+	msg.AppendContent("first")
+	msg.AddFinish(FinishReasonEndTurn, "", "")
+	finished := msg.Clone()
+	msg.AppendContent(" second")
+	redirtied := msg.Clone()
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- svc.Update(t.Context(), finished) }()
+	select {
+	case <-slow.started:
+	case <-time.After(time.Second):
+		t.Fatal("terminal update never reached UpdateMessage")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- svc.Update(t.Context(), redirtied) }()
+	require.Eventually(t, func() bool {
+		impl.mu.Lock()
+		defer impl.mu.Unlock()
+		p, ok := impl.pending[msg.ID]
+		return ok && p.dirty
+	}, time.Second, time.Millisecond, "the second update must re-dirty the entry mid-write")
+
+	close(slow.release)
+	for _, done := range []chan error{firstDone, secondDone} {
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("Update did not return after the write completed")
+		}
+	}
+
+	got, err := svc.Get(t.Context(), msg.ID)
+	require.NoError(t, err)
+	require.Equal(t, "first second", got.Content().Text, "the mid-write delta must not be lost")
+	require.Equal(t, 0, impl.PendingCount(), "the entry is pruned once the finished message is clean")
+}
