@@ -7,10 +7,10 @@ import (
 	"slices"
 	"strings"
 
-	"mvdan.cc/sh/moreinterp/coreutils"
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
+	"mvdan.cc/sh/x/coreutils"
 )
 
 // RunOptions configures a single stateless shell execution via [Run].
