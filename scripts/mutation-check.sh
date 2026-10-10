@@ -22,9 +22,20 @@ echo "Mutating $added_lines changed Go lines since $base."
 
 go clean -testcache
 
+# By default gremlins starts one worker per CPU and each worker's go test uses
+# every CPU too, which saturates a laptop. Keep a quarter of the CPUs busy
+# with two cores per worker unless overridden; 0 restores gremlins' defaults.
+cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+workers="${MUTATION_WORKERS:-$((cpus / 4 > 0 ? cpus / 4 : 1))}"
+test_procs="${MUTATION_GOMAXPROCS:-2}"
+if [ "$test_procs" -ne 0 ]; then
+    export GOMAXPROCS="$test_procs"
+    export GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=$test_procs"
+fi
+
 gremlins_status=0
 go run "github.com/go-gremlins/gremlins/cmd/gremlins@${gremlins_version}" \
-    unleash --diff "$base" --output "$report" . || gremlins_status=$?
+    unleash --workers "$workers" --diff "$base" --output "$report" . || gremlins_status=$?
 if [ "$gremlins_status" -ne 0 ]; then
     echo "gremlins exited with status $gremlins_status." >&2
     exit "$gremlins_status"
