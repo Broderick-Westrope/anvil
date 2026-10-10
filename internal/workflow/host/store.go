@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
+	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
 
 // Status is the state of a workflow run.
@@ -154,6 +155,61 @@ func (s *Store) GetRun(ctx context.Context, id string) (RunRecord, bool, error) 
 		rec.FinishedAt = time.UnixMilli(row.FinishedAt.Int64)
 	}
 	return rec, true, nil
+}
+
+// Recorder returns a [workflow.Recorder] that appends events to a run's
+// log.
+func (s *Store) Recorder(runID string) workflow.Recorder {
+	return eventRecorder{q: s.q, runID: runID}
+}
+
+type eventRecorder struct {
+	q     db.Querier
+	runID string
+}
+
+func (r eventRecorder) Record(ctx context.Context, ev workflow.Event) error {
+	if err := r.q.InsertWorkflowEvent(ctx, db.InsertWorkflowEventParams{
+		RunID:      r.runID,
+		Seq:        int64(ev.Seq),
+		ParentSeq:  int64(ev.Parent),
+		ChildIndex: int64(ev.Index),
+		Primitive:  ev.Primitive,
+		Phase:      string(ev.Phase),
+		Args:       nullJSON(ev.Args),
+		ArgsHash:   ev.ArgsHash,
+		Result:     nullJSON(ev.Result),
+		Error:      nullJSON(ev.Error),
+		At:         ev.At.UnixMilli(),
+	}); err != nil {
+		return fmt.Errorf("record event %d of workflow run %s: %w", ev.Seq, r.runID, err)
+	}
+	return nil
+}
+
+// ListEvents returns a run's events ordered by sequence number, each
+// call's events in the order they were recorded.
+func (s *Store) ListEvents(ctx context.Context, runID string) ([]workflow.Event, error) {
+	rows, err := s.q.ListWorkflowEvents(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list events of workflow run %s: %w", runID, err)
+	}
+	events := make([]workflow.Event, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, workflow.Event{
+			Seq:       int(row.Seq),
+			Parent:    int(row.ParentSeq),
+			Index:     int(row.ChildIndex),
+			Primitive: row.Primitive,
+			Phase:     workflow.Phase(row.Phase),
+			Args:      rawJSON(row.Args),
+			ArgsHash:  row.ArgsHash,
+			Result:    rawJSON(row.Result),
+			Error:     rawJSON(row.Error),
+			At:        time.UnixMilli(row.At),
+		})
+	}
+	return events, nil
 }
 
 func nullJSON(raw json.RawMessage) sql.NullString {

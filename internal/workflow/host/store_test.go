@@ -3,10 +3,12 @@ package host_test
 import (
 	"encoding/json"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
+	"github.com/Broderick-Westrope/anvil/internal/workflow"
 	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	"github.com/stretchr/testify/require"
 )
@@ -116,4 +118,59 @@ func TestStore_FinishRunRejectsRunThatIsNotRunning(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestStore_RecorderEventsListInSequence(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestStore(t)
+	require.NoError(t, s.StartRun(t.Context(), testRun("run-1", time.Now())))
+	at := time.UnixMilli(1_760_000_000_000)
+	events := []workflow.Event{
+		{Seq: 1, Primitive: "parallel", Phase: workflow.PhaseStarted, Args: json.RawMessage(`[2]`), ArgsHash: "h1", At: at},
+		{Seq: 2, Parent: 1, Index: 0, Primitive: "bash", Phase: workflow.PhaseStarted, Args: json.RawMessage(`{"cmd":"ls"}`), ArgsHash: "h2", At: at},
+		{Seq: 3, Parent: 1, Index: 1, Primitive: "turn", Phase: workflow.PhaseStarted, ArgsHash: "h3", At: at},
+		{Seq: 2, Parent: 1, Index: 0, Primitive: "bash", Phase: workflow.PhaseCompleted, Result: json.RawMessage(`"out"`), At: at.Add(time.Second)},
+		{Seq: 3, Parent: 1, Index: 1, Primitive: "turn", Phase: workflow.PhaseFailed, Error: json.RawMessage(`{"message":"x"}`), At: at.Add(2 * time.Second)},
+		{Seq: 1, Primitive: "parallel", Phase: workflow.PhaseCompleted, Result: json.RawMessage(`[]`), At: at.Add(3 * time.Second)},
+	}
+	rec := s.Recorder("run-1")
+	for _, ev := range events {
+		require.NoError(t, rec.Record(t.Context(), ev))
+	}
+
+	got, err := s.ListEvents(t.Context(), "run-1")
+	require.NoError(t, err)
+	want := []workflow.Event{events[0], events[5], events[1], events[3], events[2], events[4]}
+	require.Equal(t, want, got)
+}
+
+func TestStore_RecorderIsSafeForConcurrentUse(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestStore(t)
+	require.NoError(t, s.StartRun(t.Context(), testRun("run-1", time.Now())))
+	rec := s.Recorder("run-1")
+
+	const n = 20
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			ev := workflow.Event{Seq: i + 1, Primitive: "bash", Phase: workflow.PhaseStarted, At: time.Now()}
+			require.NoError(t, rec.Record(t.Context(), ev))
+		})
+	}
+	wg.Wait()
+
+	got, err := s.ListEvents(t.Context(), "run-1")
+	require.NoError(t, err)
+	require.Len(t, got, n)
+}
+
+func TestStore_ListEventsOfOtherRunIsEmpty(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestStore(t)
+	require.NoError(t, s.Recorder("run-1").Record(t.Context(), workflow.Event{Seq: 1, Primitive: "bash", Phase: workflow.PhaseStarted, At: time.Now()}))
+
+	got, err := s.ListEvents(t.Context(), "run-2")
+	require.NoError(t, err)
+	require.Empty(t, got)
 }
