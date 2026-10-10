@@ -730,13 +730,21 @@ func (m *Chat) SelectedItem() list.Item {
 // ToggleExpandedSelectedItem expands the selected message item if it is expandable.
 func (m *Chat) ToggleExpandedSelectedItem() {
 	if expandable, ok := m.list.SelectedItem().(chat.Expandable); ok {
-		wasFollowing := m.follow
-		if !expandable.ToggleExpanded() {
-			m.ScrollToIndex(m.list.Selected())
-		}
-		if wasFollowing {
-			m.ScrollToBottom()
-		}
+		m.toggleExpanded(expandable)
+	}
+}
+
+// toggleExpanded toggles the selected item and keeps the view where it is.
+// Collapsing an item whose top is scrolled above the viewport would leave
+// it off screen, so only then is the view moved to the item's first line.
+func (m *Chat) toggleExpanded(expandable chat.Expandable) {
+	wasFollowing := m.follow
+	selected := m.list.Selected()
+	if !expandable.ToggleExpanded() && m.list.ItemTopAboveView(selected) {
+		m.ScrollToIndex(selected)
+	}
+	if wasFollowing {
+		m.ScrollToBottom()
 	}
 }
 
@@ -874,13 +882,7 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 		// toggling expansion for clicks outside the clickable area.
 		if handled {
 			if expandable, ok := selectedItem.(chat.Expandable); ok {
-				wasFollowing := m.follow
-				if !expandable.ToggleExpanded() {
-					m.ScrollToIndex(m.list.Selected())
-				}
-				if wasFollowing {
-					m.ScrollToBottom()
-				}
+				m.toggleExpanded(expandable)
 			}
 		}
 		return handled, nil
