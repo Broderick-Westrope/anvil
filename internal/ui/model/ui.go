@@ -663,7 +663,8 @@ func (m *UI) viewedSessionIndex() int {
 // viewedSession returns the session whose stats the header and sidebar
 // show: the viewed subagent session once loaded, otherwise the root.
 func (m *UI) viewedSession() *session.Session {
-	if entry, ok := m.viewedSessionEntry(); ok && entry.session != nil {
+	// The zero entry returned for the root session has no session either.
+	if entry, _ := m.viewedSessionEntry(); entry.session != nil {
 		return entry.session
 	}
 	return m.session
