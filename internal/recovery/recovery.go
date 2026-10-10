@@ -276,19 +276,9 @@ func scan(root string, decode bool, visit func(string, Entry, bool) error) error
 			if !decode {
 				return visit(path, Entry{}, active)
 			}
-			data, err := readRecord(path)
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			if err != nil {
+			entry, err := decodeRecord(path)
+			if err != nil || entry.SessionID == "" {
 				return err
-			}
-			var entry Entry
-			if err := json.Unmarshal(data, &entry); err != nil {
-				return fmt.Errorf("decoding recovery record %s: %w", file.Name(), err)
-			}
-			if entry.SessionID == "" {
-				return nil
 			}
 			return visit(path, entry, active)
 		}()
@@ -300,6 +290,23 @@ func scan(root string, decode bool, visit func(string, Entry, bool) error) error
 		scanErrors = append(scanErrors, sweepArtifacts(root))
 	}
 	return errors.Join(scanErrors...)
+}
+
+// decodeRecord reads the recovery record at path. A record removed since
+// it was listed decodes to the zero Entry, which has no session.
+func decodeRecord(path string) (Entry, error) {
+	data, err := readRecord(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return Entry{}, nil
+	}
+	if err != nil {
+		return Entry{}, err
+	}
+	var entry Entry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return Entry{}, fmt.Errorf("decoding recovery record %s: %w", filepath.Base(path), err)
+	}
+	return entry, nil
 }
 
 func lockRegistry(root string) (func(), error) {
