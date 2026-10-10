@@ -649,6 +649,15 @@ func (m *UI) viewedSessionEntry() (drillInEntry, bool) {
 	return drillInEntry{}, false
 }
 
+// viewedSession returns the session whose stats the header and sidebar
+// show: the viewed subagent session once loaded, otherwise the root.
+func (m *UI) viewedSession() *session.Session {
+	if entry, ok := m.viewedSessionEntry(); ok && entry.session != nil {
+		return entry.session
+	}
+	return m.session
+}
+
 // viewedSessionID returns the ID of the session currently being viewed:
 // the subagent session from viewedSessionEntry, or the root session.
 func (m *UI) viewedSessionID() string {
@@ -967,7 +976,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Fall through afterwards so handleChildSessionMessage still updates
 		// the collapsed view on the root chat.
 		for _, entry := range m.drillStack {
-			if entry.sessionID == "" || entry.sessionID != msg.Payload.SessionID {
+			if entry.sessionID != msg.Payload.SessionID {
 				continue
 			}
 			switch msg.Type {
@@ -1329,7 +1338,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		shouldContinue := anyRunning || m.isViewedSubagentRunning() || m.hasRunningJobs()
+		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
@@ -2165,11 +2174,7 @@ func mergeLiveItems(loaded []chat.MessageItem, c *Chat) []chat.MessageItem {
 			loaded[k] = live
 		}
 	}
-	for k := range c.Len() {
-		item, ok := c.ItemAt(k).(chat.MessageItem)
-		if !ok {
-			continue
-		}
+	for _, item := range c.MessageItems() {
 		if _, ok := ids[item.ID()]; !ok {
 			loaded = append(loaded, item)
 		}
@@ -3496,10 +3501,7 @@ func (m *UI) renderBreadcrumb(width int) string {
 func (m *UI) drawHeader(scr uv.Screen, area uv.Rectangle) {
 	// Use the viewed session's stats when drilled in so the context
 	// percentage reflects the subagent, not the root session.
-	sess := m.session
-	if entry, ok := m.viewedSessionEntry(); ok && entry.session != nil {
-		sess = entry.session
-	}
+	sess := m.viewedSession()
 	m.header.drawHeader(
 		scr,
 		area,

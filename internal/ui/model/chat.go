@@ -320,13 +320,18 @@ func (m *Chat) ItemAt(i int) list.Item {
 // InvalidateRenderCaches drops cached rendered output on every message
 // item so the next draw re-renders with the current styles.
 func (m *Chat) InvalidateRenderCaches() {
+	chat.ClearItemCaches(m.MessageItems())
+}
+
+// MessageItems returns the chat's message items in order.
+func (m *Chat) MessageItems() []chat.MessageItem {
 	items := make([]chat.MessageItem, 0, m.list.Len())
 	for i := range m.list.Len() {
 		if item, ok := m.list.ItemAt(i).(chat.MessageItem); ok {
 			items = append(items, item)
 		}
 	}
-	chat.ClearItemCaches(items)
+	return items
 }
 
 // SetMessages sets the chat messages to the provided list of message items.

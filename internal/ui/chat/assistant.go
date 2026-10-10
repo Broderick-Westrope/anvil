@@ -477,10 +477,9 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 
 func (a *AssistantMessageItem) renderSpinning() string {
 	var label string
-	switch {
-	case a.message.MessageType == message.MessageTypeCompaction:
+	if a.message.MessageType == message.MessageTypeCompaction {
 		label = "Summarizing"
-	case a.message.ReasoningContent().Thinking != "" && !a.thinkingFinished():
+	} else if a.message.ReasoningContent().Thinking != "" && !a.thinkingFinished() {
 		label = "Thinking"
 	}
 	if label != a.spinnerLabel {
@@ -579,7 +578,7 @@ func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) 
 	}
 	// Only the thinking box is clickable; other regions of the assistant
 	// message should not trigger expansion.
-	return a.thinkingFooterHeight > 0 && y < a.thinkingFooterHeight
+	return y < a.thinkingFooterHeight
 }
 
 // ThinkingDrillIn returns a command that opens the thinking text in a
