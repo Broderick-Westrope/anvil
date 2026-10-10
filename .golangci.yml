@@ -117,9 +117,6 @@ linters:
       - path: internal/agent/tools/download\.go
         text: 'func `(NewDownloadTool)`'
         linters: [gocognit]
-      - path: internal/agent/tools/fetch\.go
-        text: 'func `(NewFetchTool)`'
-        linters: [gocognit]
       - path: internal/agent/tools/grep\.go
         text: 'func `(NewGrepTool)`'
         linters: [gocognit]
