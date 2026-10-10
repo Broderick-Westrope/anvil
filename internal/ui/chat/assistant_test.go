@@ -3,7 +3,6 @@ package chat
 import (
 	"testing"
 
-	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -15,9 +14,8 @@ func TestAssistantMessageItemHandleMouseClick(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	msg := &message.Message{ID: "m2", Role: message.Assistant}
-	item := NewAssistantMessageItem(&sty, msg).(*AssistantMessageItem)
-	item.thinkingFooterHeight = 1
+	item := NewAssistantMessageItem(&sty, thinkingMessage("m2", "reasoning", "answer")).(*AssistantMessageItem)
+	item.Render(80)
 
 	// A click on the thinking footer is handled.
 	require.True(t, item.HandleMouseClick(ansi.MouseLeft, 0, 0))

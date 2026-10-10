@@ -44,7 +44,6 @@ type assistantSection struct {
 	srcHash uint64
 	extra   uint64
 	out     string
-	h       int
 	aux     int
 	valid   bool
 }
@@ -60,7 +59,6 @@ func (s *assistantSection) store(width int, srcHash, extra uint64, out string, a
 	s.srcHash = srcHash
 	s.extra = extra
 	s.out = out
-	s.h = lipgloss.Height(out)
 	s.aux = aux
 	s.valid = true
 }
@@ -313,11 +311,10 @@ func (a *AssistantMessageItem) compositionKey() uint64 {
 // render is recomputed.
 func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	var messageParts []string
-	thinking := strings.TrimSpace(a.message.ReasoningContent().Thinking)
 	content := strings.TrimSpace(a.message.Content().Text)
 
 	var footer string
-	if thinking != "" {
+	if a.hasThinking() {
 		footer = a.cachedThinkingFooter(width)
 	}
 	if footer != "" {
@@ -346,10 +343,13 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 
 // thinkingKey returns the (srcHash, extra) cache key components for the
 // thinking section. The section only shows the "Thought for" footer, so
-// the key covers whether thinking is done and its duration, not the
-// thinking text.
+// the key covers whether there is thinking, whether it's done and its
+// duration, not the thinking text.
 func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
-	var done byte
+	var has, done byte
+	if a.hasThinking() {
+		has = 1
+	}
 	var durationStr string
 	if a.thinkingFinished() {
 		done = 1
@@ -357,7 +357,7 @@ func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
 	if a.message.ReasoningContent().FinishedAt != 0 {
 		durationStr = a.message.ThinkingDuration().String()
 	}
-	return 0, fnvFields([]byte{done}, []byte(durationStr))
+	return 0, fnvFields([]byte{has, done}, []byte(durationStr))
 }
 
 // contentKey returns the (srcHash, extra) cache key components for the
@@ -449,6 +449,11 @@ func (a *AssistantMessageItem) renderThinkingFooter() string {
 		a.sty.Messages.ThinkingFooterDuration.Render(duration.String())
 }
 
+// hasThinking reports whether the message has any thinking text.
+func (a *AssistantMessageItem) hasThinking() bool {
+	return strings.TrimSpace(a.message.ReasoningContent().Thinking) != ""
+}
+
 // thinkingFinished reports whether the thinking is complete: the model
 // marked it done, or the turn ended. The footer, the spinner label and
 // the thinking drill-in all use this one rule.
@@ -479,7 +484,7 @@ func (a *AssistantMessageItem) renderSpinning() string {
 	var label string
 	if a.message.MessageType == message.MessageTypeCompaction {
 		label = "Summarizing"
-	} else if strings.TrimSpace(a.message.ReasoningContent().Thinking) != "" && !a.thinkingFinished() {
+	} else if a.hasThinking() && !a.thinkingFinished() {
 		label = "Thinking"
 	}
 	if label != a.spinnerLabel {
@@ -580,7 +585,7 @@ func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) 
 // ThinkingDrillIn returns a command that opens the thinking text in a
 // drill-in view, or nil when the message has no thinking.
 func (a *AssistantMessageItem) ThinkingDrillIn() tea.Cmd {
-	if strings.TrimSpace(a.message.ReasoningContent().Thinking) == "" {
+	if !a.hasThinking() {
 		return nil
 	}
 	return func() tea.Msg {

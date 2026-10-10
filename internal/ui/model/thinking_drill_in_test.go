@@ -335,7 +335,7 @@ func TestMessageEventsRepinAFollowingDrillIn(t *testing.T) {
 		follow     bool
 		wantBottom bool
 	}{
-		"message event while following":  {msg: childThinkingEvent("step", false), follow: true, wantBottom: true},
+		"message event while following":   {msg: childThinkingEvent("step", false), follow: true, wantBottom: true},
 		"message event while scrolled up": {msg: childThinkingEvent("step", false), follow: false},
 		"other message while following":   {msg: util.InfoMsg{Msg: "hi"}, follow: true},
 	}
@@ -380,6 +380,7 @@ func TestMessageEventsLeaveTheRootChatToItsOwnScrolling(t *testing.T) {
 
 	require.False(t, u.chat.AtBottom())
 }
+
 func TestPermissionNotificationReachesSubagentUnderADrillIn(t *testing.T) {
 	t.Parallel()
 

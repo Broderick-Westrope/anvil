@@ -10,6 +10,15 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 )
 
+var (
+	_ MessageItem           = (*ThinkingDetailItem)(nil)
+	_ KeyEventHandler       = (*ThinkingDetailItem)(nil)
+	_ list.SourceSelectable = (*ThinkingDetailItem)(nil)
+	_ list.Focusable        = (*ThinkingDetailItem)(nil)
+	_ list.Highlightable    = (*ThinkingDetailItem)(nil)
+	_ cacheClearable        = (*ThinkingDetailItem)(nil)
+)
+
 // ThinkingDetailItem shows an assistant message's full thinking text in a
 // drill-in view. It reads from the source item, so thinking that is still
 // streaming keeps updating.
@@ -61,8 +70,10 @@ func (t *ThinkingDetailItem) ID() string {
 }
 
 // Version implements list.Item. It adds the source's version to this
-// item's own, since the thinking text lives on the source. Both counters
-// only grow, so the sum changes whenever either does.
+// item's own, since the thinking text lives on the source and changes
+// without telling this item; that's what lets the drill-in update live.
+// Tool drill-ins don't need this because they show a snapshot. Both
+// counters only grow, so the sum changes whenever either does.
 func (t *ThinkingDetailItem) Version() uint64 {
 	return t.Versioned.Version() + t.source.Version()
 }

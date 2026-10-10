@@ -123,8 +123,10 @@ func TestThinkingDetailItemReusesRenderWhenThinkingIsUnchanged(t *testing.T) {
 	detail := NewThinkingDetailItem(&sty, source).(*ThinkingDetailItem)
 	detail.RawRender(80)
 
-	// Stomp the cached render so a cache hit is observable, then change
-	// only the answer and the selection.
+	// Stomp the cached render so a cache hit is observable, as the
+	// section-cache tests do: the rendered output is the same either way,
+	// so nothing public can tell a hit from a re-render. Then change only
+	// the answer and the selection.
 	detail.rendered = "CACHED"
 	source.SetMessage(thinkingMessage("m1", thinkingDetailText, "first and second"))
 	detail.SetFocused(true)

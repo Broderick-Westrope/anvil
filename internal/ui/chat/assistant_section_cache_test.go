@@ -82,10 +82,9 @@ func snapshot(a *AssistantMessageItem) sectionSnapshot {
 
 // TestAssistantSectionCache_ContentChangeDoesNotInvalidateThinking covers
 // the central F4 invariant: streaming the main content through SetMessage
-// must keep the cached thinking render intact, provided the inputs to
-// the thinking section render (its footer state) are unchanged. We seed an already-non-empty content so that IsThinking()
-// is false on both renders — that's the steady streaming state where
-// the thinking block has finished and content keeps growing.
+// must keep the cached thinking footer intact, provided its inputs are
+// unchanged. The thinking has finished on both renders, which is the
+// steady state while the answer keeps growing.
 func TestAssistantSectionCache_ContentChangeDoesNotInvalidateThinking(t *testing.T) {
 	sty := styles.TokyoNight()
 	thinking := "Step 1\nStep 2\nStep 3"
@@ -180,9 +179,9 @@ func TestAssistantSectionCache_CloneRoundTrip(t *testing.T) {
 	require.Equal(t, first.content, second.content, "clone must hit the content cache")
 }
 
-// TestAssistantSectionCache_ResizeInvalidatesWidthDependentSections asserts that a width
-// change forces a re-render of every width-dependent section. The
-// thinking footer doesn't depend on width.
+// TestAssistantSectionCache_ResizeInvalidatesWidthDependentSections
+// asserts that a width change forces a re-render of every section that
+// depends on width. The thinking footer doesn't.
 func TestAssistantSectionCache_ResizeInvalidatesWidthDependentSections(t *testing.T) {
 	sty := styles.TokyoNight()
 	msg := errorMessage("a5", "boom", strings.Repeat("detail line\n", 5))
