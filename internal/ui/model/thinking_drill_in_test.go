@@ -4,9 +4,12 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -211,4 +214,143 @@ func TestThinkingDrillInOnSubagentKeepsItsSession(t *testing.T) {
 	u.Update(util.ThinkingDrillInMsg{Source: sub, Label: "Thinking"})
 
 	require.Equal(t, "child", u.viewedSessionID())
+}
+
+// fakeAgentItem is a minimal agent item that drills into sessionID.
+type fakeAgentItem struct {
+	*list.Versioned
+	sessionID string
+}
+
+func (*fakeAgentItem) ID() string                { return "agent" }
+func (*fakeAgentItem) Render(int) string         { return "agent" }
+func (*fakeAgentItem) RawRender(int) string      { return "agent" }
+func (*fakeAgentItem) Finished() bool            { return true }
+func (f *fakeAgentItem) AgentDrillIn() string    { return f.sessionID }
+func (*fakeAgentItem) AgentDrillInLabel() string { return "Explorer" }
+
+func TestChatClickOnAgentDrillsIntoItsSession(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		sessionID string
+		wantMsg   tea.Msg
+	}{
+		"agent with a session": {sessionID: "child", wantMsg: util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"}},
+		"agent without one":    {sessionID: ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			u := newTestUI()
+			u.chat.SetMessages(&fakeAgentItem{Versioned: list.NewVersioned(), sessionID: tc.sessionID})
+			u.chat.SetSelected(0)
+
+			handled, cmd := u.chat.HandleDelayedClick(DelayedClickMsg{ClickID: u.chat.pendingClickID})
+
+			require.Equal(t, tc.wantMsg != nil, handled)
+			if tc.wantMsg != nil {
+				require.Equal(t, tc.wantMsg, cmd())
+			}
+		})
+	}
+}
+
+func TestChatClickBelowThinkingFooterDoesNotDrillIn(t *testing.T) {
+	t.Parallel()
+
+	u := newTestUI()
+	u.chat.SetSize(80, 20)
+	u.chat.SetMessages(newThinkingItem(u, "reasoning", true))
+	u.chat.SetSelected(0)
+	u.chat.list.Render()
+
+	handled, cmd := u.chat.HandleDelayedClick(DelayedClickMsg{ClickID: u.chat.pendingClickID, Y: 2})
+
+	require.False(t, handled)
+	require.Nil(t, cmd)
+}
+
+func TestThinkingDrillInMsgIgnoresOtherSources(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+
+	u.Update(util.ThinkingDrillInMsg{Source: "not an item", Label: "Thinking"})
+
+	require.Empty(t, u.drillStack)
+}
+
+func TestViewedSession(t *testing.T) {
+	t.Parallel()
+
+	root := &session.Session{ID: "s1"}
+	child := &session.Session{ID: "child"}
+	tests := map[string]struct {
+		stack []drillInEntry
+		want  *session.Session
+	}{
+		"root":                            {want: root},
+		"subagent still loading":          {stack: []drillInEntry{{sessionID: "child"}}, want: root},
+		"loaded subagent":                 {stack: []drillInEntry{{sessionID: "child", session: child}}, want: child},
+		"thinking over a loaded subagent": {stack: []drillInEntry{{sessionID: "child", session: child}, {}}, want: child},
+		"thinking over the root":          {stack: []drillInEntry{{}}, want: root},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			u := newTestUI()
+			u.session = root
+			u.drillStack = tc.stack
+
+			require.Same(t, tc.want, u.viewedSession())
+		})
+	}
+}
+
+func TestChildEventsReachOnlyTheirSubagentChat(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newJobsTestUI(nil)
+	other, child := NewChat(u.com), NewChat(u.com)
+	u.drillStack = []drillInEntry{{sessionID: "other", chat: other}, {sessionID: "child", chat: child}}
+
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: childThinkingEvent("step", false).Payload})
+
+	require.Nil(t, other.MessageItem("sub-a"))
+	require.NotNil(t, child.MessageItem("sub-a"))
+}
+
+func TestMessageEventsRepinAFollowingChat(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		msg        tea.Msg
+		follow     bool
+		wantBottom bool
+	}{
+		"message event while following":   {msg: childThinkingEvent("step", false), follow: true, wantBottom: true},
+		"message event while scrolled up": {msg: childThinkingEvent("step", false), follow: false},
+		"other message while following":   {msg: util.InfoMsg{Msg: "hi"}, follow: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			u, _ := newJobsTestUI(nil)
+			u.updateLayoutAndSize()
+			long := strings.TrimSpace(strings.Repeat("line\n\n", 200))
+			u.chat.SetMessages(chat.NewAssistantMessageItem(u.com.Styles, &message.Message{
+				ID: "a", Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: long}},
+			}))
+			u.chat.ScrollToTop()
+			u.chat.SetFollow(tc.follow)
+
+			u.Update(tc.msg)
+
+			require.Equal(t, tc.wantBottom, u.chat.AtBottom())
+		})
+	}
 }

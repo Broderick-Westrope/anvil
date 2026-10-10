@@ -142,3 +142,20 @@ func TestAssistantMessageItemSpinnerDropsThinkingLabelWhenThinkingFinishes(t *te
 	require.NotContains(t, out, "Thinking")
 	require.Contains(t, out, "Thought for 5s")
 }
+
+func TestAssistantMessageItemCompactionSpinnerSaysSummarizing(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	msg := &message.Message{
+		ID:          "m1",
+		Role:        message.Assistant,
+		MessageType: message.MessageTypeCompaction,
+		Parts:       []message.ContentPart{message.ReasoningContent{Thinking: "reasoning", StartedAt: testStartedAt}},
+	}
+
+	out := ansi.Strip(NewAssistantMessageItem(&sty, msg).Render(80))
+
+	require.Contains(t, out, "Summarizing")
+	require.NotContains(t, out, "Thinking")
+}
