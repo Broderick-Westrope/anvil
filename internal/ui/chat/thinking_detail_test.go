@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -69,4 +70,40 @@ func TestThinkingDetailItemIdentityAndCopy(t *testing.T) {
 	handled, cmd := detail.(KeyEventHandler).HandleKeyEvent(tea.KeyPressMsg{Code: 'c', Text: "c"})
 	require.True(t, handled)
 	require.NotNil(t, cmd)
+}
+
+func TestAssistantMessageItemDrillsIntoThinking(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	keys := map[string]tea.KeyPressMsg{
+		"right": {Code: tea.KeyRight},
+		"l":     {Code: 'l', Text: "l"},
+	}
+	for name, key := range keys {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			item := NewAssistantMessageItem(&sty, thinkingMessage("m1", "reasoning", "answer")).(*AssistantMessageItem)
+
+			handled, cmd := item.HandleKeyEvent(key)
+
+			require.True(t, handled)
+			require.Equal(t, util.ThinkingDrillInMsg{Source: item, Label: "Thinking"}, cmd())
+		})
+	}
+}
+
+func TestAssistantMessageItemWithoutThinkingDoesNotDrillIn(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	msg := &message.Message{ID: "m1", Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: "answer"}}}
+	item := NewAssistantMessageItem(&sty, msg).(*AssistantMessageItem)
+
+	handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: tea.KeyRight})
+
+	require.False(t, handled)
+	require.Nil(t, cmd)
+	require.Nil(t, item.ThinkingDrillIn())
 }

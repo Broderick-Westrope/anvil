@@ -14,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -569,11 +570,28 @@ func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) 
 	return a.thinkingFooterHeight > 0 && y < a.thinkingFooterHeight
 }
 
+// ThinkingDrillIn returns a command that opens the thinking text in a
+// drill-in view, or nil when the message has no thinking.
+func (a *AssistantMessageItem) ThinkingDrillIn() tea.Cmd {
+	if strings.TrimSpace(a.message.ReasoningContent().Thinking) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return util.ThinkingDrillInMsg{Source: a, Label: "Thinking"}
+	}
+}
+
 // HandleKeyEvent implements KeyEventHandler.
 func (a *AssistantMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	if k := key.String(); k == "c" || k == "y" {
+	switch key.String() {
+	case "c", "y":
 		text := a.message.Content().Text
 		return true, common.CopyToClipboard(text, "Message copied to clipboard")
+	case "right", "l":
+		// Drill into the thinking, matching the tool and agent →/l pattern.
+		if cmd := a.ThinkingDrillIn(); cmd != nil {
+			return true, cmd
+		}
 	}
 	return false, nil
 }

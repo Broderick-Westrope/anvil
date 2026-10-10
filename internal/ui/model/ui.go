@@ -1410,6 +1410,33 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// expands. This also correctly sizes the new chat.
 		m.updateLayoutAndSize()
 
+	case util.ThinkingDrillInMsg:
+		source, ok := msg.Source.(*chat.AssistantMessageItem)
+		if !ok {
+			break
+		}
+		detail := chat.NewThinkingDetailItem(m.com.Styles, source)
+		newChat := NewChat(m.com)
+		// Follow while the thinking still streams; otherwise start at the
+		// top.
+		follow := !detail.Finished()
+		newChat.SetFollow(follow)
+		newChat.Focus()
+		newChat.SetMessages(detail)
+		newChat.SelectLast()
+		m.drillStack = append(m.drillStack, drillInEntry{
+			chat:  newChat,
+			label: msg.Label,
+		})
+		m.textarea.Blur()
+		m.focus = uiFocusMain
+		m.updateLayoutAndSize()
+		// Sizing a new chat pins it to the bottom, so scroll to the top
+		// afterwards.
+		if !follow {
+			newChat.ScrollToTop()
+		}
+
 	case drillInSessionLoadedMsg:
 		// Find the matching entry and populate it.
 		for i := range m.drillStack {

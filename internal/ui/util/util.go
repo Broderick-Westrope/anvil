@@ -83,6 +83,13 @@ type (
 		ToolItem any // chat.ToolMessageItem
 		Label    string
 	}
+
+	// ThinkingDrillInMsg is sent when drilling into an assistant message's
+	// thinking text.
+	ThinkingDrillInMsg struct {
+		Source any // *chat.AssistantMessageItem
+		Label  string
+	}
 )
 
 // IsEmpty checks if the [InfoMsg] is empty.
