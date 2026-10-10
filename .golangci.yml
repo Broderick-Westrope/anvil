@@ -135,9 +135,6 @@ linters:
       - path: internal/agent/tools/todos\.go
         text: 'func `(NewTodosTool)`'
         linters: [gocognit]
-      - path: internal/agent/tools/write\.go
-        text: 'func `(NewWriteTool)`'
-        linters: [gocognit]
       - path: internal/app/app\.go
         text: 'func `(\(\*App\)\.RunNonInteractive)`'
         linters: [gocognit]
