@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -265,5 +266,36 @@ func TestAwaitBehindQueuedUserWorkRunsAfterUserTurnFails(t *testing.T) {
 		require.Equal(t, "C", got)
 	case <-time.After(2 * time.Second):
 		t.Fatal("awaited submission stranded behind queued user work")
+	}
+}
+
+func TestContinuationRegisteredAfterCancelNeverRuns(t *testing.T) {
+	t.Parallel()
+
+	for name, submitAwaited := range map[string]bool{"awaited": true, "plain": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			a := newAdmission(t.Context())
+			var continued atomic.Bool
+			run := func(ctx context.Context) (*fantasy.AgentResult, error) {
+				// Esc lands between the summary and registering the
+				// continuation.
+				a.cancel("s")
+				a.continueWith(ctx, "s", submission{prompt: "continue", run: func(context.Context) (*fantasy.AgentResult, error) {
+					continued.Store(true)
+					return nil, nil
+				}})
+				return nil, nil
+			}
+			if submitAwaited {
+				_, _ = a.submitAwait(t.Context(), "s", submission{run: run})
+			} else {
+				_, _ = a.submit(t.Context(), "s", submission{run: run})
+			}
+			require.Eventually(t, func() bool { return !a.busy("s") }, time.Second, time.Millisecond)
+			time.Sleep(20 * time.Millisecond)
+			require.False(t, continued.Load())
+			require.Empty(t, a.queued("s"))
+		})
 	}
 }

@@ -188,6 +188,11 @@ func (a *admission) withdraw(id string, done chan<- submissionResult) bool {
 func (a *admission) continueWith(ctx context.Context, id string, job submission) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if ctx.Err() != nil {
+		// The work was cancelled (Esc, abort) before it could register its
+		// continuation; cancelling means stop, so it doesn't continue.
+		return
+	}
 	job.continuation = true
 	owner, ok := ctx.Value(ownerKey{}).(*submissionOwner)
 	if ok && owner != nil && owner.sessionID == id {
@@ -417,11 +422,13 @@ func (a *admission) cancel(id string) {
 	owner := a.owners[id]
 	dropped := a.queues[id]
 	delete(a.queues, id)
-	a.mu.Unlock()
-	cancelAwaited(dropped)
+	// Cancelled under the lock, so continueWith sees either the queue
+	// before it was cleared or the cancelled context, never neither.
 	if owner != nil {
 		owner.cancel()
 	}
+	a.mu.Unlock()
+	cancelAwaited(dropped)
 }
 
 // cancelAwaited tells the submitters of dropped awaited jobs that their
@@ -445,11 +452,11 @@ func (a *admission) cancelAll() {
 		dropped = append(dropped, q...)
 	}
 	clear(a.queues)
-	a.mu.Unlock()
-	cancelAwaited(dropped)
 	for _, owner := range owners {
 		owner.cancel()
 	}
+	a.mu.Unlock()
+	cancelAwaited(dropped)
 	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()
 	tick := time.NewTicker(10 * time.Millisecond)
