@@ -3,9 +3,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"charm.land/fantasy"
@@ -367,4 +372,254 @@ func TestBashTool_AllowedCommandStillRequestsPermission(t *testing.T) {
 
 	require.Equal(t, 1, perms.requestCount)
 	require.Contains(t, resp.Content, "Permission denied")
+}
+
+func TestBashTool_MissingCommand(t *testing.T) {
+	t.Parallel()
+	tool, perms := newBashToolWithRecordingPerms(t.TempDir(), true)
+
+	resp := runBashTool(t, tool, sessionCtx(), BashParams{Description: "empty"})
+
+	require.True(t, resp.IsError)
+	require.Equal(t, "missing command", resp.Content)
+	require.Zero(t, perms.requestCount)
+}
+
+func TestBashTool_RequiresSession(t *testing.T) {
+	t.Parallel()
+	tool := newBashToolForTest(t.TempDir())
+
+	_, err := tool.Run(context.Background(), fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  BashToolName,
+		Input: `{"command":"echo hi"}`,
+	})
+
+	require.EqualError(t, err, "session ID is required for executing shell command")
+}
+
+func TestBashTool_SafeReadOnlyCommandsSkipPermission(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		command     string
+		wantRequest bool
+	}{
+		"exact safe command":            {command: "ls"},
+		"safe command with arguments":   {command: "ls ."},
+		"safe command with dash suffix": {command: "ls-unknown-command"},
+		"safe command in upper case":    {command: "LS ."},
+		"safe prefix of another word":   {command: "lsunknowncommand", wantRequest: true},
+		"safe command with chaining":    {command: "ls; ls", wantRequest: true},
+		"unsafe command":                {command: "touch file", wantRequest: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool, perms := newBashToolWithRecordingPerms(t.TempDir(), false)
+
+			runBashTool(t, tool, sessionCtx(), BashParams{Description: "safe", Command: tc.command})
+
+			if tc.wantRequest {
+				require.Equal(t, 1, perms.requestCount)
+			} else {
+				require.Zero(t, perms.requestCount)
+			}
+		})
+	}
+}
+
+func TestBashTool_PermissionRequestFields(t *testing.T) {
+	t.Parallel()
+	toolDir := t.TempDir()
+	tests := map[string]struct {
+		workingDir string
+		wantPath   string
+	}{
+		"tool working directory":      {wantPath: toolDir},
+		"requested working directory": {workingDir: "/requested", wantPath: "/requested"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool, perms := newBashToolWithRecordingPerms(toolDir, false)
+			params := BashParams{Description: "touch", Command: "touch file", WorkingDir: tc.workingDir}
+
+			runBashTool(t, tool, sessionCtx(), params)
+
+			require.Equal(t, permission.CreatePermissionRequest{
+				SessionID:     "test-session",
+				Path:          tc.wantPath,
+				ToolCallID:    "test-call",
+				ToolName:      BashToolName,
+				Action:        "execute",
+				Description:   "Execute command: touch file",
+				Params:        BashPermissionsParams(params),
+				Input:         "touch file",
+				InputSegments: []string{"touch file"},
+			}, perms.lastRequest)
+		})
+	}
+}
+
+func TestBashTool_PermissionDeniedStopsTurn(t *testing.T) {
+	t.Parallel()
+	tool, _ := newBashToolWithRecordingPerms(t.TempDir(), false)
+
+	resp := runBashTool(t, tool, sessionCtx(), BashParams{Description: "touch", Command: "touch file"})
+
+	require.True(t, resp.IsError)
+	require.True(t, resp.StopTurn)
+	require.Equal(t, "Permission denied", resp.Content)
+}
+
+func TestBashTool_PermissionRequestErrorIsReturned(t *testing.T) {
+	t.Parallel()
+	requestErr := errors.New("permission service down")
+	perms := &mockViewPermissionService{
+		Broker: pubsub.NewBroker[permission.PermissionRequest](),
+		requestFunc: func(context.Context, permission.CreatePermissionRequest) (permission.RequestResult, error) {
+			return permission.RequestResult{}, requestErr
+		},
+	}
+	tool := NewBashTool(perms, t.TempDir(), nil)
+
+	_, err := tool.Run(sessionCtx(), fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  BashToolName,
+		Input: `{"command":"touch file"}`,
+	})
+
+	require.ErrorIs(t, err, requestErr)
+}
+
+func TestBashTool_CompletedCommandOutput(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		command     string
+		background  bool
+		wantContent func(cwd string) string
+		wantOutput  string
+	}{
+		"foreground output": {
+			command:     "echo hi",
+			wantContent: func(cwd string) string { return "hi\n\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "hi\n",
+		},
+		"foreground no output": {
+			command:     "true",
+			wantContent: func(string) string { return BashNoOutput },
+		},
+		"foreground non-zero exit": {
+			command:     "echo out; exit 3",
+			wantContent: func(cwd string) string { return "out\n\nexit status 3\nExit code 3\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "out\n\nexit status 3\nExit code 3",
+		},
+		"background fast completion": {
+			command:     "echo hi",
+			background:  true,
+			wantContent: func(cwd string) string { return "hi\n\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "hi\n",
+		},
+		"background fast completion no output": {
+			command:     "true",
+			background:  true,
+			wantContent: func(string) string { return BashNoOutput },
+		},
+		"background fast failure": {
+			command:     "exit 4",
+			background:  true,
+			wantContent: func(cwd string) string { return "\nexit status 4\nExit code 4\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "\nexit status 4\nExit code 4",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			workingDir := t.TempDir()
+			tool := newBashToolForTest(workingDir)
+
+			resp := runBashTool(t, tool, sessionCtx(), BashParams{
+				Description:     name,
+				Command:         tc.command,
+				RunInBackground: tc.background,
+			})
+
+			require.False(t, resp.IsError)
+			require.Equal(t, tc.wantContent(normalizeWorkingDir(workingDir)), resp.Content)
+			var meta BashResponseMetadata
+			require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+			require.Equal(t, tc.wantOutput, meta.Output)
+			require.Equal(t, tc.background, meta.Background)
+			require.Equal(t, workingDir, meta.WorkingDirectory)
+			require.Equal(t, name, meta.Description)
+			require.Empty(t, meta.ShellID)
+		})
+	}
+}
+
+func TestBashTool_LongRunningCommandBecomesJob(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		params      BashParams
+		wantOrigin  shell.JobOrigin
+		wantContent string
+	}{
+		"explicit background": {
+			params:      BashParams{Command: "sleep 30", RunInBackground: true},
+			wantOrigin:  shell.OriginExplicit,
+			wantContent: "Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.",
+		},
+		"auto background": {
+			params:      BashParams{Command: "echo started; sleep 30", AutoBackgroundAfter: 1},
+			wantOrigin:  shell.OriginAuto,
+			wantContent: "Command is still running after 1s and has been moved to the background as job %s.\n\nOutput so far (last 20 lines):\nstarted",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			workingDir := t.TempDir()
+			tool := newBashToolForTest(workingDir)
+			tc.params.Description = name
+
+			resp := runBashTool(t, tool, sessionCtx(), tc.params)
+
+			var meta BashResponseMetadata
+			require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+			bgManager := shell.GetBackgroundShellManager()
+			t.Cleanup(func() { _ = bgManager.Kill(meta.ShellID) })
+			require.False(t, resp.IsError)
+			require.True(t, meta.Background)
+			require.NotEmpty(t, meta.ShellID)
+			require.Empty(t, meta.Output)
+			require.Equal(t, workingDir, meta.WorkingDirectory)
+			require.Equal(t, name, meta.Description)
+			require.True(t, strings.HasPrefix(resp.Content, fmt.Sprintf(tc.wantContent, meta.ShellID)), resp.Content)
+
+			job, ok := bgManager.Get(meta.ShellID)
+			require.True(t, ok)
+			require.Equal(t, tc.wantOrigin, job.Info().Origin)
+			require.Equal(t, "test-session", job.Info().SessionID)
+		})
+	}
+}
+
+func TestBashTool_CancelledWhileWaitingKillsCommand(t *testing.T) {
+	t.Parallel()
+	workingDir := t.TempDir()
+	tool := newBashToolForTest(workingDir)
+	ctx, cancel := context.WithCancel(sessionCtx())
+	time.AfterFunc(300*time.Millisecond, cancel)
+
+	_, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  BashToolName,
+		Input: `{"command":"sleep 1 && touch finished","description":"cancelled"}`,
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Never(t, func() bool {
+		_, statErr := os.Stat(filepath.Join(workingDir, "finished"))
+		return statErr == nil
+	}, 1500*time.Millisecond, 100*time.Millisecond, "cancelled command must be killed")
 }
