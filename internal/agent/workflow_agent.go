@@ -151,6 +151,18 @@ func (c *coordinator) buildWorkflowAgent(ctx context.Context, call WorkflowAgent
 	if err != nil {
 		return nil, nil, err
 	}
+	// Lazy MCP servers don't connect at startup, so a tool the workflow
+	// names from one isn't registered yet: connect its server first.
+	if servers := lazyServersFor(missingTools(call.Tools, available), c.allowedLazyMCPs(agentCfg)); len(servers) > 0 {
+		for _, server := range servers {
+			if err := toolsmcp.ConnectDeferred(ctx, server, c.cfg); err != nil {
+				return nil, nil, fmt.Errorf("connect MCP server %q: %w", server, err)
+			}
+		}
+		if available, lazy, err = c.buildTools(ctx, agentCfg, workflowAgentDepth); err != nil {
+			return nil, nil, err
+		}
+	}
 	agentTools := available
 	if call.Tools != nil {
 		byName := make(map[string]fantasy.AgentTool, len(available))
@@ -280,4 +292,40 @@ func (t *submitResultTool) SetProviderOptions(opts fantasy.ProviderOptions) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.opts = opts
+}
+
+// allowedLazyMCPs lists the lazy MCP servers agentCfg may use, by name.
+func (c *coordinator) allowedLazyMCPs(agentCfg config.Agent) map[string]string {
+	lazy := make(map[string]string)
+	for name, mcpCfg := range c.cfg.Config().MCP {
+		if mcpCfg.IsLazy() {
+			lazy[name] = mcpCfg.LazyDescription
+		}
+	}
+	return filterAllowedLazyMCPs(lazy, agentCfg.AllowedMCP)
+}
+
+func missingTools(names []string, available []fantasy.AgentTool) []string {
+	var missing []string
+	for _, name := range names {
+		if !slices.ContainsFunc(available, func(t fantasy.AgentTool) bool { return t.Info().Name == name }) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// lazyServersFor returns the lazy servers whose tools the names refer to.
+// MCP tool names are mcp_<server>_<tool>, with the server capitalised
+// under OAuth renaming, so the match ignores case.
+func lazyServersFor(names []string, lazy map[string]string) []string {
+	var servers []string
+	for _, name := range names {
+		for server := range lazy {
+			if strings.HasPrefix(strings.ToLower(name), "mcp_"+strings.ToLower(server)+"_") && !slices.Contains(servers, server) {
+				servers = append(servers, server)
+			}
+		}
+	}
+	return servers
 }
