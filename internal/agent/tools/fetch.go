@@ -63,8 +63,8 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 				return fantasy.NewTextErrorResponse("URL parameter is required"), nil
 			}
 
-			format := strings.ToLower(params.Format)
-			if format != "text" && format != "markdown" && format != "html" {
+			convert, ok := fetchFormats[strings.ToLower(params.Format)]
+			if !ok {
 				return fantasy.NewTextErrorResponse("Format must be one of: text, markdown, html"), nil
 			}
 
@@ -77,7 +77,7 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for creating a new file")
 			}
 
-			p, err := permissions.Request(ctx,
+			denied, granted, err := requestPermission(ctx, permissions,
 				permission.CreatePermissionRequest{
 					SessionID:   sessionID,
 					Path:        workingDir,
@@ -89,11 +89,8 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 					Input:       params.URL,
 				},
 			)
-			if err != nil {
-				return fantasy.ToolResponse{}, err
-			}
-			if !p.Granted {
-				return NewPermissionDeniedResponse(p.Reason), nil
+			if !granted {
+				return denied, err
 			}
 
 			// maxFetchTimeoutSeconds is the maximum allowed timeout for fetch requests (2 minutes)
@@ -102,11 +99,9 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 			// Handle timeout with context
 			requestCtx := ctx
 			if params.Timeout > 0 {
-				if params.Timeout > maxFetchTimeoutSeconds {
-					params.Timeout = maxFetchTimeoutSeconds
-				}
+				timeout := min(params.Timeout, maxFetchTimeoutSeconds)
 				var cancel context.CancelFunc
-				requestCtx, cancel = context.WithTimeout(ctx, time.Duration(params.Timeout)*time.Second)
+				requestCtx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 				defer cancel()
 			}
 
@@ -140,43 +135,9 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 			}
 			contentType := resp.Header.Get("Content-Type")
 
-			switch format {
-			case "text":
-				if strings.Contains(contentType, "text/html") {
-					text, err := extractTextFromHTML(content)
-					if err != nil {
-						return fantasy.NewTextErrorResponse("Failed to extract text from HTML: " + err.Error()), nil
-					}
-					content = text
-				}
-
-			case "markdown":
-				if strings.Contains(contentType, "text/html") {
-					markdown, err := convertHTMLToMarkdown(content)
-					if err != nil {
-						return fantasy.NewTextErrorResponse("Failed to convert HTML to Markdown: " + err.Error()), nil
-					}
-					content = markdown
-				}
-
-				content = "```\n" + content + "\n```"
-
-			case "html":
-				// return only the body of the HTML document
-				if strings.Contains(contentType, "text/html") {
-					doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
-					if err != nil {
-						return fantasy.NewTextErrorResponse("Failed to parse HTML: " + err.Error()), nil
-					}
-					body, err := doc.Find("body").Html()
-					if err != nil {
-						return fantasy.NewTextErrorResponse("Failed to extract body from HTML: " + err.Error()), nil
-					}
-					if body == "" {
-						return fantasy.NewTextErrorResponse("No body content found in HTML"), nil
-					}
-					content = "<html>\n<body>\n" + body + "\n</body>\n</html>"
-				}
+			content, err = convert(content, strings.Contains(contentType, "text/html"))
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 			// truncate content if it exceeds max read size
 			if int64(len(content)) >= MaxFetchSize {
@@ -186,6 +147,60 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 
 			return fantasy.NewTextResponse(content), nil
 		})
+}
+
+// fetchFormats converts a fetched body into each format the tool returns.
+// isHTML reports whether the server sent HTML.
+var fetchFormats = map[string]func(content string, isHTML bool) (string, error){
+	"text":     fetchAsText,
+	"markdown": fetchAsMarkdown,
+	"html":     fetchAsHTML,
+}
+
+// fetchFailure is a conversion failure the model sees as is.
+type fetchFailure string
+
+func (f fetchFailure) Error() string { return string(f) }
+
+func fetchAsText(content string, isHTML bool) (string, error) {
+	if !isHTML {
+		return content, nil
+	}
+	text, err := extractTextFromHTML(content)
+	if err != nil {
+		return "", fetchFailure("Failed to extract text from HTML: " + err.Error())
+	}
+	return text, nil
+}
+
+func fetchAsMarkdown(content string, isHTML bool) (string, error) {
+	if isHTML {
+		markdown, err := convertHTMLToMarkdown(content)
+		if err != nil {
+			return "", fetchFailure("Failed to convert HTML to Markdown: " + err.Error())
+		}
+		content = markdown
+	}
+	return "```\n" + content + "\n```", nil
+}
+
+// fetchAsHTML returns only the body of an HTML document.
+func fetchAsHTML(content string, isHTML bool) (string, error) {
+	if !isHTML {
+		return content, nil
+	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
+	if err != nil {
+		return "", fetchFailure("Failed to parse HTML: " + err.Error())
+	}
+	body, err := doc.Find("body").Html()
+	if err != nil {
+		return "", fetchFailure("Failed to extract body from HTML: " + err.Error())
+	}
+	if body == "" {
+		return "", fetchFailure("No body content found in HTML")
+	}
+	return "<html>\n<body>\n" + body + "\n</body>\n</html>", nil
 }
 
 func extractTextFromHTML(html string) (string, error) {
