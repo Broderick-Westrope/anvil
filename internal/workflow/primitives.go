@@ -94,18 +94,28 @@ func primTurn(r *Run, _ int, args json.RawMessage) (any, error) {
 
 	call := TurnCall{SessionID: in.Session, Prompt: in.Prompt, Skills: in.Skills}
 	r.mu.Lock()
-	if s, ok := r.seeds[in.Session]; ok {
-		delete(r.seeds, in.Session)
+	s, seeded := r.seeds[in.Session]
+	r.mu.Unlock()
+	if seeded {
 		call.Prompt = s.prompt + "\n\n" + call.Prompt
 		call.Skills = append(slices.Clone(s.skills), call.Skills...)
 	}
-	r.mu.Unlock()
 	if schema != nil {
 		call.Prompt += schemaInstructions(schema)
 	}
 	reply, err := r.backend.Turn(r.ctx, call)
-	if err != nil || schema == nil {
-		return reply, err
+	if err != nil {
+		return nil, err
+	}
+	// The seed stays until a turn delivers it, so a failed first turn
+	// doesn't lose it.
+	if seeded {
+		r.mu.Lock()
+		delete(r.seeds, in.Session)
+		r.mu.Unlock()
+	}
+	if schema == nil {
+		return reply, nil
 	}
 	out, verr := validated(schema, reply)
 	if verr == nil {

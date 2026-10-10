@@ -200,6 +200,27 @@ function main() {
 	require.Empty(t, h.backend.turns[1].Skills)
 }
 
+func TestNewSessionKeepsItsSeedUntilATurnSucceeds(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	var calls atomic.Int32
+	h.backend.turnFn = func(context.Context, workflow.TurnCall) (string, error) {
+		if calls.Add(1) == 1 {
+			return "", errBoom
+		}
+		return "ok", nil
+	}
+	_, err := h.run(t, `function main() {
+  const s = session.new({seed: "SEED"})
+  try { s.turn("first") } catch (e) {}
+  s.turn("retry")
+}`, "")
+	require.NoError(t, err)
+	require.Len(t, h.backend.turns, 2)
+	require.Equal(t, "SEED\n\nretry", h.backend.turns[1].Prompt)
+}
+
 func TestAgentReturnsTextOrSchemaObject(t *testing.T) {
 	t.Parallel()
 
