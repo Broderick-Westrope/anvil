@@ -111,9 +111,8 @@ type AssistantMessageItem struct {
 	// line, which is the click target for drilling into the thinking.
 	thinkingFooterHeight int
 
-	// Per-section render caches. Splitting these out means content
-	// streaming does not invalidate the (often expensive) thinking
-	// render, and vice versa.
+	// Per-section render caches. Splitting these out means streaming one
+	// section, usually the content, does not invalidate the others.
 	thinkingSec assistantSection
 	contentSec  assistantSection
 	errorSec    assistantSection
@@ -349,16 +348,18 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 // duration, not the thinking text.
 func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
 	var has, done byte
+	var durationStr string
 	if a.hasThinking() {
 		has = 1
 	}
-	var durationStr string
 	if a.thinkingFinished() {
 		done = 1
 	}
 	if a.message.ReasoningContent().FinishedAt != 0 {
 		durationStr = a.message.ThinkingDuration().String()
 	}
+	// The source hash is always 0: the footer doesn't show the thinking
+	// text, so only these inputs change it.
 	return 0, fnvFields([]byte{has, done}, []byte(durationStr))
 }
 

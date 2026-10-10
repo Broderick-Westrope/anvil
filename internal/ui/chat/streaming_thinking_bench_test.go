@@ -12,7 +12,7 @@ import (
 // buildThinkingBlock generates a realistic long thinking block with
 // paragraphs, lists, and code fences — the kind of content that
 // triggers the every-frame full re-render the prefix cache fixes
-// (upstream 884391f9).
+// (upstream 884391f9). The thinking drill-in renders thinking this way.
 func buildThinkingBlock(paragraphs int) string {
 	var b strings.Builder
 	for i := range paragraphs {

@@ -332,7 +332,7 @@ func quickStyle(o quickStyleOpts) Styles {
 		},
 	}
 
-	// QuietMarkdown style - dimmed colors for thinking content.
+	// QuietMarkdown style - dimmed colors for markdown tool output.
 	plainFg := hex(o.fgMostSubtle)
 	s.QuietMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
