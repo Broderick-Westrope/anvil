@@ -10,8 +10,8 @@ can't be enforced that way:
   how they were resolved. Today the orchestrator writes the DA prompt and can
   leak anything. After a rebuild, the same context that built the wrong
   approach builds the next one, still anchored to it.
-- **Mandatory transitions.** After a review, every finding must be audited
-  before it is acted on. Today the orchestrator reads raw findings and may
+- **Mandatory transitions.** After the code review, every finding must be
+  audited before it is acted on. Today the orchestrator reads raw findings and may
   drop, merge or agree with them silently. `/review` spends a third of its
   prose forcing the model to dispatch three reviewers in one parallel batch.
 - **Counters and caps.** Three DA rounds per approach, two rebuilds, then stop
@@ -65,6 +65,14 @@ Out of scope (later sub-projects):
   remove worktree and branch, clean up tmpdirs and stray files).
 - `parallel()` over anything other than `agent` descriptors.
 - Workflows invoking other workflows.
+- Per-session working directories. Every session and agent in a run uses
+  the Anvil process's working directory, so creating or switching worktrees
+  from a workflow (and the `/merge` workflow) waits for a sub-project that
+  binds workspaces to sessions. v1 `/build` must be invoked from inside its
+  worktree.
+- Binding a non-orchestrator agent to a long-lived session.
+  `session.new()` creates an orchestrator session. Specialists run through
+  `agent()`.
 - Running workflows under `anvil run` (non-interactive).
 - A skip-step control.
 - Showing the `COMMAND.md` body as a UI preview.
@@ -103,6 +111,8 @@ Out of scope (later sub-projects):
       changing the session's tool list.
 - [ ] `parallel()` runs agent descriptors concurrently and returns settled
       results in order.
+- [ ] `s.turn()` returns the result of its own run, never another queued
+      run's, even when you queue messages in the same session meanwhile.
 - [ ] Cancelling a turn with Esc makes `s.turn()` throw `Cancelled`. Pause
       takes effect at the next primitive boundary. Abort cancels in-flight
       work and ends the run as `aborted`.
@@ -111,14 +121,20 @@ Out of scope (later sub-projects):
 - [ ] Every primitive call and its result is in `workflow_events`, and the
       run row records the script hash and tmpdir path.
 - [ ] Tmpdirs of runs older than 14 days are pruned at startup.
+- [ ] Discovering a workflow, and `anvil workflow check`, never execute any
+      of its code. `requires()` is read from the parsed AST.
 - [ ] `anvil workflow check <path>` validates the script without running
-      `main`.
+      it.
 - [ ] The ported `/build` stops after three DA reviews of one approach and
-      after two rebuilds, and calls `ask` with the latest findings. Each DA
-      call receives only the design doc, the build note and the base branch.
-      A rebuild runs in a fresh session. The final review runs three
-      reviewers in parallel and audits their findings before the builder
-      sees them.
+      after two rebuilds, and calls `ask` with the latest findings and what
+      each approach taught. The DA's prompt contains only the design doc,
+      the build note and the base branch, and it shares no conversation
+      with the builder or earlier DA rounds. The DA still gets the normal
+      specialist system prompt, including recent commits, so this is
+      prompt-level isolation, not information isolation. A rebuild resets
+      the branch to the base and runs in a fresh session. The final review
+      runs three reviewers in parallel and audits their findings before the
+      builder sees them.
 
 **Design Decisions:**
 
@@ -155,8 +171,20 @@ Out of scope (later sub-projects):
   Declined: a separate `workflows/` directory (duplicate machinery, and
   name collisions with commands).
 - **File structure:** a top-level `requires({skills, agents, references})`
-  call plus `function main(args)`. At load time Anvil evaluates the top
-  level only. Calling any primitive other than `requires()` there throws.
+  call plus `function main(input)`. **No workflow code runs before
+  approval.** At discovery and in `anvil workflow check`, Anvil only
+  *parses* the file (goja's parser) and reads `requires()` from the AST. It
+  must be a top-level call whose argument is an object literal of string
+  arrays. Anything else is a load warning ("requires() must be a literal").
+  A cloned repo's workflow therefore can't hang or exhaust Anvil just by
+  being discovered. Top-level code runs only at invocation, after approval,
+  and calling a primitive at top level throws.
+- **`main(input)`** receives `{raw}`: the raw argument string after the
+  command name. Parsing is the script's job, since workflow commands have no
+  body to declare `$NAMED` arguments in. For example, `/build` treats a
+  non-empty `raw` as a design doc path or request, finds the newest
+  `plans/design-*.md` and confirms it with `ask` when `raw` is empty, and
+  works out the base branch with `bash`.
 
 *Requirements*
 - **Upfront validation** runs at command load (shown as `PluginWarning`, and
@@ -170,19 +198,35 @@ Out of scope (later sub-projects):
   skills, so there's no private skill directory per workflow.
 
 *Primitives (v1)*
-- `requires({skills, agents, references})`, `main(args)`.
-- `session.current()` and `session.new(agent, {seed, skills})` return
+- `requires({skills, agents, references})`, `main(input)`.
+- `session.current()` and `session.new({seed, skills})` return
   **handles**. All session operations go through a handle (`s.turn(...)`).
   There's no implicit default session, because a global default would
-  confuse authors. Sessions a workflow creates are children of the invoking
-  session, like subagent sessions.
+  confuse authors.
+- **Workflow sessions are a new session kind, not subagent sessions.**
+  Today's child (task) sessions are hidden from the session list
+  (`internal/db/sql/sessions.sql`) and open with the editor disabled
+  (`internal/ui/model/ui.go`). A session from `session.new()` is a normal,
+  interactive orchestrator session. It records its invoking session and
+  workflow run, is listed under the invoking session in the session list,
+  and stays usable after the run ends or is interrupted. Your messages there
+  run with the orchestrator, like any session.
 - `s.turn(prompt, {schema?, skills?})` runs a turn in that session and
-  returns once the run has finished. If the session is busy, it queues
-  behind the run already there (the existing admission queue). Messages you
-  send during it are folded into the turn (`injectedMessages`). If you
-  cancel the turn, it throws `Cancelled`. Cancelling means "stop", so a
-  script that forgets to check a flag must not carry on, and a script that
-  wants to recover catches the error.
+  returns **that turn's own result** once its run finishes. Today's
+  admission queue can't do this: a submission to a busy session returns
+  `(nil, nil)` straight away, the first caller can get a later queued run's
+  result, and cancelling clears queued work without telling its submitters
+  (`internal/agent/admission.go`). Admission gains per-submission IDs, with
+  completion, result and cancellation delivered to each submitter. If the
+  session is busy, the turn queues and waits for its own run.
+- **Messages you send while a workflow turn runs** are queued and run as
+  their own turn afterwards (current behaviour; queued prompts aren't
+  injected into the running turn). They're extra context for the session
+  and don't change the script's control flow. If you queue a message ahead
+  of the script's next turn, the script's turn waits behind it.
+- If you cancel a script turn, `s.turn()` throws `Cancelled`. Cancelling
+  means "stop", so a script that forgets to check a flag must not carry on,
+  and a script that wants to recover catches the error.
 - `workflow.focus(s)` moves the UI to a session. Focus starts where you
   invoked the workflow. Nothing else moves focus. If the editor has unsent
   text, it shows "workflow moved to `<session>`, press X to follow" rather
@@ -198,6 +242,11 @@ Out of scope (later sub-projects):
 - `skill(name)` returns `{body, location}`, for scripts that need the text
   itself.
 - `reference(path)` reads a file relative to the workflow directory.
+- `readFile(path)` reads any file as a string and throws if the read fails,
+  so scripts don't have to shell out to `cat` with unquoted paths.
+  `bash(...)` stays for commands. Its `cmd` is passed to the shell as
+  written, so scripts must quote interpolated paths (tmpdirs can contain
+  spaces).
 - `ask(question, {options?})` is a human gate shown in the existing dialog
   machinery.
 - `status(step, detail)` updates the progress panel. It's a label only; the
@@ -266,11 +315,21 @@ Out of scope (later sub-projects):
   result or error, timestamps). Every primitive call is logged from v1, for
   the UI history, for debugging ("what exactly did the DA see?") and as the
   basis for replay.
-- **Replay resume (fast-follow).** Re-run `main` and return logged results
-  in order until the log runs out, then continue live. Resume refuses to run
-  if the script hash has changed. `bash` and `turn` are never re-executed
-  during replay. A run interrupted by Anvil exiting is marked `interrupted`.
-  In v1 you finish it by hand from its sessions.
+- **v1 event format, shaped for replay.** Each primitive call writes a
+  `started` event (sequence number, primitive, canonical argument hash)
+  before its side effect, and a `completed` or `failed` event with the
+  result afterwards. `parallel` writes one parent event plus one child per
+  descriptor (sequence number and index), so partial completion is visible.
+  Session handles are stored as session IDs and rebuilt from them.
+- **Replay resume (fast-follow).** Re-run `main`. For each call, check that
+  the primitive and argument hash match the logged event (a mismatch means
+  the run diverged, so refuse), and return the logged result. Continue live
+  once the log runs out. Resume refuses to run if the script hash has
+  changed. A call with `started` but no `completed` (Anvil died during the
+  side effect) is never silently re-run or skipped: resume stops and `ask`s
+  you to re-run it, treat it as done (supplying nothing; the script gets
+  `Interrupted`), or abandon the run. A run interrupted by Anvil exiting is
+  marked `interrupted`. In v1 you finish it by hand from its sessions.
 - **The tmpdir** is `<data dir>/workflows/<run-id>/tmp`. It is kept after a
   run ends in any state, so `/build`'s build note can become the PR body.
   Startup prunes run directories older than 14 days. A future `/merge`
@@ -298,34 +357,57 @@ Out of scope (later sub-projects):
 ```js
 requires({
   skills: ["go-style", "build-tdd"],
-  agents: ["coder", "devils-advocate", "reviewer", "convention-reviewer", "verifier"],
+  agents: ["devils-advocate", "reviewer", "convention-reviewer", "verifier"],
   references: ["references/da.md", "references/review.md", "references/audit.md"],
 })
 
-function main(args) {
-  const tmp = workflow.tmpdir()
-  const notePath = tmp + "/build-note.md"
+function main(input) {
+  const { doc, base } = resolveInputs(input.raw)  // bash + ask, see main(input)
+  const notePath = workflow.tmpdir() + "/build-note.md"
+  const lessons = []
   let builder = session.current()
-  for (let rebuild = 0; rebuild < 3; rebuild++) {
-    status("build", "approach " + (rebuild + 1))
-    builder.turn(buildPrompt(args, notePath), { skills: ["go-style", "build-tdd"] })
+
+  for (let approach = 1; approach <= 3; approach++) {  // first build + two rebuilds
+    status("build", "approach " + approach + "/3")
+    builder.turn(buildPrompt(doc, notePath), { skills: ["go-style", "build-tdd"] })
+
     let verdict
-    for (let round = 1; round <= 3; round++) {
-      status("devils-advocate", "round " + round + "/3")
-      verdict = agent("devils-advocate",
-        daPrompt(args.doc, bash("cat " + notePath).stdout, args.base),
+    for (let round = 1; ; round++) {
+      status("devils-advocate", "approach " + approach + ", round " + round + "/3")
+      verdict = agent("devils-advocate", daPrompt(doc, readFile(notePath), base),
         { schema: DAVerdict })
       if (verdict.kind !== "changes") break
+      if (round === 3)
+        return ask("DA still objecting after 3 rounds:\n" + fmt(verdict.findings))
       builder.turn(refinePrompt(verdict.findings, notePath))
     }
-    if (verdict.kind === "clean") return review(builder, args)
-    if (verdict.kind === "changes")
-      return ask("DA still objecting after 3 rounds:\n" + fmt(verdict.findings))
-    builder.turn("Record what this approach taught you in " + args.doc + ".")
-    builder = session.new("coder", { seed: seedFrom(args.doc), skills: ["go-style"] })
+    if (verdict.kind === "clean") return review(builder, base, notePath)
+
+    // verdict.kind === "wrong-approach"
+    lessons.push(builder.turn(lessonPrompt(verdict, doc), { schema: Lesson }))
+    if (approach === 3) break
+    bash("git reset --hard " + q(base))  // discard the rejected implementation
+    builder = session.new({ seed: seedFrom(doc, lessons), skills: ["go-style", "build-tdd"] })
     workflow.focus(builder)
   }
-  return ask("Two rebuilds without a clean DA review. The design doc likely needs revisiting.")
+  return ask("Two rebuilds without a clean DA review. What each approach taught:\n"
+    + fmt(lessons))
+}
+
+function review(builder, base, notePath) {
+  for (let pass = 1; pass <= 3; pass++) {  // pass cap is illustrative
+    status("review", "pass " + pass)
+    const prompt = reviewPrompt(base)
+    const results = parallel(REVIEWERS.map(r =>
+      ({ agent: r.agent, model: r.model, prompt, schema: Findings })))
+    const raw = results.filter(r => r.ok).flatMap(r => r.value.findings)
+    const audited = agent("verifier", auditPrompt(raw), { schema: Findings, tools: READ_ONLY })
+    const blocking = audited.findings.filter(f => f.severity !== "minor")
+    if (blocking.length === 0)
+      return ask("Ready for your review. Draft PR body:\n" + readFile(notePath))
+    builder.turn(fixPrompt(blocking))  // the builder only ever sees audited findings
+  }
+  return ask("Review still requesting changes after 3 passes.")
 }
 ```
 
@@ -334,8 +416,15 @@ function main(args) {
   `skills:` preload.
 - `internal/agent/coordinator.go`: `Run`, `RunWake`, `runSubAgent`,
   `subAgentParams`, `buildAgent`.
-- `internal/agent/agent.go`: per-session admission queue and queued prompts.
-- `internal/agent/injected_messages.go`: folding queued messages into a run.
+- `internal/agent/admission.go` and `internal/agent/agent.go`: per-session
+  admission queue, which needs per-submission results for `s.turn()`.
+- `internal/agent/injected_messages_test.go`: confirms queued prompts run as
+  their own turn rather than being injected.
+- `internal/session/session.go` and `internal/db/sql/sessions.sql`: child
+  session creation and why child sessions are hidden from the list.
+- `internal/agent/templates/specialist.md.tpl` and
+  `internal/agent/prompt/prompt.go`: what a fresh specialist still sees
+  (environment, recent commits).
 - `internal/agent/cacheusage/fingerprint.go` and
   `.agents/skills/anvil-cache-triage/references/classify.sql`: why tool-list
   changes are avoided.
