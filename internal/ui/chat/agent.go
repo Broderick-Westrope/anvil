@@ -71,8 +71,8 @@ type drillableAgentState struct {
 	clearFunc func() // set to baseToolMessageItem.clearCache during construction.
 }
 
-// DrillIn returns the child session ID to drill into.
-func (s *drillableAgentState) DrillIn() string {
+// AgentDrillIn returns the child session ID to drill into.
+func (s *drillableAgentState) AgentDrillIn() string {
 	return s.childSessionID
 }
 
@@ -191,7 +191,7 @@ type AgentToolMessageItem struct {
 var (
 	_ ToolMessageItem     = (*AgentToolMessageItem)(nil)
 	_ NestedToolContainer = (*AgentToolMessageItem)(nil)
-	_ DrillInHandler      = (*AgentToolMessageItem)(nil)
+	_ AgentDrillInHandler = (*AgentToolMessageItem)(nil)
 	_ KeyEventHandler     = (*AgentToolMessageItem)(nil)
 )
 
@@ -290,8 +290,8 @@ func (a *AgentToolMessageItem) AddNestedTool(tool ToolMessageItem) {
 	a.Bump()
 }
 
-// DrillInLabel returns the breadcrumb label for this item.
-func (a *AgentToolMessageItem) DrillInLabel() string {
+// AgentDrillInLabel returns the breadcrumb label for this item.
+func (a *AgentToolMessageItem) AgentDrillInLabel() string {
 	var params agent.TaskParams
 	_ = json.Unmarshal([]byte(a.toolCall.Input), &params)
 	return agentBreadcrumbLabel(params.SubagentType, params.Description)
@@ -310,9 +310,9 @@ func (a *AgentToolMessageItem) ToolDrillInLabel() string { return "" }
 func (a *AgentToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	if k := key.String(); (k == "right" || k == "l") && a.childSessionID != "" {
 		return true, func() tea.Msg {
-			return util.DrillInMsg{
+			return util.AgentDrillInMsg{
 				SessionID: a.childSessionID,
-				Label:     a.DrillInLabel(),
+				Label:     a.AgentDrillInLabel(),
 			}
 		}
 	}
@@ -505,7 +505,7 @@ type AgenticFetchToolMessageItem struct {
 var (
 	_ ToolMessageItem     = (*AgenticFetchToolMessageItem)(nil)
 	_ NestedToolContainer = (*AgenticFetchToolMessageItem)(nil)
-	_ DrillInHandler      = (*AgenticFetchToolMessageItem)(nil)
+	_ AgentDrillInHandler = (*AgenticFetchToolMessageItem)(nil)
 	_ KeyEventHandler     = (*AgenticFetchToolMessageItem)(nil)
 )
 
@@ -589,8 +589,8 @@ func (a *AgenticFetchToolMessageItem) AddNestedTool(tool ToolMessageItem) {
 	a.Bump()
 }
 
-// DrillInLabel returns the breadcrumb label for this item.
-func (a *AgenticFetchToolMessageItem) DrillInLabel() string {
+// AgentDrillInLabel returns the breadcrumb label for this item.
+func (a *AgenticFetchToolMessageItem) AgentDrillInLabel() string {
 	var params agenticFetchParams
 	_ = json.Unmarshal([]byte(a.toolCall.Input), &params)
 	prompt := ansi.Truncate(params.Prompt, 40, "…")
@@ -611,9 +611,9 @@ func (a *AgenticFetchToolMessageItem) ToolDrillInLabel() string { return "" }
 func (a *AgenticFetchToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	if k := key.String(); (k == "right" || k == "l") && a.childSessionID != "" {
 		return true, func() tea.Msg {
-			return util.DrillInMsg{
+			return util.AgentDrillInMsg{
 				SessionID: a.childSessionID,
-				Label:     a.DrillInLabel(),
+				Label:     a.AgentDrillInLabel(),
 			}
 		}
 	}

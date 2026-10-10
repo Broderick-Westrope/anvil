@@ -91,7 +91,7 @@ func TestSubagentThinkingDrillInKeepsStreaming(t *testing.T) {
 
 	u, _ := newJobsTestUI(nil)
 	u.updateLayoutAndSize()
-	u.Update(util.DrillInMsg{SessionID: "child", Label: "Explorer"})
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
 	first := childThinkingEvent("first step", false).Payload
 	sub := chat.NewAssistantMessageItem(u.com.Styles, &first)
 	u.drillStack[0].chat.SetMessages(sub)
@@ -109,7 +109,7 @@ func TestThinkingDrillInFollowsAfterContentStarts(t *testing.T) {
 
 	u, _ := newJobsTestUI(nil)
 	u.updateLayoutAndSize()
-	u.Update(util.DrillInMsg{SessionID: "child", Label: "Explorer"})
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
 	first := childThinkingEvent("step", false).Payload
 	sub := chat.NewAssistantMessageItem(u.com.Styles, &first)
 	u.drillStack[0].chat.SetMessages(sub)
@@ -128,7 +128,7 @@ func TestThinkingDrillInSurvivesSubagentLoad(t *testing.T) {
 
 	u, _ := newJobsTestUI(nil)
 	u.updateLayoutAndSize()
-	u.Update(util.DrillInMsg{SessionID: "child", Label: "Explorer"})
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
 	// A live event arrives before the subagent session finishes loading,
 	// and the user drills into its thinking.
 	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: childThinkingEvent("first step", false).Payload})
@@ -136,7 +136,7 @@ func TestThinkingDrillInSurvivesSubagentLoad(t *testing.T) {
 	require.True(t, ok)
 	u.Update(util.ThinkingDrillInMsg{Source: live, Label: "Thinking"})
 
-	u.Update(drillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{childThinkingEvent("first step", false).Payload}})
+	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{childThinkingEvent("first step", false).Payload}})
 	u.Update(childThinkingEvent("first step\n\nsecond step", false))
 
 	require.Contains(t, ansi.Strip(u.drillStack[1].chat.ItemAt(0).Render(80)), "second step",
@@ -148,14 +148,14 @@ func TestSubagentLoadKeepsLiveMessagesMissingFromItsSnapshot(t *testing.T) {
 
 	u, _ := newJobsTestUI(nil)
 	u.updateLayoutAndSize()
-	u.Update(util.DrillInMsg{SessionID: "child", Label: "Explorer"})
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
 	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: childThinkingEvent("first step", false).Payload})
 	live, ok := u.drillStack[0].chat.MessageItem("sub-a").(*chat.AssistantMessageItem)
 	require.True(t, ok)
 	u.Update(util.ThinkingDrillInMsg{Source: live, Label: "Thinking"})
 
 	// The snapshot was read before sub-a was created.
-	u.Update(drillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{{
+	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{{
 		ID: "older", Role: message.User, SessionID: "child",
 		Parts: []message.ContentPart{message.TextContent{Text: "task"}},
 	}}})

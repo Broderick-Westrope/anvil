@@ -72,8 +72,8 @@ type (
 	}
 	ClearStatusMsg struct{}
 
-	// DrillInMsg requests the UI to drill into a subagent session.
-	DrillInMsg struct {
+	// AgentDrillInMsg requests the UI to drill into a subagent session.
+	AgentDrillInMsg struct {
 		SessionID string
 		Label     string
 	}

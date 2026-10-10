@@ -834,14 +834,14 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 	// Execute the click action (e.g., expansion or drill-in).
 	selectedItem := m.list.SelectedItem()
 
-	// Check for drill-in before Expandable — DrillInHandler takes priority.
-	if driller, ok := selectedItem.(chat.DrillInHandler); ok {
-		sessionID := driller.DrillIn()
+	// Check for agent drill-in before Expandable — it takes priority.
+	if driller, ok := selectedItem.(chat.AgentDrillInHandler); ok {
+		sessionID := driller.AgentDrillIn()
 		if sessionID != "" {
 			cmd := func() tea.Msg {
-				return util.DrillInMsg{
+				return util.AgentDrillInMsg{
 					SessionID: sessionID,
-					Label:     driller.DrillInLabel(),
+					Label:     driller.AgentDrillInLabel(),
 				}
 			}
 			return true, cmd

@@ -155,9 +155,9 @@ type (
 	// copyChatHighlightMsg is sent to copy the current chat highlight to clipboard.
 	copyChatHighlightMsg struct{}
 
-	// drillInSessionLoadedMsg is sent when a drilled-in session's messages and
-	// metadata have been loaded asynchronously.
-	drillInSessionLoadedMsg struct {
+	// agentDrillInSessionLoadedMsg is sent when a drilled-in subagent
+	// session's messages and metadata have been loaded asynchronously.
+	agentDrillInSessionLoadedMsg struct {
 		sessionID string
 		messages  []message.Message
 		session   *session.Session
@@ -1364,7 +1364,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"response", string(msg.Payload),
 				"options", msg.Options)
 		}
-	case util.DrillInMsg:
+	case util.AgentDrillInMsg:
 		if msg.SessionID == "" {
 			break
 		}
@@ -1382,7 +1382,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Recalculate layout so editor height becomes 0 and main area
 		// expands. This also correctly sizes the new chat.
 		m.updateLayoutAndSize()
-		cmds = append(cmds, m.loadDrillInSession(msg.SessionID))
+		cmds = append(cmds, m.loadAgentDrillInSession(msg.SessionID))
 		// Start the elapsed tick if the viewed subagent is running.
 		if !m.elapsedTickRunning && m.isViewedSubagentRunning() {
 			m.elapsedTickRunning = true
@@ -1442,7 +1442,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newChat.ScrollToTop()
 		}
 
-	case drillInSessionLoadedMsg:
+	case agentDrillInSessionLoadedMsg:
 		// Find the matching entry and populate it.
 		for i := range m.drillStack {
 			if m.drillStack[i].sessionID != msg.sessionID {
@@ -2176,10 +2176,10 @@ func (m *UI) repointThinkingDrillIns(i int) {
 	}
 }
 
-// loadDrillInSession asynchronously loads the messages and session metadata
-// for a drilled-in child session. It never does IO in Update — all work
+// loadAgentDrillInSession asynchronously loads the messages and session
+// metadata for a drilled-in child session. It never does IO in Update — all work
 // happens inside the returned tea.Cmd.
-func (m *UI) loadDrillInSession(sessionID string) tea.Cmd {
+func (m *UI) loadAgentDrillInSession(sessionID string) tea.Cmd {
 	// Capture workspace reference locally to avoid holding a pointer to
 	// the full UI model inside the command closure.
 	ws := m.com.Workspace
@@ -2191,12 +2191,12 @@ func (m *UI) loadDrillInSession(sessionID string) tea.Cmd {
 		sess, err := ws.GetSession(context.Background(), sessionID)
 		if err != nil {
 			// Non-fatal — session metadata (tokens/cost) won't be available.
-			return drillInSessionLoadedMsg{
+			return agentDrillInSessionLoadedMsg{
 				sessionID: sessionID,
 				messages:  msgs,
 			}
 		}
-		return drillInSessionLoadedMsg{
+		return agentDrillInSessionLoadedMsg{
 			sessionID: sessionID,
 			messages:  msgs,
 			session:   &sess,
