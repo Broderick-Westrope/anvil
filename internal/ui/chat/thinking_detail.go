@@ -19,6 +19,10 @@ type ThinkingDetailItem struct {
 
 	sty    *styles.Styles
 	source *AssistantMessageItem
+	// seenSource and seenSourceVersion record the source state the
+	// current version reflects; see Version.
+	seenSource        *AssistantMessageItem
+	seenSourceVersion uint64
 
 	streaming streamingMarkdown
 	// rendered caches the markdown render keyed on the thinking text and
@@ -57,14 +61,18 @@ func (t *ThinkingDetailItem) SetSource(source *AssistantMessageItem) {
 	t.source = source
 	t.streaming.Reset()
 	t.rendered.reset()
-	t.Bump()
 }
 
-// Version implements list.Item. It folds in the source's version so the
-// list re-renders when the source's thinking changes. Both counters only
-// grow, so the sum changes whenever either does.
+// Version implements list.Item. The source changes without telling this
+// item, so it bumps its own version whenever the source, or the source's
+// version, differs from what it last saw.
 func (t *ThinkingDetailItem) Version() uint64 {
-	return t.Versioned.Version() + t.source.Version()
+	if t.source != t.seenSource || t.source.Version() != t.seenSourceVersion {
+		t.seenSource = t.source
+		t.seenSourceVersion = t.source.Version()
+		t.Bump()
+	}
+	return t.Versioned.Version()
 }
 
 // Finished implements list.Item.
