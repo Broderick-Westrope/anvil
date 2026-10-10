@@ -471,10 +471,47 @@ func TestSubagentLoadKeepsLiveToolPermissionState(t *testing.T) {
 	assistant := message.Message{ID: "sub-a", Role: message.Assistant, SessionID: "child", Parts: []message.ContentPart{call}}
 	u.Update(pubsub.Event[message.Message]{Type: pubsub.UpdatedEvent, Payload: assistant})
 	u.Update(pubsub.Event[permission.PermissionNotification]{Payload: permission.PermissionNotification{ToolCallID: "tc1"}})
+	live := u.drillStack[0].chat.MessageItem("tc1")
 
 	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{assistant}})
 
 	tool, ok := u.drillStack[0].chat.MessageItem("tc1").(chat.ToolMessageItem)
 	require.True(t, ok)
+	require.Same(t, live, tool, "a live tool without a result keeps its identity over a snapshot without one")
 	require.Equal(t, chat.ToolStatusAwaitingPermission, tool.Status())
+}
+
+func TestSubagentLoadMergesEachItemKindByItsOwnRule(t *testing.T) {
+	t.Parallel()
+
+	u, jobs := newJobsTestUI(nil)
+	u.com.Workspace = &nestedAgentWorkspace{jobsWorkspace: jobs}
+	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
+	inChild := func(id string, role message.MessageRole, parts ...message.ContentPart) message.Message {
+		return message.Message{ID: id, Role: role, SessionID: "child", Parts: parts}
+	}
+	task := inChild("u0", message.User, message.TextContent{Text: "task"})
+	toolCall := inChild("a1", message.Assistant, message.ToolCall{ID: "tc1", Name: "bash", Input: "{}", Finished: true})
+	toolResult := inChild("r1", message.Tool, message.ToolResult{ToolCallID: "tc1", Name: "bash", Content: "done"})
+	agentCall := inChild("a2", message.Assistant, message.ToolCall{ID: "agent1", Name: agent.TaskToolName, Input: `{"prompt":"look"}`, Finished: true})
+	thinking := inChild("a3", message.Assistant, message.ReasoningContent{Thinking: "reasoning", StartedAt: 1_700_000_000})
+	// Live events arrive for every message except the user's task, and
+	// before the tool result.
+	for _, msg := range []message.Message{toolCall, agentCall, thinking} {
+		u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: msg})
+	}
+	c := u.drillStack[0].chat
+	liveTool, liveAgent, liveThinking := c.MessageItem("tc1"), c.MessageItem("agent1"), c.MessageItem("a3")
+	require.NotNil(t, liveTool)
+	require.NotNil(t, liveAgent)
+	require.NotNil(t, liveThinking)
+
+	u.Update(agentDrillInSessionLoadedMsg{sessionID: "child", messages: []message.Message{task, toolCall, toolResult, agentCall, thinking}})
+
+	require.NotNil(t, c.MessageItem("u0"), "items with no live copy come from the snapshot")
+	require.NotSame(t, liveTool, c.MessageItem("tc1"), "a snapshot tool with the result the live one lacks wins")
+	require.True(t, c.MessageItem("tc1").(chat.ToolMessageItem).HasResult())
+	require.NotSame(t, liveAgent, c.MessageItem("agent1"), "agents come from the snapshot")
+	require.Same(t, liveThinking, c.MessageItem("a3"), "a live assistant item is kept")
+	require.Len(t, c.MessageItems(), 4, "no item is duplicated")
 }

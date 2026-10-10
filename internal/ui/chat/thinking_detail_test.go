@@ -257,3 +257,18 @@ func TestThinkingDetailItemCopiesTrimmedThinking(t *testing.T) {
 
 	require.Equal(t, "reasoning", NewThinkingDetailItem(&sty, source).(*ThinkingDetailItem).SelectionSource())
 }
+
+func TestThinkingDetailItemVersionChangesWhenBothSidesChange(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := NewAssistantMessageItem(&sty, thinkingMessage("m1", thinkingDetailText, "")).(*AssistantMessageItem)
+	detail := NewThinkingDetailItem(&sty, source).(*ThinkingDetailItem)
+	before := detail.Version()
+
+	// One bump on each side: a sum moves, a difference wouldn't.
+	detail.SetFocused(true)
+	source.Bump()
+
+	require.NotEqual(t, before, detail.Version())
+}
