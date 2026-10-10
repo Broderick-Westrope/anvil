@@ -73,29 +73,13 @@ type Result struct {
 // call concurrently for different servers; concurrent calls for the
 // same server are not serialised by this package.
 func Authorize(ctx context.Context, opts Options) (Result, error) {
-	if opts.Config.Auth != config.MCPAuthOAuth {
-		return Result{}, fmt.Errorf(
-			"MCP server %q does not use OAuth authentication (auth=%q)",
-			opts.ServerName, opts.Config.Auth)
-	}
-	if opts.Config.Type != config.MCPHttp && opts.Config.Type != config.MCPSSE {
-		return Result{}, fmt.Errorf(
-			"OAuth authentication is only supported for http/sse MCP servers (type=%q)",
-			opts.Config.Type)
-	}
-	if opts.Config.URL == "" {
-		return Result{}, fmt.Errorf(
-			"MCP server %q has no URL configured", opts.ServerName)
+	if err := opts.validate(); err != nil {
+		return Result{}, err
 	}
 
 	// Check existing auth (unless Force).
-	if !opts.Force {
-		tok, err := opts.Queries.GetMCPOAuthToken(ctx, opts.ServerName)
-		if err == nil {
-			if !tok.Expiry.Valid || time.Unix(tok.Expiry.Int64, 0).After(time.Now()) {
-				return Result{AlreadyValid: true}, nil
-			}
-		}
+	if !opts.Force && hasValidToken(ctx, opts) {
+		return Result{AlreadyValid: true}, nil
 	}
 
 	// Resolve the URL so $VAR references expand.
@@ -162,52 +146,20 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 	// DCR if needed.
 	if needDCR && asm != nil && asm.RegistrationEndpoint != "" {
 		progress(opts, StageRegistering, "")
-		clientName := opts.Config.ClientName
-		if clientName == "" {
-			clientName = "Anvil MCP Client"
-		}
-		regMeta := &oauthex.ClientRegistrationMetadata{
-			RedirectURIs:  []string{redirectURI},
-			GrantTypes:    []string{"authorization_code"},
-			ResponseTypes: []string{"code"},
-			ClientName:    clientName,
-		}
-		regResp, regErr := oauthex.RegisterClient(
-			ctx, asm.RegistrationEndpoint, regMeta, httpClient)
+		regResp, regErr := registerClient(
+			ctx, opts, asm.RegistrationEndpoint, redirectURI, serverURL, httpClient)
 		if regErr != nil {
-			return Result{}, fmt.Errorf(
-				"dynamic client registration failed: %w", regErr)
+			return Result{}, regErr
 		}
 		clientID = regResp.ClientID
 		clientSecret = regResp.ClientSecret
 		authStyle = authMethodToStyle(regResp.TokenEndpointAuthMethod)
-
-		// Persist DCR credentials.
-		if err := opts.Queries.UpsertMCPOAuthClient(ctx, db.UpsertMCPOAuthClientParams{
-			ServerName: opts.ServerName,
-			ServerUrl:  serverURL,
-			ClientID:   clientID,
-			ClientSecret: sql.NullString{
-				String: clientSecret,
-				Valid:  clientSecret != "",
-			},
-		}); err != nil {
-			return Result{}, fmt.Errorf(
-				"failed to persist client credentials: %w", err)
-		}
 	} else if needDCR {
 		return Result{}, fmt.Errorf(
 			"server does not support dynamic client registration; set clientId in your MCP config")
 	}
 
-	// Determine scopes.
-	scopes := opts.Config.Scopes
-	if len(scopes) == 0 && len(wwwScopes) > 0 {
-		scopes = wwwScopes
-	}
-	if len(scopes) == 0 && prm != nil && len(prm.ScopesSupported) > 0 {
-		scopes = prm.ScopesSupported
-	}
+	scopes := selectScopes(opts.Config.Scopes, wwwScopes, prm)
 
 	// Build the OAuth2 configuration from discovered endpoints.
 	authEndpoint := ""
@@ -256,34 +208,14 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 		_ = opts.OpenURL(authURL)
 	}
 
-	// Wait for callback.
-	browserTimeout := opts.BrowserTimeout
-	if browserTimeout == 0 {
-		browserTimeout = 5 * time.Minute
-	}
-	callbackCtx, cancel := context.WithTimeout(ctx, browserTimeout)
-	defer cancel()
-
-	var result callbackResult
-	select {
-	case result = <-resultCh:
-	case <-callbackCtx.Done():
-		return Result{}, fmt.Errorf(
-			"authentication timed out after %s",
-			browserTimeout.String())
-	}
-
-	if result.Err != nil {
-		return Result{}, result.Err
-	}
-
-	if result.State != state {
-		return Result{}, fmt.Errorf("state mismatch: possible CSRF attack")
+	code, err := awaitCallback(ctx, resultCh, opts.BrowserTimeout, state)
+	if err != nil {
+		return Result{}, err
 	}
 
 	progress(opts, StageExchanging, "")
 	token, err := oauthCfg.Exchange(
-		ctx, result.Code, oauth2.VerifierOption(verifier))
+		ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return Result{}, fmt.Errorf("token exchange failed: %w", err)
 	}
@@ -323,6 +255,117 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 		Scopes: scopes,
 		Expiry: token.Expiry,
 	}, nil
+}
+
+// validate rejects configurations the OAuth flow cannot serve.
+func (opts Options) validate() error {
+	if opts.Config.Auth != config.MCPAuthOAuth {
+		return fmt.Errorf(
+			"MCP server %q does not use OAuth authentication (auth=%q)",
+			opts.ServerName, opts.Config.Auth)
+	}
+	if opts.Config.Type != config.MCPHttp && opts.Config.Type != config.MCPSSE {
+		return fmt.Errorf(
+			"OAuth authentication is only supported for http/sse MCP servers (type=%q)",
+			opts.Config.Type)
+	}
+	if opts.Config.URL == "" {
+		return fmt.Errorf(
+			"MCP server %q has no URL configured", opts.ServerName)
+	}
+	return nil
+}
+
+// hasValidToken reports whether a token is stored for the server and has
+// not expired. A token without an expiry never expires, and a failed
+// lookup counts as no token.
+func hasValidToken(ctx context.Context, opts Options) bool {
+	tok, err := opts.Queries.GetMCPOAuthToken(ctx, opts.ServerName)
+	if err != nil {
+		return false
+	}
+	return !tok.Expiry.Valid || time.Unix(tok.Expiry.Int64, 0).After(time.Now())
+}
+
+// registerClient registers Anvil with the authorization server through
+// dynamic client registration (RFC 7591) and persists the issued
+// credentials.
+func registerClient(ctx context.Context, opts Options, endpoint, redirectURI, serverURL string, httpClient *http.Client) (*oauthex.ClientRegistrationResponse, error) {
+	clientName := opts.Config.ClientName
+	if clientName == "" {
+		clientName = "Anvil MCP Client"
+	}
+	regMeta := &oauthex.ClientRegistrationMetadata{
+		RedirectURIs:  []string{redirectURI},
+		GrantTypes:    []string{"authorization_code"},
+		ResponseTypes: []string{"code"},
+		ClientName:    clientName,
+	}
+	regResp, err := oauthex.RegisterClient(ctx, endpoint, regMeta, httpClient)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"dynamic client registration failed: %w", err)
+	}
+
+	if err := opts.Queries.UpsertMCPOAuthClient(ctx, db.UpsertMCPOAuthClientParams{
+		ServerName: opts.ServerName,
+		ServerUrl:  serverURL,
+		ClientID:   regResp.ClientID,
+		ClientSecret: sql.NullString{
+			String: regResp.ClientSecret,
+			Valid:  regResp.ClientSecret != "",
+		},
+	}); err != nil {
+		return nil, fmt.Errorf(
+			"failed to persist client credentials: %w", err)
+	}
+	return regResp, nil
+}
+
+// awaitCallback waits for the browser to deliver the authorization
+// response and returns its code. The response is rejected unless its state
+// matches the one sent, which guards against CSRF. A zero timeout means 5
+// minutes.
+func awaitCallback(ctx context.Context, resultCh <-chan callbackResult, timeout time.Duration, state string) (string, error) {
+	if timeout == 0 {
+		timeout = 5 * time.Minute
+	}
+	callbackCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var result callbackResult
+	select {
+	case result = <-resultCh:
+	case <-callbackCtx.Done():
+		return "", fmt.Errorf(
+			"authentication timed out after %s",
+			timeout.String())
+	}
+
+	if result.Err != nil {
+		return "", result.Err
+	}
+
+	if result.State != state {
+		return "", fmt.Errorf("state mismatch: possible CSRF attack")
+	}
+	return result.Code, nil
+}
+
+// selectScopes picks the scopes to request: those configured for the
+// server, else those in the server's WWW-Authenticate challenge, else
+// those its protected resource metadata lists as supported.
+func selectScopes(configured, challenged []string, prm *oauthex.ProtectedResourceMetadata) []string {
+	if len(configured) > 0 {
+		return configured
+	}
+	if len(challenged) > 0 {
+		return challenged
+	}
+	if prm != nil && len(prm.ScopesSupported) > 0 {
+		return prm.ScopesSupported
+	}
+	return configured
 }
 
 // progress calls opts.Progress if non-nil.
