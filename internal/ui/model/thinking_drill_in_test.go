@@ -203,23 +203,6 @@ func TestThinkingDrillInOnRootDoesNotShowSubagentStats(t *testing.T) {
 
 	require.NotContains(t, ansi.Strip(u.sidebarContent), "turns ·",
 		"a thinking drill-in on the root session isn't a subagent session")
-	_, viewingSubagent := u.viewedSessionEntry()
-	require.False(t, viewingSubagent)
-}
-
-func TestThinkingDrillInOnSubagentKeepsItsSession(t *testing.T) {
-	t.Parallel()
-
-	u, _ := newJobsTestUI(nil)
-	u.Update(util.AgentDrillInMsg{SessionID: "child", Label: "Explorer"})
-	first := childThinkingEvent("step", false).Payload
-	sub := chat.NewAssistantMessageItem(u.com.Styles, &first)
-	u.drillStack[0].chat.SetMessages(sub)
-	u.Update(util.ThinkingDrillInMsg{Source: sub})
-
-	entry, ok := u.viewedSessionEntry()
-	require.True(t, ok)
-	require.Equal(t, "child", entry.sessionID)
 }
 
 // fakeAgentItem is a minimal agent item that drills into sessionID.
@@ -288,30 +271,36 @@ func TestThinkingDrillInMsgIgnoresOtherSources(t *testing.T) {
 	require.Empty(t, u.drillStack)
 }
 
-func TestViewedSession(t *testing.T) {
+func TestSidebarShowsTheSubagentSessionBeneathADrillIn(t *testing.T) {
 	t.Parallel()
 
-	root := &session.Session{ID: "s1"}
-	child := &session.Session{ID: "child"}
+	child := &session.Session{ID: "child", CreatedAt: 1_700_000_000, UpdatedAt: 1_700_000_042}
 	tests := map[string]struct {
-		stack []drillInEntry
-		want  *session.Session
+		stack       []drillInEntry
+		wantElapsed string
 	}{
-		"root":                            {want: root},
-		"subagent still loading":          {stack: []drillInEntry{{sessionID: "child"}}, want: root},
-		"loaded subagent":                 {stack: []drillInEntry{{sessionID: "child", session: child}}, want: child},
-		"thinking over a loaded subagent": {stack: []drillInEntry{{sessionID: "child", session: child}, {}}, want: child},
-		"thinking over the root":          {stack: []drillInEntry{{}}, want: root},
+		"loaded subagent":                 {stack: []drillInEntry{{sessionID: "child", session: child}}, wantElapsed: "42s"},
+		"thinking over a loaded subagent": {stack: []drillInEntry{{sessionID: "child", session: child}, {}}, wantElapsed: "42s"},
+		"subagent still loading":          {stack: []drillInEntry{{sessionID: "child"}}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			u := newTestUI()
-			u.session = root
+			u, _ := newJobsTestUI(nil)
+			for k := range tc.stack {
+				tc.stack[k].chat = NewChat(u.com)
+			}
 			u.drillStack = tc.stack
+			u.updateLayoutAndSize()
 
-			require.Same(t, tc.want, u.viewedSession())
+			u.updateSidebarScrollState()
+
+			content := ansi.Strip(u.sidebarContent)
+			require.Contains(t, content, "turns ·", "a subagent is being viewed")
+			if tc.wantElapsed != "" {
+				require.Contains(t, content, tc.wantElapsed)
+			}
 		})
 	}
 }
