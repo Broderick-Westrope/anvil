@@ -151,8 +151,11 @@ type Service struct {
 
 	mu       sync.Mutex
 	stopping bool
-	runs     map[string]*activeRun // Keyed by invoking session.
-	pending  map[string]pendingRequest
+	// stopReason says why Shutdown stopped the service, for the runs it
+	// interrupts.
+	stopReason string
+	runs       map[string]*activeRun // Keyed by invoking session.
+	pending    map[string]pendingRequest
 }
 
 // pendingRequest is an approval or ask awaiting Respond. A non-empty
@@ -232,10 +235,11 @@ func (s *Service) Start(ctx context.Context, inv Invocation) error {
 
 // Shutdown refuses new workflows, ends pending approvals and questions,
 // aborts running scripts and waits, up to ctx, for them to record their
-// outcome. Runs it ends are recorded as interrupted, not aborted.
-func (s *Service) Shutdown(ctx context.Context) error {
+// outcome, then closes every subscription. Runs it ends are recorded as
+// interrupted, not aborted, with reason as the cause.
+func (s *Service) Shutdown(ctx context.Context, reason string) error {
 	s.mu.Lock()
-	s.stopping = true
+	s.stopping, s.stopReason = true, reason
 	var runs []*workflow.Run
 	for _, active := range s.runs {
 		if active.run != nil {
@@ -252,6 +256,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		s.wg.Wait()
 		close(done)
 	}()
+	defer s.events.Shutdown()
 	select {
 	case <-done:
 		return nil
@@ -260,10 +265,28 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (s *Service) isStopping() bool {
+// stopped reports whether Shutdown has begun, and why.
+func (s *Service) stopped() (bool, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.stopping
+	return s.stopping, s.stopReason
+}
+
+// runOutcome classifies how a run ended. Shutdown aborting a run makes it
+// interrupted, but a run that failed on its own stays failed even if
+// shutdown had begun.
+func runOutcome(err error, stopping bool, reason string) (Status, string) {
+	cancelled := errors.Is(err, workflow.ErrAborted) || errors.Is(err, context.Canceled)
+	switch {
+	case err == nil:
+		return StatusCompleted, ""
+	case cancelled && stopping:
+		return StatusInterrupted, "interrupted: " + reason
+	case errors.Is(err, workflow.ErrAborted):
+		return StatusAborted, "aborted"
+	default:
+		return StatusFailed, err.Error()
+	}
 }
 
 func (s *Service) invoke(inv Invocation, script *workflow.Script) {
@@ -312,7 +335,7 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 		Tmpdir:            s.deps.Store.Tmpdir(runID),
 	})
 	s.mu.Lock()
-	stopping := s.stopping
+	stopping, reason := s.stopping, s.stopReason
 	if !stopping {
 		s.runs[inv.SessionID] = &activeRun{id: runID, command: inv.CommandName, run: run}
 	}
@@ -320,7 +343,7 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	if stopping {
 		// Shutdown began after this run was recorded but before it could
 		// be registered for Shutdown to abort; it never starts.
-		msg := "interrupted: Anvil shut down"
+		msg := "interrupted: " + reason
 		if ferr := s.deps.Store.FinishRun(context.WithoutCancel(ctx), runID, StatusInterrupted, nil, msg); ferr != nil {
 			slog.Warn("Failed to record workflow run outcome", "run", runID, "error", ferr)
 		}
@@ -330,15 +353,8 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	b.publishState(ctx, Event{Kind: EventState, State: StateStarted})
 
 	result, err := run.Execute(ctx, workflow.Input{Raw: inv.Raw})
-	status, msg := StatusCompleted, ""
-	switch {
-	case err != nil && s.isStopping():
-		status, msg = StatusInterrupted, "interrupted: Anvil shut down"
-	case errors.Is(err, workflow.ErrAborted):
-		status, msg = StatusAborted, "aborted"
-	case err != nil:
-		status, msg = StatusFailed, err.Error()
-	}
+	stopping, reason = s.stopped()
+	status, msg := runOutcome(err, stopping, reason)
 	if ferr := s.deps.Store.FinishRun(context.WithoutCancel(ctx), runID, status, result, msg); ferr != nil {
 		slog.Warn("Failed to record workflow run outcome", "run", runID, "error", ferr)
 	}

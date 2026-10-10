@@ -335,10 +335,11 @@ func TestServiceShutdownInterruptsRunsAndRefusesNewOnes(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(h.fixture.Context, 5*time.Second)
 	defer cancel()
-	require.NoError(t, h.svc.Shutdown(ctx))
+	require.NoError(t, h.svc.Shutdown(ctx, "agents reloaded"))
 
 	done := h.next(t, host.EventFinished)
 	require.Equal(t, host.StatusInterrupted, done.Status)
+	require.Equal(t, "interrupted: agents reloaded", done.Message)
 	run, ok, err := h.store.GetRun(h.fixture.Context, done.RunID)
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -346,6 +347,19 @@ func TestServiceShutdownInterruptsRunsAndRefusesNewOnes(t *testing.T) {
 	require.Error(t, h.svc.Respond(ask.RequestID, "late"))
 	err = h.svc.Start(h.fixture.Context, host.Invocation{CommandID: "x", ScriptPath: path, SessionID: h.session})
 	require.ErrorIs(t, err, host.ErrShuttingDown)
+}
+
+func TestServiceShutdownClosesSubscriptions(t *testing.T) {
+	h := newServiceHarness(t, true)
+	ctx, cancel := context.WithTimeout(h.fixture.Context, 5*time.Second)
+	defer cancel()
+	require.NoError(t, h.svc.Shutdown(ctx, "test"))
+	select {
+	case _, ok := <-h.events:
+		require.False(t, ok, "no events after shutdown")
+	case <-ctx.Done():
+		t.Fatal("subscription still open after shutdown")
+	}
 }
 
 func TestServiceExclusiveRefusesThenStopsSessionJobs(t *testing.T) {

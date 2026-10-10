@@ -98,6 +98,10 @@ type App struct {
 	jobWaker           *jobWaker
 	jobs               *jobLifecycle // Nil when job persistence is unavailable.
 	workflowStore      *host.Store
+	// retiredWorkflows tracks services replaced by startWorkflows that are
+	// still stopping, so Shutdown waits for their outcomes before the DB
+	// closes.
+	retiredWorkflows sync.WaitGroup
 }
 
 // New initializes a new application instance.
@@ -668,12 +672,16 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 // rebuilt, so a service never drives a coordinator that was replaced.
 func (app *App) startWorkflows() {
 	if old := app.Workflows; old != nil {
-		// Runs of the old service drive a coordinator that's gone.
-		ctx, cancel := context.WithTimeout(context.Background(), workflowShutdownWait)
-		if err := old.Shutdown(ctx); err != nil {
-			slog.Warn("Previous workflows did not stop in time", "error", err)
-		}
-		cancel()
+		// Runs of the old service drive a coordinator that's gone. This can
+		// be reached from the UI's Update (onboarding), so stopping them
+		// must not block the caller.
+		app.retiredWorkflows.Go(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), workflowShutdownWait)
+			defer cancel()
+			if err := old.Shutdown(ctx, workflowReloadReason); err != nil {
+				slog.Warn("Previous workflows did not stop in time", "error", err)
+			}
+		})
 	}
 	app.Workflows = host.NewService(app.globalCtx, host.Deps{
 		Coordinator:  app.AgentCoordinator,
@@ -867,6 +875,12 @@ func waitWithTimeout(wait func(), timeout time.Duration) bool {
 // to record that they were interrupted.
 const workflowShutdownWait = 3 * time.Second
 
+// Why workflow runs were interrupted, as shown with their outcome.
+const (
+	workflowShutdownReason = "Anvil shut down"
+	workflowReloadReason   = "agents were reloaded"
+)
+
 // Shutdown performs a graceful shutdown of the application.
 func (app *App) Shutdown() {
 	start := time.Now()
@@ -885,11 +899,12 @@ func (app *App) Shutdown() {
 	// agent to cancel. Their outcomes must land before the DB closes.
 	if app.Workflows != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), workflowShutdownWait)
-		if err := app.Workflows.Shutdown(ctx); err != nil {
+		if err := app.Workflows.Shutdown(ctx, workflowShutdownReason); err != nil {
 			slog.Warn("Workflows did not stop in time", "error", err)
 		}
 		cancel()
 	}
+	app.retiredWorkflows.Wait()
 
 	// First, cancel all agents and wait for them to finish. This must complete
 	// before closing the DB so agents can finish writing their state.
