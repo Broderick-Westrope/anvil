@@ -2,6 +2,7 @@ package shell_test
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,7 +250,6 @@ func TestJQBuiltin_Files(t *testing.T) {
 	second := filepath.Join(dir, "second.json")
 	require.NoError(t, os.WriteFile(first, []byte(`1 2`), 0o644))
 	require.NoError(t, os.WriteFile(second, []byte(`3`), 0o644))
-	missing := filepath.Join(dir, "missing.json")
 
 	tests := map[string]struct {
 		command string
@@ -271,17 +271,9 @@ func TestJQBuiltin_Files(t *testing.T) {
 			command: `jq -- '` + second + `'`,
 			want:    jqResult{stdout: "3\n"},
 		},
-		"double dash passes dash-prefixed names as files": {
-			command: `jq . -- -x`,
-			want:    jqResult{stderr: "jq: open -x: no such file or directory\n", code: 2},
-		},
 		"raw input reads each file": {
 			command: `jq -c -R . '` + second + `'`,
 			want:    jqResult{stdout: "\"3\"\n"},
-		},
-		"missing file fails before any output": {
-			command: `jq -c . '` + first + `' '` + missing + `'`,
-			want:    jqResult{stderr: "jq: open " + missing + ": no such file or directory\n", code: 2},
 		},
 	}
 	for name, tc := range tests {
@@ -289,6 +281,72 @@ func TestJQBuiltin_Files(t *testing.T) {
 			t.Parallel()
 			got := runJQ(t, tc.command, "ignored")
 			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// The OS words file errors differently per platform, so these cases pin
+// only the exit code and jq's own prefix.
+func TestJQBuiltin_FileErrors(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.json")
+	require.NoError(t, os.WriteFile(first, []byte(`1`), 0o644))
+	missing := filepath.Join(dir, "missing.json")
+
+	tests := map[string]struct {
+		command          string
+		wantStderrPrefix string
+	}{
+		"double dash passes dash-prefixed names as files": {
+			command:          `jq . -- -x`,
+			wantStderrPrefix: "jq: open -x: ",
+		},
+		"missing file fails before any output": {
+			command:          `jq -c . '` + first + `' '` + missing + `'`,
+			wantStderrPrefix: "jq: open " + missing + ": ",
+		},
+		"unreadable file fails as an input error": {
+			command:          `jq . '` + dir + `'`,
+			wantStderrPrefix: "jq: read " + dir + ": ",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := runJQ(t, tc.command, "ignored")
+			require.Equal(t, 2, got.code)
+			require.Empty(t, got.stdout)
+			require.True(t, strings.HasPrefix(got.stderr, tc.wantStderrPrefix), "stderr = %q", got.stderr)
+		})
+	}
+}
+
+type errWriter struct{ err error }
+
+func (w errWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestJQBuiltin_WriteError(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"json": `jq .`,
+		"raw":  `jq -r .`,
+	}
+	for name, command := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("disk full")
+
+			err := shell.Run(t.Context(), shell.RunOptions{
+				Command: command,
+				Cwd:     t.TempDir(),
+				Stdin:   strings.NewReader(`"x"`),
+				Stdout:  errWriter{err: want},
+			})
+
+			require.ErrorIs(t, err, want)
 		})
 	}
 }
