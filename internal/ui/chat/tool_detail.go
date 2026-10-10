@@ -411,7 +411,7 @@ func (p *toolDetailParamItem) Render(width int) string {
 		} else {
 			// Collapsed: show key with line count hint.
 			hint := p.sty.Tool.ContentTruncation.Render(
-				fmt.Sprintf(truncatedLinesFormat, lineCount),
+				fmt.Sprintf(assistantMessageTruncateFormat, lineCount),
 			)
 			rendered = fmt.Sprintf("  %s %s", key, hint)
 		}
