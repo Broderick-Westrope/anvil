@@ -184,10 +184,10 @@ func (b *backend) Hold(ctx context.Context, call workflow.HoldCall) (func(), err
 		release()
 		return nil, err
 	}
-	b.publish(Event{Kind: EventState, Held: true})
+	b.publishState(ctx, Event{Kind: EventState, State: StateHeld})
 	return func() {
 		release()
-		b.publish(Event{Kind: EventState, Held: false})
+		b.publishState(ctx, Event{Kind: EventState, State: StateReleased})
 	}, nil
 }
 

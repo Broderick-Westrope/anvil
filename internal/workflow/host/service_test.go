@@ -171,6 +171,31 @@ func TestServiceAllowsOneRunPerSession(t *testing.T) {
 	require.JSONEq(t, `"yes"`, string(done.Result))
 }
 
+func TestServicePublishesEachRunStateWithItsCommand(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `function main() { workflow.exclusive(() => 1); return ask("wait") }`)
+	h.start(t, path, "")
+
+	var states []host.RunState
+	for len(states) < 3 {
+		ev := h.next(t, host.EventState)
+		require.Equal(t, "demo", ev.Command)
+		require.Equal(t, h.session, ev.SessionID)
+		states = append(states, ev.State)
+	}
+	require.Equal(t, []host.RunState{host.StateStarted, host.StateHeld, host.StateReleased}, states)
+
+	ask := h.next(t, host.EventAsk)
+	require.NoError(t, h.svc.Pause(h.session))
+	paused := h.next(t, host.EventState)
+	require.Equal(t, host.StatePaused, paused.State)
+	require.Equal(t, "demo", paused.Command)
+	require.NoError(t, h.svc.Resume(h.session))
+	require.Equal(t, host.StateResumed, h.next(t, host.EventState).State)
+	require.NoError(t, h.svc.Respond(ask.RequestID, "go"))
+	h.next(t, host.EventFinished)
+}
+
 func TestServiceAbortEndsRun(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `function main() { ask("wait") }`)

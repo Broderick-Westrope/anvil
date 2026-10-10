@@ -51,8 +51,7 @@ const (
 	// EventStep is a bash command or turn the script started, shown as a
 	// workflow step.
 	EventStep EventKind = "step"
-	// EventState reports a run starting, pausing, resuming or holding
-	// sessions.
+	// EventState reports a change in a run's State.
 	EventState EventKind = "state"
 	// EventAgent reports a subagent starting (Status running) and ending
 	// (completed or failed, with Message). Step is the agent, Detail its
@@ -60,6 +59,22 @@ const (
 	EventAgent EventKind = "agent"
 	// EventFinished ends an invocation.
 	EventFinished EventKind = "finished"
+)
+
+// RunState is the change an EventState reports.
+type RunState string
+
+const (
+	// StateStarted is a run that passed approval and began executing.
+	StateStarted RunState = "started"
+	// StatePaused is a run that issues no new primitives until resumed.
+	StatePaused RunState = "paused"
+	// StateResumed is a paused run continuing.
+	StateResumed RunState = "resumed"
+	// StateHeld is a run holding its sessions inside workflow.exclusive.
+	StateHeld RunState = "held"
+	// StateReleased is a run whose sessions are no longer held.
+	StateReleased RunState = "released"
 )
 
 // Event is everything the UI needs to show a workflow. Fields beyond the
@@ -84,8 +99,7 @@ type Event struct {
 	// EventAgent.
 	Target string
 
-	Paused bool
-	Held   bool
+	State RunState
 
 	Status Status
 	Result json.RawMessage
@@ -149,8 +163,9 @@ type pendingRequest struct {
 }
 
 type activeRun struct {
-	id  string
-	run *workflow.Run
+	id      string
+	command string
+	run     *workflow.Run
 }
 
 // NewService creates a Service. Runs live as long as lifetime.
@@ -299,7 +314,7 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	s.mu.Lock()
 	stopping := s.stopping
 	if !stopping {
-		s.runs[inv.SessionID] = &activeRun{id: runID, run: run}
+		s.runs[inv.SessionID] = &activeRun{id: runID, command: inv.CommandName, run: run}
 	}
 	s.mu.Unlock()
 	if stopping {
@@ -312,9 +327,7 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 		finish(runID, StatusInterrupted, nil, msg)
 		return
 	}
-	started := base
-	started.Kind = EventState
-	s.events.Publish(pubsub.UpdatedEvent, started)
+	b.publishState(ctx, Event{Kind: EventState, State: StateStarted})
 
 	result, err := run.Execute(ctx, workflow.Input{Raw: inv.Raw})
 	status, msg := StatusCompleted, ""
@@ -425,28 +438,31 @@ func (s *Service) Respond(requestID, answer string) error {
 // Pause, Resume and Abort control the run that involves sessionID, which
 // may be its invoking session or any session it created.
 func (s *Service) Pause(sessionID string) error {
-	return s.control(sessionID, func(r *workflow.Run) { r.Pause() })
+	return s.control(sessionID, StatePaused, func(r *workflow.Run) { r.Pause() })
 }
 
 // Resume continues a paused run.
 func (s *Service) Resume(sessionID string) error {
-	return s.control(sessionID, func(r *workflow.Run) { r.Resume() })
+	return s.control(sessionID, StateResumed, func(r *workflow.Run) { r.Resume() })
 }
 
-// Abort cancels a run's in-flight work and ends it as aborted.
+// Abort cancels a run's in-flight work and ends it as aborted. Its
+// EventFinished reports the outcome, so it publishes no state.
 func (s *Service) Abort(sessionID string) error {
-	return s.control(sessionID, func(r *workflow.Run) { r.Abort() })
+	return s.control(sessionID, "", func(r *workflow.Run) { r.Abort() })
 }
 
-func (s *Service) control(sessionID string, fn func(*workflow.Run)) error {
+func (s *Service) control(sessionID string, state RunState, fn func(*workflow.Run)) error {
 	invoker, active := s.find(sessionID)
 	if active == nil {
 		return ErrNoRun
 	}
 	fn(active.run)
-	s.events.Publish(pubsub.UpdatedEvent, Event{
-		Kind: EventState, RunID: active.id, SessionID: invoker, Paused: active.run.Paused(),
-	})
+	if state != "" {
+		s.events.PublishMustDeliver(context.WithoutCancel(s.lifetime), pubsub.UpdatedEvent, Event{
+			Kind: EventState, RunID: active.id, Command: active.command, SessionID: invoker, State: state,
+		})
+	}
 	return nil
 }
 

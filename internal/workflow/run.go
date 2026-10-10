@@ -175,13 +175,6 @@ func (r *Run) Resume() {
 	}
 }
 
-// Paused reports whether the run is paused.
-func (r *Run) Paused() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.paused
-}
-
 // Abort cancels in-flight work and interrupts the script.
 func (r *Run) Abort() {
 	r.aborted.Store(true)

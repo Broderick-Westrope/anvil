@@ -380,11 +380,11 @@ func TestWorkflowPanelShowsPausedAndHeld(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", Paused: true})
+	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", State: host.StatePaused})
 	require.Contains(t, f.panel(), "paused")
 	require.Contains(t, f.panel(), "ctrl+x resume")
 
-	f.event(host.Event{Kind: host.EventState, RunID: "run-1", Command: "demo", SessionID: "sess-1", Held: true})
+	f.event(host.Event{Kind: host.EventState, RunID: "run-1", Command: "demo", SessionID: "sess-1", State: host.StateHeld})
 	require.Contains(t, f.panel(), "paused", "a hold doesn't clear the pause")
 	require.Contains(t, f.panel(), "holding sessions")
 }
@@ -450,7 +450,7 @@ func TestWorkflowControlKeys(t *testing.T) {
 
 	f.event(started("demo", "sess-1"))
 	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
-	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", Paused: true})
+	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", State: host.StatePaused})
 	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt})
 	require.Equal(t, []string{"pause:sess-1", "resume:sess-1", "abort:sess-1"}, f.ws.controls)
@@ -645,7 +645,7 @@ func TestWorkflowControlsDescribeTheCurrentRun(t *testing.T) {
 	f.event(started("demo", "sess-1"))
 	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo"}, f.u.workflowControls())
 
-	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", Paused: true})
+	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", State: host.StatePaused})
 	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
 	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Paused: true, CanGoToActive: true}, f.u.workflowControls())
 }

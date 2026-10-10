@@ -378,12 +378,11 @@ func (m *UI) handleWorkflowEvent(ev host.Event) tea.Cmd {
 	}
 	switch ev.Kind {
 	case host.EventState:
-		// Pause controls publish without a command; holds and the start
-		// carry one and say nothing about pausing.
-		if ev.Command == "" {
-			run.paused = ev.Paused
-		} else {
-			run.held = ev.Held
+		switch ev.State {
+		case host.StatePaused, host.StateResumed:
+			run.paused = ev.State == host.StatePaused
+		case host.StateHeld, host.StateReleased:
+			run.held = ev.State == host.StateHeld
 		}
 	case host.EventStatus:
 		run.step, run.detail = ev.Step, ev.Detail
