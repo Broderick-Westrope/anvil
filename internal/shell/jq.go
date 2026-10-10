@@ -87,10 +87,13 @@ var jqVariableFlags = map[string]func(name, value string) (any, error){
 // the first help flag, so later arguments are never checked.
 func parseJQArgs(args []string) (jqOptions, error) {
 	var opts jqOptions
-	for i := 0; i < len(args) && !opts.help; i++ {
+	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if set, ok := jqSwitches[arg]; ok {
 			set(&opts)
+			if opts.help {
+				break
+			}
 			continue
 		}
 		if parse, ok := jqVariableFlags[arg]; ok {
@@ -125,9 +128,8 @@ func parseJQArgs(args []string) (jqOptions, error) {
 	return opts, nil
 }
 
-// handleJQ implements the jq builtin using gojq. It supports a subset of jq
-// flags: -r (raw output), -c (compact output), -s (slurp), -n (null input),
-// -e (exit status), -R (raw input), and --arg name value.
+// handleJQ implements the jq builtin using gojq. It supports the subset of
+// jq flags listed in [jqSwitches] and [jqVariableFlags].
 //
 // ctx is polled at each iteration of the output loop and at each reader in
 // [readInputs] so that hook timeouts or other cancellations can interrupt
