@@ -103,16 +103,6 @@ linters:
       - text: '(slog|log)\.\w+'
         linters:
           - noctx
-      # Layer violations that predate the depguard rules. Fix and delete.
-      - path: internal/app/app\.go
-        text: 'internal/ui/(anim|styles)'
-        linters: [depguard]
-      - path: internal/format/spinner\.go
-        text: 'internal/ui/anim'
-        linters: [depguard]
-      - path: internal/commands/commands\.go
-        text: 'internal/agent/tools/mcp'
-        linters: [depguard]
       - path: _test\.go
         linters: [gocognit]
       # Functions over the gocognit limit when it was enabled. Each new
