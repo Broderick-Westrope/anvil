@@ -73,8 +73,19 @@ type Result struct {
 // call concurrently for different servers; concurrent calls for the
 // same server are not serialised by this package.
 func Authorize(ctx context.Context, opts Options) (Result, error) {
-	if err := opts.validate(); err != nil {
-		return Result{}, err
+	if opts.Config.Auth != config.MCPAuthOAuth {
+		return Result{}, fmt.Errorf(
+			"MCP server %q does not use OAuth authentication (auth=%q)",
+			opts.ServerName, opts.Config.Auth)
+	}
+	if opts.Config.Type != config.MCPHttp && opts.Config.Type != config.MCPSSE {
+		return Result{}, fmt.Errorf(
+			"OAuth authentication is only supported for http/sse MCP servers (type=%q)",
+			opts.Config.Type)
+	}
+	if opts.Config.URL == "" {
+		return Result{}, fmt.Errorf(
+			"MCP server %q has no URL configured", opts.ServerName)
 	}
 
 	// Check existing auth (unless Force).
@@ -88,23 +99,9 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("failed to resolve server URL: %w", err)
 	}
 
-	// Resolve client credentials. Pre-registered clients (clientId
-	// in config) are used directly. DCR clients are always
-	// re-registered because the ephemeral callback port changes
-	// between invocations and the redirect URI must match what was
-	// registered.
-	var clientID, clientSecret string
-	authStyle := oauth2.AuthStyleAutoDetect
-	needDCR := true
-	if opts.Config.ClientID != "" {
-		clientID = opts.Config.ClientID
-		resolved, resolveErr := opts.Config.ResolvedClientSecret(opts.Resolver)
-		if resolveErr != nil {
-			return Result{}, fmt.Errorf(
-				"failed to resolve clientSecret: %w", resolveErr)
-		}
-		clientSecret = resolved
-		needDCR = false
+	client, err := configuredClient(opts)
+	if err != nil {
+		return Result{}, err
 	}
 
 	// OAuth metadata discovery.
@@ -143,20 +140,13 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 		redirectURI = fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 	}
 
-	// DCR if needed.
-	if needDCR && asm != nil && asm.RegistrationEndpoint != "" {
-		progress(opts, StageRegistering, "")
-		regResp, regErr := registerClient(
-			ctx, opts, asm.RegistrationEndpoint, redirectURI, serverURL, httpClient)
-		if regErr != nil {
-			return Result{}, regErr
-		}
-		clientID = regResp.ClientID
-		clientSecret = regResp.ClientSecret
-		authStyle = authMethodToStyle(regResp.TokenEndpointAuthMethod)
-	} else if needDCR {
-		return Result{}, fmt.Errorf(
-			"server does not support dynamic client registration; set clientId in your MCP config")
+	client, err = client.registered(ctx, opts, asm, clientRegistration{
+		redirectURI: redirectURI,
+		serverURL:   serverURL,
+		httpClient:  httpClient,
+	})
+	if err != nil {
+		return Result{}, err
 	}
 
 	scopes := selectScopes(opts.Config.Scopes, wwwScopes, prm)
@@ -173,19 +163,13 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 			"could not determine authorization or token endpoint")
 	}
 
-	// Select auth style from ASM metadata when not set by DCR.
-	if authStyle == oauth2.AuthStyleAutoDetect && asm != nil {
-		authStyle = selectTokenAuthMethod(
-			asm.TokenEndpointAuthMethodsSupported)
-	}
-
 	oauthCfg := &oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
+		ClientID:     client.id,
+		ClientSecret: client.secret,
 		Endpoint: oauth2.Endpoint{
 			AuthURL:   authEndpoint,
 			TokenURL:  tokenEndpoint,
-			AuthStyle: authStyle,
+			AuthStyle: client.tokenAuthStyle(asm),
 		},
 		RedirectURL: redirectURI,
 		Scopes:      scopes,
@@ -242,10 +226,10 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 			String: tokenEndpoint,
 			Valid:  tokenEndpoint != "",
 		},
-		ClientID: clientID,
+		ClientID: client.id,
 		ClientSecret: sql.NullString{
-			String: clientSecret,
-			Valid:  clientSecret != "",
+			String: client.secret,
+			Valid:  client.secret != "",
 		},
 	}); err != nil {
 		return Result{}, fmt.Errorf("failed to persist token: %w", err)
@@ -255,25 +239,6 @@ func Authorize(ctx context.Context, opts Options) (Result, error) {
 		Scopes: scopes,
 		Expiry: token.Expiry,
 	}, nil
-}
-
-// validate rejects configurations the OAuth flow cannot serve.
-func (opts Options) validate() error {
-	if opts.Config.Auth != config.MCPAuthOAuth {
-		return fmt.Errorf(
-			"MCP server %q does not use OAuth authentication (auth=%q)",
-			opts.ServerName, opts.Config.Auth)
-	}
-	if opts.Config.Type != config.MCPHttp && opts.Config.Type != config.MCPSSE {
-		return fmt.Errorf(
-			"OAuth authentication is only supported for http/sse MCP servers (type=%q)",
-			opts.Config.Type)
-	}
-	if opts.Config.URL == "" {
-		return fmt.Errorf(
-			"MCP server %q has no URL configured", opts.ServerName)
-	}
-	return nil
 }
 
 // hasValidToken reports whether a token is stored for the server and has
@@ -287,39 +252,101 @@ func hasValidToken(ctx context.Context, opts Options) bool {
 	return !tok.Expiry.Valid || time.Unix(tok.Expiry.Int64, 0).After(time.Now())
 }
 
-// registerClient registers Anvil with the authorization server through
-// dynamic client registration (RFC 7591) and persists the issued
-// credentials.
-func registerClient(ctx context.Context, opts Options, endpoint, redirectURI, serverURL string, httpClient *http.Client) (*oauthex.ClientRegistrationResponse, error) {
+// clientCredentials is the OAuth client Anvil authorizes as. A client
+// pre-registered in config (clientId) is used directly. Any other client is
+// registered dynamically (RFC 7591) on every run, because the ephemeral
+// callback port changes between runs and the redirect URI must match what
+// was registered.
+type clientCredentials struct {
+	id     string
+	secret string
+	// authStyle is how the token endpoint expects the client to
+	// authenticate, or [oauth2.AuthStyleAutoDetect] when registration did
+	// not say.
+	authStyle oauth2.AuthStyle
+	// unregistered marks a client with no clientId in config that has
+	// not been registered yet.
+	unregistered bool
+}
+
+// clientRegistration is what dynamic client registration needs to know
+// about this run.
+type clientRegistration struct {
+	redirectURI string
+	serverURL   string
+	httpClient  *http.Client
+}
+
+// configuredClient returns the client pre-registered in config, or an
+// unregistered client when no clientId is set.
+func configuredClient(opts Options) (clientCredentials, error) {
+	if opts.Config.ClientID == "" {
+		return clientCredentials{unregistered: true}, nil
+	}
+	secret, err := opts.Config.ResolvedClientSecret(opts.Resolver)
+	if err != nil {
+		return clientCredentials{}, fmt.Errorf(
+			"failed to resolve clientSecret: %w", err)
+	}
+	return clientCredentials{id: opts.Config.ClientID, secret: secret}, nil
+}
+
+// registered returns c ready to authorize with the server described by
+// asm. A pre-registered client is returned unchanged. An unregistered one
+// is registered at asm's registration endpoint and its issued credentials
+// are persisted; that fails when the server offers no such endpoint.
+func (c clientCredentials) registered(ctx context.Context, opts Options, asm *oauthex.AuthServerMeta, reg clientRegistration) (clientCredentials, error) {
+	if !c.unregistered {
+		return c, nil
+	}
+	if asm == nil || asm.RegistrationEndpoint == "" {
+		return clientCredentials{}, fmt.Errorf(
+			"server does not support dynamic client registration; set clientId in your MCP config")
+	}
+
+	progress(opts, StageRegistering, "")
 	clientName := opts.Config.ClientName
 	if clientName == "" {
 		clientName = "Anvil MCP Client"
 	}
 	regMeta := &oauthex.ClientRegistrationMetadata{
-		RedirectURIs:  []string{redirectURI},
+		RedirectURIs:  []string{reg.redirectURI},
 		GrantTypes:    []string{"authorization_code"},
 		ResponseTypes: []string{"code"},
 		ClientName:    clientName,
 	}
-	regResp, err := oauthex.RegisterClient(ctx, endpoint, regMeta, httpClient)
+	regResp, err := oauthex.RegisterClient(ctx, asm.RegistrationEndpoint, regMeta, reg.httpClient)
 	if err != nil {
-		return nil, fmt.Errorf(
+		return clientCredentials{}, fmt.Errorf(
 			"dynamic client registration failed: %w", err)
 	}
 
 	if err := opts.Queries.UpsertMCPOAuthClient(ctx, db.UpsertMCPOAuthClientParams{
 		ServerName: opts.ServerName,
-		ServerUrl:  serverURL,
+		ServerUrl:  reg.serverURL,
 		ClientID:   regResp.ClientID,
 		ClientSecret: sql.NullString{
 			String: regResp.ClientSecret,
 			Valid:  regResp.ClientSecret != "",
 		},
 	}); err != nil {
-		return nil, fmt.Errorf(
+		return clientCredentials{}, fmt.Errorf(
 			"failed to persist client credentials: %w", err)
 	}
-	return regResp, nil
+	return clientCredentials{
+		id:        regResp.ClientID,
+		secret:    regResp.ClientSecret,
+		authStyle: authMethodToStyle(regResp.TokenEndpointAuthMethod),
+	}, nil
+}
+
+// tokenAuthStyle is how c authenticates at the token endpoint: as
+// registration said, else as asm advertises.
+func (c clientCredentials) tokenAuthStyle(asm *oauthex.AuthServerMeta) oauth2.AuthStyle {
+	if c.authStyle == oauth2.AuthStyleAutoDetect && asm != nil {
+		return selectTokenAuthMethod(asm.TokenEndpointAuthMethodsSupported)
+	}
+	return c.authStyle
 }
 
 // awaitCallback waits for the browser to deliver the authorization
