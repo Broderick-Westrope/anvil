@@ -264,38 +264,40 @@ func writeMCP(b *strings.Builder, states map[string]mcp.ClientInfo, cfg *config.
 	}
 
 	// Write configured but not running MCP servers
-	c := cfg.Config()
-	if len(c.MCP) > 0 {
-		runtimeNames := make(map[string]bool)
-		for name := range states {
-			runtimeNames[name] = true
-		}
+	runtimeNames := make(map[string]bool)
+	for name := range states {
+		runtimeNames[name] = true
+	}
+	writeConfiguredServers(b, "[mcp_configured]", cfg.Config().MCP, runtimeNames, func(c config.MCPConfig) bool { return c.Disabled })
+}
 
-		type configuredEntry struct {
-			name   string
-			status string
+// writeConfiguredServers writes the servers in configured that aren't
+// running under header, sorted by name, each as disabled or not_started.
+func writeConfiguredServers[C any](b *strings.Builder, header string, configured map[string]C, running map[string]bool, disabled func(C) bool) {
+	type configuredEntry struct {
+		name   string
+		status string
+	}
+	var entries []configuredEntry
+	for name, serverCfg := range configured {
+		// Skip if already in runtime
+		if running[name] {
+			continue
 		}
-		var entries []configuredEntry
-		for name, mcpCfg := range c.MCP {
-			// Skip if already in runtime
-			if runtimeNames[name] {
-				continue
-			}
-			status := "not_started"
-			if mcpCfg.Disabled {
-				status = "disabled"
-			}
-			entries = append(entries, configuredEntry{name: name, status: status})
+		status := "not_started"
+		if disabled(serverCfg) {
+			status = "disabled"
 		}
+		entries = append(entries, configuredEntry{name: name, status: status})
+	}
 
-		if len(entries) > 0 {
-			slices.SortFunc(entries, func(a, b configuredEntry) int { return strings.Compare(a.name, b.name) })
-			b.WriteString("[mcp_configured]\n")
-			for _, e := range entries {
-				fmt.Fprintf(b, "%s = %s\n", e.name, e.status)
-			}
-			b.WriteString("\n")
+	if len(entries) > 0 {
+		slices.SortFunc(entries, func(a, b configuredEntry) int { return strings.Compare(a.name, b.name) })
+		b.WriteString(header + "\n")
+		for _, e := range entries {
+			fmt.Fprintf(b, "%s = %s\n", e.name, e.status)
 		}
+		b.WriteString("\n")
 	}
 }
 
