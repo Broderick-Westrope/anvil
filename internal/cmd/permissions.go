@@ -334,9 +334,22 @@ func applyPermissionCandidates(ctx context.Context, store *config.ConfigStore, s
 			return err
 		}
 	}
-	updated, err := readBackRules(ctx, store, path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
+	}
+	var written struct {
+		Permissions config.Permissions `json:"permissions"`
+	}
+	if err := json.Unmarshal(data, &written); err != nil {
+		return fmt.Errorf("reading written permissions: %w", err)
+	}
+	updated := written.Permissions.Rules
+	if store.WorkingDir() != "" {
+		if err := store.ReloadFromDisk(ctx); err != nil {
+			return fmt.Errorf("rules written but config reload failed: %w", err)
+		}
+		updated = permissionRules(store)
 	}
 	failed := false
 	for _, c := range chosen {
@@ -362,29 +375,6 @@ func applyPermissionCandidates(ctx context.Context, store *config.ConfigStore, s
 		return errors.New("rules written but some examples do not evaluate to the intended action")
 	}
 	return nil
-}
-
-// readBackRules returns the permission rules in effect after a write to
-// path: the reloaded config when the store has a working directory,
-// otherwise the rules in the written file alone.
-func readBackRules(ctx context.Context, store *config.ConfigStore, path string) ([]config.PermissionRule, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var written struct {
-		Permissions config.Permissions `json:"permissions"`
-	}
-	if err := json.Unmarshal(data, &written); err != nil {
-		return nil, fmt.Errorf("reading written permissions: %w", err)
-	}
-	if store.WorkingDir() == "" {
-		return written.Permissions.Rules, nil
-	}
-	if err := store.ReloadFromDisk(ctx); err != nil {
-		return nil, fmt.Errorf("rules written but config reload failed: %w", err)
-	}
-	return permissionRules(store), nil
 }
 
 // colorWriter strips or downsamples ANSI styling unless w already applies
