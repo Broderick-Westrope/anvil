@@ -339,12 +339,12 @@ func (m *UI) goToSession(sessionID string) tea.Cmd {
 
 // handleWorkflowEvent applies a workflow event to the UI.
 func (m *UI) handleWorkflowEvent(ev host.Event) tea.Cmd {
-	defer m.updateLayoutAndSize()
 	if (ev.Kind == host.EventApproval || ev.Kind == host.EventAsk) && m.seenWorkflowRequest(ev.RequestID) {
 		// The host republishes requests until answered, in case one was
 		// dropped; one already shown or answered needs nothing more.
 		return nil
 	}
+	defer m.updateLayoutAndSize()
 	switch ev.Kind {
 	case host.EventApproval:
 		m.trackWorkflowRequest(ev)

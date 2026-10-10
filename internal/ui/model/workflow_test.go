@@ -1042,6 +1042,20 @@ func TestWorkflowRunFromPalette(t *testing.T) {
 	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRunID))
 }
 
+func TestWorkflowRepublishedRequestDoesNotRelayout(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	ask := host.Event{Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
+	f.event(ask)
+	layout := f.u.layout
+	// A relayout would size to the new width; nothing else does here.
+	f.u.width += 20
+	f.event(ask)
+	require.Equal(t, layout, f.u.layout)
+}
+
 func TestWorkflowRepublishedRequestIsShownOnce(t *testing.T) {
 	t.Parallel()
 
