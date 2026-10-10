@@ -2623,7 +2623,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.confirmReloadInstance())
 	case dialog.ActionReloadInstanceCancel:
 		cmds = append(cmds, m.cancelReloadInstance())
-	case dialog.ActionWorkflowRespond, dialog.ActionWorkflowControl:
+	case dialog.ActionWorkflowRespond, dialog.ActionWorkflowControl, dialog.ActionWorkflowOpenAgent:
 		cmds = append(cmds, m.handleWorkflowAction(msg))
 	case dialog.ActionAttachSkill:
 		if m.slashACOpen {
@@ -2886,7 +2886,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case key.Matches(msg, m.keyMap.CycleBouncer):
 			cmds = append(cmds, m.handleCycleBouncerKey())
 			return true
-		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort, m.keyMap.WorkflowGo, m.keyMap.WorkflowAgent):
+		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort, m.keyMap.WorkflowGo, m.keyMap.WorkflowAgent, m.keyMap.WorkflowRun):
 			if cmd, ok := m.handleWorkflowKey(msg); ok {
 				cmds = append(cmds, cmd)
 				return true

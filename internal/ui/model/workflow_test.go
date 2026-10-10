@@ -20,6 +20,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/golden"
 	"github.com/stretchr/testify/require"
@@ -468,29 +469,35 @@ func TestWorkflowFinishReportsOutcome(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		ev       host.Event
-		wantType util.InfoType
-		wantMsg  string
+		ev        host.Event
+		wantType  util.InfoType
+		wantMsg   string
+		wantPanel string
 	}{
 		"completed": {
 			ev:       host.Event{Status: host.StatusCompleted, Result: []byte(`"done"`)},
 			wantType: util.InfoTypeSuccess, wantMsg: `Workflow /demo completed: "done"`,
+			wantPanel: `/demo · completed: "done"`,
 		},
 		"completed without result": {
 			ev:       host.Event{Status: host.StatusCompleted, Result: []byte(`null`)},
 			wantType: util.InfoTypeSuccess, wantMsg: "Workflow /demo completed",
+			wantPanel: "/demo · completed",
 		},
 		"failed": {
 			ev:       host.Event{Status: host.StatusFailed, Message: "BashError: exit 1"},
 			wantType: util.InfoTypeError, wantMsg: "Workflow /demo failed: BashError: exit 1",
+			wantPanel: "/demo · failed: BashError: exit 1",
 		},
 		"denied": {
 			ev:       host.Event{Status: host.StatusDenied},
 			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo was not approved",
+			wantPanel: "/demo · not approved",
 		},
 		"aborted": {
 			ev:       host.Event{Status: host.StatusAborted},
 			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo aborted",
+			wantPanel: "/demo · aborted",
 		},
 	}
 	for name, tc := range tests {
@@ -504,7 +511,8 @@ func TestWorkflowFinishReportsOutcome(t *testing.T) {
 			require.Len(t, infos, 1)
 			require.Equal(t, tc.wantType, infos[0].Type)
 			require.Equal(t, tc.wantMsg, infos[0].Msg)
-			require.Empty(t, f.panel())
+			require.Contains(t, f.panel(), tc.wantPanel)
+			require.Equal(t, 1, f.u.pillsAreaHeight(), "only the one-line summary is left")
 		})
 	}
 }
@@ -533,7 +541,7 @@ func TestPromptHistorySkipsWorkflowTurns(t *testing.T) {
 func TestRenderWorkflowPanelGolden(t *testing.T) {
 	t.Parallel()
 
-	keys := workflowPanel{pauseKey: "ctrl+x", abortKey: "alt+x", goKey: "alt+g", agentKey: "alt+o"}
+	keys := workflowPanel{pauseKey: "ctrl+x", abortKey: "alt+x", goKey: "alt+g", agentKey: "alt+o", runKey: "alt+w"}
 	tests := map[string]workflowPanel{
 		"running": {
 			command: "build", step: "devils-advocate", detail: "approach 1, round 2/3",
@@ -544,29 +552,33 @@ func TestRenderWorkflowPanelGolden(t *testing.T) {
 		"narrow": {
 			command: "build", step: "review", detail: "pass 1 with a very long detail that cannot fit",
 			activity: "$ a long command",
-			entries:  []workflowEntry{{question: "A long question that will not fit in fifty columns", answer: "an answer"}},
+			entries:  []dialog.WorkflowEntry{{Kind: dialog.WorkflowEntryAsk, Question: "A long question that will not fit in fifty columns", Answer: "an answer"}},
 		},
 		"with_agents": {
 			command: "build", step: "review", detail: "approach 2/3",
-			entries: []workflowEntry{
-				{agent: "builder", model: "anthropic/claude-sonnet", sessionID: "c1", status: host.StatusCompleted},
-				{agent: "reviewer", sessionID: "c2", status: host.StatusFailed, err: "submit_result never called\nsecond line"},
-				{question: "Ship it?", answer: "yes"},
-				{agent: "devils-advocate", sessionID: "c3", status: host.StatusRunning},
+			entries: []dialog.WorkflowEntry{
+				{Kind: dialog.WorkflowEntryAgent, Agent: "builder", Model: "anthropic/claude-sonnet", SessionID: "c1", Status: host.StatusCompleted},
+				{Kind: dialog.WorkflowEntryAgent, Agent: "reviewer", SessionID: "c2", Status: host.StatusFailed, Err: "submit_result never called\nsecond line"},
+				{Kind: dialog.WorkflowEntryAsk, Question: "Ship it?", Answer: "yes"},
+				{Kind: dialog.WorkflowEntryAgent, Agent: "devils-advocate", SessionID: "c3", Status: host.StatusRunning},
 			},
+		},
+		"finished": {
+			command: "build",
+			outcome: &dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: host.StatusFailed, Text: "BashError: exit 1\nstack"},
 		},
 		"with_questions": {
 			command: "build", step: "escalate",
-			entries: []workflowEntry{
-				{question: "Ship approach 2?\nIt failed review twice.", answer: "yes"},
-				{question: "Anything to add for the hand-over?", answer: "keep the retry loop\nand log it"},
+			entries: []dialog.WorkflowEntry{
+				{Kind: dialog.WorkflowEntryAsk, Question: "Ship approach 2?\nIt failed review twice.", Answer: "yes"},
+				{Kind: dialog.WorkflowEntryAsk, Question: "Anything to add for the hand-over?", Answer: "keep the retry loop\nand log it"},
 			},
 		},
 	}
 	for name, p := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			p.pauseKey, p.abortKey, p.goKey, p.agentKey = keys.pauseKey, keys.abortKey, keys.goKey, keys.agentKey
+			p.pauseKey, p.abortKey, p.goKey, p.agentKey, p.runKey = keys.pauseKey, keys.abortKey, keys.goKey, keys.agentKey, keys.runKey
 			width := 100
 			if name == "narrow" {
 				width = 50
@@ -826,4 +838,162 @@ func TestWorkflowAgentFromPalette(t *testing.T) {
 	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowOpenAgent}))
 	require.True(t, f.u.isDrilledIn())
 	require.Equal(t, "child-1", f.u.drillStack[0].sessionID)
+}
+
+// runDialog draws the workflow run dialog, or returns "" when it isn't
+// open.
+func (f *workflowFixture) runDialog() string {
+	d := f.u.dialog.Dialog(dialog.WorkflowRunID)
+	if d == nil {
+		return ""
+	}
+	scr := uv.NewScreenBuffer(120, 80)
+	d.Draw(scr, uv.Rect(0, 0, 120, 80))
+	return strings.Join(strings.Fields(strings.ReplaceAll(scr.String(), "│", "")), " ")
+}
+
+var showRunKey = tea.KeyPressMsg{Code: 'w', Mod: tea.ModAlt}
+
+func (f *workflowFixture) answer(id, question, answer string) {
+	f.event(askFor(id, question))
+	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: id, Answer: answer}))
+}
+
+func TestWorkflowRunKeepsWhatThePanelDrops(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{Kind: host.EventStatus, Command: "demo", SessionID: "sess-1", Step: "build", Detail: "approach 1/3"})
+	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "bash", Detail: "git status"})
+	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(host.Event{Kind: host.EventWarn, Command: "demo", SessionID: "sess-1", Message: "undeclared: add `x` to requires()"})
+	f.event(agentEvent("first", "child-1", host.StatusRunning))
+	f.event(agentEvent("first", "child-1", host.StatusCompleted))
+	f.answer("q0", "first question\nwith a second line", "first answer\nin full")
+	for i := range workflowPanelEntries {
+		f.answer(string(rune('a'+i)), "later question", "ok")
+	}
+	require.NotContains(t, f.panel(), "first question", "the panel has dropped it")
+	require.NotContains(t, f.panel(), "/demo: first")
+
+	f.press(showRunKey)
+	out := f.runDialog()
+	require.Contains(t, out, "build · approach 1/3")
+	require.Contains(t, out, "$ git status")
+	require.Contains(t, out, "turn in Builder")
+	require.Contains(t, out, "undeclared: add `x` to requires()")
+	require.Contains(t, out, "/demo: first · done")
+	require.Contains(t, out, "first question with a second line")
+	require.Contains(t, out, "first answer in full")
+}
+
+func TestWorkflowRunOutlivesTheRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
+	f.answer("q1", "Ship it?", "yes")
+	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusFailed, Message: "BashError: exit 1"})
+
+	panel := f.panel()
+	require.Contains(t, panel, "/demo · failed: BashError: exit 1")
+	require.Contains(t, panel, "alt+w details")
+	require.Equal(t, 1, f.u.pillsAreaHeight())
+	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Finished: true}, f.u.workflowControls())
+
+	f.press(showRunKey)
+	out := f.runDialog()
+	require.Contains(t, out, "Ship it? → yes")
+	require.Contains(t, out, "/demo: reviewer")
+	require.Contains(t, out, "result failed: BashError: exit 1")
+}
+
+func TestWorkflowRunOpensAnAgentSession(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(agentEvent("builder", "child-1", host.StatusRunning))
+	f.event(agentEvent("builder", "child-1", host.StatusCompleted))
+	f.event(agentEvent("reviewer", "child-2", host.StatusRunning))
+	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted})
+
+	f.press(showRunKey)
+	f.runDialog()
+	f.press(tea.KeyPressMsg{Code: tea.KeyUp})
+	f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRunID))
+	require.True(t, f.u.isDrilledIn())
+	top := f.u.drillStack[len(f.u.drillStack)-1]
+	require.Equal(t, "child-1", top.sessionID)
+	require.Equal(t, "/demo: builder", top.label)
+}
+
+func TestWorkflowRunCanBeDismissed(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusAborted})
+	f.press(showRunKey)
+	f.press(tea.KeyPressMsg{Code: 'd', Text: "d"})
+
+	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRunID))
+	require.Empty(t, f.panel())
+	require.Nil(t, f.u.workflowControls())
+	f.press(showRunKey)
+	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRunID), "nothing is left to show")
+}
+
+func TestWorkflowRunIsReplacedByTheNextRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.answer("q1", "old question", "yes")
+	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted})
+
+	next := started("demo", "sess-1")
+	next.RunID = "run-2"
+	f.event(next)
+	require.NotContains(t, f.panel(), "completed")
+	f.press(showRunKey)
+	require.NotContains(t, f.runDialog(), "old question")
+}
+
+func TestWorkflowRunShowsInOtherSessionsOfTheRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted})
+	sess := f.ws.sessions["sess-2"]
+	f.u.session = &sess
+	f.u.updateLayoutAndSize()
+	require.Empty(t, f.panel(), "a session the run never used shows nothing")
+	f.press(showRunKey)
+	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRunID))
+}
+
+func TestWorkflowRunUpdatesWhileOpen(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.press(showRunKey)
+	require.NotContains(t, f.runDialog(), "NEWEST")
+	f.event(host.Event{Kind: host.EventStatus, Command: "demo", SessionID: "sess-1", Step: "NEWEST"})
+	require.Contains(t, f.runDialog(), "NEWEST")
+}
+
+func TestWorkflowRunFromPalette(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowShowRun}))
+	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRunID))
 }

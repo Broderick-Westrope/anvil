@@ -72,6 +72,9 @@ type KeyMap struct {
 	WorkflowGo    key.Binding
 	// WorkflowAgent opens the session of the run's latest subagent.
 	WorkflowAgent key.Binding
+	// WorkflowRun shows the transcript of the run involving the current
+	// session, running or last finished.
+	WorkflowRun key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -127,6 +130,10 @@ func DefaultKeyMap() KeyMap {
 		WorkflowAgent: key.NewBinding(
 			key.WithKeys("alt+o"),
 			key.WithHelp("alt+o", "open workflow agent"),
+		),
+		WorkflowRun: key.NewBinding(
+			key.WithKeys("alt+w"),
+			key.WithHelp("alt+w", "show workflow run"),
 		),
 	}
 
