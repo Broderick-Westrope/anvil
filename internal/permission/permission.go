@@ -118,9 +118,6 @@ type PendingPermission struct {
 
 type Service interface {
 	pubsub.Subscriber[PermissionRequest]
-	// Deprecated: use GrantSession instead. Kept for backward compatibility
-	// with the TUI.
-	GrantPersistent(permission PermissionRequest)
 	Grant(permission PermissionRequest)
 	Deny(permission PermissionRequest, reason string)
 	Request(ctx context.Context, opts CreatePermissionRequest) (RequestResult, error)
@@ -161,14 +158,6 @@ type Service interface {
 	ResetBouncerCache()
 }
 
-// PermissionKey is a composite key for session permission lookups.
-type PermissionKey struct {
-	SessionID string
-	ToolName  string
-	Action    string
-	Path      string
-}
-
 // Lock ordering: requestMu is the outermost lock and must not be held
 // when acquiring configRulesMu, sessionRulesMu, or activeRequestMu. The
 // latter three are independent and never nested. A request's
@@ -179,7 +168,6 @@ type permissionService struct {
 
 	notificationBroker    *pubsub.Broker[PermissionNotification]
 	workingDir            string
-	sessionPermissions    *csync.Map[PermissionKey, bool]
 	pendingRequests       *csync.Map[string, chan permissionResponse]
 	autoApproveSessions   map[string]bool
 	autoApproveSessionsMu sync.RWMutex
@@ -208,34 +196,6 @@ type permissionService struct {
 	requestMu       sync.Mutex
 	activeRequest   *PermissionRequest
 	activeRequestMu sync.Mutex
-}
-
-// Deprecated: use GrantSession instead. Kept for the HTTP/proto remote
-// workspace path (backend.GrantPermission), which has no pattern
-// information and still relies on exact PermissionKey matching. Remove
-// once the remote protocol carries patterns for session grants.
-func (s *permissionService) GrantPersistent(permission PermissionRequest) {
-	s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-		ToolCallID: permission.ToolCallID,
-		Granted:    true,
-	})
-	respCh, ok := s.pendingRequests.Get(permission.ID)
-	if ok {
-		respCh <- permissionResponse{Granted: true}
-	}
-
-	s.sessionPermissions.Set(PermissionKey{
-		SessionID: permission.SessionID,
-		ToolName:  permission.ToolName,
-		Action:    permission.Action,
-		Path:      permission.Path,
-	}, true)
-
-	s.activeRequestMu.Lock()
-	if s.activeRequest != nil && s.activeRequest.ID == permission.ID {
-		s.activeRequest = nil
-	}
-	s.activeRequestMu.Unlock()
 }
 
 func (s *permissionService) Grant(permission PermissionRequest) {
@@ -474,8 +434,8 @@ type policyResult struct {
 }
 
 // evaluatePolicy applies session auto-approval, config and session rules,
-// yolo-standard promotion, and legacy session grants. It reads fresh
-// snapshots on every call so it can be re-run at each commit boundary.
+// and yolo-standard promotion. It reads fresh snapshots on every call so it
+// can be re-run at each commit boundary.
 func (s *permissionService) evaluatePolicy(opts CreatePermissionRequest) policyResult {
 	s.autoApproveSessionsMu.RLock()
 	autoApprove := s.autoApproveSessions[opts.SessionID]
@@ -543,15 +503,6 @@ func (s *permissionService) evaluatePolicy(opts CreatePermissionRequest) policyR
 		}
 	}
 
-	if _, ok := s.sessionPermissions.Get(PermissionKey{
-		SessionID: opts.SessionID,
-		ToolName:  opts.ToolName,
-		Action:    opts.Action,
-		Path:      s.requestDir(opts.Path),
-	}); ok {
-		return policyResult{resolved: true, source: DecisionSourceSessionGrant, verdict: VerdictAllow}
-	}
-
 	return policyResult{isDefault: result.IsDefault, yolo: yoloDeferred}
 }
 
@@ -560,7 +511,7 @@ func (s *permissionService) finishPolicy(opts CreatePermissionRequest, p policyR
 }
 
 // requestDir resolves the directory a request applies to, as shown in the
-// prompt and used for legacy session grants.
+// prompt.
 func (s *permissionService) requestDir(path string) string {
 	dir := path
 	if fileInfo, err := os.Stat(path); err == nil && !fileInfo.IsDir() {
@@ -685,7 +636,6 @@ func NewPermissionService(workingDir string, yoloLevel config.YoloLevel, configR
 		Broker:              pubsub.NewBroker[PermissionRequest](),
 		notificationBroker:  pubsub.NewBroker[PermissionNotification](),
 		workingDir:          workingDir,
-		sessionPermissions:  csync.NewMap[PermissionKey, bool](),
 		autoApproveSessions: make(map[string]bool),
 		configRules:         configRules,
 		sessionRules:        make(map[string][]config.PermissionRule),

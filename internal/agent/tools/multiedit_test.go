@@ -27,8 +27,6 @@ func (m *mockPermissionService) Grant(req permission.PermissionRequest) {}
 
 func (m *mockPermissionService) Deny(req permission.PermissionRequest, reason string) {}
 
-func (m *mockPermissionService) GrantPersistent(req permission.PermissionRequest) {}
-
 func (m *mockPermissionService) AutoApproveSession(sessionID string) {}
 
 func (m *mockPermissionService) RevokeAutoApproveSession(sessionID string) {}

@@ -33,8 +33,6 @@ func (m *mockBashPermissionService) Grant(req permission.PermissionRequest) {}
 
 func (m *mockBashPermissionService) Deny(req permission.PermissionRequest, reason string) {}
 
-func (m *mockBashPermissionService) GrantPersistent(req permission.PermissionRequest) {}
-
 func (m *mockBashPermissionService) AutoApproveSession(sessionID string) {}
 
 func (m *mockBashPermissionService) RevokeAutoApproveSession(sessionID string) {}
@@ -158,8 +156,6 @@ func (m *recordingPermissionService) Request(ctx context.Context, req permission
 func (m *recordingPermissionService) Grant(req permission.PermissionRequest) {}
 
 func (m *recordingPermissionService) Deny(req permission.PermissionRequest, reason string) {}
-
-func (m *recordingPermissionService) GrantPersistent(req permission.PermissionRequest) {}
 
 func (m *recordingPermissionService) AutoApproveSession(sessionID string) {}
 

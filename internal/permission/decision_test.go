@@ -31,16 +31,16 @@ func (r *fakeRecorder) snapshot() []Decision {
 func TestDecisionRequest(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name               string
-		level              config.YoloLevel
-		rule               config.PermissionAction
-		session            config.PermissionAction
-		hook, auto, legacy bool
-		prompt             string
-		source             DecisionSource
-		verdict            Verdict
-		matched            string
-		notifications      int
+		name          string
+		level         config.YoloLevel
+		rule          config.PermissionAction
+		session       config.PermissionAction
+		hook, auto    bool
+		prompt        string
+		source        DecisionSource
+		verdict       Verdict
+		matched       string
+		notifications int
 	}{
 		{name: "full yolo", level: config.YoloFull, rule: config.PermissionDeny, source: DecisionSourceYolo, verdict: VerdictAllow},
 		{name: "hook", hook: true, rule: config.PermissionDeny, source: DecisionSourceHook, verdict: VerdictAllow, notifications: 1},
@@ -56,7 +56,6 @@ func TestDecisionRequest(t *testing.T) {
 		{name: "standard session ask", level: config.YoloStandard, session: config.PermissionAsk, source: DecisionSourceYolo, verdict: VerdictAllow, matched: "bash:git *", notifications: 2},
 		{name: "standard explicit allow", level: config.YoloStandard, rule: config.PermissionAllow, source: DecisionSourceRule, verdict: VerdictAllow, matched: "bash", notifications: 2},
 		{name: "standard deny", level: config.YoloStandard, rule: config.PermissionDeny, source: DecisionSourceRule, verdict: VerdictDeny, matched: "bash", notifications: 2},
-		{name: "legacy grant", legacy: true, source: DecisionSourceSessionGrant, verdict: VerdictAllow, notifications: 2},
 		{name: "human allow", prompt: "allow", source: DecisionSourceHuman, verdict: VerdictAllow, notifications: 2},
 		{name: "human deny", prompt: "deny", source: DecisionSourceHuman, verdict: VerdictDeny, notifications: 2},
 		{name: "cancelled", prompt: "cancel", source: DecisionSourceHuman, verdict: VerdictCancelled, notifications: 1},
@@ -76,9 +75,6 @@ func TestDecisionRequest(t *testing.T) {
 			}
 			if tt.auto {
 				svc.AutoApproveSession("session")
-			}
-			if tt.legacy {
-				svc.GrantPersistent(PermissionRequest{SessionID: "session", ToolName: "bash", Action: "execute", Path: dir})
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
