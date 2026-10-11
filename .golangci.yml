@@ -108,9 +108,6 @@ linters:
       # Functions over the gocognit limit when it was enabled. Each new
       # function must stay under it. Delete an entry once its function is
       # back under the limit.
-      - path: internal/agent/tools/lsp_rename\.go
-        text: 'func `(NewRenameTool)`'
-        linters: [gocognit]
       - path: internal/app/app\.go
         text: 'func `(\(\*App\)\.RunNonInteractive)`'
         linters: [gocognit]
