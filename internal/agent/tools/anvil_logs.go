@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -147,7 +148,9 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 	const chunkSize = 8192 // 8KB chunks
 
 	pos := stat.Size()
-	var remainder []byte
+	// carry holds the start of a line that began in an earlier chunk, which
+	// the next iteration reads.
+	var carry []byte
 
 	for pos > 0 && len(entries) < n {
 		chunkStart := max(pos-chunkSize, 0)
@@ -168,21 +171,22 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 			return nil, err
 		}
 
-		// Combine with remainder from previous (earlier) chunk.
-		data := append(chunk, remainder...)
+		// Complete the line carried over from the later chunk.
+		data := append(chunk, carry...)
+		carry = nil
 
-		// Split into lines (without the final incomplete line if any).
-		lines := splitLines(data)
-
-		// Keep the incomplete line for next iteration.
-		if len(data) > 0 && data[len(data)-1] != '\n' {
-			remainder = lines[len(lines)-1]
-			lines = lines[:len(lines)-1]
-		} else {
-			remainder = nil
+		// Unless this chunk starts the file, its first line may have begun
+		// in the earlier chunk, so carry it into the next iteration.
+		if chunkStart > 0 {
+			before, after, found := bytes.Cut(data, []byte{'\n'})
+			if !found {
+				before, after = data, nil
+			}
+			carry, data = before, after
 		}
 
 		// Parse lines from end to start to get most recent first.
+		lines := splitLines(data)
 		for i := len(lines) - 1; i >= 0; i-- {
 			entry, ok := parseLogLine(lines[i])
 			if !ok {
@@ -196,11 +200,6 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 		}
 
 		pos = chunkStart
-	}
-
-	// Handle final remainder.
-	if entry, ok := parseLogLine(remainder); ok && len(entries) < n {
-		entries = append(entries, entry)
 	}
 
 	// Reverse to get chronological order (oldest first).

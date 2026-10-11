@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -586,24 +587,21 @@ func jsonLineOfSize(size int) string {
 	return prefix + strings.Repeat("x", size-len(prefix)-len(suffix)) + suffix
 }
 
-func TestAnvilLogs_TrailingLineWithoutNewlineKnownBug(t *testing.T) {
+func TestAnvilLogs_TrailingLineWithoutNewline(t *testing.T) {
 	t.Parallel()
 
-	// BUG: a final line without a newline is read last, so it comes back
-	// as the oldest entry rather than the newest, and is the first to be
-	// dropped when lines runs out.
 	content := `{"msg":"a"}` + "\n" + `{"msg":"b"}` + "\n" + `{"msg":"c"}`
 	tests := map[string]struct {
 		lines int
 		want  string
 	}{
-		"room for the trailing line": {
+		"room for every line": {
 			lines: 3,
-			want:  "--:--:-- INFO unknown:0 c\n--:--:-- INFO unknown:0 a\n--:--:-- INFO unknown:0 b",
+			want:  "--:--:-- INFO unknown:0 a\n--:--:-- INFO unknown:0 b\n--:--:-- INFO unknown:0 c",
 		},
-		"no room for the trailing line": {
+		"room for the newest lines": {
 			lines: 2,
-			want:  "--:--:-- INFO unknown:0 a\n--:--:-- INFO unknown:0 b",
+			want:  "--:--:-- INFO unknown:0 b\n--:--:-- INFO unknown:0 c",
 		},
 	}
 	for name, tc := range tests {
@@ -617,53 +615,79 @@ func TestAnvilLogs_TrailingLineWithoutNewlineKnownBug(t *testing.T) {
 	}
 }
 
+// readLastLines reads the file backwards in chunks of this size.
+const testLogChunkSize = 8192
+
 func TestAnvilLogs_ReadsAcrossChunks(t *testing.T) {
 	t.Parallel()
 
-	// readLastLines reads the file backwards in chunks of this size.
-	const chunkSize = 8192
 	const total = 150
 	var content strings.Builder
 	var starts []int
+	var all []string
 	for i := range total {
 		starts = append(starts, content.Len())
 		line, err := json.Marshal(makeLogEntry("INFO", fmt.Sprintf("entry %03d", i), "app.go", 1, nil))
 		require.NoError(t, err)
 		content.Write(line)
 		content.WriteString("\n")
+		all = append(all, fmt.Sprintf("10:30:00 INFO app.go:1 entry %03d", i))
 	}
 	size := content.Len()
-	require.Greater(t, size, chunkSize)
+	require.Greater(t, size, testLogChunkSize)
 	starts = append(starts, size)
-
-	// Entries that straddle a chunk boundary are read wrongly today, so
-	// only check that the newest entries which don't are all returned, in
-	// order.
 	crossesChunk := func(i int) bool {
-		for b := size - chunkSize; b > 0; b -= chunkSize {
+		for b := size - testLogChunkSize; b > 0; b -= testLogChunkSize {
 			if starts[i] < b && b < starts[i+1] {
 				return true
 			}
 		}
 		return false
 	}
-	var want []string
+	newest := make([]int, 0, maxLogLines)
 	for i := total - maxLogLines; i < total; i++ {
-		if !crossesChunk(i) {
-			want = append(want, fmt.Sprintf("entry %03d", i))
-		}
+		newest = append(newest, i)
 	}
-	require.Less(t, len(want), maxLogLines, "the test needs at least one entry across a chunk boundary")
+	require.True(t, slices.ContainsFunc(newest, crossesChunk), "the test needs at least one entry across a chunk boundary")
 
 	result := runAnvilLogs(writeRawLog(t, content.String()), AnvilLogsParams{Lines: maxLogLines})
 
-	lines := strings.Split(result, "\n")
-	require.Len(t, lines, maxLogLines)
-	next := 0
-	for _, line := range lines {
-		if next < len(want) && strings.HasSuffix(line, " "+want[next]) {
-			next++
-		}
+	require.Equal(t, strings.Join(all[total-maxLogLines:], "\n"), result)
+}
+
+func TestAnvilLogs_ChunkBoundaryPlacement(t *testing.T) {
+	t.Parallel()
+
+	// Every line but the newest is this long, so the newest line's length
+	// sets where the chunk boundaries fall.
+	const lineSize = 128
+	tests := map[string]struct {
+		newestSize int
+	}{
+		"newline is the first byte of a chunk":    {newestSize: lineSize - 1},
+		"line starts exactly at a chunk boundary": {newestSize: lineSize},
+		"line straddles a chunk boundary":         {newestSize: lineSize + 1},
 	}
-	require.Equal(t, len(want), next, "missing %q", want[min(next, len(want)-1)])
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			const total = 150
+			var content strings.Builder
+			var all []string
+			for i := range total {
+				size := lineSize
+				if i == total-1 {
+					size = tc.newestSize
+				}
+				pad := strings.Repeat("x", size-len(fmt.Sprintf(`{"msg":"entry %03d","pad":""}`, i))-1)
+				fmt.Fprintf(&content, `{"msg":"entry %03d","pad":"%s"}`+"\n", i, pad)
+				all = append(all, fmt.Sprintf("--:--:-- INFO unknown:0 entry %03d pad=%s", i, pad))
+			}
+			require.Equal(t, (total-1)*lineSize+tc.newestSize, content.Len())
+
+			result := runAnvilLogs(writeRawLog(t, content.String()), AnvilLogsParams{Lines: maxLogLines})
+
+			require.Equal(t, strings.Join(all[total-maxLogLines:], "\n"), result)
+		})
+	}
 }
