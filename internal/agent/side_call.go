@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// sideCall is one model request made beside the conversation's turns: a
+// sideCall is one model request made beside the session's turns: a
 // summary, a title or a small-model completion. Like a turn, its methods
-// are the fantasy callbacks. They frame the request for the provider the
-// way a turn does and record its step usage.
+// are the fantasy callbacks. They frame the request with frameMessages, as
+// a turn does, and record its step usage.
 type sideCall struct {
 	a           *sessionAgent
 	prefix      string

@@ -9,7 +9,7 @@ import (
 
 // toolAccess decides which tools an agent may use. Built-in tools follow
 // the agent's AllowedTools filter and the global DisabledTools list; MCP
-// tools and lazy MCP servers follow the agent's AllowedMCP map.
+// tools and lazy MCPs follow the agent's AllowedMCP map.
 type toolAccess struct {
 	allowedTools  []string
 	disabledTools []string
