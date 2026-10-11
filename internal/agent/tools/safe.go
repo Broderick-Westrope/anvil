@@ -13,22 +13,15 @@ var safeCommands = []string{
 	"df",
 	"du",
 	"echo",
-	"env",
 	"free",
 	"groups",
 	"hostname",
 	"id",
-	"kill",
-	"killall",
 	"ls",
-	"nice",
-	"nohup",
 	"printenv",
 	"ps",
 	"pwd",
 	"set",
-	"time",
-	"timeout",
 	"top",
 	"type",
 	"uname",
@@ -61,13 +54,16 @@ var safeCommands = []string{
 var chainingMetacharacters = []string{
 	";",
 	"|",
-	"&&",
+	"&",
+	"\n",
+	">",
+	"<",
 	"$(",
 	"`",
 }
 
 // containsCommandChaining reports whether s contains shell metacharacters
-// that enable command chaining or substitution.
+// that enable command chaining, substitution or redirection.
 func containsCommandChaining(s string) bool {
 	return slices.ContainsFunc(chainingMetacharacters, func(c string) bool {
 		return strings.Contains(s, c)

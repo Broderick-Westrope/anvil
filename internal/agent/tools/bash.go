@@ -364,7 +364,7 @@ func isSafeReadOnly(command string) bool {
 	for _, safe := range safeCommands {
 		if strings.HasPrefix(cmdLower, safe) {
 			if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
-				return true
+				return hasSafeArgs(command, safe)
 			}
 		}
 	}
