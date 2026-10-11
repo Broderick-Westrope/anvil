@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -245,8 +248,64 @@ func TestConfigureProviders_Characterization(t *testing.T) {
 
 	server := newDiscoveryServer(t)
 
+	// Many providers on each side of the custom-provider loop's skips, so
+	// stopping the loop early misses some whatever order the map yields
+	// them in.
+	var manyKnown []catwalk.Provider
+	knownWant := map[string]ProviderConfig{}
+	validCustom := map[string]any{}
+	rejectedCustom := map[string]any{}
+	customWant := map[string]ProviderConfig{}
+	for i := range 8 {
+		knownID := fmt.Sprintf("known-%d", i)
+		manyKnown = append(manyKnown, catwalk.Provider{
+			ID:          catwalk.InferenceProvider(knownID),
+			Name:        knownID,
+			Type:        catwalk.TypeOpenAI,
+			APIKey:      "k",
+			APIEndpoint: "https://known.example",
+			Models:      []catwalk.Model{{ID: "m", Name: "M"}},
+		})
+		knownWant[knownID] = ProviderConfig{
+			ID:             knownID,
+			Name:           knownID,
+			BaseURL:        "https://known.example",
+			Type:           catwalk.TypeOpenAI,
+			APIKey:         "k",
+			APIKeyTemplate: "k",
+			ExtraHeaders:   map[string]string{},
+			ExtraParams:    map[string]string{},
+			Models:         []catwalk.Model{{ID: "m", Name: "M"}},
+		}
+
+		customID := fmt.Sprintf("custom-%d", i)
+		validCustom[customID] = map[string]any{"base_url": "https://custom.example", "api_key": "k", "models": []any{map[string]any{"id": "m"}}}
+		customWant[customID] = ProviderConfig{
+			ID:      customID,
+			Name:    customID,
+			BaseURL: "https://custom.example",
+			Type:    catwalk.TypeOpenAICompat,
+			APIKey:  "k",
+			Models:  []catwalk.Model{{ID: "m"}},
+		}
+
+		rejectedCustom[fmt.Sprintf("rejected-%d", i)] = map[string]any{"api_key": "k", "models": []any{map[string]any{"id": "m"}}}
+	}
+	providersConfig := func(groups ...map[string]any) string {
+		providers := map[string]any{}
+		for _, group := range groups {
+			maps.Copy(providers, group)
+		}
+		data, err := json.Marshal(map[string]any{"providers": providers})
+		require.NoError(t, err)
+		return string(data)
+	}
+	knownAndCustomWant := maps.Clone(knownWant)
+	maps.Copy(knownAndCustomWant, customWant)
+
 	tests := map[string]struct {
 		catalog  []catwalk.InferenceProvider
+		known    []catwalk.Provider
 		config   string
 		env      map[string]string
 		want     map[string]ProviderConfig
@@ -506,6 +565,16 @@ func TestConfigureProviders_Characterization(t *testing.T) {
 			config:  `{}`,
 			want:    map[string]ProviderConfig{},
 		},
+		"every custom provider is prepared alongside many known providers": {
+			known:  manyKnown,
+			config: providersConfig(validCustom),
+			want:   knownAndCustomWant,
+		},
+		"every rejected custom provider is removed and every valid one kept": {
+			config:   providersConfig(validCustom, rejectedCustom),
+			want:     customWant,
+			wantLogs: map[string]int{logCustomMissingURL: 8},
+		},
 		"custom provider defaults its name and type and resolves only its headers": {
 			config: `{"providers": {"local": {
 				"base_url": "$LOCAL_URL",
@@ -686,7 +755,7 @@ func TestConfigureProviders_Characterization(t *testing.T) {
 			cfg.setDefaults(t.TempDir(), "")
 
 			catalog := testCatalog()
-			known := make([]catwalk.Provider, 0, len(tc.catalog))
+			known := slices.Clone(tc.known)
 			for _, id := range tc.catalog {
 				known = append(known, catalog[id])
 			}
