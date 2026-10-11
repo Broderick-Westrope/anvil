@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1092,5 +1093,55 @@ func TestProviderRetryLogFields(t *testing.T) {
 			"retry_delay", "1s",
 			"status_code", 503,
 		}, fields)
+	})
+}
+
+func TestCompleteSmall(t *testing.T) {
+	t.Parallel()
+	t.Run("no small model", func(t *testing.T) {
+		t.Parallel()
+		env := testEnv(t)
+		a := sideCallAgent(env, Model{}, Model{}, "", config.ProviderConfig{})
+		_, _, err := a.completeSmall(t.Context(), "review", "is this safe?")
+		require.EqualError(t, err, "small model not configured")
+	})
+	for name, tt := range map[string]struct {
+		canReason bool
+		maxTokens int64
+		want      int64
+	}{
+		"plain model":               {maxTokens: 4000, want: completeSmallMaxTokens},
+		"reasoning model with more": {canReason: true, maxTokens: 4000, want: 4000},
+		"reasoning model with less": {canReason: true, maxTokens: 10, want: completeSmallMaxTokens},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := testEnv(t)
+			model := &recordingModel{respond: func(int) ([]fantasy.StreamPart, error) {
+				return textReply("allow", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 1}), nil
+			}}
+			m := Model{Model: model, CatwalkCfg: catwalk.Model{DefaultMaxTokens: tt.maxTokens, CanReason: tt.canReason}, ModelCfg: config.SelectedModel{Model: "small-id"}}
+			a := sideCallAgent(env, m, m, "", config.ProviderConfig{})
+			reply, modelID, err := a.completeSmall(t.Context(), "review", "is this safe?")
+			require.NoError(t, err)
+			require.Equal(t, "allow", reply)
+			require.Equal(t, "small-id", modelID)
+			recorded := model.recorded()
+			require.Len(t, recorded, 1)
+			require.Equal(t, tt.want, *recorded[0].MaxOutputTokens)
+		})
+	}
+	t.Run("stream error", func(t *testing.T) {
+		t.Parallel()
+		env := testEnv(t)
+		model := &recordingModel{respond: func(int) ([]fantasy.StreamPart, error) {
+			return nil, errors.New("down")
+		}}
+		m := Model{Model: model, ModelCfg: config.SelectedModel{Model: "small-id"}}
+		a := sideCallAgent(env, m, m, "", config.ProviderConfig{})
+		_, modelID, err := a.completeSmall(t.Context(), "review", "is this safe?")
+		require.ErrorContains(t, err, "small model: ")
+		require.ErrorContains(t, err, "down")
+		require.Equal(t, "small-id", modelID)
 	})
 }
