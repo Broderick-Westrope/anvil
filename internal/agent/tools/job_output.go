@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
@@ -69,7 +70,9 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 			bgManager := shell.GetBackgroundShellManager()
 			bgShell, ok := bgManager.Get(params.ShellID)
 			if !ok {
-				return unloadedJobOutput(ctx, opts.Archive, params), nil
+				return serveArchivedJob(ctx, opts.Archive, params.ShellID, func(rec jobstore.Record) fantasy.ToolResponse {
+					return archivedJobOutput(opts.Archive, rec, params)
+				}), nil
 			}
 
 			// The matcher is created before reading so an unread
@@ -150,19 +153,6 @@ func jobOutputPattern(params JobOutputParams) (*regexp.Regexp, error) {
 		return nil, fmt.Errorf("invalid pattern: %v", err)
 	}
 	return re, nil
-}
-
-// unloadedJobOutput serves job_output for a job that is not in memory:
-// from the archive if it was persisted there, otherwise as not found.
-func unloadedJobOutput(ctx context.Context, archive JobArchive, params JobOutputParams) fantasy.ToolResponse {
-	rec, found, err := lookupArchivedJob(ctx, archive, params.ShellID)
-	if err != nil {
-		return fantasy.NewTextErrorResponse(err.Error())
-	}
-	if !found {
-		return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID))
-	}
-	return archivedJobOutput(archive, rec, params)
 }
 
 func jobWaitTimeout(seconds int) time.Duration {
