@@ -680,6 +680,11 @@ func TestAnvilLogs_ChunkBoundaryPlacement(t *testing.T) {
 			newestSize: lineSize + 1,
 			placed:     func(before, at byte) bool { return before != '\n' && at != '\n' },
 		},
+		"carriage return is the last byte of a chunk": {
+			eol:        "\r\n",
+			newestSize: lineSize - 1,
+			placed:     func(before, at byte) bool { return before == '\r' && at == '\n' },
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
