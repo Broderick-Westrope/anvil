@@ -183,10 +183,7 @@ func formatGrepMatch(match grepMatch) string {
 	if match.lineNum <= 0 {
 		return fmt.Sprintf("  %s\n", match.path)
 	}
-	lineText := match.lineText
-	if ansi.StringWidth(lineText) > maxGrepContentWidth {
-		lineText = ansi.Truncate(lineText, maxGrepContentWidth, "...")
-	}
+	lineText := ansi.Truncate(match.lineText, maxGrepContentWidth, "...")
 	if match.charNum > 0 {
 		return fmt.Sprintf("  Line %d, Char %d: %s\n", match.lineNum, match.charNum, lineText)
 	}
