@@ -49,13 +49,8 @@ func hasSafeArgs(entry string, words []*syntax.Word) bool {
 func expands(word *syntax.Word) bool {
 	braces := &syntax.Word{Parts: slices.Clone(word.Parts)}
 	syntax.SplitBraces(braces)
-	return slices.ContainsFunc(braces.Parts, func(part syntax.WordPart) bool {
-		_, ok := part.(*syntax.BraceExp)
-		return ok
-	}) || slices.ContainsFunc(word.Parts, func(part syntax.WordPart) bool {
-		lit, ok := part.(*syntax.Lit)
-		return ok && strings.ContainsAny(lit.Value, "*?[")
-	})
+	return slices.ContainsFunc(braces.Parts, isBraceExpansion) ||
+		slices.ContainsFunc(word.Parts, isUnquotedGlob)
 }
 
 // flagSet holds flags, either exactly or as a prefix of a flag with a
@@ -164,9 +159,8 @@ func readsRemotes(args []string) bool {
 		return false
 	}
 	options := args[subcommand+1:]
-	if remote := slices.IndexFunc(options, func(arg string) bool {
-		return !strings.HasPrefix(arg, "-")
-	}); remote >= 0 {
+	remote := slices.IndexFunc(options, isOperand)
+	if remote >= 0 {
 		options = options[:remote]
 	}
 	return slices.Contains(options, "-n")
@@ -241,4 +235,18 @@ func comparesWorkspacePaths(args []string) bool {
 		elements := strings.FieldsFunc(arg, func(r rune) bool { return r == '/' || r == '\\' })
 		return strings.IndexAny(arg, `/\~`) == 0 || strings.Index(arg, ":") == 1 || slices.Contains(elements, "..")
 	})
+}
+
+func isBraceExpansion(part syntax.WordPart) bool {
+	_, ok := part.(*syntax.BraceExp)
+	return ok
+}
+
+func isUnquotedGlob(part syntax.WordPart) bool {
+	lit, ok := part.(*syntax.Lit)
+	return ok && strings.ContainsAny(lit.Value, "*?[")
+}
+
+func isOperand(arg string) bool {
+	return !strings.HasPrefix(arg, "-")
 }
