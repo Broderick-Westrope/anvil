@@ -56,10 +56,10 @@ func NewCallHierarchyTool(lspManager *lsp.Manager) fantasy.AgentTool {
 
 			calls, err := direction.calls(ctx, resolved.client, item)
 			if err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to get %s calls: %s", direction.kind, err)), nil
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to get %s calls: %s", params.Direction, err)), nil
 			}
 			if len(calls) == 0 {
-				fmt.Fprintf(&b, "No %s calls found.\n", direction.kind)
+				fmt.Fprintf(&b, "No %s calls found.\n", params.Direction)
 			} else {
 				fmt.Fprintf(&b, "%d %s:\n\n", len(calls), direction.noun)
 				for _, c := range calls {
@@ -76,15 +76,14 @@ func NewCallHierarchyTool(lspManager *lsp.Manager) fantasy.AgentTool {
 
 // callDirection is one direction lsp_call_hierarchy can list calls in.
 type callDirection struct {
-	kind string
 	noun string
 	// calls returns the item at the other end of each call.
 	calls func(ctx context.Context, client *lsp.Client, item protocol.CallHierarchyItem) ([]protocol.CallHierarchyItem, error)
 }
 
 var callDirections = map[string]callDirection{
-	"incoming": {kind: "incoming", noun: "caller(s)", calls: callers},
-	"outgoing": {kind: "outgoing", noun: "callee(s)", calls: callees},
+	"incoming": {noun: "caller(s)", calls: callers},
+	"outgoing": {noun: "callee(s)", calls: callees},
 }
 
 func callers(ctx context.Context, client *lsp.Client, item protocol.CallHierarchyItem) ([]protocol.CallHierarchyItem, error) {
