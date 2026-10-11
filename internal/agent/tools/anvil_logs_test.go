@@ -615,9 +615,6 @@ func TestAnvilLogs_TrailingLineWithoutNewline(t *testing.T) {
 	}
 }
 
-// readLastLines reads the file backwards in chunks of this size.
-const testLogChunkSize = 8192
-
 func TestAnvilLogs_ReadsAcrossChunks(t *testing.T) {
 	t.Parallel()
 
@@ -634,10 +631,10 @@ func TestAnvilLogs_ReadsAcrossChunks(t *testing.T) {
 		all = append(all, fmt.Sprintf("10:30:00 INFO app.go:1 entry %03d", i))
 	}
 	size := content.Len()
-	require.Greater(t, size, testLogChunkSize)
+	require.Greater(t, size, logChunkSize)
 	starts = append(starts, size)
 	crossesChunk := func(i int) bool {
-		for b := size - testLogChunkSize; b > 0; b -= testLogChunkSize {
+		for b := size - logChunkSize; b > 0; b -= logChunkSize {
 			if starts[i] < b && b < starts[i+1] {
 				return true
 			}
@@ -659,33 +656,55 @@ func TestAnvilLogs_ChunkBoundaryPlacement(t *testing.T) {
 	t.Parallel()
 
 	// Every line but the newest is this long, so the newest line's length
-	// sets where the chunk boundaries fall.
+	// sets where the chunk boundaries fall. The placed check fails the case
+	// if the chunk size moves the boundary away from what the case is named
+	// after.
 	const lineSize = 128
 	tests := map[string]struct {
+		eol        string
 		newestSize int
+		placed     func(before, at byte) bool
 	}{
-		"newline is the first byte of a chunk":    {newestSize: lineSize - 1},
-		"line starts exactly at a chunk boundary": {newestSize: lineSize},
-		"line straddles a chunk boundary":         {newestSize: lineSize + 1},
+		"newline is the first byte of a chunk": {
+			eol:        "\n",
+			newestSize: lineSize - 1,
+			placed:     func(before, at byte) bool { return before != '\n' && at == '\n' },
+		},
+		"line starts exactly at a chunk boundary": {
+			eol:        "\n",
+			newestSize: lineSize,
+			placed:     func(before, at byte) bool { return before == '\n' && at != '\n' },
+		},
+		"line straddles a chunk boundary": {
+			eol:        "\n",
+			newestSize: lineSize + 1,
+			placed:     func(before, at byte) bool { return before != '\n' && at != '\n' },
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			const total = 150
 			var content strings.Builder
+			var starts []int
 			var all []string
 			for i := range total {
 				size := lineSize
 				if i == total-1 {
 					size = tc.newestSize
 				}
-				pad := strings.Repeat("x", size-len(fmt.Sprintf(`{"msg":"entry %03d","pad":""}`, i))-1)
-				fmt.Fprintf(&content, `{"msg":"entry %03d","pad":"%s"}`+"\n", i, pad)
+				starts = append(starts, content.Len())
+				pad := strings.Repeat("x", size-len(fmt.Sprintf(`{"msg":"entry %03d","pad":""}`, i))-len(tc.eol))
+				fmt.Fprintf(&content, `{"msg":"entry %03d","pad":"%s"}`+tc.eol, i, pad)
 				all = append(all, fmt.Sprintf("--:--:-- INFO unknown:0 entry %03d pad=%s", i, pad))
 			}
-			require.Equal(t, (total-1)*lineSize+tc.newestSize, content.Len())
+			raw := content.String()
+			require.Equal(t, (total-1)*lineSize+tc.newestSize, len(raw))
+			boundary := len(raw) - logChunkSize
+			require.Greater(t, boundary, starts[total-maxLogLines], "the boundary must fall within the lines read")
+			require.True(t, tc.placed(raw[boundary-1], raw[boundary]), "the chunk boundary is not where the case needs it")
 
-			result := runAnvilLogs(writeRawLog(t, content.String()), AnvilLogsParams{Lines: maxLogLines})
+			result := runAnvilLogs(writeRawLog(t, raw), AnvilLogsParams{Lines: maxLogLines})
 
 			require.Equal(t, strings.Join(all[total-maxLogLines:], "\n"), result)
 		})

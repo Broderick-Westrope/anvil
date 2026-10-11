@@ -44,6 +44,9 @@ func anvilLogsDescription() string {
 // Max line size to prevent memory issues with very long log lines (1 MB).
 const maxLogLineSize = 1024 * 1024
 
+// readLastLines reads the file backwards in chunks of this many bytes.
+const logChunkSize = 8192
+
 // Default and max line limits.
 const (
 	defaultLogLines = 50
@@ -145,7 +148,6 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 
 	// Seek to end and read chunks backwards.
 	var entries []map[string]any
-	const chunkSize = 8192 // 8KB chunks
 
 	pos := stat.Size()
 	// carry holds the start of a line that began in an earlier chunk, which
@@ -153,7 +155,7 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 	var carry []byte
 
 	for pos > 0 && len(entries) < n {
-		chunkStart := max(pos-chunkSize, 0)
+		chunkStart := max(pos-logChunkSize, 0)
 
 		chunkLen := int(pos - chunkStart)
 		if chunkLen == 0 {
