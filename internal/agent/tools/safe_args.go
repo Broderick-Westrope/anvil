@@ -13,17 +13,12 @@ import (
 // arguments after the entry and reports whether they keep the command
 // read-only.
 var safeArgs = map[string]func(args []string) bool{
-	"date":         readsDate,
-	"hostname":     onlyFlags(hostnameReadFlags),
-	"git branch":   listsRefs(branchReadFlags),
-	"git tag":      listsRefs(tagReadFlags),
-	"git remote":   readsRemotes,
-	"git blame":    noArgWithPrefix("--output"),
-	"git diff":     noArgWithPrefix("--output"),
-	"git log":      noArgWithPrefix("--output"),
-	"git shortlog": noArgWithPrefix("--output"),
-	"git show":     noArgWithPrefix("--output"),
-	"git grep":     opensNoPager,
+	"date":       readsDate,
+	"hostname":   onlyFlags(hostnameReadFlags),
+	"git branch": listsRefs(branchReadFlags),
+	"git tag":    listsRefs(tagReadFlags),
+	"git remote": readsRemotes,
+	"git diff":   comparesWorkspacePaths,
 }
 
 // hasSafeArgs reports whether words, the arguments after the safe command
@@ -42,6 +37,9 @@ func hasSafeArgs(entry string, words []*syntax.Word) bool {
 			return false
 		}
 		args = append(args, arg)
+	}
+	if slices.ContainsFunc(args, gitFileFlags[entry].match) {
+		return false
 	}
 	return !ok || rule(args)
 }
@@ -174,25 +172,73 @@ func readsRemotes(args []string) bool {
 	return slices.Contains(options, "-n")
 }
 
-func noArgWithPrefix(prefixes ...string) func(args []string) bool {
-	return func(args []string) bool {
-		return !slices.ContainsFunc(args, func(arg string) bool {
-			return slices.ContainsFunc(prefixes, func(prefix string) bool {
-				return strings.HasPrefix(arg, prefix)
-			})
-		})
-	}
+// fileFlags are the flags of a git command that name a file to read or
+// write, or a command to run, which could be anywhere on disk.
+type fileFlags struct {
+	long []longFlag
+	// short holds the letters of short flags. Git lets short flags be
+	// bundled, so any short flag argument containing one matches.
+	short string
 }
 
-// opensNoPager is the rule for git grep, whose -O and
-// --open-files-in-pager run a command on the matching files. Short flags
-// can be bundled, so any short flag containing an o or O counts,
-// including --only-matching's -o.
-func opensNoPager(args []string) bool {
+// longFlag is a long flag and the shortest abbreviation of it git accepts.
+// Commands that take no abbreviations use the whole flag for both.
+type longFlag struct {
+	name, abbrev string
+}
+
+func (f fileFlags) match(arg string) bool {
+	if strings.HasPrefix(arg, "--") {
+		flag, _, _ := strings.Cut(arg, "=")
+		return slices.ContainsFunc(f.long, func(long longFlag) bool {
+			return strings.HasPrefix(flag, long.abbrev) && strings.HasPrefix(long.name, flag)
+		})
+	}
+	return strings.HasPrefix(arg, "-") && strings.ContainsAny(arg, f.short)
+}
+
+var (
+	outputFlag = longFlag{"--output", "--output"}
+	// logFlags are the file flags of git log and git show. -O names a file
+	// that orders the files in a diff.
+	logFlags    = fileFlags{long: []longFlag{outputFlag}, short: "O"}
+	configFlags = fileFlags{long: []longFlag{{"--file", "--fil"}}, short: "f"}
+)
+
+// gitFileFlags holds the file flags of each safe git command, keyed by its
+// safeCommands entry. The view tool asks before reading outside the working
+// directory, and a safe command must not get around that.
+var gitFileFlags = map[string]fileFlags{
+	"git blame": {
+		long:  []longFlag{outputFlag, {"--contents", "--con"}, {"--ignore-revs-file", "--ignore-revs"}},
+		short: "S",
+	},
+	"git diff":     {long: []longFlag{outputFlag, {"--no-index", "--no-index"}}, short: "O"},
+	"git log":      logFlags,
+	"git show":     logFlags,
+	"git shortlog": {long: []longFlag{outputFlag}},
+	// The --o abbreviation is ambiguous, so git rejects it, but it is kept
+	// out with the rest.
+	"git grep": {long: []longFlag{{"--open-files-in-pager", "--o"}}, short: "Of"},
+	"git ls-files": {
+		long:  []longFlag{{"--exclude-from", "--exclude-f"}, {"--exclude-per-directory", "--exclude-p"}},
+		short: "X",
+	},
+	"git config --get":          configFlags,
+	"git config --get-all":      configFlags,
+	"git config --get-regexp":   configFlags,
+	"git config --get-urlmatch": configFlags,
+	"git config --list":         configFlags,
+}
+
+// comparesWorkspacePaths is the rule for git diff, which compares any two
+// files on disk, as --no-index does, when one is outside the repository.
+// It rejects arguments that are absolute paths, start from a home directory
+// or climb out with "..". A flag is caught only when its value has a ".."
+// element, and then the command just asks.
+func comparesWorkspacePaths(args []string) bool {
 	return !slices.ContainsFunc(args, func(arg string) bool {
-		if strings.HasPrefix(arg, "--") {
-			return strings.HasPrefix(arg, "--op")
-		}
-		return strings.HasPrefix(arg, "-") && strings.ContainsAny(arg, "oO")
+		elements := strings.FieldsFunc(arg, func(r rune) bool { return r == '/' || r == '\\' })
+		return strings.IndexAny(arg, `/\~`) == 0 || strings.Index(arg, ":") == 1 || slices.Contains(elements, "..")
 	})
 }
