@@ -77,6 +77,8 @@ func TestGetProviderOptionsMatrix(t *testing.T) {
 		{name: "effort-none", catwalk: catwalk.Model{ID: "model-x", CanReason: true, ReasoningLevels: levels}, selected: config.SelectedModel{ReasoningEffort: "none"}},
 		{name: "effort-default", catwalk: catwalk.Model{ID: "model-x", CanReason: true, ReasoningLevels: levels, DefaultReasoningEffort: "medium"}},
 		{name: "effort-unlisted", catwalk: catwalk.Model{ID: "model-x", CanReason: false, ReasoningLevels: levels}, selected: config.SelectedModel{ReasoningEffort: "high", Think: true}},
+		{name: "effort-unsupported", catwalk: catwalk.Model{ID: "model-x", CanReason: true, ReasoningLevels: levels, DefaultReasoningEffort: "medium"}, selected: config.SelectedModel{ReasoningEffort: "max"}},
+		{name: "default-unsupported", catwalk: catwalk.Model{ID: "model-x", CanReason: true, ReasoningLevels: levels, DefaultReasoningEffort: "max"}},
 		{name: "effort-and-think", catwalk: catwalk.Model{ID: "model-x", CanReason: true, ReasoningLevels: levels}, selected: config.SelectedModel{ReasoningEffort: "low", Think: true}},
 		{name: "gpt-5", catwalk: catwalk.Model{ID: "gpt-5", CanReason: true, ReasoningLevels: levels}, selected: config.SelectedModel{ReasoningEffort: "medium"}},
 		{name: "gpt-3.5", catwalk: catwalk.Model{ID: "gpt-3.5-turbo"}},

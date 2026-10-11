@@ -6,6 +6,8 @@ openai/custom/effort-high: {"openai":{"data":{"reasoning_effort":"high"},"type":
 openai/custom/effort-none: {"openai":{"data":{"reasoning_effort":"none"},"type":"openai.options"}}
 openai/custom/effort-default: {"openai":{"data":{"reasoning_effort":"medium"},"type":"openai.options"}}
 openai/custom/effort-unlisted: {"openai":{"data":{},"type":"openai.options"}}
+openai/custom/effort-unsupported: {"openai":{"data":{"reasoning_effort":"medium"},"type":"openai.options"}}
+openai/custom/default-unsupported: {"openai":{"data":{"reasoning_effort":"none"},"type":"openai.options"}}
 openai/custom/effort-and-think: {"openai":{"data":{"reasoning_effort":"low"},"type":"openai.options"}}
 openai/custom/gpt-5: {"openai":{"data":{"include":["reasoning.encrypted_content"],"reasoning_effort":"medium","reasoning_summary":"auto"},"type":"openai.responses.options"}}
 openai/custom/gpt-3.5: {"openai":{"data":{},"type":"openai.responses.options"}}
@@ -28,6 +30,8 @@ openai/alibaba-us/effort-high: {"openai":{"data":{"reasoning_effort":"high"},"ty
 openai/alibaba-us/effort-none: {"openai":{"data":{"reasoning_effort":"none"},"type":"openai.options"}}
 openai/alibaba-us/effort-default: {"openai":{"data":{"reasoning_effort":"medium"},"type":"openai.options"}}
 openai/alibaba-us/effort-unlisted: {"openai":{"data":{},"type":"openai.options"}}
+openai/alibaba-us/effort-unsupported: {"openai":{"data":{"reasoning_effort":"medium"},"type":"openai.options"}}
+openai/alibaba-us/default-unsupported: {"openai":{"data":{"reasoning_effort":"none"},"type":"openai.options"}}
 openai/alibaba-us/effort-and-think: {"openai":{"data":{"reasoning_effort":"low"},"type":"openai.options"}}
 openai/alibaba-us/gpt-5: {"openai":{"data":{"include":["reasoning.encrypted_content"],"reasoning_effort":"medium","reasoning_summary":"auto"},"type":"openai.responses.options"}}
 openai/alibaba-us/gpt-3.5: {"openai":{"data":{},"type":"openai.responses.options"}}
@@ -50,6 +54,8 @@ azure/custom/effort-high: {"openai":{"data":{"reasoning_effort":"high"},"type":"
 azure/custom/effort-none: {"openai":{"data":{"reasoning_effort":"none"},"type":"openai.options"}}
 azure/custom/effort-default: {"openai":{"data":{"reasoning_effort":"medium"},"type":"openai.options"}}
 azure/custom/effort-unlisted: {"openai":{"data":{},"type":"openai.options"}}
+azure/custom/effort-unsupported: {"openai":{"data":{"reasoning_effort":"medium"},"type":"openai.options"}}
+azure/custom/default-unsupported: {"openai":{"data":{"reasoning_effort":"none"},"type":"openai.options"}}
 azure/custom/effort-and-think: {"openai":{"data":{"reasoning_effort":"low"},"type":"openai.options"}}
 azure/custom/gpt-5: {"openai":{"data":{"include":["reasoning.encrypted_content"],"reasoning_effort":"medium","reasoning_summary":"auto"},"type":"openai.responses.options"}}
 azure/custom/gpt-3.5: {"openai":{"data":{},"type":"openai.responses.options"}}
@@ -72,6 +78,8 @@ azure/alibaba-us/effort-high: {"openai":{"data":{"reasoning_effort":"high"},"typ
 azure/alibaba-us/effort-none: {"openai":{"data":{"reasoning_effort":"none"},"type":"openai.options"}}
 azure/alibaba-us/effort-default: {"openai":{"data":{"reasoning_effort":"medium"},"type":"openai.options"}}
 azure/alibaba-us/effort-unlisted: {"openai":{"data":{},"type":"openai.options"}}
+azure/alibaba-us/effort-unsupported: {"openai":{"data":{"reasoning_effort":"medium"},"type":"openai.options"}}
+azure/alibaba-us/default-unsupported: {"openai":{"data":{"reasoning_effort":"none"},"type":"openai.options"}}
 azure/alibaba-us/effort-and-think: {"openai":{"data":{"reasoning_effort":"low"},"type":"openai.options"}}
 azure/alibaba-us/gpt-5: {"openai":{"data":{"include":["reasoning.encrypted_content"],"reasoning_effort":"medium","reasoning_summary":"auto"},"type":"openai.responses.options"}}
 azure/alibaba-us/gpt-3.5: {"openai":{"data":{},"type":"openai.responses.options"}}
@@ -94,6 +102,8 @@ anthropic/custom/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"ant
 anthropic/custom/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/custom/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/custom/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+anthropic/custom/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+anthropic/custom/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/custom/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 anthropic/custom/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/custom/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -116,6 +126,8 @@ anthropic/ionet/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"anth
 anthropic/ionet/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/ionet/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/ionet/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+anthropic/ionet/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+anthropic/ionet/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/ionet/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 anthropic/ionet/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/ionet/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -138,6 +150,8 @@ anthropic/opencode-go/effort-high: {"anthropic":{"data":{"effort":"high"},"type"
 anthropic/opencode-go/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/opencode-go/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/opencode-go/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+anthropic/opencode-go/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+anthropic/opencode-go/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/opencode-go/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 anthropic/opencode-go/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/opencode-go/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -160,6 +174,8 @@ anthropic/opencode-zen/effort-high: {"anthropic":{"data":{"effort":"high"},"type
 anthropic/opencode-zen/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/opencode-zen/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/opencode-zen/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+anthropic/opencode-zen/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+anthropic/opencode-zen/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/opencode-zen/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 anthropic/opencode-zen/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/opencode-zen/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -182,6 +198,8 @@ anthropic/zai/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"anthro
 anthropic/zai/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/zai/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/zai/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+anthropic/zai/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+anthropic/zai/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/zai/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 anthropic/zai/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/zai/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -204,6 +222,8 @@ anthropic/deepseek/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"a
 anthropic/deepseek/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/deepseek/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/deepseek/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+anthropic/deepseek/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+anthropic/deepseek/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/deepseek/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 anthropic/deepseek/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/deepseek/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -226,6 +246,8 @@ anthropic/fireworks/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"
 anthropic/fireworks/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/fireworks/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/fireworks/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+anthropic/fireworks/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+anthropic/fireworks/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/fireworks/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 anthropic/fireworks/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/fireworks/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -248,6 +270,8 @@ anthropic/baseten/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"an
 anthropic/baseten/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/baseten/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/baseten/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+anthropic/baseten/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+anthropic/baseten/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 anthropic/baseten/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 anthropic/baseten/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 anthropic/baseten/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -270,6 +294,8 @@ anthropic/alibaba-singapore/effort-high: {"anthropic":{"data":{"extra_body":{"re
 anthropic/alibaba-singapore/effort-none: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"none"}},"type":"anthropic.options"}}
 anthropic/alibaba-singapore/effort-default: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
 anthropic/alibaba-singapore/effort-unlisted: {"anthropic":{"data":{},"type":"anthropic.options"}}
+anthropic/alibaba-singapore/effort-unsupported: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
+anthropic/alibaba-singapore/default-unsupported: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"none"}},"type":"anthropic.options"}}
 anthropic/alibaba-singapore/effort-and-think: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"low"}},"type":"anthropic.options"}}
 anthropic/alibaba-singapore/gpt-5: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
 anthropic/alibaba-singapore/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -292,6 +318,8 @@ anthropic/alibaba-us/effort-high: {"anthropic":{"data":{"extra_body":{"reasoning
 anthropic/alibaba-us/effort-none: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"none"}},"type":"anthropic.options"}}
 anthropic/alibaba-us/effort-default: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
 anthropic/alibaba-us/effort-unlisted: {"anthropic":{"data":{},"type":"anthropic.options"}}
+anthropic/alibaba-us/effort-unsupported: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
+anthropic/alibaba-us/default-unsupported: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"none"}},"type":"anthropic.options"}}
 anthropic/alibaba-us/effort-and-think: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"low"}},"type":"anthropic.options"}}
 anthropic/alibaba-us/gpt-5: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
 anthropic/alibaba-us/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -314,6 +342,8 @@ bedrock/custom/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"anthr
 bedrock/custom/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/custom/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/custom/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+bedrock/custom/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+bedrock/custom/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/custom/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 bedrock/custom/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/custom/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -336,6 +366,8 @@ bedrock/ionet/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"anthro
 bedrock/ionet/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/ionet/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/ionet/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+bedrock/ionet/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+bedrock/ionet/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/ionet/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 bedrock/ionet/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/ionet/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -358,6 +390,8 @@ bedrock/opencode-go/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"
 bedrock/opencode-go/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/opencode-go/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/opencode-go/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+bedrock/opencode-go/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+bedrock/opencode-go/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/opencode-go/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 bedrock/opencode-go/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/opencode-go/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -380,6 +414,8 @@ bedrock/opencode-zen/effort-high: {"anthropic":{"data":{"effort":"high"},"type":
 bedrock/opencode-zen/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/opencode-zen/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/opencode-zen/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+bedrock/opencode-zen/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+bedrock/opencode-zen/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/opencode-zen/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 bedrock/opencode-zen/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/opencode-zen/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -402,6 +438,8 @@ bedrock/zai/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"anthropi
 bedrock/zai/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/zai/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/zai/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+bedrock/zai/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+bedrock/zai/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/zai/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 bedrock/zai/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/zai/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -424,6 +462,8 @@ bedrock/deepseek/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"ant
 bedrock/deepseek/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/deepseek/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/deepseek/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+bedrock/deepseek/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+bedrock/deepseek/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/deepseek/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 bedrock/deepseek/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/deepseek/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -446,6 +486,8 @@ bedrock/fireworks/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"an
 bedrock/fireworks/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/fireworks/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/fireworks/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+bedrock/fireworks/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+bedrock/fireworks/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/fireworks/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 bedrock/fireworks/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/fireworks/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -468,6 +510,8 @@ bedrock/baseten/effort-high: {"anthropic":{"data":{"effort":"high"},"type":"anth
 bedrock/baseten/effort-none: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/baseten/effort-default: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/baseten/effort-unlisted: {"anthropic":{"data":{"thinking":{"budget_tokens":2000}},"type":"anthropic.options"}}
+bedrock/baseten/effort-unsupported: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
+bedrock/baseten/default-unsupported: {"anthropic":{"data":{"effort":"none"},"type":"anthropic.options"}}
 bedrock/baseten/effort-and-think: {"anthropic":{"data":{"effort":"low"},"type":"anthropic.options"}}
 bedrock/baseten/gpt-5: {"anthropic":{"data":{"effort":"medium"},"type":"anthropic.options"}}
 bedrock/baseten/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -490,6 +534,8 @@ bedrock/alibaba-singapore/effort-high: {"anthropic":{"data":{"extra_body":{"reas
 bedrock/alibaba-singapore/effort-none: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"none"}},"type":"anthropic.options"}}
 bedrock/alibaba-singapore/effort-default: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
 bedrock/alibaba-singapore/effort-unlisted: {"anthropic":{"data":{},"type":"anthropic.options"}}
+bedrock/alibaba-singapore/effort-unsupported: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
+bedrock/alibaba-singapore/default-unsupported: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"none"}},"type":"anthropic.options"}}
 bedrock/alibaba-singapore/effort-and-think: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"low"}},"type":"anthropic.options"}}
 bedrock/alibaba-singapore/gpt-5: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
 bedrock/alibaba-singapore/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -512,6 +558,8 @@ bedrock/alibaba-us/effort-high: {"anthropic":{"data":{"extra_body":{"reasoning_e
 bedrock/alibaba-us/effort-none: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"none"}},"type":"anthropic.options"}}
 bedrock/alibaba-us/effort-default: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
 bedrock/alibaba-us/effort-unlisted: {"anthropic":{"data":{},"type":"anthropic.options"}}
+bedrock/alibaba-us/effort-unsupported: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
+bedrock/alibaba-us/default-unsupported: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"none"}},"type":"anthropic.options"}}
 bedrock/alibaba-us/effort-and-think: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"low"}},"type":"anthropic.options"}}
 bedrock/alibaba-us/gpt-5: {"anthropic":{"data":{"extra_body":{"reasoning_effort":"medium"}},"type":"anthropic.options"}}
 bedrock/alibaba-us/gpt-3.5: {"anthropic":{"data":{},"type":"anthropic.options"}}
@@ -534,6 +582,8 @@ openrouter/custom/effort-high: {"openrouter":{"data":{"reasoning":{"effort":"hig
 openrouter/custom/effort-none: {"openrouter":{"data":{"reasoning":{"effort":"none","enabled":true}},"type":"openrouter.options"}}
 openrouter/custom/effort-default: {"openrouter":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"openrouter.options"}}
 openrouter/custom/effort-unlisted: {"openrouter":{"data":{},"type":"openrouter.options"}}
+openrouter/custom/effort-unsupported: {"openrouter":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"openrouter.options"}}
+openrouter/custom/default-unsupported: {"openrouter":{"data":{"reasoning":{"effort":"none","enabled":true}},"type":"openrouter.options"}}
 openrouter/custom/effort-and-think: {"openrouter":{"data":{"reasoning":{"effort":"low","enabled":true}},"type":"openrouter.options"}}
 openrouter/custom/gpt-5: {"openrouter":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"openrouter.options"}}
 openrouter/custom/gpt-3.5: {"openrouter":{"data":{},"type":"openrouter.options"}}
@@ -556,6 +606,8 @@ openrouter/alibaba-us/effort-high: {"openrouter":{"data":{"reasoning":{"effort":
 openrouter/alibaba-us/effort-none: {"openrouter":{"data":{"reasoning":{"effort":"none","enabled":true}},"type":"openrouter.options"}}
 openrouter/alibaba-us/effort-default: {"openrouter":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"openrouter.options"}}
 openrouter/alibaba-us/effort-unlisted: {"openrouter":{"data":{},"type":"openrouter.options"}}
+openrouter/alibaba-us/effort-unsupported: {"openrouter":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"openrouter.options"}}
+openrouter/alibaba-us/default-unsupported: {"openrouter":{"data":{"reasoning":{"effort":"none","enabled":true}},"type":"openrouter.options"}}
 openrouter/alibaba-us/effort-and-think: {"openrouter":{"data":{"reasoning":{"effort":"low","enabled":true}},"type":"openrouter.options"}}
 openrouter/alibaba-us/gpt-5: {"openrouter":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"openrouter.options"}}
 openrouter/alibaba-us/gpt-3.5: {"openrouter":{"data":{},"type":"openrouter.options"}}
@@ -578,6 +630,8 @@ vercel/custom/effort-high: {"vercel":{"data":{"reasoning":{"effort":"high","enab
 vercel/custom/effort-none: {"vercel":{"data":{"reasoning":{"effort":"none","enabled":true}},"type":"vercel.options"}}
 vercel/custom/effort-default: {"vercel":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"vercel.options"}}
 vercel/custom/effort-unlisted: {"vercel":{"data":{},"type":"vercel.options"}}
+vercel/custom/effort-unsupported: {"vercel":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"vercel.options"}}
+vercel/custom/default-unsupported: {"vercel":{"data":{"reasoning":{"effort":"none","enabled":true}},"type":"vercel.options"}}
 vercel/custom/effort-and-think: {"vercel":{"data":{"reasoning":{"effort":"low","enabled":true}},"type":"vercel.options"}}
 vercel/custom/gpt-5: {"vercel":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"vercel.options"}}
 vercel/custom/gpt-3.5: {"vercel":{"data":{},"type":"vercel.options"}}
@@ -600,6 +654,8 @@ vercel/alibaba-us/effort-high: {"vercel":{"data":{"reasoning":{"effort":"high","
 vercel/alibaba-us/effort-none: {"vercel":{"data":{"reasoning":{"effort":"none","enabled":true}},"type":"vercel.options"}}
 vercel/alibaba-us/effort-default: {"vercel":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"vercel.options"}}
 vercel/alibaba-us/effort-unlisted: {"vercel":{"data":{},"type":"vercel.options"}}
+vercel/alibaba-us/effort-unsupported: {"vercel":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"vercel.options"}}
+vercel/alibaba-us/default-unsupported: {"vercel":{"data":{"reasoning":{"effort":"none","enabled":true}},"type":"vercel.options"}}
 vercel/alibaba-us/effort-and-think: {"vercel":{"data":{"reasoning":{"effort":"low","enabled":true}},"type":"vercel.options"}}
 vercel/alibaba-us/gpt-5: {"vercel":{"data":{"reasoning":{"effort":"medium","enabled":true}},"type":"vercel.options"}}
 vercel/alibaba-us/gpt-3.5: {"vercel":{"data":{},"type":"vercel.options"}}
@@ -622,6 +678,8 @@ google/custom/effort-high: {"google":{"data":{"cached_content":"","thinking_conf
 google/custom/effort-none: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"none"},"threshold":""},"type":"google.options"}}
 google/custom/effort-default: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"medium"},"threshold":""},"type":"google.options"}}
 google/custom/effort-unlisted: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":""},"threshold":""},"type":"google.options"}}
+google/custom/effort-unsupported: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"medium"},"threshold":""},"type":"google.options"}}
+google/custom/default-unsupported: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"none"},"threshold":""},"type":"google.options"}}
 google/custom/effort-and-think: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"low"},"threshold":""},"type":"google.options"}}
 google/custom/gpt-5: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"medium"},"threshold":""},"type":"google.options"}}
 google/custom/gpt-3.5: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":""},"threshold":""},"type":"google.options"}}
@@ -644,6 +702,8 @@ google/alibaba-us/effort-high: {"google":{"data":{"cached_content":"","thinking_
 google/alibaba-us/effort-none: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"none"},"threshold":""},"type":"google.options"}}
 google/alibaba-us/effort-default: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"medium"},"threshold":""},"type":"google.options"}}
 google/alibaba-us/effort-unlisted: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":""},"threshold":""},"type":"google.options"}}
+google/alibaba-us/effort-unsupported: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"medium"},"threshold":""},"type":"google.options"}}
+google/alibaba-us/default-unsupported: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"none"},"threshold":""},"type":"google.options"}}
 google/alibaba-us/effort-and-think: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"low"},"threshold":""},"type":"google.options"}}
 google/alibaba-us/gpt-5: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":"medium"},"threshold":""},"type":"google.options"}}
 google/alibaba-us/gpt-3.5: {"google":{"data":{"cached_content":"","thinking_config":{"include_thoughts":true,"thinking_level":""},"threshold":""},"type":"google.options"}}
@@ -666,6 +726,8 @@ openai-compat/custom/effort-high: {"openai-compat":{"data":{"reasoning_effort":"
 openai-compat/custom/effort-none: {"openai-compat":{"data":{"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/custom/effort-default: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/custom/effort-unlisted: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+openai-compat/custom/effort-unsupported: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
+openai-compat/custom/default-unsupported: {"openai-compat":{"data":{"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/custom/effort-and-think: {"openai-compat":{"data":{"reasoning_effort":"low"},"type":"openai-compat.options"}}
 openai-compat/custom/gpt-5: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/custom/gpt-3.5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
@@ -688,6 +750,8 @@ openai-compat/ionet/effort-high: {"openai-compat":{"data":{"extra_body":{"reason
 openai-compat/ionet/effort-none: {"openai-compat":{"data":{"extra_body":{"reasoning":{"effort":"none"}}},"type":"openai-compat.options"}}
 openai-compat/ionet/effort-default: {"openai-compat":{"data":{"extra_body":{"reasoning":{"effort":"medium"}}},"type":"openai-compat.options"}}
 openai-compat/ionet/effort-unlisted: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+openai-compat/ionet/effort-unsupported: {"openai-compat":{"data":{"extra_body":{"reasoning":{"effort":"medium"}}},"type":"openai-compat.options"}}
+openai-compat/ionet/default-unsupported: {"openai-compat":{"data":{"extra_body":{"reasoning":{"effort":"none"}}},"type":"openai-compat.options"}}
 openai-compat/ionet/effort-and-think: {"openai-compat":{"data":{"extra_body":{"reasoning":{"effort":"low"}}},"type":"openai-compat.options"}}
 openai-compat/ionet/gpt-5: {"openai-compat":{"data":{"extra_body":{"reasoning":{"effort":"medium"}}},"type":"openai-compat.options"}}
 openai-compat/ionet/gpt-3.5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
@@ -710,6 +774,8 @@ openai-compat/opencode-go/effort-high: {"openai-compat":{"data":{"reasoning_effo
 openai-compat/opencode-go/effort-none: {"openai-compat":{"data":{"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/opencode-go/effort-default: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/opencode-go/effort-unlisted: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+openai-compat/opencode-go/effort-unsupported: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
+openai-compat/opencode-go/default-unsupported: {"openai-compat":{"data":{"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/opencode-go/effort-and-think: {"openai-compat":{"data":{"reasoning_effort":"low"},"type":"openai-compat.options"}}
 openai-compat/opencode-go/gpt-5: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/opencode-go/gpt-3.5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
@@ -732,6 +798,8 @@ openai-compat/opencode-zen/effort-high: {"openai-compat":{"data":{"reasoning_eff
 openai-compat/opencode-zen/effort-none: {"openai-compat":{"data":{"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/opencode-zen/effort-default: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/opencode-zen/effort-unlisted: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+openai-compat/opencode-zen/effort-unsupported: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
+openai-compat/opencode-zen/default-unsupported: {"openai-compat":{"data":{"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/opencode-zen/effort-and-think: {"openai-compat":{"data":{"reasoning_effort":"low"},"type":"openai-compat.options"}}
 openai-compat/opencode-zen/gpt-5: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/opencode-zen/gpt-3.5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
@@ -754,6 +822,8 @@ openai-compat/zai/effort-high: {"openai-compat":{"data":{"extra_body":{"thinking
 openai-compat/zai/effort-none: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/zai/effort-default: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/zai/effort-unlisted: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}}},"type":"openai-compat.options"}}
+openai-compat/zai/effort-unsupported: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
+openai-compat/zai/default-unsupported: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/zai/effort-and-think: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"low"},"type":"openai-compat.options"}}
 openai-compat/zai/gpt-5: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/zai/gpt-3.5: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"disabled"}}},"type":"openai-compat.options"}}
@@ -776,6 +846,8 @@ openai-compat/deepseek/effort-high: {"openai-compat":{"data":{"extra_body":{"thi
 openai-compat/deepseek/effort-none: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/deepseek/effort-default: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/deepseek/effort-unlisted: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}}},"type":"openai-compat.options"}}
+openai-compat/deepseek/effort-unsupported: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
+openai-compat/deepseek/default-unsupported: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/deepseek/effort-and-think: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"low"},"type":"openai-compat.options"}}
 openai-compat/deepseek/gpt-5: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"enabled"}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/deepseek/gpt-3.5: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"disabled"}}},"type":"openai-compat.options"}}
@@ -798,6 +870,8 @@ openai-compat/fireworks/effort-high: {"openai-compat":{"data":{"reasoning_effort
 openai-compat/fireworks/effort-none: {"openai-compat":{"data":{"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/fireworks/effort-default: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"disabled"}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/fireworks/effort-unlisted: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+openai-compat/fireworks/effort-unsupported: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
+openai-compat/fireworks/default-unsupported: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"disabled"}},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/fireworks/effort-and-think: {"openai-compat":{"data":{"reasoning_effort":"low"},"type":"openai-compat.options"}}
 openai-compat/fireworks/gpt-5: {"openai-compat":{"data":{"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/fireworks/gpt-3.5: {"openai-compat":{"data":{"extra_body":{"thinking":{"type":"disabled"}}},"type":"openai-compat.options"}}
@@ -820,6 +894,8 @@ openai-compat/baseten/effort-high: {"openai-compat":{"data":{"extra_body":{"chat
 openai-compat/baseten/effort-none: {"openai-compat":{"data":{"extra_body":{"chat_template_args":{"enable_thinking":false}},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/baseten/effort-default: {"openai-compat":{"data":{"extra_body":{"chat_template_args":{"enable_thinking":true}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/baseten/effort-unlisted: {"openai-compat":{"data":{"extra_body":{"chat_template_args":{"enable_thinking":true}}},"type":"openai-compat.options"}}
+openai-compat/baseten/effort-unsupported: {"openai-compat":{"data":{"extra_body":{"chat_template_args":{"enable_thinking":true}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
+openai-compat/baseten/default-unsupported: {"openai-compat":{"data":{"extra_body":{"chat_template_args":{"enable_thinking":false}},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/baseten/effort-and-think: {"openai-compat":{"data":{"extra_body":{"chat_template_args":{"enable_thinking":true}},"reasoning_effort":"low"},"type":"openai-compat.options"}}
 openai-compat/baseten/gpt-5: {"openai-compat":{"data":{"extra_body":{"chat_template_args":{"enable_thinking":true}},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/baseten/gpt-3.5: {"openai-compat":{"data":{"extra_body":{"chat_template_args":{"enable_thinking":false}}},"type":"openai-compat.options"}}
@@ -842,6 +918,8 @@ openai-compat/alibaba-singapore/effort-high: {"openai-compat":{"data":{"extra_bo
 openai-compat/alibaba-singapore/effort-none: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/alibaba-singapore/effort-default: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/alibaba-singapore/effort-unlisted: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+openai-compat/alibaba-singapore/effort-unsupported: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
+openai-compat/alibaba-singapore/default-unsupported: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/alibaba-singapore/effort-and-think: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"low"},"type":"openai-compat.options"}}
 openai-compat/alibaba-singapore/gpt-5: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/alibaba-singapore/gpt-3.5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
@@ -864,6 +942,8 @@ openai-compat/alibaba-us/effort-high: {"openai-compat":{"data":{"extra_body":{"e
 openai-compat/alibaba-us/effort-none: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/alibaba-us/effort-default: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/alibaba-us/effort-unlisted: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+openai-compat/alibaba-us/effort-unsupported: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
+openai-compat/alibaba-us/default-unsupported: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"none"},"type":"openai-compat.options"}}
 openai-compat/alibaba-us/effort-and-think: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"low"},"type":"openai-compat.options"}}
 openai-compat/alibaba-us/gpt-5: {"openai-compat":{"data":{"extra_body":{"enable_thinking":true},"reasoning_effort":"medium"},"type":"openai-compat.options"}}
 openai-compat/alibaba-us/gpt-3.5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
@@ -886,6 +966,8 @@ ollama/custom/effort-high: {"openai-compat":{"data":{},"type":"openai-compat.opt
 ollama/custom/effort-none: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/custom/effort-default: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/custom/effort-unlisted: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+ollama/custom/effort-unsupported: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+ollama/custom/default-unsupported: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/custom/effort-and-think: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/custom/gpt-5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/custom/gpt-3.5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
@@ -908,6 +990,8 @@ ollama/alibaba-us/effort-high: {"openai-compat":{"data":{},"type":"openai-compat
 ollama/alibaba-us/effort-none: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/alibaba-us/effort-default: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/alibaba-us/effort-unlisted: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+ollama/alibaba-us/effort-unsupported: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
+ollama/alibaba-us/default-unsupported: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/alibaba-us/effort-and-think: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/alibaba-us/gpt-5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
 ollama/alibaba-us/gpt-3.5: {"openai-compat":{"data":{},"type":"openai-compat.options"}}
@@ -930,6 +1014,8 @@ unknown-type/custom/effort-high: {}
 unknown-type/custom/effort-none: {}
 unknown-type/custom/effort-default: {}
 unknown-type/custom/effort-unlisted: {}
+unknown-type/custom/effort-unsupported: {}
+unknown-type/custom/default-unsupported: {}
 unknown-type/custom/effort-and-think: {}
 unknown-type/custom/gpt-5: {}
 unknown-type/custom/gpt-3.5: {}
@@ -952,6 +1038,8 @@ unknown-type/alibaba-us/effort-high: {}
 unknown-type/alibaba-us/effort-none: {}
 unknown-type/alibaba-us/effort-default: {}
 unknown-type/alibaba-us/effort-unlisted: {}
+unknown-type/alibaba-us/effort-unsupported: {}
+unknown-type/alibaba-us/default-unsupported: {}
 unknown-type/alibaba-us/effort-and-think: {}
 unknown-type/alibaba-us/gpt-5: {}
 unknown-type/alibaba-us/gpt-3.5: {}
