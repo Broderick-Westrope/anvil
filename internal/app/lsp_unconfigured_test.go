@@ -64,6 +64,9 @@ func TestNew_ConfiguredFailsWhenOrchestratorAgentCannotInit(t *testing.T) {
 
 	conn, err := db.ConnectGlobal(t.Context())
 	require.NoError(t, err)
+	// New returns no app to shut down, so close the database here or
+	// Windows can't remove the temporary data directory.
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
 	a, err := app.New(t.Context(), conn, store)
 	require.ErrorContains(t, err, "orchestrator agent configuration is missing")
