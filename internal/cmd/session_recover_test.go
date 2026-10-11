@@ -138,6 +138,41 @@ func TestSessionRecoverShowsOnlyLatestInterruption(t *testing.T) {
 	require.Len(t, entries, 3)
 }
 
+func TestSessionRecoverCountsHiddenSessionsAcrossEveryEarlierInterruption(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	restart := time.Now().Add(-time.Hour).UTC()
+	writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "latest", WorkingDir: "/a", Title: "Latest", SeenAt: restart})
+	writeRecoveryRecord(t, root, "b", recovery.Entry{SessionID: "yesterday", WorkingDir: "/b", Title: "Yesterday", SeenAt: restart.Add(-24 * time.Hour)})
+	writeRecoveryRecord(t, root, "c", recovery.Entry{SessionID: "last-week", WorkingDir: "/c", Title: "Last week", SeenAt: restart.Add(-7 * 24 * time.Hour)})
+
+	run := func(args ...string) (string, string) {
+		command := newSessionRecoverCommand(root, nil)
+		var output, notes bytes.Buffer
+		command.SetOut(&output)
+		command.SetErr(&notes)
+		command.SetArgs(args)
+		require.NoError(t, command.Execute())
+		return output.String(), notes.String()
+	}
+
+	listing, _ := run()
+	require.Contains(t, listing, "Session: latest\n")
+	require.NotContains(t, listing, "yesterday")
+	require.NotContains(t, listing, "last-week")
+	require.Contains(t, listing, "2 sessions from earlier interruptions not shown. Use --all")
+
+	commands, notes := run("--print-commands")
+	require.Equal(t, "# Latest\ncd /a && anvil --session latest\n\n", commands)
+	require.Equal(t, "2 sessions from earlier interruptions not shown. Use --all to include them.\n", notes)
+
+	encoded, _ := run("--json")
+	var entries []recovery.Entry
+	require.NoError(t, json.Unmarshal([]byte(encoded), &entries))
+	require.Len(t, entries, 1)
+	require.Equal(t, "latest", entries[0].SessionID)
+}
+
 func TestSessionRecoverHidesSessionsWithNothingToResume(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
