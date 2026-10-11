@@ -225,13 +225,29 @@ func TestRenameTool_RenamesSymbolFoundInWorkspace(t *testing.T) {
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, "func Bar() {}\nBar()\n", string(got))
-	require.Equal(t, permission.CreatePermissionRequest{
-		SessionID:   "test-session",
-		ToolName:    RenameToolName,
-		Description: "Rename 'Foo' to 'Bar'",
-		Input:       path,
-	}, perms.lastRequest)
+	require.Equal(t, "test-session", perms.lastRequest.SessionID)
+	require.Equal(t, RenameToolName, perms.lastRequest.ToolName)
+	require.Equal(t, "Rename 'Foo' to 'Bar'", perms.lastRequest.Description)
+	require.Equal(t, path, perms.lastRequest.Input)
 	require.Equal(t, filetracker.HashContent(got), tracker.hashes[lspShownPath(t, path)])
+}
+
+func TestRenameTool_PermissionRequestKnownBug(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := writeFakeLangFile(t, dir, "a.fakelang", renameTestSource)
+	manager := newFakeLSP(t, dir, map[string]fakeLSPReply{"textDocument/rename": {Result: fooToBarEdit(path)}})
+	perms := &recordingPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest](), allow: true}
+
+	_, err := runRenameTool(t, NewRenameTool(manager, perms, nil, dir), sessionCtx(), RenameParams{Symbol: "Foo", NewName: "Bar"})
+
+	require.NoError(t, err)
+	// BUG: the request has no ToolCallID, so a PreToolUse hook's "allow"
+	// never pre-approves a rename (hookApproved needs the ID). It has no
+	// Path or Action either, unlike the other tools' requests.
+	require.Empty(t, perms.lastRequest.ToolCallID)
+	require.Empty(t, perms.lastRequest.Path)
+	require.Empty(t, perms.lastRequest.Action)
 }
 
 func TestRenameTool_WorkspaceResolution(t *testing.T) {
@@ -261,7 +277,7 @@ func TestRenameTool_WorkspaceResolution(t *testing.T) {
 
 		require.NoError(t, err)
 		require.True(t, resp.IsError)
-		require.Equal(t, "Symbol 'Foo' matches in multiple files:\n\n  "+first+":1\n  "+second+":1\n\n"+
+		require.Equal(t, "Symbol 'Foo' matches in multiple files:\n\n  "+lspShownPath(t, first)+":1\n  "+lspShownPath(t, second)+":1\n\n"+
 			"Retry with file_path set to the file containing the symbol you want to rename.", resp.Content)
 		got, err := os.ReadFile(first)
 		require.NoError(t, err)
