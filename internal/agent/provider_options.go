@@ -2,9 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -297,4 +299,35 @@ func alibabaReasoning(opts, extraBody map[string]any, r reasoningRequest) {
 	if r.model.CatwalkCfg.CanReason {
 		extraBody["enable_thinking"] = r.thinking()
 	}
+}
+
+// effectiveReasoningEffort returns the reasoning effort to apply for
+// provider calls. It prefers the user-selected effort when valid,
+// otherwise the model default when valid, and finally falls back to the
+// first configured reasoning level.
+func effectiveReasoningEffort(model Model) string {
+	if !model.CatwalkCfg.CanReason {
+		return ""
+	}
+
+	if effort := model.ModelCfg.ReasoningEffort; effort != "" && slices.Contains(model.CatwalkCfg.ReasoningLevels, effort) {
+		return effort
+	}
+	if effort := model.CatwalkCfg.DefaultReasoningEffort; effort != "" && slices.Contains(model.CatwalkCfg.ReasoningLevels, effort) {
+		return effort
+	}
+	if len(model.CatwalkCfg.ReasoningLevels) > 0 {
+		return model.CatwalkCfg.ReasoningLevels[0]
+	}
+	return ""
+}
+
+func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderOptions, *float64, *float64, *int64, *float64, *float64) {
+	modelOptions := getProviderOptions(model, cfg)
+	temp := cmp.Or(model.ModelCfg.Temperature, model.CatwalkCfg.Options.Temperature)
+	topP := cmp.Or(model.ModelCfg.TopP, model.CatwalkCfg.Options.TopP)
+	topK := cmp.Or(model.ModelCfg.TopK, model.CatwalkCfg.Options.TopK)
+	freqPenalty := cmp.Or(model.ModelCfg.FrequencyPenalty, model.CatwalkCfg.Options.FrequencyPenalty)
+	presPenalty := cmp.Or(model.ModelCfg.PresencePenalty, model.CatwalkCfg.Options.PresencePenalty)
+	return modelOptions, temp, topP, topK, freqPenalty, presPenalty
 }
