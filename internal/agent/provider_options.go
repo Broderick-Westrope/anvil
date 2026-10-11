@@ -152,22 +152,40 @@ func openAIOptions(opts map[string]any, r reasoningRequest) (fantasy.ProviderOpt
 }
 
 func anthropicOptions(opts map[string]any, r reasoningRequest) (fantasy.ProviderOptionsData, error) {
+	reasoning, ok := anthropicReasoning[r.providerID]
+	if !ok {
+		reasoning = standardAnthropicReasoning
+	}
+	reasoning(opts, r)
+	return parsedOptions(anthropic.ParseOptions(opts))
+}
+
+// anthropicReasoning holds how each Anthropic-compatible provider that
+// doesn't take Anthropic's own "effort" and "thinking" fields is told to
+// reason. Providers not listed use standardAnthropicReasoning.
+var anthropicReasoning = map[string]func(opts map[string]any, r reasoningRequest){
+	string(catwalk.InferenceProviderAlibabaSingapore): alibabaAnthropicReasoning,
+	string(catwalk.InferenceProviderAlibabaUS):        alibabaAnthropicReasoning,
+}
+
+func standardAnthropicReasoning(opts map[string]any, r reasoningRequest) {
 	_, hasThink := opts["thinking"]
-	wantsEffort := r.wantsEffort(opts, "effort")
-	if r.providerID == string(catwalk.InferenceProviderAlibabaSingapore) || r.providerID == string(catwalk.InferenceProviderAlibabaUS) {
-		extraBody := make(map[string]any)
-		if wantsEffort {
-			extraBody["reasoning_effort"] = r.effort
-		} else if !hasThink && r.model.CatwalkCfg.CanReason {
-			extraBody["thinking"] = thinkingType(r.model.ModelCfg.Think)
-		}
-		opts["extra_body"] = extraBody
-	} else if wantsEffort {
+	if r.wantsEffort(opts, "effort") {
 		opts["effort"] = r.effort
 	} else if !hasThink && r.model.ModelCfg.Think {
 		opts["thinking"] = map[string]any{"budget_tokens": 2000}
 	}
-	return parsedOptions(anthropic.ParseOptions(opts))
+}
+
+func alibabaAnthropicReasoning(opts map[string]any, r reasoningRequest) {
+	_, hasThink := opts["thinking"]
+	extraBody := make(map[string]any)
+	if r.wantsEffort(opts, "effort") {
+		extraBody["reasoning_effort"] = r.effort
+	} else if !hasThink && r.model.CatwalkCfg.CanReason {
+		extraBody["thinking"] = thinkingType(r.model.ModelCfg.Think)
+	}
+	opts["extra_body"] = extraBody
 }
 
 func openRouterOptions(opts map[string]any, r reasoningRequest) (fantasy.ProviderOptionsData, error) {
