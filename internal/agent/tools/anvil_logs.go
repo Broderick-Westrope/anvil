@@ -173,16 +173,11 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 
 		// Complete the line carried over from the later chunk.
 		data := append(chunk, carry...)
-		carry = nil
 
 		// Unless this chunk starts the file, its first line may have begun
 		// in the earlier chunk, so carry it into the next iteration.
 		if chunkStart > 0 {
-			before, after, found := bytes.Cut(data, []byte{'\n'})
-			if !found {
-				before, after = data, nil
-			}
-			carry, data = before, after
+			carry, data, _ = bytes.Cut(data, []byte{'\n'})
 		}
 
 		// Parse lines from end to start to get most recent first.
