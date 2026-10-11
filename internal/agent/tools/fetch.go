@@ -135,9 +135,9 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 			}
 			contentType := resp.Header.Get("Content-Type")
 
-			content, err = convert(content, strings.Contains(contentType, "text/html"))
-			if err != nil {
-				return fantasy.NewTextErrorResponse(err.Error()), nil
+			content, failure := convert(content, strings.Contains(contentType, "text/html"))
+			if failure != "" {
+				return fantasy.NewTextErrorResponse(failure), nil
 			}
 			// truncate content if it exceeds max read size
 			if int64(len(content)) >= MaxFetchSize {
@@ -150,57 +150,53 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 }
 
 // fetchFormats converts a fetched body into each format the tool returns.
-// isHTML reports whether the server sent HTML.
-var fetchFormats = map[string]func(content string, isHTML bool) (string, error){
+// isHTML reports whether the server sent HTML. A non-empty failure is the
+// message the model sees instead of the content.
+var fetchFormats = map[string]func(content string, isHTML bool) (converted, failure string){
 	"text":     fetchAsText,
 	"markdown": fetchAsMarkdown,
 	"html":     fetchAsHTML,
 }
 
-// fetchFailure is a conversion failure the model sees as is.
-type fetchFailure string
-
-func (f fetchFailure) Error() string { return string(f) }
-
-func fetchAsText(content string, isHTML bool) (string, error) {
+func fetchAsText(content string, isHTML bool) (converted, failure string) {
 	if !isHTML {
-		return content, nil
+		return content, ""
 	}
 	text, err := extractTextFromHTML(content)
 	if err != nil {
-		return "", fetchFailure("Failed to extract text from HTML: " + err.Error())
+		return "", "Failed to extract text from HTML: " + err.Error()
 	}
-	return text, nil
+	return text, ""
 }
 
-func fetchAsMarkdown(content string, isHTML bool) (string, error) {
+func fetchAsMarkdown(content string, isHTML bool) (converted, failure string) {
 	if isHTML {
 		markdown, err := convertHTMLToMarkdown(content)
 		if err != nil {
-			return "", fetchFailure("Failed to convert HTML to Markdown: " + err.Error())
+			return "", "Failed to convert HTML to Markdown: " + err.Error()
 		}
 		content = markdown
 	}
-	return "```\n" + content + "\n```", nil
+	return "```\n" + content + "\n```", ""
 }
 
 // fetchAsHTML returns only the body of an HTML document.
-func fetchAsHTML(content string, isHTML bool) (string, error) {
+func fetchAsHTML(content string, isHTML bool) (converted, failure string) {
 	if !isHTML {
-		return content, nil
+		return content, ""
 	}
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 	if err != nil {
-		return "", fetchFailure("Failed to parse HTML: " + err.Error())
+		return "", "Failed to parse HTML: " + err.Error()
 	}
 	body, err := doc.Find("body").Html()
 	if err != nil {
-		return "", fetchFailure("Failed to extract body from HTML: " + err.Error())
+		return "", "Failed to extract body from HTML: " + err.Error()
 	}
 	if body == "" {
-		return "", fetchFailure("No body content found in HTML")
+		return "", "No body content found in HTML"
 	}
-	return "<html>\n<body>\n" + body + "\n</body>\n</html>", nil
+	return "<html>\n<body>\n" + body + "\n</body>\n</html>", ""
 }
 
 func extractTextFromHTML(html string) (string, error) {
