@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 
 	"charm.land/fantasy"
@@ -11,10 +10,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
 )
-
-const todosTestResponse = "Todo list updated successfully.\n\n" +
-	"Status: %d pending, %d in progress, %d completed\n" +
-	"Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable."
 
 func newTodosToolForTest(t *testing.T, existing []session.Todo) (fantasy.AgentTool, session.Service, context.Context) {
 	t.Helper()
@@ -97,7 +92,9 @@ func TestTodosTool_SavesTodosAndReportsCounts(t *testing.T) {
 
 	require.NoError(t, err)
 	require.False(t, resp.IsError)
-	require.Equal(t, fmtTodosResponse(2, 1, 3), resp.Content)
+	require.Equal(t, "Todo list updated successfully.\n\n"+
+		"Status: 2 pending, 1 in progress, 3 completed\n"+
+		"Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable.", resp.Content)
 	want := []session.Todo{
 		{Content: "a", Status: session.TodoStatusPending},
 		{Content: "b", Status: session.TodoStatusPending, ActiveForm: "Doing b"},
@@ -200,8 +197,4 @@ func TestTodosTool_ReportsTransitions(t *testing.T) {
 			require.Equal(t, tc.wantJustStarted, meta.JustStarted)
 		})
 	}
-}
-
-func fmtTodosResponse(pending, inProgress, completed int) string {
-	return fmt.Sprintf(todosTestResponse, pending, inProgress, completed)
 }
