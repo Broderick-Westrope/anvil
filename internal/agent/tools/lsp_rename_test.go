@@ -232,22 +232,38 @@ func TestRenameTool_RenamesSymbolFoundInWorkspace(t *testing.T) {
 	require.Equal(t, filetracker.HashContent(got), tracker.hashes[lspShownPath(t, path)])
 }
 
-func TestRenameTool_PermissionRequestKnownBug(t *testing.T) {
+func TestRenameTool_PermissionRequestIdentifiesCallAndPath(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	path := writeFakeLangFile(t, dir, "a.fakelang", renameTestSource)
-	manager := newFakeLSP(t, dir, map[string]fakeLSPReply{"textDocument/rename": {Result: fooToBarEdit(path)}})
-	perms := &recordingPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest](), allow: true}
+	tests := map[string]struct {
+		outsideWorkingDir bool
+	}{
+		"file inside working directory":  {},
+		"file outside working directory": {outsideWorkingDir: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := writeFakeLangFile(t, dir, "a.fakelang", renameTestSource)
+			manager := newFakeLSP(t, dir, map[string]fakeLSPReply{
+				"textDocument/documentSymbol": {Result: fooDocumentSymbols},
+				"textDocument/rename":         {Result: fooToBarEdit(path)},
+			})
+			perms := &recordingPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest](), allow: true}
+			workingDir, wantPath := dir, dir
+			if tc.outsideWorkingDir {
+				workingDir, wantPath = t.TempDir(), path
+			}
 
-	_, err := runRenameTool(t, NewRenameTool(manager, perms, nil, dir), sessionCtx(), RenameParams{Symbol: "Foo", NewName: "Bar"})
+			resp, err := runRenameTool(t, NewRenameTool(manager, perms, nil, workingDir), sessionCtx(), RenameParams{Symbol: "Foo", NewName: "Bar", FilePath: path})
 
-	require.NoError(t, err)
-	// BUG: the request has no ToolCallID, so a PreToolUse hook's "allow"
-	// never pre-approves a rename (hookApproved needs the ID). It has no
-	// Path or Action either, unlike the other tools' requests.
-	require.Empty(t, perms.lastRequest.ToolCallID)
-	require.Empty(t, perms.lastRequest.Path)
-	require.Empty(t, perms.lastRequest.Action)
+			require.NoError(t, err)
+			require.False(t, resp.IsError, resp.Content)
+			require.Equal(t, "test-call", perms.lastRequest.ToolCallID)
+			require.Equal(t, wantPath, perms.lastRequest.Path)
+			require.Equal(t, "write", perms.lastRequest.Action)
+		})
+	}
 }
 
 func TestRenameTool_WorkspaceResolution(t *testing.T) {

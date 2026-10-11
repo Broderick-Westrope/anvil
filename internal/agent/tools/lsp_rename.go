@@ -13,6 +13,7 @@ import (
 	"charm.land/fantasy"
 
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
+	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	lsputil "github.com/Broderick-Westrope/anvil/internal/lsp/util"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -64,7 +65,7 @@ func NewRenameTool(
 			}
 
 			sessionID := GetSessionFromContext(ctx)
-			denied, granted, err := requestRenamePermission(ctx, permissions, sessionID, params, resolved.path)
+			denied, granted, err := requestRenamePermission(ctx, permissions, sessionID, call.ID, workingDir, params, resolved.path)
 			if !granted {
 				return denied, err
 			}
@@ -117,13 +118,16 @@ func resolveRenameTarget(ctx context.Context, lspManager *lsp.Manager, params Re
 // session or a permission service there is nobody to ask, so the rename
 // goes ahead. Like [requestPermission], the caller returns the response
 // and error as they are unless granted.
-func requestRenamePermission(ctx context.Context, permissions permission.Service, sessionID string, params RenameParams, path string) (fantasy.ToolResponse, bool, error) {
+func requestRenamePermission(ctx context.Context, permissions permission.Service, sessionID, callID, workingDir string, params RenameParams, path string) (fantasy.ToolResponse, bool, error) {
 	if sessionID == "" || permissions == nil {
 		return fantasy.ToolResponse{}, true, nil
 	}
 	denied, granted, err := requestPermission(ctx, permissions, permission.CreatePermissionRequest{
 		SessionID:   sessionID,
+		Path:        fsext.PathOrPrefix(path, workingDir),
+		ToolCallID:  callID,
 		ToolName:    RenameToolName,
+		Action:      "write",
 		Description: fmt.Sprintf("Rename '%s' to '%s'", params.Symbol, params.NewName),
 		Input:       path,
 	})
