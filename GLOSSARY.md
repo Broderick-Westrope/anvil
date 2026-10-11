@@ -81,6 +81,13 @@ An MCP server with `lazy_description` set. It doesn't connect at startup, and it
 - **Code:** `agent/lazy_mcp.go`, `agent/tools/enable_mcp.go`, `mcp.StateLazy`
 - **Not:** disabled MCP. A disabled MCP is off for every session.
 
+## Memory Monitor
+
+The background loop that samples Anvil's memory every few seconds, persists each sample under the project's `logs/memory`, captures heap and goroutine profiles when the capture policy asks, and logs a status line.
+
+- **Code:** `memoryMonitor` (`internal/app/memlog.go`)
+- **Not:** memory recorder. The recorder only writes samples and profiles to disk; the monitor decides when.
+
 ## Orchestrator
 
 The main agent the user talks to. It handles small tasks itself and delegates the rest to specialist agents through the `task` tool.

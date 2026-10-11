@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -318,4 +319,128 @@ func TestMemoryMonitorCapturesABaselineAndLogsStatusOnItsFirstSample(t *testing.
 	require.Contains(t, logs.String(), "slot=baseline")
 	require.Contains(t, logs.String(), `msg="Memory status"`)
 	require.NotContains(t, logs.String(), "Failed")
+}
+
+// captureSlogRecords swaps the default slog handler for one that keeps
+// records, and returns those with the given message.
+func captureSlogRecords(t *testing.T) func(msg string) []map[string]any {
+	t.Helper()
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return func(msg string) []map[string]any {
+		var records []map[string]any
+		for line := range strings.Lines(logs.String()) {
+			var record map[string]any
+			require.NoError(t, json.Unmarshal([]byte(line), &record))
+			if record["msg"] == msg {
+				records = append(records, record)
+			}
+		}
+		return records
+	}
+}
+
+func newTestMemoryMonitor(t *testing.T) *memoryMonitor {
+	t.Helper()
+	recorder, err := newMemoryRecorder(t.TempDir())
+	require.NoError(t, err)
+	return &memoryMonitor{recorder: recorder}
+}
+
+func TestMemoryMonitorLogsStatusEachMinuteOrWhenMemoryIsHighOrEventsDrop(t *testing.T) {
+	records := captureSlogRecords(t)
+	monitor := newTestMemoryMonitor(t)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	steps := []struct {
+		at         time.Duration
+		sample     memorySample
+		wantStatus bool
+	}{
+		{at: 0, wantStatus: true},
+		{at: 59 * time.Second},
+		{at: time.Minute, wantStatus: true},
+		{at: 61 * time.Second, sample: memorySample{RSS: memoryCaptureFloor - 1, GoResident: memoryCaptureFloor - 1}},
+		{at: 62 * time.Second, sample: memorySample{RSS: memoryCaptureFloor}, wantStatus: true},
+		{at: 63 * time.Second, sample: memorySample{GoResident: memoryCaptureFloor}, wantStatus: true},
+		{at: 64 * time.Second},
+		{at: 65 * time.Second, sample: memorySample{EventDrops: 1}, wantStatus: true},
+		{at: 66 * time.Second, sample: memorySample{EventDrops: 1}},
+		{at: 67 * time.Second, sample: memorySample{EventDrops: 1, MustDeliverDrops: 1}, wantStatus: true},
+		{at: 68 * time.Second, sample: memorySample{EventDrops: 1, MustDeliverDrops: 1}},
+	}
+	logged := 0
+	for _, step := range steps {
+		step.sample.Time = start.Add(step.at)
+		monitor.tick(step.sample)
+		status := len(records("Memory status"))
+		require.Equal(t, step.wantStatus, status > logged, "status logged at %s", step.at)
+		logged = status
+	}
+}
+
+func TestMemoryMonitorRecordsAndLogsTheSampleWithItsAllocationRate(t *testing.T) {
+	records := captureSlogRecords(t)
+	monitor := newTestMemoryMonitor(t)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	monitor.tick(memorySample{Time: start, TotalAlloc: 10 << 20})
+	monitor.tick(memorySample{
+		Time: start.Add(2 * time.Second), RSS: 1 << 20, HeapAlloc: 2 << 20, GoResident: 3 << 20,
+		HeapSys: 4 << 20, HeapReleased: 5 << 20, GCCPUFraction: 0.25, TotalAlloc: 30 << 20,
+		NumGC: 6, Goroutines: 7, EventDrops: 8, MustDeliverDrops: 9,
+	})
+
+	data, err := os.ReadFile(filepath.Join(monitor.recorder.dir, "samples.jsonl"))
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	require.Len(t, lines, 2)
+	var first, second memorySample
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &first))
+	require.NoError(t, json.Unmarshal([]byte(lines[1]), &second))
+	require.Zero(t, first.AllocBytesSecond)
+	require.EqualValues(t, 10<<20, second.AllocBytesSecond)
+
+	captured := records("Memory profiles captured")
+	require.Len(t, captured, 1)
+	require.Equal(t, "baseline", captured[0]["slot"])
+	require.Empty(t, records("Failed to capture memory profiles"))
+
+	status := records("Memory status")
+	require.Len(t, status, 2)
+	last := status[1]
+	delete(last, "time")
+	delete(last, "level")
+	delete(last, "msg")
+	require.Equal(t, map[string]any{
+		"pid": 0.0, "rss_mb": 1.0, "heap_alloc_mb": 2.0, "go_managed_resident_mb": 3.0,
+		"heap_sys_mb": 4.0, "heap_released_mb": 5.0, "num_gc": 6.0, "gc_cpu_pct": 25.0,
+		"total_alloc_mb": 30.0, "alloc_mb_per_second": 10.0, "goroutines": 7.0,
+		"event_drops": 8.0, "event_must_deliver_drops": 9.0,
+	}, last)
+}
+
+func TestMemoryMonitorLogsAWriteFailureOnceUntilWritesRecover(t *testing.T) {
+	records := captureSlogRecords(t)
+	dir := filepath.Join(t.TempDir(), "run")
+	monitor := &memoryMonitor{recorder: &memoryRecorder{dir: dir}}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	monitor.tick(memorySample{Time: start})
+	monitor.tick(memorySample{Time: start.Add(5 * time.Second)})
+	require.Len(t, records("Failed to persist memory diagnostics"), 1)
+
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	monitor.tick(memorySample{Time: start.Add(10 * time.Second)})
+	require.Len(t, records("Failed to persist memory diagnostics"), 1)
+
+	require.NoError(t, os.RemoveAll(dir))
+	monitor.tick(memorySample{Time: start.Add(15 * time.Second)})
+	require.Len(t, records("Failed to persist memory diagnostics"), 2)
+
+	failed := records("Failed to capture memory profiles")
+	require.Len(t, failed, 1)
+	require.Equal(t, "baseline", failed[0]["slot"])
+	require.Empty(t, records("Memory profiles captured"))
 }
