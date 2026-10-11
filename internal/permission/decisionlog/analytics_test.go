@@ -233,6 +233,7 @@ func TestStatsEscalations(t *testing.T) {
 		row("escalate", nil, "human", "allow"),
 		row("escalate", nil, "human", "deny"),
 		row("escalate", nil, "human", "cancelled"),
+		row("escalate", nil, "human", "cancelled"),
 		row("escalate", nil, "bouncer", "allow"),
 		row("deny", nil, "human", "allow"),
 		row("escalate", remote, "human", "allow"),
