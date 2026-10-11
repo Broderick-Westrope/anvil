@@ -596,3 +596,22 @@ func TestGrepTool_Errors(t *testing.T) {
 	require.True(t, resp.IsError)
 	require.True(t, strings.HasPrefix(resp.Content, "error searching files: "), resp.Content)
 }
+
+func TestFormatGrepMatch(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		match grepMatch
+		want  string
+	}{
+		"line and column":       {match: grepMatch{path: "a.go", lineNum: 2, charNum: 5, lineText: "x"}, want: "  Line 2, Char 5: x\n"},
+		"first line and column": {match: grepMatch{path: "a.go", lineNum: 1, charNum: 1, lineText: "x"}, want: "  Line 1, Char 1: x\n"},
+		"no column":             {match: grepMatch{path: "a.go", lineNum: 2, lineText: "x"}, want: "  Line 2: x\n"},
+		"no line":               {match: grepMatch{path: "a.go", charNum: 5, lineText: "x"}, want: "  a.go\n"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, formatGrepMatch(tc.match))
+		})
+	}
+}
