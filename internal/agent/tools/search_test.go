@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // serveSearchStub points the DuckDuckGo endpoint at a local server
@@ -73,5 +75,45 @@ func TestSearchParsesNormalResults(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].Link != "https://example.com/post" {
 		t.Fatalf("unexpected results: %+v", results)
+	}
+}
+
+func TestParseLiteSearchResults(t *testing.T) {
+	t.Parallel()
+
+	const page = `<html><body><table>
+<tr><td class="result-snippet">Orphan snippet.</td></tr>
+<tr><td><a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fone.example%2F&amp;rut=x">One</a></td></tr>
+<tr><td class="result-snippet">First snippet.</td></tr>
+<tr><td><a class="result-link">No link</a></td></tr>
+<tr><td class="result-snippet">Dropped snippet.</td></tr>
+<tr><td><a data-x="y" href="https://two.example/" class="other result-link" href="https://ignored.example/">Two</a></td></tr>
+<tr><td><a class="result-link" href="https://three.example/">Three</a></td></tr>
+<tr><td class="result-snippet">Third snippet.</td></tr>
+</table></body></html>`
+	all := []SearchResult{
+		{Title: "One", Link: "https://one.example/", Snippet: "First snippet.", Position: 1},
+		{Title: "Two", Link: "https://two.example/", Position: 2},
+		{Title: "Three", Link: "https://three.example/", Snippet: "Third snippet.", Position: 3},
+	}
+	tests := map[string]struct {
+		maxResults int
+		want       []SearchResult
+	}{
+		"every result":       {maxResults: 10, want: all},
+		"exactly the max":    {maxResults: 3, want: all},
+		"stops at the max":   {maxResults: 2, want: all[:2]},
+		"first result only":  {maxResults: 1, want: all[:1]},
+		"no results allowed": {maxResults: 0},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := parseLiteSearchResults(page, tc.maxResults)
+
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
 	}
 }
