@@ -45,3 +45,27 @@ func TestNew_UnconfiguredTracksConfiguredLSPs(t *testing.T) {
 		return ok && info.State == lsp.StateUnstarted
 	}, 5*time.Second, 10*time.Millisecond)
 }
+
+// A configured app whose orchestrator agent can't be initialised must fail
+// rather than hand back a half-built app.
+func TestNew_ConfiguredFailsWhenOrchestratorAgentCannotInit(t *testing.T) {
+	t.Setenv("ANVIL_GLOBAL_CONFIG", t.TempDir())
+	t.Setenv("ANVIL_GLOBAL_DATA", t.TempDir())
+	t.Setenv("ANVIL_CACHE_DIR", t.TempDir())
+	t.Setenv("ANVIL_DISABLE_PROVIDER_AUTO_UPDATE", "1")
+
+	store, err := config.Load(t.TempDir(), t.TempDir(), false)
+	require.NoError(t, err)
+	store.Config().Providers.Reset(map[string]config.ProviderConfig{
+		"anvil-test-provider": {ID: "anvil-test-provider", APIKey: "fake-key"},
+	})
+	require.True(t, store.Config().IsConfigured())
+	delete(store.Config().Agents, config.AgentOrchestrator)
+
+	conn, err := db.ConnectGlobal(t.Context())
+	require.NoError(t, err)
+
+	a, err := app.New(t.Context(), conn, store)
+	require.ErrorContains(t, err, "orchestrator agent configuration is missing")
+	require.Nil(t, a)
+}
