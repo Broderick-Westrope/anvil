@@ -3,10 +3,12 @@ package shell_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -19,17 +21,35 @@ type jqResult struct {
 	code   int
 }
 
+// jqDeadline bounds each jq run. Flag parsing never polls the context, so a
+// parser that stops advancing spins and allocates gigabytes a second, and
+// the test binary would hang until the OOM killer ends it. Failing the test
+// cannot stop that goroutine and the other parallel tests keep the binary
+// alive, so the whole binary exits with a failure instead.
+const jqDeadline = 500 * time.Millisecond
+
 func runJQ(t *testing.T, command, stdin string) jqResult {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	err := shell.Run(t.Context(), shell.RunOptions{
-		Command: command,
-		Cwd:     t.TempDir(),
-		Stdin:   strings.NewReader(stdin),
-		Stdout:  &stdout,
-		Stderr:  &stderr,
-	})
-	return jqResult{stdout: stdout.String(), stderr: stderr.String(), code: shell.ExitCode(err)}
+	cwd := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		done <- shell.Run(t.Context(), shell.RunOptions{
+			Command: command,
+			Cwd:     cwd,
+			Stdin:   strings.NewReader(stdin),
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+		})
+	}()
+	select {
+	case err := <-done:
+		return jqResult{stdout: stdout.String(), stderr: stderr.String(), code: shell.ExitCode(err)}
+	case <-time.After(jqDeadline):
+		fmt.Fprintf(os.Stderr, "--- FAIL: %s: jq did not finish within %s: %s\n", t.Name(), jqDeadline, command)
+		os.Exit(1)
+		return jqResult{}
+	}
 }
 
 func TestJQBuiltin(t *testing.T) {
@@ -155,6 +175,16 @@ func TestJQBuiltin(t *testing.T) {
 		"arg before the filter": {
 			command: `jq --arg x v -n '$x'`,
 			want:    jqResult{stdout: "\"v\"\n"},
+		},
+		"arg after a switch and before the filter reads stdin": {
+			command: `jq -c --arg x 1 '.a + $x'`,
+			stdin:   `{"a":"v"}`,
+			want:    jqResult{stdout: "\"v1\"\n"},
+		},
+		"argjson first then the filter reads stdin": {
+			command: `jq --argjson n 2 '.a + $n'`,
+			stdin:   `{"a":1}`,
+			want:    jqResult{stdout: "3\n"},
 		},
 		"arg missing value": {
 			command: `jq -n . --arg x`,
