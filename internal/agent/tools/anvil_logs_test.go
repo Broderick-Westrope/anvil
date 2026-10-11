@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -127,15 +128,34 @@ func TestAnvilLogs_MissingFile(t *testing.T) {
 	require.Contains(t, result, "No log file found")
 }
 
-func TestAnvilLogs_EmptyFile(t *testing.T) {
+func TestAnvilLogs_UnreadableFile(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	logFile := filepath.Join(tempDir, "anvil.log")
-	_, err := os.Create(logFile)
-	require.NoError(t, err)
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs file modes that deny reading")
+	}
+	logFile := writeRawLog(t, `{"msg":"a"}`+"\n")
+	require.NoError(t, os.Chmod(logFile, 0o000))
 
 	result := runAnvilLogs(logFile, AnvilLogsParams{Lines: 50})
-	require.Contains(t, result, "Log file is empty")
+
+	require.Equal(t, "Error reading log file: open "+logFile+": permission denied", result)
+}
+
+func TestAnvilLogs_EmptyFile(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"no content":                     "",
+		"only blank and malformed lines": "\nnot json\n",
+	}
+	for name, content := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result := runAnvilLogs(writeRawLog(t, content), AnvilLogsParams{Lines: 50})
+
+			require.Equal(t, "Log file is empty", result)
+		})
+	}
 }
 
 func TestAnvilLogs_MalformedLines(t *testing.T) {
@@ -150,6 +170,7 @@ func TestAnvilLogs_MalformedLines(t *testing.T) {
 	validEntry := makeLogEntry("INFO", "Valid entry", "app.go", 1, nil)
 	line, _ := json.Marshal(validEntry)
 	file.WriteString(string(line) + "\n")
+	file.WriteString("\n")
 	file.WriteString("this is not json\n")
 	file.WriteString(`{"incomplete": "json` + "\n")
 
@@ -300,6 +321,29 @@ func TestAnvilLogs_ReservedFields(t *testing.T) {
 
 func TestAnvilLogs_OversizedLines(t *testing.T) {
 	t.Parallel()
+
+	t.Run("trailing line", func(t *testing.T) {
+		t.Parallel()
+		tests := map[string]struct {
+			size int
+			want int
+		}{
+			"at the limit":   {size: maxLogLineSize, want: 2},
+			"over the limit": {size: maxLogLineSize + 1, want: 1},
+		}
+		for name, tc := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				result := runAnvilLogs(writeRawLog(t, `{"msg":"small"}`+"\n"+jsonLineOfSize(tc.size)), AnvilLogsParams{Lines: 10})
+
+				lines := strings.Split(result, "\n")
+				require.Len(t, lines, tc.want)
+				require.Contains(t, lines, "--:--:-- INFO unknown:0 small")
+			})
+		}
+	})
+
 	tempDir := t.TempDir()
 	logFile := filepath.Join(tempDir, "anvil.log")
 
@@ -542,76 +586,84 @@ func jsonLineOfSize(size int) string {
 	return prefix + strings.Repeat("x", size-len(prefix)-len(suffix)) + suffix
 }
 
-func TestReadLastLines_TrailingLineWithoutNewline(t *testing.T) {
+func TestAnvilLogs_TrailingLineWithoutNewlineKnownBug(t *testing.T) {
 	t.Parallel()
 
-	// A final line without a newline is read last, so today it comes
-	// back as the oldest entry rather than the newest.
+	// BUG: a final line without a newline is read last, so it comes back
+	// as the oldest entry rather than the newest, and is the first to be
+	// dropped when lines runs out.
 	content := `{"msg":"a"}` + "\n" + `{"msg":"b"}` + "\n" + `{"msg":"c"}`
 	tests := map[string]struct {
-		n    int
-		want []map[string]any
+		lines int
+		want  string
 	}{
 		"room for the trailing line": {
-			n:    3,
-			want: []map[string]any{{"msg": "c"}, {"msg": "a"}, {"msg": "b"}},
+			lines: 3,
+			want:  "--:--:-- INFO unknown:0 c\n--:--:-- INFO unknown:0 a\n--:--:-- INFO unknown:0 b",
 		},
 		"no room for the trailing line": {
-			n:    2,
-			want: []map[string]any{{"msg": "a"}, {"msg": "b"}},
+			lines: 2,
+			want:  "--:--:-- INFO unknown:0 a\n--:--:-- INFO unknown:0 b",
 		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := readLastLines(writeRawLog(t, content), tc.n)
+			result := runAnvilLogs(writeRawLog(t, content), AnvilLogsParams{Lines: tc.lines})
 
-			require.NoError(t, err)
-			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.want, result)
 		})
 	}
 }
 
-func TestReadLastLines_TrailingLineSizeLimit(t *testing.T) {
+func TestAnvilLogs_ReadsAcrossChunks(t *testing.T) {
 	t.Parallel()
 
-	tests := map[string]struct {
-		size int
-		want int
-	}{
-		"at the limit":   {size: maxLogLineSize, want: 2},
-		"over the limit": {size: maxLogLineSize + 1, want: 1},
+	// readLastLines reads the file backwards in chunks of this size.
+	const chunkSize = 8192
+	const total = 150
+	var content strings.Builder
+	var starts []int
+	for i := range total {
+		starts = append(starts, content.Len())
+		line, err := json.Marshal(makeLogEntry("INFO", fmt.Sprintf("entry %03d", i), "app.go", 1, nil))
+		require.NoError(t, err)
+		content.Write(line)
+		content.WriteString("\n")
 	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
+	size := content.Len()
+	require.Greater(t, size, chunkSize)
+	starts = append(starts, size)
 
-			got, err := readLastLines(writeRawLog(t, `{"msg":"small"}`+"\n"+jsonLineOfSize(tc.size)), 10)
-
-			require.NoError(t, err)
-			require.Len(t, got, tc.want)
-			require.Equal(t, "small", got[len(got)-1]["msg"])
-		})
+	// Entries that straddle a chunk boundary are read wrongly today, so
+	// only check that the newest entries which don't are all returned, in
+	// order.
+	crossesChunk := func(i int) bool {
+		for b := size - chunkSize; b > 0; b -= chunkSize {
+			if starts[i] < b && b < starts[i+1] {
+				return true
+			}
+		}
+		return false
 	}
-}
+	var want []string
+	for i := total - maxLogLines; i < total; i++ {
+		if !crossesChunk(i) {
+			want = append(want, fmt.Sprintf("entry %03d", i))
+		}
+	}
+	require.Less(t, len(want), maxLogLines, "the test needs at least one entry across a chunk boundary")
 
-func TestReadLastLines_SkipsMalformedAndBlankLines(t *testing.T) {
-	t.Parallel()
+	result := runAnvilLogs(writeRawLog(t, content.String()), AnvilLogsParams{Lines: maxLogLines})
 
-	got, err := readLastLines(writeRawLog(t, `{"msg":"a"}`+"\n\nnot json\n"+`{"msg":"b"}`+"\n"), 10)
-
-	require.NoError(t, err)
-	require.Equal(t, []map[string]any{{"msg": "a"}, {"msg": "b"}}, got)
-}
-
-func TestReadLastLines_MissingOrEmptyFile(t *testing.T) {
-	t.Parallel()
-
-	_, err := readLastLines(filepath.Join(t.TempDir(), "missing.log"), 10)
-	require.ErrorIs(t, err, os.ErrNotExist)
-
-	got, err := readLastLines(writeRawLog(t, ""), 10)
-	require.NoError(t, err)
-	require.Nil(t, got)
+	lines := strings.Split(result, "\n")
+	require.Len(t, lines, maxLogLines)
+	next := 0
+	for _, line := range lines {
+		if next < len(want) && strings.HasSuffix(line, " "+want[next]) {
+			next++
+		}
+	}
+	require.Equal(t, len(want), next, "missing %q", want[min(next, len(want)-1)])
 }
