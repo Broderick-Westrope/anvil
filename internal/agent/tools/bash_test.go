@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -408,7 +407,6 @@ func TestBashTool_SafeReadOnlyCommandsSkipPermission(t *testing.T) {
 	}{
 		"exact safe command":          {command: "ls"},
 		"safe command with arguments": {command: "ls ."},
-		"safe command in upper case":  {command: "LS ."},
 		"quoted command name":         {command: "'ls' ."},
 		"safe prefix of another word": {command: "lsunknowncommand", wantRequest: true},
 		"safe command with dash":      {command: "ls-unknown-command", wantRequest: true},
@@ -534,7 +532,6 @@ func TestBashTool_SafeReadOnlyCommandsSkipPermission(t *testing.T) {
 		"git branch --list with pattern":       {command: "git branch --list 'feat/*'"},
 		"git branch --list with unquoted glob": {command: "git branch --list feat*", files: []string{"feat1"}, wantRequest: true},
 		"git branch -l with pattern":           {command: "git branch -l feat"},
-		"git branch upper case":                {command: "GIT BRANCH -a"},
 		"git branch upper-case flag":           {command: "git branch -A", wantRequest: true},
 		"git branch --contains":                {command: "git branch --contains HEAD"},
 		"git branch --contains=":               {command: "git branch --contains=HEAD"},
@@ -693,8 +690,6 @@ func TestBashTool_SafeReadOnlyCommandsSkipPermission(t *testing.T) {
 			files:       []string{"--open-files-in-pager=touch PWNED;#"},
 			wantRequest: true,
 		},
-
-		"windows-only safe command": {command: "where git", wantRequest: runtime.GOOS != "windows"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -714,6 +709,40 @@ func TestBashTool_SafeReadOnlyCommandsSkipPermission(t *testing.T) {
 			} else {
 				require.Zero(t, perms.requestCount)
 			}
+		})
+	}
+}
+
+func TestIsSafeReadOnly_CommandNamesAndPlatform(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		command string
+		goos    string
+		want    bool
+	}{
+		"command on linux":               {command: "ls", goos: "linux", want: true},
+		"upper-case command on linux":    {command: "LS", goos: "linux"},
+		"upper-case command on darwin":   {command: "LS", goos: "darwin"},
+		"upper-case command on windows":  {command: "LS", goos: "windows", want: true},
+		"upper-case git on linux":        {command: "GIT status", goos: "linux"},
+		"upper-case subcommand on linux": {command: "git STATUS", goos: "linux"},
+		"upper-case git on windows":      {command: "GIT BRANCH -a", goos: "windows", want: true},
+		"upper-case flag on windows":     {command: "git branch -A", goos: "windows"},
+		"where on windows":               {command: "where git", goos: "windows", want: true},
+		"upper-case where on windows":    {command: "WHERE git", goos: "windows", want: true},
+		"where on linux":                 {command: "where git", goos: "linux"},
+		"ipconfig on windows":            {command: "ipconfig", goos: "windows", want: true},
+		"systeminfo on windows":          {command: "systeminfo", goos: "windows", want: true},
+		"tasklist on windows":            {command: "tasklist", goos: "windows", want: true},
+		"tasklist on darwin":             {command: "tasklist", goos: "darwin"},
+		"ping on windows":                {command: "ping example.com", goos: "windows"},
+		"nslookup on windows":            {command: "nslookup example.com", goos: "windows"},
+		"shared command on windows":      {command: "git status", goos: "windows", want: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, isSafeReadOnly(tc.command, tc.goos))
 		})
 	}
 }
