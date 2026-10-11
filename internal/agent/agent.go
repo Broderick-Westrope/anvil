@@ -752,61 +752,54 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			),
 		))
 	}
-	knownToolCallIDs, knownToolResultIDs := knownToolIDs(msgs)
-
-	for _, m := range msgs {
-		if len(m.Parts) == 0 {
-			continue
-		}
-		// Assistant message without content or tool calls (cancelled before it returned anything).
-		if m.Role == message.Assistant && len(m.ToolCalls()) == 0 && m.Content().Text == "" && m.ReasoningContent().String() == "" {
-			continue
-		}
-		if m.Role == message.Tool {
-			if msg, ok := filterOrphanedToolResults(m, knownToolCallIDs); ok {
-				history = append(history, msg)
-			}
-			continue
-		}
-		aiMsgs := m.ToAIMessage()
-		if !supportsImages {
-			for i := range aiMsgs {
-				if aiMsgs[i].Role == fantasy.MessageRoleUser {
-					aiMsgs[i].Content = filterFileParts(aiMsgs[i].Content)
-				}
-			}
-		}
-		history = append(history, aiMsgs...)
-
-		if m.Role == message.Assistant {
-			if msg, ok := syntheticToolResultsForOrphanedCalls(m, knownToolResultIDs); ok {
-				history = append(history, msg)
-			}
-		}
-	}
-	return history
-}
-
-// knownToolIDs collects all tool call IDs present in assistant messages and
-// all tool result IDs present in tool messages. This lets us detect both
-// orphaned tool results (result without a call) and orphaned tool calls
-// (call without a result).
-func knownToolIDs(msgs []message.Message) (callIDs, resultIDs map[string]struct{}) {
-	callIDs = make(map[string]struct{})
-	resultIDs = make(map[string]struct{})
+	// Collect all tool call IDs present in assistant messages and all tool
+	// result IDs present in tool messages. This lets us detect both orphaned
+	// tool results (result without a call) and orphaned tool calls (call
+	// without a result).
+	knownToolCallIDs := make(map[string]struct{})
+	knownToolResultIDs := make(map[string]struct{})
 	for _, m := range msgs {
 		switch m.Role {
 		case message.Assistant:
 			for _, tc := range m.ToolCalls() {
-				callIDs[tc.ID] = struct{}{}
+				knownToolCallIDs[tc.ID] = struct{}{}
 			}
 		case message.Tool:
 			for _, tr := range m.ToolResults() {
-				resultIDs[tr.ToolCallID] = struct{}{}
+				knownToolResultIDs[tr.ToolCallID] = struct{}{}
 			}
 		}
 	}
-	return callIDs, resultIDs
+
+	for _, m := range msgs {
+		// Skip empty messages, and assistant messages without content or
+		// tool calls (cancelled before they returned anything).
+		if len(m.Parts) == 0 || (m.Role == message.Assistant && len(m.ToolCalls()) == 0 && m.Content().Text == "" && m.ReasoningContent().String() == "") {
+			continue
+		}
+		switch m.Role {
+		case message.Tool:
+			if msg, ok := filterOrphanedToolResults(m, knownToolCallIDs); ok {
+				history = append(history, msg)
+			}
+		case message.Assistant:
+			history = append(history, m.ToAIMessage()...)
+			if msg, ok := syntheticToolResultsForOrphanedCalls(m, knownToolResultIDs); ok {
+				history = append(history, msg)
+			}
+		default:
+			history = append(history, m.ToAIMessage()...)
+		}
+	}
+
+	if !supportsImages {
+		for i := range history {
+			if history[i].Role == fantasy.MessageRoleUser {
+				history[i].Content = filterFileParts(history[i].Content)
+			}
+		}
+	}
+	return history
 }
 
 // attachmentFiles returns the binary attachments as file parts. Text
