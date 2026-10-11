@@ -39,12 +39,11 @@ func TestGetProviderOptionsMatrix(t *testing.T) {
 		catwalk.InferenceProviderAlibabaSingapore,
 		catwalk.InferenceProviderAlibabaUS,
 	}
-	// Types without ID quirks still run against IDs that have quirks
-	// elsewhere, so a quirk leaking into the wrong type shows up.
+	// Types without ID quirks run against a plain ID and an ID with quirks
+	// in both the Anthropic and openai-compat types, so a quirk leaking
+	// into the wrong type shows up.
 	crossIDs := []catwalk.InferenceProvider{
 		"custom",
-		catwalk.InferenceProviderIoNet,
-		catwalk.InferenceProviderOpenCodeGo,
 		catwalk.InferenceProviderAlibabaUS,
 	}
 	providers := []struct {
