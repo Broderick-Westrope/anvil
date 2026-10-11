@@ -253,3 +253,69 @@ func (zeroReader) Read(buffer []byte) (int, error) {
 	clear(buffer)
 	return len(buffer), nil
 }
+
+// The memory monitor tests below swap the default slog handler, so they
+// don't run in parallel.
+
+// startTestMemoryMonitor starts the monitor and returns a function that
+// stops it and waits for it to finish.
+func startTestMemoryMonitor(t *testing.T, ctx context.Context, projectDir string) (stop func()) {
+	t.Helper()
+	app := &App{
+		config: config.NewTestStore(&config.Config{Options: &config.Options{ProjectDirectory: projectDir}}),
+		events: pubsub.NewBroker[tea.Msg](),
+	}
+	t.Cleanup(app.events.Shutdown)
+	app.startMemoryMonitor(ctx)
+	return func() {
+		shutdownCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		for _, cleanup := range app.cleanupFuncs {
+			require.NoError(t, cleanup(shutdownCtx))
+		}
+	}
+}
+
+func TestMemoryMonitorLogsAndStopsWhenDiagnosticsCannotStart(t *testing.T) {
+	logs := captureSlog(t)
+	projectDir := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(projectDir, nil, 0o600))
+
+	startTestMemoryMonitor(t, t.Context(), projectDir)()
+
+	require.Contains(t, logs.String(), `msg="Failed to initialize memory diagnostics"`)
+	require.NotContains(t, logs.String(), "Memory diagnostics enabled")
+}
+
+func TestMemoryMonitorTakesNoSampleOnceCancelled(t *testing.T) {
+	logs := captureSlog(t)
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	startTestMemoryMonitor(t, ctx, root)()
+
+	require.Contains(t, logs.String(), `msg="Memory diagnostics enabled"`)
+	runs, err := filepath.Glob(filepath.Join(root, "logs", "memory", "run-*"))
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	require.NoFileExists(t, filepath.Join(runs[0], "samples.jsonl"))
+	require.NotContains(t, logs.String(), "Memory status")
+}
+
+func TestMemoryMonitorCapturesABaselineAndLogsStatusOnItsFirstSample(t *testing.T) {
+	logs := captureSlog(t)
+	root := t.TempDir()
+
+	stop := startTestMemoryMonitor(t, t.Context(), root)
+	require.Eventually(t, func() bool {
+		paths, err := filepath.Glob(filepath.Join(root, "logs", "memory", "run-*", "baseline.json"))
+		return err == nil && len(paths) == 1
+	}, 10*time.Second, 10*time.Millisecond)
+	stop()
+
+	require.Contains(t, logs.String(), `msg="Memory profiles captured"`)
+	require.Contains(t, logs.String(), "slot=baseline")
+	require.Contains(t, logs.String(), `msg="Memory status"`)
+	require.NotContains(t, logs.String(), "Failed")
+}
