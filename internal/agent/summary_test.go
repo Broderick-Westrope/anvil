@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
@@ -17,8 +18,8 @@ import (
 
 // TestSummarizeFailure covers the failed summaries the provider fixture in
 // run_integration_test.go can't script: a failure after reasoning and text
-// have streamed, and a canceled request that fails with an unrelated
-// error.
+// have streamed, a canceled request that fails with an unrelated error,
+// and a live request whose stream fails with context.Canceled.
 func TestSummarizeFailure(t *testing.T) {
 	t.Parallel()
 	streamed := []fantasy.StreamPart{
@@ -48,6 +49,10 @@ func TestSummarizeFailure(t *testing.T) {
 				cancel()
 				return errors.New("stream broke")
 			},
+			abandons: true,
+		},
+		"canceled error drops the placeholder": {
+			fail:     func(context.CancelFunc) error { return fmt.Errorf("stream: %w", context.Canceled) },
 			abandons: true,
 		},
 	}
