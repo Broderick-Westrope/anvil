@@ -132,8 +132,7 @@ func (t *tally) observe(e *evidence) {
 	if !IsSource(r) {
 		return
 	}
-	switch {
-	case r.ToolName == "bash":
+	if r.ToolName == "bash" {
 		for _, input := range e.inputs {
 			res, ok := t.allowPatterns[input]
 			if !ok {
@@ -159,7 +158,7 @@ func (t *tally) observe(e *evidence) {
 				t.add(e, Candidate{Kind: KindDeny, Tier: TierB, InputPattern: pattern, Warning: "Review the scope of this permanent denial"}, e.commands[0])
 			}
 		}
-	case strings.HasPrefix(r.ToolName, "mcp_") && !strings.ContainsAny(r.ToolName, globMeta):
+	} else if strings.HasPrefix(r.ToolName, "mcp_") && !strings.ContainsAny(r.ToolName, globMeta) {
 		t.add(e, Candidate{Kind: KindAllow, Tier: TierB, Warning: "MCP rules cover every argument this tool accepts"}, r.Input)
 	}
 }
