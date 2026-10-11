@@ -81,9 +81,9 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 			}
 			defer os.RemoveAll(tmpDir)
 
-			fullPrompt, err := agenticFetchPrompt(ctx, client, tmpDir, params)
-			if err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to %s", err)), nil
+			fullPrompt, failure := agenticFetchPrompt(ctx, client, tmpDir, params)
+			if failure.IsError {
+				return failure, nil
 			}
 
 			promptOpts := []prompt.Option{
@@ -162,25 +162,26 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 // agenticFetchPrompt returns the fetch sub-agent's task. For a URL it
 // fetches the page first: a small page goes inline, and a large one is
 // saved in dir for the sub-agent to search. Without a URL the sub-agent
-// searches the web itself. Errors name the step that failed.
-func agenticFetchPrompt(ctx context.Context, client *http.Client, dir string, params tools.AgenticFetchParams) (string, error) {
+// searches the web itself. When a step fails it returns, in place of the
+// task, the error response the model sees.
+func agenticFetchPrompt(ctx context.Context, client *http.Client, dir string, params tools.AgenticFetchParams) (string, fantasy.ToolResponse) {
 	if params.URL == "" {
-		return fmt.Sprintf("%s\n\nUse the web_search tool to find relevant information. Break down the question into smaller, focused searches if needed. After searching, use web_fetch to get detailed content from the most relevant results.", params.Prompt), nil
+		return fmt.Sprintf("%s\n\nUse the web_search tool to find relevant information. Break down the question into smaller, focused searches if needed. After searching, use web_fetch to get detailed content from the most relevant results.", params.Prompt), fantasy.ToolResponse{}
 	}
 	content, err := tools.FetchURLAndConvert(ctx, client, params.URL)
 	if err != nil {
-		return "", fmt.Errorf("fetch URL: %w", err)
+		return "", fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to fetch URL: %s", err))
 	}
 	if len(content) <= tools.LargeContentThreshold {
-		return fmt.Sprintf("%s\n\nWeb page URL: %s\n\n<webpage_content>\n%s\n</webpage_content>", params.Prompt, params.URL, content), nil
+		return fmt.Sprintf("%s\n\nWeb page URL: %s\n\n<webpage_content>\n%s\n</webpage_content>", params.Prompt, params.URL, content), fantasy.ToolResponse{}
 	}
 	tempFile, err := os.CreateTemp(dir, "page-*.md")
 	if err != nil {
-		return "", fmt.Errorf("create temporary file: %w", err)
+		return "", fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to create temporary file: %s", err))
 	}
 	defer tempFile.Close()
 	if _, err := tempFile.WriteString(content); err != nil {
-		return "", fmt.Errorf("write content to file: %w", err)
+		return "", fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to write content to file: %s", err))
 	}
-	return fmt.Sprintf("%s\n\nThe web page from %s has been saved to: %s\n\nUse the view and grep tools to analyze this file and extract the requested information.", params.Prompt, params.URL, tempFile.Name()), nil
+	return fmt.Sprintf("%s\n\nThe web page from %s has been saved to: %s\n\nUse the view and grep tools to analyze this file and extract the requested information.", params.Prompt, params.URL, tempFile.Name()), fantasy.ToolResponse{}
 }
