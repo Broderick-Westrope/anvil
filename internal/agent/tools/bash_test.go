@@ -404,13 +404,16 @@ func TestBashTool_SafeReadOnlyCommandsSkipPermission(t *testing.T) {
 		command     string
 		wantRequest bool
 	}{
-		"exact safe command":            {command: "ls"},
-		"safe command with arguments":   {command: "ls ."},
-		"safe command with dash suffix": {command: "ls-unknown-command"},
-		"safe command in upper case":    {command: "LS ."},
-		"safe prefix of another word":   {command: "lsunknowncommand", wantRequest: true},
-		"safe command with chaining":    {command: "ls; ls", wantRequest: true},
-		"unsafe command":                {command: "touch file", wantRequest: true},
+		"exact safe command":          {command: "ls"},
+		"safe command with arguments": {command: "ls ."},
+		// Current behaviour, not a deliberate rule: a dash after a safe
+		// command also counts as a word boundary, so any command such as
+		// ls-anything skips permission whether or not it is read-only.
+		"current behaviour: safe command with dash suffix": {command: "ls-unknown-command"},
+		"safe command in upper case":                       {command: "LS ."},
+		"safe prefix of another word":                      {command: "lsunknowncommand", wantRequest: true},
+		"safe command with chaining":                       {command: "ls; ls", wantRequest: true},
+		"unsafe command":                                   {command: "touch file", wantRequest: true},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

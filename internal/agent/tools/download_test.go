@@ -94,15 +94,26 @@ func TestDownloadTool_DownloadsFile(t *testing.T) {
 	got, err := os.ReadFile(filePath)
 	require.NoError(t, err)
 	require.Equal(t, "GET anvil/1.0", string(got))
-	require.Equal(t, permission.CreatePermissionRequest{
-		SessionID:   "test-session",
-		Path:        filePath,
-		ToolName:    DownloadToolName,
-		Action:      "download",
-		Description: "Download file from URL: " + server.URL + " to " + filePath,
-		Params:      DownloadPermissionsParams(params),
-		Input:       server.URL,
-	}, perms.lastRequest)
+	require.Equal(t, "test-session", perms.lastRequest.SessionID)
+	require.Equal(t, filePath, perms.lastRequest.Path)
+	require.Equal(t, DownloadToolName, perms.lastRequest.ToolName)
+	require.Equal(t, "download", perms.lastRequest.Action)
+	require.Equal(t, "Download file from URL: "+server.URL+" to "+filePath, perms.lastRequest.Description)
+	require.Equal(t, DownloadPermissionsParams(params), perms.lastRequest.Params)
+	require.Equal(t, server.URL, perms.lastRequest.Input)
+}
+
+func TestDownloadTool_PermissionRequestKnownBug(t *testing.T) {
+	t.Parallel()
+	server := newFetchServer(t, serveBody("", "abc"))
+	tool, perms := newDownloadToolForTest(t, t.TempDir(), server.Client())
+
+	_, err := runDownloadTool(t, tool, sessionCtx(), DownloadParams{URL: server.URL, FilePath: "out.bin"})
+
+	require.NoError(t, err)
+	// BUG: the request has no ToolCallID, so a PreToolUse hook's "allow"
+	// never pre-approves a download (hookApproved needs the ID).
+	require.Empty(t, perms.lastRequest.ToolCallID)
 }
 
 func TestDownloadTool_OmitsMissingContentType(t *testing.T) {
