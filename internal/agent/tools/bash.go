@@ -294,18 +294,20 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				return fantasy.ToolResponse{}, fmt.Errorf("%s: %w", launch.startErr, err)
 			}
 
-			if err := launch.wait(ctx, bgShell); err != nil {
-				// Incoming context was cancelled before we moved to background
-				// Kill the shell and return error
+			err = launch.wait(ctx, bgShell)
+			if err != nil {
+				// The incoming context was cancelled before the command moved
+				// to the background, so kill the shell and return the error.
 				bgManager.Kill(bgShell.ID())
 				return fantasy.ToolResponse{}, err
 			}
 			stdout, stderr, done, execErr := bgShell.GetOutput()
 
 			if done {
-				// Command finished while we waited - return its output directly
-				// Remove from background manager since we're returning directly
-				// Don't call Kill() as it cancels the context and corrupts the exit code
+				// The command finished while we waited, so return its output
+				// directly. Remove it from the background manager rather than
+				// calling Kill(), which cancels the context and corrupts the
+				// exit code.
 				bgManager.Remove(bgShell.ID())
 
 				interrupted := shell.IsInterrupt(execErr)
@@ -390,7 +392,8 @@ func newBashLaunch(params BashParams) bashLaunch {
 			origin:   shell.OriginExplicit,
 			startErr: "error starting background shell",
 			wait: func(context.Context, *shell.BackgroundShell) error {
-				// Wait a short time to detect fast failures (blocked commands, syntax errors, etc.)
+				// Wait a short time to detect fast failures, such as blocked
+				// commands and syntax errors.
 				time.Sleep(1 * time.Second)
 				return nil
 			},
@@ -405,31 +408,25 @@ func newBashLaunch(params BashParams) bashLaunch {
 		origin:   shell.OriginAuto,
 		startErr: "error starting shell",
 		wait: func(ctx context.Context, bgShell *shell.BackgroundShell) error {
-			return waitForAutoBackground(ctx, bgShell, autoBackgroundThreshold)
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			timeout := time.After(autoBackgroundThreshold)
+			for {
+				select {
+				case <-ticker.C:
+					if bgShell.IsDone() {
+						return nil
+					}
+				case <-timeout:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
 		},
 		handover: func(jobID string, elapsed time.Duration, stdout, stderr string) string {
 			return formatAutoBackgroundResponse(jobID, elapsed, joinOutput(stdout, stderr))
 		},
-	}
-}
-
-// waitForAutoBackground waits for either completion, the auto-background
-// threshold, or context cancellation.
-func waitForAutoBackground(ctx context.Context, bgShell *shell.BackgroundShell, threshold time.Duration) error {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	timeout := time.After(threshold)
-	for {
-		select {
-		case <-ticker.C:
-			if bgShell.IsDone() {
-				return nil
-			}
-		case <-timeout:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
 	}
 }
 
