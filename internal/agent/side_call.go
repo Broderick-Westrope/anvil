@@ -58,13 +58,7 @@ func (s *sideCall) streamCall(prompt string) fantasy.AgentStreamCall {
 }
 
 func (s *sideCall) prepareStep(ctx context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-	prepared.Messages = options.Messages
-	if s.prefix != "" {
-		prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(s.prefix)}, prepared.Messages...)
-	}
-	if isAnthropicOAuth(s.providerCfg) {
-		prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
-	}
+	prepared.Messages = frameMessages(s.prefix, s.providerCfg, options.Messages)
 	if s.a.usageRecorder != nil {
 		s.capture = s.a.newCapture(s.kind, s.runID, s.sessionID, s.parentID, s.model, nil, prepared.Messages)
 		s.capture.agent = s.agentName

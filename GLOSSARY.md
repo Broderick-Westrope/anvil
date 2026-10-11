@@ -104,9 +104,9 @@ A conversation between the user and an agent, stored with its message tree, usag
 
 ## Side Call
 
-A model request made beside a session's turns: a summary, a session title, or a one-shot small-model completion such as a bouncer review. Its request is framed like a turn's and its step usage is recorded, but it has no tools.
+A model request made beside a session's turns: a summary, a session title, or a one-shot small-model completion such as a bouncer review. Its request is framed like a turn's, through the same `frameMessages`, and its step usage is recorded, but it has no tools.
 
-- **Code:** `sideCall` (`internal/agent/side_call.go`)
+- **Code:** `sideCall` (`internal/agent/side_call.go`); request framing in `frameMessages` (`internal/agent/anthropic_oauth.go`)
 - **Not:** turn, sub-agent run. A sub-agent runs full turns in a child session.
 
 ## Skill
