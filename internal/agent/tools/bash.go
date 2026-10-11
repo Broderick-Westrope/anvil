@@ -357,18 +357,12 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 // isSafeReadOnly reports whether command is a single read-only command
 // that runs without asking for permission.
 func isSafeReadOnly(command string) bool {
-	if containsCommandChaining(command) {
+	words, ok := plainCall(command)
+	if !ok {
 		return false
 	}
-	cmdLower := strings.ToLower(command)
-	for _, safe := range safeCommands {
-		if strings.HasPrefix(cmdLower, safe) {
-			if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
-				return hasSafeArgs(command, safe)
-			}
-		}
-	}
-	return false
+	entry, n, ok := safeEntry(words)
+	return ok && hasSafeArgs(entry, words[n:])
 }
 
 // bashLaunch is how a bash call waits on its command before handing it
