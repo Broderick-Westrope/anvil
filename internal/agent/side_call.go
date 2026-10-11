@@ -57,14 +57,14 @@ func (s *sideCall) streamCall(prompt string) fantasy.AgentStreamCall {
 	}
 }
 
-func (s *sideCall) prepareStep(ctx context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-	prepared.Messages = frameMessages(s.prefix, s.providerCfg, options.Messages)
+func (s *sideCall) prepareStep(ctx context.Context, options fantasy.PrepareStepFunctionOptions) (context.Context, fantasy.PrepareStepResult, error) {
+	messages := frameMessages(s.prefix, s.providerCfg, options.Messages)
 	if s.a.usageRecorder != nil {
-		s.capture = s.a.newCapture(s.kind, s.runID, s.sessionID, s.parentID, s.model, nil, prepared.Messages)
+		s.capture = s.a.newCapture(s.kind, s.runID, s.sessionID, s.parentID, s.model, nil, messages)
 		s.capture.agent = s.agentName
 		s.capture.messageID = s.messageID
 		s.capture.attempt = s.attempt
 		s.capture.stepIndex = options.StepNumber
 	}
-	return ctx, prepared, nil
+	return ctx, fantasy.PrepareStepResult{Messages: messages}, nil
 }

@@ -37,8 +37,8 @@ func sideCallAgent(env fakeEnv, large, small Model, prefix string, providerCfg c
 }
 
 // sessionWithUserMessage creates a session whose branch holds one user
-// message.
-func sessionWithUserMessage(t *testing.T, env fakeEnv) (sessionID, leafID string) {
+// message, and returns the session's ID and the message's ID.
+func sessionWithUserMessage(t *testing.T, env fakeEnv) (string, string) {
 	t.Helper()
 	sess := newTestSession(t, env)
 	msg, err := env.messages.Create(t.Context(), sess.ID, message.CreateMessageParams{

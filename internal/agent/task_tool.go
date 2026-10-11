@@ -141,12 +141,12 @@ func (c *coordinator) usableModelOverride(agent, model string) string {
 
 // subAgentOrigin returns the session and assistant message a sub-agent
 // tool call came from. The sub-agent's child session hangs off them.
-func subAgentOrigin(ctx context.Context) (sessionID, agentMessageID string, err error) {
-	sessionID = tools.GetSessionFromContext(ctx)
+func subAgentOrigin(ctx context.Context) (string, string, error) {
+	sessionID := tools.GetSessionFromContext(ctx)
 	if sessionID == "" {
 		return "", "", errors.New("session id missing from context")
 	}
-	agentMessageID = tools.GetMessageFromContext(ctx)
+	agentMessageID := tools.GetMessageFromContext(ctx)
 	if agentMessageID == "" {
 		return "", "", errors.New("agent message id missing from context")
 	}
