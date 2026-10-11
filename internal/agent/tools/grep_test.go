@@ -597,16 +597,17 @@ func TestGrepTool_Errors(t *testing.T) {
 	require.True(t, strings.HasPrefix(resp.Content, "error searching files: "), resp.Content)
 }
 
+// TestFormatGrepMatch covers only the zero line and column branches. Both
+// search backends always report a 1-based line and column, so the tool
+// can't reach them; TestGrepTool_FormatsMatchesByFile covers the rest.
 func TestFormatGrepMatch(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
 		match grepMatch
 		want  string
 	}{
-		"line and column":       {match: grepMatch{path: "a.go", lineNum: 2, charNum: 5, lineText: "x"}, want: "  Line 2, Char 5: x\n"},
-		"first line and column": {match: grepMatch{path: "a.go", lineNum: 1, charNum: 1, lineText: "x"}, want: "  Line 1, Char 1: x\n"},
-		"no column":             {match: grepMatch{path: "a.go", lineNum: 2, lineText: "x"}, want: "  Line 2: x\n"},
-		"no line":               {match: grepMatch{path: "a.go", charNum: 5, lineText: "x"}, want: "  a.go\n"},
+		"no column": {match: grepMatch{path: "a.go", lineNum: 2, lineText: "x"}, want: "  Line 2: x\n"},
+		"no line":   {match: grepMatch{path: "a.go", charNum: 5, lineText: "x"}, want: "  a.go\n"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
