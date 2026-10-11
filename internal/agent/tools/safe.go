@@ -60,12 +60,12 @@ var windowsSafeCommands = []string{"ipconfig", "systeminfo", "tasklist", "where"
 
 // safeRedirects are the only redirections a safe command may make. Each
 // discards output or merges streams, so none reads or writes a file.
-var safeRedirects = []string{">/dev/null", "2>/dev/null", "&>/dev/null", "2>&1", "1>&2", ">&2"}
+var safeRedirects = []string{">/dev/null", "1>/dev/null", "2>/dev/null", "&>/dev/null", "2>&1", "1>&2", ">&2"}
 
 // plainCall returns the words of command when it parses to one simple
 // command that runs nothing else: no chaining, pipes, backgrounding,
-// negation, assignments, command, process or arithmetic substitution, and
-// no redirection other than safeRedirects.
+// coprocesses, disowning, negation, assignments, command, process or
+// arithmetic substitution, and no redirection other than safeRedirects.
 func plainCall(command string) ([]*syntax.Word, bool) {
 	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
 	if err != nil || len(file.Stmts) != 1 {
@@ -73,7 +73,7 @@ func plainCall(command string) ([]*syntax.Word, bool) {
 	}
 	stmt := file.Stmts[0]
 	call, ok := stmt.Cmd.(*syntax.CallExpr)
-	if !ok || stmt.Background || stmt.Negated || len(call.Assigns) > 0 ||
+	if !ok || stmt.Background || stmt.Coprocess || stmt.Disown || stmt.Negated || len(call.Assigns) > 0 ||
 		slices.ContainsFunc(stmt.Redirs, isUnsafeRedirect) {
 		return nil, false
 	}
