@@ -148,13 +148,7 @@ func parseLiteSearchResults(htmlContent string, maxResults int) ([]SearchResult,
 						return
 					}
 				}
-				currentResult = &SearchResult{Title: getTextContent(n)}
-				for _, attr := range n.Attr {
-					if attr.Key == "href" {
-						currentResult.Link = cleanDuckDuckGoURL(attr.Val)
-						break
-					}
-				}
+				currentResult = &SearchResult{Title: getTextContent(n), Link: cleanDuckDuckGoURL(attrValue(n, "href"))}
 			}
 			if n.Data == "td" && hasClass(n, "result-snippet") && currentResult != nil {
 				currentResult.Snippet = getTextContent(n)
@@ -176,6 +170,16 @@ func parseLiteSearchResults(htmlContent string, maxResults int) ([]SearchResult,
 	}
 
 	return results, nil
+}
+
+// attrValue returns the value of n's attribute key, or "" without one.
+func attrValue(n *html.Node, key string) string {
+	for _, attr := range n.Attr {
+		if attr.Key == key {
+			return attr.Val
+		}
+	}
+	return ""
 }
 
 func hasClass(n *html.Node, class string) bool {
