@@ -108,9 +108,6 @@ linters:
       # Functions over the gocognit limit when it was enabled. Each new
       # function must stay under it. Delete an entry once its function is
       # back under the limit.
-      - path: internal/agent/tools/download\.go
-        text: 'func `(NewDownloadTool)`'
-        linters: [gocognit]
       - path: internal/agent/tools/lsp_call_hierarchy\.go
         text: 'func `(NewCallHierarchyTool)`'
         linters: [gocognit]
