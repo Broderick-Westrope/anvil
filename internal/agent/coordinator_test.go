@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1009,15 +1010,30 @@ func TestJobToolNamesCoversRegisteredJobTools(t *testing.T) {
 func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		disabled []string
-		want     []string
+		allowed, disabled []string
+		// want lists the bash and job tools the agent gets.
+		want []string
 	}{
 		"bash only": {
-			want: append([]string{tools.BashToolName}, tools.JobToolNames()...),
+			allowed: []string{tools.BashToolName},
+			want:    append([]string{tools.BashToolName}, tools.JobToolNames()...),
 		},
 		"globally disabled job_kill": {
+			allowed:  []string{tools.BashToolName},
 			disabled: []string{tools.JobKillToolName},
 			want:     []string{tools.BashToolName, tools.JobOutputToolName, tools.JobListToolName},
+		},
+		"globally disabled bash": {
+			allowed:  []string{tools.BashToolName},
+			disabled: []string{tools.BashToolName},
+			want:     tools.JobToolNames(),
+		},
+		"without bash": {
+			allowed: []string{tools.ViewToolName},
+		},
+		"job tool excluded by name": {
+			allowed: []string{"!" + tools.JobKillToolName},
+			want:    []string{tools.BashToolName, tools.JobOutputToolName, tools.JobListToolName},
 		},
 	}
 	for name, tt := range tests {
@@ -1028,14 +1044,19 @@ func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 			cfg.Config().Options.DisabledTools = tt.disabled
 			cfg.Config().MCP = nil
 			c := &coordinator{cfg: cfg}
-			agentCfg := config.Agent{ID: "fixer", AllowedTools: []string{tools.BashToolName}}
+			agentCfg := config.Agent{ID: "fixer", AllowedTools: tt.allowed}
 			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil)
 			require.NoError(t, err)
 			var names []string
 			for _, tool := range builtTools {
-				names = append(names, tool.Info().Name)
+				if name := tool.Info().Name; name == tools.BashToolName || slices.Contains(tools.JobToolNames(), name) {
+					names = append(names, name)
+				}
 			}
 			require.ElementsMatch(t, tt.want, names)
+			if slices.Equal(tt.allowed, []string{tools.BashToolName}) {
+				require.Len(t, builtTools, len(tt.want), "bash brings only the job tools")
+			}
 		})
 	}
 }

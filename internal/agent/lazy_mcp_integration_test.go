@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
-	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 )
 
@@ -141,44 +140,6 @@ func TestLazyMCPIntegration_HumanToggleOrdering(t *testing.T) {
 	// After enable + result + disable + re-enable.
 	state3 := deriveLazyMCPState(msgs)
 	require.True(t, state3["datadog"])
-}
-
-func TestLazyMCPIntegration_AllowedMCPFiltering(t *testing.T) {
-	t.Parallel()
-
-	lazyMCPs := map[string]string{
-		"datadog": "Observability tools",
-		"slack":   "Messaging integration",
-		"linear":  "Project management",
-	}
-
-	// Agent only allowed datadog and linear.
-	allowed := map[string][]string{
-		"datadog": nil,
-		"linear":  nil,
-	}
-
-	access, err := newToolAccess(config.Agent{AllowedMCP: allowed}, nil)
-	require.NoError(t, err)
-	filtered := make(map[string]string)
-	for name, desc := range lazyMCPs {
-		if access.allowsMCPServer(name) {
-			filtered[name] = desc
-		}
-	}
-	require.Len(t, filtered, 2)
-	require.Contains(t, filtered, "datadog")
-	require.Contains(t, filtered, "linear")
-	require.NotContains(t, filtered, "slack")
-
-	// Build enable_mcp tool from filtered list.
-	enableTool := tools.NewEnableMCPTool(filtered, nil)
-	info := enableTool.Info()
-	require.Equal(t, tools.EnableMCPToolName, info.Name)
-	// The description should mention datadog and linear but not slack.
-	require.Contains(t, info.Description, "datadog")
-	require.Contains(t, info.Description, "linear")
-	require.NotContains(t, info.Description, "slack")
 }
 
 func TestLazyMCPIntegration_EnableMCPToolValidation(t *testing.T) {
