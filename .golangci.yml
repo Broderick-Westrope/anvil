@@ -123,9 +123,6 @@ linters:
       - path: internal/agent/tools/lsp_rename\.go
         text: 'func `(NewRenameTool)`'
         linters: [gocognit]
-      - path: internal/agent/tools/search\.go
-        text: 'func `(parseLiteSearchResults)`'
-        linters: [gocognit]
       - path: internal/app/app\.go
         text: 'func `(\(\*App\)\.RunNonInteractive)`'
         linters: [gocognit]
