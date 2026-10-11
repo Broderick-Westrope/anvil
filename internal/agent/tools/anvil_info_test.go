@@ -167,32 +167,28 @@ func TestAnvilInfo_MCPStates(t *testing.T) {
 
 	connectedAt := time.Date(2025, 1, 15, 15, 4, 5, 0, time.UTC)
 	states := map[string]mcp.ClientInfo{
-		"github": {
-			Name:        "github",
-			State:       mcp.StateConnected,
-			Counts:      mcp.Counts{Tools: 42, Resources: 7},
-			ConnectedAt: connectedAt,
-		},
-		"filesystem": {
-			Name:  "filesystem",
-			State: mcp.StateError,
-			Error: errors.New("connection refused"),
-		},
+		"a-since":    {State: mcp.StateConnected, Counts: mcp.Counts{Tools: 3, Resources: 4}, ConnectedAt: connectedAt},
+		"b-plain":    {State: mcp.StateConnected, Counts: mcp.Counts{Tools: 5, Resources: 6}},
+		"c-err":      {State: mcp.StateError, Error: errors.New("boom")},
+		"d-bare-err": {State: mcp.StateError},
+		"e-lazy":     {State: mcp.StateLazy},
+		"f-starting": {State: mcp.StateStarting, Counts: mcp.Counts{Tools: 9}, ConnectedAt: connectedAt},
+		"g-deferred": {State: mcp.StateDeferred},
 	}
-
-	cfg := config.NewTestStore(&config.Config{
-		Providers: csync.NewMap[string, config.ProviderConfig](),
-	})
+	cfg := config.NewTestStore(&config.Config{Providers: csync.NewMap[string, config.ProviderConfig]()})
 
 	var b strings.Builder
 	writeMCP(&b, states, cfg)
-	output := b.String()
-	require.Contains(t, output, "[mcp]")
-	require.Contains(t, output, "filesystem = error: connection refused")
-	require.Contains(t, output, "github = connected (42 tools, 7 resources) since 15:04:05")
-	filesystemIdx := strings.Index(output, "filesystem")
-	githubIdx := strings.Index(output, "github")
-	require.Less(t, filesystemIdx, githubIdx, "filesystem should appear before github")
+
+	require.Equal(t, "[mcp]\n"+
+		"a-since = connected (3 tools, 4 resources) since 15:04:05\n"+
+		"b-plain = connected (5 tools, 6 resources)\n"+
+		"c-err = error: boom\n"+
+		"d-bare-err = error\n"+
+		"e-lazy = lazy (connected but not enabled)\n"+
+		"f-starting = starting\n"+
+		"g-deferred = deferred\n"+
+		"\n", b.String())
 }
 
 func TestAnvilInfo_YoloMode(t *testing.T) {
@@ -662,35 +658,6 @@ func TestAnvilInfo_LSPConfiguredServers(t *testing.T) {
 			require.Equal(t, tc.want, b.String())
 		})
 	}
-}
-
-func TestAnvilInfo_MCPRuntimeStates(t *testing.T) {
-	t.Parallel()
-
-	connectedAt := time.Date(2025, 1, 15, 15, 4, 5, 0, time.UTC)
-	states := map[string]mcp.ClientInfo{
-		"a-since":    {State: mcp.StateConnected, Counts: mcp.Counts{Tools: 3, Resources: 4}, ConnectedAt: connectedAt},
-		"b-plain":    {State: mcp.StateConnected, Counts: mcp.Counts{Tools: 5, Resources: 6}},
-		"c-err":      {State: mcp.StateError, Error: errors.New("boom")},
-		"d-bare-err": {State: mcp.StateError},
-		"e-lazy":     {State: mcp.StateLazy},
-		"f-starting": {State: mcp.StateStarting, Counts: mcp.Counts{Tools: 9}, ConnectedAt: connectedAt},
-		"g-deferred": {State: mcp.StateDeferred},
-	}
-	cfg := config.NewTestStore(&config.Config{Providers: csync.NewMap[string, config.ProviderConfig]()})
-
-	var b strings.Builder
-	writeMCP(&b, states, cfg)
-
-	require.Equal(t, "[mcp]\n"+
-		"a-since = connected (3 tools, 4 resources) since 15:04:05\n"+
-		"b-plain = connected (5 tools, 6 resources)\n"+
-		"c-err = error: boom\n"+
-		"d-bare-err = error\n"+
-		"e-lazy = lazy (connected but not enabled)\n"+
-		"f-starting = starting\n"+
-		"g-deferred = deferred\n"+
-		"\n", b.String())
 }
 
 func TestAnvilInfo_MCPConfiguredServers(t *testing.T) {
