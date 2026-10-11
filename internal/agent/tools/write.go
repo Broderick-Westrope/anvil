@@ -177,15 +177,11 @@ func (g writeGate) check(ctx context.Context, callID, sessionID, filePath string
 	// The gate error embeds file content, which is equivalent to a view.
 	// For files outside the working directory, require the same read
 	// permission the view tool does before returning content.
-	absWorkingDir, err := filepath.Abs(g.workingDir)
+	outside, err := isOutsideWorkingDir(filePath, g.workingDir)
 	if err != nil {
-		return fantasy.ToolResponse{}, false, fmt.Errorf("error resolving working directory: %w", err)
+		return fantasy.ToolResponse{}, false, err
 	}
-	absFilePath, err := filepath.Abs(filePath)
-	if err != nil {
-		return fantasy.ToolResponse{}, false, fmt.Errorf("error resolving file path: %w", err)
-	}
-	if !fsext.HasPrefix(absFilePath, absWorkingDir) {
+	if outside {
 		// Request this as a view/read permission: granular permission
 		// rules for the view tool apply, and the dialog renders as a read
 		// request rather than a write with an empty diff.
@@ -213,6 +209,21 @@ func (g writeGate) check(ctx context.Context, callID, sessionID, filePath string
 	// immediate retry passes the gate.
 	g.tracker.RecordReadWithHash(ctx, sessionID, filePath, diskHash)
 	return fantasy.NewTextErrorResponse(writeGateError(filePath, diskBytes)), false, nil
+}
+
+// isOutsideWorkingDir reports whether filePath resolves outside workingDir.
+func isOutsideWorkingDir(filePath, workingDir string) (bool, error) {
+	absWorkingDir, err := filepath.Abs(workingDir)
+	if err != nil {
+		return false, fmt.Errorf("error resolving working directory: %w", err)
+	}
+
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return false, fmt.Errorf("error resolving file path: %w", err)
+	}
+
+	return !fsext.HasPrefix(absFilePath, absWorkingDir), nil
 }
 
 // writeGateErrorWithoutContent builds the gate error used when read
