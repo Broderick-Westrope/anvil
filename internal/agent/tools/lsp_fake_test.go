@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/textproto"
 	"os"
 	"path/filepath"
@@ -32,6 +34,41 @@ const fakeLSPFileType = "fakelang"
 type fakeLSPReply struct {
 	Result any    `json:"result,omitempty"`
 	Error  string `json:"error,omitempty"`
+}
+
+// TestMain drops the "Error reading stderr" record powernap logs when a
+// fake language server shuts down. Its stderr reader races the process
+// wait that closes the pipe, so the record is noise, not a failure.
+func TestMain(m *testing.M) {
+	slog.SetDefault(slog.New(dropClosedStderrHandler{slog.NewTextHandler(os.Stderr, nil)}))
+	os.Exit(m.Run())
+}
+
+// dropClosedStderrHandler passes every record on except powernap's
+// "Error reading stderr" for a pipe that is already closed.
+type dropClosedStderrHandler struct{ slog.Handler }
+
+func (h dropClosedStderrHandler) Handle(ctx context.Context, r slog.Record) error {
+	closed := false
+	if r.Message == "Error reading stderr" {
+		r.Attrs(func(a slog.Attr) bool {
+			err, ok := a.Value.Any().(error)
+			closed = ok && errors.Is(err, os.ErrClosed)
+			return !closed
+		})
+	}
+	if closed {
+		return nil
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h dropClosedStderrHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return dropClosedStderrHandler{h.Handler.WithAttrs(attrs)}
+}
+
+func (h dropClosedStderrHandler) WithGroup(name string) slog.Handler {
+	return dropClosedStderrHandler{h.Handler.WithGroup(name)}
 }
 
 // TestFakeLSPServer is not a test: it is the fake language server that
