@@ -100,7 +100,8 @@ Terms with a specific meaning in this codebase are defined in
 
 ### Key Patterns
 
-- **Config is a Service**: accessed via `config.Service`, not global state.
+- **Config is a store**: read and written through a `*config.ConfigStore`
+  passed in by the caller, not global state.
 - **Tools are self-documenting**: each tool has a `.go` implementation and a
   `.md` description file in `internal/agent/tools/`.
 - **System prompts are Go templates**: `internal/agent/templates/*.md.tpl`
@@ -253,29 +254,14 @@ equivalent. The check still runs and reports them, but passes.
 - **Comments**: End comments in periods unless comments are at the end of the
   line.
 
-## Testing with Mock Providers
+## Testing with Provider Configurations
 
-When writing tests that involve provider configurations, use the mock
-providers to avoid API calls:
-
-```go
-func TestYourFunction(t *testing.T) {
-    // Enable mock providers for testing
-    originalUseMock := config.UseMockProviders
-    config.UseMockProviders = true
-    defer func() {
-        config.UseMockProviders = originalUseMock
-        config.ResetProviders()
-    }()
-
-    // Reset providers to ensure fresh mock data
-    config.ResetProviders()
-
-    // Your test code here - providers will now return mock data
-    providers := config.Providers()
-    // ... test logic
-}
-```
+Tests never fetch the Catwalk catalog. Pass the known providers in as
+fixtures instead: `(*Config).configureProviders` takes them as its last
+argument, so build a small `[]catwalk.Provider` in the test (see
+`internal/config/load_test.go`). Isolate
+`HOME` and `PATH` with `t.Setenv` when the code under test could find real
+credentials, such as the Claude CLI's.
 
 ## Formatting
 
