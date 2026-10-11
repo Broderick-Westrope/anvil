@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"slices"
-	"strings"
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -381,7 +380,7 @@ func TestCompleteSmall(t *testing.T) {
 		a := sideCallAgent(env, m, m, "", config.ProviderConfig{})
 		_, modelID, err := a.completeSmall(t.Context(), "review", "is this safe?")
 		require.ErrorContains(t, err, "small model: ")
-		require.True(t, strings.Contains(err.Error(), "down"))
+		require.ErrorContains(t, err, "down")
 		require.Equal(t, "small-id", modelID)
 	})
 }

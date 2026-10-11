@@ -25,7 +25,7 @@ type summaryRun struct {
 	msg        *message.Message
 }
 
-func (s *summaryRun) onReasoningDelta(_ string, text string) error {
+func (s *summaryRun) onReasoningDelta(_, text string) error {
 	s.msg.AppendReasoningContent(text)
 	return s.a.messages.Update(s.genCtx, *s.msg)
 }
