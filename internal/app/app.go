@@ -11,7 +11,6 @@ import (
 	"io"
 	"log/slog"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -347,8 +346,7 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	}(ctx, sess.ID, prompt)
 
 	messageEvents := app.Messages.Subscribe(ctx)
-	messageReadBytes := make(map[string]int)
-	var printed bool
+	printer := &streamPrinter{output: output, sessionID: sess.ID, onReply: onResponse, readBytes: make(map[string]int)}
 
 	defer func() {
 		// Always print a newline at the end. If output is a TTY this will
@@ -370,30 +368,8 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 			return nil
 
 		case event := <-messageEvents:
-			msg := event.Payload
-			if msg.SessionID == sess.ID && msg.Role == message.Assistant && len(msg.Parts) > 0 {
-				onResponse()
-
-				content := msg.Content().String()
-				readBytes := messageReadBytes[msg.ID]
-
-				if len(content) < readBytes {
-					slog.Error("Non-interactive: message content is shorter than read bytes", "message_length", len(content), "read_bytes", readBytes)
-					return fmt.Errorf("message content is shorter than read bytes: %d < %d", len(content), readBytes)
-				}
-
-				part := content[readBytes:]
-				// Trim leading whitespace. Sometimes the LLM includes leading
-				// formatting and intentation, which we don't want here.
-				if readBytes == 0 {
-					part = strings.TrimLeft(part, " \t")
-				}
-				// Ignore initial whitespace-only messages.
-				if printed || strings.TrimSpace(part) != "" {
-					printed = true
-					fmt.Fprint(output, part)
-				}
-				messageReadBytes[msg.ID] = len(content)
+			if err := printer.print(event.Payload); err != nil {
+				return err
 			}
 
 		case <-ctx.Done():
