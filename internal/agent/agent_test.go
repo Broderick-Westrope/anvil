@@ -887,6 +887,43 @@ func TestPreparePrompt_OrphanedToolUseMixed(t *testing.T) {
 	require.Equal(t, 1, syntheticCount, "expected exactly one synthetic result for the orphaned call")
 }
 
+func TestPreparePrompt_SkipsEmptyMessages(t *testing.T) {
+	t.Parallel()
+	finished := message.Finish{Reason: message.FinishReasonCanceled}
+	tests := map[string]struct {
+		msg  message.Message
+		kept bool
+	}{
+		"no parts": {msg: message.Message{Role: message.User}},
+		"assistant cancelled before replying": {
+			msg: message.Message{Role: message.Assistant, Parts: []message.ContentPart{finished}},
+		},
+		"assistant with text": {
+			msg:  message.Message{Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: "hi"}, finished}},
+			kept: true,
+		},
+		"assistant with reasoning": {
+			msg:  message.Message{Role: message.Assistant, Parts: []message.ContentPart{message.ReasoningContent{Thinking: "hmm"}, finished}},
+			kept: true,
+		},
+		"assistant with a tool call": {
+			msg:  message.Message{Role: message.Assistant, Parts: []message.ContentPart{message.ToolCall{ID: "call", Name: "view", Input: "{}", Finished: true}, finished}},
+			kept: true,
+		},
+		"user with only an image": {
+			msg:  message.Message{Role: message.User, Parts: []message.ContentPart{message.BinaryContent{Path: "image.png", MIMEType: "image/png", Data: []byte("png")}}},
+			kept: true,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			history := (&sessionAgent{isSubAgent: true}).preparePrompt([]message.Message{tt.msg}, true)
+			require.Equal(t, tt.kept, len(history) > 0)
+		})
+	}
+}
+
 func TestWorkaroundProviderMediaLimitations_TextOnlyModel(t *testing.T) {
 	env := testEnv(t)
 	sa := testSessionAgent(env, nil, nil, "test prompt")
