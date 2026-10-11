@@ -194,16 +194,10 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		func(ctx context.Context) error { return mcp.Close(ctx) },
 	)
 
-	// TODO: remove the concept of agent config, most likely.
-	if !cfg.IsConfigured() {
-		slog.Warn("No agent configuration found")
-		return app, nil
-	}
-	if err := app.InitOrchestratorAgent(ctx); err != nil {
-		return nil, initFailure(ctx, err, logs...)
-	}
-
-	// Set up callback for LSP state updates.
+	// LSP tracking doesn't depend on agent configuration, so it is wired
+	// up before the unconfigured early return. Onboarding only initialises
+	// agents, so a session that starts unconfigured would otherwise never
+	// report LSP state or reap idle clients.
 	app.LSPManager.SetCallback(func(name string, client *lsp.Client) {
 		if client == nil {
 			updateLSPState(name, lsp.StateUnstarted, nil, nil, 0)
@@ -217,6 +211,15 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	// installed when configured-but-not-yet-started LSPs are announced.
 	go app.LSPManager.TrackConfigured(ctx)
 	go app.LSPManager.StartIdleReaper(ctx)
+
+	// TODO: remove the concept of agent config, most likely.
+	if !cfg.IsConfigured() {
+		slog.Warn("No agent configuration found")
+		return app, nil
+	}
+	if err := app.InitOrchestratorAgent(ctx); err != nil {
+		return nil, initFailure(ctx, err, logs...)
+	}
 
 	return app, nil
 }
