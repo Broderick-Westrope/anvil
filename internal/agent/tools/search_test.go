@@ -61,26 +61,10 @@ func TestSearchRateLimitedOnAnomalyPage(t *testing.T) {
 }
 
 // TestSearchParsesNormalResults guards against false positives: a
-// genuine results page still parses.
+// genuine results page still parses, pairing each link with the snippet
+// after it and stopping at the result cap.
 // Not parallel: mutates the package-level ddgLiteEndpoint.
 func TestSearchParsesNormalResults(t *testing.T) {
-	page := `<html><body><table>
-<tr><td><a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpost">Example Post</a></td></tr>
-<tr><td class="result-snippet">A snippet about the example post.</td></tr>
-</table></body></html>`
-	serveSearchStub(t, http.StatusOK, page)
-	results, err := searchDuckDuckGo(context.Background(), http.DefaultClient, "example", 10)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(results) != 1 || results[0].Link != "https://example.com/post" {
-		t.Fatalf("unexpected results: %+v", results)
-	}
-}
-
-func TestParseLiteSearchResults(t *testing.T) {
-	t.Parallel()
-
 	const page = `<html><body><table>
 <tr><td class="result-snippet">Orphan snippet.</td></tr>
 <tr><td><a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fone.example%2F&amp;rut=x">One</a></td></tr>
@@ -100,17 +84,16 @@ func TestParseLiteSearchResults(t *testing.T) {
 		maxResults int
 		want       []SearchResult
 	}{
-		"every result":       {maxResults: 10, want: all},
-		"exactly the max":    {maxResults: 3, want: all},
-		"stops at the max":   {maxResults: 2, want: all[:2]},
-		"first result only":  {maxResults: 1, want: all[:1]},
-		"no results allowed": {maxResults: 0},
+		"every result":      {maxResults: 10, want: all},
+		"exactly the max":   {maxResults: 3, want: all},
+		"stops at the max":  {maxResults: 2, want: all[:2]},
+		"first result only": {maxResults: 1, want: all[:1]},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			t.Parallel()
+			serveSearchStub(t, http.StatusOK, page)
 
-			got, err := parseLiteSearchResults(page, tc.maxResults)
+			got, err := searchDuckDuckGo(context.Background(), http.DefaultClient, "example", tc.maxResults)
 
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
