@@ -267,3 +267,36 @@ func TestGlobWithDoubleStar(t *testing.T) {
 		require.Equal(t, []string{oldestFile, middleDir, newestFile}, matches)
 	})
 }
+
+func TestHasPrefix(t *testing.T) {
+	t.Parallel()
+	prefix := filepath.FromSlash("/work")
+	tests := map[string]struct {
+		path string
+		want bool
+	}{
+		"same directory":                     {path: "/work", want: true},
+		"file inside":                        {path: "/work/file.txt", want: true},
+		"name starting with two dots":        {path: "/work/..foo", want: true},
+		"nested name starting with two dots": {path: "/work/a/..b", want: true},
+		"parent directory, rel is ..":        {path: "/", want: false},
+		"sibling directory, rel is ../x":     {path: "/x", want: false},
+		"sibling sharing a name prefix":      {path: "/workspace/file.txt", want: false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, HasPrefix(filepath.FromSlash(tc.path), prefix))
+		})
+	}
+}
+
+func TestPathOrPrefix(t *testing.T) {
+	t.Parallel()
+	prefix := filepath.FromSlash("/work")
+	inside := filepath.FromSlash("/work/..foo")
+	outside := filepath.FromSlash("/workspace/file.txt")
+
+	require.Equal(t, prefix, PathOrPrefix(inside, prefix))
+	require.Equal(t, outside, PathOrPrefix(outside, prefix))
+}

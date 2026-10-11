@@ -144,12 +144,8 @@ func TestViewToolOutsideWorkingDirPermission(t *testing.T) {
 		"nested inside working directory": {
 			path: func(workingDir, _ string) string { return filepath.Join(workingDir, "sub", "file.txt") },
 		},
-		// BUG: fsext.HasPrefix treats any relative path starting with ".."
-		// as outside, so a file named "..file.txt" inside the working
-		// directory asks for permission it shouldn't need.
-		"KnownBug: name starting with two dots inside working directory asks for permission": {
-			path:        func(workingDir, _ string) string { return filepath.Join(workingDir, "..file.txt") },
-			wantRequest: true,
+		"name starting with two dots inside working directory": {
+			path: func(workingDir, _ string) string { return filepath.Join(workingDir, "..file.txt") },
 		},
 		"outside working directory": {
 			path:        func(_, outsideDir string) string { return filepath.Join(outsideDir, "file.txt") },
