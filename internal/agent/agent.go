@@ -570,14 +570,13 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		a.summarizing.Set(sessionID, owner)
 		defer a.summarizing.CompareAndDelete(sessionID, owner)
 	}
-	// Copy mutable fields under lock to avoid races with SetModels.
-	largeModel := a.largeModel.Get()
-	call := a.newSideCall(usageKindSummary, sessionID, largeModel)
-
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
+	// Copy mutable fields under lock to avoid races with SetModels.
+	largeModel := a.largeModel.Get()
+	call := a.newSideCall(usageKindSummary, sessionID, currentSession.ParentSessionID, largeModel)
 	msgs, rawPath, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return err
@@ -626,7 +625,6 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		return err
 	}
 
-	call.parentID = currentSession.ParentSessionID
 	call.messageID = compactionMsg.ID
 	streamCall := call.streamCall(buildSummaryPrompt(currentSession.Todos))
 	streamCall.Messages = aiMsgs
@@ -975,7 +973,7 @@ func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string)
 		fantasy.WithMaxOutputTokens(tok),
 		fantasy.WithUserAgent(userAgent),
 	)
-	call := a.newSideCall(usageKindSmall, "", small)
+	call := a.newSideCall(usageKindSmall, "", "", small)
 	call.agentName = bouncerReviewerAgentName
 	resp, err := agent.Stream(ctx, call.streamCall(prompt))
 	if err != nil {
@@ -1010,7 +1008,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 	// The fallback loop below sets the call's attempt and model before each
 	// attempt so every attempt that reports usage is recorded against the
 	// model that made it.
-	call := a.newSideCall(usageKindTitle, sessionID, Model{})
+	call := a.newSideCall(usageKindTitle, sessionID, "", Model{})
 
 	newAgent := func(m fantasy.LanguageModel, p []byte, tok int64) fantasy.Agent {
 		return fantasy.NewAgent(m,

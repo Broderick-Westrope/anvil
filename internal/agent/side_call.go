@@ -18,10 +18,14 @@ type sideCall struct {
 	providerCfg config.ProviderConfig
 	runID       string
 	kind        string
-	agentName   string
 	sessionID   string
 	parentID    string
-	messageID   string
+	// agentName defaults to the session agent's name. A call made for
+	// another agent, such as the bouncer's reviewer, overrides it.
+	agentName string
+	// messageID is the message the call writes into, set once a summary
+	// has created its placeholder.
+	messageID string
 	// model and attempt name the model making the request. A call that
 	// falls back to another model sets them before each attempt.
 	model   Model
@@ -30,17 +34,19 @@ type sideCall struct {
 }
 
 // newSideCall starts a side call of kind for sessionID, which is empty for
-// calls outside any session. It snapshots the provider prefix and config
-// so a concurrent SetModels can't change them mid-call.
-func (a *sessionAgent) newSideCall(kind, sessionID string, model Model) *sideCall {
+// calls outside any session, and parentID, the session's parent if it has
+// one. It snapshots the provider prefix and config so a concurrent
+// SetModels can't change them mid-call.
+func (a *sessionAgent) newSideCall(kind, sessionID, parentID string, model Model) *sideCall {
 	return &sideCall{
 		a:           a,
 		prefix:      a.systemPromptPrefix.Get(),
 		providerCfg: a.providerConfig.Get(),
 		runID:       uuid.NewString(),
 		kind:        kind,
-		agentName:   a.agentName,
 		sessionID:   sessionID,
+		parentID:    parentID,
+		agentName:   a.agentName,
 		model:       model,
 	}
 }
