@@ -138,12 +138,10 @@ func (s *splitter) addStmt(stmt *syntax.Stmt) {
 	var inline, writes, plainWrites []string
 	for _, redir := range stmt.Redirs {
 		text, isWrite := formatRedir(s.printer, redir)
-		switch {
-		case text == "":
-		case isWrite:
+		if isWrite {
 			writes = append(writes, text)
 			plainWrites = append(plainWrites, cmp.Or(plainRedir(redir), text))
-		default:
+		} else if text != "" {
 			inline = append(inline, text)
 		}
 	}
@@ -153,11 +151,10 @@ func (s *splitter) addStmt(stmt *syntax.Stmt) {
 		tokens = make([]string, 0, len(call.Args))
 		for _, arg := range call.Args {
 			var sb strings.Builder
-			if err := s.printer.Print(&sb, arg); err != nil {
-				continue
+			if err := s.printer.Print(&sb, arg); err == nil {
+				tokens = append(tokens, sb.String())
+				plain = append(plain, plainWords(arg, sb.String())...)
 			}
-			tokens = append(tokens, sb.String())
-			plain = append(plain, plainWords(arg, sb.String())...)
 		}
 	}
 	if len(plain) > 0 && strings.Contains(plain[0], "/") {
