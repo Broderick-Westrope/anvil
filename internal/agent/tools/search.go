@@ -183,14 +183,7 @@ func attrValue(n *html.Node, key string) string {
 }
 
 func hasClass(n *html.Node, class string) bool {
-	for _, attr := range n.Attr {
-		if attr.Key == "class" {
-			if slices.Contains(strings.Fields(attr.Val), class) {
-				return true
-			}
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(attrValue(n, "class")), class)
 }
 
 func getTextContent(n *html.Node) string {
