@@ -164,7 +164,7 @@ func fetchAsText(content string, isHTML bool) (converted, failure string) {
 	}
 	text, err := extractTextFromHTML(content)
 	if err != nil {
-		return "", "Failed to extract text from HTML: " + err.Error()
+		return "", fmt.Sprintf("Failed to extract text from HTML: %v", err)
 	}
 	return text, ""
 }
@@ -173,7 +173,7 @@ func fetchAsMarkdown(content string, isHTML bool) (converted, failure string) {
 	if isHTML {
 		markdown, err := convertHTMLToMarkdown(content)
 		if err != nil {
-			return "", "Failed to convert HTML to Markdown: " + err.Error()
+			return "", fmt.Sprintf("Failed to convert HTML to Markdown: %v", err)
 		}
 		content = markdown
 	}
@@ -187,11 +187,11 @@ func fetchAsHTML(content string, isHTML bool) (converted, failure string) {
 	}
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 	if err != nil {
-		return "", "Failed to parse HTML: " + err.Error()
+		return "", fmt.Sprintf("Failed to parse HTML: %v", err)
 	}
 	body, err := doc.Find("body").Html()
 	if err != nil {
-		return "", "Failed to extract body from HTML: " + err.Error()
+		return "", fmt.Sprintf("Failed to extract body from HTML: %v", err)
 	}
 	if body == "" {
 		return "", "No body content found in HTML"
