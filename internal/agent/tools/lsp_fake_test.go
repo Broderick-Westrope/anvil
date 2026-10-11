@@ -42,7 +42,8 @@ func TestFakeLSPServer(t *testing.T) {
 		t.Skip("only runs as the fake LSP server process")
 	}
 	var canned map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(replies), &canned); err != nil {
+	err := json.Unmarshal([]byte(replies), &canned)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
@@ -62,14 +63,16 @@ func serveFakeLSP(in io.Reader, out io.Writer, canned map[string]json.RawMessage
 			return
 		}
 		body := make([]byte, length)
-		if _, err := io.ReadFull(reader.R, body); err != nil {
+		_, err = io.ReadFull(reader.R, body)
+		if err != nil {
 			return
 		}
 		var msg struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 		}
-		if err := json.Unmarshal(body, &msg); err != nil {
+		err = json.Unmarshal(body, &msg)
+		if err != nil {
 			return
 		}
 		if msg.Method == "exit" {

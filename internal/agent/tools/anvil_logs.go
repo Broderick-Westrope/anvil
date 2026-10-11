@@ -216,7 +216,8 @@ func parseLogLine(line []byte) (map[string]any, bool) {
 		return nil, false
 	}
 	var entry map[string]any
-	if err := json.Unmarshal(line, &entry); err != nil {
+	err := json.Unmarshal(line, &entry)
+	if err != nil {
 		return nil, false
 	}
 	return entry, true

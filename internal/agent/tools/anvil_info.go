@@ -252,7 +252,7 @@ func writeConfiguredServers[C any](b *strings.Builder, header string, configured
 	}
 	var entries []configuredEntry
 	for name, serverCfg := range configured {
-		// Skip if already in runtime
+		// Skip servers that are already running.
 		if running[name] {
 			continue
 		}
