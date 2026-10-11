@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -1057,6 +1059,37 @@ func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 			if slices.Equal(tt.allowed, []string{tools.BashToolName}) {
 				require.Len(t, builtTools, len(tt.want), "bash brings only the job tools")
 			}
+		})
+	}
+}
+
+// TestBuildToolsWarnsOnInvalidAllowedTools isn't parallel because it
+// swaps the default logger.
+func TestBuildToolsWarnsOnInvalidAllowedTools(t *testing.T) {
+	const warning = "Invalid AllowedTools filter for agent"
+	tests := map[string]struct {
+		allowed  []string
+		wantWarn bool
+		wantBash bool
+	}{
+		"valid filter":                    {allowed: []string{tools.ViewToolName}},
+		"invalid filter allows all tools": {allowed: []string{tools.ViewToolName, "!" + tools.BashToolName}, wantWarn: true, wantBash: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(logger) })
+			cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+			require.NoError(t, err)
+			cfg.Config().MCP = nil
+			c := &coordinator{cfg: cfg}
+			builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "fixer", AllowedTools: tt.allowed}, 1, nil, nil, nil, nil, nil)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantWarn, strings.Contains(logs.String(), warning), logs.String())
+			hasBash := slices.ContainsFunc(builtTools, func(tool fantasy.AgentTool) bool { return tool.Info().Name == tools.BashToolName })
+			require.Equal(t, tt.wantBash, hasBash)
 		})
 	}
 }
