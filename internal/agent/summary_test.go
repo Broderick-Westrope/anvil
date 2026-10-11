@@ -99,3 +99,49 @@ func TestSummarizeFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestSummarizeIgnoresUnsignedReasoning covers reasoning that ends without
+// an Anthropic signature: metadata under the Anthropic key that isn't
+// reasoning metadata, and reasoning metadata with an empty signature. The
+// stream sends no reasoning text and then fails, so the placeholder keeps
+// what streamed and a stray signature would show up as a reasoning part.
+func TestSummarizeIgnoresUnsignedReasoning(t *testing.T) {
+	t.Parallel()
+	badRequest := &fantasy.ProviderError{Title: "bad request", Message: "nope", StatusCode: http.StatusBadRequest}
+	tests := map[string]fantasy.ProviderOptionsData{
+		"other metadata type": &anthropic.ProviderCacheControlOptions{},
+		"empty signature":     &anthropic.ReasoningOptionMetadata{},
+	}
+	for name, metadata := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := testEnv(t)
+			model := &recordingModel{respond: func(int) ([]fantasy.StreamPart, error) {
+				return []fantasy.StreamPart{
+					{Type: fantasy.StreamPartTypeReasoningStart, ID: "r"},
+					{Type: fantasy.StreamPartTypeReasoningEnd, ID: "r", ProviderMetadata: fantasy.ProviderMetadata{anthropic.Name: metadata}},
+					{Type: fantasy.StreamPartTypeTextStart, ID: "t"},
+					{Type: fantasy.StreamPartTypeTextDelta, ID: "t", Delta: "Partial summary."},
+					{Type: fantasy.StreamPartTypeTextEnd, ID: "t"},
+					{Type: fantasy.StreamPartTypeError, Error: badRequest},
+				}, nil
+			}}
+			m := Model{Model: model, CatwalkCfg: catwalk.Model{ContextWindow: 200000, DefaultMaxTokens: 1000}}
+			a := sideCallAgent(env, m, m, "", config.ProviderConfig{})
+			sessionID, _ := sessionWithUserMessage(t, env)
+
+			require.ErrorIs(t, a.Summarize(t.Context(), sessionID, nil), badRequest)
+
+			msgs, err := env.messages.List(t.Context(), sessionID)
+			require.NoError(t, err)
+			idx := slices.IndexFunc(msgs, func(m message.Message) bool { return m.MessageType == message.MessageTypeCompaction })
+			require.GreaterOrEqual(t, idx, 0)
+			placeholder := msgs[idx]
+			require.Equal(t, "Partial summary.", placeholder.Content().Text)
+			require.False(t, slices.ContainsFunc(placeholder.Parts, func(p message.ContentPart) bool {
+				_, ok := p.(message.ReasoningContent)
+				return ok
+			}))
+		})
+	}
+}
