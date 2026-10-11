@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"charm.land/fantasy"
@@ -88,6 +90,9 @@ func TestViewToolFileNotFound(t *testing.T) {
 
 func TestViewToolStatErrorIsReturned(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports a path through a file as not existing, not as a stat error")
+	}
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644))
 	tool := newViewToolForTest(dir)
@@ -216,10 +221,13 @@ func TestViewToolOutsideWorkingDirRequestErrorIsReturned(t *testing.T) {
 	}
 	tool := newViewToolWithPermissionsForTest(nil, nil, perms, t.TempDir())
 
-	_, err := tool.Run(sessionCtx(), fantasy.ToolCall{
+	input, err := json.Marshal(ViewParams{FilePath: path})
+	require.NoError(t, err)
+
+	_, err = tool.Run(sessionCtx(), fantasy.ToolCall{
 		ID:    "test-call",
 		Name:  ViewToolName,
-		Input: `{"file_path":"` + path + `"}`,
+		Input: string(input),
 	})
 
 	require.ErrorIs(t, err, requestErr)
