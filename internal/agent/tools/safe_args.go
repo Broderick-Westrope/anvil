@@ -152,13 +152,26 @@ func listsRefs(flags flagSet) func(args []string) bool {
 }
 
 // readsRemotes is the rule for git remote: listing remotes, get-url, or
-// show with -n, which stops it querying the remote.
+// show with -n, which stops it querying the remote. The -n must come
+// before the first remote, and there must be no --, after which -n would
+// name a remote rather than set the flag.
 func readsRemotes(args []string) bool {
 	subcommand := slices.IndexFunc(args, func(arg string) bool {
 		return arg != "-v" && arg != "--verbose"
 	})
-	return subcommand < 0 || args[subcommand] == "get-url" ||
-		args[subcommand] == "show" && slices.Contains(args[subcommand+1:], "-n")
+	if subcommand < 0 || args[subcommand] == "get-url" {
+		return true
+	}
+	if args[subcommand] != "show" || slices.Contains(args, "--") {
+		return false
+	}
+	options := args[subcommand+1:]
+	if remote := slices.IndexFunc(options, func(arg string) bool {
+		return !strings.HasPrefix(arg, "-")
+	}); remote >= 0 {
+		options = options[:remote]
+	}
+	return slices.Contains(options, "-n")
 }
 
 func noArgWithPrefix(prefixes ...string) func(args []string) bool {
