@@ -916,11 +916,17 @@ func TestPreparePrompt_SkipsEmptyMessages(t *testing.T) {
 			kept: true,
 		},
 	}
+	next := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "next"}}}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			history := (&sessionAgent{isSubAgent: true}).preparePrompt([]message.Message{tt.msg}, true)
-			require.Equal(t, tt.kept, len(history) > 0)
+			history := (&sessionAgent{isSubAgent: true}).preparePrompt([]message.Message{tt.msg, next}, true)
+			require.NotEmpty(t, history, "the message after it is kept")
+			last := history[len(history)-1]
+			text, ok := fantasy.AsMessagePart[fantasy.TextPart](last.Content[0])
+			require.True(t, ok)
+			require.Equal(t, "next", text.Text)
+			require.Equal(t, tt.kept, len(history) > 1)
 		})
 	}
 }
