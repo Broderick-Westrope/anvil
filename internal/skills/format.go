@@ -28,6 +28,26 @@ func ParseContentXML(text string) ([]ContentXML, string) {
 	}
 }
 
+// CollapseContentXML replaces <skill_content> XML blocks with a compact
+// "Using skill: name" label for display in the chat thread. The full
+// content is still sent to the LLM.
+func CollapseContentXML(text string) string {
+	matches := skillContentRe.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+	names := make([]string, 0, len(matches))
+	for _, match := range matches {
+		names = append(names, match[1])
+	}
+	label := "Using skill: " + strings.Join(names, ", ")
+	rest := strings.TrimSpace(skillContentRe.ReplaceAllString(text, ""))
+	if rest == "" {
+		return label
+	}
+	return label + "\n\n" + rest
+}
+
 // FormatContentXML formats a single skill's instructions as a
 // <skill_content> XML block for inclusion in a user message.
 func FormatContentXML(name, instructions string) string {
