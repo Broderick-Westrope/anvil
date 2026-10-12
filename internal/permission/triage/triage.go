@@ -71,6 +71,9 @@ type group struct {
 	projects  map[string]bool
 	examples  []string
 	unsafe    bool
+	// last is the evidence that most recently added to the group, so
+	// a record with several matching inputs is counted once.
+	last *evidence
 }
 
 // IsSource reports whether a decision can contribute candidate evidence.
@@ -89,14 +92,12 @@ func IsSource(r Record) bool {
 
 // Analyze sorts candidates by tier, descending count, and pattern.
 func Analyze(records []Record, rules []config.PermissionRule, opts Options) (allow, deny []Candidate) {
-	allow, deny = []Candidate{}, []Candidate{}
 	if opts.MinCount <= 0 {
 		opts.MinCount = 5
 	}
 	if opts.MaxHazardAllow <= 0 {
 		opts.MaxHazardAllow = 0.2
 	}
-	a := newAnalyzer(rules)
 	ix := newEvidenceIndex(len(records))
 	for _, r := range records {
 		if opts.WorkingDir != "" && r.WorkingDir != opts.WorkingDir {
@@ -104,72 +105,97 @@ func Analyze(records []Record, rules []config.PermissionRule, opts Options) (all
 		}
 		ix.add(r)
 	}
-	type allowResult struct {
-		pattern string
-		tier    Tier
+	t := tally{opts: opts, groups: map[string]*group{}, allowPatterns: map[string]allowProposal{}}
+	for i := range ix.all {
+		t.observe(&ix.all[i])
 	}
-	allowPatterns := make(map[string]allowResult)
-	groups := make(map[string]*group)
-	for _, e := range ix.all {
-		r := e.record
-		if !IsSource(r) {
-			continue
-		}
-		seen := make(map[string]bool)
-		add := func(kind Kind, tier Tier, pattern, example, warning string) {
-			key := string(kind) + "\x00" + r.ToolName + "\x00" + pattern
-			g := groups[key]
-			if g == nil {
-				g = &group{candidate: Candidate{Kind: kind, Tier: tier, ToolPattern: r.ToolName, InputPattern: pattern, Warning: warning}, sessions: map[string]bool{}, projects: map[string]bool{}}
-				groups[key] = g
-			}
-			if !seen[key] {
-				g.candidate.Count++
-				seen[key] = true
-			}
-			g.sessions[r.SessionID] = true
-			g.projects[r.WorkingDir] = true
-			if !slices.Contains(g.examples, example) {
-				g.examples = append(g.examples, example)
-			}
-			if kind == KindAllow && (r.Verdict != string(permission.VerdictAllow) ||
-				(r.MaxHazard != nil && (math.IsNaN(*r.MaxHazard) || *r.MaxHazard > opts.MaxHazardAllow))) {
-				g.unsafe = true
-			}
-		}
-		switch {
-		case r.ToolName == "bash":
-			for _, input := range e.inputs {
-				res, ok := allowPatterns[input]
-				if !ok {
-					res.pattern, res.tier = allowPattern(input)
-					allowPatterns[input] = res
-				}
-				if res.pattern != "" {
-					warning := ""
-					if res.tier == TierB {
-						warning = "Uncurated command: review every argument this pattern permits"
-					}
-					add(KindAllow, res.tier, res.pattern, input, warning)
-				}
-			}
-			// Only a human's denial proposes a permanent deny rule. The
-			// bouncer also denies explicit actions the user simply didn't
-			// mention (git push, gh pr merge), so learning denies from it
-			// would turn its false positives into permanent rules. Its
-			// denials still count as evidence against allow candidates.
-			if len(e.commands) == 1 && r.Verdict == string(permission.VerdictDeny) &&
-				r.DecidedBy == string(permission.DecisionSourceHuman) {
-				if pattern := denyPattern(e.commands[0]); pattern != "" {
-					add(KindDeny, TierB, pattern, e.commands[0], "Review the scope of this permanent denial")
-				}
-			}
-		case strings.HasPrefix(r.ToolName, "mcp_") && !strings.ContainsAny(r.ToolName, globMeta):
-			add(KindAllow, TierB, "", r.Input, "MCP rules cover every argument this tool accepts")
-		}
+	return t.candidates(newAnalyzer(rules), ix)
+}
+
+// tally groups evidence by the candidate rule each record supports.
+type tally struct {
+	opts   Options
+	groups map[string]*group
+	// allowPatterns memoises allowPattern, which tries every command
+	// family, because the same segment recurs across many records.
+	allowPatterns map[string]allowProposal
+}
+
+type allowProposal struct {
+	pattern string
+	tier    Tier
+}
+
+// observe adds the candidates e supports.
+func (t *tally) observe(e *evidence) {
+	r := e.record
+	if !IsSource(r) {
+		return
 	}
-	for _, g := range groups {
-		if g.unsafe || g.candidate.Count < opts.MinCount {
+	if r.ToolName == "bash" {
+		for _, input := range e.inputs {
+			res, ok := t.allowPatterns[input]
+			if !ok {
+				res.pattern, res.tier = allowPattern(input)
+				t.allowPatterns[input] = res
+			}
+			if res.pattern != "" {
+				warning := ""
+				if res.tier == TierB {
+					warning = "Uncurated command: review every argument this pattern permits"
+				}
+				t.add(e, Candidate{Kind: KindAllow, Tier: res.tier, InputPattern: res.pattern, Warning: warning}, input)
+			}
+		}
+		// Only a human's denial proposes a permanent deny rule. The
+		// bouncer also denies explicit actions the user simply didn't
+		// mention (git push, gh pr merge), so learning denies from it
+		// would turn its false positives into permanent rules. Its
+		// denials still count as evidence against allow candidates.
+		if len(e.commands) == 1 && r.Verdict == string(permission.VerdictDeny) &&
+			r.DecidedBy == string(permission.DecisionSourceHuman) {
+			if pattern := denyPattern(e.commands[0]); pattern != "" {
+				t.add(e, Candidate{Kind: KindDeny, Tier: TierB, InputPattern: pattern, Warning: "Review the scope of this permanent denial"}, e.commands[0])
+			}
+		}
+	} else if strings.HasPrefix(r.ToolName, "mcp_") && !strings.ContainsAny(r.ToolName, globMeta) {
+		t.add(e, Candidate{Kind: KindAllow, Tier: TierB, Warning: "MCP rules cover every argument this tool accepts"}, r.Input)
+	}
+}
+
+// add records e as evidence for c, a candidate for e's tool, with
+// example as the input it was seen on.
+func (t *tally) add(e *evidence, c Candidate, example string) {
+	r := e.record
+	c.ToolPattern = r.ToolName
+	key := string(c.Kind) + "\x00" + c.ToolPattern + "\x00" + c.InputPattern
+	g := t.groups[key]
+	if g == nil {
+		g = &group{candidate: c, sessions: map[string]bool{}, projects: map[string]bool{}}
+		t.groups[key] = g
+	}
+	if g.last != e {
+		g.candidate.Count++
+		g.last = e
+	}
+	g.sessions[r.SessionID] = true
+	g.projects[r.WorkingDir] = true
+	if !slices.Contains(g.examples, example) {
+		g.examples = append(g.examples, example)
+	}
+	if c.Kind == KindAllow && (r.Verdict != string(permission.VerdictAllow) ||
+		(r.MaxHazard != nil && (math.IsNaN(*r.MaxHazard) || *r.MaxHazard > t.opts.MaxHazardAllow))) {
+		g.unsafe = true
+	}
+}
+
+// candidates returns the groups that are frequent and safe enough to
+// propose, that no evidence contradicts, and that the current rules do
+// not already cover.
+func (t *tally) candidates(a *analyzer, ix *evidenceIndex) ([]Candidate, []Candidate) {
+	allow, deny := []Candidate{}, []Candidate{}
+	for _, g := range t.groups {
+		if g.unsafe || g.candidate.Count < t.opts.MinCount {
 			continue
 		}
 		c := g.candidate

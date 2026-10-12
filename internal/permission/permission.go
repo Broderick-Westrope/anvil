@@ -299,7 +299,7 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		return s.finishPolicy(opts, p, nil), nil
 	}
 
-	perm := PermissionRequest{
+	r := &inflightRequest{perm: PermissionRequest{
 		ID:            uuid.New().String(),
 		Path:          s.requestDir(opts.Path),
 		SessionID:     opts.SessionID,
@@ -310,72 +310,95 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		Params:        opts.Params,
 		Input:         opts.Input,
 		InputSegments: opts.InputSegments,
-	}
+	}}
 
 	// The bouncer runs without requestMu so concurrent requests are
 	// classified in parallel rather than queued behind a human prompt.
-	var details json.RawMessage
+	if s.shouldAssess(p) {
+		res, decided, err := s.consultBouncer(ctx, opts, r)
+		if decided {
+			return res, err
+		}
+	}
+	return s.promptHuman(ctx, opts, r)
+}
+
+// inflightRequest is the state of a request the policy layers left
+// unresolved, carried from the bouncer to the human prompt.
+type inflightRequest struct {
+	perm PermissionRequest
+	// details is the bouncer's assessment, recorded with the decision.
+	details json.RawMessage
 	// bouncerDenied marks a request the enforcing bouncer would have
 	// blocked. It goes to the human as a deny prompt instead, and yolo
 	// never approves it.
-	var bouncerDenied bool
-	var denyReason string
-	var review *pendingReview
-	if s.shouldAssess(p) {
-		key := allowCacheKey(opts)
-		cache := s.allowCache.Load()
-		if s.currentBouncerMode() == BouncerEnforce {
-			if s.beforeAllowCache != nil {
-				s.beforeAllowCache(opts)
-			}
-			if _, ok := cache.Get(key); ok {
-				// A rule added since the cached allow wins over it.
-				if p2 := s.evaluatePolicy(opts); p2.resolved {
-					return s.finishPolicy(opts, p2, nil), nil
-				}
-				slog.Debug("Bouncer allow cache hit", "tool", opts.ToolName)
-				return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", cachedAllowRecord(), ""), nil
-			}
-		}
+	bouncerDenied bool
+	denyReason    string
+	review        *pendingReview
+}
 
-		a, failed := s.assess(ctx, opts)
-		mode := s.currentBouncerMode()
-		details = withAssessmentMode(a.Details, mode)
-		if ctx.Err() != nil {
-			s.record(opts, DecisionSourceHuman, VerdictCancelled, "", details)
-			return RequestResult{}, ctx.Err()
+// consultBouncer asks the bouncer about r. It reports decided when the
+// bouncer, a rule added during the call, or yolo settles the request
+// without a prompt.
+func (s *permissionService) consultBouncer(ctx context.Context, opts CreatePermissionRequest, r *inflightRequest) (RequestResult, bool, error) {
+	key := allowCacheKey(opts)
+	cache := s.allowCache.Load()
+	if s.currentBouncerMode() == BouncerEnforce {
+		if s.beforeAllowCache != nil {
+			s.beforeAllowCache(opts)
 		}
-
-		// Commit boundary 1: rules may have changed during the call.
-		p2 := s.evaluatePolicy(opts)
-		if p2.resolved {
-			return s.finishPolicy(opts, p2, details), nil
-		}
-
-		if mode == BouncerEnforce {
-			switch a.Outcome {
-			case AssessAllow:
-				cache.Set(key, struct{}{})
-				return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", details, ""), nil
-			case AssessDeny:
-				bouncerDenied = true
-				denyReason = a.Reason
+		if _, ok := cache.Get(key); ok {
+			// A rule added since the cached allow wins over it.
+			if p2 := s.evaluatePolicy(opts); p2.resolved {
+				return s.finishPolicy(opts, p2, nil), true, nil
 			}
-		}
-		// Yolo approves whatever the bouncer didn't decide, including
-		// skips and errors, exactly as it would without a bouncer.
-		if p2.yolo && !bouncerDenied {
-			return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
-		}
-		if mode != BouncerOff {
-			perm.Bouncer = assessmentSummary(a, details, failed, mode)
-			perm.BouncerNote = perm.Bouncer.Note()
-			if s.shouldReview(perm.Bouncer) {
-				review = s.startReview(ctx, opts, perm.Bouncer, details)
-			}
+			slog.Debug("Bouncer allow cache hit", "tool", opts.ToolName)
+			return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", cachedAllowRecord(), ""), true, nil
 		}
 	}
 
+	a, failed := s.assess(ctx, opts)
+	mode := s.currentBouncerMode()
+	r.details = withAssessmentMode(a.Details, mode)
+	if ctx.Err() != nil {
+		s.record(opts, DecisionSourceHuman, VerdictCancelled, "", r.details)
+		return RequestResult{}, true, ctx.Err()
+	}
+
+	// Commit boundary 1: rules may have changed during the call.
+	p2 := s.evaluatePolicy(opts)
+	if p2.resolved {
+		return s.finishPolicy(opts, p2, r.details), true, nil
+	}
+
+	if mode == BouncerEnforce {
+		switch a.Outcome {
+		case AssessAllow:
+			cache.Set(key, struct{}{})
+			return s.finish(opts, DecisionSourceBouncer, VerdictAllow, "", r.details, ""), true, nil
+		case AssessDeny:
+			r.bouncerDenied = true
+			r.denyReason = a.Reason
+		}
+	}
+	// Yolo approves whatever the bouncer didn't decide, including
+	// skips and errors, exactly as it would without a bouncer.
+	if p2.yolo && !r.bouncerDenied {
+		return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", r.details, ""), true, nil
+	}
+	if mode != BouncerOff {
+		r.perm.Bouncer = assessmentSummary(a, r.details, failed, mode)
+		r.perm.BouncerNote = r.perm.Bouncer.Note()
+		if s.shouldReview(r.perm.Bouncer) {
+			r.review = s.startReview(ctx, opts, r.perm.Bouncer, r.details)
+		}
+	}
+	return RequestResult{}, false, nil
+}
+
+// promptHuman waits for the prompt slot, then asks the human about r
+// unless a grant, rule, or yolo settles the request first.
+func (s *permissionService) promptHuman(ctx context.Context, opts CreatePermissionRequest, r *inflightRequest) (RequestResult, error) {
 	if s.beforePromptLock != nil {
 		s.beforePromptLock(opts)
 	}
@@ -383,8 +406,8 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	defer s.requestMu.Unlock()
 
 	if ctx.Err() != nil {
-		review.stop()
-		s.recordReviewed(opts, VerdictCancelled, details, review)
+		r.review.stop()
+		s.recordReviewed(opts, VerdictCancelled, r.details, r.review)
 		return RequestResult{}, ctx.Err()
 	}
 
@@ -393,45 +416,45 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// Requests resolved here never reach the human, so their review has
 	// nothing to be compared with and is dropped.
 	if p3 := s.evaluatePolicy(opts); p3.resolved {
-		review.stop()
-		return s.finishPolicy(opts, p3, details), nil
-	} else if p3.yolo && !bouncerDenied {
+		r.review.stop()
+		return s.finishPolicy(opts, p3, r.details), nil
+	} else if p3.yolo && !r.bouncerDenied {
 		// The bouncer was switched on after this request skipped it;
 		// yolo never prompts.
-		review.stop()
-		return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", details, ""), nil
+		r.review.stop()
+		return s.finish(opts, DecisionSourceYolo, VerdictAllow, "", r.details, ""), nil
 	}
 
 	s.activeRequestMu.Lock()
-	s.activeRequest = &perm
+	s.activeRequest = &r.perm
 	s.activeRequestMu.Unlock()
 
 	respCh := make(chan permissionResponse, 1)
-	s.pendingRequests.Set(perm.ID, respCh)
-	defer s.pendingRequests.Del(perm.ID)
+	s.pendingRequests.Set(r.perm.ID, respCh)
+	defer s.pendingRequests.Del(r.perm.ID)
 
 	// Publish the request.
-	s.publishWithReview(&perm, review)
+	s.publishWithReview(&r.perm, r.review)
 
 	select {
 	case <-ctx.Done():
 		s.activeRequestMu.Lock()
-		if s.activeRequest != nil && s.activeRequest.ID == perm.ID {
+		if s.activeRequest != nil && s.activeRequest.ID == r.perm.ID {
 			s.activeRequest = nil
 		}
 		s.activeRequestMu.Unlock()
-		review.stop()
-		s.recordReviewed(opts, VerdictCancelled, details, review)
+		r.review.stop()
+		s.recordReviewed(opts, VerdictCancelled, r.details, r.review)
 		return RequestResult{}, ctx.Err()
 	case resp := <-respCh:
 		verdict := VerdictDeny
 		if resp.Granted {
 			verdict = VerdictAllow
 		}
-		s.recordReviewed(opts, verdict, details, review)
+		s.recordReviewed(opts, verdict, r.details, r.review)
 		reason := resp.Reason
-		if !resp.Granted && bouncerDenied && reason == "" {
-			reason = "the user confirmed the permission bouncer's block (" + denyReason + "). Do not retry this or work around it; tell the user what you were trying to do."
+		if !resp.Granted && r.bouncerDenied && reason == "" {
+			reason = "the user confirmed the permission bouncer's block (" + r.denyReason + "). Do not retry this or work around it; tell the user what you were trying to do."
 		}
 		return RequestResult{Granted: resp.Granted, Reason: reason}, nil
 	}

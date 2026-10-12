@@ -353,19 +353,16 @@ func applyPermissionCandidates(ctx context.Context, store *config.ConfigStore, s
 	}
 	failed := false
 	for _, c := range chosen {
-		ok := true
-		for _, example := range c.Examples {
-			if permission.Evaluate(c.ToolPattern, example, updated, nil).Action != config.PermissionAction(c.Kind) {
-				ok = false
-				if _, err := fmt.Fprintf(out, "FAIL example: %s %q does not evaluate to %s\n", terminalText(c.ToolPattern), terminalText(example), c.Kind); err != nil {
-					return err
-				}
-			}
-		}
 		status := "OK"
-		if !ok {
+		for _, example := range c.Examples {
+			if permission.Evaluate(c.ToolPattern, example, updated, nil).Action == config.PermissionAction(c.Kind) {
+				continue
+			}
 			status = "FAIL"
 			failed = true
+			if _, err := fmt.Fprintf(out, "FAIL example: %s %q does not evaluate to %s\n", terminalText(c.ToolPattern), terminalText(example), c.Kind); err != nil {
+				return err
+			}
 		}
 		if _, err := fmt.Fprintf(out, "%s %s: %q -> %s\n", status, terminalText(c.ToolPattern), terminalText(c.InputPattern), c.Kind); err != nil {
 			return err

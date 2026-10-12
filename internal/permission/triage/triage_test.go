@@ -255,3 +255,73 @@ func TestBouncerDenialsNeverProposeDenyRules(t *testing.T) {
 	require.Empty(t, a)
 	require.Empty(t, d)
 }
+
+func TestAnalyzeCountsRecordsNotSegments(t *testing.T) {
+	t.Parallel()
+	a, _ := Analyze(repeated("git status && git status --short", "allow"), nil, Options{})
+	require.Len(t, a, 1)
+	require.Equal(t, "git status *", a[0].InputPattern)
+	require.Equal(t, 6, a[0].Count)
+	require.Equal(t, []string{"git status", "git status --short"}, a[0].Examples)
+}
+
+func TestAnalyzeWarnings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, input, verdict, warning string
+	}{
+		{"curated allow", "git status --short", "allow", ""},
+		{"uncurated allow", "go test ./...", "allow", "Uncurated command: review every argument this pattern permits"},
+		{"deny", "gh pr merge 42", "deny", "Review the scope of this permanent denial"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a, d := Analyze(repeated(tt.input, tt.verdict), nil, Options{})
+			got := slices.Concat(a, d)
+			require.Len(t, got, 1)
+			require.Equal(t, tt.warning, got[0].Warning)
+		})
+	}
+}
+
+func TestAnalyzeAllowsHazardAtTheLimit(t *testing.T) {
+	t.Parallel()
+	records := repeated("git status", "allow")
+	hazard := 0.5
+	records[0].MaxHazard = &hazard
+	a, _ := Analyze(records, nil, Options{MaxHazardAllow: 0.5})
+	require.Len(t, a, 1)
+}
+
+func TestAnalyzeShowsThreeExamples(t *testing.T) {
+	t.Parallel()
+	records := repeated("git status", "allow")
+	for i := range records {
+		records[i].Input = fmt.Sprintf("git status --porcelain=v%d", i)
+	}
+	a, _ := Analyze(records, nil, Options{})
+	require.Len(t, a, 1)
+	require.Equal(t, []string{"git status --porcelain=v0", "git status --porcelain=v1", "git status --porcelain=v2"}, a[0].Examples)
+}
+
+func TestAnalyzeProposesDenyPartlyCoveredByRules(t *testing.T) {
+	t.Parallel()
+	records := repeated("gh pr merge 1", "deny")
+	records[0].Input = "gh pr merge 2"
+	rules := config.UpsertPermissionRule(nil, "bash", "gh pr merge 1", config.PermissionDeny)
+	_, d := Analyze(records, rules, Options{})
+	require.Len(t, d, 1)
+	require.Equal(t, "gh pr merge *", d[0].InputPattern)
+}
+
+func TestAnalyzeIgnoresMCPToolPatterns(t *testing.T) {
+	t.Parallel()
+	records := repeated("{}", "allow")
+	for i := range records {
+		records[i].ToolName = "mcp_*"
+	}
+	a, d := Analyze(records, nil, Options{})
+	require.Empty(t, a)
+	require.Empty(t, d)
+}

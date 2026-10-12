@@ -981,3 +981,37 @@ func TestYoloFullEnabledMidFlightStillPrompts(t *testing.T) {
 	require.True(t, r.result.Granted)
 	require.Equal(t, DecisionSourceHuman, h.rec.snapshot()[0].DecidedBy)
 }
+
+func TestBouncerCancelledDuringAssessment(t *testing.T) {
+	t.Parallel()
+	for _, level := range []config.YoloLevel{config.YoloOff, config.YoloStandard} {
+		t.Run(fmt.Sprint(level), func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeBouncer{outcome: AssessAllow, entered: make(chan AssessInput, 1), release: make(chan struct{})}
+			h := newYoloBouncerHarness(t, fake, BouncerEnforce, level, nil)
+			ctx, cancel := context.WithCancel(testCtx(t))
+			type result struct {
+				r   RequestResult
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				r, err := h.svc.Request(ctx, h.req("call", "go build ./..."))
+				done <- result{r, err}
+			}()
+			<-fake.entered
+			cancel()
+
+			// Yolo would approve a request the bouncer didn't decide, so
+			// the cancellation must be seen before yolo is consulted.
+			got := <-done
+			require.ErrorIs(t, got.err, context.Canceled)
+			require.False(t, got.r.Granted)
+			require.Empty(t, h.events)
+			decisions := h.rec.snapshot()
+			require.Len(t, decisions, 1)
+			require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
+			require.Equal(t, VerdictCancelled, decisions[0].Verdict)
+		})
+	}
+}

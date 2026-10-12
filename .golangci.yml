@@ -168,9 +168,6 @@ linters:
       - path: internal/app/memlog\.go
         text: 'func `(\(\*App\)\.startMemoryMonitor)`'
         linters: [gocognit]
-      - path: internal/cmd/permissions\.go
-        text: 'func `(applyPermissionCandidates)`'
-        linters: [gocognit]
       - path: internal/cmd/session_recover\.go
         text: 'func `(newSessionRecoverCommand)`'
         linters: [gocognit]
@@ -194,18 +191,6 @@ linters:
         linters: [gocognit]
       - path: internal/message/tree\.go
         text: 'func `(FilterBranchPathForContext)`'
-        linters: [gocognit]
-      - path: internal/permission/decisionlog/analytics\.go
-        text: 'func `(ComputeStats)`'
-        linters: [gocognit]
-      - path: internal/permission/permission\.go
-        text: 'func `(\(\*permissionService\)\.Request)`'
-        linters: [gocognit]
-      - path: internal/permission/segment/segment\.go
-        text: 'func `(split)`'
-        linters: [gocognit]
-      - path: internal/permission/triage/triage\.go
-        text: 'func `(Analyze)`'
         linters: [gocognit]
       - path: internal/recovery/recovery\.go
         text: 'func `(scan|sweepArtifacts)`'

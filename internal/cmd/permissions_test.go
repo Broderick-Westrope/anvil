@@ -182,6 +182,26 @@ func TestPermissionsConflicts(t *testing.T) {
 	}
 }
 
+func TestPermissionsApplyReportsExamplesThatStillFail(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "anvil.json")
+	store := config.NewTestStoreWithDataPath(&config.Config{}, path)
+	chosen := []triage.Candidate{
+		{Kind: triage.KindAllow, Tier: triage.TierB, ToolPattern: "bash", InputPattern: "tee *", Examples: []string{"tee out.txt", "cat out.txt", "tee log.txt", "head out.txt"}},
+		{Kind: triage.KindAllow, Tier: triage.TierA, ToolPattern: "bash", InputPattern: "git status *", Examples: []string{"git status"}},
+	}
+	var out bytes.Buffer
+	err := applyPermissionCandidates(t.Context(), store, config.ScopeGlobal, nil, chosen, nil, true, &out)
+	require.EqualError(t, err, "rules written but some examples do not evaluate to the intended action")
+	require.Equal(t, `Conflict: bash "cat out.txt": Example does not evaluate to allow
+Conflict: bash "head out.txt": Example does not evaluate to allow
+FAIL example: bash "cat out.txt" does not evaluate to allow
+FAIL example: bash "head out.txt" does not evaluate to allow
+FAIL bash: "tee *" -> allow
+OK bash: "git status *" -> allow
+Config: `+path+"\n", out.String())
+}
+
 func TestPermissionsSelection(t *testing.T) {
 	t.Parallel()
 	candidates := []triage.Candidate{{Kind: triage.KindAllow, Tier: triage.TierA}, {Kind: triage.KindAllow, Tier: triage.TierB}, {Kind: triage.KindDeny, Tier: triage.TierB}, {Kind: triage.KindAllow, Tier: triage.TierB}}
