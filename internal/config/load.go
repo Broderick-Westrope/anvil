@@ -224,192 +224,237 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 	for _, p := range knownProviders {
 		knownProviderNames[string(p.ID)] = true
 		config, configExists := c.Providers.Get(string(p.ID))
-		// if the user configured a known provider we need to allow it to override a couple of parameters
-		if configExists {
-			if config.BaseURL != "" {
-				p.APIEndpoint = config.BaseURL
-			}
-			if config.APIKey != "" {
-				p.APIKey = config.APIKey
-			}
-			if len(config.Models) > 0 {
-				models := []catwalk.Model{}
-				seen := make(map[string]bool)
-
-				for _, model := range config.Models {
-					if seen[model.ID] {
-						continue
-					}
-					seen[model.ID] = true
-					if model.Name == "" {
-						model.Name = model.ID
-					}
-					models = append(models, model)
-				}
-				for _, model := range p.Models {
-					if seen[model.ID] {
-						continue
-					}
-					seen[model.ID] = true
-					if model.Name == "" {
-						model.Name = model.ID
-					}
-					models = append(models, model)
-				}
-
-				p.Models = models
-			}
+		prepared, warnSkip, err := prepareKnownProvider(p, config, env, resolver)
+		if err != nil {
+			return err
 		}
-
-		headers := map[string]string{}
-		if len(p.DefaultHeaders) > 0 {
-			maps.Copy(headers, p.DefaultHeaders)
-		}
-		if len(config.ExtraHeaders) > 0 {
-			maps.Copy(headers, config.ExtraHeaders)
-		}
-		// Provider headers use the same error contract as MCP headers:
-		// a failing $(...) aborts the provider load with a clear
-		// message, and a header that resolves to the empty string
-		// (unset bare $VAR under lenient nounset, $(echo), or literal
-		// "") is dropped from the outgoing request. See PLAN.md
-		// Phase 2 design decisions #14 and #18.
-		for k, v := range headers {
-			resolved, err := resolver.ResolveValue(v)
-			if err != nil {
-				return fmt.Errorf("resolving provider %s header %q: %w", p.ID, k, err)
+		if warnSkip != nil {
+			if configExists {
+				warnSkip()
+				c.Providers.Del(string(p.ID))
 			}
-			if resolved == "" {
-				delete(headers, k)
-				continue
-			}
-			headers[k] = resolved
-		}
-		prepared := ProviderConfig{
-			ID:                 string(p.ID),
-			Name:               p.Name,
-			BaseURL:            p.APIEndpoint,
-			APIKey:             p.APIKey,
-			APIKeyTemplate:     p.APIKey, // Store original template for re-resolution
-			AuthMode:           config.AuthMode,
-			OAuthToken:         config.OAuthToken,
-			Type:               p.Type,
-			Disable:            config.Disable,
-			SystemPromptPrefix: config.SystemPromptPrefix,
-			ExtraHeaders:       headers,
-			ExtraBody:          config.ExtraBody,
-			ExtraParams:        make(map[string]string),
-			Models:             p.Models,
-		}
-
-		switch p.ID {
-		case catwalk.InferenceProviderAnthropic:
-			configureAnthropicAuth(&prepared, config.AuthMode)
-		}
-
-		switch p.ID {
-		// Handle specific providers that require additional configuration
-		case catwalk.InferenceProviderAnthropic:
-			switch config.AuthMode {
-			case AuthModeOAuth:
-				if prepared.OAuthToken == nil {
-					if configExists {
-						slog.Warn(
-							"Skipping Anthropic provider — auth_mode is \"oauth\" "+
-								"but no OAuth credentials found. Run `claude /login` "+
-								"to authenticate.",
-							"provider", p.ID,
-						)
-						c.Providers.Del(string(p.ID))
-					}
-					continue
-				}
-			case AuthModeAPIKey:
-				v, err := resolver.ResolveValue(p.APIKey)
-				if v == "" || err != nil {
-					if configExists {
-						slog.Warn(
-							"Skipping Anthropic provider — auth_mode is \"api-key\" "+
-								"but no API key found. Set ANTHROPIC_API_KEY.",
-							"provider", p.ID,
-						)
-						c.Providers.Del(string(p.ID))
-					}
-					continue
-				}
-			default:
-				if prepared.OAuthToken == nil {
-					v, err := resolver.ResolveValue(p.APIKey)
-					if v == "" || err != nil {
-						if configExists {
-							slog.Warn(
-								"Skipping Anthropic provider — no OAuth credentials or "+
-									"API key found. Run `claude /login` to authenticate, "+
-									"or set ANTHROPIC_API_KEY.",
-								"provider", p.ID,
-							)
-							c.Providers.Del(string(p.ID))
-						}
-						continue
-					}
-				}
-			}
-		case catwalk.InferenceProviderVertexAI:
-			var (
-				project  = env.Get("VERTEXAI_PROJECT")
-				location = env.Get("VERTEXAI_LOCATION")
-			)
-			if project == "" || location == "" {
-				if configExists {
-					slog.Warn("Skipping Vertex AI provider due to missing credentials")
-					c.Providers.Del(string(p.ID))
-				}
-				continue
-			}
-			prepared.ExtraParams["project"] = project
-			prepared.ExtraParams["location"] = location
-		case catwalk.InferenceProviderAzure:
-			endpoint, err := resolver.ResolveValue(p.APIEndpoint)
-			if err != nil || endpoint == "" {
-				if configExists {
-					slog.Warn("Skipping Azure provider due to missing API endpoint", "provider", p.ID, "error", err)
-					c.Providers.Del(string(p.ID))
-				}
-				continue
-			}
-			prepared.BaseURL = endpoint
-			prepared.ExtraParams["apiVersion"] = env.Get("AZURE_OPENAI_API_VERSION")
-		case catwalk.InferenceProviderBedrock, catwalk.InferenceProviderBedrockEurope:
-			if p.APIKey == "" && !hasAWSCredentials(env) {
-				if configExists {
-					slog.Warn("Skipping Bedrock provider due to missing AWS credentials")
-					c.Providers.Del(string(p.ID))
-				}
-				continue
-			}
-		default:
-			// if the provider api or endpoint are missing we skip them
-			v, err := resolver.ResolveValue(p.APIKey)
-			if v == "" || err != nil {
-				if configExists {
-					slog.Warn("Skipping provider due to missing API key", "provider", p.ID)
-					c.Providers.Del(string(p.ID))
-				}
-				continue
-			}
+			continue
 		}
 		c.Providers.Set(string(p.ID), prepared)
 	}
 
-	// Discover models concurrently for custom providers that need it.
-	// A provider needs discovery when discover_models is explicitly true,
-	// or when the models list is empty (auto-trigger, unless opted out).
-	type discoveryResult struct {
-		models []catwalk.Model
-		err    error
+	discoveryResults := c.discoverCustomProviderModels(ctx, knownProviderNames, resolver)
+
+	// Validate the custom providers.
+	for id, providerConfig := range c.Providers.Seq2() {
+		if knownProviderNames[id] {
+			continue
+		}
+		prepared, ok, err := prepareCustomProvider(id, providerConfig, discoveryResults[id], resolver)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			c.Providers.Del(id)
+			continue
+		}
+		c.Providers.Set(id, prepared)
 	}
 
-	discoveryResults := make(map[string]discoveryResult)
+	if c.Providers.Len() == 0 && c.Options.DisableDefaultProviders {
+		return fmt.Errorf("default providers are disabled and there are no custom providers are configured")
+	}
+
+	return nil
+}
+
+// prepareKnownProvider builds the config for a known provider. The user's
+// config for it may override its endpoint, API key and models, and add
+// headers. When the provider lacks the credentials its kind needs (see
+// knownProviderCompletions), it returns a non-nil function that logs why;
+// the caller calls it only when the user configured the provider.
+func prepareKnownProvider(p catwalk.Provider, config ProviderConfig, env env.Env, resolver VariableResolver) (ProviderConfig, func(), error) {
+	p.APIEndpoint = cmp.Or(config.BaseURL, p.APIEndpoint)
+	p.APIKey = cmp.Or(config.APIKey, p.APIKey)
+	// The user's models come first and win over the known provider's models
+	// with the same ID.
+	if len(config.Models) > 0 {
+		models := []catwalk.Model{}
+		seen := make(map[string]bool)
+		for _, model := range slices.Concat(config.Models, p.Models) {
+			if seen[model.ID] {
+				continue
+			}
+			seen[model.ID] = true
+			model.Name = cmp.Or(model.Name, model.ID)
+			models = append(models, model)
+		}
+		p.Models = models
+	}
+
+	headers := map[string]string{}
+	maps.Copy(headers, p.DefaultHeaders)
+	maps.Copy(headers, config.ExtraHeaders)
+	if err := resolveProviderHeaders(string(p.ID), headers, resolver); err != nil {
+		return ProviderConfig{}, nil, err
+	}
+	prepared := ProviderConfig{
+		ID:                 string(p.ID),
+		Name:               p.Name,
+		BaseURL:            p.APIEndpoint,
+		APIKey:             p.APIKey,
+		APIKeyTemplate:     p.APIKey, // Store original template for re-resolution
+		AuthMode:           config.AuthMode,
+		OAuthToken:         config.OAuthToken,
+		Type:               p.Type,
+		Disable:            config.Disable,
+		SystemPromptPrefix: config.SystemPromptPrefix,
+		ExtraHeaders:       headers,
+		ExtraBody:          config.ExtraBody,
+		ExtraParams:        make(map[string]string),
+		Models:             p.Models,
+	}
+
+	complete, ok := knownProviderCompletions[p.ID]
+	if !ok {
+		complete = completeAPIKeyProvider
+	}
+	return prepared, complete(&prepared, env, resolver), nil
+}
+
+// providerCompletion completes prepared with the settings its kind of
+// known provider needs, which may mean reading the environment or the
+// keychain. When the provider lacks the credentials to be used, it returns
+// a non-nil function that logs why at its own call site.
+type providerCompletion func(prepared *ProviderConfig, env env.Env, resolver VariableResolver) func()
+
+// knownProviderCompletions holds the completion for each known provider
+// that needs more than an API key.
+var knownProviderCompletions = map[catwalk.InferenceProvider]providerCompletion{
+	catwalk.InferenceProviderAnthropic:     completeAnthropicProvider,
+	catwalk.InferenceProviderVertexAI:      completeVertexAIProvider,
+	catwalk.InferenceProviderAzure:         completeAzureProvider,
+	catwalk.InferenceProviderBedrock:       completeBedrockProvider,
+	catwalk.InferenceProviderBedrockEurope: completeBedrockProvider,
+}
+
+func completeAPIKeyProvider(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
+	if !hasAPIKey(resolver, prepared.APIKey) {
+		return func() {
+			slog.Warn("Skipping provider due to missing API key", "provider", prepared.ID)
+		}
+	}
+	return nil
+}
+
+func completeAnthropicProvider(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
+	configureAnthropicAuth(prepared, prepared.AuthMode)
+	switch prepared.AuthMode {
+	case AuthModeOAuth:
+		if prepared.OAuthToken == nil {
+			return func() {
+				slog.Warn(
+					"Skipping Anthropic provider — auth_mode is \"oauth\" "+
+						"but no OAuth credentials found. Run `claude /login` "+
+						"to authenticate.",
+					"provider", prepared.ID,
+				)
+			}
+		}
+	case AuthModeAPIKey:
+		if !hasAPIKey(resolver, prepared.APIKeyTemplate) {
+			return func() {
+				slog.Warn(
+					"Skipping Anthropic provider — auth_mode is \"api-key\" "+
+						"but no API key found. Set ANTHROPIC_API_KEY.",
+					"provider", prepared.ID,
+				)
+			}
+		}
+	default:
+		if prepared.OAuthToken == nil && !hasAPIKey(resolver, prepared.APIKeyTemplate) {
+			return func() {
+				slog.Warn(
+					"Skipping Anthropic provider — no OAuth credentials or "+
+						"API key found. Run `claude /login` to authenticate, "+
+						"or set ANTHROPIC_API_KEY.",
+					"provider", prepared.ID,
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func completeVertexAIProvider(prepared *ProviderConfig, env env.Env, _ VariableResolver) func() {
+	var (
+		project  = env.Get("VERTEXAI_PROJECT")
+		location = env.Get("VERTEXAI_LOCATION")
+	)
+	if project == "" || location == "" {
+		return func() {
+			slog.Warn("Skipping Vertex AI provider due to missing credentials")
+		}
+	}
+	prepared.ExtraParams["project"] = project
+	prepared.ExtraParams["location"] = location
+	return nil
+}
+
+func completeAzureProvider(prepared *ProviderConfig, env env.Env, resolver VariableResolver) func() {
+	endpoint, err := resolver.ResolveValue(prepared.BaseURL)
+	if err != nil || endpoint == "" {
+		return func() {
+			slog.Warn("Skipping Azure provider due to missing API endpoint", "provider", prepared.ID, "error", err)
+		}
+	}
+	prepared.BaseURL = endpoint
+	prepared.ExtraParams["apiVersion"] = env.Get("AZURE_OPENAI_API_VERSION")
+	return nil
+}
+
+func completeBedrockProvider(prepared *ProviderConfig, env env.Env, _ VariableResolver) func() {
+	if prepared.APIKey == "" && !hasAWSCredentials(env) {
+		return func() {
+			slog.Warn("Skipping Bedrock provider due to missing AWS credentials")
+		}
+	}
+	return nil
+}
+
+// hasAPIKey reports whether key resolves to a non-empty value. A key that
+// fails to resolve counts as missing.
+func hasAPIKey(resolver VariableResolver, key string) bool {
+	v, err := resolver.ResolveValue(key)
+	return v != "" && err == nil
+}
+
+// resolveProviderHeaders resolves provider headers in place. Provider
+// headers use the same error contract as MCP headers: a failing $(...)
+// aborts the provider load with a clear message, and a header that
+// resolves to the empty string (unset bare $VAR under lenient nounset,
+// $(echo), or literal "") is dropped from the outgoing request.
+func resolveProviderHeaders(id string, headers map[string]string, resolver VariableResolver) error {
+	for k, v := range headers {
+		resolved, err := resolver.ResolveValue(v)
+		if err != nil {
+			return fmt.Errorf("resolving provider %s header %q: %w", id, k, err)
+		}
+		if resolved == "" {
+			delete(headers, k)
+			continue
+		}
+		headers[k] = resolved
+	}
+	return nil
+}
+
+type discoveryResult struct {
+	models []catwalk.Model
+	err    error
+}
+
+// discoverCustomProviderModels discovers models concurrently for the
+// custom providers that need it, keyed by provider ID. A provider needs
+// discovery when discover_models is explicitly true, or when the models
+// list is empty (auto-trigger, unless opted out).
+func (c *Config) discoverCustomProviderModels(ctx context.Context, knownProviderNames map[string]bool, resolver VariableResolver) map[string]*discoveryResult {
+	discoveryResults := make(map[string]*discoveryResult)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -448,99 +493,72 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 				}
 			}
 			mu.Lock()
-			discoveryResults[id] = discoveryResult{models: models, err: err}
+			discoveryResults[id] = &discoveryResult{models: models, err: err}
 			mu.Unlock()
 		})
 	}
 	wg.Wait()
+	return discoveryResults
+}
 
-	// Validate the custom providers.
-	for id, providerConfig := range c.Providers.Seq2() {
-		if knownProviderNames[id] {
-			continue
-		}
-
-		// Make sure the provider ID is set.
-		providerConfig.ID = id
-		providerConfig.Name = cmp.Or(providerConfig.Name, id) // Use ID as name if not set
-		// Default to OpenAI if not set.
-		providerConfig.Type = cmp.Or(providerConfig.Type, catwalk.TypeOpenAICompat)
-		if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) &&
-			!discover.IsKnownCustomProvider(string(providerConfig.Type)) {
-			slog.Warn("Skipping custom provider due to unsupported provider type", "provider", id)
-			c.Providers.Del(id)
-			continue
-		}
-
-		if providerConfig.Disable {
-			slog.Debug("Skipping custom provider due to disable flag", "provider", id)
-			c.Providers.Del(id)
-			continue
-		}
-		if providerConfig.APIKey == "" {
-			slog.Warn("Provider is missing API key, this might be OK for local providers", "provider", id)
-		}
-		if providerConfig.BaseURL == "" {
-			slog.Warn("Skipping custom provider due to missing API endpoint", "provider", id)
-			c.Providers.Del(id)
-			continue
-		}
-
-		// Apply discovery results if available.
-		if result, ok := discoveryResults[id]; ok {
-			if result.err != nil {
-				slog.Warn("Model discovery failed", "provider", id, "error", result.err)
-				if len(providerConfig.Models) == 0 {
-					slog.Warn("Skipping provider with no models after failed discovery", "provider", id)
-					c.Providers.Del(id)
-					continue
-				}
-			} else if len(result.models) > 0 {
-				providerConfig.Models = result.models
-				slog.Info("Discovered models for provider", "provider", id, "count", len(result.models))
-			}
-		}
-
-		if len(providerConfig.Models) == 0 {
-			slog.Warn("Skipping custom provider because the provider has no models", "provider", id)
-			c.Providers.Del(id)
-			continue
-		}
-
-		apiKey, err := resolver.ResolveValue(providerConfig.APIKey)
-		if apiKey == "" || err != nil {
-			slog.Warn("Provider is missing API key, this might be OK for local providers", "provider", id)
-		}
-		baseURL, err := resolver.ResolveValue(providerConfig.BaseURL)
-		if baseURL == "" || err != nil {
-			slog.Warn("Skipping custom provider due to missing API endpoint", "provider", id, "error", err)
-			c.Providers.Del(id)
-			continue
-		}
-
-		// Custom-provider headers share the MCP error contract; see
-		// the known-provider loop above and PLAN.md Phase 2 design
-		// decisions #14 and #18.
-		for k, v := range providerConfig.ExtraHeaders {
-			resolved, err := resolver.ResolveValue(v)
-			if err != nil {
-				return fmt.Errorf("resolving provider %s header %q: %w", id, k, err)
-			}
-			if resolved == "" {
-				delete(providerConfig.ExtraHeaders, k)
-				continue
-			}
-			providerConfig.ExtraHeaders[k] = resolved
-		}
-
-		c.Providers.Set(id, providerConfig)
+// prepareCustomProvider validates a user-defined provider and fills in its
+// defaults and any models discovery found for it (discovered is nil when
+// discovery didn't run). It logs why and returns false when the provider
+// can't be used.
+func prepareCustomProvider(id string, providerConfig ProviderConfig, discovered *discoveryResult, resolver VariableResolver) (ProviderConfig, bool, error) {
+	providerConfig.ID = id
+	providerConfig.Name = cmp.Or(providerConfig.Name, id) // Use ID as name if not set
+	providerConfig.Type = cmp.Or(providerConfig.Type, catwalk.TypeOpenAICompat)
+	if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) &&
+		!discover.IsKnownCustomProvider(string(providerConfig.Type)) {
+		slog.Warn("Skipping custom provider due to unsupported provider type", "provider", id)
+		return providerConfig, false, nil
 	}
 
-	if c.Providers.Len() == 0 && c.Options.DisableDefaultProviders {
-		return fmt.Errorf("default providers are disabled and there are no custom providers are configured")
+	if providerConfig.Disable {
+		slog.Debug("Skipping custom provider due to disable flag", "provider", id)
+		return providerConfig, false, nil
+	}
+	if providerConfig.APIKey == "" {
+		slog.Warn("Provider is missing API key, this might be OK for local providers", "provider", id)
+	}
+	if providerConfig.BaseURL == "" {
+		slog.Warn("Skipping custom provider due to missing API endpoint", "provider", id)
+		return providerConfig, false, nil
 	}
 
-	return nil
+	if discovered != nil {
+		if discovered.err != nil {
+			slog.Warn("Model discovery failed", "provider", id, "error", discovered.err)
+			if len(providerConfig.Models) == 0 {
+				slog.Warn("Skipping provider with no models after failed discovery", "provider", id)
+				return providerConfig, false, nil
+			}
+		} else if len(discovered.models) > 0 {
+			providerConfig.Models = discovered.models
+			slog.Info("Discovered models for provider", "provider", id, "count", len(discovered.models))
+		}
+	}
+
+	if len(providerConfig.Models) == 0 {
+		slog.Warn("Skipping custom provider because the provider has no models", "provider", id)
+		return providerConfig, false, nil
+	}
+
+	apiKey, err := resolver.ResolveValue(providerConfig.APIKey)
+	if apiKey == "" || err != nil {
+		slog.Warn("Provider is missing API key, this might be OK for local providers", "provider", id)
+	}
+	baseURL, err := resolver.ResolveValue(providerConfig.BaseURL)
+	if baseURL == "" || err != nil {
+		slog.Warn("Skipping custom provider due to missing API endpoint", "provider", id, "error", err)
+		return providerConfig, false, nil
+	}
+
+	if err := resolveProviderHeaders(id, providerConfig.ExtraHeaders, resolver); err != nil {
+		return providerConfig, false, err
+	}
+	return providerConfig, true, nil
 }
 
 // configureAnthropicAuth sets up Anthropic authentication on prepared based
@@ -566,9 +584,9 @@ func configureAnthropicAuthWith(prepared *ProviderConfig, mode AuthMode, readCre
 	}
 
 	// AuthModeOAuth and AuthModeAuto both try OAuth here. The difference
-	// between them is enforced by the validation block in
-	// configureProviders: oauth skips the provider when no credentials
-	// are found, while auto falls back to the API key check.
+	// between them is enforced by completeAnthropicProvider: oauth skips
+	// the provider when no credentials are found, while auto falls back to
+	// the API key check.
 	if prepared.OAuthToken != nil {
 		prepared.SetupAnthropic()
 		return
@@ -832,86 +850,11 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 
 	largeModelSelected, largeModelConfigured := cfg.Models[SelectedModelTypeLarge]
 	if largeModelConfigured {
-		if largeModelSelected.Model != "" {
-			large.Model = largeModelSelected.Model
-		}
-		if largeModelSelected.Provider != "" {
-			large.Provider = largeModelSelected.Provider
-		}
-		model := cfg.GetModel(large.Provider, large.Model)
-		if model == nil {
-			large = defaultLarge
-			result.LargeFallback = true
-		} else {
-			if largeModelSelected.MaxTokens > 0 {
-				large.MaxTokens = largeModelSelected.MaxTokens
-			} else {
-				large.MaxTokens = model.DefaultMaxTokens
-			}
-			if largeModelSelected.ReasoningEffort != "" {
-				large.ReasoningEffort = largeModelSelected.ReasoningEffort
-			} else {
-				large.ReasoningEffort = model.DefaultReasoningEffort
-			}
-			large.Think = largeModelSelected.Think
-			if largeModelSelected.Temperature != nil {
-				large.Temperature = largeModelSelected.Temperature
-			}
-			if largeModelSelected.TopP != nil {
-				large.TopP = largeModelSelected.TopP
-			}
-			if largeModelSelected.TopK != nil {
-				large.TopK = largeModelSelected.TopK
-			}
-			if largeModelSelected.FrequencyPenalty != nil {
-				large.FrequencyPenalty = largeModelSelected.FrequencyPenalty
-			}
-			if largeModelSelected.PresencePenalty != nil {
-				large.PresencePenalty = largeModelSelected.PresencePenalty
-			}
-		}
+		large, result.LargeFallback = resolveSelectedModel(cfg, defaultLarge, largeModelSelected)
 	}
 	smallModelSelected, smallModelConfigured := cfg.Models[SelectedModelTypeSmall]
 	if smallModelConfigured {
-		if smallModelSelected.Model != "" {
-			small.Model = smallModelSelected.Model
-		}
-		if smallModelSelected.Provider != "" {
-			small.Provider = smallModelSelected.Provider
-		}
-
-		model := cfg.GetModel(small.Provider, small.Model)
-		if model == nil {
-			small = defaultSmall
-			result.SmallFallback = true
-		} else {
-			if smallModelSelected.MaxTokens > 0 {
-				small.MaxTokens = smallModelSelected.MaxTokens
-			} else {
-				small.MaxTokens = model.DefaultMaxTokens
-			}
-			if smallModelSelected.ReasoningEffort != "" {
-				small.ReasoningEffort = smallModelSelected.ReasoningEffort
-			} else {
-				small.ReasoningEffort = model.DefaultReasoningEffort
-			}
-			if smallModelSelected.Temperature != nil {
-				small.Temperature = smallModelSelected.Temperature
-			}
-			if smallModelSelected.TopP != nil {
-				small.TopP = smallModelSelected.TopP
-			}
-			if smallModelSelected.TopK != nil {
-				small.TopK = smallModelSelected.TopK
-			}
-			if smallModelSelected.FrequencyPenalty != nil {
-				small.FrequencyPenalty = smallModelSelected.FrequencyPenalty
-			}
-			if smallModelSelected.PresencePenalty != nil {
-				small.PresencePenalty = smallModelSelected.PresencePenalty
-			}
-			small.Think = smallModelSelected.Think
-		}
+		small, result.SmallFallback = resolveSelectedModel(cfg, defaultSmall, smallModelSelected)
 	}
 
 	// When small isn't explicitly configured and the provider isn't a
@@ -919,13 +862,9 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 	// prevents two different models from being requested concurrently
 	// for local/openai-compat providers.
 	if !smallModelConfigured {
-		isKnownProvider := false
-		for _, kp := range knownProviders {
-			if string(kp.ID) == small.Provider {
-				isKnownProvider = true
-				break
-			}
-		}
+		isKnownProvider := slices.ContainsFunc(knownProviders, func(kp catwalk.Provider) bool {
+			return string(kp.ID) == small.Provider
+		})
 		if !isKnownProvider {
 			slog.Warn("Using large model as small model for unknown provider", "provider", large.Provider, "model", large.Model)
 			small = large
@@ -935,6 +874,32 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 	result.Large = large
 	result.Small = small
 	return result, nil
+}
+
+// resolveSelectedModel lays a configured model selection over the default
+// one for its type, taking any setting the selection leaves unset from the
+// default or the model. It returns the default and fallback true when the
+// selected model isn't one of its provider's models.
+func resolveSelectedModel(cfg *Config, def, selected SelectedModel) (SelectedModel, bool) {
+	resolved := def
+	resolved.Model = cmp.Or(selected.Model, resolved.Model)
+	resolved.Provider = cmp.Or(selected.Provider, resolved.Provider)
+	model := cfg.GetModel(resolved.Provider, resolved.Model)
+	if model == nil {
+		return def, true
+	}
+	resolved.MaxTokens = model.DefaultMaxTokens
+	if selected.MaxTokens > 0 {
+		resolved.MaxTokens = selected.MaxTokens
+	}
+	resolved.ReasoningEffort = cmp.Or(selected.ReasoningEffort, model.DefaultReasoningEffort)
+	resolved.Think = selected.Think
+	resolved.Temperature = cmp.Or(selected.Temperature, resolved.Temperature)
+	resolved.TopP = cmp.Or(selected.TopP, resolved.TopP)
+	resolved.TopK = cmp.Or(selected.TopK, resolved.TopK)
+	resolved.FrequencyPenalty = cmp.Or(selected.FrequencyPenalty, resolved.FrequencyPenalty)
+	resolved.PresencePenalty = cmp.Or(selected.PresencePenalty, resolved.PresencePenalty)
+	return resolved, false
 }
 
 // lookupConfigs searches config files starting at cwd and walking up

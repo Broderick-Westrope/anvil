@@ -37,6 +37,13 @@ Builds the orchestrator and specialist agents, assembles their tools, and routes
 - **Code:** `agent.Coordinator` (`internal/agent/coordinator.go`)
 - **Not:** orchestrator. The coordinator is code that manages agents; the orchestrator is one of the agents.
 
+## Custom Provider
+
+A provider the user defines in `anvil.json` that isn't in the Catwalk catalog, or any configured provider when `disable_default_providers` is set. It needs its own endpoint and models; models can be discovered from its `/models` endpoint.
+
+- **Code:** `prepareCustomProvider`, `discoverCustomProviderModels` (`internal/config/load.go`)
+- **Not:** known provider.
+
 ## Drill-in
 
 A view that opens on top of the chat to show one item in detail: a subagent's session, a tool call, or a message's thinking.
@@ -57,6 +64,15 @@ A long-running shell command moved to the background, with output the agent can 
 
 - **Code:** `internal/shell/background.go`, persisted by `internal/jobstore`
 - **Not:** task. A task is a subagent run.
+
+## Known Provider
+
+A provider from the Catwalk catalog. The user's config for it can override its endpoint, API key and models, and it is used only when it has the credentials its kind needs (an API key, OAuth, AWS or Vertex credentials, or an Azure endpoint).
+
+The `disable_default_providers` option and its error message call known providers "default providers".
+
+- **Code:** `prepareKnownProvider`, `knownProviderCompletions` (`internal/config/load.go`)
+- **Not:** catalog provider, custom provider.
 
 ## Lazy MCP
 
