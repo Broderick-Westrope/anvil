@@ -81,7 +81,9 @@ mixes concerns or grows a branch per feature doesn't. Fix it with a
 different shape (a lookup table, a state machine, a type that owns the
 rules), not by splitting it into single-use helpers. Functions already over
 the limit are listed in `.golangci.yml`; remove an entry when you bring its
-function under the limit, and never add one.
+function under the limit, and never add one. A few upstream-shaped TUI
+functions stay listed on purpose; see
+`docs/adr/0003-ui-complexity.md`.
 
 Terms with a specific meaning in this codebase are defined in
 `GLOSSARY.md`. Hard-to-reverse design decisions are recorded in

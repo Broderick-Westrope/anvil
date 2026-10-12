@@ -108,20 +108,8 @@ linters:
       # Functions over the gocognit limit when it was enabled. Each new
       # function must stay under it. Delete an entry once its function is
       # back under the limit.
-      - path: internal/ui/anim/anim\.go
-        text: 'func `(New)`'
-        linters: [gocognit]
-      - path: internal/ui/chat/docker_mcp\.go
-        text: 'func `(\(\*DockerMCPToolRenderContext\)\.RenderTool)`'
-        linters: [gocognit]
-      - path: internal/ui/chat/todos\.go
-        text: 'func `(\(\*TodosToolRenderContext\)\.RenderTool)`'
-        linters: [gocognit]
       - path: internal/ui/chat/tools\.go
         text: 'func `(\(\*baseToolMessageItem\)\.formatParametersForCopy)`'
-        linters: [gocognit]
-      - path: internal/ui/chat/unified_diff\.go
-        text: 'func `(parseUnifiedDiff)`'
         linters: [gocognit]
       - path: internal/ui/dialog/commands\.go
         text: 'func `(\(\*Commands\)\.defaultCommands|\(\*Commands\)\.HandleMsg)`'
@@ -138,17 +126,31 @@ linters:
       - path: internal/ui/dialog/tree\.go
         text: 'func `(NewTree)`'
         linters: [gocognit]
-      - path: internal/ui/diffview/diffview\.go
-        text: 'func `(\(\*DiffView\)\.renderSplit|\(\*DiffView\)\.renderUnified)`'
-        linters: [gocognit]
-      - path: internal/ui/list/highlight\.go
-        text: 'func `(HighlightBuffer)`'
-        linters: [gocognit]
       - path: internal/ui/model/sidebar\.go
         text: 'func `(\(\*UI\)\.modelInfo)`'
         linters: [gocognit]
       - path: internal/ui/model/ui\.go
         text: 'func `(\(\*UI\)\.appendSessionMessageToChat|\(\*UI\)\.deriveEnabledLazyMCPs|\(\*UI\)\.Draw|\(\*UI\)\.FullHelp|\(\*UI\)\.handleChildSessionMessage|\(\*UI\)\.handleDialogMsg|\(\*UI\)\.handleKeyPressMsg|\(\*UI\)\.loadNestedToolCalls|\(\*UI\)\.update|\(\*UI\)\.updateSessionMessageToChat)`'
+        linters: [gocognit]
+      # Upstream-shaped TUI leaf code that stays over the gocognit limit on
+      # purpose. See docs/adr/0003-ui-complexity.md before changing these.
+      - path: internal/ui/anim/anim\.go
+        text: 'func `(New)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/docker_mcp\.go
+        text: 'func `(\(\*DockerMCPToolRenderContext\)\.RenderTool)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/todos\.go
+        text: 'func `(\(\*TodosToolRenderContext\)\.RenderTool)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/unified_diff\.go
+        text: 'func `(parseUnifiedDiff)`'
+        linters: [gocognit]
+      - path: internal/ui/diffview/diffview\.go
+        text: 'func `(\(\*DiffView\)\.renderSplit|\(\*DiffView\)\.renderUnified)`'
+        linters: [gocognit]
+      - path: internal/ui/list/highlight\.go
+        text: 'func `(HighlightBuffer)`'
         linters: [gocognit]
 issues:
   max-issues-per-linter: 0
