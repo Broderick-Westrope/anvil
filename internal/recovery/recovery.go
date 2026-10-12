@@ -276,19 +276,9 @@ func scan(root string, decode bool, visit func(string, Entry, bool) error) error
 			if !decode {
 				return visit(path, Entry{}, active)
 			}
-			data, err := readRecord(path)
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			if err != nil {
+			entry, err := decodeRecord(path)
+			if err != nil || entry.SessionID == "" {
 				return err
-			}
-			var entry Entry
-			if err := json.Unmarshal(data, &entry); err != nil {
-				return fmt.Errorf("decoding recovery record %s: %w", file.Name(), err)
-			}
-			if entry.SessionID == "" {
-				return nil
 			}
 			return visit(path, entry, active)
 		}()
@@ -302,67 +292,107 @@ func scan(root string, decode bool, visit func(string, Entry, bool) error) error
 	return errors.Join(scanErrors...)
 }
 
+// decodeRecord reads the recovery record at path. A record removed since
+// it was listed decodes to the zero Entry, which has no session.
+func decodeRecord(path string) (Entry, error) {
+	data, err := readRecord(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return Entry{}, nil
+	}
+	if err != nil {
+		return Entry{}, err
+	}
+	var entry Entry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return Entry{}, fmt.Errorf("decoding recovery record %s: %w", filepath.Base(path), err)
+	}
+	return entry, nil
+}
+
 func lockRegistry(root string) (func(), error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return lock.File(ctx, filepath.Join(root, ".registry.lock"))
 }
 
+// sweepArtifacts removes files left by windows that are no longer running:
+// lock files whose record is gone, and temporary files nobody owns.
 func sweepArtifacts(root string) error {
 	files, err := os.ReadDir(root)
 	if err != nil {
 		return err
 	}
-	active := make(map[string]bool)
-	var cleanupErrors []error
+	sweep := artifactSweep{root: root, active: make(map[string]bool)}
 	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".lock") || file.Name() == ".registry.lock" {
-			continue
+		sweep.lockFile(file)
+	}
+	for _, file := range files {
+		sweep.temporaryFile(file)
+	}
+	return errors.Join(sweep.failures...)
+}
+
+// artifactSweep is one pass of [sweepArtifacts]. Every lock file is visited
+// before any temporary file, so active names each owner that may still be
+// running by the time temporary files are judged.
+type artifactSweep struct {
+	root     string
+	active   map[string]bool
+	failures []error
+}
+
+// lockFile removes file when it is a lock nobody holds for a record that is
+// gone, and otherwise records whether its owner may still be running.
+func (sweep *artifactSweep) lockFile(file os.DirEntry) {
+	if file.IsDir() || !strings.HasSuffix(file.Name(), ".lock") || file.Name() == ".registry.lock" {
+		return
+	}
+	owner := strings.TrimSuffix(file.Name(), ".lock")
+	path := filepath.Join(sweep.root, file.Name())
+	release, err := lock.TryFile(path)
+	if errors.Is(err, lock.ErrContended) {
+		sweep.active[owner] = true
+		return
+	}
+	if err != nil {
+		sweep.active[owner] = true
+		sweep.failures = append(sweep.failures, err)
+		return
+	}
+	release()
+	if _, err := os.Stat(filepath.Join(sweep.root, owner+".json")); errors.Is(err, os.ErrNotExist) {
+		if err := removeRecord(path); err != nil {
+			sweep.failures = append(sweep.failures, err)
 		}
-		owner := strings.TrimSuffix(file.Name(), ".lock")
-		path := filepath.Join(root, file.Name())
-		release, err := lock.TryFile(path)
-		if errors.Is(err, lock.ErrContended) {
-			active[owner] = true
-			continue
-		}
+	}
+}
+
+// temporaryFile removes file when it is a temporary record whose owner is
+// not running, or a legacy temporary file over a day old while no window
+// is running.
+func (sweep *artifactSweep) temporaryFile(file os.DirEntry) {
+	if file.IsDir() {
+		return
+	}
+	owner, _, ownedTemp := strings.Cut(file.Name(), ".tmp-")
+	legacy := strings.HasPrefix(file.Name(), ".recovery-")
+	if !ownedTemp && !legacy {
+		return
+	}
+	if ownedTemp && sweep.active[owner] {
+		return
+	}
+	if legacy {
+		info, err := file.Info()
 		if err != nil {
-			active[owner] = true
-			cleanupErrors = append(cleanupErrors, err)
-			continue
+			sweep.failures = append(sweep.failures, err)
+			return
 		}
-		release()
-		if _, err := os.Stat(filepath.Join(root, owner+".json")); errors.Is(err, os.ErrNotExist) {
-			if err := removeRecord(path); err != nil {
-				cleanupErrors = append(cleanupErrors, err)
-			}
+		if len(sweep.active) > 0 || info.ModTime().After(time.Now().Add(-24*time.Hour)) {
+			return
 		}
 	}
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		owner, _, ownedTemp := strings.Cut(file.Name(), ".tmp-")
-		legacy := strings.HasPrefix(file.Name(), ".recovery-")
-		if !ownedTemp && !legacy {
-			continue
-		}
-		if ownedTemp && active[owner] {
-			continue
-		}
-		if legacy {
-			info, err := file.Info()
-			if err != nil {
-				cleanupErrors = append(cleanupErrors, err)
-				continue
-			}
-			if len(active) > 0 || time.Since(info.ModTime()) < 24*time.Hour {
-				continue
-			}
-		}
-		if err := removeRecord(filepath.Join(root, file.Name())); err != nil {
-			cleanupErrors = append(cleanupErrors, err)
-		}
+	if err := removeRecord(filepath.Join(sweep.root, file.Name())); err != nil {
+		sweep.failures = append(sweep.failures, err)
 	}
-	return errors.Join(cleanupErrors...)
 }
