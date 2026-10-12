@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -68,7 +69,14 @@ func TestNew_ConfiguredFailsWhenOrchestratorAgentCannotInit(t *testing.T) {
 	// Windows can't remove the temporary data directory.
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
-	a, err := app.New(t.Context(), conn, store)
+	// New starts background work, such as the memory monitor writing into
+	// the data directory, that a failed New hands back no app to shut down.
+	// A cancelled context stops that work before it touches the temporary
+	// directories this test removes.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	a, err := app.New(ctx, conn, store)
 	require.ErrorContains(t, err, "orchestrator agent configuration is missing")
 	require.Nil(t, a)
 }
