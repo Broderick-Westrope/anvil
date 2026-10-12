@@ -177,15 +177,6 @@ linters:
       - path: internal/mcpauth/authorize\.go
         text: 'func `(Authorize)`'
         linters: [gocognit]
-      - path: internal/message/content\.go
-        text: 'func `(\(\*Message\)\.ToAIMessage)`'
-        linters: [gocognit]
-      - path: internal/message/message\.go
-        text: 'func `(\(\*service\)\.flushOne|unmarshalParts)`'
-        linters: [gocognit]
-      - path: internal/message/tree\.go
-        text: 'func `(FilterBranchPathForContext)`'
-        linters: [gocognit]
       - path: internal/recovery/recovery\.go
         text: 'func `(scan|sweepArtifacts)`'
         linters: [gocognit]

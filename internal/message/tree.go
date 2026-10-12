@@ -1,5 +1,7 @@
 package message
 
+import "slices"
+
 // FilterBranchPathForContext processes a root-to-leaf branch path into
 // the message slice that should be sent to the LLM. It handles
 // compaction boundaries, branch summaries, and filters out metadata
@@ -17,68 +19,46 @@ func FilterBranchPathForContext(path []Message) []Message {
 
 	var result []Message
 
+	// Context is a contiguous tail of the path. Without a compaction it
+	// is the whole path. With one, it starts at the compaction's first
+	// kept entry, or just after the compaction when that entry isn't on
+	// the path before it. FilterMetadataMessage drops the compaction
+	// entries themselves.
+	start := 0
 	if compactionIdx >= 0 {
-		compaction := path[compactionIdx]
-		// Emit the compaction summary as a synthetic user message.
-		var summaryText string
-		for _, part := range compaction.Parts {
+		var compaction CompactionContent
+		for _, part := range path[compactionIdx].Parts {
 			if cc, ok := part.(CompactionContent); ok {
-				summaryText = cc.Summary
+				compaction = cc
 				break
 			}
 		}
-		if summaryText != "" {
+		// Emit the compaction summary as a synthetic user message.
+		if compaction.Summary != "" {
 			result = append(result, Message{
 				Role: User,
 				Parts: []ContentPart{
 					TextContent{
-						Text: "<summary>The conversation history before this point was compacted into the following summary:\n\n" + summaryText + "</summary>",
+						Text: "<summary>The conversation history before this point was compacted into the following summary:\n\n" + compaction.Summary + "</summary>",
 					},
 				},
 			})
 		}
 
-		// Emit "kept" messages: find firstKeptEntryId and emit from
-		// there, plus all messages after the compaction entry.
-		var firstKeptEntryID string
-		for _, part := range compaction.Parts {
-			if cc, ok := part.(CompactionContent); ok {
-				firstKeptEntryID = cc.FirstKeptEntryID
-				break
+		start = compactionIdx
+		if compaction.FirstKeptEntryID != "" {
+			kept := slices.IndexFunc(path[:compactionIdx], func(msg Message) bool {
+				return msg.ID == compaction.FirstKeptEntryID
+			})
+			if kept >= 0 {
+				start = kept
 			}
 		}
+	}
 
-		// Messages between firstKeptEntryId and compaction entry
-		// (inclusive of firstKeptEntryId, exclusive of compaction).
-		if firstKeptEntryID != "" {
-			inKeptRange := false
-			for i, msg := range path {
-				if msg.ID == firstKeptEntryID {
-					inKeptRange = true
-				}
-				if i == compactionIdx {
-					break
-				}
-				if inKeptRange {
-					if filtered := FilterMetadataMessage(msg); filtered != nil {
-						result = append(result, *filtered)
-					}
-				}
-			}
-		}
-
-		// All messages after the compaction entry.
-		for i := compactionIdx + 1; i < len(path); i++ {
-			if filtered := FilterMetadataMessage(path[i]); filtered != nil {
-				result = append(result, *filtered)
-			}
-		}
-	} else {
-		// No compaction — emit all messages, filtering metadata types.
-		for _, msg := range path {
-			if filtered := FilterMetadataMessage(msg); filtered != nil {
-				result = append(result, *filtered)
-			}
+	for _, msg := range path[start:] {
+		if filtered := FilterMetadataMessage(msg); filtered != nil {
+			result = append(result, *filtered)
 		}
 	}
 

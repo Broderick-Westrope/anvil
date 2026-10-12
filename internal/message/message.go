@@ -91,8 +91,8 @@ type pendingState struct {
 	flushing bool
 
 	// timer is the active debounce timer, or nil if no flush is
-	// scheduled. Stopped and reset when a terminal update preempts
-	// the debounce window.
+	// scheduled. beginFlush stops and clears it whenever a flush claims
+	// the buffer, so the next delta schedules a fresh one.
 	timer *time.Timer
 
 	// lastFlushed is the snapshot most recently written to SQL. Used
@@ -103,6 +103,50 @@ type pendingState struct {
 	// ID; until then lastFlushed is the zero value and must not be
 	// treated as a real prior state.
 	hasFlushed bool
+}
+
+// isTerminal reports whether next is a structural change against the
+// last flushed snapshot. See [shouldFlushNow].
+func (p *pendingState) isTerminal(next *Message) bool {
+	var prev *Message
+	if p.hasFlushed {
+		prev = &p.lastFlushed
+	}
+	return shouldFlushNow(prev, next)
+}
+
+// beginFlush claims the buffered snapshot for a SQL write, cancelling
+// any scheduled flush. It reports whether the snapshot is terminal,
+// judged now because that compares against what is on disk before the
+// write. The caller must hold service.mu and finish with endFlush.
+func (p *pendingState) beginFlush() (Message, bool) {
+	if p.timer != nil {
+		p.timer.Stop()
+		p.timer = nil
+	}
+	snap := p.latest
+	terminal := p.isTerminal(&snap)
+	p.flushing = true
+	p.dirty = false
+	return snap, terminal
+}
+
+// endFlush records the outcome of the write of snap started by
+// beginFlush. A failed write stays dirty so the next flush retries it.
+// It reports whether the entry is done and can be pruned: the write
+// landed, the message is finished, and no Update re-dirtied the entry
+// during the write. Unfinished entries are kept as the baseline that
+// stops later deltas from looking structural again. The caller must
+// hold service.mu.
+func (p *pendingState) endFlush(snap Message, err error) bool {
+	p.flushing = false
+	if err != nil {
+		p.dirty = true
+		return false
+	}
+	p.lastFlushed = snap
+	p.hasFlushed = true
+	return snap.IsFinished() && !p.dirty
 }
 
 type service struct {
@@ -284,11 +328,7 @@ func (s *service) Update(ctx context.Context, msg Message) error {
 	p.latest = cloned
 	p.dirty = true
 
-	var prev *Message
-	if p.hasFlushed {
-		prev = &p.lastFlushed
-	}
-	terminal := shouldFlushNow(prev, &cloned)
+	terminal := p.isTerminal(&cloned)
 
 	if terminal {
 		if p.timer != nil {
@@ -384,43 +424,14 @@ func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) erro
 			return nil
 		}
 
-		if p.timer != nil {
-			p.timer.Stop()
-			p.timer = nil
-		}
-		snap := p.latest
-		// Decide whether this snapshot represents a terminal event
-		// against the prior baseline. We must do this before resetting
-		// dirty/flushing because shouldFlushNow looks at p.lastFlushed
-		// (which is what was on disk before this write).
-		var prev *Message
-		if p.hasFlushed {
-			prev = &p.lastFlushed
-		}
-		isTerminal := shouldFlushNow(prev, &snap)
-		p.flushing = true
-		p.dirty = false
+		snap, isTerminal := p.beginFlush()
 		s.mu.Unlock()
 
 		err := s.write(ctx, snap)
 
 		s.mu.Lock()
-		p.flushing = false
-		if err == nil {
-			p.lastFlushed = snap
-			p.hasFlushed = true
-			// Prune terminal entries that are no longer dirty.
-			// A concurrent Update may have re-dirtied the entry during
-			// the SQL write; in that case, leave it for the next flush.
-			if isTerminal && !p.dirty {
-				if p.timer != nil {
-					p.timer.Stop()
-				}
-				delete(s.pending, id)
-			}
-		} else {
-			// Restore dirty so the next caller retries.
-			p.dirty = true
+		if p.endFlush(snap, err) {
+			delete(s.pending, id)
 		}
 		// If a delta arrived during the SQL write and we are a sync
 		// caller, the user expects that delta to land too.
@@ -710,6 +721,31 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 	return json.Marshal(wrappedParts)
 }
 
+// partDecoders decodes the data of each stored part type.
+var partDecoders = map[partType]func(json.RawMessage) (ContentPart, error){
+	reasoningType:           decodePart[ReasoningContent],
+	textType:                decodePart[TextContent],
+	imageURLType:            decodePart[ImageURLContent],
+	binaryType:              decodePart[BinaryContent],
+	toolCallType:            decodePart[ToolCall],
+	toolResultType:          decodePart[ToolResult],
+	finishType:              decodePart[Finish],
+	compactionType:          decodePart[CompactionContent],
+	branchSummaryType:       decodePart[BranchSummaryContent],
+	labelType:               decodePart[LabelContent],
+	modelChangeType:         decodePart[ModelChangeContent],
+	thinkingLevelChangeType: decodePart[ThinkingLevelChangeContent],
+	mcpToggleType:           decodePart[MCPToggleContent],
+}
+
+func decodePart[T ContentPart](data json.RawMessage) (ContentPart, error) {
+	var part T
+	if err := json.Unmarshal(data, &part); err != nil {
+		return nil, err
+	}
+	return part, nil
+}
+
 func unmarshalParts(data []byte) ([]ContentPart, error) {
 	temp := []json.RawMessage{}
 
@@ -729,88 +765,15 @@ func unmarshalParts(data []byte) ([]ContentPart, error) {
 			return nil, err
 		}
 
-		switch wrapper.Type {
-		case reasoningType:
-			part := ReasoningContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case textType:
-			part := TextContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case imageURLType:
-			part := ImageURLContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case binaryType:
-			part := BinaryContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case toolCallType:
-			part := ToolCall{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case toolResultType:
-			part := ToolResult{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case finishType:
-			part := Finish{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case compactionType:
-			part := CompactionContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case branchSummaryType:
-			part := BranchSummaryContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case labelType:
-			part := LabelContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case modelChangeType:
-			part := ModelChangeContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case thinkingLevelChangeType:
-			part := ThinkingLevelChangeContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case mcpToggleType:
-			part := MCPToggleContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		default:
+		decode, ok := partDecoders[wrapper.Type]
+		if !ok {
 			return nil, fmt.Errorf("unknown part type: %s", wrapper.Type)
 		}
+		part, err := decode(wrapper.Data)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
 	}
 
 	return parts, nil
