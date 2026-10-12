@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -115,7 +116,7 @@ func (h *bouncerHarness) assessment(t *testing.T, d Decision) AssessmentRecord {
 
 func testCtx(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), waitTimeout)
 	t.Cleanup(cancel)
 	return ctx
 }
@@ -141,7 +142,7 @@ func waitResult(t *testing.T, ch <-chan asyncResult) asyncResult {
 	select {
 	case r := <-ch:
 		return r
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitTimeout):
 		t.Fatal("request did not return")
 		return asyncResult{}
 	}
@@ -152,7 +153,7 @@ func waitPrompt(t *testing.T, events <-chan pubsub.Event[PermissionRequest]) Per
 	select {
 	case e := <-events:
 		return e.Payload
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitTimeout):
 		t.Fatal("prompt was not published")
 		return PermissionRequest{}
 	}
@@ -163,7 +164,7 @@ func waitEntered(t *testing.T, f *fakeBouncer) AssessInput {
 	select {
 	case in := <-f.entered:
 		return in
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitTimeout):
 		t.Fatal("bouncer was not called")
 		return AssessInput{}
 	}
@@ -181,21 +182,23 @@ func TestBouncerNotCalledWhenOff(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			h := newBouncerHarness(t, tt.fake, tt.mode, nil, nil)
-			done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf build"))
-			perm := waitPrompt(t, h.events)
-			require.Empty(t, perm.BouncerNote)
-			h.svc.Grant(perm)
-			r := waitResult(t, done)
-			require.NoError(t, r.err)
-			require.True(t, r.result.Granted)
-			if tt.fake != nil {
-				require.Zero(t, tt.fake.calls.Load())
-			}
-			decisions := h.rec.snapshot()
-			require.Len(t, decisions, 1)
-			require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
-			require.Empty(t, decisions[0].Assessment)
+			synctest.Test(t, func(t *testing.T) {
+				h := newBouncerHarness(t, tt.fake, tt.mode, nil, nil)
+				done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf build"))
+				perm := waitPrompt(t, h.events)
+				require.Empty(t, perm.BouncerNote)
+				h.svc.Grant(perm)
+				r := waitResult(t, done)
+				require.NoError(t, r.err)
+				require.True(t, r.result.Granted)
+				if tt.fake != nil {
+					require.Zero(t, tt.fake.calls.Load())
+				}
+				decisions := h.rec.snapshot()
+				require.Len(t, decisions, 1)
+				require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
+				require.Empty(t, decisions[0].Assessment)
+			})
 		})
 	}
 }
@@ -272,37 +275,39 @@ func TestBouncerEnforceDenyPrompts(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			fake := &fakeBouncer{outcome: AssessDeny, reason: "destructive=0.95 severity=2.5"}
-			h := newYoloBouncerHarness(t, fake, BouncerEnforce, tt.yolo, nil)
-			done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf /"))
-			perm := waitPrompt(t, h.events)
-			require.NotNil(t, perm.Bouncer)
-			require.Equal(t, "deny", perm.Bouncer.Outcome)
-			require.False(t, perm.Bouncer.Shadow)
-			if tt.grant {
-				h.svc.Grant(perm)
-			} else {
-				h.svc.Deny(perm, tt.reason)
-			}
-			r := waitResult(t, done)
-			require.NoError(t, r.err)
-			require.Equal(t, tt.grant, r.result.Granted)
-			switch {
-			case tt.grant:
-				require.Empty(t, r.result.Reason)
-			case tt.reason != "":
-				require.Equal(t, tt.reason, r.result.Reason)
-			default:
-				require.Contains(t, r.result.Reason, "permission bouncer")
-				require.Contains(t, r.result.Reason, "destructive=0.95")
-			}
-			decisions := h.rec.snapshot()
-			require.Len(t, decisions, 1)
-			require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
-			require.Equal(t, tt.verdict, decisions[0].Verdict)
-			rec := h.assessment(t, decisions[0])
-			require.Equal(t, "enforce", rec.Mode)
-			require.Equal(t, "deny", rec.Outcome)
+			synctest.Test(t, func(t *testing.T) {
+				fake := &fakeBouncer{outcome: AssessDeny, reason: "destructive=0.95 severity=2.5"}
+				h := newYoloBouncerHarness(t, fake, BouncerEnforce, tt.yolo, nil)
+				done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf /"))
+				perm := waitPrompt(t, h.events)
+				require.NotNil(t, perm.Bouncer)
+				require.Equal(t, "deny", perm.Bouncer.Outcome)
+				require.False(t, perm.Bouncer.Shadow)
+				if tt.grant {
+					h.svc.Grant(perm)
+				} else {
+					h.svc.Deny(perm, tt.reason)
+				}
+				r := waitResult(t, done)
+				require.NoError(t, r.err)
+				require.Equal(t, tt.grant, r.result.Granted)
+				switch {
+				case tt.grant:
+					require.Empty(t, r.result.Reason)
+				case tt.reason != "":
+					require.Equal(t, tt.reason, r.result.Reason)
+				default:
+					require.Contains(t, r.result.Reason, "permission bouncer")
+					require.Contains(t, r.result.Reason, "destructive=0.95")
+				}
+				decisions := h.rec.snapshot()
+				require.Len(t, decisions, 1)
+				require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
+				require.Equal(t, tt.verdict, decisions[0].Verdict)
+				rec := h.assessment(t, decisions[0])
+				require.Equal(t, "enforce", rec.Mode)
+				require.Equal(t, "deny", rec.Outcome)
+			})
 		})
 	}
 }
@@ -319,83 +324,94 @@ func TestBouncerEnforceEscalatePrompts(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			h := newBouncerHarness(t, tt.fake, BouncerEnforce, nil, nil)
-			done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
-			perm := waitPrompt(t, h.events)
-			require.Equal(t, tt.note, perm.BouncerNote)
-			h.svc.Deny(perm, "no")
-			r := waitResult(t, done)
-			require.NoError(t, r.err)
-			require.False(t, r.result.Granted)
-			d := h.rec.snapshot()[0]
-			require.Equal(t, DecisionSourceHuman, d.DecidedBy)
-			require.Equal(t, "enforce", h.assessment(t, d).Mode)
+			synctest.Test(t, func(t *testing.T) {
+				h := newBouncerHarness(t, tt.fake, BouncerEnforce, nil, nil)
+				done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
+				perm := waitPrompt(t, h.events)
+				require.Equal(t, tt.note, perm.BouncerNote)
+				h.svc.Deny(perm, "no")
+				r := waitResult(t, done)
+				require.NoError(t, r.err)
+				require.False(t, r.result.Granted)
+				d := h.rec.snapshot()[0]
+				require.Equal(t, DecisionSourceHuman, d.DecidedBy)
+				require.Equal(t, "enforce", h.assessment(t, d).Mode)
+			})
 		})
 	}
 }
 
 func TestBouncerShadowAllowStillPrompts(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{outcome: AssessAllow}
-	h := newBouncerHarness(t, fake, BouncerShadow, nil, nil)
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "go test ./..."))
-	perm := waitPrompt(t, h.events)
-	require.Equal(t, "bouncer (shadow): allow · destructive=0.05 severity=0.3", perm.BouncerNote)
-	h.svc.Grant(perm)
-	r := waitResult(t, done)
-	require.NoError(t, r.err)
-	require.True(t, r.result.Granted)
-	decisions := h.rec.snapshot()
-	require.Len(t, decisions, 1)
-	require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
-	rec := h.assessment(t, decisions[0])
-	require.Equal(t, "shadow", rec.Mode)
-	require.Equal(t, "allow", rec.Outcome)
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBouncer{outcome: AssessAllow}
+		h := newBouncerHarness(t, fake, BouncerShadow, nil, nil)
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "go test ./..."))
+		perm := waitPrompt(t, h.events)
+		require.Equal(t, "bouncer (shadow): allow · destructive=0.05 severity=0.3", perm.BouncerNote)
+		h.svc.Grant(perm)
+		r := waitResult(t, done)
+		require.NoError(t, r.err)
+		require.True(t, r.result.Granted)
+		decisions := h.rec.snapshot()
+		require.Len(t, decisions, 1)
+		require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
+		rec := h.assessment(t, decisions[0])
+		require.Equal(t, "shadow", rec.Mode)
+		require.Equal(t, "allow", rec.Outcome)
+	})
 }
 
 func TestBouncerExplicitAskToHuman(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{outcome: AssessAllow}
-	rules := []config.PermissionRule{{ToolPattern: "bash", Action: config.PermissionAsk}}
-	h := newBouncerHarness(t, nil, "", rules, nil, WithBouncer(BouncerOptions{
-		Bouncer:            fake,
-		Mode:               BouncerEnforce,
-		ExplicitAskToHuman: true,
-	}))
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "ls"))
-	perm := waitPrompt(t, h.events)
-	require.Empty(t, perm.BouncerNote)
-	h.svc.Grant(perm)
-	require.NoError(t, waitResult(t, done).err)
-	require.Zero(t, fake.calls.Load())
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBouncer{outcome: AssessAllow}
+		rules := []config.PermissionRule{{ToolPattern: "bash", Action: config.PermissionAsk}}
+		h := newBouncerHarness(t, nil, "", rules, nil, WithBouncer(BouncerOptions{
+			Bouncer:            fake,
+			Mode:               BouncerEnforce,
+			ExplicitAskToHuman: true,
+		}))
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "ls"))
+		perm := waitPrompt(t, h.events)
+		require.Empty(t, perm.BouncerNote)
+		h.svc.Grant(perm)
+		require.NoError(t, waitResult(t, done).err)
+		require.Zero(t, fake.calls.Load())
+	})
 }
 
 func TestBouncerCommitBoundaryOneHonoursNewDeny(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{
-		outcome: AssessAllow,
-		entered: make(chan AssessInput, 1),
-		release: make(chan struct{}),
-	}
-	dir := t.TempDir()
-	store := config.NewTestStoreWithDataPath(&config.Config{}, filepath.Join(dir, "anvil.json"))
-	h := newBouncerHarness(t, fake, BouncerEnforce, nil, store)
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBouncer{
+			outcome: AssessAllow,
+			entered: make(chan AssessInput, 1),
+			release: make(chan struct{}),
+		}
+		dir := t.TempDir()
+		store := config.NewTestStoreWithDataPath(&config.Config{}, filepath.Join(dir, "anvil.json"))
+		h := newBouncerHarness(t, fake, BouncerEnforce, nil, store)
 
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "git push --force"))
-	waitEntered(t, fake)
-	require.NoError(t, h.svc.GrantForever("bash", "git push *", config.PermissionDeny, config.ScopeGlobal))
-	close(fake.release)
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "git push --force"))
+		waitEntered(t, fake)
+		require.NoError(t, h.svc.GrantForever("bash", "git push *", config.PermissionDeny, config.ScopeGlobal))
+		close(fake.release)
 
-	r := waitResult(t, done)
-	require.NoError(t, r.err)
-	require.False(t, r.result.Granted)
-	require.Equal(t, `denied by rule "bash:git push *"`, r.result.Reason)
-	require.Empty(t, h.events)
-	d := h.rec.snapshot()[0]
-	require.Equal(t, DecisionSourceRule, d.DecidedBy)
-	require.Equal(t, VerdictDeny, d.Verdict)
+		r := waitResult(t, done)
+		require.NoError(t, r.err)
+		require.False(t, r.result.Granted)
+		require.Equal(t, `denied by rule "bash:git push *"`, r.result.Reason)
+		require.Empty(t, h.events)
+		d := h.rec.snapshot()[0]
+		require.Equal(t, DecisionSourceRule, d.DecidedBy)
+		require.Equal(t, VerdictDeny, d.Verdict)
+	})
 }
 
+// TestBouncerCommitBoundaryTwo stays outside a synctest bubble: B waits
+// on requestMu, a sync.Mutex, which never blocks durably, so a hung A
+// would stop fake time and the bounded waits would never fire.
 func TestBouncerCommitBoundaryTwo(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
@@ -429,13 +445,13 @@ func TestBouncerCommitBoundaryTwo(t *testing.T) {
 			h.svc.beforePromptLock = func(o CreatePermissionRequest) { lockWait <- o.ToolCallID }
 
 			a := requestAsync(testCtx(t), h.svc, h.req("a", "make a"))
-			require.Equal(t, "a", <-lockWait)
+			require.Equal(t, "a", recv(t, lockWait))
 			permA := waitPrompt(t, h.events)
 
 			b := requestAsync(testCtx(t), h.svc, h.req("b", "make b"))
 			// B has passed commit boundary 1 and cannot take the lock
 			// until A resolves.
-			require.Equal(t, "b", <-lockWait)
+			require.Equal(t, "b", recv(t, lockWait))
 			require.NoError(t, tt.grant(h))
 			h.drainNotifications()
 			h.svc.Grant(permA)
@@ -466,6 +482,8 @@ func TestBouncerCommitBoundaryTwo(t *testing.T) {
 	}
 }
 
+// TestBouncerCancelWhileWaitingForLock stays outside a synctest bubble
+// for the same reason as TestBouncerCommitBoundaryTwo.
 func TestBouncerCancelWhileWaitingForLock(t *testing.T) {
 	t.Parallel()
 	fake := &fakeBouncer{outcome: AssessEscalate}
@@ -474,12 +492,12 @@ func TestBouncerCancelWhileWaitingForLock(t *testing.T) {
 	h.svc.beforePromptLock = func(o CreatePermissionRequest) { lockWait <- o.ToolCallID }
 
 	a := requestAsync(testCtx(t), h.svc, h.req("a", "make a"))
-	require.Equal(t, "a", <-lockWait)
+	require.Equal(t, "a", recv(t, lockWait))
 	permA := waitPrompt(t, h.events)
 
 	bctx, cancelB := context.WithCancel(testCtx(t))
 	b := requestAsync(bctx, h.svc, h.req("b", "make b"))
-	require.Equal(t, "b", <-lockWait)
+	require.Equal(t, "b", recv(t, lockWait))
 	cancelB()
 	h.svc.Grant(permA)
 
@@ -504,26 +522,28 @@ func TestBouncerCancelWhileWaitingForLock(t *testing.T) {
 
 func TestBouncerRunsConcurrently(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{
-		outcome: AssessAllow,
-		entered: make(chan AssessInput, 2),
-		release: make(chan struct{}),
-	}
-	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBouncer{
+			outcome: AssessAllow,
+			entered: make(chan AssessInput, 2),
+			release: make(chan struct{}),
+		}
+		h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
 
-	first := requestAsync(testCtx(t), h.svc, h.req("a", "make a"))
-	second := requestAsync(testCtx(t), h.svc, h.req("b", "make b"))
-	entered := map[string]bool{}
-	entered[waitEntered(t, fake).Input] = true
-	entered[waitEntered(t, fake).Input] = true
-	require.Equal(t, map[string]bool{"make a": true, "make b": true}, entered)
-	close(fake.release)
+		first := requestAsync(testCtx(t), h.svc, h.req("a", "make a"))
+		second := requestAsync(testCtx(t), h.svc, h.req("b", "make b"))
+		entered := map[string]bool{}
+		entered[waitEntered(t, fake).Input] = true
+		entered[waitEntered(t, fake).Input] = true
+		require.Equal(t, map[string]bool{"make a": true, "make b": true}, entered)
+		close(fake.release)
 
-	for _, ch := range []<-chan asyncResult{first, second} {
-		r := waitResult(t, ch)
-		require.NoError(t, r.err)
-		require.True(t, r.result.Granted)
-	}
+		for _, ch := range []<-chan asyncResult{first, second} {
+			r := waitResult(t, ch)
+			require.NoError(t, r.err)
+			require.True(t, r.result.Granted)
+		}
+	})
 }
 
 func TestBouncerNoteSkipped(t *testing.T) {
@@ -574,15 +594,17 @@ func TestAssessmentSummaryOrdersDrivingAxesFirst(t *testing.T) {
 
 func TestEscalatedPromptCarriesSummary(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{outcome: AssessEscalate}
-	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
-	perm := waitPrompt(t, h.events)
-	require.NotNil(t, perm.Bouncer)
-	require.Equal(t, "escalate", perm.Bouncer.Outcome)
-	require.Equal(t, perm.Bouncer.Note(), perm.BouncerNote)
-	h.svc.Deny(perm, "no")
-	require.NoError(t, waitResult(t, done).err)
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBouncer{outcome: AssessEscalate}
+		h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
+		perm := waitPrompt(t, h.events)
+		require.NotNil(t, perm.Bouncer)
+		require.Equal(t, "escalate", perm.Bouncer.Outcome)
+		require.Equal(t, perm.Bouncer.Note(), perm.BouncerNote)
+		h.svc.Deny(perm, "no")
+		require.NoError(t, waitResult(t, done).err)
+	})
 }
 
 func TestWithAssessmentMode(t *testing.T) {
@@ -598,12 +620,14 @@ func TestWithAssessmentMode(t *testing.T) {
 
 func TestBouncerPanicEscalates(t *testing.T) {
 	t.Parallel()
-	h := newBouncerHarness(t, nil, "", nil, nil, WithBouncer(BouncerOptions{Bouncer: panicBouncer{}, Mode: BouncerEnforce}))
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "ls"))
-	perm := waitPrompt(t, h.events)
-	require.Equal(t, "bouncer: error", perm.BouncerNote)
-	h.svc.Grant(perm)
-	require.NoError(t, waitResult(t, done).err)
+	synctest.Test(t, func(t *testing.T) {
+		h := newBouncerHarness(t, nil, "", nil, nil, WithBouncer(BouncerOptions{Bouncer: panicBouncer{}, Mode: BouncerEnforce}))
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "ls"))
+		perm := waitPrompt(t, h.events)
+		require.Equal(t, "bouncer: error", perm.BouncerNote)
+		h.svc.Grant(perm)
+		require.NoError(t, waitResult(t, done).err)
+	})
 }
 
 type panicBouncer struct{}
@@ -670,14 +694,16 @@ func TestBouncerAllowCacheKeyedOnDiff(t *testing.T) {
 
 func TestBouncerReceivesDiff(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{outcome: AssessAllow, entered: make(chan AssessInput, 1)}
-	h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
-	opts := h.req("call", "/work/main.go")
-	opts.ToolName = "edit"
-	opts.Diff = "-gone\n"
-	_, err := h.svc.Request(testCtx(t), opts)
-	require.NoError(t, err)
-	require.Equal(t, "-gone\n", waitEntered(t, fake).Diff)
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBouncer{outcome: AssessAllow, entered: make(chan AssessInput, 1)}
+		h := newBouncerHarness(t, fake, BouncerEnforce, nil, nil)
+		opts := h.req("call", "/work/main.go")
+		opts.ToolName = "edit"
+		opts.Diff = "-gone\n"
+		_, err := h.svc.Request(testCtx(t), opts)
+		require.NoError(t, err)
+		require.Equal(t, "-gone\n", waitEntered(t, fake).Diff)
+	})
 }
 
 func TestBouncerAllowCacheRechecksPolicy(t *testing.T) {
@@ -711,25 +737,27 @@ func TestBouncerShadowSkipsAllowCache(t *testing.T) {
 	for _, prefilled := range []bool{true, false} {
 		t.Run(fmt.Sprintf("prefilled=%v", prefilled), func(t *testing.T) {
 			t.Parallel()
-			fake := &fakeBouncer{outcome: AssessAllow}
-			h := newBouncerHarness(t, fake, BouncerShadow, nil, nil)
-			opts := h.req("a", "go test ./...")
-			if prefilled {
-				h.svc.allowCache.Load().Set(allowCacheKey(opts), struct{}{})
-			}
+			synctest.Test(t, func(t *testing.T) {
+				fake := &fakeBouncer{outcome: AssessAllow}
+				h := newBouncerHarness(t, fake, BouncerShadow, nil, nil)
+				opts := h.req("a", "go test ./...")
+				if prefilled {
+					h.svc.allowCache.Load().Set(allowCacheKey(opts), struct{}{})
+				}
 
-			for _, id := range []string{"a", "b"} {
-				opts.ToolCallID = id
-				done := requestAsync(testCtx(t), h.svc, opts)
-				perm := waitPrompt(t, h.events)
-				require.Equal(t, "bouncer (shadow): allow · destructive=0.05 severity=0.3", perm.BouncerNote)
-				h.svc.Grant(perm)
-				require.NoError(t, waitResult(t, done).err)
-			}
-			require.Equal(t, int32(2), fake.calls.Load())
-			if !prefilled {
-				require.Zero(t, h.svc.allowCache.Load().Len())
-			}
+				for _, id := range []string{"a", "b"} {
+					opts.ToolCallID = id
+					done := requestAsync(testCtx(t), h.svc, opts)
+					perm := waitPrompt(t, h.events)
+					require.Equal(t, "bouncer (shadow): allow · destructive=0.05 severity=0.3", perm.BouncerNote)
+					h.svc.Grant(perm)
+					require.NoError(t, waitResult(t, done).err)
+				}
+				require.Equal(t, int32(2), fake.calls.Load())
+				if !prefilled {
+					require.Zero(t, h.svc.allowCache.Load().Len())
+				}
+			})
 		})
 	}
 }
@@ -822,30 +850,34 @@ func TestYoloFullBypassesBouncer(t *testing.T) {
 
 func TestNoYoloEscalateStillPrompts(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{outcome: AssessEscalate}
-	h := newYoloBouncerHarness(t, fake, BouncerEnforce, config.YoloOff, nil)
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
-	perm := waitPrompt(t, h.events)
-	h.svc.Grant(perm)
-	r := waitResult(t, done)
-	require.NoError(t, r.err)
-	require.True(t, r.result.Granted)
-	require.Equal(t, DecisionSourceHuman, h.rec.snapshot()[0].DecidedBy)
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBouncer{outcome: AssessEscalate}
+		h := newYoloBouncerHarness(t, fake, BouncerEnforce, config.YoloOff, nil)
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
+		perm := waitPrompt(t, h.events)
+		h.svc.Grant(perm)
+		r := waitResult(t, done)
+		require.NoError(t, r.err)
+		require.True(t, r.result.Granted)
+		require.Equal(t, DecisionSourceHuman, h.rec.snapshot()[0].DecidedBy)
+	})
 }
 
 func TestYoloWithBouncerTurnedOffMidFlight(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{outcome: AssessDeny, entered: make(chan AssessInput, 1), release: make(chan struct{})}
-	h := newYoloBouncerHarness(t, fake, BouncerEnforce, config.YoloStandard, nil)
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf build"))
-	waitEntered(t, fake)
-	h.svc.bouncerMode.Store(BouncerOff)
-	close(fake.release)
-	r := waitResult(t, done)
-	require.NoError(t, r.err)
-	require.True(t, r.result.Granted, "a deny from a now-disabled bouncer must not apply")
-	require.Empty(t, h.events, "yolo must never prompt")
-	require.Equal(t, DecisionSourceYolo, h.rec.snapshot()[0].DecidedBy)
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBouncer{outcome: AssessDeny, entered: make(chan AssessInput, 1), release: make(chan struct{})}
+		h := newYoloBouncerHarness(t, fake, BouncerEnforce, config.YoloStandard, nil)
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf build"))
+		waitEntered(t, fake)
+		h.svc.bouncerMode.Store(BouncerOff)
+		close(fake.release)
+		r := waitResult(t, done)
+		require.NoError(t, r.err)
+		require.True(t, r.result.Granted, "a deny from a now-disabled bouncer must not apply")
+		require.Empty(t, h.events, "yolo must never prompt")
+		require.Equal(t, DecisionSourceYolo, h.rec.snapshot()[0].DecidedBy)
+	})
 }
 
 func TestSetBouncerModeWithoutBouncerIsNoOp(t *testing.T) {
@@ -866,25 +898,27 @@ func TestSetBouncerModeIgnoresUnknownMode(t *testing.T) {
 
 func TestSetBouncerModeEnforceSkipsPrompt(t *testing.T) {
 	t.Parallel()
-	fake := &fakeBouncer{outcome: AssessAllow}
-	h := newBouncerHarness(t, fake, BouncerOff, nil, nil)
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBouncer{outcome: AssessAllow}
+		h := newBouncerHarness(t, fake, BouncerOff, nil, nil)
 
-	done := requestAsync(testCtx(t), h.svc, h.req("call-1", "go build ./..."))
-	perm := waitPrompt(t, h.events)
-	h.svc.Grant(perm)
-	require.NoError(t, waitResult(t, done).err)
-	require.Zero(t, fake.calls.Load())
+		done := requestAsync(testCtx(t), h.svc, h.req("call-1", "go build ./..."))
+		perm := waitPrompt(t, h.events)
+		h.svc.Grant(perm)
+		require.NoError(t, waitResult(t, done).err)
+		require.Zero(t, fake.calls.Load())
 
-	h.svc.SetBouncerMode(BouncerEnforce)
-	require.Equal(t, BouncerEnforce, h.svc.BouncerMode())
-	r, err := h.svc.Request(testCtx(t), h.req("call-2", "go build ./..."))
-	require.NoError(t, err)
-	require.True(t, r.Granted)
-	require.Empty(t, h.events)
-	require.Equal(t, int32(1), fake.calls.Load())
-	decisions := h.rec.snapshot()
-	require.Len(t, decisions, 2)
-	require.Equal(t, DecisionSourceBouncer, decisions[1].DecidedBy)
+		h.svc.SetBouncerMode(BouncerEnforce)
+		require.Equal(t, BouncerEnforce, h.svc.BouncerMode())
+		r, err := h.svc.Request(testCtx(t), h.req("call-2", "go build ./..."))
+		require.NoError(t, err)
+		require.True(t, r.Granted)
+		require.Empty(t, h.events)
+		require.Equal(t, int32(1), fake.calls.Load())
+		decisions := h.rec.snapshot()
+		require.Len(t, decisions, 2)
+		require.Equal(t, DecisionSourceBouncer, decisions[1].DecidedBy)
+	})
 }
 
 func newWarmHarness(t *testing.T, mode BouncerMode) (*permissionService, <-chan struct{}) {
@@ -898,50 +932,58 @@ func newWarmHarness(t *testing.T, mode BouncerMode) (*permissionService, <-chan 
 	return svc, warmed
 }
 
-// waitWarms waits for want warm-ups, then checks no more arrive.
+// waitWarms waits for want warm-ups, then checks no more arrive once
+// the bubble settles. Call it only inside a synctest bubble.
 func waitWarms(t *testing.T, warmed <-chan struct{}, want int) {
 	t.Helper()
 	for i := range want {
 		select {
 		case <-warmed:
-		case <-time.After(10 * time.Second):
+		case <-time.After(waitTimeout):
 			t.Fatalf("warm %d of %d did not run", i+1, want)
 		}
 	}
+	synctest.Wait()
 	select {
 	case <-warmed:
 		t.Fatal("bouncer warmed more than expected")
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 }
 
 func TestSetBouncerModeWarmsOncePerEnable(t *testing.T) {
 	t.Parallel()
-	svc, warmed := newWarmHarness(t, BouncerOff)
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Go(func() { svc.SetBouncerMode(BouncerEnforce) })
-	}
-	wg.Wait()
-	waitWarms(t, warmed, 1)
+	synctest.Test(t, func(t *testing.T) {
+		svc, warmed := newWarmHarness(t, BouncerOff)
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() { svc.SetBouncerMode(BouncerEnforce) })
+		}
+		wait(t, &wg)
+		waitWarms(t, warmed, 1)
+	})
 }
 
 func TestSetBouncerModeOnToOnDoesNotWarm(t *testing.T) {
 	t.Parallel()
-	svc, warmed := newWarmHarness(t, BouncerShadow)
-	svc.SetBouncerMode(BouncerEnforce)
-	require.Equal(t, BouncerEnforce, svc.BouncerMode())
-	waitWarms(t, warmed, 0)
+	synctest.Test(t, func(t *testing.T) {
+		svc, warmed := newWarmHarness(t, BouncerShadow)
+		svc.SetBouncerMode(BouncerEnforce)
+		require.Equal(t, BouncerEnforce, svc.BouncerMode())
+		waitWarms(t, warmed, 0)
+	})
 }
 
 func TestSetBouncerModeReenableWarmsAgain(t *testing.T) {
 	t.Parallel()
-	svc, warmed := newWarmHarness(t, BouncerOff)
-	svc.SetBouncerMode(BouncerEnforce)
-	waitWarms(t, warmed, 1)
-	svc.SetBouncerMode(BouncerOff)
-	svc.SetBouncerMode(BouncerEnforce)
-	waitWarms(t, warmed, 1)
+	synctest.Test(t, func(t *testing.T) {
+		svc, warmed := newWarmHarness(t, BouncerOff)
+		svc.SetBouncerMode(BouncerEnforce)
+		waitWarms(t, warmed, 1)
+		svc.SetBouncerMode(BouncerOff)
+		svc.SetBouncerMode(BouncerEnforce)
+		waitWarms(t, warmed, 1)
+	})
 }
 
 // TestYoloEnabledWhileWaitingForPromptLock covers commit boundary 2: a
@@ -969,17 +1011,19 @@ func TestYoloEnabledWhileWaitingForPromptLock(t *testing.T) {
 // in-flight request prompting. This fails towards more prompting.
 func TestYoloFullEnabledMidFlightStillPrompts(t *testing.T) {
 	t.Parallel()
-	h := newYoloBouncerHarness(t, nil, "", config.YoloOff, nil)
-	h.svc.beforePromptLock = func(CreatePermissionRequest) {
-		h.svc.SetYoloLevel(config.YoloFull)
-	}
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
-	perm := waitPrompt(t, h.events)
-	h.svc.Grant(perm)
-	r := waitResult(t, done)
-	require.NoError(t, r.err)
-	require.True(t, r.result.Granted)
-	require.Equal(t, DecisionSourceHuman, h.rec.snapshot()[0].DecidedBy)
+	synctest.Test(t, func(t *testing.T) {
+		h := newYoloBouncerHarness(t, nil, "", config.YoloOff, nil)
+		h.svc.beforePromptLock = func(CreatePermissionRequest) {
+			h.svc.SetYoloLevel(config.YoloFull)
+		}
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
+		perm := waitPrompt(t, h.events)
+		h.svc.Grant(perm)
+		r := waitResult(t, done)
+		require.NoError(t, r.err)
+		require.True(t, r.result.Granted)
+		require.Equal(t, DecisionSourceHuman, h.rec.snapshot()[0].DecidedBy)
+	})
 }
 
 func TestBouncerCancelledDuringAssessment(t *testing.T) {
@@ -987,31 +1031,33 @@ func TestBouncerCancelledDuringAssessment(t *testing.T) {
 	for _, level := range []config.YoloLevel{config.YoloOff, config.YoloStandard} {
 		t.Run(fmt.Sprint(level), func(t *testing.T) {
 			t.Parallel()
-			fake := &fakeBouncer{outcome: AssessAllow, entered: make(chan AssessInput, 1), release: make(chan struct{})}
-			h := newYoloBouncerHarness(t, fake, BouncerEnforce, level, nil)
-			ctx, cancel := context.WithCancel(testCtx(t))
-			type result struct {
-				r   RequestResult
-				err error
-			}
-			done := make(chan result, 1)
-			go func() {
-				r, err := h.svc.Request(ctx, h.req("call", "go build ./..."))
-				done <- result{r, err}
-			}()
-			<-fake.entered
-			cancel()
+			synctest.Test(t, func(t *testing.T) {
+				fake := &fakeBouncer{outcome: AssessAllow, entered: make(chan AssessInput, 1), release: make(chan struct{})}
+				h := newYoloBouncerHarness(t, fake, BouncerEnforce, level, nil)
+				ctx, cancel := context.WithCancel(testCtx(t))
+				type result struct {
+					r   RequestResult
+					err error
+				}
+				done := make(chan result, 1)
+				go func() {
+					r, err := h.svc.Request(ctx, h.req("call", "go build ./..."))
+					done <- result{r, err}
+				}()
+				waitEntered(t, fake)
+				cancel()
 
-			// Yolo would approve a request the bouncer didn't decide, so
-			// the cancellation must be seen before yolo is consulted.
-			got := <-done
-			require.ErrorIs(t, got.err, context.Canceled)
-			require.False(t, got.r.Granted)
-			require.Empty(t, h.events)
-			decisions := h.rec.snapshot()
-			require.Len(t, decisions, 1)
-			require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
-			require.Equal(t, VerdictCancelled, decisions[0].Verdict)
+				// Yolo would approve a request the bouncer didn't decide, so
+				// the cancellation must be seen before yolo is consulted.
+				got := recv(t, done)
+				require.ErrorIs(t, got.err, context.Canceled)
+				require.False(t, got.r.Granted)
+				require.Empty(t, h.events)
+				decisions := h.rec.snapshot()
+				require.Len(t, decisions, 1)
+				require.Equal(t, DecisionSourceHuman, decisions[0].DecidedBy)
+				require.Equal(t, VerdictCancelled, decisions[0].Verdict)
+			})
 		})
 	}
 }

@@ -27,17 +27,60 @@ echo "Mutating $added_lines changed Go lines since $base."
 
 GOBIN="$run_dir/bin" go install "github.com/go-gremlins/gremlins/cmd/gremlins@${gremlins_version}"
 
-gremlins_status=0
-"$run_dir/bin/gremlins" unleash --config "$config" --diff "$base" --output "$report" . ||
-    gremlins_status=$?
-if [ "$gremlins_status" -ne 0 ]; then
-    echo "gremlins exited with status $gremlins_status." >&2
-    exit "$gremlins_status"
-fi
-if [ ! -s "$report" ]; then
-    echo "gremlins wrote no report; the run was probably interrupted." >&2
-    exit 1
-fi
+# Mutate only the packages the PR changes. A whole-repo run spends minutes
+# gathering coverage for packages with nothing to mutate, and gremlins times
+# each mutant out at a multiple of that coverage time, so hanging mutants
+# get slower too. A directory whose ancestor also changed is covered by the
+# ancestor's run, which scans ./dir/....
+dirs=$(git diff --merge-base "$base" --name-only --diff-filter=d -- '*.go' ':(exclude)*_test.go' |
+    xargs -n1 dirname | sort -u |
+    awk '{ for (i = 1; i <= n; i++) if (index($0 "/", kept[i] "/") == 1 || kept[i] == ".") next; kept[++n] = $0; print }')
+
+repo_root=$(pwd)
+reports=()
+for dir in $dirs; do
+    # Gremlins reads file paths relative to the directory it scans but
+    # takes the changed-line diff from git, which reports paths from the
+    # repo root. Running it inside the directory with diff.relative makes
+    # git report paths the same way.
+    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.relative GIT_CONFIG_VALUE_0=true
+    if [ -z "$(cd "$dir" && git diff --merge-base "$base" --name-only -- '*.go')" ]; then
+        echo "git reported no changes inside $dir, so scoping is broken." >&2
+        exit 1
+    fi
+    unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
+    # Exclusions match paths relative to the scanned directory.
+    prefix=""
+    [ "$dir" = "." ] || prefix="$dir/"
+    db_pattern="^internal/db/(db|models|querier)\.go$"
+    case "internal/db/" in
+    "$prefix"*) db_pattern="^${db_pattern#^"$prefix"}" ;;
+    esac
+
+    out="$run_dir/report-${#reports[@]}.json"
+    echo
+    echo "Mutating changed lines in $dir"
+    gremlins_status=0
+    (cd "$dir" &&
+        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.relative GIT_CONFIG_VALUE_0=true \
+            GOFLAGS=-count=1 \
+            "$run_dir/bin/gremlins" unleash --config "$repo_root/$config" --diff "$base" --output "$out" \
+            --exclude-files '\.sql\.go$' --exclude-files '(^|/)testdata/' --exclude-files "$db_pattern") ||
+        gremlins_status=$?
+    if [ "$gremlins_status" -ne 0 ]; then
+        echo "gremlins exited with status $gremlins_status in $dir." >&2
+        exit "$gremlins_status"
+    fi
+    if [ ! -s "$out" ]; then
+        echo "gremlins wrote no report for $dir; the run was probably interrupted." >&2
+        exit 1
+    fi
+    # Report file names relative to the repo root again.
+    jq --arg prefix "$prefix" '.files |= map(.file_name = $prefix + .file_name)' "$out" >"$out.rooted"
+    reports+=("$out.rooted")
+done
+jq -s '{files: (map(.files // []) | add)}' "${reports[@]}" >"$report"
 
 survivors=$(jq -r '
     .files[]? as $file

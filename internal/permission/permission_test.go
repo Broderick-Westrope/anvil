@@ -79,7 +79,7 @@ func TestSkipRace(t *testing.T) {
 		defer wg.Done()
 		svc.YoloLevel()
 	}()
-	wg.Wait()
+	wait(t, &wg)
 }
 
 func TestPermissionService_YoloStandard(t *testing.T) {
@@ -158,9 +158,9 @@ func TestPermissionService_HookApproval(t *testing.T) {
 		})
 
 		// Confirm the service published a real request (i.e. didn't bypass).
-		event := <-events
+		event := recv(t, events)
 		service.Deny(event.Payload, "")
-		wg.Wait()
+		wait(t, &wg)
 		require.NoError(t, err)
 		assert.False(t, granted.Granted, "stamped approval must not apply to a different tool call")
 	})
@@ -182,7 +182,7 @@ func TestPermissionService_HookApproval(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, granted.Granted)
 
-		event := <-notifications
+		event := recv(t, notifications)
 		assert.Equal(t, "call-99", event.Payload.ToolCallID)
 		assert.True(t, event.Payload.Granted, "subscribers should see a granted notification")
 	})
@@ -210,11 +210,11 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 		})
 
 		var permissionReq PermissionRequest
-		event := <-events
+		event := recv(t, events)
 		permissionReq = event.Payload
 
 		service.Grant(permissionReq)
-		wg.Wait()
+		wait(t, &wg)
 		assert.True(t, result1.Granted, "First request should be granted")
 
 		var result2 RequestResult
@@ -223,10 +223,10 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 			result2, _ = service.Request(t.Context(), req)
 		})
 
-		event = <-events
+		event = recv(t, events)
 		permissionReq = event.Payload
 		service.Deny(permissionReq, "")
-		wg.Wait()
+		wait(t, &wg)
 		assert.False(t, result2.Granted, "Second request should be denied")
 	})
 	t.Run("Concurrent requests with different outcomes", func(t *testing.T) {
@@ -271,7 +271,7 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 		}
 
 		for range 3 {
-			event := <-events
+			event := recv(t, events)
 			switch event.Payload.ToolName {
 			case "tool1":
 				service.Grant(event.Payload)
@@ -281,7 +281,7 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 				service.Deny(event.Payload, "")
 			}
 		}
-		wg.Wait()
+		wait(t, &wg)
 		grantedCount := 0
 		for _, result := range results {
 			if result.Granted {
@@ -333,9 +333,9 @@ func TestRevokeAutoApproveSession(t *testing.T) {
 			})
 		})
 
-		event := <-events
+		event := recv(t, events)
 		service.Deny(event.Payload, "")
-		wg.Wait()
+		wait(t, &wg)
 
 		require.NoError(t, reqErr)
 		require.False(t, result.Granted, "revoked session should no longer be auto-approved")
@@ -417,9 +417,9 @@ func TestGrantOnce_DoesNotAffectSubsequentRequests(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	event := <-events
+	event := recv(t, events)
 	service.Grant(event.Payload)
-	wg.Wait()
+	wait(t, &wg)
 	require.True(t, result1.Granted, "first request should be granted")
 
 	// Second identical request should NOT be auto-approved.
@@ -437,9 +437,9 @@ func TestGrantOnce_DoesNotAffectSubsequentRequests(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	event = <-events
+	event = recv(t, events)
 	service.Deny(event.Payload, "")
-	wg.Wait()
+	wait(t, &wg)
 	require.False(t, result2.Granted, "grant once should not affect subsequent requests")
 }
 
@@ -513,11 +513,11 @@ func TestPermissionService_InputSegments(t *testing.T) {
 		})
 
 		// The request must block and publish a pending prompt.
-		event := <-events
+		event := recv(t, events)
 		require.Equal(t, []string{"git status", "rm -rf /"}, event.Payload.InputSegments)
 
 		service.Deny(event.Payload, "")
-		wg.Wait()
+		wait(t, &wg)
 		require.False(t, result.Granted, "denied prompt should not grant")
 	})
 }
@@ -663,7 +663,7 @@ func TestPendingRequest(t *testing.T) {
 				require.NoError(t, err)
 			})
 
-			event := <-events
+			event := recv(t, events)
 			pending, ok := service.PendingRequest()
 			require.True(t, ok)
 			require.Equal(t, PendingPermission{
@@ -676,7 +676,7 @@ func TestPendingRequest(t *testing.T) {
 			_, ok = service.PendingRequest()
 			require.False(t, ok, "nothing is pending once the request is resolved")
 
-			wg.Wait()
+			wait(t, &wg)
 			require.Equal(t, tt.granted, result.Granted)
 		})
 	}
@@ -717,5 +717,5 @@ func TestPendingRequestConcurrentWithReview(t *testing.T) {
 	h.svc.Grant(update)
 	require.NoError(t, waitResult(t, done).err)
 	close(stop)
-	wg.Wait()
+	wait(t, &wg)
 }
