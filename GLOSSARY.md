@@ -102,6 +102,13 @@ A conversation between the user and an agent, stored with its message tree, usag
 - **Code:** `session.Session` (`internal/session`)
 - **Not:** chat, thread, conversation.
 
+## Side Call
+
+A model request made beside a session's turns: a summary, a session title, or a one-shot small-model completion such as a bouncer review. Its request is framed like a turn's, through the same `frameMessages`, and its step usage is recorded, but it has no tools.
+
+- **Code:** `sideCall` (`internal/agent/side_call.go`); request framing in `frameMessages` (`internal/agent/anthropic_oauth.go`)
+- **Not:** turn, sub-agent run. A sub-agent runs full turns in a child session.
+
 ## Skill
 
 Knowledge or a procedure in a `SKILL.md` file that an agent loads into its conversation when needed. An **unlisted** skill (`unlisted: true`) is left out of the agent's catalog and loads only when something names it.
@@ -121,6 +128,13 @@ An agent defined in a plugin's agent `.md` file, with its own model, tools and p
 One recorded model response with its normalised token counts, price and request fingerprints, used to study prompt caching.
 
 - **Code:** `step_usage` table, `internal/agent/cacheusage`
+
+## Tool Access
+
+Which tools an agent may use: built-in tools by its `allowed_tools` filter and the global `disabled_tools` list, MCP tools and lazy MCPs by its `allowed_mcp` map. The job tools come with bash.
+
+- **Code:** `toolAccess` (`internal/agent/tool_access.go`)
+- **Not:** permissions. Tool access decides which tools the model sees; the permission service decides whether one call may run.
 
 ## Workspace
 

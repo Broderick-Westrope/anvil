@@ -766,3 +766,39 @@ func TestRunLogsOnlyRealProblems(t *testing.T) {
 		})
 	}
 }
+
+func TestRunSendsBinaryAttachmentsAsFiles(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	sess := newTestSession(t, env)
+	model := &recordingModel{respond: func(int) ([]fantasy.StreamPart, error) {
+		return textReply("done", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 1}), nil
+	}}
+	a := turnAgent(env, model, "system", 200_000)
+	m := a.largeModel.Get()
+	m.CatwalkCfg.SupportsImages = true
+	a.largeModel.Set(m)
+
+	_, err := a.Run(t.Context(), SessionAgentCall{
+		SessionID: sess.ID,
+		Prompt:    "look",
+		Attachments: []message.Attachment{
+			{FileName: "notes.txt", MimeType: "text/plain", Content: []byte("text attachment")},
+			{FileName: "shot.png", MimeType: "image/png", Content: []byte("png bytes")},
+		},
+		NonInteractive: true,
+	})
+	require.NoError(t, err)
+
+	calls := model.recorded()
+	require.Len(t, calls, 1)
+	last := calls[0].Prompt[len(calls[0].Prompt)-1]
+	var files []fantasy.FilePart
+	for _, part := range last.Content {
+		if file, ok := fantasy.AsMessagePart[fantasy.FilePart](part); ok {
+			files = append(files, file)
+		}
+	}
+	require.Equal(t, []fantasy.FilePart{{Filename: "shot.png", Data: []byte("png bytes"), MediaType: "image/png"}}, files)
+	require.Contains(t, textOf(last), "text attachment")
+}

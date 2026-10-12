@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"regexp"
 	"slices"
@@ -361,7 +360,8 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		}
 	}()
 
-	history, files := a.preparePrompt(msgs, t.largeModel.CatwalkCfg.SupportsImages, call.Attachments...)
+	history := a.preparePrompt(msgs, t.largeModel.CatwalkCfg.SupportsImages)
+	files := attachmentFiles(call.Attachments)
 
 	// prevTurn is the history of the session's last recorded turn step
 	// before this run; the turn updates it after each step.
@@ -570,15 +570,13 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		a.summarizing.Set(sessionID, owner)
 		defer a.summarizing.CompareAndDelete(sessionID, owner)
 	}
-	// Copy mutable fields under lock to avoid races with SetModels.
-	largeModel := a.largeModel.Get()
-	systemPromptPrefix := a.systemPromptPrefix.Get()
-	providerCfg := a.providerConfig.Get()
-
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
+	// Copy mutable fields under lock to avoid races with SetModels.
+	largeModel := a.largeModel.Get()
+	call := a.newSideCall(usageKindSummary, sessionID, currentSession.ParentSessionID, largeModel)
 	msgs, rawPath, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return err
@@ -588,7 +586,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		return nil
 	}
 
-	aiMsgs, _ := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages)
+	aiMsgs := a.preparePrompt(msgs, largeModel.CatwalkCfg.SupportsImages)
 
 	genCtx := ctx
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
@@ -627,70 +625,18 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		return err
 	}
 
-	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
-
-	runID := uuid.NewString()
-	var capture *stepCapture
-	onRetry, onStreamFinish := a.captureCallbacks(&capture)
-
-	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
-		Prompt:          summaryPromptText,
-		Messages:        aiMsgs,
-		Headers:         sessionHeaders(sessionID),
-		ProviderOptions: opts,
-		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = options.Messages
-			if systemPromptPrefix != "" {
-				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(systemPromptPrefix)}, prepared.Messages...)
-			}
-			if isAnthropicOAuth(providerCfg) {
-				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
-			}
-			if a.usageRecorder != nil {
-				capture = a.newCapture(usageKindSummary, runID, sessionID, currentSession.ParentSessionID, largeModel, nil, prepared.Messages)
-				capture.stepIndex = options.StepNumber
-				capture.messageID = compactionMsg.ID
-			}
-			return callContext, prepared, nil
-		},
-		OnRetry:        onRetry,
-		OnStreamFinish: onStreamFinish,
-		OnReasoningDelta: func(id string, text string) error {
-			compactionMsg.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, compactionMsg)
-		},
-		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
-			// Handle anthropic signature.
-			if anthropicData, ok := reasoning.ProviderMetadata["anthropic"]; ok {
-				if signature, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok && signature.Signature != "" {
-					compactionMsg.AppendReasoningSignature(signature.Signature)
-				}
-			}
-			compactionMsg.FinishThinking()
-			return a.messages.Update(genCtx, compactionMsg)
-		},
-		OnTextDelta: func(id, text string) error {
-			compactionMsg.AppendContent(text)
-			return a.messages.Update(genCtx, compactionMsg)
-		},
-	})
+	call.messageID = compactionMsg.ID
+	streamCall := call.streamCall(buildSummaryPrompt(currentSession.Todos))
+	streamCall.Messages = aiMsgs
+	streamCall.Headers = sessionHeaders(sessionID)
+	streamCall.ProviderOptions = opts
+	run := &summaryRun{a: a, sessionID: sessionID, genCtx: genCtx, persistCtx: persistCtx, msg: &compactionMsg}
+	streamCall.OnReasoningDelta = run.onReasoningDelta
+	streamCall.OnReasoningEnd = run.onReasoningEnd
+	streamCall.OnTextDelta = run.onTextDelta
+	resp, err := agent.Stream(genCtx, streamCall)
 	if err != nil {
-		var providerErr *fantasy.ProviderError
-		if errors.Is(err, context.Canceled) || genCtx.Err() != nil ||
-			(errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized) {
-			if moveErr := a.sessions.MoveLeaf(persistCtx, sessionID, compactionMsg.ParentMessageID); moveErr != nil {
-				return fmt.Errorf("restoring summary parent: %w", moveErr)
-			}
-			if deleteErr := a.messages.Delete(persistCtx, compactionMsg.ID); deleteErr != nil {
-				return fmt.Errorf("deleting summary placeholder: %w", deleteErr)
-			}
-			return err
-		}
-		compactionMsg.AddFinish(message.FinishReasonError, "Summarization Error", err.Error())
-		if updateErr := a.messages.Update(persistCtx, compactionMsg); updateErr != nil {
-			return updateErr
-		}
-		return err
+		return run.recordFailure(err)
 	}
 
 	// Populate the CompactionContent part with the generated summary.
@@ -715,19 +661,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		return err
 	}
 
-	var openrouterCost *float64
-	for _, step := range resp.Steps {
-		stepCost := a.openrouterCost(step.ProviderMetadata)
-		if stepCost != nil {
-			newCost := *stepCost
-			if openrouterCost != nil {
-				newCost += *openrouterCost
-			}
-			openrouterCost = &newCost
-		}
-	}
-
-	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, openrouterCost, false)
+	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
 
 	// Update session usage. The leaf already points to the compaction
 	// message (advanced atomically by Create() above).
@@ -805,7 +739,7 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	return msg, nil
 }
 
-func (a *sessionAgent) preparePrompt(msgs []message.Message, supportsImages bool, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
+func (a *sessionAgent) preparePrompt(msgs []message.Message, supportsImages bool) []fantasy.Message {
 	var history []fantasy.Message
 	if !a.isSubAgent {
 		history = append(history, fantasy.NewUserMessage(
@@ -836,36 +770,39 @@ If not, please feel free to ignore. Again do not mention this message to the use
 	}
 
 	for _, m := range msgs {
-		if len(m.Parts) == 0 {
+		// Skip empty messages, and assistant messages without content or
+		// tool calls (cancelled before they returned anything).
+		if len(m.Parts) == 0 || (m.Role == message.Assistant && len(m.ToolCalls()) == 0 && m.Content().Text == "" && m.ReasoningContent().String() == "") {
 			continue
 		}
-		// Assistant message without content or tool calls (cancelled before it returned anything).
-		if m.Role == message.Assistant && len(m.ToolCalls()) == 0 && m.Content().Text == "" && m.ReasoningContent().String() == "" {
-			continue
-		}
-		if m.Role == message.Tool {
+		switch m.Role {
+		case message.Tool:
 			if msg, ok := filterOrphanedToolResults(m, knownToolCallIDs); ok {
 				history = append(history, msg)
 			}
-			continue
-		}
-		aiMsgs := m.ToAIMessage()
-		if !supportsImages {
-			for i := range aiMsgs {
-				if aiMsgs[i].Role == fantasy.MessageRoleUser {
-					aiMsgs[i].Content = filterFileParts(aiMsgs[i].Content)
-				}
-			}
-		}
-		history = append(history, aiMsgs...)
-
-		if m.Role == message.Assistant {
+		case message.Assistant:
+			history = append(history, m.ToAIMessage()...)
 			if msg, ok := syntheticToolResultsForOrphanedCalls(m, knownToolResultIDs); ok {
 				history = append(history, msg)
 			}
+		default:
+			history = append(history, m.ToAIMessage()...)
 		}
 	}
 
+	if !supportsImages {
+		for i := range history {
+			if history[i].Role == fantasy.MessageRoleUser {
+				history[i].Content = filterFileParts(history[i].Content)
+			}
+		}
+	}
+	return history
+}
+
+// attachmentFiles returns the binary attachments as file parts. Text
+// attachments are sent in the prompt text instead.
+func attachmentFiles(attachments []message.Attachment) []fantasy.FilePart {
 	var files []fantasy.FilePart
 	for _, attachment := range attachments {
 		if attachment.IsText() {
@@ -877,8 +814,7 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			MediaType: attachment.MimeType,
 		})
 	}
-
-	return history, files
+	return files
 }
 
 // filterFileParts removes fantasy.FilePart entries from a slice of message
@@ -1028,9 +964,6 @@ func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string)
 	if small.Model == nil {
 		return "", "", errors.New("small model not configured")
 	}
-	systemPromptPrefix := a.systemPromptPrefix.Get()
-	providerCfg := a.providerConfig.Get()
-
 	tok := int64(completeSmallMaxTokens)
 	if small.CatwalkCfg.CanReason {
 		tok = max(tok, small.CatwalkCfg.DefaultMaxTokens)
@@ -1040,31 +973,9 @@ func (a *sessionAgent) completeSmall(ctx context.Context, system, prompt string)
 		fantasy.WithMaxOutputTokens(tok),
 		fantasy.WithUserAgent(userAgent),
 	)
-	runID := uuid.NewString()
-	var capture *stepCapture
-	onRetry, onStreamFinish := a.captureCallbacks(&capture)
-	resp, err := agent.Stream(ctx, fantasy.AgentStreamCall{
-		Prompt: prompt,
-		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = opts.Messages
-			if systemPromptPrefix != "" {
-				prepared.Messages = append([]fantasy.Message{
-					fantasy.NewSystemMessage(systemPromptPrefix),
-				}, prepared.Messages...)
-			}
-			if isAnthropicOAuth(providerCfg) {
-				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
-			}
-			if a.usageRecorder != nil {
-				capture = a.newCapture(usageKindSmall, runID, "", "", small, nil, prepared.Messages)
-				capture.agent = bouncerReviewerAgentName
-				capture.stepIndex = opts.StepNumber
-			}
-			return callCtx, prepared, nil
-		},
-		OnRetry:        onRetry,
-		OnStreamFinish: onStreamFinish,
-	})
+	call := a.newSideCall(usageKindSmall, "", "", small)
+	call.agentName = bouncerReviewerAgentName
+	resp, err := agent.Stream(ctx, call.streamCall(prompt))
 	if err != nil {
 		return "", small.ModelCfg.Model, fmt.Errorf("small model: %w", err)
 	}
@@ -1094,8 +1005,10 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 
 	smallModel := a.smallModel.Get()
 	largeModel := a.largeModel.Get()
-	systemPromptPrefix := a.systemPromptPrefix.Get()
-	providerCfg := a.providerConfig.Get()
+	// The fallback loop below sets the call's attempt and model before each
+	// attempt so every attempt that reports usage is recorded against the
+	// model that made it.
+	call := a.newSideCall(usageKindTitle, sessionID, "", Model{})
 
 	newAgent := func(m fantasy.LanguageModel, p []byte, tok int64) fantasy.Agent {
 		return fantasy.NewAgent(m,
@@ -1105,37 +1018,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 		)
 	}
 
-	// The fallback loop below sets attemptIndex and attemptModel before
-	// each attempt so every attempt that reports usage is recorded against
-	// the model that made it.
-	runID := uuid.NewString()
-	var capture *stepCapture
-	var attemptIndex int
-	var attemptModel Model
-	onRetry, onStreamFinish := a.captureCallbacks(&capture)
-
-	streamCall := fantasy.AgentStreamCall{
-		Prompt: fmt.Sprintf("Generate a concise title for the following conversation:\n\n%s\n <think>\n\n</think>", conversationText),
-		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = opts.Messages
-			if systemPromptPrefix != "" {
-				prepared.Messages = append([]fantasy.Message{
-					fantasy.NewSystemMessage(systemPromptPrefix),
-				}, prepared.Messages...)
-			}
-			if isAnthropicOAuth(providerCfg) {
-				prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
-			}
-			if a.usageRecorder != nil {
-				capture = a.newCapture(usageKindTitle, runID, sessionID, "", attemptModel, nil, prepared.Messages)
-				capture.attempt = attemptIndex
-				capture.stepIndex = opts.StepNumber
-			}
-			return callCtx, prepared, nil
-		},
-		OnRetry:        onRetry,
-		OnStreamFinish: onStreamFinish,
-	}
+	streamCall := call.streamCall(fmt.Sprintf("Generate a concise title for the following conversation:\n\n%s\n <think>\n\n</think>", conversationText))
 
 	type modelAttempt struct {
 		name  string
@@ -1151,7 +1034,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 	var model Model
 	var success bool
 	for i, attempt := range attempts {
-		attemptIndex, attemptModel = i, attempt.model
+		call.attempt, call.model = i, attempt.model
 		tok := int64(40)
 		if attempt.model.CatwalkCfg.CanReason {
 			tok = attempt.model.CatwalkCfg.DefaultMaxTokens
@@ -1187,34 +1070,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 	title = cmp.Or(title, DefaultSessionName)
 
 	// Calculate usage and cost.
-	var openrouterCost *float64
-	for _, step := range resp.Steps {
-		stepCost := a.openrouterCost(step.ProviderMetadata)
-		if stepCost != nil {
-			newCost := *stepCost
-			if openrouterCost != nil {
-				newCost += *openrouterCost
-			}
-			openrouterCost = &newCost
-		}
-	}
-
-	modelConfig := model.CatwalkCfg
-	cost := modelConfig.CostPer1MInCached/1e6*float64(resp.TotalUsage.CacheCreationTokens) +
-		modelConfig.CostPer1MOutCached/1e6*float64(resp.TotalUsage.CacheReadTokens) +
-		modelConfig.CostPer1MIn/1e6*float64(resp.TotalUsage.InputTokens) +
-		modelConfig.CostPer1MOut/1e6*float64(resp.TotalUsage.OutputTokens)
-
-	// Use override cost if available (e.g., from OpenRouter).
-	if openrouterCost != nil {
-		cost = *openrouterCost
-	}
-
-	// Skip cost accumulation
-	if model.FlatRate {
-		cost = 0
-	}
-
+	cost := usageCost(model, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
 	promptTokens := resp.TotalUsage.InputTokens + resp.TotalUsage.CacheCreationTokens
 	completionTokens := resp.TotalUsage.OutputTokens
 
@@ -1241,32 +1097,45 @@ func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float6
 	return &opts.Usage.Cost
 }
 
+// openrouterRunCost sums the cost OpenRouter reported for each step of a
+// run, or returns nil when it reported none.
+func (a *sessionAgent) openrouterRunCost(steps []fantasy.StepResult) *float64 {
+	var total *float64
+	for _, step := range steps {
+		if stepCost := a.openrouterCost(step.ProviderMetadata); stepCost != nil {
+			sum := *stepCost
+			if total != nil {
+				sum += *total
+			}
+			total = &sum
+		}
+	}
+	return total
+}
+
+// usageCost prices usage at the model's catwalk rates. An override cost
+// (e.g. from OpenRouter) replaces the rates, and flat-rate models and
+// estimated usage cost nothing.
+func usageCost(model Model, usage fantasy.Usage, overrideCost *float64, estimated bool) float64 {
+	if estimated || model.FlatRate {
+		return 0
+	}
+	if overrideCost != nil {
+		return *overrideCost
+	}
+	modelConfig := model.CatwalkCfg
+	return modelConfig.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
+		modelConfig.CostPer1MOutCached/1e6*float64(usage.CacheReadTokens) +
+		modelConfig.CostPer1MIn/1e6*float64(usage.InputTokens) +
+		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
+}
+
 func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) {
 	if !usageIsZero(usage) {
 		session.EstimatedUsage = estimated
 	}
 
-	modelConfig := model.CatwalkCfg
-	cost := modelConfig.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
-		modelConfig.CostPer1MOutCached/1e6*float64(usage.CacheReadTokens) +
-		modelConfig.CostPer1MIn/1e6*float64(usage.InputTokens) +
-		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
-
-	if estimated {
-		cost = 0
-	} else {
-		// Use override cost if available (e.g., from OpenRouter).
-		if overrideCost != nil {
-			cost = *overrideCost
-		}
-
-		// Skip cost accumulation
-		if model.FlatRate {
-			cost = 0
-		}
-	}
-
-	session.Cost += cost
+	session.Cost += usageCost(model, usage, overrideCost, estimated)
 	updateSessionTokenCounters(session, usage)
 }
 

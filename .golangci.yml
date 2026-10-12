@@ -108,21 +108,6 @@ linters:
       # Functions over the gocognit limit when it was enabled. Each new
       # function must stay under it. Delete an entry once its function is
       # back under the limit.
-      - path: internal/agent/agent\.go
-        text: 'func `(\(\*sessionAgent\)\.generateTitle|\(\*sessionAgent\)\.preparePrompt|\(\*sessionAgent\)\.summarizeOwned)`'
-        linters: [gocognit]
-      - path: internal/agent/agentic_fetch_tool\.go
-        text: 'func `(\(\*coordinator\)\.agenticFetchTool)`'
-        linters: [gocognit]
-      - path: internal/agent/coordinator\.go
-        text: 'func `(\(\*coordinator\)\.buildToolsWithState|getProviderOptions)`'
-        linters: [gocognit]
-      - path: internal/agent/lazy_mcp\.go
-        text: 'func `(deriveLazyMCPState)`'
-        linters: [gocognit]
-      - path: internal/agent/task_tool\.go
-        text: 'func `(\(\*coordinator\)\.taskTool)`'
-        linters: [gocognit]
       - path: internal/agent/tools/anvil_info\.go
         text: 'func `(writeLSP|writeMCP)`'
         linters: [gocognit]

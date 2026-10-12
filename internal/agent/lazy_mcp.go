@@ -26,16 +26,18 @@ import (
 //
 // The last event per server wins, respecting chronological order.
 func deriveLazyMCPState(messages []message.Message) map[string]bool {
-	// Collect all events in order and build a result index in a single pass.
-	type event struct {
-		serverName string
-		callID     string // Non-empty for enable_mcp ToolCalls.
-		enabled    bool   // For MCPToggleContent: the toggle value.
-		isToggle   bool   // True for MCPToggleContent events.
-	}
-	var events []event
+	// Index the results first: an enable_mcp call's result comes after it.
 	resultOK := make(map[string]bool) // callID → true if result exists and not error.
+	for _, msg := range messages {
+		for _, tr := range msg.ToolResults() {
+			resultOK[tr.ToolCallID] = !tr.IsError
+		}
+	}
 
+	// Apply events in order. enable_mcp calls are resolved against the
+	// result index; a missing or errored result leaves the state as it
+	// was. MCPToggleContent entries apply directly.
+	enabled := make(map[string]bool)
 	for _, msg := range messages {
 		for _, part := range msg.Parts {
 			switch p := part.(type) {
@@ -48,63 +50,15 @@ func deriveLazyMCPState(messages []message.Message) map[string]bool {
 					slog.Debug("Failed to parse enable_mcp input", "error", err, "input", p.Input)
 					continue
 				}
-				if params.ServerName != "" && p.ID != "" {
-					events = append(events, event{serverName: params.ServerName, callID: p.ID})
-				}
-			case message.ToolResult:
-				if p.ToolCallID != "" {
-					resultOK[p.ToolCallID] = !p.IsError
+				if params.ServerName != "" && p.ID != "" && resultOK[p.ID] {
+					enabled[params.ServerName] = true
 				}
 			case message.MCPToggleContent:
-				events = append(events, event{
-					serverName: p.ServerName,
-					enabled:    p.Enabled,
-					isToggle:   true,
-				})
+				enabled[p.ServerName] = p.Enabled
 			}
 		}
 	}
-
-	// Apply events in order. enable_mcp calls are resolved against
-	// the result index; MCPToggleContent entries apply directly.
-	enabled := make(map[string]bool)
-	for _, e := range events {
-		if e.isToggle {
-			enabled[e.serverName] = e.enabled
-		} else {
-			ok, found := resultOK[e.callID]
-			if found && ok {
-				enabled[e.serverName] = true
-			}
-			// Missing result or IsError: do not mark enabled.
-		}
-	}
-
 	return enabled
-}
-
-// filterAllowedLazyMCPs applies the agent's AllowedMCP restrictions to the
-// set of lazy MCPs discovered from config. The rules are:
-//   - allowedMCP == nil → no restrictions, keep all lazy MCPs
-//   - len(allowedMCP) == 0 → remove all lazy MCPs
-//   - otherwise → keep only lazy MCPs whose name is a key in allowedMCP
-func filterAllowedLazyMCPs(lazyMCPs map[string]string, allowedMCP map[string][]string) map[string]string {
-	if allowedMCP == nil {
-		return lazyMCPs
-	}
-	if len(allowedMCP) == 0 {
-		return nil
-	}
-	filtered := make(map[string]string, len(lazyMCPs))
-	for name, desc := range lazyMCPs {
-		if _, ok := allowedMCP[name]; ok {
-			filtered[name] = desc
-		}
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return filtered
 }
 
 // filterLazyMCPTools returns a subset of agentTools that excludes tools

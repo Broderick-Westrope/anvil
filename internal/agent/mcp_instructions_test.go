@@ -17,8 +17,9 @@ import (
 // connectMCPServers starts an HTTP MCP server per entry of instructions
 // and connects each under its name. Servers in lazy are configured as
 // lazy. The servers are registered in the mcp package's global state, so
-// callers must not run in parallel.
-func connectMCPServers(t *testing.T, instructions map[string]string, lazy ...string) {
+// callers must not run in parallel. It returns the config the servers
+// are registered in.
+func connectMCPServers(t *testing.T, instructions map[string]string, lazy ...string) *config.ConfigStore {
 	t.Helper()
 	t.Setenv("ANVIL_GLOBAL_CONFIG", t.TempDir())
 	t.Setenv("ANVIL_GLOBAL_DATA", t.TempDir())
@@ -49,6 +50,7 @@ func connectMCPServers(t *testing.T, instructions map[string]string, lazy ...str
 			mcp.DeleteStateForTest(name)
 		})
 	}
+	return cfg
 }
 
 func TestMCPInstructions(t *testing.T) {

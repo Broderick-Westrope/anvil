@@ -214,14 +214,7 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 
 	prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, t.largeModel)
 	t.addCacheControl(prepared.Messages)
-
-	if t.promptPrefix != "" {
-		prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(t.promptPrefix)}, prepared.Messages...)
-	}
-
-	if isAnthropicOAuth(t.providerCfg) {
-		prepared.Messages = transformForAnthropicOAuth(prepared.Messages)
-	}
+	prepared.Messages = frameMessages(t.promptPrefix, t.providerCfg, prepared.Messages)
 
 	t.mu.Lock()
 	t.stepMessages = cloneFantasyMessages(prepared.Messages)
