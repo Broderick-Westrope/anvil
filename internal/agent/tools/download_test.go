@@ -103,7 +103,7 @@ func TestDownloadTool_DownloadsFile(t *testing.T) {
 	require.Equal(t, server.URL, perms.lastRequest.Input)
 }
 
-func TestDownloadTool_PermissionRequestKnownBug(t *testing.T) {
+func TestDownloadTool_PermissionRequestCarriesToolCallID(t *testing.T) {
 	t.Parallel()
 	server := newFetchServer(t, serveBody("", "abc"))
 	tool, perms := newDownloadToolForTest(t, t.TempDir(), server.Client())
@@ -111,9 +111,7 @@ func TestDownloadTool_PermissionRequestKnownBug(t *testing.T) {
 	_, err := runDownloadTool(t, tool, sessionCtx(), DownloadParams{URL: server.URL, FilePath: "out.bin"})
 
 	require.NoError(t, err)
-	// BUG: the request has no ToolCallID, so a PreToolUse hook's "allow"
-	// never pre-approves a download (hookApproved needs the ID).
-	require.Empty(t, perms.lastRequest.ToolCallID)
+	require.Equal(t, "test-call", perms.lastRequest.ToolCallID)
 }
 
 func TestDownloadTool_OmitsMissingContentType(t *testing.T) {

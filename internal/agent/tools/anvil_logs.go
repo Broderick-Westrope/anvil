@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -42,6 +43,9 @@ func anvilLogsDescription() string {
 
 // Max line size to prevent memory issues with very long log lines (1 MB).
 const maxLogLineSize = 1024 * 1024
+
+// readLastLines reads the file backwards in chunks of this many bytes.
+const logChunkSize = 8192
 
 // Default and max line limits.
 const (
@@ -144,13 +148,14 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 
 	// Seek to end and read chunks backwards.
 	var entries []map[string]any
-	const chunkSize = 8192 // 8KB chunks
 
 	pos := stat.Size()
-	var remainder []byte
+	// carry holds the start of a line that began in an earlier chunk, which
+	// the next iteration reads.
+	var carry []byte
 
 	for pos > 0 && len(entries) < n {
-		chunkStart := max(pos-chunkSize, 0)
+		chunkStart := max(pos-logChunkSize, 0)
 
 		chunkLen := int(pos - chunkStart)
 		if chunkLen == 0 {
@@ -168,21 +173,17 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 			return nil, err
 		}
 
-		// Combine with remainder from previous (earlier) chunk.
-		data := append(chunk, remainder...)
+		// Complete the line carried over from the later chunk.
+		data := append(chunk, carry...)
 
-		// Split into lines (without the final incomplete line if any).
-		lines := splitLines(data)
-
-		// Keep the incomplete line for next iteration.
-		if len(data) > 0 && data[len(data)-1] != '\n' {
-			remainder = lines[len(lines)-1]
-			lines = lines[:len(lines)-1]
-		} else {
-			remainder = nil
+		// Unless this chunk starts the file, its first line may have begun
+		// in the earlier chunk, so carry it into the next iteration.
+		if chunkStart > 0 {
+			carry, data, _ = bytes.Cut(data, []byte{'\n'})
 		}
 
 		// Parse lines from end to start to get most recent first.
+		lines := splitLines(data)
 		for i := len(lines) - 1; i >= 0; i-- {
 			entry, ok := parseLogLine(lines[i])
 			if !ok {
@@ -196,11 +197,6 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 		}
 
 		pos = chunkStart
-	}
-
-	// Handle final remainder.
-	if entry, ok := parseLogLine(remainder); ok && len(entries) < n {
-		entries = append(entries, entry)
 	}
 
 	// Reverse to get chronological order (oldest first).

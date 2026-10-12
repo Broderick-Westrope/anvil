@@ -235,8 +235,9 @@ func HasPrefix(path, prefix string) bool {
 	if err != nil {
 		return false
 	}
-	// If path is within prefix, Rel will not return a path starting with ".."
-	return !strings.HasPrefix(rel, "..")
+	// If path is within prefix, Rel will not return ".." or a path starting
+	// with "../". A name like "..foo" is still inside.
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // ToUnixLineEndings converts Windows line endings (CRLF) to Unix line endings (LF).
