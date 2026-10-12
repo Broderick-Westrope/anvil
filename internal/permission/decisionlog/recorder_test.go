@@ -27,7 +27,7 @@ func TestRecorderFlushAndPrune(t *testing.T) {
 	t.Parallel()
 	q := testQueries(t)
 	r := New(q)
-	t.Cleanup(func() { require.NoError(t, r.Close(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, r.Close(testCtx(t))) })
 	assessment, err := json.Marshal(permission.AssessmentRecord{SchemaVersion: permission.AssessmentSchemaVersion, Mode: "shadow", Outcome: "escalate"})
 	require.NoError(t, err)
 	decisions := []permission.Decision{
@@ -38,9 +38,9 @@ func TestRecorderFlushAndPrune(t *testing.T) {
 	for _, d := range decisions {
 		r.Record(d)
 	}
-	require.NoError(t, r.Close(t.Context()))
+	require.NoError(t, r.Close(testCtx(t)))
 	r.Record(permission.Decision{ToolName: "after-close"})
-	require.NoError(t, r.Close(t.Context()))
+	require.NoError(t, r.Close(testCtx(t)))
 	rows, err := q.ListPermissionDecisionsSince(t.Context(), 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 3)
@@ -93,7 +93,7 @@ func TestRecorderFullDoesNotBlock(t *testing.T) {
 	go func() { r.Record(permission.Decision{ToolName: "dropped"}); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(waitTimeout):
 		t.Fatal("Record blocked on a full buffer")
 	}
 	require.Len(t, r.ch, bufferSize)
@@ -122,10 +122,10 @@ func TestRecorderConcurrentClose(t *testing.T) {
 	var release sync.Once
 	t.Cleanup(func() {
 		release.Do(func() { close(blocked.release) })
-		require.NoError(t, r.Close(context.Background()))
+		require.NoError(t, r.Close(testCtx(t)))
 	})
 	r.Record(permission.Decision{ToolCallID: "first", ToolName: "bash"})
-	<-blocked.started
+	recv(t, blocked.started)
 	start := make(chan struct{})
 	var ready, writers sync.WaitGroup
 	ready.Add(8)
@@ -139,22 +139,22 @@ func TestRecorderConcurrentClose(t *testing.T) {
 			}
 		})
 	}
-	ready.Wait()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	wait(t, &ready)
+	ctx, cancel := context.WithTimeout(t.Context(), waitTimeout)
 	defer cancel()
 	closed := make(chan error, 1)
 	go func() { <-start; closed <- r.Close(ctx) }()
 	close(start)
-	writers.Wait()
+	wait(t, &writers)
 	require.Eventually(t, func() bool {
 		r.mu.RLock()
 		defer r.mu.RUnlock()
 		return r.closed
-	}, time.Second, time.Millisecond)
+	}, waitTimeout, time.Millisecond)
 	accepted := len(r.ch) + 1
 	require.GreaterOrEqual(t, accepted, 9)
 	release.Do(func() { close(blocked.release) })
-	require.NoError(t, <-closed)
+	require.NoError(t, recv(t, closed))
 	r.Record(permission.Decision{ToolCallID: "after-close"})
 	rows, err := q.ListPermissionDecisionsSince(t.Context(), 0)
 	require.NoError(t, err)
@@ -179,14 +179,14 @@ func TestRecorderCloseCancelled(t *testing.T) {
 	require.ErrorIs(t, r.Close(ctx), context.Canceled)
 	r.Record(permission.Decision{})
 	close(r.done)
-	require.NoError(t, r.Close(t.Context()))
+	require.NoError(t, r.Close(testCtx(t)))
 }
 
 func TestRecorderHumanApproval(t *testing.T) {
 	t.Parallel()
 	q := testQueries(t)
 	r := New(q)
-	t.Cleanup(func() { require.NoError(t, r.Close(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, r.Close(testCtx(t))) })
 	svc := permission.NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, permission.WithDecisionRecorder(r))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -200,10 +200,10 @@ func TestRecorderHumanApproval(t *testing.T) {
 		}
 	})
 	result, err := svc.Request(ctx, permission.CreatePermissionRequest{SessionID: "session", ToolCallID: "call", ToolName: "bash", Input: "git status"})
-	wg.Wait()
+	wait(t, &wg)
 	require.NoError(t, err)
 	require.True(t, result.Granted)
-	require.NoError(t, r.Close(t.Context()))
+	require.NoError(t, r.Close(testCtx(t)))
 	rows, err := q.ListPermissionDecisionsSince(t.Context(), 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
