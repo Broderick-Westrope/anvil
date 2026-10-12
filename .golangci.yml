@@ -108,45 +108,6 @@ linters:
       # Functions over the gocognit limit when it was enabled. Each new
       # function must stay under it. Delete an entry once its function is
       # back under the limit.
-      - path: internal/agent/tools/anvil_info\.go
-        text: 'func `(writeLSP|writeMCP)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/anvil_logs\.go
-        text: 'func `(readLastLines)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/bash\.go
-        text: 'func `(newBashTool)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/download\.go
-        text: 'func `(NewDownloadTool)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/fetch\.go
-        text: 'func `(NewFetchTool)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/grep\.go
-        text: 'func `(NewGrepTool)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/job_output\.go
-        text: 'func `(NewJobOutputTool)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/lsp_call_hierarchy\.go
-        text: 'func `(NewCallHierarchyTool)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/lsp_rename\.go
-        text: 'func `(NewRenameTool)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/search\.go
-        text: 'func `(parseLiteSearchResults)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/todos\.go
-        text: 'func `(NewTodosTool)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/view\.go
-        text: 'func `(runPathMode)`'
-        linters: [gocognit]
-      - path: internal/agent/tools/write\.go
-        text: 'func `(NewWriteTool)`'
-        linters: [gocognit]
       - path: internal/app/app\.go
         text: 'func `(\(\*App\)\.RunNonInteractive)`'
         linters: [gocognit]

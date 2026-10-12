@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
@@ -45,14 +46,9 @@ func NewJobKillTool(opts JobToolOptions) fantasy.AgentTool {
 
 			bgShell, ok := bgManager.Get(params.ShellID)
 			if !ok {
-				rec, found, err := lookupArchivedJob(ctx, opts.Archive, params.ShellID)
-				if err != nil {
-					return fantasy.NewTextErrorResponse(err.Error()), nil
-				}
-				if !found {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
-				}
-				return killArchivedJob(opts.Archive, rec, params.ShellID), nil
+				return serveArchivedJob(ctx, opts.Archive, params.ShellID, func(rec jobstore.Record) fantasy.ToolResponse {
+					return killArchivedJob(opts.Archive, rec, params.ShellID)
+				}), nil
 			}
 
 			metadata := JobKillResponseMetadata{

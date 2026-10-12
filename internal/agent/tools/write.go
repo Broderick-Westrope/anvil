@@ -46,6 +46,7 @@ func NewWriteTool(
 	tracker filetracker.Service,
 	workingDir string,
 ) fantasy.AgentTool {
+	gate := writeGate{permissions: permissions, tracker: tracker, workingDir: workingDir}
 	return fantasy.NewAgentTool(
 		WriteToolName,
 		writeDescription,
@@ -75,46 +76,9 @@ func NewWriteTool(
 					return fantasy.ToolResponse{}, fmt.Errorf("error reading file: %w", readErr)
 				}
 
-				diskHash := filetracker.HashContent(diskBytes)
-				if tracker.LastContentHash(ctx, sessionID, filePath) != diskHash {
-					// The gate error embeds file content, which is
-					// equivalent to a view. For files outside the working
-					// directory, require the same read permission the view
-					// tool does before returning content.
-					outside, outsideErr := isOutsideWorkingDir(filePath, workingDir)
-					if outsideErr != nil {
-						return fantasy.ToolResponse{}, outsideErr
-					}
-					if outside {
-						// Request this as a view/read permission: granular
-						// permission rules for the view tool apply, and the
-						// dialog renders as a read request rather than a
-						// write with an empty diff.
-						granted, permErr := permissions.Request(ctx,
-							permission.CreatePermissionRequest{
-								SessionID:   sessionID,
-								Path:        filePath,
-								ToolCallID:  call.ID,
-								ToolName:    ViewToolName,
-								Action:      "read",
-								Description: fmt.Sprintf("Read file outside working directory to include in write-gate error: %s", filePath),
-								Params:      ViewPermissionsParams{FilePath: filePath},
-								Input:       filePath,
-							},
-						)
-						if permErr != nil {
-							return fantasy.ToolResponse{}, permErr
-						}
-						if !granted.Granted {
-							return fantasy.NewTextErrorResponse(writeGateErrorWithoutContent(filePath)), nil
-						}
-					}
-
-					// Record the disk hash so the failed call itself
-					// counts as a read: an immediate retry passes the
-					// gate.
-					tracker.RecordReadWithHash(ctx, sessionID, filePath, diskHash)
-					return fantasy.NewTextErrorResponse(writeGateError(filePath, diskBytes)), nil
+				resp, passed, err := gate.check(ctx, call.ID, sessionID, filePath, diskBytes)
+				if !passed {
+					return resp, err
 				}
 
 				oldContent = string(diskBytes)
@@ -193,6 +157,60 @@ func NewWriteTool(
 		})
 }
 
+// writeGate refuses to overwrite a file unless the session has seen its
+// current content. A refusal shows the model that content, so the refused
+// call counts as a read and an immediate retry passes.
+type writeGate struct {
+	permissions permission.Service
+	tracker     filetracker.Service
+	workingDir  string
+}
+
+// check reports whether the write may go ahead. When it may not, the
+// caller returns the response and error as they are.
+func (g writeGate) check(ctx context.Context, callID, sessionID, filePath string, diskBytes []byte) (fantasy.ToolResponse, bool, error) {
+	diskHash := filetracker.HashContent(diskBytes)
+	if g.tracker.LastContentHash(ctx, sessionID, filePath) == diskHash {
+		return fantasy.ToolResponse{}, true, nil
+	}
+
+	// The gate error embeds file content, which is equivalent to a view.
+	// For files outside the working directory, require the same read
+	// permission the view tool does before returning content.
+	outside, err := isOutsideWorkingDir(filePath, g.workingDir)
+	if err != nil {
+		return fantasy.ToolResponse{}, false, err
+	}
+	if outside {
+		// Request this as a view/read permission: granular permission
+		// rules for the view tool apply, and the dialog renders as a read
+		// request rather than a write with an empty diff.
+		granted, err := g.permissions.Request(ctx,
+			permission.CreatePermissionRequest{
+				SessionID:   sessionID,
+				Path:        filePath,
+				ToolCallID:  callID,
+				ToolName:    ViewToolName,
+				Action:      "read",
+				Description: fmt.Sprintf("Read file outside working directory to include in write-gate error: %s", filePath),
+				Params:      ViewPermissionsParams{FilePath: filePath},
+				Input:       filePath,
+			},
+		)
+		if err != nil {
+			return fantasy.ToolResponse{}, false, err
+		}
+		if !granted.Granted {
+			return fantasy.NewTextErrorResponse(writeGateErrorWithoutContent(filePath)), false, nil
+		}
+	}
+
+	// Record the disk hash so the failed call itself counts as a read: an
+	// immediate retry passes the gate.
+	g.tracker.RecordReadWithHash(ctx, sessionID, filePath, diskHash)
+	return fantasy.NewTextErrorResponse(writeGateError(filePath, diskBytes)), false, nil
+}
+
 // isOutsideWorkingDir reports whether filePath resolves outside workingDir.
 func isOutsideWorkingDir(filePath, workingDir string) (bool, error) {
 	absWorkingDir, err := filepath.Abs(workingDir)
@@ -205,8 +223,7 @@ func isOutsideWorkingDir(filePath, workingDir string) (bool, error) {
 		return false, fmt.Errorf("error resolving file path: %w", err)
 	}
 
-	relPath, err := filepath.Rel(absWorkingDir, absFilePath)
-	return err != nil || strings.HasPrefix(relPath, ".."), nil
+	return !fsext.HasPrefix(absFilePath, absWorkingDir), nil
 }
 
 // writeGateErrorWithoutContent builds the gate error used when read

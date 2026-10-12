@@ -60,9 +60,9 @@ A user-defined shell command in `anvil.json` that runs before a tool call and ca
 
 ## Job
 
-A long-running shell command moved to the background, with output the agent can read later.
+A long-running shell command moved to the background, with output the agent can read later. Its **origin** says how it got there: **explicit** when the agent asked for `run_in_background`, **auto** when a foreground command was still running at its auto-background threshold.
 
-- **Code:** `internal/shell/background.go`, persisted by `internal/jobstore`
+- **Code:** `internal/shell/background.go`, persisted by `internal/jobstore`; origins are `shell.JobOrigin`
 - **Not:** task. A task is a subagent run.
 
 ## Known Provider
@@ -142,3 +142,10 @@ The set of operations a frontend (the TUI or the CLI) performs against a running
 
 - **Code:** `workspace.Workspace` (`internal/workspace`), implemented by `AppWorkspace`
 - **Not:** working directory, project.
+
+## Write Gate
+
+The write tool's refusal to overwrite a file whose current content the session hasn't seen, either because it was never read or because it changed on disk since. The refusal shows the model the current content, so it counts as a read and an immediate retry goes through.
+
+- **Code:** `writeGate` (`internal/agent/tools/write.go`), backed by content hashes in `filetracker.Service`
+- **Not:** permission check. The gate runs before the write permission request.

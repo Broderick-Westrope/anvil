@@ -46,22 +46,9 @@ func NewRenameTool(
 				return fantasy.NewTextErrorResponse("new_name is required"), nil
 			}
 
-			var resolved *resolvedSymbol
-			if params.FilePath != "" {
-				var errResp *fantasy.ToolResponse
-				resolved, errResp = resolveSymbolInFile(ctx, lspManager, params.Symbol, params.FilePath)
-				if errResp != nil {
-					return *errResp, nil
-				}
-			} else {
-				candidates, err := resolveSymbolCandidates(ctx, lspManager, params.Symbol, workingDir)
-				if err != nil {
-					return fantasy.NewTextResponse(fmt.Sprintf("Symbol '%s' not found", params.Symbol)), nil
-				}
-				if len(candidates) > 1 {
-					return fantasy.NewTextErrorResponse(formatRenameCandidates(params.Symbol, candidates)), nil
-				}
-				resolved = candidates[0]
+			resolved, errResp := resolveRenameTarget(ctx, lspManager, params, workingDir)
+			if errResp != nil {
+				return *errResp, nil
 			}
 
 			edit, err := resolved.client.Rename(ctx, resolved.path, resolved.line, resolved.char, params.NewName)
@@ -77,19 +64,9 @@ func NewRenameTool(
 			}
 
 			sessionID := GetSessionFromContext(ctx)
-			if sessionID != "" && permissions != nil {
-				granted, err := permissions.Request(ctx, permission.CreatePermissionRequest{
-					SessionID:   sessionID,
-					ToolName:    RenameToolName,
-					Description: fmt.Sprintf("Rename '%s' to '%s'", params.Symbol, params.NewName),
-					Input:       resolved.path,
-				})
-				if err != nil {
-					return fantasy.ToolResponse{}, fmt.Errorf("permission request failed: %w", err)
-				}
-				if !granted.Granted {
-					return NewPermissionDeniedResponse(granted.Reason), nil
-				}
+			denied, granted, err := requestRenamePermission(ctx, permissions, sessionID, params, resolved.path)
+			if !granted {
+				return denied, err
 			}
 
 			affectedFiles := collectAffectedFiles(edit)
@@ -115,6 +92,45 @@ func NewRenameTool(
 			return fantasy.NewTextResponse(text), nil
 		},
 	)
+}
+
+// resolveRenameTarget resolves the symbol to rename: in params.FilePath
+// when given, otherwise anywhere under workingDir as long as only one file
+// matches. It returns a non-nil response when resolution fails.
+func resolveRenameTarget(ctx context.Context, lspManager *lsp.Manager, params RenameParams, workingDir string) (*resolvedSymbol, *fantasy.ToolResponse) {
+	if params.FilePath != "" {
+		return resolveSymbolInFile(ctx, lspManager, params.Symbol, params.FilePath)
+	}
+	candidates, err := resolveSymbolCandidates(ctx, lspManager, params.Symbol, workingDir)
+	if err != nil {
+		resp := fantasy.NewTextResponse(fmt.Sprintf("Symbol '%s' not found", params.Symbol))
+		return nil, &resp
+	}
+	if len(candidates) > 1 {
+		resp := fantasy.NewTextErrorResponse(formatRenameCandidates(params.Symbol, candidates))
+		return nil, &resp
+	}
+	return candidates[0], nil
+}
+
+// requestRenamePermission asks to rename the symbol at path. Without a
+// session or a permission service there is nobody to ask, so the rename
+// goes ahead. Like [requestPermission], the caller returns the response
+// and error as they are unless granted.
+func requestRenamePermission(ctx context.Context, permissions permission.Service, sessionID string, params RenameParams, path string) (fantasy.ToolResponse, bool, error) {
+	if sessionID == "" || permissions == nil {
+		return fantasy.ToolResponse{}, true, nil
+	}
+	denied, granted, err := requestPermission(ctx, permissions, permission.CreatePermissionRequest{
+		SessionID:   sessionID,
+		ToolName:    RenameToolName,
+		Description: fmt.Sprintf("Rename '%s' to '%s'", params.Symbol, params.NewName),
+		Input:       path,
+	})
+	if err != nil {
+		return denied, false, fmt.Errorf("permission request failed: %w", err)
+	}
+	return denied, granted, nil
 }
 
 // resolveSymbolInFile resolves a symbol within a single file via LSP

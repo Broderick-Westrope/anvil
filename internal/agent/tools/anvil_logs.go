@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -183,15 +184,8 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 
 		// Parse lines from end to start to get most recent first.
 		for i := len(lines) - 1; i >= 0; i-- {
-			if len(lines[i]) > maxLogLineSize {
-				// Skip oversized lines silently.
-				continue
-			}
-
-			// Try to parse as JSON.
-			var entry map[string]any
-			if err := json.Unmarshal(lines[i], &entry); err != nil {
-				// Skip malformed lines silently.
+			entry, ok := parseLogLine(lines[i])
+			if !ok {
 				continue
 			}
 
@@ -205,21 +199,28 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 	}
 
 	// Handle final remainder.
-	if len(remainder) > 0 && len(remainder) <= maxLogLineSize {
-		var entry map[string]any
-		if err := json.Unmarshal(remainder, &entry); err == nil {
-			if len(entries) < n {
-				entries = append(entries, entry)
-			}
-		}
+	if entry, ok := parseLogLine(remainder); ok && len(entries) < n {
+		entries = append(entries, entry)
 	}
 
 	// Reverse to get chronological order (oldest first).
-	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
-		entries[i], entries[j] = entries[j], entries[i]
-	}
+	slices.Reverse(entries)
 
 	return entries, nil
+}
+
+// parseLogLine parses one JSON log line. It reports false for oversized
+// and malformed lines, which the reader skips silently.
+func parseLogLine(line []byte) (map[string]any, bool) {
+	if len(line) > maxLogLineSize {
+		return nil, false
+	}
+	var entry map[string]any
+	err := json.Unmarshal(line, &entry)
+	if err != nil {
+		return nil, false
+	}
+	return entry, true
 }
 
 // splitLines splits data into lines without allocating strings.

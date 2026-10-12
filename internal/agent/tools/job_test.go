@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1185,4 +1186,85 @@ func TestJobKillTool_ArchivedRemoteRefused(t *testing.T) {
 	require.Equal(t, "Running:", lines[0])
 	require.Contains(t, lines[1], id+"  running  ")
 	require.Contains(t, lines[1], "(other Anvil process)  explicit  npm run dev")
+}
+
+// failingJobArchive fails every lookup.
+type failingJobArchive struct{ err error }
+
+func (a failingJobArchive) Get(context.Context, string) (jobstore.Record, bool, error) {
+	return jobstore.Record{}, false, a.err
+}
+
+func (a failingJobArchive) ListBySession(context.Context, string) ([]jobstore.Record, error) {
+	return nil, a.err
+}
+
+func (a failingJobArchive) ReadLog(string) ([]byte, []byte, error) { return nil, nil, a.err }
+
+func TestJobOutputTool_RejectsBeforeLookingUpJob(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := sessionContext(t)
+	tests := map[string]struct {
+		params JobOutputParams
+		want   string
+	}{
+		"missing shell id": {
+			params: JobOutputParams{Pattern: "("},
+			want:   "missing shell_id",
+		},
+		"pattern with full": {
+			params: JobOutputParams{ShellID: "unknown-job", Full: true, Pattern: "("},
+			want:   "pattern cannot be combined with full=true",
+		},
+		"invalid regex": {
+			params: JobOutputParams{ShellID: "unknown-job", Pattern: "("},
+			want:   "invalid pattern: error parsing regexp: missing closing ): `(`",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool := NewJobOutputTool(JobToolOptions{Archive: failingJobArchive{err: errors.New("unreachable")}})
+
+			resp := runJobTool(t, tool, ctx, tc.params)
+
+			require.True(t, resp.IsError)
+			require.Equal(t, tc.want, resp.Content)
+		})
+	}
+}
+
+func TestJobOutputTool_UnknownJob(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := sessionContext(t)
+	archive, _, _ := newTestArchive(t)
+	tests := map[string]struct {
+		archive JobArchive
+		want    string
+	}{
+		"archive lookup fails": {
+			archive: failingJobArchive{err: errors.New("db closed")},
+			want:    "looking up job unknown-job: db closed",
+		},
+		"not in the archive": {
+			archive: archive,
+			want:    "background shell not found: unknown-job",
+		},
+		"no archive": {
+			want: "background shell not found: unknown-job",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool := NewJobOutputTool(JobToolOptions{Archive: tc.archive})
+
+			resp := runJobTool(t, tool, ctx, JobOutputParams{ShellID: "unknown-job", Pattern: "x"})
+
+			require.True(t, resp.IsError)
+			require.Equal(t, tc.want, resp.Content)
+		})
+	}
 }
