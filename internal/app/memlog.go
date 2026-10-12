@@ -208,6 +208,51 @@ func memoryRSS(ctx context.Context) (uint64, error) {
 	return kilobytes * 1024, nil
 }
 
+// memoryMonitor turns each memory sample into diagnostics: it persists
+// the sample, captures profiles when the capture policy asks, and logs a
+// status line at most once a minute unless memory is high or events
+// were dropped.
+type memoryMonitor struct {
+	recorder    *memoryRecorder
+	policy      memoryCapturePolicy
+	previous    memorySample
+	lastLog     time.Time
+	writeFailed bool // Repeated write failures are logged once.
+}
+
+func (monitor *memoryMonitor) tick(sample memorySample) {
+	previous := monitor.previous
+	if !previous.Time.IsZero() {
+		sample.AllocBytesSecond = uint64(float64(sample.TotalAlloc-previous.TotalAlloc) / sample.Time.Sub(previous.Time).Seconds())
+	}
+	if err := monitor.recorder.record(sample); err != nil {
+		if !monitor.writeFailed {
+			slog.Error("Failed to persist memory diagnostics", "error", err, "path", monitor.recorder.dir)
+		}
+		monitor.writeFailed = true
+	} else {
+		monitor.writeFailed = false
+	}
+	if slot := monitor.policy.next(sample); slot != "" {
+		if err := monitor.recorder.capture(slot, sample); err != nil {
+			slog.Error("Failed to capture memory profiles", "error", err, "path", monitor.recorder.dir, "slot", slot)
+		} else {
+			slog.Info("Memory profiles captured", "path", monitor.recorder.dir, "slot", slot, "pid", sample.PID)
+		}
+	}
+	if sample.Time.Sub(monitor.lastLog) >= time.Minute || max(sample.RSS, sample.GoResident) >= memoryCaptureFloor || sample.EventDrops != previous.EventDrops || sample.MustDeliverDrops != previous.MustDeliverDrops {
+		slog.Info("Memory status", "pid", sample.PID, "rss_mb", sample.RSS>>20,
+			"heap_alloc_mb", sample.HeapAlloc>>20, "go_managed_resident_mb", sample.GoResident>>20,
+			"heap_sys_mb", sample.HeapSys>>20, "heap_released_mb", sample.HeapReleased>>20,
+			"num_gc", sample.NumGC, "gc_cpu_pct", int(sample.GCCPUFraction*100),
+			"total_alloc_mb", sample.TotalAlloc>>20, "alloc_mb_per_second", sample.AllocBytesSecond>>20,
+			"goroutines", sample.Goroutines, "event_drops", sample.EventDrops,
+			"event_must_deliver_drops", sample.MustDeliverDrops)
+		monitor.lastLog = sample.Time
+	}
+	monitor.previous = sample
+}
+
 func (app *App) startMemoryMonitor(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -231,10 +276,7 @@ func (app *App) startMemoryMonitor(ctx context.Context) {
 		slog.Info("Memory diagnostics enabled", "path", recorder.dir, "pid", os.Getpid())
 		ticker := time.NewTicker(memSampleInterval)
 		defer ticker.Stop()
-		var policy memoryCapturePolicy
-		var previous memorySample
-		var lastLog time.Time
-		var writeFailed bool
+		monitor := memoryMonitor{recorder: recorder}
 		for {
 			if ctx.Err() != nil {
 				return
@@ -253,35 +295,7 @@ func (app *App) startMemoryMonitor(ctx context.Context) {
 			if err != nil {
 				sample.RSSError = err.Error()
 			}
-			if !previous.Time.IsZero() {
-				sample.AllocBytesSecond = uint64(float64(sample.TotalAlloc-previous.TotalAlloc) / sample.Time.Sub(previous.Time).Seconds())
-			}
-			if err := recorder.record(sample); err != nil {
-				if !writeFailed {
-					slog.Error("Failed to persist memory diagnostics", "error", err, "path", recorder.dir)
-				}
-				writeFailed = true
-			} else {
-				writeFailed = false
-			}
-			if slot := policy.next(sample); slot != "" {
-				if err := recorder.capture(slot, sample); err != nil {
-					slog.Error("Failed to capture memory profiles", "error", err, "path", recorder.dir, "slot", slot)
-				} else {
-					slog.Info("Memory profiles captured", "path", recorder.dir, "slot", slot, "pid", sample.PID)
-				}
-			}
-			if sample.Time.Sub(lastLog) >= time.Minute || max(sample.RSS, sample.GoResident) >= memoryCaptureFloor || sample.EventDrops != previous.EventDrops || sample.MustDeliverDrops != previous.MustDeliverDrops {
-				slog.Info("Memory status", "pid", sample.PID, "rss_mb", sample.RSS>>20,
-					"heap_alloc_mb", sample.HeapAlloc>>20, "go_managed_resident_mb", sample.GoResident>>20,
-					"heap_sys_mb", sample.HeapSys>>20, "heap_released_mb", sample.HeapReleased>>20,
-					"num_gc", sample.NumGC, "gc_cpu_pct", int(sample.GCCPUFraction*100),
-					"total_alloc_mb", sample.TotalAlloc>>20, "alloc_mb_per_second", sample.AllocBytesSecond>>20,
-					"goroutines", sample.Goroutines, "event_drops", sample.EventDrops,
-					"event_must_deliver_drops", sample.MustDeliverDrops)
-				lastLog = sample.Time
-			}
-			previous = sample
+			monitor.tick(sample)
 			select {
 			case <-ctx.Done():
 				return
