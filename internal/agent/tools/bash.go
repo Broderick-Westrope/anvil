@@ -264,7 +264,7 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for executing shell command")
 			}
 			rootSessionEnv := []string{"ANVIL_ROOT_SESSION_ID=" + cmp.Or(GetRootSessionFromContext(ctx), sessionID)}
-			if !isSafeReadOnly(params.Command) {
+			if !isSafeReadOnly(params.Command, runtime.GOOS) {
 				denied, granted, err := requestPermission(ctx, permissions,
 					permission.CreatePermissionRequest{
 						SessionID:     sessionID,
@@ -355,20 +355,14 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 }
 
 // isSafeReadOnly reports whether command is a single read-only command
-// that runs without asking for permission.
-func isSafeReadOnly(command string) bool {
-	if containsCommandChaining(command) {
+// that runs on goos without asking for permission.
+func isSafeReadOnly(command, goos string) bool {
+	words, ok := plainCall(command)
+	if !ok {
 		return false
 	}
-	cmdLower := strings.ToLower(command)
-	for _, safe := range safeCommands {
-		if strings.HasPrefix(cmdLower, safe) {
-			if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
-				return true
-			}
-		}
-	}
-	return false
+	entry, n, ok := safeEntry(words, goos)
+	return ok && hasSafeArgs(entry, words[n:])
 }
 
 // bashLaunch is how a bash call waits on its command before handing it

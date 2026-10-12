@@ -223,7 +223,7 @@ func plainWords(arg *syntax.Word, printed string) []string {
 	}
 	out := make([]string, 0, len(words))
 	for _, w := range words {
-		value, ok := staticWord(w)
+		value, ok := StaticWord(w)
 		if !ok {
 			return []string{printed}
 		}
@@ -302,10 +302,11 @@ func scriptPayload(words []string) (string, bool) {
 	return "", false
 }
 
-// staticWord returns the value a word expands to when it contains only
+// StaticWord returns the value a word expands to when it contains only
 // literal text and quoting. It reports false for any word whose value
-// depends on runtime state.
-func staticWord(w *syntax.Word) (string, bool) {
+// depends on runtime state. Unquoted glob and brace characters are kept
+// as written, so callers that care must check for them.
+func StaticWord(w *syntax.Word) (string, bool) {
 	var sb strings.Builder
 	for _, part := range w.Parts {
 		switch p := part.(type) {
@@ -371,7 +372,7 @@ func plainRedir(redir *syntax.Redirect) string {
 	if redir.Word == nil {
 		return ""
 	}
-	target, ok := staticWord(redir.Word)
+	target, ok := StaticWord(redir.Word)
 	if !ok {
 		return ""
 	}
