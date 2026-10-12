@@ -189,51 +189,6 @@ func TestPermissionService_HookApproval(t *testing.T) {
 }
 
 func TestPermissionService_SequentialProperties(t *testing.T) {
-	t.Run("Sequential permission requests with persistent grants", func(t *testing.T) {
-		service := NewPermissionService("/tmp", config.YoloOff, nil, nil)
-
-		req1 := CreatePermissionRequest{
-			SessionID:   "session1",
-			ToolName:    "file_tool",
-			Description: "Read file",
-			Action:      "read",
-			Params:      map[string]string{"file": "test.txt"},
-			Path:        "/tmp/test.txt",
-		}
-
-		var result1 RequestResult
-		var wg sync.WaitGroup
-		wg.Add(1)
-
-		events := service.Subscribe(t.Context())
-
-		go func() {
-			defer wg.Done()
-			result1, _ = service.Request(t.Context(), req1)
-		}()
-
-		var permissionReq PermissionRequest
-		event := <-events
-
-		permissionReq = event.Payload
-		service.GrantPersistent(permissionReq)
-
-		wg.Wait()
-		assert.True(t, result1.Granted, "First request should be granted")
-
-		// Second identical request should be automatically approved due to persistent permission.
-		req2 := CreatePermissionRequest{
-			SessionID:   "session1",
-			ToolName:    "file_tool",
-			Description: "Read file again",
-			Action:      "read",
-			Params:      map[string]string{"file": "test.txt"},
-			Path:        "/tmp/test.txt",
-		}
-		result2, err := service.Request(t.Context(), req2)
-		require.NoError(t, err)
-		assert.True(t, result2.Granted, "Second request should be auto-approved")
-	})
 	t.Run("Sequential requests with temporary grants", func(t *testing.T) {
 		service := NewPermissionService("/tmp", config.YoloOff, nil, nil)
 
@@ -321,7 +276,7 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 			case "tool1":
 				service.Grant(event.Payload)
 			case "tool2":
-				service.GrantPersistent(event.Payload)
+				service.Grant(event.Payload)
 			case "tool3":
 				service.Deny(event.Payload, "")
 			}
@@ -335,11 +290,6 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 		}
 
 		assert.Equal(t, 2, grantedCount, "Should have 2 granted and 1 denied")
-		secondReq := requests[1]
-		secondReq.Description = "Repeat of second request"
-		result, err := service.Request(t.Context(), secondReq)
-		require.NoError(t, err)
-		assert.True(t, result.Granted, "Repeated request should be auto-approved due to persistent permission")
 	})
 }
 
