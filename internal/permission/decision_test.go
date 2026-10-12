@@ -164,7 +164,7 @@ func TestDecisionCancelPreservesOtherActiveRequest(t *testing.T) {
 	svc.activeRequest = &PermissionRequest{ID: "other"}
 	svc.activeRequestMu.Unlock()
 	cancel()
-	wg.Wait()
+	wait(t, &wg)
 	require.ErrorIs(t, err, context.Canceled)
 	svc.activeRequestMu.Lock()
 	defer svc.activeRequestMu.Unlock()

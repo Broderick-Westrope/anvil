@@ -115,7 +115,7 @@ func (h *bouncerHarness) assessment(t *testing.T, d Decision) AssessmentRecord {
 
 func testCtx(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), waitTimeout)
 	t.Cleanup(cancel)
 	return ctx
 }
@@ -141,7 +141,7 @@ func waitResult(t *testing.T, ch <-chan asyncResult) asyncResult {
 	select {
 	case r := <-ch:
 		return r
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitTimeout):
 		t.Fatal("request did not return")
 		return asyncResult{}
 	}
@@ -152,7 +152,7 @@ func waitPrompt(t *testing.T, events <-chan pubsub.Event[PermissionRequest]) Per
 	select {
 	case e := <-events:
 		return e.Payload
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitTimeout):
 		t.Fatal("prompt was not published")
 		return PermissionRequest{}
 	}
@@ -163,7 +163,7 @@ func waitEntered(t *testing.T, f *fakeBouncer) AssessInput {
 	select {
 	case in := <-f.entered:
 		return in
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitTimeout):
 		t.Fatal("bouncer was not called")
 		return AssessInput{}
 	}
@@ -429,13 +429,13 @@ func TestBouncerCommitBoundaryTwo(t *testing.T) {
 			h.svc.beforePromptLock = func(o CreatePermissionRequest) { lockWait <- o.ToolCallID }
 
 			a := requestAsync(testCtx(t), h.svc, h.req("a", "make a"))
-			require.Equal(t, "a", <-lockWait)
+			require.Equal(t, "a", recv(t, lockWait))
 			permA := waitPrompt(t, h.events)
 
 			b := requestAsync(testCtx(t), h.svc, h.req("b", "make b"))
 			// B has passed commit boundary 1 and cannot take the lock
 			// until A resolves.
-			require.Equal(t, "b", <-lockWait)
+			require.Equal(t, "b", recv(t, lockWait))
 			require.NoError(t, tt.grant(h))
 			h.drainNotifications()
 			h.svc.Grant(permA)
@@ -474,12 +474,12 @@ func TestBouncerCancelWhileWaitingForLock(t *testing.T) {
 	h.svc.beforePromptLock = func(o CreatePermissionRequest) { lockWait <- o.ToolCallID }
 
 	a := requestAsync(testCtx(t), h.svc, h.req("a", "make a"))
-	require.Equal(t, "a", <-lockWait)
+	require.Equal(t, "a", recv(t, lockWait))
 	permA := waitPrompt(t, h.events)
 
 	bctx, cancelB := context.WithCancel(testCtx(t))
 	b := requestAsync(bctx, h.svc, h.req("b", "make b"))
-	require.Equal(t, "b", <-lockWait)
+	require.Equal(t, "b", recv(t, lockWait))
 	cancelB()
 	h.svc.Grant(permA)
 
@@ -904,7 +904,7 @@ func waitWarms(t *testing.T, warmed <-chan struct{}, want int) {
 	for i := range want {
 		select {
 		case <-warmed:
-		case <-time.After(10 * time.Second):
+		case <-time.After(waitTimeout):
 			t.Fatalf("warm %d of %d did not run", i+1, want)
 		}
 	}
@@ -922,7 +922,7 @@ func TestSetBouncerModeWarmsOncePerEnable(t *testing.T) {
 	for range 8 {
 		wg.Go(func() { svc.SetBouncerMode(BouncerEnforce) })
 	}
-	wg.Wait()
+	wait(t, &wg)
 	waitWarms(t, warmed, 1)
 }
 
@@ -999,12 +999,12 @@ func TestBouncerCancelledDuringAssessment(t *testing.T) {
 				r, err := h.svc.Request(ctx, h.req("call", "go build ./..."))
 				done <- result{r, err}
 			}()
-			<-fake.entered
+			waitEntered(t, fake)
 			cancel()
 
 			// Yolo would approve a request the bouncer didn't decide, so
 			// the cancellation must be seen before yolo is consulted.
-			got := <-done
+			got := recv(t, done)
 			require.ErrorIs(t, got.err, context.Canceled)
 			require.False(t, got.r.Granted)
 			require.Empty(t, h.events)

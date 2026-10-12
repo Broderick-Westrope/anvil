@@ -50,7 +50,7 @@ func waitUpdate(t *testing.T, events <-chan pubsub.Event[PermissionRequest]) Per
 	case e := <-events:
 		require.Equal(t, pubsub.UpdatedEvent, e.Type)
 		return e.Payload
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitTimeout):
 		t.Fatal("review update was not published")
 		return PermissionRequest{}
 	}
@@ -60,7 +60,7 @@ func waitUpdate(t *testing.T, events <-chan pubsub.Event[PermissionRequest]) Per
 // decision with a review still running is recorded once it settles.
 func waitDecision(t *testing.T, rec *fakeRecorder) Decision {
 	t.Helper()
-	require.Eventually(t, func() bool { return len(rec.snapshot()) == 1 }, 10*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return len(rec.snapshot()) == 1 }, waitTimeout, 5*time.Millisecond)
 	return rec.snapshot()[0]
 }
 
@@ -130,7 +130,7 @@ func TestReviewShownAndRecordedWithPrompt(t *testing.T) {
 	require.True(t, perm.Review.Pending)
 	require.True(t, perm.Review.Shadow)
 
-	in := <-reviewer.calls
+	in := recv(t, reviewer.calls)
 	require.Equal(t, []string{"please open a PR for this"}, in.UserMessages)
 	require.Equal(t, "gh pr create", in.Input)
 	require.Equal(t, "escalate", in.Bouncer.Outcome)
