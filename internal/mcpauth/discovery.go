@@ -53,12 +53,20 @@ func discoverOAuthMetadata(ctx context.Context, serverURL string, httpClient *ht
 		}
 	}
 
+	resourceURL, err := url.Parse(serverURL)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf(
+			"failed to parse server URL: %w", err)
+	}
+	resourceURL.RawQuery = ""
+	resourceURL.Fragment = ""
+
 	// Try multiple PRM URLs following the MCP spec:
 	// 1. From WWW-Authenticate resource_metadata parameter
 	// 2. At /.well-known/oauth-protected-resource/<path>
 	// 3. At /.well-known/oauth-protected-resource (root)
 	var prm *oauthex.ProtectedResourceMetadata
-	for _, prmURL := range protectedResourceMetadataURLs(resourceMetadataURL, serverURL) {
+	for _, prmURL := range protectedResourceMetadataURLs(resourceMetadataURL, resourceURL.String()) {
 		p, prmErr := oauthex.GetProtectedResourceMetadata(
 			ctx, prmURL.url, prmURL.resource, httpClient)
 		if prmErr != nil || p == nil {
@@ -78,13 +86,9 @@ func discoverOAuthMetadata(ctx context.Context, serverURL string, httpClient *ht
 	} else {
 		// Fallback to 2025-03-26 spec: server root is the auth
 		// server.
-		parsed, parseErr := url.Parse(serverURL)
-		if parseErr != nil {
-			return nil, nil, nil, fmt.Errorf(
-				"failed to parse server URL: %w", parseErr)
-		}
-		parsed.Path = ""
-		issuer = parsed.String()
+		root := *resourceURL
+		root.Path = ""
+		issuer = root.String()
 	}
 
 	// Use the SDK's GetAuthServerMetadata which tries multiple

@@ -447,6 +447,42 @@ func TestAuthorize_Scopes(t *testing.T) {
 	}
 }
 
+func TestAuthorize_ServerURLWithQuery(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		prmScopes  []string
+		wantScopes []string
+	}{
+		"resource metadata found": {prmScopes: []string{"prm"}, wantScopes: []string{"prm"}},
+		"no resource metadata":    {},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newOAuthFixture(t)
+			f.prmScopes = tc.prmScopes
+			q := newFakeQuerier()
+			var authURL string
+			opts := oauthOptions(f, q)
+			opts.Config.URL = f.server.URL + "/mcp?toolsets=all"
+			opts.OpenURL = browser(t, approve(), &authURL)
+
+			res, err := Authorize(t.Context(), opts)
+
+			require.NoError(t, err)
+			require.Equal(t, tc.wantScopes, res.Scopes)
+			parsed, err := url.Parse(authURL)
+			require.NoError(t, err)
+			require.Equal(t, f.server.URL+"/authorize", parsed.Scheme+"://"+parsed.Host+parsed.Path)
+			require.Equal(t, f.server.URL+"/mcp?toolsets=all", q.upserts[0].ServerUrl)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			require.Len(t, f.registerRequests, 1)
+		})
+	}
+}
+
 func TestAuthorize_FixedRedirectURI(t *testing.T) {
 	t.Parallel()
 	f := newOAuthFixture(t)
