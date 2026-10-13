@@ -1,16 +1,16 @@
 package common
 
 import (
+	"cmp"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
 const (
-	// alignNearWindow is how far ahead in the source the aligner looks for
+	// alignNearWindow is how many source runes ahead the aligner looks for
 	// a rendered rune before falling back to a full forward scan. It covers
 	// typical markdown syntax runs (fences, table separators, link URLs).
 	alignNearWindow = 48
@@ -20,9 +20,9 @@ const (
 	// alignFarConfirm is the stricter confirmation used for far matches,
 	// which typically occur after truncated or collapsed rendered output.
 	alignFarConfirm = 8
-	// anchorLen is the length in non-space runes of the substrings used as
-	// alignment anchors. It is long enough that a substring occurring once
-	// in each text almost always marks the same content in both.
+	// anchorLen is the number of word runes in the runs used as alignment
+	// anchors. It is long enough that a run occurring once in each text
+	// almost always marks the same content in both.
 	anchorLen = 10
 )
 
@@ -43,8 +43,16 @@ var fenceRe = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
 // (ANSI-free) rendered text and [start, end) is the selected byte range
 // within it. It returns the corresponding markdown, including the inline
 // and block syntax that rendering removed. ok is false when the selection
-// cannot be mapped (for example when it only covers decorations that have
-// no counterpart in the source).
+// can't be mapped reliably, and the caller should copy the rendered text
+// instead: when it only covers decorations with no counterpart in the
+// source, when fewer than half its word runes map, when its first or last
+// word rune doesn't map, or when a selected word maps across other source
+// words.
+//
+// Text that rendering hides but that repeats visible text can still be
+// mapped wrongly with ok true. For example, when a link title repeats a
+// visible phrase that follows a second link to the same URL, selecting the
+// phrase can copy from inside the title to the phrase.
 func MapSelectionToSource(source, rendered string, start, end int) (string, bool) {
 	if source == "" || start < 0 || end <= start {
 		return "", false
@@ -62,13 +70,12 @@ func MapSelectionToSource(source, rendered string, start, end int) (string, bool
 	if !scan.mappable() || splitsWord(rPos, rRunes, sRunes, mapping, start, end) {
 		return "", false
 	}
-	firstSel, lastSel := scan.firstSel, scan.lastSel
 
-	srcStart := sPos[mapping[firstSel]]
-	lastRune := sRunes[mapping[lastSel]]
-	srcEnd := sPos[mapping[lastSel]] + utf8.RuneLen(lastRune)
+	srcStart := sPos[mapping[scan.firstSel]]
+	lastRune := sRunes[mapping[scan.lastSel]]
+	srcEnd := sPos[mapping[scan.lastSel]] + utf8.RuneLen(lastRune)
 
-	if firstSel == scan.firstAll {
+	if scan.firstSel == scan.firstAll {
 		srcStart = 0
 	} else {
 		if !scan.mappedBeforeOnLine {
@@ -81,7 +88,7 @@ func MapSelectionToSource(source, rendered string, start, end int) (string, bool
 			srcStart--
 		}
 	}
-	if lastSel == scan.lastAll {
+	if scan.lastSel == scan.lastAll {
 		srcEnd = len(source)
 	} else {
 		for srcEnd < len(source) && strings.IndexByte(inlineMarkers, source[srcEnd]) >= 0 {
@@ -101,7 +108,8 @@ func MapSelectionToSource(source, rendered string, start, end int) (string, bool
 
 // selectionScan summarises how a selection over the rendered text lines up
 // with the source. Rune fields are indexes into the rendered non-space
-// runes and are -1 when there is no such rune.
+// runes. firstAll and firstSel are -1 when there is no such rune; lastAll
+// and lastSel are only meaningful when their first counterpart isn't.
 type selectionScan struct {
 	// firstAll and lastAll are the first and last mapped runes overall.
 	firstAll, lastAll int
@@ -118,8 +126,10 @@ type selectionScan struct {
 	firstWordMapped, lastWordMapped bool
 }
 
+// scanSelection walks the aligned rendered runes once and records how the
+// selected byte range [start, end) of rendered lines up with the source.
 func scanSelection(rendered string, rPos []int, rRunes []rune, mapping []int, start, end int) selectionScan {
-	scan := selectionScan{firstAll: -1, lastAll: -1, firstSel: -1, lastSel: -1}
+	scan := selectionScan{firstAll: -1, firstSel: -1}
 	lineStart := strings.LastIndexByte(rendered[:start], '\n') + 1
 	for i, m := range mapping {
 		pos := rPos[i]
@@ -164,7 +174,7 @@ func (s selectionScan) mappable() bool {
 	if s.firstSel < 0 || s.mappedWords*2 < s.selectedWords {
 		return false
 	}
-	return s.selectedWords == 0 || s.firstWordMapped && s.lastWordMapped
+	return s.selectedWords == 0 || (s.firstWordMapped && s.lastWordMapped)
 }
 
 // splitsWord reports whether two word runes that are adjacent in one
@@ -247,7 +257,7 @@ func anchorChain(rendered, source []rune) []anchor {
 		if renderedAt[key] != i {
 			continue
 		}
-		if j, ok := sourceAt[key]; ok && j >= 0 {
+		if j, ok := sourceAt[key]; ok && j != -1 {
 			candidates = append(candidates, anchor{rendered: rAt[i], source: sAt[j]})
 		}
 	}
@@ -268,7 +278,7 @@ func wordRunes(runes []rune) (words []rune, at []int) {
 // uniqueSubstrings maps each anchorLen-rune substring of runes to the index
 // where it starts, or to -1 when it occurs more than once.
 func uniqueSubstrings(runes []rune) map[string]int {
-	at := make(map[string]int, max(len(runes)-anchorLen+1, 0))
+	at := make(map[string]int)
 	for i := 0; i+anchorLen <= len(runes); i++ {
 		key := string(runes[i : i+anchorLen])
 		if _, seen := at[key]; seen {
@@ -288,10 +298,9 @@ func longestIncreasing(anchors []anchor) []anchor {
 	var tails []int
 	prev := make([]int, len(anchors))
 	for i, a := range anchors {
-		n := sort.Search(len(tails), func(n int) bool {
-			return anchors[tails[n]].source >= a.source
+		n, _ := slices.BinarySearchFunc(tails, a.source, func(t, source int) int {
+			return cmp.Compare(anchors[t].source, source)
 		})
-		prev[i] = -1
 		if n > 0 {
 			prev[i] = tails[n-1]
 		}
@@ -319,10 +328,7 @@ func alignGap(mapping []int, rendered, source []rune, rFrom, rTo, sFrom, sTo int
 	j := sFrom
 	for i := rFrom; i < rTo; i++ {
 		mapping[i] = -1
-		if j >= sTo {
-			continue
-		}
-		k := findAlignedRune(rendered, i, source, j, min(sTo, j+alignNearWindow+1), alignNearConfirm)
+		k := findAlignedRune(rendered, i, source, j, min(sTo, j+alignNearWindow), alignNearConfirm)
 		if k < 0 && isWordRune(rendered[i]) {
 			k = findAlignedRune(rendered, i, source, j, sTo, alignFarConfirm)
 		}
