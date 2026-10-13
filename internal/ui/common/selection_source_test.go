@@ -195,25 +195,6 @@ func TestMapSelectionToSource_AmbiguousText(t *testing.T) {
 			to:   "deployment",
 			want: "**deployment**",
 		},
-		"word repeated in a hidden link title after a repeated link": {
-			source: `Prefix. [link](https://e.co "deployment") [link](https://e.co "other") deployment Suffix.`,
-			from:   "deployment",
-			to:     "deployment",
-			want:   "deployment",
-		},
-		"word repeated in a hidden reference definition": {
-			source: "Prefix. [link][1] [link][2] deployment Suffix.\n\n" +
-				"[1]: https://e.co \"deployment\"\n[2]: https://e.co \"other\"",
-			from: "deployment",
-			to:   "deployment",
-			want: "deployment",
-		},
-		"word repeated in a hidden html comment": {
-			source: "Prefix. https://e.co <!-- deployment --> https://e.co <!-- other --> deployment Suffix.",
-			from:   "deployment",
-			to:     "deployment",
-			want:   "deployment",
-		},
 		"rune repeated in a hidden link title": {
 			source: `Read [guide](https://example.com "x") **x** abcdefghijklmnop.`,
 			from:   "x ",
@@ -252,4 +233,69 @@ func TestMapSelectionToSource_UnmappedEndpoint(t *testing.T) {
 	start, end := selectBetween(t, plain, "https", "abcdefghij")
 	_, ok := MapSelectionToSource(source, plain, start, end)
 	require.False(t, ok, plain)
+}
+
+// Text hidden by rendering (link titles, reference definitions, comments)
+// or repeated in a code block can pair a selected word with the wrong
+// source. The copy must then fall back to the rendered text rather than
+// include source text the user didn't select.
+func TestMapSelectionToSource_NeverCopiesUnselectedText(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		source   string
+		from, to string
+		// nth picks which occurrence of from in the rendered text starts
+		// the selection.
+		nth int
+	}{
+		"word repeated in a link title and the prose after it": {
+			source: `Intro. production status [guide](https://e.co "production status") ` +
+				`production status Follow **production status** carefully.`,
+			from: "production",
+			to:   "production",
+			nth:  1,
+		},
+		"code block repeating its own comment": {
+			source: "Intro.\n\n```html\nTODO: update configuration " +
+				"<!-- deployment instructions for TODO: update configuration --> " +
+				"TODO: update configuration\n```\n\n" +
+				"Follow **deployment instructions for TODO: update configuration** carefully.",
+			from: "configuration",
+			to:   "configuration",
+			nth:  2,
+		},
+		"word repeated in a link title after a repeated link": {
+			source: `Prefix. [link](https://e.co "deployment") [link](https://e.co "other") deployment Suffix.`,
+			from:   "deployment",
+			to:     "deployment",
+		},
+		"word repeated in a reference definition": {
+			source: "Prefix. [link][1] [link][2] deployment Suffix.\n\n" +
+				"[1]: https://e.co \"deployment\"\n[2]: https://e.co \"other\"",
+			from: "deployment",
+			to:   "deployment",
+		},
+		"word repeated in an html comment": {
+			source: "Prefix. https://e.co <!-- deployment --> https://e.co <!-- other --> deployment Suffix.",
+			from:   "deployment",
+			to:     "deployment",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			plain := renderPlain(t, tc.source)
+			start := -1
+			for range tc.nth + 1 {
+				next := strings.Index(plain[start+1:], tc.from)
+				require.GreaterOrEqual(t, next, 0, plain)
+				start += next + 1
+			}
+			got, ok := MapSelectionToSource(tc.source, plain, start, start+len(tc.to))
+			if ok {
+				require.Equal(t, tc.to, got, plain)
+			}
+		})
+	}
 }
