@@ -184,7 +184,7 @@ func nonSpaceRunes(s string) (positions []int, runes []rune) {
 // rendering decoration (bullets, borders, labels, link references) with no
 // source counterpart. Matches are monotonic.
 //
-// Substrings that occur exactly once in each text are paired up as
+// Runs of word runes that occur exactly once in each text are paired up as
 // anchors, and the longest chain of anchors in the same order in both
 // texts is kept. The runes between consecutive anchors are aligned
 // greedily, so a wrong greedy match can't skip past the next anchor.
@@ -207,22 +207,38 @@ type anchor struct {
 }
 
 // anchorChain returns the longest chain of anchors whose rendered and
-// source indexes both strictly increase. Anchors are the starts of
-// anchorLen-rune substrings that occur exactly once in each text.
+// source indexes both strictly increase. Anchors are the starts of runs of
+// anchorLen word runes that occur exactly once in each text. Only word
+// runes count, because markdown syntax splits visible source text
+// (**bold**) while hidden text such as a link title doesn't, which would
+// otherwise make the hidden copy look like the unique match.
 func anchorChain(rendered, source []rune) []anchor {
-	sourceAt := uniqueSubstrings(source)
-	renderedAt := uniqueSubstrings(rendered)
+	rWords, rAt := wordRunes(rendered)
+	sWords, sAt := wordRunes(source)
+	sourceAt := uniqueSubstrings(sWords)
+	renderedAt := uniqueSubstrings(rWords)
 	var candidates []anchor
-	for i := 0; i+anchorLen <= len(rendered); i++ {
-		key := string(rendered[i : i+anchorLen])
+	for i := 0; i+anchorLen <= len(rWords); i++ {
+		key := string(rWords[i : i+anchorLen])
 		if renderedAt[key] != i {
 			continue
 		}
 		if j, ok := sourceAt[key]; ok && j >= 0 {
-			candidates = append(candidates, anchor{rendered: i, source: j})
+			candidates = append(candidates, anchor{rendered: rAt[i], source: sAt[j]})
 		}
 	}
 	return longestIncreasing(candidates)
+}
+
+// wordRunes returns the word runes of runes with their indexes.
+func wordRunes(runes []rune) (words []rune, at []int) {
+	for i, r := range runes {
+		if isWordRune(r) {
+			words = append(words, r)
+			at = append(at, i)
+		}
+	}
+	return words, at
 }
 
 // uniqueSubstrings maps each anchorLen-rune substring of runes to the index

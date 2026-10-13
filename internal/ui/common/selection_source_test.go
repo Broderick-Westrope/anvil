@@ -188,6 +188,13 @@ func TestMapSelectionToSource_AmbiguousText(t *testing.T) {
 		from, to string
 		want     string
 	}{
+		"text repeated in a hidden link title": {
+			source: `Intro **deployment** instructions for production environments. ` +
+				`[x](https://e.co "deployment instructions for production environments") End.`,
+			from: "deployment",
+			to:   "deployment",
+			want: "**deployment**",
+		},
 		"rune repeated in a hidden link title": {
 			source: `Read [guide](https://example.com "x") **x** abcdefghijklmnop.`,
 			from:   "x ",
