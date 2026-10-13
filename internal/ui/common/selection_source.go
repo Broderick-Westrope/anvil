@@ -2,6 +2,7 @@ package common
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,6 +19,10 @@ const (
 	// alignFarConfirm is the stricter confirmation used for far matches,
 	// which typically occur after truncated or collapsed rendered output.
 	alignFarConfirm = 8
+	// anchorLen is the length in non-space runes of the substrings used as
+	// alignment anchors. It is long enough that a substring occurring once
+	// in each text almost always marks the same content in both.
+	anchorLen = 10
 )
 
 // inlineMarkers are markdown inline syntax characters that glamour strips
@@ -129,12 +134,118 @@ func nonSpaceRunes(s string) (positions []int, runes []rune) {
 	return positions, runes
 }
 
-// alignRunes greedily aligns rendered runes to source runes, returning for
-// each rendered rune the index of its source rune or -1 when the rune is a
-// rendering decoration (bullets, borders, labels) with no source
-// counterpart. Matches are monotonic and confirmed by the word runes that
-// follow, so source-only syntax and rendered-only decorations are skipped.
+// alignRunes aligns rendered runes to source runes, returning for each
+// rendered rune the index of its source rune or -1 when the rune is a
+// rendering decoration (bullets, borders, labels, link references) with no
+// source counterpart. Matches are monotonic.
+//
+// Substrings that occur exactly once in each text are paired up as
+// anchors, and the longest chain of anchors in the same order in both
+// texts is kept. The runes between consecutive anchors are aligned
+// greedily, so a wrong greedy match can't skip past the next anchor.
 func alignRunes(rendered, source []rune) []int {
+	mapping := make([]int, len(rendered))
+	ri, si := 0, 0
+	for _, a := range anchorChain(rendered, source) {
+		gap := alignGreedy(rendered[ri:a.rendered], source[si:a.source])
+		for k, m := range gap {
+			mapping[ri+k] = offsetMatch(m, si)
+		}
+		mapping[a.rendered] = a.source
+		ri, si = a.rendered+1, a.source+1
+	}
+	for k, m := range alignGreedy(rendered[ri:], source[si:]) {
+		mapping[ri+k] = offsetMatch(m, si)
+	}
+	return mapping
+}
+
+func offsetMatch(m, offset int) int {
+	if m < 0 {
+		return m
+	}
+	return m + offset
+}
+
+// anchor pairs a rendered rune index with the source rune index of the
+// same content.
+type anchor struct {
+	rendered, source int
+}
+
+// anchorChain returns the longest chain of anchors whose rendered and
+// source indexes both strictly increase. Anchors are the starts of
+// anchorLen-rune substrings that occur exactly once in each text.
+func anchorChain(rendered, source []rune) []anchor {
+	sourceAt := uniqueSubstrings(source)
+	renderedAt := uniqueSubstrings(rendered)
+	var candidates []anchor
+	for i := 0; i+anchorLen <= len(rendered); i++ {
+		key := string(rendered[i : i+anchorLen])
+		if renderedAt[key] != i {
+			continue
+		}
+		if j, ok := sourceAt[key]; ok && j >= 0 {
+			candidates = append(candidates, anchor{rendered: i, source: j})
+		}
+	}
+	return longestIncreasing(candidates)
+}
+
+// uniqueSubstrings maps each anchorLen-rune substring of runes to the index
+// where it starts, or to -1 when it occurs more than once.
+func uniqueSubstrings(runes []rune) map[string]int {
+	at := make(map[string]int, max(len(runes)-anchorLen+1, 0))
+	for i := 0; i+anchorLen <= len(runes); i++ {
+		key := string(runes[i : i+anchorLen])
+		if _, seen := at[key]; seen {
+			at[key] = -1
+			continue
+		}
+		at[key] = i
+	}
+	return at
+}
+
+// longestIncreasing returns the longest subsequence of anchors, which are
+// ordered by rendered index, whose source indexes strictly increase.
+func longestIncreasing(anchors []anchor) []anchor {
+	// tails[n] is the index in anchors of the smallest source index that
+	// ends an increasing chain of length n+1.
+	var tails []int
+	prev := make([]int, len(anchors))
+	for i, a := range anchors {
+		n := sort.Search(len(tails), func(n int) bool {
+			return anchors[tails[n]].source >= a.source
+		})
+		prev[i] = -1
+		if n > 0 {
+			prev[i] = tails[n-1]
+		}
+		if n == len(tails) {
+			tails = append(tails, i)
+		} else {
+			tails[n] = i
+		}
+	}
+	chain := make([]anchor, len(tails))
+	for n, i := len(tails)-1, tailOrNone(tails); n >= 0; n, i = n-1, prev[i] {
+		chain[n] = anchors[i]
+	}
+	return chain
+}
+
+func tailOrNone(tails []int) int {
+	if len(tails) == 0 {
+		return -1
+	}
+	return tails[len(tails)-1]
+}
+
+// alignGreedy greedily aligns rendered runes to source runes in the same
+// shape as alignRunes. Matches are confirmed by the word runes that
+// follow, so source-only syntax and rendered-only decorations are skipped.
+func alignGreedy(rendered, source []rune) []int {
 	mapping := make([]int, len(rendered))
 	j := 0
 	for i := range rendered {

@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,8 +12,13 @@ import (
 
 func renderPlain(t *testing.T, source string) string {
 	t.Helper()
+	return renderPlainWidth(t, source, 80)
+}
+
+func renderPlainWidth(t *testing.T, source string, width int) string {
+	t.Helper()
 	sty := styles.TokyoNight()
-	renderer := MarkdownRenderer(&sty, 80)
+	renderer := MarkdownRenderer(&sty, width)
 	mu := LockMarkdownRenderer(renderer)
 	mu.Lock()
 	out, err := renderer.Render(source)
@@ -120,4 +126,42 @@ func TestMapSelectionToSource_DecorationOnly(t *testing.T) {
 	rendered := "Thinking:\n\nhello world"
 	_, ok := MapSelectionToSource(source, rendered, 0, len("Thinking:"))
 	require.False(t, ok)
+}
+
+// Glamour repeats table link URLs in a reference list below the table.
+// That list has no counterpart in the source and shares text with an
+// email address further down, so it must not pull the alignment past the
+// content in between.
+func TestMapSelectionToSource_TableLinkReferences(t *testing.T) {
+	t.Parallel()
+
+	const url = "docs.example.com/document/d/7qWzR2kLmN4pXvB8sTyH3jFdC6gA9eUo1iKwZ5-rPtMx"
+	source := strings.Join([]string{
+		"| Date | From | What |",
+		"|---|---|---|",
+		"| 19 Feb | Alice ([link](https://example.enterprise.slack.com/archives/C1/p1)) | Sets up team@example.vc |",
+		"| 26 Feb | Bob ([link](https://example.enterprise.slack.com/archives/C1/p2)) | Slides |",
+		"",
+		"## Documents",
+		"",
+		"1. **Rollout guide for the payments team (June):** `" + url + "`",
+		"2. **Second guide:** `docs.example.com/document/d/4hGtQ8wZrYv2Ln`",
+		"",
+		"Email team@example.vc to confirm the launch date.",
+	}, "\n")
+
+	for width := 40; width <= 120; width += 4 {
+		t.Run(fmt.Sprintf("width %d", width), func(t *testing.T) {
+			t.Parallel()
+			plain := renderPlainWidth(t, source, width)
+			from := strings.Index(plain, "(June):")
+			require.GreaterOrEqual(t, from, 0, plain)
+			start := from + strings.Index(plain[from:], "docs.")
+			end := start + strings.Index(plain[start:], "rPtMx") + len("rPtMx")
+
+			got, ok := MapSelectionToSource(source, plain, start, end)
+			require.True(t, ok)
+			require.Equal(t, "`"+url+"`", got)
+		})
+	}
 }
