@@ -15,10 +15,12 @@ import (
 )
 
 // discoverOAuthMetadata performs RFC 9728 / RFC 8414 metadata discovery
-// for the given MCP server URL. It mirrors the go-sdk's
+// for the given MCP server URL. It follows the go-sdk's
 // AuthorizationCodeHandler discovery logic: tries multiple PRM URLs
 // (from WWW-Authenticate, at path, at root), then multiple ASM URLs
 // (OAuth 2.0 and OIDC well-known, with and without path insertion).
+// Unlike the go-sdk, it also accepts PRM published for the server URL
+// without its query, and derives the fallback issuer from that URL.
 func discoverOAuthMetadata(ctx context.Context, serverURL string, httpClient *http.Client) (*oauthex.ProtectedResourceMetadata, *oauthex.AuthServerMeta, []string, error) {
 	// Issue GET to provoke a 401.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL, nil)
@@ -66,6 +68,9 @@ func discoverOAuthMetadata(ctx context.Context, serverURL string, httpClient *ht
 	// 1. From WWW-Authenticate resource_metadata parameter
 	// 2. At /.well-known/oauth-protected-resource/<path>
 	// 3. At /.well-known/oauth-protected-resource (root)
+	// The same candidates are then retried for the URL without its
+	// query, because servers that take options in the query (such as
+	// Datadog's ?toolsets=all) publish PRM for the bare resource.
 	candidates := protectedResourceMetadataURLs(resourceMetadataURL, serverURL)
 	if resource := resourceURL.String(); resource != serverURL {
 		candidates = append(candidates,
