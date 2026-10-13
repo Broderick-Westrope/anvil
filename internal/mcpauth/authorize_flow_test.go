@@ -29,6 +29,8 @@ type oauthFixture struct {
 
 	wwwScope           string
 	prmScopes          []string
+	prmResource        string
+	prmScopesForQuery  []string
 	noRegistration     bool
 	authMethods        []string
 	registerStatus     int
@@ -69,10 +71,19 @@ func (f *oauthFixture) serve(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
+		resource := base + "/mcp"
+		if f.prmResource != "" {
+			resource = base + f.prmResource
+		}
+		scopes := f.prmScopes
+		if f.prmScopesForQuery != nil && r.URL.RawQuery != "" {
+			resource = base + "/mcp?" + r.URL.RawQuery
+			scopes = f.prmScopesForQuery
+		}
 		writeJSON(map[string]any{
-			"resource":              base + "/mcp",
+			"resource":              resource,
 			"authorization_servers": []string{base},
-			"scopes_supported":      f.prmScopes,
+			"scopes_supported":      scopes,
 		})
 	case "/.well-known/oauth-authorization-server":
 		meta := map[string]any{
@@ -443,6 +454,57 @@ func TestAuthorize_Scopes(t *testing.T) {
 			require.Equal(t, strings.Join(tc.want, " "), parsed.Query().Get("scope"))
 			require.Equal(t, strings.Join(tc.want, " "), q.upserts[0].Scopes.String)
 			require.Equal(t, len(tc.want) > 0, q.upserts[0].Scopes.Valid)
+		})
+	}
+}
+
+func TestAuthorize_ServerURLWithQuery(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		path              string
+		prmResource       string
+		prmScopes         []string
+		prmScopesForQuery []string
+		wantScopes        []string
+	}{
+		"resource metadata without the query": {path: "/mcp?toolsets=all", prmScopes: []string{"prm"}, wantScopes: []string{"prm"}},
+		"resource metadata keeps the query": {
+			path: "/mcp?toolsets=all", prmResource: "/mcp?toolsets=all",
+			prmScopes: []string{"prm"}, wantScopes: []string{"prm"},
+		},
+		"exact resource metadata wins": {
+			path: "/mcp?toolsets=all", prmScopes: []string{"bare"},
+			prmScopesForQuery: []string{"exact"}, wantScopes: []string{"exact"},
+		},
+		"empty query":                       {path: "/mcp?", prmScopes: []string{"prm"}, wantScopes: []string{"prm"}},
+		"no resource metadata":              {path: "/mcp?toolsets=all"},
+		"no resource metadata, empty query": {path: "/mcp?"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newOAuthFixture(t)
+			f.prmScopes = tc.prmScopes
+			f.prmResource = tc.prmResource
+			f.prmScopesForQuery = tc.prmScopesForQuery
+			q := newFakeQuerier()
+			var authURL string
+			opts := oauthOptions(f, q)
+			opts.Config.URL = f.server.URL + tc.path
+			opts.OpenURL = browser(t, approve(), &authURL)
+
+			res, err := Authorize(t.Context(), opts)
+
+			require.NoError(t, err)
+			require.Equal(t, tc.wantScopes, res.Scopes)
+			parsed, err := url.Parse(authURL)
+			require.NoError(t, err)
+			require.Equal(t, f.server.URL+"/authorize", parsed.Scheme+"://"+parsed.Host+parsed.Path)
+			require.Equal(t, f.server.URL+tc.path, q.upserts[0].ServerUrl)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			require.Len(t, f.registerRequests, 1)
 		})
 	}
 }
