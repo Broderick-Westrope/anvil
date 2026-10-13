@@ -262,17 +262,13 @@ func longestIncreasing(anchors []anchor) []anchor {
 		}
 	}
 	chain := make([]anchor, len(tails))
-	for n, i := len(tails)-1, tailOrNone(tails); n >= 0; n, i = n-1, prev[i] {
+	if len(tails) == 0 {
+		return chain
+	}
+	for n, i := len(tails)-1, tails[len(tails)-1]; n >= 0; n, i = n-1, prev[i] {
 		chain[n] = anchors[i]
 	}
 	return chain
-}
-
-func tailOrNone(tails []int) int {
-	if len(tails) == 0 {
-		return -1
-	}
-	return tails[len(tails)-1]
 }
 
 // alignGap greedily aligns the rendered runes in [rFrom, rTo) to the source
