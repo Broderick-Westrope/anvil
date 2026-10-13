@@ -59,14 +59,20 @@ func discoverOAuthMetadata(ctx context.Context, serverURL string, httpClient *ht
 			"failed to parse server URL: %w", err)
 	}
 	resourceURL.RawQuery = ""
+	resourceURL.ForceQuery = false
 	resourceURL.Fragment = ""
 
 	// Try multiple PRM URLs following the MCP spec:
 	// 1. From WWW-Authenticate resource_metadata parameter
 	// 2. At /.well-known/oauth-protected-resource/<path>
 	// 3. At /.well-known/oauth-protected-resource (root)
+	candidates := protectedResourceMetadataURLs(resourceMetadataURL, serverURL)
+	if resource := resourceURL.String(); resource != serverURL {
+		candidates = append(candidates,
+			protectedResourceMetadataURLs(resourceMetadataURL, resource)...)
+	}
 	var prm *oauthex.ProtectedResourceMetadata
-	for _, prmURL := range protectedResourceMetadataURLs(resourceMetadataURL, resourceURL.String()) {
+	for _, prmURL := range candidates {
 		p, prmErr := oauthex.GetProtectedResourceMetadata(
 			ctx, prmURL.url, prmURL.resource, httpClient)
 		if prmErr != nil || p == nil {

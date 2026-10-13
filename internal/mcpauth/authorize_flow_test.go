@@ -29,6 +29,7 @@ type oauthFixture struct {
 
 	wwwScope           string
 	prmScopes          []string
+	prmResource        string
 	noRegistration     bool
 	authMethods        []string
 	registerStatus     int
@@ -69,8 +70,12 @@ func (f *oauthFixture) serve(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
+		resource := base + "/mcp"
+		if f.prmResource != "" {
+			resource = base + f.prmResource
+		}
 		writeJSON(map[string]any{
-			"resource":              base + "/mcp",
+			"resource":              resource,
 			"authorization_servers": []string{base},
 			"scopes_supported":      f.prmScopes,
 		})
@@ -451,21 +456,30 @@ func TestAuthorize_ServerURLWithQuery(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		prmScopes  []string
-		wantScopes []string
+		path        string
+		prmResource string
+		prmScopes   []string
+		wantScopes  []string
 	}{
-		"resource metadata found": {prmScopes: []string{"prm"}, wantScopes: []string{"prm"}},
-		"no resource metadata":    {},
+		"resource metadata found": {path: "/mcp?toolsets=all", prmScopes: []string{"prm"}, wantScopes: []string{"prm"}},
+		"resource metadata keeps the query": {
+			path: "/mcp?toolsets=all", prmResource: "/mcp?toolsets=all",
+			prmScopes: []string{"prm"}, wantScopes: []string{"prm"},
+		},
+		"empty query":                       {path: "/mcp?", prmScopes: []string{"prm"}, wantScopes: []string{"prm"}},
+		"no resource metadata":              {path: "/mcp?toolsets=all"},
+		"no resource metadata, empty query": {path: "/mcp?"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newOAuthFixture(t)
 			f.prmScopes = tc.prmScopes
+			f.prmResource = tc.prmResource
 			q := newFakeQuerier()
 			var authURL string
 			opts := oauthOptions(f, q)
-			opts.Config.URL = f.server.URL + "/mcp?toolsets=all"
+			opts.Config.URL = f.server.URL + tc.path
 			opts.OpenURL = browser(t, approve(), &authURL)
 
 			res, err := Authorize(t.Context(), opts)
@@ -475,7 +489,7 @@ func TestAuthorize_ServerURLWithQuery(t *testing.T) {
 			parsed, err := url.Parse(authURL)
 			require.NoError(t, err)
 			require.Equal(t, f.server.URL+"/authorize", parsed.Scheme+"://"+parsed.Host+parsed.Path)
-			require.Equal(t, f.server.URL+"/mcp?toolsets=all", q.upserts[0].ServerUrl)
+			require.Equal(t, f.server.URL+tc.path, q.upserts[0].ServerUrl)
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			require.Len(t, f.registerRequests, 1)
