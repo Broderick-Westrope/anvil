@@ -179,3 +179,51 @@ func TestMapSelectionToSource_MostlyDecoration(t *testing.T) {
 	_, ok := MapSelectionToSource(source, rendered, start, end)
 	require.False(t, ok)
 }
+
+func TestMapSelectionToSource_AmbiguousText(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		source   string
+		from, to string
+		want     string
+	}{
+		"rune repeated in a hidden link title": {
+			source: `Read [guide](https://example.com "x") **x** abcdefghijklmnop.`,
+			from:   "x ",
+			to:     "abcdefghijklmnop",
+			want:   "**x** abcdefghijklmnop",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			plain := renderPlain(t, tc.source)
+			start, end := selectBetween(t, plain, tc.from, tc.to)
+			got, ok := MapSelectionToSource(tc.source, plain, start, end)
+			require.True(t, ok, plain)
+			require.Equal(t, tc.want, got, plain)
+		})
+	}
+}
+
+// When the selection's first or last word rune has no source match, the
+// mapped range would cut the selection short, so the caller falls back to
+// the rendered text. Here the cell's URL also appears, hidden, as the
+// link's target, and the "[1]" link reference stops the end of the cell's
+// URL from matching.
+func TestMapSelectionToSource_UnmappedEndpoint(t *testing.T) {
+	t.Parallel()
+
+	source := strings.Join([]string{
+		"| Name | Description |",
+		"|---|---|",
+		"| [link](https://example.com/abcdefghij) | `https://example.com/abcdefghij` |",
+		"",
+		"Footer text.",
+	}, "\n")
+	plain := renderPlain(t, source)
+	start, end := selectBetween(t, plain, "https", "abcdefghij")
+	_, ok := MapSelectionToSource(source, plain, start, end)
+	require.False(t, ok, plain)
+}

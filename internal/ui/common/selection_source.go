@@ -112,6 +112,9 @@ type selectionScan struct {
 	// selectedWords counts selected word runes, and mappedWords those of
 	// them with a source counterpart.
 	selectedWords, mappedWords int
+	// firstWordMapped and lastWordMapped report whether the first and last
+	// selected word runes have a source counterpart.
+	firstWordMapped, lastWordMapped bool
 }
 
 func scanSelection(rendered string, rPos []int, rRunes []rune, mapping []int, start, end int) selectionScan {
@@ -121,6 +124,10 @@ func scanSelection(rendered string, rPos []int, rRunes []rune, mapping []int, st
 		pos := rPos[i]
 		selected := pos >= start && pos < end
 		if selected && isWordRune(rRunes[i]) {
+			if scan.selectedWords == 0 {
+				scan.firstWordMapped = m >= 0
+			}
+			scan.lastWordMapped = m >= 0
 			scan.selectedWords++
 			if m >= 0 {
 				scan.mappedWords++
@@ -150,9 +157,13 @@ func scanSelection(rendered string, rPos []int, rRunes []rune, mapping []int, st
 // mappable reports whether the selection can be trusted to map to the
 // source. Mostly unmapped word runes mean the selection is largely
 // rendered-only text, or that alignment went wrong, so the few runes that
-// matched would not be what the user selected.
+// matched would not be what the user selected. An unmapped first or last
+// word rune would cut the mapped range short of the selection.
 func (s selectionScan) mappable() bool {
-	return s.firstSel >= 0 && s.mappedWords*2 >= s.selectedWords
+	if s.firstSel < 0 || s.mappedWords*2 < s.selectedWords {
+		return false
+	}
+	return s.selectedWords == 0 || s.firstWordMapped && s.lastWordMapped
 }
 
 // nonSpaceRunes returns the non-whitespace runes of s with their byte
@@ -181,24 +192,12 @@ func alignRunes(rendered, source []rune) []int {
 	mapping := make([]int, len(rendered))
 	ri, si := 0, 0
 	for _, a := range anchorChain(rendered, source) {
-		gap := alignGreedy(rendered[ri:a.rendered], source[si:a.source])
-		for k, m := range gap {
-			mapping[ri+k] = offsetMatch(m, si)
-		}
+		alignGap(mapping, rendered, source, ri, a.rendered, si, a.source)
 		mapping[a.rendered] = a.source
 		ri, si = a.rendered+1, a.source+1
 	}
-	for k, m := range alignGreedy(rendered[ri:], source[si:]) {
-		mapping[ri+k] = offsetMatch(m, si)
-	}
+	alignGap(mapping, rendered, source, ri, len(rendered), si, len(source))
 	return mapping
-}
-
-func offsetMatch(m, offset int) int {
-	if m < 0 {
-		return m
-	}
-	return m + offset
 }
 
 // anchor pairs a rendered rune index with the source rune index of the
@@ -276,34 +275,32 @@ func tailOrNone(tails []int) int {
 	return tails[len(tails)-1]
 }
 
-// alignGreedy greedily aligns rendered runes to source runes in the same
-// shape as alignRunes. Matches are confirmed by the word runes that
-// follow, so source-only syntax and rendered-only decorations are skipped.
-func alignGreedy(rendered, source []rune) []int {
-	mapping := make([]int, len(rendered))
-	j := 0
-	for i := range rendered {
+// alignGap greedily aligns the rendered runes in [rFrom, rTo) to the source
+// runes in [sFrom, sTo), writing into mapping. Matches are confirmed by the
+// word runes that follow, read past the end of the gap, so source-only
+// syntax and rendered-only decorations are skipped.
+func alignGap(mapping []int, rendered, source []rune, rFrom, rTo, sFrom, sTo int) {
+	j := sFrom
+	for i := rFrom; i < rTo; i++ {
 		mapping[i] = -1
-		if j >= len(source) {
+		if j >= sTo {
 			continue
 		}
-		k := findAlignedRune(rendered, i, source, j, alignNearWindow, alignNearConfirm)
+		k := findAlignedRune(rendered, i, source, j, min(sTo, j+alignNearWindow+1), alignNearConfirm)
 		if k < 0 && isWordRune(rendered[i]) {
-			k = findAlignedRune(rendered, i, source, j, len(source), alignFarConfirm)
+			k = findAlignedRune(rendered, i, source, j, sTo, alignFarConfirm)
 		}
 		if k >= 0 {
 			mapping[i] = k
 			j = k + 1
 		}
 	}
-	return mapping
 }
 
-// findAlignedRune finds the first source index in [from, from+window] whose
-// rune equals rendered[i] and whose following word runes agree with the
+// findAlignedRune finds the first source index in [from, limit) whose rune
+// equals rendered[i] and whose following word runes agree with the
 // rendered text. It returns -1 when no such index exists.
-func findAlignedRune(rendered []rune, i int, source []rune, from, window, confirm int) int {
-	limit := min(len(source), from+window+1)
+func findAlignedRune(rendered []rune, i int, source []rune, from, limit, confirm int) int {
 	for k := from; k < limit; k++ {
 		if source[k] == rendered[i] && wordRunesAgree(rendered, i+1, source, k+1, confirm) {
 			return k
