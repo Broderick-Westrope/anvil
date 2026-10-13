@@ -37,6 +37,15 @@ var blockPrefixRe = regexp.MustCompile(`^[ \t]*(?:(?:#{1,6}|>|[-*+](?:[ \t]+\[[ 
 // fenceRe matches the opening or closing line of a fenced code block.
 var fenceRe = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
 
+// hiddenSourceRes match markdown source text that glamour never renders in
+// place: link and image titles (the first submatch), reference definition
+// lines, and HTML comments.
+var hiddenSourceRes = []*regexp.Regexp{
+	regexp.MustCompile(`\]\(\s*(?:<[^>]*>|[^\s()]+)\s+("[^"]*"|'[^']*'|\([^)]*\))\s*\)`),
+	regexp.MustCompile(`(?m)^ {0,3}\[[^\]]+\]:[ \t]*\S+.*$`),
+	regexp.MustCompile(`(?s)<!--.*?-->`),
+}
+
 // MapSelectionToSource maps a selection over glamour-rendered plain text
 // back to the markdown source it was rendered from. rendered is the plain
 // (ANSI-free) rendered text and [start, end) is the selected byte range
@@ -56,7 +65,7 @@ func MapSelectionToSource(source, rendered string, start, end int) (string, bool
 	if len(rRunes) == 0 || len(sRunes) == 0 {
 		return "", false
 	}
-	mapping := alignRunes(rRunes, sRunes)
+	mapping := alignRunes(rRunes, sRunes, hiddenRunes(source, sPos))
 	scan := scanSelection(rendered, rPos, rRunes, mapping, start, end)
 	if !scan.mappable() {
 		return "", false
@@ -182,16 +191,17 @@ func nonSpaceRunes(s string) (positions []int, runes []rune) {
 // alignRunes aligns rendered runes to source runes, returning for each
 // rendered rune the index of its source rune or -1 when the rune is a
 // rendering decoration (bullets, borders, labels, link references) with no
-// source counterpart. Matches are monotonic.
+// source counterpart. Matches are monotonic. sourceHidden marks source
+// runes that are never rendered in place; they can't be anchors.
 //
 // Runs of word runes that occur exactly once in each text are paired up as
 // anchors, and the longest chain of anchors in the same order in both
 // texts is kept. The runes between consecutive anchors are aligned
 // greedily, so a wrong greedy match can't skip past the next anchor.
-func alignRunes(rendered, source []rune) []int {
+func alignRunes(rendered, source []rune, sourceHidden []bool) []int {
 	mapping := make([]int, len(rendered))
 	ri, si := 0, 0
-	for _, a := range anchorChain(rendered, source) {
+	for _, a := range anchorChain(rendered, source, sourceHidden) {
 		alignGap(mapping, rendered, source, ri, a.rendered, si, a.source)
 		mapping[a.rendered] = a.source
 		ri, si = a.rendered+1, a.source+1
@@ -208,13 +218,14 @@ type anchor struct {
 
 // anchorChain returns the longest chain of anchors whose rendered and
 // source indexes both strictly increase. Anchors are the starts of runs of
-// anchorLen word runes that occur exactly once in each text. Only word
-// runes count, because markdown syntax splits visible source text
-// (**bold**) while hidden text such as a link title doesn't, which would
-// otherwise make the hidden copy look like the unique match.
-func anchorChain(rendered, source []rune) []anchor {
-	rWords, rAt := wordRunes(rendered)
-	sWords, sAt := wordRunes(source)
+// anchorLen word runes that occur exactly once in each text, ignoring
+// hidden source runes. Only word runes count, because markdown syntax
+// splits visible source text (**bold**) while hidden text such as a link
+// title doesn't, which would otherwise make the hidden copy look like the
+// unique match.
+func anchorChain(rendered, source []rune, sourceHidden []bool) []anchor {
+	rWords, rAt := wordRunes(rendered, nil)
+	sWords, sAt := wordRunes(source, sourceHidden)
 	sourceAt := uniqueSubstrings(sWords)
 	renderedAt := uniqueSubstrings(rWords)
 	var candidates []anchor
@@ -230,15 +241,38 @@ func anchorChain(rendered, source []rune) []anchor {
 	return longestIncreasing(candidates)
 }
 
-// wordRunes returns the word runes of runes with their indexes.
-func wordRunes(runes []rune) (words []rune, at []int) {
+// wordRunes returns the word runes of runes that aren't marked in skip,
+// with their indexes. A nil skip keeps every word rune.
+func wordRunes(runes []rune, skip []bool) (words []rune, at []int) {
 	for i, r := range runes {
-		if isWordRune(r) {
+		if isWordRune(r) && (skip == nil || !skip[i]) {
 			words = append(words, r)
 			at = append(at, i)
 		}
 	}
 	return words, at
+}
+
+// hiddenRunes reports for each non-space source rune, at the byte offsets
+// in pos, whether it lies in text matched by hiddenSourceRes.
+func hiddenRunes(source string, pos []int) []bool {
+	hiddenByte := make([]bool, len(source))
+	for _, re := range hiddenSourceRes {
+		for _, m := range re.FindAllStringSubmatchIndex(source, -1) {
+			from, to := m[0], m[1]
+			if len(m) > 2 {
+				from, to = m[2], m[3]
+			}
+			for b := from; b < to; b++ {
+				hiddenByte[b] = true
+			}
+		}
+	}
+	hidden := make([]bool, len(pos))
+	for i, p := range pos {
+		hidden[i] = hiddenByte[p]
+	}
+	return hidden
 }
 
 // uniqueSubstrings maps each anchorLen-rune substring of runes to the index

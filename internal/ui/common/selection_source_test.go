@@ -195,6 +195,25 @@ func TestMapSelectionToSource_AmbiguousText(t *testing.T) {
 			to:   "deployment",
 			want: "**deployment**",
 		},
+		"word repeated in a hidden link title after a repeated link": {
+			source: `Prefix. [link](https://e.co "deployment") [link](https://e.co "other") deployment Suffix.`,
+			from:   "deployment",
+			to:     "deployment",
+			want:   "deployment",
+		},
+		"word repeated in a hidden reference definition": {
+			source: "Prefix. [link][1] [link][2] deployment Suffix.\n\n" +
+				"[1]: https://e.co \"deployment\"\n[2]: https://e.co \"other\"",
+			from: "deployment",
+			to:   "deployment",
+			want: "deployment",
+		},
+		"word repeated in a hidden html comment": {
+			source: "Prefix. https://e.co <!-- deployment --> https://e.co <!-- other --> deployment Suffix.",
+			from:   "deployment",
+			to:     "deployment",
+			want:   "deployment",
+		},
 		"rune repeated in a hidden link title": {
 			source: `Read [guide](https://example.com "x") **x** abcdefghijklmnop.`,
 			from:   "x ",
