@@ -57,43 +57,20 @@ func MapSelectionToSource(source, rendered string, start, end int) (string, bool
 		return "", false
 	}
 	mapping := alignRunes(rRunes, sRunes)
-
-	firstAll, lastAll := -1, -1
-	firstSel, lastSel := -1, -1
-	mappedBeforeOnLine := false
-	lineStart := strings.LastIndexByte(rendered[:start], '\n') + 1
-	for i, m := range mapping {
-		if m < 0 {
-			continue
-		}
-		if firstAll < 0 {
-			firstAll = i
-		}
-		lastAll = i
-		pos := rPos[i]
-		if pos >= lineStart && pos < start {
-			mappedBeforeOnLine = true
-		}
-		if pos < start || pos >= end {
-			continue
-		}
-		if firstSel < 0 {
-			firstSel = i
-		}
-		lastSel = i
-	}
-	if firstSel < 0 {
+	scan := scanSelection(rendered, rPos, rRunes, mapping, start, end)
+	if !scan.mappable() {
 		return "", false
 	}
+	firstSel, lastSel := scan.firstSel, scan.lastSel
 
 	srcStart := sPos[mapping[firstSel]]
 	lastRune := sRunes[mapping[lastSel]]
 	srcEnd := sPos[mapping[lastSel]] + utf8.RuneLen(lastRune)
 
-	if firstSel == firstAll {
+	if firstSel == scan.firstAll {
 		srcStart = 0
 	} else {
-		if !mappedBeforeOnLine {
+		if !scan.mappedBeforeOnLine {
 			ls := strings.LastIndexByte(source[:srcStart], '\n') + 1
 			if blockPrefixRe.MatchString(source[ls:srcStart]) {
 				srcStart = ls
@@ -103,7 +80,7 @@ func MapSelectionToSource(source, rendered string, start, end int) (string, bool
 			srcStart--
 		}
 	}
-	if lastSel == lastAll {
+	if lastSel == scan.lastAll {
 		srcEnd = len(source)
 	} else {
 		for srcEnd < len(source) && strings.IndexByte(inlineMarkers, source[srcEnd]) >= 0 {
@@ -119,6 +96,63 @@ func MapSelectionToSource(source, rendered string, start, end int) (string, bool
 		return "", false
 	}
 	return prefix + text + suffix, true
+}
+
+// selectionScan summarises how a selection over the rendered text lines up
+// with the source. Rune fields are indexes into the rendered non-space
+// runes and are -1 when there is no such rune.
+type selectionScan struct {
+	// firstAll and lastAll are the first and last mapped runes overall.
+	firstAll, lastAll int
+	// firstSel and lastSel are the first and last mapped selected runes.
+	firstSel, lastSel int
+	// mappedBeforeOnLine reports whether a mapped rune precedes the
+	// selection on its first line.
+	mappedBeforeOnLine bool
+	// selectedWords counts selected word runes, and mappedWords those of
+	// them with a source counterpart.
+	selectedWords, mappedWords int
+}
+
+func scanSelection(rendered string, rPos []int, rRunes []rune, mapping []int, start, end int) selectionScan {
+	scan := selectionScan{firstAll: -1, lastAll: -1, firstSel: -1, lastSel: -1}
+	lineStart := strings.LastIndexByte(rendered[:start], '\n') + 1
+	for i, m := range mapping {
+		pos := rPos[i]
+		selected := pos >= start && pos < end
+		if selected && isWordRune(rRunes[i]) {
+			scan.selectedWords++
+			if m >= 0 {
+				scan.mappedWords++
+			}
+		}
+		if m < 0 {
+			continue
+		}
+		if scan.firstAll < 0 {
+			scan.firstAll = i
+		}
+		scan.lastAll = i
+		if pos >= lineStart && pos < start {
+			scan.mappedBeforeOnLine = true
+		}
+		if !selected {
+			continue
+		}
+		if scan.firstSel < 0 {
+			scan.firstSel = i
+		}
+		scan.lastSel = i
+	}
+	return scan
+}
+
+// mappable reports whether the selection can be trusted to map to the
+// source. Mostly unmapped word runes mean the selection is largely
+// rendered-only text, or that alignment went wrong, so the few runes that
+// matched would not be what the user selected.
+func (s selectionScan) mappable() bool {
+	return s.firstSel >= 0 && s.mappedWords*2 >= s.selectedWords
 }
 
 // nonSpaceRunes returns the non-whitespace runes of s with their byte

@@ -165,3 +165,17 @@ func TestMapSelectionToSource_TableLinkReferences(t *testing.T) {
 		})
 	}
 }
+
+// A selection that is mostly rendered-only text can't be trusted to map to
+// the source, so the caller falls back to the rendered text instead of
+// copying the few runes that happened to match.
+func TestMapSelectionToSource_MostlyDecoration(t *testing.T) {
+	t.Parallel()
+
+	source := "hello world"
+	rendered := "Note: qqqq zzzz\nhello world"
+	start := strings.Index(rendered, "qqqq")
+	end := strings.Index(rendered, "hello") + len("he")
+	_, ok := MapSelectionToSource(source, rendered, start, end)
+	require.False(t, ok)
+}
