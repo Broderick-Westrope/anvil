@@ -1535,3 +1535,16 @@ func TestWorkflowAnswerToAForgottenRequestIsSentButNotKept(t *testing.T) {
 	require.Equal(t, [][2]string{{"ask-1", "yes"}}, f.ws.responds)
 	f.requireNothingKept(t)
 }
+
+func TestWorkflowUnseenRunFinishingAfterAnEarlierRunReleasesItsInvocation(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
+	f.event(approvalFor("req-2", "sess-1"))
+	f.act(dialog.ActionWorkflowRespond{RequestID: "req-2", Answer: workflowhost.AnswerApprove})
+	// Shutdown ends run-2 before it reports starting.
+	f.event(finishedIn("sess-1", "run-2", workflowhost.StatusInterrupted))
+	f.requireNothingKept(t)
+}

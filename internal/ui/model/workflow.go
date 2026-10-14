@@ -645,7 +645,7 @@ func (w *workflowFeature) handleFocus(msg workflowFocusMsg) tea.Cmd {
 // session runs another workflow.
 func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
 	run := w.runs[ev.SessionID]
-	seen := run != nil && ev.RunID != "" && run.log.RunID == ev.RunID
+	seen := run != nil && run.log.RunID == ev.RunID
 	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID, seen))
 	if run == nil || run.log.Finished || otherWorkflowRun(run, ev) {
 		run = w.newRun(ev)
