@@ -180,6 +180,10 @@ func TestWorkflowApprovalShowsEveryFile(t *testing.T) {
 			want:    []string{"1 of 2 files changed", "references/da.md", "removed"},
 			notWant: []string{"Be kind.", "return 2"},
 		},
+		"every changed file is counted": {
+			ev:   bundleEvent(workflowhost.FileChanged, workflowhost.FileChanged),
+			want: []string{"2 of 2 files changed"},
+		},
 		"added reference shows its source": {
 			ev:   bundleEvent(workflowhost.FileUnchanged, workflowhost.FileAdded),
 			want: []string{"1 of 2 files changed", "references/da.md", "added", "Be thorough."},
@@ -286,11 +290,12 @@ func TestWorkflowApprovalShowsAnOmittedFileBySizeAndHash(t *testing.T) {
 			ev.Approval.Files = append(ev.Approval.Files, workflowhost.ApprovalFile{
 				Path: "tool.bin", Status: tc.status, Size: 2048, Omitted: "binary",
 				Hash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-			})
+			}, workflowhost.ApprovalFile{Path: "z-after.md", Status: workflowhost.FileAdded, Source: "listed after it"})
 			out := drawAllScrolled(NewWorkflowApproval(workflowCommon(), ev), 120, 40)
 			require.Contains(t, out, "tool.bin "+string(tc.status))
 			require.Contains(t, out, "binary · 2048 bytes")
 			require.Contains(t, out, "sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+			require.Contains(t, out, "listed after it")
 		})
 	}
 }

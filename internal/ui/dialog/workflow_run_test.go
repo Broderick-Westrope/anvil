@@ -357,3 +357,78 @@ func TestWorkflowRunScrollsTheChosenAgentIntoView(t *testing.T) {
 		require.Equal(t, before, visibleEntries(drawDialog(d, 100, 30)))
 	})
 }
+
+func TestWorkflowRunMarksNoEntryWithoutAgents(t *testing.T) {
+	t.Parallel()
+
+	require.NotContains(t, drawDialog(NewWorkflowRun(workflowCommon(), stepTranscript(5)), 100, 30), "›")
+}
+
+func TestWorkflowRunRewrapsWhenResized(t *testing.T) {
+	t.Parallel()
+
+	resized := NewWorkflowRun(workflowCommon(), reviewTranscript())
+	drawDialog(resized, 100, 40)
+	require.Equal(t, drawDialog(NewWorkflowRun(workflowCommon(), reviewTranscript()), 60, 40), drawDialog(resized, 60, 40))
+}
+
+func TestWorkflowRunFollowsNewEntriesOnlyFromTheBottom(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		keys []tea.KeyPressMsg
+		want bool
+	}{
+		"at the bottom":   {want: true},
+		"scrolled to top": {keys: []tea.KeyPressMsg{{Code: tea.KeyHome}}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tr := stepTranscript(60)
+			d := NewWorkflowRun(workflowCommon(), tr)
+			drawDialog(d, 100, 30)
+			for _, k := range tc.keys {
+				d.HandleMsg(k)
+			}
+			drawDialog(d, 100, 30)
+			tr.Entries = append(tr.Entries, WorkflowEntry{Kind: WorkflowEntryStatus, Text: "NEWEST"})
+			tr.Version++
+			require.Equal(t, tc.want, strings.Contains(drawDialog(d, 100, 30), "NEWEST"))
+		})
+	}
+}
+
+func TestWorkflowRunSelectionFollowsNewAgentsFromTheLatest(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		keys []tea.KeyPressMsg
+		want ActionWorkflowOpenAgent
+	}{
+		"the latest agent moves to the new one": {
+			want: ActionWorkflowOpenAgent{SessionID: "c03", Command: "build", Agent: "agent03"},
+		},
+		"an earlier agent stays chosen": {
+			keys: []tea.KeyPressMsg{{Code: tea.KeyUp}},
+			want: ActionWorkflowOpenAgent{SessionID: "c01", Command: "build", Agent: "agent01"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tr := stepTranscript(4, 1, 2, 3)
+			added := tr.Entries[3]
+			tr.Entries = tr.Entries[:3]
+			d := NewWorkflowRun(workflowCommon(), tr)
+			drawDialog(d, 100, 30)
+			for _, k := range tc.keys {
+				require.Nil(t, d.HandleMsg(k))
+			}
+			tr.Entries = append(tr.Entries, added)
+			tr.Version++
+			drawDialog(d, 100, 30)
+			require.Equal(t, tc.want, d.HandleMsg(press("enter")))
+		})
+	}
+}
