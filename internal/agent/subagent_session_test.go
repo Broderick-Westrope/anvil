@@ -58,7 +58,7 @@ func TestRunSubAgentChildSessionLifecycle(t *testing.T) {
 			resp, err := coord.runSubAgent(t.Context(), subAgentParams{
 				Agent: agent, SessionID: parent.ID, AgentMessageID: "msg-1", ToolCallID: "call-" + name,
 				Prompt: "go", SessionTitle: "Child",
-				SessionSetup: func(id string) { setupID = id },
+				OnSession: func(id string) { setupID = id },
 			})
 			require.NoError(t, err)
 			require.Equal(t, tc.wantIsError, resp.IsError)

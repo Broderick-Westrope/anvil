@@ -472,7 +472,7 @@ func TestRunSubAgent(t *testing.T) {
 			ToolCallID:     "call-1",
 			Prompt:         "test",
 			SessionTitle:   "Test",
-			SessionSetup: func(sessionID string) {
+			OnSession: func(sessionID string) {
 				setupCalledWith = sessionID
 			},
 		})

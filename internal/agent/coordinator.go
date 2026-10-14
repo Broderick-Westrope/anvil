@@ -1567,67 +1567,103 @@ type subAgentParams struct {
 	ToolCallID     string
 	Prompt         string
 	SessionTitle   string
-	// SessionSetup is an optional callback invoked after session creation
-	// but before agent execution, for custom session configuration.
-	SessionSetup func(sessionID string)
+	// OnSession, when set, is called with the child session's ID before
+	// the agent runs, for custom session configuration.
+	OnSession func(sessionID string)
 }
 
-// runSubAgent runs a sub-agent and handles session management and cost accumulation.
-// It creates a sub-session, runs the agent with the given prompt, and propagates
-// the cost to the parent session.
-func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (resp fantasy.ToolResponse, err error) {
+// childSession describes the session a subagent runs in.
+type childSession struct {
+	ID, ParentID, Title string
+	// OnCreate, when set, is called once the session exists.
+	OnCreate func(sessionID string)
+}
+
+// inChildSession runs fn in a new child session of s.ParentID, then rolls
+// the child's cost up to the parent (only when fn succeeds) and hands its
+// surviving background jobs to the parent. It returns the hand-off
+// inventory, empty when there were no jobs. Every subagent run, from the
+// task tool or a workflow, goes through here.
+func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn func(ctx context.Context, sessionID string) error) (handedOff string, err error) {
+	// Detach from any submission owner ctx carries: the child's turns are
+	// admitted as their own submissions, not run in place as, or rejected
+	// as, the parent's owner.
 	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
-	// Create sub-session
-	agentToolSessionID := c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID)
-	session, err := c.sessions.CreateTaskSession(ctx, agentToolSessionID, params.SessionID, params.SessionTitle)
+	session, err := c.sessions.CreateTaskSession(ctx, s.ID, s.ParentID, s.Title)
 	if err != nil {
-		return fantasy.ToolResponse{}, fmt.Errorf("create session: %w", err)
+		return "", fmt.Errorf("create session: %w", err)
 	}
 	defer func() {
-		inventory := handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, params.SessionID)
-		if inventory == "" {
-			return
-		}
-		if err != nil {
-			slog.Warn("Subagent jobs handed off after error", "child_session", session.ID, "inventory", inventory)
-			return
-		}
-		resp.Content += "\n\n" + inventory
+		handedOff = handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, s.ParentID)
 	}()
 	defer c.permissions.RevokeAutoApproveSession(session.ID)
-
-	// Call session setup function if provided
-	if params.SessionSetup != nil {
-		params.SessionSetup(session.ID)
+	if s.OnCreate != nil {
+		s.OnCreate(session.ID)
 	}
-
-	call, err := c.subAgentCall(ctx, params.Agent, session.ID, params.Prompt)
-	if errors.Is(err, errRefreshSubAgentModels) {
-		return fantasy.NewTextErrorResponse("Failed to " + err.Error()), nil
+	if err := fn(ctx, session.ID); err != nil {
+		return "", err
 	}
-	if err != nil {
-		return fantasy.ToolResponse{}, err
-	}
-	result, err := params.Agent.Run(ctx, call)
-	if err != nil {
-		return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to generate response: %s", err)), nil
-	}
-
-	// Update parent session cost on a best-effort basis. A failure here must
-	// not discard the sub-agent output that was already produced.
-	if err := c.updateParentSessionCost(ctx, session.ID, params.SessionID); err != nil {
+	// Best effort: a failure here must not discard output the subagent
+	// already produced.
+	if err := c.updateParentSessionCost(ctx, session.ID, s.ParentID); err != nil {
 		slog.Warn("Failed to update parent session cost",
 			"child_session", session.ID,
-			"parent_session", params.SessionID,
+			"parent_session", s.ParentID,
 			"error", err,
 		)
 	}
+	return "", nil
+}
 
-	output := subAgentOutput(result)
-	if output == "" {
-		return fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output."), nil
+// errSubAgentRun marks a failure the task tool reports back to the model
+// as a tool error rather than failing the tool call.
+type errSubAgentRun struct{ msg string }
+
+func (e errSubAgentRun) Error() string { return e.msg }
+
+// runSubAgent runs a sub-agent for the task tool in a child session and
+// returns its output as the tool's response.
+func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, error) {
+	var output string
+	handedOff, err := c.inChildSession(ctx, childSession{
+		ID:       c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID),
+		ParentID: params.SessionID,
+		Title:    params.SessionTitle,
+		OnCreate: params.OnSession,
+	}, func(ctx context.Context, sessionID string) error {
+		call, err := c.subAgentCall(ctx, params.Agent, sessionID, params.Prompt)
+		if errors.Is(err, errRefreshSubAgentModels) {
+			return errSubAgentRun{"Failed to " + err.Error()}
+		}
+		if err != nil {
+			return err
+		}
+		result, err := params.Agent.Run(ctx, call)
+		if err != nil {
+			return errSubAgentRun{fmt.Sprintf("Failed to generate response: %s", err)}
+		}
+		output = subAgentOutput(result)
+		return nil
+	})
+	var runErr errSubAgentRun
+	var resp fantasy.ToolResponse
+	switch {
+	case errors.As(err, &runErr):
+		resp = fantasy.NewTextErrorResponse(runErr.msg)
+	case err != nil:
+		if handedOff != "" {
+			slog.Warn("Subagent jobs handed off after error", "parent_session", params.SessionID, "inventory", handedOff)
+		}
+		return fantasy.ToolResponse{}, err
+	case output == "":
+		resp = fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output.")
+	default:
+		resp = fantasy.NewTextResponse(output)
 	}
-	return fantasy.NewTextResponse(output), nil
+	if handedOff != "" {
+		resp.Content += "\n\n" + handedOff
+	}
+	return resp, nil
 }
 
 var errRefreshSubAgentModels = errors.New("refresh sub-agent models")

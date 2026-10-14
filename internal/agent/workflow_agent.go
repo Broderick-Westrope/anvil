@@ -14,7 +14,6 @@ import (
 
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
-	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
 // SubmitResultToolName is the tool a workflow subagent calls to return
@@ -91,44 +90,35 @@ func (c *coordinator) RunWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 	if title == "" {
 		title = "workflow: " + call.Agent
 	}
-	// Detach from any submission owner ctx carries, as runSubAgent does:
-	// the child session's turns must be admitted as their own submissions,
-	// not run in place as, or rejected as, the parent's owner.
-	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
 	sessionID := call.SessionID
 	if sessionID == "" {
 		sessionID = uuid.NewString()
 	}
-	session, err := c.sessions.CreateTaskSession(ctx, sessionID, call.ParentSessionID, title)
-	if err != nil {
-		return WorkflowAgentOutput{}, fmt.Errorf("create session: %w", err)
-	}
-	if call.OnSession != nil {
-		call.OnSession(session.ID)
-	}
-	defer func() {
-		if inventory := handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, call.ParentSessionID); inventory != "" {
-			slog.Info("Workflow subagent jobs handed off", "child_session", session.ID, "inventory", inventory)
+	out := WorkflowAgentOutput{SessionID: sessionID}
+	handedOff, err := c.inChildSession(ctx, childSession{
+		ID: sessionID, ParentID: call.ParentSessionID, Title: title, OnCreate: call.OnSession,
+	}, func(ctx context.Context, sessionID string) error {
+		text, err := c.runWorkflowTurn(ctx, sub, sessionID, call.Prompt)
+		if err != nil {
+			return err
 		}
-	}()
-	defer c.permissions.RevokeAutoApproveSession(session.ID)
-
-	text, err := c.runWorkflowTurn(ctx, sub, session.ID, call.Prompt)
+		if submit != nil && submit.result() == nil {
+			// One nudge, in the same session, before giving up.
+			text, err = c.runWorkflowTurn(ctx, sub, sessionID,
+				"You ended without calling "+SubmitResultToolName+". Call it now with your result.")
+			if err != nil {
+				return err
+			}
+		}
+		out.Text = text
+		return nil
+	})
+	if handedOff != "" {
+		slog.Info("Workflow subagent jobs handed off", "parent_session", call.ParentSessionID, "inventory", handedOff)
+	}
 	if err != nil {
 		return WorkflowAgentOutput{}, err
 	}
-	if submit != nil && submit.result() == nil {
-		// One nudge, in the same session, before giving up.
-		text, err = c.runWorkflowTurn(ctx, sub, session.ID,
-			"You ended without calling "+SubmitResultToolName+". Call it now with your result.")
-		if err != nil {
-			return WorkflowAgentOutput{}, err
-		}
-	}
-	if err := c.updateParentSessionCost(ctx, session.ID, call.ParentSessionID); err != nil {
-		slog.Warn("Failed to update parent session cost", "child_session", session.ID, "error", err)
-	}
-	out := WorkflowAgentOutput{SessionID: session.ID, Text: text}
 	if submit != nil {
 		out.Output = submit.result()
 	}
