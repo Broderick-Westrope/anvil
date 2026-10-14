@@ -162,6 +162,7 @@ func TestServiceApprovalCoversTheWholeCommandDirectory(t *testing.T) {
 	h := newServiceHarness(t, false)
 	writeFile(t, filepath.Join(h.dir, "references", "guide.md"), "be careful")
 	writeFile(t, filepath.Join(h.dir, "a-first.md"), "sorted before the script")
+	writeFile(t, filepath.Join(h.dir, "z-last.md"), "sorted after the script")
 	writeFile(t, filepath.Join(h.dir, ".git", "HEAD"), "ref: main")
 	writeFile(t, filepath.Join(h.dir, "node_modules", "dep", "index.js"), "module.exports = 1")
 	path := h.write(t, `function main() { return reference("references/guide.md") }`)
@@ -173,7 +174,7 @@ func TestServiceApprovalCoversTheWholeCommandDirectory(t *testing.T) {
 		paths = append(paths, f.Path)
 		require.Equal(t, workflowhost.FileAdded, f.Status, f.Path)
 	}
-	require.Equal(t, []string{"workflow.js", "a-first.md", filepath.Join("references", "guide.md")}, paths,
+	require.Equal(t, []string{"workflow.js", "a-first.md", filepath.Join("references", "guide.md"), "z-last.md"}, paths,
 		"script first, then the rest by path, skipping dot directories and node_modules")
 	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
 	require.Equal(t, workflowhost.StatusCompleted, h.next(t, workflowhost.EventFinished).Status)
@@ -871,17 +872,22 @@ function main() {
 
 func TestServiceBashReturnsFailuresAsResults(t *testing.T) {
 	h := newServiceHarness(t, true)
-	path := h.write(t, `function main() {
+	// A script with no shebang runs in-process, so its parse error stops
+	// the command partway rather than exiting with a status.
+	broken := filepath.Join(t.TempDir(), "broken.sh")
+	writeFile(t, broken, "echo 'unterminated")
+	path := h.write(t, `function main(input) {
   return {
     failed: bash("echo out; echo err >&2; exit 3", {check: false}),
     unparsable: bash("echo 'unterminated", {check: false}),
+    halted: bash("echo before >&2; '" + input.raw + "'", {check: false}),
   }
 }`)
-	h.start(t, path, "")
+	h.start(t, path, broken)
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
 	var got struct {
-		Failed, Unparsable struct {
+		Failed, Unparsable, Halted struct {
 			Stdout, Stderr string
 			ExitCode       int
 		}
@@ -893,6 +899,8 @@ func TestServiceBashReturnsFailuresAsResults(t *testing.T) {
 	require.Empty(t, got.Unparsable.Stdout)
 	require.Contains(t, got.Unparsable.Stderr, "reached EOF without closing quote")
 	require.Equal(t, 1, got.Unparsable.ExitCode)
+	require.True(t, strings.HasPrefix(got.Halted.Stderr, "before\n"), got.Halted.Stderr)
+	require.Contains(t, got.Halted.Stderr, "could not parse")
 }
 
 func TestServiceRecordsAnInterruptedBashAsFailed(t *testing.T) {

@@ -293,12 +293,16 @@ func TestStore_PruneRunDirsIgnoresFiles(t *testing.T) {
 	path := filepath.Join(dataDir, "workflows", "notes.txt")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	require.NoError(t, os.WriteFile(path, []byte("keep"), 0o600))
+	// A run directory listed after the file is still pruned.
+	require.NoError(t, os.MkdirAll(s.Tmpdir("run-1"), 0o700))
 	old := time.Now().Add(-30 * 24 * time.Hour)
 	require.NoError(t, os.Chtimes(path, old, old))
+	require.NoError(t, os.Chtimes(s.RunDir("run-1"), old, old))
 
 	require.NoError(t, s.PruneRunDirs(t.Context(), time.Now()))
 
 	require.FileExists(t, path)
+	require.NoDirExists(t, s.RunDir("run-1"))
 }
 
 func TestStore_MarkInterruptedChecksEveryRun(t *testing.T) {
