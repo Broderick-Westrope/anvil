@@ -95,7 +95,7 @@ func (p staticPanel) Render(width int) string {
 
 func newFeatureTestUI(t *testing.T) (*UI, *fakeFeature) {
 	t.Helper()
-	ws := newWorkflowWorkspace()
+	ws := newWorkflowTestWorkspace()
 	u := newTestUI()
 	u.com.Workspace = ws
 	u.keyMap = DefaultKeyMap()
@@ -199,7 +199,7 @@ func TestPaletteCommandRunsThroughItsFeature(t *testing.T) {
 
 	require.Equal(t, []string{"fake|"}, f.commands)
 	require.False(t, u.dialog.ContainsDialog(dialog.CommandsID), "the palette closes")
-	require.Empty(t, u.com.Workspace.(*workflowWorkspace).runs, "the body isn't sent")
+	require.Empty(t, u.com.Workspace.(*workflowTestWorkspace).runs, "the body isn't sent")
 }
 
 func TestSlashCommandRunsThroughItsFeature(t *testing.T) {
@@ -210,7 +210,7 @@ func TestSlashCommandRunsThroughItsFeature(t *testing.T) {
 	cmdMsgs(u.tryExecuteSlashCommand("/fake some args"))
 
 	require.Equal(t, []string{"fake|some args"}, f.commands)
-	require.Empty(t, u.com.Workspace.(*workflowWorkspace).runs, "the body isn't sent")
+	require.Empty(t, u.com.Workspace.(*workflowTestWorkspace).runs, "the body isn't sent")
 }
 
 func TestFeaturePanelSharesThePillsArea(t *testing.T) {

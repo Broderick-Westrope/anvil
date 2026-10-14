@@ -73,7 +73,6 @@ type Commands struct {
 
 	customCommands []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
-	workflow       *WorkflowControls
 	// featureEntries are the entries UI's features contribute.
 	featureEntries []*CommandItem
 
@@ -594,33 +593,6 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		}
 	}
 
-	if w := c.workflow; w != nil && w.Finished {
-		commands = append(commands,
-			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, w.Keys.Run,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowShowRun}),
-			NewCommandItem(c.com.Styles, "workflow_dismiss", "Dismiss Workflow Run /"+w.Command, "",
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowDismiss}))
-	} else if w != nil {
-		pause := NewCommandItem(c.com.Styles, "workflow_pause", "Pause Workflow /"+w.Command, w.Keys.Pause,
-			ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowPause})
-		if w.Paused {
-			pause = NewCommandItem(c.com.Styles, "workflow_pause", "Resume Workflow /"+w.Command, w.Keys.Pause,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowResume})
-		}
-		commands = append(commands, pause,
-			NewCommandItem(c.com.Styles, "workflow_abort", "Abort Workflow /"+w.Command, w.Keys.Abort,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowAbort}),
-			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, w.Keys.Run,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowShowRun}))
-		if w.CanGoToActive {
-			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_goto", "Go to Workflow Session", w.Keys.GoTo,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowGoToActive}))
-		}
-		if w.CanOpenAgent {
-			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_agent", "Open Workflow Agent Session", w.Keys.Agent,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowOpenAgent}))
-		}
-	}
 	commands = append(commands, c.featureEntries...)
 
 	commands = append(commands,
@@ -658,37 +630,6 @@ func nextBouncerMode(mode permission.BouncerMode) permission.BouncerMode {
 	default:
 		return permission.BouncerShadow
 	}
-}
-
-// WorkflowControls describes the workflow run involving the current
-// session, for the palette's pause, resume, abort and go-to entries.
-type WorkflowControls struct {
-	SessionID string
-	Command   string
-	Paused    bool
-	// Finished is set when the run has ended but hasn't been dismissed,
-	// so it can only be shown or dismissed.
-	Finished bool
-	// CanGoToActive is set when the run is driving a session other than
-	// the one shown.
-	CanGoToActive bool
-	// CanOpenAgent is set when the run has a subagent session to open.
-	CanOpenAgent bool
-	// Keys are the shortcuts shown beside each control.
-	Keys WorkflowKeys
-}
-
-// WorkflowKeys are the help keys of the workflow control bindings, so the
-// palette shows whatever they are bound to.
-type WorkflowKeys struct {
-	Pause, Abort, GoTo, Agent, Run string
-}
-
-// SetWorkflowControls shows controls for the workflow run involving the
-// current session, or hides them when w is nil.
-func (c *Commands) SetWorkflowControls(w *WorkflowControls) {
-	c.workflow = w
-	c.setCommandItems(c.selected)
 }
 
 // SetFeatureEntries shows the entries UI's features contribute, in

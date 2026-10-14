@@ -1,6 +1,7 @@
 package dialog
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -152,4 +153,23 @@ func TestDefaultCommands_ReloadInstance(t *testing.T) {
 	require.Equal(t, "Reload Instance", item.title)
 	require.Equal(t, ActionReloadInstance{}, item.Action())
 	require.Contains(t, item.Filter(), "restart")
+}
+
+func TestDefaultCommandsListFeatureEntriesInOrderBeforeBrowseSkills(t *testing.T) {
+	t.Parallel()
+
+	s := styles.TokyoNight()
+	com := &common.Common{Styles: &s, Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig()}}
+	c := &Commands{com: com}
+	first := NewCommandItem(&s, "feature_first", "First", "", ActionClose{})
+	second := NewCommandItem(&s, "feature_second", "Second", "", ActionClose{})
+	c.featureEntries = []*CommandItem{first, second}
+
+	items := c.defaultCommands()
+	at := func(id string) int {
+		return slices.IndexFunc(items, func(item *CommandItem) bool { return item.ID() == id })
+	}
+	require.Equal(t, at("feature_first")+1, at("feature_second"))
+	require.Equal(t, at("feature_second")+1, at("browse_skills"))
+	require.Equal(t, at("toggle_transparent")+1, at("feature_first"))
 }

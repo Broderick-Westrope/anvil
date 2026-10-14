@@ -31,7 +31,6 @@ import (
 	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
-	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
@@ -339,19 +338,6 @@ type UI struct {
 	// features are the fork features routed to from the dispatchers.
 	features features
 
-	// workflows holds the running workflows, keyed by invoking session.
-	workflows map[string]*workflowRun
-	// workflowTitles caches the titles of sessions workflows drive.
-	workflowTitles map[string]string
-	// workflowRequests holds the open approval and ask requests by ID.
-	workflowRequests map[string]workflowhost.Event
-	// workflowAnswered remembers answered requests so a republished copy
-	// doesn't reopen its dialog.
-	workflowAnswered map[string]bool
-	// workflowFollow is a session a workflow focused while the editor had
-	// text; the go key follows it.
-	workflowFollow string
-
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
 
@@ -488,6 +474,8 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		initialSessionID:    initialSessionID,
 		continueLastSession: continueLast,
 	}
+
+	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -938,10 +926,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		if _, ok := m.workflowTitles[msg.Payload.ID]; ok {
-			m.setWorkflowTitle(msg.Payload.ID, msg.Payload.Title)
-		}
-
 		// Update the cached session for any matching drill-stack entry so the
 		// sidebar reflects live token/cost data for the viewed subagent.
 		for i := range m.drillStack {
@@ -1098,12 +1082,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
-	case pubsub.Event[workflowhost.Event]:
-		cmds = append(cmds, m.handleWorkflowEvent(msg.Payload))
-	case workflowSessionTitleMsg:
-		m.setWorkflowTitle(msg.id, msg.title)
-	case workflowFocusMsg:
-		cmds = append(cmds, m.handleWorkflowFocus(msg))
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
 	case tea.TerminalVersionMsg:
@@ -2668,10 +2646,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		))
 
 	case dialog.ActionRunCustomCommand:
-		if msg.Workflow != "" {
-			cmds = append(cmds, m.handleWorkflowAction(msg))
-			break
-		}
 		if customCommandNeedsArgumentDialog(msg) {
 			m.dialog.CloseFrontDialog()
 			argsDialog := dialog.NewArguments(
@@ -2731,8 +2705,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.confirmReloadInstance())
 	case dialog.ActionReloadInstanceCancel:
 		cmds = append(cmds, m.cancelReloadInstance())
-	case dialog.ActionWorkflowRespond, dialog.ActionWorkflowControl, dialog.ActionWorkflowOpenAgent:
-		cmds = append(cmds, m.handleWorkflowAction(msg))
 	case dialog.ActionAttachSkill:
 		if m.slashACOpen {
 			m.closeSlashAC(true)
@@ -2994,11 +2966,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case key.Matches(msg, m.keyMap.CycleBouncer):
 			cmds = append(cmds, m.handleCycleBouncerKey())
 			return true
-		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort, m.keyMap.WorkflowGo, m.keyMap.WorkflowAgent, m.keyMap.WorkflowRun):
-			if cmd, ok := m.handleWorkflowKey(msg); ok {
-				cmds = append(cmds, cmd)
-				return true
-			}
 		default:
 			if cmd, ok := m.features.handleKey(msg); ok {
 				cmds = append(cmds, cmd)
@@ -4540,11 +4507,6 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 	rawArgs := extractSlashArgs(value, argName)
 	prefix := "/" + argName
 
-	// A workflow command runs its script with the raw arguments; it
-	// never sends its body.
-	if cmd.Workflow != "" {
-		return m.startWorkflowCommand(argName, cmd, rawArgs)
-	}
 	if run, ok := m.features.runCommand(cmd, rawArgs); ok {
 		return run
 	}
@@ -5608,7 +5570,6 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 		return util.ReportError(err)
 	}
 
-	commands.SetWorkflowControls(m.workflowControls())
 	commands.SetFeatureEntries(m.features.paletteEntries())
 	m.dialog.OpenDialog(commands)
 
