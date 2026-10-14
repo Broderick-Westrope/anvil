@@ -332,6 +332,11 @@ func TestMapSelectionToSource_Rules(t *testing.T) {
 			from: "beta", to: "beta",
 			want: "beta", wantOK: true,
 		},
+		"selection on a later line keeps its block prefix": {
+			source: "- a\n- b", rendered: "a\nb",
+			from: "b", to: "b",
+			want: "- b", wantOK: true,
+		},
 		"unmapped first word falls back": {
 			source: "hello world", rendered: "Note hello world",
 			from: "Note", to: "world",
@@ -371,6 +376,10 @@ func TestMapSelectionToSource_Rules(t *testing.T) {
 		"word split by hidden text falls back": {
 			source: "a<!--bcd-->bcde", rendered: "abcde",
 			from: "abcde", to: "abcde",
+		},
+		"multibyte word split by hidden text falls back": {
+			source: "é<!--bcd-->bcde", rendered: "ébcde",
+			from: "ébcde", to: "ébcde",
 		},
 		"selection ending inside a split word maps": {
 			source: "a<!--bcd-->bcde", rendered: "abcde",
