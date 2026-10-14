@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -247,7 +248,7 @@ func (d *WorkflowRun) renderEntry(e WorkflowEntry, wrap func(lipgloss.Style, str
 	case WorkflowEntryWarning:
 		return "warn", wrap(t.Pills.WorkflowWarning, e.Text)
 	default:
-		return "result", wrap(t.Pills.TodoProgress, WorkflowOutcomeText(e.Status, e.Text))
+		return "result", wrap(t.Pills.TodoProgress, chat.WorkflowOutcomeText(e.Status, e.Text))
 	}
 }
 
@@ -272,35 +273,6 @@ func WorkflowAgentLine(t *styles.Styles, command string, e WorkflowEntry, inline
 			failed += ": " + first
 		}
 		return t.Tool.IconError.String() + " " + label + sep + t.Pills.HelpText.Render(failed)
-	}
-}
-
-// WorkflowOutcomeText describes how a run ended, given its result for a
-// completed run or the host's message otherwise. It is the one place a
-// Status becomes words, so every view of a run says the same thing.
-func WorkflowOutcomeText(status workflowhost.Status, text string) string {
-	switch status {
-	case workflowhost.StatusRunning:
-		return "running"
-	case workflowhost.StatusCompleted:
-		if text == "" {
-			return "completed"
-		}
-		return "completed: " + text
-	case workflowhost.StatusDenied:
-		return "not approved"
-	case workflowhost.StatusAborted:
-		return "aborted"
-	case workflowhost.StatusInterrupted:
-		// The host's message already says the run was interrupted, and why.
-		if text == "" {
-			return "interrupted"
-		}
-		return text
-	case workflowhost.StatusFailed:
-		return "failed: " + text
-	default:
-		return string(status)
 	}
 }
 

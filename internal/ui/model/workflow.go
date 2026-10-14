@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -598,7 +599,7 @@ func (m *UI) finishWorkflow(ev workflowhost.Event) tea.Cmd {
 	case workflowhost.StatusDenied, workflowhost.StatusAborted, workflowhost.StatusInterrupted:
 		severity = util.InfoTypeWarn
 	}
-	return util.CmdHandler(util.InfoMsg{Type: severity, Msg: "Workflow /" + ev.Command + " " + dialog.WorkflowOutcomeText(ev.Status, outcome)})
+	return util.CmdHandler(util.InfoMsg{Type: severity, Msg: "Workflow /" + ev.Command + " " + chat.WorkflowOutcomeText(ev.Status, outcome)})
 }
 
 // compactResult renders a run's JSON result on one line, or "" when it
@@ -689,7 +690,7 @@ func renderWorkflowPanel(t *styles.Styles, p workflowPanel, width int) string {
 
 	progress := t.Messages.WorkflowTag.Render("Workflow") + " " + t.Pills.TodoLabel.Render("/"+p.command)
 	if o := p.outcome; o != nil {
-		summary := progress + sep + t.Pills.TodoProgress.Render(firstLine(dialog.WorkflowOutcomeText(o.Status, o.Text)))
+		summary := progress + sep + t.Pills.TodoProgress.Render(firstLine(chat.WorkflowOutcomeText(o.Status, o.Text)))
 		return fitWithHints(summary, hint(p.runKey, "details"))
 	}
 	for _, part := range []string{p.step, p.detail} {

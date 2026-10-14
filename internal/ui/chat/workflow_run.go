@@ -11,7 +11,6 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/message"
-	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -191,7 +190,7 @@ func (w *WorkflowRunMessageItem) summary() string {
 	}
 	v := w.view
 	if v.Status != workflowhost.StatusRunning {
-		return dialog.WorkflowOutcomeText(v.Status, firstLine(v.Error)) + " · " + formatRunDuration(v.FinishedAt.Sub(v.StartedAt))
+		return WorkflowOutcomeText(v.Status, firstLine(v.Error)) + " · " + formatRunDuration(v.FinishedAt.Sub(v.StartedAt))
 	}
 	parts := []string{}
 	if step, detail := v.Current(); step != "" {
@@ -257,7 +256,7 @@ func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost
 		if input := firstLine(view.Input); input != "" {
 			title += " " + sty.Tool.ParamMain.Render(input)
 		}
-		state := dialog.WorkflowOutcomeText(view.Status, firstLine(view.Error))
+		state := WorkflowOutcomeText(view.Status, firstLine(view.Error))
 		if view.Status == workflowhost.StatusRunning {
 			state = runningState(view)
 		}
@@ -361,4 +360,33 @@ func formatRunDuration(d time.Duration) string {
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return line
+}
+
+// WorkflowOutcomeText describes how a run ended, given its result for a
+// completed run or the host's message otherwise. It is the one place a
+// Status becomes words, so every view of a run says the same thing.
+func WorkflowOutcomeText(status workflowhost.Status, text string) string {
+	switch status {
+	case workflowhost.StatusRunning:
+		return "running"
+	case workflowhost.StatusCompleted:
+		if text == "" {
+			return "completed"
+		}
+		return "completed: " + text
+	case workflowhost.StatusDenied:
+		return "not approved"
+	case workflowhost.StatusAborted:
+		return "aborted"
+	case workflowhost.StatusInterrupted:
+		// The host's message already says the run was interrupted, and why.
+		if text == "" {
+			return "interrupted"
+		}
+		return text
+	case workflowhost.StatusFailed:
+		return "failed: " + text
+	default:
+		return string(status)
+	}
 }
