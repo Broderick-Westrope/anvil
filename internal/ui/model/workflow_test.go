@@ -1400,3 +1400,27 @@ func TestWorkflowRequestsAreForgottenWhenTheRunEndsBeforeItsFirstEvent(t *testin
 	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusInterrupted))
 	f.requireNothingKept(t)
 }
+
+func TestWorkflowStaleEventOfAnEarlierRunKeepsTheCurrentRequests(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
+	next := started("demo", "sess-1")
+	next.RunID = "run-2"
+	f.event(next)
+	open := askFor("ask-open", "Still waiting?")
+	open.RunID = "run-2"
+	f.event(open)
+	f.answer("ask-done", "Done?", "yes")
+
+	// A pause of run-1, published separately from its finish, arrives late.
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: workflowhost.StatePaused})
+
+	require.True(t, f.requestOpen("ask-open"))
+	f.requireShownOnce(t, open)
+	done := askFor("ask-done", "Done?")
+	done.RunID = "run-2"
+	f.requireShownOnce(t, done)
+}
