@@ -381,6 +381,10 @@ func TestMapSelectionToSource_Rules(t *testing.T) {
 			source: "é<!--bcd-->bcde", rendered: "ébcde",
 			from: "ébcde", to: "ébcde",
 		},
+		"word split after another selected word falls back": {
+			source: "x a<!--bcd-->bcde", rendered: "x abcde",
+			from: "x", to: "abcde",
+		},
 		"selection ending inside a split word maps": {
 			source: "a<!--bcd-->bcde", rendered: "abcde",
 			from: "a", to: "a",
