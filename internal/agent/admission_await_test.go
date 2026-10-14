@@ -325,3 +325,43 @@ func TestAwaitOnIdleSessionRunsWorkLeftQueuedFirst(t *testing.T) {
 	require.Equal(t, "mine", resultText(r))
 	require.Equal(t, []string{"pending", "script"}, order)
 }
+
+func TestUnheldContinuationRunsBehindMessagesQueuedBeforeIt(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	var order []string
+	record := func(name string) func(context.Context) (*fantasy.AgentResult, error) {
+		return func(context.Context) (*fantasy.AgentResult, error) {
+			order = append(order, name)
+			return nil, nil
+		}
+	}
+	_, err := a.submit(t.Context(), "s", submission{run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		_, err := a.submit(t.Context(), "s", submission{prompt: "next", run: record("next")})
+		require.NoError(t, err)
+		a.continueWith(ctx, "s", submission{prompt: "continue", run: record("continue")})
+		return nil, nil
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"next", "continue"}, order)
+}
+
+func TestAwaitWithAFinishedOwnersContextIsRefused(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	var old context.Context
+	_, err := a.submitAwait(t.Context(), "s", submission{run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		old = ctx
+		return nil, nil
+	}})
+	require.NoError(t, err)
+	var ran atomic.Bool
+	_, err = a.submitAwait(context.WithoutCancel(old), "s", submission{run: func(context.Context) (*fantasy.AgentResult, error) {
+		ran.Store(true)
+		return nil, nil
+	}})
+	require.ErrorIs(t, err, ErrSessionBusy)
+	require.False(t, ran.Load())
+}

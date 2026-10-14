@@ -33,6 +33,9 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 		// rebuildFails drops the small model selection once the agents are
 		// built, so rebuilding them on the refreshed credentials fails.
 		rebuildFails bool
+		// keyUnchanged starts with the API key the refreshed token yields,
+		// so only the token itself changes.
+		keyUnchanged bool
 	}{
 		{name: "expired token is refreshed before requesting", expiresIn: -time.Hour, wantAuth: []string{"Bearer fresh-token"}},
 		{name: "revoked token is refreshed on retry", expiresIn: time.Hour, wantAuth: []string{"Bearer stale-token", "Bearer fresh-token"}},
@@ -41,6 +44,7 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 		{name: "rejected refreshed token stops retrying", expiresIn: time.Hour, wantAuth: []string{"Bearer stale-token", "Bearer fresh-token"}, reject: true},
 		{name: "valid token does not rebuild model", expiresIn: time.Hour, wantAuth: []string{"Bearer fresh-token"}, fresh: true},
 		{name: "failed rebuild is reported to the model", expiresIn: -time.Hour, rebuildFails: true},
+		{name: "refreshed token rebuilds model with an unchanged key", expiresIn: -time.Hour, wantAuth: []string{"Bearer fresh-token"}, keyUnchanged: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("ANVIL_GLOBAL_CONFIG", t.TempDir())
@@ -95,6 +99,9 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 			if test.fresh {
 				providerCfg.APIKey = "Bearer fresh-token"
 				providerCfg.OAuthToken.AccessToken = "fresh-token"
+			}
+			if test.keyUnchanged {
+				providerCfg.APIKey = "Bearer fresh-token"
 			}
 			providers.Set("anthropic", providerCfg)
 			cfg.Config().Providers = providers
@@ -158,6 +165,10 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 			}
 			if test.fresh {
 				require.Same(t, specialist.Model, agent.Model().Model)
+			}
+			if test.keyUnchanged {
+				_, original := agent.Model().Model.(*struct{ fantasy.LanguageModel })
+				require.False(t, original, "the models are rebuilt on the refreshed token")
 			}
 			mu.Lock()
 			defer mu.Unlock()
