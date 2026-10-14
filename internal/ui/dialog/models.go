@@ -174,71 +174,63 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 	if action, ok := m.mouse.handle(msg, m.list, m.isModelRow, nil, func() Action { return m.HandleMsg(confirmKey) }); ok {
 		return action
 	}
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch {
-		case key.Matches(msg, m.keyMap.Close):
-			return ActionClose{}
-		case key.Matches(msg, m.keyMap.Previous):
-			m.list.Focus()
-			if m.list.IsSelectedFirst() {
-				m.list.SelectLast()
-			} else {
-				m.list.SelectPrev()
-			}
-			m.list.ScrollToSelectedWithMargin(listScrollMargin)
-		case key.Matches(msg, m.keyMap.Next):
-			m.list.Focus()
-			if m.list.IsSelectedLast() {
-				m.list.SelectFirst()
-			} else {
-				m.list.SelectNext()
-			}
-			m.list.ScrollToSelectedWithMargin(listScrollMargin)
-		case key.Matches(msg, m.keyMap.Select, m.keyMap.Edit):
-			selectedItem := m.list.SelectedItem()
-			if selectedItem == nil {
-				break
-			}
-
-			modelItem, ok := selectedItem.(*ModelItem)
-			if !ok {
-				break
-			}
-
-			isEdit := key.Matches(msg, m.keyMap.Edit)
-
-			return ActionSelectModel{
-				Provider:       modelItem.prov,
-				Model:          modelItem.SelectedModel(),
-				ModelType:      modelItem.SelectedModelType(),
-				ReAuthenticate: isEdit,
-			}
-		case key.Matches(msg, m.keyMap.Tab):
-			if m.isOnboarding {
-				break
-			}
-			if m.modelType == ModelTypeLarge {
-				m.modelType = ModelTypeSmall
-			} else {
-				m.modelType = ModelTypeLarge
-			}
-			if err := m.setProviderItems(); err != nil {
-				return util.ReportError(err)
-			}
-		default:
-			prevValue := m.input.Value()
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			value := m.input.Value()
-			if value != prevValue {
-				m.list.Focus()
-				m.list.SetFilter(value)
-				m.list.SelectFirst()
-				m.list.ScrollToTop()
-			}
-			return ActionCmd{cmd}
+	keyMsg, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return nil
+	}
+	switch {
+	case key.Matches(keyMsg, m.keyMap.Close):
+		return ActionClose{}
+	case key.Matches(keyMsg, m.keyMap.Previous):
+		m.list.Focus()
+		if m.list.IsSelectedFirst() {
+			m.list.SelectLast()
+		} else {
+			m.list.SelectPrev()
 		}
+		m.list.ScrollToSelectedWithMargin(listScrollMargin)
+	case key.Matches(keyMsg, m.keyMap.Next):
+		m.list.Focus()
+		if m.list.IsSelectedLast() {
+			m.list.SelectFirst()
+		} else {
+			m.list.SelectNext()
+		}
+		m.list.ScrollToSelectedWithMargin(listScrollMargin)
+	case key.Matches(keyMsg, m.keyMap.Select, m.keyMap.Edit):
+		modelItem, ok := m.list.SelectedItem().(*ModelItem)
+		if !ok {
+			break
+		}
+		return ActionSelectModel{
+			Provider:       modelItem.prov,
+			Model:          modelItem.SelectedModel(),
+			ModelType:      modelItem.SelectedModelType(),
+			ReAuthenticate: key.Matches(keyMsg, m.keyMap.Edit),
+		}
+	case key.Matches(keyMsg, m.keyMap.Tab):
+		if m.isOnboarding {
+			break
+		}
+		if m.modelType == ModelTypeLarge {
+			m.modelType = ModelTypeSmall
+		} else {
+			m.modelType = ModelTypeLarge
+		}
+		if err := m.setProviderItems(); err != nil {
+			return util.ReportError(err)
+		}
+	default:
+		prevValue := m.input.Value()
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(keyMsg)
+		if value := m.input.Value(); value != prevValue {
+			m.list.Focus()
+			m.list.SetFilter(value)
+			m.list.SelectFirst()
+			m.list.ScrollToTop()
+		}
+		return ActionCmd{cmd}
 	}
 	return nil
 }
