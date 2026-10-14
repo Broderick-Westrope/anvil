@@ -1,13 +1,13 @@
 package chat
 
 import (
-	"regexp"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
@@ -86,7 +86,7 @@ func (m *UserMessageItem) RawRender(width int) string {
 
 // displayContent returns the markdown source shown for the message.
 func (m *UserMessageItem) displayContent() string {
-	msgContent := stripSkillContentForDisplay(strings.TrimSpace(m.message.Content().Text))
+	msgContent := skills.CollapseContentXML(strings.TrimSpace(m.message.Content().Text))
 	return commands.CollapseExpansionXML(msgContent)
 }
 
@@ -158,35 +158,4 @@ func (m *UserMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 		return true, common.CopyToClipboard(text, "Message copied to clipboard")
 	}
 	return false, nil
-}
-
-// skillContentRe matches <skill_content name="...">...</skill_content> blocks
-// and captures the skill name.
-var skillContentRe = regexp.MustCompile(`(?s)<skill_content name="([^"]+)">\n.*?\n</skill_content>`)
-
-// stripSkillContentForDisplay replaces verbose <skill_content> XML blocks
-// with compact "Using skill: name" labels for display in the chat thread.
-// The full content is still sent to the LLM.
-func stripSkillContentForDisplay(text string) string {
-	names := skillContentRe.FindAllStringSubmatch(text, -1)
-	if len(names) == 0 {
-		return text
-	}
-
-	// Collect skill names.
-	var skillNames []string
-	for _, match := range names {
-		skillNames = append(skillNames, match[1])
-	}
-
-	// Strip the XML blocks.
-	stripped := skillContentRe.ReplaceAllString(text, "")
-	stripped = strings.TrimSpace(stripped)
-
-	// Prepend compact skill labels.
-	label := "Using skill: " + strings.Join(skillNames, ", ")
-	if stripped == "" {
-		return label
-	}
-	return label + "\n\n" + stripped
 }

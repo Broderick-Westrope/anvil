@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -50,18 +51,21 @@ func waitUpdate(t *testing.T, events <-chan pubsub.Event[PermissionRequest]) Per
 	case e := <-events:
 		require.Equal(t, pubsub.UpdatedEvent, e.Type)
 		return e.Payload
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitTimeout):
 		t.Fatal("review update was not published")
 		return PermissionRequest{}
 	}
 }
 
-// waitDecision waits for the recorder to hold one decision, since a
-// decision with a review still running is recorded once it settles.
+// waitDecision waits for the bubble to settle, then returns the one
+// recorded decision, since a decision with a review still running is
+// recorded once it settles. Call it only inside a synctest bubble.
 func waitDecision(t *testing.T, rec *fakeRecorder) Decision {
 	t.Helper()
-	require.Eventually(t, func() bool { return len(rec.snapshot()) == 1 }, 10*time.Second, 5*time.Millisecond)
-	return rec.snapshot()[0]
+	synctest.Wait()
+	decisions := rec.snapshot()
+	require.Len(t, decisions, 1)
+	return decisions[0]
 }
 
 func TestReviewEffect(t *testing.T) {
@@ -116,133 +120,147 @@ func TestVerifyQuote(t *testing.T) {
 
 func TestReviewShownAndRecordedWithPrompt(t *testing.T) {
 	t.Parallel()
-	reviewer := &fakeReviewer{
-		opinion: ReviewOpinion{Verdict: ReviewAllow, Quote: "open a PR for this", Reason: "the user asked for a PR", Model: "small"},
-		calls:   make(chan ReviewInput, 1),
-		release: make(chan struct{}),
-	}
-	h := newBouncerHarness(t, &fakeBouncer{outcome: AssessEscalate}, BouncerEnforce, nil, nil,
-		reviewOption(reviewer, "please open a PR for this"))
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "gh pr create"))
+	synctest.Test(t, func(t *testing.T) {
+		reviewer := &fakeReviewer{
+			opinion: ReviewOpinion{Verdict: ReviewAllow, Quote: "open a PR for this", Reason: "the user asked for a PR", Model: "small"},
+			calls:   make(chan ReviewInput, 1),
+			release: make(chan struct{}),
+		}
+		h := newBouncerHarness(t, &fakeBouncer{outcome: AssessEscalate}, BouncerEnforce, nil, nil,
+			reviewOption(reviewer, "please open a PR for this"))
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "gh pr create"))
 
-	perm := waitPrompt(t, h.events)
-	require.NotNil(t, perm.Review)
-	require.True(t, perm.Review.Pending)
-	require.True(t, perm.Review.Shadow)
+		perm := waitPrompt(t, h.events)
+		require.NotNil(t, perm.Review)
+		require.True(t, perm.Review.Pending)
+		require.True(t, perm.Review.Shadow)
 
-	in := <-reviewer.calls
-	require.Equal(t, []string{"please open a PR for this"}, in.UserMessages)
-	require.Equal(t, "gh pr create", in.Input)
-	require.Equal(t, "escalate", in.Bouncer.Outcome)
+		in := recv(t, reviewer.calls)
+		require.Equal(t, []string{"please open a PR for this"}, in.UserMessages)
+		require.Equal(t, "gh pr create", in.Input)
+		require.Equal(t, "escalate", in.Bouncer.Outcome)
 
-	close(reviewer.release)
-	update := waitUpdate(t, h.events)
-	require.Equal(t, perm.ID, update.ID)
-	require.False(t, update.Review.Pending)
-	require.Equal(t, "allow", update.Review.Effect)
-	require.True(t, update.Review.QuoteVerified)
+		close(reviewer.release)
+		update := waitUpdate(t, h.events)
+		require.Equal(t, perm.ID, update.ID)
+		require.False(t, update.Review.Pending)
+		require.Equal(t, "allow", update.Review.Effect)
+		require.True(t, update.Review.QuoteVerified)
 
-	h.svc.Grant(update)
-	r := waitResult(t, done)
-	require.NoError(t, r.err)
-	require.True(t, r.result.Granted, "shadow review never changes the outcome")
+		h.svc.Grant(update)
+		r := waitResult(t, done)
+		require.NoError(t, r.err)
+		require.True(t, r.result.Granted, "shadow review never changes the outcome")
 
-	d := waitDecision(t, h.rec)
-	require.Equal(t, DecisionSourceHuman, d.DecidedBy)
-	rec := h.assessment(t, d)
-	require.NotNil(t, rec.Review)
-	require.Equal(t, "shadow", rec.Review.Mode)
-	require.Equal(t, "small", rec.Review.Model)
-	require.Equal(t, "allow", rec.Review.Verdict)
-	require.Equal(t, "allow", rec.Review.Effect)
-	require.True(t, rec.Review.QuoteVerified)
+		d := waitDecision(t, h.rec)
+		require.Equal(t, DecisionSourceHuman, d.DecidedBy)
+		rec := h.assessment(t, d)
+		require.NotNil(t, rec.Review)
+		require.Equal(t, "shadow", rec.Review.Mode)
+		require.Equal(t, "small", rec.Review.Model)
+		require.Equal(t, "allow", rec.Review.Verdict)
+		require.Equal(t, "allow", rec.Review.Effect)
+		require.True(t, rec.Review.QuoteVerified)
+	})
 }
 
 func TestReviewRecordedAfterHumanAnswersFirst(t *testing.T) {
 	t.Parallel()
-	reviewer := &fakeReviewer{
-		opinion: ReviewOpinion{Verdict: ReviewAllow, Quote: "something the user never said"},
-		release: make(chan struct{}),
-	}
-	h := newBouncerHarness(t, &fakeBouncer{outcome: AssessDeny, reason: "destructive=0.95"}, BouncerEnforce, nil, nil,
-		reviewOption(reviewer, "tidy up the build directory"))
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf /"))
+	synctest.Test(t, func(t *testing.T) {
+		reviewer := &fakeReviewer{
+			opinion: ReviewOpinion{Verdict: ReviewAllow, Quote: "something the user never said"},
+			release: make(chan struct{}),
+		}
+		h := newBouncerHarness(t, &fakeBouncer{outcome: AssessDeny, reason: "destructive=0.95"}, BouncerEnforce, nil, nil,
+			reviewOption(reviewer, "tidy up the build directory"))
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "rm -rf /"))
 
-	perm := waitPrompt(t, h.events)
-	h.svc.Deny(perm, "")
-	r := waitResult(t, done)
-	require.NoError(t, r.err)
-	require.False(t, r.result.Granted)
-	require.Empty(t, h.rec.snapshot(), "the decision waits for the review")
+		perm := waitPrompt(t, h.events)
+		h.svc.Deny(perm, "")
+		r := waitResult(t, done)
+		require.NoError(t, r.err)
+		require.False(t, r.result.Granted)
+		require.Empty(t, h.rec.snapshot(), "the decision waits for the review")
 
-	close(reviewer.release)
-	rec := h.assessment(t, waitDecision(t, h.rec))
-	require.Equal(t, "deny", rec.Outcome)
-	require.NotNil(t, rec.Review)
-	require.False(t, rec.Review.QuoteVerified, "a quote the user never wrote is not verified")
-	require.Equal(t, "escalate", rec.Review.Effect, "a deny never goes straight to allow")
+		close(reviewer.release)
+		rec := h.assessment(t, waitDecision(t, h.rec))
+		require.Equal(t, "deny", rec.Outcome)
+		require.NotNil(t, rec.Review)
+		require.False(t, rec.Review.QuoteVerified, "a quote the user never wrote is not verified")
+		require.Equal(t, "escalate", rec.Review.Effect, "a deny never goes straight to allow")
+	})
 }
 
 func TestReviewErrorIsRecorded(t *testing.T) {
 	t.Parallel()
-	reviewer := &fakeReviewer{err: errors.New("model unavailable")}
-	h := newBouncerHarness(t, &fakeBouncer{outcome: AssessEscalate}, BouncerEnforce, nil, nil, reviewOption(reviewer, "hi"))
-	done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
-	perm := waitPrompt(t, h.events)
-	h.svc.Grant(perm)
-	require.NoError(t, waitResult(t, done).err)
-	rec := h.assessment(t, waitDecision(t, h.rec))
-	require.Equal(t, "model unavailable", rec.Review.Error)
-	require.Equal(t, "escalate", rec.Review.Effect)
+	synctest.Test(t, func(t *testing.T) {
+		reviewer := &fakeReviewer{err: errors.New("model unavailable")}
+		h := newBouncerHarness(t, &fakeBouncer{outcome: AssessEscalate}, BouncerEnforce, nil, nil, reviewOption(reviewer, "hi"))
+		done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
+		perm := waitPrompt(t, h.events)
+		h.svc.Grant(perm)
+		require.NoError(t, waitResult(t, done).err)
+		rec := h.assessment(t, waitDecision(t, h.rec))
+		require.Equal(t, "model unavailable", rec.Review.Error)
+		require.Equal(t, "escalate", rec.Review.Effect)
+	})
 }
 
 func TestReviewSkipped(t *testing.T) {
 	t.Parallel()
 	t.Run("bouncer allow in enforce", func(t *testing.T) {
 		t.Parallel()
-		reviewer := &fakeReviewer{calls: make(chan ReviewInput, 1)}
-		h := newBouncerHarness(t, &fakeBouncer{outcome: AssessAllow}, BouncerEnforce, nil, nil, reviewOption(reviewer))
-		r, err := h.svc.Request(testCtx(t), h.req("call", "go build"))
-		require.NoError(t, err)
-		require.True(t, r.Granted)
-		require.Empty(t, reviewer.calls)
+		synctest.Test(t, func(t *testing.T) {
+			reviewer := &fakeReviewer{calls: make(chan ReviewInput, 1)}
+			h := newBouncerHarness(t, &fakeBouncer{outcome: AssessAllow}, BouncerEnforce, nil, nil, reviewOption(reviewer))
+			r, err := h.svc.Request(testCtx(t), h.req("call", "go build"))
+			require.NoError(t, err)
+			require.True(t, r.Granted)
+			require.Empty(t, reviewer.calls)
+		})
 	})
 	t.Run("bouncer allow in shadow", func(t *testing.T) {
 		t.Parallel()
-		reviewer := &fakeReviewer{calls: make(chan ReviewInput, 1)}
-		h := newBouncerHarness(t, &fakeBouncer{outcome: AssessAllow}, BouncerShadow, nil, nil, reviewOption(reviewer))
-		done := requestAsync(testCtx(t), h.svc, h.req("call", "go build"))
-		perm := waitPrompt(t, h.events)
-		require.Nil(t, perm.Review)
-		h.svc.Grant(perm)
-		require.NoError(t, waitResult(t, done).err)
-		require.Empty(t, reviewer.calls)
-		require.Nil(t, h.assessment(t, h.rec.snapshot()[0]).Review)
+		synctest.Test(t, func(t *testing.T) {
+			reviewer := &fakeReviewer{calls: make(chan ReviewInput, 1)}
+			h := newBouncerHarness(t, &fakeBouncer{outcome: AssessAllow}, BouncerShadow, nil, nil, reviewOption(reviewer))
+			done := requestAsync(testCtx(t), h.svc, h.req("call", "go build"))
+			perm := waitPrompt(t, h.events)
+			require.Nil(t, perm.Review)
+			h.svc.Grant(perm)
+			require.NoError(t, waitResult(t, done).err)
+			require.Empty(t, reviewer.calls)
+			require.Nil(t, h.assessment(t, h.rec.snapshot()[0]).Review)
+		})
 	})
 	t.Run("reviewer off", func(t *testing.T) {
 		t.Parallel()
-		reviewer := &fakeReviewer{calls: make(chan ReviewInput, 1)}
-		h := newBouncerHarness(t, &fakeBouncer{outcome: AssessEscalate}, BouncerEnforce, nil, nil,
-			WithReviewer(ReviewOptions{Reviewer: reviewer, Intent: fakeIntent{}, Mode: ReviewOff}))
-		done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
-		perm := waitPrompt(t, h.events)
-		require.Nil(t, perm.Review)
-		h.svc.Grant(perm)
-		require.NoError(t, waitResult(t, done).err)
-		require.Empty(t, reviewer.calls)
+		synctest.Test(t, func(t *testing.T) {
+			reviewer := &fakeReviewer{calls: make(chan ReviewInput, 1)}
+			h := newBouncerHarness(t, &fakeBouncer{outcome: AssessEscalate}, BouncerEnforce, nil, nil,
+				WithReviewer(ReviewOptions{Reviewer: reviewer, Intent: fakeIntent{}, Mode: ReviewOff}))
+			done := requestAsync(testCtx(t), h.svc, h.req("call", "make deploy"))
+			perm := waitPrompt(t, h.events)
+			require.Nil(t, perm.Review)
+			h.svc.Grant(perm)
+			require.NoError(t, waitResult(t, done).err)
+			require.Empty(t, reviewer.calls)
+		})
 	})
 }
 
 func TestReviewCancelledWithRequest(t *testing.T) {
 	t.Parallel()
-	reviewer := &fakeReviewer{release: make(chan struct{})}
-	h := newBouncerHarness(t, &fakeBouncer{outcome: AssessEscalate}, BouncerEnforce, nil, nil, reviewOption(reviewer, "hi"))
-	ctx, cancel := context.WithCancel(testCtx(t))
-	done := requestAsync(ctx, h.svc, h.req("call", "make deploy"))
-	waitPrompt(t, h.events)
-	cancel()
-	require.ErrorIs(t, waitResult(t, done).err, context.Canceled)
-	d := waitDecision(t, h.rec)
-	require.Equal(t, VerdictCancelled, d.Verdict)
-	require.NotEmpty(t, h.assessment(t, d).Review.Error)
+	synctest.Test(t, func(t *testing.T) {
+		reviewer := &fakeReviewer{release: make(chan struct{})}
+		h := newBouncerHarness(t, &fakeBouncer{outcome: AssessEscalate}, BouncerEnforce, nil, nil, reviewOption(reviewer, "hi"))
+		ctx, cancel := context.WithCancel(testCtx(t))
+		done := requestAsync(ctx, h.svc, h.req("call", "make deploy"))
+		waitPrompt(t, h.events)
+		cancel()
+		require.ErrorIs(t, waitResult(t, done).err, context.Canceled)
+		d := waitDecision(t, h.rec)
+		require.Equal(t, VerdictCancelled, d.Verdict)
+		require.NotEmpty(t, h.assessment(t, d).Review.Error)
+	})
 }

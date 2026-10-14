@@ -87,10 +87,11 @@ func NewDownloadTool(permissions permission.Service, workingDir string, client *
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for downloading files")
 			}
 
-			p, err := permissions.Request(ctx,
+			denied, granted, err := requestPermission(ctx, permissions,
 				permission.CreatePermissionRequest{
 					SessionID:   sessionID,
 					Path:        filePath,
+					ToolCallID:  call.ID,
 					ToolName:    DownloadToolName,
 					Action:      "download",
 					Description: fmt.Sprintf("Download file from URL: %s to %s", params.URL, filePath),
@@ -98,20 +99,15 @@ func NewDownloadTool(permissions permission.Service, workingDir string, client *
 					Input:       params.URL,
 				},
 			)
-			if err != nil {
-				return fantasy.ToolResponse{}, err
-			}
-			if !p.Granted {
-				return NewPermissionDeniedResponse(p.Reason), nil
+			if !granted {
+				return denied, err
 			}
 
 			// Handle timeout with context
 			requestCtx := ctx
 			if params.Timeout > 0 {
 				maxTimeout := 600 // 10 minutes
-				if params.Timeout > maxTimeout {
-					params.Timeout = maxTimeout
-				}
+				params.Timeout = min(params.Timeout, maxTimeout)
 				var cancel context.CancelFunc
 				requestCtx, cancel = context.WithTimeout(ctx, time.Duration(params.Timeout)*time.Second)
 				defer cancel()

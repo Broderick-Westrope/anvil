@@ -266,6 +266,154 @@ func TestFilterBranchPathForContext(t *testing.T) {
 	}
 }
 
+func TestFilterBranchPathForContext_CompactionBoundaries(t *testing.T) {
+	t.Parallel()
+
+	text := func(id, body string) message.Message {
+		return message.Message{
+			ID:          id,
+			Role:        message.User,
+			MessageType: message.MessageTypeMessage,
+			Parts:       []message.ContentPart{message.TextContent{Text: body}},
+		}
+	}
+	compaction := func(id string, parts ...message.ContentPart) message.Message {
+		return message.Message{
+			ID:          id,
+			Role:        message.Assistant,
+			MessageType: message.MessageTypeCompaction,
+			Parts:       parts,
+		}
+	}
+	summary := func(body string) message.Message {
+		return message.Message{
+			Role: message.User,
+			Parts: []message.ContentPart{message.TextContent{
+				Text: "<summary>The conversation history before this point was compacted into the following summary:\n\n" + body + "</summary>",
+			}},
+		}
+	}
+	branchSummary := message.Message{
+		ID:          "bs",
+		Role:        message.Assistant,
+		MessageType: message.MessageTypeBranchSummary,
+		Parts:       []message.ContentPart{message.BranchSummaryContent{Summary: "side trip"}},
+	}
+	label := message.Message{
+		ID:          "label",
+		MessageType: message.MessageTypeLabel,
+		Parts:       []message.ContentPart{message.LabelContent{Label: "l"}},
+	}
+
+	tests := map[string]struct {
+		path []message.Message
+		want []message.Message
+	}{
+		"kept range starts at the root and filters metadata": {
+			path: []message.Message{
+				text("a", "first"),
+				label,
+				compaction("old", message.CompactionContent{Summary: "old", FirstKeptEntryID: "a"}),
+				branchSummary,
+				compaction("c", message.CompactionContent{Summary: "sum", FirstKeptEntryID: "a"}),
+				text("b", "after"),
+			},
+			want: []message.Message{
+				summary("sum"),
+				text("a", "first"),
+				{
+					Role: message.User,
+					Parts: []message.ContentPart{message.TextContent{
+						Text: "<summary>The following is a summary of a branch that this conversation came back from:\n\nside trip</summary>",
+					}},
+				},
+				text("b", "after"),
+			},
+		},
+		"kept entry missing from the path keeps only later messages": {
+			path: []message.Message{
+				text("a", "first"),
+				compaction("c", message.CompactionContent{Summary: "sum", FirstKeptEntryID: "gone"}),
+				text("b", "after"),
+			},
+			want: []message.Message{summary("sum"), text("b", "after")},
+		},
+		"kept entry after the compaction is ignored": {
+			path: []message.Message{
+				text("a", "first"),
+				compaction("c", message.CompactionContent{Summary: "sum", FirstKeptEntryID: "b"}),
+				text("b", "after"),
+				text("d", "later"),
+			},
+			want: []message.Message{summary("sum"), text("b", "after"), text("d", "later")},
+		},
+		"empty summary and no kept entry emit only later messages": {
+			path: []message.Message{
+				text("a", "first"),
+				compaction("c", message.CompactionContent{}),
+				text("b", "after"),
+			},
+			want: []message.Message{text("b", "after")},
+		},
+		"compaction without compaction content emits only later messages": {
+			path: []message.Message{
+				text("a", "first"),
+				compaction("c", message.TextContent{Text: "not a compaction part"}),
+				text("b", "after"),
+			},
+			want: []message.Message{text("b", "after")},
+		},
+		"first compaction content part wins": {
+			path: []message.Message{
+				text("a", "first"),
+				text("k", "kept"),
+				compaction("c",
+					message.TextContent{Text: "noise"},
+					message.CompactionContent{Summary: "sum", FirstKeptEntryID: "k"},
+					message.CompactionContent{Summary: "other", FirstKeptEntryID: "a"},
+				),
+			},
+			want: []message.Message{summary("sum"), text("k", "kept")},
+		},
+		"duplicate kept entry ID keeps from the first match": {
+			path: []message.Message{
+				text("a", "first"),
+				text("k", "kept once"),
+				text("b", "between"),
+				text("k", "kept twice"),
+				compaction("c", message.CompactionContent{Summary: "sum", FirstKeptEntryID: "k"}),
+			},
+			want: []message.Message{
+				summary("sum"),
+				text("k", "kept once"),
+				text("b", "between"),
+				text("k", "kept twice"),
+			},
+		},
+		"compaction at the root keeps everything after it": {
+			path: []message.Message{
+				compaction("c", message.CompactionContent{Summary: "sum"}),
+				text("b", "after"),
+			},
+			want: []message.Message{summary("sum"), text("b", "after")},
+		},
+		"compaction as the last entry emits only its summary": {
+			path: []message.Message{
+				text("a", "first"),
+				compaction("c", message.CompactionContent{Summary: "sum"}),
+			},
+			want: []message.Message{summary("sum")},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, message.FilterBranchPathForContext(tc.path))
+		})
+	}
+}
+
 func TestComputeFirstKeptEntryID(t *testing.T) {
 	t.Parallel()
 

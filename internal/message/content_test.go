@@ -2,11 +2,15 @@ package message
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"charm.land/fantasy"
+	"charm.land/fantasy/providers/anthropic"
+	"charm.land/fantasy/providers/google"
+	"charm.land/fantasy/providers/openai"
 	"github.com/stretchr/testify/require"
 )
 
@@ -275,4 +279,126 @@ func TestResetStreamedContentEmpty(t *testing.T) {
 	msg := &Message{}
 	msg.ResetStreamedContent()
 	require.Empty(t, msg.Parts)
+}
+
+func TestToAIMessage_ByRole(t *testing.T) {
+	t.Parallel()
+
+	itemID := "item_1"
+	responses := &openai.ResponsesReasoningMetadata{ItemID: itemID, Summary: []string{"s"}}
+	pngData := []byte{0x89, 0x50, 0x4E, 0x47}
+	validBase64 := base64.StdEncoding.EncodeToString(pngData)
+
+	tests := map[string]struct {
+		msg  Message
+		want []fantasy.Message
+	}{
+		"user text with text and image attachments": {
+			msg: Message{
+				Role: User,
+				Parts: []ContentPart{
+					TextContent{Text: "  hello  "},
+					BinaryContent{Path: "notes.txt", MIMEType: "text/plain", Data: []byte("note body")},
+					BinaryContent{Path: "shot.png", MIMEType: "image/png", Data: pngData},
+				},
+			},
+			want: []fantasy.Message{{
+				Role: fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{
+					fantasy.TextPart{Text: "hello\n<system_info>The files below have been attached by the user, consider them in your response</system_info>\n<file path='notes.txt'>\n\nnote body\n</file>\n"},
+					fantasy.FilePart{Filename: "shot.png", Data: pngData, MediaType: "image/png"},
+				},
+			}},
+		},
+		"user with only an image omits the text part": {
+			msg: Message{
+				Role:  User,
+				Parts: []ContentPart{BinaryContent{Path: "shot.png", MIMEType: "image/png", Data: pngData}},
+			},
+			want: []fantasy.Message{{
+				Role:    fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{fantasy.FilePart{Filename: "shot.png", Data: pngData, MediaType: "image/png"}},
+			}},
+		},
+		"user with no content has no parts": {
+			msg:  Message{Role: User, Parts: []ContentPart{TextContent{Text: "   "}}},
+			want: []fantasy.Message{{Role: fantasy.MessageRoleUser}},
+		},
+		"assistant reasoning carries every provider signature": {
+			msg: Message{
+				Role: Assistant,
+				Parts: []ContentPart{
+					ReasoningContent{
+						Thinking:         "thinking",
+						Signature:        "anthropic-sig",
+						ThoughtSignature: "google-sig",
+						ToolID:           "tool-1",
+						ResponsesData:    responses,
+					},
+					TextContent{Text: " answer "},
+					ToolCall{ID: "call_1", Name: "bash", Input: `{"command":"ls"}`, ProviderExecuted: true},
+				},
+			},
+			want: []fantasy.Message{{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ReasoningPart{Text: "thinking", ProviderOptions: fantasy.ProviderOptions{
+						anthropic.Name: &anthropic.ReasoningOptionMetadata{Signature: "anthropic-sig"},
+						openai.Name:    responses,
+						google.Name:    &google.ReasoningMetadata{Signature: "google-sig", ToolID: "tool-1"},
+					}},
+					fantasy.TextPart{Text: "answer"},
+					fantasy.ToolCallPart{ToolCallID: "call_1", ToolName: "bash", Input: `{"command":"ls"}`, ProviderExecuted: true},
+				},
+			}},
+		},
+		"assistant reasoning without signatures has empty provider options": {
+			msg: Message{
+				Role:  Assistant,
+				Parts: []ContentPart{ReasoningContent{Thinking: "thinking"}},
+			},
+			want: []fantasy.Message{{
+				Role:    fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{fantasy.ReasoningPart{Text: "thinking", ProviderOptions: fantasy.ProviderOptions{}}},
+			}},
+		},
+		"assistant with empty reasoning and text has no parts": {
+			msg: Message{
+				Role:  Assistant,
+				Parts: []ContentPart{ReasoningContent{Signature: "sig"}, TextContent{Text: " "}},
+			},
+			want: []fantasy.Message{{Role: fantasy.MessageRoleAssistant}},
+		},
+		"tool results by kind": {
+			msg: Message{
+				Role: Tool,
+				Parts: []ContentPart{
+					ToolResult{ToolCallID: "err", Content: "boom", Data: validBase64, IsError: true},
+					ToolResult{ToolCallID: "text", Content: "plain output"},
+					ToolResult{ToolCallID: "media", Content: "ignored", Data: validBase64, MIMEType: "image/png"},
+					ToolResult{ToolCallID: "bad-media", Content: "ignored", Data: "not base64!", MIMEType: "image/png"},
+				},
+			},
+			want: []fantasy.Message{{
+				Role: fantasy.MessageRoleTool,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolResultPart{ToolCallID: "err", Output: fantasy.ToolResultOutputContentError{Error: errors.New("boom")}},
+					fantasy.ToolResultPart{ToolCallID: "text", Output: fantasy.ToolResultOutputContentText{Text: "plain output"}},
+					fantasy.ToolResultPart{ToolCallID: "media", Output: fantasy.ToolResultOutputContentMedia{Data: validBase64, MediaType: "image/png"}},
+					fantasy.ToolResultPart{ToolCallID: "bad-media", Output: fantasy.ToolResultOutputContentText{Text: mediaLoadFailedPlaceholder}},
+				},
+			}},
+		},
+		"system role produces nothing": {
+			msg:  Message{Role: System, Parts: []ContentPart{TextContent{Text: "sys"}}},
+			want: nil,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, tc.msg.ToAIMessage())
+		})
+	}
 }

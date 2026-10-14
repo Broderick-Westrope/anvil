@@ -1,0 +1,76 @@
+package agent
+
+import (
+	"context"
+
+	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/google/uuid"
+)
+
+// sideCall is one model request made beside the session's turns: a
+// summary, a title or a small-model completion. Like a turn, its methods
+// are the fantasy callbacks. They frame the request with frameMessages, as
+// a turn does, and record its step usage.
+type sideCall struct {
+	a           *sessionAgent
+	prefix      string
+	providerCfg config.ProviderConfig
+	runID       string
+	kind        string
+	sessionID   string
+	parentID    string
+	// agentName defaults to the session agent's name. A call made for
+	// another agent, such as the bouncer's reviewer, overrides it.
+	agentName string
+	// messageID is the message the call writes into, set once a summary
+	// has created its placeholder.
+	messageID string
+	// model and attempt name the model making the request. A call that
+	// falls back to another model sets them before each attempt.
+	model   Model
+	attempt int
+	capture *stepCapture
+}
+
+// newSideCall starts a side call of kind for sessionID, which is empty for
+// calls outside any session, and parentID, the session's parent if it has
+// one. It snapshots the provider prefix and config so a concurrent
+// SetModels can't change them mid-call.
+func (a *sessionAgent) newSideCall(kind, sessionID, parentID string, model Model) *sideCall {
+	return &sideCall{
+		a:           a,
+		prefix:      a.systemPromptPrefix.Get(),
+		providerCfg: a.providerConfig.Get(),
+		runID:       uuid.NewString(),
+		kind:        kind,
+		sessionID:   sessionID,
+		parentID:    parentID,
+		agentName:   a.agentName,
+		model:       model,
+	}
+}
+
+// streamCall returns the stream call for prompt with the side call's
+// callbacks set.
+func (s *sideCall) streamCall(prompt string) fantasy.AgentStreamCall {
+	onRetry, onStreamFinish := s.a.captureCallbacks(&s.capture)
+	return fantasy.AgentStreamCall{
+		Prompt:         prompt,
+		PrepareStep:    s.prepareStep,
+		OnRetry:        onRetry,
+		OnStreamFinish: onStreamFinish,
+	}
+}
+
+func (s *sideCall) prepareStep(ctx context.Context, options fantasy.PrepareStepFunctionOptions) (context.Context, fantasy.PrepareStepResult, error) {
+	messages := frameMessages(s.prefix, s.providerCfg, options.Messages)
+	if s.a.usageRecorder != nil {
+		s.capture = s.a.newCapture(s.kind, s.runID, s.sessionID, s.parentID, s.model, nil, messages)
+		s.capture.agent = s.agentName
+		s.capture.messageID = s.messageID
+		s.capture.attempt = s.attempt
+		s.capture.stepIndex = options.StepNumber
+	}
+	return ctx, fantasy.PrepareStepResult{Messages: messages}, nil
+}

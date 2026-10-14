@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -27,7 +28,7 @@ func TestRecorderFlushAndPrune(t *testing.T) {
 	t.Parallel()
 	q := testQueries(t)
 	r := New(q)
-	t.Cleanup(func() { require.NoError(t, r.Close(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, r.Close(testCtx(t))) })
 	assessment, err := json.Marshal(permission.AssessmentRecord{SchemaVersion: permission.AssessmentSchemaVersion, Mode: "shadow", Outcome: "escalate"})
 	require.NoError(t, err)
 	decisions := []permission.Decision{
@@ -38,9 +39,9 @@ func TestRecorderFlushAndPrune(t *testing.T) {
 	for _, d := range decisions {
 		r.Record(d)
 	}
-	require.NoError(t, r.Close(t.Context()))
+	require.NoError(t, r.Close(testCtx(t)))
 	r.Record(permission.Decision{ToolName: "after-close"})
-	require.NoError(t, r.Close(t.Context()))
+	require.NoError(t, r.Close(testCtx(t)))
 	rows, err := q.ListPermissionDecisionsSince(t.Context(), 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 3)
@@ -85,21 +86,23 @@ func TestRecorderFlushAndPrune(t *testing.T) {
 
 func TestRecorderFullDoesNotBlock(t *testing.T) {
 	t.Parallel()
-	r := &Recorder{ch: make(chan permission.Decision, bufferSize)}
-	for range bufferSize {
-		r.Record(permission.Decision{ToolName: "bash"})
-	}
-	done := make(chan struct{})
-	go func() { r.Record(permission.Decision{ToolName: "dropped"}); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Record blocked on a full buffer")
-	}
-	require.Len(t, r.ch, bufferSize)
-	for range bufferSize {
-		require.Equal(t, "bash", (<-r.ch).ToolName)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		r := &Recorder{ch: make(chan permission.Decision, bufferSize)}
+		for range bufferSize {
+			r.Record(permission.Decision{ToolName: "bash"})
+		}
+		done := make(chan struct{})
+		go func() { r.Record(permission.Decision{ToolName: "dropped"}); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(waitTimeout):
+			t.Fatal("Record blocked on a full buffer")
+		}
+		require.Len(t, r.ch, bufferSize)
+		for range bufferSize {
+			require.Equal(t, "bash", (<-r.ch).ToolName)
+		}
+	})
 }
 
 type blockedQuerier struct {
@@ -116,59 +119,61 @@ func (q *blockedQuerier) InsertPermissionDecision(ctx context.Context, params db
 
 func TestRecorderConcurrentClose(t *testing.T) {
 	t.Parallel()
-	q := testQueries(t)
-	blocked := &blockedQuerier{Querier: q, started: make(chan struct{}), release: make(chan struct{})}
-	r := New(blocked)
-	var release sync.Once
-	t.Cleanup(func() {
-		release.Do(func() { close(blocked.release) })
-		require.NoError(t, r.Close(context.Background()))
-	})
-	r.Record(permission.Decision{ToolCallID: "first", ToolName: "bash"})
-	<-blocked.started
-	start := make(chan struct{})
-	var ready, writers sync.WaitGroup
-	ready.Add(8)
-	for i := range 8 {
-		writers.Go(func() {
-			r.Record(permission.Decision{ToolCallID: fmt.Sprintf("%d-first", i), ToolName: "bash"})
-			ready.Done()
-			<-start
-			for j := range 32 {
-				r.Record(permission.Decision{ToolCallID: fmt.Sprintf("%d-%d", i, j), ToolName: "bash"})
-			}
+	synctest.Test(t, func(t *testing.T) {
+		q := testQueries(t)
+		blocked := &blockedQuerier{Querier: q, started: make(chan struct{}), release: make(chan struct{})}
+		r := New(blocked)
+		var release sync.Once
+		t.Cleanup(func() {
+			release.Do(func() { close(blocked.release) })
+			require.NoError(t, r.Close(testCtx(t)))
 		})
-	}
-	ready.Wait()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	closed := make(chan error, 1)
-	go func() { <-start; closed <- r.Close(ctx) }()
-	close(start)
-	writers.Wait()
-	require.Eventually(t, func() bool {
+		r.Record(permission.Decision{ToolCallID: "first", ToolName: "bash"})
+		recv(t, blocked.started)
+		start := make(chan struct{})
+		var ready, writers sync.WaitGroup
+		ready.Add(8)
+		for i := range 8 {
+			writers.Go(func() {
+				r.Record(permission.Decision{ToolCallID: fmt.Sprintf("%d-first", i), ToolName: "bash"})
+				ready.Done()
+				<-start
+				for j := range 32 {
+					r.Record(permission.Decision{ToolCallID: fmt.Sprintf("%d-%d", i, j), ToolName: "bash"})
+				}
+			})
+		}
+		wait(t, &ready)
+		ctx, cancel := context.WithTimeout(t.Context(), waitTimeout)
+		defer cancel()
+		closed := make(chan error, 1)
+		go func() { <-start; closed <- r.Close(ctx) }()
+		close(start)
+		wait(t, &writers)
+		synctest.Wait()
 		r.mu.RLock()
-		defer r.mu.RUnlock()
-		return r.closed
-	}, time.Second, time.Millisecond)
-	accepted := len(r.ch) + 1
-	require.GreaterOrEqual(t, accepted, 9)
-	release.Do(func() { close(blocked.release) })
-	require.NoError(t, <-closed)
-	r.Record(permission.Decision{ToolCallID: "after-close"})
-	rows, err := q.ListPermissionDecisionsSince(t.Context(), 0)
-	require.NoError(t, err)
-	require.Len(t, rows, accepted)
-	seen := make(map[string]bool)
-	for _, row := range rows {
-		require.False(t, seen[row.ToolCallID])
-		seen[row.ToolCallID] = true
-	}
-	require.True(t, seen["first"])
-	for i := range 8 {
-		require.True(t, seen[fmt.Sprintf("%d-first", i)])
-	}
-	require.False(t, seen["after-close"])
+		closedNow := r.closed
+		r.mu.RUnlock()
+		require.True(t, closedNow)
+		accepted := len(r.ch) + 1
+		require.GreaterOrEqual(t, accepted, 9)
+		release.Do(func() { close(blocked.release) })
+		require.NoError(t, recv(t, closed))
+		r.Record(permission.Decision{ToolCallID: "after-close"})
+		rows, err := q.ListPermissionDecisionsSince(t.Context(), 0)
+		require.NoError(t, err)
+		require.Len(t, rows, accepted)
+		seen := make(map[string]bool)
+		for _, row := range rows {
+			require.False(t, seen[row.ToolCallID])
+			seen[row.ToolCallID] = true
+		}
+		require.True(t, seen["first"])
+		for i := range 8 {
+			require.True(t, seen[fmt.Sprintf("%d-first", i)])
+		}
+		require.False(t, seen["after-close"])
+	})
 }
 
 func TestRecorderCloseCancelled(t *testing.T) {
@@ -179,35 +184,37 @@ func TestRecorderCloseCancelled(t *testing.T) {
 	require.ErrorIs(t, r.Close(ctx), context.Canceled)
 	r.Record(permission.Decision{})
 	close(r.done)
-	require.NoError(t, r.Close(t.Context()))
+	require.NoError(t, r.Close(testCtx(t)))
 }
 
 func TestRecorderHumanApproval(t *testing.T) {
 	t.Parallel()
-	q := testQueries(t)
-	r := New(q)
-	t.Cleanup(func() { require.NoError(t, r.Close(context.Background())) })
-	svc := permission.NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, permission.WithDecisionRecorder(r))
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	events := svc.Subscribe(ctx)
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		select {
-		case event := <-events:
-			svc.Grant(event.Payload)
-		case <-ctx.Done():
-		}
+	synctest.Test(t, func(t *testing.T) {
+		q := testQueries(t)
+		r := New(q)
+		t.Cleanup(func() { require.NoError(t, r.Close(testCtx(t))) })
+		svc := permission.NewPermissionService(t.TempDir(), config.YoloOff, nil, nil, permission.WithDecisionRecorder(r))
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		events := svc.Subscribe(ctx)
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			select {
+			case event := <-events:
+				svc.Grant(event.Payload)
+			case <-ctx.Done():
+			}
+		})
+		result, err := svc.Request(ctx, permission.CreatePermissionRequest{SessionID: "session", ToolCallID: "call", ToolName: "bash", Input: "git status"})
+		wait(t, &wg)
+		require.NoError(t, err)
+		require.True(t, result.Granted)
+		require.NoError(t, r.Close(testCtx(t)))
+		rows, err := q.ListPermissionDecisionsSince(t.Context(), 0)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.Equal(t, "bash", rows[0].ToolName)
+		require.Equal(t, "human", rows[0].DecidedBy)
+		require.Equal(t, "allow", rows[0].Verdict)
 	})
-	result, err := svc.Request(ctx, permission.CreatePermissionRequest{SessionID: "session", ToolCallID: "call", ToolName: "bash", Input: "git status"})
-	wg.Wait()
-	require.NoError(t, err)
-	require.True(t, result.Granted)
-	require.NoError(t, r.Close(t.Context()))
-	rows, err := q.ListPermissionDecisionsSince(t.Context(), 0)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, "bash", rows[0].ToolName)
-	require.Equal(t, "human", rows[0].DecidedBy)
-	require.Equal(t, "allow", rows[0].Verdict)
 }

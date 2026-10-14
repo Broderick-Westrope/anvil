@@ -1,9 +1,7 @@
 unleash:
   output-statuses: lct
-  exclude-files:
-    - '\.sql\.go$'
-    - '^internal/db/(db|models|querier)\.go$'
-    - '/testdata/'
+  # exclude-files is set by scripts/mutation-check.sh, because gremlins
+  # matches it against paths relative to each scanned package.
 mutants:
   arithmetic-base:
     enabled: true

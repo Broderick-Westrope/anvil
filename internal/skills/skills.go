@@ -50,9 +50,13 @@ type Skill struct {
 	License       string            `yaml:"license,omitempty" json:"license,omitempty"`
 	Compatibility string            `yaml:"compatibility,omitempty" json:"compatibility,omitempty"`
 	Metadata      map[string]string `yaml:"metadata,omitempty" json:"metadata,omitempty"`
-	Instructions  string            `yaml:"-" json:"instructions"`
-	Path          string            `yaml:"-" json:"path"`
-	SkillFilePath string            `yaml:"-" json:"skill_file_path"`
+	// Unlisted keeps the skill out of the prompt catalog, so its description
+	// costs no context and it never triggers on its own. Users, commands
+	// and agents can still load it by its exact name.
+	Unlisted      bool   `yaml:"unlisted,omitempty" json:"unlisted,omitempty"`
+	Instructions  string `yaml:"-" json:"instructions"`
+	Path          string `yaml:"-" json:"path"`
+	SkillFilePath string `yaml:"-" json:"skill_file_path"`
 	// Source indicates where the skill was discovered from. Empty string
 	// means user-provided (from skills_paths), "builtin" means embedded,
 	// "plugin:{name}" means from a plugin directory.
@@ -332,15 +336,18 @@ func DiscoverWithStates(paths []string) ([]*Skill, []*SkillState) {
 	return skills, states
 }
 
-// ToPromptXML generates XML for injection into the system prompt.
+// ToPromptXML generates the catalog XML for injection into the system
+// prompt. Unlisted skills are left out. It returns an empty string when no
+// listed skills remain.
 func ToPromptXML(skills []*Skill) string {
-	if len(skills) == 0 {
-		return ""
-	}
-
 	var sb strings.Builder
-	sb.WriteString("<available_skills>\n")
 	for _, s := range skills {
+		if s.Unlisted {
+			continue
+		}
+		if sb.Len() == 0 {
+			sb.WriteString("<available_skills>\n")
+		}
 		sb.WriteString("  <skill>\n")
 		fmt.Fprintf(&sb, "    <name>%s</name>\n", escape(s.Name))
 		fmt.Fprintf(&sb, "    <description>%s</description>\n", escape(s.Description))
@@ -348,6 +355,9 @@ func ToPromptXML(skills []*Skill) string {
 			sb.WriteString("    <type>builtin</type>\n")
 		}
 		sb.WriteString("  </skill>\n")
+	}
+	if sb.Len() == 0 {
+		return ""
 	}
 	sb.WriteString("</available_skills>")
 	return sb.String()

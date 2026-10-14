@@ -85,6 +85,12 @@ func (a *Autocomplete) renderRow(i, width int) string {
 		typeSuffix = "(cmd)"
 	case BuiltinItem:
 		typeSuffix = "(builtin)"
+	case SkillItem:
+		if item.Unlisted {
+			typeSuffix = "(unlisted skill)"
+		} else {
+			typeSuffix = "(skill)"
+		}
 	default:
 		typeSuffix = "(skill)"
 	}

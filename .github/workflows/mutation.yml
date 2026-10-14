@@ -25,6 +25,4 @@ jobs:
       - run: scripts/mutation-check.sh "origin/$BASE_REF"
         env:
           BASE_REF: ${{ github.base_ref }}
-          MUTATION_WORKERS: "0"
-          MUTATION_GOMAXPROCS: "0"
           MUTATION_EXEMPT: ${{ contains(github.event.pull_request.labels.*.name, 'mutation-exempt') }}

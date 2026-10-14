@@ -14,22 +14,9 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 )
-
-// assistantMessageTruncateFormat is the text shown when an assistant message is
-// truncated in the collapsed state.
-const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to expand]"
-
-// assistantMessageTailWindowFormat is shown above a tail-windowed thinking
-// block to advertise that earlier lines exist and that the user can
-// promote the view to a full expansion. The promotion is wired through
-// the existing ToggleExpanded path (click / space) — F5 deliberately
-// does not add a new keybinding.
-const assistantMessageTailWindowFormat = "… %d earlier lines hidden [click or space for full view]"
-
-// maxCollapsedThinkingHeight defines the maximum height of the thinking
-const maxCollapsedThinkingHeight = 10
 
 // Default copy for a provider-refusal banner. The agent persists only
 // the FinishReasonContentFilter reason; the TUI owns this text and
@@ -42,44 +29,21 @@ const (
 	refusalDetails  = "The provider's safety classifier stopped this response before any usable content was produced. Rephrase the request, start a fresh session, or try a different model."
 )
 
-// maxExpandedThinkingTailLines is the F5 tail-window cap. When the user
-// expands a thinking block whose post-glamour line count exceeds this
-// threshold, only the last N lines are shown with an affordance line
-// indicating how many earlier lines are hidden. Clicking / pressing
-// space again promotes the view to a full expansion. The slice is
-// taken AFTER glamour render (not before) so fenced code blocks,
-// lists, and tables are not torn at arbitrary boundaries.
-const maxExpandedThinkingTailLines = 200
-
-// thinkingViewMode is the F5 three-state view machine for the thinking
-// block. ToggleExpanded cycles
-// collapsed → tail-window → full-expanded → collapsed, skipping the
-// tail-window step when the rendered thinking fits within the cap so
-// short blocks still toggle in two clicks.
-type thinkingViewMode uint8
-
-const (
-	thinkingCollapsed thinkingViewMode = iota
-	thinkingTailWindow
-	thinkingFullExpanded
-)
-
 // assistantSection is a per-section render cache for AssistantMessageItem.
 // Each section (thinking, content, error) carries its own keys so that
 // streaming a section does not invalidate a different — often more
 // expensive — section's cached render. srcHash is an FNV-64 of the
 // section's source text; extra captures any other state that changes
-// the rendered output (e.g. thinkingExpanded, the thinking footer
-// inputs). valid disambiguates a real cache hit from the zero value
-// when both source text and extras hash to zero. aux carries any
-// per-section side data that the caller needs to recover on a hit
-// (e.g. the thinking box height for click detection).
+// the rendered output (e.g. the thinking footer inputs). valid
+// disambiguates a real cache hit from the zero value when both source
+// text and extras hash to zero. aux carries any per-section side data
+// that the caller needs to recover on a hit (e.g. the thinking footer
+// height for click detection).
 type assistantSection struct {
 	width   int
 	srcHash uint64
 	extra   uint64
 	out     string
-	h       int
 	aux     int
 	valid   bool
 }
@@ -95,7 +59,6 @@ func (s *assistantSection) store(width int, srcHash, extra uint64, out string, a
 	s.srcHash = srcHash
 	s.extra = extra
 	s.out = out
-	s.h = lipgloss.Height(out)
 	s.aux = aux
 	s.valid = true
 }
@@ -110,47 +73,6 @@ func fnv64(s string) uint64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(s))
 	return h.Sum64()
-}
-
-// countLines returns the number of lines in s (i.e. the number of
-// newline-separated segments). Equivalent to len(strings.Split(s,
-// "\n")) but allocates nothing (upstream 884391f9).
-func countLines(s string) int {
-	if s == "" {
-		return 1
-	}
-	n := 1
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			n++
-		}
-	}
-	return n
-}
-
-// tailLines returns the last n lines of s and the count of hidden
-// (earlier) lines. totalLines is the pre-computed line count of s
-// (from countLines). It finds the cut point with a bounded backward
-// scan so the cost is O(n) in the number of kept lines, not O(L)
-// in the total document length (upstream 884391f9).
-func tailLines(s string, n, totalLines int) (tail string, hidden int) {
-	if n <= 0 {
-		return "", totalLines
-	}
-	if totalLines <= n {
-		return s, 0
-	}
-	// Find the nth newline from the end. The tail starts after it.
-	count := 0
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == '\n' {
-			count++
-			if count == n {
-				return s[i+1:], totalLines - n
-			}
-		}
-	}
-	return s, 0
 }
 
 // fnvFields hashes a list of byte fields with length-prefix framing
@@ -178,25 +100,19 @@ type AssistantMessageItem struct {
 	*cachedMessageItem
 	*focusableMessageItem
 
-	message           *message.Message
-	sty               *styles.Styles
-	anim              *anim.Anim
-	thinkingViewMode  thinkingViewMode
-	thinkingBoxHeight int // Tracks the rendered thinking box height for click detection.
+	message *message.Message
+	sty     *styles.Styles
+	anim    *anim.Anim
+	// spinnerLabel is the label last set on anim, so it's only re-rendered
+	// when it changes.
+	spinnerLabel string
 
-	// Incremental FNV-64a hash of the thinking text. Avoids
-	// re-hashing the entire accumulated text on every streaming
-	// tick. thinkingHashSample holds a short prefix of the hashed
-	// text so we can detect divergence (e.g. a user retry that
-	// rewrites the thinking from scratch) without re-hashing the
-	// whole thing (upstream 884391f9).
-	thinkingHash       uint64
-	thinkingHashLen    int
-	thinkingHashSample string
+	// thinkingFooterHeight is the rendered height of the "Thought for"
+	// line, which is the click target for drilling into the thinking.
+	thinkingFooterHeight int
 
-	// Per-section render caches. Splitting these out means content
-	// streaming does not invalidate the (often expensive) thinking
-	// render, and vice versa.
+	// Per-section render caches. Splitting these out means streaming one
+	// section, usually the content, does not invalidate the others.
 	thinkingSec assistantSection
 	contentSec  assistantSection
 	errorSec    assistantSection
@@ -207,16 +123,7 @@ type AssistantMessageItem struct {
 	// docs/notes/2026-05-12-chat-rendering-perf.md. See
 	// streaming_markdown.go for the full algorithm.
 	streamingContent streamingMarkdown
-
-	// streamingThinking applies the same stable-prefix caching to
-	// the thinking/reasoning section. Without this, every streaming
-	// delta forces a full glamour re-render of the entire accumulated
-	// thinking text, which burns CPU and starves the terminal emulator
-	// during long reasoning traces.
-	streamingThinking streamingMarkdown
 }
-
-var _ Expandable = (*AssistantMessageItem)(nil)
 
 // NewAssistantMessageItem creates a new AssistantMessageItem.
 func NewAssistantMessageItem(sty *styles.Styles, message *message.Message) MessageItem {
@@ -295,18 +202,10 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 }
 
 // SelectionSource implements [list.SourceSelectable]. It returns the raw
-// markdown of the thinking and content sections in display order.
+// markdown of the content. Thinking text isn't shown here, so it isn't
+// selectable either.
 func (a *AssistantMessageItem) SelectionSource() string {
-	thinking := strings.TrimSpace(a.message.ReasoningContent().Thinking)
-	content := strings.TrimSpace(a.message.Content().Text)
-	switch {
-	case thinking == "":
-		return content
-	case content == "":
-		return thinking
-	default:
-		return thinking + "\n\n" + content
-	}
+	return strings.TrimSpace(a.message.Content().Text)
 }
 
 // Render implements MessageItem.
@@ -411,15 +310,20 @@ func (a *AssistantMessageItem) compositionKey() uint64 {
 // render is recomputed.
 func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	var messageParts []string
-	thinking := strings.TrimSpace(a.message.ReasoningContent().Thinking)
 	content := strings.TrimSpace(a.message.Content().Text)
 
-	if thinking != "" {
-		messageParts = append(messageParts, a.cachedThinking(width))
+	var footer string
+	if a.hasThinking() {
+		footer = a.cachedThinkingFooter(width)
+	} else {
+		a.thinkingFooterHeight = 0
+	}
+	if footer != "" {
+		messageParts = append(messageParts, footer)
 	}
 
 	if content != "" {
-		if thinking != "" {
+		if footer != "" {
 			messageParts = append(messageParts, "")
 		}
 		messageParts = append(messageParts, a.cachedContent(width))
@@ -439,82 +343,24 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 }
 
 // thinkingKey returns the (srcHash, extra) cache key components for the
-// thinking section. extra folds in everything other than the raw
-// thinking text that affects the rendered output: the view mode
-// (collapsed / tail-window / full) and the footer state (which
-// depends on IsThinking, ToolCalls, and ThinkingDuration).
-//
-// The source hash is computed incrementally: during streaming the
-// thinking text only grows by appending, so we continue the FNV-64a
-// hash from the saved state rather than re-hashing the entire
-// accumulated text (upstream 884391f9).
+// thinking section. The section only shows the "Thought for" footer, so
+// the key covers whether there is thinking, whether it's done and its
+// duration, not the thinking text.
 func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
-	thinking := a.message.ReasoningContent().Thinking
-	srcHash := a.thinkingHashIncremental(thinking)
-
-	showFooter := !a.message.IsThinking() || len(a.message.ToolCalls()) > 0
+	var has, done byte
 	var durationStr string
-	if showFooter {
-		duration := a.message.ThinkingDuration()
-		if duration.String() != "0s" {
-			durationStr = duration.String()
-		}
+	if a.hasThinking() {
+		has = 1
 	}
-	var footer byte
-	if showFooter {
-		footer = 1
+	if a.thinkingFinished() {
+		done = 1
 	}
-	// The thinking-finished bit guarantees exactly one cache-key
-	// change when reasoning completes, so the definitive RenderFinal
-	// output replaces any seamed streaming render even when the
-	// footer state happens not to change.
-	var thinkingDone byte
 	if a.message.ReasoningContent().FinishedAt != 0 {
-		thinkingDone = 1
+		durationStr = a.message.ThinkingDuration().String()
 	}
-	// Length-prefixed framing avoids any delimiter collision between
-	// the flag bytes and the duration string. The view mode is folded
-	// in so that toggling collapsed ↔ tail-window ↔ full invalidates
-	// only the thinking section, not content/error.
-	extra := fnvFields([]byte{byte(a.thinkingViewMode), footer, thinkingDone}, []byte(durationStr))
-	return srcHash, extra
-}
-
-// thinkingHashIncremental returns the FNV-64a hash of thinking,
-// continuing from the saved state when thinking is a prefix-extension
-// of the previously hashed text. Falls back to a full re-hash when
-// the text shrinks or diverges (e.g. user retried the turn).
-func (a *AssistantMessageItem) thinkingHashIncremental(thinking string) uint64 {
-	// Detect divergence: if the saved sample no longer matches the
-	// start of the current text, the content was rewritten (retry)
-	// and we must re-hash from scratch. Compare against the sample's
-	// own length: while the text is still shorter than the 64-byte
-	// sample cap, the sample from the previous tick is shorter than
-	// min(len(thinking), 64), and slicing to the latter would make the
-	// guard fail on every append and full-rehash each tick.
-	if a.thinkingHashLen > 0 && len(thinking) >= a.thinkingHashLen &&
-		thinking[:len(a.thinkingHashSample)] == a.thinkingHashSample {
-		// Fast path: continue hashing from saved state.
-		h := a.thinkingHash
-		for i := a.thinkingHashLen; i < len(thinking); i++ {
-			h ^= uint64(thinking[i])
-			h *= 1099511628211
-		}
-		a.thinkingHash = h
-		a.thinkingHashLen = len(thinking)
-		// Grow the sample toward the 64-byte cap as the text grows, so
-		// divergence detection strengthens beyond the first few bytes.
-		if len(a.thinkingHashSample) < 64 {
-			a.thinkingHashSample = thinking[:min(len(thinking), 64)]
-		}
-		return h
-	}
-	// Full re-hash (first call, or text diverged/shrank).
-	h := fnv64(thinking)
-	a.thinkingHash = h
-	a.thinkingHashLen = len(thinking)
-	a.thinkingHashSample = thinking[:min(len(thinking), 64)]
-	return h
+	// The source hash is always 0: the footer doesn't show the thinking
+	// text, so only these inputs change it.
+	return 0, fnvFields([]byte{has, done}, []byte(durationStr))
 }
 
 // contentKey returns the (srcHash, extra) cache key components for the
@@ -548,18 +394,21 @@ func (a *AssistantMessageItem) errorKey() (uint64, uint64) {
 	return fnvFields([]byte(finishPart.Reason), []byte(finishPart.Message), []byte(finishPart.Details)), 0
 }
 
-// cachedThinking returns the rendered thinking section, computing and
-// caching it on miss. The thinking-box height (used for click target
-// detection) is preserved across hits via assistantSection.aux so the
-// cached path never desyncs click detection.
-func (a *AssistantMessageItem) cachedThinking(width int) string {
+// cachedThinkingFooter returns the rendered thinking footer, computing
+// and caching it on miss. The footer height (the drill-in click target)
+// is preserved across hits via assistantSection.aux.
+func (a *AssistantMessageItem) cachedThinkingFooter(width int) string {
 	srcHash, extra := a.thinkingKey()
 	if a.thinkingSec.hit(width, srcHash, extra) {
-		a.thinkingBoxHeight = a.thinkingSec.aux
+		a.thinkingFooterHeight = a.thinkingSec.aux
 		return a.thinkingSec.out
 	}
-	out := a.renderThinking(a.message.ReasoningContent().Thinking, width)
-	a.thinkingSec.store(width, srcHash, extra, out, a.thinkingBoxHeight)
+	out := a.renderThinkingFooter()
+	a.thinkingFooterHeight = 0
+	if out != "" {
+		a.thinkingFooterHeight = lipgloss.Height(out)
+	}
+	a.thinkingSec.store(width, srcHash, extra, out, a.thinkingFooterHeight)
 	return out
 }
 
@@ -585,96 +434,34 @@ func (a *AssistantMessageItem) cachedError(width int) string {
 	return out
 }
 
-// renderThinking renders the thinking/reasoning content with footer.
-//
-// Slicing happens AFTER glamour rendering so fenced code blocks, list
-// continuations, and tables are not split mid-block — the same
-// boundary problem §4.4 of the design note flags. The bordered
-// ThinkingBox style is applied on top of the (already-windowed)
-// lines so the visual box matches what the user sees today.
-func (a *AssistantMessageItem) renderThinking(thinking string, width int) string {
-	// Account for the ThinkingBox border and padding so content wraps correctly.
-	innerWidth := width - a.sty.Messages.ThinkingBox.GetHorizontalFrameSize()
-
-	renderer := common.QuietMarkdownRenderer(a.sty, innerWidth)
-	var rendered string
-	// Gate on real stream completion (FinishedAt set by FinishThinking,
-	// or a terminal message). NOT on IsThinking(): that flips false as
-	// soon as content text or tool calls arrive while reasoning may
-	// still be streamed by interleaved-thinking providers, and calling
-	// RenderFinal per flush would reset the streaming cache each time.
-	if a.message.ReasoningContent().FinishedAt != 0 || a.message.IsFinished() {
-		// Thinking is complete: take the definitive render so any
-		// force-advanced (seamed) streaming output is replaced.
-		rendered = a.streamingThinking.RenderFinal(thinking, innerWidth, renderer)
-	} else {
-		rendered = a.streamingThinking.Render(thinking, innerWidth, renderer)
+// renderThinkingFooter renders the line that stands in for the thinking
+// text once thinking is done: "Thought for Xs", or "Thought" when it took
+// under a second. While the model is still thinking it renders nothing
+// and the spinner shows instead.
+func (a *AssistantMessageItem) renderThinkingFooter() string {
+	if !a.thinkingFinished() {
+		return ""
 	}
-	rendered = strings.TrimSpace(rendered)
-
-	// Count lines and, for the windowed view modes, slice the tail
-	// WITHOUT splitting the entire rendered document. Splitting a
-	// 1200-line render just to keep the last 10 lines is O(n) per
-	// tick; tailLines finds the cut point with a bounded backward
-	// scan (upstream 884391f9).
-	var lines []string
-	var totalLines int
-
-	// hintLines is the number of leading lines (label row + blank spacer)
-	// that should not have ThinkingLine italic applied.
-	const hintLines = 2
-	label := a.sty.Messages.ThinkingLabel.Render("Thinking:")
-	switch a.thinkingViewMode {
-	case thinkingCollapsed:
-		totalLines = countLines(rendered)
-		if totalLines > maxCollapsedThinkingHeight {
-			tail, hidden := tailLines(rendered, maxCollapsedThinkingHeight, totalLines)
-			hint := a.sty.Messages.ThinkingTruncationHint.Render(
-				fmt.Sprintf(assistantMessageTruncateFormat, hidden),
-			)
-			lines = append([]string{label + " " + hint, ""}, strings.Split(tail, "\n")...)
-		} else {
-			lines = append([]string{label, ""}, strings.Split(rendered, "\n")...)
-		}
-	case thinkingTailWindow:
-		totalLines = countLines(rendered)
-		if totalLines > maxExpandedThinkingTailLines {
-			tail, hidden := tailLines(rendered, maxExpandedThinkingTailLines, totalLines)
-			hint := a.sty.Messages.ThinkingTruncationHint.Render(
-				fmt.Sprintf(assistantMessageTailWindowFormat, hidden),
-			)
-			lines = append([]string{label + " " + hint, ""}, strings.Split(tail, "\n")...)
-		} else {
-			lines = append([]string{label, ""}, strings.Split(rendered, "\n")...)
-		}
-	default:
-		lines = append([]string{label, ""}, strings.Split(rendered, "\n")...)
+	// Without an end time the duration would run to now, so it's only
+	// shown once the model marked the thinking done.
+	duration := a.message.ThinkingDuration()
+	if a.message.ReasoningContent().FinishedAt == 0 || duration.String() == "0s" {
+		return a.sty.Messages.ThinkingFooterTitle.Render("Thought")
 	}
+	return a.sty.Messages.ThinkingFooterTitle.Render("Thought for ") +
+		a.sty.Messages.ThinkingFooterDuration.Render(duration.String())
+}
 
-	// Apply italic to content lines, leaving the hint unstyled.
-	for i := hintLines; i < len(lines); i++ {
-		lines[i] = a.sty.Messages.ThinkingLine.Render(lines[i])
-	}
+// hasThinking reports whether the message has any thinking text.
+func (a *AssistantMessageItem) hasThinking() bool {
+	return strings.TrimSpace(a.message.ReasoningContent().Thinking) != ""
+}
 
-	thinkingStyle := a.sty.Messages.ThinkingBox.Width(width)
-	result := thinkingStyle.Render(strings.Join(lines, "\n"))
-	a.thinkingBoxHeight = lipgloss.Height(result)
-
-	var footer string
-	// if thinking is done add the thought for footer
-	if !a.message.IsThinking() || len(a.message.ToolCalls()) > 0 {
-		duration := a.message.ThinkingDuration()
-		if duration.String() != "0s" {
-			footer = a.sty.Messages.ThinkingFooterTitle.Render("Thought for ") +
-				a.sty.Messages.ThinkingFooterDuration.Render(duration.String())
-		}
-	}
-
-	if footer != "" {
-		result += "\n\n" + footer
-	}
-
-	return result
+// thinkingFinished reports whether the thinking is complete: the model
+// marked it done, or the turn ended. The footer, the spinner label and
+// the thinking drill-in all use this one rule.
+func (a *AssistantMessageItem) thinkingFinished() bool {
+	return a.message.ReasoningContent().FinishedAt != 0 || a.message.IsFinished()
 }
 
 // renderMarkdown renders content as markdown. F8 routes the call
@@ -697,10 +484,15 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 }
 
 func (a *AssistantMessageItem) renderSpinning() string {
-	if a.message.IsThinking() {
-		a.anim.SetLabel("Thinking")
-	} else if a.message.MessageType == message.MessageTypeCompaction {
-		a.anim.SetLabel("Summarizing")
+	var label string
+	if a.message.MessageType == message.MessageTypeCompaction {
+		label = "Summarizing"
+	} else if a.hasThinking() && !a.thinkingFinished() {
+		label = "Thinking"
+	}
+	if label != a.spinnerLabel {
+		a.spinnerLabel = label
+		a.anim.SetLabel(label)
 	}
 	return a.anim.Render()
 }
@@ -781,92 +573,40 @@ func (a *AssistantMessageItem) clearCache() {
 	a.contentSec.reset()
 	a.errorSec.reset()
 	a.streamingContent.Reset()
-	a.streamingThinking.Reset()
-	a.thinkingHash = 0
-	a.thinkingHashLen = 0
-	a.thinkingHashSample = ""
 }
 
-// ToggleExpanded advances the F5 thinking view-mode cycle and returns
-// whether the item is now in any expanded state (tail-window or full).
-// The cycle is collapsed → tail-window → full → collapsed, with the
-// tail-window step skipped when the rendered thinking fits within
-// maxExpandedThinkingTailLines so short blocks remain a two-click
-// toggle. Both the thinking section cache and the F3 prefix cache
-// fold thinkingViewMode into their keys, so no explicit invalidation
-// is required here.
-//
-// When the message carries no thinking text the toggle is a no-op:
-// there is nothing to expand, and mutating the view mode would
-// thrash the thinking-section cache key for no visible benefit.
-func (a *AssistantMessageItem) ToggleExpanded() bool {
-	if strings.TrimSpace(a.message.ReasoningContent().Thinking) == "" {
-		return a.thinkingViewMode != thinkingCollapsed
-	}
-	switch a.thinkingViewMode {
-	case thinkingCollapsed:
-		if a.tailWindowWouldTruncate() {
-			a.thinkingViewMode = thinkingTailWindow
-		} else {
-			a.thinkingViewMode = thinkingFullExpanded
-		}
-	case thinkingTailWindow:
-		a.thinkingViewMode = thinkingFullExpanded
-	case thinkingFullExpanded:
-		a.thinkingViewMode = thinkingCollapsed
-	}
-	// View-mode changes alter the windowing slice applied after
-	// glamour render. The streaming prefix cache may have been
-	// seeded under a different slice regime, and glued renders are
-	// not byte-identical to monolithic ones. Drop the prefix cache
-	// so the next render is clean.
-	a.streamingThinking.Reset()
-	a.Bump()
-	return a.thinkingViewMode != thinkingCollapsed
-}
-
-// tailWindowWouldTruncate reports whether the current thinking text
-// is long enough that the tail-window step is worth inserting into
-// the toggle cycle. We use a cheap source-text logical-line count
-// as the heuristic rather than peeking into the cache: the cache
-// may be populated in collapsed state (where its height is bounded
-// by maxCollapsedThinkingHeight and tells us nothing about the
-// underlying length), and re-running glamour just to count lines
-// would defeat the cache. The heuristic can over-trigger (a source
-// with many short lines may wrap to fewer than N lines), in which
-// case the tail-window render is visually identical to full and
-// the cycle costs the user one extra toggle — preferred over the
-// alternative of failing to show the affordance on a genuinely
-// long block.
-//
-// Logical line count is `1 + newlineCount` (a string with no
-// newlines is one line). Comparing newline count alone introduced
-// an off-by-one that let a source whose post-newline-split length
-// equalled the cap skip the tail-window step.
-func (a *AssistantMessageItem) tailWindowWouldTruncate() bool {
-	lineCount := 1 + strings.Count(a.message.ReasoningContent().Thinking, "\n")
-	return lineCount > maxExpandedThinkingTailLines
-}
-
-// HandleMouseClick implements MouseClickable. It signals (via a true return)
-// that the click lies on the thinking box so the caller can invoke
-// [AssistantMessageItem.ToggleExpanded] through the generic [Expandable]
-// path. Toggling here directly would double-toggle because the caller always
-// runs the generic path after a handled click.
+// HandleMouseClick implements MouseClickable. It reports whether a left
+// click landed on the "Thought for" line, which the caller turns into a
+// thinking drill-in. The rest of the message isn't clickable.
 func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) bool {
 	if btn != ansi.MouseLeft {
 		return false
 	}
-	// Only the thinking box is clickable; other regions of the assistant
-	// message should not trigger expansion.
-	return a.thinkingBoxHeight > 0 && y < a.thinkingBoxHeight
+	return y < a.thinkingFooterHeight
+}
+
+// ThinkingDrillIn returns a command that opens the thinking text in a
+// drill-in view, or nil when the message has no thinking.
+func (a *AssistantMessageItem) ThinkingDrillIn() tea.Cmd {
+	if !a.hasThinking() {
+		return nil
+	}
+	return func() tea.Msg {
+		return util.ThinkingDrillInMsg{Source: a}
+	}
 }
 
 // HandleKeyEvent implements KeyEventHandler.
 func (a *AssistantMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	if k := key.String(); k == "c" || k == "y" {
+	switch key.String() {
+	case "c", "y":
 		text := a.message.Content().Text
 		return true, common.CopyToClipboard(text, "Message copied to clipboard")
+	case "right", "l":
+		// Drill into the thinking, matching the tool and agent →/l pattern.
+		if cmd := a.ThinkingDrillIn(); cmd != nil {
+			return true, cmd
+		}
 	}
 	return false, nil
 }

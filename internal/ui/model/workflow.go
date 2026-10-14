@@ -224,7 +224,7 @@ func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
 	case dialog.ActionWorkflowOpenAgent:
 		m.dialog.CloseDialog(dialog.WorkflowRunID)
 		m.clearDrillStack()
-		return util.CmdHandler(util.DrillInMsg{SessionID: action.SessionID, Label: workflowAgentLabel(action.Command, action.Agent)})
+		return util.CmdHandler(util.AgentDrillInMsg{SessionID: action.SessionID, Label: workflowAgentLabel(action.Command, action.Agent)})
 	}
 	return nil
 }
@@ -309,7 +309,7 @@ func (m *UI) openWorkflowAgent(run *workflowRun) tea.Cmd {
 		return nil
 	}
 	m.clearDrillStack()
-	return util.CmdHandler(util.DrillInMsg{SessionID: e.SessionID, Label: workflowAgentLabel(run.command, e.Agent)})
+	return util.CmdHandler(util.AgentDrillInMsg{SessionID: e.SessionID, Label: workflowAgentLabel(run.command, e.Agent)})
 }
 
 // workflowAgentLabel names a workflow's subagent the way its session is

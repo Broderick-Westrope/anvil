@@ -136,7 +136,6 @@ type Workspace interface {
 
 	// Permissions
 	PermissionGrant(perm permission.PermissionRequest)
-	PermissionGrantPersistent(perm permission.PermissionRequest)
 	PermissionGrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error
 	PermissionGrantForever(toolPattern, inputPattern string, action config.PermissionAction, scope config.Scope) error
 	PermissionDeny(perm permission.PermissionRequest, reason string)

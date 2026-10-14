@@ -6,6 +6,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -57,7 +58,7 @@ func (w *WorkflowTurnMessageItem) SourceMessage() message.Message { return w.mes
 
 // SelectionSource implements [list.SourceSelectable].
 func (w *WorkflowTurnMessageItem) SelectionSource() string {
-	return stripSkillContentForDisplay(strings.TrimSpace(w.prompt))
+	return skills.CollapseContentXML(strings.TrimSpace(w.prompt))
 }
 
 // RawRender implements [MessageItem].

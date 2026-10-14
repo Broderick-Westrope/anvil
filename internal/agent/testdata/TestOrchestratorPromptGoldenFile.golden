@@ -362,6 +362,11 @@ Today's date: 1/1/2025
     <type>builtin</type>
   </skill>
   <skill>
+    <name>choosing-extension-types</name>
+    <description>Decides whether new agent guidance or a workflow should be a skill, an unlisted skill, a command, an agent, or a command that wraps a skill, and how to write its frontmatter. Use when creating, splitting, merging or moving a SKILL.md, COMMAND.md or agent .md file, or when reviewing a plugin&apos;s layout.</description>
+    <type>builtin</type>
+  </skill>
+  <skill>
     <name>finishing-a-development-branch</name>
     <description>Lands or wraps up work on a feature branch in a linked worktree: verifies tests, then merges locally, opens a PR, keeps the branch, or discards it, and cleans up the worktree with wtp. Use when implementation is done and the user wants to merge, open a PR, or clean up a branch or worktree.</description>
     <type>builtin</type>

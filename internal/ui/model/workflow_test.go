@@ -180,7 +180,7 @@ func (f *workflowFixture) run(cmd tea.Cmd) []util.InfoMsg {
 		switch msg := msg.(type) {
 		case util.InfoMsg:
 			infos = append(infos, msg)
-		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg, util.DrillInMsg:
+		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg, util.AgentDrillInMsg:
 			_, next := f.u.Update(msg)
 			queue = append(queue, cmdMsgs(next)...)
 		}

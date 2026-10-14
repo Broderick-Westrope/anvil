@@ -48,16 +48,16 @@ type KeyEventHandler interface {
 	HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd)
 }
 
-// DrillInHandler is implemented by items that support drill-in navigation.
-// HandleDelayedClick checks for this interface before Expandable — if the
-// selected item implements DrillInHandler, DrillIn() is called instead of
-// ToggleExpanded().
-type DrillInHandler interface {
-	// DrillIn returns the child session ID to drill into.
-	DrillIn() string
-	// DrillInLabel returns the breadcrumb label for this item
+// AgentDrillInHandler is implemented by agent items that support drill-in
+// to their subagent session. HandleDelayedClick checks for this interface
+// before Expandable — if the selected item implements AgentDrillInHandler,
+// AgentDrillIn() is called instead of ToggleExpanded().
+type AgentDrillInHandler interface {
+	// AgentDrillIn returns the child session ID to drill into.
+	AgentDrillIn() string
+	// AgentDrillInLabel returns the breadcrumb label for this item
 	// (e.g., "Explorer: Search auth").
-	DrillInLabel() string
+	AgentDrillInLabel() string
 }
 
 // ToolDrillInHandler is implemented by tool items that support drill-in

@@ -306,13 +306,14 @@ func (t *submitResultTool) SetProviderOptions(opts fantasy.ProviderOptions) {
 
 // allowedLazyMCPs lists the lazy MCP servers agentCfg may use, by name.
 func (c *coordinator) allowedLazyMCPs(agentCfg config.Agent) map[string]string {
+	access := toolAccess{allowedMCP: agentCfg.AllowedMCP}
 	lazy := make(map[string]string)
 	for name, mcpCfg := range c.cfg.Config().MCP {
-		if mcpCfg.IsLazy() {
+		if mcpCfg.IsLazy() && access.allowsMCPServer(name) {
 			lazy[name] = mcpCfg.LazyDescription
 		}
 	}
-	return filterAllowedLazyMCPs(lazy, agentCfg.AllowedMCP)
+	return lazy
 }
 
 func missingTools(names []string, available []fantasy.AgentTool) []string {

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,6 +138,41 @@ func TestSessionRecoverShowsOnlyLatestInterruption(t *testing.T) {
 	require.Len(t, entries, 3)
 }
 
+func TestSessionRecoverCountsHiddenSessionsAcrossEveryEarlierInterruption(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	restart := time.Now().Add(-time.Hour).UTC()
+	writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "latest", WorkingDir: "/a", Title: "Latest", SeenAt: restart})
+	writeRecoveryRecord(t, root, "b", recovery.Entry{SessionID: "yesterday", WorkingDir: "/b", Title: "Yesterday", SeenAt: restart.Add(-24 * time.Hour)})
+	writeRecoveryRecord(t, root, "c", recovery.Entry{SessionID: "last-week", WorkingDir: "/c", Title: "Last week", SeenAt: restart.Add(-7 * 24 * time.Hour)})
+
+	run := func(args ...string) (string, string) {
+		command := newSessionRecoverCommand(root, nil)
+		var output, notes bytes.Buffer
+		command.SetOut(&output)
+		command.SetErr(&notes)
+		command.SetArgs(args)
+		require.NoError(t, command.Execute())
+		return output.String(), notes.String()
+	}
+
+	listing, _ := run()
+	require.Contains(t, listing, "Session: latest\n")
+	require.NotContains(t, listing, "yesterday")
+	require.NotContains(t, listing, "last-week")
+	require.Contains(t, listing, "2 sessions from earlier interruptions not shown. Use --all")
+
+	commands, notes := run("--print-commands")
+	require.Equal(t, "# Latest\ncd /a && anvil --session latest\n\n", commands)
+	require.Equal(t, "2 sessions from earlier interruptions not shown. Use --all to include them.\n", notes)
+
+	encoded, _ := run("--json")
+	var entries []recovery.Entry
+	require.NoError(t, json.Unmarshal([]byte(encoded), &entries))
+	require.Len(t, entries, 1)
+	require.Equal(t, "latest", entries[0].SessionID)
+}
+
 func TestSessionRecoverHidesSessionsWithNothingToResume(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -221,4 +257,117 @@ func TestSessionRecoverPrintsResumeCommands(t *testing.T) {
 	command.SetErr(&notes)
 	command.SetArgs([]string{"--print-commands", "--json"})
 	require.Error(t, command.Execute())
+}
+
+func TestSessionRecoverClearReportsWhatItDid(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "gone", SeenAt: time.Now().UTC()})
+	command := newSessionRecoverCommand(root, nil)
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"--clear"})
+	require.NoError(t, command.Execute())
+	require.Equal(t, "Cleared interrupted-session recovery records. Conversations were not deleted.\n", output.String())
+}
+
+func TestSessionRecoverDefaultsToGlobalDataDir(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("ANVIL_GLOBAL_DATA", data)
+	root := filepath.Join(data, "recovery")
+	require.NoError(t, os.MkdirAll(root, 0o700))
+	writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "global", SeenAt: time.Now().UTC()})
+	command := newSessionRecoverCommand("", nil)
+	var output bytes.Buffer
+	command.SetOut(&output)
+	require.NoError(t, command.Execute())
+	require.Contains(t, output.String(), "Session: global\n")
+}
+
+func TestSessionRecoverUnreadableDirectory(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(root, nil, 0o600))
+
+	command := newSessionRecoverCommand(root, nil)
+	var output, warnings bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&warnings)
+	require.NoError(t, command.Execute())
+	require.Equal(t, "No interrupted sessions recorded.\n", output.String())
+	require.True(t, strings.HasPrefix(warnings.String(), "Warning: some recovery records could not be read: "))
+
+	command = newSessionRecoverCommand(root, nil)
+	output.Reset()
+	command.SetOut(&output)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"--clear"})
+	command.SilenceUsage = true
+	require.Error(t, command.Execute())
+	require.Empty(t, output.String())
+}
+
+func TestSessionRecoverPrintCommandsWithoutHiddenSessionsHasNoNote(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "only", WorkingDir: "/a", Title: "Only", SeenAt: time.Now().UTC()})
+	command := newSessionRecoverCommand(root, nil)
+	var output, notes bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&notes)
+	command.SetArgs([]string{"--print-commands"})
+	require.NoError(t, command.Execute())
+	require.Equal(t, "# Only\ncd /a && anvil --session only\n\n", output.String())
+	require.Empty(t, notes.String())
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("stderr closed") }
+
+func TestSessionRecoverFailsWhenWarningCannotBeWritten(t *testing.T) {
+	t.Parallel()
+	seen := time.Now().UTC()
+	tests := map[string]struct {
+		args  []string
+		setup func(t *testing.T, root string)
+		open  openSessionLookup
+	}{
+		"unreadable record": {
+			setup: func(t *testing.T, root string) {
+				require.NoError(t, os.WriteFile(filepath.Join(root, "bad.json"), []byte("{"), 0o600))
+			},
+		},
+		"session store unavailable": {
+			setup: func(t *testing.T, root string) {
+				writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "kept", SeenAt: seen})
+			},
+			open: func(*cobra.Command) (sessionLookup, func(), error) {
+				return nil, nil, errors.New("no database")
+			},
+		},
+		"hidden sessions note": {
+			args: []string{"--print-commands"},
+			setup: func(t *testing.T, root string) {
+				writeRecoveryRecord(t, root, "a", recovery.Entry{SessionID: "new", SeenAt: seen})
+				writeRecoveryRecord(t, root, "b", recovery.Entry{SessionID: "old", SeenAt: seen.Add(-time.Hour)})
+			},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			tc.setup(t, root)
+			command := newSessionRecoverCommand(root, tc.open)
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(failingWriter{})
+			command.SetArgs(tc.args)
+			command.SilenceErrors = true
+			command.SilenceUsage = true
+			require.EqualError(t, command.Execute(), "stderr closed")
+			require.Empty(t, output.String())
+		})
+	}
 }

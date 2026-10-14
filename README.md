@@ -798,6 +798,26 @@ by-name loading. Names resolve against the executing tool's registry snapshot;
 an unknown name returns an error without searching the filesystem. Loading a
 skill supplies task context, not additional tools, delegation, or authority.
 
+#### Unlisted skills
+
+Set `unlisted: true` in a skill's frontmatter to keep it out of the prompt
+catalog:
+
+```yaml
+---
+name: design-it-twice
+description: Compare several designs for one module before picking one.
+unlisted: true
+---
+```
+
+The description then costs no context and the skill never triggers on its
+own, but it still works everywhere a name is given: you can attach it from the
+skill picker or `/` autocomplete (marked `unlisted`), a command can preload it
+with `skills:`, and any agent can load it with `view(skill_name=...)`. Use it
+for skills that only specific commands, agents or other skills should pull in.
+`anvil_info` shows unlisted skills as `unlisted`.
+
 The global paths we looks for skills are:
 
 - `$ANVIL_SKILLS_DIR`
@@ -879,6 +899,11 @@ warning for anything it skips: loose `.md` files in a commands directory
 (skills directories get the same check) and directories without a
 `COMMAND.md`.
 
+`COMMAND.md` frontmatter takes a `description`, an `argument_hint` shown in
+autocomplete, and `skills`, a list of skill names whose bodies are sent with
+the command. `$ARGUMENTS` in the body is replaced with whatever follows the
+command name. `workflow` makes the command run a script instead (see below).
+
 #### Workflow commands
 
 A command can run a JavaScript workflow instead of sending its body to the
@@ -930,10 +955,11 @@ from the command palette.
 The first time a workflow runs, and whenever any file in its command
 directory changes, Anvil shows you every file (as a diff once approved) and
 asks you to approve it. Binary files and files over 256 KiB are shown by
-size and hash only, and `reference()` can't read them. `reference(path)` reads the files as they were when
-the run started, never an edit made during it, and can't read through a
-symlink that leads outside the directory. `--yolo=full` skips approval. Workflows need the
-TUI, so `anvil run` refuses them. Check a script without running it with
+size and hash only, and `reference()` can't read them. `reference(path)`
+reads the files as they were when the run started, never an edit made during
+it, and can't read through a symlink that leads outside the directory.
+`--yolo=full` skips approval. Workflows need the TUI, so `anvil run` refuses
+them. Check a script without running it with
 `anvil workflow check <path>`, which exits non-zero on a parse error, a
 problem with the script's shape (printed as `error:`) or a missing
 requirement; `--no-catalog` skips loading your config

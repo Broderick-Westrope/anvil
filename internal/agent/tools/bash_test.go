@@ -3,9 +3,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"charm.land/fantasy"
@@ -27,8 +32,6 @@ func (m *mockBashPermissionService) Request(ctx context.Context, req permission.
 func (m *mockBashPermissionService) Grant(req permission.PermissionRequest) {}
 
 func (m *mockBashPermissionService) Deny(req permission.PermissionRequest, reason string) {}
-
-func (m *mockBashPermissionService) GrantPersistent(req permission.PermissionRequest) {}
 
 func (m *mockBashPermissionService) AutoApproveSession(sessionID string) {}
 
@@ -153,8 +156,6 @@ func (m *recordingPermissionService) Request(ctx context.Context, req permission
 func (m *recordingPermissionService) Grant(req permission.PermissionRequest) {}
 
 func (m *recordingPermissionService) Deny(req permission.PermissionRequest, reason string) {}
-
-func (m *recordingPermissionService) GrantPersistent(req permission.PermissionRequest) {}
 
 func (m *recordingPermissionService) AutoApproveSession(sessionID string) {}
 
@@ -367,4 +368,588 @@ func TestBashTool_AllowedCommandStillRequestsPermission(t *testing.T) {
 
 	require.Equal(t, 1, perms.requestCount)
 	require.Contains(t, resp.Content, "Permission denied")
+}
+
+func TestBashTool_MissingCommand(t *testing.T) {
+	t.Parallel()
+	tool, perms := newBashToolWithRecordingPerms(t.TempDir(), true)
+
+	resp := runBashTool(t, tool, sessionCtx(), BashParams{Description: "empty"})
+
+	require.True(t, resp.IsError)
+	require.Equal(t, "missing command", resp.Content)
+	require.Zero(t, perms.requestCount)
+}
+
+func TestBashTool_RequiresSession(t *testing.T) {
+	t.Parallel()
+	tool := newBashToolForTest(t.TempDir())
+
+	_, err := tool.Run(context.Background(), fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  BashToolName,
+		Input: `{"command":"echo hi"}`,
+	})
+
+	require.EqualError(t, err, "session ID is required for executing shell command")
+}
+
+func TestBashTool_SafeReadOnlyCommandsSkipPermission(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		command     string
+		files       []string
+		wantRequest bool
+	}{
+		"exact safe command":          {command: "ls"},
+		"safe command with arguments": {command: "ls ."},
+		"quoted command name":         {command: "'ls' ."},
+		"safe prefix of another word": {command: "lsunknowncommand", wantRequest: true},
+		"safe command with dash":      {command: "ls-unknown-command", wantRequest: true},
+		"executable under ls-":        {command: "ls-/x", files: []string{"ls-/x"}, wantRequest: true},
+		"executable under echo-":      {command: "echo-/x", files: []string{"echo-/x"}, wantRequest: true},
+		"executable under date-":      {command: "date-/x", files: []string{"date-/x"}, wantRequest: true},
+		"command name from variable":  {command: "$X .", wantRequest: true},
+		"command name from glob":      {command: "l? .", files: []string{"ls"}, wantRequest: true},
+		"unsafe command":              {command: "touch file", wantRequest: true},
+		"variable expansion":          {command: "echo $HOME"},
+		"braced variable expansion":   {command: "echo ${HOME}"},
+		"printenv":                    {command: "printenv"},
+		"ls glob":                     {command: "ls *.go", files: []string{"a.go"}},
+		"du glob":                     {command: "du -sh *", files: []string{"a.go"}},
+		"comment only":                {command: "# ls", wantRequest: true},
+		"unparseable":                 {command: "ls 'unterminated", wantRequest: true},
+
+		"semicolon":                   {command: "ls; ls", wantRequest: true},
+		"newline":                     {command: "ls -la\nrm -rf x", wantRequest: true},
+		"background":                  {command: "ls &", wantRequest: true},
+		"single ampersand":            {command: "ls & rm -rf x", wantRequest: true},
+		"and":                         {command: "ls && rm -rf x", wantRequest: true},
+		"or":                          {command: "ls || rm -rf x", wantRequest: true},
+		"pipe":                        {command: "ls | rm -rf x", wantRequest: true},
+		"stderr pipe":                 {command: "ls |& rm -rf x", wantRequest: true},
+		"negated":                     {command: "! ls", wantRequest: true},
+		"coprocess":                   {command: "coproc ls", wantRequest: true},
+		"zsh disown":                  {command: "ls &!", wantRequest: true},
+		"assignment prefix":           {command: "PATH=. ls", wantRequest: true},
+		"assignment only":             {command: "X=1", wantRequest: true},
+		"subshell":                    {command: "(ls)", wantRequest: true},
+		"brace group":                 {command: "{ ls; }", wantRequest: true},
+		"function declaration":        {command: "ls() { rm -rf x; }", wantRequest: true},
+		"command substitution":        {command: "ls $(rm -rf x)", wantRequest: true},
+		"quoted command substitution": {command: `echo "$(rm -rf x)"`, wantRequest: true},
+		"backticks":                   {command: "ls `rm -rf x`", wantRequest: true},
+		"input process substitution":  {command: "ls <(rm -rf x)", wantRequest: true},
+		"output process substitution": {command: "ls >(rm -rf x)", wantRequest: true},
+		"arithmetic expansion":        {command: "echo $((x = 1))", wantRequest: true},
+
+		"output redirect":                {command: "echo x > out.txt", wantRequest: true},
+		"appending redirect":             {command: "echo x >> out.txt", wantRequest: true},
+		"stderr to file":                 {command: "ls 2>out.txt", wantRequest: true},
+		"both streams to file":           {command: "ls &>out.txt", wantRequest: true},
+		"duplicating to file":            {command: "ls >&out.txt", wantRequest: true},
+		"redirect to variable":           {command: "ls 2>$X", wantRequest: true},
+		"other descriptor to /dev/null":  {command: "ls 3>/dev/null", wantRequest: true},
+		"input redirect":                 {command: "ls < in.txt", wantRequest: true},
+		"heredoc":                        {command: "ls <<EOF\nx\nEOF", wantRequest: true},
+		"herestring":                     {command: "ls <<< x", wantRequest: true},
+		"stdout to /dev/null":            {command: "ls >/dev/null"},
+		"stdout fd 1 to /dev/null":       {command: "ls 1>/dev/null"},
+		"stdout fd 1 to file":            {command: "ls 1>out.txt", wantRequest: true},
+		"stderr to /dev/null":            {command: "ls 2>/dev/null"},
+		"quoted /dev/null":               {command: "ls 2>'/dev/null'"},
+		"both streams to /dev/null":      {command: "ls &>/dev/null"},
+		"stderr to stdout":               {command: "ls -la 2>&1"},
+		"git stderr to stdout":           {command: "git status 2>&1"},
+		"stdout to stderr":               {command: "ls 1>&2"},
+		"stdout to stderr shorthand":     {command: "ls >&2"},
+		"safe redirects together":        {command: "git ls-files 2>/dev/null >&2"},
+		"safe and unsafe redirects":      {command: "ls 2>/dev/null >out.txt", wantRequest: true},
+		"unsafe redirect on safe prefix": {command: "ls 2>&1 >out.txt", wantRequest: true},
+
+		"env":                              {command: "env", wantRequest: true},
+		"env running a shell":              {command: "env sh -c 'rm -rf x'", wantRequest: true},
+		"timeout":                          {command: "timeout 5 rm -rf x", wantRequest: true},
+		"nice":                             {command: "nice rm x", wantRequest: true},
+		"nohup":                            {command: "nohup rm x", wantRequest: true},
+		"nohup in the background":          {command: "nohup rm x &", wantRequest: true},
+		"time":                             {command: "time rm x", wantRequest: true},
+		"kill":                             {command: "kill 999999", wantRequest: true},
+		"killall":                          {command: "killall anvil-no-such-process", wantRequest: true},
+		"removed command with dash suffix": {command: "kill-unknown-command", wantRequest: true},
+
+		"date":                          {command: "date"},
+		"date format":                   {command: "date +%s"},
+		"date utc":                      {command: "date -u --utc --universal +%Y"},
+		"date -d":                       {command: "date -d '2 days ago' +%F"},
+		"date -d attached":              {command: "date -dyesterday"},
+		"date --date":                   {command: "date --date yesterday"},
+		"date --date=":                  {command: "date --date=yesterday"},
+		"date -r":                       {command: "date -r f", files: []string{"f"}},
+		"date --reference":              {command: "date --reference f", files: []string{"f"}},
+		"date --reference=":             {command: "date --reference=f", files: []string{"f"}},
+		"date ISO":                      {command: "date -I -Iseconds --iso-8601 --iso-8601=ns"},
+		"date RFC":                      {command: "date -R --rfc-email --rfc-3339=ns"},
+		"date -s":                       {command: "date -s 2020-01-01", wantRequest: true},
+		"date --set=":                   {command: "date --set=2020-01-01", wantRequest: true},
+		"date positional":               {command: "date 01010000", wantRequest: true},
+		"date positional after a value": {command: "date -d now 01010000", wantRequest: true},
+		"date bundled flags":            {command: "date -us 2020-01-01", wantRequest: true},
+		"date variable":                 {command: "date $X", wantRequest: true},
+		"date glob":                     {command: "date *", files: []string{"-s"}, wantRequest: true},
+
+		"hostname":              {command: "hostname"},
+		"hostname read flags":   {command: "hostname -f -s -i -I -d -a -A --fqdn --short --domain"},
+		"hostname sets":         {command: "hostname newname", wantRequest: true},
+		"hostname -F":           {command: "hostname -F file", wantRequest: true},
+		"hostname variable":     {command: "hostname $X", wantRequest: true},
+		"hostname bundled flag": {command: "hostname -fF", wantRequest: true},
+
+		"git status":                    {command: "git status"},
+		"git status with variable":      {command: "git status $X", wantRequest: true},
+		"git status with quoted var":    {command: `git status "$X"`, wantRequest: true},
+		"git status with glob":          {command: "git status *", files: []string{"x"}, wantRequest: true},
+		"git status with ? glob":        {command: "git status ?", files: []string{"x"}, wantRequest: true},
+		"git status with [ glob":        {command: "git status [x]", files: []string{"x"}, wantRequest: true},
+		"git status with extglob":       {command: "git status @(x)", files: []string{"x"}, wantRequest: true},
+		"git status quoted glob":        {command: "git status -- '*.go'"},
+		"git command name from glob":    {command: "git stat?s", wantRequest: true},
+		"git variable before command":   {command: "git $X status", wantRequest: true},
+		"git config --get":              {command: "git config --get user.name"},
+		"git config --get-all":          {command: "git config --get-all user.name"},
+		"git config --get-regexp":       {command: "git config --get-regexp 'user\\..*'"},
+		"git config --get-urlmatch":     {command: "git config --get-urlmatch http https://example.com"},
+		"git config --list":             {command: "git config --list"},
+		"git config with other suffix":  {command: "git config --get-colorbool x", wantRequest: true},
+		"git config sets":               {command: "git config user.name x", wantRequest: true},
+		"git rev-parse with brace text": {command: "git rev-parse HEAD@{1}"},
+		"git rev-parse brace expansion": {command: "git rev-parse {HEAD,main}", wantRequest: true},
+
+		"git branch":                           {command: "git branch"},
+		"git branch read flags":                {command: "git branch -a -r -v -vv --verbose --show-current"},
+		"git branch filter flags":              {command: "git branch --merged --no-merged --contains --no-contains --points-at"},
+		"git branch formatting":                {command: "git branch --sort=-committerdate --format='%(refname)' --color=always --no-color --column=never"},
+		"git branch --list with pattern":       {command: "git branch --list 'feat/*'"},
+		"git branch --list with unquoted glob": {command: "git branch --list feat*", files: []string{"feat1"}, wantRequest: true},
+		"git branch -l with pattern":           {command: "git branch -l feat"},
+		"git branch upper-case flag":           {command: "git branch -A", wantRequest: true},
+		"git branch --contains":                {command: "git branch --contains HEAD"},
+		"git branch --contains=":               {command: "git branch --contains=HEAD"},
+		"git branch --no-contains":             {command: "git branch --no-contains HEAD"},
+		"git branch --merged":                  {command: "git branch --merged main"},
+		"git branch --no-merged":               {command: "git branch --no-merged main"},
+		"git branch --points-at":               {command: "git branch --points-at HEAD"},
+		"git branch filter after read flag":    {command: "git branch -r --merged origin/main"},
+		"git branch filter with pattern":       {command: "git branch --contains HEAD 'feat/*'"},
+		"git branch filter value as flag":      {command: "git branch --contains -D x", wantRequest: true},
+		"git branch filter with -d":            {command: "git branch --merged main -d x", wantRequest: true},
+		"git branch pattern then -D":           {command: "git branch -l feat -D x", wantRequest: true},
+		"git branch creates":                   {command: "git branch newname", wantRequest: true},
+		"git branch creates with read flag":    {command: "git branch -v newname", wantRequest: true},
+		"git branch -D":                        {command: "git branch -D x", wantRequest: true},
+		"git branch -d":                        {command: "git branch -d x", wantRequest: true},
+		"git branch -m":                        {command: "git branch -m a b", wantRequest: true},
+		"git branch --list -D":                 {command: "git branch --list -D x", wantRequest: true},
+		"git branch quoted -D":                 {command: "git branch '-D' x", wantRequest: true},
+		"git branch --sort without value":      {command: "git branch --sort", wantRequest: true},
+		"git branch with dash suffix":          {command: "git branch-x", wantRequest: true},
+		"git branch --list with variable":      {command: "git branch --list $X", wantRequest: true},
+
+		"git tag":                     {command: "git tag"},
+		"git tag -l":                  {command: "git tag -l"},
+		"git tag -n":                  {command: "git tag -n"},
+		"git tag --list with pattern": {command: "git tag --list 'v1.*'"},
+		"git tag -n with list":        {command: "git tag -n5 -l v1"},
+		"git tag filter flags":        {command: "git tag --contains --no-contains --merged --no-merged --points-at"},
+		"git tag --contains":          {command: "git tag --contains v1.0"},
+		"git tag --merged":            {command: "git tag --merged main"},
+		"git tag --points-at":         {command: "git tag --points-at HEAD"},
+		"git tag formatting":          {command: "git tag --sort=v:refname --format='%(refname)' --column=never --color=never"},
+		"git tag creates":             {command: "git tag v1", wantRequest: true},
+		"git tag -n creates":          {command: "git tag -n v1", wantRequest: true},
+		"git tag -d":                  {command: "git tag -d v1", wantRequest: true},
+		"git tag -a":                  {command: "git tag -a v1 -m msg", wantRequest: true},
+		"git tag filter with -d":      {command: "git tag --contains HEAD -d v1", wantRequest: true},
+
+		"git remote":                {command: "git remote"},
+		"git remote -v":             {command: "git remote -v"},
+		"git remote --verbose":      {command: "git remote --verbose"},
+		"git remote show -n":        {command: "git remote show -n origin"},
+		"git remote -v show -n":     {command: "git remote -v show -n origin"},
+		"git remote show -n alone":  {command: "git remote show -n"},
+		"git remote -n after name":  {command: "git remote show origin -n", wantRequest: true},
+		"git remote -n after --":    {command: "git remote show -- http://host/SECRET.git -n", wantRequest: true},
+		"git remote -n before --":   {command: "git remote show -n -- origin", wantRequest: true},
+		"git remote show":           {command: "git remote show origin", wantRequest: true},
+		"git remote show no remote": {command: "git remote show", wantRequest: true},
+		"git remote -n before show": {command: "git remote -n show origin", wantRequest: true},
+		"git remote get-url":        {command: "git remote get-url origin"},
+		"git remote add":            {command: "git remote add o https://example.com/x.git", wantRequest: true},
+		"git remote -v add":         {command: "git remote -v add o https://example.com/x.git", wantRequest: true},
+		"git remote remove":         {command: "git remote remove o", wantRequest: true},
+		"git remote rm":             {command: "git remote rm o", wantRequest: true},
+		"git remote rename":         {command: "git remote rename o p", wantRequest: true},
+		"git remote set-url":        {command: "git remote set-url o https://example.com/y.git", wantRequest: true},
+		"git remote set-head":       {command: "git remote set-head o -a", wantRequest: true},
+		"git remote set-branches":   {command: "git remote set-branches o main", wantRequest: true},
+		"git remote prune":          {command: "git remote prune o", wantRequest: true},
+		"git remote update":         {command: "git remote update", wantRequest: true},
+
+		"git ls-remote":                {command: "git ls-remote --tags .", wantRequest: true},
+		"git ls-remote url":            {command: "git ls-remote https://example.com/x.git", wantRequest: true},
+		"git ls-remote glob injection": {command: "git ls-remote * .", files: []string{"--upload-pack=touch PWNED;#"}, wantRequest: true},
+
+		"git log":                        {command: "git log --oneline"},
+		"git log quoted format":          {command: "git log --format='%h %s'"},
+		"git log format with brackets":   {command: "git log --format='%h <%an>'"},
+		"git log pretty with brackets":   {command: "git log --pretty=format:'%h %s (%an <%ae>)'"},
+		"git log grep with pipe":         {command: "git log --grep='a|b'"},
+		"git log range":                  {command: "git log HEAD~3..HEAD"},
+		"git diff":                       {command: "git diff HEAD"},
+		"git show":                       {command: "git show HEAD"},
+		"git log --output":               {command: "git log --output=out.txt", wantRequest: true},
+		"git diff --output":              {command: "git diff --output out.txt", wantRequest: true},
+		"git show --output":              {command: "git show --output=out.txt", wantRequest: true},
+		"git shortlog":                   {command: "git shortlog -sn --no-merges"},
+		"git shortlog --output":          {command: "git shortlog --output=out.txt", wantRequest: true},
+		"git blame":                      {command: "git blame -L 1,10 f"},
+		"git blame --output":             {command: "git blame --output=out.txt f", wantRequest: true},
+		"git diff --no-index":            {command: "git diff --no-index /etc/hosts /dev/null", wantRequest: true},
+		"git diff --no-index relative":   {command: "git diff --no-index a b", wantRequest: true},
+		"git diff --no-indent-heuristic": {command: "git diff --no-indent-heuristic"},
+		"git diff -O":                    {command: "git diff -O /etc/hosts", wantRequest: true},
+		"git diff attached -O":           {command: "git diff -O/etc/hosts", wantRequest: true},
+		"git diff bundled -O":            {command: "git diff -pO/etc/hosts", wantRequest: true},
+		"git log -O":                     {command: "git log -p -O/etc/hosts", wantRequest: true},
+		"git show -O":                    {command: "git show -O/etc/hosts", wantRequest: true},
+		"git log --stdin":                {command: "git log --stdin"},
+		"git diff output indicator":      {command: "git diff --output-indicator-new=+"},
+		"git diff absolute path":         {command: "git diff /etc/hosts /dev/null", wantRequest: true},
+		"git diff absolute after --":     {command: "git diff -- a /etc/hosts", wantRequest: true},
+		"git diff backslash path":        {command: `git diff '\etc\hosts' a`, wantRequest: true},
+		"git diff home path":             {command: "git diff ~/.ssh/config a", wantRequest: true},
+		"git diff drive path":            {command: "git diff C:/x a", wantRequest: true},
+		"git diff parent path":           {command: "git diff ../x a", wantRequest: true},
+		"git diff nested parent path":    {command: `git diff 'a\..\..\x' b`, wantRequest: true},
+		"git diff relative path":         {command: "git diff -- a dir/b"},
+		"git diff revision range":        {command: "git diff HEAD~1..HEAD -- a"},
+		"git diff revision path":         {command: "git diff HEAD:a b"},
+		"git diff dotted names":          {command: "git diff ..a a.. a/..b"},
+		"git diff empty path":            {command: "git diff ''"},
+		"git blame --contents":           {command: "git blame --contents /etc/hosts a", wantRequest: true},
+		"git blame --contents=":          {command: "git blame --contents=/etc/hosts a", wantRequest: true},
+		"git blame abbreviated contents": {command: "git blame --con=/etc/hosts a", wantRequest: true},
+		"git blame --color-lines":        {command: "git blame --color-lines a"},
+		"git blame -S":                   {command: "git blame -S /etc/hosts a", wantRequest: true},
+		"git blame attached -S":          {command: "git blame -S/etc/hosts a", wantRequest: true},
+		"git blame bundled -S":           {command: "git blame -wS /etc/hosts a", wantRequest: true},
+		"git blame -s":                   {command: "git blame -s a"},
+		"git blame --ignore-revs-file":   {command: "git blame --ignore-revs-file /etc/hosts a", wantRequest: true},
+		"git blame --ignore-revs-file=":  {command: "git blame --ignore-revs-file=/etc/hosts a", wantRequest: true},
+		"git blame abbreviated revs":     {command: "git blame --ignore-revs=/etc/hosts a", wantRequest: true},
+		"git blame --ignore-rev":         {command: "git blame --ignore-rev HEAD a"},
+		"git ls-files --exclude-from":    {command: "git ls-files -o --exclude-from=/etc/hosts", wantRequest: true},
+		"git ls-files abbreviated from":  {command: "git ls-files -o --exclude-f /etc/hosts", wantRequest: true},
+		"git ls-files -X":                {command: "git ls-files -oX /etc/hosts", wantRequest: true},
+		"git ls-files per-directory":     {command: "git ls-files -o --exclude-per-directory=../../x", wantRequest: true},
+		"git ls-files abbreviated per":   {command: "git ls-files -o --exclude-p ../../x", wantRequest: true},
+		"git ls-files --exclude":         {command: "git ls-files -o -x '*.go' --exclude='*.md' --exclude-standard"},
+		"git config --file":              {command: "git config --list --file ~/.aws/credentials", wantRequest: true},
+		"git config --file=":             {command: "git config --get-regexp --file=/etc/hosts .", wantRequest: true},
+		"git config abbreviated file":    {command: "git config --get --fil=/etc/hosts x", wantRequest: true},
+		"git config -f":                  {command: "git config --get-all -f /etc/hosts x", wantRequest: true},
+		"git config bundled -f":          {command: "git config --get-urlmatch -zf /etc/hosts http x", wantRequest: true},
+		"git config --fixed-value":       {command: "git config --get --fixed-value x y"},
+		"git log quoted --output":        {command: "git log '--output=out.txt'", wantRequest: true},
+		"git log spliced --output":       {command: `git log --out""put=out.txt`, wantRequest: true},
+		"git log ANSI-C --output":        {command: "git log $'--output=out.txt'", wantRequest: true},
+		"git log brace --output":         {command: "git log {--output=out.txt,HEAD}", wantRequest: true},
+		"git log variable":               {command: "git log ${X:---output=out.txt}", wantRequest: true},
+		"git log -exec":                  {command: "git log -exec rm x"},
+		"git log glob injection":         {command: "git log *", files: []string{"--output=a.txt"}, wantRequest: true},
+		"git diff glob injection":        {command: "git diff *", files: []string{"--output=a.txt"}, wantRequest: true},
+		"git show glob injection":        {command: "git show *", files: []string{"--output=a.txt"}, wantRequest: true},
+		"git grep":                       {command: "git grep -n --count foo"},
+		"git grep alternation":           {command: "git grep -E 'a|b'"},
+		"git grep quoted pathspec":       {command: "git grep -n foo -- '*.go'"},
+		"git grep --open-files-in-pager": {command: "git grep --open-files-in-pager=rm foo", wantRequest: true},
+		"git grep abbreviated pager":     {command: "git grep --op=rm foo", wantRequest: true},
+		"git grep -O":                    {command: "git grep -Orm foo", wantRequest: true},
+		"git grep bundled -O":            {command: "git grep -iOrm foo", wantRequest: true},
+		"git grep -o":                    {command: "git grep -o foo"},
+		"git grep bundled -o":            {command: "git grep -io foo"},
+		"git grep --only-matching":       {command: "git grep --only-matching foo"},
+		"git grep --or":                  {command: "git grep -e a --or -e b"},
+		"git grep ambiguous --o":         {command: "git grep --o foo", wantRequest: true},
+		"git grep -f":                    {command: "git grep -f /etc/hosts", wantRequest: true},
+		"git grep attached -f":           {command: "git grep -f/etc/hosts", wantRequest: true},
+		"git grep bundled -f":            {command: "git grep -if /etc/hosts", wantRequest: true},
+		"git grep --files-with-matches":  {command: "git grep --files-with-matches foo"},
+		"git grep glob injection": {
+			command:     "git grep -e alpha *",
+			files:       []string{"--open-files-in-pager=touch PWNED;#"},
+			wantRequest: true,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, file := range tc.files {
+				path := filepath.Join(dir, file)
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+				require.NoError(t, os.WriteFile(path, nil, 0o755))
+			}
+			tool, perms := newBashToolWithRecordingPerms(dir, false)
+
+			runBashTool(t, tool, sessionCtx(), BashParams{Description: "safe", Command: tc.command})
+
+			if tc.wantRequest {
+				require.Equal(t, 1, perms.requestCount)
+			} else {
+				require.Zero(t, perms.requestCount)
+			}
+		})
+	}
+}
+
+func TestIsSafeReadOnly_CommandNamesAndPlatform(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		command string
+		goos    string
+		want    bool
+	}{
+		"command on linux":               {command: "ls", goos: "linux", want: true},
+		"upper-case command on linux":    {command: "LS", goos: "linux"},
+		"upper-case command on darwin":   {command: "LS", goos: "darwin"},
+		"upper-case command on windows":  {command: "LS", goos: "windows", want: true},
+		"upper-case git on linux":        {command: "GIT status", goos: "linux"},
+		"upper-case subcommand on linux": {command: "git STATUS", goos: "linux"},
+		"upper-case git on windows":      {command: "GIT BRANCH -a", goos: "windows", want: true},
+		"upper-case flag on windows":     {command: "git branch -A", goos: "windows"},
+		"where on windows":               {command: "where git", goos: "windows", want: true},
+		"upper-case where on windows":    {command: "WHERE git", goos: "windows", want: true},
+		"where on linux":                 {command: "where git", goos: "linux"},
+		"ipconfig on windows":            {command: "ipconfig", goos: "windows", want: true},
+		"systeminfo on windows":          {command: "systeminfo", goos: "windows", want: true},
+		"tasklist on windows":            {command: "tasklist", goos: "windows", want: true},
+		"tasklist on darwin":             {command: "tasklist", goos: "darwin"},
+		"ping on windows":                {command: "ping example.com", goos: "windows"},
+		"nslookup on windows":            {command: "nslookup example.com", goos: "windows"},
+		"shared command on windows":      {command: "git status", goos: "windows", want: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, isSafeReadOnly(tc.command, tc.goos))
+		})
+	}
+}
+
+func TestBashTool_PermissionRequestFields(t *testing.T) {
+	t.Parallel()
+	toolDir := t.TempDir()
+	tests := map[string]struct {
+		workingDir string
+		wantPath   string
+	}{
+		"tool working directory":      {wantPath: toolDir},
+		"requested working directory": {workingDir: "/requested", wantPath: "/requested"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool, perms := newBashToolWithRecordingPerms(toolDir, false)
+			params := BashParams{Description: "touch", Command: "touch file", WorkingDir: tc.workingDir}
+
+			runBashTool(t, tool, sessionCtx(), params)
+
+			require.Equal(t, permission.CreatePermissionRequest{
+				SessionID:     "test-session",
+				Path:          tc.wantPath,
+				ToolCallID:    "test-call",
+				ToolName:      BashToolName,
+				Action:        "execute",
+				Description:   "Execute command: touch file",
+				Params:        BashPermissionsParams(params),
+				Input:         "touch file",
+				InputSegments: []string{"touch file"},
+			}, perms.lastRequest)
+		})
+	}
+}
+
+func TestBashTool_PermissionDeniedStopsTurn(t *testing.T) {
+	t.Parallel()
+	tool, _ := newBashToolWithRecordingPerms(t.TempDir(), false)
+
+	resp := runBashTool(t, tool, sessionCtx(), BashParams{Description: "touch", Command: "touch file"})
+
+	require.True(t, resp.IsError)
+	require.True(t, resp.StopTurn)
+	require.Equal(t, "Permission denied", resp.Content)
+}
+
+func TestBashTool_PermissionRequestErrorIsReturned(t *testing.T) {
+	t.Parallel()
+	requestErr := errors.New("permission service down")
+	perms := &mockViewPermissionService{
+		Broker: pubsub.NewBroker[permission.PermissionRequest](),
+		requestFunc: func(context.Context, permission.CreatePermissionRequest) (permission.RequestResult, error) {
+			return permission.RequestResult{}, requestErr
+		},
+	}
+	tool := NewBashTool(perms, t.TempDir(), nil)
+
+	_, err := tool.Run(sessionCtx(), fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  BashToolName,
+		Input: `{"command":"touch file"}`,
+	})
+
+	require.ErrorIs(t, err, requestErr)
+}
+
+func TestBashTool_CompletedCommandOutput(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		command     string
+		background  bool
+		wantContent func(cwd string) string
+		wantOutput  string
+	}{
+		"foreground output": {
+			command:     "echo hi",
+			wantContent: func(cwd string) string { return "hi\n\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "hi\n",
+		},
+		"foreground no output": {
+			command:     "true",
+			wantContent: func(string) string { return BashNoOutput },
+		},
+		"foreground non-zero exit": {
+			command:     "echo out; exit 3",
+			wantContent: func(cwd string) string { return "out\n\nexit status 3\nExit code 3\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "out\n\nexit status 3\nExit code 3",
+		},
+		"background fast completion": {
+			command:     "echo hi",
+			background:  true,
+			wantContent: func(cwd string) string { return "hi\n\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "hi\n",
+		},
+		"foreground completion after the first poll": {
+			command:     "sleep 0.3; echo hi",
+			wantContent: func(cwd string) string { return "hi\n\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "hi\n",
+		},
+		"background completion within the fast-failure window": {
+			command:     "sleep 0.3; echo hi",
+			background:  true,
+			wantContent: func(cwd string) string { return "hi\n\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "hi\n",
+		},
+		"background fast completion no output": {
+			command:     "true",
+			background:  true,
+			wantContent: func(string) string { return BashNoOutput },
+		},
+		"background fast failure": {
+			command:     "exit 4",
+			background:  true,
+			wantContent: func(cwd string) string { return "\nexit status 4\nExit code 4\n\n<cwd>" + cwd + "</cwd>" },
+			wantOutput:  "\nexit status 4\nExit code 4",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			workingDir := t.TempDir()
+			tool := newBashToolForTest(workingDir)
+
+			resp := runBashTool(t, tool, sessionCtx(), BashParams{
+				Description:     name,
+				Command:         tc.command,
+				RunInBackground: tc.background,
+			})
+
+			require.False(t, resp.IsError)
+			require.Equal(t, tc.wantContent(normalizeWorkingDir(workingDir)), resp.Content)
+			var meta BashResponseMetadata
+			require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+			require.Equal(t, tc.wantOutput, meta.Output)
+			require.Equal(t, tc.background, meta.Background)
+			require.Equal(t, workingDir, meta.WorkingDirectory)
+			require.Equal(t, name, meta.Description)
+			require.Empty(t, meta.ShellID)
+		})
+	}
+}
+
+func TestBashTool_LongRunningCommandBecomesJob(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		params      BashParams
+		wantOrigin  shell.JobOrigin
+		wantContent string
+	}{
+		"explicit background": {
+			params:      BashParams{Command: "sleep 30", RunInBackground: true},
+			wantOrigin:  shell.OriginExplicit,
+			wantContent: "Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.",
+		},
+		"auto background": {
+			params:      BashParams{Command: "echo started; sleep 30", AutoBackgroundAfter: 1},
+			wantOrigin:  shell.OriginAuto,
+			wantContent: "Command is still running after 1s and has been moved to the background as job %s.\n\nOutput so far (last 20 lines):\nstarted",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			workingDir := t.TempDir()
+			tool := newBashToolForTest(workingDir)
+			tc.params.Description = name
+
+			resp := runBashTool(t, tool, sessionCtx(), tc.params)
+
+			var meta BashResponseMetadata
+			require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+			bgManager := shell.GetBackgroundShellManager()
+			t.Cleanup(func() { _ = bgManager.Kill(meta.ShellID) })
+			require.False(t, resp.IsError)
+			require.True(t, meta.Background)
+			require.NotEmpty(t, meta.ShellID)
+			require.Empty(t, meta.Output)
+			require.Equal(t, workingDir, meta.WorkingDirectory)
+			require.Equal(t, name, meta.Description)
+			require.True(t, strings.HasPrefix(resp.Content, fmt.Sprintf(tc.wantContent, meta.ShellID)), resp.Content)
+
+			job, ok := bgManager.Get(meta.ShellID)
+			require.True(t, ok)
+			require.Equal(t, tc.wantOrigin, job.Info().Origin)
+			require.Equal(t, "test-session", job.Info().SessionID)
+		})
+	}
+}
+
+func TestBashTool_CancelledWhileWaitingKillsCommand(t *testing.T) {
+	t.Parallel()
+	workingDir := t.TempDir()
+	tool := newBashToolForTest(workingDir)
+	ctx, cancel := context.WithCancel(sessionCtx())
+	time.AfterFunc(300*time.Millisecond, cancel)
+
+	_, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  BashToolName,
+		Input: `{"command":"sleep 1 && touch finished","description":"cancelled"}`,
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Never(t, func() bool {
+		_, statErr := os.Stat(filepath.Join(workingDir, "finished"))
+		return statErr == nil
+	}, 1500*time.Millisecond, 100*time.Millisecond, "cancelled command must be killed")
 }
