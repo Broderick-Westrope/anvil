@@ -1426,3 +1426,92 @@ func TestCommandsLoadedWithHealthyWorkflowsWarnsNothing(t *testing.T) {
 	}})
 	require.Empty(t, f.run(cmd))
 }
+
+func TestWorkflowRunRedrawsAnAnswerAndATitle(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		change func(f *workflowFixture)
+		want   string
+	}{
+		"answer": {
+			change: func(f *workflowFixture) { f.answer("ask-1", "Ship it?", "yes") },
+			want:   "Ship it? → yes",
+		},
+		"title": {
+			change: func(f *workflowFixture) {
+				f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
+			},
+			want: "turn in Builder",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			f.press(showRunKey)
+			require.NotContains(t, f.runDialog(), tc.want)
+
+			// Each change records an entry and then updates it.
+			tc.change(f)
+			require.Contains(t, f.runDialog(), tc.want)
+		})
+	}
+}
+
+func TestWorkflowTitleRenamesOnlyTurnsInItsSession(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	for _, sess := range []string{"sess-unknown", "sess-2"} {
+		f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: sess}})
+	}
+
+	f.press(showRunKey)
+	out := f.runDialog()
+	require.Contains(t, out, "turn in another session")
+	require.Contains(t, out, "turn in Builder")
+}
+
+func TestWorkflowFinishWithoutATrackedRunIsShown(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFinished, RunID: "run-1", Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusFailed, Message: "boom"})
+	require.Len(t, infos, 1)
+	require.Equal(t, "Workflow /demo failed: boom", infos[0].Msg)
+	require.Contains(t, f.panel(), "/demo · failed: boom")
+}
+
+func TestWorkflowFinishTruncatesOnlyAResult(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("x", workflowResultMaxWidth+10)
+	tests := map[string]struct {
+		ev      workflowhost.Event
+		wantMsg string
+	}{
+		"completed": {
+			ev:      workflowhost.Event{Status: workflowhost.StatusCompleted, Result: []byte(`"` + long + `"`)},
+			wantMsg: "Workflow /demo completed: " + ansi.Truncate(`"`+long+`"`, workflowResultMaxWidth, "…"),
+		},
+		"failed": {
+			ev:      workflowhost.Event{Status: workflowhost.StatusFailed, Message: long},
+			wantMsg: "Workflow /demo failed: " + long,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			ev := tc.ev
+			ev.Kind, ev.Command, ev.SessionID = workflowhost.EventFinished, "demo", "sess-1"
+			infos := f.event(ev)
+			require.Len(t, infos, 1)
+			require.Equal(t, tc.wantMsg, infos[0].Msg)
+		})
+	}
+}
