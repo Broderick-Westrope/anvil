@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
 )
 
@@ -48,14 +49,56 @@ func TestWorkflowAgentReturnsSubmittedResult(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"kind":"clean"}`, string(out.Output))
-	require.Contains(t, f.Provider.Requests()[0].Body, `"submit_result"`)
+	body := f.Provider.Requests()[0].Body
+	require.Contains(t, body, `"submit_result"`)
+	require.Contains(t, body, `"properties":{"kind":{"type":"string"}}`, "submit_result takes the workflow's schema")
+}
+
+func TestWorkflowAgentWrapsANonObjectSchema(t *testing.T) {
+	f := branchfixture.New(t, branchfixture.WithAgents("reviewer"))
+	parent := newParent(t, f)
+	f.Provider.Enqueue(
+		branchfixture.Response{ToolName: "submit_result", ToolInput: `{"result":"clean"}`},
+		branchfixture.Response{Text: "submitted"},
+	)
+	out, err := f.Coordinator.RunWorkflowAgent(f.Context, agent.WorkflowAgentCall{
+		ParentSessionID: parent, Agent: "reviewer", Prompt: "review", Schema: json.RawMessage(`{"type":"string"}`),
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `"clean"`, string(out.Output))
+	require.Contains(t, f.Provider.Requests()[0].Body, `"properties":{"result":{"type":"string"}}`)
+}
+
+func TestWorkflowAgentTitlesItsSession(t *testing.T) {
+	tests := map[string]struct {
+		title string
+		want  string
+	}{
+		"given title":   {title: "Review the diff", want: "Review the diff"},
+		"default title": {want: "workflow: reviewer"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := branchfixture.New(t, branchfixture.WithAgents("reviewer"))
+			parent := newParent(t, f)
+			f.Provider.Enqueue(branchfixture.Response{Text: "done"})
+			out, err := f.Coordinator.RunWorkflowAgent(f.Context, agent.WorkflowAgentCall{
+				ParentSessionID: parent, Agent: "reviewer", Prompt: "look", Title: tc.title,
+			})
+			require.NoError(t, err)
+			child, err := f.Workspace.GetSession(f.Context, out.SessionID)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, child.Title)
+		})
+	}
 }
 
 func TestWorkflowAgentRejectsInvalidSubmission(t *testing.T) {
 	f := branchfixture.New(t, branchfixture.WithAgents("reviewer"))
 	parent := newParent(t, f)
 	f.Provider.Enqueue(
-		branchfixture.Response{ToolName: "submit_result", ToolInput: `{"other":1}`},
+		// The schema allows an empty kind; only Validate rejects it.
+		branchfixture.Response{ToolName: "submit_result", ToolInput: `{"kind":""}`},
 		branchfixture.Response{Text: "gave up"},
 		branchfixture.Response{ToolName: "submit_result", ToolInput: `{"kind":"changes"}`},
 		branchfixture.Response{Text: "submitted"},
@@ -66,6 +109,7 @@ func TestWorkflowAgentRejectsInvalidSubmission(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"kind":"changes"}`, string(out.Output))
 	requests := f.Provider.Requests()
+	require.Contains(t, requests[1].Body, "Invalid result: kind is required")
 	require.True(t, strings.Contains(requests[1].Body, `"is_error":true`), "invalid submission must go back as a tool error")
 	require.Len(t, requests, 4)
 }
@@ -105,9 +149,9 @@ func TestWorkflowAgentFailsClosedOnUnknownTool(t *testing.T) {
 	f := branchfixture.New(t, branchfixture.WithAgents("reviewer"))
 	parent := newParent(t, f)
 	_, err := f.Coordinator.RunWorkflowAgent(f.Context, agent.WorkflowAgentCall{
-		ParentSessionID: parent, Agent: "reviewer", Prompt: "look", Tools: []string{"view", "telepathy"},
+		ParentSessionID: parent, Agent: "reviewer", Prompt: "look", Tools: []string{"telepathy", "view", "clairvoyance"},
 	})
-	require.ErrorContains(t, err, "telepathy")
+	require.ErrorContains(t, err, "can't use tools: telepathy, clairvoyance")
 	require.Empty(t, f.Provider.Requests())
 }
 
@@ -118,6 +162,8 @@ func TestWorkflowAgentRejectsUnknownAgentAndModel(t *testing.T) {
 	require.ErrorContains(t, err, "ghost")
 	_, err = f.Coordinator.RunWorkflowAgent(f.Context, agent.WorkflowAgentCall{ParentSessionID: parent, Agent: "reviewer", Prompt: "x", Model: "nope/nope"})
 	require.ErrorContains(t, err, "nope/nope")
+	_, err = f.Coordinator.RunWorkflowAgent(f.Context, agent.WorkflowAgentCall{ParentSessionID: parent, Agent: config.AgentOrchestrator, Prompt: "x"})
+	require.ErrorContains(t, err, `agent "orchestrator" not configured`)
 	require.Empty(t, f.Provider.Requests())
 }
 

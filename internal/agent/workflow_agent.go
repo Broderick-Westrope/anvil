@@ -260,9 +260,9 @@ func (t *submitResultTool) Run(_ context.Context, call fantasy.ToolCall) (fantas
 		var in struct {
 			Result json.RawMessage `json:"result"`
 		}
-		if err := json.Unmarshal(doc, &in); err != nil {
-			return fantasy.NewTextErrorResponse("Invalid result: " + err.Error()), nil
-		}
+		// Can't fail: fantasy only runs a tool once its input parsed as a
+		// JSON object.
+		_ = json.Unmarshal(doc, &in)
 		doc = in.Result
 	}
 	if t.validate != nil {

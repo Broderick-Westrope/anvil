@@ -4,11 +4,14 @@ import (
 	"context"
 	"testing"
 
+	"charm.land/fantasy"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
-// These tests are internal: the agent cache and lazyServersFor have no
-// exported view.
+// These tests are internal: the agent cache, lazyServersFor and the
+// subagent a workflow runs have no exported view.
 
 func TestWorkflowAgentPinningOnlyAModelReusesTheCachedAgent(t *testing.T) {
 	t.Parallel()
@@ -48,4 +51,25 @@ func TestLazyServersForToolNames(t *testing.T) {
 			require.Equal(t, tc.want, lazyServersFor(tc.names, lazy))
 		})
 	}
+}
+
+// A workflow gets only the subagent's text and output, so jobs handed to
+// the parent session are logged instead. It replaces the default logger,
+// so it doesn't run in parallel.
+func TestWorkflowAgentLogsJobsHandedToTheParent(t *testing.T) {
+	logs := captureLogs(t)
+	env := testEnv(t)
+	c, _ := newReloadTestCoordinator(t, env)
+	parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
+	require.NoError(t, err)
+	c.agents.Set("helper|2", newMockAgent(reloadTestProvider, 1000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		startTestJob(t, call.SessionID, "sleep 30", shell.OriginExplicit)
+		return agentResultWithText("done"), nil
+	}))
+
+	out, err := c.RunWorkflowAgent(t.Context(), WorkflowAgentCall{ParentSessionID: parent.ID, Agent: "helper", Prompt: "x"})
+	require.NoError(t, err)
+	require.Equal(t, "done", out.Text)
+	require.Len(t, shell.GetBackgroundShellManager().ListBySession(parent.ID), 1)
+	require.Contains(t, logs.String(), "Workflow subagent jobs handed off")
 }
