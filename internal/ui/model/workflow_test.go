@@ -1304,7 +1304,7 @@ func TestWorkflowPanelKeepsThePanelContract(t *testing.T) {
 			elsewhere: "Builder\nsecond line",
 			entries: []dialog.WorkflowEntry{
 				{Kind: dialog.WorkflowEntryAgent, Agent: "rev\niewer", SessionID: "c1", Status: workflowhost.StatusRunning},
-				{Kind: dialog.WorkflowEntryAgent, Agent: "critic", SessionID: "c2", Status: workflowhost.StatusFailed, Err: "boom\nstack"},
+				{Kind: dialog.WorkflowEntryAgent, Agent: "critic", Model: "bad\nmodel", SessionID: "c2", Status: workflowhost.StatusFailed, Err: "boom\nstack"},
 				{Kind: dialog.WorkflowEntryAsk, Question: "Ship?\nReally?", Answer: "yes\nno"},
 			},
 		},

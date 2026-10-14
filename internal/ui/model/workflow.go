@@ -795,7 +795,7 @@ func (p workflowPanel) Render(width int) string {
 			entry = "  " + t.Pills.HelpKey.Render("?") + " " + t.Pills.HelpText.Render(firstLine(e.Question)) +
 				" " + t.Pills.HelpText.Render("→") + " " + t.Pills.TodoProgress.Render(firstLine(e.Answer))
 		} else {
-			e.Agent = firstLine(e.Agent)
+			e.Agent, e.Model = firstLine(e.Agent), firstLine(e.Model)
 			entry = "  " + dialog.WorkflowAgentLine(t, p.command, e, true)
 			if e.SessionID == latest.SessionID {
 				entry += "  " + hint(p.agentKey, "open")
