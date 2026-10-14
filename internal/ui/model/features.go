@@ -19,17 +19,23 @@ type feature interface {
 	// result, so they survive update's early returns.
 	Observe(msg tea.Msg) tea.Cmd
 	// HandleMsg is offered messages no update case handled (update's
-	// default arm), before they go to the dialog. handled=true claims
+	// default arm), before they go to the dialog. Reporting true claims
 	// the message.
-	HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool)
-	// HandleKey is offered keys no global key binding matched.
-	HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool)
-	// HandleAction is offered each dialog action before the action switch.
-	HandleAction(action dialog.Action) (cmd tea.Cmd, handled bool)
+	HandleMsg(msg tea.Msg) (tea.Cmd, bool)
+	// HandleKey is offered keys no global key binding matched. Reporting
+	// true claims the key.
+	HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool)
+	// HandleAction is offered each dialog action before the action
+	// switch, except dialog.ActionRunCustomCommand: the palette's run goes
+	// to commandFeature.RunCommand instead. Reporting true claims the
+	// action. A feature closes the dialogs its own actions came from.
+	HandleAction(action dialog.Action) (tea.Cmd, bool)
 }
 
 // commandFeature runs some custom commands itself, from the slash
-// command line (with its raw arguments) or the palette (with none).
+// command line (with its raw arguments) or the palette (with none). When
+// one runs a command from the palette, the registry closes the palette,
+// as upstream's prompt path does for the commands it runs.
 type commandFeature interface {
 	RunCommand(cmd commands.CustomCommand, rawArgs string) (tea.Cmd, bool)
 }

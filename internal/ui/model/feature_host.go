@@ -17,9 +17,9 @@ type featureHost interface {
 	SessionID() string
 	// EnsureSession returns the current session, creating it and
 	// switching to chat when there's none (assigns the session and
-	// honours forced compact mode). cmd loads a new session. sessionID is
-	// "" when no session could be had.
-	EnsureSession() (sessionID string, cmd tea.Cmd, err error)
+	// honours forced compact mode), and the command that loads a new
+	// session. The ID is "" when no session could be had.
+	EnsureSession() (string, tea.Cmd, error)
 	// Navigate does nothing when sessionID is already the root session.
 	// Otherwise it clears any drill-in synchronously and returns the
 	// command that loads sessionID.
@@ -38,7 +38,7 @@ type featureHost interface {
 	ComposerHasContent() bool
 	// Reloading reports an instance reload in progress.
 	Reloading() bool
-	// KeyMap is the current key bindings.
+	// KeyMap is a copy of the current key bindings.
 	KeyMap() KeyMap
 }
 

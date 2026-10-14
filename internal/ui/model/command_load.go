@@ -23,16 +23,15 @@ func loadCommands(com *common.Common) []commands.CustomCommand {
 }
 
 // commandsLoaded delivers freshly loaded commands, with a warning beside
-// them when some won't run. The warning travels as a second command in a
-// tea.BatchMsg, which Bubble Tea runs as tea.Batch would, so the
-// userCommandsLoadedMsg case in update needs no warning of its own.
+// them when some won't run, so the userCommandsLoadedMsg case in update
+// needs no warning of its own.
 func commandsLoaded(cmds []commands.CustomCommand) tea.Msg {
 	loaded := userCommandsLoadedMsg{Commands: cmds}
 	warning := brokenWorkflowsWarning(cmds)
 	if warning == "" {
 		return loaded
 	}
-	return tea.BatchMsg{func() tea.Msg { return loaded }, util.ReportWarn(warning)}
+	return tea.Batch(func() tea.Msg { return loaded }, util.ReportWarn(warning))()
 }
 
 // brokenWorkflowsWarning describes the workflow commands that won't run, or

@@ -139,8 +139,10 @@ type workflowWorkspace interface {
 // progress as a panel, and their controls as keys and palette entries.
 type workflowFeature struct {
 	host featureHost
-	com  *common.Common
-	ws   workflowWorkspace
+	// com is for styles and dialog constructors only; workspace calls go
+	// through ws.
+	com *common.Common
+	ws  workflowWorkspace
 
 	// runs holds the runs, keyed by invoking session.
 	runs map[string]*workflowRun
@@ -191,7 +193,7 @@ func (w *workflowFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 // runFor returns the run involving sessionID, if any.
 // A session the user invoked a run from wins, then a running run that
 // used it, so a finished run's leftovers never shadow the live one.
-func (w *workflowFeature) runFor(sessionID string) (invoker string, run *workflowRun) {
+func (w *workflowFeature) runFor(sessionID string) (string, *workflowRun) {
 	if run := w.runs[sessionID]; run != nil {
 		return sessionID, run
 	}
@@ -210,7 +212,7 @@ func (w *workflowFeature) runFor(sessionID string) (invoker string, run *workflo
 }
 
 // currentRun returns the run involving the session on screen.
-func (w *workflowFeature) currentRun() (invoker string, run *workflowRun) {
+func (w *workflowFeature) currentRun() (string, *workflowRun) {
 	id := w.host.SessionID()
 	if id == "" {
 		return "", nil
@@ -273,7 +275,7 @@ func (w *workflowFeature) HandleAction(action dialog.Action) (tea.Cmd, bool) {
 		dialogs.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
 		// An untracked request comes back zero, and nothing is kept for
 		// it.
-		req, _ := w.requests.take(action.RequestID)
+		req := w.requests.take(action.RequestID)
 		// A request whose answer didn't arrive stays unanswered, so its
 		// republish opens it again rather than leaving the run waiting.
 		if err := w.ws.WorkflowRespond(action.RequestID, action.Answer); err != nil {

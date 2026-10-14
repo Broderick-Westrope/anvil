@@ -23,10 +23,6 @@ type invocationRequests struct {
 	answered map[string]bool
 }
 
-func newInvocationRequests(runID string) *invocationRequests {
-	return &invocationRequests{runID: runID, open: map[string]workflowhost.Event{}, answered: map[string]bool{}}
-}
-
 // seen reports whether ev's request is open or was answered.
 func (r *workflowRequests) seen(ev workflowhost.Event) bool {
 	inv := r.bySession[ev.SessionID]
@@ -73,22 +69,23 @@ func (r *workflowRequests) add(ev workflowhost.Event) []string {
 		if r.bySession == nil {
 			r.bySession = map[string]*invocationRequests{}
 		}
-		inv = newInvocationRequests(ev.RunID)
+		inv = &invocationRequests{runID: ev.RunID, open: map[string]workflowhost.Event{}, answered: map[string]bool{}}
 		r.bySession[ev.SessionID] = inv
 	}
 	inv.open[ev.RequestID] = ev
 	return replaced
 }
 
-// take closes the open request id and returns it.
-func (r *workflowRequests) take(id string) (workflowhost.Event, bool) {
+// take closes the open request id and returns it, or a zero event when
+// it isn't open.
+func (r *workflowRequests) take(id string) workflowhost.Event {
 	for _, inv := range r.bySession {
 		if ev, ok := inv.open[id]; ok {
 			delete(inv.open, id)
-			return ev, true
+			return ev
 		}
 	}
-	return workflowhost.Event{}, false
+	return workflowhost.Event{}
 }
 
 // answer marks ev, a request taken, as answered. A zero ev, for a request
