@@ -42,6 +42,7 @@ type workflowWorkspace struct {
 	// noSessionID makes CreateSession return a session without an ID.
 	noSessionID bool
 	controls    []string
+	controlErr  error
 	missing     map[string][]string
 	loadErr     map[string]error
 }
@@ -120,7 +121,7 @@ func (w *workflowWorkspace) WorkflowRespond(requestID, answer string) error {
 
 func (w *workflowWorkspace) WorkflowPause(id string) error {
 	w.controls = append(w.controls, "pause:"+id)
-	return nil
+	return w.controlErr
 }
 
 func (w *workflowWorkspace) WorkflowResume(id string) error {
@@ -1217,4 +1218,211 @@ func TestWorkflowForPrefersTheRunASessionInvokedOverAFinishedOneThatUsedIt(t *te
 		require.Equal(t, "sess-1", invoker)
 		require.Equal(t, "new", run.command)
 	}
+}
+
+func TestPromptCommandAsksForItsArgumentsOnlyWhenNoneAreGiven(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		arguments  []commands.Argument
+		line       string
+		wantDialog bool
+		wantSent   string
+	}{
+		"declared arguments and none given": {
+			arguments: []commands.Argument{{ID: "target"}}, line: "/fix", wantDialog: true,
+		},
+		"declared arguments given inline": {
+			arguments: []commands.Argument{{ID: "target"}}, line: "/fix the retry loop", wantSent: "Fix the retry loop.",
+		},
+		"no declared arguments": {line: "/fix", wantSent: "Fix ."},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.u.customCommands = append(f.u.customCommands, commands.CustomCommand{
+				ID: "user:fix", Name: "fix", Content: "Fix $ARGUMENTS.", Arguments: tc.arguments,
+			})
+			var dialogs []dialog.ActionRunCustomCommand
+			for _, msg := range cmdMsgs(f.u.tryExecuteSlashCommand(tc.line)) {
+				if action, ok := msg.(dialog.ActionRunCustomCommand); ok {
+					dialogs = append(dialogs, action)
+				}
+			}
+			if tc.wantDialog {
+				require.Equal(t, []dialog.ActionRunCustomCommand{{Name: "fix", Content: "Fix $ARGUMENTS.", Arguments: tc.arguments}}, dialogs)
+				require.Empty(t, f.ws.runs)
+				return
+			}
+			require.Empty(t, dialogs)
+			require.Len(t, f.ws.runs, 1)
+			require.Contains(t, f.ws.runs[0], tc.wantSent)
+			require.NotContains(t, f.ws.runs[0], "$ARGUMENTS")
+		})
+	}
+}
+
+func TestWorkflowRunRedrawsChangesMadeBetweenDraws(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.press(showRunKey)
+	require.NotContains(t, f.runDialog(), "reviewer")
+
+	// Two changes between draws must not look like none.
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusCompleted))
+	require.Contains(t, f.runDialog(), "/demo: reviewer · done")
+}
+
+func TestWorkflowForFindsTheRunThatUsedASessionAmongOthers(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	for i := range 10 {
+		id := string(rune('a' + i))
+		f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-" + id, Command: "other", SessionID: "other-" + id, State: workflowhost.StateStarted})
+	}
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-old", Command: "old", SessionID: "sess-0", State: workflowhost.StateStarted})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-old", Command: "old", SessionID: "sess-0", Focus: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, RunID: "run-old", Command: "old", SessionID: "sess-0", Status: workflowhost.StatusCompleted})
+	f.event(started("demo", "sess-1"))
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, RunID: "run-1", Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
+
+	sess := f.ws.sessions["sess-2"]
+	f.u.session = &sess
+	// Map order is random, so look many times.
+	for range 30 {
+		controls := f.u.workflowControls()
+		require.NotNil(t, controls)
+		require.Equal(t, "sess-1", controls.SessionID)
+		require.Equal(t, "demo", controls.Command)
+	}
+}
+
+func TestWorkflowDismissKeepsARunningRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	dismiss := dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowDismiss}
+	require.Empty(t, f.run(f.u.handleWorkflowAction(dismiss)), "dismissing without a run does nothing")
+
+	f.event(started("demo", "sess-1"))
+	f.run(f.u.handleWorkflowAction(dismiss))
+	require.Contains(t, f.panel(), "/demo")
+	require.NotNil(t, f.u.workflowControls())
+}
+
+func TestWorkflowLateEventOfAFinishedRunIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"same run ID": "run-1",
+		"no run ID":   "",
+	}
+	for name, runID := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			f.event(workflowhost.Event{Kind: workflowhost.EventFinished, RunID: "run-1", Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusCompleted})
+			f.event(workflowhost.Event{Kind: workflowhost.EventStatus, RunID: runID, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "LATE"}})
+
+			require.Contains(t, f.panel(), "/demo · completed")
+			require.NotContains(t, f.panel(), "LATE")
+			f.press(showRunKey)
+			require.NotContains(t, f.runDialog(), "LATE")
+		})
+	}
+}
+
+func TestWorkflowRunKeepsTheFirstRunIDItLearns(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string][]workflowhost.Event{
+		"learned from a later event": {
+			{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "first run"}},
+			{Kind: workflowhost.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "first run again"}},
+		},
+		"kept through an event without one": {
+			started("demo", "sess-1"),
+			{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "first run"}},
+		},
+	}
+	for name, events := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			for _, ev := range events {
+				f.event(ev)
+			}
+			require.Equal(t, "run-1", f.u.workflows["sess-1"].log.RunID)
+
+			next := started("demo", "sess-1")
+			next.RunID = "run-2"
+			f.event(next)
+			run := f.u.workflows["sess-1"]
+			require.Equal(t, "run-2", run.log.RunID)
+			for _, e := range run.log.Entries {
+				require.NotContains(t, e.Text, "first run", "run-2 starts a new record")
+			}
+		})
+	}
+}
+
+func TestWorkflowAnswerIsRecordedOnItsQuestion(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.answer("ask-1", "Ship it?", "yes")
+
+	f.press(showRunKey)
+	out := f.runDialog()
+	require.Contains(t, out, "Ship it? → yes")
+	require.Equal(t, 1, strings.Count(out, "Ship it?"))
+	require.NotContains(t, out, "waiting for an answer")
+}
+
+func TestWorkflowControlErrorIsReported(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	require.Empty(t, f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}), "a control that worked reports nothing")
+
+	f.ws.controlErr = errors.New("no running workflow")
+	infos := f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeError, infos[0].Type)
+	require.Contains(t, infos[0].Msg, "no running workflow")
+}
+
+func TestWorkflowRepublishedApprovalIsShownOnce(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	approval := workflowhost.Event{
+		Kind: workflowhost.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "sess-1",
+		Approval: &workflowhost.ApprovalRequest{Files: []workflowhost.ApprovalFile{{Path: "workflow.js", Source: "function main() {}"}}},
+	}
+	f.event(approval)
+	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: "approve"}))
+	f.event(approval)
+
+	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("req-1")), "an answered approval must not reopen")
+	require.Equal(t, [][2]string{{"req-1", "approve"}}, f.ws.responds)
+}
+
+func TestCommandsLoadedWithHealthyWorkflowsWarnsNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	_, cmd := f.u.Update(userCommandsLoadedMsg{Commands: []commands.CustomCommand{
+		{ID: "ok", Name: "ok", Workflow: "/ok.js"},
+		{ID: "prompt", Name: "prompt", Problems: []string{"prompt commands aren't workflows"}},
+	}})
+	require.Empty(t, f.run(cmd))
 }
