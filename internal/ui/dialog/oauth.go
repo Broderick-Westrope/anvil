@@ -164,31 +164,8 @@ func (m *OAuth) HandleMsg(msg tea.Msg) Action {
 		}
 
 	case tea.KeyPressMsg:
-		// The paste field swallows keys while focused so typing lands in
-		// it: enter submits the pasted code, esc steps back to the
-		// buttons.
 		if m.codeEntryActive() && m.codeInput.Focused() {
-			switch {
-			case key.Matches(msg, m.keyMap.Submit):
-				if value := m.codeInput.Value(); value != "" {
-					m.codeInput.Blur()
-					return ActionCmd{m.oAuthProvider.submitCode(value)}
-				}
-				cmd := m.copyCodeAndOpenURL()
-				return ActionCmd{cmd}
-
-			case key.Matches(msg, m.keyMap.Close):
-				m.codeInput.Blur()
-				return nil
-
-			default:
-				var cmd tea.Cmd
-				m.codeInput, cmd = m.codeInput.Update(msg)
-				if cmd != nil {
-					return ActionCmd{cmd}
-				}
-				return nil
-			}
+			return m.handleCodeInputKey(msg)
 		}
 
 		switch {
@@ -289,6 +266,33 @@ func (m *OAuth) HandleMsg(msg tea.Msg) Action {
 		return ActionCmd{util.ReportError(msg.err)}
 	}
 	return nil
+}
+
+// handleCodeInputKey handles a key while the paste field has focus. The
+// field swallows keys so typing lands in it: enter submits the pasted
+// code, esc steps back to the buttons.
+func (m *OAuth) handleCodeInputKey(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, m.keyMap.Submit):
+		if value := m.codeInput.Value(); value != "" {
+			m.codeInput.Blur()
+			return ActionCmd{m.oAuthProvider.submitCode(value)}
+		}
+		cmd := m.copyCodeAndOpenURL()
+		return ActionCmd{cmd}
+
+	case key.Matches(msg, m.keyMap.Close):
+		m.codeInput.Blur()
+		return nil
+
+	default:
+		var cmd tea.Cmd
+		m.codeInput, cmd = m.codeInput.Update(msg)
+		if cmd != nil {
+			return ActionCmd{cmd}
+		}
+		return nil
+	}
 }
 
 // oauthSaveDoneMsg is emitted by the background save command once the
