@@ -23,6 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -709,4 +710,15 @@ func TestConfigReloadAnnotatesCommandsAndWarns(t *testing.T) {
 	require.Len(t, infos, 1)
 	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
 	require.Contains(t, infos[0].Msg, `zz-routing-demo: agent "ghost" not found`)
+}
+
+func TestNewRoutesWorkflowEvents(t *testing.T) {
+	t.Parallel()
+
+	ws := newWorkflowTestWorkspace()
+	u := New(common.DefaultCommon(ws), "", false)
+	sess := ws.sessions["sess-1"]
+	u.session = &sess
+	u.Update(pubsub.Event[workflowhost.Event]{Type: pubsub.UpdatedEvent, Payload: started("demo", "sess-1")})
+	require.Equal(t, 1, u.features.panelLines())
 }
