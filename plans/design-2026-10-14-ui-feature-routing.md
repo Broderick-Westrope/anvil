@@ -20,7 +20,8 @@ In scope:
 - **The pattern:** the feature surface, the host surface, where each dispatcher offers messages, keys and actions to features, and optional panels.
 - **Migrating workflows to it:** this covers all of `internal/ui/model/workflow.go`, the 5 `UI` fields, and the workflow edits in `ui.go`, `pills.go` and `keys.go` wiring.
 - **Moving the two data fixes out of upstream cases to where the data is produced:** requirement annotation of workflow commands, and filtering workflow turns from prompt history.
-- **Clearing a run's answered request IDs when the run is finished or replaced.** This fixes the unbounded `workflowAnswered` and is the one intended behaviour change.
+- **Clearing a run's answered request IDs when the run is finished or replaced.** This fixes the unbounded `workflowAnswered`.
+- **Collapsing multi-line script text in panel rows to one line.** See Panels. Together with the previous item, these are the only intended behaviour changes.
 - **Updating `internal/ui/AGENTS.md`** to document the pattern, and noting the change in ADR 0003's consequences.
 
 Out of scope:
@@ -32,7 +33,7 @@ Out of scope:
 - Upstream-origin cases in the three dispatchers keep their current line shape, so Crush cherry-picks still apply. Routing sits outside the switches, because upstream keeps adding cases to `update`.
 - `UI` stays the only `tea.Model`. Features are plain types that `UI` calls.
 - `gocognit` stays under 30 for new functions. `ui.go`'s existing exclusions don't grow.
-- No golden file changes, apart from any the intended `workflowAnswered` fix needs (none expected).
+- No golden file changes. Neither intended behaviour change affects the existing goldens, because none of them uses multi-line script text.
 - A feature never reaches `*UI` directly.
 
 **Success Criteria:**
@@ -68,6 +69,9 @@ Out of scope:
   - an approval or ask opening with the grace period and a notification;
   - resize changing panel height and layout;
   - drill-in suppressing the panel;
+  - controls and focus/follow while drilled in, which act on the root session's run;
+  - a focus on the current root session doing nothing;
+  - agent drill-in from the key and from the run dialog;
   - pause, resume and abort from keys and from the palette.
 - [ ] A benchmark shows offering an unowned high-frequency message (a spinner tick, anim step or mouse motion) to the registered features makes no allocations.
 - [ ] All existing UI golden files are unchanged. The full `go test ./...` passes, and `task lint` passes with no new `gocognit` exclusions.
@@ -110,7 +114,7 @@ There are also optional interfaces, each checked with a type assertion when the 
 
 Observing and claiming are separate on purpose:
 - **`Observe`** is for shared messages that upstream handles too. It can't stop them.
-- **`HandleMsg`** is only for a feature's own message types, which no upstream case matches. Today those reach `update`'s `default:` arm.
+- **`HandleMsg`** is only for a feature's own message types, which no upstream case matches. Once the three workflow cases are removed from `update` (`ui.go:1097-1102`), those messages fall through to its `default:` arm, where the hook sits.
 
 Features never see input through `Observe` or `HandleMsg`: `tea.KeyPressMsg`, `tea.PasteMsg` and mouse messages are filtered out before either is called. Keys reach features only through `HandleKey`, after dialogs, the grace period and focus routing.
 
@@ -134,16 +138,21 @@ Features never see input through `Observe` or `HandleMsg`: `tea.KeyPressMsg`, `t
 
 ```go
 type featureHost interface {
-	// Session is the session on screen, or nil.
+	// Session is the root session (UI's m.session), or nil. It is not
+	// the drilled-in child on screen: workflows key runs and controls by
+	// the root, as today.
 	Session() *session.Session
 	// EnsureSession returns the current session, creating it and switching
 	// to chat when there's none (today's ensureSession: assigns the
 	// session, honours forced compact mode). cmd loads the new session.
 	EnsureSession() (sessionID string, cmd tea.Cmd, err error)
-	// Navigate clears any drill-in and loads sessionID.
+	// Navigate does nothing when sessionID is already the root session.
+	// Otherwise it clears any drill-in synchronously and returns the
+	// command that loads sessionID (today's goToSession).
 	Navigate(sessionID string) tea.Cmd
-	// DrillInto clears any drill-in and drills into sessionID's child
-	// session, labelled label.
+	// DrillInto clears any drill-in synchronously and returns a command
+	// that delivers util.AgentDrillInMsg for sessionID, labelled label,
+	// asynchronously (today's openWorkflowAgent and run-dialog path).
 	DrillInto(sessionID, label string) tea.Cmd
 	// IsDrilledIn reports whether a drill-in is on screen.
 	IsDrilledIn() bool
@@ -187,7 +196,9 @@ The real `Workspace` satisfies it, and tests fake only those seven methods. `Com
 
 *Panels.* `Panel()` returns a `panelView` built from the feature's single view-model:
 - `Lines() int`: the number of rows, independent of width.
-- `Render(width int) string`: exactly `Lines()` lines, each truncated to `width`.
+- `Render(width int) string`: exactly `Lines()` lines, each truncated to `width`. When `width` is 0, which `pills.go:248-249` can produce, it returns `Lines()` empty lines.
+
+The view-model makes each row a single line, so scripts can't break the layout. Newlines and other control characters in script-supplied text (`status()` step and detail, session titles, bash commands, questions, errors) are collapsed to spaces. This is the second intended behaviour change: today such text can spill extra lines into the panel, or fewer lines at narrow widths, which the hand-kept height can't track. Tests cover multiline status and title inputs, and widths of 0 and 1.
 
 `pillsAreaHeight` sums `Lines()` over the panel features before the pills rectangle exists, as today. `renderPills` calls `Render` with the content width it computes today. A shared test asserts the `Render`/`Lines` contract at several widths. Panels are suppressed while drilled in, as today, by the pills code checking `isDrilledIn` before asking features.
 - **Declined: `pills.go` calling the workflow feature directly.** The next feature with a panel would edit `pills.go` again.
