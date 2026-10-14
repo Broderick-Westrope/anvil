@@ -43,6 +43,8 @@ func TestParseWarnsOnNonLiteralRequires(t *testing.T) {
 		"unknown key":       `requires({tools: ["bash"]}); function main() {}`,
 		"called twice":      `requires({}); requires({}); function main() {}`,
 		"template string":   "requires({skills: [`x`]}); function main() {}",
+		"computed key":      `requires({["skills"]: ["x"]}); function main() {}`,
+		"shorthand key":     `const skills = []; requires({skills}); function main() {}`,
 	}
 	for name, src := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -57,8 +59,33 @@ func TestParseWarnsOnNonLiteralRequires(t *testing.T) {
 func TestParseRequiresMain(t *testing.T) {
 	t.Parallel()
 
-	_, err := workflow.Parse("workflow.js", []byte(`requires({})`))
-	require.ErrorContains(t, err, "main")
+	tests := map[string]string{
+		"no function":    `requires({})`,
+		"only a helper":  `function helper() {}`,
+		"main is called": `main()`,
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := workflow.Parse("workflow.js", []byte(src))
+			require.ErrorContains(t, err, "main")
+		})
+	}
+}
+
+func TestParseReadsEveryTopLevelStatement(t *testing.T) {
+	t.Parallel()
+
+	src := `let ready = false
+ready = true
+setup()
+function main() {}
+requires({skills: ["x"]})
+function setup() {}`
+	script, err := workflow.Parse("workflow.js", []byte(src))
+	require.NoError(t, err)
+	require.Equal(t, []string{"x"}, script.Requires.Skills)
+	require.Empty(t, script.Problems)
 }
 
 func TestParseReportsSyntaxErrors(t *testing.T) {
@@ -95,7 +122,7 @@ func TestMissingListsUnresolvedRequirements(t *testing.T) {
 	src := `requires({
   skills: ["go-style", "nope-skill"],
   agents: ["reviewer", "nope-agent"],
-  references: ["references/da.md", "references/nope.md", "../escape.md"],
+  references: ["../escape.md", "references/da.md", "references/nope.md"],
 })
 function main() {}`
 	path := filepath.Join(dir, "workflow.js")
@@ -107,8 +134,8 @@ function main() {}`
 	require.Equal(t, []string{
 		`skill "nope-skill" not found`,
 		`agent "nope-agent" not found`,
-		`reference "references/nope.md" not found`,
 		`reference "../escape.md" is outside the workflow directory`,
+		`reference "references/nope.md" not found`,
 	}, missing)
 }
 
@@ -133,4 +160,38 @@ function main() {}`
 		`reference "escape.md" not found`,
 		`reference "linkdir/x.md" not found`,
 	}, script.Missing(catalog{}))
+}
+
+func TestBundledListsOnlyRegularFilesOutsideHiddenAndDependencyDirs(t *testing.T) {
+	t.Parallel()
+
+	// The workflow directory's own name doesn't hide it.
+	dir := filepath.Join(t.TempDir(), ".workflow")
+	writeFile(t, dir, "workflow.js", "function main() {}")
+	writeFile(t, dir, "lib/a.js", "a")
+	writeFile(t, dir, ".git/HEAD", "ref")
+	writeFile(t, dir, "node_modules/x/index.js", "x")
+	require.NoError(t, os.Symlink(filepath.Join(dir, "lib"), filepath.Join(dir, "linked")))
+	script, err := workflow.Load(filepath.Join(dir, "workflow.js"))
+	require.NoError(t, err)
+
+	files, err := script.Bundled()
+	require.NoError(t, err)
+	var rels []string
+	for _, f := range files {
+		rels = append(rels, f.Rel)
+	}
+	require.Equal(t, []string{filepath.Join("lib", "a.js"), "workflow.js"}, rels)
+}
+
+func TestBundledFailsWithoutTheScript(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "x")
+	script, err := workflow.Parse(filepath.Join(dir, "workflow.js"), []byte("function main() {}"))
+	require.NoError(t, err)
+
+	_, err = script.Bundled()
+	require.ErrorContains(t, err, "doesn't contain the script")
 }

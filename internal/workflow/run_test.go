@@ -83,6 +83,23 @@ func TestScriptsSeeOnlyErrorClassesTheRuntimeThrows(t *testing.T) {
 	require.Equal(t, []any{"function", "function", "function", "function", "undefined"}, got)
 }
 
+func TestMainReturningNothingHasNoResult(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"undefined": `function main() {}`,
+		"null":      `function main() { return null }`,
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			out, err := newHarness(t).newRun(t, src).Execute(t.Context(), workflow.Input{})
+			require.NoError(t, err)
+			require.Nil(t, out)
+		})
+	}
+}
+
 func TestUncaughtErrorFailsRun(t *testing.T) {
 	t.Parallel()
 
@@ -146,6 +163,7 @@ func TestTurnWithSchemaReturnsValidatedObject(t *testing.T) {
 
 	h := newHarness(t)
 	h.backend.turnFn = func(_ context.Context, call workflow.TurnCall) (string, error) {
+		require.True(t, strings.HasPrefix(call.Prompt, "judge\n\nEnd your reply with a single ```json"), call.Prompt)
 		require.Contains(t, call.Prompt, `"kind"`)
 		return "Here you go:\n```json\n{\"kind\": \"clean\"}\n```", nil
 	}
@@ -172,6 +190,14 @@ func TestTurnWithSchemaReadsTheBlockThatEndsTheReply(t *testing.T) {
 		},
 		"earlier example block": {
 			reply: "Example:\n```json\n{\"code\": \"old\"}\n```\nFinal:\n```json\n{\"code\": \"new\"}\n```",
+			want:  "new",
+		},
+		"text after the blocks": {
+			reply: "```json\n{\"code\": \"old\"}\n```\n```json\n{\"code\": \"new\"}\n```\nDone.",
+			want:  "new",
+		},
+		"plain fence after the block": {
+			reply: "```json\n{\"code\": \"new\"}\n```\nRun:\n```\ngo test\n```",
 			want:  "new",
 		},
 	}
@@ -278,6 +304,31 @@ func TestNewSessionKeepsItsSeedUntilATurnSucceeds(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, h.backend.turns, 2)
 	require.Equal(t, "SEED\n\nretry", h.backend.turns[1].Prompt)
+}
+
+func TestNewSessionSeedsOnlyWhenGivenASeedOrSkills(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		opts       string
+		wantPrompt string
+		wantSkills []string
+	}{
+		"nothing":     {opts: `{}`, wantPrompt: "first"},
+		"skills only": {opts: `{skills: ["go-style"]}`, wantPrompt: "\n\nfirst", wantSkills: []string{"go-style"}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			_, err := h.run(t, `requires({skills: ["go-style"]})
+function main() { session.new(`+tc.opts+`).turn("first") }`, "")
+			require.NoError(t, err)
+			require.Len(t, h.backend.turns, 1)
+			require.Equal(t, tc.wantPrompt, h.backend.turns[0].Prompt)
+			require.Equal(t, tc.wantSkills, h.backend.turns[0].Skills)
+		})
+	}
 }
 
 func TestAgentReturnsTextOrSchemaObject(t *testing.T) {
@@ -602,6 +653,17 @@ func TestAbortCancelsInFlightWork(t *testing.T) {
 	require.ErrorIs(t, <-done, workflow.ErrAborted)
 }
 
+func TestAbortBeforeExecuteRunsNothing(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	run := h.newRun(t, `function main() { bash("never") }`)
+	run.Abort()
+	_, err := run.Execute(t.Context(), workflow.Input{})
+	require.ErrorIs(t, err, workflow.ErrAborted)
+	require.Empty(t, h.backend.bashCmds())
+}
+
 func TestAbortInterruptsPureJSLoop(t *testing.T) {
 	t.Parallel()
 
@@ -681,7 +743,7 @@ func TestCancellingExecuteContextInterruptsPureJSLoop(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		require.ErrorIs(t, err, workflow.ErrAborted)
+		require.EqualError(t, err, workflow.ErrAborted.Error())
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancelling the context did not stop the script")
 	}
@@ -715,8 +777,6 @@ func TestUncaughtBashErrorNamesStderrAndScriptLine(t *testing.T) {
 	h.backend.bashFn = func(context.Context, workflow.BashCall) (workflow.BashResult, error) {
 		return workflow.BashResult{ExitCode: 1, Stderr: "no 'origin' remote found\n"}, nil
 	}
-	_, err := h.run(t, "function main() {\n  bash(\"wtp add\")\n}", "")
-	require.ErrorContains(t, err, "no 'origin' remote found")
-	require.ErrorContains(t, err, "workflow.js:2")
-	require.NotContains(t, err.Error(), "prelude.js")
+	_, err := h.run(t, "function setup() {\n  bash(\"wtp add\")\n}\nfunction main() {\n  setup()\n}", "")
+	require.EqualError(t, err, filepath.Join(h.dir, "workflow.js")+":2:7: BashError: command exited 1: wtp add: no 'origin' remote found")
 }
