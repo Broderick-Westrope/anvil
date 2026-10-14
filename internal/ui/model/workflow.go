@@ -224,7 +224,7 @@ func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
 	case dialog.ActionWorkflowOpenAgent:
 		m.dialog.CloseDialog(dialog.WorkflowRunID)
 		m.clearDrillStack()
-		return util.CmdHandler(util.AgentDrillInMsg{SessionID: action.SessionID, Label: workflowAgentLabel(action.Command, action.Agent)})
+		return util.CmdHandler(util.AgentDrillInMsg{SessionID: action.SessionID, Label: workflowhost.AgentSessionTitle(action.Command, action.Agent)})
 	}
 	return nil
 }
@@ -309,13 +309,7 @@ func (m *UI) openWorkflowAgent(run *workflowRun) tea.Cmd {
 		return nil
 	}
 	m.clearDrillStack()
-	return util.CmdHandler(util.AgentDrillInMsg{SessionID: e.SessionID, Label: workflowAgentLabel(run.command, e.Agent)})
-}
-
-// workflowAgentLabel names a workflow's subagent the way its session is
-// titled.
-func workflowAgentLabel(command, agent string) string {
-	return "/" + command + ": " + agent
+	return util.CmdHandler(util.AgentDrillInMsg{SessionID: e.SessionID, Label: workflowhost.AgentSessionTitle(run.command, e.Agent)})
 }
 
 // workflowControls describes the run involving the session on screen for
@@ -728,7 +722,7 @@ func renderWorkflowPanel(t *styles.Styles, p workflowPanel, width int) string {
 			entry = "  " + t.Pills.HelpKey.Render("?") + " " + t.Pills.HelpText.Render(firstLine(e.Question)) +
 				" " + t.Pills.HelpText.Render("→") + " " + t.Pills.TodoProgress.Render(firstLine(e.Answer))
 		} else {
-			entry = "  " + renderWorkflowAgent(t, p.command, e)
+			entry = "  " + dialog.WorkflowAgentLine(t, p.command, e, true)
 			if e.SessionID == latest.SessionID {
 				entry += "  " + hint(p.agentKey, "open")
 			}
@@ -736,22 +730,6 @@ func renderWorkflowPanel(t *styles.Styles, p workflowPanel, width int) string {
 		lines = append(lines, ansi.Truncate(entry, width, "…"))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func renderWorkflowAgent(t *styles.Styles, command string, e dialog.WorkflowEntry) string {
-	label := t.Pills.TodoLabel.Render(workflowAgentLabel(command, e.Agent))
-	if e.Model != "" {
-		label += " " + t.Pills.HelpText.Render("("+e.Model+")")
-	}
-	sep := t.Pills.HelpText.Render(" · ")
-	switch e.Status {
-	case workflowhost.StatusRunning:
-		return t.Tool.IconPending.String() + " " + label + sep + t.Pills.TodoProgress.Render("running")
-	case workflowhost.StatusCompleted:
-		return t.Tool.IconSuccess.String() + " " + label + sep + t.Pills.HelpText.Render("done")
-	default:
-		return t.Tool.IconError.String() + " " + label + sep + t.Pills.HelpText.Render("failed: "+firstLine(e.Err))
-	}
 }
 
 func firstLine(s string) string {

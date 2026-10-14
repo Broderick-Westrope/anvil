@@ -87,6 +87,12 @@ func (b *backend) NewSession(ctx context.Context, title string) (string, error) 
 	return s.ID, nil
 }
 
+// AgentSessionTitle titles the session a workflow's subagent runs in, which
+// is also how every view names that subagent.
+func AgentSessionTitle(command, agent string) string {
+	return "/" + command + ": " + agent
+}
+
 // Agent runs a subagent in a child session whose ID is published once the
 // session exists, so the UI can open it while it runs. Its messages stay
 // in that session and never reach the invoking one. An agent that fails
@@ -96,7 +102,7 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 		ParentSessionID: call.ParentSessionID,
 		Agent:           call.Agent,
 		Prompt:          b.withSkills(call.Skills, call.Prompt),
-		Title:           "/" + b.base.Command + ": " + call.Agent,
+		Title:           AgentSessionTitle(b.base.Command, call.Agent),
 		Tools:           call.Tools,
 		Model:           call.Model,
 	}

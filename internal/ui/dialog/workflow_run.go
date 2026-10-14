@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
@@ -218,7 +219,6 @@ func (d *WorkflowRun) renderEntries(width int) string {
 // with wrap.
 func (d *WorkflowRun) renderEntry(e WorkflowEntry, wrap func(lipgloss.Style, string) string) (label, body string) {
 	t := d.com.Styles
-	sep := t.Pills.HelpText.Render(" · ")
 	switch e.Kind {
 	case WorkflowEntryStatus:
 		return "status", wrap(t.Pills.TodoProgress, e.Text)
@@ -238,19 +238,7 @@ func (d *WorkflowRun) renderEntry(e WorkflowEntry, wrap func(lipgloss.Style, str
 		return "ask", wrap(t.Dialog.Permissions.ValueText, e.Question) + "\n" +
 			wrap(lipgloss.NewStyle(), t.Pills.HelpText.Render("→ ")+answer)
 	case WorkflowEntryAgent:
-		name := t.Pills.TodoLabel.Render("/" + d.tr.Command + ": " + e.Agent)
-		if e.Model != "" {
-			name += " " + t.Pills.HelpText.Render("("+e.Model+")")
-		}
-		switch e.Status {
-		case workflowhost.StatusRunning:
-			body = t.Tool.IconPending.String() + " " + name + sep + t.Pills.TodoProgress.Render("running")
-		case workflowhost.StatusCompleted:
-			body = t.Tool.IconSuccess.String() + " " + name + sep + t.Pills.HelpText.Render("done")
-		default:
-			body = t.Tool.IconError.String() + " " + name + sep + t.Pills.HelpText.Render("failed")
-		}
-		body = wrap(lipgloss.NewStyle(), body)
+		body = wrap(lipgloss.NewStyle(), WorkflowAgentLine(t, d.tr.Command, e, false))
 		if e.Err != "" {
 			body += "\n" + wrap(t.Pills.HelpText, e.Err)
 		}
@@ -259,6 +247,30 @@ func (d *WorkflowRun) renderEntry(e WorkflowEntry, wrap func(lipgloss.Style, str
 		return "warn", wrap(t.Pills.WorkflowWarning, e.Text)
 	default:
 		return "result", wrap(t.Pills.TodoProgress, WorkflowOutcomeText(e.Status, e.Text))
+	}
+}
+
+// WorkflowAgentLine renders a subagent call on one line: its icon, its
+// session's title, its model and how it is going. inlineErr adds the first
+// line of a failure's error, for views with no room to show it below.
+func WorkflowAgentLine(t *styles.Styles, command string, e WorkflowEntry, inlineErr bool) string {
+	label := t.Pills.TodoLabel.Render(workflowhost.AgentSessionTitle(command, e.Agent))
+	if e.Model != "" {
+		label += " " + t.Pills.HelpText.Render("("+e.Model+")")
+	}
+	sep := t.Pills.HelpText.Render(" · ")
+	switch e.Status {
+	case workflowhost.StatusRunning:
+		return t.Tool.IconPending.String() + " " + label + sep + t.Pills.TodoProgress.Render("running")
+	case workflowhost.StatusCompleted:
+		return t.Tool.IconSuccess.String() + " " + label + sep + t.Pills.HelpText.Render("done")
+	default:
+		failed := "failed"
+		if inlineErr {
+			first, _, _ := strings.Cut(e.Err, "\n")
+			failed += ": " + first
+		}
+		return t.Tool.IconError.String() + " " + label + sep + t.Pills.HelpText.Render(failed)
 	}
 }
 
