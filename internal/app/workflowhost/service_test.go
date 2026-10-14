@@ -687,3 +687,22 @@ func writeFile(t *testing.T, path, content string) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }
+
+func TestServiceFreesTheSessionBeforeReportingFinished(t *testing.T) {
+	h := newServiceHarness(t, true)
+	// A subscriber that never reads makes each must-deliver publish block
+	// for its timeout once the buffer is full, which widens the window
+	// between reporting "finished" and freeing the session.
+	_ = h.svc.Subscribe(h.fixture.Context)
+	path := h.write(t, `function main() { for (let i = 0; i < 66; i++) status("s", "" + i) }`)
+	for range 6 {
+		h.start(t, path, "")
+		h.next(t, workflowhost.EventFinished)
+		// Starting again the moment "finished" arrives must work.
+		require.NoError(t, h.svc.Start(h.fixture.Context, workflowhost.Invocation{
+			CommandID: "project:demo", CommandName: "demo", Source: "project",
+			ScriptPath: path, SessionID: h.session,
+		}))
+		h.next(t, workflowhost.EventFinished)
+	}
+}

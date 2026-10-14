@@ -291,13 +291,13 @@ func runOutcome(err error, stopping bool, reason string) (Status, string) {
 
 func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	ctx := s.lifetime
-	defer func() {
+	base := Event{Command: inv.CommandName, SessionID: inv.SessionID}
+	// finish ends every path. It frees the session before reporting, so
+	// anyone reacting to "finished" can start the next run straight away.
+	finish := func(runID string, status Status, result json.RawMessage, msg string) {
 		s.mu.Lock()
 		delete(s.runs, inv.SessionID)
 		s.mu.Unlock()
-	}()
-	base := Event{Command: inv.CommandName, SessionID: inv.SessionID}
-	finish := func(runID string, status Status, result json.RawMessage, msg string) {
 		ev := base
 		ev.Kind, ev.RunID, ev.Status, ev.Result, ev.Message = EventFinished, runID, status, result, msg
 		s.events.PublishMustDeliver(context.WithoutCancel(ctx), pubsub.UpdatedEvent, ev)
