@@ -39,13 +39,9 @@ func (m *UI) runConfigReload() tea.Msg {
 	if !pluginsReloaded(r) {
 		return msg
 	}
-	// Custom commands include plugin commands.
-	customCmds, err := commands.LoadAllCommands(m.com.Config(), nil)
-	if err != nil {
-		slog.Error("Failed to reload custom commands after plugin reload", "error", err)
-	}
 	msg.SkillStates = m.com.Workspace.SkillStates()
-	msg.CustomCommands = annotateWorkflowCommands(m.com.Workspace, customCmds)
+	// Custom commands include plugin commands.
+	msg.CustomCommands = loadCommands(m.com)
 	return msg
 }
 
@@ -67,7 +63,7 @@ func (m *UI) handleConfigReloaded(msg configReloadedMsg) tea.Cmd {
 	if isErr {
 		typ = util.InfoTypeError
 	}
-	if warning := brokenWorkflowsWarning(msg.CustomCommands); warning != "" {
+	if warning := brokenCommandsWarning(msg.CustomCommands); warning != "" {
 		text += " · " + warning
 		if !isErr {
 			typ = util.InfoTypeWarn

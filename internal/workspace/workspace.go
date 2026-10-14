@@ -14,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
@@ -182,9 +183,15 @@ type Workspace interface {
 	// WorkflowRunning reports the invoking session of the run involving
 	// sessionID, if any.
 	WorkflowRunning(sessionID string) (invoker string, ok bool)
-	// WorkflowMissing loads a workflow script and lists the requirements
-	// it declares that don't exist.
-	WorkflowMissing(scriptPath string) ([]string, error)
+
+	// Commands
+
+	// AnnotateCommands returns cmds with what stops each one running added
+	// to its problems: the requirements a workflow script declares that
+	// don't exist, or why it doesn't load. Commands that already have
+	// problems aren't checked again, and nothing is added while workflows
+	// are unavailable. It loads scripts, so call it from a command.
+	AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand
 
 	// Config (read-only data)
 	Config() *config.Config

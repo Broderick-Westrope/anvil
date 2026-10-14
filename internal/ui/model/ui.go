@@ -612,11 +612,7 @@ func (m *UI) setState(state uiState, focus uiFocusState) {
 // loadCustomCommands loads the custom commands asynchronously.
 func (m *UI) loadCustomCommands() tea.Cmd {
 	return func() tea.Msg {
-		customCommands, err := commands.LoadAllCommands(m.com.Config(), nil)
-		if err != nil {
-			slog.Error("Failed to load custom commands", "error", err)
-		}
-		return userCommandsLoadedMsg{Commands: annotateWorkflowCommands(m.com.Workspace, customCommands)}
+		return commandsLoaded(loadCommands(m.com))
 	}
 }
 
@@ -824,9 +820,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
 		m.slashAC.SetItems(m.buildSlashACItems())
-		if warning := brokenWorkflowsWarning(msg.Commands); warning != "" {
-			cmds = append(cmds, util.ReportWarn(warning))
-		}
 		dia := m.dialog.Dialog(dialog.CommandsID)
 		if dia == nil {
 			break
@@ -902,9 +895,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case promptHistoryLoadedMsg:
 		m.promptHistory.messages = nil
 		for _, source := range msg.messages {
-			if isWorkflowTurn(source.Content().Text) {
-				continue
-			}
 			state := composerFromMessage(source, m.com.Workspace.ActiveSkillByName, m.customCommands)
 			if !state.isEmpty() {
 				m.promptHistory.messages = append(m.promptHistory.messages, state)

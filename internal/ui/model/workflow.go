@@ -21,7 +21,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
-	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -812,47 +811,4 @@ func (p workflowPanel) Render(width int) string {
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return line
-}
-
-// annotateWorkflowCommands adds the missing requirements of each workflow
-// command to its problems, so a command that can't run is shown as broken.
-// Scripts that already failed to load aren't checked again. It does IO, so
-// call it from a command.
-func annotateWorkflowCommands(ws workspace.Workspace, cmds []commands.CustomCommand) []commands.CustomCommand {
-	out := make([]commands.CustomCommand, len(cmds))
-	for i, cmd := range cmds {
-		out[i] = cmd
-		if cmd.Workflow == "" || len(cmd.Problems) > 0 {
-			continue
-		}
-		missing, err := ws.WorkflowMissing(cmd.Workflow)
-		if err == nil {
-			out[i].Problems = missing
-		} else if !errors.Is(err, workspace.ErrWorkflowsUnavailable) {
-			out[i].Problems = []string{err.Error()}
-		}
-	}
-	return out
-}
-
-// brokenWorkflowsWarning describes the workflow commands that won't run,
-// or returns "" when there are none.
-func brokenWorkflowsWarning(cmds []commands.CustomCommand) string {
-	var problems []string
-	for _, cmd := range cmds {
-		if cmd.Workflow == "" || len(cmd.Problems) == 0 {
-			continue
-		}
-		problems = append(problems, fmt.Sprintf("/%s: %s", cmd.SlashName(), strings.Join(cmd.Problems, "; ")))
-	}
-	if len(problems) == 0 {
-		return ""
-	}
-	return "Broken workflow commands: " + strings.Join(problems, " · ")
-}
-
-// isWorkflowTurn reports whether text is a turn a workflow script sent.
-func isWorkflowTurn(text string) bool {
-	_, _, ok := commands.ParseWorkflowTurnXML(strings.TrimSpace(text))
-	return ok
 }

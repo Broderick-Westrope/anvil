@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
@@ -666,13 +668,22 @@ func (w *AppWorkspace) WorkflowRunning(sessionID string) (string, bool) {
 	return w.app.Workflows.Running(sessionID)
 }
 
-func (w *AppWorkspace) WorkflowMissing(scriptPath string) ([]string, error) {
+func (w *AppWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand {
+	out := slices.Clone(cmds)
 	if w.app.Workflows == nil {
-		return nil, ErrWorkflowsUnavailable
+		return out
 	}
-	script, err := workflow.Load(scriptPath)
-	if err != nil {
-		return nil, err
+	catalog := w.app.Workflows.Catalog()
+	for i, cmd := range out {
+		if cmd.Workflow == "" || len(cmd.Problems) > 0 {
+			continue
+		}
+		script, err := workflow.Load(cmd.Workflow)
+		if err != nil {
+			out[i].Problems = []string{err.Error()}
+			continue
+		}
+		out[i].Problems = script.Missing(catalog)
 	}
-	return script.Missing(w.app.Workflows.Catalog()), nil
+	return out
 }

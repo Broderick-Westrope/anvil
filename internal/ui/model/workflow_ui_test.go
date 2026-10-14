@@ -38,8 +38,7 @@ type workflowTestWorkspace struct {
 	// noSessionID makes CreateSession return a session without an ID.
 	noSessionID bool
 	controls    []string
-	missing     map[string][]string
-	loadErr     map[string]error
+	history     []message.Message
 }
 
 func newWorkflowTestWorkspace() *workflowTestWorkspace {
@@ -77,8 +76,16 @@ func (*workflowTestWorkspace) ListMessages(context.Context, string) ([]message.M
 	return nil, nil
 }
 
-func (*workflowTestWorkspace) ListUserMessages(context.Context, string) ([]message.Message, error) {
-	return nil, nil
+func (w *workflowTestWorkspace) ListUserMessages(context.Context, string) ([]message.Message, error) {
+	return w.history, nil
+}
+
+func (w *workflowTestWorkspace) ListUserMessagesByWorkingDir(context.Context, string) ([]message.Message, error) {
+	return w.history, nil
+}
+
+func (*workflowTestWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand {
+	return cmds
 }
 
 func (w *workflowTestWorkspace) GetSession(_ context.Context, id string) (session.Session, error) {
@@ -129,10 +136,6 @@ func (w *workflowTestWorkspace) WorkflowAbort(id string) error {
 	return nil
 }
 
-func (w *workflowTestWorkspace) WorkflowMissing(path string) ([]string, error) {
-	return w.missing[path], w.loadErr[path]
-}
-
 type workflowUIFixture struct {
 	u  *UI
 	ws *workflowTestWorkspace
@@ -177,7 +180,7 @@ func (f *workflowUIFixture) run(cmd tea.Cmd) []util.InfoMsg {
 		switch msg := msg.(type) {
 		case util.InfoMsg:
 			infos = append(infos, msg)
-		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg, util.AgentDrillInMsg:
+		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg, util.AgentDrillInMsg, userCommandsLoadedMsg:
 			_, next := f.u.Update(msg)
 			queue = append(queue, cmdMsgs(next)...)
 		}
@@ -222,49 +225,16 @@ func TestWorkflowSlashCommandFromLandingCreatesASession(t *testing.T) {
 	require.Equal(t, "new-session", f.ws.starts[0].SessionID)
 }
 
-func TestAnnotateWorkflowCommands(t *testing.T) {
-	t.Parallel()
-
-	ws := newWorkflowTestWorkspace()
-	ws.missing = map[string][]string{"/a/workflow.js": {`agent "ghost" not found`}}
-	ws.loadErr = map[string]error{"/c/workflow.js": errors.New("parse error")}
-	ws.loadErr["/e/workflow.js"] = workspace.ErrWorkflowsUnavailable
-	cmds := []commands.CustomCommand{
-		{Name: "first-prompt"},
-		{Name: "a", Workflow: "/a/workflow.js"},
-		{Name: "b", Workflow: "/b/workflow.js"},
-		{Name: "c", Workflow: "/c/workflow.js"},
-		{Name: "d", Workflow: "/d/workflow.js", Problems: []string{"already broken"}},
-		{Name: "prompt"},
-		{Name: "e", Workflow: "/e/workflow.js"},
-	}
-
-	got := annotateWorkflowCommands(ws, cmds)
-
-	require.Len(t, got, len(cmds))
-	for i := range cmds {
-		require.Equal(t, cmds[i].Name, got[i].Name)
-	}
-	require.Empty(t, got[0].Problems)
-	require.Equal(t, []string{`agent "ghost" not found`}, got[1].Problems)
-	require.Empty(t, got[2].Problems)
-	require.Equal(t, []string{"parse error"}, got[3].Problems)
-	require.Equal(t, []string{"already broken"}, got[4].Problems, "a script that didn't load isn't checked again")
-	require.Empty(t, got[5].Problems)
-	require.Empty(t, got[6].Problems, "workflows aren't broken just because the agent isn't ready")
-	require.Empty(t, cmds[1].Problems, "the input is not modified")
-}
-
 func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
 	t.Parallel()
 
 	f := newWorkflowUIFixture(t)
-	_, cmd := f.u.Update(userCommandsLoadedMsg{Commands: []commands.CustomCommand{
+	loaded := commandsLoaded([]commands.CustomCommand{
 		{ID: "ok", Name: "ok", Workflow: "/ok.js"},
 		{ID: "prompt", Name: "prompt", Problems: []string{"prompt commands aren't workflows"}},
 		{ID: "project:demo", Name: "demo", Description: "Demo", Workflow: "/w.js", Problems: []string{`skill "x" not found`}},
-	}})
-	infos := f.run(cmd)
+	})
+	infos := f.run(func() tea.Msg { return loaded })
 
 	require.Len(t, infos, 1)
 	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
@@ -282,15 +252,39 @@ func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
 	require.Equal(t, "Demo (broken)", desc)
 }
 
-func TestPromptHistorySkipsWorkflowTurns(t *testing.T) {
+func TestCommandsLoadedWithoutProblemsDoNotWarn(t *testing.T) {
 	t.Parallel()
 
 	f := newWorkflowUIFixture(t)
-	user := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "mine"}}}
-	turn := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: commands.FormatWorkflowTurnXML("demo", "engine")}}}
-	f.u.Update(promptHistoryLoadedMsg{messages: []message.Message{turn, user}})
-	require.Len(t, f.u.promptHistory.messages, 1)
-	require.Equal(t, "mine", f.u.promptHistory.messages[0].text)
+	infos := f.run(func() tea.Msg {
+		return commandsLoaded([]commands.CustomCommand{{ID: "ok", Name: "ok", Workflow: "/ok.js"}})
+	})
+	require.Empty(t, infos)
+	require.Len(t, f.u.customCommands, 1)
+}
+
+func TestPromptHistorySkipsWorkflowTurns(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]bool{"session": true, "working directory": false}
+	for name, inSession := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowUIFixture(t)
+			if !inSession {
+				f.u.session = nil
+			}
+			user := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "mine"}}}
+			turn := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: commands.FormatWorkflowTurnXML("demo", "engine")}}}
+			f.ws.history = []message.Message{turn, user}
+
+			msg := f.u.loadPromptHistory()()
+			require.Equal(t, promptHistoryLoadedMsg{messages: []message.Message{user}}, msg)
+			f.u.Update(msg)
+			require.Len(t, f.u.promptHistory.messages, 1)
+			require.Equal(t, "mine", f.u.promptHistory.messages[0].text)
+		})
+	}
 }
 
 func TestConfigReloadWarnsAboutBrokenWorkflows(t *testing.T) {

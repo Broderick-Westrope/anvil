@@ -3,9 +3,12 @@ package model
 import (
 	"context"
 	"log/slog"
+	"slices"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 )
 
@@ -31,8 +34,15 @@ func (m *UI) loadPromptHistory() tea.Cmd {
 			return promptHistoryLoadedMsg{messages: nil}
 		}
 
-		return promptHistoryLoadedMsg{messages: messages}
+		return promptHistoryLoadedMsg{messages: slices.DeleteFunc(messages, isWorkflowTurn)}
 	}
+}
+
+// isWorkflowTurn reports whether msg is a turn a workflow script sent,
+// which isn't something you typed.
+func isWorkflowTurn(msg message.Message) bool {
+	_, _, ok := commands.ParseWorkflowTurnXML(strings.TrimSpace(msg.Content().Text))
+	return ok
 }
 
 // handleHistoryUp handles up arrow for history navigation.
