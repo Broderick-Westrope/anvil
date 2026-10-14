@@ -639,6 +639,11 @@ func (w *workflowFeature) handleFocus(msg workflowFocusMsg) tea.Cmd {
 // session runs another workflow.
 func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
 	run := w.runs[ev.SessionID]
+	if run != nil && !run.log.Finished && otherWorkflowRun(run, ev) {
+		// The live run is taken to be over, its finish lost, so its
+		// requests end with it.
+		w.closeRequests(w.requests.finish(ev.SessionID, run.log.RunID, true))
+	}
 	seen := run != nil && run.log.RunID == ev.RunID
 	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID, seen))
 	if run == nil || run.log.Finished || otherWorkflowRun(run, ev) {

@@ -1576,3 +1576,20 @@ func TestWorkflowFinishedRunLetsItsControlKeysFallThrough(t *testing.T) {
 	require.Empty(t, f.ws.controls)
 	require.Empty(t, f.host.navigated)
 }
+
+func TestWorkflowFinishOfAnotherRunEndsTheLiveRunsRequestsToo(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	ask := askFor("ask-1", "Go?")
+	ask.RunID = "run-1"
+	f.event(ask)
+
+	// run-1's finish and all of run-2's earlier events were lost.
+	f.event(finishedIn("sess-1", "run-2", workflowhost.StatusCompleted))
+
+	require.Contains(t, f.panel(), "/demo · completed")
+	require.False(t, f.requestOpen("ask-1"), "run-1's question can't be answered any more")
+	f.requireNothingKept(t)
+}

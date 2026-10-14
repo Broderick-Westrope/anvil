@@ -68,7 +68,7 @@ Out of scope:
   - The initial load shows the "broken workflow commands" warning.
   - Config reload folds it into the single reload report, and that report keeps error severity when the reload itself failed. The existing config-reload assertions (`TestConfigReloadWarnsAboutBrokenWorkflows`) still pass.
 - [ ] Prompt history leaves out script-sent turns for both the per-session and the working-directory query.
-- [ ] The workflow feature's behaviour tests drive it only through its surface (messages, keys, actions, commands, panel, palette entries). They use a fake host and a fake of the narrow workflow-workspace interface. The one exception is a targeted internal assertion that answered request IDs are freed when their run finishes or is replaced, because that can't be observed from outside.
+- [ ] The workflow feature's behaviour tests drive it only through its surface (messages, keys, actions, commands, panel, palette entries). They use a fake host and a workspace fake the narrow workflow-workspace interface limits them to. The one exception is a targeted internal assertion that answered request IDs are freed when their run finishes or is replaced, because that can't be observed from outside.
 - [ ] Integration tests through `UI.Update` cover:
   - a `workflowhost.Event` reaching the feature;
   - focus/follow (with the editor empty and with it non-empty);
@@ -221,7 +221,7 @@ This fixes the unbounded `workflowAnswered`. The transitions (seen, open, answer
 
 The run records (`runs`, which the panel and run dialog read) stay a separate store, because an approval exists before its run does. The feature tells the request tracker whether a finishing run is one it has a record of, which is how a provisional invocation tells a late finish of the previous run from the finish of a run that never reported starting.
 
-Known gap, unchanged from before this change: a finish of another run while a run is live is treated as the finish of a newer run whose other events were lost, so the live run's record is replaced. It could instead be a late finish of an earlier run, if the next run started in the microseconds between the host freeing the session and publishing the finish. The event can't tell the two apart.
+Known gap, unchanged from before this change: a finish of another run while a run is live is treated as the finish of a newer run whose other events were lost, so the live run is taken to be over: its record is replaced and its requests end with it, as today's `finishWorkflow` closed every request in the session. It could instead be a late finish of an earlier run, if the next run started in the microseconds between the host freeing the session and publishing the finish. The event can't tell the two apart.
 
 Surface tests cover:
 - concurrent approvals in two sessions;
