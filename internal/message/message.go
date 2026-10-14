@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -771,7 +772,11 @@ func unmarshalParts(data []byte) ([]ContentPart, error) {
 
 		decode, ok := partDecoders[wrapper.Type]
 		if !ok {
-			return nil, fmt.Errorf("unknown part type: %s", wrapper.Type)
+			// A newer Anvil sharing the database wrote a part this version
+			// doesn't know. Skipping it keeps the rest of the transcript
+			// readable rather than failing the whole session.
+			slog.Debug("Skipping unknown message part", "type", wrapper.Type)
+			continue
 		}
 		part, err := decode(wrapper.Data)
 		if err != nil {
