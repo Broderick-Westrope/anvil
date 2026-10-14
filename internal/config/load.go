@@ -295,6 +295,8 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 			ExtraBody:          config.ExtraBody,
 			ExtraParams:        make(map[string]string),
 			Models:             p.Models,
+			ChatGPTModels:      config.ChatGPTModels,
+			GrokModels:         config.GrokModels,
 		}
 
 		switch {
@@ -383,6 +385,11 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 				continue
 			}
 		default:
+			// An OAuth login is a credential too: OpenAI signed in with
+			// ChatGPT, or xAI with Grok, is configured without an API key.
+			if prepared.OAuthToken != nil {
+				break
+			}
 			// if the provider api or endpoint are missing we skip them
 			v, err := resolver.ResolveValue(p.APIKey)
 			if v == "" || err != nil {
