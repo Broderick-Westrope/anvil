@@ -57,22 +57,6 @@ type streamingMarkdown struct {
 	// the final post-stream render should be a clean monolithic
 	// render — see RenderFinal.
 	forced bool
-
-	// stablePrefixLines is the line count of stablePrefixRender, and
-	// lastLines the line count of whatever the most recent Render or
-	// RenderFinal returned. Callers need the count to size a truncation
-	// hint; tracking it alongside the prefix keeps that O(trail) rather
-	// than a fresh O(document) scan on every flush.
-	stablePrefixLines int
-	lastLines         int
-}
-
-// LastLines reports the number of lines in the string the most recent
-// [streamingMarkdown.Render] or [streamingMarkdown.RenderFinal]
-// returned, with surrounding whitespace trimmed. Equivalent to
-// countLines on that trimmed string, without rescanning it.
-func (s *streamingMarkdown) LastLines() int {
-	return s.lastLines
 }
 
 const (
@@ -122,8 +106,6 @@ func (s *streamingMarkdown) Reset() {
 	s.baseHasListMarker = false
 	s.openFence = ""
 	s.forced = false
-	s.stablePrefixLines = 0
-	s.lastLines = 0
 }
 
 // Render returns the glamour render of content at the given width,
@@ -148,16 +130,9 @@ func (s *streamingMarkdown) Render(content string, width int, renderer *glamour.
 	full := func() string {
 		out, err := renderer.Render(content)
 		if err != nil {
-			out = content
-		} else {
-			out = strings.TrimSuffix(out, "\n")
+			return content
 		}
-		// A full render is already O(document), so counting here
-		// costs nothing extra. Counted against the trimmed form: that
-		// is what callers measure, and the glue paths return trimmed
-		// output.
-		s.lastLines = countLines(trimGlamourMargins(out))
-		return out
+		return strings.TrimSuffix(out, "\n")
 	}
 
 	// Width change OR content not a prefix-extension: drop cache,
@@ -197,7 +172,7 @@ func (s *streamingMarkdown) Render(content string, width int, renderer *glamour.
 			return full()
 		}
 		trail := content[len(s.stablePrefix):]
-		return s.glue(s.renderTrailingCtx(trail, renderer))
+		return glueRenders(s.stablePrefixRender, s.renderTrailingCtx(trail, renderer))
 	}
 
 	if boundary <= len(s.stablePrefix) {
@@ -210,7 +185,7 @@ func (s *streamingMarkdown) Render(content string, width int, renderer *glamour.
 			s.forceAdvance(content, renderer)
 		}
 		trail := content[len(s.stablePrefix):]
-		return s.glue(s.renderTrailingCtx(trail, renderer))
+		return glueRenders(s.stablePrefixRender, s.renderTrailingCtx(trail, renderer))
 	}
 
 	// boundary > len(stablePrefix): we have a NEW chunk of safe
@@ -218,7 +193,7 @@ func (s *streamingMarkdown) Render(content string, width int, renderer *glamour.
 	// promote the boundary, then render the remaining trail.
 	newChunk := content[len(s.stablePrefix):boundary]
 	newChunkRender := s.renderTrailingCtx(newChunk, renderer)
-	s.promote(newChunkRender)
+	s.stablePrefixRender = glueRenders(s.stablePrefixRender, newChunkRender)
 	// Update cumulative state for the new stable prefix. A safe
 	// boundary implies even fence parity, so any force-advanced
 	// open fence has closed inside newChunk.
@@ -231,7 +206,6 @@ func (s *streamingMarkdown) Render(content string, width int, renderer *glamour.
 	if trail == "" {
 		// boundary == len(content): no trailing content. Returning
 		// the cached prefix render directly is correct.
-		s.lastLines = s.stablePrefixLines
 		return s.stablePrefixRender
 	}
 	// The trail past the new boundary can itself be oversized (safe
@@ -240,37 +214,7 @@ func (s *streamingMarkdown) Render(content string, width int, renderer *glamour.
 		s.forceAdvance(content, renderer)
 		trail = content[len(s.stablePrefix):]
 	}
-	return s.glue(s.renderTrailingCtx(trail, renderer))
-}
-
-// glue joins the cached prefix render to a trailing render and records
-// the line count of the result from the prefix's already-known count.
-func (s *streamingMarkdown) glue(trail string) string {
-	s.lastLines = glueLines(s.stablePrefixRender, s.stablePrefixLines, trail)
-	return glueRenders(s.stablePrefixRender, trail)
-}
-
-// promote appends a rendered chunk to the cached prefix render,
-// keeping stablePrefixLines in step.
-func (s *streamingMarkdown) promote(chunkRender string) {
-	s.stablePrefixLines = glueLines(s.stablePrefixRender, s.stablePrefixLines, chunkRender)
-	s.stablePrefixRender = glueRenders(s.stablePrefixRender, chunkRender)
-}
-
-// glueLines returns the line count [glueRenders] would produce for
-// prefix and trail, given prefix's line count, without scanning the
-// prefix. prefix must already be trimmed (stablePrefixRender always
-// is).
-func glueLines(prefix string, prefixLines int, trail string) int {
-	trail = trimGlamourMargins(trail)
-	if prefix == "" {
-		return countLines(trail)
-	}
-	if trail == "" {
-		return prefixLines
-	}
-	// glueRenders joins with a blank line between the two renders.
-	return prefixLines + 1 + countLines(trail)
+	return glueRenders(s.stablePrefixRender, s.renderTrailingCtx(trail, renderer))
 }
 
 // RenderFinal returns the definitive render for a completed stream:
@@ -286,12 +230,9 @@ func (s *streamingMarkdown) RenderFinal(content string, width int, renderer *gla
 	defer mu.Unlock()
 	out, err := renderer.Render(content)
 	if err != nil {
-		out = content
-	} else {
-		out = strings.TrimSuffix(out, "\n")
+		return content
 	}
-	s.lastLines = countLines(trimGlamourMargins(out))
-	return out
+	return strings.TrimSuffix(out, "\n")
 }
 
 // forceAdvance promotes the stable prefix through an unsafe segment
@@ -353,7 +294,8 @@ func (s *streamingMarkdown) forceAdvance(content string, renderer *glamour.TermR
 		src += closingFence(opener)
 	}
 
-	s.promote(s.renderTrailing(src, renderer))
+	out := s.renderTrailing(src, renderer)
+	s.stablePrefixRender = glueRenders(s.stablePrefixRender, out)
 	s.baseFenceCount += countFenceLines(newChunk)
 	s.baseHasListMarker = s.baseHasListMarker || chunkHasListMarker(newChunk, s.openFence != "")
 	s.stablePrefix = content[:cut]
@@ -424,7 +366,6 @@ func (s *streamingMarkdown) tryAdvanceFromEmpty(content string, width int, rende
 	}
 	s.stablePrefix = prefix
 	s.stablePrefixRender = trimGlamourMargins(out)
-	s.stablePrefixLines = countLines(s.stablePrefixRender)
 	s.width = width
 	// Seed cumulative state for incremental boundary search.
 	s.baseFenceCount = countFenceLines(prefix)
@@ -1256,10 +1197,4 @@ func isLinkRefDefinition(line string) bool {
 	}
 	// At least one non-whitespace character of destination.
 	return i < len(line)
-}
-
-// countLines returns the number of lines in s; an empty string is one
-// line.
-func countLines(s string) int {
-	return 1 + strings.Count(s, "\n")
 }
