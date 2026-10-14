@@ -795,3 +795,16 @@ func TestScriptErrorAfterItsContextEndsCountsAsAborted(t *testing.T) {
 	_, err := run.Execute(ctx, workflow.Input{})
 	require.ErrorIs(t, err, workflow.ErrAborted)
 }
+
+func TestScriptErrorAfterAbortCountsAsAborted(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	run := h.newRun(t, `function main() { try { bash("slow") } catch (e) {} ; throw new Error("carried on") }`)
+	h.backend.bashFn = func(ctx context.Context, _ workflow.BashCall) (workflow.BashResult, error) {
+		run.Abort()
+		return workflow.BashResult{}, ctx.Err()
+	}
+	_, err := run.Execute(t.Context(), workflow.Input{})
+	require.ErrorIs(t, err, workflow.ErrAborted)
+}
