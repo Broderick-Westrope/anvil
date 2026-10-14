@@ -130,9 +130,12 @@ func TestFeaturesNeverSeeInputAsMessages(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]tea.Msg{
-		"key":   tea.KeyPressMsg{Code: 'a', Text: "a"},
-		"paste": tea.PasteMsg{Content: "pasted"},
-		"click": tea.MouseClickMsg{X: 1, Y: 1},
+		"key":         tea.KeyPressMsg{Code: 'a', Text: "a"},
+		"paste":       tea.PasteMsg{Content: "pasted"},
+		"click":       tea.MouseClickMsg{X: 1, Y: 1},
+		"key release": tea.KeyReleaseMsg{Code: 'a'},
+		"paste start": tea.PasteStartMsg{},
+		"wheel":       tea.MouseWheelMsg{},
 	}
 	for name, msg := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -273,6 +276,7 @@ func TestPanelsKeepTheirRowsWhenNothingFits(t *testing.T) {
 	fs.register(&fakeFeature{panel: staticPanel{"first"}})
 	fs.register(&fakeFeature{panel: staticPanel{"second"}})
 	fs.register(&fakeFeature{})
+	fs.register(&fakeFeature{panel: staticPanel{}})
 	require.Equal(t, 2, fs.panelLines())
 	for _, width := range []int{0, 1, 3} {
 		require.Len(t, strings.Split(fs.renderPanels(width), "\n"), 2, "width %d", width)

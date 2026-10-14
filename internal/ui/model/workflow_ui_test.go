@@ -236,6 +236,29 @@ func TestWorkflowSlashCommandFromLandingCreatesASession(t *testing.T) {
 	require.Equal(t, "new-session", f.ws.starts[0].SessionID)
 }
 
+func TestWorkflowSlashCommandReportsASessionThatWasNotCreated(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowUIFixture(t)
+	f.u.session = nil
+	f.ws.noSessionID = true
+	infos := f.submit("/demo")
+	require.Equal(t, []util.InfoMsg{{Type: util.InfoTypeError, Msg: "workflow needs a session"}}, infos)
+	require.Empty(t, f.ws.starts)
+}
+
+func TestWorkflowSlashCommandWaitsOutAReload(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowUIFixture(t)
+	f.u.reloading = true
+	// The editor refuses to submit during a reload before the slash path
+	// runs, so this calls the slash path directly.
+	infos := f.run(f.u.tryExecuteSlashCommand("/demo"))
+	require.Equal(t, []util.InfoMsg{{Type: util.InfoTypeWarn, Msg: reloadInProgressMsg}}, infos)
+	require.Empty(t, f.ws.starts)
+}
+
 func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
 	t.Parallel()
 
