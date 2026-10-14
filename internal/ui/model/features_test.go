@@ -43,10 +43,13 @@ var fakeFeatureKey = key.NewBinding(key.WithKeys("f9"))
 
 func (f *fakeFeature) Observe(msg tea.Msg) tea.Cmd {
 	f.observed = append(f.observed, msg)
-	if _, ok := msg.(pubsub.Event[session.Session]); ok {
+	switch msg.(type) {
+	case pubsub.Event[session.Session]:
 		// The title UI shows before update applies the event.
 		title := f.u.session.Title
 		return func() tea.Msg { return fakeObservedMsg{title: title} }
+	case tea.TerminalVersionMsg:
+		return func() tea.Msg { return fakeObservedMsg{title: "early return"} }
 	}
 	return nil
 }
@@ -282,4 +285,32 @@ func TestPanelsKeepTheirRowsWhenNothingFits(t *testing.T) {
 		require.Len(t, strings.Split(fs.renderPanels(width), "\n"), 2, "width %d", width)
 	}
 	require.Equal(t, "first\nsecond", fs.renderPanels(10))
+}
+
+func TestObservedCommandsSurviveUpdatesEarlyReturns(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newFeatureTestUI(t)
+	_, cmd := u.Update(tea.TerminalVersionMsg{Name: "xterm"})
+	require.Contains(t, cmdMsgs(cmd), tea.Msg(fakeObservedMsg{title: "early return"}))
+}
+
+func TestTheFirstFeatureToClaimWins(t *testing.T) {
+	t.Parallel()
+
+	u, first := newFeatureTestUI(t)
+	second := &fakeFeature{u: u}
+	u.features.register(second)
+	u.Update(fakeFeatureMsg{})
+	u.Update(tea.KeyPressMsg{Code: tea.KeyF9})
+	u.dialog.OpenDialog(&stubDialog{id: "stub", action: fakeFeatureAction{}})
+	u.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	require.Len(t, first.msgs, 1)
+	require.Len(t, first.keys, 1)
+	require.Len(t, first.actions, 1)
+	require.Empty(t, second.msgs)
+	require.Empty(t, second.keys)
+	require.Empty(t, second.actions)
+	require.Len(t, second.observed, len(first.observed), "every feature observes")
 }
