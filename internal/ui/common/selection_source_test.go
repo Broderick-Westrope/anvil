@@ -248,6 +248,9 @@ func TestMapSelectionToSource_NeverCopiesUnselectedText(t *testing.T) {
 		// nth picks which occurrence of from in the rendered text starts
 		// the selection.
 		nth int
+		// wantOK is whether the selection maps; when it does, it must map
+		// to exactly the selected word.
+		wantOK bool
 	}{
 		"word repeated in a link title and the prose after it": {
 			source: `Intro. production status [guide](https://e.co "production status") ` +
@@ -261,9 +264,10 @@ func TestMapSelectionToSource_NeverCopiesUnselectedText(t *testing.T) {
 				"<!-- deployment instructions for TODO: update configuration --> " +
 				"TODO: update configuration\n```\n\n" +
 				"Follow **deployment instructions for TODO: update configuration** carefully.",
-			from: "configuration",
-			to:   "configuration",
-			nth:  2,
+			from:   "configuration",
+			to:     "configuration",
+			nth:    2,
+			wantOK: true,
 		},
 		"word repeated in a link title after a repeated link": {
 			source: `Prefix. [link](https://e.co "deployment") [link](https://e.co "other") deployment Suffix.`,
@@ -293,9 +297,143 @@ func TestMapSelectionToSource_NeverCopiesUnselectedText(t *testing.T) {
 				start += next + 1
 			}
 			got, ok := MapSelectionToSource(tc.source, plain, start, start+len(tc.to))
+			require.Equal(t, tc.wantOK, ok, plain)
 			if ok {
 				require.Equal(t, tc.to, got, plain)
 			}
+		})
+	}
+}
+
+// These tests use hand-built rendered text so each case isolates one rule
+// for when a selection maps and when it falls back.
+func TestMapSelectionToSource_Rules(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		source, rendered string
+		// from and to are the first and last selected text in rendered.
+		from, to string
+		want     string
+		wantOK   bool
+	}{
+		"selection at the source start maps": {
+			source: "hello world", rendered: "hello world",
+			from: "hello", to: "hello",
+			want: "hello", wantOK: true,
+		},
+		"selection from the first mapped rune keeps leading source": {
+			source: "<!--c-->hello world", rendered: "hello world",
+			from: "hello", to: "hello",
+			want: "<!--c-->hello", wantOK: true,
+		},
+		"mapped rune at the line start keeps the block prefix out": {
+			source: "x\n- beta", rendered: "x beta",
+			from: "beta", to: "beta",
+			want: "beta", wantOK: true,
+		},
+		"unmapped first word falls back": {
+			source: "hello world", rendered: "Note hello world",
+			from: "Note", to: "world",
+		},
+		"unselected unmapped words don't count": {
+			source: "hello world", rendered: "Note hello world",
+			from: "hello", to: "world",
+			want: "hello world", wantOK: true,
+		},
+		"unmapped rune inside a word is tolerated": {
+			source: "hello world", rendered: "hellqo world",
+			from: "hellqo", to: "world",
+			want: "hello world", wantOK: true,
+		},
+		// The q runs have no source match, and neither do b, c and d,
+		// because the words after them don't confirm a match.
+		"exactly half the words mapped maps": {
+			source: "abcd efg", rendered: "abcd q efg",
+			from: "abcd", to: "efg",
+			want: "abcd efg", wantOK: true,
+		},
+		"under half the words mapped falls back": {
+			source: "abcd efg", rendered: "abcd qq efg",
+			from: "abcd", to: "efg",
+		},
+		"punctuation-only selection maps": {
+			source: "x --- y", rendered: "x --- y",
+			from: "---", to: "---",
+			want: "---", wantOK: true,
+		},
+		"decoration-only selection falls back": {
+			source: "hello", rendered: "│ hello",
+			from: "│", to: "│",
+		},
+		// The comment repeats the letters after a, so a maps to the
+		// source start and bcde to the visible text after the comment.
+		"word split by hidden text falls back": {
+			source: "a<!--bcd-->bcde", rendered: "abcde",
+			from: "abcde", to: "abcde",
+		},
+		"selection ending inside a split word maps": {
+			source: "a<!--bcd-->bcde", rendered: "abcde",
+			from: "a", to: "a",
+			want: "a", wantOK: true,
+		},
+		"split word before the selection is ignored": {
+			source: "a<!--bcd-->bcde fg", rendered: "abcde fg",
+			from: "fg", to: "fg",
+			want: "fg", wantOK: true,
+		},
+		"hidden text between a word and punctuation maps": {
+			source: "x<!--c-->.", rendered: "x.",
+			from: "x.", to: "x.",
+			want: "x<!--c-->.", wantOK: true,
+		},
+		"hidden text between two words maps": {
+			source: "x<!--abc--> abcd", rendered: "x abcd",
+			from: "x", to: "abcd",
+			want: "x<!--abc--> abcd", wantOK: true,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			start, end := selectBetween(t, tc.rendered, tc.from, tc.to)
+			got, ok := MapSelectionToSource(tc.source, tc.rendered, start, end)
+			require.Equal(t, tc.wantOK, ok)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestAnchorChain(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		rendered, source string
+		want             []anchor
+	}{
+		"text exactly one anchor long": {
+			rendered: "abcdefghij", source: "abcdefghij",
+			want: []anchor{{rendered: 0, source: 0}},
+		},
+		"anchor after a rendered decoration": {
+			rendered: "│abcdefghij", source: "abcdefghij",
+			want: []anchor{{rendered: 1, source: 0}},
+		},
+		"run repeated in the source is not an anchor": {
+			rendered: "abcdefghij", source: "abcdefghijabcdefghij",
+			want: []anchor{},
+		},
+		"out of order runs keep the longest ordered chain": {
+			rendered: "abcdefghijklmnopqrstuvwxyzABCD",
+			source:   "klmnopqrstabcdefghijuvwxyzABCD",
+			want:     []anchor{{rendered: 10, source: 0}, {rendered: 20, source: 20}},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := anchorChain([]rune(tc.rendered), []rune(tc.source))
+			require.Equal(t, tc.want, got)
 		})
 	}
 }
