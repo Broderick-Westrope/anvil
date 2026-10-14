@@ -5,10 +5,12 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
@@ -342,4 +344,34 @@ func TestAPaletteCommandNoFeatureRunsLeavesThePaletteToUpstream(t *testing.T) {
 	require.Empty(t, f.commands)
 	require.True(t, u.dialog.ContainsDialog(dialog.CommandsID), "only a feature that runs the command closes the palette")
 	require.False(t, u.dialog.ContainsDialog("front"), "upstream handles it as a prompt command")
+}
+
+func TestFeaturesIgnoreHighFrequencyMessagesWithoutAllocating(t *testing.T) {
+	f := newWorkflowUIFixture(t)
+	f.event(started("demo", "sess-1"))
+	msgs := []tea.Msg{spinner.TickMsg{}, anim.StepMsg{}, tea.MouseMotionMsg{}}
+	allocs := testing.AllocsPerRun(100, func() {
+		for _, msg := range msgs {
+			f.u.features.observe(msg)
+			f.u.features.handleMsg(msg)
+		}
+	})
+	require.Zero(t, allocs)
+}
+
+func BenchmarkFeaturesIgnoreHighFrequencyMessages(b *testing.B) {
+	ws := newWorkflowTestWorkspace()
+	u := newTestUI()
+	u.com.Workspace = ws
+	u.keyMap = DefaultKeyMap()
+	u.dialog = dialog.NewOverlay()
+	u.features.register(newWorkflowFeature(uiHost{u}, u.com, ws))
+	msgs := []tea.Msg{spinner.TickMsg{}, anim.StepMsg{}, tea.MouseMotionMsg{}}
+	b.ReportAllocs()
+	for b.Loop() {
+		for _, msg := range msgs {
+			u.features.observe(msg)
+			u.features.handleMsg(msg)
+		}
+	}
 }
