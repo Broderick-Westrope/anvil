@@ -1482,3 +1482,54 @@ func TestWorkflowLateControlDuringTheNextApprovalKeepsItsRequests(t *testing.T) 
 
 	f.requireShownOnce(t, approvalFor("req-2", "sess-1"))
 }
+
+func TestWorkflowLateEventOfAFinishedRunChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
+	late := agentEvent("reviewer", "child-1", workflowhost.StatusRunning)
+	late.RunID = "run-1"
+	f.event(late)
+
+	require.Contains(t, f.panel(), "/demo · completed")
+	require.Equal(t, 1, f.panelLines())
+	f.press(showRunKey)
+	require.NotContains(t, f.runDialog(), "reviewer")
+}
+
+func TestWorkflowLiveRunBeatsAFinishedOneOnASharedSession(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	turnIn := func(invoker, runID, command string) {
+		f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: runID, Command: command, SessionID: invoker, State: workflowhost.StateStarted})
+		f.event(workflowhost.Event{Kind: workflowhost.EventStep, RunID: runID, Command: command, SessionID: invoker, Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "shared"}})
+	}
+	turnIn("sess-0", "run-a", "old")
+	f.event(finishedIn("sess-0", "run-a", workflowhost.StatusCompleted))
+	turnIn("sess-2", "run-b", "new")
+	f.host.session = &session.Session{ID: "shared"}
+	for range 20 {
+		require.Contains(t, f.panel(), "/new")
+	}
+}
+
+func TestWorkflowAnswerToAForgottenRequestIsSentButNotKept(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	ask := askFor("ask-1", "Go?")
+	ask.RunID = "run-1"
+	f.event(ask)
+	// A late answer to a request whose dialog was closed when its
+	// invocation ended.
+	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusAborted))
+	infos := f.act(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"})
+
+	require.Empty(t, infos)
+	require.Equal(t, [][2]string{{"ask-1", "yes"}}, f.ws.responds)
+	f.requireNothingKept(t)
+}

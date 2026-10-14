@@ -750,3 +750,23 @@ func TestLoadingCommandsLogsNoErrorWhenItWorks(t *testing.T) {
 	loadCommands(f.u.com)
 	require.Empty(t, rec.errors)
 }
+
+func TestWorkflowFollowToTheSessionOnScreenKeepsTheDrillIn(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowUIFixture(t)
+	f.u.textarea.SetValue("draft")
+	f.event(started("demo", "sess-1"))
+	f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Focus: "sess-2"})
+	f.run(f.u.loadSession("sess-2"))
+	require.Equal(t, "sess-2", f.u.session.ID)
+	f.run(util.CmdHandler(util.AgentDrillInMsg{SessionID: "child", Label: "child"}))
+	require.True(t, f.u.isDrilledIn())
+
+	_, cmd := f.u.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModAlt})
+	require.True(t, f.u.isDrilledIn(), "following to the root session leaves the drill-in")
+	for _, msg := range cmdMsgs(cmd) {
+		_, loads := msg.(loadSessionMsg)
+		require.False(t, loads, "nothing is loaded")
+	}
+}
