@@ -109,7 +109,7 @@ func MapSelectionToSource(source, rendered string, start, end int) (string, bool
 // selectionScan summarises how a selection over the rendered text lines up
 // with the source. Rune fields are indexes into the rendered non-space
 // runes. firstAll and firstSel are -1 when there is no such rune; lastAll
-// and lastSel are only meaningful when their first counterpart isn't.
+// and lastSel are only meaningful when the matching first field isn't -1.
 type selectionScan struct {
 	// firstAll and lastAll are the first and last mapped runes overall.
 	firstAll, lastAll int
