@@ -1,11 +1,16 @@
 package dialog
 
 import (
+	"fmt"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/golden"
 	"github.com/stretchr/testify/require"
 )
@@ -180,4 +185,175 @@ func TestWorkflowOutcomeTextDescribesEveryStatus(t *testing.T) {
 		})
 	}
 	require.Len(t, tests, len(workflowhost.Statuses()))
+}
+
+func TestWorkflowRunShowsWhetherAQuestionCanStillBeAnswered(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		answer   string
+		finished bool
+		want     string
+	}{
+		"answered":                    {answer: "ship it", want: "→ ship it"},
+		"unanswered in a running run": {want: "→ waiting for an answer"},
+		"unanswered in a finished run": {
+			finished: true, want: "→ not answered",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tr := &WorkflowTranscript{Command: "build", Finished: tc.finished, Entries: []WorkflowEntry{
+				{Kind: WorkflowEntryAsk, RequestID: "ask-1", Question: "Ship?", Answer: tc.answer},
+			}}
+			out := drawDialog(NewWorkflowRun(workflowCommon(), tr), 100, 30)
+			require.Contains(t, out, tc.want)
+			for _, other := range []string{"waiting for an answer", "not answered", "ship it"} {
+				if !strings.Contains(tc.want, other) {
+					require.NotContains(t, out, other)
+				}
+			}
+		})
+	}
+}
+
+func TestWorkflowAgentLineSaysHowTheAgentIsGoing(t *testing.T) {
+	t.Parallel()
+
+	failed := WorkflowEntry{
+		Kind: WorkflowEntryAgent, Agent: "reviewer", Model: "sonnet", Status: workflowhost.StatusFailed,
+		Err: "submit_result never called\nthe model stopped after 3 turns",
+	}
+	tests := map[string]struct {
+		entry     WorkflowEntry
+		inlineErr bool
+		want      string
+	}{
+		"running": {
+			entry: WorkflowEntry{Agent: "reviewer", Model: "sonnet", Status: workflowhost.StatusRunning},
+			want:  "/build: reviewer (sonnet) · running",
+		},
+		"completed": {
+			entry: WorkflowEntry{Agent: "reviewer", Status: workflowhost.StatusCompleted},
+			want:  "/build: reviewer · done",
+		},
+		"failed with the error below": {entry: failed, want: "/build: reviewer (sonnet) · failed"},
+		"failed with the error inline": {
+			entry: failed, inlineErr: true,
+			want: "/build: reviewer (sonnet) · failed: submit_result never called",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := workflowCommon().Styles
+			line := ansi.Strip(WorkflowAgentLine(s, "build", tc.entry, tc.inlineErr))
+			_, text, _ := strings.Cut(line, " ")
+			require.Equal(t, tc.want, text)
+		})
+	}
+}
+
+func TestWorkflowRunOffersAgentKeysOnlyWithAgents(t *testing.T) {
+	t.Parallel()
+
+	withAgents := drawDialog(NewWorkflowRun(workflowCommon(), reviewTranscript()), 100, 40)
+	require.Contains(t, withAgents, "choose agent")
+	require.Contains(t, withAgents, "open agent")
+
+	tr := reviewTranscript()
+	tr.Entries = tr.Entries[:2]
+	without := drawDialog(NewWorkflowRun(workflowCommon(), tr), 100, 40)
+	require.NotContains(t, without, "choose agent")
+	require.NotContains(t, without, "open agent")
+}
+
+// stepTranscript is n one-line bash entries, "step 00" onwards, with an
+// agent, "agent05" for index 5, in place of each entry at agentAt.
+func stepTranscript(n int, agentAt ...int) *WorkflowTranscript {
+	tr := &WorkflowTranscript{RunID: "run-1", SessionID: "s1", Command: "build"}
+	for i := range n {
+		e := WorkflowEntry{Kind: WorkflowEntryBash, Text: fmt.Sprintf("step %02d", i)}
+		if slices.Contains(agentAt, i) {
+			e = WorkflowEntry{
+				Kind: WorkflowEntryAgent, Agent: fmt.Sprintf("agent%02d", i),
+				SessionID: fmt.Sprintf("c%02d", i), Status: workflowhost.StatusCompleted,
+			}
+		}
+		tr.Entries = append(tr.Entries, e)
+	}
+	return tr
+}
+
+var stepEntryPattern = regexp.MustCompile(`(?:step |agent)(\d\d)`)
+
+// visibleEntries returns the indices of the stepTranscript entries on
+// screen, top to bottom.
+func visibleEntries(screen string) []int {
+	var got []int
+	for _, m := range stepEntryPattern.FindAllStringSubmatch(screen, -1) {
+		i, _ := strconv.Atoi(m[1])
+		got = append(got, i)
+	}
+	return got
+}
+
+func entryRange(from, to int) []int {
+	var r []int
+	for i := from; i <= to; i++ {
+		r = append(r, i)
+	}
+	return r
+}
+
+func TestWorkflowRunArrowsScrollWhenThereAreNoAgents(t *testing.T) {
+	t.Parallel()
+
+	d := NewWorkflowRun(workflowCommon(), stepTranscript(60))
+	drawDialog(d, 100, 30)
+	d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyHome})
+	top := visibleEntries(drawDialog(d, 100, 30))
+	require.Equal(t, 0, top[0])
+
+	d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyDown})
+	require.Equal(t, entryRange(1, len(top)), visibleEntries(drawDialog(d, 100, 30)))
+	d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyUp})
+	require.Equal(t, top, visibleEntries(drawDialog(d, 100, 30)))
+}
+
+func TestWorkflowRunScrollsTheChosenAgentIntoView(t *testing.T) {
+	t.Parallel()
+
+	// The number of entries the dialog shows at once.
+	probe := NewWorkflowRun(workflowCommon(), stepTranscript(60))
+	drawDialog(probe, 100, 30)
+	probe.HandleMsg(tea.KeyPressMsg{Code: tea.KeyHome})
+	view := len(visibleEntries(drawDialog(probe, 100, 30)))
+	require.Greater(t, view, 5)
+	require.Less(t, view, 50)
+
+	t.Run("an agent above the view becomes its first line", func(t *testing.T) {
+		t.Parallel()
+		d := NewWorkflowRun(workflowCommon(), stepTranscript(60, 5, 59))
+		drawDialog(d, 100, 30)
+		d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyUp})
+		require.Equal(t, entryRange(5, 5+view-1), visibleEntries(drawDialog(d, 100, 30)))
+	})
+	t.Run("an agent just below the view becomes its last line", func(t *testing.T) {
+		t.Parallel()
+		d := NewWorkflowRun(workflowCommon(), stepTranscript(60, view, 59))
+		drawDialog(d, 100, 30)
+		d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyHome})
+		require.Equal(t, entryRange(0, view-1), visibleEntries(drawDialog(d, 100, 30)))
+		d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyUp})
+		require.Equal(t, entryRange(1, view), visibleEntries(drawDialog(d, 100, 30)))
+	})
+	t.Run("an agent in view scrolls nothing", func(t *testing.T) {
+		t.Parallel()
+		d := NewWorkflowRun(workflowCommon(), stepTranscript(60, 58, 59))
+		before := visibleEntries(drawDialog(d, 100, 30))
+		d.HandleMsg(tea.KeyPressMsg{Code: tea.KeyUp})
+		require.Equal(t, before, visibleEntries(drawDialog(d, 100, 30)))
+	})
 }

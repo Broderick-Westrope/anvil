@@ -200,15 +200,16 @@ func (d *WorkflowApproval) renderHeader(width int) string {
 		)
 	}
 	changed, total := d.fileCounts()
+	// An if chain, not a tagless switch: coverage never marks a case
+	// expression as run, so mutation testing would skip its conditions.
 	var note string
-	switch {
-	case d.firstRun() && total == 1:
+	if d.firstRun() && total == 1 {
 		note = "First run: review the whole script. Once approved, its bash commands run without permission prompts."
-	case d.firstRun():
+	} else if d.firstRun() {
 		note = fmt.Sprintf("First run: review all %d files. Once approved, its bash commands run without permission prompts.", total)
-	case total == 1:
+	} else if total == 1 {
 		note = "1 of 1 file changed since you last approved it: review the changes."
-	default:
+	} else {
 		note = fmt.Sprintf("%d of %d files changed since you last approved it: review the changes.", changed, total)
 	}
 	lines = append(lines, "", t.Dialog.Permissions.ValueText.Width(width).Render(note))
@@ -222,12 +223,12 @@ func (d *WorkflowApproval) renderHeader(width int) string {
 func visibleControls(s string) string {
 	var b strings.Builder
 	for _, r := range s {
-		switch {
-		case r == '\n' || r == '\t' || !unicode.IsControl(r):
+		// An if chain so mutation testing sees the conditions.
+		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
 			b.WriteRune(r)
-		case r <= 0x7f:
+		} else if r <= 0x7f {
 			fmt.Fprintf(&b, `\x%02x`, r)
-		default:
+		} else {
 			fmt.Fprintf(&b, `\u%04x`, r)
 		}
 	}

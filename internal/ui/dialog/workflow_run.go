@@ -228,12 +228,11 @@ func (d *WorkflowRun) renderEntry(e WorkflowEntry, wrap func(lipgloss.Style, str
 		return "turn", wrap(t.Pills.TodoCurrentTask, "in "+e.Text)
 	case WorkflowEntryAsk:
 		answer := t.Pills.TodoProgress.Render(e.Answer)
-		switch {
-		case e.Answer != "":
-		case d.tr.Finished:
-			answer = t.Pills.HelpText.Render("not answered")
-		default:
+		if e.Answer == "" {
 			answer = t.Pills.HelpText.Render("waiting for an answer")
+			if d.tr.Finished {
+				answer = t.Pills.HelpText.Render("not answered")
+			}
 		}
 		return "ask", wrap(t.Dialog.Permissions.ValueText, e.Question) + "\n" +
 			wrap(lipgloss.NewStyle(), t.Pills.HelpText.Render("→ ")+answer)
@@ -312,10 +311,10 @@ func (d *WorkflowRun) revealSelected() {
 	start, height := d.starts[i], d.contentHeights[i]
 	end := start + height - 1
 	top, view := d.viewport.YOffset(), d.viewport.Height()
-	switch {
-	case start < top:
+	// An if chain so mutation testing sees the conditions.
+	if start < top {
 		d.viewport.SetYOffset(start)
-	case end >= top+view:
+	} else if end >= top+view {
 		d.viewport.SetYOffset(min(start, end-view+1))
 	}
 }
