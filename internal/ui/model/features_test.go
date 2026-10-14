@@ -314,3 +314,17 @@ func TestTheFirstFeatureToClaimWins(t *testing.T) {
 	require.Empty(t, second.actions)
 	require.Len(t, second.observed, len(first.observed), "every feature observes")
 }
+
+func TestASlashCommandAFeatureRunsIsNotSentAsAPrompt(t *testing.T) {
+	t.Parallel()
+
+	u, f := newFeatureTestUI(t)
+	u.customCommands = []commands.CustomCommand{{ID: "fake:cmd", Name: "fake", Content: "BODY $ARGUMENTS"}}
+	u.focus = uiFocusEditor
+	u.textarea.SetValue("/fake some args")
+	_, cmd := u.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	cmdMsgs(cmd)
+
+	require.Equal(t, []string{"fake|some args"}, f.commands)
+	require.Empty(t, u.com.Workspace.(*workflowTestWorkspace).runs, "a command run without a follow-up command is still handled")
+}

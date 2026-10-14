@@ -149,9 +149,15 @@ func (fs *features) handleAction(overlay *dialog.Overlay, action dialog.Action) 
 	return nil, false
 }
 
+// runCommand offers cmd to the command features. A claimed command always
+// comes back with a non-nil tea.Cmd, because the slash path takes nil to
+// mean "not a command" and would send the input as a prompt.
 func (fs *features) runCommand(cmd commands.CustomCommand, rawArgs string) (tea.Cmd, bool) {
 	for _, f := range fs.commands {
 		if c, ok := f.RunCommand(cmd, rawArgs); ok {
+			if c == nil {
+				c = func() tea.Msg { return nil }
+			}
 			return c, true
 		}
 	}
