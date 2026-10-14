@@ -272,4 +272,7 @@ func TestRunCommandRefusesAWorkflowCommand(t *testing.T) {
 	rootCmd.SetArgs([]string{"run", "--quiet", "--cwd", project, "--data-dir", dataDir, "/demo now"})
 	err = rootCmd.ExecuteContext(t.Context())
 	require.ErrorContains(t, err, "/demo is a workflow command")
+	// The refusal comes before Anvil starts: no database or log file is
+	// opened, so nothing is left holding files in the data dir.
+	require.NoFileExists(t, filepath.Join(dataDir, "logs", "anvil.log"))
 }

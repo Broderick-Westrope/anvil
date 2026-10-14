@@ -83,15 +83,28 @@ anvil run --continue "Follow up on your last response"
 			return fmt.Errorf("no prompt provided")
 		}
 
+		// Refuse before Anvil starts, so a refused run opens no database,
+		// log file or app.
+		if strings.HasPrefix(prompt, "/") {
+			cwd, err := ResolveCwd(cmd)
+			if err != nil {
+				return err
+			}
+			dataDir, _ := cmd.Flags().GetString("data-dir")
+			store, err := config.Load(cwd, dataDir, false)
+			if err != nil {
+				return fmt.Errorf("load configuration: %w", err)
+			}
+			if err := refuseWorkflowCommand(store.Config(), prompt); err != nil {
+				return err
+			}
+		}
+
 		ws, cleanup, err := setupLocalWorkspace(cmd)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
-
-		if err := refuseWorkflowCommand(ws.Config(), prompt); err != nil {
-			return err
-		}
 
 		if !ws.Config().IsConfigured() {
 			return fmt.Errorf("no providers configured - please run 'anvil' to set up a provider interactively")
@@ -219,9 +232,6 @@ func init() {
 // and focus, and run without their script they'd skip its gates. A slash
 // prompt is refused when commands can't load, since it might be one.
 func refuseWorkflowCommand(cfg *config.Config, prompt string) error {
-	if !strings.HasPrefix(prompt, "/") {
-		return nil
-	}
 	cmds, err := commands.LoadAllCommands(cfg, nil)
 	if err != nil {
 		return fmt.Errorf("load commands to check %s isn't a workflow: %w", strings.Fields(prompt)[0], err)
