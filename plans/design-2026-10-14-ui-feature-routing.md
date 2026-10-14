@@ -36,104 +36,167 @@ Out of scope:
 - A feature never reaches `*UI` directly.
 
 **Success Criteria:**
-- [ ] `grep -n -i workflow internal/ui/model/ui.go` finds only the line that registers the workflow feature, plus the host methods `UI` implements if they live in `ui.go`. There are no workflow cases in `update`, `handleDialogMsg`, `handleKeyPressMsg` or `Draw`.
+- [ ] `ui.go`'s `update`, `handleDialogMsg`, `handleKeyPressMsg` and `Draw` contain no workflow code. Workflow-specific lines in `ui.go` are limited to registering the feature and the generic routing hooks below, which name no feature. (`grep -n -i workflow internal/ui/model/ui.go` returns only the registration line.)
 - [ ] The four upstream cases that carried workflow edits contain no workflow code:
   - `userCommandsLoadedMsg`
   - `promptHistoryLoadedMsg`
   - `pubsub.Event[session.Session]`
   - `ActionRunCustomCommand`
 - [ ] `UI` has none of the five workflow fields; the workflow feature owns them.
-- [ ] `pills.go` doesn't mention workflows. Panel height comes from the rendered panel's line count, so `workflowPanelHeight` no longer exists.
-- [ ] Workflow keys keep today's precedence: dialogs, then focus-specific keys, then upstream global keys, then features. A test drives a workflow key through `UI.Update` and shows that an upstream global key with the same binding would still win.
-- [ ] The workflow feature's tests drive it only through its surface (messages, keys, actions, panel), using a fake host and a fake of the narrow workflow-workspace interface it declares. No test reads the feature's or `UI`'s fields.
-- [ ] One `ui.go`-level test shows a `workflowhost.Event` reaching the feature through `UI.Update`, and a workflow key reaching it through the global-keys fallback.
+- [ ] `pills.go` doesn't mention workflows. `workflowPanelHeight` is gone, and the panel's line count comes from the same view-model that renders it. A test asserts the rendered line count matches it at several widths, including 1 and widths narrower than the content.
+- [ ] Key precedence is unchanged in every state. Collision tests through `UI.Update` cover a workflow key with each of these open:
+  - editor focus, the textarea and slash autocomplete open;
+  - main focus with a selected chat item;
+  - sidebar focus;
+  - landing;
+  - a dialog open;
+  - an upstream global binding that matches but whose condition is false (it still blocks the feature, as today);
+  - a rebound workflow key.
+- [ ] Both invocation paths behave as today:
+  - slash, with raw arguments, including from landing (it creates a session);
+  - the command palette, with no arguments.
+
+  Both are covered by tests through `UI.Update`.
+- [ ] Both command-load paths behave as today:
+  - The initial load shows the "broken workflow commands" warning.
+  - Config reload folds it into the single reload report, and that report keeps error severity when the reload itself failed. The existing `workflow_test.go:724-748` assertions still pass.
+- [ ] Prompt history leaves out script-sent turns for both the per-session and the working-directory query.
+- [ ] The workflow feature's behaviour tests drive it only through its surface (messages, keys, actions, commands, panel, palette entries). They use a fake host and a fake of the narrow workflow-workspace interface. The one exception is a targeted internal assertion that answered request IDs are freed when their run finishes or is replaced, because that can't be observed from outside.
+- [ ] Integration tests through `UI.Update` cover:
+  - a `workflowhost.Event` reaching the feature;
+  - focus/follow (with the editor empty and with it non-empty);
+  - an approval or ask opening with the grace period and a notification;
+  - resize changing panel height and layout;
+  - drill-in suppressing the panel;
+  - pause, resume and abort from keys and from the palette.
+- [ ] A benchmark shows offering an unowned high-frequency message (a spinner tick, anim step or mouse motion) to the registered features makes no allocations.
 - [ ] All existing UI golden files are unchanged. The full `go test ./...` passes, and `task lint` passes with no new `gocognit` exclusions.
-- [ ] Answered request IDs are dropped when their run finishes or a new run replaces it. A test proves a finished run leaves no answered IDs behind.
 - [ ] A real TUI session through the `terminal` MCP shows behaviour unchanged:
   - approval and ask dialogs;
-  - the panel, including the summary line after a run;
+  - the panel and the summary line after a run;
   - pause, resume and abort;
   - focus/follow;
   - the run dialog;
-  - agent drill-in.
+  - agent drill-in;
+  - invocation from landing.
 
 **Design Decisions:**
+
+*Interpretation of ADR 0003.* The ADR asks for features "routed through a table". Here the table is an ordered registry of features, each offered the messages, keys and actions the dispatchers don't own. It is a list rather than a map because keys need precedence, which a type-keyed map can't express. `internal/ui/AGENTS.md` says components expose imperative methods and never their own `Update`. That rule gets an explicit exception for registered features: `UI` still decides when features are called, and features stay plain types, not `tea.Model`s. This change proves the pattern on one feature only. It is the starting point for later adopters, not a proven universal pattern.
 
 *Feature surface.* A feature implements:
 
 ```go
 type feature interface {
-	// HandleMsg sees every message before update's switch. It returns
-	// handled=true only for messages it owns, which then skip the switch.
-	// For shared messages it observes and returns handled=false.
+	// Observe sees every non-input message before update runs, and never
+	// claims one. The commands it returns are batched with update's
+	// result, so they survive update's early returns.
+	Observe(msg tea.Msg) tea.Cmd
+	// HandleMsg is offered messages no update case handled (update's
+	// default arm), before they go to the dialog. handled=true claims
+	// the message.
 	HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool)
-	// HandleKey runs in the global-keys fallback, after upstream's global
-	// keys, for keys nothing else claimed.
+	// HandleKey is offered keys no global key binding matched.
 	HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool)
-	// HandleAction sees each dialog action before handleDialogMsg's switch.
+	// HandleAction is offered each dialog action before the action switch.
 	HandleAction(action dialog.Action) (cmd tea.Cmd, handled bool)
 }
 ```
 
-Each feature switches only on its own types internally, so `ui.go` stops growing per feature.
-- **Declined: a table keyed by message type** (`map[reflect.Type]handler`). Every key is a `KeyPressMsg`, so keys and actions would need separate tables of their own. That's three mechanisms instead of one.
+There are also optional interfaces, each checked with a type assertion when the feature is registered:
+- `commandFeature`: `RunCommand(cmd commands.CustomCommand, rawArgs string) (tea.Cmd, bool)`.
+- `panelFeature`: `Panel() panelView` (see Panels).
+- `paletteFeature`: `PaletteEntries() []dialog.CommandItem` (see Palette).
+
+Observing and claiming are separate on purpose:
+- **`Observe`** is for shared messages that upstream handles too. It can't stop them.
+- **`HandleMsg`** is only for a feature's own message types, which no upstream case matches. Today those reach `update`'s `default:` arm.
+
+Features never see input through `Observe` or `HandleMsg`: `tea.KeyPressMsg`, `tea.PasteMsg` and mouse messages are filtered out before either is called. Keys reach features only through `HandleKey`, after dialogs, the grace period and focus routing.
+
+- **Declined: one `HandleMsg` before the switch that can claim anything.** It would let a feature take keys before dialogs and focus routing. Its commands would be lost on upstream's early-return paths (`ui.go:1061-1075`, `:1111`). Claimed messages would also skip `update`'s pre- and post-switch steps (composer sync, drill follow, placeholder, attachments).
+- **Declined: a table keyed by message type** (`map[reflect.Type]handler`). Every key is a `KeyPressMsg`, so keys and actions would need separate tables of their own.
 - **Declined: features owning state while `ui.go` keeps one-line cases.** The switches would still gain a case per message type per feature, which is what ADR 0003 wants to stop.
-- **`AGENTS.md` change:** this bends `internal/ui/AGENTS.md`'s "components expose imperative methods, not `Update`" rule, and the doc is updated to say so. `UI` still decides when features see messages, and features stay plain types, not `tea.Model`s.
 
-*Routing order.* `UI` holds `features []feature`, in registration order. In each dispatcher:
-- **`update`:** before the type switch, offer the message to each feature. Run any commands they return, and skip the switch if one claimed it. This sits before the switch, outside upstream's lines. Messages owned by no feature (including all upstream ones) reach the switch unchanged. Observing features run first, so they see state as it was before the upstream case changed it. Features that need state after the change should observe a message sent after that change. None does today.
-- **`handleDialogMsg`:** after `m.dialog.Update(msg)` produces an action, offer it to features before the action switch.
-- **`handleKeyPressMsg`:** offer the key inside the global-keys fallback, after upstream's global keys. Upstream bindings and the editor always win, and a feature only sees keys nobody else claimed. This matches today's workflow key placement.
-  - **Declined: offering keys straight after the dialog check.** One careless binding would swallow typing.
+*Where each hook sits.* Each hook is one generic line in `ui.go` that names no feature, and none re-indents an upstream case:
 
-*Host surface.* `UI` implements a narrow `featureHost` handed to each feature when it's built. Its methods are:
-- the current session;
-- the dialog overlay;
-- `LoadSession`;
-- drill into a session;
-- request a relayout;
-- send a notification;
-- whether the editor or attachments have content;
-- whether a reload is in progress;
-- `*common.Common`, for dialog constructors and `Workspace`.
+| Hook | Where | When it runs |
+|---|---|---|
+| `Observe` | In `Update` (the fork-owned wrapper that already adds Herdr tracking) | Before calling `update`. The commands are batched with `update`'s result. |
+| `HandleMsg` | At the top of `update`'s `default:` arm | Before `handleDialogMsg`. A claimed message skips the dialog, and `update`'s post-switch steps still run, exactly as for today's workflow cases. |
+| `HandleKey` | As the `default:` arm of `handleGlobalKeys`'s switch | Only when no upstream global case matched. A matched case whose condition is false (`TogglePills`, `PillLeft`, `PillRight`) still blocks features, as it blocks the workflow case today. `handleGlobalKeys` is called from the editor default (before the textarea), the main focus default (after the selected chat item), the sidebar and other states, so precedence is identical in every focus state. |
+| `HandleAction` | In `handleDialogMsg`, after `m.dialog.Update(msg)` and before the action switch | The routing layer turns `ActionRunCustomCommand` into `RunCommand(cmd, "")` for features that implement `commandFeature`. That covers the palette, which passes no arguments today. |
+| `RunCommand` (slash path) | In `tryExecuteSlashCommand`, after `MatchSlash` and before body expansion | Called with the raw arguments. This replaces today's `if cmd.Workflow != ""` line with one generic line. |
 
-The set is exactly what `workflow.go` uses today, as the survey listed it.
-- **Growth rule:** a method is added only when two features need it, or it exposes `UI`-owned state. This stops the host turning into all of `UI`.
-- **Declined: returning intents as messages.** Each intent kind would add a shared case to `update`, and synchronous reads would still need passing in.
-- **Declined: passing `*UI`.** The invariants would stay unowned.
+*Lifecycle contract.* `Observe` runs before `update`, so a feature sees `UI` state as it was before the upstream case changed it. For workflows that matches today: the title cache already runs before the drill-stack update in the session case. The workflow feature ignores `DeletedEvent` in `Observe`, matching the deletion guard at `ui.go:927-935`. A later adopter that needs the state after the change (for example after `loadSessionMsg`, which has no follow-up message) needs a post-update hook. That is added when such an adopter arrives, not now.
 
-*Narrow workspace interface.* The workflow feature declares the small interface of `Workspace` calls it makes:
+*Host surface.* `UI` implements `featureHost`, handed to each feature when it's built. Each method documents its side effects:
+
+```go
+type featureHost interface {
+	// Session is the session on screen, or nil.
+	Session() *session.Session
+	// EnsureSession returns the current session, creating it and switching
+	// to chat when there's none (today's ensureSession: assigns the
+	// session, honours forced compact mode). cmd loads the new session.
+	EnsureSession() (sessionID string, cmd tea.Cmd, err error)
+	// Navigate clears any drill-in and loads sessionID.
+	Navigate(sessionID string) tea.Cmd
+	// DrillInto clears any drill-in and drills into sessionID's child
+	// session, labelled label.
+	DrillInto(sessionID, label string) tea.Cmd
+	// IsDrilledIn reports whether a drill-in is on screen.
+	IsDrilledIn() bool
+	// Dialogs is the dialog overlay (OpenDialog, OpenDialogWithGrace,
+	// CloseDialog, ContainsDialog).
+	Dialogs() *dialog.Overlay
+	// Notify sends a desktop notification under UI's notification policy.
+	Notify(n notification.Notification) tea.Cmd
+	// Relayout recomputes layout after the feature changed its panel.
+	Relayout()
+	// ComposerHasContent reports unsent editor text or attachments.
+	ComposerHasContent() bool
+	// Reloading reports an instance reload in progress.
+	Reloading() bool
+	// KeyMap is the current key bindings.
+	KeyMap() *KeyMap
+}
+```
+
+These are exactly the operations `workflow.go` performs on `UI` today. The workflow code calls `clearDrillStack` in three places; each is followed by a load or a drill-in, so the pairing is folded into `Navigate` and `DrillInto`.
+
+Growth rule: a method is added only when a second feature needs it, or when it is a `UI`-owned operation that existing methods can't express (as `EnsureSession` is). It must document its side effects. The host can't hand out `*UI` or arbitrary fields.
+
+*Workspace.* Features also receive `*common.Common`, for styles and dialog constructors, since every dialog takes it. The workflow feature makes its own workspace calls through a narrow interface it declares and receives separately:
 - `AgentIsReady`
 - `WorkflowStart`, `WorkflowRespond`, `WorkflowPause`, `WorkflowResume` and `WorkflowAbort`
 - `GetSession`
 
-The real `Workspace` satisfies it. This is a consumer-side interface at an existing seam (`Workspace` is already an interface), and it is what lets tests use a small fake instead of the 20-method one.
+The real `Workspace` satisfies it, and tests fake only those seven methods. `Common` still exposes the full `Workspace`; the workflow feature doesn't use it, and a lint isn't worth adding for one feature.
 
-*Upstream-case edits.* The four edits go as follows:
-- **`ActionRunCustomCommand`:** claimed by the workflow feature's `HandleAction` when `Workflow != ""`.
-- **Session-title cache** (`pubsub.Event[session.Session]`): the feature observes the event and returns `handled=false`.
-- **Broken-command annotation and warning** (`userCommandsLoadedMsg`): annotation moves to where commands are produced. It currently happens inside `UI.loadCustomCommands` and `runConfigReload` via `annotateWorkflowCommands`; the decision is to add one `Workspace` method that returns custom commands with workflow problems attached, called from both load paths. The "broken workflow commands" warning comes from the feature observing the loaded message and returning a warning command.
-- **Prompt-history filtering** (`promptHistoryLoadedMsg`): workflow turns are dropped in `loadPromptHistory` (`history.go`) before the message is built.
+*Commands and history (the upstream-case edits).*
+- **Custom-command problems.**
+  - **Annotation:** a shared command loader (fork-owned) loads the custom commands, attaches workflow problems through a `Workspace` method, and builds a generic summary of commands with problems. Both load paths use it: `loadCustomCommands` and `runConfigReload`. The summary isn't workflow-specific, because `Problems` is a generic field on `CustomCommand`.
+  - **Initial load:** the loader returns the summary as its own warning command alongside `userCommandsLoadedMsg`, so the upstream case doesn't change.
+  - **Reload:** `reload_report.go` (fork-owned) keeps folding the summary into its single report and keeps error severity, as today.
+- **Prompt history:** `loadPromptHistory` (`history.go`) drops script-sent turns after either query, before it builds `promptHistoryLoadedMsg`. This is a UI-loader change only; `Workspace` results are unchanged.
+- **Session titles:** handled by `Observe`, as described above.
+- **Running a custom command:** handled by `RunCommand` through the routing hooks.
 
-Moving these out also means other clients never see broken commands or script turns.
 - **Declined: a hook that lets features rewrite a message before upstream sees it.** It is a second, subtler hook, and its effects are hard to follow.
 
-*Panels.* A feature can also implement the optional:
+*Panels.* `Panel()` returns a `panelView` built from the feature's single view-model:
+- `Lines() int`: the number of rows, independent of width.
+- `Render(width int) string`: exactly `Lines()` lines, each truncated to `width`.
 
-```go
-type panelFeature interface {
-	// Panel renders the feature's panel at width, or "" for none.
-	Panel(width int) string
-}
-```
+`pillsAreaHeight` sums `Lines()` over the panel features before the pills rectangle exists, as today. `renderPills` calls `Render` with the content width it computes today. A shared test asserts the `Render`/`Lines` contract at several widths. Panels are suppressed while drilled in, as today, by the pills code checking `isDrilledIn` before asking features.
+- **Declined: `pills.go` calling the workflow feature directly.** The next feature with a panel would edit `pills.go` again.
 
-`pills.go` stacks the panels from every feature that has one, and the height is the rendered line count. `Draw`'s structure is unchanged.
-- **Declined: `pills.go` calling the workflow feature directly.** It is simpler with one feature, but the next feature with a panel would edit `pills.go` again.
-- **The command palette's workflow entries:** these are currently fed through `SetWorkflowControls`. They become data the feature supplies through an optional `paletteFeature` with the same pattern, so `ui.go:5594` stops naming workflows.
+*Palette.* `paletteFeature.PaletteEntries()` returns the items the feature contributes. The commands dialog shows them where the workflow controls appear today (`dialog/commands.go:595-628`), in registration order, each feature keeping its own order. This replaces `SetWorkflowControls` and `dialog.WorkflowControls`.
 
-*Request tracking.* The workflow feature keeps open requests and answered IDs together, per run. An answered ID is dropped when its run finishes or is replaced, which fixes the unbounded `workflowAnswered`. Because the state lives in one place, the transitions (seen, open, answered, closed on finish) live in one place too.
+*Request tracking.* The workflow feature keeps open requests and answered IDs together, per run. An answered ID is dropped when its run finishes or is replaced, which fixes the unbounded `workflowAnswered`. The transitions (seen, open, answered, closed on finish) live in one type.
 
-*Testing.* The feature is tested through its surface with a fake host and a fake narrow workspace, and the existing dialog tests are unchanged. One `ui.go` integration test covers routing. Existing goldens are the guard against visible regressions.
+*Testing.* The feature's behaviour tests drive it through its surface, with the one internal retention assertion noted above. Integration tests through `UI.Update` cover routing and the cases listed in Success Criteria, and a benchmark covers fan-out. The existing goldens are kept as a regression guard. They render the panel directly, so they don't prove routing or layout on their own; the integration tests do.
 
 **Later adopters** (not in this change): drill-ins, branching, pins, reload, MCP palette, lazy MCP and OAuth, Herdr, jobs, and composer history. Each should move to this pattern in its own change. A later change might find the feature surface missing something, for example:
 - a draw slot outside pills, which the drill-in breadcrumb needs;
