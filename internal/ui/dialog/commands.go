@@ -420,10 +420,7 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 				Arguments: cmd.Arguments,
 				Skills:    cmd.Skills,
 				Location:  cmd.Location,
-				CommandID: cmd.ID,
-				Source:    cmd.Source,
-				Workflow:  cmd.Workflow,
-				Problems:  cmd.Problems,
+				Command:   cmd,
 			}
 			title := name
 			if cmd.ArgumentHint != "" {

@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -172,4 +173,25 @@ func TestDefaultCommandsListFeatureEntriesInOrderBeforeBrowseSkills(t *testing.T
 	require.Equal(t, at("feature_first")+1, at("feature_second"))
 	require.Equal(t, at("feature_second")+1, at("browse_skills"))
 	require.Equal(t, at("toggle_transparent")+1, at("feature_first"))
+}
+
+func TestUserCommandActionCarriesTheWholeCommand(t *testing.T) {
+	t.Parallel()
+
+	s := styles.TokyoNight()
+	com := &common.Common{Styles: &s, Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig()}}
+	cmd := commands.CustomCommand{
+		ID: "project:demo", Name: "demo", DisplayName: "demo-2", Description: "Demo", ArgumentHint: "[x]",
+		Content: "BODY", Source: "project", Location: "/p/COMMAND.md", Workflow: "/p/workflow.js",
+		Problems: []string{"broken"}, Skills: []string{"go-style"},
+	}
+	c, err := NewCommands(com, "", false, false, false, false, []commands.CustomCommand{cmd}, nil)
+	require.NoError(t, err)
+	c.setCommandItems(UserCommands)
+	item, ok := c.list.SelectedItem().(*CommandItem)
+	require.True(t, ok)
+	action, ok := item.Action().(ActionRunCustomCommand)
+	require.True(t, ok)
+	require.Equal(t, cmd, action.Command)
+	require.Equal(t, "demo-2", action.Name)
 }

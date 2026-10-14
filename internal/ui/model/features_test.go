@@ -199,7 +199,7 @@ func TestPaletteCommandRunsThroughItsFeature(t *testing.T) {
 
 	u, f := newFeatureTestUI(t)
 	u.dialog.OpenDialog(&stubDialog{id: dialog.CommandsID, action: dialog.ActionRunCustomCommand{
-		Name: "fake", Content: "BODY", CommandID: "fake:cmd",
+		Name: "fake", Content: "BODY", Command: commands.CustomCommand{ID: "fake:cmd", Name: "fake", Content: "BODY"},
 	}})
 	u.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter})
 
@@ -327,4 +327,19 @@ func TestASlashCommandAFeatureRunsIsNotSentAsAPrompt(t *testing.T) {
 
 	require.Equal(t, []string{"fake|some args"}, f.commands)
 	require.Empty(t, u.com.Workspace.(*workflowTestWorkspace).runs, "a command run without a follow-up command is still handled")
+}
+
+func TestAPaletteCommandNoFeatureRunsLeavesThePaletteToUpstream(t *testing.T) {
+	t.Parallel()
+
+	u, f := newFeatureTestUI(t)
+	u.dialog.OpenDialog(&stubDialog{id: dialog.CommandsID})
+	u.dialog.OpenDialog(&stubDialog{id: "front", action: dialog.ActionRunCustomCommand{
+		Name: "other", Content: "BODY", Command: commands.CustomCommand{ID: "other", Name: "other", Content: "BODY"},
+	}})
+	u.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	require.Empty(t, f.commands)
+	require.True(t, u.dialog.ContainsDialog(dialog.CommandsID), "only a feature that runs the command closes the palette")
+	require.False(t, u.dialog.ContainsDialog("front"), "upstream handles it as a prompt command")
 }

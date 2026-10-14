@@ -624,10 +624,9 @@ func TestWorkflowCommandFromPaletteThroughUpdate(t *testing.T) {
 	t.Parallel()
 
 	f := newWorkflowUIFixture(t)
-	f.u.dialog.OpenDialog(&stubDialog{id: dialog.CommandsID, action: dialog.ActionRunCustomCommand{
-		Name: "demo", Content: "BODY $ARGUMENTS", CommandID: "project:demo", Source: "project",
-		Workflow: "/proj/demo/workflow.js", Arguments: []commands.Argument{{ID: "X"}},
-	}})
+	f.u.customCommands[0].Arguments = []commands.Argument{{ID: "X"}}
+	f.press(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	f.press(tea.KeyPressMsg{Code: tea.KeyTab})
 	f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	require.False(t, f.u.dialog.HasDialogs(), "the palette closes and no arguments dialog opens")

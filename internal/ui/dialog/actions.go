@@ -108,12 +108,10 @@ type (
 		Skills    []string          // Skill names to preload.
 		Location  string            // Path to the command's COMMAND.md.
 		Args      map[string]string // Actual argument values
-		// CommandID, Source, Workflow and Problems describe a workflow
-		// command; Workflow is empty for prompt commands.
-		CommandID string
-		Source    string
-		Workflow  string
-		Problems  []string
+		// Command is the whole command when the palette runs it, so a
+		// feature that runs commands sees what the slash path sees. It is
+		// zero for actions built elsewhere.
+		Command commands.CustomCommand
 	}
 	// ActionRunMCPPrompt is a message to run a custom command.
 	ActionRunMCPPrompt struct {
