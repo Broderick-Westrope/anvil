@@ -743,23 +743,26 @@ func TestServiceKeepsAScriptChosenSessionTitle(t *testing.T) {
 
 func TestServiceApprovalListsFilesRemovedSinceTheLastApproval(t *testing.T) {
 	h := newServiceHarness(t, false)
-	writeFile(t, filepath.Join(h.dir, "one.md"), "one")
-	writeFile(t, filepath.Join(h.dir, "two.md"), "two")
+	for _, name := range []string{"a-gone.md", "b-kept.md", "c-gone.md"} {
+		writeFile(t, filepath.Join(h.dir, name), name)
+	}
 	path := h.write(t, `function main() { return 1 }`)
 	h.start(t, path, "")
 	req := h.next(t, workflowhost.EventApproval)
 	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
 	require.Equal(t, workflowhost.StatusCompleted, h.next(t, workflowhost.EventFinished).Status)
 
-	require.NoError(t, os.Remove(filepath.Join(h.dir, "one.md")))
-	require.NoError(t, os.Remove(filepath.Join(h.dir, "two.md")))
+	require.NoError(t, os.Remove(filepath.Join(h.dir, "a-gone.md")))
+	require.NoError(t, os.Remove(filepath.Join(h.dir, "c-gone.md")))
 	h.start(t, path, "")
 	req = h.next(t, workflowhost.EventApproval)
 	var got []string
 	for _, f := range req.Approval.Files {
 		got = append(got, f.Path+" "+string(f.Status))
 	}
-	require.Equal(t, []string{"workflow.js unchanged", "one.md removed", "two.md removed"}, got)
+	require.Equal(t, []string{
+		"workflow.js unchanged", "a-gone.md removed", "b-kept.md unchanged", "c-gone.md removed",
+	}, got, "removed files sort among the current ones")
 	require.NoError(t, h.svc.Respond(req.RequestID, "deny"))
 	require.Equal(t, workflowhost.StatusDenied, h.next(t, workflowhost.EventFinished).Status)
 }
@@ -1004,7 +1007,16 @@ func TestServiceShutdownBetweenApprovalAndStartInterruptsTheRun(t *testing.T) {
 	}, 5*time.Second, time.Millisecond)
 	close(release)
 
-	done := h.next(t, workflowhost.EventFinished)
+	var done workflowhost.Event
+	for done.Kind != workflowhost.EventFinished {
+		select {
+		case ev := <-h.events:
+			done = ev.Payload
+			require.NotEqual(t, workflowhost.EventState, done.Kind, "the run never starts")
+		case <-time.After(10 * time.Second):
+			t.Fatal("no finished event")
+		}
+	}
 	require.Equal(t, workflowhost.StatusInterrupted, done.Status, done.Message)
 	require.Equal(t, "interrupted: agents reloaded", done.Message)
 	require.NoError(t, <-shutdown)
