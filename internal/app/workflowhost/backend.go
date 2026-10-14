@@ -77,12 +77,20 @@ func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, err
 }
 
 func (b *backend) NewSession(ctx context.Context, title string) (string, error) {
-	if title == "" {
+	// A title the script chose is kept; without one, the session starts as
+	// "/cmd" and is auto-titled after its first turn like any session.
+	chosen := title != ""
+	if !chosen {
 		title = "/" + b.base.Command
 	}
 	s, err := b.svc.deps.Sessions.Create(ctx, title, b.svc.deps.WorkingDir)
 	if err != nil {
 		return "", err
+	}
+	if chosen {
+		if err := b.svc.deps.Sessions.Rename(ctx, s.ID, title, true); err != nil {
+			return "", fmt.Errorf("keep session title: %w", err)
+		}
 	}
 	return s.ID, nil
 }

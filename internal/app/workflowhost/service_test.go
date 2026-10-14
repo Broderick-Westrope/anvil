@@ -706,3 +706,23 @@ func TestServiceFreesTheSessionBeforeReportingFinished(t *testing.T) {
 		h.next(t, workflowhost.EventFinished)
 	}
 }
+
+func TestServiceKeepsAScriptChosenSessionTitle(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "ok"}, branchfixture.Response{Text: "Generated Title"})
+	path := h.write(t, `function main() {
+  const s = session.new({ title: "/demo second" })
+  s.turn("hello")
+  return s.id
+}`)
+	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+	var id string
+	require.NoError(t, json.Unmarshal(done.Result, &id))
+	h.fixture.WaitBackgroundJobs()
+	s, err := h.fixture.Sessions.Get(h.fixture.Context, id)
+	require.NoError(t, err)
+	require.Equal(t, "/demo second", s.Title)
+	require.True(t, s.TitleIsCustom)
+}
