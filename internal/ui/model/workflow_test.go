@@ -30,7 +30,6 @@ type fakeHost struct {
 	created     []string
 	navigated   []string
 	drills      []util.AgentDrillInMsg
-	drilledIn   bool
 	overlay     *dialog.Overlay
 	notes       []notification.Notification
 	relayouts   int
@@ -57,19 +56,16 @@ func (h *fakeHost) Navigate(sessionID string) tea.Cmd {
 	if h.session != nil && h.session.ID == sessionID {
 		return nil
 	}
-	h.drilledIn = false
 	h.navigated = append(h.navigated, sessionID)
 	h.session = &session.Session{ID: sessionID}
 	return nil
 }
 
 func (h *fakeHost) DrillInto(sessionID, label string) tea.Cmd {
-	h.drilledIn = true
 	h.drills = append(h.drills, util.AgentDrillInMsg{SessionID: sessionID, Label: label})
 	return nil
 }
 
-func (h *fakeHost) IsDrilledIn() bool        { return h.drilledIn }
 func (h *fakeHost) Dialogs() *dialog.Overlay { return h.overlay }
 
 func (h *fakeHost) Notify(n notification.Notification) tea.Cmd {

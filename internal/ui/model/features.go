@@ -210,8 +210,6 @@ type featureHost interface {
 	// that delivers util.AgentDrillInMsg for sessionID, labelled label,
 	// asynchronously.
 	DrillInto(sessionID, label string) tea.Cmd
-	// IsDrilledIn reports whether a drill-in is on screen.
-	IsDrilledIn() bool
 	// Dialogs is the dialog overlay.
 	Dialogs() *dialog.Overlay
 	// Notify sends a desktop notification under UI's notification policy.
@@ -254,8 +252,6 @@ func (h uiHost) DrillInto(sessionID, label string) tea.Cmd {
 	h.m.clearDrillStack()
 	return util.CmdHandler(util.AgentDrillInMsg{SessionID: sessionID, Label: label})
 }
-
-func (h uiHost) IsDrilledIn() bool { return h.m.isDrilledIn() }
 
 func (h uiHost) Dialogs() *dialog.Overlay { return h.m.dialog }
 
