@@ -336,6 +336,24 @@ func (m *Chat) MessageItems() []chat.MessageItem {
 
 // SetMessages sets the chat messages to the provided list of message items.
 func (m *Chat) SetMessages(msgs ...chat.MessageItem) {
+	m.setItems(msgs)
+	m.ScrollToBottom()
+}
+
+// ReplaceMessages swaps in new items for the same view, keeping where it's
+// scrolled to, or following the bottom if it was.
+func (m *Chat) ReplaceMessages(msgs ...chat.MessageItem) {
+	offset, follow := m.list.Offset(), m.follow
+	m.setItems(msgs)
+	if follow {
+		m.ScrollToBottom()
+		return
+	}
+	m.list.ScrollToTop()
+	m.list.ScrollBy(offset)
+}
+
+func (m *Chat) setItems(msgs []chat.MessageItem) {
 	m.idInxMap = make(map[string]int)
 	m.pausedAnimations = make(map[string]struct{})
 
@@ -351,7 +369,6 @@ func (m *Chat) SetMessages(msgs ...chat.MessageItem) {
 		items[i] = msg
 	}
 	m.list.SetItems(items...)
-	m.ScrollToBottom()
 }
 
 // AppendMessages appends a new message item to the chat list.

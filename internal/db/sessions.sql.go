@@ -291,7 +291,7 @@ func (q *Queries) ListPinnedSessions(ctx context.Context) ([]Session, error) {
 const listSessionsByWorkflowRun = `-- name: ListSessionsByWorkflowRun :many
 SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
 FROM sessions
-WHERE workflow_run_id = ?
+WHERE workflow_run_id = ? AND workflow_run_id != ''
 ORDER BY workflow_seq ASC, created_at ASC
 `
 

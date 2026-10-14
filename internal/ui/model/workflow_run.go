@@ -108,11 +108,14 @@ func (m *UI) applyWorkflowRunView(msg workflowRunViewLoadedMsg) {
 func (m *UI) showWorkflowRunRows(entry *drillInEntry, view workflowhost.RunView) {
 	selected := entry.chat.Selected()
 	command := strings.TrimPrefix(entry.label, "/")
-	entry.chat.SetMessages(chat.BuildWorkflowRunItems(m.com.Styles, command, view)...)
+	rows := chat.BuildWorkflowRunItems(m.com.Styles, command, view)
 	if selected < 0 {
+		entry.chat.SetMessages(rows...)
 		entry.chat.SelectFirst()
 		entry.chat.ScrollToTop()
+		entry.chat.SetFollow(false)
 		return
 	}
+	entry.chat.ReplaceMessages(rows...)
 	entry.chat.SetSelected(min(selected, entry.chat.Len()-1))
 }

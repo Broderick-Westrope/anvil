@@ -223,3 +223,30 @@ func TestWorkflowRunNodeShowsWhatACompletedRunReturned(t *testing.T) {
 
 	require.Contains(t, ansi.Strip(f.node(t).Render(200)), `completed: {"outcome":"stopped","reason":"cap hit"} · 1m0s`)
 }
+
+func TestWorkflowRunViewKeepsItsScrollWhenTheRunMovesOn(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	long := runningView()
+	for i := range 30 {
+		long.Phases = append(long.Phases, workflowhost.RunPhase{Step: "round", Detail: time.Duration(i).String()})
+	}
+	f.ws.views = map[string]workflowhost.RunView{"run-1": long}
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+	f.run(cmd)
+	view := f.u.drillStack[0].chat
+	require.Zero(t, view.list.Offset(), "a run view opens at its top")
+	view.ScrollBy(5)
+	view.SetSelected(8)
+	before := view.list.Offset()
+
+	more := long
+	more.Phases = append(append([]workflowhost.RunPhase{}, long.Phases...), workflowhost.RunPhase{Step: "review"})
+	f.ws.views["run-1"] = more
+	f.event(workflowhost.Event{Kind: workflowhost.EventChanged, RunID: "run-1", Command: "demo", SessionID: "sess-1"})
+
+	require.Equal(t, len(more.Phases)+6-2, view.Len())
+	require.Equal(t, before, view.list.Offset())
+	require.Equal(t, 8, view.Selected())
+}

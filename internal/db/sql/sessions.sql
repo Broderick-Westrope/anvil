@@ -118,5 +118,5 @@ WHERE id = ?;
 -- name: ListSessionsByWorkflowRun :many
 SELECT *
 FROM sessions
-WHERE workflow_run_id = ?
+WHERE workflow_run_id = ? AND workflow_run_id != ''
 ORDER BY workflow_seq ASC, created_at ASC;

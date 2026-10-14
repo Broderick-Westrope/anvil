@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pressly/goose/v3"
@@ -157,4 +158,27 @@ func queryLinks(t *testing.T, conn *sql.DB, query string) map[string]*string {
 	}
 	require.NoError(t, rows.Err())
 	return links
+}
+
+func TestListSessionsByWorkflowRunUsesItsIndex(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, initGoose())
+	conn, err := openDB(filepath.Join(t.TempDir(), "anvil.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	require.NoError(t, goose.Up(conn, "migrations"))
+
+	rows, err := conn.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+listSessionsByWorkflowRun, "run-1")
+	require.NoError(t, err)
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Err())
+	require.Contains(t, strings.Join(plan, "\n"), "idx_sessions_workflow_run", "a run view reload must not scan every session")
 }
