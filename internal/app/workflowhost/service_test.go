@@ -1169,3 +1169,70 @@ function main() {
 	answer := view.Phases[2].Items
 	require.Equal(t, []workflowhost.RunItem{{Kind: workflowhost.RunItemAsk, Question: "ship it?", Answer: "yes", Status: workflowhost.StatusCompleted}}, answer)
 }
+
+// busyInvoker starts a turn in the invoking session that runs until the
+// returned release is called.
+func (h *serviceHarness) busyInvoker(t *testing.T) (release func(), done <-chan error) {
+	t.Helper()
+	require.NoError(t, h.fixture.Sessions.Rename(h.fixture.Context, h.session, "invoker", true))
+	started, unblock := make(chan struct{}), make(chan struct{})
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "still talking", Started: started, Release: unblock})
+	finished := make(chan error, 1)
+	go func() {
+		_, err := h.fixture.Coordinator.Run(h.fixture.Context, h.session, "hello")
+		finished <- err
+	}()
+	select {
+	case <-started:
+	case <-h.fixture.Context.Done():
+		t.Fatal(h.fixture.Context.Err())
+	}
+	return sync.OnceFunc(func() { close(unblock) }), finished
+}
+
+func TestServiceMarksTheRunAfterTheInvokersTurnInFlight(t *testing.T) {
+	h := newServiceHarness(t, true)
+	release, turnDone := h.busyInvoker(t)
+	h.start(t, h.write(t, `function main() { return 1 }`), "")
+	release()
+	require.NoError(t, <-turnDone)
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status)
+
+	view, _, err := h.svc.RunView(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+	marker, err := h.fixture.Messages.Get(h.fixture.Context, view.MarkerMessageID)
+	require.NoError(t, err)
+	reply, err := h.fixture.Messages.Get(h.fixture.Context, marker.ParentMessageID)
+	require.NoError(t, err)
+	require.Equal(t, message.Assistant, reply.Role, "the marker follows the turn that was running, on the same branch")
+	require.Equal(t, "still talking", reply.Content().Text)
+	invoker, err := h.fixture.Sessions.Get(h.fixture.Context, h.session)
+	require.NoError(t, err)
+	require.Equal(t, marker.ID, invoker.LeafMessageID)
+}
+
+func TestServiceAbortEndsARunStillWaitingToBeMarked(t *testing.T) {
+	h := newServiceHarness(t, true)
+	release, turnDone := h.busyInvoker(t)
+	t.Cleanup(release)
+	h.start(t, h.write(t, `function main() { return 1 }`), "")
+	require.Eventually(t, func() bool { return h.svc.Abort(h.session) == nil }, 5*time.Second, 10*time.Millisecond)
+
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusAborted, done.Status)
+	run, ok, err := h.store.GetRun(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Empty(t, run.MarkerMessageID)
+	require.Equal(t, workflowhost.StatusAborted, run.Status)
+	require.Empty(t, h.fixture.Coordinator.QueuedPromptsList(h.session))
+
+	release()
+	require.NoError(t, <-turnDone)
+	invoker, err := h.fixture.Sessions.Get(h.fixture.Context, h.session)
+	require.NoError(t, err)
+	leaf, err := h.fixture.Messages.Get(h.fixture.Context, invoker.LeafMessageID)
+	require.NoError(t, err)
+	require.NotEqual(t, message.MessageTypeWorkflowRun, leaf.MessageType)
+}

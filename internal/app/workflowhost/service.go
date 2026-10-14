@@ -202,6 +202,9 @@ type activeRun struct {
 	id      string
 	command string
 	run     *workflow.Run
+	// abortStart cancels the wait to mark the run in its session, which
+	// happens before the script runs and so before Run.Abort can reach it.
+	abortStart context.CancelCauseFunc
 }
 
 // NewService creates a Service. Runs live as long as lifetime.
@@ -380,10 +383,12 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 		Tmpdir:            s.deps.Store.Tmpdir(runID),
 		References:        current.references(),
 	})
+	startCtx, abortStart := context.WithCancelCause(ctx)
+	defer abortStart(nil)
 	s.mu.Lock()
 	stopping, reason := s.stopping, s.stopReason
 	if !stopping {
-		s.runs[inv.SessionID] = &activeRun{id: runID, command: inv.CommandName, run: run}
+		s.runs[inv.SessionID] = &activeRun{id: runID, command: inv.CommandName, run: run, abortStart: abortStart}
 	}
 	s.mu.Unlock()
 	if stopping {
@@ -399,8 +404,10 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	b.publishState(ctx, Event{Kind: EventState, State: StateStarted})
 
 	var result json.RawMessage
-	err = s.writeMarker(ctx, runID, inv)
-	if err != nil {
+	err = s.writeMarker(startCtx, runID, inv)
+	if cause := context.Cause(startCtx); err != nil && errors.Is(cause, workflow.ErrAborted) {
+		err = cause
+	} else if err != nil {
 		err = fmt.Errorf("mark the run in its session: %w", err)
 	} else {
 		result, err = run.Execute(ctx, workflow.Input{Raw: inv.Raw})
@@ -414,30 +421,28 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 }
 
 // writeMarker adds the run's marker to the invoking session, where the UI
-// shows the run as a node. The session is held while it's written: a turn
-// in flight appends from its own leaf, so a marker written beside it would
-// land on a side branch. Once the hold has waited the session out, the
-// branch up to the marker is settled; that's the run's start boundary.
+// shows the run as a node. It's written as work in the session's queue,
+// after anything already queued: a turn in flight appends from its own
+// leaf, so a marker written beside it would land on a side branch. Once
+// the queue reaches it, the branch up to the marker is settled; that's the
+// run's start boundary.
 func (s *Service) writeMarker(ctx context.Context, runID string, inv Invocation) error {
-	release, err := s.deps.Coordinator.Hold(ctx, []string{inv.SessionID})
-	if err != nil {
-		return err
-	}
-	defer release()
-	invoker, err := s.deps.Sessions.Get(ctx, inv.SessionID)
-	if err != nil {
-		return err
-	}
-	marker, err := s.deps.Messages.Create(ctx, inv.SessionID, message.CreateMessageParams{
-		Role:            message.System,
-		ParentMessageID: invoker.LeafMessageID,
-		MessageType:     message.MessageTypeWorkflowRun,
-		Parts:           []message.ContentPart{message.WorkflowRunContent{RunID: runID, Command: inv.CommandName, Input: inv.Raw}},
+	return s.deps.Coordinator.RunInSession(ctx, inv.SessionID, func(ctx context.Context) error {
+		invoker, err := s.deps.Sessions.Get(ctx, inv.SessionID)
+		if err != nil {
+			return err
+		}
+		marker, err := s.deps.Messages.Create(ctx, inv.SessionID, message.CreateMessageParams{
+			Role:            message.System,
+			ParentMessageID: invoker.LeafMessageID,
+			MessageType:     message.MessageTypeWorkflowRun,
+			Parts:           []message.ContentPart{message.WorkflowRunContent{RunID: runID, Command: inv.CommandName, Input: inv.Raw}},
+		})
+		if err != nil {
+			return err
+		}
+		return s.deps.Store.SetMarker(ctx, runID, marker.ID)
 	})
-	if err != nil {
-		return err
-	}
-	return s.deps.Store.SetMarker(ctx, runID, marker.ID)
 }
 
 // approve asks the user to approve the current bundle unless this exact
@@ -539,26 +544,29 @@ func (s *Service) Respond(requestID, answer string) error {
 // Pause, Resume and Abort control the run that involves sessionID, which
 // may be its invoking session or any session it created.
 func (s *Service) Pause(sessionID string) error {
-	return s.control(sessionID, StatePaused, func(r *workflow.Run) { r.Pause() })
+	return s.control(sessionID, StatePaused, func(a *activeRun) { a.run.Pause() })
 }
 
 // Resume continues a paused run.
 func (s *Service) Resume(sessionID string) error {
-	return s.control(sessionID, StateResumed, func(r *workflow.Run) { r.Resume() })
+	return s.control(sessionID, StateResumed, func(a *activeRun) { a.run.Resume() })
 }
 
 // Abort cancels a run's in-flight work and ends it as aborted. Its
 // EventFinished reports the outcome, so it publishes no state.
 func (s *Service) Abort(sessionID string) error {
-	return s.control(sessionID, "", func(r *workflow.Run) { r.Abort() })
+	return s.control(sessionID, "", func(a *activeRun) {
+		a.abortStart(workflow.ErrAborted)
+		a.run.Abort()
+	})
 }
 
-func (s *Service) control(sessionID string, state RunState, fn func(*workflow.Run)) error {
+func (s *Service) control(sessionID string, state RunState, fn func(*activeRun)) error {
 	invoker, active := s.find(sessionID)
 	if active == nil {
 		return ErrNoRun
 	}
-	fn(active.run)
+	fn(active)
 	if state != "" {
 		s.events.PublishMustDeliver(context.WithoutCancel(s.lifetime), pubsub.UpdatedEvent, Event{
 			Kind: EventState, RunID: active.id, Command: active.command, SessionID: invoker, State: state,

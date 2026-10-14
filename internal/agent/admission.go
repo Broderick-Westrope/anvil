@@ -44,6 +44,8 @@ type submission struct {
 	ctx context.Context
 	// continuation marks work queued by continueWith.
 	continuation bool
+	// silent marks work that isn't a prompt, which queued() leaves out.
+	silent bool
 }
 
 type submissionResult struct {
@@ -401,7 +403,9 @@ func (a *admission) queued(id string) []string {
 	defer a.mu.Unlock()
 	var prompts []string
 	for _, job := range a.queues[id] {
-		prompts = append(prompts, job.prompt)
+		if !job.silent {
+			prompts = append(prompts, job.prompt)
+		}
 	}
 	return prompts
 }

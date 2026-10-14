@@ -75,6 +75,11 @@ type Coordinator interface {
 	// If the session is busy, the turn queues behind the work in progress;
 	// messages queued after it run once it finishes.
 	RunTurn(ctx context.Context, sessionID, prompt string) (*fantasy.AgentResult, error)
+	// RunInSession runs fn in sessionID's queue, in order with its turns:
+	// it waits for work ahead of it and nothing else starts in the session
+	// until it returns. It's for writes that must land on the session's
+	// current branch, such as a marker message.
+	RunInSession(ctx context.Context, sessionID string, fn func(ctx context.Context) error) error
 	// RunWorkflowAgent runs a fresh, isolated subagent for a workflow.
 	RunWorkflowAgent(ctx context.Context, call WorkflowAgentCall) (WorkflowAgentOutput, error)
 	// HasAgent reports whether name is a configured agent other than the
@@ -1281,6 +1286,14 @@ func (c *coordinator) HasAgent(name string) bool {
 }
 
 // Hold implements Coordinator.
+// RunInSession implements Coordinator.
+func (c *coordinator) RunInSession(ctx context.Context, sessionID string, fn func(ctx context.Context) error) error {
+	_, err := c.admission.submitAwait(ctx, sessionID, submission{silent: true, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		return nil, fn(ctx)
+	}})
+	return err
+}
+
 func (c *coordinator) Hold(ctx context.Context, sessionIDs []string) (release func(), err error) {
 	return c.admission.hold(ctx, sessionIDs)
 }

@@ -78,6 +78,22 @@ func (v RunView) Current() (step, detail string) {
 	return last.Step, last.Detail
 }
 
+// WaitingForUser reports whether a running run is waiting on a question
+// to the user.
+func (v RunView) WaitingForUser() bool {
+	if v.Status != StatusRunning {
+		return false
+	}
+	for _, p := range v.Phases {
+		for _, item := range p.Items {
+			if item.Kind == RunItemAsk && item.Status == StatusRunning {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // RunView loads the view of a run, reporting false when there's no such
 // run.
 func (s *Service) RunView(ctx context.Context, runID string) (RunView, bool, error) {
