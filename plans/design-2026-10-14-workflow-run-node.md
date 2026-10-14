@@ -97,7 +97,7 @@ Out of scope:
 
 ### The marker message
 
-When a run starts (`Service.Start`, before `main`), the host creates one
+When a run starts (after approval, before `main`), the host creates one
 message in the invoking session:
 
 - `message_type = 'workflow_run'`, role `system`, with a new content part
@@ -105,9 +105,23 @@ message in the invoking session:
 - `FilterMetadataMessage` drops it from model context, like `mcp_toggle`.
 - `ExtractMessageItems` renders it as a `WorkflowRunMessageItem` instead of
   dropping system messages. `/tree` shows it as a labelled entry.
-- It's created through `message.Create`, so it becomes the leaf. Code that
-  assumes the leaf is a model-visible message (`agent/run_state.go:43`,
-  `app/bouncer.go:259`) must skip it, as it skips other metadata types.
+
+**It's written through the session's admission queue,** not straight
+through `message.Create`. A turn in flight keeps its own leaf and appends
+from it (`agent/agent.go:317`, `agent/turn.go:400`), so a marker inserted
+beside it would land on a sibling branch and vanish from the transcript.
+The host submits an awaited admission entry that only appends the marker,
+so it queues behind anything running in the invoker, exactly like a typed
+message would. The run doesn't start `main` until the marker exists.
+
+The run row records `marker_message_id`, written after the marker is
+created and before `main` runs. A run with no marker (Anvil died in
+between) is marked interrupted at startup like any other dead run.
+
+The marker becomes the leaf, and the moment it's written is the run's
+**start boundary**: the invoker is idle (the admission queue guarantees
+it), so the branch up to the marker is complete and settled. Forking uses
+that boundary (see *Forking*).
 
 The marker is the durable session → run link; today the only link is
 `workflow_runs.invoking_session_id` and the text of `<workflow_turn>`
@@ -123,9 +137,18 @@ Two nullable columns on `sessions`:
   (`session.fork`, `session.new` or `agent`).
 
 Every run-owned session also gets `parent_session_id = invoking session`, so
-it stays out of session lists and its cost rolls up to the invoker the way
-subagent costs already do. That changes `session.new` sessions, which are
-top-level today.
+it stays out of session lists. That changes `session.new` sessions, which
+are top-level today. Subagent sessions are already children of the
+invoker.
+
+**Cost.** Rollup today happens only in `inChildSession`, after a subagent
+finishes (`agent/coordinator.go:1577-1610`), not because of the parent
+column. That stays for subagents. Orchestrator sessions keep their own
+cost and don't roll up: a builder you keep talking to after hand-over
+would otherwise inflate the invoker's cost forever. The node and the run
+view show the run's total, summed over sessions with its
+`workflow_run_id`. Copied history carries no cost, since cost lives on the
+session, not on messages.
 
 The creating primitive decides what a session is: `session.fork` and
 `session.new` make **orchestrator sessions** (typeable, run by the
@@ -133,12 +156,20 @@ orchestrator agent); `agent` makes a **subagent session** (read-only, run by
 the named agent). No `kind` column is needed: `workflow_seq` points at the
 event, whose args name the agent.
 
-Child-session guards that assume "child means subagent" need the
-distinction:
+Code that assumes "child means subagent" needs the distinction. A
+run-owned orchestrator session is treated as a root for each of these:
 - `resolveSession` (`app/app.go:284`) refuses to continue a child session.
   It should allow run-owned orchestrator sessions.
 - The job waker (`job_waker.go:209`) skips child sessions. It should wake
   run-owned orchestrator sessions, since builders own background jobs.
+- The permission bouncer climbs `ParentSessionID` to the root for the
+  user's intent (`app/bouncer.go:234-241`). It must stop at an orchestrator
+  session, so what you type into a builder is the intent for that builder
+  and its subagents, not the invoker's older conversation. Subagent
+  sessions keep climbing to their owning orchestrator.
+
+One helper, `session.IntentRoot` (or similar), answers "which session's
+conversation governs this one" so the three places can't disagree.
 
 Recording `workflow_seq` also closes a gap the explorer found: agent child
 session ids are only published in memory today, so after a restart nothing
@@ -149,12 +180,21 @@ ties a subagent session to the call (or `parallel()` slot) that made it.
 `s.fork({title, seed})` is a method on a session handle, recorded as a
 `session.fork` primitive. The backend gets `Fork(ctx, source, leaf, title)`.
 
-- **What's copied:** the source's branch path, root to leaf, from
-  `GetBranchPath`. The leaf is the source's leaf **when the run started**,
-  recorded on the run (`workflow_runs.invoking_leaf_id`), not its leaf at
-  fork time. So every approach of `/build` starts from the conversation you
-  had before invoking it, even if you've chatted in your session since.
-  Forking a session the run created uses that session's current leaf.
+- **What's copied from the invoker:** its branch path up to the run's start
+  boundary, the marker's parent. That path was settled when the marker was
+  written (the invoker was idle), and nothing edits finished messages, so
+  every approach of `/build` gets the same conversation you had before
+  invoking it, even if you've chatted in your session since. The fork
+  stops at the marker's parent; it never copies the marker or anything
+  after it.
+- **What's copied from a run-created session:** its path at the moment of
+  the fork. The fork goes through that session's admission queue, so it
+  waits out a turn in flight and copies a settled path. The event records
+  the source and the leaf it copied to, so a replay forks the same thing.
+- **Incomplete exchanges:** the copy drops a trailing assistant message that
+  never finished, and a trailing tool call with no result, so the fork
+  never starts mid-exchange. With idle sources this is a guard, not the
+  common case.
 - **How:** a new `message.Service.CopyBranch(ctx, path, toSession)` inserts
   the messages in order in one transaction, giving each a new id and
   chaining `parent_message_id`. It preserves parts as stored (no extra
@@ -234,10 +274,14 @@ A new drill-in level, beside the session, tool and thinking levels:
 - **Navigation:** ↑/↓ selects any item with a session; → / `l` / enter /
   click drills into it; ← / `h` goes back. Pause and abort keys work
   anywhere in the view.
-- **Data:** on drill-in, load the run row, its events and its sessions
-  (`ListSessionsByWorkflowRun`), and build the tree. While the run is live,
-  host events append to it; on any doubt (a dropped event), reload from the
-  database.
+- **Data:** on drill-in, a `tea.Cmd` loads the run row, its events and its
+  sessions (`ListSessionsByWorkflowRun`) and returns a snapshot; the tree is
+  built from it in `UI.Update`. While the run is live, host events carry
+  the run id and the event `seq` they follow from, and session creation
+  publishes its own event. An event whose `seq` doesn't follow the last one
+  applied triggers a reload, so a dropped event can't leave the view wrong.
+  Pause state is persisted on the run row (`workflow_runs.paused`) rather
+  than only published, so it's in the snapshot.
 
 `WorkflowEntry` and `WorkflowTranscript` in `dialog/workflow_run.go` are
 replaced by a run-view model in `internal/ui/model` that both the node and
@@ -246,17 +290,27 @@ the view read.
 ### Typing into a drilled-in session
 
 When the viewed drill-in level is a run-owned orchestrator session, the
-editor is shown and sends go to that session:
+editor is shown and sends go to that session. The UI gets one explicit
+**editable session** target, replacing every place that assumes
+`m.session`:
 
+- It's the root session, or the drilled-in orchestrator session once its
+  session has loaded. Until then the editor is shown but sending is
+  disabled; `viewedSession()` falls back to the root while loading
+  (`ui.go:671`), which must never become a send target.
+- `sendMessage`, slash commands, cancel (`AgentCancel`), busy state
+  (`IsSessionBusy`), prompt history, queue count, todos and composer
+  reporting (`composer_state.go:22`, which the job waker reads to decide
+  whether it may wake a session, `job_waker.go:177-181`) all use the
+  editable session.
+- Drafts and attachments are kept per session, so drilling in and out
+  doesn't carry a half-typed message to the wrong session.
 - `generateLayout`, the drill-in blur, and the Tab and focus guards allow the
-  editor for that level only.
-- `sendMessage` targets `viewedSession()` instead of `m.session`, and runs
-  through `Coordinator.Run`, which already uses the orchestrator agent.
-  Busy state and cancel use `IsSessionBusy(viewed)` and
-  `AgentCancel(viewed)`.
-- Your messages queue alongside the script's turns through the existing
-  admission queue, which already keeps each awaited turn's result its own.
-- Prompt history, queue count and todos read the viewed session.
+  editor when the editable session is a drilled-in one.
+- Sends run through `Coordinator.Run`, which already uses the orchestrator
+  agent. Your messages queue alongside the script's turns through the
+  existing admission queue, which already keeps each awaited turn's result
+  its own.
 - Subagent sessions keep today's read-only drill-in.
 
 After hand-over, you keep talking to the builder by drilling into it. The
@@ -266,6 +320,14 @@ builder's session is reachable from your session's node indefinitely.
 
 - `workflow.focus()` is removed from the prelude and the engine, so calling
   it throws. The engine is beta and `/build` is the only caller.
+- **The invoking session belongs to you.** `session.current()` still
+  returns a handle, but only to fork from: `.turn()` on it throws, telling
+  the script to fork it. The invoker leaves the run's session set, so
+  `workflow.exclusive` no longer holds it and you can keep using it while
+  the run works.
+- Pause and abort address a **run id**, not a session. Today they resolve
+  the run by session (`workflowhost/service.go:521`), which would pick the
+  newest run when you act on an older run's node.
 - The workflow status bar (`renderWorkflowPanel`, `workflowPanelHeight`), the
   `WorkflowAgent`, `WorkflowGo` and `WorkflowRun` keys, the elsewhere warning
   and `dialog.WorkflowRun` go. `WorkflowPause` and `WorkflowAbort` move to
@@ -292,10 +354,12 @@ in this design blocks resume.
 
 **Implementation order:**
 1. Schema and store: `sessions.workflow_run_id`, `workflow_seq`,
-   `workflow_runs.invoking_leaf_id`, `ListSessionsByWorkflowRun`, the
-   timestamp-preserving message insert.
+   `workflow_runs.marker_message_id` and `paused`,
+   `ListSessionsByWorkflowRun`, the timestamp-preserving message insert.
 2. Run-owned sessions: parent, run and seq on `session.new` and `agent`
-   sessions; the `resolveSession` and job-waker distinctions.
+   sessions; the intent-root helper used by `resolveSession`, the job
+   waker and the bouncer; run-total cost; `session.current()` as
+   fork-only; pause and abort by run id.
 3. `CopyBranch` and `s.fork()` through engine, backend and prelude (and the
    claude-essentials fake runtime).
 4. The marker message: type, content part, context filtering, leaf
@@ -316,6 +380,10 @@ owning its sessions), **Run View** (the drill-in showing one run) and
 that introduces them. Record "run-owned sessions are child sessions of the
 invoker" as an ADR when step 2 lands: it changes what a child session means
 and is hard to reverse.
+
+**Existing runs:** runs started before this lands have no marker and no
+run-owned session links. They don't get a node; their sessions stay where
+they are. The engine is beta, so no backfill.
 
 **Open Questions:**
 - Should the node show "waiting for you" with the question's first line
