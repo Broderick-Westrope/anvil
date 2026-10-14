@@ -91,13 +91,22 @@ func (r *workflowRequests) answer(ev workflowhost.Event) {
 	}
 }
 
-// finish forgets sessionID's invocation when runID is its run ("" for
-// one that ended before its run started), and returns the IDs of its
-// requests still open. The host frees a session before it reports the
-// finish, so a finish can arrive after the next invocation's approval;
-// that invocation is kept.
-func (r *workflowRequests) finish(sessionID, runID string) []string {
-	if inv := r.bySession[sessionID]; inv == nil || inv.runID != runID {
+// finish forgets sessionID's invocation when the finish of runID ("" for
+// an invocation that ended before its run started) is its own, and
+// returns the IDs of its requests still open. seen reports whether runID's
+// events arrived before.
+//
+// The host frees a session before it reports the finish, so the finish of
+// a run already seen can arrive after the next invocation's approval; that
+// invocation is kept. A provisional invocation still owns the finish of a
+// run never seen: shutdown can end a run before it reports starting.
+func (r *workflowRequests) finish(sessionID, runID string, seen bool) []string {
+	inv := r.bySession[sessionID]
+	if inv == nil {
+		return nil
+	}
+	own := inv.runID == runID || (inv.runID == "" && !seen)
+	if !own {
 		return nil
 	}
 	return r.drop(sessionID)

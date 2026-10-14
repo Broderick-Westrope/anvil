@@ -1389,3 +1389,14 @@ func TestWorkflowLateFinishKeepsTheNextInvocationsRequests(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowRequestsAreForgottenWhenTheRunEndsBeforeItsFirstEvent(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(approvalFor("req-1", "sess-1"))
+	f.act(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: workflowhost.AnswerApprove})
+	// Shutdown can end a recorded run before it publishes that it started.
+	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusInterrupted))
+	f.requireNothingKept(t)
+}

@@ -638,6 +638,8 @@ func (w *workflowFeature) handleFocus(msg workflowFocusMsg) tea.Cmd {
 // session runs another workflow.
 func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
 	run := w.runs[ev.SessionID]
+	seen := run != nil && ev.RunID != "" && run.log.RunID == ev.RunID
+	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID, seen))
 	if run == nil || run.log.Finished || otherWorkflowRun(run, ev) {
 		run = w.newRun(ev)
 	}
@@ -650,7 +652,6 @@ func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
 	}
 	run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: ev.Status, Text: outcome})
 	run.log.Finished = true
-	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID))
 	if ev.Status == workflowhost.StatusCompleted {
 		outcome = ansi.Truncate(outcome, workflowResultMaxWidth, "…")
 	}
