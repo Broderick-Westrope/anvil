@@ -331,3 +331,36 @@ func TestHoldWaitsForAnAwaitedTurnsContinuation(t *testing.T) {
 	}
 	(<-held)()
 }
+
+// A hold lets the finishing run's own continuation through, but not one an
+// earlier run left queued behind other work.
+func TestHoldKeepsAnotherRunsContinuationQueued(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	var continued atomic.Bool
+	released := make(chan func(), 1)
+	_, err := a.submit(t.Context(), "s", submission{prompt: "first", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		_, err := a.submit(t.Context(), "s", submission{prompt: "user", run: func(context.Context) (*fantasy.AgentResult, error) {
+			go func() {
+				rel, err := a.hold(t.Context(), []string{"s"})
+				require.NoError(t, err)
+				released <- rel
+			}()
+			require.Eventually(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.held["s"] == 1 }, time.Second, time.Millisecond)
+			return nil, nil
+		}})
+		require.NoError(t, err)
+		a.continueWith(ctx, "s", submission{prompt: "continue", run: func(context.Context) (*fantasy.AgentResult, error) {
+			continued.Store(true)
+			return nil, nil
+		}})
+		return nil, nil
+	}})
+	require.NoError(t, err)
+	rel := <-released
+	require.False(t, continued.Load(), "the first run's continuation started while the session was held")
+	require.Equal(t, []string{"continue"}, a.queued("s"))
+	rel()
+	require.Eventually(t, continued.Load, time.Second, time.Millisecond)
+}
