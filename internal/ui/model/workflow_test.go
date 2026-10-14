@@ -389,7 +389,7 @@ func TestWorkflowEventOfAnotherRunStartsANewRecord(t *testing.T) {
 			t.Parallel()
 			f := newWorkflowFixture(t)
 			f.event(started("demo", "sess-1"))
-			f.event(workflowhost.Event{Kind: workflowhost.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Step: "first run"})
+			f.event(workflowhost.Event{Kind: workflowhost.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "first run"}})
 
 			// run-1's finish was dropped; the next event is run-2's.
 			ev.RunID = "run-2"
@@ -444,8 +444,8 @@ func TestWorkflowPanelShowsProgress(t *testing.T) {
 	require.Empty(t, f.panel())
 
 	f.event(started("demo", "sess-1"))
-	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Step: "build", Detail: "approach 1/3"})
-	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "bash", Detail: "git status"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "build", Detail: "approach 1/3"}})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityBash, Cmd: "git status"}})
 
 	panel := f.panel()
 	require.Contains(t, panel, "/demo · build · approach 1/3")
@@ -525,7 +525,7 @@ func TestWorkflowPanelWarnsWhenAnotherSessionIsActive(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
 
 	require.Contains(t, f.panel(), "workflow /demo is running in Builder")
 	require.Contains(t, f.panel(), "alt+g")
@@ -541,7 +541,7 @@ func TestWorkflowFocusMovesWhenEditorEmpty(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-2"})
+	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, Command: "demo", SessionID: "sess-1", Focus: "sess-2"})
 
 	require.Empty(t, infos)
 	require.Equal(t, "sess-2", f.u.session.ID)
@@ -553,7 +553,7 @@ func TestWorkflowFocusWaitsWhileEditorHasText(t *testing.T) {
 	f := newWorkflowFixture(t)
 	f.u.textarea.SetValue("half a thought")
 	f.event(started("demo", "sess-1"))
-	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-2"})
+	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, Command: "demo", SessionID: "sess-1", Focus: "sess-2"})
 
 	require.Equal(t, "sess-1", f.u.session.ID)
 	require.Len(t, infos, 1)
@@ -775,7 +775,7 @@ func TestWorkflowControlsDescribeTheCurrentRun(t *testing.T) {
 	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Keys: keys}, f.u.workflowControls())
 
 	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: workflowhost.StatePaused})
-	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
 	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Paused: true, CanGoToActive: true, Keys: keys}, f.u.workflowControls())
 }
 
@@ -805,7 +805,7 @@ func TestWorkflowGoToActiveFromPalette(t *testing.T) {
 	require.Nil(t, f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowGoToActive}),
 		"the active session is already open")
 
-	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
 	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowGoToActive}))
 	require.Equal(t, "sess-2", f.u.session.ID)
 
@@ -818,7 +818,7 @@ func TestWorkflowFocusOnTheOpenSessionIsQuiet(t *testing.T) {
 	f := newWorkflowFixture(t)
 	f.u.textarea.SetValue("draft")
 	f.event(started("demo", "sess-1"))
-	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-1"})
+	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, Command: "demo", SessionID: "sess-1", Focus: "sess-1"})
 	require.Empty(t, infos)
 	require.Empty(t, f.u.workflowFollow)
 }
@@ -831,7 +831,7 @@ func TestWorkflowPanelSharesThePillsArea(t *testing.T) {
 	require.Equal(t, 1, f.u.pillsAreaHeight())
 	require.NotContains(t, f.panel(), "ctrl+t", "no pills without todos or a queue")
 
-	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
 	require.Equal(t, 2, f.u.pillsAreaHeight())
 
 	f.u.promptQueue = 2
@@ -892,7 +892,10 @@ func TestWorkflowPanelKeepsTheLatestEntries(t *testing.T) {
 }
 
 func agentEvent(agent, child string, status workflowhost.Status) workflowhost.Event {
-	return workflowhost.Event{Kind: workflowhost.EventAgent, Command: "demo", SessionID: "sess-1", Step: agent, Target: child, Status: status}
+	return workflowhost.Event{
+		Kind: workflowhost.EventAgent, Command: "demo", SessionID: "sess-1",
+		Agent: &workflowhost.AgentCall{Name: agent, Session: child, Status: status},
+	}
 }
 
 func TestWorkflowPanelListsAgentCalls(t *testing.T) {
@@ -908,7 +911,7 @@ func TestWorkflowPanelListsAgentCalls(t *testing.T) {
 	require.Equal(t, 2, f.u.pillsAreaHeight())
 
 	failed := agentEvent("reviewer", "child-1", workflowhost.StatusFailed)
-	failed.Message = "model overloaded"
+	failed.Agent.Err = "model overloaded"
 	f.event(failed)
 	f.event(agentEvent("devils-advocate", "child-2", workflowhost.StatusRunning))
 	f.event(agentEvent("devils-advocate", "child-2", workflowhost.StatusCompleted))
@@ -936,7 +939,7 @@ func TestWorkflowAgentThatFailedWithoutASessionIsListedButNotOpened(t *testing.T
 	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
 	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusCompleted))
 	failed := agentEvent("critic", "", workflowhost.StatusFailed)
-	failed.Message = "unknown model"
+	failed.Agent.Err = "unknown model"
 	f.event(failed)
 	require.Contains(t, f.panel(), "/demo: critic · failed: unknown model")
 
@@ -1028,9 +1031,9 @@ func TestWorkflowRunKeepsWhatThePanelDrops(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Step: "build", Detail: "approach 1/3"})
-	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "bash", Detail: "git status"})
-	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "build", Detail: "approach 1/3"}})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityBash, Cmd: "git status"}})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
 	f.event(workflowhost.Event{Kind: workflowhost.EventWarn, Command: "demo", SessionID: "sess-1", Message: "undeclared: add `x` to requires()"})
 	f.event(agentEvent("first", "child-1", workflowhost.StatusRunning))
 	f.event(agentEvent("first", "child-1", workflowhost.StatusCompleted))
@@ -1152,7 +1155,7 @@ func TestWorkflowRunUpdatesWhileOpen(t *testing.T) {
 	f.event(started("demo", "sess-1"))
 	f.press(showRunKey)
 	require.NotContains(t, f.runDialog(), "NEWEST")
-	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Step: "NEWEST"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "NEWEST"}})
 	require.Contains(t, f.runDialog(), "NEWEST")
 }
 
@@ -1206,7 +1209,7 @@ func TestWorkflowForPrefersTheRunASessionInvokedOverAFinishedOneThatUsedIt(t *te
 
 	f := newWorkflowFixture(t)
 	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-a", Command: "old", SessionID: "sess-0"})
-	f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-a", Command: "old", SessionID: "sess-0", Target: "sess-1"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-a", Command: "old", SessionID: "sess-0", Focus: "sess-1"})
 	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, RunID: "run-a", Command: "old", SessionID: "sess-0", Status: workflowhost.StatusCompleted})
 	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-b", Command: "new", SessionID: "sess-1"})
 	for range 20 {

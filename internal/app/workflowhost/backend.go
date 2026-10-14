@@ -64,7 +64,7 @@ func (b *backend) withSkills(names []string, prompt string) string {
 }
 
 func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, error) {
-	b.publish(Event{Kind: EventStep, Step: "turn", Target: call.SessionID})
+	b.publish(Event{Kind: EventStep, Activity: &Activity{Kind: ActivityTurn, Session: call.SessionID}})
 	prompt := commands.FormatWorkflowTurnXML(b.base.Command, b.withSkills(call.Skills, call.Prompt))
 	result, err := b.svc.deps.Coordinator.RunTurn(ctx, call.SessionID, prompt)
 	if err != nil {
@@ -113,18 +113,18 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 		}
 		wc.Schema, wc.Validate = call.Schema, schema.Validate
 	}
-	ended := Event{Kind: EventAgent, Step: call.Agent, Detail: call.Model, Status: StatusCompleted}
+	ended := AgentCall{Name: call.Agent, Model: call.Model, Status: StatusCompleted}
 	wc.OnSession = func(sessionID string) {
 		started := ended
-		started.Target, started.Status = sessionID, StatusRunning
-		b.publishState(ctx, started)
-		ended.Target = sessionID
+		started.Session, started.Status = sessionID, StatusRunning
+		b.publishState(ctx, Event{Kind: EventAgent, Agent: &started})
+		ended.Session = sessionID
 	}
 	res, err := b.runAgent(ctx, wc)
 	if err != nil {
-		ended.Status, ended.Message = StatusFailed, err.Error()
+		ended.Status, ended.Err = StatusFailed, err.Error()
 	}
-	b.publishState(ctx, ended)
+	b.publishState(ctx, Event{Kind: EventAgent, Agent: &ended})
 	return res, err
 }
 
@@ -146,7 +146,7 @@ func (b *backend) Bash(ctx context.Context, call workflow.BashCall) (workflow.Ba
 	if cwd == "" {
 		cwd = b.svc.deps.WorkingDir
 	}
-	b.publish(Event{Kind: EventStep, Step: "bash", Detail: call.Cmd})
+	b.publish(Event{Kind: EventStep, Activity: &Activity{Kind: ActivityBash, Cmd: call.Cmd}})
 	sh := shell.NewShell(&shell.Options{WorkingDir: cwd})
 	// wtp runs as a child process so cancelling a workflow kills hooks
 	// it started too; in-process it can't stop them.
@@ -170,11 +170,11 @@ func (b *backend) Ask(ctx context.Context, question string, options []string) (s
 }
 
 func (b *backend) Status(step, detail string) {
-	b.publish(Event{Kind: EventStatus, Step: step, Detail: detail})
+	b.publish(Event{Kind: EventStatus, Progress: &Progress{Step: step, Detail: detail}})
 }
 
 func (b *backend) Focus(sessionID string) {
-	b.publish(Event{Kind: EventFocus, Target: sessionID})
+	b.publish(Event{Kind: EventFocus, Focus: sessionID})
 }
 
 func (b *backend) Warn(msg string) {

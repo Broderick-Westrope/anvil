@@ -83,17 +83,17 @@ func (r *workflowRun) panelEntries() []dialog.WorkflowEntry {
 // agentEvent records a subagent starting, or updates it when it ends. A
 // subagent that failed before it had a session never started, so it's
 // recorded as it ends, with no session to open.
-func (r *workflowRun) agentEvent(ev workflowhost.Event) {
-	if ev.Status == workflowhost.StatusRunning || ev.Target == "" {
+func (r *workflowRun) agentEvent(a workflowhost.AgentCall) {
+	if a.Status == workflowhost.StatusRunning || a.Session == "" {
 		r.show(r.record(dialog.WorkflowEntry{
-			Kind: dialog.WorkflowEntryAgent, Agent: ev.Step, Model: ev.Detail, SessionID: ev.Target,
-			Status: ev.Status, Err: ev.Message,
+			Kind: dialog.WorkflowEntryAgent, Agent: a.Name, Model: a.Model, SessionID: a.Session,
+			Status: a.Status, Err: a.Err,
 		}))
 		return
 	}
 	for i, e := range r.log.Entries {
-		if e.Kind == dialog.WorkflowEntryAgent && e.SessionID == ev.Target {
-			r.log.Entries[i].Status, r.log.Entries[i].Err = ev.Status, ev.Message
+		if e.Kind == dialog.WorkflowEntryAgent && e.SessionID == a.Session {
+			r.log.Entries[i].Status, r.log.Entries[i].Err = a.Status, a.Err
 			r.log.Version++
 		}
 	}
@@ -396,36 +396,39 @@ func (m *UI) handleWorkflowEvent(ev workflowhost.Event) tea.Cmd {
 			run.held = ev.State == workflowhost.StateHeld
 		}
 	case workflowhost.EventStatus:
-		run.step, run.detail = ev.Step, ev.Detail
+		p := ev.Progress
+		run.step, run.detail = p.Step, p.Detail
 		var parts []string
-		for _, part := range []string{ev.Step, ev.Detail} {
+		for _, part := range []string{p.Step, p.Detail} {
 			if part != "" {
 				parts = append(parts, part)
 			}
 		}
 		run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryStatus, Text: strings.Join(parts, " · ")})
 	case workflowhost.EventStep:
-		if ev.Step == "bash" {
-			run.activity = "$ " + ev.Detail
-			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryBash, Text: ev.Detail})
-			return nil
-		}
-		run.activity = ev.Step
-		if ev.Target != "" {
-			run.active = ev.Target
-			run.sessions[ev.Target] = true
-			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryTurn, SessionID: ev.Target, Text: m.workflowTitle(ev.Target)})
-			return m.fetchWorkflowTitle(ev.Target)
+		a := ev.Activity
+		switch a.Kind {
+		case workflowhost.ActivityBash:
+			run.activity = "$ " + a.Cmd
+			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryBash, Text: a.Cmd})
+		case workflowhost.ActivityTurn:
+			run.activity = "turn"
+			if a.Session != "" {
+				run.active = a.Session
+				run.sessions[a.Session] = true
+				run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryTurn, SessionID: a.Session, Text: m.workflowTitle(a.Session)})
+				return m.fetchWorkflowTitle(a.Session)
+			}
 		}
 	case workflowhost.EventAgent:
-		run.agentEvent(ev)
+		run.agentEvent(*ev.Agent)
 	case workflowhost.EventFocus:
-		run.active = ev.Target
-		run.sessions[ev.Target] = true
+		run.active = ev.Focus
+		run.sessions[ev.Focus] = true
 		ws := m.com.Workspace
 		return func() tea.Msg {
-			msg := workflowFocusMsg{target: ev.Target}
-			if s, err := ws.GetSession(context.Background(), ev.Target); err == nil {
+			msg := workflowFocusMsg{target: ev.Focus}
+			if s, err := ws.GetSession(context.Background(), ev.Focus); err == nil {
 				msg.title = s.Title
 			}
 			return msg

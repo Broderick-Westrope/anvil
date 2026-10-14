@@ -94,7 +94,7 @@ func TestServiceRunsWorkflowAndRecordsIt(t *testing.T) {
 }`)
 	h.start(t, path, "hello")
 
-	require.Equal(t, "echo", h.next(t, workflowhost.EventStatus).Step)
+	require.Equal(t, "echo", h.next(t, workflowhost.EventStatus).Progress.Step)
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
 	require.JSONEq(t, `"hello"`, string(done.Result))
@@ -526,19 +526,19 @@ function main() { return agent("reviewer", "review") }`)
 	start := h.next(t, workflowhost.EventAgent)
 	require.Equal(t, "demo", start.Command)
 	require.Equal(t, h.session, start.SessionID)
-	require.Equal(t, "reviewer", start.Step)
-	require.Empty(t, start.Detail, "no model was pinned")
-	require.Equal(t, workflowhost.StatusRunning, start.Status)
-	_, err := h.fixture.Workspace.GetSession(h.fixture.Context, start.Target)
+	require.Equal(t, "reviewer", start.Agent.Name)
+	require.Empty(t, start.Agent.Model, "no model was pinned")
+	require.Equal(t, workflowhost.StatusRunning, start.Agent.Status)
+	_, err := h.fixture.Workspace.GetSession(h.fixture.Context, start.Agent.Session)
 	require.NoError(t, err, "the session exists when it's published")
 
 	end := h.next(t, workflowhost.EventAgent)
-	require.Equal(t, start.Target, end.Target)
-	require.Equal(t, "reviewer", end.Step)
-	require.Equal(t, workflowhost.StatusCompleted, end.Status)
+	require.Equal(t, start.Agent.Session, end.Agent.Session)
+	require.Equal(t, "reviewer", end.Agent.Name)
+	require.Equal(t, workflowhost.StatusCompleted, end.Agent.Status)
 	require.Equal(t, workflowhost.StatusCompleted, h.next(t, workflowhost.EventFinished).Status)
 
-	child, err := h.fixture.Workspace.GetSession(h.fixture.Context, start.Target)
+	child, err := h.fixture.Workspace.GetSession(h.fixture.Context, start.Agent.Session)
 	require.NoError(t, err)
 	require.Equal(t, h.session, child.ParentSessionID)
 	require.Equal(t, "/demo: reviewer", child.Title)
@@ -551,10 +551,10 @@ function main() { return agent("reviewer", "review", {model: "nope/nope"}) }`)
 	h.start(t, path, "")
 
 	failed := h.next(t, workflowhost.EventAgent)
-	require.Equal(t, "nope/nope", failed.Detail)
-	require.Equal(t, workflowhost.StatusFailed, failed.Status, "an agent that never got a session never shows as running")
-	require.Empty(t, failed.Target, "it has no session to open")
-	require.Contains(t, failed.Message, "nope/nope")
+	require.Equal(t, "nope/nope", failed.Agent.Model)
+	require.Equal(t, workflowhost.StatusFailed, failed.Agent.Status, "an agent that never got a session never shows as running")
+	require.Empty(t, failed.Agent.Session, "it has no session to open")
+	require.Contains(t, failed.Agent.Err, "nope/nope")
 	require.Equal(t, workflowhost.StatusFailed, h.next(t, workflowhost.EventFinished).Status)
 }
 
@@ -568,10 +568,10 @@ function main() { parallel([{agent: "reviewer", prompt: "a"}, {agent: "reviewer"
 	running, ended := map[string]bool{}, map[string]bool{}
 	for range 4 {
 		ev := h.next(t, workflowhost.EventAgent)
-		if ev.Status == workflowhost.StatusRunning {
-			running[ev.Target] = true
+		if ev.Agent.Status == workflowhost.StatusRunning {
+			running[ev.Agent.Session] = true
 		} else {
-			ended[ev.Target] = true
+			ended[ev.Agent.Session] = true
 		}
 	}
 	require.Len(t, running, 2)
@@ -676,7 +676,7 @@ func TestServiceRefusesAWorkflowFromASessionAnotherRunUses(t *testing.T) {
 	h.start(t, path, "")
 	focus := h.next(t, workflowhost.EventFocus)
 	ask := h.next(t, workflowhost.EventAsk)
-	err := h.svc.Start(h.fixture.Context, workflowhost.Invocation{CommandID: "x", ScriptPath: path, SessionID: focus.Target})
+	err := h.svc.Start(h.fixture.Context, workflowhost.Invocation{CommandID: "x", ScriptPath: path, SessionID: focus.Focus})
 	require.ErrorIs(t, err, workflowhost.ErrRunInProgress)
 	require.NoError(t, h.svc.Respond(ask.RequestID, "ok"))
 	h.next(t, workflowhost.EventFinished)

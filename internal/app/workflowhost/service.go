@@ -50,8 +50,7 @@ const (
 	// EventState reports a change in a run's State.
 	EventState EventKind = "state"
 	// EventAgent reports a subagent starting (Status running) and ending
-	// (completed or failed, with Message). Step is the agent, Detail its
-	// pinned model and Target its child session.
+	// (completed or failed, with Err).
 	EventAgent EventKind = "agent"
 	// EventFinished ends an invocation.
 	EventFinished EventKind = "finished"
@@ -74,7 +73,7 @@ const (
 )
 
 // Event is everything the UI needs to show a workflow. Fields beyond the
-// identifying ones depend on Kind.
+// identifying ones belong to the Kinds named beside them.
 type Event struct {
 	Kind      EventKind
 	RunID     string
@@ -87,18 +86,54 @@ type Event struct {
 	Question  string
 	Options   []string
 
-	Step    string
-	Detail  string
+	Progress *Progress  // EventStatus.
+	Activity *Activity  // EventStep.
+	Agent    *AgentCall // EventAgent.
+	Focus    string     // EventFocus: the session to move to.
+	State    RunState   // EventState.
+
+	// Message is an EventWarn's warning, or why an EventFinished run
+	// didn't complete.
 	Message string
-	// Target is the session for EventFocus, the session a turn runs in
-	// for an EventStep with Step "turn", and the child session for
-	// EventAgent.
-	Target string
-
-	State RunState
-
+	// Status and Result are how an EventFinished run ended.
 	Status Status
 	Result json.RawMessage
+}
+
+// Progress is what a script last reported with status().
+type Progress struct {
+	Step, Detail string
+}
+
+// ActivityKind says what an EventStep started.
+type ActivityKind string
+
+const (
+	// ActivityBash is a bash command.
+	ActivityBash ActivityKind = "bash"
+	// ActivityTurn is a turn sent to a session.
+	ActivityTurn ActivityKind = "turn"
+)
+
+// Activity is a bash command or turn a script started.
+type Activity struct {
+	Kind ActivityKind
+	// Cmd is an ActivityBash's command line.
+	Cmd string
+	// Session is the session an ActivityTurn runs in.
+	Session string
+}
+
+// AgentCall is a subagent a script ran.
+type AgentCall struct {
+	Name  string
+	Model string // The pinned model, if any.
+	// Session is the subagent's child session, empty when it failed
+	// before it had one.
+	Session string
+	// Status is running, completed or failed, with Err saying why.
+	Status Status
+	Err    string
 }
 
 // ApprovalRequest is what the user reviews before a workflow first runs
