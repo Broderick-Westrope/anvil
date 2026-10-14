@@ -127,7 +127,7 @@ func (fs *features) handleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 // from the palette goes to the command features, with no arguments, and
 // closes the palette when one runs it.
 func (fs *features) handleAction(overlay *dialog.Overlay, action dialog.Action) (tea.Cmd, bool) {
-	if run, ok := action.(dialog.ActionRunCustomCommand); ok && run.Command.ID != "" {
+	if run, ok := action.(dialog.ActionRunCustomCommand); ok {
 		cmd, handled := fs.runCommand(run.Command, "")
 		if handled {
 			overlay.CloseDialog(dialog.CommandsID)
