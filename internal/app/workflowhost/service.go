@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
@@ -163,6 +164,7 @@ type Invocation struct {
 type Deps struct {
 	Coordinator agent.Coordinator
 	Sessions    session.Service
+	Messages    message.Service
 	Store       *Store
 	WorkingDir  string
 	// SkipApproval reports whether approval is skipped (--yolo).
@@ -396,13 +398,46 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	}
 	b.publishState(ctx, Event{Kind: EventState, State: StateStarted})
 
-	result, err := run.Execute(ctx, workflow.Input{Raw: inv.Raw})
+	var result json.RawMessage
+	err = s.writeMarker(ctx, runID, inv)
+	if err != nil {
+		err = fmt.Errorf("mark the run in its session: %w", err)
+	} else {
+		result, err = run.Execute(ctx, workflow.Input{Raw: inv.Raw})
+	}
 	stopping, reason = s.stopped()
 	status, msg := runOutcome(err, stopping, reason)
 	if ferr := s.deps.Store.FinishRun(context.WithoutCancel(ctx), runID, status, result, msg); ferr != nil {
 		slog.Warn("Failed to record workflow run outcome", "run", runID, "error", ferr)
 	}
 	finish(runID, status, result, msg)
+}
+
+// writeMarker adds the run's marker to the invoking session, where the UI
+// shows the run as a node. The session is held while it's written: a turn
+// in flight appends from its own leaf, so a marker written beside it would
+// land on a side branch. Once the hold has waited the session out, the
+// branch up to the marker is settled; that's the run's start boundary.
+func (s *Service) writeMarker(ctx context.Context, runID string, inv Invocation) error {
+	release, err := s.deps.Coordinator.Hold(ctx, []string{inv.SessionID})
+	if err != nil {
+		return err
+	}
+	defer release()
+	invoker, err := s.deps.Sessions.Get(ctx, inv.SessionID)
+	if err != nil {
+		return err
+	}
+	marker, err := s.deps.Messages.Create(ctx, inv.SessionID, message.CreateMessageParams{
+		Role:            message.System,
+		ParentMessageID: invoker.LeafMessageID,
+		MessageType:     message.MessageTypeWorkflowRun,
+		Parts:           []message.ContentPart{message.WorkflowRunContent{RunID: runID, Command: inv.CommandName, Input: inv.Raw}},
+	})
+	if err != nil {
+		return err
+	}
+	return s.deps.Store.SetMarker(ctx, runID, marker.ID)
 }
 
 // approve asks the user to approve the current bundle unless this exact

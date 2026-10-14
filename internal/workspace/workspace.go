@@ -182,6 +182,9 @@ type Workspace interface {
 	// WorkflowRunning reports the invoking session of the run involving
 	// sessionID, if any.
 	WorkflowRunning(sessionID string) (invoker string, ok bool)
+	// WorkflowRunView loads what a workflow run looks like to the user,
+	// reporting false when there's no such run.
+	WorkflowRunView(ctx context.Context, runID string) (workflowhost.RunView, bool, error)
 	// WorkflowMissing loads a workflow script and lists the requirements
 	// it declares that don't exist.
 	WorkflowMissing(scriptPath string) ([]string, error)

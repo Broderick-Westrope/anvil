@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
@@ -76,9 +77,10 @@ func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, err
 	return result.Response.Content.Text(), nil
 }
 
-func (b *backend) NewSession(ctx context.Context, title string) (string, error) {
+func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (string, error) {
 	// A title the script chose is kept; without one, the session starts as
 	// "/cmd" and is auto-titled after its first turn like any session.
+	title := call.Title
 	chosen := title != ""
 	if !chosen {
 		title = "/" + b.base.Command
@@ -91,6 +93,9 @@ func (b *backend) NewSession(ctx context.Context, title string) (string, error) 
 		if err := b.svc.deps.Sessions.Rename(ctx, s.ID, title, true); err != nil {
 			return "", fmt.Errorf("keep session title: %w", err)
 		}
+	}
+	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, b.base.RunID, call.Seq); err != nil {
+		return "", err
 	}
 	return s.ID, nil
 }
@@ -123,6 +128,11 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 	}
 	ended := AgentCall{Name: call.Agent, Model: call.Model, Status: StatusCompleted}
 	wc.OnSession = func(sessionID string) {
+		// The run view finds the session by the event that made it, so
+		// it's recorded before anyone hears the subagent started.
+		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, sessionID, b.base.RunID, call.Seq); err != nil {
+			slog.Warn("Failed to record workflow subagent session", "run", b.base.RunID, "session", sessionID, "error", err)
+		}
 		started := ended
 		started.Session, started.Status = sessionID, StatusRunning
 		b.publishState(ctx, Event{Kind: EventAgent, Agent: &started})

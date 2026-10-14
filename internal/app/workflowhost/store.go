@@ -57,6 +57,9 @@ type RunRecord struct {
 	InstanceID        string
 	StartedAt         time.Time
 	FinishedAt        time.Time // Zero while running.
+	// MarkerMessageID is the message marking the run in its invoking
+	// session; empty until it's written.
+	MarkerMessageID string
 }
 
 // Store persists workflow state in the database and run directories
@@ -165,6 +168,7 @@ func (s *Store) GetRun(ctx context.Context, id string) (RunRecord, bool, error) 
 		Tmpdir:            row.Tmpdir,
 		InstanceID:        row.InstanceID,
 		StartedAt:         time.UnixMilli(row.StartedAt),
+		MarkerMessageID:   row.MarkerMessageID,
 	}
 	if row.FinishedAt.Valid {
 		rec.FinishedAt = time.UnixMilli(row.FinishedAt.Int64)
@@ -198,6 +202,15 @@ func (r eventRecorder) Record(ctx context.Context, ev workflow.Event) error {
 		At:         ev.At.UnixMilli(),
 	}); err != nil {
 		return fmt.Errorf("record event %d of workflow run %s: %w", ev.Seq, r.runID, err)
+	}
+	return nil
+}
+
+// SetMarker records the message that marks the run in its invoking
+// session.
+func (s *Store) SetMarker(ctx context.Context, runID, messageID string) error {
+	if err := s.q.SetWorkflowRunMarker(ctx, db.SetWorkflowRunMarkerParams{ID: runID, MarkerMessageID: messageID}); err != nil {
+		return fmt.Errorf("set marker of workflow run %s: %w", runID, err)
 	}
 	return nil
 }

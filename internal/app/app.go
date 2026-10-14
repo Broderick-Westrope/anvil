@@ -596,6 +596,7 @@ func (app *App) startWorkflows() {
 	app.Workflows = workflowhost.NewService(app.globalCtx, workflowhost.Deps{
 		Coordinator:  app.AgentCoordinator,
 		Sessions:     app.Sessions,
+		Messages:     app.Messages,
 		Store:        app.workflowStore,
 		WorkingDir:   app.config.WorkingDir(),
 		SkipApproval: app.skipWorkflowApproval,

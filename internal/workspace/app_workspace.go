@@ -666,6 +666,13 @@ func (w *AppWorkspace) WorkflowRunning(sessionID string) (string, bool) {
 	return w.app.Workflows.Running(sessionID)
 }
 
+func (w *AppWorkspace) WorkflowRunView(ctx context.Context, runID string) (workflowhost.RunView, bool, error) {
+	if w.app.Workflows == nil {
+		return workflowhost.RunView{}, false, ErrWorkflowsUnavailable
+	}
+	return w.app.Workflows.RunView(ctx, runID)
+}
+
 func (w *AppWorkspace) WorkflowMissing(scriptPath string) ([]string, error) {
 	if w.app.Workflows == nil {
 		return nil, ErrWorkflowsUnavailable

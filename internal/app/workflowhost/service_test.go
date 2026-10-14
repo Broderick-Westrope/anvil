@@ -19,6 +19,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -44,6 +45,7 @@ func newServiceHarness(t *testing.T, yolo bool, opts ...func(*workflowhost.Deps)
 	deps := workflowhost.Deps{
 		Coordinator: f.Coordinator,
 		Sessions:    f.Sessions,
+		Messages:    f.Messages,
 		Store:       store,
 		WorkingDir:  f.Config.WorkingDir(),
 		SkipApproval: func() bool {
@@ -1106,4 +1108,64 @@ BEGIN SELECT RAISE(ABORT, 'finish refused'); END`)
 			}
 		})
 	}
+}
+
+func TestServiceMarksTheRunInItsSessionAndRebuildsItsView(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "solo"}, branchfixture.Response{Text: "a"}, branchfixture.Response{Text: "b"})
+	path := h.write(t, `requires({agents: ["reviewer"]})
+function main() {
+  const builder = session.new({title: "builder"})
+  status("review", "pass 1/3")
+  agent("reviewer", "solo")
+  parallel([{agent: "reviewer", prompt: "a"}, {agent: "reviewer", prompt: "b"}])
+  status("hand over")
+  return ask("ship it?", {options: ["yes", "no"]})
+}`)
+	h.start(t, path, "track downloads")
+	ask := h.next(t, workflowhost.EventAsk)
+	require.NoError(t, h.svc.Respond(ask.RequestID, "yes"))
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status)
+
+	view, ok, err := h.svc.RunView(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	invoker, err := h.fixture.Sessions.Get(h.fixture.Context, h.session)
+	require.NoError(t, err)
+	require.Equal(t, invoker.LeafMessageID, view.MarkerMessageID, "the marker is the last thing in the invoking session")
+	marker, err := h.fixture.Messages.Get(h.fixture.Context, view.MarkerMessageID)
+	require.NoError(t, err)
+	require.Equal(t, message.MessageTypeWorkflowRun, marker.MessageType)
+	require.Equal(t, []message.ContentPart{message.WorkflowRunContent{RunID: done.RunID, Command: "demo", Input: "track downloads"}}, marker.Parts)
+
+	require.Equal(t, workflowhost.StatusCompleted, view.Status)
+	require.Equal(t, "track downloads", view.Input)
+	step, detail := view.Current()
+	require.Equal(t, [2]string{"hand over", ""}, [2]string{step, detail})
+	require.Len(t, view.Phases, 3)
+
+	builder := view.Phases[0].Items
+	require.Len(t, builder, 1)
+	require.Equal(t, workflowhost.RunItemSession, builder[0].Kind)
+	require.Equal(t, "builder", builder[0].Title)
+	require.NotEmpty(t, builder[0].SessionID)
+
+	review := view.Phases[1]
+	require.Equal(t, "review", review.Step)
+	require.Equal(t, "pass 1/3", review.Detail)
+	require.Len(t, review.Items, 3)
+	sessions := map[string]bool{}
+	for _, item := range review.Items {
+		require.Equal(t, workflowhost.RunItemAgent, item.Kind)
+		require.Equal(t, "reviewer", item.Agent)
+		require.Equal(t, workflowhost.StatusCompleted, item.Status)
+		require.NotEmpty(t, item.SessionID)
+		sessions[item.SessionID] = true
+	}
+	require.Len(t, sessions, 3, "each subagent opens its own session")
+
+	answer := view.Phases[2].Items
+	require.Equal(t, []workflowhost.RunItem{{Kind: workflowhost.RunItemAsk, Question: "ship it?", Answer: "yes", Status: workflowhost.StatusCompleted}}, answer)
 }
