@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -720,4 +721,32 @@ func TestNewRoutesWorkflowEvents(t *testing.T) {
 	u.session = &sess
 	u.Update(pubsub.Event[workflowhost.Event]{Type: pubsub.UpdatedEvent, Payload: started("demo", "sess-1")})
 	require.Equal(t, 1, u.features.panelLines())
+}
+
+// errorRecorder is a slog handler that keeps error records.
+type errorRecorder struct{ errors []string }
+
+func (*errorRecorder) Enabled(context.Context, slog.Level) bool { return true }
+
+func (r *errorRecorder) Handle(_ context.Context, rec slog.Record) error {
+	if rec.Level >= slog.LevelError {
+		r.errors = append(r.errors, rec.Message)
+	}
+	return nil
+}
+
+func (r *errorRecorder) WithAttrs([]slog.Attr) slog.Handler { return r }
+func (r *errorRecorder) WithGroup(string) slog.Handler      { return r }
+
+// Not parallel: it swaps the default logger.
+func TestLoadingCommandsLogsNoErrorWhenItWorks(t *testing.T) {
+	rec := &errorRecorder{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	f := newWorkflowUIFixture(t)
+	f.writeProjectWorkflow(t, "zz-routing-demo")
+	loadCommands(f.u.com)
+	require.Empty(t, rec.errors)
 }
