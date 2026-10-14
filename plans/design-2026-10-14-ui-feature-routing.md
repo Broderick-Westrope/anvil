@@ -21,7 +21,7 @@ In scope:
 - **Migrating workflows to it:** this covers all of `internal/ui/model/workflow.go`, the 5 `UI` fields, and the workflow edits in `ui.go`, `pills.go` and `keys.go` wiring.
 - **Moving the two data fixes out of upstream cases to where the data is produced:** requirement annotation of workflow commands, and filtering workflow turns from prompt history.
 - **Clearing a run's answered request IDs when the run is finished or replaced.** This fixes the unbounded `workflowAnswered`.
-- **Collapsing multi-line script text in panel rows to one line.** See Panels. Together with the previous item, these are the only intended behaviour changes.
+- **Cutting multi-line script text in panel rows at its first line,** as the panel already does for errors and answers. See Panels. Together with the previous item, these are the only intended behaviour changes.
 - **Updating `internal/ui/AGENTS.md`** to document the pattern, and noting the change in ADR 0003's consequences.
 
 Out of scope:
@@ -33,7 +33,7 @@ Out of scope:
 - Upstream-origin cases in the three dispatchers keep their current line shape, so Crush cherry-picks still apply. Routing sits outside the switches, because upstream keeps adding cases to `update`.
 - `UI` stays the only `tea.Model`. Features are plain types that `UI` calls.
 - `gocognit` stays under 30 for new functions. `ui.go`'s existing exclusions don't grow.
-- No golden file changes. Neither intended behaviour change affects the existing goldens, because none of them uses multi-line script text.
+- No golden file changes. The existing goldens' multi-line inputs are errors, outcomes, questions and answers, which already render their first line, so the first-line rule leaves them unchanged.
 - A feature never reaches `*UI` directly.
 
 **Success Criteria:**
@@ -67,7 +67,8 @@ Out of scope:
   - a `workflowhost.Event` reaching the feature;
   - focus/follow (with the editor empty and with it non-empty);
   - an approval or ask opening with the grace period and a notification;
-  - resize changing panel height and layout;
+  - a width change re-rendering panel rows within the pills rectangle, with chat and editor layout unchanged;
+  - a change in the number of panel rows (a new agent, or a question being answered) resizing the pills area;
   - drill-in suppressing the panel;
   - controls and focus/follow while drilled in, which act on the root session's run;
   - a focus on the current root session doing nothing;
@@ -198,14 +199,30 @@ The real `Workspace` satisfies it, and tests fake only those seven methods. `Com
 - `Lines() int`: the number of rows, independent of width.
 - `Render(width int) string`: exactly `Lines()` lines, each truncated to `width`. When `width` is 0, which `pills.go:248-249` can produce, it returns `Lines()` empty lines.
 
-The view-model makes each row a single line, so scripts can't break the layout. Newlines and other control characters in script-supplied text (`status()` step and detail, session titles, bash commands, questions, errors) are collapsed to spaces. This is the second intended behaviour change: today such text can spill extra lines into the panel, or fewer lines at narrow widths, which the hand-kept height can't track. Tests cover multiline status and title inputs, and widths of 0 and 1.
+The view-model makes each row a single line. It does this with the rule the panel already applies to agent errors, outcomes, questions and answers (`workflow.go:692`, `:725-726`; `workflow_run.go:269-271`): text is cut at its first line. The rule extends to the script-supplied text that today is passed through whole and can spill extra rows: `status()` step and detail, session titles, and bash commands. This is the second intended behaviour change, and it only affects multi-line inputs. Tests cover multi-line status and title inputs, and widths of 0 and 1.
 
 `pillsAreaHeight` sums `Lines()` over the panel features before the pills rectangle exists, as today. `renderPills` calls `Render` with the content width it computes today. A shared test asserts the `Render`/`Lines` contract at several widths. Panels are suppressed while drilled in, as today, by the pills code checking `isDrilledIn` before asking features.
 - **Declined: `pills.go` calling the workflow feature directly.** The next feature with a panel would edit `pills.go` again.
 
 *Palette.* `paletteFeature.PaletteEntries()` returns the items the feature contributes. The commands dialog shows them where the workflow controls appear today (`dialog/commands.go:595-628`), in registration order, each feature keeping its own order. This replaces `SetWorkflowControls` and `dialog.WorkflowControls`.
 
-*Request tracking.* The workflow feature keeps open requests and answered IDs together, per run. An answered ID is dropped when its run finishes or is replaced, which fixes the unbounded `workflowAnswered`. The transitions (seen, open, answered, closed on finish) live in one type.
+*Request tracking.* Requests are owned per invoking session, not per run, because an approval arrives before its run exists. Approval events carry no run ID (`workflowhost/service.go:423-424`, `:442`), the run ID is allocated only after approval (`:344-356`), and a denial or startup failure finishes with an empty run ID. A single type tracks one invocation in a session:
+1. **Approval.** A provisional invocation starts with the approval request, keyed by the invoking session.
+2. **Run starts.** The provisional entry becomes the run when the first event with a run ID arrives for that session.
+3. **Clean-up.** Open and answered request IDs for the invocation are dropped when either of these happens:
+   - its finish arrives, including an empty-run-ID finish (denied, or failed before starting);
+   - a new invocation in the same session replaces it.
+
+This fixes the unbounded `workflowAnswered`. The transitions (seen, open, answered, closed) live in that one type.
+
+Surface tests cover:
+- concurrent approvals in two sessions;
+- denial;
+- a failure before the run starts;
+- an approval after an earlier finished run in the same session;
+- republished requests staying deduplicated through all of these.
+
+The retention assertion checks nothing is left after each case.
 
 *Testing.* The feature's behaviour tests drive it through its surface, with the one internal retention assertion noted above. Integration tests through `UI.Update` cover routing and the cases listed in Success Criteria, and a benchmark covers fan-out. The existing goldens are kept as a regression guard. They render the panel directly, so they don't prove routing or layout on their own; the integration tests do.
 
@@ -213,7 +230,7 @@ The view-model makes each row a single line, so scripts can't break the layout. 
 - a draw slot outside pills, which the drill-in breadcrumb needs;
 - a pre-switch hook for mouse events.
 
-That gets extended then, not designed now.
+Others need focus-specific key routing: composer history runs before the global keys (`ui.go:3294-3320`), and drill-back runs before selected-item handling (`ui.go:3389-3397`, `:3479-3483`). Those adopters will need more than the global-keys fallback. All of these get extended when their adopter arrives, not designed now.
 
 **Context Files:**
 - `docs/adr/0003-ui-complexity.md`: the decision this implements.
