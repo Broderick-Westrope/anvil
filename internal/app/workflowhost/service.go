@@ -20,10 +20,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
 
-// StatusDenied ends an invocation whose script wasn't approved. It never
-// has a run row.
-const StatusDenied Status = "denied"
-
 // ErrRunInProgress refuses a second workflow in a session that already
 // has one running.
 var ErrRunInProgress = errors.New("a workflow is already running in this session")

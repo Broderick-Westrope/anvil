@@ -614,7 +614,7 @@ func TestWorkflowFinishReportsOutcome(t *testing.T) {
 		},
 		"denied": {
 			ev:       workflowhost.Event{Status: workflowhost.StatusDenied},
-			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo was not approved",
+			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo not approved",
 			wantPanel: "/demo · not approved",
 		},
 		"aborted": {

@@ -263,9 +263,12 @@ func (d *WorkflowRun) renderEntry(e WorkflowEntry, wrap func(lipgloss.Style, str
 }
 
 // WorkflowOutcomeText describes how a run ended, given its result for a
-// completed run or its error otherwise.
+// completed run or the host's message otherwise. It is the one place a
+// Status becomes words, so every view of a run says the same thing.
 func WorkflowOutcomeText(status workflowhost.Status, text string) string {
 	switch status {
+	case workflowhost.StatusRunning:
+		return "running"
 	case workflowhost.StatusCompleted:
 		if text == "" {
 			return "completed"
@@ -276,9 +279,15 @@ func WorkflowOutcomeText(status workflowhost.Status, text string) string {
 	case workflowhost.StatusAborted:
 		return "aborted"
 	case workflowhost.StatusInterrupted:
-		return "interrupted"
-	default:
+		// The host's message already says the run was interrupted, and why.
+		if text == "" {
+			return "interrupted"
+		}
+		return text
+	case workflowhost.StatusFailed:
 		return "failed: " + text
+	default:
+		return string(status)
 	}
 }
 

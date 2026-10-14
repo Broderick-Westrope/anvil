@@ -591,24 +591,17 @@ func (m *UI) finishWorkflow(ev workflowhost.Event) tea.Cmd {
 			delete(m.workflowRequests, req)
 		}
 	}
-	name := "/" + ev.Command
+	if ev.Status == workflowhost.StatusCompleted {
+		outcome = ansi.Truncate(outcome, workflowResultMaxWidth, "…")
+	}
+	severity := util.InfoTypeError
 	switch ev.Status {
 	case workflowhost.StatusCompleted:
-		text := "Workflow " + name + " completed"
-		if result := compactResult(ev.Result); result != "" {
-			text += ": " + ansi.Truncate(result, workflowResultMaxWidth, "…")
-		}
-		return util.CmdHandler(util.InfoMsg{Type: util.InfoTypeSuccess, Msg: text})
-	case workflowhost.StatusDenied:
-		return util.ReportWarn("Workflow " + name + " was not approved")
-	case workflowhost.StatusAborted:
-		return util.ReportWarn("Workflow " + name + " aborted")
-	case workflowhost.StatusInterrupted:
-		// The host's message already says the run was interrupted, and why.
-		return util.ReportWarn("Workflow " + name + " " + ev.Message)
-	default:
-		return util.CmdHandler(util.InfoMsg{Type: util.InfoTypeError, Msg: "Workflow " + name + " failed: " + ev.Message})
+		severity = util.InfoTypeSuccess
+	case workflowhost.StatusDenied, workflowhost.StatusAborted, workflowhost.StatusInterrupted:
+		severity = util.InfoTypeWarn
 	}
+	return util.CmdHandler(util.InfoMsg{Type: severity, Msg: "Workflow /" + ev.Command + " " + dialog.WorkflowOutcomeText(ev.Status, outcome)})
 }
 
 // compactResult renders a run's JSON result on one line, or "" when it

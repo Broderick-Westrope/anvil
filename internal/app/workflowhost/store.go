@@ -26,7 +26,16 @@ const (
 	StatusFailed      Status = "failed"
 	StatusAborted     Status = "aborted"
 	StatusInterrupted Status = "interrupted"
+	// StatusDenied ends an invocation whose script wasn't approved. It never
+	// has a run row.
+	StatusDenied Status = "denied"
 )
+
+// Statuses returns every Status, so anything that describes them can check
+// it describes them all.
+func Statuses() []Status {
+	return []Status{StatusRunning, StatusCompleted, StatusFailed, StatusAborted, StatusInterrupted, StatusDenied}
+}
 
 // RunRecord is a persisted workflow run.
 type RunRecord struct {
