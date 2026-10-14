@@ -197,6 +197,13 @@ func (f *workflowUIFixture) press(k tea.KeyPressMsg) []util.InfoMsg {
 	return f.run(cmd)
 }
 
+// submit sends text from the editor, as pressing enter does.
+func (f *workflowUIFixture) submit(text string) []util.InfoMsg {
+	f.u.focus = uiFocusEditor
+	f.u.textarea.SetValue(text)
+	return f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
+}
+
 func (f *workflowUIFixture) panel() string {
 	return ansi.Strip(f.u.pillsView)
 }
@@ -205,7 +212,7 @@ func TestWorkflowSlashCommandStartsWithRawArguments(t *testing.T) {
 	t.Parallel()
 
 	f := newWorkflowUIFixture(t)
-	infos := f.run(f.u.tryExecuteSlashCommand("/demo some args"))
+	infos := f.submit("/demo some args")
 
 	require.Empty(t, infos)
 	require.Empty(t, f.ws.runs, "a workflow command never sends its body")
@@ -221,7 +228,7 @@ func TestWorkflowSlashCommandFromLandingCreatesASession(t *testing.T) {
 	f := newWorkflowUIFixture(t)
 	f.u.session = nil
 	f.u.setState(uiLanding, uiFocusEditor)
-	f.run(f.u.tryExecuteSlashCommand("/demo"))
+	f.submit("/demo")
 
 	require.Equal(t, uiChat, f.u.state)
 	require.Equal(t, []string{"new-session"}, f.ws.created)
