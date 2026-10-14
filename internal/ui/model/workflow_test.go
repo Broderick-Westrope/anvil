@@ -1548,3 +1548,23 @@ func TestWorkflowUnseenRunFinishingAfterAnEarlierRunReleasesItsInvocation(t *tes
 	f.event(finishedIn("sess-1", "run-2", workflowhost.StatusInterrupted))
 	f.requireNothingKept(t)
 }
+
+func TestWorkflowFinishedRunLetsItsControlKeysFallThrough(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, RunID: "run-1", Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
+	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
+
+	for name, k := range map[string]tea.KeyPressMsg{
+		"pause": {Code: 'x', Mod: tea.ModCtrl},
+		"abort": {Code: 'x', Mod: tea.ModAlt},
+		"go":    {Code: 'g', Mod: tea.ModAlt},
+	} {
+		_, handled := f.wf.HandleKey(k)
+		require.False(t, handled, name)
+	}
+	require.Empty(t, f.ws.controls)
+	require.Empty(t, f.host.navigated)
+}
