@@ -164,7 +164,7 @@ Terms with a specific meaning in this codebase are defined in
   (`.agents/skills/anvil-cache-triage/references/classify.sql`), not in
   Go. Rows older than 90 days are pruned at startup.
 - **Workflows**: a command whose `COMMAND.md` sets `workflow:` runs a
-  JavaScript script (see `plans/design-2026-10-10-workflows.md`).
+  JavaScript script (see `plans/completed/design-2026-10-10-workflows.md`).
   `internal/workflow` is the engine: it parses `requires()` without running
   anything (a malformed one is a `Script.Problems` entry, which, like
   `CustomCommand.Problems`, blocks running and fails `anvil workflow
