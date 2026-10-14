@@ -265,6 +265,18 @@ func TestWorkflowCommandWaitsOutAReload(t *testing.T) {
 	require.Equal(t, []util.InfoMsg{{Type: util.InfoTypeWarn, Msg: reloadInProgressMsg}}, infos)
 }
 
+func TestWorkflowCommandNeedsTheAgent(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.notReady = true
+	infos := f.start("")
+
+	require.Equal(t, []util.InfoMsg{{Type: util.InfoTypeError, Msg: "orchestrator agent is not initialized"}}, infos)
+	require.Empty(t, f.ws.starts)
+	require.Empty(t, f.host.created, "no session is created for a command that can't run")
+}
+
 func TestWorkflowStartErrorIsReported(t *testing.T) {
 	t.Parallel()
 

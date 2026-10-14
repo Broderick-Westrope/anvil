@@ -47,6 +47,8 @@ type workflowTestWorkspace struct {
 	noSessionID bool
 	controls    []string
 	history     []message.Message
+	notReady    bool
+	createErr   error
 	// projectDir is the project directory commands load from.
 	projectDir string
 }
@@ -58,7 +60,7 @@ func newWorkflowTestWorkspace() *workflowTestWorkspace {
 	}}
 }
 
-func (*workflowTestWorkspace) AgentIsReady() bool                        { return true }
+func (w *workflowTestWorkspace) AgentIsReady() bool                      { return !w.notReady }
 func (*workflowTestWorkspace) AgentIsSessionBusy(string) bool            { return false }
 func (*workflowTestWorkspace) AgentIsBusy() bool                         { return false }
 func (*workflowTestWorkspace) AgentQueuedPrompts(string) int             { return 0 }
@@ -124,6 +126,9 @@ func (w *workflowTestWorkspace) GetSession(_ context.Context, id string) (sessio
 }
 
 func (w *workflowTestWorkspace) CreateSession(_ context.Context, title string) (session.Session, error) {
+	if w.createErr != nil {
+		return session.Session{}, w.createErr
+	}
 	s := session.Session{ID: "new-session", Title: title}
 	if w.noSessionID {
 		return session.Session{Title: title}, nil
@@ -268,6 +273,18 @@ func TestWorkflowSlashCommandReportsASessionThatWasNotCreated(t *testing.T) {
 	infos := f.submit("/demo")
 	require.Equal(t, []util.InfoMsg{{Type: util.InfoTypeError, Msg: "workflow needs a session"}}, infos)
 	require.Empty(t, f.ws.starts)
+}
+
+func TestWorkflowSlashCommandReportsASessionThatCouldNotBeCreated(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowUIFixture(t)
+	f.u.session = nil
+	f.ws.createErr = errors.New("disk full")
+	infos := f.submit("/demo")
+	require.Equal(t, []util.InfoMsg{{Type: util.InfoTypeError, Msg: "disk full"}}, infos)
+	require.Empty(t, f.ws.starts)
+	require.Empty(t, f.ws.runs, "the command isn't sent as a prompt")
 }
 
 func TestWorkflowSlashCommandWaitsOutAReload(t *testing.T) {
