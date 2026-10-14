@@ -650,7 +650,7 @@ func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
 	}
 	run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: ev.Status, Text: outcome})
 	run.log.Finished = true
-	w.closeRequests(w.requests.drop(ev.SessionID))
+	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID))
 	if ev.Status == workflowhost.StatusCompleted {
 		outcome = ansi.Truncate(outcome, workflowResultMaxWidth, "…")
 	}

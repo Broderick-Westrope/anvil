@@ -1365,3 +1365,27 @@ func TestWorkflowReplacedInvocationClosesItsOpenRequests(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowLateFinishKeepsTheNextInvocationsRequests(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]bool{"pending": false, "answered": true}
+	for name, answered := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+
+			// The host frees the session before publishing run-1's finish, so
+			// the next invocation's approval can arrive first.
+			f.event(approvalFor("req-2", "sess-1"))
+			if answered {
+				f.act(dialog.ActionWorkflowRespond{RequestID: "req-2", Answer: workflowhost.AnswerApprove})
+			}
+			f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
+
+			require.Equal(t, !answered, f.requestOpen("req-2"))
+			f.requireShownOnce(t, approvalFor("req-2", "sess-1"))
+		})
+	}
+}

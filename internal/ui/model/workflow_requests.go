@@ -91,8 +91,20 @@ func (r *workflowRequests) answer(ev workflowhost.Event) {
 	}
 }
 
-// drop forgets sessionID's invocation, when it finishes or is replaced,
-// and returns the IDs of its requests still open.
+// finish forgets sessionID's invocation when runID is its run ("" for
+// one that ended before its run started), and returns the IDs of its
+// requests still open. The host frees a session before it reports the
+// finish, so a finish can arrive after the next invocation's approval;
+// that invocation is kept.
+func (r *workflowRequests) finish(sessionID, runID string) []string {
+	if inv := r.bySession[sessionID]; inv == nil || inv.runID != runID {
+		return nil
+	}
+	return r.drop(sessionID)
+}
+
+// drop forgets sessionID's invocation and returns the IDs of its requests
+// still open.
 func (r *workflowRequests) drop(sessionID string) []string {
 	inv := r.bySession[sessionID]
 	if inv == nil {
