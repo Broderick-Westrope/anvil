@@ -365,7 +365,9 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 		Input:             inv.Raw,
 		WorkingDir:        canonicalDir(s.deps.WorkingDir),
 	}
-	if err := s.deps.Store.StartRun(ctx, rec); err != nil {
+	// Shutdown may already have cancelled ctx. The run is still recorded,
+	// so it ends as interrupted below rather than failing to record.
+	if err := s.deps.Store.StartRun(context.WithoutCancel(ctx), rec); err != nil {
 		finish("", StatusFailed, nil, err.Error())
 		return
 	}

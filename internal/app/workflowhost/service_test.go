@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -980,4 +981,36 @@ func TestServiceRecordsTheCanonicalWorkingDir(t *testing.T) {
 			require.Equal(t, want, run.WorkingDir)
 		})
 	}
+}
+
+func TestServiceShutdownBetweenApprovalAndStartInterruptsTheRun(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	h := newServiceHarness(t, true, func(d *workflowhost.Deps) {
+		d.SkipApproval = func() bool {
+			close(entered)
+			<-release
+			return true
+		}
+	})
+	path := h.write(t, `function main() { bash("touch should-not-exist") }`)
+	h.start(t, path, "")
+	<-entered
+
+	shutdown := make(chan error, 1)
+	go func() { shutdown <- h.svc.Shutdown(context.WithoutCancel(h.fixture.Context), "agents reloaded") }()
+	require.Eventually(t, func() bool {
+		err := h.svc.Start(h.fixture.Context, workflowhost.Invocation{CommandID: "x", ScriptPath: path, SessionID: h.session})
+		return errors.Is(err, workflowhost.ErrShuttingDown)
+	}, 5*time.Second, time.Millisecond)
+	close(release)
+
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusInterrupted, done.Status, done.Message)
+	require.Equal(t, "interrupted: agents reloaded", done.Message)
+	require.NoError(t, <-shutdown)
+	run, ok, err := h.store.GetRun(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, workflowhost.StatusInterrupted, run.Status)
+	require.NoFileExists(t, filepath.Join(h.fixture.Config.WorkingDir(), "should-not-exist"))
 }
