@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -190,7 +192,7 @@ func (w *WorkflowRunMessageItem) summary() string {
 	}
 	v := w.view
 	if v.Status != workflowhost.StatusRunning {
-		return WorkflowOutcomeText(v.Status, firstLine(v.Error)) + " · " + formatRunDuration(v.FinishedAt.Sub(v.StartedAt))
+		return WorkflowOutcomeText(v.Status, outcomeDetail(*v)) + " · " + formatRunDuration(v.FinishedAt.Sub(v.StartedAt))
 	}
 	parts := []string{}
 	if step, detail := v.Current(); step != "" {
@@ -256,7 +258,7 @@ func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost
 		if input := firstLine(view.Input); input != "" {
 			title += " " + sty.Tool.ParamMain.Render(input)
 		}
-		state := WorkflowOutcomeText(view.Status, firstLine(view.Error))
+		state := WorkflowOutcomeText(view.Status, outcomeDetail(view))
 		if view.Status == workflowhost.StatusRunning {
 			state = runningState(view)
 		}
@@ -327,6 +329,19 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 		}
 		return workflowStatusIcon(sty, item.Status) + " " + label + sep + sty.Tool.StatsLine.Render(state)
 	}
+}
+
+// outcomeDetail is what a finished run said about how it ended: its result
+// when it completed, its error otherwise.
+func outcomeDetail(view workflowhost.RunView) string {
+	if view.Status != workflowhost.StatusCompleted {
+		return firstLine(view.Error)
+	}
+	var buf bytes.Buffer
+	if len(view.Result) == 0 || json.Compact(&buf, view.Result) != nil || buf.String() == "null" {
+		return ""
+	}
+	return buf.String()
 }
 
 // runningState says how a running run is going.

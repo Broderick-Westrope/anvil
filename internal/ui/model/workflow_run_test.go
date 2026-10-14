@@ -207,3 +207,19 @@ func TestWorkflowRunViewShowsCallsLeftOpenByAnInterruptedRun(t *testing.T) {
 	require.Contains(t, rows[4], "/demo: devils-advocate gpt-6 · interrupted")
 	require.Contains(t, rows[5], "? Which repo? → unanswered (interrupted)")
 }
+
+func TestWorkflowRunNodeShowsWhatACompletedRunReturned(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	done := runningView()
+	done.Status, done.FinishedAt = workflowhost.StatusCompleted, done.StartedAt.Add(time.Minute)
+	done.Result = []byte(`{
+  "outcome": "stopped",
+  "reason": "cap hit"
+}`)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": done}
+	f.markerArrives()
+
+	require.Contains(t, ansi.Strip(f.node(t).Render(200)), `completed: {"outcome":"stopped","reason":"cap hit"} · 1m0s`)
+}
