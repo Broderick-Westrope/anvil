@@ -1295,3 +1295,53 @@ func TestWorkflowRequestsOfAReplacedInvocationAreForgotten(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowPanelKeepsThePanelContract(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	keys := workflowPanel{styles: &sty, pauseKey: "ctrl+x", abortKey: "alt+x", goKey: "alt+g", agentKey: "alt+o", runKey: "alt+w"}
+	tests := map[string]workflowPanel{
+		"progress": {command: "build", step: "review", detail: "approach 2/3", activity: "$ git status", paused: true, held: true},
+		"multi-line script text": {
+			command: "build", step: "review\nthe diff", detail: "approach 2\nof 3", activity: "$ git status\ngit diff",
+			elsewhere: "Builder\nsecond line",
+			entries: []dialog.WorkflowEntry{
+				{Kind: dialog.WorkflowEntryAgent, Agent: "rev\niewer", SessionID: "c1", Status: workflowhost.StatusRunning},
+				{Kind: dialog.WorkflowEntryAgent, Agent: "critic", SessionID: "c2", Status: workflowhost.StatusFailed, Err: "boom\nstack"},
+				{Kind: dialog.WorkflowEntryAsk, Question: "Ship?\nReally?", Answer: "yes\nno"},
+			},
+		},
+		"finished": {command: "build", outcome: &dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: workflowhost.StatusFailed, Text: "BashError\nstack"}},
+	}
+	for name, p := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			p.styles, p.pauseKey, p.abortKey, p.goKey, p.agentKey, p.runKey = keys.styles, keys.pauseKey, keys.abortKey, keys.goKey, keys.agentKey, keys.runKey
+			requirePanelContract(t, p)
+		})
+	}
+}
+
+func TestWorkflowPanelCutsScriptTextAtItsFirstLine(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.sessions["sess-2"] = session.Session{ID: "sess-2", Title: "Builder\nwith a second line"}
+	f.event(started("demo", "sess-1"))
+	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "build\nstep two", Detail: "approach 1\nof 3"}})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
+	f.event(agentEvent("rev\niewer", "child-1", workflowhost.StatusRunning))
+
+	panel := f.panel()
+	require.Equal(t, f.panelLines(), strings.Count(panel, "\n")+1)
+	require.Contains(t, panel, "/demo · build · approach 1")
+	require.Contains(t, panel, "workflow /demo is running in Builder  alt+g")
+	require.Contains(t, panel, "/demo: rev · running")
+	for _, rest := range []string{"step two", "of 3", "with a second line", "iewer"} {
+		require.NotContains(t, panel, rest)
+	}
+
+	f.press(showRunKey)
+	require.Contains(t, f.runDialog(), "build step two", "the run dialog keeps the full text")
+}

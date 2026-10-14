@@ -245,3 +245,23 @@ func TestPaletteListsFeatureEntries(t *testing.T) {
 
 	require.Contains(t, f.actions, dialog.Action(fakeFeatureAction{}))
 }
+
+// requirePanelContract checks that p renders exactly p.Lines() lines,
+// each within width, at widths from nothing to wider than its content.
+func requirePanelContract(t *testing.T, p panelView) {
+	t.Helper()
+	for _, width := range []int{0, 1, 2, 7, 30, 200} {
+		out := p.Render(width)
+		lines := strings.Split(out, "\n")
+		require.Len(t, lines, p.Lines(), "width %d:\n%s", width, out)
+		for _, line := range lines {
+			require.LessOrEqual(t, ansi.StringWidth(line), width, "width %d: %q", width, line)
+		}
+	}
+}
+
+func TestStaticPanelKeepsThePanelContract(t *testing.T) {
+	t.Parallel()
+
+	requirePanelContract(t, staticPanel{"first panel line", "second"})
+}

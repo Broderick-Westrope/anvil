@@ -736,7 +736,8 @@ func (p workflowPanel) Lines() int {
 
 // Render renders the progress line, plus a warning when the run is
 // driving another session, within width; or, once the run has finished,
-// a one-line summary.
+// a one-line summary. Script-supplied text is cut at its first line so
+// each row is one line.
 func (p workflowPanel) Render(width int) string {
 	t := p.styles
 	sep := t.Pills.HelpText.Render(" · ")
@@ -757,7 +758,7 @@ func (p workflowPanel) Render(width int) string {
 	}
 	for _, part := range []string{p.step, p.detail} {
 		if part != "" {
-			progress += sep + t.Pills.TodoProgress.Render(part)
+			progress += sep + t.Pills.TodoProgress.Render(firstLine(part))
 		}
 	}
 	if p.paused {
@@ -778,7 +779,7 @@ func (p workflowPanel) Render(width int) string {
 	lines := []string{fitWithHints(progress, hints)}
 
 	if p.elsewhere != "" {
-		warning := t.Pills.WorkflowWarning.Render(fmt.Sprintf("workflow /%s is running in %s", p.command, p.elsewhere))
+		warning := t.Pills.WorkflowWarning.Render(fmt.Sprintf("workflow /%s is running in %s", p.command, firstLine(p.elsewhere)))
 		lines = append(lines, ansi.Truncate(warning+"  "+hint(p.goKey, "go there"), width, "…"))
 	}
 	latest, _ := latestAgent(p.entries)
@@ -788,6 +789,7 @@ func (p workflowPanel) Render(width int) string {
 			entry = "  " + t.Pills.HelpKey.Render("?") + " " + t.Pills.HelpText.Render(firstLine(e.Question)) +
 				" " + t.Pills.HelpText.Render("→") + " " + t.Pills.TodoProgress.Render(firstLine(e.Answer))
 		} else {
+			e.Agent = firstLine(e.Agent)
 			entry = "  " + dialog.WorkflowAgentLine(t, p.command, e, true)
 			if e.SessionID == latest.SessionID {
 				entry += "  " + hint(p.agentKey, "open")
