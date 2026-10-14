@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"strings"
 	"sync"
 
 	"charm.land/lipgloss/v2"
@@ -82,10 +83,21 @@ func Formatter(bgColor color.Color, processValue func(string) string) chroma.For
 				s = s.Foreground(lipgloss.Color(entry.Colour.String()))
 			}
 
-			if _, err := fmt.Fprint(w, s.Render(value)); err != nil {
+			if _, err := fmt.Fprint(w, renderLines(s, value)); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// renderLines styles each line of value on its own. Rendering a multi-line
+// value in one call would pad every line to the widest one, shifting the
+// text that follows a token ending in a newline, such as a line comment.
+func renderLines(s lipgloss.Style, value string) string {
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		lines[i] = s.Render(line)
+	}
+	return strings.Join(lines, "\n")
 }

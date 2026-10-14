@@ -24,6 +24,8 @@ type Item struct {
 	Description  string
 	ArgumentHint string // Optional inline argument hint shown after the name.
 	Type         ItemType
+	// Unlisted marks a skill that is hidden from the agent's catalog.
+	Unlisted bool
 	// Opaque ID for execution — the handler maps this back to
 	// the domain object. Avoids importing commands/skills packages.
 	ID string // e.g., "cmd:commit" or "skill:grilling"

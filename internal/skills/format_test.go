@@ -46,3 +46,35 @@ func TestResolveSkillContent_Empty(t *testing.T) {
 	got := ResolveContent(nil, lookup)
 	require.Empty(t, got)
 }
+
+func TestCollapseContentXML(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		text string
+		want string
+	}{
+		"no skill content": {
+			text: "plain message",
+			want: "plain message",
+		},
+		"only skill content": {
+			text: FormatContentXML("grilling", "Ask questions"),
+			want: "Using skill: grilling",
+		},
+		"skill content before the message": {
+			text: FormatContentXML("grilling", "Ask questions") + "\n\nDesign the cache",
+			want: "Using skill: grilling\n\nDesign the cache",
+		},
+		"several skills around the message": {
+			text: FormatContentXML("a", "one") + "\n\nMiddle text\n\n" + FormatContentXML("b", "two\nlines"),
+			want: "Using skill: a, b\n\nMiddle text",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, CollapseContentXML(tc.text))
+		})
+	}
+}

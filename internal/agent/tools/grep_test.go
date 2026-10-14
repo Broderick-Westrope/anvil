@@ -1,11 +1,16 @@
 package tools
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
+	"time"
 
+	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -453,6 +458,161 @@ func TestColumnMatch(t *testing.T) {
 			require.Equal(t, 14, match.charNum)
 			require.Equal(t, "I wanna grep THIS particular word", match.lineText)
 			require.Equal(t, "testdata/grep.txt", filepath.ToSlash(filepath.Clean(match.path)))
+		})
+	}
+}
+
+func runGrepTool(t *testing.T, workingDir string, params GrepParams) fantasy.ToolResponse {
+	t.Helper()
+	input, err := json.Marshal(params)
+	require.NoError(t, err)
+	resp, err := NewGrepTool(workingDir, config.ToolGrep{}).Run(t.Context(), fantasy.ToolCall{ID: "test-call", Name: GrepToolName, Input: string(input)})
+	require.NoError(t, err)
+	return resp
+}
+
+// writeGrepFile writes content to name under dir with a fixed modification
+// time, since grep lists the most recently modified files first.
+func writeGrepFile(t *testing.T, dir, name, content string, modTime time.Time) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	require.NoError(t, os.Chtimes(path, modTime, modTime))
+	return filepath.ToSlash(path)
+}
+
+func TestGrepTool_FormatsMatchesByFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	older := writeGrepFile(t, dir, "older.txt", "needle one\nnothing\nxx needle two\n", base)
+	newer := writeGrepFile(t, dir, "newer.txt", "a needle here\n", base.Add(time.Hour))
+	writeGrepFile(t, dir, "none.txt", "nothing\n", base.Add(2*time.Hour))
+
+	resp := runGrepTool(t, dir, GrepParams{Pattern: "needle"})
+
+	require.False(t, resp.IsError)
+	require.Equal(t, "Found 3 matches\n"+
+		newer+":\n"+
+		"  Line 1, Char 3: a needle here\n"+
+		"\n"+
+		older+":\n"+
+		"  Line 1, Char 1: needle one\n"+
+		"  Line 3, Char 4: xx needle two\n", resp.Content)
+	var meta GrepResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, GrepResponseMetadata{NumberOfMatches: 3}, meta)
+}
+
+func TestGrepTool_NoMatches(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeGrepFile(t, dir, "a.txt", "nothing\n", time.Now())
+
+	resp := runGrepTool(t, dir, GrepParams{Pattern: "needle"})
+
+	require.False(t, resp.IsError)
+	require.Equal(t, "No files found", resp.Content)
+}
+
+func TestGrepTool_TruncatesResults(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeGrepFile(t, dir, "many.txt", strings.Repeat("needle\n", 101), time.Now())
+
+	resp := runGrepTool(t, dir, GrepParams{Pattern: "needle"})
+
+	require.True(t, strings.HasPrefix(resp.Content, "Found 100 matches\n"), resp.Content)
+	require.True(t, strings.HasSuffix(resp.Content, "  Line 100, Char 1: needle\n\n(Results are truncated. Consider using a more specific path or pattern.)"), resp.Content)
+	var meta GrepResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, GrepResponseMetadata{NumberOfMatches: 100, Truncated: true}, meta)
+}
+
+func TestGrepTool_TruncatesLongLines(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		line string
+		want string
+	}{
+		"at the width":   {line: "needle" + strings.Repeat("x", maxGrepContentWidth-6), want: "needle" + strings.Repeat("x", maxGrepContentWidth-6)},
+		"over the width": {line: "needle" + strings.Repeat("x", maxGrepContentWidth-5), want: "needle" + strings.Repeat("x", maxGrepContentWidth-9) + "..."},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := writeGrepFile(t, dir, "long.txt", tc.line+"\n", time.Now())
+
+			resp := runGrepTool(t, dir, GrepParams{Pattern: "needle"})
+
+			require.Equal(t, "Found 1 matches\n"+path+":\n  Line 1, Char 1: "+tc.want+"\n", resp.Content)
+		})
+	}
+}
+
+func TestGrepTool_Params(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	path := writeGrepFile(t, sub, "a.go", "x := a.b(c)\n", time.Now())
+	writeGrepFile(t, sub, "a.txt", "x := a.b(c)\n", time.Now())
+
+	tests := map[string]struct {
+		params GrepParams
+		want   string
+	}{
+		"literal text": {
+			params: GrepParams{Pattern: "a.b(c)", LiteralText: true, Path: sub, Include: "*.go"},
+			want:   "Found 1 matches\n" + path + ":\n  Line 1, Char 6: x := a.b(c)\n",
+		},
+		"regex does not match literally": {
+			params: GrepParams{Pattern: "a.b(c)", Path: sub, Include: "*.go"},
+			want:   "No files found",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			resp := runGrepTool(t, dir, tc.params)
+
+			require.False(t, resp.IsError)
+			require.Equal(t, tc.want, resp.Content)
+		})
+	}
+}
+
+func TestGrepTool_Errors(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	resp := runGrepTool(t, dir, GrepParams{})
+	require.True(t, resp.IsError)
+	require.Equal(t, "pattern is required", resp.Content)
+
+	resp = runGrepTool(t, dir, GrepParams{Pattern: "(", Path: filepath.Join(dir, "missing")})
+	require.True(t, resp.IsError)
+	require.True(t, strings.HasPrefix(resp.Content, "error searching files: "), resp.Content)
+}
+
+// TestFormatGrepMatch covers only the zero line and column branches. Both
+// search backends always report a 1-based line and column, so the tool
+// can't reach them; TestGrepTool_FormatsMatchesByFile covers the rest.
+func TestFormatGrepMatch(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		match grepMatch
+		want  string
+	}{
+		"no column": {match: grepMatch{path: "a.go", lineNum: 2, lineText: "x"}, want: "  Line 2: x\n"},
+		"no line":   {match: grepMatch{path: "a.go", charNum: 5, lineText: "x"}, want: "  a.go\n"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, formatGrepMatch(tc.match))
 		})
 	}
 }

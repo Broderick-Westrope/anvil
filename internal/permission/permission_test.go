@@ -79,7 +79,7 @@ func TestSkipRace(t *testing.T) {
 		defer wg.Done()
 		svc.YoloLevel()
 	}()
-	wg.Wait()
+	wait(t, &wg)
 }
 
 func TestPermissionService_YoloStandard(t *testing.T) {
@@ -158,9 +158,9 @@ func TestPermissionService_HookApproval(t *testing.T) {
 		})
 
 		// Confirm the service published a real request (i.e. didn't bypass).
-		event := <-events
+		event := recv(t, events)
 		service.Deny(event.Payload, "")
-		wg.Wait()
+		wait(t, &wg)
 		require.NoError(t, err)
 		assert.False(t, granted.Granted, "stamped approval must not apply to a different tool call")
 	})
@@ -182,58 +182,13 @@ func TestPermissionService_HookApproval(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, granted.Granted)
 
-		event := <-notifications
+		event := recv(t, notifications)
 		assert.Equal(t, "call-99", event.Payload.ToolCallID)
 		assert.True(t, event.Payload.Granted, "subscribers should see a granted notification")
 	})
 }
 
 func TestPermissionService_SequentialProperties(t *testing.T) {
-	t.Run("Sequential permission requests with persistent grants", func(t *testing.T) {
-		service := NewPermissionService("/tmp", config.YoloOff, nil, nil)
-
-		req1 := CreatePermissionRequest{
-			SessionID:   "session1",
-			ToolName:    "file_tool",
-			Description: "Read file",
-			Action:      "read",
-			Params:      map[string]string{"file": "test.txt"},
-			Path:        "/tmp/test.txt",
-		}
-
-		var result1 RequestResult
-		var wg sync.WaitGroup
-		wg.Add(1)
-
-		events := service.Subscribe(t.Context())
-
-		go func() {
-			defer wg.Done()
-			result1, _ = service.Request(t.Context(), req1)
-		}()
-
-		var permissionReq PermissionRequest
-		event := <-events
-
-		permissionReq = event.Payload
-		service.GrantPersistent(permissionReq)
-
-		wg.Wait()
-		assert.True(t, result1.Granted, "First request should be granted")
-
-		// Second identical request should be automatically approved due to persistent permission.
-		req2 := CreatePermissionRequest{
-			SessionID:   "session1",
-			ToolName:    "file_tool",
-			Description: "Read file again",
-			Action:      "read",
-			Params:      map[string]string{"file": "test.txt"},
-			Path:        "/tmp/test.txt",
-		}
-		result2, err := service.Request(t.Context(), req2)
-		require.NoError(t, err)
-		assert.True(t, result2.Granted, "Second request should be auto-approved")
-	})
 	t.Run("Sequential requests with temporary grants", func(t *testing.T) {
 		service := NewPermissionService("/tmp", config.YoloOff, nil, nil)
 
@@ -255,11 +210,11 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 		})
 
 		var permissionReq PermissionRequest
-		event := <-events
+		event := recv(t, events)
 		permissionReq = event.Payload
 
 		service.Grant(permissionReq)
-		wg.Wait()
+		wait(t, &wg)
 		assert.True(t, result1.Granted, "First request should be granted")
 
 		var result2 RequestResult
@@ -268,10 +223,10 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 			result2, _ = service.Request(t.Context(), req)
 		})
 
-		event = <-events
+		event = recv(t, events)
 		permissionReq = event.Payload
 		service.Deny(permissionReq, "")
-		wg.Wait()
+		wait(t, &wg)
 		assert.False(t, result2.Granted, "Second request should be denied")
 	})
 	t.Run("Concurrent requests with different outcomes", func(t *testing.T) {
@@ -316,17 +271,17 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 		}
 
 		for range 3 {
-			event := <-events
+			event := recv(t, events)
 			switch event.Payload.ToolName {
 			case "tool1":
 				service.Grant(event.Payload)
 			case "tool2":
-				service.GrantPersistent(event.Payload)
+				service.Grant(event.Payload)
 			case "tool3":
 				service.Deny(event.Payload, "")
 			}
 		}
-		wg.Wait()
+		wait(t, &wg)
 		grantedCount := 0
 		for _, result := range results {
 			if result.Granted {
@@ -335,11 +290,6 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 		}
 
 		assert.Equal(t, 2, grantedCount, "Should have 2 granted and 1 denied")
-		secondReq := requests[1]
-		secondReq.Description = "Repeat of second request"
-		result, err := service.Request(t.Context(), secondReq)
-		require.NoError(t, err)
-		assert.True(t, result.Granted, "Repeated request should be auto-approved due to persistent permission")
 	})
 }
 
@@ -383,9 +333,9 @@ func TestRevokeAutoApproveSession(t *testing.T) {
 			})
 		})
 
-		event := <-events
+		event := recv(t, events)
 		service.Deny(event.Payload, "")
-		wg.Wait()
+		wait(t, &wg)
 
 		require.NoError(t, reqErr)
 		require.False(t, result.Granted, "revoked session should no longer be auto-approved")
@@ -467,9 +417,9 @@ func TestGrantOnce_DoesNotAffectSubsequentRequests(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	event := <-events
+	event := recv(t, events)
 	service.Grant(event.Payload)
-	wg.Wait()
+	wait(t, &wg)
 	require.True(t, result1.Granted, "first request should be granted")
 
 	// Second identical request should NOT be auto-approved.
@@ -487,9 +437,9 @@ func TestGrantOnce_DoesNotAffectSubsequentRequests(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	event = <-events
+	event = recv(t, events)
 	service.Deny(event.Payload, "")
-	wg.Wait()
+	wait(t, &wg)
 	require.False(t, result2.Granted, "grant once should not affect subsequent requests")
 }
 
@@ -563,11 +513,11 @@ func TestPermissionService_InputSegments(t *testing.T) {
 		})
 
 		// The request must block and publish a pending prompt.
-		event := <-events
+		event := recv(t, events)
 		require.Equal(t, []string{"git status", "rm -rf /"}, event.Payload.InputSegments)
 
 		service.Deny(event.Payload, "")
-		wg.Wait()
+		wait(t, &wg)
 		require.False(t, result.Granted, "denied prompt should not grant")
 	})
 }
@@ -713,7 +663,7 @@ func TestPendingRequest(t *testing.T) {
 				require.NoError(t, err)
 			})
 
-			event := <-events
+			event := recv(t, events)
 			pending, ok := service.PendingRequest()
 			require.True(t, ok)
 			require.Equal(t, PendingPermission{
@@ -726,7 +676,7 @@ func TestPendingRequest(t *testing.T) {
 			_, ok = service.PendingRequest()
 			require.False(t, ok, "nothing is pending once the request is resolved")
 
-			wg.Wait()
+			wait(t, &wg)
 			require.Equal(t, tt.granted, result.Granted)
 		})
 	}
@@ -767,5 +717,5 @@ func TestPendingRequestConcurrentWithReview(t *testing.T) {
 	h.svc.Grant(update)
 	require.NoError(t, waitResult(t, done).err)
 	close(stop)
-	wg.Wait()
+	wait(t, &wg)
 }

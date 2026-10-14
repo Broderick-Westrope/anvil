@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	_ "embed"
 	"fmt"
@@ -54,44 +55,35 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				oldStatusByContent[todo.Content] = todo.Status
 			}
 
-			for _, item := range params.Todos {
-				switch item.Status {
-				case "pending", "in_progress", "completed":
-				default:
-					return fantasy.ToolResponse{}, fmt.Errorf("invalid status %q for todo %q", item.Status, item.Content)
-				}
+			// countByStatus counts the new todos by status. Its keys are the
+			// statuses a todo may have.
+			countByStatus := map[session.TodoStatus]int{
+				session.TodoStatusPending:    0,
+				session.TodoStatusInProgress: 0,
+				session.TodoStatusCompleted:  0,
 			}
-
 			todos := make([]session.Todo, len(params.Todos))
 			var justCompleted []string
 			var justStarted string
-			completedCount := 0
 
 			for i, item := range params.Todos {
+				newStatus := session.TodoStatus(item.Status)
+				if _, ok := countByStatus[newStatus]; !ok {
+					return fantasy.ToolResponse{}, fmt.Errorf("invalid status %q for todo %q", item.Status, item.Content)
+				}
+				countByStatus[newStatus]++
 				todos[i] = session.Todo{
 					Content:    item.Content,
-					Status:     session.TodoStatus(item.Status),
+					Status:     newStatus,
 					ActiveForm: item.ActiveForm,
 				}
 
-				newStatus := session.TodoStatus(item.Status)
 				oldStatus, existed := oldStatusByContent[item.Content]
-
-				if newStatus == session.TodoStatusCompleted {
-					completedCount++
-					if existed && oldStatus != session.TodoStatusCompleted {
-						justCompleted = append(justCompleted, item.Content)
-					}
+				if newStatus == session.TodoStatusCompleted && existed && oldStatus != session.TodoStatusCompleted {
+					justCompleted = append(justCompleted, item.Content)
 				}
-
-				if newStatus == session.TodoStatusInProgress {
-					if !existed || oldStatus != session.TodoStatusInProgress {
-						if item.ActiveForm != "" {
-							justStarted = item.ActiveForm
-						} else {
-							justStarted = item.Content
-						}
-					}
+				if newStatus == session.TodoStatusInProgress && (!existed || oldStatus != session.TodoStatusInProgress) {
+					justStarted = cmp.Or(item.ActiveForm, item.Content)
 				}
 			}
 
@@ -103,17 +95,9 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 
 			response := "Todo list updated successfully.\n\n"
 
-			pendingCount := 0
-			inProgressCount := 0
-
-			for _, todo := range todos {
-				switch todo.Status {
-				case session.TodoStatusPending:
-					pendingCount++
-				case session.TodoStatusInProgress:
-					inProgressCount++
-				}
-			}
+			pendingCount := countByStatus[session.TodoStatusPending]
+			inProgressCount := countByStatus[session.TodoStatusInProgress]
+			completedCount := countByStatus[session.TodoStatusCompleted]
 
 			response += fmt.Sprintf("Status: %d pending, %d in progress, %d completed\n",
 				pendingCount, inProgressCount, completedCount)

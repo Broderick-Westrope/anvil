@@ -142,37 +142,6 @@ func TestLazyMCPIntegration_HumanToggleOrdering(t *testing.T) {
 	require.True(t, state3["datadog"])
 }
 
-func TestLazyMCPIntegration_AllowedMCPFiltering(t *testing.T) {
-	t.Parallel()
-
-	lazyMCPs := map[string]string{
-		"datadog": "Observability tools",
-		"slack":   "Messaging integration",
-		"linear":  "Project management",
-	}
-
-	// Agent only allowed datadog and linear.
-	allowed := map[string][]string{
-		"datadog": nil,
-		"linear":  nil,
-	}
-
-	filtered := filterAllowedLazyMCPs(lazyMCPs, allowed)
-	require.Len(t, filtered, 2)
-	require.Contains(t, filtered, "datadog")
-	require.Contains(t, filtered, "linear")
-	require.NotContains(t, filtered, "slack")
-
-	// Build enable_mcp tool from filtered list.
-	enableTool := tools.NewEnableMCPTool(filtered, nil)
-	info := enableTool.Info()
-	require.Equal(t, tools.EnableMCPToolName, info.Name)
-	// The description should mention datadog and linear but not slack.
-	require.Contains(t, info.Description, "datadog")
-	require.Contains(t, info.Description, "linear")
-	require.NotContains(t, info.Description, "slack")
-}
-
 func TestLazyMCPIntegration_EnableMCPToolValidation(t *testing.T) {
 	t.Parallel()
 

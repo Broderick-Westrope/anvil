@@ -8,6 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -97,6 +101,10 @@ func TestAgenticFetchModelSelection(t *testing.T) {
 			}
 			requests := make(chan request, 1)
 			var count atomic.Int32
+			// The fetch sub-agent must run under the coordinator's shared
+			// admission, so CancelAll reaches it.
+			var shared atomic.Pointer[admission]
+			var sharedBusy atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/messages" || r.Method != http.MethodPost {
 					t.Errorf("Unexpected provider request: %s %s", r.Method, r.URL)
@@ -115,6 +123,7 @@ func TestAgenticFetchModelSelection(t *testing.T) {
 					return
 				}
 				requests <- body
+				sharedBusy.Store(shared.Load().busy(""))
 				if tt.oauthMode != "" && r.Header.Get("Authorization") != "Bearer dummy-oauth-token" {
 					t.Errorf("Unexpected authorization: %q", r.Header.Get("Authorization"))
 				}
@@ -156,6 +165,8 @@ func TestAgenticFetchModelSelection(t *testing.T) {
 				},
 				Tools: config.Tools{AgenticFetch: config.ToolAgenticFetch{Model: tt.model}},
 			})
+			c.admission = newAdmission(t.Context())
+			shared.Store(c.admission)
 			tool, err := c.agenticFetchTool(ctx, server.Client())
 			require.NoError(t, err)
 			result, err := tool.Run(ctx, fantasy.ToolCall{ID: "fetch_call", Name: tools.AgenticFetchToolName, Input: `{"prompt":"Find the model selection sentinel."}`})
@@ -178,6 +189,8 @@ func TestAgenticFetchModelSelection(t *testing.T) {
 			}
 			systemText := strings.Join(systemTexts, "\n")
 			userText := strings.Join(userTexts, "\n")
+			require.True(t, sharedBusy.Load(), "fetch sub-agent must run under the shared admission")
+			require.NotContains(t, userText, "todo list", "fetch sub-agent has no todos tool")
 			require.Equal(t, 1, strings.Count(systemText+userText, tt.wantPrefix))
 			require.NotContains(t, systemText+userText, tt.forbiddenPrefix)
 			if tt.oauthMode == SystemModeB {
@@ -384,9 +397,8 @@ func TestAgenticFetchAnthropicOAuth(t *testing.T) {
 							require.Len(t, systemTexts, 2)
 							require.Contains(t, userText, prefix)
 							require.Contains(t, userText, "You are a web content analysis agent.")
-							require.Len(t, userTexts, 3)
-							require.Contains(t, userTexts[1], "<system_reminder>")
-							require.Contains(t, userTexts[2], userPrompt)
+							require.Len(t, userTexts, 2)
+							require.Contains(t, userTexts[1], userPrompt)
 							require.Equal(t, anthropicoauth.BuildBillingValue(strings.Join(userTexts[:2], "")), systemTexts[0])
 						} else {
 							require.Equal(t, prefix, systemTexts[2])
@@ -423,4 +435,188 @@ func TestAgenticFetchAnthropicOAuth(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestAgenticFetchURLMode pins the prompt the fetch sub-agent gets for a URL:
+// small pages inline, large pages saved to a file it can search.
+func TestAgenticFetchURLMode(t *testing.T) {
+	const userPrompt = "Summarise the page."
+	const finalOutput = "Page summarised."
+	small := strings.Repeat("s", tools.LargeContentThreshold)
+	large := strings.Repeat("l", tools.LargeContentThreshold+1)
+	savedPath := regexp.MustCompile(`has been saved to: (\S+)`)
+	tests := map[string]struct {
+		page       string
+		wantPrompt func(url string, saved string) string
+	}{
+		"page at the threshold is inline": {
+			page: small,
+			wantPrompt: func(url, _ string) string {
+				return userPrompt + "\n\nWeb page URL: " + url + "\n\n<webpage_content>\n" + small + "\n</webpage_content>"
+			},
+		},
+		"page over the threshold is saved": {
+			page: large,
+			wantPrompt: func(url, saved string) string {
+				return userPrompt + "\n\nThe web page from " + url + " has been saved to: " + saved +
+					"\n\nUse the view and grep tools to analyze this file and extract the requested information."
+			},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ANTHROPIC_API_KEY", "dummy-env-key")
+			t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+			t.Setenv(SystemModeEnvVar, "")
+			type request struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content []struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"messages"`
+			}
+			var gotPrompt, gotSaved string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/page" {
+					w.Header().Set("Content-Type", "text/plain")
+					_, _ = w.Write([]byte(tt.page))
+					return
+				}
+				var body request
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("Decode provider request: %v", err)
+					return
+				}
+				last := body.Messages[len(body.Messages)-1]
+				gotPrompt = last.Content[len(last.Content)-1].Text
+				if m := savedPath.FindStringSubmatch(gotPrompt); m != nil {
+					saved, err := os.ReadFile(m[1])
+					assert.NoError(t, err)
+					gotSaved = string(saved)
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				emit := func(event, data string) { _, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data) }
+				emit("message_start", `{"type":"message_start","message":{"id":"msg_fetch","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}`)
+				emit("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+				emit("content_block_delta", fmt.Sprintf(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`, finalOutput))
+				emit("content_block_stop", `{"type":"content_block_stop","index":0}`)
+				emit("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}`)
+				emit("message_stop", `{"type":"message_stop"}`)
+			}))
+			t.Cleanup(server.Close)
+			providers := csync.NewMap[string, config.ProviderConfig]()
+			providers.Set("anthropic", config.ProviderConfig{
+				ID: "anthropic", Type: catwalk.TypeAnthropic, APIKey: "dummy-api-key", BaseURL: server.URL,
+				Models: []catwalk.Model{{ID: "claude-haiku-4-5", ContextWindow: 200000, DefaultMaxTokens: 1024}},
+			})
+			c, ctx := newAgenticFetchTestCoordinator(t, &config.Config{
+				Providers: providers,
+				Models: map[config.SelectedModelType]config.SelectedModel{
+					config.SelectedModelTypeLarge: {Provider: "anthropic", Model: "claude-haiku-4-5"},
+					config.SelectedModelTypeSmall: {Provider: "anthropic", Model: "claude-haiku-4-5"},
+				},
+			})
+			tool, err := c.agenticFetchTool(ctx, server.Client())
+			require.NoError(t, err)
+			pageURL := server.URL + "/page"
+			input, err := json.Marshal(tools.AgenticFetchParams{URL: pageURL, Prompt: userPrompt})
+			require.NoError(t, err)
+			result, err := tool.Run(ctx, fantasy.ToolCall{ID: "fetch_call", Name: tools.AgenticFetchToolName, Input: string(input)})
+			require.NoError(t, err)
+			require.False(t, result.IsError, "%+v", result)
+			require.Equal(t, finalOutput, result.Content)
+			var saved string
+			if m := savedPath.FindStringSubmatch(gotPrompt); m != nil {
+				saved = m[1]
+				require.Equal(t, tt.page, gotSaved)
+				require.NoFileExists(t, saved, "the saved page is removed after the run")
+			}
+			require.Equal(t, tt.wantPrompt(pageURL, saved), gotPrompt)
+		})
+	}
+}
+
+func TestAgenticFetchRejectsBadCalls(t *testing.T) {
+	c, ctx := newAgenticFetchTestCoordinator(t, &config.Config{})
+	projectDir := c.cfg.Config().Options.ProjectDirectory
+	var providerCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages":
+			providerCalls.Add(1)
+		case "/read-only":
+			// Make the fetch's temporary directory read-only so saving
+			// the large page fails.
+			dirs, err := filepath.Glob(filepath.Join(projectDir, "anvil-fetch-*"))
+			assert.NoError(t, err)
+			for _, dir := range dirs {
+				assert.NoError(t, os.Chmod(dir, 0o500))
+			}
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte(strings.Repeat("l", tools.LargeContentThreshold+1)))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	tests := map[string]struct {
+		ctx      context.Context
+		params   tools.AgenticFetchParams
+		want     string
+		wantErr  string
+		readOnly bool
+	}{
+		"missing prompt": {ctx: ctx, want: "prompt is required"},
+		"missing session": {
+			ctx:    context.WithValue(ctx, tools.SessionIDContextKey, ""),
+			params: tools.AgenticFetchParams{Prompt: "p"},
+			want:   "session id missing from context",
+		},
+		"missing message": {
+			ctx:    context.WithValue(ctx, tools.MessageIDContextKey, ""),
+			params: tools.AgenticFetchParams{Prompt: "p"},
+			want:   "agent message id missing from context",
+		},
+		"page not found": {
+			ctx:    ctx,
+			params: tools.AgenticFetchParams{Prompt: "p", URL: server.URL + "/missing"},
+			want:   "Failed to fetch URL: request failed with status code: 404",
+		},
+		"page cannot be saved": {
+			ctx:      ctx,
+			params:   tools.AgenticFetchParams{Prompt: "p", URL: server.URL + "/read-only"},
+			want:     "Failed to create temporary file: ",
+			readOnly: true,
+		},
+		"no small model": {
+			ctx:     ctx,
+			params:  tools.AgenticFetchParams{Prompt: "p"},
+			wantErr: "error building models: ",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if tt.readOnly && runtime.GOOS == "windows" {
+				t.Skip("Windows ignores read-only directory permissions")
+			}
+			tool, err := c.agenticFetchTool(tt.ctx, server.Client())
+			require.NoError(t, err)
+			input, err := json.Marshal(tt.params)
+			require.NoError(t, err)
+			result, err := tool.Run(tt.ctx, fantasy.ToolCall{ID: "fetch_call", Name: tools.AgenticFetchToolName, Input: string(input)})
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, result.IsError)
+			if tt.readOnly {
+				require.True(t, strings.HasPrefix(result.Content, tt.want), result.Content)
+				return
+			}
+			require.Equal(t, tt.want, result.Content)
+		})
+	}
+	require.Zero(t, providerCalls.Load())
 }

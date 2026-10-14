@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/stretchr/testify/require"
 )
 
@@ -312,4 +314,57 @@ func TestWriteToolGateErrorTruncatesLongContent(t *testing.T) {
 	require.Contains(t, resp.Content, "line 0\n")
 	require.Contains(t, resp.Content, fmt.Sprintf("(Content truncated at %d lines.)", DefaultReadLimit))
 	require.NotContains(t, resp.Content, fmt.Sprintf("line %d\n", DefaultReadLimit))
+}
+
+func TestWriteToolGateOutsideWorkingDirGrantedIncludesContent(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	filePath := filepath.Join(t.TempDir(), "shared.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("shared content\n"), 0o644))
+
+	tracker := newMockFileTracker()
+	perms := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+	tool := NewWriteTool(nil, perms, tracker, workingDir)
+
+	resp := runWrite(t, tool, filePath, "new content\n")
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "shared content")
+	require.Equal(t, []permission.CreatePermissionRequest{{
+		SessionID:   "test-session",
+		Path:        filePath,
+		ToolCallID:  "test-call",
+		ToolName:    ViewToolName,
+		Action:      "read",
+		Description: "Read file outside working directory to include in write-gate error: " + filePath,
+		Params:      ViewPermissionsParams{FilePath: filePath},
+		Input:       filePath,
+	}}, perms.requests)
+	require.Equal(t, filetracker.HashContent([]byte("shared content\n")), tracker.hashes[filePath])
+}
+
+func TestWriteToolGateOutsideWorkingDirPermissionErrorIsReturned(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	filePath := filepath.Join(t.TempDir(), "shared.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("shared content\n"), 0o644))
+
+	requestErr := errors.New("permission service down")
+	tracker := newMockFileTracker()
+	perms := &mockViewPermissionService{
+		Broker: pubsub.NewBroker[permission.PermissionRequest](),
+		requestFunc: func(context.Context, permission.CreatePermissionRequest) (permission.RequestResult, error) {
+			return permission.RequestResult{}, requestErr
+		},
+	}
+	tool := NewWriteTool(nil, perms, tracker, workingDir)
+
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, "test-session")
+	input, err := json.Marshal(WriteParams{FilePath: filePath, Content: "new content\n"})
+	require.NoError(t, err)
+	_, err = tool.Run(ctx, fantasy.ToolCall{ID: "test-call", Name: WriteToolName, Input: string(input)})
+
+	require.ErrorIs(t, err, requestErr)
+	require.Empty(t, tracker.hashes[filePath])
 }

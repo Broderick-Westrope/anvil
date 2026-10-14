@@ -8,23 +8,18 @@ vars:
   RACE:
     sh: test -f race.log && echo "1" || echo ""
 
+  GOLANGCI_LINT: go tool -modfile=tools/golangci-lint.mod golangci-lint
+
 env:
   CGO_ENABLED: 0
   GOEXPERIMENT: greenteagc
 
 tasks:
-  lint:install:
-    desc: Install golangci-lint
-    cmds:
-      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-    env:
-      GOTOOLCHAIN: go1.25.0
-
   lint:
     desc: Run base linters
     cmds:
       - task: lint:log
-      - golangci-lint run --path-mode=abs --config=".golangci.yml" --timeout=5m
+      - '{{.GOLANGCI_LINT}} run --path-mode=abs --config=".golangci.yml" --timeout=5m'
     env:
       GOEXPERIMENT: null
 
@@ -36,7 +31,7 @@ tasks:
   lint:fix:
     desc: Run base linters and fix issues
     cmds:
-      - golangci-lint run --path-mode=abs --config=".golangci.yml" --timeout=5m --fix
+      - '{{.GOLANGCI_LINT}} run --path-mode=abs --config=".golangci.yml" --timeout=5m --fix'
     env:
       GOEXPERIMENT: null
 
@@ -83,11 +78,6 @@ tasks:
     desc: Run tests
     cmds:
       - go test -race -failfast ./... {{.CLI_ARGS}}
-
-  test:mutation:
-    desc: Mutation-test Go lines changed since a base ref (default origin/main), optionally only under the given dirs
-    cmds:
-      - scripts/mutation-check.sh {{.CLI_ARGS | default "origin/main"}}
 
   test:record:
     desc: Run tests and record all VCR cassettes again

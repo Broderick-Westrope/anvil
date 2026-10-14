@@ -195,6 +195,9 @@ func TestRunSummaryCancellationRestoresLeaf(t *testing.T) {
 	all, err := f.Messages.List(f.Context, s.ID)
 	require.NoError(t, err)
 	require.Len(t, all, 4)
+	for _, m := range all {
+		require.NotEqual(t, message.MessageTypeCompaction, m.MessageType, "the canceled summary's placeholder is dropped")
+	}
 	require.False(t, f.Coordinator.IsSessionBusy(s.ID))
 }
 
@@ -378,6 +381,7 @@ func TestSummaryAuthRetryRestoresParent(t *testing.T) {
 	require.Len(t, all, 2)
 	leaf, err := f.Messages.Get(f.Context, current.LeafMessageID)
 	require.NoError(t, err)
+	require.Equal(t, []string{source.ID, leaf.ID}, []string{all[0].ID, all[1].ID}, "the unauthorized summary's placeholder is dropped")
 	require.Equal(t, source.ID, leaf.ParentMessageID)
 	require.Equal(t, message.MessageTypeCompaction, leaf.MessageType)
 	require.Equal(t, message.FinishReasonEndTurn, leaf.FinishReason())

@@ -320,13 +320,18 @@ func (m *Chat) ItemAt(i int) list.Item {
 // InvalidateRenderCaches drops cached rendered output on every message
 // item so the next draw re-renders with the current styles.
 func (m *Chat) InvalidateRenderCaches() {
+	chat.ClearItemCaches(m.MessageItems())
+}
+
+// MessageItems returns the chat's message items in order.
+func (m *Chat) MessageItems() []chat.MessageItem {
 	items := make([]chat.MessageItem, 0, m.list.Len())
 	for i := range m.list.Len() {
 		if item, ok := m.list.ItemAt(i).(chat.MessageItem); ok {
 			items = append(items, item)
 		}
 	}
-	chat.ClearItemCaches(items)
+	return items
 }
 
 // SetMessages sets the chat messages to the provided list of message items.
@@ -834,14 +839,14 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 	// Execute the click action (e.g., expansion or drill-in).
 	selectedItem := m.list.SelectedItem()
 
-	// Check for drill-in before Expandable — DrillInHandler takes priority.
-	if driller, ok := selectedItem.(chat.DrillInHandler); ok {
-		sessionID := driller.DrillIn()
+	// Check for agent drill-in before Expandable — it takes priority.
+	if driller, ok := selectedItem.(chat.AgentDrillInHandler); ok {
+		sessionID := driller.AgentDrillIn()
 		if sessionID != "" {
 			cmd := func() tea.Msg {
-				return util.DrillInMsg{
+				return util.AgentDrillInMsg{
 					SessionID: sessionID,
-					Label:     driller.DrillInLabel(),
+					Label:     driller.AgentDrillInLabel(),
 				}
 			}
 			return true, cmd
@@ -863,10 +868,14 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 
 	if clickable, ok := selectedItem.(list.MouseClickable); ok {
 		handled := clickable.HandleMouseClick(ansi.MouseButton1, msg.X, msg.Y)
+		// A handled click on an assistant message is on its "Thought for"
+		// line, which opens the thinking drill-in.
+		if assistant, ok := selectedItem.(*chat.AssistantMessageItem); ok && handled {
+			return true, assistant.ThinkingDrillIn()
+		}
 		// Toggle expansion only when the item signalled it handled the
-		// click. Items like AssistantMessageItem only report handled when
-		// the click is on their expandable region, so this avoids
-		// toggling expansion for clicks outside the clickable area.
+		// click, so clicks outside an item's expandable region (such as a
+		// tool's header) don't toggle it.
 		if handled {
 			if expandable, ok := selectedItem.(chat.Expandable); ok {
 				wasFollowing := m.follow

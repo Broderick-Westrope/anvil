@@ -798,6 +798,26 @@ by-name loading. Names resolve against the executing tool's registry snapshot;
 an unknown name returns an error without searching the filesystem. Loading a
 skill supplies task context, not additional tools, delegation, or authority.
 
+#### Unlisted skills
+
+Set `unlisted: true` in a skill's frontmatter to keep it out of the prompt
+catalog:
+
+```yaml
+---
+name: design-it-twice
+description: Compare several designs for one module before picking one.
+unlisted: true
+---
+```
+
+The description then costs no context and the skill never triggers on its
+own, but it still works everywhere a name is given: you can attach it from the
+skill picker or `/` autocomplete (marked `unlisted`), a command can preload it
+with `skills:`, and any agent can load it with `view(skill_name=...)`. Use it
+for skills that only specific commands, agents or other skills should pull in.
+`anvil_info` shows unlisted skills as `unlisted`.
+
 The global paths we looks for skills are:
 
 - `$ANVIL_SKILLS_DIR`
@@ -878,6 +898,11 @@ Commands are not nested, and `COMMAND.md` must be uppercase. Anvil logs a
 warning for anything it skips: loose `.md` files in a commands directory
 (skills directories get the same check) and directories without a
 `COMMAND.md`.
+
+`COMMAND.md` frontmatter takes a `description`, an `argument_hint` shown in
+autocomplete, and `skills`, a list of skill names whose bodies are sent with
+the command. `$ARGUMENTS` in the body is replaced with whatever follows the
+command name.
 
 ### Desktop notifications
 

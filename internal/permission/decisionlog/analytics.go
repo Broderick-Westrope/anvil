@@ -159,11 +159,7 @@ func ComputeStats(rows []db.PermissionDecision) Stats {
 		schema  int
 		battery string
 	}
-	type accumulator struct {
-		stats     AssessmentStats
-		latencies []int64
-	}
-	groups := map[version]*accumulator{}
+	groups := map[version]*versionStats{}
 	for _, row := range rows {
 		stats.ByDecidedBy[row.DecidedBy]++
 		a := parseAssessment(row)
@@ -178,67 +174,87 @@ func ComputeStats(rows []db.PermissionDecision) Stats {
 		key := version{a.SchemaVersion, a.BatteryVersion}
 		g := groups[key]
 		if g == nil {
-			g = &accumulator{stats: AssessmentStats{SchemaVersion: key.schema, BatteryVersion: key.battery, ByDecidedBy: map[string]int{}, Shadow: Comparisons{Matrix: VerdictMatrix{}}, Review: Comparisons{Matrix: VerdictMatrix{}}, Enforce: Enforcement{Bouncer: map[string]int{}, Human: Comparisons{Matrix: VerdictMatrix{}}, EscalationAxes: map[string]map[string]int{}}, Errors: map[string]int{}, Skips: map[string]int{}}}
+			g = newVersionStats(key.schema, key.battery)
 			groups[key] = g
 		}
-		s := &g.stats
-		s.Total++
-		s.ByDecidedBy[row.DecidedBy]++
-		if a.Mode == "shadow" && row.DecidedBy == string(permission.DecisionSourceHuman) {
-			addComparison(&s.Shadow, a.Outcome, row.Verdict)
-		}
-		if a.Mode == "enforce" {
-			s.Enforce.Samples++
-			if row.DecidedBy == string(permission.DecisionSourceBouncer) {
-				s.Enforce.Bouncer[row.Verdict]++
-			}
-			if row.DecidedBy == string(permission.DecisionSourceHuman) {
-				addComparison(&s.Enforce.Human, a.Outcome, row.Verdict)
-				if a.Outcome == "escalate" {
-					if len(a.Triggers) == 0 {
-						if row.Verdict == string(permission.VerdictAllow) || row.Verdict == string(permission.VerdictDeny) {
-							s.Enforce.UntriggeredEscalations++
-						}
-					} else {
-						addEscalationAxes(s.Enforce.EscalationAxes, a.Triggers, row.Verdict)
-					}
-				}
-			}
-		}
-		if a.Review != nil && row.DecidedBy == string(permission.DecisionSourceHuman) && row.Verdict != string(permission.VerdictCancelled) {
-			if a.Review.Error != "" {
-				s.ReviewErrors++
-			} else {
-				addComparison(&s.Review, a.Review.Effect, row.Verdict)
-			}
-		}
-		switch a.Outcome {
-		case "error":
-			prefix, _, _ := strings.Cut(a.Error, ":")
-			s.Errors[cmp.Or(strings.TrimSpace(prefix), "unknown")]++
-		case "skipped":
-			s.Skips[cmp.Or(a.SkipReason, "unknown")]++
-		case "allow", "escalate", "deny":
-			s.Usage.Samples++
-			s.Usage.InputTokens += int64(a.InputTokens)
-			s.Usage.OutputTokens += int64(a.OutputTokens)
-			s.Usage.MeanLatencyMS += float64(a.LatencyMS)
-			g.latencies = append(g.latencies, a.LatencyMS)
-		}
+		g.add(row, a)
 	}
 	for _, g := range groups {
-		u := &g.stats.Usage
-		if u.Samples > 0 {
-			u.MeanInputTokens = float64(u.InputTokens) / float64(u.Samples)
-			u.MeanOutputTokens = float64(u.OutputTokens) / float64(u.Samples)
-			u.MeanLatencyMS /= float64(u.Samples)
-			slices.Sort(g.latencies)
-			u.P95LatencyMS = g.latencies[int(math.Ceil(0.95*float64(len(g.latencies))))-1]
-		}
-		stats.Groups = append(stats.Groups, g.stats)
+		stats.Groups = append(stats.Groups, g.finish())
 	}
 	slices.SortFunc(stats.Groups, func(a, b AssessmentStats) int {
 		return cmp.Or(cmp.Compare(a.SchemaVersion, b.SchemaVersion), cmp.Compare(a.BatteryVersion, b.BatteryVersion))
 	})
 	return stats
+}
+
+// versionStats accumulates the AssessmentStats of one schema and battery
+// version, keeping the latencies its usage percentiles are taken from.
+type versionStats struct {
+	stats     AssessmentStats
+	latencies []int64
+}
+
+func newVersionStats(schema int, battery string) *versionStats {
+	return &versionStats{stats: AssessmentStats{SchemaVersion: schema, BatteryVersion: battery, ByDecidedBy: map[string]int{}, Shadow: Comparisons{Matrix: VerdictMatrix{}}, Review: Comparisons{Matrix: VerdictMatrix{}}, Enforce: Enforcement{Bouncer: map[string]int{}, Human: Comparisons{Matrix: VerdictMatrix{}}, EscalationAxes: map[string]map[string]int{}}, Errors: map[string]int{}, Skips: map[string]int{}}}
+}
+
+func (v *versionStats) add(row db.PermissionDecision, a *permission.AssessmentRecord) {
+	s := &v.stats
+	s.Total++
+	s.ByDecidedBy[row.DecidedBy]++
+	if a.Mode == "shadow" && row.DecidedBy == string(permission.DecisionSourceHuman) {
+		addComparison(&s.Shadow, a.Outcome, row.Verdict)
+	}
+	if a.Mode == "enforce" {
+		s.Enforce.Samples++
+		if row.DecidedBy == string(permission.DecisionSourceBouncer) {
+			s.Enforce.Bouncer[row.Verdict]++
+		}
+		if row.DecidedBy == string(permission.DecisionSourceHuman) {
+			addComparison(&s.Enforce.Human, a.Outcome, row.Verdict)
+			if a.Outcome == "escalate" {
+				if len(a.Triggers) == 0 {
+					if row.Verdict == string(permission.VerdictAllow) || row.Verdict == string(permission.VerdictDeny) {
+						s.Enforce.UntriggeredEscalations++
+					}
+				} else {
+					addEscalationAxes(s.Enforce.EscalationAxes, a.Triggers, row.Verdict)
+				}
+			}
+		}
+	}
+	if a.Review != nil && row.DecidedBy == string(permission.DecisionSourceHuman) && row.Verdict != string(permission.VerdictCancelled) {
+		if a.Review.Error != "" {
+			s.ReviewErrors++
+		} else {
+			addComparison(&s.Review, a.Review.Effect, row.Verdict)
+		}
+	}
+	switch a.Outcome {
+	case "error":
+		prefix, _, _ := strings.Cut(a.Error, ":")
+		s.Errors[cmp.Or(strings.TrimSpace(prefix), "unknown")]++
+	case "skipped":
+		s.Skips[cmp.Or(a.SkipReason, "unknown")]++
+	case "allow", "escalate", "deny":
+		s.Usage.Samples++
+		s.Usage.InputTokens += int64(a.InputTokens)
+		s.Usage.OutputTokens += int64(a.OutputTokens)
+		s.Usage.MeanLatencyMS += float64(a.LatencyMS)
+		v.latencies = append(v.latencies, a.LatencyMS)
+	}
+}
+
+// finish turns the accumulated usage totals into means and a p95.
+func (v *versionStats) finish() AssessmentStats {
+	u := &v.stats.Usage
+	if u.Samples > 0 {
+		u.MeanInputTokens = float64(u.InputTokens) / float64(u.Samples)
+		u.MeanOutputTokens = float64(u.OutputTokens) / float64(u.Samples)
+		u.MeanLatencyMS /= float64(u.Samples)
+		slices.Sort(v.latencies)
+		u.P95LatencyMS = v.latencies[int(math.Ceil(0.95*float64(len(v.latencies))))-1]
+	}
+	return v.stats
 }

@@ -1,8 +1,10 @@
 package autocomplete
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -310,4 +312,25 @@ func TestSetItems_PreservesQuery(t *testing.T) {
 
 	// The query itself must be unchanged.
 	require.Equal(t, "bet", ac.Query())
+}
+
+func TestRender_SkillTypeSuffix(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		item Item
+		want string
+	}{
+		"listed skill":   {item: Item{Name: "grilling", Type: SkillItem}, want: "grilling (skill)"},
+		"unlisted skill": {item: Item{Name: "design-twice", Type: SkillItem, Unlisted: true}, want: "design-twice (unlisted skill)"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ac := New([]Item{tc.item}, 10)
+			ac.Show()
+			require.Equal(t, tc.want, strings.TrimSpace(ansi.Strip(ac.Render(60))))
+		})
+	}
 }

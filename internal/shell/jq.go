@@ -15,7 +15,7 @@ import (
 const jqUsage = `jq - Go implementation of jq (gojq 0.12.19 builtin)
 
 Synopsis:
-  %% echo '{"foo": 128}' | jq '.foo'
+  % echo '{"foo": 128}' | jq '.foo'
 
 Usage:
   jq [OPTIONS] [FILTER] [FILE...]
@@ -33,9 +33,103 @@ Options:
   -h, --help                    display this help
 `
 
-// handleJQ implements the jq builtin using gojq. It supports a subset of jq
-// flags: -r (raw output), -c (compact output), -s (slurp), -n (null input),
-// -e (exit status), -R (raw input), and --arg name value.
+// jqOptions is the parsed jq command line.
+type jqOptions struct {
+	help       bool
+	rawOutput  bool
+	compact    bool
+	slurp      bool
+	nullInput  bool
+	exitStatus bool
+	rawInput   bool
+	joinOutput bool
+	query      string
+	files      []string
+	varNames   []string
+	varValues  []any
+}
+
+// jqSwitches maps each value-less jq flag to the option it sets.
+var jqSwitches = map[string]func(*jqOptions){
+	"-h":               func(o *jqOptions) { o.help = true },
+	"--help":           func(o *jqOptions) { o.help = true },
+	"-r":               func(o *jqOptions) { o.rawOutput = true },
+	"--raw-output":     func(o *jqOptions) { o.rawOutput = true },
+	"-j":               func(o *jqOptions) { o.joinOutput, o.rawOutput = true, true },
+	"--join-output":    func(o *jqOptions) { o.joinOutput, o.rawOutput = true, true },
+	"-c":               func(o *jqOptions) { o.compact = true },
+	"--compact-output": func(o *jqOptions) { o.compact = true },
+	"-s":               func(o *jqOptions) { o.slurp = true },
+	"--slurp":          func(o *jqOptions) { o.slurp = true },
+	"-n":               func(o *jqOptions) { o.nullInput = true },
+	"--null-input":     func(o *jqOptions) { o.nullInput = true },
+	"-e":               func(o *jqOptions) { o.exitStatus = true },
+	"--exit-status":    func(o *jqOptions) { o.exitStatus = true },
+	"-R":               func(o *jqOptions) { o.rawInput = true },
+	"--raw-input":      func(o *jqOptions) { o.rawInput = true },
+}
+
+// jqVariableFlags maps each jq flag that binds a variable to the parser for
+// its value.
+var jqVariableFlags = map[string]func(name, value string) (any, error){
+	"--arg": func(_, value string) (any, error) { return value, nil },
+	"--argjson": func(name, value string) (any, error) {
+		var val any
+		if err := json.Unmarshal([]byte(value), &val); err != nil {
+			return nil, fmt.Errorf("invalid JSON for --argjson %s: %w", name, err)
+		}
+		return val, nil
+	},
+}
+
+// parseJQArgs parses jq's arguments, excluding the command name. The first
+// non-flag argument is the filter and later ones are files. Parsing stops at
+// the first help flag, so later arguments are never checked.
+func parseJQArgs(args []string) (jqOptions, error) {
+	var opts jqOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if set, ok := jqSwitches[arg]; ok {
+			set(&opts)
+			if opts.help {
+				break
+			}
+			continue
+		}
+		if parse, ok := jqVariableFlags[arg]; ok {
+			if i+2 >= len(args) {
+				return opts, fmt.Errorf("%s requires name and value", arg)
+			}
+			val, err := parse(args[i+1], args[i+2])
+			if err != nil {
+				return opts, err
+			}
+			opts.varNames = append(opts.varNames, "$"+args[i+1])
+			opts.varValues = append(opts.varValues, val)
+			i += 2
+			continue
+		}
+		if arg == "--" {
+			opts.files = append(opts.files, args[i+1:]...)
+			break
+		}
+		if opts.query == "" {
+			opts.query = arg
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return opts, fmt.Errorf("unknown option: %s", arg)
+		}
+		opts.files = append(opts.files, arg)
+	}
+	if opts.query == "" {
+		opts.query = "."
+	}
+	return opts, nil
+}
+
+// handleJQ implements the jq builtin using gojq. It supports the subset of
+// jq flags listed in [jqSwitches] and [jqVariableFlags].
 //
 // ctx is polled at each iteration of the output loop and at each reader in
 // [readInputs] so that hook timeouts or other cancellations can interrupt
@@ -53,110 +147,33 @@ func handleJQ(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 
-	var (
-		rawOutput  bool
-		compact    bool
-		slurp      bool
-		nullInput  bool
-		exitStatus bool
-		rawInput   bool
-		joinOutput bool
-		argNames   []string
-		argValues  []any
-	)
-
-	// Parse flags and extract the query.
-	var queryStr string
-	var fileArgs []string
-	i := 1 // skip "jq"
-	for i < len(args) {
-		arg := args[i]
-		switch {
-		case arg == "-h" || arg == "--help":
-			fmt.Fprint(stdout, jqUsage)
-			return nil
-		case arg == "-r" || arg == "--raw-output":
-			rawOutput = true
-		case arg == "-j" || arg == "--join-output":
-			joinOutput = true
-			rawOutput = true
-		case arg == "-c" || arg == "--compact-output":
-			compact = true
-		case arg == "-s" || arg == "--slurp":
-			slurp = true
-		case arg == "-n" || arg == "--null-input":
-			nullInput = true
-		case arg == "-e" || arg == "--exit-status":
-			exitStatus = true
-		case arg == "-R" || arg == "--raw-input":
-			rawInput = true
-		case arg == "--arg":
-			if i+2 >= len(args) {
-				fmt.Fprintf(stderr, "jq: --arg requires name and value\n")
-				return interp.ExitStatus(2)
-			}
-			argNames = append(argNames, "$"+args[i+1])
-			argValues = append(argValues, args[i+2])
-			i += 2
-		case arg == "--argjson":
-			if i+2 >= len(args) {
-				fmt.Fprintf(stderr, "jq: --argjson requires name and value\n")
-				return interp.ExitStatus(2)
-			}
-			var val any
-			if err := json.Unmarshal([]byte(args[i+2]), &val); err != nil {
-				fmt.Fprintf(stderr, "jq: invalid JSON for --argjson %s: %s\n", args[i+1], err)
-				return interp.ExitStatus(2)
-			}
-			argNames = append(argNames, "$"+args[i+1])
-			argValues = append(argValues, val)
-			i += 2
-		case arg == "--":
-			i++
-			// Remaining args are file arguments.
-			for i < len(args) {
-				fileArgs = append(fileArgs, args[i])
-				i++
-			}
-			continue
-		case strings.HasPrefix(arg, "-") && queryStr != "":
-			fmt.Fprintf(stderr, "jq: unknown option: %s\n", arg)
-			return interp.ExitStatus(2)
-		default:
-			if queryStr == "" {
-				queryStr = arg
-			} else {
-				fileArgs = append(fileArgs, arg)
-			}
-		}
-		i++
+	opts, err := parseJQArgs(args[1:])
+	if err != nil {
+		fmt.Fprintf(stderr, "jq: %s\n", err)
+		return interp.ExitStatus(2)
+	}
+	if opts.help {
+		fmt.Fprint(stdout, jqUsage)
+		return nil
 	}
 
-	if queryStr == "" {
-		queryStr = "."
-	}
-
-	query, err := gojq.Parse(queryStr)
+	query, err := gojq.Parse(opts.query)
 	if err != nil {
 		fmt.Fprintf(stderr, "jq: %s\n", err)
 		return interp.ExitStatus(3)
 	}
 
-	opts := []gojq.CompilerOption{
+	code, err := gojq.Compile(query,
 		gojq.WithEnvironLoader(os.Environ),
-	}
-	if len(argNames) > 0 {
-		opts = append(opts, gojq.WithVariables(argNames))
-	}
-
-	code, err := gojq.Compile(query, opts...)
+		gojq.WithVariables(opts.varNames),
+	)
 	if err != nil {
 		fmt.Fprintf(stderr, "jq: %s\n", err)
 		return interp.ExitStatus(3)
 	}
 
 	// Build input values.
-	inputs, err := readInputs(ctx, stdin, fileArgs, nullInput, rawInput, slurp)
+	inputs, err := readInputs(ctx, stdin, opts)
 	if err != nil {
 		// Prefer surfacing ctx cancellation verbatim so timeouts are
 		// distinguishable from user input errors.
@@ -169,7 +186,7 @@ func handleJQ(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 
 	var lastFalsy bool
 	for _, input := range inputs {
-		iter := code.Run(input, argValues...)
+		iter := code.Run(input, opts.varValues...)
 		for {
 			// Poll ctx on every value so a long-running filter (e.g. a
 			// generator over a slurped array) can be interrupted by hook
@@ -185,16 +202,14 @@ func handleJQ(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 				fmt.Fprintf(stderr, "jq: %s\n", err)
 				return interp.ExitStatus(5)
 			}
-			if exitStatus {
-				lastFalsy = v == nil || v == false
-			}
-			if err := writeValue(stdout, v, rawOutput, compact, joinOutput); err != nil {
+			lastFalsy = v == nil || v == false
+			if err := writeValue(stdout, v, opts.rawOutput, opts.compact, opts.joinOutput); err != nil {
 				return err
 			}
 		}
 	}
 
-	if exitStatus && lastFalsy {
+	if opts.exitStatus && lastFalsy {
 		return interp.ExitStatus(1)
 	}
 	return nil
@@ -216,14 +231,14 @@ func handleJQ(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 // still outlast ctx; the outer abandon-goroutine path in the hook
 // runner (internal/hooks/runner.go) is the authoritative enforcer for
 // that case.
-func readInputs(ctx context.Context, stdin io.Reader, files []string, nullInput, rawInput, slurp bool) ([]any, error) {
-	if nullInput {
+func readInputs(ctx context.Context, stdin io.Reader, opts jqOptions) ([]any, error) {
+	if opts.nullInput {
 		return []any{nil}, nil
 	}
 
 	var readers []io.Reader
-	if len(files) > 0 {
-		for _, f := range files {
+	if len(opts.files) > 0 {
+		for _, f := range opts.files {
 			file, err := os.Open(f)
 			if err != nil {
 				return nil, err
@@ -233,6 +248,11 @@ func readInputs(ctx context.Context, stdin io.Reader, files []string, nullInput,
 		}
 	} else {
 		readers = []io.Reader{stdin}
+	}
+
+	decode := decodeJSONInput
+	if opts.rawInput {
+		decode = decodeRawInput
 	}
 
 	var vals []any
@@ -249,50 +269,55 @@ func readInputs(ctx context.Context, stdin io.Reader, files []string, nullInput,
 			}
 			return nil, err
 		}
-
-		if rawInput {
-			lines := strings.Split(string(data), "\n")
-			if slurp {
-				vals = append(vals, strings.Join(lines, "\n"))
-			} else {
-				for _, line := range lines {
-					if err := ctx.Err(); err != nil {
-						return nil, err
-					}
-					if line != "" || !slurp {
-						vals = append(vals, line)
-					}
-				}
-			}
-			continue
+		decoded, err := decode(ctx, data, opts.slurp)
+		if err != nil {
+			return nil, err
 		}
-
-		// Decode potentially multiple JSON values from the stream.
-		dec := json.NewDecoder(strings.NewReader(string(data)))
-		var streamVals []any
-		for {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			var v any
-			if err := dec.Decode(&v); err != nil {
-				if err == io.EOF {
-					break
-				}
-				return nil, fmt.Errorf("parse error: %w", err)
-			}
-			streamVals = append(streamVals, v)
-		}
-
-		if slurp {
-			vals = append(vals, streamVals)
-		} else {
-			vals = append(vals, streamVals...)
-		}
+		vals = append(vals, decoded...)
 	}
 
 	if len(vals) == 0 {
 		return []any{nil}, nil
+	}
+	return vals, nil
+}
+
+// decodeRawInput turns one input into jq values for --raw-input: one string
+// per line, or the whole text as a single string when slurping.
+func decodeRawInput(ctx context.Context, data []byte, slurp bool) ([]any, error) {
+	if slurp {
+		return []any{string(data)}, nil
+	}
+	var vals []any
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		vals = append(vals, line)
+	}
+	return vals, nil
+}
+
+// decodeJSONInput turns one input into jq values: each JSON value in the
+// stream, or the whole stream as a single array when slurping.
+func decodeJSONInput(ctx context.Context, data []byte, slurp bool) ([]any, error) {
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	var vals []any
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("parse error: %w", err)
+		}
+		vals = append(vals, v)
+	}
+	if slurp {
+		return []any{vals}, nil
 	}
 	return vals, nil
 }

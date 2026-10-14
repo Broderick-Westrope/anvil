@@ -66,11 +66,6 @@ func TestAssistantMessageItem_MutatorsBumpVersion(t *testing.T) {
 	requireBump(t, "SetHighlight", item, func() {
 		item.SetHighlight(0, 0, 0, 5)
 	})
-	// ToggleExpanded only mutates state when there is non-empty
-	// thinking text — which the build helper provides.
-	requireBump(t, "ToggleExpanded", item, func() {
-		item.ToggleExpanded()
-	})
 }
 
 // TestUserMessageItem_MutatorsBumpVersion enumerates UserMessageItem

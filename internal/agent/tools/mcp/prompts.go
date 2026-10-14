@@ -5,6 +5,7 @@ import (
 	"iter"
 	"log/slog"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -13,6 +14,39 @@ import (
 type Prompt = mcp.Prompt
 
 var allPrompts = csync.NewMap[string, []*Prompt]()
+
+// PromptCommands lists the prompts of every connected MCP server as
+// commands. It never returns nil, so callers can tell "loaded, none" from
+// "not loaded".
+func PromptCommands() []commands.MCPPrompt {
+	cmds := []commands.MCPPrompt{}
+	for mcpName, prompts := range Prompts() {
+		for _, prompt := range prompts {
+			var args []commands.Argument
+			for _, arg := range prompt.Arguments {
+				title := arg.Title
+				if title == "" {
+					title = arg.Name
+				}
+				args = append(args, commands.Argument{
+					ID:          arg.Name,
+					Title:       title,
+					Description: arg.Description,
+					Required:    arg.Required,
+				})
+			}
+			cmds = append(cmds, commands.MCPPrompt{
+				ID:          mcpName + ":" + prompt.Name,
+				Title:       prompt.Title,
+				Description: prompt.Description,
+				PromptID:    prompt.Name,
+				ClientID:    mcpName,
+				Arguments:   args,
+			})
+		}
+	}
+	return cmds
+}
 
 // Prompts returns all available MCP prompts.
 func Prompts() iter.Seq2[string, []*Prompt] {

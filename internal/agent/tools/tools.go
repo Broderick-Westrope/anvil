@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 )
 
 type (
@@ -99,6 +100,21 @@ func NewPermissionDeniedResponse(reason string) fantasy.ToolResponse {
 	resp := fantasy.NewTextErrorResponse(msg)
 	resp.StopTurn = true
 	return resp
+}
+
+// requestPermission asks permissions to approve req. It reports granted
+// only when the user approved. Otherwise the caller returns the response
+// and error as they are: a denial is a [NewPermissionDeniedResponse] with
+// a nil error, and a failed request is a zero response with its error.
+func requestPermission(ctx context.Context, permissions permission.Service, req permission.CreatePermissionRequest) (fantasy.ToolResponse, bool, error) {
+	p, err := permissions.Request(ctx, req)
+	if err != nil {
+		return fantasy.ToolResponse{}, false, err
+	}
+	if !p.Granted {
+		return NewPermissionDeniedResponse(p.Reason), false, nil
+	}
+	return fantasy.ToolResponse{}, true, nil
 }
 
 // ghAvailable indicates whether the `gh` CLI is available on PATH.
