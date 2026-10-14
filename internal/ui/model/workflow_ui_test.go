@@ -669,9 +669,12 @@ func BenchmarkFeaturesIgnoreHighFrequencyMessages(b *testing.B) {
 }
 
 // writeProjectWorkflow adds a workflow command to a fresh project
-// directory and points the workspace at it.
+// directory and points the workspace at it. It moves the user config
+// directory somewhere empty, so the caller can't run in parallel; the
+// commands in ~/.anvil still load, because home.Dir is read at startup.
 func (f *workflowUIFixture) writeProjectWorkflow(t *testing.T, name string) {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	dir := filepath.Join(t.TempDir(), "project")
 	cmdDir := filepath.Join(dir, "commands", name)
 	require.NoError(t, os.MkdirAll(cmdDir, 0o755))
@@ -681,8 +684,6 @@ func (f *workflowUIFixture) writeProjectWorkflow(t *testing.T, name string) {
 }
 
 func TestInitialCommandLoadAnnotatesAndWarns(t *testing.T) {
-	t.Parallel()
-
 	f := newWorkflowUIFixture(t)
 	f.writeProjectWorkflow(t, "zz-routing-demo")
 	infos := f.run(f.u.loadCustomCommands())
@@ -696,8 +697,6 @@ func TestInitialCommandLoadAnnotatesAndWarns(t *testing.T) {
 }
 
 func TestConfigReloadAnnotatesCommandsAndWarns(t *testing.T) {
-	t.Parallel()
-
 	f := newWorkflowUIFixture(t)
 	f.writeProjectWorkflow(t, "zz-routing-demo")
 	msg, ok := f.u.runConfigReload().(configReloadedMsg)
