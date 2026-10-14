@@ -137,3 +137,36 @@ func TestWorkflowRunViewKeepsItsSelectionWhenTheRunMovesOn(t *testing.T) {
 	require.Equal(t, 2, view.Selected())
 	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "review · pass 1/3 · running")
 }
+
+func TestWorkflowRunNodeSaysWhenTheRunIsWaitingForYou(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	view := runningView()
+	view.Phases[1].Items[1].Status, view.Phases[1].Items[1].Answer = workflowhost.StatusRunning, ""
+	f.ws.views = map[string]workflowhost.RunView{"run-1": view}
+	f.markerArrives()
+
+	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "devils-advocate · round 1/5 · waiting for you")
+}
+
+func TestWorkflowRunViewLoadsNeverLetAnOlderViewWin(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+
+	older := f.u.loadWorkflowRunView("run-1")
+	require.NotNil(t, older)
+	stale := older()
+	next := runningView()
+	next.Phases = append(next.Phases, workflowhost.RunPhase{Step: "review"})
+	f.ws.views["run-1"] = next
+	require.Nil(t, f.u.loadWorkflowRunView("run-1"), "a second load waits for the one in flight")
+
+	_, cmd := f.u.Update(stale)
+	f.run(cmd)
+	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "review · running")
+	require.Empty(t, f.u.workflowRunLoads)
+}

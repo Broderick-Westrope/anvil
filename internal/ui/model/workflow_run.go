@@ -11,28 +11,50 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 )
 
-// workflowRunViewLoadedMsg carries a run's view, loaded from the database.
+// workflowRunViewLoadedMsg carries a run's view, loaded from the database;
+// ok is false when it couldn't be loaded.
 type workflowRunViewLoadedMsg struct {
 	runID string
 	view  workflowhost.RunView
+	ok    bool
 }
 
 // loadWorkflowRunView loads a run's view. Everything the node and the run
 // view show comes from it, so a reload after any change to the run keeps
-// them right even if a live event was dropped.
+// them right even if a live event was dropped. Loads of one run never
+// overlap: a change while one is in flight queues one more, so a slow,
+// older load can't overwrite a newer one.
 func (m *UI) loadWorkflowRunView(runID string) tea.Cmd {
+	if m.workflowRunLoads == nil {
+		m.workflowRunLoads = map[string]bool{}
+	}
+	if _, loading := m.workflowRunLoads[runID]; loading {
+		m.workflowRunLoads[runID] = true
+		return nil
+	}
+	m.workflowRunLoads[runID] = false
 	ws := m.com.Workspace
 	return func() tea.Msg {
 		view, ok, err := ws.WorkflowRunView(context.Background(), runID)
 		if err != nil {
 			slog.Warn("Failed to load workflow run", "run", runID, "error", err)
-			return nil
 		}
-		if !ok {
-			return nil
-		}
-		return workflowRunViewLoadedMsg{runID: runID, view: view}
+		return workflowRunViewLoadedMsg{runID: runID, view: view, ok: ok && err == nil}
 	}
+}
+
+// workflowRunViewLoaded applies a loaded view, then loads again if the run
+// changed while it was loading.
+func (m *UI) workflowRunViewLoaded(msg workflowRunViewLoadedMsg) tea.Cmd {
+	again := m.workflowRunLoads[msg.runID]
+	delete(m.workflowRunLoads, msg.runID)
+	if msg.ok {
+		m.applyWorkflowRunView(msg)
+	}
+	if again {
+		return m.loadWorkflowRunView(msg.runID)
+	}
+	return nil
 }
 
 // loadWorkflowRunNodes loads the view of every run node in items that

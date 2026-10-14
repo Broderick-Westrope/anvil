@@ -200,7 +200,7 @@ func (w *WorkflowRunMessageItem) summary() string {
 			parts = append(parts, detail)
 		}
 	}
-	parts = append(parts, "running")
+	parts = append(parts, runningState(*v))
 	return strings.Join(parts, " · ")
 }
 
@@ -259,7 +259,7 @@ func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost
 		}
 		state := dialog.WorkflowOutcomeText(view.Status, firstLine(view.Error))
 		if view.Status == workflowhost.StatusRunning {
-			state = "running"
+			state = runningState(view)
 		}
 		return ansi.Truncate(title, width, "…") + "\n" + sty.Tool.StatsLine.Render(state)
 	})
@@ -324,6 +324,14 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 		}
 		return workflowStatusIcon(sty, item.Status) + " " + label + sep + sty.Tool.StatsLine.Render(state)
 	}
+}
+
+// runningState says how a running run is going.
+func runningState(view workflowhost.RunView) string {
+	if view.WaitingForUser() {
+		return "waiting for you"
+	}
+	return "running"
 }
 
 func workflowStatusIcon(sty *styles.Styles, status workflowhost.Status) string {

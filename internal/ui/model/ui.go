@@ -340,6 +340,9 @@ type UI struct {
 	workflows map[string]*workflowRun
 	// workflowTitles caches the titles of sessions workflows drive.
 	workflowTitles map[string]string
+	// workflowRunLoads tracks run views being loaded: one load per run at a
+	// time, and true when the run changed during it and needs another.
+	workflowRunLoads map[string]bool
 	// workflowRequests holds the open approval and ask requests by ID.
 	workflowRequests map[string]workflowhost.Event
 	// workflowAnswered remembers answered requests so a republished copy
@@ -1439,7 +1442,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case util.WorkflowRunDrillInMsg:
 		cmds = append(cmds, m.openWorkflowRun(msg.RunID, msg.Label))
 	case workflowRunViewLoadedMsg:
-		m.applyWorkflowRunView(msg)
+		cmds = append(cmds, m.workflowRunViewLoaded(msg))
 
 	case util.ToolDrillInMsg:
 		toolItem, ok := msg.ToolItem.(chat.ToolMessageItem)
