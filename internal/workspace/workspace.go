@@ -13,6 +13,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
@@ -21,7 +22,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 )
 
 // ErrWorkflowsUnavailable is returned by workflow operations when the
@@ -171,7 +171,7 @@ type Workspace interface {
 
 	// WorkflowStart validates a workflow command and runs it in the
 	// background. Later outcomes arrive as host events.
-	WorkflowStart(ctx context.Context, inv host.Invocation) error
+	WorkflowStart(ctx context.Context, inv workflowhost.Invocation) error
 	// WorkflowRespond answers a workflow approval or ask() request.
 	WorkflowRespond(requestID, answer string) error
 	// WorkflowPause, WorkflowResume and WorkflowAbort control the run

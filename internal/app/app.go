@@ -22,6 +22,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
@@ -39,7 +40,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/update"
 	"github.com/Broderick-Westrope/anvil/internal/version"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	"github.com/google/uuid"
 )
 
@@ -60,7 +60,7 @@ type App struct {
 	AgentCoordinator agent.Coordinator
 	// Workflows runs workflow commands. It is nil until the orchestrator
 	// agent exists.
-	Workflows *host.Service
+	Workflows *workflowhost.Service
 
 	LSPManager *lsp.Manager
 
@@ -88,7 +88,7 @@ type App struct {
 	jobEvents          *jobevents.Store
 	jobWaker           *jobWaker
 	jobs               *jobLifecycle // Nil when job persistence is unavailable.
-	workflowStore      *host.Store
+	workflowStore      *workflowhost.Store
 	// retiredWorkflows tracks services replaced by startWorkflows that are
 	// still stopping, so Shutdown waits for their outcomes before the DB
 	// closes.
@@ -167,7 +167,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		if err := app.jobEvents.Persist(ctx, q, app.jobs.store.InstanceID()); err != nil {
 			slog.Warn("Failed to load background job events; new events will not survive a restart", "error", err)
 		}
-		workflows := host.NewStore(q, config.GlobalDataDir(), app.jobs.store.InstanceID())
+		workflows := workflowhost.NewStore(q, config.GlobalDataDir(), app.jobs.store.InstanceID())
 		app.workflowStore = workflows
 		go startupPrune(ctx, "workflow runs", func(ctx context.Context) error {
 			return errors.Join(workflows.MarkInterrupted(ctx), workflows.PruneRunDirs(ctx, time.Now()))
@@ -175,7 +175,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	}
 	// Without job persistence this process has no registered instance, so
 	// its workflow runs get an ID no other instance will consider live.
-	app.workflowStore = cmp.Or(app.workflowStore, host.NewStore(q, config.GlobalDataDir(), uuid.NewString()))
+	app.workflowStore = cmp.Or(app.workflowStore, workflowhost.NewStore(q, config.GlobalDataDir(), uuid.NewString()))
 	mgr.SetEventSink(app.jobEvents)
 	app.jobWaker = newJobWaker(app.jobEvents, sessions)
 	go app.jobWaker.run(ctx)
@@ -599,7 +599,7 @@ func (app *App) startWorkflows() {
 			}
 		})
 	}
-	app.Workflows = host.NewService(app.globalCtx, host.Deps{
+	app.Workflows = workflowhost.NewService(app.globalCtx, workflowhost.Deps{
 		Coordinator:  app.AgentCoordinator,
 		Sessions:     app.Sessions,
 		Store:        app.workflowStore,

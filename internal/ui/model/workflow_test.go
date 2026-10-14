@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -19,7 +20,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
@@ -35,7 +35,7 @@ type workflowWorkspace struct {
 	created  []string
 	runs     []string
 
-	starts     []host.Invocation
+	starts     []workflowhost.Invocation
 	startErr   error
 	responds   [][2]string
 	respondErr error
@@ -108,7 +108,7 @@ func (w *workflowWorkspace) AgentRun(_ context.Context, _ string, prompt string,
 	return nil
 }
 
-func (w *workflowWorkspace) WorkflowStart(_ context.Context, inv host.Invocation) error {
+func (w *workflowWorkspace) WorkflowStart(_ context.Context, inv workflowhost.Invocation) error {
 	w.starts = append(w.starts, inv)
 	return w.startErr
 }
@@ -166,8 +166,8 @@ func newWorkflowFixture(t *testing.T) *workflowFixture {
 // event delivers a workflow event and runs the commands it returns,
 // feeding UI messages back through Update. It returns the status
 // messages.
-func (f *workflowFixture) event(ev host.Event) []util.InfoMsg {
-	_, cmd := f.u.Update(pubsub.Event[host.Event]{Type: pubsub.UpdatedEvent, Payload: ev})
+func (f *workflowFixture) event(ev workflowhost.Event) []util.InfoMsg {
+	_, cmd := f.u.Update(pubsub.Event[workflowhost.Event]{Type: pubsub.UpdatedEvent, Payload: ev})
 	return f.run(cmd)
 }
 
@@ -197,8 +197,8 @@ func (f *workflowFixture) panel() string {
 	return ansi.Strip(f.u.pillsView)
 }
 
-func started(command, invoker string) host.Event {
-	return host.Event{Kind: host.EventState, RunID: "run-1", Command: command, SessionID: invoker, State: host.StateStarted}
+func started(command, invoker string) workflowhost.Event {
+	return workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", Command: command, SessionID: invoker, State: workflowhost.StateStarted}
 }
 
 func TestWorkflowCommandStartsWithoutSendingBody(t *testing.T) {
@@ -209,7 +209,7 @@ func TestWorkflowCommandStartsWithoutSendingBody(t *testing.T) {
 
 	require.Empty(t, infos)
 	require.Empty(t, f.ws.runs, "a workflow command never sends its body")
-	require.Equal(t, []host.Invocation{{
+	require.Equal(t, []workflowhost.Invocation{{
 		CommandID: "project:demo", CommandName: "demo", Source: "project",
 		ScriptPath: "/proj/demo/workflow.js", SessionID: "sess-1", Raw: "some args",
 	}}, f.ws.starts)
@@ -332,9 +332,9 @@ func TestWorkflowApprovalOpensDialogAndResponds(t *testing.T) {
 	t.Parallel()
 
 	f := newWorkflowFixture(t)
-	f.event(host.Event{
-		Kind: host.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "sess-1",
-		Approval: &host.ApprovalRequest{ScriptPath: "/proj/demo/workflow.js", Origin: "project", Files: []host.ApprovalFile{{Path: "workflow.js", Source: "function main() {}"}}},
+	f.event(workflowhost.Event{
+		Kind: workflowhost.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "sess-1",
+		Approval: &workflowhost.ApprovalRequest{ScriptPath: "/proj/demo/workflow.js", Origin: "project", Files: []workflowhost.ApprovalFile{{Path: "workflow.js", Source: "function main() {}"}}},
 	})
 	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("req-1")))
 
@@ -349,7 +349,7 @@ func TestWorkflowRequestReopensWhenItsAnswerFailed(t *testing.T) {
 	f := newWorkflowFixture(t)
 	f.ws.respondErr = errors.New("no pending workflow request")
 	f.event(started("demo", "sess-1"))
-	ask := host.Event{Kind: host.EventAsk, RunID: "run-1", RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
+	ask := workflowhost.Event{Kind: workflowhost.EventAsk, RunID: "run-1", RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
 	f.event(ask)
 
 	infos := f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"}))
@@ -367,7 +367,7 @@ func TestWorkflowAskDialogAbortsWithTheKeymapsAbortKey(t *testing.T) {
 	f := newWorkflowFixture(t)
 	f.u.keyMap.WorkflowAbort = key.NewBinding(key.WithKeys("f2"), key.WithHelp("f2", "abort"))
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventAsk, RunID: "run-1", RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventAsk, RunID: "run-1", RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"})
 
 	// The dialog opens with a grace period that swallows keys, so the keys
 	// go to it directly.
@@ -380,16 +380,16 @@ func TestWorkflowAskDialogAbortsWithTheKeymapsAbortKey(t *testing.T) {
 func TestWorkflowEventOfAnotherRunStartsANewRecord(t *testing.T) {
 	t.Parallel()
 
-	tests := map[string]host.Event{
+	tests := map[string]workflowhost.Event{
 		"state":    started("demo", "sess-1"),
-		"finished": {Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted},
+		"finished": {Kind: workflowhost.EventFinished, Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusCompleted},
 	}
 	for name, ev := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newWorkflowFixture(t)
 			f.event(started("demo", "sess-1"))
-			f.event(host.Event{Kind: host.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Step: "first run"})
+			f.event(workflowhost.Event{Kind: workflowhost.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Step: "first run"})
 
 			// run-1's finish was dropped; the next event is run-2's.
 			ev.RunID = "run-2"
@@ -420,7 +420,7 @@ func TestWorkflowAskOpensDialog(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"})
 	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")))
 
 	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"}))
@@ -432,8 +432,8 @@ func TestWorkflowFinishClosesItsDialogs(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"})
-	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusAborted})
+	f.event(workflowhost.Event{Kind: workflowhost.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusAborted})
 	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")))
 }
 
@@ -444,8 +444,8 @@ func TestWorkflowPanelShowsProgress(t *testing.T) {
 	require.Empty(t, f.panel())
 
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventStatus, Command: "demo", SessionID: "sess-1", Step: "build", Detail: "approach 1/3"})
-	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "bash", Detail: "git status"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Step: "build", Detail: "approach 1/3"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "bash", Detail: "git status"})
 
 	panel := f.panel()
 	require.Contains(t, panel, "/demo · build · approach 1/3")
@@ -459,11 +459,11 @@ func TestWorkflowPanelShowsPausedAndHeld(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", State: host.StatePaused})
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: workflowhost.StatePaused})
 	require.Contains(t, f.panel(), "paused")
 	require.Contains(t, f.panel(), "ctrl+x resume")
 
-	f.event(host.Event{Kind: host.EventState, RunID: "run-1", Command: "demo", SessionID: "sess-1", State: host.StateHeld})
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", Command: "demo", SessionID: "sess-1", State: workflowhost.StateHeld})
 	require.Contains(t, f.panel(), "paused", "a hold doesn't clear the pause")
 	require.Contains(t, f.panel(), "holding sessions")
 }
@@ -472,17 +472,17 @@ func TestWorkflowStateChangesSetPausedAndHeld(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		states               []host.RunState
+		states               []workflowhost.RunState
 		wantPaused, wantHeld bool
 	}{
-		"started":                     {states: []host.RunState{host.StateStarted}},
-		"paused":                      {states: []host.RunState{host.StatePaused}, wantPaused: true},
-		"resumed":                     {states: []host.RunState{host.StatePaused, host.StateResumed}},
-		"held":                        {states: []host.RunState{host.StateHeld}, wantHeld: true},
-		"released":                    {states: []host.RunState{host.StateHeld, host.StateReleased}},
-		"resume keeps the hold":       {states: []host.RunState{host.StateHeld, host.StatePaused, host.StateResumed}, wantHeld: true},
-		"release keeps the pause":     {states: []host.RunState{host.StatePaused, host.StateHeld, host.StateReleased}, wantPaused: true},
-		"an unknown state is ignored": {states: []host.RunState{host.StatePaused, host.StateHeld, ""}, wantPaused: true, wantHeld: true},
+		"started":                     {states: []workflowhost.RunState{workflowhost.StateStarted}},
+		"paused":                      {states: []workflowhost.RunState{workflowhost.StatePaused}, wantPaused: true},
+		"resumed":                     {states: []workflowhost.RunState{workflowhost.StatePaused, workflowhost.StateResumed}},
+		"held":                        {states: []workflowhost.RunState{workflowhost.StateHeld}, wantHeld: true},
+		"released":                    {states: []workflowhost.RunState{workflowhost.StateHeld, workflowhost.StateReleased}},
+		"resume keeps the hold":       {states: []workflowhost.RunState{workflowhost.StateHeld, workflowhost.StatePaused, workflowhost.StateResumed}, wantHeld: true},
+		"release keeps the pause":     {states: []workflowhost.RunState{workflowhost.StatePaused, workflowhost.StateHeld, workflowhost.StateReleased}, wantPaused: true},
+		"an unknown state is ignored": {states: []workflowhost.RunState{workflowhost.StatePaused, workflowhost.StateHeld, ""}, wantPaused: true, wantHeld: true},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -490,7 +490,7 @@ func TestWorkflowStateChangesSetPausedAndHeld(t *testing.T) {
 			f := newWorkflowFixture(t)
 			f.event(started("demo", "sess-1"))
 			for _, s := range tc.states {
-				f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", State: s})
+				f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: s})
 			}
 			run := f.u.workflows["sess-1"]
 			require.NotNil(t, run)
@@ -525,7 +525,7 @@ func TestWorkflowPanelWarnsWhenAnotherSessionIsActive(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
 
 	require.Contains(t, f.panel(), "workflow /demo is running in Builder")
 	require.Contains(t, f.panel(), "alt+g")
@@ -541,7 +541,7 @@ func TestWorkflowFocusMovesWhenEditorEmpty(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	infos := f.event(host.Event{Kind: host.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-2"})
+	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-2"})
 
 	require.Empty(t, infos)
 	require.Equal(t, "sess-2", f.u.session.ID)
@@ -553,7 +553,7 @@ func TestWorkflowFocusWaitsWhileEditorHasText(t *testing.T) {
 	f := newWorkflowFixture(t)
 	f.u.textarea.SetValue("half a thought")
 	f.event(started("demo", "sess-1"))
-	infos := f.event(host.Event{Kind: host.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-2"})
+	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-2"})
 
 	require.Equal(t, "sess-1", f.u.session.ID)
 	require.Len(t, infos, 1)
@@ -573,7 +573,7 @@ func TestWorkflowControlKeys(t *testing.T) {
 
 	f.event(started("demo", "sess-1"))
 	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
-	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", State: host.StatePaused})
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: workflowhost.StatePaused})
 	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt})
 	require.Equal(t, []string{"pause:sess-1", "resume:sess-1", "abort:sess-1"}, f.ws.controls)
@@ -592,33 +592,33 @@ func TestWorkflowFinishReportsOutcome(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		ev        host.Event
+		ev        workflowhost.Event
 		wantType  util.InfoType
 		wantMsg   string
 		wantPanel string
 	}{
 		"completed": {
-			ev:       host.Event{Status: host.StatusCompleted, Result: []byte(`"done"`)},
+			ev:       workflowhost.Event{Status: workflowhost.StatusCompleted, Result: []byte(`"done"`)},
 			wantType: util.InfoTypeSuccess, wantMsg: `Workflow /demo completed: "done"`,
 			wantPanel: `/demo · completed: "done"`,
 		},
 		"completed without result": {
-			ev:       host.Event{Status: host.StatusCompleted, Result: []byte(`null`)},
+			ev:       workflowhost.Event{Status: workflowhost.StatusCompleted, Result: []byte(`null`)},
 			wantType: util.InfoTypeSuccess, wantMsg: "Workflow /demo completed",
 			wantPanel: "/demo · completed",
 		},
 		"failed": {
-			ev:       host.Event{Status: host.StatusFailed, Message: "BashError: exit 1"},
+			ev:       workflowhost.Event{Status: workflowhost.StatusFailed, Message: "BashError: exit 1"},
 			wantType: util.InfoTypeError, wantMsg: "Workflow /demo failed: BashError: exit 1",
 			wantPanel: "/demo · failed: BashError: exit 1",
 		},
 		"denied": {
-			ev:       host.Event{Status: host.StatusDenied},
+			ev:       workflowhost.Event{Status: workflowhost.StatusDenied},
 			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo was not approved",
 			wantPanel: "/demo · not approved",
 		},
 		"aborted": {
-			ev:       host.Event{Status: host.StatusAborted},
+			ev:       workflowhost.Event{Status: workflowhost.StatusAborted},
 			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo aborted",
 			wantPanel: "/demo · aborted",
 		},
@@ -629,7 +629,7 @@ func TestWorkflowFinishReportsOutcome(t *testing.T) {
 			f := newWorkflowFixture(t)
 			f.event(started("demo", "sess-1"))
 			ev := tc.ev
-			ev.Kind, ev.Command, ev.SessionID = host.EventFinished, "demo", "sess-1"
+			ev.Kind, ev.Command, ev.SessionID = workflowhost.EventFinished, "demo", "sess-1"
 			infos := f.event(ev)
 			require.Len(t, infos, 1)
 			require.Equal(t, tc.wantType, infos[0].Type)
@@ -644,7 +644,7 @@ func TestWorkflowWarnIsReported(t *testing.T) {
 	t.Parallel()
 
 	f := newWorkflowFixture(t)
-	infos := f.event(host.Event{Kind: host.EventWarn, Command: "demo", SessionID: "sess-1", Message: "undeclared: add `x` to requires()"})
+	infos := f.event(workflowhost.Event{Kind: workflowhost.EventWarn, Command: "demo", SessionID: "sess-1", Message: "undeclared: add `x` to requires()"})
 	require.Len(t, infos, 1)
 	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
 	require.Equal(t, "Workflow /demo: undeclared: add `x` to requires()", infos[0].Msg)
@@ -680,15 +680,15 @@ func TestRenderWorkflowPanelGolden(t *testing.T) {
 		"with_agents": {
 			command: "build", step: "review", detail: "approach 2/3",
 			entries: []dialog.WorkflowEntry{
-				{Kind: dialog.WorkflowEntryAgent, Agent: "builder", Model: "anthropic/claude-sonnet", SessionID: "c1", Status: host.StatusCompleted},
-				{Kind: dialog.WorkflowEntryAgent, Agent: "reviewer", SessionID: "c2", Status: host.StatusFailed, Err: "submit_result never called\nsecond line"},
+				{Kind: dialog.WorkflowEntryAgent, Agent: "builder", Model: "anthropic/claude-sonnet", SessionID: "c1", Status: workflowhost.StatusCompleted},
+				{Kind: dialog.WorkflowEntryAgent, Agent: "reviewer", SessionID: "c2", Status: workflowhost.StatusFailed, Err: "submit_result never called\nsecond line"},
 				{Kind: dialog.WorkflowEntryAsk, Question: "Ship it?", Answer: "yes"},
-				{Kind: dialog.WorkflowEntryAgent, Agent: "devils-advocate", SessionID: "c3", Status: host.StatusRunning},
+				{Kind: dialog.WorkflowEntryAgent, Agent: "devils-advocate", SessionID: "c3", Status: workflowhost.StatusRunning},
 			},
 		},
 		"finished": {
 			command: "build",
-			outcome: &dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: host.StatusFailed, Text: "BashError: exit 1\nstack"},
+			outcome: &dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: workflowhost.StatusFailed, Text: "BashError: exit 1\nstack"},
 		},
 		"with_questions": {
 			command: "build", step: "escalate",
@@ -769,8 +769,8 @@ func TestWorkflowControlsDescribeTheCurrentRun(t *testing.T) {
 	f.event(started("demo", "sess-1"))
 	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Keys: keys}, f.u.workflowControls())
 
-	f.event(host.Event{Kind: host.EventState, RunID: "run-1", SessionID: "sess-1", State: host.StatePaused})
-	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: workflowhost.StatePaused})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
 	require.Equal(t, &dialog.WorkflowControls{SessionID: "sess-1", Command: "demo", Paused: true, CanGoToActive: true, Keys: keys}, f.u.workflowControls())
 }
 
@@ -788,7 +788,7 @@ func TestWorkflowControlsFollowReboundKeys(t *testing.T) {
 
 	f.event(started("demo", "sess-1"))
 	require.Equal(t, want, f.u.workflowControls().Keys)
-	f.event(host.Event{Kind: host.EventFinished, RunID: "run-1", Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, RunID: "run-1", Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusCompleted})
 	require.Equal(t, want, f.u.workflowControls().Keys, "a finished run's controls use the keymap too")
 }
 
@@ -800,7 +800,7 @@ func TestWorkflowGoToActiveFromPalette(t *testing.T) {
 	require.Nil(t, f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowGoToActive}),
 		"the active session is already open")
 
-	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
 	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowGoToActive}))
 	require.Equal(t, "sess-2", f.u.session.ID)
 
@@ -813,7 +813,7 @@ func TestWorkflowFocusOnTheOpenSessionIsQuiet(t *testing.T) {
 	f := newWorkflowFixture(t)
 	f.u.textarea.SetValue("draft")
 	f.event(started("demo", "sess-1"))
-	infos := f.event(host.Event{Kind: host.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-1"})
+	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, Command: "demo", SessionID: "sess-1", Target: "sess-1"})
 	require.Empty(t, infos)
 	require.Empty(t, f.u.workflowFollow)
 }
@@ -826,7 +826,7 @@ func TestWorkflowPanelSharesThePillsArea(t *testing.T) {
 	require.Equal(t, 1, f.u.pillsAreaHeight())
 	require.NotContains(t, f.panel(), "ctrl+t", "no pills without todos or a queue")
 
-	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
 	require.Equal(t, 2, f.u.pillsAreaHeight())
 
 	f.u.promptQueue = 2
@@ -836,8 +836,8 @@ func TestWorkflowPanelSharesThePillsArea(t *testing.T) {
 	require.Contains(t, f.panel(), "2 Queued")
 }
 
-func askFor(id, question string) host.Event {
-	return host.Event{Kind: host.EventAsk, RequestID: id, Command: "demo", SessionID: "sess-1", Question: question}
+func askFor(id, question string) workflowhost.Event {
+	return workflowhost.Event{Kind: workflowhost.EventAsk, RequestID: id, Command: "demo", SessionID: "sess-1", Question: question}
 }
 
 func TestWorkflowAnsweredQuestionIsKept(t *testing.T) {
@@ -860,9 +860,9 @@ func TestWorkflowApprovalIsNotKeptAsAQuestion(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{
-		Kind: host.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "sess-1",
-		Approval: &host.ApprovalRequest{Files: []host.ApprovalFile{{Path: "workflow.js", Source: "function main() {}"}}},
+	f.event(workflowhost.Event{
+		Kind: workflowhost.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "sess-1",
+		Approval: &workflowhost.ApprovalRequest{Files: []workflowhost.ApprovalFile{{Path: "workflow.js", Source: "function main() {}"}}},
 	})
 	infos := f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: "approve"}))
 	require.Empty(t, infos)
@@ -886,8 +886,8 @@ func TestWorkflowPanelKeepsTheLatestEntries(t *testing.T) {
 	require.Equal(t, 1+workflowPanelEntries, f.u.pillsAreaHeight())
 }
 
-func agentEvent(agent, child string, status host.Status) host.Event {
-	return host.Event{Kind: host.EventAgent, Command: "demo", SessionID: "sess-1", Step: agent, Target: child, Status: status}
+func agentEvent(agent, child string, status workflowhost.Status) workflowhost.Event {
+	return workflowhost.Event{Kind: workflowhost.EventAgent, Command: "demo", SessionID: "sess-1", Step: agent, Target: child, Status: status}
 }
 
 func TestWorkflowPanelListsAgentCalls(t *testing.T) {
@@ -895,18 +895,18 @@ func TestWorkflowPanelListsAgentCalls(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
 	panel := f.panel()
 	require.Contains(t, panel, "/demo: reviewer")
 	require.Contains(t, panel, "running")
 	require.Contains(t, panel, "alt+o open")
 	require.Equal(t, 2, f.u.pillsAreaHeight())
 
-	failed := agentEvent("reviewer", "child-1", host.StatusFailed)
+	failed := agentEvent("reviewer", "child-1", workflowhost.StatusFailed)
 	failed.Message = "model overloaded"
 	f.event(failed)
-	f.event(agentEvent("devils-advocate", "child-2", host.StatusRunning))
-	f.event(agentEvent("devils-advocate", "child-2", host.StatusCompleted))
+	f.event(agentEvent("devils-advocate", "child-2", workflowhost.StatusRunning))
+	f.event(agentEvent("devils-advocate", "child-2", workflowhost.StatusCompleted))
 	panel = f.panel()
 	require.Contains(t, panel, "/demo: reviewer · failed: model overloaded")
 	require.Contains(t, panel, "/demo: devils-advocate · done")
@@ -919,7 +919,7 @@ func TestWorkflowAgentEndWithoutStartListsNothing(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(agentEvent("reviewer", "unknown", host.StatusCompleted))
+	f.event(agentEvent("reviewer", "unknown", workflowhost.StatusCompleted))
 	require.Equal(t, 1, f.u.pillsAreaHeight(), "an end without a start lists nothing")
 }
 
@@ -928,9 +928,9 @@ func TestWorkflowAgentThatFailedWithoutASessionIsListedButNotOpened(t *testing.T
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
-	f.event(agentEvent("reviewer", "child-1", host.StatusCompleted))
-	failed := agentEvent("critic", "", host.StatusFailed)
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusCompleted))
+	failed := agentEvent("critic", "", workflowhost.StatusFailed)
 	failed.Message = "unknown model"
 	f.event(failed)
 	require.Contains(t, f.panel(), "/demo: critic · failed: unknown model")
@@ -950,11 +950,11 @@ func TestWorkflowPanelDropsFinishedEntriesBeforeRunningAgents(t *testing.T) {
 		f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowRespond{RequestID: id, Answer: "ok"}))
 	}
 	answer("q1")
-	f.event(agentEvent("first", "child-1", host.StatusRunning))
+	f.event(agentEvent("first", "child-1", workflowhost.StatusRunning))
 	answer("q2")
 	answer("q3")
-	f.event(agentEvent("second", "child-2", host.StatusRunning))
-	f.event(agentEvent("third", "child-3", host.StatusRunning))
+	f.event(agentEvent("second", "child-2", workflowhost.StatusRunning))
+	f.event(agentEvent("third", "child-3", workflowhost.StatusRunning))
 
 	panel := f.panel()
 	require.Contains(t, panel, "/demo: first")
@@ -972,9 +972,9 @@ func TestWorkflowAgentKeyOpensTheLatestAgentSession(t *testing.T) {
 	f.press(tea.KeyPressMsg{Code: 'o', Mod: tea.ModAlt})
 	require.False(t, f.u.isDrilledIn(), "nothing to open before an agent runs")
 
-	f.event(agentEvent("reviewer", "child-1", host.StatusCompleted))
-	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
-	f.event(agentEvent("devils-advocate", "child-2", host.StatusRunning))
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusCompleted))
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
+	f.event(agentEvent("devils-advocate", "child-2", workflowhost.StatusRunning))
 	f.press(tea.KeyPressMsg{Code: 'o', Mod: tea.ModAlt})
 
 	require.True(t, f.u.isDrilledIn())
@@ -992,7 +992,7 @@ func TestWorkflowAgentFromPalette(t *testing.T) {
 	f.event(started("demo", "sess-1"))
 	require.False(t, f.u.workflowControls().CanOpenAgent)
 
-	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
 	require.True(t, f.u.workflowControls().CanOpenAgent)
 	f.run(f.u.handleWorkflowAction(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowOpenAgent}))
 	require.True(t, f.u.isDrilledIn())
@@ -1023,12 +1023,12 @@ func TestWorkflowRunKeepsWhatThePanelDrops(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventStatus, Command: "demo", SessionID: "sess-1", Step: "build", Detail: "approach 1/3"})
-	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "bash", Detail: "git status"})
-	f.event(host.Event{Kind: host.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
-	f.event(host.Event{Kind: host.EventWarn, Command: "demo", SessionID: "sess-1", Message: "undeclared: add `x` to requires()"})
-	f.event(agentEvent("first", "child-1", host.StatusRunning))
-	f.event(agentEvent("first", "child-1", host.StatusCompleted))
+	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Step: "build", Detail: "approach 1/3"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "bash", Detail: "git status"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Step: "turn", Target: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventWarn, Command: "demo", SessionID: "sess-1", Message: "undeclared: add `x` to requires()"})
+	f.event(agentEvent("first", "child-1", workflowhost.StatusRunning))
+	f.event(agentEvent("first", "child-1", workflowhost.StatusCompleted))
 	f.answer("q0", "first question\nwith a second line", "first answer\nin full")
 	for i := range workflowPanelEntries {
 		f.answer(string(rune('a'+i)), "later question", "ok")
@@ -1052,9 +1052,9 @@ func TestWorkflowRunOutlivesTheRun(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(agentEvent("reviewer", "child-1", host.StatusRunning))
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
 	f.answer("q1", "Ship it?", "yes")
-	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusFailed, Message: "BashError: exit 1"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusFailed, Message: "BashError: exit 1"})
 
 	panel := f.panel()
 	require.Contains(t, panel, "/demo · failed: BashError: exit 1")
@@ -1077,10 +1077,10 @@ func TestWorkflowRunOpensAnAgentSession(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(agentEvent("builder", "child-1", host.StatusRunning))
-	f.event(agentEvent("builder", "child-1", host.StatusCompleted))
-	f.event(agentEvent("reviewer", "child-2", host.StatusRunning))
-	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted})
+	f.event(agentEvent("builder", "child-1", workflowhost.StatusRunning))
+	f.event(agentEvent("builder", "child-1", workflowhost.StatusCompleted))
+	f.event(agentEvent("reviewer", "child-2", workflowhost.StatusRunning))
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusCompleted})
 
 	f.press(showRunKey)
 	f.runDialog()
@@ -1099,7 +1099,7 @@ func TestWorkflowRunCanBeDismissed(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusAborted})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusAborted})
 	f.press(showRunKey)
 	f.press(tea.KeyPressMsg{Code: 'd', Text: "d"})
 
@@ -1116,7 +1116,7 @@ func TestWorkflowRunIsReplacedByTheNextRun(t *testing.T) {
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
 	f.answer("q1", "old question", "yes")
-	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusCompleted})
 
 	next := started("demo", "sess-1")
 	next.RunID = "run-2"
@@ -1131,7 +1131,7 @@ func TestWorkflowRunShowsInOtherSessionsOfTheRun(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	f.event(host.Event{Kind: host.EventFinished, Command: "demo", SessionID: "sess-1", Status: host.StatusCompleted})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusCompleted})
 	sess := f.ws.sessions["sess-2"]
 	f.u.session = &sess
 	f.u.updateLayoutAndSize()
@@ -1147,7 +1147,7 @@ func TestWorkflowRunUpdatesWhileOpen(t *testing.T) {
 	f.event(started("demo", "sess-1"))
 	f.press(showRunKey)
 	require.NotContains(t, f.runDialog(), "NEWEST")
-	f.event(host.Event{Kind: host.EventStatus, Command: "demo", SessionID: "sess-1", Step: "NEWEST"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Step: "NEWEST"})
 	require.Contains(t, f.runDialog(), "NEWEST")
 }
 
@@ -1165,7 +1165,7 @@ func TestWorkflowRepublishedRequestDoesNotRelayout(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	ask := host.Event{Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
+	ask := workflowhost.Event{Kind: workflowhost.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
 	f.event(ask)
 	layout := f.u.layout
 	// A relayout would size to the new width; nothing else does here.
@@ -1179,7 +1179,7 @@ func TestWorkflowRepublishedRequestIsShownOnce(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.event(started("demo", "sess-1"))
-	ask := host.Event{Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
+	ask := workflowhost.Event{Kind: workflowhost.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
 	f.event(ask)
 	f.event(ask)
 	asks := 0
@@ -1200,10 +1200,10 @@ func TestWorkflowForPrefersTheRunASessionInvokedOverAFinishedOneThatUsedIt(t *te
 	t.Parallel()
 
 	f := newWorkflowFixture(t)
-	f.event(host.Event{Kind: host.EventState, RunID: "run-a", Command: "old", SessionID: "sess-0"})
-	f.event(host.Event{Kind: host.EventFocus, RunID: "run-a", Command: "old", SessionID: "sess-0", Target: "sess-1"})
-	f.event(host.Event{Kind: host.EventFinished, RunID: "run-a", Command: "old", SessionID: "sess-0", Status: host.StatusCompleted})
-	f.event(host.Event{Kind: host.EventState, RunID: "run-b", Command: "new", SessionID: "sess-1"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-a", Command: "old", SessionID: "sess-0"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-a", Command: "old", SessionID: "sess-0", Target: "sess-1"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, RunID: "run-a", Command: "old", SessionID: "sess-0", Status: workflowhost.StatusCompleted})
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-b", Command: "new", SessionID: "sess-1"})
 	for range 20 {
 		invoker, run := f.u.workflowFor("sess-1")
 		require.Equal(t, "sess-1", invoker)

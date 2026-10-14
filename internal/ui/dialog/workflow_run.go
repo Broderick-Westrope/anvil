@@ -8,8 +8,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
@@ -52,7 +52,7 @@ type WorkflowEntry struct {
 	// Agent, Model and SessionID describe a subagent call, and Status and
 	// Err how it, or the run for an outcome, ended.
 	Agent, Model, SessionID string
-	Status                  host.Status
+	Status                  workflowhost.Status
 	Err                     string
 }
 
@@ -243,9 +243,9 @@ func (d *WorkflowRun) renderEntry(e WorkflowEntry, wrap func(lipgloss.Style, str
 			name += " " + t.Pills.HelpText.Render("("+e.Model+")")
 		}
 		switch e.Status {
-		case host.StatusRunning:
+		case workflowhost.StatusRunning:
 			body = t.Tool.IconPending.String() + " " + name + sep + t.Pills.TodoProgress.Render("running")
-		case host.StatusCompleted:
+		case workflowhost.StatusCompleted:
 			body = t.Tool.IconSuccess.String() + " " + name + sep + t.Pills.HelpText.Render("done")
 		default:
 			body = t.Tool.IconError.String() + " " + name + sep + t.Pills.HelpText.Render("failed")
@@ -264,18 +264,18 @@ func (d *WorkflowRun) renderEntry(e WorkflowEntry, wrap func(lipgloss.Style, str
 
 // WorkflowOutcomeText describes how a run ended, given its result for a
 // completed run or its error otherwise.
-func WorkflowOutcomeText(status host.Status, text string) string {
+func WorkflowOutcomeText(status workflowhost.Status, text string) string {
 	switch status {
-	case host.StatusCompleted:
+	case workflowhost.StatusCompleted:
 		if text == "" {
 			return "completed"
 		}
 		return "completed: " + text
-	case host.StatusDenied:
+	case workflowhost.StatusDenied:
 		return "not approved"
-	case host.StatusAborted:
+	case workflowhost.StatusAborted:
 		return "aborted"
-	case host.StatusInterrupted:
+	case workflowhost.StatusInterrupted:
 		return "interrupted"
 	default:
 		return "failed: " + text

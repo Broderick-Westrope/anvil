@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/charmbracelet/x/exp/golden"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +16,7 @@ func reviewTranscript() *WorkflowTranscript {
 		Entries: []WorkflowEntry{
 			{Kind: WorkflowEntryStatus, Text: "build · approach 1/2"},
 			{Kind: WorkflowEntryBash, Text: "git diff main...HEAD"},
-			{Kind: WorkflowEntryAgent, Agent: "builder", Model: "anthropic/claude-sonnet", SessionID: "c1", Status: host.StatusCompleted},
+			{Kind: WorkflowEntryAgent, Agent: "builder", Model: "anthropic/claude-sonnet", SessionID: "c1", Status: workflowhost.StatusCompleted},
 			{Kind: WorkflowEntryTurn, Text: "Rebuild approach 2"},
 			{
 				Kind:     WorkflowEntryAsk,
@@ -24,8 +24,8 @@ func reviewTranscript() *WorkflowTranscript {
 				Answer:   "no, rebuild it with a backoff and a model-aware cache key",
 			},
 			{Kind: WorkflowEntryWarning, Text: "undeclared: add `reviewer` to requires()"},
-			{Kind: WorkflowEntryAgent, Agent: "reviewer", SessionID: "c2", Status: host.StatusFailed, Err: "submit_result never called\nthe model stopped after 3 turns"},
-			{Kind: WorkflowEntryOutcome, Status: host.StatusFailed, Text: "BashError: exit 1"},
+			{Kind: WorkflowEntryAgent, Agent: "reviewer", SessionID: "c2", Status: workflowhost.StatusFailed, Err: "submit_result never called\nthe model stopped after 3 turns"},
+			{Kind: WorkflowEntryOutcome, Status: workflowhost.StatusFailed, Text: "BashError: exit 1"},
 		},
 	}
 }

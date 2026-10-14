@@ -17,6 +17,7 @@ The module path is `github.com/Broderick-Westrope/anvil`.
 main.go                            CLI entry point (cobra via internal/cmd)
 internal/
   app/app.go                       Top-level wiring: DB, config, agents, LSP, MCP, events
+  app/workflowhost/                Runs workflows for the app: Service, Backend, Store, approvals
   cmd/                             CLI commands (root, run, login, models, stats, sessions)
   config/
     config.go                      Config struct, context file paths, agent definitions
@@ -54,7 +55,6 @@ internal/
   filetracker/                     Tracks files touched per session
   commands/                        Custom slash commands (COMMAND.md), incl. workflow: frontmatter
   workflow/                        Workflow script runtime (goja): parsing, primitives, event log
-    host/                          Runs workflows for the app: Service, Backend, Store, approvals
 ```
 
 ### Package Layers
@@ -171,7 +171,7 @@ Terms with a specific meaning in this codebase are defined in
   check`), runs `main` in goja, and records every primitive call as
   started/completed/failed events. It knows nothing about Anvil; every side
   effect goes through the `workflow.Backend` interface, the seam tests fake.
-  `internal/workflow/host` implements that Backend against the coordinator
+  `internal/app/workflowhost` implements that Backend against the coordinator
   and owns runs: `Service` (start, approval, ask, pause/abort, events for
   the UI) and `Store` (run rows, event log, approvals). Approval covers a
   bundle of every file under the script's directory (skipping dot

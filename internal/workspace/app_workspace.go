@@ -13,6 +13,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
@@ -22,7 +23,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -624,7 +624,7 @@ var _ Workspace = (*AppWorkspace)(nil)
 
 // -- Workflows --
 
-func (w *AppWorkspace) WorkflowStart(ctx context.Context, inv host.Invocation) error {
+func (w *AppWorkspace) WorkflowStart(ctx context.Context, inv workflowhost.Invocation) error {
 	if w.app.Workflows == nil {
 		return ErrWorkflowsUnavailable
 	}

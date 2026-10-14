@@ -31,6 +31,7 @@ import (
 	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
@@ -55,7 +56,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/Broderick-Westrope/anvil/internal/version"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
@@ -341,7 +341,7 @@ type UI struct {
 	// workflowTitles caches the titles of sessions workflows drive.
 	workflowTitles map[string]string
 	// workflowRequests holds the open approval and ask requests by ID.
-	workflowRequests map[string]host.Event
+	workflowRequests map[string]workflowhost.Event
 	// workflowAnswered remembers answered requests so a republished copy
 	// doesn't reopen its dialog.
 	workflowAnswered map[string]bool
@@ -1094,7 +1094,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
-	case pubsub.Event[host.Event]:
+	case pubsub.Event[workflowhost.Event]:
 		cmds = append(cmds, m.handleWorkflowEvent(msg.Payload))
 	case workflowSessionTitleMsg:
 		m.setWorkflowTitle(msg.id, msg.title)

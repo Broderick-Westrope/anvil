@@ -7,8 +7,8 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/app"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +35,7 @@ func TestWorkflowMissingReportsUnknownRequirements(t *testing.T) {
 	coord := catalogCoordinator{agents: map[string]bool{"reviewer": true}}
 	a := &app.App{
 		AgentCoordinator: coord,
-		Workflows:        host.NewService(t.Context(), host.Deps{Coordinator: coord}),
+		Workflows:        workflowhost.NewService(t.Context(), workflowhost.Deps{Coordinator: coord}),
 	}
 	w := &AppWorkspace{app: a}
 	path := writeWorkflow(t, `requires({agents: ["reviewer", "ghost"], skills: ["nope"]})
@@ -52,7 +52,7 @@ func TestWorkflowMissingFailsWhenScriptDoesNotLoad(t *testing.T) {
 	coord := catalogCoordinator{}
 	w := &AppWorkspace{app: &app.App{
 		AgentCoordinator: coord,
-		Workflows:        host.NewService(t.Context(), host.Deps{Coordinator: coord}),
+		Workflows:        workflowhost.NewService(t.Context(), workflowhost.Deps{Coordinator: coord}),
 	}}
 	_, err := w.WorkflowMissing(filepath.Join(t.TempDir(), "absent.js"))
 	require.Error(t, err)
@@ -62,7 +62,7 @@ func TestWorkflowControlsNeedTheService(t *testing.T) {
 	t.Parallel()
 
 	w := &AppWorkspace{app: &app.App{}}
-	require.ErrorIs(t, w.WorkflowStart(t.Context(), host.Invocation{SessionID: "s"}), ErrWorkflowsUnavailable)
+	require.ErrorIs(t, w.WorkflowStart(t.Context(), workflowhost.Invocation{SessionID: "s"}), ErrWorkflowsUnavailable)
 	require.ErrorIs(t, w.WorkflowRespond("r", "x"), ErrWorkflowsUnavailable)
 	require.ErrorIs(t, w.WorkflowPause("s"), ErrWorkflowsUnavailable)
 	require.ErrorIs(t, w.WorkflowResume("s"), ErrWorkflowsUnavailable)
@@ -76,8 +76,8 @@ func TestWorkflowControlsNeedTheService(t *testing.T) {
 func TestWorkflowRunningFindsNothingWithoutRuns(t *testing.T) {
 	t.Parallel()
 
-	w := &AppWorkspace{app: &app.App{Workflows: host.NewService(t.Context(), host.Deps{})}}
+	w := &AppWorkspace{app: &app.App{Workflows: workflowhost.NewService(t.Context(), workflowhost.Deps{})}}
 	_, ok := w.WorkflowRunning("s")
 	require.False(t, ok)
-	require.ErrorIs(t, w.WorkflowPause("s"), host.ErrNoRun)
+	require.ErrorIs(t, w.WorkflowPause("s"), workflowhost.ErrNoRun)
 }

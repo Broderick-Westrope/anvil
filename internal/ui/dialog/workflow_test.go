@@ -7,10 +7,10 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/golden"
@@ -28,17 +28,17 @@ func drawDialog(d Dialog, width, height int) string {
 	return scr.String()
 }
 
-func approvalEvent(previous string) host.Event {
-	status := host.FileAdded
+func approvalEvent(previous string) workflowhost.Event {
+	status := workflowhost.FileAdded
 	if previous != "" {
-		status = host.FileChanged
+		status = workflowhost.FileChanged
 	}
-	return host.Event{
-		Kind: host.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "s1",
-		Approval: &host.ApprovalRequest{
+	return workflowhost.Event{
+		Kind: workflowhost.EventApproval, RequestID: "req-1", Command: "demo", SessionID: "s1",
+		Approval: &workflowhost.ApprovalRequest{
 			ScriptPath: "/proj/.anvil/commands/demo/workflow.js",
 			Origin:     "project",
-			Files: []host.ApprovalFile{{
+			Files: []workflowhost.ApprovalFile{{
 				Path: "workflow.js", Source: "function main() {\n  return 2\n}\n", PreviousSource: previous, Status: status,
 			}},
 			Requires: workflow.Requirements{
@@ -134,23 +134,23 @@ func TestWorkflowApprovalScrolls(t *testing.T) {
 
 // bundleEvent is an approval for a workflow with a reference file, where
 // the script has status script and the reference has status ref.
-func bundleEvent(script, ref host.FileStatus) host.Event {
+func bundleEvent(script, ref workflowhost.FileStatus) workflowhost.Event {
 	ev := approvalEvent("")
-	file := func(path, prev, src string, status host.FileStatus) host.ApprovalFile {
-		f := host.ApprovalFile{Path: path, Status: status}
+	file := func(path, prev, src string, status workflowhost.FileStatus) workflowhost.ApprovalFile {
+		f := workflowhost.ApprovalFile{Path: path, Status: status}
 		switch status {
-		case host.FileAdded:
+		case workflowhost.FileAdded:
 			f.Source = src
-		case host.FileChanged:
+		case workflowhost.FileChanged:
 			f.Source, f.PreviousSource = src, prev
-		case host.FileUnchanged:
+		case workflowhost.FileUnchanged:
 			f.Source, f.PreviousSource = src, src
-		case host.FileRemoved:
+		case workflowhost.FileRemoved:
 			f.PreviousSource = prev
 		}
 		return f
 	}
-	ev.Approval.Files = []host.ApprovalFile{
+	ev.Approval.Files = []workflowhost.ApprovalFile{
 		file("workflow.js", "function main() {\n  return 1\n}\n", "function main() {\n  return 2\n}\n", script),
 		file("references/da.md", "# Review\n\nBe kind.\n", "# Review\n\nBe thorough.\n", ref),
 	}
@@ -162,26 +162,26 @@ func TestWorkflowApprovalShowsEveryFile(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		ev      host.Event
+		ev      workflowhost.Event
 		want    []string
 		notWant []string
 	}{
 		"first run shows every file in full": {
-			ev:   bundleEvent(host.FileAdded, host.FileAdded),
+			ev:   bundleEvent(workflowhost.FileAdded, workflowhost.FileAdded),
 			want: []string{"First run: review all 2 files", "workflow.js", "return 2", "references/da.md", "Be thorough."},
 		},
 		"changed reference shows its diff": {
-			ev:      bundleEvent(host.FileUnchanged, host.FileChanged),
+			ev:      bundleEvent(workflowhost.FileUnchanged, workflowhost.FileChanged),
 			want:    []string{"1 of 2 files changed", "references/da.md", "Be kind.", "Be thorough.", "workflow.js", "unchanged"},
 			notWant: []string{"return 2"},
 		},
 		"removed reference is noted": {
-			ev:      bundleEvent(host.FileUnchanged, host.FileRemoved),
+			ev:      bundleEvent(workflowhost.FileUnchanged, workflowhost.FileRemoved),
 			want:    []string{"1 of 2 files changed", "references/da.md", "removed"},
 			notWant: []string{"Be kind.", "return 2"},
 		},
 		"added reference shows its source": {
-			ev:   bundleEvent(host.FileUnchanged, host.FileAdded),
+			ev:   bundleEvent(workflowhost.FileUnchanged, workflowhost.FileAdded),
 			want: []string{"1 of 2 files changed", "references/da.md", "added", "Be thorough."},
 		},
 	}
@@ -235,24 +235,24 @@ func TestWorkflowApprovalShowsControlCharactersAsEscapes(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		status host.FileStatus
+		status workflowhost.FileStatus
 	}{
-		"added":   {status: host.FileAdded},
-		"changed": {status: host.FileChanged},
-		"removed": {status: host.FileRemoved},
+		"added":   {status: workflowhost.FileAdded},
+		"changed": {status: workflowhost.FileChanged},
+		"removed": {status: workflowhost.FileRemoved},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			hidden := "ok\x1b[2K\rhidden\x07\x7f\u009b"
 			ev := approvalEvent("")
-			f := host.ApprovalFile{Path: "evil\x1b[31m.md", Status: tc.status}
+			f := workflowhost.ApprovalFile{Path: "evil\x1b[31m.md", Status: tc.status}
 			switch tc.status {
-			case host.FileAdded:
+			case workflowhost.FileAdded:
 				f.Source = hidden
-			case host.FileChanged:
+			case workflowhost.FileChanged:
 				f.Source, f.PreviousSource = hidden, "before"+hidden
-			case host.FileRemoved:
+			case workflowhost.FileRemoved:
 				f.PreviousSource = hidden
 			}
 			ev.Approval.Files = append(ev.Approval.Files, f)
@@ -262,7 +262,7 @@ func TestWorkflowApprovalShowsControlCharactersAsEscapes(t *testing.T) {
 			require.NotContains(t, out, "\x7f")
 			require.NotContains(t, out, "\r")
 			require.NotContains(t, out, "\u009b")
-			if tc.status != host.FileRemoved {
+			if tc.status != workflowhost.FileRemoved {
 				require.Contains(t, out, `ok\x1b[2K\x0dhidden\x07\x7f\u009b`)
 			}
 		})
@@ -273,17 +273,17 @@ func TestWorkflowApprovalShowsAnOmittedFileBySizeAndHash(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		status host.FileStatus
+		status workflowhost.FileStatus
 	}{
-		"added":   {status: host.FileAdded},
-		"changed": {status: host.FileChanged},
-		"removed": {status: host.FileRemoved},
+		"added":   {status: workflowhost.FileAdded},
+		"changed": {status: workflowhost.FileChanged},
+		"removed": {status: workflowhost.FileRemoved},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ev := approvalEvent("")
-			ev.Approval.Files = append(ev.Approval.Files, host.ApprovalFile{
+			ev.Approval.Files = append(ev.Approval.Files, workflowhost.ApprovalFile{
 				Path: "tool.bin", Status: tc.status, Size: 2048, Omitted: "binary",
 				Hash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			})
@@ -298,9 +298,9 @@ func TestWorkflowApprovalShowsAnOmittedFileBySizeAndHash(t *testing.T) {
 // testAbortKey is the default workflow abort binding.
 var testAbortKey = key.NewBinding(key.WithKeys("alt+x"), key.WithHelp("alt+x", "abort"))
 
-func askEvent(options ...string) host.Event {
-	return host.Event{
-		Kind: host.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "s1",
+func askEvent(options ...string) workflowhost.Event {
+	return workflowhost.Event{
+		Kind: workflowhost.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "s1",
 		Question: "Which way?", Options: options,
 	}
 }
@@ -471,10 +471,10 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 		"approval_refs_only": {dialog: NewWorkflowApproval(workflowCommon(), withRefs), width: 100, height: 30},
 		"approval_small":     {dialog: NewWorkflowApproval(workflowCommon(), approvalEvent("")), width: 60, height: 20},
 		"approval_first_run_with_reference": {
-			dialog: NewWorkflowApproval(workflowCommon(), bundleEvent(host.FileAdded, host.FileAdded)), width: 100, height: 40,
+			dialog: NewWorkflowApproval(workflowCommon(), bundleEvent(workflowhost.FileAdded, workflowhost.FileAdded)), width: 100, height: 40,
 		},
 		"approval_reference_changed": {
-			dialog: NewWorkflowApproval(workflowCommon(), bundleEvent(host.FileUnchanged, host.FileChanged)), width: 100, height: 40,
+			dialog: NewWorkflowApproval(workflowCommon(), bundleEvent(workflowhost.FileUnchanged, workflowhost.FileChanged)), width: 100, height: 40,
 		},
 		"ask_options":   {dialog: selected, width: 100, height: 20},
 		"ask_free_text": {dialog: NewWorkflowAsk(workflowCommon(), askEvent(), testAbortKey), width: 100, height: 20},
@@ -489,7 +489,7 @@ func TestWorkflowDialogsGolden(t *testing.T) {
 	}
 }
 
-func longAskEvent(options ...string) host.Event {
+func longAskEvent(options ...string) workflowhost.Event {
 	ev := askEvent(options...)
 	ev.Question = "FIRST\n" + strings.Repeat("line\n", 40) + "LAST"
 	return ev

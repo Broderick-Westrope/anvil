@@ -1,6 +1,6 @@
 // Package host persists workflow runs, their event logs and script
 // approvals.
-package host
+package workflowhost
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-package host_test
+package workflowhost_test
 
 import (
 	"encoding/json"
@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	"github.com/stretchr/testify/require"
 )
 
 const testInstance = "inst0001"
 
-func newTestStore(t *testing.T) (*host.Store, *db.Queries, string) {
+func newTestStore(t *testing.T) (*workflowhost.Store, *db.Queries, string) {
 	t.Helper()
 	dbDir := t.TempDir()
 	conn, err := db.Connect(t.Context(), dbDir)
@@ -24,11 +24,11 @@ func newTestStore(t *testing.T) (*host.Store, *db.Queries, string) {
 	t.Cleanup(func() { require.NoError(t, db.Release(dbDir)) })
 	q := db.New(conn)
 	dataDir := t.TempDir()
-	return host.NewStore(q, dataDir, testInstance), q, dataDir
+	return workflowhost.NewStore(q, dataDir, testInstance), q, dataDir
 }
 
-func testRun(id string, startedAt time.Time) host.RunRecord {
-	return host.RunRecord{
+func testRun(id string, startedAt time.Time) workflowhost.RunRecord {
+	return workflowhost.RunRecord{
 		ID:                id,
 		Command:           "project:build",
 		CommandSource:     "project",
@@ -53,7 +53,7 @@ func TestStore_StartRunThenGetRun(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	want := testRun("run-1", started)
-	want.Status = host.StatusRunning
+	want.Status = workflowhost.StatusRunning
 	want.InstanceID = testInstance
 	want.Tmpdir = filepath.Join(dataDir, "workflows", "run-1", "tmp")
 	require.Equal(t, want, got)
@@ -72,13 +72,13 @@ func TestStore_GetRunMissing(t *testing.T) {
 func TestStore_FinishRun(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		status host.Status
+		status workflowhost.Status
 		result json.RawMessage
 		errMsg string
 	}{
-		"completed with result": {status: host.StatusCompleted, result: json.RawMessage(`{"pr":12}`)},
-		"failed with error":     {status: host.StatusFailed, errMsg: "boom"},
-		"aborted":               {status: host.StatusAborted},
+		"completed with result": {status: workflowhost.StatusCompleted, result: json.RawMessage(`{"pr":12}`)},
+		"failed with error":     {status: workflowhost.StatusFailed, errMsg: "boom"},
+		"aborted":               {status: workflowhost.StatusAborted},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -102,12 +102,12 @@ func TestStore_FinishRun(t *testing.T) {
 func TestStore_FinishRunRejectsRunThatIsNotRunning(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		setup func(t *testing.T, s *host.Store)
+		setup func(t *testing.T, s *workflowhost.Store)
 	}{
-		"missing run": {setup: func(*testing.T, *host.Store) {}},
-		"already finished": {setup: func(t *testing.T, s *host.Store) {
+		"missing run": {setup: func(*testing.T, *workflowhost.Store) {}},
+		"already finished": {setup: func(t *testing.T, s *workflowhost.Store) {
 			require.NoError(t, s.StartRun(t.Context(), testRun("run-1", time.Now())))
-			require.NoError(t, s.FinishRun(t.Context(), "run-1", host.StatusCompleted, nil, ""))
+			require.NoError(t, s.FinishRun(t.Context(), "run-1", workflowhost.StatusCompleted, nil, ""))
 		}},
 	}
 	for name, tc := range tests {
@@ -116,7 +116,7 @@ func TestStore_FinishRunRejectsRunThatIsNotRunning(t *testing.T) {
 			s, _, _ := newTestStore(t)
 			tc.setup(t, s)
 
-			err := s.FinishRun(t.Context(), "run-1", host.StatusFailed, nil, "late")
+			err := s.FinishRun(t.Context(), "run-1", workflowhost.StatusFailed, nil, "late")
 			require.Error(t, err)
 		})
 	}
@@ -183,14 +183,14 @@ func TestStore_MarkInterrupted(t *testing.T) {
 		owner      string
 		heartbeat  time.Duration // How long ago the owner last heartbeat; 0 means no instance row.
 		finish     bool
-		wantStatus host.Status
+		wantStatus workflowhost.Status
 	}{
-		"own run without instance row": {owner: testInstance, wantStatus: host.StatusRunning},
-		"live instance":                {owner: "live", heartbeat: time.Second, wantStatus: host.StatusRunning},
-		"stale instance":               {owner: "stale", heartbeat: 10 * time.Minute, wantStatus: host.StatusInterrupted},
-		"missing instance":             {owner: "gone", wantStatus: host.StatusInterrupted},
+		"own run without instance row": {owner: testInstance, wantStatus: workflowhost.StatusRunning},
+		"live instance":                {owner: "live", heartbeat: time.Second, wantStatus: workflowhost.StatusRunning},
+		"stale instance":               {owner: "stale", heartbeat: 10 * time.Minute, wantStatus: workflowhost.StatusInterrupted},
+		"missing instance":             {owner: "gone", wantStatus: workflowhost.StatusInterrupted},
 		"finished run of missing instance": {
-			owner: "gone", finish: true, wantStatus: host.StatusCompleted,
+			owner: "gone", finish: true, wantStatus: workflowhost.StatusCompleted,
 		},
 	}
 	for name, tc := range tests {
@@ -203,10 +203,10 @@ func TestStore_MarkInterrupted(t *testing.T) {
 					ID: tc.owner, Pid: 1, StartedAt: hb, HeartbeatAt: hb,
 				}))
 			}
-			owner := host.NewStore(q, dataDir, tc.owner)
+			owner := workflowhost.NewStore(q, dataDir, tc.owner)
 			require.NoError(t, owner.StartRun(t.Context(), testRun("run-1", time.Now())))
 			if tc.finish {
-				require.NoError(t, owner.FinishRun(t.Context(), "run-1", host.StatusCompleted, nil, ""))
+				require.NoError(t, owner.FinishRun(t.Context(), "run-1", workflowhost.StatusCompleted, nil, ""))
 			}
 
 			require.NoError(t, s.MarkInterrupted(t.Context()))
@@ -215,7 +215,7 @@ func TestStore_MarkInterrupted(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, tc.wantStatus, got.Status)
-			require.Equal(t, tc.wantStatus == host.StatusRunning, got.FinishedAt.IsZero())
+			require.Equal(t, tc.wantStatus == workflowhost.StatusRunning, got.FinishedAt.IsZero())
 		})
 	}
 }
@@ -243,7 +243,7 @@ func TestStore_PruneRunDirs(t *testing.T) {
 			if tc.hasRow {
 				require.NoError(t, s.StartRun(t.Context(), testRun("run-1", now.Add(-tc.age))))
 				if tc.finish {
-					require.NoError(t, s.FinishRun(t.Context(), "run-1", host.StatusCompleted, nil, ""))
+					require.NoError(t, s.FinishRun(t.Context(), "run-1", workflowhost.StatusCompleted, nil, ""))
 				}
 			} else {
 				require.NoError(t, os.MkdirAll(s.Tmpdir("run-1"), 0o700))
@@ -275,7 +275,7 @@ func TestStore_PruneRunDirsKeepsOtherRuns(t *testing.T) {
 	s, _, _ := newTestStore(t)
 	now := time.Now()
 	require.NoError(t, s.StartRun(t.Context(), testRun("old", now.Add(-30*24*time.Hour))))
-	require.NoError(t, s.FinishRun(t.Context(), "old", host.StatusFailed, nil, "x"))
+	require.NoError(t, s.FinishRun(t.Context(), "old", workflowhost.StatusFailed, nil, "x"))
 	require.NoError(t, s.StartRun(t.Context(), testRun("new", now)))
 
 	require.NoError(t, s.PruneRunDirs(t.Context(), now))

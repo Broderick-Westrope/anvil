@@ -11,9 +11,9 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
-	"github.com/Broderick-Westrope/anvil/internal/workflow/host"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
@@ -37,7 +37,7 @@ func WorkflowRequestDialogID(requestID string) string {
 // version, and removed and unchanged files by name.
 type WorkflowApproval struct {
 	com     *common.Common
-	ev      host.Event
+	ev      workflowhost.Event
 	approve bool // Whether Approve, rather than Deny, is selected.
 
 	viewport      viewport.Model
@@ -53,7 +53,7 @@ type WorkflowApproval struct {
 var _ Dialog = (*WorkflowApproval)(nil)
 
 // NewWorkflowApproval creates the approval dialog for an EventApproval.
-func NewWorkflowApproval(com *common.Common, ev host.Event) *WorkflowApproval {
+func NewWorkflowApproval(com *common.Common, ev workflowhost.Event) *WorkflowApproval {
 	d := &WorkflowApproval{com: com, ev: ev, viewport: viewport.New()}
 	d.help = help.New()
 	d.help.Styles = com.Styles.DialogHelpStyles()
@@ -120,7 +120,7 @@ func (d *WorkflowApproval) fileCounts() (changed, total int) {
 		return 0, 0
 	}
 	for _, f := range d.ev.Approval.Files {
-		if f.Status != host.FileUnchanged {
+		if f.Status != workflowhost.FileUnchanged {
 			changed++
 		}
 	}
@@ -133,7 +133,7 @@ func (d *WorkflowApproval) firstRun() bool {
 		return true
 	}
 	for _, f := range d.ev.Approval.Files {
-		if f.Status != host.FileAdded {
+		if f.Status != workflowhost.FileAdded {
 			return false
 		}
 	}
@@ -153,19 +153,19 @@ func (d *WorkflowApproval) renderFiles(width int) string {
 		f.Path, f.Source, f.PreviousSource = visibleControls(f.Path), visibleControls(f.Source), visibleControls(f.PreviousSource)
 		heading := lipgloss.NewStyle().Width(width).Render(
 			t.Dialog.Permissions.KeyText.Render(f.Path) + t.Dialog.Permissions.ValueText.Render(" "+string(f.Status)))
-		if f.Omitted != "" && f.Status != host.FileUnchanged {
+		if f.Omitted != "" && f.Status != workflowhost.FileUnchanged {
 			info := fmt.Sprintf("%s · %d bytes\nsha256 %s", f.Omitted, f.Size, f.Hash)
 			sections = append(sections, heading+"\n"+t.Dialog.Permissions.ValueText.Width(width).Render(info))
 			continue
 		}
 		switch f.Status {
-		case host.FileAdded:
+		case workflowhost.FileAdded:
 			source := strings.TrimRight(f.Source, "\n")
 			if highlighted, err := common.SyntaxHighlight(t, source, f.Path, t.Dialog.Permissions.ParamsBg); err == nil {
 				source = strings.TrimRight(highlighted, "\n")
 			}
 			sections = append(sections, heading+"\n"+t.Dialog.ContentPanel.Width(width).Render(source))
-		case host.FileChanged:
+		case workflowhost.FileChanged:
 			diff := common.DiffFormatter(t).
 				Before(f.Path, f.PreviousSource).
 				After(f.Path, f.Source).
@@ -235,7 +235,7 @@ func visibleControls(s string) string {
 }
 
 // requiresSummary lists what a script declares in requires().
-func requiresSummary(req *host.ApprovalRequest) string {
+func requiresSummary(req *workflowhost.ApprovalRequest) string {
 	var parts []string
 	add := func(kind string, names []string) {
 		if len(names) > 0 {
@@ -299,7 +299,7 @@ func (d *WorkflowApproval) FullHelp() [][]key.Binding {
 // the workflow abort key aborts the run instead.
 type WorkflowAsk struct {
 	com      *common.Common
-	ev       host.Event
+	ev       workflowhost.Event
 	selected int
 	input    textinput.Model
 
@@ -320,7 +320,7 @@ var _ Dialog = (*WorkflowAsk)(nil)
 
 // NewWorkflowAsk creates the dialog for an EventAsk. abort is the
 // keymap's workflow abort binding.
-func NewWorkflowAsk(com *common.Common, ev host.Event, abort key.Binding) *WorkflowAsk {
+func NewWorkflowAsk(com *common.Common, ev workflowhost.Event, abort key.Binding) *WorkflowAsk {
 	d := &WorkflowAsk{com: com, ev: ev, question: viewport.New()}
 	d.help = help.New()
 	d.help.Styles = com.Styles.DialogHelpStyles()
