@@ -17,7 +17,9 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
+	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
+	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
 
 type serviceHarness struct {
@@ -296,6 +298,13 @@ func TestServiceApprovalShowsLargeAndBinaryFilesByHashOnly(t *testing.T) {
 	writeFile(t, filepath.Join(h.dir, "big.txt"), big)
 	writeFile(t, filepath.Join(h.dir, "limit.txt"), atLimit)
 	writeFile(t, filepath.Join(h.dir, "tool.bin"), "ELF\x00one")
+	// Only the first 8 KiB are searched for a NUL byte.
+	leadingNUL := "\x00rest"
+	lastSniffedNUL := strings.Repeat("a", 8*1024-1) + "\x00"
+	unsniffedNUL := strings.Repeat("a", 8*1024) + "\x00"
+	writeFile(t, filepath.Join(h.dir, "leading.bin"), leadingNUL)
+	writeFile(t, filepath.Join(h.dir, "last-sniffed.bin"), lastSniffedNUL)
+	writeFile(t, filepath.Join(h.dir, "unsniffed.txt"), unsniffedNUL)
 	path := h.write(t, `function main() { return 1 }`)
 	sha := func(s string) string {
 		sum := sha256.Sum256([]byte(s))
@@ -317,6 +326,10 @@ func TestServiceApprovalShowsLargeAndBinaryFilesByHashOnly(t *testing.T) {
 	require.Equal(t, "binary", got["tool.bin"].Omitted)
 	require.Equal(t, atLimit, got["limit.txt"].Source)
 	require.Empty(t, got["limit.txt"].Omitted)
+	require.Equal(t, "binary", got["leading.bin"].Omitted)
+	require.Equal(t, "binary", got["last-sniffed.bin"].Omitted)
+	require.Equal(t, unsniffedNUL, got["unsniffed.txt"].Source)
+	require.Empty(t, got["unsniffed.txt"].Omitted)
 	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
 	require.Equal(t, workflowhost.StatusCompleted, h.next(t, workflowhost.EventFinished).Status)
 
@@ -725,4 +738,246 @@ func TestServiceKeepsAScriptChosenSessionTitle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "/demo second", s.Title)
 	require.True(t, s.TitleIsCustom)
+}
+
+func TestServiceApprovalListsFilesRemovedSinceTheLastApproval(t *testing.T) {
+	h := newServiceHarness(t, false)
+	writeFile(t, filepath.Join(h.dir, "one.md"), "one")
+	writeFile(t, filepath.Join(h.dir, "two.md"), "two")
+	path := h.write(t, `function main() { return 1 }`)
+	h.start(t, path, "")
+	req := h.next(t, workflowhost.EventApproval)
+	require.NoError(t, h.svc.Respond(req.RequestID, "approve"))
+	require.Equal(t, workflowhost.StatusCompleted, h.next(t, workflowhost.EventFinished).Status)
+
+	require.NoError(t, os.Remove(filepath.Join(h.dir, "one.md")))
+	require.NoError(t, os.Remove(filepath.Join(h.dir, "two.md")))
+	h.start(t, path, "")
+	req = h.next(t, workflowhost.EventApproval)
+	var got []string
+	for _, f := range req.Approval.Files {
+		got = append(got, f.Path+" "+string(f.Status))
+	}
+	require.Equal(t, []string{"workflow.js unchanged", "one.md removed", "two.md removed"}, got)
+	require.NoError(t, h.svc.Respond(req.RequestID, "deny"))
+	require.Equal(t, workflowhost.StatusDenied, h.next(t, workflowhost.EventFinished).Status)
+}
+
+func TestServiceApprovalNamesTheCommandOrigin(t *testing.T) {
+	tests := map[string]struct {
+		source string
+		want   string
+	}{
+		"personal command": {source: "", want: "personal"},
+		"project command":  {source: "project", want: "project"},
+		"plugin command":   {source: "plugin:tools", want: "plugin:tools"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			h := newServiceHarness(t, false)
+			path := h.write(t, `function main() { return 1 }`)
+			require.NoError(t, h.svc.Start(h.fixture.Context, workflowhost.Invocation{
+				CommandID: "demo", CommandName: "demo", Source: tc.source, ScriptPath: path, SessionID: h.session,
+			}))
+			req := h.next(t, workflowhost.EventApproval)
+			require.Equal(t, tc.want, req.Approval.Origin)
+			require.NoError(t, h.svc.Respond(req.RequestID, "deny"))
+			h.next(t, workflowhost.EventFinished)
+		})
+	}
+}
+
+func TestServiceRepublishesEveryTwoSecondsByDefault(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `function main() { return ask("still there?") }`)
+	h.start(t, path, "")
+	first := h.next(t, workflowhost.EventAsk)
+	published := time.Now()
+	again := h.next(t, workflowhost.EventAsk)
+	require.Equal(t, first.RequestID, again.RequestID)
+	require.GreaterOrEqual(t, time.Since(published), 1500*time.Millisecond)
+	require.NoError(t, h.svc.Respond(first.RequestID, "yes"))
+	h.next(t, workflowhost.EventFinished)
+}
+
+func TestServiceSkillsComeFromTheCoordinator(t *testing.T) {
+	h := newServiceHarness(t, true)
+	jq := h.fixture.Coordinator.ActiveSkillByName("jq")
+	require.NotNil(t, jq, "the builtin jq skill is active")
+	path := h.write(t, `requires({skills: ["jq"]})
+function main() {
+  let missing
+  try { skill("ghost") } catch (e) { missing = e.message }
+  return {jq: skill("jq"), missing}
+}`)
+	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+	var got struct {
+		JQ      struct{ Body, Location string }
+		Missing string
+	}
+	require.NoError(t, json.Unmarshal(done.Result, &got))
+	require.Equal(t, jq.Instructions, got.JQ.Body)
+	require.Equal(t, jq.SkillFilePath, got.JQ.Location)
+	require.Equal(t, `skill "ghost" not found`, got.Missing)
+}
+
+func TestServiceRefusesAScriptRequiringAMissingSkill(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `requires({skills: ["ghost"]}); function main() { bash("touch should-not-exist") }`)
+	err := h.svc.Start(h.fixture.Context, workflowhost.Invocation{CommandID: "x", ScriptPath: path, SessionID: h.session})
+	require.ErrorContains(t, err, `skill "ghost" not found`)
+}
+
+func TestServiceTurnPreloadsItsSkills(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "ok"})
+	path := h.write(t, `requires({skills: ["jq"]})
+function main() { return session.current().turn("hello", {skills: ["jq"]}) }`)
+	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+
+	msgs, err := h.fixture.Workspace.ListUserMessages(h.fixture.Context, h.session)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	_, prompt, ok := commands.ParseWorkflowTurnXML(msgs[0].Content().Text)
+	require.True(t, ok, msgs[0].Content().Text)
+	jq := h.fixture.Coordinator.ActiveSkillByName("jq")
+	require.Equal(t, skills.FormatContentXML("jq", jq.Instructions)+"\n\nhello", prompt)
+}
+
+func TestServiceAgentWithoutStructuredOutputThrowsSchemaError(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "no result"}, branchfixture.Response{Text: "still no result"})
+	path := h.write(t, `requires({agents: ["reviewer"]})
+const S = {type: "object", properties: {kind: {type: "string"}}, required: ["kind"]}
+function main() {
+  try { agent("reviewer", "review", {schema: S}) } catch (e) { return [e.name, e.raw] }
+}`)
+	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+	require.JSONEq(t, `["SchemaError", "still no result"]`, string(done.Result))
+}
+
+func TestServiceBashReturnsFailuresAsResults(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `function main() {
+  return {
+    failed: bash("echo out; echo err >&2; exit 3", {check: false}),
+    unparsable: bash("echo 'unterminated", {check: false}),
+  }
+}`)
+	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+	var got struct {
+		Failed, Unparsable struct {
+			Stdout, Stderr string
+			ExitCode       int
+		}
+	}
+	require.NoError(t, json.Unmarshal(done.Result, &got))
+	require.Equal(t, "out\n", got.Failed.Stdout)
+	require.Equal(t, "err\n", got.Failed.Stderr)
+	require.Equal(t, 3, got.Failed.ExitCode)
+	require.Empty(t, got.Unparsable.Stdout)
+	require.Contains(t, got.Unparsable.Stderr, "reached EOF without closing quote")
+	require.Equal(t, 1, got.Unparsable.ExitCode)
+}
+
+func TestServiceRecordsAnInterruptedBashAsFailed(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `function main() { status("go"); return bash("sleep 30", {check: false}) }`)
+	h.start(t, path, "")
+	h.next(t, workflowhost.EventStatus)
+	h.next(t, workflowhost.EventStep)
+	require.NoError(t, h.svc.Abort(h.session))
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusAborted, done.Status)
+
+	events, err := h.store.ListEvents(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+	var phases []workflow.Phase
+	for _, ev := range events {
+		if ev.Primitive == "bash" {
+			phases = append(phases, ev.Phase)
+		}
+	}
+	require.Equal(t, []workflow.Phase{workflow.PhaseStarted, workflow.PhaseFailed}, phases)
+}
+
+func TestServiceRunningFindsOnlyTheRunASessionBelongsTo(t *testing.T) {
+	h := newServiceHarness(t, false)
+	writeFile(t, filepath.Join(h.dir, "a", "workflow.js"),
+		`function main() { const s = session.new({}); workflow.focus(s); return ask("hold on") }`)
+	writeFile(t, filepath.Join(h.dir, "b", "workflow.js"), `function main() { return 1 }`)
+	h.start(t, filepath.Join(h.dir, "a", "workflow.js"), "")
+	approval := h.next(t, workflowhost.EventApproval)
+	require.NoError(t, h.svc.Respond(approval.RequestID, "approve"))
+	created := h.next(t, workflowhost.EventFocus).Focus
+	ask := h.next(t, workflowhost.EventAsk)
+
+	// A second run awaiting approval holds its session before it has a run.
+	waiting, err := h.fixture.Workspace.CreateSession(h.fixture.Context, "waiting")
+	require.NoError(t, err)
+	require.NoError(t, h.svc.Start(h.fixture.Context, workflowhost.Invocation{
+		CommandID: "b", CommandName: "b", ScriptPath: filepath.Join(h.dir, "b", "workflow.js"), SessionID: waiting.ID,
+	}))
+	pending := h.next(t, workflowhost.EventApproval)
+	unrelated, err := h.fixture.Workspace.CreateSession(h.fixture.Context, "unrelated")
+	require.NoError(t, err)
+
+	// Runs are kept in a map, so repeat to meet them in different orders.
+	for range 20 {
+		for _, id := range []string{h.session, created} {
+			invoker, ok := h.svc.Running(id)
+			require.True(t, ok, id)
+			require.Equal(t, h.session, invoker)
+		}
+		for _, id := range []string{waiting.ID, unrelated.ID} {
+			_, ok := h.svc.Running(id)
+			require.False(t, ok, id)
+		}
+	}
+	require.ErrorIs(t, h.svc.Pause(unrelated.ID), workflowhost.ErrNoRun)
+
+	require.NoError(t, h.svc.Respond(pending.RequestID, "deny"))
+	require.NoError(t, h.svc.Respond(ask.RequestID, "ok"))
+	for range 2 {
+		h.next(t, workflowhost.EventFinished)
+	}
+	_, ok := h.svc.Running(h.session)
+	require.False(t, ok, "a finished run no longer involves its session")
+}
+
+func TestServiceRecordsTheCanonicalWorkingDir(t *testing.T) {
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(target, link))
+	tests := map[string]struct {
+		dir, want string
+	}{
+		"relative": {dir: ".", want: cwd},
+		"symlink":  {dir: link, want: target},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			want, err := filepath.EvalSymlinks(tc.want)
+			require.NoError(t, err)
+			h := newServiceHarness(t, true, func(d *workflowhost.Deps) { d.WorkingDir = tc.dir })
+			path := h.write(t, `function main() { return 1 }`)
+			h.start(t, path, "")
+			done := h.next(t, workflowhost.EventFinished)
+			require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+			run, ok, err := h.store.GetRun(h.fixture.Context, done.RunID)
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, want, run.WorkingDir)
+		})
+	}
 }
