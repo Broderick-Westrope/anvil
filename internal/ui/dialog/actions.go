@@ -110,8 +110,9 @@ type (
 		Args      map[string]string // Actual argument values
 		// Command is the whole command when the palette runs it, so a
 		// feature that runs commands sees what the slash path sees. It is
-		// zero for actions built elsewhere, which no feature claims. The
-		// fields above are what upstream's prompt path reads.
+		// zero for actions built elsewhere, which no feature claims, and
+		// rides along when the arguments dialog sends the palette's action
+		// back. The fields above are what upstream's prompt path reads.
 		Command commands.CustomCommand
 	}
 	// ActionRunMCPPrompt is a message to run a custom command.

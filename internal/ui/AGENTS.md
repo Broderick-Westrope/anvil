@@ -107,7 +107,7 @@ Optional surfaces, found by type assertion when the feature registers:
 - `panelFeature.Panel` returns a `panelView` drawn above the pills, or
   nil. `Lines()` and `Render(width)` come from one view-model, and
   `Render` returns exactly `Lines()` lines, each one row; cut multi-line
-  text at its first line.
+  text at its first line. A panel with no lines isn't rendered.
 - `paletteFeature.PaletteEntries` adds entries to the command palette.
 
 A feature never holds `*UI`. It asks `UI` for things through `featureHost`,

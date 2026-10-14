@@ -35,7 +35,9 @@ type feature interface {
 // commandFeature runs some custom commands itself, from the slash
 // command line (with its raw arguments) or the palette (with none). When
 // one runs a command from the palette, the registry closes the palette,
-// as upstream's prompt path does for the commands it runs.
+// as upstream's prompt path does for the commands it runs. A claimed
+// command may return a nil tea.Cmd; the registry swaps in a no-op, since
+// the slash path takes nil to mean "not a command".
 type commandFeature interface {
 	RunCommand(cmd commands.CustomCommand, rawArgs string) (tea.Cmd, bool)
 }
@@ -51,7 +53,8 @@ type panelFeature interface {
 type panelView interface {
 	// Lines is the number of rows, whatever the width.
 	Lines() int
-	// Render returns exactly Lines() lines, each truncated to width.
+	// Render returns exactly Lines() lines, each truncated to width. A
+	// panel with no lines is skipped, so Render isn't called for it.
 	Render(width int) string
 }
 

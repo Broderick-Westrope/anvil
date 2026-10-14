@@ -58,7 +58,7 @@ function main() {}`)
 	require.Equal(t, []string{`skill "nope" not found`, `agent "ghost" not found`}, got[1].Problems)
 	require.Empty(t, got[2].Problems)
 	require.Len(t, got[3].Problems, 1, "a script that doesn't load can't run")
-	require.Equal(t, []string{"already broken"}, got[4].Problems, "a script that didn't load isn't checked again")
+	require.Equal(t, []string{"already broken"}, got[4].Problems, "a command that already has problems isn't checked again")
 	require.Empty(t, cmds[1].Problems, "the input is not modified")
 }
 

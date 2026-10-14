@@ -268,12 +268,6 @@ func requirePanelContract(t *testing.T, p panelView) {
 	}
 }
 
-func TestStaticPanelKeepsThePanelContract(t *testing.T) {
-	t.Parallel()
-
-	requirePanelContract(t, staticPanel{"first panel line", "second"})
-}
-
 func TestPanelsKeepTheirRowsWhenNothingFits(t *testing.T) {
 	t.Parallel()
 

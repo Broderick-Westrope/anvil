@@ -161,12 +161,16 @@ func TestDefaultCommandsListFeatureEntriesInOrderBeforeBrowseSkills(t *testing.T
 
 	s := styles.TokyoNight()
 	com := &common.Common{Styles: &s, Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig()}}
-	c := &Commands{com: com}
+	c, err := NewCommands(com, "", false, false, false, false, nil, nil)
+	require.NoError(t, err)
 	first := NewCommandItem(&s, "feature_first", "First", "", ActionClose{})
 	second := NewCommandItem(&s, "feature_second", "Second", "", ActionClose{})
-	c.featureEntries = []*CommandItem{first, second}
+	c.SetFeatureEntries([]*CommandItem{first, second})
 
-	items := c.defaultCommands()
+	var items []*CommandItem
+	for _, it := range c.list.FilteredItems() {
+		items = append(items, it.(*CommandItem))
+	}
 	at := func(id string) int {
 		return slices.IndexFunc(items, func(item *CommandItem) bool { return item.ID() == id })
 	}
