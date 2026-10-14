@@ -74,6 +74,8 @@ type Commands struct {
 	customCommands []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
 	workflow       *WorkflowControls
+	// featureEntries are the entries UI's features contribute.
+	featureEntries []*CommandItem
 
 	dockerMCPAvailable     *bool
 	dockerMCPCheckInFlight bool
@@ -619,6 +621,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowOpenAgent}))
 		}
 	}
+	commands = append(commands, c.featureEntries...)
 
 	commands = append(commands,
 		NewCommandItem(c.com.Styles, "browse_skills", "Browse Skills", "", ActionOpenDialog{SkillPickerID}),
@@ -685,6 +688,13 @@ type WorkflowKeys struct {
 // current session, or hides them when w is nil.
 func (c *Commands) SetWorkflowControls(w *WorkflowControls) {
 	c.workflow = w
+	c.setCommandItems(c.selected)
+}
+
+// SetFeatureEntries shows the entries UI's features contribute, in
+// order, among the system commands.
+func (c *Commands) SetFeatureEntries(items []*CommandItem) {
+	c.featureEntries = items
 	c.setCommandItems(c.selected)
 }
 

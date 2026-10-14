@@ -11,6 +11,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -71,7 +72,7 @@ func (*workflowWorkspace) ParseAgentToolSessionID(string) (string, string, bool)
 func (*workflowWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
 func (*workflowWorkspace) PermissionBouncerConfigured() bool     { return false }
 func (*workflowWorkspace) Config() *config.Config {
-	return &config.Config{Options: &config.Options{}}
+	return &config.Config{Options: &config.Options{TUI: &config.TUIOptions{}}, Providers: csync.NewMap[string, config.ProviderConfig]()}
 }
 
 func (*workflowWorkspace) FileTrackerListReadFiles(context.Context, string) ([]string, error) {

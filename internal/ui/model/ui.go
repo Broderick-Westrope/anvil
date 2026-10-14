@@ -336,6 +336,9 @@ type UI struct {
 	customCommands []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
 
+	// features are the fork features routed to from the dispatchers.
+	features features
+
 	// workflows holds the running workflows, keyed by invoking session.
 	workflows map[string]*workflowRun
 	// workflowTitles caches the titles of sessions workflows drive.
@@ -731,9 +734,10 @@ func (m *UI) activeChatArea() image.Rectangle {
 
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	observed := m.features.observe(msg)
 	model, cmd := m.update(msg)
 	m.trackHerdrState()
-	return model, tea.Batch(cmd, m.herdrTickCmd())
+	return model, tea.Batch(observed, cmd, m.herdrTickCmd())
 }
 
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1525,6 +1529,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
+		if cmd, ok := m.features.handleMsg(msg); ok {
+			cmds = append(cmds, cmd)
+			break
+		}
 		if m.dialog.HasDialogs() {
 			if cmd := m.handleDialogMsg(msg); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -2294,6 +2302,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 
+	if cmd, ok := m.features.handleAction(m.dialog, action); ok {
+		return cmd
+	}
+
 	isOnboarding := m.state == uiOnboarding
 
 	switch msg := action.(type) {
@@ -2984,6 +2996,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			return true
 		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort, m.keyMap.WorkflowGo, m.keyMap.WorkflowAgent, m.keyMap.WorkflowRun):
 			if cmd, ok := m.handleWorkflowKey(msg); ok {
+				cmds = append(cmds, cmd)
+				return true
+			}
+		default:
+			if cmd, ok := m.features.handleKey(msg); ok {
 				cmds = append(cmds, cmd)
 				return true
 			}
@@ -4528,6 +4545,9 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 	if cmd.Workflow != "" {
 		return m.startWorkflowCommand(argName, cmd, rawArgs)
 	}
+	if run, ok := m.features.runCommand(cmd, rawArgs); ok {
+		return run
+	}
 
 	// Command matched. If it has named arguments and none were
 	// provided inline, open the argument dialog.
@@ -5589,6 +5609,7 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 	}
 
 	commands.SetWorkflowControls(m.workflowControls())
+	commands.SetFeatureEntries(m.features.paletteEntries())
 	m.dialog.OpenDialog(commands)
 
 	return commands.InitialCmd()
