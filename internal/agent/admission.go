@@ -122,21 +122,17 @@ func (a *admission) submitAwait(ctx context.Context, id string, job submission) 
 		a.mu.Unlock()
 		return nil, err
 	}
-	if a.owners[id] != nil || len(a.queues[id]) > 0 || a.held[id] > 0 {
-		a.queues[id] = append(a.queues[id], job)
-		if a.owners[id] == nil && a.held[id] == 0 {
-			job = a.queues[id][0]
-			a.queues[id] = a.queues[id][1:]
-			owner := a.claimFor(job, id)
-			a.mu.Unlock()
-			a.start(owner, job)
-		} else {
-			a.mu.Unlock()
-		}
-	} else {
-		owner := a.claim(ctx, id)
+	// The job joins the queue and, on an idle session, starts from its head,
+	// which is the job itself unless earlier work is still waiting.
+	a.queues[id] = append(a.queues[id], job)
+	if a.owners[id] == nil && a.held[id] == 0 {
+		job = a.queues[id][0]
+		a.queues[id] = a.queues[id][1:]
+		owner := a.claimFor(job, id)
 		a.mu.Unlock()
 		a.start(owner, job)
+	} else {
+		a.mu.Unlock()
 	}
 	select {
 	case res := <-done:
@@ -341,7 +337,8 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	if a.owners[owner.sessionID] == owner {
 		a.releaseOwner(owner.sessionID)
 		q := a.queues[owner.sessionID]
-		if i := slices.IndexFunc(q, func(job submission) bool { return job.continuation }); owner.continued && i >= 0 && a.held[owner.sessionID] > 0 {
+		i := slices.IndexFunc(q, func(job submission) bool { return job.continuation })
+		if owner.continued && i >= 0 && a.held[owner.sessionID] > 0 {
 			// A hold is waiting for this work to finish, which includes
 			// its continuation; new submissions stay queued.
 			queued = q[i]

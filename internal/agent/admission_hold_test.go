@@ -234,3 +234,100 @@ func TestHoldWaitsForCompactionContinuationButNotNewWork(t *testing.T) {
 	rel()
 	require.Eventually(t, userRan.Load, time.Second, time.Millisecond)
 }
+
+func TestReleasingAHoldStartsEverySessionItFrees(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		// innerHold holds these sessions too, so they stay held after the
+		// outer hold on s and t is released.
+		innerHold []string
+		submitTo  []string
+		wantRun   []string
+		wantQueue map[string][]string
+	}{
+		"a session still held by another hold is skipped": {
+			innerHold: []string{"s"},
+			submitTo:  []string{"s", "t"},
+			wantRun:   []string{"t"},
+			wantQueue: map[string][]string{"s": {"s"}},
+		},
+		"a session with nothing queued is skipped": {
+			submitTo: []string{"t"},
+			wantRun:  []string{"t"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			a := newAdmission(t.Context())
+			outer, err := a.hold(t.Context(), []string{"s", "t"})
+			require.NoError(t, err)
+			if tc.innerHold != nil {
+				inner, err := a.hold(t.Context(), tc.innerHold)
+				require.NoError(t, err)
+				defer inner()
+			}
+			ran := make(chan string, len(tc.submitTo))
+			for _, id := range tc.submitTo {
+				_, err := a.submit(t.Context(), id, submission{prompt: id, run: func(context.Context) (*fantasy.AgentResult, error) {
+					ran <- id
+					return nil, nil
+				}})
+				require.NoError(t, err)
+			}
+
+			outer()
+			var got []string
+			for range tc.wantRun {
+				select {
+				case id := <-ran:
+					got = append(got, id)
+				case <-time.After(2 * time.Second):
+					t.Fatalf("only %v started after the hold was released", got)
+				}
+			}
+			require.ElementsMatch(t, tc.wantRun, got)
+			for id, want := range tc.wantQueue {
+				require.Equal(t, want, a.queued(id))
+			}
+		})
+	}
+}
+
+func TestHoldWaitsForAnAwaitedTurnsContinuation(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	entered, release := make(chan struct{}), make(chan struct{})
+	awaited := make(chan string, 1)
+	go func() {
+		r, err := a.submitAwait(t.Context(), "s", submission{prompt: "script", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			close(entered)
+			<-release
+			a.continueWith(ctx, "s", submission{prompt: "continue", run: instantRun("finished")})
+			return textResult("compacted"), nil
+		}})
+		require.NoError(t, err)
+		awaited <- resultText(r)
+	}()
+	<-entered
+
+	held := make(chan func(), 1)
+	go func() {
+		rel, err := a.hold(t.Context(), []string{"s"})
+		require.NoError(t, err)
+		held <- rel
+	}()
+	require.Eventually(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.held["s"] == 1 }, time.Second, time.Millisecond)
+
+	close(release)
+	select {
+	case got := <-awaited:
+		require.Equal(t, "finished", got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the awaited turn's continuation didn't run while the hold was pending")
+	}
+	(<-held)()
+}

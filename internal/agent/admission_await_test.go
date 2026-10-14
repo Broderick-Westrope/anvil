@@ -300,3 +300,28 @@ func TestContinuationRegisteredAfterCancelNeverRuns(t *testing.T) {
 		})
 	}
 }
+
+func TestAwaitOnIdleSessionRunsWorkLeftQueuedFirst(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	var order []string
+	_, err := a.submit(t.Context(), "s", submission{run: func(context.Context) (*fantasy.AgentResult, error) {
+		_, err := a.submit(t.Context(), "s", submission{prompt: "pending", run: func(context.Context) (*fantasy.AgentResult, error) {
+			order = append(order, "pending")
+			return nil, nil
+		}})
+		require.NoError(t, err)
+		return nil, errors.New("user turn failed")
+	}})
+	require.Error(t, err)
+	require.Equal(t, []string{"pending"}, a.queued("s"))
+
+	r, err := a.submitAwait(t.Context(), "s", submission{prompt: "script", run: func(context.Context) (*fantasy.AgentResult, error) {
+		order = append(order, "script")
+		return textResult("mine"), nil
+	}})
+	require.NoError(t, err)
+	require.Equal(t, "mine", resultText(r))
+	require.Equal(t, []string{"pending", "script"}, order)
+}
