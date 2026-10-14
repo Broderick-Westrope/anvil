@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"charm.land/fantasy"
@@ -79,4 +80,64 @@ func TestRunSubAgentChildSessionLifecycle(t *testing.T) {
 			}
 		})
 	}
+}
+
+// captureLogs sends the default logger to a buffer until the test ends.
+// Tests using it must not run in parallel.
+func captureLogs(t *testing.T) *lockedBuffer {
+	t.Helper()
+	logs := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return logs
+}
+
+// A subagent run logs what it can't put in its response: jobs handed off
+// when it fails outright, and a failed cost roll-up.
+func TestRunSubAgentLogsWhatItCannotReturn(t *testing.T) {
+	const providerID = "test-provider"
+
+	t.Run("jobs handed off after a failure", func(t *testing.T) {
+		logs := captureLogs(t)
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, config.ProviderConfig{ID: providerID})
+		parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
+		require.NoError(t, err)
+		agent := newMockAgent("unconfigured-provider", 4096, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+			t.Fatal("the agent ran without a configured provider")
+			return nil, nil
+		})
+
+		_, err = coord.runSubAgent(t.Context(), subAgentParams{
+			Agent: agent, SessionID: parent.ID, AgentMessageID: "msg-1", ToolCallID: "call-failed",
+			Prompt: "go", SessionTitle: "Child",
+			OnSession: func(id string) { startTestJob(t, id, "sleep 30", shell.OriginExplicit) },
+		})
+		require.ErrorIs(t, err, errModelProviderNotConfigured)
+		jobs := shell.GetBackgroundShellManager().ListBySession(parent.ID)
+		require.Len(t, jobs, 1)
+		require.Contains(t, logs.String(), "Subagent jobs handed off after error")
+	})
+
+	t.Run("failed cost roll-up keeps the output", func(t *testing.T) {
+		logs := captureLogs(t)
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, config.ProviderConfig{ID: providerID})
+		parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
+		require.NoError(t, err)
+		agent := newMockAgent(providerID, 4096, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+			require.NoError(t, env.sessions.Delete(t.Context(), parent.ID))
+			return agentResultWithText("done"), nil
+		})
+
+		resp, err := coord.runSubAgent(t.Context(), subAgentParams{
+			Agent: agent, SessionID: parent.ID, AgentMessageID: "msg-1", ToolCallID: "call-orphaned",
+			Prompt: "go", SessionTitle: "Child",
+		})
+		require.NoError(t, err)
+		require.False(t, resp.IsError)
+		require.Equal(t, "done", resp.Content)
+		require.Contains(t, logs.String(), "Failed to update parent session cost")
+	})
 }

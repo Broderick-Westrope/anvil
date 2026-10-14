@@ -1647,17 +1647,18 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 	})
 	var runErr errSubAgentRun
 	var resp fantasy.ToolResponse
-	switch {
-	case errors.As(err, &runErr):
+	// An if chain, not a tagless switch: coverage never marks a case
+	// expression as run, so mutation testing would skip its conditions.
+	if errors.As(err, &runErr) {
 		resp = fantasy.NewTextErrorResponse(runErr.msg)
-	case err != nil:
+	} else if err != nil {
 		if handedOff != "" {
 			slog.Warn("Subagent jobs handed off after error", "parent_session", params.SessionID, "inventory", handedOff)
 		}
 		return fantasy.ToolResponse{}, err
-	case output == "":
+	} else if output == "" {
 		resp = fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output.")
-	default:
+	} else {
 		resp = fantasy.NewTextResponse(output)
 	}
 	if handedOff != "" {
