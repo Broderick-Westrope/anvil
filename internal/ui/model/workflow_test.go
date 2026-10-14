@@ -1464,3 +1464,21 @@ func TestWorkflowNextRunsOwnEventReplacesAnInvocationWhoseFinishWasLost(t *testi
 	require.False(t, f.requestOpen("ask-b"))
 	f.requireNothingKept(t)
 }
+
+func TestWorkflowLateControlDuringTheNextApprovalKeepsItsRequests(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
+	f.event(approvalFor("req-2", "sess-1"))
+	f.act(dialog.ActionWorkflowRespond{RequestID: "req-2", Answer: workflowhost.AnswerApprove})
+
+	// A resume of run-1 arrives while run-2 is still being approved.
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: workflowhost.StateResumed})
+	next := started("demo", "sess-1")
+	next.RunID = "run-2"
+	f.event(next)
+
+	f.requireShownOnce(t, approvalFor("req-2", "sess-1"))
+}

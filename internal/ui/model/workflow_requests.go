@@ -40,21 +40,21 @@ func (r *workflowRequests) seen(ev workflowhost.Event) bool {
 // observeRun notes that an event of runID arrived in sessionID; fromRun
 // reports whether the run published it itself, rather than a control
 // (pause or resume) published apart from it. The session's provisional
-// invocation becomes that run.
+// invocation becomes the run that published the event.
 //
 // A run publishes all its own events before it frees the session, and a
 // subscription delivers them in order, so the run's own event from
 // another run means the invocation was replaced, its finish lost;
 // observeRun then returns the IDs of the replaced invocation's requests
-// still open. A control can arrive after the next run has started, so it
+// still open. A control can arrive after the next invocation began, so it
 // changes nothing.
 func (r *workflowRequests) observeRun(sessionID, runID string, fromRun bool) []string {
 	inv := r.bySession[sessionID]
 	switch {
-	case inv == nil || runID == "":
+	case inv == nil || runID == "" || !fromRun:
 	case inv.runID == "":
 		inv.runID = runID
-	case inv.runID != runID && fromRun:
+	case inv.runID != runID:
 		return r.drop(sessionID)
 	}
 	return nil
