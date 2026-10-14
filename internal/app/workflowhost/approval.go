@@ -66,14 +66,15 @@ const (
 func newBundleFile(path string, data []byte) bundleFile {
 	sum := sha256.Sum256(data)
 	f := bundleFile{Path: path, Size: int64(len(data)), Hash: hex.EncodeToString(sum[:])}
-	switch {
-	case bytes.IndexByte(data[:min(len(data), binarySniffSize)], 0) >= 0:
+	if bytes.IndexByte(data[:min(len(data), binarySniffSize)], 0) >= 0 {
 		f.Omitted = "binary"
-	case len(data) > maxShownFileSize:
-		f.Omitted = "over 256 KiB"
-	default:
-		f.Source = string(data)
+		return f
 	}
+	if len(data) > maxShownFileSize {
+		f.Omitted = "over 256 KiB"
+		return f
+	}
+	f.Source = string(data)
 	return f
 }
 
@@ -171,14 +172,13 @@ func approvalFiles(scriptPath string, current, previous bundle) []ApprovalFile {
 		}
 	}
 	slices.SortStableFunc(files, func(x, y ApprovalFile) int {
-		switch {
-		case x.Path == scriptPath:
+		if x.Path == scriptPath {
 			return -1
-		case y.Path == scriptPath:
-			return 1
-		default:
-			return strings.Compare(x.Path, y.Path)
 		}
+		if y.Path == scriptPath {
+			return 1
+		}
+		return strings.Compare(x.Path, y.Path)
 	})
 	return files
 }

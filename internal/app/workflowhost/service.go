@@ -307,17 +307,17 @@ func (s *Service) stopped() (bool, string) {
 // interrupted, but a run that failed on its own stays failed even if
 // shutdown had begun.
 func runOutcome(err error, stopping bool, reason string) (Status, string) {
-	cancelled := errors.Is(err, workflow.ErrAborted) || errors.Is(err, context.Canceled)
-	switch {
-	case err == nil:
+	if err == nil {
 		return StatusCompleted, ""
-	case cancelled && stopping:
-		return StatusInterrupted, "interrupted: " + reason
-	case errors.Is(err, workflow.ErrAborted):
-		return StatusAborted, "aborted"
-	default:
-		return StatusFailed, err.Error()
 	}
+	aborted := errors.Is(err, workflow.ErrAborted)
+	if stopping && (aborted || errors.Is(err, context.Canceled)) {
+		return StatusInterrupted, "interrupted: " + reason
+	}
+	if aborted {
+		return StatusAborted, "aborted"
+	}
+	return StatusFailed, err.Error()
 }
 
 func (s *Service) invoke(inv Invocation, script *workflow.Script) {
