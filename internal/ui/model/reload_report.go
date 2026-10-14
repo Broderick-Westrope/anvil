@@ -63,7 +63,7 @@ func (m *UI) handleConfigReloaded(msg configReloadedMsg) tea.Cmd {
 	if isErr {
 		typ = util.InfoTypeError
 	}
-	if warning := brokenCommandsWarning(msg.CustomCommands); warning != "" {
+	if warning := brokenWorkflowsWarning(msg.CustomCommands); warning != "" {
 		text += " · " + warning
 		if !isErr {
 			typ = util.InfoTypeWarn
