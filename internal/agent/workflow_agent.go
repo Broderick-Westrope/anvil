@@ -153,7 +153,7 @@ func (c *coordinator) buildWorkflowAgent(ctx context.Context, call WorkflowAgent
 	}
 	// Lazy MCP servers don't connect at startup, so a tool the workflow
 	// names from one isn't registered yet: connect its server first.
-	if servers := lazyServersFor(missingTools(call.Tools, available), c.allowedLazyMCPs(agentCfg)); len(servers) > 0 {
+	if servers := lazyServersFor(missingTools(call.Tools, available), c.allowedLazyMCPs(agentCfg)); servers != nil {
 		for _, server := range servers {
 			if err := toolsmcp.ConnectDeferred(ctx, server, c.cfg); err != nil {
 				return nil, nil, fmt.Errorf("connect MCP server %q: %w", server, err)
