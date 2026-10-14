@@ -64,31 +64,32 @@ func Parse(path string, src []byte) (*Script, error) {
 
 	hasMain, requiresCalls := false, 0
 	for _, stmt := range program.Body {
-		switch stmt := stmt.(type) {
-		case *ast.FunctionDeclaration:
-			if stmt.Function.Name != nil && stmt.Function.Name.Name == "main" {
-				hasMain = true
-			}
-		case *ast.ExpressionStatement:
-			call, ok := stmt.Expression.(*ast.CallExpression)
-			if !ok {
-				continue
-			}
-			if callee, ok := call.Callee.(*ast.Identifier); !ok || callee.Name != "requires" {
-				continue
-			}
-			requiresCalls++
-			if requiresCalls > 1 {
-				script.Problems = append(script.Problems, "requires() must be called once")
-				continue
-			}
-			reqs, err := literalRequirements(call)
-			if err != nil {
-				script.Problems = append(script.Problems, "requires() must be a literal: "+err.Error())
-				continue
-			}
-			script.Requires = reqs
+		if fn, ok := stmt.(*ast.FunctionDeclaration); ok && fn.Function.Name != nil && fn.Function.Name.Name == "main" {
+			hasMain = true
+			continue
 		}
+		expr, ok := stmt.(*ast.ExpressionStatement)
+		if !ok {
+			continue
+		}
+		call, ok := expr.Expression.(*ast.CallExpression)
+		if !ok {
+			continue
+		}
+		if callee, ok := call.Callee.(*ast.Identifier); !ok || callee.Name != "requires" {
+			continue
+		}
+		requiresCalls++
+		if requiresCalls > 1 {
+			script.Problems = append(script.Problems, "requires() must be called once")
+			continue
+		}
+		reqs, err := literalRequirements(call)
+		if err != nil {
+			script.Problems = append(script.Problems, "requires() must be a literal: "+err.Error())
+			continue
+		}
+		script.Requires = reqs
 	}
 	if !hasMain {
 		return nil, fmt.Errorf("workflow %s has no top-level function main(input)", path)

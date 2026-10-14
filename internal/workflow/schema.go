@@ -42,7 +42,7 @@ func (s *Schema) Validate(doc json.RawMessage) error {
 
 const jsonFence = "```json"
 
-var jsonBlock = regexp.MustCompile("(?s)" + regexp.QuoteMeta(jsonFence) + `\s*\n(.*?)` + "```")
+var jsonBlock = regexp.MustCompile("(?s)```json\\s*\\n(.*?)```")
 
 // lastJSONBlock extracts the ```json fenced block that ends a reply. The
 // block's JSON can itself contain fences, so it is the latest opener

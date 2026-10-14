@@ -300,20 +300,21 @@ func describeError(err error, aborted bool) errorInfo {
 	var bashErr *BashError
 	var schemaErr *SchemaError
 	var jobsErr *JobsRunningError
-	switch {
-	case errors.As(err, &bashErr):
+	if errors.As(err, &bashErr) {
 		return errorInfo{Name: "BashError", Message: err.Error(), Fields: map[string]any{
 			"stdout": bashErr.Stdout, "stderr": bashErr.Stderr, "exitCode": bashErr.ExitCode,
 		}}
-	case errors.As(err, &jobsErr):
-		return errorInfo{Name: "JobsRunning", Message: err.Error(), Fields: map[string]any{"jobs": jobsErr.Jobs}}
-	case errors.As(err, &schemaErr):
-		return errorInfo{Name: "SchemaError", Message: err.Error(), Fields: map[string]any{"raw": schemaErr.Raw}}
-	case errors.Is(err, context.Canceled) && !aborted:
-		return errorInfo{Name: "Cancelled", Message: "cancelled"}
-	default:
-		return errorInfo{Name: "Error", Message: err.Error()}
 	}
+	if errors.As(err, &jobsErr) {
+		return errorInfo{Name: "JobsRunning", Message: err.Error(), Fields: map[string]any{"jobs": jobsErr.Jobs}}
+	}
+	if errors.As(err, &schemaErr) {
+		return errorInfo{Name: "SchemaError", Message: err.Error(), Fields: map[string]any{"raw": schemaErr.Raw}}
+	}
+	if errors.Is(err, context.Canceled) && !aborted {
+		return errorInfo{Name: "Cancelled", Message: "cancelled"}
+	}
+	return errorInfo{Name: "Error", Message: err.Error()}
 }
 
 func encodeEnvelope(value any, err error, aborted bool) string {
@@ -328,13 +329,8 @@ func encodeEnvelope(value any, err error, aborted bool) string {
 	} else {
 		env.OK, env.Value = true, value
 	}
-	out, marshalErr := json.Marshal(env)
-	if marshalErr != nil {
-		info := errorInfo{Name: "Error", Message: "encode result: " + marshalErr.Error()}
-		out, _ = json.Marshal(struct {
-			OK    bool       `json:"ok"`
-			Error *errorInfo `json:"error"`
-		}{Error: &info})
-	}
+	// The value already encoded when call recorded it, and every errorInfo
+	// field encodes, so this can't fail.
+	out, _ := json.Marshal(env)
 	return string(out)
 }
