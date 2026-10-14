@@ -3,6 +3,9 @@ package model
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,6 +19,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
+	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
@@ -43,6 +47,8 @@ type workflowTestWorkspace struct {
 	noSessionID bool
 	controls    []string
 	history     []message.Message
+	// projectDir is the project directory commands load from.
+	projectDir string
 }
 
 func newWorkflowTestWorkspace() *workflowTestWorkspace {
@@ -68,8 +74,11 @@ func (*workflowTestWorkspace) ParseAgentToolSessionID(string) (string, string, b
 }
 func (*workflowTestWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
 func (*workflowTestWorkspace) PermissionBouncerConfigured() bool     { return false }
-func (*workflowTestWorkspace) Config() *config.Config {
-	return &config.Config{Options: &config.Options{TUI: &config.TUIOptions{}}, Providers: csync.NewMap[string, config.ProviderConfig]()}
+func (w *workflowTestWorkspace) Config() *config.Config {
+	return &config.Config{
+		Options:   &config.Options{TUI: &config.TUIOptions{}, ProjectDirectory: w.projectDir},
+		Providers: csync.NewMap[string, config.ProviderConfig](),
+	}
 }
 
 func (*workflowTestWorkspace) FileTrackerListReadFiles(context.Context, string) ([]string, error) {
@@ -88,9 +97,23 @@ func (w *workflowTestWorkspace) ListUserMessagesByWorkingDir(context.Context, st
 	return w.history, nil
 }
 
+// AnnotateCommands marks every workflow command broken, so tests can see
+// the annotation reach the UI.
 func (*workflowTestWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand {
-	return cmds
+	out := slices.Clone(cmds)
+	for i := range out {
+		if out[i].Workflow != "" && len(out[i].Problems) == 0 {
+			out[i].Problems = []string{`agent "ghost" not found`}
+		}
+	}
+	return out
 }
+
+func (*workflowTestWorkspace) ReloadConfigAndPlugins(context.Context) workspace.ReloadReport {
+	return workspace.ReloadReport{}
+}
+
+func (*workflowTestWorkspace) SkillStates() []*skills.SkillState { return nil }
 
 func (w *workflowTestWorkspace) GetSession(_ context.Context, id string) (session.Session, error) {
 	s, ok := w.sessions[id]
@@ -625,4 +648,48 @@ func BenchmarkFeaturesIgnoreHighFrequencyMessages(b *testing.B) {
 			u.features.handleMsg(msg)
 		}
 	}
+}
+
+// writeProjectWorkflow adds a workflow command to a fresh project
+// directory and points the workspace at it.
+func (f *workflowUIFixture) writeProjectWorkflow(t *testing.T, name string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "project")
+	cmdDir := filepath.Join(dir, "commands", name)
+	require.NoError(t, os.MkdirAll(cmdDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cmdDir, "COMMAND.md"), []byte("---\nworkflow: workflow.js\n---\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(cmdDir, "workflow.js"), []byte("function main() {}\n"), 0o644))
+	f.ws.projectDir = dir
+}
+
+func TestInitialCommandLoadAnnotatesAndWarns(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowUIFixture(t)
+	f.writeProjectWorkflow(t, "zz-routing-demo")
+	infos := f.run(f.u.loadCustomCommands())
+
+	idx := slices.IndexFunc(f.u.customCommands, func(c commands.CustomCommand) bool { return strings.HasSuffix(c.ID, "zz-routing-demo") })
+	require.GreaterOrEqual(t, idx, 0)
+	require.Equal(t, []string{`agent "ghost" not found`}, f.u.customCommands[idx].Problems)
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
+	require.Contains(t, infos[0].Msg, `zz-routing-demo: agent "ghost" not found`)
+}
+
+func TestConfigReloadAnnotatesCommandsAndWarns(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowUIFixture(t)
+	f.writeProjectWorkflow(t, "zz-routing-demo")
+	msg, ok := f.u.runConfigReload().(configReloadedMsg)
+	require.True(t, ok)
+	infos := f.run(f.u.handleConfigReloaded(msg))
+
+	idx := slices.IndexFunc(f.u.customCommands, func(c commands.CustomCommand) bool { return strings.HasSuffix(c.ID, "zz-routing-demo") })
+	require.GreaterOrEqual(t, idx, 0)
+	require.Equal(t, []string{`agent "ghost" not found`}, f.u.customCommands[idx].Problems)
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
+	require.Contains(t, infos[0].Msg, `zz-routing-demo: agent "ghost" not found`)
 }
