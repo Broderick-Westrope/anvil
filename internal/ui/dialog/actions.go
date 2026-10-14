@@ -243,6 +243,23 @@ type (
 	ActionOAuthErrored struct {
 		Error error
 	}
+
+	// ActionCloseOAuth closes the OAuth dialog and runs the given cleanup
+	// command, cancelling any in-flight authorization so a dismissed
+	// dialog does not leave a poller or loopback listener running.
+	ActionCloseOAuth struct {
+		Cmd tea.Cmd
+	}
+
+	// ActionSelectAuthMethod is sent when the user picks how to
+	// authenticate a provider that supports both an account sign-in and an
+	// API key.
+	ActionSelectAuthMethod struct {
+		Provider  catwalk.Provider
+		Model     config.SelectedModel
+		ModelType config.SelectedModelType
+		UseOAuth  bool
+	}
 )
 
 // ActionCmd represents an action that carries a [tea.Cmd] to be passed to the

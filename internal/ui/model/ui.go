@@ -2735,6 +2735,23 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.startMCPAuth(msg.ServerName))
 	case dialog.ActionRetryMCPAuth:
 		cmds = append(cmds, m.retryMCPAuth(msg.ServerName))
+	case dialog.ActionCloseOAuth:
+		// Like ActionClose, plus a cleanup command that cancels the
+		// in-flight sign-in so no poller or loopback listener is left.
+		m.dialog.CloseFrontDialog()
+		if msg.Cmd != nil {
+			cmds = append(cmds, msg.Cmd)
+		}
+		if m.state == uiOnboarding {
+			if cmd := m.openModelsDialog(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case dialog.ActionSelectAuthMethod:
+		m.dialog.CloseDialog(dialog.AuthMethodID)
+		if cmd := m.openAuthenticationDialogWithMethod(msg.Provider, msg.Model, msg.ModelType, msg.UseOAuth); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.ActionCancelMCPAuth:
 		m.cancelMCPAuth(msg.ServerName)
 		m.dialog.CloseDialog(dialog.MCPAuthID)
@@ -2766,6 +2783,12 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		isConfigured = func() bool { _, ok := cfg.Providers.Get(providerID); return ok }
 		isOnboarding = m.state == uiOnboarding
 	)
+
+	if config.HasSubscriptionLogin(providerID) && !msg.ReAuthenticate {
+		if cmd, handled := m.handleSubscriptionProviderSelect(msg); handled {
+			return cmd
+		}
+	}
 
 	if !isConfigured() || msg.ReAuthenticate {
 		m.dialog.CloseDialog(dialog.ModelsID)
@@ -2848,6 +2871,43 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// handleSubscriptionProviderSelect handles choosing an OpenAI or xAI
+// model, providers that hold exactly one credential: an account sign-in
+// (ChatGPT or Grok) or an API key. It reports whether it took over.
+func (m *UI) handleSubscriptionProviderSelect(msg dialog.ActionSelectModel) (tea.Cmd, bool) {
+	providerID := msg.Model.Provider
+	pc, _ := m.com.Config().Providers.Get(providerID)
+	signedIn := pc.OAuthToken != nil
+
+	if !signedIn && !pc.HasAPIKey(m.com.Workspace.Resolver()) {
+		// No credential yet: ask how to authenticate.
+		m.dialog.CloseDialog(dialog.ModelsID)
+		return m.openAuthenticationDialog(msg.Provider, msg.Model, msg.ModelType), true
+	}
+	if !signedIn {
+		return nil, false
+	}
+
+	// A sign-in swaps the catalog for the plan's, so a model picked before
+	// signing in may not exist any more. Reopen the list and say so rather
+	// than silently selecting something else.
+	if msg.Model.Model == "" || pc.FindModel(msg.Model.Model) == nil {
+		m.dialog.CloseDialog(dialog.OAuthID)
+		m.dialog.CloseDialog(dialog.AuthMethodID)
+		m.dialog.CloseDialog(dialog.ModelsID)
+		var cmds []tea.Cmd
+		if msg.Model.Model != "" {
+			cmds = append(cmds, util.ReportWarn(fmt.Sprintf(
+				"%s isn't offered by your %s account; choose another model",
+				msg.Model.Model, cmp.Or(msg.Provider.Name, providerID),
+			)))
+		}
+		cmds = append(cmds, m.openModelsDialog())
+		return tea.Batch(cmds...), true
+	}
+	return nil, false
+}
+
 func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.SelectedModel, modelType config.SelectedModelType) tea.Cmd {
 	var (
 		dlg dialog.Dialog
@@ -2856,13 +2916,61 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 		isOnboarding = m.state == uiOnboarding
 	)
 
-	dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
+	switch {
+	case config.HasSubscriptionLogin(string(provider.ID)):
+		pc, _ := m.com.Config().Providers.Get(string(provider.ID))
+		switch {
+		case pc.OAuthToken != nil:
+			// Re-authenticating while the account login is in force.
+			dlg, cmd = m.newSubscriptionOAuth(provider, model, modelType)
+		case !pc.HasAPIKey(m.com.Workspace.Resolver()):
+			// No credential at all: let the user pick the method.
+			dlg = dialog.NewAuthMethod(m.com, isOnboarding, provider, model, modelType)
+		default:
+			// An API key is the credential in force: edit it.
+			dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
+		}
+	default:
+		dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
+	}
 
 	if m.dialog.ContainsDialog(dlg.ID()) {
 		m.dialog.BringToFront(dlg.ID())
 		return nil
 	}
 
+	m.dialog.OpenDialogWithGrace(dlg)
+	return cmd
+}
+
+// newSubscriptionOAuth opens the account sign-in for OpenAI (ChatGPT) or
+// xAI (Grok).
+func (m *UI) newSubscriptionOAuth(provider catwalk.Provider, model config.SelectedModel, modelType config.SelectedModelType) (dialog.Dialog, tea.Cmd) {
+	isOnboarding := m.state == uiOnboarding
+	if provider.ID == catwalk.InferenceProviderXAI {
+		return dialog.NewOAuthGrok(m.com, isOnboarding, provider, model, modelType)
+	}
+	return dialog.NewOAuthOpenAI(m.com, isOnboarding, provider, model, modelType)
+}
+
+// openAuthenticationDialogWithMethod opens the dialog for the method the
+// user picked in the auth method chooser. The model they selected rides
+// through the sign-in so it can be applied afterwards if the plan offers
+// it.
+func (m *UI) openAuthenticationDialogWithMethod(provider catwalk.Provider, model config.SelectedModel, modelType config.SelectedModelType, useOAuth bool) tea.Cmd {
+	var (
+		dlg dialog.Dialog
+		cmd tea.Cmd
+	)
+	if useOAuth {
+		dlg, cmd = m.newSubscriptionOAuth(provider, model, modelType)
+	} else {
+		dlg, cmd = dialog.NewAPIKeyInput(m.com, m.state == uiOnboarding, provider, model, modelType)
+	}
+	if m.dialog.ContainsDialog(dlg.ID()) {
+		m.dialog.BringToFront(dlg.ID())
+		return nil
+	}
 	m.dialog.OpenDialogWithGrace(dlg)
 	return cmd
 }

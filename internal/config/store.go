@@ -658,7 +658,7 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 	var exists bool
 	var setKeyOrToken func()
 	isToken := false
-	subscription := hasSubscriptionLogin(providerID)
+	subscription := HasSubscriptionLogin(providerID)
 
 	switch v := apiKey.(type) {
 	case string:
@@ -873,14 +873,6 @@ func tokenFields(providerID string, token *oauth.Token) map[string]any {
 		fields[fmt.Sprintf("providers.%s.api_key", providerID)] = token.AccessToken
 	}
 	return fields
-}
-
-// hasSubscriptionLogin reports whether the provider supports a
-// subscription OAuth login that replaces its API key: ChatGPT for OpenAI,
-// Grok for xAI.
-func hasSubscriptionLogin(providerID string) bool {
-	return providerID == string(catwalk.InferenceProviderOpenAI) ||
-		providerID == string(catwalk.InferenceProviderXAI)
 }
 
 // subscriptionCatalogField is the config key, under the provider, holding

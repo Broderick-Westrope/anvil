@@ -869,6 +869,10 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Dialog.APIKey.Spinner = base.Foreground(o.success)
 
 	// OAuth dialog
+	s.Dialog.AuthMethod.Prompt = base.Padding(0, 1)
+	s.Dialog.AuthMethod.CardBlurred = base.Border(lipgloss.RoundedBorder()).BorderForeground(o.separator).Foreground(o.fgMostSubtle)
+	s.Dialog.AuthMethod.CardFocused = base.Border(lipgloss.RoundedBorder()).BorderForeground(o.success).Foreground(o.success)
+
 	s.Dialog.OAuth.Spinner = base.Foreground(o.successMoreSubtle)
 	s.Dialog.OAuth.Instructions = lipgloss.NewStyle().Foreground(o.fgBase)
 	s.Dialog.OAuth.UserCode = lipgloss.NewStyle().Bold(true).Foreground(o.fgBase)
