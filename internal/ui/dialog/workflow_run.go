@@ -96,7 +96,9 @@ type WorkflowRun struct {
 var _ Dialog = (*WorkflowRun)(nil)
 
 // NewWorkflowRun creates the dialog for tr, which the caller may keep
-// updating while it is open as long as it bumps tr.Version.
+// updating while it is open as long as it bumps tr.Version. Entries are
+// only appended or edited in place, never removed, so a chosen agent
+// stays in range.
 func NewWorkflowRun(com *common.Common, tr *WorkflowTranscript) *WorkflowRun {
 	d := &WorkflowRun{com: com, tr: tr, viewport: viewport.New()}
 	d.findAgents()
@@ -311,10 +313,10 @@ func (d *WorkflowRun) revealSelected() {
 	start, height := d.starts[i], d.contentHeights[i]
 	end := start + height - 1
 	top, view := d.viewport.YOffset(), d.viewport.Height()
-	// An if chain so mutation testing sees the conditions.
-	if start < top {
+	switch {
+	case start < top:
 		d.viewport.SetYOffset(start)
-	} else if end >= top+view {
+	case end >= top+view:
 		d.viewport.SetYOffset(min(start, end-view+1))
 	}
 }
@@ -337,7 +339,7 @@ func (d *WorkflowRun) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		atBottom := !d.rendered || d.viewport.AtBottom()
 		follow := d.selected == len(d.agents)-1
 		d.findAgents()
-		if follow || d.selected >= len(d.agents) {
+		if follow {
 			d.selected = len(d.agents) - 1
 		}
 		d.selected = max(d.selected, 0)
