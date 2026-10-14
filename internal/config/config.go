@@ -163,6 +163,24 @@ type ProviderConfig struct {
 	GrokModels []catwalk.Model `json:"grok_models,omitempty" jsonschema:"-"`
 }
 
+// HasAPIKey reports whether the provider's api_key resolves to a usable
+// credential. The stored value is often an unresolved template such as
+// $OPENAI_API_KEY, which is not a credential until the variable is set.
+func (c *ProviderConfig) HasAPIKey(resolver VariableResolver) bool {
+	if c.APIKey == "" {
+		return false
+	}
+	v, err := resolver.ResolveValue(c.APIKey)
+	return err == nil && v != ""
+}
+
+// HasSubscriptionLogin reports whether the provider supports an account
+// sign-in that replaces its API key: ChatGPT for OpenAI, Grok for xAI.
+func HasSubscriptionLogin(providerID string) bool {
+	return providerID == string(catwalk.InferenceProviderOpenAI) ||
+		providerID == string(catwalk.InferenceProviderXAI)
+}
+
 // AvailableModels returns the models this provider can serve with its
 // current credential: the subscription catalog when signed in with
 // ChatGPT or Grok (once fetched), otherwise the API-key catalog.

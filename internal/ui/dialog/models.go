@@ -448,8 +448,17 @@ func (m *Models) setProviderItems() error {
 
 		name := cmp.Or(displayProvider.Name, providerID)
 
+		// Signed in with ChatGPT or Grok, only the models the plan grants
+		// can be served, so they are the whole section; the API catalog
+		// would only fail. Until the plan's catalog arrives the section
+		// falls back to the API catalog, as before sign-in.
+		models := displayProvider.Models
+		if sub := providerConfig.SubscriptionModels(); providerConfigured && sub != nil {
+			models = sub
+		}
+
 		group := NewModelGroup(t, name, providerConfigured)
-		for _, model := range displayProvider.Models {
+		for _, model := range models {
 			item := NewModelItem(t, provider, model, m.modelType, false)
 			group.AppendItems(item)
 			itemsMap[item.ID()] = item
