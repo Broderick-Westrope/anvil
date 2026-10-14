@@ -139,8 +139,12 @@ func (r *Run) Execute(ctx context.Context, input Input) (json.RawMessage, error)
 }
 
 func (r *Run) scriptError(err error) error {
+	// Once the run's context has ended (abort, or shutdown cancelling it),
+	// any error the script ends with is a consequence of being stopped,
+	// even one it threw itself after catching the cancellation, before
+	// the VM interrupt landed.
 	var interrupted *goja.InterruptedError
-	if r.aborted.Load() || errors.As(err, &interrupted) {
+	if r.aborted.Load() || errors.As(err, &interrupted) || r.ctx.Err() != nil {
 		return ErrAborted
 	}
 	var ex *goja.Exception

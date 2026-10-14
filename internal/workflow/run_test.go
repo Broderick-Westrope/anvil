@@ -780,3 +780,18 @@ func TestUncaughtBashErrorNamesStderrAndScriptLine(t *testing.T) {
 	_, err := h.run(t, "function setup() {\n  bash(\"wtp add\")\n}\nfunction main() {\n  setup()\n}", "")
 	require.EqualError(t, err, filepath.Join(h.dir, "workflow.js")+":2:7: BashError: command exited 1: wtp add: no 'origin' remote found")
 }
+
+func TestScriptErrorAfterItsContextEndsCountsAsAborted(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	h.backend.askFn = func(context.Context, string, []string) (string, error) {
+		// The run's context ends (shutdown) while the script waits here.
+		cancel()
+		return "", context.Canceled
+	}
+	run := h.newRun(t, `function main() { try { ask("wait") } catch (e) {} ; throw new Error("carried on") }`)
+	_, err := run.Execute(ctx, workflow.Input{})
+	require.ErrorIs(t, err, workflow.ErrAborted)
+}
