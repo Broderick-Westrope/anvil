@@ -310,10 +310,10 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 		default:
 			answer = "unanswered (" + string(item.Status) + ")"
 		}
-		return sty.Tool.IconPending.Render("?") + " " + sty.Tool.NameNormal.Render(firstLine(item.Question)) +
+		return sty.Tool.IconPending.UnsetString().Render("?") + " " + sty.Tool.NameNormal.Render(firstLine(item.Question)) +
 			sty.Tool.StatsSep.Render(" → ") + sty.Tool.StatsLine.Render(answer)
 	case workflowhost.RunItemSession:
-		return sty.Tool.IconSuccess.Render("◆") + " " + sty.Tool.NameNormal.Render(name) + sep + sty.Tool.StatsLine.Render("session")
+		return sty.Tool.IconSuccess.UnsetString().Render("◆") + " " + sty.Tool.NameNormal.Render(name) + sep + sty.Tool.StatsLine.Render("session")
 	default:
 		label := sty.Tool.NameNormal.Render(name)
 		if item.Model != "" {
