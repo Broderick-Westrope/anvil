@@ -145,12 +145,8 @@ type workflowFeature struct {
 	// runs holds the runs, keyed by invoking session.
 	runs map[string]*workflowRun
 	// titles caches the titles of sessions workflows drive.
-	titles map[string]string
-	// requests holds the open approval and ask requests by ID.
-	requests map[string]workflowhost.Event
-	// answered remembers answered requests so a republished copy
-	// doesn't reopen its dialog.
-	answered map[string]bool
+	titles   map[string]string
+	requests workflowRequests
 	// follow is a session a workflow focused while the editor had
 	// text; the go key follows it.
 	follow string
@@ -158,13 +154,11 @@ type workflowFeature struct {
 
 func newWorkflowFeature(host featureHost, com *common.Common, ws workflowWorkspace) *workflowFeature {
 	return &workflowFeature{
-		host:     host,
-		com:      com,
-		ws:       ws,
-		runs:     map[string]*workflowRun{},
-		titles:   map[string]string{},
-		requests: map[string]workflowhost.Event{},
-		answered: map[string]bool{},
+		host:   host,
+		com:    com,
+		ws:     ws,
+		runs:   map[string]*workflowRun{},
+		titles: map[string]string{},
 	}
 }
 
@@ -285,14 +279,16 @@ func (w *workflowFeature) HandleAction(action dialog.Action) (tea.Cmd, bool) {
 	switch action := action.(type) {
 	case dialog.ActionWorkflowRespond:
 		dialogs.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
-		req := w.requests[action.RequestID]
-		delete(w.requests, action.RequestID)
+		req, tracked := w.requests.take(action.RequestID)
 		// A request whose answer didn't arrive stays unanswered, so its
 		// republish opens it again rather than leaving the run waiting.
 		if err := w.ws.WorkflowRespond(action.RequestID, action.Answer); err != nil {
 			return util.ReportError(err), true
 		}
-		w.answered[action.RequestID] = true
+		if !tracked {
+			return nil, true
+		}
+		w.requests.answer(req)
 		if req.Kind == workflowhost.EventAsk {
 			return w.keepAnswer(req, action.Answer), true
 		}
@@ -430,22 +426,25 @@ func (w *workflowFeature) PaletteEntries() []*dialog.CommandItem {
 
 // handleEvent applies a workflow event.
 func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
-	if (ev.Kind == workflowhost.EventApproval || ev.Kind == workflowhost.EventAsk) && w.seenRequest(ev.RequestID) {
+	if (ev.Kind == workflowhost.EventApproval || ev.Kind == workflowhost.EventAsk) && w.requests.seen(ev) {
 		// The host republishes requests until answered, in case one was
 		// dropped; one already shown or answered needs nothing more.
 		return nil
 	}
+	if ev.Kind != workflowhost.EventFinished {
+		w.requests.observeRun(ev.SessionID, ev.RunID)
+	}
 	defer w.host.Relayout()
 	switch ev.Kind {
 	case workflowhost.EventApproval:
-		w.requests[ev.RequestID] = ev
+		w.requests.add(ev)
 		w.host.Dialogs().OpenDialogWithGrace(dialog.NewWorkflowApproval(w.com, ev))
 		return w.host.Notify(notification.Notification{
 			Title:   "Anvil is waiting...",
 			Message: fmt.Sprintf("Workflow /%s needs approval", ev.Command),
 		})
 	case workflowhost.EventAsk:
-		w.requests[ev.RequestID] = ev
+		w.requests.add(ev)
 		if run := w.ensureRun(ev); run != nil {
 			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ev.RequestID, Question: ev.Question})
 		}
@@ -515,12 +514,6 @@ func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
 		}
 	}
 	return nil
-}
-
-// seenRequest reports whether a request is open or was answered.
-func (w *workflowFeature) seenRequest(id string) bool {
-	_, open := w.requests[id]
-	return open || w.answered[id]
 }
 
 // keepAnswer records the answer to a question, lists the exchange in the
@@ -649,11 +642,8 @@ func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
 	}
 	run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: ev.Status, Text: outcome})
 	run.log.Finished = true
-	for req, pending := range w.requests {
-		if pending.SessionID == ev.SessionID {
-			w.host.Dialogs().CloseDialog(dialog.WorkflowRequestDialogID(req))
-			delete(w.requests, req)
-		}
+	for _, id := range w.requests.finish(ev.SessionID) {
+		w.host.Dialogs().CloseDialog(dialog.WorkflowRequestDialogID(id))
 	}
 	if ev.Status == workflowhost.StatusCompleted {
 		outcome = ansi.Truncate(outcome, workflowResultMaxWidth, "…")

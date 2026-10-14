@@ -1144,3 +1144,154 @@ func TestWorkflowTitleFollowsSessionRenames(t *testing.T) {
 	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-9"}})
 	require.Contains(t, f.panel(), "running in another session", "a session no workflow used isn't cached")
 }
+
+func approvalFor(id, sessionID string) workflowhost.Event {
+	return workflowhost.Event{
+		Kind: workflowhost.EventApproval, RequestID: id, Command: "demo", SessionID: sessionID,
+		Approval: &workflowhost.ApprovalRequest{Files: []workflowhost.ApprovalFile{{Path: "workflow.js", Source: "function main() {}"}}},
+	}
+}
+
+func finishedIn(sessionID, runID string, status workflowhost.Status) workflowhost.Event {
+	return workflowhost.Event{Kind: workflowhost.EventFinished, RunID: runID, Command: "demo", SessionID: sessionID, Status: status}
+}
+
+// requestOpen reports whether id's dialog is open.
+func (f *workflowFixture) requestOpen(id string) bool {
+	return f.host.overlay.ContainsDialog(dialog.WorkflowRequestDialogID(id))
+}
+
+// requireShownOnce checks that a republished ev opens nothing new.
+func (f *workflowFixture) requireShownOnce(t *testing.T, ev workflowhost.Event) {
+	t.Helper()
+	wasOpen := f.requestOpen(ev.RequestID)
+	notes := len(f.host.notes)
+	f.event(ev)
+	require.Equal(t, wasOpen, f.requestOpen(ev.RequestID), "a republished request changes nothing")
+	require.Len(t, f.host.notes, notes, "a republished request doesn't notify again")
+}
+
+// requireNothingKept checks that no request IDs outlive their invocation.
+// It reads the feature's internals because forgetting them can't be seen
+// from outside.
+func (f *workflowFixture) requireNothingKept(t *testing.T) {
+	t.Helper()
+	require.Empty(t, f.wf.requests.bySession)
+}
+
+func TestWorkflowRequestsOfConcurrentApprovalsAreKeptApart(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(approvalFor("req-a", "sess-1"))
+	f.event(approvalFor("req-b", "sess-2"))
+	require.True(t, f.requestOpen("req-a"))
+	require.True(t, f.requestOpen("req-b"))
+
+	f.act(dialog.ActionWorkflowRespond{RequestID: "req-a", Answer: workflowhost.AnswerApprove})
+	f.requireShownOnce(t, approvalFor("req-a", "sess-1"))
+	f.requireShownOnce(t, approvalFor("req-b", "sess-2"))
+	require.True(t, f.requestOpen("req-b"))
+
+	f.event(started("demo", "sess-1"))
+	ask := askFor("ask-1", "Go?")
+	ask.RunID = "run-1"
+	f.event(ask)
+	f.act(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"})
+	f.requireShownOnce(t, ask)
+	f.requireShownOnce(t, approvalFor("req-a", "sess-1"))
+
+	f.act(dialog.ActionWorkflowRespond{RequestID: "req-b", Answer: workflowhost.AnswerDeny})
+	f.requireShownOnce(t, approvalFor("req-b", "sess-2"))
+	f.event(finishedIn("sess-2", "", workflowhost.StatusDenied))
+	f.requireShownOnce(t, ask)
+
+	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
+	f.requireNothingKept(t)
+}
+
+func TestWorkflowRequestsAreForgottenWhenTheInvocationEndsBeforeItsRun(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		answer string
+		status workflowhost.Status
+	}{
+		"denied":                    {answer: workflowhost.AnswerDeny, status: workflowhost.StatusDenied},
+		"failed before it started":  {answer: workflowhost.AnswerApprove, status: workflowhost.StatusFailed},
+		"interrupted while pending": {status: workflowhost.StatusInterrupted},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(approvalFor("req-1", "sess-1"))
+			f.requireShownOnce(t, approvalFor("req-1", "sess-1"))
+			if tc.answer != "" {
+				f.act(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: tc.answer})
+				f.requireShownOnce(t, approvalFor("req-1", "sess-1"))
+			}
+			f.event(finishedIn("sess-1", "", tc.status))
+			require.False(t, f.requestOpen("req-1"))
+			f.requireNothingKept(t)
+		})
+	}
+}
+
+func TestWorkflowRequestsOfAFinishedRunAreForgotten(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(approvalFor("req-1", "sess-1"))
+	f.act(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: workflowhost.AnswerApprove})
+	f.event(started("demo", "sess-1"))
+	f.answer("ask-1", "Go?", "yes")
+	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
+	f.requireNothingKept(t)
+
+	f.event(approvalFor("req-2", "sess-1"))
+	require.True(t, f.requestOpen("req-2"), "an approval after a finished run opens")
+	f.requireShownOnce(t, approvalFor("req-2", "sess-1"))
+	f.act(dialog.ActionWorkflowRespond{RequestID: "req-2", Answer: workflowhost.AnswerApprove})
+	f.requireShownOnce(t, approvalFor("req-2", "sess-1"))
+	next := started("demo", "sess-1")
+	next.RunID = "run-2"
+	f.event(next)
+	f.requireShownOnce(t, approvalFor("req-2", "sess-1"))
+	f.event(finishedIn("sess-1", "run-2", workflowhost.StatusCompleted))
+	f.requireNothingKept(t)
+}
+
+func TestWorkflowRequestsOfAReplacedInvocationAreForgotten(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]workflowhost.Event{
+		"by a new approval": approvalFor("req-2", "sess-1"),
+		"by another run":    {Kind: workflowhost.EventState, RunID: "run-2", Command: "demo", SessionID: "sess-1", State: workflowhost.StateStarted},
+	}
+	for name, next := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(approvalFor("req-1", "sess-1"))
+			f.act(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: workflowhost.AnswerApprove})
+			f.event(started("demo", "sess-1"))
+			f.answer("ask-1", "Go?", "yes")
+
+			// run-1's finish was dropped; the next invocation replaces it.
+			f.event(next)
+			if inv := f.wf.requests.bySession["sess-1"]; inv != nil {
+				require.NotContains(t, inv.answered, "ask-1")
+				require.NotContains(t, inv.answered, "req-1")
+			}
+
+			if next.Kind == workflowhost.EventApproval {
+				f.act(dialog.ActionWorkflowRespond{RequestID: "req-2", Answer: workflowhost.AnswerDeny})
+				f.event(finishedIn("sess-1", "", workflowhost.StatusDenied))
+			} else {
+				f.event(finishedIn("sess-1", "run-2", workflowhost.StatusCompleted))
+			}
+			f.requireNothingKept(t)
+		})
+	}
+}
