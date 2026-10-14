@@ -45,7 +45,7 @@ func (m *UI) runConfigReload() tea.Msg {
 		slog.Error("Failed to reload custom commands after plugin reload", "error", err)
 	}
 	msg.SkillStates = m.com.Workspace.SkillStates()
-	msg.CustomCommands = customCmds
+	msg.CustomCommands = annotateWorkflowCommands(m.com.Workspace, customCmds)
 	return msg
 }
 
@@ -66,6 +66,12 @@ func (m *UI) handleConfigReloaded(msg configReloadedMsg) tea.Cmd {
 	typ := util.InfoTypeInfo
 	if isErr {
 		typ = util.InfoTypeError
+	}
+	if warning := brokenWorkflowsWarning(msg.CustomCommands); warning != "" {
+		text += " · " + warning
+		if !isErr {
+			typ = util.InfoTypeWarn
+		}
 	}
 	return util.CmdHandler(util.InfoMsg{Type: typ, Msg: text})
 }

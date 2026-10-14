@@ -196,6 +196,9 @@ func builtinHandler() func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 				hc := interp.HandlerCtx(ctx)
 				return handleJQ(ctx, args, hc.Stdin, hc.Stdout, hc.Stderr)
 			case "wtp":
+				if prefix := externalWTP(ctx); prefix != nil {
+					return next(ctx, append(slices.Clone(prefix), args[1:]...))
+				}
 				return handleWTP(ctx, args)
 			default:
 				return next(ctx, args)

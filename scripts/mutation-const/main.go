@@ -1,5 +1,6 @@
-// Command mutation-const marks gremlins survivors on package-level constant
-// declarations. See package mutationconst.
+// Command mutation-const marks gremlins survivors that Go coverage can't
+// reach: package-level constants and switch case conditions. See package
+// mutationconst.
 package main
 
 import (

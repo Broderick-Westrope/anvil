@@ -246,10 +246,15 @@ type Styles struct {
 		ErrorTag         lipgloss.Style
 		ErrorTitle       lipgloss.Style
 		ErrorDetails     lipgloss.Style
-		ToolCallFocused  lipgloss.Style
-		ToolCallCompact  lipgloss.Style
-		ToolCallBlurred  lipgloss.Style
-		SectionHeader    lipgloss.Style
+		// Workflow* style turns a workflow script sent to a session.
+		WorkflowBlurred lipgloss.Style
+		WorkflowFocused lipgloss.Style
+		WorkflowTag     lipgloss.Style
+		WorkflowTitle   lipgloss.Style
+		ToolCallFocused lipgloss.Style
+		ToolCallCompact lipgloss.Style
+		ToolCallBlurred lipgloss.Style
+		SectionHeader   lipgloss.Style
 
 		// Thinking section styles
 		ThinkingFooterTitle    lipgloss.Style // "Thought for" text
@@ -557,6 +562,8 @@ type Styles struct {
 		HelpKey            lipgloss.Style // Keystroke hint style
 		HelpText           lipgloss.Style // Help action text style
 		Area               lipgloss.Style // Pills area container
+		// WorkflowWarning flags a workflow running in another session.
+		WorkflowWarning lipgloss.Style
 	}
 }
 

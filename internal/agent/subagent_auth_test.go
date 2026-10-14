@@ -30,6 +30,12 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 		think     bool
 		reject    bool
 		fresh     bool
+		// rebuildFails drops the small model selection once the agents are
+		// built, so rebuilding them on the refreshed credentials fails.
+		rebuildFails bool
+		// keyUnchanged starts with the API key the refreshed token yields,
+		// so only the token itself changes.
+		keyUnchanged bool
 	}{
 		{name: "expired token is refreshed before requesting", expiresIn: -time.Hour, wantAuth: []string{"Bearer fresh-token"}},
 		{name: "revoked token is refreshed on retry", expiresIn: time.Hour, wantAuth: []string{"Bearer stale-token", "Bearer fresh-token"}},
@@ -37,6 +43,8 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 		{name: "thinking survives auth retry", expiresIn: time.Hour, wantAuth: []string{"Bearer stale-token", "Bearer fresh-token"}, think: true},
 		{name: "rejected refreshed token stops retrying", expiresIn: time.Hour, wantAuth: []string{"Bearer stale-token", "Bearer fresh-token"}, reject: true},
 		{name: "valid token does not rebuild model", expiresIn: time.Hour, wantAuth: []string{"Bearer fresh-token"}, fresh: true},
+		{name: "failed rebuild is reported to the model", expiresIn: -time.Hour, rebuildFails: true},
+		{name: "refreshed token rebuilds model with an unchanged key", expiresIn: -time.Hour, wantAuth: []string{"Bearer fresh-token"}, keyUnchanged: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("ANVIL_GLOBAL_CONFIG", t.TempDir())
@@ -92,6 +100,9 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 				providerCfg.APIKey = "Bearer fresh-token"
 				providerCfg.OAuthToken.AccessToken = "fresh-token"
 			}
+			if test.keyUnchanged {
+				providerCfg.APIKey = "Bearer fresh-token"
+			}
 			providers.Set("anthropic", providerCfg)
 			cfg.Config().Providers = providers
 			cfg.Config().Models = map[config.SelectedModelType]config.SelectedModel{
@@ -128,6 +139,9 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 			require.NoError(t, err)
 			parentMessage, err := messages.Create(t.Context(), parent.ID, message.CreateMessageParams{Role: message.Assistant})
 			require.NoError(t, err)
+			if test.rebuildFails {
+				delete(cfg.Config().Models, config.SelectedModelTypeSmall)
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 			response, err := coord.runSubAgent(ctx, subAgentParams{
@@ -135,6 +149,14 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 				ToolCallID: "auth_task", Prompt: "Check authentication.", SessionTitle: "Authentication",
 			})
 			require.NoError(t, err)
+			if test.rebuildFails {
+				require.True(t, response.IsError)
+				require.Equal(t, "Failed to refresh sub-agent models: small model not selected", response.Content)
+				mu.Lock()
+				defer mu.Unlock()
+				require.Empty(t, authorizations, "no request is sent with models that failed to rebuild")
+				return
+			}
 			require.Equal(t, test.reject, response.IsError, "%s", response.Content)
 			if test.reject {
 				require.Contains(t, response.Content, "invalid OAuth token")
@@ -143,6 +165,10 @@ func TestRunSubAgentRefreshesCredentials(t *testing.T) {
 			}
 			if test.fresh {
 				require.Same(t, specialist.Model, agent.Model().Model)
+			}
+			if test.keyUnchanged {
+				_, original := agent.Model().Model.(*struct{ fantasy.LanguageModel })
+				require.False(t, original, "the models are rebuilt on the refreshed token")
 			}
 			mu.Lock()
 			defer mu.Unlock()

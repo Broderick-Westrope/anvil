@@ -64,6 +64,17 @@ type KeyMap struct {
 	// CycleBouncer cycles the bouncer mode. Only active when
 	// a bouncer is configured.
 	CycleBouncer key.Binding
+	// WorkflowPause pauses or resumes, WorkflowAbort aborts, and
+	// WorkflowGo opens the session driven by the workflow run involving
+	// the current session. They only act while there is such a run.
+	WorkflowPause key.Binding
+	WorkflowAbort key.Binding
+	WorkflowGo    key.Binding
+	// WorkflowAgent opens the session of the run's latest subagent.
+	WorkflowAgent key.Binding
+	// WorkflowRun shows the transcript of the run involving the current
+	// session, running or last finished.
+	WorkflowRun key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -103,6 +114,26 @@ func DefaultKeyMap() KeyMap {
 		CycleBouncer: key.NewBinding(
 			key.WithKeys("ctrl+q"),
 			key.WithHelp("ctrl+q", "cycle bouncer"),
+		),
+		WorkflowPause: key.NewBinding(
+			key.WithKeys("ctrl+x"),
+			key.WithHelp("ctrl+x", "pause workflow"),
+		),
+		WorkflowAbort: key.NewBinding(
+			key.WithKeys("alt+x"),
+			key.WithHelp("alt+x", "abort workflow"),
+		),
+		WorkflowGo: key.NewBinding(
+			key.WithKeys("alt+g"),
+			key.WithHelp("alt+g", "go to workflow session"),
+		),
+		WorkflowAgent: key.NewBinding(
+			key.WithKeys("alt+o"),
+			key.WithHelp("alt+o", "open workflow agent"),
+		),
+		WorkflowRun: key.NewBinding(
+			key.WithKeys("alt+w"),
+			key.WithHelp("alt+w", "show workflow run"),
 		),
 	}
 

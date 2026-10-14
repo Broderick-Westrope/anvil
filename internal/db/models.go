@@ -171,3 +171,45 @@ type StepUsage struct {
 	HistoryPrefixMatch sql.NullInt64 `json:"history_prefix_match"`
 	FingerprintError   string        `json:"fingerprint_error"`
 }
+
+type WorkflowApproval struct {
+	ScriptPath string `json:"script_path"`
+	BundleHash string `json:"bundle_hash"`
+	Bundle     string `json:"bundle"`
+	Origin     string `json:"origin"`
+	ApprovedAt int64  `json:"approved_at"`
+}
+
+type WorkflowEvent struct {
+	ID         int64          `json:"id"`
+	RunID      string         `json:"run_id"`
+	Seq        int64          `json:"seq"`
+	ParentSeq  int64          `json:"parent_seq"`
+	ChildIndex int64          `json:"child_index"`
+	Primitive  string         `json:"primitive"`
+	Phase      string         `json:"phase"`
+	Args       sql.NullString `json:"args"`
+	ArgsHash   string         `json:"args_hash"`
+	Result     sql.NullString `json:"result"`
+	Error      sql.NullString `json:"error"`
+	At         int64          `json:"at"`
+}
+
+type WorkflowRun struct {
+	ID                string         `json:"id"`
+	Command           string         `json:"command"`
+	CommandSource     string         `json:"command_source"`
+	ScriptPath        string         `json:"script_path"`
+	ScriptHash        string         `json:"script_hash"`
+	BundleHash        string         `json:"bundle_hash"`
+	InvokingSessionID string         `json:"invoking_session_id"`
+	Input             string         `json:"input"`
+	WorkingDir        string         `json:"working_dir"`
+	Status            string         `json:"status"`
+	Result            sql.NullString `json:"result"`
+	Error             string         `json:"error"`
+	Tmpdir            string         `json:"tmpdir"`
+	InstanceID        string         `json:"instance_id"`
+	StartedAt         int64          `json:"started_at"`
+	FinishedAt        sql.NullInt64  `json:"finished_at"`
+}

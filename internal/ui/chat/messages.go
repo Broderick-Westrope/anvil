@@ -393,6 +393,9 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 		if msg.MessageType == message.MessageTypeJobEvent {
 			return []MessageItem{NewJobEventMessageItem(sty, msg)}
 		}
+		if item, ok := NewWorkflowTurnMessageItem(sty, msg); ok {
+			return []MessageItem{item}
+		}
 		r := attachments.NewRenderer(
 			sty.Attachments.Normal,
 			sty.Attachments.Deleting,

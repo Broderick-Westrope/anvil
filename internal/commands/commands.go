@@ -19,6 +19,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/entrydir"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
+	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
 
 var namedArgPattern = regexp.MustCompile(`\$([A-Z][A-Z0-9_]*)`)
@@ -67,6 +68,13 @@ type CustomCommand struct {
 	// Location is the path to the command's COMMAND.md, so the agent can
 	// resolve the files it bundles.
 	Location string
+	// Workflow is the absolute path to the command's workflow script, empty
+	// for prompt commands. A workflow command's body isn't injected.
+	Workflow string
+	// Problems are faults found while loading, such as a workflow script
+	// that is missing or doesn't parse. A command with problems still
+	// loads so it can be shown as broken, but it won't run.
+	Problems []string
 }
 
 // commandFrontmatter is the YAML structure expected in command .md files.
@@ -74,6 +82,17 @@ type commandFrontmatter struct {
 	Description  string   `yaml:"description,omitempty"`
 	ArgumentHint string   `yaml:"argument_hint,omitempty"`
 	Skills       []string `yaml:"skills,omitempty"`
+	Workflow     string   `yaml:"workflow,omitempty"`
+}
+
+// DisplayDescription is the description shown in autocomplete and the
+// command palette, marked "(broken)" when the command has problems and
+// won't run.
+func (c *CustomCommand) DisplayDescription() string {
+	if len(c.Problems) == 0 {
+		return c.Description
+	}
+	return strings.TrimSpace(c.Description + " (broken)")
 }
 
 // ItemName returns the logical command name for collision detection.
@@ -84,6 +103,15 @@ func (c *CustomCommand) ItemSource() string { return c.Source }
 
 // SetDisplayName sets the display name for collision detection.
 func (c *CustomCommand) SetDisplayName(name string) { c.DisplayName = name }
+
+// SlashName is the name a user types after "/" to invoke the command: its
+// display name when collisions gave it one, else its logical name.
+func (c *CustomCommand) SlashName() string {
+	if c.DisplayName != "" {
+		return c.DisplayName
+	}
+	return c.ItemName()
+}
 
 type commandSource struct {
 	path   string
@@ -263,6 +291,12 @@ func loadFromSource(source commandSource) ([]CustomCommand, error) {
 	return commands, nil
 }
 
+// LoadCommand parses the COMMAND.md at path without a name prefix or
+// source, for tools that inspect one command outside discovery.
+func LoadCommand(path string) (CustomCommand, error) {
+	return loadCommand(path, "")
+}
+
 // loadCommand parses the COMMAND.md at path. The command is named after the
 // directory holding it.
 func loadCommand(path, prefix string) (CustomCommand, error) {
@@ -331,7 +365,24 @@ func loadCommand(path, prefix string) (CustomCommand, error) {
 	cmd.ArgumentHint = fm.ArgumentHint
 	cmd.Skills = fm.Skills
 	cmd.Content = body
-	cmd.Arguments = extractArgNames(body)
+	if fm.Workflow == "" {
+		cmd.Arguments = extractArgNames(body)
+		return cmd, nil
+	}
+	// A workflow script is only parsed here, never run: discovery must not
+	// execute code from a command it found on disk.
+	if filepath.IsAbs(fm.Workflow) || !filepath.IsLocal(fm.Workflow) {
+		cmd.Problems = append(cmd.Problems,
+			fmt.Sprintf("workflow %q is outside the command directory", fm.Workflow))
+		return cmd, nil
+	}
+	cmd.Workflow = filepath.Join(filepath.Dir(path), fm.Workflow)
+	script, err := workflow.Load(cmd.Workflow)
+	if err != nil {
+		cmd.Problems = append(cmd.Problems, err.Error())
+		return cmd, nil
+	}
+	cmd.Problems = append(cmd.Problems, script.Problems...)
 	return cmd, nil
 }
 
@@ -392,4 +443,19 @@ func hasEntryFile(path string) bool {
 	}
 	name := filepath.Base(path)
 	return slices.ContainsFunc(entries, func(entry fs.DirEntry) bool { return entry.Name() == name })
+}
+
+// MatchSlash finds the command a "/name args" line invokes, by its
+// [CustomCommand.SlashName].
+func MatchSlash(cmds []CustomCommand, line string) (CustomCommand, bool) {
+	if !strings.HasPrefix(line, "/") {
+		return CustomCommand{}, false
+	}
+	for _, cmd := range cmds {
+		prefix := "/" + cmd.SlashName()
+		if line == prefix || strings.HasPrefix(line, prefix+" ") {
+			return cmd, true
+		}
+	}
+	return CustomCommand{}, false
 }

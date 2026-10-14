@@ -42,6 +42,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.createSessionStmt, err = db.PrepareContext(ctx, createSession); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateSession: %w", err)
 	}
+	if q.createWorkflowRunStmt, err = db.PrepareContext(ctx, createWorkflowRun); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateWorkflowRun: %w", err)
+	}
 	if q.deleteAnvilInstanceStmt, err = db.PrepareContext(ctx, deleteAnvilInstance); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteAnvilInstance: %w", err)
 	}
@@ -77,6 +80,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.finalizeBackgroundJobStmt, err = db.PrepareContext(ctx, finalizeBackgroundJob); err != nil {
 		return nil, fmt.Errorf("error preparing query FinalizeBackgroundJob: %w", err)
+	}
+	if q.finishWorkflowRunStmt, err = db.PrepareContext(ctx, finishWorkflowRun); err != nil {
+		return nil, fmt.Errorf("error preparing query FinishWorkflowRun: %w", err)
 	}
 	if q.getAllSessionMessagesStmt, err = db.PrepareContext(ctx, getAllSessionMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllSessionMessages: %w", err)
@@ -114,11 +120,20 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getSessionByIDStmt, err = db.PrepareContext(ctx, getSessionByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSessionByID: %w", err)
 	}
+	if q.getWorkflowApprovalStmt, err = db.PrepareContext(ctx, getWorkflowApproval); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWorkflowApproval: %w", err)
+	}
+	if q.getWorkflowRunStmt, err = db.PrepareContext(ctx, getWorkflowRun); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWorkflowRun: %w", err)
+	}
 	if q.insertPermissionDecisionStmt, err = db.PrepareContext(ctx, insertPermissionDecision); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertPermissionDecision: %w", err)
 	}
 	if q.insertStepUsageStmt, err = db.PrepareContext(ctx, insertStepUsage); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertStepUsage: %w", err)
+	}
+	if q.insertWorkflowEventStmt, err = db.PrepareContext(ctx, insertWorkflowEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertWorkflowEvent: %w", err)
 	}
 	if q.listAllSessionsStmt, err = db.PrepareContext(ctx, listAllSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAllSessions: %w", err)
@@ -150,6 +165,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listRunningBackgroundJobsStmt, err = db.PrepareContext(ctx, listRunningBackgroundJobs); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRunningBackgroundJobs: %w", err)
 	}
+	if q.listRunningWorkflowRunsStmt, err = db.PrepareContext(ctx, listRunningWorkflowRuns); err != nil {
+		return nil, fmt.Errorf("error preparing query ListRunningWorkflowRuns: %w", err)
+	}
 	if q.listSessionReadFilesStmt, err = db.PrepareContext(ctx, listSessionReadFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionReadFiles: %w", err)
 	}
@@ -165,11 +183,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listUserMessagesByWorkingDirStmt, err = db.PrepareContext(ctx, listUserMessagesByWorkingDir); err != nil {
 		return nil, fmt.Errorf("error preparing query ListUserMessagesByWorkingDir: %w", err)
 	}
+	if q.listWorkflowEventsStmt, err = db.PrepareContext(ctx, listWorkflowEvents); err != nil {
+		return nil, fmt.Errorf("error preparing query ListWorkflowEvents: %w", err)
+	}
 	if q.markBackgroundJobLogExpiredStmt, err = db.PrepareContext(ctx, markBackgroundJobLogExpired); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkBackgroundJobLogExpired: %w", err)
 	}
 	if q.markBackgroundJobsInterruptedStmt, err = db.PrepareContext(ctx, markBackgroundJobsInterrupted); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkBackgroundJobsInterrupted: %w", err)
+	}
+	if q.markWorkflowRunInterruptedStmt, err = db.PrepareContext(ctx, markWorkflowRunInterrupted); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkWorkflowRunInterrupted: %w", err)
 	}
 	if q.recordFileReadStmt, err = db.PrepareContext(ctx, recordFileRead); err != nil {
 		return nil, fmt.Errorf("error preparing query RecordFileRead: %w", err)
@@ -210,6 +234,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.upsertMCPOAuthTokenStmt, err = db.PrepareContext(ctx, upsertMCPOAuthToken); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertMCPOAuthToken: %w", err)
 	}
+	if q.upsertWorkflowApprovalStmt, err = db.PrepareContext(ctx, upsertWorkflowApproval); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertWorkflowApproval: %w", err)
+	}
 	return &q, nil
 }
 
@@ -243,6 +270,11 @@ func (q *Queries) Close() error {
 	if q.createSessionStmt != nil {
 		if cerr := q.createSessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createSessionStmt: %w", cerr)
+		}
+	}
+	if q.createWorkflowRunStmt != nil {
+		if cerr := q.createWorkflowRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createWorkflowRunStmt: %w", cerr)
 		}
 	}
 	if q.deleteAnvilInstanceStmt != nil {
@@ -305,6 +337,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing finalizeBackgroundJobStmt: %w", cerr)
 		}
 	}
+	if q.finishWorkflowRunStmt != nil {
+		if cerr := q.finishWorkflowRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing finishWorkflowRunStmt: %w", cerr)
+		}
+	}
 	if q.getAllSessionMessagesStmt != nil {
 		if cerr := q.getAllSessionMessagesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAllSessionMessagesStmt: %w", cerr)
@@ -365,6 +402,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getSessionByIDStmt: %w", cerr)
 		}
 	}
+	if q.getWorkflowApprovalStmt != nil {
+		if cerr := q.getWorkflowApprovalStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWorkflowApprovalStmt: %w", cerr)
+		}
+	}
+	if q.getWorkflowRunStmt != nil {
+		if cerr := q.getWorkflowRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWorkflowRunStmt: %w", cerr)
+		}
+	}
 	if q.insertPermissionDecisionStmt != nil {
 		if cerr := q.insertPermissionDecisionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertPermissionDecisionStmt: %w", cerr)
@@ -373,6 +420,11 @@ func (q *Queries) Close() error {
 	if q.insertStepUsageStmt != nil {
 		if cerr := q.insertStepUsageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertStepUsageStmt: %w", cerr)
+		}
+	}
+	if q.insertWorkflowEventStmt != nil {
+		if cerr := q.insertWorkflowEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertWorkflowEventStmt: %w", cerr)
 		}
 	}
 	if q.listAllSessionsStmt != nil {
@@ -425,6 +477,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listRunningBackgroundJobsStmt: %w", cerr)
 		}
 	}
+	if q.listRunningWorkflowRunsStmt != nil {
+		if cerr := q.listRunningWorkflowRunsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listRunningWorkflowRunsStmt: %w", cerr)
+		}
+	}
 	if q.listSessionReadFilesStmt != nil {
 		if cerr := q.listSessionReadFilesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listSessionReadFilesStmt: %w", cerr)
@@ -450,6 +507,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listUserMessagesByWorkingDirStmt: %w", cerr)
 		}
 	}
+	if q.listWorkflowEventsStmt != nil {
+		if cerr := q.listWorkflowEventsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listWorkflowEventsStmt: %w", cerr)
+		}
+	}
 	if q.markBackgroundJobLogExpiredStmt != nil {
 		if cerr := q.markBackgroundJobLogExpiredStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing markBackgroundJobLogExpiredStmt: %w", cerr)
@@ -458,6 +520,11 @@ func (q *Queries) Close() error {
 	if q.markBackgroundJobsInterruptedStmt != nil {
 		if cerr := q.markBackgroundJobsInterruptedStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing markBackgroundJobsInterruptedStmt: %w", cerr)
+		}
+	}
+	if q.markWorkflowRunInterruptedStmt != nil {
+		if cerr := q.markWorkflowRunInterruptedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markWorkflowRunInterruptedStmt: %w", cerr)
 		}
 	}
 	if q.recordFileReadStmt != nil {
@@ -525,6 +592,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing upsertMCPOAuthTokenStmt: %w", cerr)
 		}
 	}
+	if q.upsertWorkflowApprovalStmt != nil {
+		if cerr := q.upsertWorkflowApprovalStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertWorkflowApprovalStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -570,6 +642,7 @@ type Queries struct {
 	createBackgroundJobEventStmt                *sql.Stmt
 	createMessageStmt                           *sql.Stmt
 	createSessionStmt                           *sql.Stmt
+	createWorkflowRunStmt                       *sql.Stmt
 	deleteAnvilInstanceStmt                     *sql.Stmt
 	deleteBackgroundJobStmt                     *sql.Stmt
 	deleteBackgroundJobEventStmt                *sql.Stmt
@@ -582,6 +655,7 @@ type Queries struct {
 	deleteSessionMessagesStmt                   *sql.Stmt
 	deleteStepUsageBeforeStmt                   *sql.Stmt
 	finalizeBackgroundJobStmt                   *sql.Stmt
+	finishWorkflowRunStmt                       *sql.Stmt
 	getAllSessionMessagesStmt                   *sql.Stmt
 	getBackgroundJobStmt                        *sql.Stmt
 	getBranchPathStmt                           *sql.Stmt
@@ -594,8 +668,11 @@ type Queries struct {
 	getMessageStmt                              *sql.Stmt
 	getMessageChildrenStmt                      *sql.Stmt
 	getSessionByIDStmt                          *sql.Stmt
+	getWorkflowApprovalStmt                     *sql.Stmt
+	getWorkflowRunStmt                          *sql.Stmt
 	insertPermissionDecisionStmt                *sql.Stmt
 	insertStepUsageStmt                         *sql.Stmt
+	insertWorkflowEventStmt                     *sql.Stmt
 	listAllSessionsStmt                         *sql.Stmt
 	listAnvilInstancesStmt                      *sql.Stmt
 	listBackgroundJobIDsBySessionStmt           *sql.Stmt
@@ -606,13 +683,16 @@ type Queries struct {
 	listPermissionDecisionsSinceStmt            *sql.Stmt
 	listPinnedSessionsStmt                      *sql.Stmt
 	listRunningBackgroundJobsStmt               *sql.Stmt
+	listRunningWorkflowRunsStmt                 *sql.Stmt
 	listSessionReadFilesStmt                    *sql.Stmt
 	listSessionsByWorkingDirStmt                *sql.Stmt
 	listUndeliveredBackgroundJobEventsStmt      *sql.Stmt
 	listUserMessagesBySessionStmt               *sql.Stmt
 	listUserMessagesByWorkingDirStmt            *sql.Stmt
+	listWorkflowEventsStmt                      *sql.Stmt
 	markBackgroundJobLogExpiredStmt             *sql.Stmt
 	markBackgroundJobsInterruptedStmt           *sql.Stmt
+	markWorkflowRunInterruptedStmt              *sql.Stmt
 	recordFileReadStmt                          *sql.Stmt
 	releaseBackgroundJobEventStmt               *sql.Stmt
 	renameSessionStmt                           *sql.Stmt
@@ -626,6 +706,7 @@ type Queries struct {
 	upsertAnvilInstanceStmt                     *sql.Stmt
 	upsertMCPOAuthClientStmt                    *sql.Stmt
 	upsertMCPOAuthTokenStmt                     *sql.Stmt
+	upsertWorkflowApprovalStmt                  *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -638,6 +719,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createBackgroundJobEventStmt:                q.createBackgroundJobEventStmt,
 		createMessageStmt:                           q.createMessageStmt,
 		createSessionStmt:                           q.createSessionStmt,
+		createWorkflowRunStmt:                       q.createWorkflowRunStmt,
 		deleteAnvilInstanceStmt:                     q.deleteAnvilInstanceStmt,
 		deleteBackgroundJobStmt:                     q.deleteBackgroundJobStmt,
 		deleteBackgroundJobEventStmt:                q.deleteBackgroundJobEventStmt,
@@ -650,6 +732,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteSessionMessagesStmt:                   q.deleteSessionMessagesStmt,
 		deleteStepUsageBeforeStmt:                   q.deleteStepUsageBeforeStmt,
 		finalizeBackgroundJobStmt:                   q.finalizeBackgroundJobStmt,
+		finishWorkflowRunStmt:                       q.finishWorkflowRunStmt,
 		getAllSessionMessagesStmt:                   q.getAllSessionMessagesStmt,
 		getBackgroundJobStmt:                        q.getBackgroundJobStmt,
 		getBranchPathStmt:                           q.getBranchPathStmt,
@@ -662,8 +745,11 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getMessageStmt:                              q.getMessageStmt,
 		getMessageChildrenStmt:                      q.getMessageChildrenStmt,
 		getSessionByIDStmt:                          q.getSessionByIDStmt,
+		getWorkflowApprovalStmt:                     q.getWorkflowApprovalStmt,
+		getWorkflowRunStmt:                          q.getWorkflowRunStmt,
 		insertPermissionDecisionStmt:                q.insertPermissionDecisionStmt,
 		insertStepUsageStmt:                         q.insertStepUsageStmt,
+		insertWorkflowEventStmt:                     q.insertWorkflowEventStmt,
 		listAllSessionsStmt:                         q.listAllSessionsStmt,
 		listAnvilInstancesStmt:                      q.listAnvilInstancesStmt,
 		listBackgroundJobIDsBySessionStmt:           q.listBackgroundJobIDsBySessionStmt,
@@ -674,13 +760,16 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listPermissionDecisionsSinceStmt:            q.listPermissionDecisionsSinceStmt,
 		listPinnedSessionsStmt:                      q.listPinnedSessionsStmt,
 		listRunningBackgroundJobsStmt:               q.listRunningBackgroundJobsStmt,
+		listRunningWorkflowRunsStmt:                 q.listRunningWorkflowRunsStmt,
 		listSessionReadFilesStmt:                    q.listSessionReadFilesStmt,
 		listSessionsByWorkingDirStmt:                q.listSessionsByWorkingDirStmt,
 		listUndeliveredBackgroundJobEventsStmt:      q.listUndeliveredBackgroundJobEventsStmt,
 		listUserMessagesBySessionStmt:               q.listUserMessagesBySessionStmt,
 		listUserMessagesByWorkingDirStmt:            q.listUserMessagesByWorkingDirStmt,
+		listWorkflowEventsStmt:                      q.listWorkflowEventsStmt,
 		markBackgroundJobLogExpiredStmt:             q.markBackgroundJobLogExpiredStmt,
 		markBackgroundJobsInterruptedStmt:           q.markBackgroundJobsInterruptedStmt,
+		markWorkflowRunInterruptedStmt:              q.markWorkflowRunInterruptedStmt,
 		recordFileReadStmt:                          q.recordFileReadStmt,
 		releaseBackgroundJobEventStmt:               q.releaseBackgroundJobEventStmt,
 		renameSessionStmt:                           q.renameSessionStmt,
@@ -694,5 +783,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		upsertAnvilInstanceStmt:                     q.upsertAnvilInstanceStmt,
 		upsertMCPOAuthClientStmt:                    q.upsertMCPOAuthClientStmt,
 		upsertMCPOAuthTokenStmt:                     q.upsertMCPOAuthTokenStmt,
+		upsertWorkflowApprovalStmt:                  q.upsertWorkflowApprovalStmt,
 	}
 }

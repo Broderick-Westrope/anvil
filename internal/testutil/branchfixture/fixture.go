@@ -145,8 +145,25 @@ func (f *Fixture) WaitBackgroundJobs() {
 	f.Coordinator.(interface{ WaitBackgroundJobs() }).WaitBackgroundJobs()
 }
 
-func New(t *testing.T) *Fixture {
+// Option configures a fixture.
+type Option func(*options)
+
+type options struct {
+	agents []string
+}
+
+// WithAgents adds specialist agents, defined in a plugin, that can use
+// view, grep and bash.
+func WithAgents(names ...string) Option {
+	return func(o *options) { o.agents = append(o.agents, names...) }
+}
+
+func New(t *testing.T, opts ...Option) *Fixture {
 	t.Helper()
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	originalTransport := http.DefaultTransport
 	transport := originalTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
@@ -196,6 +213,15 @@ func New(t *testing.T) *Fixture {
 	cfg.Config().LSP = nil
 	cfg.Config().MCP = nil
 	cfg.Config().Plugins = nil
+	if len(o.agents) > 0 {
+		pluginDir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(pluginDir, "agents"), 0o755))
+		for _, name := range o.agents {
+			md := "---\nrole: Test " + name + "\ndelegates_to: []\ntools:\n  - view\n  - grep\n  - bash\n---\nYou are " + name + ".\n"
+			require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "agents", name+".md"), []byte(md), 0o644))
+		}
+		cfg.Config().Plugins = []config.PluginConfig{{Path: pluginDir}}
+	}
 	conn, err := db.Connect(ctx, t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })

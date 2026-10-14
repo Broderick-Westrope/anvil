@@ -71,6 +71,20 @@ type Coordinator interface {
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+	// RunTurn runs prompt in sessionID and waits for that turn's own result.
+	// If the session is busy, the turn queues behind the work in progress;
+	// messages queued after it run once it finishes.
+	RunTurn(ctx context.Context, sessionID, prompt string) (*fantasy.AgentResult, error)
+	// RunWorkflowAgent runs a fresh, isolated subagent for a workflow.
+	RunWorkflowAgent(ctx context.Context, call WorkflowAgentCall) (WorkflowAgentOutput, error)
+	// HasAgent reports whether name is a configured agent other than the
+	// orchestrator.
+	HasAgent(name string) bool
+	// Hold stops new runs from starting in sessionIDs and waits for their
+	// in-flight runs to finish. Messages sent meanwhile queue; exclusive
+	// work such as summarizing is refused. Holds nest. The idempotent
+	// release lifts the hold and starts work queued behind it.
+	Hold(ctx context.Context, sessionIDs []string) (release func(), err error)
 	// RunWake starts a turn for an idle session to deliver its pending
 	// job events. See SessionAgent.RunWake.
 	RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error)
@@ -213,6 +227,9 @@ func NewCoordinator(
 		plugins:        plugins,
 		agents:         csync.NewMap[string, SessionAgent](),
 	}
+	// Runs the admission queue starts on their own goroutines count as
+	// active for Pause, but a cancelled submission stops waiting for one.
+	c.admission.gate = c.admit
 
 	// Enable MCP OAuth tool-name rename when the Anthropic provider uses
 	// OAuth credentials. This must happen once during coordinator
@@ -251,11 +268,7 @@ func NewCoordinator(
 	// the agent roster, replacing the hardcoded non-orchestrator defaults set
 	// during config loading with values sourced from the .md frontmatter.
 	// The store keeps them so later config reloads retain plugin agents.
-	mdDefaults := make(map[string]config.Agent, len(agentMDs))
-	for name, md := range agentMDs {
-		mdDefaults[name] = agentConfigFromMD(name, md)
-	}
-	cfg.SetAgentDefaults(mdDefaults)
+	cfg.SetAgentDefaults(agentDefaultsFromMDs(agentMDs))
 	c.agentConfigs = cfg.Config().Agents
 
 	// Build the orchestrator eagerly at depth=3.
@@ -275,6 +288,16 @@ func NewCoordinator(
 	c.orchestratorMu.Unlock()
 
 	return c, nil
+}
+
+// agentDefaultsFromMDs converts every agent .md file into its config.Agent
+// default.
+func agentDefaultsFromMDs(agentMDs map[string]prompt.AgentMD) map[string]config.Agent {
+	defaults := make(map[string]config.Agent, len(agentMDs))
+	for name, md := range agentMDs {
+		defaults[name] = agentConfigFromMD(name, md)
+	}
+	return defaults
 }
 
 // agentConfigFromMD converts the capability and model fields of a parsed
@@ -516,6 +539,30 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		}
 		ctx = context.WithValue(ctx, modelSelectionKey{}, modelSelection{large: largeSelection, small: smallSelection})
 		return c.runOwned(ctx, sessionID, prompt, state, attachments)
+	}})
+}
+
+// RunTurn implements Coordinator.
+func (c *coordinator) RunTurn(ctx context.Context, sessionID, prompt string) (*fantasy.AgentResult, error) {
+	if sessionID == "" {
+		return nil, ErrSessionMissing
+	}
+	if prompt == "" {
+		return nil, ErrEmptyPrompt
+	}
+	agentCfg, ok := c.orchestratorConfig()
+	if !ok {
+		return nil, errOrchestratorAgentNotConfigured
+	}
+	largeSelection, selectionErr := config.ResolveAgentModel(agentCfg, c.cfg.Config())
+	smallSelection := c.cfg.Config().Models[config.SelectedModelTypeSmall]
+	state := &runState{}
+	return c.admission.submitAwait(ctx, sessionID, submission{prompt: prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+		if selectionErr != nil {
+			return nil, selectionErr
+		}
+		ctx = context.WithValue(ctx, modelSelectionKey{}, modelSelection{large: largeSelection, small: smallSelection})
+		return c.runOwned(ctx, sessionID, prompt, state, nil)
 	}})
 }
 
@@ -1225,6 +1272,19 @@ func (c *coordinator) IsBusy() bool {
 	return c.getOrchestrator().IsBusy()
 }
 
+// HasAgent implements Coordinator.
+func (c *coordinator) HasAgent(name string) bool {
+	c.orchestratorMu.RLock()
+	defer c.orchestratorMu.RUnlock()
+	_, ok := c.agentConfigs[name]
+	return ok && name != config.AgentOrchestrator
+}
+
+// Hold implements Coordinator.
+func (c *coordinator) Hold(ctx context.Context, sessionIDs []string) (release func(), err error) {
+	return c.admission.hold(ctx, sessionIDs)
+}
+
 func (c *coordinator) IsSessionBusy(sessionID string) bool {
 	return c.getOrchestrator().IsSessionBusy(sessionID)
 }
@@ -1507,42 +1567,112 @@ type subAgentParams struct {
 	ToolCallID     string
 	Prompt         string
 	SessionTitle   string
-	// SessionSetup is an optional callback invoked after session creation
-	// but before agent execution, for custom session configuration.
-	SessionSetup func(sessionID string)
+	// OnSession, when set, is called with the child session's ID before
+	// the agent runs, for custom session configuration.
+	OnSession func(sessionID string)
 }
 
-// runSubAgent runs a sub-agent and handles session management and cost accumulation.
-// It creates a sub-session, runs the agent with the given prompt, and propagates
-// the cost to the parent session.
-func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (resp fantasy.ToolResponse, err error) {
+// childSession describes the session a subagent runs in.
+type childSession struct {
+	ID, ParentID, Title string
+	// OnCreate, when set, is called once the session exists.
+	OnCreate func(sessionID string)
+}
+
+// inChildSession runs fn in a new child session of s.ParentID, then rolls
+// the child's cost up to the parent (only when fn succeeds) and hands its
+// surviving background jobs to the parent. It returns the hand-off
+// inventory, empty when there were no jobs. Every subagent run, from the
+// task tool or a workflow, goes through here.
+func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn func(ctx context.Context, sessionID string) error) (handedOff string, err error) {
+	// Detach from any submission owner ctx carries: the child's turns are
+	// admitted as their own submissions, not run in place as, or rejected
+	// as, the parent's owner.
 	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
-	// Create sub-session
-	agentToolSessionID := c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID)
-	session, err := c.sessions.CreateTaskSession(ctx, agentToolSessionID, params.SessionID, params.SessionTitle)
+	session, err := c.sessions.CreateTaskSession(ctx, s.ID, s.ParentID, s.Title)
 	if err != nil {
-		return fantasy.ToolResponse{}, fmt.Errorf("create session: %w", err)
+		return "", fmt.Errorf("create session: %w", err)
 	}
 	defer func() {
-		inventory := handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, params.SessionID)
-		if inventory == "" {
-			return
-		}
-		if err != nil {
-			slog.Warn("Subagent jobs handed off after error", "child_session", session.ID, "inventory", inventory)
-			return
-		}
-		resp.Content += "\n\n" + inventory
+		handedOff = handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, s.ParentID)
 	}()
 	defer c.permissions.RevokeAutoApproveSession(session.ID)
-
-	// Call session setup function if provided
-	if params.SessionSetup != nil {
-		params.SessionSetup(session.ID)
+	if s.OnCreate != nil {
+		s.OnCreate(session.ID)
 	}
+	if err := fn(ctx, session.ID); err != nil {
+		return "", err
+	}
+	// Best effort: a failure here must not discard output the subagent
+	// already produced.
+	if err := c.updateParentSessionCost(ctx, session.ID, s.ParentID); err != nil {
+		slog.Warn("Failed to update parent session cost",
+			"child_session", session.ID,
+			"parent_session", s.ParentID,
+			"error", err,
+		)
+	}
+	return "", nil
+}
 
-	// Get model configuration
-	model := params.Agent.Model()
+// errSubAgentRun marks a failure the task tool reports back to the model
+// as a tool error rather than failing the tool call.
+type errSubAgentRun struct{ msg string }
+
+func (e errSubAgentRun) Error() string { return e.msg }
+
+// runSubAgent runs a sub-agent for the task tool in a child session and
+// returns its output as the tool's response.
+func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, error) {
+	var output string
+	handedOff, err := c.inChildSession(ctx, childSession{
+		ID:       c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID),
+		ParentID: params.SessionID,
+		Title:    params.SessionTitle,
+		OnCreate: params.OnSession,
+	}, func(ctx context.Context, sessionID string) error {
+		call, err := c.subAgentCall(ctx, params.Agent, sessionID, params.Prompt)
+		if errors.Is(err, errRefreshSubAgentModels) {
+			return errSubAgentRun{"Failed to " + err.Error()}
+		}
+		if err != nil {
+			return err
+		}
+		result, err := params.Agent.Run(ctx, call)
+		if err != nil {
+			return errSubAgentRun{fmt.Sprintf("Failed to generate response: %s", err)}
+		}
+		output = subAgentOutput(result)
+		return nil
+	})
+	var runErr errSubAgentRun
+	var resp fantasy.ToolResponse
+	// An if chain, not a tagless switch: coverage never marks a case
+	// expression as run, so mutation testing would skip its conditions.
+	if errors.As(err, &runErr) {
+		resp = fantasy.NewTextErrorResponse(runErr.msg)
+	} else if err != nil {
+		if handedOff != "" {
+			slog.Warn("Subagent jobs handed off after error", "parent_session", params.SessionID, "inventory", handedOff)
+		}
+		return fantasy.ToolResponse{}, err
+	} else if output == "" {
+		resp = fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output.")
+	} else {
+		resp = fantasy.NewTextResponse(output)
+	}
+	if handedOff != "" {
+		resp.Content += "\n\n" + handedOff
+	}
+	return resp, nil
+}
+
+var errRefreshSubAgentModels = errors.New("refresh sub-agent models")
+
+// subAgentCall prepares a non-interactive run of agent in a sub-session,
+// refreshing credentials and the agent's models first when they changed.
+func (c *coordinator) subAgentCall(ctx context.Context, agent SessionAgent, sessionID, prompt string) (SessionAgentCall, error) {
+	model := agent.Model()
 	maxTokens := model.CatwalkCfg.DefaultMaxTokens
 	if model.ModelCfg.MaxTokens != 0 {
 		maxTokens = model.ModelCfg.MaxTokens
@@ -1550,7 +1680,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (r
 
 	providerCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
 	if !ok {
-		return fantasy.ToolResponse{}, errModelProviderNotConfigured
+		return SessionAgentCall{}, errModelProviderNotConfigured
 	}
 
 	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
@@ -1558,11 +1688,11 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (r
 	}
 	updatedProviderCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
 	if !ok {
-		return fantasy.ToolResponse{}, errModelProviderNotConfigured
+		return SessionAgentCall{}, errModelProviderNotConfigured
 	}
 	if updatedProviderCfg.OAuthToken != providerCfg.OAuthToken || updatedProviderCfg.APIKey != providerCfg.APIKey {
-		if err := c.refreshSubAgentModels(ctx, params.Agent); err != nil {
-			return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to refresh sub-agent models: %s", err)), nil
+		if err := c.refreshSubAgentModels(ctx, agent); err != nil {
+			return SessionAgentCall{}, fmt.Errorf("%w: %w", errRefreshSubAgentModels, err)
 		}
 	}
 	providerCfg = updatedProviderCfg
@@ -1574,15 +1704,14 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (r
 			if err := refreshCredentials(ctx, providerErr); err != nil {
 				return err
 			}
-			return c.refreshSubAgentModels(ctx, params.Agent)
+			return c.refreshSubAgentModels(ctx, agent)
 		}
 	}
 
-	// Run the agent
 	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
-	result, err := params.Agent.Run(ctx, SessionAgentCall{
-		SessionID:        session.ID,
-		Prompt:           params.Prompt,
+	return SessionAgentCall{
+		SessionID:        sessionID,
+		Prompt:           prompt,
 		MaxOutputTokens:  maxTokens,
 		ProviderOptions:  mergedOptions,
 		Temperature:      temp,
@@ -1592,26 +1721,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (r
 		PresencePenalty:  presPenalty,
 		NonInteractive:   true,
 		OnAuthRefresh:    authRefresh,
-	})
-	if err != nil {
-		return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to generate response: %s", err)), nil
-	}
-
-	// Update parent session cost on a best-effort basis. A failure here must
-	// not discard the sub-agent output that was already produced.
-	if err := c.updateParentSessionCost(ctx, session.ID, params.SessionID); err != nil {
-		slog.Warn("Failed to update parent session cost",
-			"child_session", session.ID,
-			"parent_session", params.SessionID,
-			"error", err,
-		)
-	}
-
-	output := subAgentOutput(result)
-	if output == "" {
-		return fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output."), nil
-	}
-	return fantasy.NewTextResponse(output), nil
+	}, nil
 }
 
 func (c *coordinator) refreshSubAgentModels(ctx context.Context, agent SessionAgent) error {
@@ -1709,10 +1819,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) ([]PluginWarning, error
 	// 4. Re-apply .md defaults to produce new agent configs.
 	// SetupAgentsWithDefaults is pure; cfg.Agents is not mutated until
 	// the atomic swap below.
-	mdDefaults := make(map[string]config.Agent, len(newAgentMDs))
-	for name, md := range newAgentMDs {
-		mdDefaults[name] = agentConfigFromMD(name, md)
-	}
+	mdDefaults := agentDefaultsFromMDs(newAgentMDs)
 	// SetupAgentsWithDefaults is a pure function; it returns a new map
 	// without touching cfg.Agents. The defaults are only committed to the
 	// store after every fallible step below has succeeded.
