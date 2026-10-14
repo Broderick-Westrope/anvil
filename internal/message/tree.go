@@ -71,7 +71,8 @@ func FilterBranchPathForContext(path []Message) []Message {
 // regular messages, it returns a pointer to the original.
 func FilterMetadataMessage(msg Message) *Message {
 	switch msg.MessageType {
-	case MessageTypeLabel, MessageTypeModelChange, MessageTypeThinkingLevelChange, MessageTypeMCPToggle:
+	case MessageTypeLabel, MessageTypeModelChange, MessageTypeThinkingLevelChange, MessageTypeMCPToggle,
+		MessageTypeWorkflowRun:
 		return nil
 	case MessageTypeJobEvent:
 		return &msg

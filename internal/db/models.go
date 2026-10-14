@@ -128,6 +128,8 @@ type Session struct {
 	TitleIsCustom    int64          `json:"title_is_custom"`
 	Pinned           int64          `json:"pinned"`
 	PinNote          string         `json:"pin_note"`
+	WorkflowRunID    string         `json:"workflow_run_id"`
+	WorkflowSeq      int64          `json:"workflow_seq"`
 }
 
 type StepUsage struct {
@@ -212,4 +214,5 @@ type WorkflowRun struct {
 	InstanceID        string         `json:"instance_id"`
 	StartedAt         int64          `json:"started_at"`
 	FinishedAt        sql.NullInt64  `json:"finished_at"`
+	MarkerMessageID   string         `json:"marker_message_id"`
 }

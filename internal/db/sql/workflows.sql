@@ -87,3 +87,8 @@ ON CONFLICT (script_path) DO UPDATE SET
     bundle = excluded.bundle,
     origin = excluded.origin,
     approved_at = excluded.approved_at;
+
+-- name: SetWorkflowRunMarker :exec
+UPDATE workflow_runs
+SET marker_message_id = ?
+WHERE id = ?;

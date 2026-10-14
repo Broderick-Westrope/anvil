@@ -171,6 +171,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listSessionReadFilesStmt, err = db.PrepareContext(ctx, listSessionReadFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionReadFiles: %w", err)
 	}
+	if q.listSessionsByWorkflowRunStmt, err = db.PrepareContext(ctx, listSessionsByWorkflowRun); err != nil {
+		return nil, fmt.Errorf("error preparing query ListSessionsByWorkflowRun: %w", err)
+	}
 	if q.listSessionsByWorkingDirStmt, err = db.PrepareContext(ctx, listSessionsByWorkingDir); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionsByWorkingDir: %w", err)
 	}
@@ -206,6 +209,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.setSessionPinStmt, err = db.PrepareContext(ctx, setSessionPin); err != nil {
 		return nil, fmt.Errorf("error preparing query SetSessionPin: %w", err)
+	}
+	if q.setSessionWorkflowOwnerStmt, err = db.PrepareContext(ctx, setSessionWorkflowOwner); err != nil {
+		return nil, fmt.Errorf("error preparing query SetSessionWorkflowOwner: %w", err)
+	}
+	if q.setWorkflowRunMarkerStmt, err = db.PrepareContext(ctx, setWorkflowRunMarker); err != nil {
+		return nil, fmt.Errorf("error preparing query SetWorkflowRunMarker: %w", err)
 	}
 	if q.touchAnvilInstanceStmt, err = db.PrepareContext(ctx, touchAnvilInstance); err != nil {
 		return nil, fmt.Errorf("error preparing query TouchAnvilInstance: %w", err)
@@ -487,6 +496,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listSessionReadFilesStmt: %w", cerr)
 		}
 	}
+	if q.listSessionsByWorkflowRunStmt != nil {
+		if cerr := q.listSessionsByWorkflowRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listSessionsByWorkflowRunStmt: %w", cerr)
+		}
+	}
 	if q.listSessionsByWorkingDirStmt != nil {
 		if cerr := q.listSessionsByWorkingDirStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listSessionsByWorkingDirStmt: %w", cerr)
@@ -545,6 +559,16 @@ func (q *Queries) Close() error {
 	if q.setSessionPinStmt != nil {
 		if cerr := q.setSessionPinStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing setSessionPinStmt: %w", cerr)
+		}
+	}
+	if q.setSessionWorkflowOwnerStmt != nil {
+		if cerr := q.setSessionWorkflowOwnerStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setSessionWorkflowOwnerStmt: %w", cerr)
+		}
+	}
+	if q.setWorkflowRunMarkerStmt != nil {
+		if cerr := q.setWorkflowRunMarkerStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setWorkflowRunMarkerStmt: %w", cerr)
 		}
 	}
 	if q.touchAnvilInstanceStmt != nil {
@@ -685,6 +709,7 @@ type Queries struct {
 	listRunningBackgroundJobsStmt               *sql.Stmt
 	listRunningWorkflowRunsStmt                 *sql.Stmt
 	listSessionReadFilesStmt                    *sql.Stmt
+	listSessionsByWorkflowRunStmt               *sql.Stmt
 	listSessionsByWorkingDirStmt                *sql.Stmt
 	listUndeliveredBackgroundJobEventsStmt      *sql.Stmt
 	listUserMessagesBySessionStmt               *sql.Stmt
@@ -697,6 +722,8 @@ type Queries struct {
 	releaseBackgroundJobEventStmt               *sql.Stmt
 	renameSessionStmt                           *sql.Stmt
 	setSessionPinStmt                           *sql.Stmt
+	setSessionWorkflowOwnerStmt                 *sql.Stmt
+	setWorkflowRunMarkerStmt                    *sql.Stmt
 	touchAnvilInstanceStmt                      *sql.Stmt
 	transferBackgroundJobsStmt                  *sql.Stmt
 	updateMessageStmt                           *sql.Stmt
@@ -762,6 +789,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listRunningBackgroundJobsStmt:               q.listRunningBackgroundJobsStmt,
 		listRunningWorkflowRunsStmt:                 q.listRunningWorkflowRunsStmt,
 		listSessionReadFilesStmt:                    q.listSessionReadFilesStmt,
+		listSessionsByWorkflowRunStmt:               q.listSessionsByWorkflowRunStmt,
 		listSessionsByWorkingDirStmt:                q.listSessionsByWorkingDirStmt,
 		listUndeliveredBackgroundJobEventsStmt:      q.listUndeliveredBackgroundJobEventsStmt,
 		listUserMessagesBySessionStmt:               q.listUserMessagesBySessionStmt,
@@ -774,6 +802,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		releaseBackgroundJobEventStmt:               q.releaseBackgroundJobEventStmt,
 		renameSessionStmt:                           q.renameSessionStmt,
 		setSessionPinStmt:                           q.setSessionPinStmt,
+		setSessionWorkflowOwnerStmt:                 q.setSessionWorkflowOwnerStmt,
+		setWorkflowRunMarkerStmt:                    q.setWorkflowRunMarkerStmt,
 		touchAnvilInstanceStmt:                      q.touchAnvilInstanceStmt,
 		transferBackgroundJobsStmt:                  q.transferBackgroundJobsStmt,
 		updateMessageStmt:                           q.updateMessageStmt,

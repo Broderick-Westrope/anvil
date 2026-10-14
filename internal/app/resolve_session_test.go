@@ -109,6 +109,14 @@ func (m *mockSessionService) IsAgentToolSession(sessionID string) bool {
 	return ok
 }
 
+func (m *mockSessionService) SetWorkflowOwner(context.Context, string, string, int) error {
+	return nil
+}
+
+func (m *mockSessionService) ListByWorkflowRun(context.Context, string) ([]session.Session, error) {
+	return nil, nil
+}
+
 func newTestApp(t *testing.T, sessions session.Service) *App {
 	t.Helper()
 	store, err := config.Init(t.TempDir(), "", false)

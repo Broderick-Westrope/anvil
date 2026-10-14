@@ -35,7 +35,7 @@ INSERT INTO sessions (
     ?,
     strftime('%s', 'now'),
     strftime('%s', 'now')
-) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
+) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
 `
 
 type CreateSessionParams struct {
@@ -79,6 +79,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.TitleIsCustom,
 		&i.Pinned,
 		&i.PinNote,
+		&i.WorkflowRunID,
+		&i.WorkflowSeq,
 	)
 	return i, err
 }
@@ -94,7 +96,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 }
 
 const getLastGlobalSession = `-- name: GetLastGlobalSession :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
 FROM sessions
 WHERE parent_session_id IS NULL
 ORDER BY updated_at DESC
@@ -120,12 +122,14 @@ func (q *Queries) GetLastGlobalSession(ctx context.Context) (Session, error) {
 		&i.TitleIsCustom,
 		&i.Pinned,
 		&i.PinNote,
+		&i.WorkflowRunID,
+		&i.WorkflowSeq,
 	)
 	return i, err
 }
 
 const getLastSessionByWorkingDir = `-- name: GetLastSessionByWorkingDir :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
 FROM sessions
 WHERE working_dir = ? AND parent_session_id IS NULL
 ORDER BY updated_at DESC
@@ -151,12 +155,14 @@ func (q *Queries) GetLastSessionByWorkingDir(ctx context.Context, workingDir str
 		&i.TitleIsCustom,
 		&i.Pinned,
 		&i.PinNote,
+		&i.WorkflowRunID,
+		&i.WorkflowSeq,
 	)
 	return i, err
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
 FROM sessions
 WHERE id = ? LIMIT 1
 `
@@ -180,12 +186,14 @@ func (q *Queries) GetSessionByID(ctx context.Context, id string) (Session, error
 		&i.TitleIsCustom,
 		&i.Pinned,
 		&i.PinNote,
+		&i.WorkflowRunID,
+		&i.WorkflowSeq,
 	)
 	return i, err
 }
 
 const listAllSessions = `-- name: ListAllSessions :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
 FROM sessions
 WHERE parent_session_id IS NULL
 ORDER BY updated_at DESC
@@ -216,6 +224,8 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.TitleIsCustom,
 			&i.Pinned,
 			&i.PinNote,
+			&i.WorkflowRunID,
+			&i.WorkflowSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -231,7 +241,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 }
 
 const listPinnedSessions = `-- name: ListPinnedSessions :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
 FROM sessions
 WHERE parent_session_id IS NULL AND pinned = 1
 ORDER BY updated_at DESC
@@ -262,6 +272,56 @@ func (q *Queries) ListPinnedSessions(ctx context.Context) ([]Session, error) {
 			&i.TitleIsCustom,
 			&i.Pinned,
 			&i.PinNote,
+			&i.WorkflowRunID,
+			&i.WorkflowSeq,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionsByWorkflowRun = `-- name: ListSessionsByWorkflowRun :many
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
+FROM sessions
+WHERE workflow_run_id = ?
+ORDER BY workflow_seq ASC, created_at ASC
+`
+
+func (q *Queries) ListSessionsByWorkflowRun(ctx context.Context, workflowRunID string) ([]Session, error) {
+	rows, err := q.query(ctx, q.listSessionsByWorkflowRunStmt, listSessionsByWorkflowRun, workflowRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentSessionID,
+			&i.Title,
+			&i.MessageCount,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.Cost,
+			&i.UpdatedAt,
+			&i.CreatedAt,
+			&i.Todos,
+			&i.LeafMessageID,
+			&i.WorkingDir,
+			&i.TitleIsCustom,
+			&i.Pinned,
+			&i.PinNote,
+			&i.WorkflowRunID,
+			&i.WorkflowSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -277,7 +337,7 @@ func (q *Queries) ListPinnedSessions(ctx context.Context) ([]Session, error) {
 }
 
 const listSessionsByWorkingDir = `-- name: ListSessionsByWorkingDir :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
 FROM sessions
 WHERE parent_session_id IS NULL AND working_dir = ?
 ORDER BY updated_at DESC
@@ -308,6 +368,8 @@ func (q *Queries) ListSessionsByWorkingDir(ctx context.Context, workingDir strin
 			&i.TitleIsCustom,
 			&i.Pinned,
 			&i.PinNote,
+			&i.WorkflowRunID,
+			&i.WorkflowSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -360,6 +422,25 @@ func (q *Queries) SetSessionPin(ctx context.Context, arg SetSessionPinParams) er
 	return err
 }
 
+const setSessionWorkflowOwner = `-- name: SetSessionWorkflowOwner :exec
+UPDATE sessions
+SET
+    workflow_run_id = ?,
+    workflow_seq = ?
+WHERE id = ?
+`
+
+type SetSessionWorkflowOwnerParams struct {
+	WorkflowRunID string `json:"workflow_run_id"`
+	WorkflowSeq   int64  `json:"workflow_seq"`
+	ID            string `json:"id"`
+}
+
+func (q *Queries) SetSessionWorkflowOwner(ctx context.Context, arg SetSessionWorkflowOwnerParams) error {
+	_, err := q.exec(ctx, q.setSessionWorkflowOwnerStmt, setSessionWorkflowOwner, arg.WorkflowRunID, arg.WorkflowSeq, arg.ID)
+	return err
+}
+
 const updateSession = `-- name: UpdateSession :one
 UPDATE sessions
 SET
@@ -370,7 +451,7 @@ SET
     cost = ?,
     todos = ?
 WHERE id = ?
-RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note
+RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, workflow_run_id, workflow_seq
 `
 
 type UpdateSessionParams struct {
@@ -410,6 +491,8 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 		&i.TitleIsCustom,
 		&i.Pinned,
 		&i.PinNote,
+		&i.WorkflowRunID,
+		&i.WorkflowSeq,
 	)
 	return i, err
 }

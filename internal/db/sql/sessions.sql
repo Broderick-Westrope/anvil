@@ -107,3 +107,16 @@ SELECT *
 FROM sessions
 WHERE parent_session_id IS NULL AND pinned = 1
 ORDER BY updated_at DESC;
+
+-- name: SetSessionWorkflowOwner :exec
+UPDATE sessions
+SET
+    workflow_run_id = ?,
+    workflow_seq = ?
+WHERE id = ?;
+
+-- name: ListSessionsByWorkflowRun :many
+SELECT *
+FROM sessions
+WHERE workflow_run_id = ?
+ORDER BY workflow_seq ASC, created_at ASC;

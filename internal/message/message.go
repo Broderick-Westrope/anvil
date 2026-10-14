@@ -669,6 +669,7 @@ const (
 	modelChangeType         partType = "model_change"
 	thinkingLevelChangeType partType = "thinking_level_change"
 	mcpToggleType           partType = "mcp_toggle"
+	workflowRunType         partType = "workflow_run"
 )
 
 type partWrapper struct {
@@ -709,6 +710,8 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 			typ = thinkingLevelChangeType
 		case MCPToggleContent:
 			typ = mcpToggleType
+		case WorkflowRunContent:
+			typ = workflowRunType
 		default:
 			return nil, fmt.Errorf("unknown part type: %T", part)
 		}
@@ -736,6 +739,7 @@ var partDecoders = map[partType]func(json.RawMessage) (ContentPart, error){
 	modelChangeType:         decodePart[ModelChangeContent],
 	thinkingLevelChangeType: decodePart[ThinkingLevelChangeContent],
 	mcpToggleType:           decodePart[MCPToggleContent],
+	workflowRunType:         decodePart[WorkflowRunContent],
 }
 
 func decodePart[T ContentPart](data json.RawMessage) (ContentPart, error) {

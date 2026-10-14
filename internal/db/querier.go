@@ -60,6 +60,7 @@ type Querier interface {
 	ListRunningBackgroundJobs(ctx context.Context) ([]BackgroundJob, error)
 	ListRunningWorkflowRuns(ctx context.Context) ([]WorkflowRun, error)
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
+	ListSessionsByWorkflowRun(ctx context.Context, workflowRunID string) ([]Session, error)
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
 	ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]ListUndeliveredBackgroundJobEventsRow, error)
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
@@ -72,6 +73,8 @@ type Querier interface {
 	ReleaseBackgroundJobEvent(ctx context.Context, id string) error
 	RenameSession(ctx context.Context, arg RenameSessionParams) error
 	SetSessionPin(ctx context.Context, arg SetSessionPinParams) error
+	SetSessionWorkflowOwner(ctx context.Context, arg SetSessionWorkflowOwnerParams) error
+	SetWorkflowRunMarker(ctx context.Context, arg SetWorkflowRunMarkerParams) error
 	TouchAnvilInstance(ctx context.Context, arg TouchAnvilInstanceParams) error
 	TransferBackgroundJobs(ctx context.Context, arg TransferBackgroundJobsParams) error
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error

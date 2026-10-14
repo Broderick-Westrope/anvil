@@ -67,8 +67,13 @@ type Session struct {
 	Todos            []Todo
 	Pinned           bool
 	PinNote          string
-	CreatedAt        int64
-	UpdatedAt        int64
+	// WorkflowRunID is the workflow run that created the session, and
+	// WorkflowSeq the seq of the run's event that created it. Both are zero
+	// for sessions no run created.
+	WorkflowRunID string
+	WorkflowSeq   int
+	CreatedAt     int64
+	UpdatedAt     int64
 }
 
 // MaxPinNoteLen is the maximum length of a pin note in runes.
@@ -104,6 +109,13 @@ type Service interface {
 	ListPinned(ctx context.Context) ([]Session, error)
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
 	Delete(ctx context.Context, id string) error
+
+	// SetWorkflowOwner records that a workflow run's event seq created the
+	// session.
+	SetWorkflowOwner(ctx context.Context, id, runID string, seq int) error
+	// ListByWorkflowRun returns the sessions a workflow run created, in the
+	// order its events created them.
+	ListByWorkflowRun(ctx context.Context, runID string) ([]Session, error)
 
 	// Agent tool session management
 	CreateAgentToolSessionID(messageID, toolCallID string) string
@@ -434,9 +446,34 @@ func (s *service) fromDBItem(item db.Session) Session {
 		Todos:            todos,
 		Pinned:           item.Pinned != 0,
 		PinNote:          item.PinNote,
+		WorkflowRunID:    item.WorkflowRunID,
+		WorkflowSeq:      int(item.WorkflowSeq),
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
+}
+
+func (s *service) SetWorkflowOwner(ctx context.Context, id, runID string, seq int) error {
+	if err := s.q.SetSessionWorkflowOwner(ctx, db.SetSessionWorkflowOwnerParams{
+		ID:            id,
+		WorkflowRunID: runID,
+		WorkflowSeq:   int64(seq),
+	}); err != nil {
+		return fmt.Errorf("set workflow owner of session %s: %w", id, err)
+	}
+	return nil
+}
+
+func (s *service) ListByWorkflowRun(ctx context.Context, runID string) ([]Session, error) {
+	rows, err := s.q.ListSessionsByWorkflowRun(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions of workflow run %s: %w", runID, err)
+	}
+	sessions := make([]Session, len(rows))
+	for i, row := range rows {
+		sessions[i] = s.fromDBItem(row)
+	}
+	return sessions, nil
 }
 
 func boolToInt64(b bool) int64 {
