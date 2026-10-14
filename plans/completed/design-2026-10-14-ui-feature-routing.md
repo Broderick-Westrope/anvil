@@ -1,8 +1,8 @@
 # UI Feature Routing Design Spec
 
-**Problem:** Every fork feature in the TUI lives as methods and fields on `*UI` and adds cases to `ui.go`'s dispatchers (`update`, `handleDialogMsg`, `handleKeyPressMsg`), sometimes inside cases that came from upstream Crush. [ADR 0003](../docs/adr/0003-ui-complexity.md) (Accepted) says fork features should move out of the dispatchers into sub-models that own their state and are routed to through a table, with upstream cases left in their current shape so Crush cherry-picks keep applying. It also says the dispatcher design has to be settled before any code is written, because it becomes the pattern for the whole TUI.
+**Problem:** Every fork feature in the TUI lives as methods and fields on `*UI` and adds cases to `ui.go`'s dispatchers (`update`, `handleDialogMsg`, `handleKeyPressMsg`), sometimes inside cases that came from upstream Crush. [ADR 0003](../../docs/adr/0003-ui-complexity.md) (Accepted) says fork features should move out of the dispatchers into sub-models that own their state and are routed to through a table, with upstream cases left in their current shape so Crush cherry-picks keep applying. It also says the dispatcher design has to be settled before any code is written, because it becomes the pattern for the whole TUI.
 
-Workflows is the worst current case. The [workflows architecture survey](analysis-2026-10-14-workflows-architecture-survey.md) (candidate 1) found:
+Workflows is the worst current case. The [workflows architecture survey](../analysis-2026-10-14-workflows-architecture-survey.md) (candidate 1) found:
 - **On `*UI`:** 22 methods and 5 fields (`workflows`, `workflowTitles`, `workflowRequests`, `workflowAnswered`, `workflowFollow`).
 - **In the dispatchers:** 9 edits, 4 of them inside upstream cases.
 - **Request state:** spread across four stores with no single owner, and `workflowAnswered` is never cleared.

@@ -85,7 +85,7 @@ pattern for the whole TUI. Only one agent works in `ui.go` at a time.
 - The table is the feature registry in `internal/ui/model/features.go`,
   described under "Feature Routing" in `internal/ui/AGENTS.md`. Workflows
   were the first feature moved onto it
-  (`plans/design-2026-10-14-ui-feature-routing.md`); the other fork
+  (`plans/completed/design-2026-10-14-ui-feature-routing.md`); the other fork
   features move one change at a time, extending the surface when one
   needs more than it offers.
 - The registry's interfaces (`feature`, `featureHost`, `panelView`) start
