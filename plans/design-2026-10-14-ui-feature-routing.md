@@ -22,10 +22,13 @@ In scope:
 - **Moving the two data fixes out of upstream cases to where the data is produced:** requirement annotation of workflow commands, and filtering workflow turns from prompt history.
 - **Clearing a run's answered request IDs when the run is finished or replaced.** This fixes the unbounded `workflowAnswered`.
 - **Cutting multi-line script text in panel rows at its first line,** as the panel already does for errors and answers. See Panels.
-- **Closing the open request dialogs of an invocation that was replaced** (its finish was lost). Today they stay open until the session's next finish, and answering one fails because the host no longer has the request. See Request tracking.
-
-Together with the previous two items, these are the only intended behaviour changes.
+- **Request lifecycle fixes** (see Request tracking), which only matter when events arrive late or are lost:
+  - an invocation that was replaced closes its open request dialogs; today they stay open until the session's next finish, and answering one fails;
+  - a late finish of an earlier run no longer closes the next invocation's dialogs;
+  - a late pause or resume of an earlier run no longer replaces the live run's record and panel.
 - **Updating `internal/ui/AGENTS.md`** to document the pattern, and noting the change in ADR 0003's consequences.
+
+The answered-ID clean-up, the first-line rule and the request lifecycle fixes are the only intended behaviour changes. The one other visible difference is a log line: a failed command load after a plugin reload now logs "Failed to load custom commands", as the initial load does.
 
 Out of scope:
 - Migrating the other fork features: drill-ins, branching, pins, reload, MCP palette, lazy MCP and OAuth, Herdr, jobs, and composer history. They are named as later adopters; each moves in its own change once this pattern has landed.
@@ -63,7 +66,7 @@ Out of scope:
   Both are covered by tests through `UI.Update`.
 - [ ] Both command-load paths behave as today:
   - The initial load shows the "broken workflow commands" warning.
-  - Config reload folds it into the single reload report, and that report keeps error severity when the reload itself failed. The existing `workflow_test.go:724-748` assertions still pass.
+  - Config reload folds it into the single reload report, and that report keeps error severity when the reload itself failed. The existing config-reload assertions (`TestConfigReloadWarnsAboutBrokenWorkflows`) still pass.
 - [ ] Prompt history leaves out script-sent turns for both the per-session and the working-directory query.
 - [ ] The workflow feature's behaviour tests drive it only through its surface (messages, keys, actions, commands, panel, palette entries). They use a fake host and a fake of the narrow workflow-workspace interface. The one exception is a targeted internal assertion that answered request IDs are freed when their run finishes or is replaced, because that can't be observed from outside.
 - [ ] Integration tests through `UI.Update` cover:
@@ -142,10 +145,10 @@ Features never see input through `Observe` or `HandleMsg`: `tea.KeyPressMsg`, `t
 
 ```go
 type featureHost interface {
-	// Session is the root session (UI's m.session), or nil. It is not
-	// the drilled-in child on screen: workflows key runs and controls by
-	// the root, as today.
-	Session() *session.Session
+	// SessionID is the root session's ID (UI's m.session), or "". It is
+	// not the drilled-in child on screen: workflows key runs and controls
+	// by the root, as today.
+	SessionID() string
 	// EnsureSession returns the current session, creating it and switching
 	// to chat when there's none (today's ensureSession: assigns the
 	// session, honours forced compact mode). cmd loads the new session.
@@ -169,8 +172,8 @@ type featureHost interface {
 	ComposerHasContent() bool
 	// Reloading reports an instance reload in progress.
 	Reloading() bool
-	// KeyMap is the current key bindings.
-	KeyMap() *KeyMap
+	// KeyMap is a copy of the current key bindings.
+	KeyMap() KeyMap
 }
 ```
 
@@ -233,7 +236,7 @@ The retention assertion checks nothing is left after each case.
 
 Others need focus-specific key routing: composer history runs before the global keys (`ui.go:3294-3320`), and drill-back runs before selected-item handling (`ui.go:3389-3397`, `:3479-3483`). Those adopters will need more than the global-keys fallback. All of these get extended when their adopter arrives, not designed now.
 
-**Context Files:**
+**Context Files** (line numbers are from before this change, at `2e09c9474`):
 - `docs/adr/0003-ui-complexity.md`: the decision this implements.
 - `internal/ui/AGENTS.md`: component conventions, updated by this change.
 - `plans/analysis-2026-10-14-workflows-architecture-survey.md`: candidate 1's evidence.
