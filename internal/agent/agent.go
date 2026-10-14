@@ -750,52 +750,9 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			),
 		))
 	}
-	// Collect all tool call IDs present in assistant messages, then index
-	// every tool result by its call ID. Tool results are re-emitted right
-	// after the assistant message that requested them instead of at their
-	// stored position: messages can be written to a session concurrently
-	// (e.g. resuming while a tool is still running), which interleaves
-	// user messages between a tool call and its result. LLM APIs require
-	// every tool call to be followed by its results before any other
-	// message, and strict-adjacency providers (e.g. Kimi, DeepSeek) reject
-	// the request otherwise, permanently locking the session.
-	knownToolCallIDs := make(map[string]struct{})
-	for _, m := range msgs {
-		if m.Role != message.Assistant {
-			continue
-		}
-		for _, tc := range m.ToolCalls() {
-			knownToolCallIDs[tc.ID] = struct{}{}
-		}
-	}
-	toolResultsByCall := make(map[string][]fantasy.MessagePart)
-	for _, m := range msgs {
-		if m.Role != message.Tool {
-			continue
-		}
-		for _, aiMsg := range m.ToAIMessage() {
-			for _, part := range aiMsg.Content {
-				tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
-				if !ok {
-					// Tool-role ToAIMessage only emits ToolResultParts today;
-					// log so unexpected parts do not vanish silently.
-					slog.Warn(
-						"Dropping unexpected non-tool-result part from tool message",
-						"part_type", fmt.Sprintf("%T", part),
-					)
-					continue
-				}
-				if _, known := knownToolCallIDs[tr.ToolCallID]; !known {
-					slog.Warn(
-						"Dropping orphaned tool result with no matching tool call",
-						"tool_call_id", tr.ToolCallID,
-					)
-					continue
-				}
-				toolResultsByCall[tr.ToolCallID] = append(toolResultsByCall[tr.ToolCallID], part)
-			}
-		}
-	}
+	// Tool results are emitted right after the assistant message that
+	// requested them, not at their stored position; see toolResultIndex.
+	results := newToolResultIndex(msgs)
 
 	for _, m := range msgs {
 		// Skip empty messages, and assistant messages without content or
@@ -809,7 +766,7 @@ If not, please feel free to ignore. Again do not mention this message to the use
 		case message.Assistant:
 			history = append(history, m.ToAIMessage()...)
 			if len(m.ToolCalls()) > 0 {
-				history = append(history, toolResultsForCalls(m, toolResultsByCall))
+				history = append(history, results.take(m))
 			}
 		default:
 			history = append(history, m.ToAIMessage()...)
@@ -857,20 +814,69 @@ func filterFileParts(parts []fantasy.MessagePart) []fantasy.MessagePart {
 	return filtered
 }
 
-// toolResultsForCalls builds the tool message that must immediately follow
-// an assistant message with tool calls. LLM APIs require every tool call to
-// be followed by its results before any other message; strict-adjacency
-// providers reject the request otherwise. Results are taken from
-// toolResultsByCall and consumed, so a result stored in a message that also
-// holds results for calls of other assistant messages is emitted exactly
-// once, next to the assistant that requested it. Tool calls without any
-// stored result (e.g. an interrupted session) receive a synthetic error
-// response so the conversation keeps working.
-func toolResultsForCalls(m message.Message, toolResultsByCall map[string][]fantasy.MessagePart) fantasy.Message {
+// toolResultIndex holds a transcript's tool results by the ID of the call
+// they answer. Messages can be written to a session concurrently (e.g.
+// resuming while a tool is still running), which interleaves user messages
+// between a tool call and its result, or stores a result before its call.
+// LLM APIs require every tool call to be followed by its results before any
+// other message, and strict-adjacency providers (e.g. Kimi, DeepSeek)
+// reject the request otherwise, permanently locking the session. So results
+// are re-emitted next to the assistant message that requested them.
+type toolResultIndex map[string][]fantasy.MessagePart
+
+// newToolResultIndex indexes the tool results in msgs, dropping any result
+// whose call is not in msgs: an orphaned result fails API validation on
+// every later turn.
+func newToolResultIndex(msgs []message.Message) toolResultIndex {
+	knownCalls := make(map[string]struct{})
+	var toolMsgs []fantasy.Message
+	for _, m := range msgs {
+		switch m.Role {
+		case message.Assistant:
+			for _, tc := range m.ToolCalls() {
+				knownCalls[tc.ID] = struct{}{}
+			}
+		case message.Tool:
+			toolMsgs = append(toolMsgs, m.ToAIMessage()...)
+		}
+	}
+	index := make(toolResultIndex)
+	for _, aiMsg := range toolMsgs {
+		for _, part := range aiMsg.Content {
+			tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
+			if !ok {
+				// Tool-role ToAIMessage only emits ToolResultParts today;
+				// log so unexpected parts do not vanish silently.
+				slog.Warn(
+					"Dropping unexpected non-tool-result part from tool message",
+					"part_type", fmt.Sprintf("%T", part),
+				)
+				continue
+			}
+			if _, known := knownCalls[tr.ToolCallID]; !known {
+				slog.Warn(
+					"Dropping orphaned tool result with no matching tool call",
+					"tool_call_id", tr.ToolCallID,
+				)
+				continue
+			}
+			index[tr.ToolCallID] = append(index[tr.ToolCallID], part)
+		}
+	}
+	return index
+}
+
+// take builds the tool message that must immediately follow the assistant
+// message m, removing its results from the index so a result stored in a
+// message that also holds results for other assistants' calls is emitted
+// exactly once. Tool calls without any stored result (e.g. an interrupted
+// session) receive a synthetic error response so the conversation keeps
+// working.
+func (idx toolResultIndex) take(m message.Message) fantasy.Message {
 	content := make([]fantasy.MessagePart, 0, len(m.ToolCalls()))
 	for _, tc := range m.ToolCalls() {
-		parts := toolResultsByCall[tc.ID]
-		delete(toolResultsByCall, tc.ID)
+		parts := idx[tc.ID]
+		delete(idx, tc.ID)
 		if len(parts) > 0 {
 			content = append(content, parts...)
 			continue
