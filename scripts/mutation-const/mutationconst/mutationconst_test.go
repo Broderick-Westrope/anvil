@@ -2,6 +2,7 @@ package mutationconst
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,14 +37,17 @@ func writeSource(t *testing.T) string {
 	return path
 }
 
-func TestConstRanges(t *testing.T) {
+func TestRegionsOfConsts(t *testing.T) {
 	t.Parallel()
 
-	rs, err := constRanges(writeSource(t))
+	rs, err := regionsOf(writeSource(t))
 	require.NoError(t, err)
-	require.Equal(t, []lineRange{{start: 5, end: 5}, {start: 7, end: 10}}, rs)
+	require.Equal(t, []region{
+		{label: "const", from: pos{5, 0}, to: pos{5, math.MaxInt}},
+		{label: "const", from: pos{7, 0}, to: pos{10, math.MaxInt}},
+	}, rs)
 
-	_, err = constRanges(filepath.Join(t.TempDir(), "missing.go"))
+	_, err = regionsOf(filepath.Join(t.TempDir(), "missing.go"))
 	require.Error(t, err)
 }
 
@@ -66,7 +70,7 @@ func TestClassify(t *testing.T) {
 	}, "\n")
 
 	var out strings.Builder
-	require.NoError(t, classify(strings.NewReader(in), &out, constRanges))
+	require.NoError(t, classify(strings.NewReader(in), &out, regionsOf))
 
 	var labels []string
 	for line := range strings.SplitSeq(strings.TrimSpace(out.String()), "\n") {
@@ -93,7 +97,7 @@ func TestClassifyKeepsUnparseableFiles(t *testing.T) {
 	t.Parallel()
 
 	calls := 0
-	failing := func(string) ([]lineRange, error) {
+	failing := func(string) ([]region, error) {
 		calls++
 		return nil, errors.New("parse failed")
 	}
@@ -109,9 +113,9 @@ func TestClassifyCachesRanges(t *testing.T) {
 	t.Parallel()
 
 	calls := 0
-	ranges := func(string) ([]lineRange, error) {
+	ranges := func(string) ([]region, error) {
 		calls++
-		return []lineRange{{start: 3, end: 3}}, nil
+		return []region{{label: "const", from: pos{3, 0}, to: pos{3, math.MaxInt}}}, nil
 	}
 	in := "a.go\t3\t1\tNOT COVERED\tX\na.go\t4\t1\tNOT COVERED\tX\n"
 
@@ -128,7 +132,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write fa
 func TestClassifyReturnsWriteErrors(t *testing.T) {
 	t.Parallel()
 
-	err := classify(strings.NewReader("a.go\t1\t1\tLIVED\tX\n"), failingWriter{}, constRanges)
+	err := classify(strings.NewReader("a.go\t1\t1\tLIVED\tX\n"), failingWriter{}, regionsOf)
 	require.EqualError(t, err, "write failed")
 }
 
@@ -148,8 +152,8 @@ func TestRun(t *testing.T) {
 func TestClassifySkipsBlankLinesAndNeedsOnlyStatus(t *testing.T) {
 	t.Parallel()
 
-	ranges := func(string) ([]lineRange, error) {
-		return []lineRange{{start: 3, end: 3}}, nil
+	ranges := func(string) ([]region, error) {
+		return []region{{label: "const", from: pos{3, 0}, to: pos{3, math.MaxInt}}}, nil
 	}
 	// A blank line must not stop processing, and the mutation type column
 	// is optional: the status in the fourth field is enough.
@@ -158,4 +162,46 @@ func TestClassifySkipsBlankLinesAndNeedsOnlyStatus(t *testing.T) {
 	var out strings.Builder
 	require.NoError(t, classify(strings.NewReader(in), &out, ranges))
 	require.Equal(t, "const\ta.go\t3\t1\tNOT COVERED\tX\nconst\ta.go\t3\t1\tNOT COVERED\n", out.String())
+}
+
+const switchSource = `package sample
+
+func g(a, b int) int {
+	switch {
+	case a < b, a+1 == b:
+		return a - b
+	}
+	switch a * 2 {
+	case b - 1:
+		return 1
+	}
+	select {}
+}
+`
+
+func TestClassifyCaseConditions(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "switch.go")
+	require.NoError(t, os.WriteFile(path, []byte(switchSource), 0o644))
+	in := strings.Join([]string{
+		path + "\t5\t9\tNOT COVERED\tCONDITIONALS_BOUNDARY", // Tagless case condition.
+		path + "\t5\t16\tNOT COVERED\tARITHMETIC_BASE",      // Second expression in the same case.
+		path + "\t6\t12\tNOT COVERED\tARITHMETIC_BASE",      // The case body is instrumented.
+		path + "\t8\t11\tNOT COVERED\tARITHMETIC_BASE",      // A switch tag is instrumented.
+		path + "\t9\t9\tNOT COVERED\tARITHMETIC_BASE",       // Tagged case value.
+		path + "\t5\t9\tLIVED\tCONDITIONALS_BOUNDARY",       // LIVED means a test ran it.
+		path + "\t5\t2\tNOT COVERED\tCONDITIONALS_BOUNDARY", // Before the expression, on the case keyword.
+	}, "\n")
+
+	var out strings.Builder
+	require.NoError(t, classify(strings.NewReader(in), &out, regionsOf))
+
+	var labels []string
+	for line := range strings.SplitSeq(strings.TrimSpace(out.String()), "\n") {
+		label, _, ok := strings.Cut(line, "\t")
+		require.True(t, ok)
+		labels = append(labels, label)
+	}
+	require.Equal(t, []string{"case", "case", "keep", "keep", "case", "keep", "keep"}, labels)
 }

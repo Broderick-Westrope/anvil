@@ -241,11 +241,12 @@ test runs the line). Fix it by adding or tightening tests until each
 listed mutant makes a test fail. Don't weaken the code or the config to
 dodge it.
 
-Mutants on package-level `const` declarations are listed but don't fail
-the check: Go's coverage tool never instruments them, so gremlins reports
-them NOT COVERED however well the values are tested
-(`scripts/mutation-const/mutationconst`). Pin such values with a test
-anyway.
+Mutants on package-level `const` declarations, and in the expressions of
+a `switch` statement's `case` lists, are listed but don't fail the check:
+Go's coverage tool never instruments them, so gremlins reports them NOT
+COVERED however well they are tested (`scripts/mutation-const/mutationconst`).
+Pin such values and conditions with a test anyway; there's no need to
+rewrite a switch as an `if` chain to make them reachable.
 
 Some mutants can't be killed because they don't change behaviour, such as
 a boundary flip that both sides of the comparison handle the same. Only
