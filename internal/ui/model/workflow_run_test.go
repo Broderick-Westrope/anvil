@@ -170,3 +170,38 @@ func TestWorkflowRunViewLoadsNeverLetAnOlderViewWin(t *testing.T) {
 	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "review · running")
 	require.Empty(t, f.u.workflowRunLoads)
 }
+
+func TestWorkflowRunNodeIsFoundByItsRunWhateverMessageCarriesIt(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	// A fork copies the marker under a new message ID.
+	copied := message.Message{
+		ID: "copy-1", SessionID: "sess-1", Role: message.System, MessageType: message.MessageTypeWorkflowRun,
+		Parts: []message.ContentPart{message.WorkflowRunContent{RunID: "run-1", Command: "demo"}},
+	}
+	_, cmd := f.u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: copied})
+	f.run(cmd)
+
+	node, ok := f.u.chat.MessageItem("copy-1").(*chat.WorkflowRunMessageItem)
+	require.True(t, ok)
+	require.True(t, node.HasView())
+}
+
+func TestWorkflowRunViewShowsCallsLeftOpenByAnInterruptedRun(t *testing.T) {
+	t.Parallel()
+
+	sty := newTestUI().com.Styles
+	view := runningView()
+	view.Status = workflowhost.StatusInterrupted
+	view.Phases[1].Items[0].Status = workflowhost.StatusInterrupted
+	view.Phases[1].Items[1] = workflowhost.RunItem{Kind: workflowhost.RunItemAsk, Question: "Which repo?", Status: workflowhost.StatusInterrupted}
+
+	var rows []string
+	for _, item := range chat.BuildWorkflowRunItems(sty, "demo", view) {
+		rows = append(rows, ansi.Strip(item.Render(100)))
+	}
+	require.Contains(t, rows[4], "/demo: devils-advocate gpt-6 · interrupted")
+	require.Contains(t, rows[5], "? Which repo? → unanswered (interrupted)")
+}

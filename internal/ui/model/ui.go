@@ -1099,7 +1099,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
 	case pubsub.Event[workflowhost.Event]:
-		cmds = append(cmds, m.handleWorkflowEvent(msg.Payload))
+		if msg.Payload.Kind != workflowhost.EventChanged {
+			cmds = append(cmds, m.handleWorkflowEvent(msg.Payload))
+		}
 		if msg.Payload.RunID != "" {
 			cmds = append(cmds, m.loadWorkflowRunView(msg.Payload.RunID))
 		}

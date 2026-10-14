@@ -21,6 +21,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
@@ -1235,4 +1236,43 @@ func TestServiceAbortEndsARunStillWaitingToBeMarked(t *testing.T) {
 	leaf, err := h.fixture.Messages.Get(h.fixture.Context, invoker.LeafMessageID)
 	require.NoError(t, err)
 	require.NotEqual(t, message.MessageTypeWorkflowRun, leaf.MessageType)
+}
+
+// ownerlessSessions can't record which run created a session.
+type ownerlessSessions struct{ session.Service }
+
+func (ownerlessSessions) SetWorkflowOwner(context.Context, string, string, int) error {
+	return errors.New("database is locked")
+}
+
+func TestServiceStopsASubagentItCantTieToTheRun(t *testing.T) {
+	h := newServiceHarness(t, true, func(d *workflowhost.Deps) { d.Sessions = ownerlessSessions{d.Sessions} })
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "should never be asked"})
+	h.start(t, h.write(t, `requires({agents: ["reviewer"]})
+function main() { try { agent("reviewer", "look") } catch (e) { return e.message } }`), "")
+
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status)
+	require.JSONEq(t, `"record subagent session: database is locked"`, string(done.Result))
+}
+
+func TestServiceRunViewEndsOpenCallsTheWayTheRunEnded(t *testing.T) {
+	h := newServiceHarness(t, true)
+	ctx := h.fixture.Context
+	require.NoError(t, h.store.StartRun(ctx, workflowhost.RunRecord{ID: "run-dead", Command: "project:demo", InvokingSessionID: h.session}))
+	rec := h.store.Recorder("run-dead")
+	require.NoError(t, rec.Record(ctx, workflow.Event{Seq: 1, Primitive: "agent", Phase: workflow.PhaseStarted, Args: json.RawMessage(`{"agent":"reviewer"}`), At: time.Now()}))
+	require.NoError(t, rec.Record(ctx, workflow.Event{Seq: 2, Primitive: "ask", Phase: workflow.PhaseStarted, Args: json.RawMessage(`{"question":"q"}`), At: time.Now()}))
+	// The process died mid-call; startup marks the run interrupted.
+	require.NoError(t, h.store.FinishRun(ctx, "run-dead", workflowhost.StatusInterrupted, nil, "interrupted: anvil exited"))
+
+	view, ok, err := h.svc.RunView(ctx, "run-dead")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, view.WaitingForUser())
+	items := view.Phases[0].Items
+	require.Len(t, items, 2)
+	for _, item := range items {
+		require.Equal(t, workflowhost.StatusInterrupted, item.Status, item.Kind)
+	}
 }

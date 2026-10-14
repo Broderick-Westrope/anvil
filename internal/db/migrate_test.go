@@ -91,3 +91,62 @@ func TestMigrations_RenameDecisionSourceToBouncer(t *testing.T) {
 	require.NoError(t, goose.DownTo(conn, "migrations", before))
 	require.Equal(t, map[string]string{"a": "assessor", "h": "human", "r": "rule"}, sources())
 }
+
+func TestMigrations_WorkflowRunMarkersAreRemovedOnDowngrade(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, initGoose())
+
+	conn, err := openDB(filepath.Join(t.TempDir(), "anvil.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	conn.SetMaxOpenConns(1)
+
+	const before, links = 20261010000000, 20261014000000
+	require.NoError(t, goose.UpTo(conn, "migrations", links))
+
+	// s1: user -> marker A -> marker B -> reply, leaf on reply.
+	// s2: user2 -> marker C, leaf on the marker. s3: a lone root marker.
+	_, err = conn.ExecContext(t.Context(), `
+		INSERT INTO sessions (id, title, updated_at, created_at, leaf_message_id) VALUES
+			('s1', 't', 0, 0, 'reply'), ('s2', 't', 0, 0, 'c'), ('s3', 't', 0, 0, 'lone');
+		INSERT INTO messages (id, session_id, role, parts, created_at, updated_at, parent_message_id, message_type) VALUES
+			('user', 's1', 'user', '[]', 0, 0, NULL, 'message'),
+			('a', 's1', 'system', '[]', 0, 0, 'user', 'workflow_run'),
+			('b', 's1', 'system', '[]', 0, 0, 'a', 'workflow_run'),
+			('reply', 's1', 'user', '[]', 0, 0, 'b', 'message'),
+			('user2', 's2', 'user', '[]', 0, 0, NULL, 'message'),
+			('c', 's2', 'system', '[]', 0, 0, 'user2', 'workflow_run'),
+			('lone', 's3', 'system', '[]', 0, 0, NULL, 'workflow_run');`)
+	require.NoError(t, err)
+
+	require.NoError(t, goose.DownTo(conn, "migrations", before))
+
+	parents := map[string]*string{}
+	rows, err := conn.QueryContext(t.Context(), `SELECT id, parent_message_id FROM messages`)
+	require.NoError(t, err)
+	for rows.Next() {
+		var id string
+		var parent *string
+		require.NoError(t, rows.Scan(&id, &parent))
+		parents[id] = parent
+	}
+	require.NoError(t, rows.Err())
+	rows.Close()
+	user := "user"
+	require.Equal(t, map[string]*string{"user": nil, "reply": &user, "user2": nil}, parents)
+
+	leaves := map[string]*string{}
+	rows, err = conn.QueryContext(t.Context(), `SELECT id, leaf_message_id FROM sessions`)
+	require.NoError(t, err)
+	for rows.Next() {
+		var id string
+		var leaf *string
+		require.NoError(t, rows.Scan(&id, &leaf))
+		leaves[id] = leaf
+	}
+	require.NoError(t, rows.Err())
+	rows.Close()
+	reply, user2 := "reply", "user2"
+	require.Equal(t, map[string]*string{"s1": &reply, "s2": &user2, "s3": nil}, leaves)
+}

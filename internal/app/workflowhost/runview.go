@@ -177,6 +177,17 @@ func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Ses
 			add(ev.Seq, RunItem{Kind: RunItemAsk, Question: args.Question, Status: StatusRunning})
 		}
 	}
+	// A run that ended with calls still open (interrupted, or aborted
+	// mid-call) leaves them as it ended, not running forever.
+	if v.Status != StatusRunning {
+		for p := range v.Phases {
+			for i := range v.Phases[p].Items {
+				if item := &v.Phases[p].Items[i]; item.Status == StatusRunning {
+					item.Status = v.Status
+				}
+			}
+		}
+	}
 	return v, true, nil
 }
 

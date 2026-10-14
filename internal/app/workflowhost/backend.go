@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
@@ -127,11 +126,15 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 		wc.Schema, wc.Validate = call.Schema, schema.Validate
 	}
 	ended := AgentCall{Name: call.Agent, Model: call.Model, Status: StatusCompleted}
+	// A subagent whose session can't be tied to the run would be
+	// unreachable from it, so failing to record that stops the subagent.
+	ctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
 	wc.OnSession = func(sessionID string) {
 		// The run view finds the session by the event that made it, so
 		// it's recorded before anyone hears the subagent started.
 		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, sessionID, b.base.RunID, call.Seq); err != nil {
-			slog.Warn("Failed to record workflow subagent session", "run", b.base.RunID, "session", sessionID, "error", err)
+			stop(fmt.Errorf("record subagent session: %w", err))
 		}
 		started := ended
 		started.Session, started.Status = sessionID, StatusRunning
@@ -139,6 +142,9 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 		ended.Session = sessionID
 	}
 	res, err := b.runAgent(ctx, wc)
+	if cause := context.Cause(ctx); err != nil && cause != nil && !errors.Is(cause, context.Canceled) {
+		err = cause
+	}
 	if err != nil {
 		ended.Status, ended.Err = StatusFailed, err.Error()
 	}

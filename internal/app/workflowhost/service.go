@@ -55,6 +55,10 @@ const (
 	EventAgent EventKind = "agent"
 	// EventFinished ends an invocation.
 	EventFinished EventKind = "finished"
+	// EventChanged says the run's log gained an event. It's published
+	// after the event is recorded, so a view reloaded on it is never
+	// behind the log.
+	EventChanged EventKind = "changed"
 )
 
 // RunState is the change an EventState reports.
@@ -378,7 +382,8 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	}
 	base.RunID = runID
 	b := &backend{svc: s, base: base}
-	run := workflow.NewRun(script, b, s.deps.Store.Recorder(runID), workflow.Options{
+	recorder := changeNotifier{Recorder: s.deps.Store.Recorder(runID), changed: func() { b.publish(Event{Kind: EventChanged}) }}
+	run := workflow.NewRun(script, b, recorder, workflow.Options{
 		InvokingSessionID: inv.SessionID,
 		Tmpdir:            s.deps.Store.Tmpdir(runID),
 		References:        current.references(),
@@ -418,6 +423,20 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 		slog.Warn("Failed to record workflow run outcome", "run", runID, "error", ferr)
 	}
 	finish(runID, status, result, msg)
+}
+
+// changeNotifier announces each event once it's recorded.
+type changeNotifier struct {
+	workflow.Recorder
+	changed func()
+}
+
+func (n changeNotifier) Record(ctx context.Context, ev workflow.Event) error {
+	if err := n.Recorder.Record(ctx, ev); err != nil {
+		return err
+	}
+	n.changed()
+	return nil
 }
 
 // writeMarker adds the run's marker to the invoking session, where the UI

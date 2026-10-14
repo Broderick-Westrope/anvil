@@ -92,9 +92,13 @@ func (m *UI) applyWorkflowRunView(msg workflowRunViewLoadedMsg) {
 		}
 		chats = append(chats, entry.chat)
 	}
+	// A run's node is found by its run, not its message: a fork copies the
+	// marker into other sessions under new message IDs.
 	for _, c := range chats {
-		if node, ok := c.MessageItem(msg.view.MarkerMessageID).(*chat.WorkflowRunMessageItem); ok {
-			node.SetView(msg.view)
+		for _, item := range c.MessageItems() {
+			if node, ok := item.(*chat.WorkflowRunMessageItem); ok && node.RunID() == msg.runID {
+				node.SetView(msg.view)
+			}
 		}
 	}
 }

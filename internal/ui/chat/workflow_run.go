@@ -302,9 +302,13 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 	sep := sty.Tool.StatsSep.Render(" · ")
 	switch item.Kind {
 	case workflowhost.RunItemAsk:
-		answer := "waiting for you"
-		if item.Status != workflowhost.StatusRunning {
-			answer = firstLine(item.Answer)
+		answer := firstLine(item.Answer)
+		switch item.Status {
+		case workflowhost.StatusRunning:
+			answer = "waiting for you"
+		case workflowhost.StatusCompleted:
+		default:
+			answer = "unanswered (" + string(item.Status) + ")"
 		}
 		return sty.Tool.IconPending.Render("?") + " " + sty.Tool.NameNormal.Render(firstLine(item.Question)) +
 			sty.Tool.StatsSep.Render(" → ") + sty.Tool.StatsLine.Render(answer)
@@ -315,7 +319,7 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 		if item.Model != "" {
 			label += " " + sty.Tool.StatsLine.Render(item.Model)
 		}
-		state := "running"
+		state := string(item.Status)
 		switch item.Status {
 		case workflowhost.StatusCompleted:
 			state = "done"
