@@ -1,6 +1,8 @@
 package model
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -170,18 +172,13 @@ func (fs *features) panelLines() int {
 // renderPanels renders the panels within width, in registration order,
 // as panelLines() lines.
 func (fs *features) renderPanels(width int) string {
-	var out string
+	var panels []string
 	for _, f := range fs.panels {
-		p := f.Panel()
-		if p == nil || p.Lines() == 0 {
-			continue
+		if p := f.Panel(); p != nil && p.Lines() > 0 {
+			panels = append(panels, p.Render(width))
 		}
-		if out != "" {
-			out += "\n"
-		}
-		out += p.Render(width)
 	}
-	return out
+	return strings.Join(panels, "\n")
 }
 
 func (fs *features) paletteEntries() []*dialog.CommandItem {

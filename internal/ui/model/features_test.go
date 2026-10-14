@@ -265,3 +265,17 @@ func TestStaticPanelKeepsThePanelContract(t *testing.T) {
 
 	requirePanelContract(t, staticPanel{"first panel line", "second"})
 }
+
+func TestPanelsKeepTheirRowsWhenNothingFits(t *testing.T) {
+	t.Parallel()
+
+	var fs features
+	fs.register(&fakeFeature{panel: staticPanel{"first"}})
+	fs.register(&fakeFeature{panel: staticPanel{"second"}})
+	fs.register(&fakeFeature{})
+	require.Equal(t, 2, fs.panelLines())
+	for _, width := range []int{0, 1, 3} {
+		require.Len(t, strings.Split(fs.renderPanels(width), "\n"), 2, "width %d", width)
+	}
+	require.Equal(t, "first\nsecond", fs.renderPanels(10))
+}
