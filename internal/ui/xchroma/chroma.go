@@ -91,15 +91,10 @@ func Formatter(bgColor color.Color, processValue func(string) string) chroma.For
 	})
 }
 
-// renderLines styles each line of value separately, joining them with plain
-// newlines. Tokens may contain trailing or embedded newlines (e.g. Chroma's
-// CommentSingle includes the line terminator), and rendering a multi-line
-// string through Lip Gloss makes it equalize line widths, padding the line
-// after a comment with stray spaces and corrupting its indentation.
+// renderLines styles each line of value on its own. Rendering a multi-line
+// value in one call would pad every line to the widest one, shifting the
+// text that follows a token ending in a newline, such as a line comment.
 func renderLines(s lipgloss.Style, value string) string {
-	if !strings.Contains(value, "\n") {
-		return s.Render(value)
-	}
 	lines := strings.Split(value, "\n")
 	for i, line := range lines {
 		lines[i] = s.Render(line)

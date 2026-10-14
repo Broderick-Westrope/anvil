@@ -200,7 +200,8 @@ func BuildDelegationWorkflow(agents []AgentMD) string {
 
 	sb.WriteString("1. **Understand** — Read the full request. Identify the goal, constraints, and\n")
 	sb.WriteString("   any ambiguity, and whether the user wants you to act or only to answer.\n")
-	sb.WriteString("   Ask clarifying questions before acting if the request is genuinely unclear.\n\n")
+	sb.WriteString("   Resolve ambiguity yourself as described in <decision_making>; only ask\n")
+	sb.WriteString("   in the cases it lists.\n\n")
 
 	sb.WriteString("2. **Path Selection** — Decide: handle directly or delegate?\n")
 	sb.WriteString("   - Handle directly when the task is small, self-contained, or delegation\n")

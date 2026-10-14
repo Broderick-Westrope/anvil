@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -138,6 +140,43 @@ func TestRunSubAgent(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "done", resp.Content)
 		assert.False(t, resp.IsError)
+	})
+
+	t.Run("sampling falls back to catwalk defaults", func(t *testing.T) {
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, providerCfg)
+
+		parentSession, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
+		require.NoError(t, err)
+
+		var got SessionAgentCall
+		agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+			got = call
+			return agentResultWithText("done"), nil
+		})
+		agent.model.CatwalkCfg.Options = catwalk.ModelOptions{
+			Temperature:      new(0.3),
+			TopP:             new(0.8),
+			TopK:             new(int64(40)),
+			FrequencyPenalty: new(0.1),
+			PresencePenalty:  new(0.2),
+		}
+		agent.model.ModelCfg.TopP = new(0.9)
+
+		_, err = coord.runSubAgent(t.Context(), subAgentParams{
+			Agent:          agent,
+			SessionID:      parentSession.ID,
+			AgentMessageID: "msg-1",
+			ToolCallID:     "call-1",
+			Prompt:         "do something",
+			SessionTitle:   "Test Session",
+		})
+		require.NoError(t, err)
+		require.Equal(t, new(0.3), got.Temperature)
+		require.Equal(t, new(0.9), got.TopP)
+		require.Equal(t, new(int64(40)), got.TopK)
+		require.Equal(t, new(0.1), got.FrequencyPenalty)
+		require.Equal(t, new(0.2), got.PresencePenalty)
 	})
 
 	t.Run("cost update failure preserves output", func(t *testing.T) {
@@ -901,6 +940,8 @@ func TestNewCoordinatorDoesNotBlockOnMCPInit(t *testing.T) {
 			nil, // jobEvents — notifications disabled.
 			nil, // jobArchive — no persisted job fallbacks.
 			nil, // onIdle — no waker.
+			nil, // jobWakeEnabled — never wakes.
+			nil, // usageRecorder — no usage rows.
 		)
 		done <- coordinatorResult{c, buildErr}
 	}()
@@ -985,41 +1026,6 @@ type waitingSessionAgent struct {
 
 func (a *waitingSessionAgent) WaitBackgroundJobs() { a.waited = true }
 
-func TestWithJobTools(t *testing.T) {
-	t.Parallel()
-	all := []string{"bash", "view", "job_output", "job_kill", "job_list"}
-	tests := map[string]struct {
-		filter, allowed, want []string
-	}{
-		"include with bash": {
-			filter:  []string{"bash", "view"},
-			allowed: []string{"bash", "view"},
-			want:    []string{"bash", "view", "job_output", "job_kill", "job_list"},
-		},
-		"include without bash": {
-			filter:  []string{"view"},
-			allowed: []string{"view"},
-			want:    []string{"view"},
-		},
-		"exclude job_kill": {
-			filter:  []string{"!job_kill"},
-			allowed: []string{"bash", "view", "job_output", "job_list"},
-			want:    []string{"bash", "view", "job_output", "job_list"},
-		},
-		"nil filter": {
-			filter:  nil,
-			allowed: all,
-			want:    all,
-		},
-	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, withJobTools(tt.filter, slices.Clone(tt.allowed)))
-		})
-	}
-}
-
 func TestJobToolNamesCoversRegisteredJobTools(t *testing.T) {
 	t.Parallel()
 	cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
@@ -1042,15 +1048,30 @@ func TestJobToolNamesCoversRegisteredJobTools(t *testing.T) {
 func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		disabled []string
-		want     []string
+		allowed, disabled []string
+		// want lists the bash and job tools the agent gets.
+		want []string
 	}{
 		"bash only": {
-			want: append([]string{tools.BashToolName}, tools.JobToolNames()...),
+			allowed: []string{tools.BashToolName},
+			want:    append([]string{tools.BashToolName}, tools.JobToolNames()...),
 		},
 		"globally disabled job_kill": {
+			allowed:  []string{tools.BashToolName},
 			disabled: []string{tools.JobKillToolName},
 			want:     []string{tools.BashToolName, tools.JobOutputToolName, tools.JobListToolName},
+		},
+		"globally disabled bash": {
+			allowed:  []string{tools.BashToolName},
+			disabled: []string{tools.BashToolName},
+			want:     tools.JobToolNames(),
+		},
+		"without bash": {
+			allowed: []string{tools.ViewToolName},
+		},
+		"job tool excluded by name": {
+			allowed: []string{"!" + tools.JobKillToolName},
+			want:    []string{tools.BashToolName, tools.JobOutputToolName, tools.JobListToolName},
 		},
 	}
 	for name, tt := range tests {
@@ -1061,14 +1082,171 @@ func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 			cfg.Config().Options.DisabledTools = tt.disabled
 			cfg.Config().MCP = nil
 			c := &coordinator{cfg: cfg}
-			agentCfg := config.Agent{ID: "fixer", AllowedTools: []string{tools.BashToolName}}
+			agentCfg := config.Agent{ID: "fixer", AllowedTools: tt.allowed}
 			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil)
+			require.NoError(t, err)
+			var names []string
+			for _, tool := range builtTools {
+				if name := tool.Info().Name; name == tools.BashToolName || slices.Contains(tools.JobToolNames(), name) {
+					names = append(names, name)
+				}
+			}
+			require.ElementsMatch(t, tt.want, names)
+			if slices.Equal(tt.allowed, []string{tools.BashToolName}) {
+				require.Len(t, builtTools, len(tt.want), "bash brings only the job tools")
+			}
+		})
+	}
+}
+
+// TestBuildToolsWarnsOnInvalidAllowedTools isn't parallel because it
+// swaps the default logger.
+func TestBuildToolsWarnsOnInvalidAllowedTools(t *testing.T) {
+	const warning = "Invalid AllowedTools filter for agent"
+	tests := map[string]struct {
+		allowed  []string
+		wantWarn bool
+		wantBash bool
+	}{
+		"valid filter":                    {allowed: []string{tools.ViewToolName}},
+		"invalid filter allows all tools": {allowed: []string{tools.ViewToolName, "!" + tools.BashToolName}, wantWarn: true, wantBash: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(logger) })
+			cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+			require.NoError(t, err)
+			cfg.Config().MCP = nil
+			c := &coordinator{cfg: cfg}
+			builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "fixer", AllowedTools: tt.allowed}, 1, nil, nil, nil, nil, nil)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantWarn, strings.Contains(logs.String(), warning), logs.String())
+			hasBash := slices.ContainsFunc(builtTools, func(tool fantasy.AgentTool) bool { return tool.Info().Name == tools.BashToolName })
+			require.Equal(t, tt.wantBash, hasBash)
+		})
+	}
+}
+
+func TestBuildToolsTaskToolFollowsDelegates(t *testing.T) {
+	t.Parallel()
+	withDelegates := map[string]prompt.AgentMD{"fixer": {Name: "fixer", DelegatesTo: []string{"explorer"}}}
+	withoutDelegates := map[string]prompt.AgentMD{"fixer": {Name: "fixer"}}
+	tests := map[string]struct {
+		agentID  string
+		depth    int
+		agentMDs map[string]prompt.AgentMD
+		want     bool
+	}{
+		"orchestrator at depth 3":          {agentID: config.AgentOrchestrator, depth: 3, want: true},
+		"orchestrator at depth 2":          {agentID: config.AgentOrchestrator, depth: 2, want: true},
+		"orchestrator at depth 1":          {agentID: config.AgentOrchestrator, depth: 1},
+		"specialist with delegates":        {agentID: "fixer", depth: 2, agentMDs: withDelegates, want: true},
+		"specialist with delegates deep":   {agentID: "fixer", depth: 1, agentMDs: withDelegates},
+		"specialist without delegates":     {agentID: "fixer", depth: 2, agentMDs: withoutDelegates},
+		"specialist without an agent file": {agentID: "fixer", depth: 2},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+			require.NoError(t, err)
+			cfg.Config().MCP = nil
+			c := &coordinator{cfg: cfg}
+			agentCfg := config.Agent{ID: tt.agentID, AllowedTools: []string{TaskToolName, tools.ViewToolName}}
+			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, tt.depth, nil, nil, nil, tt.agentMDs, nil)
 			require.NoError(t, err)
 			var names []string
 			for _, tool := range builtTools {
 				names = append(names, tool.Info().Name)
 			}
-			require.ElementsMatch(t, tt.want, names)
+			if tt.want {
+				require.Equal(t, []string{TaskToolName, tools.ViewToolName}, names)
+			} else {
+				require.Equal(t, []string{tools.ViewToolName}, names)
+			}
+		})
+	}
+}
+
+// TestBuildToolsAppliesAllowedMCP connects real MCP servers, so it must not
+// run in parallel.
+func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
+	const (
+		eager     = "test-tools-eager"
+		lazy      = "test-tools-lazy"
+		eagerPing = "mcp_" + eager + "_ping"
+		lazyPing  = "mcp_" + lazy + "_ping"
+	)
+	// An Anthropic OAuth coordinator built by an earlier test turns on the
+	// PascalCase tool names globally.
+	renamed := toolsmcp.OAuthRenameEnabled()
+	toolsmcp.SetOAuthRename(false)
+	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
+	cfg := connectMCPServers(t, map[string]string{eager: "", lazy: ""}, lazy)
+	c := &coordinator{cfg: cfg}
+	tests := map[string]struct {
+		allowedMCP map[string][]string
+		want       []string
+		wantLazy   map[string]string
+	}{
+		"no restrictions": {
+			want:     []string{tools.EnableMCPToolName, eagerPing, lazyPing, tools.ViewToolName},
+			wantLazy: map[string]string{lazyPing: lazy},
+		},
+		"none allowed": {
+			allowedMCP: map[string][]string{},
+			want:       []string{tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"whole eager server": {
+			allowedMCP: map[string][]string{eager: nil},
+			want:       []string{eagerPing, tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"listed eager tool": {
+			allowedMCP: map[string][]string{eager: {"ping"}},
+			want:       []string{eagerPing, tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"other eager tool": {
+			allowedMCP: map[string][]string{eager: {"other"}},
+			want:       []string{tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"listed lazy tool": {
+			allowedMCP: map[string][]string{lazy: {"ping"}},
+			want:       []string{tools.EnableMCPToolName, lazyPing, tools.ViewToolName},
+			wantLazy:   map[string]string{lazyPing: lazy},
+		},
+		"other lazy tool": {
+			allowedMCP: map[string][]string{lazy: {"other"}},
+			want:       []string{tools.EnableMCPToolName, tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+		"unknown server": {
+			allowedMCP: map[string][]string{"missing": nil},
+			want:       []string{tools.ViewToolName},
+			wantLazy:   map[string]string{},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			agentCfg := config.Agent{ID: "fixer", AllowedTools: []string{tools.ViewToolName}, AllowedMCP: tt.allowedMCP}
+			builtTools, lazyMap, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil)
+			require.NoError(t, err)
+			var names []string
+			for _, tool := range builtTools {
+				names = append(names, tool.Info().Name)
+				if tool.Info().Name == tools.EnableMCPToolName {
+					require.Contains(t, tool.Info().Description, lazy)
+					require.NotContains(t, tool.Info().Description, eager)
+				}
+			}
+			require.Equal(t, tt.want, names)
+			require.Equal(t, tt.wantLazy, lazyMap)
 		})
 	}
 }
@@ -1105,7 +1283,7 @@ func newReloadTestCoordinator(t *testing.T, env fakeEnv) (*coordinator, string) 
 	cfg.Config().Plugins = []config.PluginConfig{{Path: pluginDir}}
 
 	coord, err := NewCoordinator(t.Context(), cfg, env.sessions, env.messages, env.permissions,
-		*env.filetracker, nil, nil, nil, nil, nil)
+		*env.filetracker, nil, nil, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 	c := coord.(*coordinator)
 	require.Contains(t, c.agentConfigs, "helper")
@@ -1588,3 +1766,20 @@ func TestCallTopK(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// TestConnectDeferredMCP seeds the global MCP state, so it must not run in
+// parallel.
+func TestConnectDeferredMCP(t *testing.T) {
+	cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+	require.NoError(t, err)
+	c := &coordinator{cfg: cfg, agentConfigs: map[string]config.Agent{}}
+
+	_, err = c.connectDeferredMCP(t.Context(), "test-connect-missing")
+	require.ErrorContains(t, err, "not found in state registry")
+
+	const connected = "test-connect-connected"
+	toolsmcp.SetStateForTest(connected, toolsmcp.StateConnected)
+	t.Cleanup(func() { toolsmcp.DeleteStateForTest(connected) })
+	_, err = c.connectDeferredMCP(t.Context(), connected)
+	require.ErrorIs(t, err, errOrchestratorAgentNotConfigured, "a connected server goes on to refresh the tools")
+}

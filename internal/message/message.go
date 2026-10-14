@@ -91,8 +91,8 @@ type pendingState struct {
 	flushing bool
 
 	// timer is the active debounce timer, or nil if no flush is
-	// scheduled. Stopped and reset when a terminal update preempts
-	// the debounce window.
+	// scheduled. beginFlush stops and clears it whenever a flush claims
+	// the buffer, so the next delta schedules a fresh one.
 	timer *time.Timer
 
 	// baseline is the projection of the snapshot most recently
@@ -128,6 +128,50 @@ func newFlushBaseline(m *Message) flushBaseline {
 		toolCallsFinished:   finished,
 		reasoningFinishedAt: m.ReasoningContent().FinishedAt,
 	}
+}
+
+// isTerminal reports whether next is a structural change against the
+// last flushed snapshot. See [shouldFlushNow].
+func (p *pendingState) isTerminal(next *Message) bool {
+	var prev *flushBaseline
+	if p.hasFlushed {
+		prev = &p.baseline
+	}
+	return shouldFlushNow(prev, next)
+}
+
+// beginFlush claims the buffered snapshot for a SQL write, cancelling
+// any scheduled flush. It reports whether the snapshot is terminal,
+// judged now because that compares against what is on disk before the
+// write. The caller must hold service.mu and finish with endFlush.
+func (p *pendingState) beginFlush() (Message, bool) {
+	if p.timer != nil {
+		p.timer.Stop()
+		p.timer = nil
+	}
+	snap := p.latest
+	terminal := p.isTerminal(&snap)
+	p.flushing = true
+	p.dirty = false
+	return snap, terminal
+}
+
+// endFlush records the outcome of the write of snap started by
+// beginFlush. A failed write stays dirty so the next flush retries it.
+// It reports whether the entry is done and can be pruned: the write
+// landed, the message is finished, and no Update re-dirtied the entry
+// during the write. Unfinished entries are kept as the baseline that
+// stops later deltas from looking structural again. The caller must
+// hold service.mu.
+func (p *pendingState) endFlush(snap Message, err error) bool {
+	p.flushing = false
+	if err != nil {
+		p.dirty = true
+		return false
+	}
+	p.baseline = newFlushBaseline(&snap)
+	p.hasFlushed = true
+	return snap.IsFinished() && !p.dirty
 }
 
 type service struct {
@@ -309,11 +353,7 @@ func (s *service) Update(ctx context.Context, msg Message) error {
 	p.latest = cloned
 	p.dirty = true
 
-	var prev *flushBaseline
-	if p.hasFlushed {
-		prev = &p.baseline
-	}
-	terminal := shouldFlushNow(prev, &cloned)
+	terminal := p.isTerminal(&cloned)
 
 	if terminal {
 		if p.timer != nil {
@@ -410,48 +450,14 @@ func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) erro
 			return nil
 		}
 
-		if p.timer != nil {
-			p.timer.Stop()
-			p.timer = nil
-		}
-		snap := p.latest
-		// Decide whether this snapshot represents a terminal event
-		// against the prior baseline. We must do this before resetting
-		// dirty/flushing because shouldFlushNow looks at p.baseline
-		// (which is what was on disk before this write).
-		var prev *flushBaseline
-		if p.hasFlushed {
-			prev = &p.baseline
-		}
-		isTerminal := shouldFlushNow(prev, &snap)
-		p.flushing = true
-		p.dirty = false
+		snap, isTerminal := p.beginFlush()
 		s.mu.Unlock()
 
 		err := s.write(ctx, snap)
 
 		s.mu.Lock()
-		p.flushing = false
-		if err == nil {
-			p.baseline = newFlushBaseline(&snap)
-			p.hasFlushed = true
-			// Prune entries for finished messages that are no longer
-			// dirty. Structural events mid-stream (tool call added or
-			// finished, reasoning ended) must keep the entry, because
-			// dropping the baseline makes every later delta look
-			// structural and defeats debouncing for the rest of the
-			// stream. A concurrent Update may have re-dirtied the entry
-			// during the SQL write; in that case, leave it for the next
-			// flush.
-			if snap.IsFinished() && !p.dirty {
-				if p.timer != nil {
-					p.timer.Stop()
-				}
-				delete(s.pending, id)
-			}
-		} else {
-			// Restore dirty so the next caller retries.
-			p.dirty = true
+		if p.endFlush(snap, err) {
+			delete(s.pending, id)
 		}
 		// If a delta arrived during the SQL write and we are a sync
 		// caller, the user expects that delta to land too.
@@ -602,19 +608,7 @@ func (s *service) GetBranchPath(ctx context.Context, leafMessageID string) ([]Me
 	}
 	messages := make([]Message, len(dbMessages))
 	for i, dbMessage := range dbMessages {
-		messages[i], err = s.fromDBItem(db.Message{
-			ID:              dbMessage.ID,
-			SessionID:       dbMessage.SessionID,
-			Role:            dbMessage.Role,
-			Parts:           dbMessage.Parts,
-			Model:           dbMessage.Model,
-			Provider:        dbMessage.Provider,
-			FinishedAt:      dbMessage.FinishedAt,
-			ParentMessageID: dbMessage.ParentMessageID,
-			MessageType:     dbMessage.MessageType,
-			CreatedAt:       dbMessage.CreatedAt,
-			UpdatedAt:       dbMessage.UpdatedAt,
-		})
+		messages[i], err = s.fromDBItem(db.Message(dbMessage))
 		if err != nil {
 			return nil, err
 		}
@@ -635,19 +629,7 @@ func (s *service) GetBranchPathTail(ctx context.Context, leafMessageID string, l
 	}
 	messages := make([]Message, len(dbMessages))
 	for i, dbMessage := range dbMessages {
-		messages[i], err = s.fromDBItem(db.Message{
-			ID:              dbMessage.ID,
-			SessionID:       dbMessage.SessionID,
-			Role:            dbMessage.Role,
-			Parts:           dbMessage.Parts,
-			Model:           dbMessage.Model,
-			Provider:        dbMessage.Provider,
-			FinishedAt:      dbMessage.FinishedAt,
-			ParentMessageID: dbMessage.ParentMessageID,
-			MessageType:     dbMessage.MessageType,
-			CreatedAt:       dbMessage.CreatedAt,
-			UpdatedAt:       dbMessage.UpdatedAt,
-		})
+		messages[i], err = s.fromDBItem(db.Message(dbMessage))
 		if err != nil {
 			return nil, err
 		}
@@ -779,6 +761,31 @@ type rawPartWrapper struct {
 	Data json.RawMessage `json:"data"`
 }
 
+// partDecoders decodes the data of each stored part type.
+var partDecoders = map[partType]func(json.RawMessage) (ContentPart, error){
+	reasoningType:           decodePart[ReasoningContent],
+	textType:                decodePart[TextContent],
+	imageURLType:            decodePart[ImageURLContent],
+	binaryType:              decodePart[BinaryContent],
+	toolCallType:            decodePart[ToolCall],
+	toolResultType:          decodePart[ToolResult],
+	finishType:              decodePart[Finish],
+	compactionType:          decodePart[CompactionContent],
+	branchSummaryType:       decodePart[BranchSummaryContent],
+	labelType:               decodePart[LabelContent],
+	modelChangeType:         decodePart[ModelChangeContent],
+	thinkingLevelChangeType: decodePart[ThinkingLevelChangeContent],
+	mcpToggleType:           decodePart[MCPToggleContent],
+}
+
+func decodePart[T ContentPart](data json.RawMessage) (ContentPart, error) {
+	var part T
+	if err := json.Unmarshal(data, &part); err != nil {
+		return nil, err
+	}
+	return part, nil
+}
+
 func unmarshalParts(data []byte) ([]ContentPart, error) {
 	// One pass gets every type tag and its still-encoded payload. Splitting
 	// into []json.RawMessage first would walk the same bytes twice.
@@ -789,7 +796,11 @@ func unmarshalParts(data []byte) ([]ContentPart, error) {
 
 	parts := make([]ContentPart, 0, len(wrapped))
 	for _, w := range wrapped {
-		part, err := unmarshalPart(w.Type, w.Data)
+		decode, ok := partDecoders[w.Type]
+		if !ok {
+			return nil, fmt.Errorf("unknown part type: %s", w.Type)
+		}
+		part, err := decode(w.Data)
 		if err != nil {
 			return nil, err
 		}
@@ -797,46 +808,4 @@ func unmarshalParts(data []byte) ([]ContentPart, error) {
 	}
 
 	return parts, nil
-}
-
-// unmarshalPart decodes a single part's payload according to its type tag.
-func unmarshalPart(typ partType, data json.RawMessage) (ContentPart, error) {
-	switch typ {
-	case reasoningType:
-		return decodePart[ReasoningContent](data)
-	case textType:
-		return decodePart[TextContent](data)
-	case imageURLType:
-		return decodePart[ImageURLContent](data)
-	case binaryType:
-		return decodePart[BinaryContent](data)
-	case toolCallType:
-		return decodePart[ToolCall](data)
-	case toolResultType:
-		return decodePart[ToolResult](data)
-	case finishType:
-		return decodePart[Finish](data)
-	case compactionType:
-		return decodePart[CompactionContent](data)
-	case branchSummaryType:
-		return decodePart[BranchSummaryContent](data)
-	case labelType:
-		return decodePart[LabelContent](data)
-	case modelChangeType:
-		return decodePart[ModelChangeContent](data)
-	case thinkingLevelChangeType:
-		return decodePart[ThinkingLevelChangeContent](data)
-	case mcpToggleType:
-		return decodePart[MCPToggleContent](data)
-	default:
-		return nil, fmt.Errorf("unknown part type: %s", typ)
-	}
-}
-
-func decodePart[T ContentPart](data json.RawMessage) (ContentPart, error) {
-	var part T
-	if err := json.Unmarshal(data, &part); err != nil {
-		return nil, err
-	}
-	return part, nil
 }

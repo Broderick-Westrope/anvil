@@ -34,32 +34,44 @@ func TestState_String(t *testing.T) {
 func TestUpdateState_NeedsAuth(t *testing.T) {
 	t.Parallel()
 
-	const name = "auth-flag-test"
-	t.Cleanup(func() { states.Del(name) })
+	tests := []struct {
+		name      string
+		key       string
+		state     State
+		err       error
+		wantNeeds bool
+	}{
+		{
+			name:      "StateError with auth error sets NeedsAuth true",
+			key:       "auth-flag-test-auth-error",
+			state:     StateError,
+			err:       fmt.Errorf("wrapped: %w", ErrNeedsAuth),
+			wantNeeds: true,
+		},
+		{
+			name:  "StateError with plain error sets NeedsAuth false",
+			key:   "auth-flag-test-plain-error",
+			state: StateError,
+			err:   fmt.Errorf("plain"),
+		},
+		{
+			name:  "StateConnected with stale auth error sets NeedsAuth false",
+			key:   "auth-flag-test-connected",
+			state: StateConnected,
+			err:   fmt.Errorf("stale: %w", ErrNeedsAuth),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			t.Cleanup(func() { states.Del(tt.key) })
 
-	t.Run("StateError with auth error sets NeedsAuth true", func(t *testing.T) {
-		authErr := fmt.Errorf("wrapped: %w", ErrNeedsAuth)
-		updateState(name, StateError, authErr, nil, Counts{})
-		info, ok := GetState(name)
-		require.True(t, ok)
-		require.True(t, info.NeedsAuth)
-	})
-
-	t.Run("StateError with plain error sets NeedsAuth false", func(t *testing.T) {
-		updateState(name, StateError, fmt.Errorf("plain"), nil, Counts{})
-		info, ok := GetState(name)
-		require.True(t, ok)
-		require.False(t, info.NeedsAuth)
-	})
-
-	t.Run("StateConnected with stale auth error sets NeedsAuth false", func(t *testing.T) {
-		authErr := fmt.Errorf("stale: %w", ErrNeedsAuth)
-		updateState(name, StateConnected, authErr, nil, Counts{})
-		info, ok := GetState(name)
-		require.True(t, ok)
-		require.False(t, info.NeedsAuth,
-			"NeedsAuth must be false when state is not StateError")
-	})
+			updateState(tt.key, tt.state, tt.err, nil, Counts{})
+			info, ok := GetState(tt.key)
+			require.True(t, ok)
+			require.Equal(t, tt.wantNeeds, info.NeedsAuth)
+		})
+	}
 }
 
 func TestUpdateState_EventNeedsAuth_Dedup(t *testing.T) {

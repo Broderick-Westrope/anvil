@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -19,8 +18,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
-	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
@@ -28,7 +27,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/filetracker"
-	"github.com/Broderick-Westrope/anvil/internal/format"
 	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/log"
@@ -40,13 +38,8 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
-	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
-	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/update"
 	"github.com/Broderick-Westrope/anvil/internal/version"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/exp/charmtone"
-	"github.com/charmbracelet/x/term"
 )
 
 // UpdateAvailableMsg is sent when a new version is available.
@@ -66,6 +59,10 @@ type App struct {
 	AgentCoordinator agent.Coordinator
 
 	LSPManager *lsp.Manager
+
+	// cacheUsage records per-call prompt-cache usage. It is closed by the
+	// shutdown cleanup after agents have been cancelled.
+	cacheUsage *cacheusage.Recorder
 
 	config *config.ConfigStore
 	// bouncer is the same Bouncer the permission service assesses with,
@@ -93,15 +90,18 @@ type App struct {
 func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, error) {
 	q := db.New(conn)
 	recorder := decisionlog.New(q)
-	// Prune old decisions once at startup in the background. Failure only
-	// means the table keeps extra rows until the next start.
-	go func() {
-		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := decisionlog.Prune(pruneCtx, q, time.Now()); err != nil {
-			slog.Warn("Failed to prune permission decisions", "error", err)
-		}
-	}()
+	cacheUsage := cacheusage.New(q)
+	logs := []namedLog{
+		{name: "permission decision log", log: recorder},
+		{name: "cache usage log", log: cacheUsage},
+	}
+	// Prune old rows once at startup in the background.
+	go startupPrune(ctx, "permission decisions", func(ctx context.Context) error {
+		return decisionlog.Prune(ctx, q, time.Now())
+	})
+	go startupPrune(ctx, "step usage", func(ctx context.Context) error {
+		return cacheusage.Prune(ctx, q, time.Now())
+	})
 	store.SetBouncerValidator(func(b *config.Bouncer) error {
 		return BouncerThresholds(b).Validate()
 	})
@@ -137,6 +137,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		FileTracker: filetracker.NewService(q),
 		Queries:     q,
 		LSPManager:  lsp.NewManager(store),
+		cacheUsage:  cacheUsage,
 
 		globalCtx: ctx,
 
@@ -186,33 +187,25 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Release the shared database connection on shutdown. The pool
 	// closes the underlying *sql.DB when the last reference is released.
-	// Cleanup funcs run concurrently, so the decision log is flushed here
-	// first. If the flush times out the connection is left open, since
-	// the recorder is still writing and the process is exiting anyway.
+	// Cleanup funcs run concurrently, so the decision log and step usage
+	// recorder are flushed here first. If a flush times out the connection
+	// is left open, since that recorder is still writing and the process
+	// is exiting anyway.
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
 		func(ctx context.Context) error {
-			if err := recorder.Close(ctx); err != nil {
-				return fmt.Errorf("permission decision log did not flush before shutdown: %w", err)
+			if err := closeLogs(ctx, logs...); err != nil {
+				return fmt.Errorf("logs did not flush before shutdown: %w", err)
 			}
 			return db.ReleaseGlobal()
 		},
 		func(ctx context.Context) error { return mcp.Close(ctx) },
 	)
 
-	// TODO: remove the concept of agent config, most likely.
-	if !cfg.IsConfigured() {
-		slog.Warn("No agent configuration found")
-		return app, nil
-	}
-	if err := app.InitOrchestratorAgent(ctx); err != nil {
-		if closeErr := recorder.Close(ctx); closeErr != nil {
-			slog.Warn("Failed to close permission decision log after initialization error", "error", closeErr)
-		}
-		return nil, fmt.Errorf("failed to initialize orchestrator agent: %w", err)
-	}
-
-	// Set up callback for LSP state updates.
+	// LSP tracking doesn't depend on agent configuration, so it is wired
+	// up before the unconfigured early return. Onboarding only initialises
+	// agents, so a session that starts unconfigured would otherwise never
+	// report LSP state or reap idle clients.
 	app.LSPManager.SetCallback(func(name string, client *lsp.Client) {
 		if client == nil {
 			updateLSPState(name, lsp.StateUnstarted, nil, nil, 0)
@@ -226,6 +219,15 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	// installed when configured-but-not-yet-started LSPs are announced.
 	go app.LSPManager.TrackConfigured(ctx)
 	go app.LSPManager.StartIdleReaper(ctx)
+
+	// TODO: remove the concept of agent config, most likely.
+	if !cfg.IsConfigured() {
+		slog.Warn("No agent configuration found")
+		return app, nil
+	}
+	if err := app.InitOrchestratorAgent(ctx); err != nil {
+		return nil, initFailure(ctx, err, logs...)
+	}
 
 	return app, nil
 }
@@ -295,9 +297,10 @@ func (app *App) resolveSession(ctx context.Context, continueSessionID string, us
 	}
 }
 
-// RunNonInteractive runs the application in non-interactive mode with the
-// given prompt, printing to stdout.
-func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel, reasoningEffort string, hideSpinner bool, continueSessionID string, useLast bool) error {
+// RunNonInteractive runs prompt to completion and streams the reply to
+// output. onResponse is called when the reply starts or the run ends, and
+// may be called more than once.
+func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel, reasoningEffort string, onResponse func(), continueSessionID string, useLast bool) error {
 	slog.Info("Running in non-interactive mode")
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -314,52 +317,6 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 		}
 	}
 
-	var (
-		spinner   *format.Spinner
-		stdoutTTY bool
-		stderrTTY bool
-		stdinTTY  bool
-		progress  bool
-	)
-
-	if f, ok := output.(*os.File); ok {
-		stdoutTTY = term.IsTerminal(f.Fd())
-	}
-	stderrTTY = term.IsTerminal(os.Stderr.Fd())
-	stdinTTY = term.IsTerminal(os.Stdin.Fd())
-	progress = app.config.Config().Options.Progress == nil || *app.config.Config().Options.Progress
-
-	if !hideSpinner && stderrTTY {
-		t := styles.TokyoNight()
-
-		// Detect background color to set the appropriate color for the
-		// spinner's 'Generating...' text. Without this, that text would be
-		// unreadable in light terminals.
-		hasDarkBG := true
-		if f, ok := output.(*os.File); ok && stdinTTY && stdoutTTY {
-			hasDarkBG = lipgloss.HasDarkBackground(os.Stdin, f)
-		}
-		defaultFG := lipgloss.LightDark(hasDarkBG)(charmtone.Pepper, t.WorkingLabelColor)
-
-		spinner = format.NewSpinner(ctx, cancel, anim.Settings{
-			Size:        10,
-			Label:       "Generating",
-			LabelColor:  defaultFG,
-			GradColorA:  t.WorkingGradFromColor,
-			GradColorB:  t.WorkingGradToColor,
-			CycleColors: true,
-		})
-		spinner.Start()
-	}
-
-	// Helper function to stop spinner once.
-	stopSpinner := func() {
-		if !hideSpinner && spinner != nil {
-			spinner.Stop()
-			spinner = nil
-		}
-	}
-
 	// Wait for MCP initialization to complete before reading MCP tools.
 	if err := mcp.WaitForInit(ctx); err != nil {
 		return fmt.Errorf("failed to wait for MCP initialization: %w", err)
@@ -368,7 +325,7 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	// force update of agent models before running so mcp tools are loaded
 	app.AgentCoordinator.UpdateModels(ctx)
 
-	defer stopSpinner()
+	defer onResponse()
 
 	sess, err := app.resolveSession(ctx, continueSessionID, useLast)
 	if err != nil {
@@ -405,29 +362,18 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	}(ctx, sess.ID, prompt)
 
 	messageEvents := app.Messages.Subscribe(ctx)
-	messageReadBytes := make(map[string]int)
-	var printed bool
+	printer := &streamPrinter{output: output, sessionID: sess.ID, onReply: onResponse, readBytes: make(map[string]int)}
 
 	defer func() {
-		if progress && stderrTTY {
-			_, _ = fmt.Fprintf(os.Stderr, ansi.ResetProgressBar)
-		}
-
 		// Always print a newline at the end. If output is a TTY this will
 		// prevent the prompt from overwriting the last line of output.
 		_, _ = fmt.Fprintln(output)
 	}()
 
 	for {
-		if progress && stderrTTY {
-			// HACK: Reinitialize the terminal progress bar on every iteration
-			// so it doesn't get hidden by the terminal due to inactivity.
-			_, _ = fmt.Fprintf(os.Stderr, ansi.SetIndeterminateProgressBar)
-		}
-
 		select {
 		case result := <-done:
-			stopSpinner()
+			onResponse()
 			if result.err != nil {
 				if errors.Is(result.err, context.Canceled) || errors.Is(result.err, agent.ErrRequestCancelled) {
 					slog.Debug("Non-interactive: agent processing cancelled", "session_id", sess.ID)
@@ -438,34 +384,12 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 			return nil
 
 		case event := <-messageEvents:
-			msg := event.Payload
-			if msg.SessionID == sess.ID && msg.Role == message.Assistant && len(msg.Parts) > 0 {
-				stopSpinner()
-
-				content := msg.Content().String()
-				readBytes := messageReadBytes[msg.ID]
-
-				if len(content) < readBytes {
-					slog.Error("Non-interactive: message content is shorter than read bytes", "message_length", len(content), "read_bytes", readBytes)
-					return fmt.Errorf("message content is shorter than read bytes: %d < %d", len(content), readBytes)
-				}
-
-				part := content[readBytes:]
-				// Trim leading whitespace. Sometimes the LLM includes leading
-				// formatting and intentation, which we don't want here.
-				if readBytes == 0 {
-					part = strings.TrimLeft(part, " \t")
-				}
-				// Ignore initial whitespace-only messages.
-				if printed || strings.TrimSpace(part) != "" {
-					printed = true
-					fmt.Fprint(output, part)
-				}
-				messageReadBytes[msg.ID] = len(content)
+			if err := printer.print(event.Payload); err != nil {
+				return err
 			}
 
 		case <-ctx.Done():
-			stopSpinner()
+			onResponse()
 			return ctx.Err()
 		}
 	}
@@ -688,6 +612,8 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.jobEvents,
 		app.jobArchive(),
 		app.jobWaker.trigger,
+		app.jobWaker.enabled.Load,
+		app.cacheUsage,
 	)
 	if err != nil {
 		slog.Error("Failed to create orchestrator agent", "err", err)
@@ -796,6 +722,79 @@ func (app *App) Subscribe(program *tea.Program) {
 	}
 }
 
+// startupPrune runs prune with a 30 second deadline and logs failure,
+// which only means the table keeps extra rows until the next start. It
+// returns prune's error.
+func startupPrune(ctx context.Context, what string, prune func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := prune(ctx); err != nil {
+		slog.Warn("Failed to prune "+what, "error", err)
+		return err
+	}
+	return nil
+}
+
+// logCloser is an asynchronous log writer such as the permission decision
+// log or the step usage recorder.
+type logCloser interface {
+	Close(ctx context.Context) error
+}
+
+// namedLog pairs a log with the name its close errors are reported under.
+type namedLog struct {
+	name string
+	log  logCloser
+}
+
+// closeLogs flushes and closes logs concurrently, so a slow log cannot use
+// up ctx before the others get to flush. It joins their errors.
+func closeLogs(ctx context.Context, logs ...namedLog) error {
+	errs := make([]error, len(logs))
+	var wg sync.WaitGroup
+	for i, l := range logs {
+		wg.Go(func() {
+			if err := l.log.Close(ctx); err != nil {
+				errs[i] = fmt.Errorf("%s: %w", l.name, err)
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+// initFailure closes logs after orchestrator initialization fails and
+// returns the initialization error joined with any close error, so neither
+// is lost.
+func initFailure(ctx context.Context, err error, logs ...namedLog) error {
+	return errors.Join(
+		fmt.Errorf("failed to initialize orchestrator agent: %w", err),
+		closeLogs(ctx, logs...),
+	)
+}
+
+// backgroundJobsShutdownWait bounds how long shutdown waits for agent
+// background jobs such as title generation.
+const backgroundJobsShutdownWait = 2 * time.Second
+
+// waitWithTimeout runs wait and reports whether it returned within timeout.
+// On timeout wait keeps running in the background.
+func waitWithTimeout(wait func(), timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 // Shutdown performs a graceful shutdown of the application.
 func (app *App) Shutdown() {
 	start := time.Now()
@@ -813,6 +812,14 @@ func (app *App) Shutdown() {
 	// before closing the DB so agents can finish writing their state.
 	if app.AgentCoordinator != nil {
 		app.AgentCoordinator.CancelAll()
+		// Title generation outlives cancellation. Give it a short window
+		// to land its title and usage rows before the recorder and DB
+		// close, but never hold up shutdown for long.
+		if w, ok := app.AgentCoordinator.(interface{ WaitBackgroundJobs() }); ok {
+			if !waitWithTimeout(w.WaitBackgroundJobs, backgroundJobsShutdownWait) {
+				slog.Warn("Timed out waiting for agent background jobs to finish")
+			}
+		}
 	}
 
 	// Shared shutdown context for all timeout-bounded cleanup.

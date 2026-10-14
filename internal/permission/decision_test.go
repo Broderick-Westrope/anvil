@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -31,16 +32,16 @@ func (r *fakeRecorder) snapshot() []Decision {
 func TestDecisionRequest(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name               string
-		level              config.YoloLevel
-		rule               config.PermissionAction
-		session            config.PermissionAction
-		hook, auto, legacy bool
-		prompt             string
-		source             DecisionSource
-		verdict            Verdict
-		matched            string
-		notifications      int
+		name          string
+		level         config.YoloLevel
+		rule          config.PermissionAction
+		session       config.PermissionAction
+		hook, auto    bool
+		prompt        string
+		source        DecisionSource
+		verdict       Verdict
+		matched       string
+		notifications int
 	}{
 		{name: "full yolo", level: config.YoloFull, rule: config.PermissionDeny, source: DecisionSourceYolo, verdict: VerdictAllow},
 		{name: "hook", hook: true, rule: config.PermissionDeny, source: DecisionSourceHook, verdict: VerdictAllow, notifications: 1},
@@ -56,7 +57,6 @@ func TestDecisionRequest(t *testing.T) {
 		{name: "standard session ask", level: config.YoloStandard, session: config.PermissionAsk, source: DecisionSourceYolo, verdict: VerdictAllow, matched: "bash:git *", notifications: 2},
 		{name: "standard explicit allow", level: config.YoloStandard, rule: config.PermissionAllow, source: DecisionSourceRule, verdict: VerdictAllow, matched: "bash", notifications: 2},
 		{name: "standard deny", level: config.YoloStandard, rule: config.PermissionDeny, source: DecisionSourceRule, verdict: VerdictDeny, matched: "bash", notifications: 2},
-		{name: "legacy grant", legacy: true, source: DecisionSourceSessionGrant, verdict: VerdictAllow, notifications: 2},
 		{name: "human allow", prompt: "allow", source: DecisionSourceHuman, verdict: VerdictAllow, notifications: 2},
 		{name: "human deny", prompt: "deny", source: DecisionSourceHuman, verdict: VerdictDeny, notifications: 2},
 		{name: "cancelled", prompt: "cancel", source: DecisionSourceHuman, verdict: VerdictCancelled, notifications: 1},
@@ -64,76 +64,75 @@ func TestDecisionRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			r := &fakeRecorder{}
-			var rules []config.PermissionRule
-			if tt.rule != "" {
-				rules = []config.PermissionRule{{ToolPattern: "bash", Action: tt.rule}}
-			}
-			svc := NewPermissionService(dir, tt.level, rules, nil, WithDecisionRecorder(r)).(*permissionService)
-			if tt.session != "" {
-				require.NoError(t, svc.GrantSession("session", "bash", "git *", tt.session))
-			}
-			if tt.auto {
-				svc.AutoApproveSession("session")
-			}
-			if tt.legacy {
-				svc.GrantPersistent(PermissionRequest{SessionID: "session", ToolName: "bash", Action: "execute", Path: dir})
-			}
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			if tt.hook {
-				ctx = WithHookApproval(ctx, "call")
-			}
-			notifications := svc.SubscribeNotifications(t.Context())
-			events := svc.Subscribe(t.Context())
-			var wg sync.WaitGroup
-			if tt.prompt != "" {
-				wg.Go(func() {
-					select {
-					case event := <-events:
-						switch tt.prompt {
-						case "allow":
-							svc.Grant(event.Payload)
-						case "deny":
-							svc.Deny(event.Payload, "not needed")
-						case "cancel":
-							cancel()
-						}
-					case <-ctx.Done():
-					}
-				})
-			}
-			opts := CreatePermissionRequest{SessionID: "session", ToolCallID: "call", ToolName: "bash", Action: "execute", Input: "git status && git log", InputSegments: []string{"git status", "git log"}, Path: dir}
-			result, err := svc.Request(ctx, opts)
-			wg.Wait()
-			if tt.verdict == VerdictCancelled {
-				require.ErrorIs(t, err, context.Canceled)
-				svc.activeRequestMu.Lock()
-				active := svc.activeRequest
-				svc.activeRequestMu.Unlock()
-				require.Nil(t, active)
-			} else {
-				require.NoError(t, err)
-			}
-			require.Equal(t, tt.verdict == VerdictAllow, result.Granted)
-			if tt.prompt == "deny" {
-				require.Equal(t, "not needed", result.Reason)
-			}
-			require.Equal(t, []Decision{{SessionID: opts.SessionID, ToolCallID: opts.ToolCallID, ToolName: opts.ToolName, Action: opts.Action, Input: opts.Input, InputSegments: opts.InputSegments, WorkingDir: dir, DecidedBy: tt.source, Verdict: tt.verdict, MatchedRule: tt.matched}}, r.snapshot())
-			require.Len(t, notifications, tt.notifications)
-			for i := range tt.notifications {
-				n := (<-notifications).Payload
-				expected := PermissionNotification{ToolCallID: "call"}
-				if i == tt.notifications-1 && tt.verdict != VerdictCancelled {
-					expected.Granted = result.Granted
-					expected.Denied = !result.Granted
-					expected.Reason = result.Reason
+			synctest.Test(t, func(t *testing.T) {
+				dir := t.TempDir()
+				r := &fakeRecorder{}
+				var rules []config.PermissionRule
+				if tt.rule != "" {
+					rules = []config.PermissionRule{{ToolPattern: "bash", Action: tt.rule}}
 				}
-				require.Equal(t, expected, n)
-			}
-			opts.InputSegments[0] = "changed"
-			require.Equal(t, "git status", r.snapshot()[0].InputSegments[0])
+				svc := NewPermissionService(dir, tt.level, rules, nil, WithDecisionRecorder(r)).(*permissionService)
+				if tt.session != "" {
+					require.NoError(t, svc.GrantSession("session", "bash", "git *", tt.session))
+				}
+				if tt.auto {
+					svc.AutoApproveSession("session")
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				if tt.hook {
+					ctx = WithHookApproval(ctx, "call")
+				}
+				notifications := svc.SubscribeNotifications(t.Context())
+				events := svc.Subscribe(t.Context())
+				var wg sync.WaitGroup
+				if tt.prompt != "" {
+					wg.Go(func() {
+						select {
+						case event := <-events:
+							switch tt.prompt {
+							case "allow":
+								svc.Grant(event.Payload)
+							case "deny":
+								svc.Deny(event.Payload, "not needed")
+							case "cancel":
+								cancel()
+							}
+						case <-ctx.Done():
+						}
+					})
+				}
+				opts := CreatePermissionRequest{SessionID: "session", ToolCallID: "call", ToolName: "bash", Action: "execute", Input: "git status && git log", InputSegments: []string{"git status", "git log"}, Path: dir}
+				result, err := svc.Request(ctx, opts)
+				wg.Wait()
+				if tt.verdict == VerdictCancelled {
+					require.ErrorIs(t, err, context.Canceled)
+					svc.activeRequestMu.Lock()
+					active := svc.activeRequest
+					svc.activeRequestMu.Unlock()
+					require.Nil(t, active)
+				} else {
+					require.NoError(t, err)
+				}
+				require.Equal(t, tt.verdict == VerdictAllow, result.Granted)
+				if tt.prompt == "deny" {
+					require.Equal(t, "not needed", result.Reason)
+				}
+				require.Equal(t, []Decision{{SessionID: opts.SessionID, ToolCallID: opts.ToolCallID, ToolName: opts.ToolName, Action: opts.Action, Input: opts.Input, InputSegments: opts.InputSegments, WorkingDir: dir, DecidedBy: tt.source, Verdict: tt.verdict, MatchedRule: tt.matched}}, r.snapshot())
+				require.Len(t, notifications, tt.notifications)
+				for i := range tt.notifications {
+					n := (<-notifications).Payload
+					expected := PermissionNotification{ToolCallID: "call"}
+					if i == tt.notifications-1 && tt.verdict != VerdictCancelled {
+						expected.Granted = result.Granted
+						expected.Denied = !result.Granted
+						expected.Reason = result.Reason
+					}
+					require.Equal(t, expected, n)
+				}
+				opts.InputSegments[0] = "changed"
+				require.Equal(t, "git status", r.snapshot()[0].InputSegments[0])
+			})
 		})
 	}
 }
@@ -152,27 +151,29 @@ func TestDecisionCloneRules(t *testing.T) {
 
 func TestDecisionCancelPreservesOtherActiveRequest(t *testing.T) {
 	t.Parallel()
-	svc := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil).(*permissionService)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	events := svc.Subscribe(ctx)
-	var wg sync.WaitGroup
-	var err error
-	wg.Go(func() { _, err = svc.Request(ctx, CreatePermissionRequest{ToolName: "bash"}) })
-	select {
-	case <-events:
-	case <-ctx.Done():
-		t.Fatal("request was not published")
-	}
-	svc.activeRequestMu.Lock()
-	svc.activeRequest = &PermissionRequest{ID: "other"}
-	svc.activeRequestMu.Unlock()
-	cancel()
-	wg.Wait()
-	require.ErrorIs(t, err, context.Canceled)
-	svc.activeRequestMu.Lock()
-	defer svc.activeRequestMu.Unlock()
-	require.Equal(t, "other", svc.activeRequest.ID)
+	synctest.Test(t, func(t *testing.T) {
+		svc := NewPermissionService(t.TempDir(), config.YoloOff, nil, nil).(*permissionService)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		events := svc.Subscribe(ctx)
+		var wg sync.WaitGroup
+		var err error
+		wg.Go(func() { _, err = svc.Request(ctx, CreatePermissionRequest{ToolName: "bash"}) })
+		select {
+		case <-events:
+		case <-ctx.Done():
+			t.Fatal("request was not published")
+		}
+		svc.activeRequestMu.Lock()
+		svc.activeRequest = &PermissionRequest{ID: "other"}
+		svc.activeRequestMu.Unlock()
+		cancel()
+		wait(t, &wg)
+		require.ErrorIs(t, err, context.Canceled)
+		svc.activeRequestMu.Lock()
+		defer svc.activeRequestMu.Unlock()
+		require.Equal(t, "other", svc.activeRequest.ID)
+	})
 }
 
 func TestWithBouncerSetsOptionsAndMode(t *testing.T) {

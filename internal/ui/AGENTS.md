@@ -133,21 +133,37 @@ RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string
 `NewToolMessageItem` in `chat/tools.go` is the central factory that routes
 tool names to specific types:
 
-| File                  | Tools rendered                                 |
-| --------------------- | ---------------------------------------------- |
-| `chat/bash.go`        | Bash, JobOutput, JobKill                       |
-| `chat/file.go`        | View, Write, Edit, MultiEdit, Download         |
-| `chat/search.go`      | Glob, Grep, LS, Sourcegraph                    |
-| `chat/fetch.go`       | Fetch, WebFetch, WebSearch                     |
-| `chat/agent.go`       | Agent, AgenticFetch                            |
-| `chat/diagnostics.go` | Diagnostics                                    |
-| `chat/references.go`  | References                                     |
-| `chat/lsp_restart.go` | LSPRestart                                     |
-| `chat/todos.go`       | Todos                                          |
-| `chat/mcp.go`         | MCP tools (`mcp_` prefix)                      |
-| `chat/generic.go`     | Fallback for unrecognized tools                |
-| `chat/assistant.go`   | Assistant messages (thinking, content, errors) |
-| `chat/user.go`        | User messages (input + attachments)            |
+| File                      | Tools rendered                                           |
+| ------------------------- | -------------------------------------------------------- |
+| `chat/bash.go`            | Bash, JobOutput, JobKill                                 |
+| `chat/file.go`            | View, Write, Edit, MultiEdit, Download                   |
+| `chat/search.go`          | Glob, Grep, LS, Sourcegraph                              |
+| `chat/fetch.go`           | Fetch, WebFetch, WebSearch                               |
+| `chat/agent.go`           | Agent, AgenticFetch                                      |
+| `chat/diagnostics.go`     | Diagnostics                                              |
+| `chat/references.go`      | References                                               |
+| `chat/lsp_restart.go`     | LSPRestart                                               |
+| `chat/todos.go`           | Todos                                                    |
+| `chat/mcp.go`             | MCP tools (`mcp_` prefix)                                |
+| `chat/generic.go`         | Fallback for unrecognized tools                          |
+| `chat/assistant.go`       | Assistant messages ("Thought for" line, content, errors) |
+| `chat/thinking_detail.go` | Full thinking text in the thinking drill-in              |
+| `chat/user.go`            | User messages (input + attachments)                      |
+
+### Drill-ins
+
+`UI.drillStack` holds the views opened on top of the root chat. There are
+three kinds, each opened by its own message:
+
+- **Agent** (`util.AgentDrillInMsg`): a subagent's session. Its entry has
+  a `sessionID`, and child-session events update its chat even when another
+  drill-in sits on top.
+- **Tool** (`util.ToolDrillInMsg`): a tool call's detail view.
+- **Thinking** (`util.ThinkingDrillInMsg`): an assistant message's full
+  thinking, rendered by `chat.ThinkingDetailItem` from the live source item.
+
+Tool and thinking entries have no `sessionID`, so `viewedSessionEntry`
+skips them when the header and sidebar look for the session being viewed.
 
 ### Styling
 

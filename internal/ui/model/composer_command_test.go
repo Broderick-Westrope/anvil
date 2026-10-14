@@ -11,6 +11,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
+	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
 )
@@ -177,9 +178,38 @@ func TestComposerResourceLabels(t *testing.T) {
 		{"", "attachment"},
 	} {
 		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
 			state := composerFromMessage(message.Message{Parts: []message.ContentPart{message.BinaryContent{Path: tt.path}}}, nil, nil)
 			require.Equal(t, tt.want, state.attachments[0].FileName)
 			require.Equal(t, tt.path, state.attachments[0].FilePath)
 		})
 	}
+}
+
+func TestBuildSlashACItemsMarksUnlistedSkills(t *testing.T) {
+	t.Parallel()
+
+	u := newTestUI()
+	u.com.Workspace = &composerSkillWorkspace{Workspace: u.com.Workspace, active: map[string]*skills.Skill{
+		"listed":   {Name: "listed", Description: "listed desc"},
+		"unlisted": {Name: "unlisted", Description: "unlisted desc", Unlisted: true},
+	}}
+	u.skillStates = []*skills.SkillState{
+		{Name: "listed", State: skills.StateNormal},
+		{Name: "unlisted", State: skills.StateNormal},
+		{Name: "missing", State: skills.StateNormal},
+	}
+
+	got := map[string]autocomplete.Item{}
+	for _, item := range u.buildSlashACItems() {
+		if item.Type == autocomplete.SkillItem {
+			got[item.Name] = item
+		}
+	}
+
+	require.Equal(t, map[string]autocomplete.Item{
+		"listed":   {Name: "listed", Description: "listed desc", Type: autocomplete.SkillItem, ID: "skill:listed"},
+		"unlisted": {Name: "unlisted", Description: "unlisted desc", Type: autocomplete.SkillItem, Unlisted: true, ID: "skill:unlisted"},
+		"missing":  {Name: "missing", Type: autocomplete.SkillItem, ID: "skill:missing"},
+	}, got)
 }

@@ -449,7 +449,7 @@ func TestAnimation_DrillIn(t *testing.T) {
 }
 
 func drillIn(sessionID string) tea.Msg {
-	return util.DrillInMsg{SessionID: sessionID, Label: "agent"}
+	return util.AgentDrillInMsg{SessionID: sessionID, Label: "agent"}
 }
 
 func (*animWorkspace) AgentQueuedPrompts(string) int          { return 0 }

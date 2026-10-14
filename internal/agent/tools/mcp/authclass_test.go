@@ -204,7 +204,7 @@ func (staticResolver) ResolveValue(v string) (string, error) { return v, nil }
 // is not listening. Useful for simulating a downed server.
 func closedPort(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := l.Addr().String()
 	l.Close()

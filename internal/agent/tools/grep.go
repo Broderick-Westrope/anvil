@@ -160,19 +160,7 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 						currentFile = match.path
 						fmt.Fprintf(&output, "%s:\n", filepath.ToSlash(match.path))
 					}
-					if match.lineNum > 0 {
-						lineText := match.lineText
-						if ansi.StringWidth(lineText) > maxGrepContentWidth {
-							lineText = ansi.Truncate(lineText, maxGrepContentWidth, "...")
-						}
-						if match.charNum > 0 {
-							fmt.Fprintf(&output, "  Line %d, Char %d: %s\n", match.lineNum, match.charNum, lineText)
-						} else {
-							fmt.Fprintf(&output, "  Line %d: %s\n", match.lineNum, lineText)
-						}
-					} else {
-						fmt.Fprintf(&output, "  %s\n", match.path)
-					}
+					output.WriteString(formatGrepMatch(match))
 				}
 
 				if truncated {
@@ -188,6 +176,18 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 				},
 			), nil
 		})
+}
+
+// formatGrepMatch renders one match as a line of the grep tool's output.
+func formatGrepMatch(match grepMatch) string {
+	if match.lineNum <= 0 {
+		return fmt.Sprintf("  %s\n", match.path)
+	}
+	lineText := ansi.Truncate(match.lineText, maxGrepContentWidth, "...")
+	if match.charNum > 0 {
+		return fmt.Sprintf("  Line %d, Char %d: %s\n", match.lineNum, match.charNum, lineText)
+	}
+	return fmt.Sprintf("  Line %d: %s\n", match.lineNum, lineText)
 }
 
 func searchFiles(ctx context.Context, pattern, rootPath, include string, limit int) ([]grepMatch, bool, error) {

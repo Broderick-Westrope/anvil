@@ -200,16 +200,15 @@ func TestAuthorize_HappyPath(t *testing.T) {
 	// auth well-known to the auth server.
 	resourceServer := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			switch {
-			case r.URL.Path == "/.well-known/oauth-protected-resource" ||
-				r.URL.Path == "/.well-known/oauth-protected-resource/":
+			switch r.URL.Path {
+			case "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/":
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"resource":              "PLACEHOLDER_RES",
 					"authorization_servers": []string{authServer.URL},
 					"scopes_supported":      []string{"read", "write"},
 				})
-			case r.URL.Path == "/.well-known/oauth-authorization-server":
+			case "/.well-known/oauth-authorization-server":
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"issuer":                 authServer.URL,
@@ -253,7 +252,11 @@ func TestAuthorize_HappyPath(t *testing.T) {
 				cbURL := fmt.Sprintf(
 					"%s?code=test-auth-code&state=%s",
 					redirectURI, state)
-				resp, httpErr := http.Get(cbURL) //nolint:gosec
+				req, reqErr := http.NewRequestWithContext(t.Context(), http.MethodGet, cbURL, nil)
+				if reqErr != nil {
+					return
+				}
+				resp, httpErr := http.DefaultClient.Do(req) //nolint:gosec
 				if httpErr == nil {
 					resp.Body.Close()
 				}
@@ -346,7 +349,11 @@ func TestAuthorize_StateMismatch(t *testing.T) {
 				cbURL := fmt.Sprintf(
 					"%s?code=test-code&state=wrong-state",
 					redirectURI)
-				resp, httpErr := http.Get(cbURL) //nolint:gosec
+				req, reqErr := http.NewRequestWithContext(t.Context(), http.MethodGet, cbURL, nil)
+				if reqErr != nil {
+					return
+				}
+				resp, httpErr := http.DefaultClient.Do(req) //nolint:gosec
 				if httpErr == nil {
 					resp.Body.Close()
 				}

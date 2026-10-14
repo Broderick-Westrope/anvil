@@ -220,3 +220,41 @@ func TestStatsReview(t *testing.T) {
 	require.Equal(t, 1, g.ReviewErrors)
 	require.Equal(t, map[string]int{"allow": 3, "deny": 2, "cancelled": 1}, g.Enforce.Human.Matrix["deny"], "deny prompts the human overrode")
 }
+
+func TestStatsEscalations(t *testing.T) {
+	t.Parallel()
+	row := func(outcome string, triggers map[string]string, source, verdict string) db.PermissionDecision {
+		data, err := json.Marshal(permission.AssessmentRecord{SchemaVersion: 2, BatteryVersion: "v4", Mode: "enforce", Outcome: outcome, Triggers: triggers})
+		require.NoError(t, err)
+		return db.PermissionDecision{DecidedBy: source, Verdict: verdict, Assessment: sql.NullString{Valid: true, String: string(data)}}
+	}
+	remote := map[string]string{"remote_exec": permission.TriggerEscalate}
+	stats := ComputeStats([]db.PermissionDecision{
+		row("escalate", nil, "human", "allow"),
+		row("escalate", nil, "human", "deny"),
+		row("escalate", nil, "human", "cancelled"),
+		row("escalate", nil, "human", "cancelled"),
+		row("escalate", nil, "bouncer", "allow"),
+		row("deny", nil, "human", "allow"),
+		row("escalate", remote, "human", "allow"),
+		row("escalate", remote, "bouncer", "deny"),
+		row("deny", remote, "human", "deny"),
+	})
+	require.Len(t, stats.Groups, 1)
+	e := stats.Groups[0].Enforce
+	require.Equal(t, 2, e.UntriggeredEscalations)
+	require.Equal(t, map[string]map[string]int{"remote_exec": {"allow": 1}}, e.EscalationAxes)
+}
+
+func TestStatsGroupWithoutUsage(t *testing.T) {
+	t.Parallel()
+	stats := ComputeStats([]db.PermissionDecision{
+		assessmentRow(t, 1, "v1", "shadow", "error", "human", "allow", 10),
+		assessmentRow(t, 1, "v1", "shadow", "skipped", "human", "deny", 20),
+	})
+	require.Len(t, stats.Groups, 1)
+	g := stats.Groups[0]
+	require.Equal(t, 2, g.Total)
+	require.Equal(t, map[string]int{"human": 2}, g.ByDecidedBy)
+	require.Equal(t, UsageStats{}, g.Usage)
+}

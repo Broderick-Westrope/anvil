@@ -28,6 +28,7 @@ internal/
     hooked_tool.go                 Decorator that runs PreToolUse hooks before tool execution
     lazy_mcp.go                    Lazy MCP state derivation and tool filtering
     prompts.go                     Loads Go-template system prompts
+    cacheusage/                    Prompt-cache usage: async step_usage recorder, normalisation, fingerprints
     templates/                     System prompt templates (coder.md.tpl, task.md.tpl, etc.)
     tools/                         All built-in tools (bash, edit, view, grep, glob, etc.)
       enable_mcp.go                enable_mcp tool for agent-side lazy MCP activation
@@ -53,6 +54,41 @@ internal/
   filetracker/                     Tracks files touched per session
 ```
 
+### Package Layers
+
+Packages in `internal/` form layers. A package may import its own layer or
+any layer below it, never one above:
+
+1. `cmd`: CLI entry points. Only `main.go` imports it.
+2. `ui`: the Bubble Tea TUI. It may use `app` directly through
+   `common.Common`.
+3. `workspace`: the interface the UI drives.
+4. `app`: wires services together and runs agents.
+5. `agent`: sessions, the coordinator, tools and prompts.
+6. Everything else (`config`, `session`, `message`, `permission`, `hooks`,
+   `skills`, `lsp`, `shell`, `db`, `pubsub`, ...): services and libraries
+   that know nothing about the layers above.
+
+`internal/testutil` is test-only and may import any layer.
+
+`depguard` in `.golangci.yml` enforces this. When a lower package needs
+something from a higher one, pass it in from the caller or move the code
+down; don't add an exclusion.
+
+`gocognit` caps the cognitive complexity of new functions at 30. A long
+function that reads top to bottom as one concern stays under it; one that
+mixes concerns or grows a branch per feature doesn't. Fix it with a
+different shape (a lookup table, a state machine, a type that owns the
+rules), not by splitting it into single-use helpers. Functions already over
+the limit are listed in `.golangci.yml`; remove an entry when you bring its
+function under the limit, and never add one. A few upstream-shaped TUI
+functions stay listed on purpose; see
+`docs/adr/0003-ui-complexity.md`.
+
+Terms with a specific meaning in this codebase are defined in
+`GLOSSARY.md`. Hard-to-reverse design decisions are recorded in
+`docs/adr/`.
+
 ### Key Dependency Roles
 
 - **`charm.land/fantasy`**: LLM provider abstraction layer. Handles protocol
@@ -66,7 +102,8 @@ internal/
 
 ### Key Patterns
 
-- **Config is a Service**: accessed via `config.Service`, not global state.
+- **Config is a store**: read and written through a `*config.ConfigStore`
+  passed in by the caller, not global state.
 - **Tools are self-documenting**: each tool has a `.go` implementation and a
   `.md` description file in `internal/agent/tools/`.
 - **System prompts are Go templates**: `internal/agent/templates/*.md.tpl`
@@ -77,9 +114,8 @@ internal/
 - **Persistence**: SQLite + sqlc. A single global database at
   `~/.local/share/anvil/anvil.db` stores all sessions, messages, files,
   and OAuth tokens. All queries live in `internal/db/sql/`, generated
-  code in `internal/db/`. Migrations in `internal/db/migrations/`.
-  Per-project databases are migrated to the global DB on first startup
-  (`internal/migrate/`).
+  code in `internal/db/`. Migrations in `internal/db/migrations/`. See
+  `docs/adr/0001-global-database.md`.
 - **Pub/sub**: `internal/pubsub` for decoupled communication between agent,
   UI, and services.
 - **Hooks**: User-defined shell commands in `anvil.json` that fire before
@@ -87,16 +123,18 @@ internal/
   and agent — it takes inputs, runs commands, returns decisions. The
   `hookedTool` decorator in `internal/agent/hooked_tool.go` wraps tools at
   the coordinator level. Hooks run before permission checks. See
-  `HOOKS.md` for the user-facing protocol.
+  `docs/hooks/README.md` for the user-facing protocol.
 - **Lazy MCPs**: MCP servers with `lazy_description` set in `anvil.json`
-  connect eagerly but have their tools excluded from the LLM context until
-  explicitly enabled. The `enable_mcp` built-in tool lets the agent activate
+  don't connect at startup, and their tools are excluded from the LLM
+  context until explicitly enabled; the first enable connects them. The
+  `enable_mcp` built-in tool lets the agent activate
   them; humans toggle via the MCP palette dialog (Ctrl+P → "MCP Servers").
   Enabled state is branch-scoped — derived from message history
   (`deriveLazyMCPState` in `internal/agent/lazy_mcp.go`) so it persists
   across restarts and survives compaction. `PrepareStep` filters the tool
   list on every turn. The `LazyMCPState` type in
   `internal/agent/tools/lazy_mcp_state.go` holds the per-Run enabled set.
+  See `docs/adr/0002-lazy-mcp-state-from-messages.md`.
 - **LSP memory management**: auto-configured gopls runs with `-remote=auto`
   so concurrent Anvil processes share one gopls daemon
   (`applyGoplsDaemonDefaults` in `internal/lsp/manager.go`); user-configured
@@ -112,6 +150,16 @@ internal/
   behaviour and the isolated-session test recipe live in
   `plans/completed/design-2026-10-08-herdr-integration.md`; never test
   against the user's default Herdr session.
+- **Cache usage metrics**: every model response (turn steps, summaries,
+  titles, `CompleteSmall`) is recorded as a `step_usage` row with
+  normalised token counts, prices and hashed request fingerprints. The
+  recorder (`internal/agent/cacheusage`) writes on one background
+  goroutine and drops rows rather than block a model call; `Record` is
+  nil-safe, so a nil recorder disables recording. It is observation only:
+  nothing reads the table at runtime. Cache-miss classification lives in
+  SQL in the `anvil-cache-triage` skill
+  (`.agents/skills/anvil-cache-triage/references/classify.sql`), not in
+  Go. Rows older than 90 days are pruned at startup.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
@@ -125,7 +173,10 @@ internal/
   - Update specific package:
     `go test ./internal/tui/components/core -update` (in this case,
     we're updating "core")
-- **Lint**: `task lint:fix`
+- **Lint**: `task lint` (check) or `task lint:fix`. golangci-lint is pinned
+  as a Go tool in its own modfile, so nothing needs installing; bump it with
+  `go get -tool -modfile=tools/golangci-lint.mod
+  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<version>`.
 - **Format**: `task fmt` (`gofumpt -w .`)
 - **Modernize**: `task modernize` (runs `modernize` which makes code
   simplifications)
@@ -134,6 +185,44 @@ internal/
   it through the `terminal` MCP to confirm the change works in a real
   session. This applies to any behaviour change, not just UI. Load the
   `tui-manual-testing` skill for how.
+- **Mutation test**: don't run mutation testing locally. It takes around
+  ten minutes and saturates the machine. The CI `mutation` check runs
+  [gremlins](https://gremlins.dev) on the Go lines a PR changes and is the
+  only place it runs; read its output after pushing and add tests for any
+  mutant it lists.
+
+## Merge Gates
+
+`main` has a ruleset that blocks merging until these checks pass: `build`
+and `lint` on Ubuntu, macOS and Windows, `mutation`, and `govulncheck`.
+Never bypass a failing check, merge with `--admin`, or change the ruleset
+to get a PR in.
+
+`govulncheck` fails when our code calls a function with a known
+vulnerability, including in the Go standard library. It can start failing
+on a PR that didn't cause it, when a new advisory is published. Fix it by
+upgrading the affected module (or the Go version in `go.mod`) to the
+release the output lists under "Fixed in", in its own PR if it's unrelated
+to the change. Run `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`
+to reproduce it locally.
+
+The `mutation` check fails when a mutant on a changed line is `LIVED` (a
+test runs the line but none fails when it changes) or `NOT COVERED` (no
+test runs the line). Fix it by adding or tightening tests until each
+listed mutant makes a test fail. Don't weaken the code or the config to
+dodge it.
+
+Mutants on package-level `const` declarations are listed but don't fail
+the check: Go's coverage tool never instruments them, so gremlins reports
+them NOT COVERED however well the values are tested
+(`scripts/mutation-const/mutationconst`). Pin such values with a test
+anyway.
+
+Some mutants can't be killed because they don't change behaviour, such as
+a boundary flip that both sides of the comparison handle the same. Only
+then, ask the user before adding the `mutation-exempt` label to the PR,
+and explain in the PR description which mutants are left and why each is
+equivalent. The check still runs and reports them, but passes.
 
 ## Code Style Guidelines
 
@@ -167,29 +256,14 @@ internal/
 - **Comments**: End comments in periods unless comments are at the end of the
   line.
 
-## Testing with Mock Providers
+## Testing with Provider Configurations
 
-When writing tests that involve provider configurations, use the mock
-providers to avoid API calls:
-
-```go
-func TestYourFunction(t *testing.T) {
-    // Enable mock providers for testing
-    originalUseMock := config.UseMockProviders
-    config.UseMockProviders = true
-    defer func() {
-        config.UseMockProviders = originalUseMock
-        config.ResetProviders()
-    }()
-
-    // Reset providers to ensure fresh mock data
-    config.ResetProviders()
-
-    // Your test code here - providers will now return mock data
-    providers := config.Providers()
-    // ... test logic
-}
-```
+Tests never fetch the Catwalk catalog. Pass the known providers in as
+fixtures instead: `(*Config).configureProviders` takes them as its last
+argument, so build a small `[]catwalk.Provider` in the test (see
+`internal/config/load_test.go`). Isolate
+`HOME` and `PATH` with `t.Setenv` when the code under test could find real
+credentials, such as the Claude CLI's.
 
 ## Formatting
 
@@ -207,6 +281,8 @@ func TestYourFunction(t *testing.T) {
 
 ## Committing
 
+- Work and commit in a linked worktree on a feature branch, never in the root
+  checkout. Follow the builtin `using-git-worktrees` skill.
 - ALWAYS use semantic commits (`fix:`, `feat:`, `chore:`, `refactor:`,
   `docs:`, `sec:`, etc).
 - Try to keep commits to one line, not including your attribution. Only use

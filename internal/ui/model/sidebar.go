@@ -49,13 +49,8 @@ func (m *UI) modelInfo(width int) string {
 	}
 
 	// Use the drilled-in session's stats when applicable; fall back to root.
-	activeSession := m.session
-	if m.isDrilledIn() {
-		top := m.drillStack[len(m.drillStack)-1]
-		if top.session != nil {
-			activeSession = top.session
-		}
-	}
+	activeSession := m.viewedSession()
+	_, viewingSubagent := m.viewedSessionEntry()
 
 	var modelContext *common.ModelContextInfo
 	if model != nil && activeSession != nil {
@@ -73,7 +68,7 @@ func (m *UI) modelInfo(width int) string {
 
 	// Build extra sidebar lines for drilled-in subagent sessions.
 	var extraLines []string
-	if m.isDrilledIn() {
+	if viewingSubagent {
 		t := m.com.Styles
 		turns, toolCalls := m.viewedSessionStats()
 		statsStr := t.ModelInfo.Stats.Render(fmt.Sprintf("%d turns · %d tools", turns, toolCalls))
@@ -115,8 +110,8 @@ func (m *UI) modelInfo(width int) string {
 // parent agent item with pre-computed stats. The root session is only shown
 // when NOT drilled in, so tick-driven performance is not a concern there.
 func (m *UI) viewedSessionStats() (turns, toolCalls int) {
-	if m.isDrilledIn() {
-		sid := m.viewedSessionID()
+	if entry, ok := m.viewedSessionEntry(); ok {
+		sid := entry.sessionID
 		_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(sid)
 		if !ok {
 			return 0, 0
@@ -130,7 +125,7 @@ func (m *UI) viewedSessionStats() (turns, toolCalls int) {
 	}
 
 	// Root session: derive counts from the chat item list.
-	c := m.activeChat()
+	c := m.chat
 	for i := range c.Len() {
 		item := c.ItemAt(i)
 		if _, ok := item.(*chat.AssistantMessageItem); ok {
@@ -147,10 +142,11 @@ func (m *UI) viewedSessionStats() (turns, toolCalls int) {
 // being viewed is still running. It determines running state from the
 // parent agent item's ToolStatus rather than a time heuristic.
 func (m *UI) isViewedSubagentRunning() bool {
-	if !m.isDrilledIn() {
+	entry, ok := m.viewedSessionEntry()
+	if !ok {
 		return false
 	}
-	sid := m.viewedSessionID()
+	sid := entry.sessionID
 	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(sid)
 	if !ok {
 		return false

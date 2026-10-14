@@ -118,6 +118,15 @@ func TestRestartRequired(t *testing.T) {
 			curB:     bouncer(func(b *Bouncer) { b.Mode = BouncerOff }),
 		},
 		{
+			name:   "yolo default changed",
+			mutate: func(c *Config) { c.Yolo = YoloModeFull },
+			want:   []string{"yolo"},
+		},
+		{
+			name:   "yolo off equals unset",
+			mutate: func(c *Config) { c.Yolo = YoloModeOff },
+		},
+		{
 			name:       "project directory changed",
 			startupRaw: ".anvil",
 			curRaw:     "state",

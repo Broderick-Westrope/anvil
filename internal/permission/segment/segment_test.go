@@ -221,6 +221,11 @@ func TestSplit(t *testing.T) {
 			want:    []string{`$'\x72m' -rf x`, "rm -rf x"},
 		},
 		{
+			name:    "ANSI-C control characters become spaces",
+			command: `echo $'a\tb\nc'`,
+			want:    []string{`echo $'a\tb\nc'`, "echo a b c"},
+		},
+		{
 			name:    "command path is reduced to its base name",
 			command: "/bin/rm -rf x",
 			want:    []string{"/bin/rm -rf x", "rm -rf x"},
@@ -269,6 +274,36 @@ func TestSplit(t *testing.T) {
 			name:    "double-quoted variable keeps its printed form",
 			command: `rm "$dir"`,
 			want:    []string{`rm "$dir"`},
+		},
+		{
+			name:    "script payloads unwrap up to the depth limit",
+			command: strings.Repeat("eval ", 8) + "rm -rf x",
+			want: []string{
+				strings.Repeat("eval ", 8) + "rm -rf x",
+				strings.Repeat("eval ", 7) + "rm -rf x",
+				strings.Repeat("eval ", 6) + "rm -rf x",
+				strings.Repeat("eval ", 5) + "rm -rf x",
+				strings.Repeat("eval ", 4) + "rm -rf x",
+				strings.Repeat("eval ", 3) + "rm -rf x",
+				strings.Repeat("eval ", 2) + "rm -rf x",
+				strings.Repeat("eval ", 1) + "rm -rf x",
+				"rm -rf x",
+			},
+		},
+		{
+			name:    "script payloads past the depth limit stay wrapped",
+			command: strings.Repeat("eval ", 9) + "rm -rf x",
+			want: []string{
+				strings.Repeat("eval ", 9) + "rm -rf x",
+				strings.Repeat("eval ", 8) + "rm -rf x",
+				strings.Repeat("eval ", 7) + "rm -rf x",
+				strings.Repeat("eval ", 6) + "rm -rf x",
+				strings.Repeat("eval ", 5) + "rm -rf x",
+				strings.Repeat("eval ", 4) + "rm -rf x",
+				strings.Repeat("eval ", 3) + "rm -rf x",
+				strings.Repeat("eval ", 2) + "rm -rf x",
+				strings.Repeat("eval ", 1) + "rm -rf x",
+			},
 		},
 		{
 			name:    "duplicates deduped",
@@ -549,40 +584,6 @@ func TestSplitKeepsEnvironment(t *testing.T) {
 		t.Run(tt.command, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tt.want, Split(tt.command))
-		})
-	}
-}
-
-func TestSimpleCommand(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		command string
-		argv    []string
-		ok      bool
-	}{
-		{"ls -la", []string{"ls", "-la"}, true},
-		{`git log "--output=x"`, []string{"git", "log", "--output=x"}, true},
-		{`git log --out\put=x`, []string{"git", "log", "--output=x"}, true},
-		{"echo 'a b' c", []string{"echo", "a b", "c"}, true},
-		{"echo $HOME", nil, false},
-		{"echo $(id)", nil, false},
-		{"FOO=bar ls", nil, false},
-		{"ls > out", nil, false},
-		{"ls &", nil, false},
-		{"! ls", nil, false},
-		{"ls; pwd", nil, false},
-		{"ls | wc", nil, false},
-		{"(ls)", nil, false},
-		{"", nil, false},
-		{"ls '", nil, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.command, func(t *testing.T) {
-			t.Parallel()
-			argv, ok := SimpleCommand(tt.command)
-			require.Equal(t, tt.ok, ok)
-			require.Equal(t, tt.argv, argv)
 		})
 	}
 }

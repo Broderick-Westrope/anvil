@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestJQ_CtxCancel verifies that handleJQ polls ctx during iteration and
@@ -207,5 +209,53 @@ func TestJQ_Success(t *testing.T) {
 	}
 	if got := stdout.String(); got != "1\n" {
 		t.Fatalf("stdout = %q, want %q", got, "1\n")
+	}
+}
+
+// cancelAtEOFReader serves its data, then cancels ctx as it reports EOF,
+// so cancellation is first observable after io.ReadAll has returned.
+type cancelAtEOFReader struct {
+	data   *strings.Reader
+	cancel context.CancelFunc
+}
+
+func (r cancelAtEOFReader) Read(p []byte) (int, error) {
+	n, err := r.data.Read(p)
+	if errors.Is(err, io.EOF) {
+		r.cancel()
+	}
+	return n, err
+}
+
+// TestJQ_CtxCancel_AfterRead verifies that a cancellation observed while
+// splitting or decoding already-read input surfaces as ctx.Err() with no
+// output, even when the input itself is invalid. It calls handleJQ directly
+// because shell.Run copies stdin through an os.Pipe, so the cancellation
+// can't be timed to land between the read and the decode.
+func TestJQ_CtxCancel_AfterRead(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		args  []string
+		input string
+	}{
+		"json":         {args: []string{"jq", "."}, input: "1 2 3"},
+		"invalid json": {args: []string{"jq", "."}, input: "{"},
+		"raw":          {args: []string{"jq", "-R", "."}, input: "a\nb"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			reader := cancelAtEOFReader{data: strings.NewReader(tc.input), cancel: cancel}
+			var stdout, stderr bytes.Buffer
+
+			err := handleJQ(ctx, tc.args, reader, &stdout, &stderr)
+
+			require.ErrorIs(t, err, context.Canceled)
+			require.Empty(t, stdout.String())
+			require.Empty(t, stderr.String())
+		})
 	}
 }

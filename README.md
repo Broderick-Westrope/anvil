@@ -537,6 +537,21 @@ rules and the [bouncer](#bouncer). Be very, very careful with these.
 editor gutter shows the current level: an amber ` ! ` for standard and a red
 `!!!` for full.
 
+To start every session at a level without passing the flag, set `yolo` in
+your **user-level** config (`~/.config/anvil/anvil.json`). Like the bouncer,
+it is ignored in project and workspace configs, so a cloned repo can't switch
+it on.
+
+```json
+{
+  "yolo": "standard"
+}
+```
+
+Values are `off` (the default), `standard` and `full`. `--yolo`,
+`--yolo=full` and `--yolo=false` override it for one run, and `anvil run`
+ignores it.
+
 #### Bouncer
 
 The bouncer is an optional classifier that answers permission prompts on
@@ -783,6 +798,26 @@ by-name loading. Names resolve against the executing tool's registry snapshot;
 an unknown name returns an error without searching the filesystem. Loading a
 skill supplies task context, not additional tools, delegation, or authority.
 
+#### Unlisted skills
+
+Set `unlisted: true` in a skill's frontmatter to keep it out of the prompt
+catalog:
+
+```yaml
+---
+name: design-it-twice
+description: Compare several designs for one module before picking one.
+unlisted: true
+---
+```
+
+The description then costs no context and the skill never triggers on its
+own, but it still works everywhere a name is given: you can attach it from the
+skill picker or `/` autocomplete (marked `unlisted`), a command can preload it
+with `skills:`, and any agent can load it with `view(skill_name=...)`. Use it
+for skills that only specific commands, agents or other skills should pull in.
+`anvil_info` shows unlisted skills as `unlisted`.
+
 The global paths we looks for skills are:
 
 - `$ANVIL_SKILLS_DIR`
@@ -863,6 +898,11 @@ Commands are not nested, and `COMMAND.md` must be uppercase. Anvil logs a
 warning for anything it skips: loose `.md` files in a commands directory
 (skills directories get the same check) and directories without a
 `COMMAND.md`.
+
+`COMMAND.md` frontmatter takes a `description`, an `argument_hint` shown in
+autocomplete, and `skills`, a list of skill names whose bodies are sent with
+the command. `$ARGUMENTS` in the body is replaced with whatever follows the
+command name.
 
 ### Desktop notifications
 

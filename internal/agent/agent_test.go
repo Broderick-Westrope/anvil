@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -90,6 +91,8 @@ func TestOrchestratorAgent(t *testing.T) {
 				assert.Equal(t, len(msgs), 2)
 			})
 			t.Run("read a file", func(t *testing.T) {
+				// The usage checks below expect Anthropic cache markers.
+				t.Setenv("ANVIL_DISABLE_ANTHROPIC_CACHE", "")
 				agent, env := setupAgent(t, pair)
 
 				session, err := env.sessions.Create(t.Context(), "New Session", t.TempDir())
@@ -128,6 +131,37 @@ func TestOrchestratorAgent(t *testing.T) {
 					}
 				}
 				require.True(t, foundFile)
+
+				// Usage rows match the cassette's reported usage.
+				agent.(interface{ WaitBackgroundJobs() }).WaitBackgroundJobs()
+				rows := stepUsageRows(t, env)
+				turns := filterUsageRows(rows, usageKindTurn)
+				require.Len(t, turns, 3)
+				for i, row := range turns {
+					require.Equal(t, int64(i), row.stepIndex)
+					require.Equal(t, turns[0].runID, row.runID)
+					require.Equal(t, session.ID, row.sessionID)
+					require.NotEmpty(t, row.messageID)
+					require.NotEmpty(t, row.toolsHash)
+					require.NotEmpty(t, row.systemHash)
+					require.Equal(t, turns[0].toolsHash, row.toolsHash)
+					require.Equal(t, turns[0].systemHash, row.systemHash)
+					require.Zero(t, row.estimated)
+					require.Equal(t, cachePolicyAnthropicEphemeral, row.cachePolicy)
+				}
+				require.NotEmpty(t, turns[0].runID)
+				require.Equal(t, int64(9100), turns[0].cacheWrite)
+				require.Zero(t, turns[0].cacheRead)
+				require.Equal(t, int64(9100), turns[1].cacheRead)
+				require.Equal(t, int64(9279), turns[2].cacheRead)
+				require.False(t, turns[0].prefixMatch.Valid)
+				for _, row := range turns[1:] {
+					require.True(t, row.prefixMatch.Valid)
+					require.Equal(t, int64(1), row.prefixMatch.Int64)
+				}
+				titles := filterUsageRows(rows, usageKindTitle)
+				require.Len(t, titles, 1)
+				require.Zero(t, titles[0].attempt)
 			})
 			t.Run("update a file", func(t *testing.T) {
 				agent, env := setupAgent(t, pair)
@@ -694,7 +728,7 @@ func TestPreparePrompt_FiltersImageAttachments(t *testing.T) {
 	require.NoError(t, err)
 
 	// When supportsImages is false, image attachments should be stripped.
-	history, _ := agent.preparePrompt(msgs, false)
+	history := agent.preparePrompt(msgs, false)
 	// First message is the system reminder, second is the user message.
 	require.Len(t, history, 2)
 	require.Len(t, history[1].Content, 1)
@@ -704,7 +738,7 @@ func TestPreparePrompt_FiltersImageAttachments(t *testing.T) {
 	require.Contains(t, text.Text, "important notes")
 
 	// When supportsImages is true, image attachments should remain.
-	history, _ = agent.preparePrompt(msgs, true)
+	history = agent.preparePrompt(msgs, true)
 	require.Len(t, history, 2)
 	require.Len(t, history[1].Content, 2)
 	text, ok = fantasy.AsMessagePart[fantasy.TextPart](history[1].Content[0])
@@ -761,7 +795,7 @@ func TestPreparePrompt_OrphanedToolUse(t *testing.T) {
 	msgs, err := env.messages.List(ctx, sess.ID)
 	require.NoError(t, err)
 
-	history, _ := agent.preparePrompt(msgs, true)
+	history := agent.preparePrompt(msgs, true)
 
 	// The history must contain a synthetic tool result for the orphaned call.
 	found := false
@@ -835,7 +869,7 @@ func TestPreparePrompt_OrphanedToolUseMixed(t *testing.T) {
 	msgs, err := env.messages.List(ctx, sess.ID)
 	require.NoError(t, err)
 
-	history, _ := agent.preparePrompt(msgs, true)
+	history := agent.preparePrompt(msgs, true)
 
 	// Should have a synthetic result only for the orphaned call.
 	var syntheticCount int
@@ -968,7 +1002,7 @@ func TestPreparePrompt_NonAdjacentToolResults(t *testing.T) {
 
 	require.Equal(t, message.User, msgs[2].Role, "interleaved user should be between assistant and results in DB order")
 
-	history, _ := agent.preparePrompt(msgs, false)
+	history := agent.preparePrompt(msgs, false)
 
 	requireToolCallAdjacency(t, history)
 
@@ -1018,7 +1052,7 @@ func TestPreparePrompt_ResultBeforeAssistant(t *testing.T) {
 	msgs, err := env.messages.List(ctx, sess.ID)
 	require.NoError(t, err)
 
-	history, _ := agent.preparePrompt(msgs, false)
+	history := agent.preparePrompt(msgs, false)
 
 	requireToolCallAdjacency(t, history)
 
@@ -1085,7 +1119,7 @@ func TestPreparePrompt_BundledResultsAcrossAssistants(t *testing.T) {
 	msgs, err := env.messages.List(ctx, sess.ID)
 	require.NoError(t, err)
 
-	history, _ := agent.preparePrompt(msgs, false)
+	history := agent.preparePrompt(msgs, false)
 
 	requireToolCallAdjacency(t, history)
 
@@ -1135,10 +1169,53 @@ func TestPreparePrompt_DropsOrphanedToolResults(t *testing.T) {
 	msgs, err := env.messages.List(ctx, sess.ID)
 	require.NoError(t, err)
 
-	history, _ := agent.preparePrompt(msgs, false)
+	history := agent.preparePrompt(msgs, false)
 
 	for _, msg := range history {
 		require.NotEqual(t, fantasy.MessageRoleTool, msg.Role, "orphaned tool results must be dropped")
+	}
+}
+
+func TestPreparePrompt_SkipsEmptyMessages(t *testing.T) {
+	t.Parallel()
+	finished := message.Finish{Reason: message.FinishReasonCanceled}
+	tests := map[string]struct {
+		msg  message.Message
+		kept bool
+	}{
+		"no parts": {msg: message.Message{Role: message.User}},
+		"assistant cancelled before replying": {
+			msg: message.Message{Role: message.Assistant, Parts: []message.ContentPart{finished}},
+		},
+		"assistant with text": {
+			msg:  message.Message{Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: "hi"}, finished}},
+			kept: true,
+		},
+		"assistant with reasoning": {
+			msg:  message.Message{Role: message.Assistant, Parts: []message.ContentPart{message.ReasoningContent{Thinking: "hmm"}, finished}},
+			kept: true,
+		},
+		"assistant with a tool call": {
+			msg:  message.Message{Role: message.Assistant, Parts: []message.ContentPart{message.ToolCall{ID: "call", Name: "view", Input: "{}", Finished: true}, finished}},
+			kept: true,
+		},
+		"user with only an image": {
+			msg:  message.Message{Role: message.User, Parts: []message.ContentPart{message.BinaryContent{Path: "image.png", MIMEType: "image/png", Data: []byte("png")}}},
+			kept: true,
+		},
+	}
+	next := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "next"}}}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			history := (&sessionAgent{isSubAgent: true}).preparePrompt([]message.Message{tt.msg, next}, true)
+			require.NotEmpty(t, history, "the message after it is kept")
+			last := history[len(history)-1]
+			text, ok := fantasy.AsMessagePart[fantasy.TextPart](last.Content[0])
+			require.True(t, ok)
+			require.Equal(t, "next", text.Text)
+			require.Equal(t, tt.kept, len(history) > 1)
+		})
 	}
 }
 
@@ -1310,5 +1387,55 @@ func TestProviderRetryLogFields(t *testing.T) {
 			"retry_delay", "1s",
 			"status_code", 503,
 		}, fields)
+	})
+}
+
+func TestCompleteSmall(t *testing.T) {
+	t.Parallel()
+	t.Run("no small model", func(t *testing.T) {
+		t.Parallel()
+		env := testEnv(t)
+		a := sideCallAgent(env, Model{}, Model{}, "", config.ProviderConfig{})
+		_, _, err := a.completeSmall(t.Context(), "review", "is this safe?")
+		require.EqualError(t, err, "small model not configured")
+	})
+	for name, tt := range map[string]struct {
+		canReason bool
+		maxTokens int64
+		want      int64
+	}{
+		"plain model":               {maxTokens: 4000, want: completeSmallMaxTokens},
+		"reasoning model with more": {canReason: true, maxTokens: 4000, want: 4000},
+		"reasoning model with less": {canReason: true, maxTokens: 10, want: completeSmallMaxTokens},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := testEnv(t)
+			model := &recordingModel{respond: func(int) ([]fantasy.StreamPart, error) {
+				return textReply("allow", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 1}), nil
+			}}
+			m := Model{Model: model, CatwalkCfg: catwalk.Model{DefaultMaxTokens: tt.maxTokens, CanReason: tt.canReason}, ModelCfg: config.SelectedModel{Model: "small-id"}}
+			a := sideCallAgent(env, m, m, "", config.ProviderConfig{})
+			reply, modelID, err := a.completeSmall(t.Context(), "review", "is this safe?")
+			require.NoError(t, err)
+			require.Equal(t, "allow", reply)
+			require.Equal(t, "small-id", modelID)
+			recorded := model.recorded()
+			require.Len(t, recorded, 1)
+			require.Equal(t, tt.want, *recorded[0].MaxOutputTokens)
+		})
+	}
+	t.Run("stream error", func(t *testing.T) {
+		t.Parallel()
+		env := testEnv(t)
+		model := &recordingModel{respond: func(int) ([]fantasy.StreamPart, error) {
+			return nil, errors.New("down")
+		}}
+		m := Model{Model: model, ModelCfg: config.SelectedModel{Model: "small-id"}}
+		a := sideCallAgent(env, m, m, "", config.ProviderConfig{})
+		_, modelID, err := a.completeSmall(t.Context(), "review", "is this safe?")
+		require.ErrorContains(t, err, "small model: ")
+		require.ErrorContains(t, err, "down")
+		require.Equal(t, "small-id", modelID)
 	})
 }

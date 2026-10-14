@@ -27,6 +27,7 @@ type Querier interface {
 	DeletePermissionDecisionsBefore(ctx context.Context, createdAt int64) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
+	DeleteStepUsageBefore(ctx context.Context, responseFinishedAt int64) error
 	FinalizeBackgroundJob(ctx context.Context, arg FinalizeBackgroundJobParams) (int64, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
 	GetBackgroundJob(ctx context.Context, id int64) (BackgroundJob, error)
@@ -41,6 +42,7 @@ type Querier interface {
 	GetMessageChildren(ctx context.Context, parentID sql.NullString) ([]Message, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
 	InsertPermissionDecision(ctx context.Context, arg InsertPermissionDecisionParams) error
+	InsertStepUsage(ctx context.Context, arg InsertStepUsageParams) error
 	ListAllSessions(ctx context.Context) ([]Session, error)
 	ListAnvilInstances(ctx context.Context) ([]AnvilInstance, error)
 	ListBackgroundJobIDsBySession(ctx context.Context, sessionID string) ([]int64, error)

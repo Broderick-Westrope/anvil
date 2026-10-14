@@ -245,6 +245,16 @@
           "$ref": "#/$defs/Bouncer",
           "description": "Classifier that answers permission prompts. Only read from user-level config files"
         },
+        "yolo": {
+          "type": "string",
+          "enum": [
+            "off",
+            "standard",
+            "full"
+          ],
+          "description": "Yolo level new sessions start at when --yolo is not passed. Only read from user-level config files",
+          "default": "off"
+        },
         "tools": {
           "$ref": "#/$defs/Tools",
           "description": "Tool configurations"
@@ -834,10 +844,18 @@
           "enum": [
             "openai",
             "openai-compat",
+            "openrouter",
+            "vercel",
             "anthropic",
-            "gemini",
+            "google",
             "azure",
-            "vertexai"
+            "bedrock",
+            "google-vertex",
+            "llamacpp",
+            "omlx",
+            "lmstudio",
+            "litellm",
+            "ollama"
           ],
           "description": "Provider type that determines the API format",
           "default": "openai"

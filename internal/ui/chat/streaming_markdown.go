@@ -1257,3 +1257,9 @@ func isLinkRefDefinition(line string) bool {
 	// At least one non-whitespace character of destination.
 	return i < len(line)
 }
+
+// countLines returns the number of lines in s; an empty string is one
+// line.
+func countLines(s string) int {
+	return 1 + strings.Count(s, "\n")
+}

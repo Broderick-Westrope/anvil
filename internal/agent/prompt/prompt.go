@@ -216,17 +216,20 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 	workingDir := cmp.Or(p.workingDir, store.WorkingDir())
 	platform := cmp.Or(p.platform, runtime.GOOS)
 
-	files := map[string][]ContextFile{}
+	// Context files keep the order of context_paths so the system prompt is
+	// identical across runs and its prompt cache stays valid.
+	var contextFiles []ContextFile
+	seenPaths := map[string]bool{}
 
 	cfg := store.Config()
 	for _, pth := range cfg.Options.ContextPaths {
 		expanded := expandPath(pth, store)
 		pathKey := strings.ToLower(expanded)
-		if _, ok := files[pathKey]; ok {
+		if seenPaths[pathKey] {
 			continue
 		}
-		content := processContextPath(expanded, store)
-		files[pathKey] = content
+		seenPaths[pathKey] = true
+		contextFiles = append(contextFiles, processContextPath(expanded, store)...)
 	}
 
 	// Discover and load skills metadata.
@@ -294,9 +297,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 		}
 	}
 
-	for _, contextFiles := range files {
-		data.ContextFiles = append(data.ContextFiles, contextFiles...)
-	}
+	data.ContextFiles = contextFiles
 	return data, nil
 }
 

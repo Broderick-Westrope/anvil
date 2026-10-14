@@ -72,8 +72,8 @@ type (
 	}
 	ClearStatusMsg struct{}
 
-	// DrillInMsg requests the UI to drill into a subagent session.
-	DrillInMsg struct {
+	// AgentDrillInMsg requests the UI to drill into a subagent session.
+	AgentDrillInMsg struct {
 		SessionID string
 		Label     string
 	}
@@ -82,6 +82,12 @@ type (
 	ToolDrillInMsg struct {
 		ToolItem any // chat.ToolMessageItem
 		Label    string
+	}
+
+	// ThinkingDrillInMsg is sent when drilling into an assistant message's
+	// thinking text.
+	ThinkingDrillInMsg struct {
+		Source any // *chat.AssistantMessageItem
 	}
 )
 

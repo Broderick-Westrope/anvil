@@ -66,16 +66,22 @@ func (s *SkillPickerItem) SetMatch(m fuzzy.Match) {
 	s.Bump()
 }
 
-// sourceLabel returns a human-readable label for the skill source.
+// sourceLabel returns a human-readable label for the skill source, prefixed
+// with "unlisted" when the agent's catalog leaves the skill out.
 func (s *SkillPickerItem) sourceLabel() string {
-	switch {
-	case s.skill.Source == skills.SourceBuiltin:
-		return "builtin"
-	case s.skill.Source == "":
-		return "user"
+	var source string
+	switch s.skill.Source {
+	case skills.SourceBuiltin:
+		source = "builtin"
+	case "":
+		source = "user"
 	default:
-		return s.skill.Source
+		source = s.skill.Source
 	}
+	if s.skill.Unlisted {
+		return "unlisted · " + source
+	}
+	return source
 }
 
 // Render renders the skill item.

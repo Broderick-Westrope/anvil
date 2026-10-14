@@ -2,10 +2,12 @@ package message
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
@@ -95,79 +97,80 @@ func (c *eventCollector) reset() {
 func TestUpdate_DebouncesTextDeltas(t *testing.T) {
 	t.Parallel()
 
-	// Long-enough debounce that we can verify nothing flushes prematurely.
-	svc, sessionID := newTestService(t, WithDebounce(50*time.Millisecond))
+	synctest.Test(t, func(t *testing.T) {
+		const debounce = 50 * time.Millisecond
+		svc, sessionID := newTestService(t, WithDebounce(debounce))
 
-	subCtx, cancelSub := context.WithCancel(t.Context())
-	defer cancelSub()
-	sub := svc.Subscribe(subCtx)
-	collector := collect(subCtx, sub)
+		subCtx, cancelSub := context.WithCancel(t.Context())
+		defer cancelSub()
+		sub := svc.Subscribe(subCtx)
+		collector := collect(subCtx, sub)
 
-	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{
-		Role: Assistant,
+		msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{
+			Role: Assistant,
+		})
+		require.NoError(t, err)
+		// Drop the CreatedEvent emitted by Create.
+		synctest.Wait()
+		collector.reset()
+
+		// Push 5 deltas inside a single debounce window.
+		for i := 0; i < 5; i++ {
+			msg.AppendContent("a")
+			require.NoError(t, svc.Update(testCtx(t), msg))
+		}
+
+		// Just before the debounce expires no UpdatedEvent should have
+		// landed.
+		time.Sleep(debounce - time.Nanosecond)
+		synctest.Wait()
+		require.Empty(t, collector.snapshot(), "no events should land before debounce window expires")
+
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		events := collector.snapshot()
+		require.Len(t, events, 1, "5 deltas should coalesce into 1 UpdatedEvent")
+		require.Equal(t, pubsub.UpdatedEvent, events[0].Type)
+		require.Equal(t, "aaaaa", events[0].Payload.Content().Text)
+
+		// Final state must be persisted.
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Equal(t, "aaaaa", got.Content().Text)
 	})
-	require.NoError(t, err)
-	// Drop the CreatedEvent emitted by Create.
-	time.Sleep(5 * time.Millisecond)
-	collector.reset()
-
-	// Push 5 deltas inside a single debounce window.
-	for i := 0; i < 5; i++ {
-		msg.AppendContent("a")
-		require.NoError(t, svc.Update(t.Context(), msg))
-	}
-
-	// Before the debounce expires no UpdatedEvent should have landed.
-	time.Sleep(10 * time.Millisecond)
-	require.Empty(t, collector.snapshot(), "no events should land before debounce window expires")
-
-	// Wait for the debounce timer to fire.
-	require.Eventually(t, func() bool {
-		return len(collector.snapshot()) >= 1
-	}, time.Second, 5*time.Millisecond)
-	events := collector.snapshot()
-	require.Len(t, events, 1, "5 deltas should coalesce into 1 UpdatedEvent")
-	require.Equal(t, pubsub.UpdatedEvent, events[0].Type)
-	require.Equal(t, "aaaaa", events[0].Payload.Content().Text)
-
-	// Final state must be persisted.
-	got, err := svc.Get(t.Context(), msg.ID)
-	require.NoError(t, err)
-	require.Equal(t, "aaaaa", got.Content().Text)
 }
 
 func TestUpdate_TerminalUpdatesFlushSynchronously(t *testing.T) {
 	t.Parallel()
 
-	svc, sessionID := newTestService(t, WithDebounce(time.Hour))
+	synctest.Test(t, func(t *testing.T) {
+		svc, sessionID := newTestService(t, WithDebounce(time.Hour))
 
-	subCtx, cancelSub := context.WithCancel(t.Context())
-	defer cancelSub()
-	sub := svc.Subscribe(subCtx)
-	collector := collect(subCtx, sub)
+		subCtx, cancelSub := context.WithCancel(t.Context())
+		defer cancelSub()
+		sub := svc.Subscribe(subCtx)
+		collector := collect(subCtx, sub)
 
-	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
-	require.NoError(t, err)
-	time.Sleep(5 * time.Millisecond)
-	collector.reset()
+		msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+		require.NoError(t, err)
+		synctest.Wait()
+		collector.reset()
 
-	// AddFinish makes the message terminal; Update must flush
-	// synchronously even with a 1-hour debounce.
-	msg.AppendContent("done")
-	msg.AddFinish(FinishReasonEndTurn, "", "")
-	require.NoError(t, svc.Update(t.Context(), msg))
+		// AddFinish makes the message terminal; Update must flush
+		// synchronously even with a 1-hour debounce.
+		msg.AppendContent("done")
+		msg.AddFinish(FinishReasonEndTurn, "", "")
+		require.NoError(t, svc.Update(testCtx(t), msg))
+		synctest.Wait()
 
-	require.Eventually(t, func() bool {
-		return len(collector.snapshot()) >= 1
-	}, time.Second, 5*time.Millisecond,
-		"terminal update must publish without waiting for debounce")
-	events := collector.snapshot()
-	require.Len(t, events, 1)
-	require.True(t, events[0].Payload.IsFinished())
+		events := collector.snapshot()
+		require.Len(t, events, 1, "terminal update must publish without waiting for debounce")
+		require.True(t, events[0].Payload.IsFinished())
 
-	got, err := svc.Get(t.Context(), msg.ID)
-	require.NoError(t, err)
-	require.True(t, got.IsFinished())
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.True(t, got.IsFinished())
+	})
 }
 
 func TestUpdate_ToolCallStructuralChangeFlushes(t *testing.T) {
@@ -180,7 +183,7 @@ func TestUpdate_ToolCallStructuralChangeFlushes(t *testing.T) {
 
 	// Adding a new tool call is a structural change → sync flush.
 	msg.AddToolCall(ToolCall{ID: "tc1", Name: "view", Finished: false})
-	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Update(testCtx(t), msg))
 
 	got, err := svc.Get(t.Context(), msg.ID)
 	require.NoError(t, err)
@@ -189,11 +192,48 @@ func TestUpdate_ToolCallStructuralChangeFlushes(t *testing.T) {
 
 	// Marking the tool call finished is also a structural change.
 	msg.AddToolCall(ToolCall{ID: "tc1", Name: "view", Input: "{}", Finished: true})
-	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Update(testCtx(t), msg))
 
 	got, err = svc.Get(t.Context(), msg.ID)
 	require.NoError(t, err)
 	require.True(t, got.ToolCalls()[0].Finished)
+}
+
+// TestUpdate_DeltaAfterStructuralFlushDebounces guards against pruning
+// the pending entry on every structural flush. Pruning drops the
+// last-flushed baseline, so every later delta compared against an empty
+// message and flushed synchronously.
+func TestUpdate_DeltaAfterStructuralFlushDebounces(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(*Message){
+		"tool call added":    func(m *Message) { m.AddToolCall(ToolCall{ID: "tc1", Name: "view"}) },
+		"reasoning finished": func(m *Message) { m.AppendReasoningContent("hmm"); m.FinishThinking() },
+	}
+
+	for name, structural := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			svc, sessionID := newTestService(t, WithDebounce(time.Hour))
+			impl := svc.(*service)
+
+			msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+			require.NoError(t, err)
+			structural(&msg)
+			require.NoError(t, svc.Update(testCtx(t), msg))
+			require.Equal(t, 1, impl.PendingCount(), "an unfinished message keeps its baseline")
+
+			// The structural change is already on disk, so a text delta
+			// stays in the debounce buffer.
+			msg.AppendContent("delta")
+			require.NoError(t, svc.Update(testCtx(t), msg))
+
+			got, err := svc.Get(t.Context(), msg.ID)
+			require.NoError(t, err)
+			require.Empty(t, got.Content().Text, "delta should still be in the debounce buffer")
+		})
+	}
 }
 
 func TestUpdate_ReasoningEndFlushes(t *testing.T) {
@@ -206,14 +246,14 @@ func TestUpdate_ReasoningEndFlushes(t *testing.T) {
 
 	// Reasoning deltas alone debounce.
 	msg.AppendReasoningContent("hmm")
-	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Update(testCtx(t), msg))
 	got, err := svc.Get(t.Context(), msg.ID)
 	require.NoError(t, err)
 	require.Empty(t, got.ReasoningContent().Thinking, "reasoning delta should still be in the debounce buffer")
 
 	// FinishThinking sets FinishedAt → terminal flush.
 	msg.FinishThinking()
-	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Update(testCtx(t), msg))
 
 	got, err = svc.Get(t.Context(), msg.ID)
 	require.NoError(t, err)
@@ -229,21 +269,21 @@ func TestFlush_DrainsPendingDebouncedUpdates(t *testing.T) {
 	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
 	require.NoError(t, err)
 	msg.AppendContent("buffered")
-	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Update(testCtx(t), msg))
 
 	// Without a flush the SQL row is unchanged from Create.
 	got, err := svc.Get(t.Context(), msg.ID)
 	require.NoError(t, err)
 	require.Empty(t, got.Content().Text)
 
-	require.NoError(t, svc.Flush(t.Context(), msg.ID))
+	require.NoError(t, svc.Flush(testCtx(t), msg.ID))
 
 	got, err = svc.Get(t.Context(), msg.ID)
 	require.NoError(t, err)
 	require.Equal(t, "buffered", got.Content().Text)
 
 	// Subsequent Flush is a no-op.
-	require.NoError(t, svc.Flush(t.Context(), msg.ID))
+	require.NoError(t, svc.Flush(testCtx(t), msg.ID))
 }
 
 func TestFlushAll_DrainsAllPending(t *testing.T) {
@@ -257,11 +297,11 @@ func TestFlushAll_DrainsAllPending(t *testing.T) {
 		m, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
 		require.NoError(t, err)
 		m.AppendContent("hi")
-		require.NoError(t, svc.Update(t.Context(), m))
+		require.NoError(t, svc.Update(testCtx(t), m))
 		msgs[i] = m
 	}
 
-	require.NoError(t, svc.FlushAll(t.Context()))
+	require.NoError(t, svc.FlushAll(testCtx(t)))
 
 	for _, m := range msgs {
 		got, err := svc.Get(t.Context(), m.ID)
@@ -280,27 +320,27 @@ func TestUpdate_OrderingMatchesNonCoalesced(t *testing.T) {
 		msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
 		require.NoError(t, err)
 		msg.AppendReasoningContent("thinking 1 ")
-		require.NoError(t, svc.Update(t.Context(), msg))
+		require.NoError(t, svc.Update(testCtx(t), msg))
 		msg.AppendReasoningContent("thinking 2")
-		require.NoError(t, svc.Update(t.Context(), msg))
+		require.NoError(t, svc.Update(testCtx(t), msg))
 		msg.FinishThinking()
-		require.NoError(t, svc.Update(t.Context(), msg))
+		require.NoError(t, svc.Update(testCtx(t), msg))
 		msg.AppendContent("hello ")
-		require.NoError(t, svc.Update(t.Context(), msg))
+		require.NoError(t, svc.Update(testCtx(t), msg))
 		msg.AppendContent("world")
-		require.NoError(t, svc.Update(t.Context(), msg))
+		require.NoError(t, svc.Update(testCtx(t), msg))
 		msg.AddToolCall(ToolCall{ID: "tc", Name: "x", Finished: false})
-		require.NoError(t, svc.Update(t.Context(), msg))
+		require.NoError(t, svc.Update(testCtx(t), msg))
 		msg.AddToolCall(ToolCall{ID: "tc", Name: "x", Input: "{}", Finished: true})
-		require.NoError(t, svc.Update(t.Context(), msg))
+		require.NoError(t, svc.Update(testCtx(t), msg))
 		msg.AddFinish(FinishReasonEndTurn, "", "")
-		require.NoError(t, svc.Update(t.Context(), msg))
+		require.NoError(t, svc.Update(testCtx(t), msg))
 		return msg
 	}
 
 	coalesced, sid1 := newTestService(t, WithDebounce(20*time.Millisecond))
 	a := build(coalesced, sid1)
-	require.NoError(t, coalesced.FlushAll(t.Context()))
+	require.NoError(t, coalesced.FlushAll(testCtx(t)))
 	gotA, err := coalesced.Get(t.Context(), a.ID)
 	require.NoError(t, err)
 
@@ -322,12 +362,12 @@ func TestDelete_DropsPendingState(t *testing.T) {
 	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
 	require.NoError(t, err)
 	msg.AppendContent("dropped")
-	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Update(testCtx(t), msg))
 
 	require.NoError(t, svc.Delete(t.Context(), msg.ID))
 
 	// FlushAll after Delete must not write to the deleted row.
-	require.NoError(t, svc.FlushAll(t.Context()))
+	require.NoError(t, svc.FlushAll(testCtx(t)))
 
 	_, err = svc.Get(t.Context(), msg.ID)
 	require.Error(t, err, "deleted message must remain deleted")
@@ -357,108 +397,110 @@ func TestBroker_PublishLossyDropCounter(t *testing.T) {
 func TestBroker_PublishMustDeliverHonorsTimeout(t *testing.T) {
 	t.Parallel()
 
-	b := pubsub.NewBrokerWithOptions[int](1)
-	b.SetMustDeliverTimeout(20 * time.Millisecond)
-	defer b.Shutdown()
+	synctest.Test(t, func(t *testing.T) {
+		b := pubsub.NewBrokerWithOptions[int](1)
+		b.SetMustDeliverTimeout(20 * time.Millisecond)
+		defer b.Shutdown()
 
-	subCtx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	sub := b.Subscribe(subCtx)
-	require.NotNil(t, sub)
+		subCtx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		sub := b.Subscribe(subCtx)
+		require.NotNil(t, sub)
 
-	// Saturate: one event sits in the buffer, the second must wait.
-	b.Publish(pubsub.UpdatedEvent, 1)
+		// Saturate: one event sits in the buffer, the second must wait.
+		b.Publish(pubsub.UpdatedEvent, 1)
 
-	// PublishMustDeliver should block up to 20ms then drop.
-	start := time.Now()
-	b.PublishMustDeliver(t.Context(), pubsub.UpdatedEvent, 2)
-	elapsed := time.Since(start)
+		// PublishMustDeliver should block up to 20ms then drop.
+		start := time.Now()
+		b.PublishMustDeliver(t.Context(), pubsub.UpdatedEvent, 2)
+		elapsed := time.Since(start)
 
-	require.GreaterOrEqual(t, elapsed, 20*time.Millisecond,
-		"PublishMustDeliver should block at least the timeout under contention")
-	require.Less(t, elapsed, 200*time.Millisecond,
-		"PublishMustDeliver must not block indefinitely")
-	require.GreaterOrEqual(t, b.MustDeliverDropCount(), uint64(1),
-		"timeout must increment the must-deliver drop counter")
+		require.GreaterOrEqual(t, elapsed, 20*time.Millisecond,
+			"PublishMustDeliver should block at least the timeout under contention")
+		require.Less(t, elapsed, 200*time.Millisecond,
+			"PublishMustDeliver must not block indefinitely")
+		require.GreaterOrEqual(t, b.MustDeliverDropCount(), uint64(1),
+			"timeout must increment the must-deliver drop counter")
+	})
 }
 
 func TestBroker_PublishMustDeliverWithReader(t *testing.T) {
 	t.Parallel()
 
-	b := pubsub.NewBrokerWithOptions[int](1)
-	b.SetMustDeliverTimeout(50 * time.Millisecond)
-	defer b.Shutdown()
+	synctest.Test(t, func(t *testing.T) {
+		b := pubsub.NewBrokerWithOptions[int](1)
+		b.SetMustDeliverTimeout(50 * time.Millisecond)
+		defer b.Shutdown()
 
-	subCtx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	sub := b.Subscribe(subCtx)
+		subCtx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		sub := b.Subscribe(subCtx)
 
-	var received atomic.Uint64
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-subCtx.Done():
-				return
-			case _, ok := <-sub:
-				if !ok {
+		var received atomic.Uint64
+		go func() {
+			for {
+				select {
+				case <-subCtx.Done():
 					return
+				case _, ok := <-sub:
+					if !ok {
+						return
+					}
+					received.Add(1)
 				}
-				received.Add(1)
 			}
+		}()
+
+		for i := range 10 {
+			b.PublishMustDeliver(t.Context(), pubsub.UpdatedEvent, i)
 		}
-	}()
 
-	for i := range 10 {
-		b.PublishMustDeliver(t.Context(), pubsub.UpdatedEvent, i)
-	}
-
-	// All 10 should land within the must-deliver timeout window.
-	require.Eventually(t, func() bool { return received.Load() == 10 },
-		time.Second, 5*time.Millisecond,
-		"all must-deliver events should reach an active subscriber")
-	require.Zero(t, b.MustDeliverDropCount(),
-		"no drops expected when subscriber drains promptly")
+		// All 10 should land within the must-deliver timeout window.
+		synctest.Wait()
+		require.Equal(t, uint64(10), received.Load(),
+			"all must-deliver events should reach an active subscriber")
+		require.Zero(t, b.MustDeliverDropCount(),
+			"no drops expected when subscriber drains promptly")
+	})
 }
 
 func TestUpdate_TerminalEventUsesMustDeliver(t *testing.T) {
 	t.Parallel()
 
-	svc, sessionID := newTestService(t, WithDebounce(time.Hour))
+	synctest.Test(t, func(t *testing.T) {
+		svc, sessionID := newTestService(t, WithDebounce(time.Hour))
 
-	subCtx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	sub := svc.Subscribe(subCtx)
+		subCtx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		sub := svc.Subscribe(subCtx)
 
-	var seenFinish atomic.Bool
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-subCtx.Done():
-				return
-			case ev, ok := <-sub:
-				if !ok {
+		var seenFinish atomic.Bool
+		go func() {
+			for {
+				select {
+				case <-subCtx.Done():
 					return
-				}
-				if ev.Type == pubsub.UpdatedEvent && ev.Payload.IsFinished() {
-					seenFinish.Store(true)
+				case ev, ok := <-sub:
+					if !ok {
+						return
+					}
+					if ev.Type == pubsub.UpdatedEvent && ev.Payload.IsFinished() {
+						seenFinish.Store(true)
+					}
 				}
 			}
-		}
-	}()
+		}()
 
-	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
-	require.NoError(t, err)
-	msg.AppendContent("final")
-	msg.AddFinish(FinishReasonEndTurn, "", "")
-	require.NoError(t, svc.Update(t.Context(), msg))
+		msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+		require.NoError(t, err)
+		msg.AppendContent("final")
+		msg.AddFinish(FinishReasonEndTurn, "", "")
+		require.NoError(t, svc.Update(testCtx(t), msg))
 
-	require.Eventually(t, func() bool { return seenFinish.Load() },
-		time.Second, 10*time.Millisecond,
-		"terminal update must reach subscribers via the must-deliver path")
+		synctest.Wait()
+		require.True(t, seenFinish.Load(),
+			"terminal update must reach subscribers via the must-deliver path")
+	})
 }
 
 func TestUpdate_ZeroDebounceFlushesEveryUpdate(t *testing.T) {
@@ -471,7 +513,7 @@ func TestUpdate_ZeroDebounceFlushesEveryUpdate(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		msg.AppendContent("x")
-		require.NoError(t, svc.Update(t.Context(), msg))
+		require.NoError(t, svc.Update(testCtx(t), msg))
 		got, err := svc.Get(t.Context(), msg.ID)
 		require.NoError(t, err)
 		require.Len(t, got.Content().Text, i+1, "every update must land synchronously when debounce is 0")
@@ -486,62 +528,64 @@ func TestUpdate_ZeroDebounceFlushesEveryUpdate(t *testing.T) {
 func TestFlush_WaitsForInFlightWrite(t *testing.T) {
 	t.Parallel()
 
-	conn, err := db.Connect(t.Context(), t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	q := db.New(conn)
-	sessions := session.NewService(q, conn)
-	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
-	require.NoError(t, err)
-
-	slow := &slowUpdateQuerier{
-		Querier: q,
-		release: make(chan struct{}),
-		started: make(chan struct{}),
-	}
-	// Short debounce so the timer fires quickly.
-	svc := NewService(slow, WithConn(conn), WithDebounce(10*time.Millisecond))
-
-	msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
-	require.NoError(t, err)
-	msg.AppendContent("payload")
-	require.NoError(t, svc.Update(t.Context(), msg))
-
-	// Wait for the timer-fired flush to enter UpdateMessage.
-	select {
-	case <-slow.started:
-	case <-time.After(time.Second):
-		t.Fatal("timer-fired flush never reached UpdateMessage")
-	}
-
-	// At this point the buffer is dirty=false but flushing=true. A
-	// naive Flush would early-return on !dirty. Spawn Flush in a
-	// goroutine and assert it has not returned while the write is
-	// still blocked.
-	flushDone := make(chan error, 1)
-	go func() { flushDone <- svc.Flush(t.Context(), msg.ID) }()
-
-	select {
-	case err := <-flushDone:
-		t.Fatalf("Flush returned %v while in-flight write was still blocked", err)
-	case <-time.After(50 * time.Millisecond):
-		// Expected: Flush is correctly waiting.
-	}
-
-	// Release the slow write; Flush must now return cleanly.
-	close(slow.release)
-	select {
-	case err := <-flushDone:
+	synctest.Test(t, func(t *testing.T) {
+		conn, err := db.Connect(t.Context(), t.TempDir())
 		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("Flush did not return after in-flight write completed")
-	}
+		t.Cleanup(func() { _ = conn.Close() })
 
-	// The SQL row should now reflect the buffered payload.
-	got, err := svc.Get(t.Context(), msg.ID)
-	require.NoError(t, err)
-	require.Equal(t, "payload", got.Content().Text)
+		q := db.New(conn)
+		sessions := session.NewService(q, conn)
+		sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+		require.NoError(t, err)
+
+		slow := &slowUpdateQuerier{
+			Querier: q,
+			release: make(chan struct{}),
+			started: make(chan struct{}),
+		}
+		// Short debounce so the timer fires quickly.
+		svc := NewService(slow, WithConn(conn), WithDebounce(10*time.Millisecond))
+
+		msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+		require.NoError(t, err)
+		msg.AppendContent("payload")
+		require.NoError(t, svc.Update(testCtx(t), msg))
+
+		// Wait for the timer-fired flush to enter UpdateMessage.
+		select {
+		case <-slow.started:
+		case <-time.After(waitTimeout):
+			t.Fatal("timer-fired flush never reached UpdateMessage")
+		}
+
+		// At this point the buffer is dirty=false but flushing=true. A
+		// naive Flush would early-return on !dirty. Spawn Flush in a
+		// goroutine and assert it has not returned while the write is
+		// still blocked.
+		flushDone := make(chan error, 1)
+		go func() { flushDone <- svc.Flush(testCtx(t), msg.ID) }()
+
+		select {
+		case err := <-flushDone:
+			t.Fatalf("Flush returned %v while in-flight write was still blocked", err)
+		case <-time.After(50 * time.Millisecond):
+			// Expected: Flush is correctly waiting.
+		}
+
+		// Release the slow write; Flush must now return cleanly.
+		close(slow.release)
+		select {
+		case err := <-flushDone:
+			require.NoError(t, err)
+		case <-time.After(waitTimeout):
+			t.Fatal("Flush did not return after in-flight write completed")
+		}
+
+		// The SQL row should now reflect the buffered payload.
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Equal(t, "payload", got.Content().Text)
+	})
 }
 
 // TestFlushAll_WaitsForInFlightWrite asserts FlushAll picks up IDs
@@ -550,53 +594,55 @@ func TestFlush_WaitsForInFlightWrite(t *testing.T) {
 func TestFlushAll_WaitsForInFlightWrite(t *testing.T) {
 	t.Parallel()
 
-	conn, err := db.Connect(t.Context(), t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	q := db.New(conn)
-	sessions := session.NewService(q, conn)
-	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
-	require.NoError(t, err)
-
-	slow := &slowUpdateQuerier{
-		Querier: q,
-		release: make(chan struct{}),
-		started: make(chan struct{}),
-	}
-	svc := NewService(slow, WithConn(conn), WithDebounce(10*time.Millisecond))
-
-	msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
-	require.NoError(t, err)
-	msg.AppendContent("payload")
-	require.NoError(t, svc.Update(t.Context(), msg))
-
-	select {
-	case <-slow.started:
-	case <-time.After(time.Second):
-		t.Fatal("timer-fired flush never reached UpdateMessage")
-	}
-
-	flushDone := make(chan error, 1)
-	go func() { flushDone <- svc.FlushAll(t.Context()) }()
-
-	select {
-	case err := <-flushDone:
-		t.Fatalf("FlushAll returned %v while in-flight write was still blocked", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	close(slow.release)
-	select {
-	case err := <-flushDone:
+	synctest.Test(t, func(t *testing.T) {
+		conn, err := db.Connect(t.Context(), t.TempDir())
 		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("FlushAll did not return after in-flight write completed")
-	}
+		t.Cleanup(func() { _ = conn.Close() })
 
-	got, err := svc.Get(t.Context(), msg.ID)
-	require.NoError(t, err)
-	require.Equal(t, "payload", got.Content().Text)
+		q := db.New(conn)
+		sessions := session.NewService(q, conn)
+		sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+		require.NoError(t, err)
+
+		slow := &slowUpdateQuerier{
+			Querier: q,
+			release: make(chan struct{}),
+			started: make(chan struct{}),
+		}
+		svc := NewService(slow, WithConn(conn), WithDebounce(10*time.Millisecond))
+
+		msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+		require.NoError(t, err)
+		msg.AppendContent("payload")
+		require.NoError(t, svc.Update(testCtx(t), msg))
+
+		select {
+		case <-slow.started:
+		case <-time.After(waitTimeout):
+			t.Fatal("timer-fired flush never reached UpdateMessage")
+		}
+
+		flushDone := make(chan error, 1)
+		go func() { flushDone <- svc.FlushAll(testCtx(t)) }()
+
+		select {
+		case err := <-flushDone:
+			t.Fatalf("FlushAll returned %v while in-flight write was still blocked", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		close(slow.release)
+		select {
+		case err := <-flushDone:
+			require.NoError(t, err)
+		case <-time.After(waitTimeout):
+			t.Fatal("FlushAll did not return after in-flight write completed")
+		}
+
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Equal(t, "payload", got.Content().Text)
+	})
 }
 
 // TestUpdate_StructuralFlushUsesMustDeliver covers the second review
@@ -643,54 +689,54 @@ func TestUpdate_StructuralFlushUsesMustDeliver(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			conn, err := db.Connect(t.Context(), t.TempDir())
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = conn.Close() })
+			synctest.Test(t, func(t *testing.T) {
+				conn, err := db.Connect(t.Context(), t.TempDir())
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = conn.Close() })
 
-			q := db.New(conn)
-			sessions := session.NewService(q, conn)
-			sess, err := sessions.Create(t.Context(), "test", t.TempDir())
-			require.NoError(t, err)
+				q := db.New(conn)
+				sessions := session.NewService(q, conn)
+				sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+				require.NoError(t, err)
 
-			// Replace the default broker with a tiny buffer + short
-			// must-deliver timeout so we can fully saturate from a
-			// single sender and observe drops without long waits.
-			svc := NewService(q, WithConn(conn), WithDebounce(time.Hour))
-			impl := svc.(*service)
-			impl.Shutdown()
-			impl.Broker = pubsub.NewBrokerWithOptions[Message](1)
-			impl.SetMustDeliverTimeout(40 * time.Millisecond)
+				// Replace the default broker with a tiny buffer + short
+				// must-deliver timeout so we can fully saturate from a
+				// single sender and observe drops without long waits.
+				svc := NewService(q, WithConn(conn), WithDebounce(time.Hour))
+				impl := svc.(*service)
+				impl.Shutdown()
+				impl.Broker = pubsub.NewBrokerWithOptions[Message](1)
+				impl.SetMustDeliverTimeout(40 * time.Millisecond)
 
-			subCtx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			sub := svc.Subscribe(subCtx)
+				subCtx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				sub := svc.Subscribe(subCtx)
 
-			msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
-			require.NoError(t, err)
+				msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+				require.NoError(t, err)
 
-			// Saturate the subscriber's buffer (capacity 1). The
-			// CreatedEvent from Create above already left one event
-			// in the buffer; we never read sub, so the next publish
-			// has nowhere to go.
-			_ = sub // intentionally not drained.
+				// Saturate the subscriber's buffer (capacity 1). The
+				// CreatedEvent from Create above already left one event
+				// in the buffer; we never read sub, so the next publish
+				// has nowhere to go.
+				_ = sub // intentionally not drained.
 
-			// Drive the structural change. With debounce=1h, Update
-			// flushes synchronously and routes through whichever
-			// publish path the service chose for structural events.
-			tc.mut(&msg)
-			require.NoError(t, svc.Update(t.Context(), msg))
+				// Drive the structural change. With debounce=1h, Update
+				// flushes synchronously and routes through whichever
+				// publish path the service chose for structural events.
+				tc.mut(&msg)
+				require.NoError(t, svc.Update(testCtx(t), msg))
 
-			// Must-deliver timeout (40ms) should have expired with
-			// no drain. If structural events are routed through
-			// must-deliver: MustDeliverDropCount > 0, DropCount
-			// unchanged. If routed through lossy Publish:
-			// DropCount > 0, MustDeliverDropCount == 0.
-			require.Eventually(t, func() bool {
-				return impl.MustDeliverDropCount() >= 1
-			}, time.Second, 5*time.Millisecond,
-				"structural terminal event should publish via must-deliver, not lossy Publish")
-			require.Zero(t, impl.DropCount(),
-				"structural terminal event must not be silently dropped via lossy Publish")
+				// Must-deliver timeout (40ms) should have expired with
+				// no drain. If structural events are routed through
+				// must-deliver: MustDeliverDropCount > 0, DropCount
+				// unchanged. If routed through lossy Publish:
+				// DropCount > 0, MustDeliverDropCount == 0.
+				require.GreaterOrEqual(t, impl.MustDeliverDropCount(), uint64(1),
+					"structural terminal event should publish via must-deliver, not lossy Publish")
+				require.Zero(t, impl.DropCount(),
+					"structural terminal event must not be silently dropped via lossy Publish")
+			})
 		})
 	}
 }
@@ -706,18 +752,18 @@ func TestPendingState_PrunedAfterFinish(t *testing.T) {
 
 	// Non-terminal update creates a pending entry.
 	msg.AppendContent("streaming")
-	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Update(testCtx(t), msg))
 	require.Equal(t, 1, impl.PendingCount())
 
 	// Terminal update prunes the entry.
 	msg.AddFinish(FinishReasonEndTurn, "", "")
-	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Update(testCtx(t), msg))
 	require.Equal(t, 0, impl.PendingCount())
 
 	// A subsequent Update for the same ID creates a fresh pendingState.
 	msg.Parts = nil
 	msg.AppendContent("restarted")
-	require.NoError(t, svc.Update(t.Context(), msg))
+	require.NoError(t, svc.Update(testCtx(t), msg))
 	require.Equal(t, 1, impl.PendingCount())
 }
 
@@ -829,5 +875,264 @@ func TestShouldFlushNow_AgainstCompactBaseline(t *testing.T) {
 		got, err := svc.Get(t.Context(), msg.ID)
 		require.NoError(t, err)
 		require.NotZero(t, got.ReasoningContent().FinishedAt)
+	})
+}
+
+// failingUpdateQuerier wraps a [db.Querier] and fails UpdateMessage
+// while fail is set.
+type failingUpdateQuerier struct {
+	db.Querier
+	fail atomic.Bool
+}
+
+var errUpdateFailed = errors.New("update failed")
+
+func (f *failingUpdateQuerier) UpdateMessage(ctx context.Context, arg db.UpdateMessageParams) error {
+	if f.fail.Load() {
+		return errUpdateFailed
+	}
+	return f.Querier.UpdateMessage(ctx, arg)
+}
+
+func TestFlush_UnknownIDIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	require.NoError(t, svc.Flush(testCtx(t), "missing"))
+}
+
+func TestFlush_FailedWriteIsRetriedByNextFlush(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		conn, err := db.Connect(t.Context(), t.TempDir())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+
+		q := db.New(conn)
+		sessions := session.NewService(q, conn)
+		sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+		require.NoError(t, err)
+
+		failing := &failingUpdateQuerier{Querier: q}
+		svc := NewService(failing, WithConn(conn), WithDebounce(time.Hour))
+		subCtx, cancelSub := context.WithCancel(t.Context())
+		defer cancelSub()
+		collector := collect(subCtx, svc.Subscribe(subCtx))
+
+		msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+		require.NoError(t, err)
+		msg.AppendContent("payload")
+		require.NoError(t, svc.Update(testCtx(t), msg))
+
+		failing.fail.Store(true)
+		require.ErrorIs(t, svc.Flush(testCtx(t), msg.ID), errUpdateFailed)
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Empty(t, got.Content().Text, "failed write must not land")
+
+		failing.fail.Store(false)
+		require.NoError(t, svc.Flush(testCtx(t), msg.ID))
+		got, err = svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Equal(t, "payload", got.Content().Text, "next flush must retry the failed write")
+
+		synctest.Wait()
+		events := collector.snapshot()
+		require.Len(t, events, 2)
+		require.Equal(t, pubsub.CreatedEvent, events[0].Type)
+		require.Equal(t, pubsub.UpdatedEvent, events[1].Type, "only the successful write publishes")
+		require.Equal(t, "payload", events[1].Payload.Content().Text)
+	})
+}
+
+func TestFlush_FailedTerminalWriteKeepsPendingState(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+	sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+	require.NoError(t, err)
+
+	failing := &failingUpdateQuerier{Querier: q}
+	svc := NewService(failing, WithConn(conn), WithDebounce(time.Hour))
+	impl := svc.(*service)
+
+	msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+	require.NoError(t, err)
+	msg.AppendContent("done")
+	msg.AddFinish(FinishReasonEndTurn, "", "")
+
+	failing.fail.Store(true)
+	require.ErrorIs(t, svc.Update(testCtx(t), msg), errUpdateFailed)
+	require.Equal(t, 1, impl.PendingCount(), "a failed terminal write must stay pending")
+
+	failing.fail.Store(false)
+	require.NoError(t, svc.Flush(testCtx(t), msg.ID))
+	require.Equal(t, 0, impl.PendingCount(), "a landed terminal write is pruned")
+	got, err := svc.Get(t.Context(), msg.ID)
+	require.NoError(t, err)
+	require.True(t, got.IsFinished())
+}
+
+// TestFlush_PicksUpDeltaArrivingDuringWrite asserts a sync Flush loops
+// to write an Update that landed while its own SQL write was in flight.
+func TestFlush_PicksUpDeltaArrivingDuringWrite(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		conn, err := db.Connect(t.Context(), t.TempDir())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+
+		q := db.New(conn)
+		sessions := session.NewService(q, conn)
+		sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+		require.NoError(t, err)
+
+		slow := &slowUpdateQuerier{
+			Querier: q,
+			release: make(chan struct{}),
+			started: make(chan struct{}),
+		}
+		svc := NewService(slow, WithConn(conn), WithDebounce(time.Hour))
+		impl := svc.(*service)
+		subCtx, cancelSub := context.WithCancel(t.Context())
+		defer cancelSub()
+		collector := collect(subCtx, svc.Subscribe(subCtx))
+
+		msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+		require.NoError(t, err)
+		msg.AppendContent("first")
+		require.NoError(t, svc.Update(testCtx(t), msg))
+
+		flushDone := make(chan error, 1)
+		go func() { flushDone <- svc.Flush(testCtx(t), msg.ID) }()
+		select {
+		case <-slow.started:
+		case <-time.After(waitTimeout):
+			t.Fatal("flush never reached UpdateMessage")
+		}
+
+		// A delta lands while the write is in flight. It must not schedule
+		// its own flush; the in-flight sync flusher owns it.
+		msg.AppendContent(" second")
+		require.NoError(t, svc.Update(testCtx(t), msg))
+
+		close(slow.release)
+		select {
+		case err := <-flushDone:
+			require.NoError(t, err)
+		case <-time.After(waitTimeout):
+			t.Fatal("Flush did not return after the write completed")
+		}
+
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Equal(t, "first second", got.Content().Text, "sync flush must write the mid-flight delta")
+		require.Equal(t, 1, impl.PendingCount(), "a non-terminal write keeps the entry")
+
+		synctest.Wait()
+		events := collector.snapshot()
+		require.Len(t, events, 3)
+		require.Equal(t, "first", events[1].Payload.Content().Text)
+		require.Equal(t, "first second", events[2].Payload.Content().Text)
+	})
+}
+
+// TestUpdate_DeltaAfterFlushSchedulesFreshTimer asserts a sync Flush
+// clears the debounce timer it cancels, so the next delta is flushed by
+// a timer of its own rather than waiting for another explicit flush.
+func TestUpdate_DeltaAfterFlushSchedulesFreshTimer(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		const debounce = 10 * time.Millisecond
+		svc, sessionID := newTestService(t, WithDebounce(debounce))
+
+		msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+		require.NoError(t, err)
+		msg.AppendContent("first")
+		require.NoError(t, svc.Update(testCtx(t), msg))
+		require.NoError(t, svc.Flush(testCtx(t), msg.ID))
+
+		msg.AppendContent(" second")
+		require.NoError(t, svc.Update(testCtx(t), msg))
+
+		time.Sleep(debounce)
+		synctest.Wait()
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Equal(t, "first second", got.Content().Text, "the debounce timer must flush the delta after an explicit Flush")
+	})
+}
+
+// TestFlush_FinishedMessageRedirtiedDuringWriteIsNotPruned asserts a
+// finished message that an Update re-dirties mid-write keeps its pending
+// entry until that delta is written too.
+func TestFlush_FinishedMessageRedirtiedDuringWriteIsNotPruned(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		conn, err := db.Connect(t.Context(), t.TempDir())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+
+		q := db.New(conn)
+		sessions := session.NewService(q, conn)
+		sess, err := sessions.Create(t.Context(), "test", t.TempDir())
+		require.NoError(t, err)
+
+		slow := &slowUpdateQuerier{
+			Querier: q,
+			release: make(chan struct{}),
+			started: make(chan struct{}),
+		}
+		svc := NewService(slow, WithConn(conn), WithDebounce(time.Hour))
+		impl := svc.(*service)
+
+		msg, err := svc.Create(t.Context(), sess.ID, CreateMessageParams{Role: Assistant})
+		require.NoError(t, err)
+		msg.AppendContent("first")
+		msg.AddFinish(FinishReasonEndTurn, "", "")
+		finished := msg.Clone()
+		msg.AppendContent(" second")
+		redirtied := msg.Clone()
+
+		firstDone := make(chan error, 1)
+		go func() { firstDone <- svc.Update(testCtx(t), finished) }()
+		select {
+		case <-slow.started:
+		case <-time.After(waitTimeout):
+			t.Fatal("terminal update never reached UpdateMessage")
+		}
+
+		secondDone := make(chan error, 1)
+		go func() { secondDone <- svc.Update(testCtx(t), redirtied) }()
+		synctest.Wait()
+		impl.mu.Lock()
+		p, ok := impl.pending[msg.ID]
+		redirtiedMidWrite := ok && p.dirty
+		impl.mu.Unlock()
+		require.True(t, redirtiedMidWrite, "the second update must re-dirty the entry mid-write")
+
+		close(slow.release)
+		for _, done := range []chan error{firstDone, secondDone} {
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(waitTimeout):
+				t.Fatal("Update did not return after the write completed")
+			}
+		}
+
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Equal(t, "first second", got.Content().Text, "the mid-write delta must not be lost")
+		require.Equal(t, 0, impl.PendingCount(), "the entry is pruned once the finished message is clean")
 	})
 }

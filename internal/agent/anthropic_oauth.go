@@ -41,6 +41,20 @@ func anthropicSystemMode() string {
 	return SystemModeA
 }
 
+// frameMessages frames msgs for the provider: the provider's system prompt
+// prefix goes first, then an Anthropic OAuth provider gets its billing and
+// identity messages. Turns and side calls both frame their requests here,
+// so the provider sees the same framing from each.
+func frameMessages(prefix string, cfg config.ProviderConfig, msgs []fantasy.Message) []fantasy.Message {
+	if prefix != "" {
+		msgs = append([]fantasy.Message{fantasy.NewSystemMessage(prefix)}, msgs...)
+	}
+	if isAnthropicOAuth(cfg) {
+		msgs = transformForAnthropicOAuth(msgs)
+	}
+	return msgs
+}
+
 // transformForAnthropicOAuth rewrites messages for Anthropic OAuth billing
 // compliance. It prepends a billing header and identity prefix, using the
 // mode selected by anthropicSystemMode.

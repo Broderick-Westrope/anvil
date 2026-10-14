@@ -628,3 +628,25 @@ func TestViewToolSkillNamePermissionBehavior(t *testing.T) {
 		require.Equal(t, 1, permissions.requestCount())
 	})
 }
+
+func TestViewToolSkillNameLoadsUnlistedSkill(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	skillDir := filepath.Join(workingDir, "hidden")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	content := "---\nname: hidden\ndescription: hidden skill\nunlisted: true\n---\n\nhidden body\n"
+	require.NoError(t, os.WriteFile(skillPath, []byte(content), 0o644))
+
+	registry := skills.Discover([]string{workingDir})
+	require.Len(t, registry, 1)
+	require.True(t, registry[0].Unlisted)
+	require.Empty(t, skills.ToPromptXML(registry))
+
+	tool := newViewToolWithRegistryForTest(registry, workingDir)
+	resp := runViewTool(t, tool, sessionCtx(), ViewParams{SkillName: "hidden"})
+
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "hidden body")
+}

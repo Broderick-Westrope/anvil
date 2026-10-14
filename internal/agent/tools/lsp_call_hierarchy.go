@@ -9,6 +9,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 type CallHierarchyParams struct {
@@ -30,7 +31,8 @@ func NewCallHierarchyTool(lspManager *lsp.Manager) fantasy.AgentTool {
 			if params.Symbol == "" {
 				return fantasy.NewTextErrorResponse("symbol is required"), nil
 			}
-			if params.Direction != "incoming" && params.Direction != "outgoing" {
+			direction, ok := callDirections[params.Direction]
+			if !ok {
 				return fantasy.NewTextErrorResponse("direction must be 'incoming' or 'outgoing'"), nil
 			}
 			workingDir := cmp.Or(params.Path, ".")
@@ -52,39 +54,58 @@ func NewCallHierarchyTool(lspManager *lsp.Manager) fantasy.AgentTool {
 			var b strings.Builder
 			fmt.Fprintf(&b, "Call hierarchy for '%s':\n\n", item.Name)
 
-			if params.Direction == "incoming" {
-				calls, err := resolved.client.IncomingCalls(ctx, item)
-				if err != nil {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to get incoming calls: %s", err)), nil
-				}
-				if len(calls) == 0 {
-					b.WriteString("No incoming calls found.\n")
-				} else {
-					fmt.Fprintf(&b, "%d caller(s):\n\n", len(calls))
-					for _, c := range calls {
-						path, _ := c.From.URI.Path()
-						line := c.From.Range.Start.Line + 1
-						fmt.Fprintf(&b, "  %s:%d — %s\n", path, line, c.From.Name)
-					}
-				}
+			calls, err := direction.calls(ctx, resolved.client, item)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to get %s calls: %s", params.Direction, err)), nil
+			}
+			if len(calls) == 0 {
+				fmt.Fprintf(&b, "No %s calls found.\n", params.Direction)
 			} else {
-				calls, err := resolved.client.OutgoingCalls(ctx, item)
-				if err != nil {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to get outgoing calls: %s", err)), nil
-				}
-				if len(calls) == 0 {
-					b.WriteString("No outgoing calls found.\n")
-				} else {
-					fmt.Fprintf(&b, "%d callee(s):\n\n", len(calls))
-					for _, c := range calls {
-						path, _ := c.To.URI.Path()
-						line := c.To.Range.Start.Line + 1
-						fmt.Fprintf(&b, "  %s:%d — %s\n", path, line, c.To.Name)
-					}
+				fmt.Fprintf(&b, "%d %s:\n\n", len(calls), direction.noun)
+				for _, c := range calls {
+					path, _ := c.URI.Path()
+					line := c.Range.Start.Line + 1
+					fmt.Fprintf(&b, "  %s:%d — %s\n", path, line, c.Name)
 				}
 			}
 
 			return fantasy.NewTextResponse(b.String()), nil
 		},
 	)
+}
+
+// callDirection is one direction lsp_call_hierarchy can list calls in.
+type callDirection struct {
+	noun string
+	// calls returns the item at the other end of each call.
+	calls func(ctx context.Context, client *lsp.Client, item protocol.CallHierarchyItem) ([]protocol.CallHierarchyItem, error)
+}
+
+var callDirections = map[string]callDirection{
+	"incoming": {noun: "caller(s)", calls: callers},
+	"outgoing": {noun: "callee(s)", calls: callees},
+}
+
+func callers(ctx context.Context, client *lsp.Client, item protocol.CallHierarchyItem) ([]protocol.CallHierarchyItem, error) {
+	calls, err := client.IncomingCalls(ctx, item)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]protocol.CallHierarchyItem, len(calls))
+	for i, c := range calls {
+		items[i] = c.From
+	}
+	return items, nil
+}
+
+func callees(ctx context.Context, client *lsp.Client, item protocol.CallHierarchyItem) ([]protocol.CallHierarchyItem, error) {
+	calls, err := client.OutgoingCalls(ctx, item)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]protocol.CallHierarchyItem, len(calls))
+	for i, c := range calls {
+		items[i] = c.To
+	}
+	return items, nil
 }

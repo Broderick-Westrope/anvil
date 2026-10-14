@@ -15,6 +15,10 @@ import (
 // scriptRunner returns a cliRunner whose herdr binary is a shell script.
 // The timeout is raised because the first exec of a new file can be slow
 // on a loaded macOS machine.
+//
+// Tests that use it must not call t.Parallel. A process forked by another
+// goroutine while the script is still open for writing holds it open, and
+// executing it then fails with "text file busy" (golang/go#22315).
 func scriptRunner(t *testing.T, body string) cliRunner {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -28,7 +32,6 @@ func scriptRunner(t *testing.T, body string) cliRunner {
 }
 
 func TestCLIRunnerPassesArgvVerbatim(t *testing.T) {
-	t.Parallel()
 	argsFile := filepath.Join(t.TempDir(), "args")
 	r := scriptRunner(t, `for a in "$@"; do printf '%s\n' "$a"; done > "`+argsFile+`"; echo ok`)
 
@@ -43,10 +46,7 @@ func TestCLIRunnerPassesArgvVerbatim(t *testing.T) {
 }
 
 func TestCLIRunnerErrorIncludesStderr(t *testing.T) {
-	t.Parallel()
-
 	t.Run("stderr", func(t *testing.T) {
-		t.Parallel()
 		r := scriptRunner(t, `echo "  pane not found  " >&2; exit 3`)
 		_, err := r.run(context.Background(), "pane", "get", "w1:p2")
 		require.Error(t, err)
@@ -55,7 +55,6 @@ func TestCLIRunnerErrorIncludesStderr(t *testing.T) {
 	})
 
 	t.Run("no stderr", func(t *testing.T) {
-		t.Parallel()
 		r := scriptRunner(t, `exit 3`)
 		_, err := r.run(context.Background(), "pane", "get", "w1:p2")
 		require.EqualError(t, err, "herdr pane get: exit status 3")
@@ -63,7 +62,6 @@ func TestCLIRunnerErrorIncludesStderr(t *testing.T) {
 }
 
 func TestCLIRunnerCancelKillsChild(t *testing.T) {
-	t.Parallel()
 	r := scriptRunner(t, `exec sleep 30`)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

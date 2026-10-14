@@ -50,6 +50,20 @@ func lookupArchivedJob(ctx context.Context, archive JobArchive, id string) (jobs
 	return rec, ok, nil
 }
 
+// serveArchivedJob serves a job tool call for a job that is not in memory:
+// serve renders the persisted record, and a failed lookup or an unknown
+// job is an error response the model sees.
+func serveArchivedJob(ctx context.Context, archive JobArchive, id string, serve func(jobstore.Record) fantasy.ToolResponse) fantasy.ToolResponse {
+	rec, found, err := lookupArchivedJob(ctx, archive, id)
+	if err != nil {
+		return fantasy.NewTextErrorResponse(err.Error())
+	}
+	if !found {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", id))
+	}
+	return serve(rec)
+}
+
 // archivedJobOutput serves job_output for a persisted job. Waits return
 // immediately and patterns are ignored, since nothing in this process
 // writes to the job any more.

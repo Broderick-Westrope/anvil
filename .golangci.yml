@@ -2,8 +2,10 @@ version: "2"
 linters:
   enable:
     - bodyclose
+    - depguard
     # - exhaustive
     # - goconst
+    - gocognit
     # - godot
     # - godox
     # - gomoddirectives
@@ -25,6 +27,70 @@ linters:
     # - unparam
     - whitespace
     # - wrapcheck
+  settings:
+    # Layers, top to bottom: cmd, ui, workspace, app, agent, then everything
+    # else in internal/. A package may import its own layer or any layer
+    # below it. See "Package Layers" in AGENTS.md.
+    depguard:
+      rules:
+        core:
+          files:
+            - "**/internal/**"
+            - "!**/internal/agent/**"
+            - "!**/internal/app/**"
+            - "!**/internal/workspace/**"
+            - "!**/internal/ui/**"
+            - "!**/internal/cmd/**"
+            - "!**/internal/testutil/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/agent
+              desc: core packages sit below the agent layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/app
+              desc: core packages sit below the app layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/workspace
+              desc: core packages sit below the workspace layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/ui
+              desc: core packages sit below the ui layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+        agent:
+          files:
+            - "**/internal/agent/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/app
+              desc: agent sits below the app layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/workspace
+              desc: agent sits below the workspace layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/ui
+              desc: agent sits below the ui layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+        app:
+          files:
+            - "**/internal/app/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/workspace
+              desc: app sits below the workspace layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/ui
+              desc: app sits below the ui layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+        workspace:
+          files:
+            - "**/internal/workspace/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/ui
+              desc: workspace sits below the ui layer
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+        ui:
+          files:
+            - "**/internal/ui/**"
+          deny:
+            - pkg: github.com/Broderick-Westrope/anvil/internal/cmd
+              desc: only main imports cmd
+    gocognit:
+      min-complexity: 30
   disable:
     - errcheck
     - ineffassign
@@ -37,6 +103,55 @@ linters:
       - text: '(slog|log)\.\w+'
         linters:
           - noctx
+      - path: _test\.go
+        linters: [gocognit]
+      # Functions over the gocognit limit when it was enabled. Each new
+      # function must stay under it. Delete an entry once its function is
+      # back under the limit.
+      - path: internal/ui/chat/tools\.go
+        text: 'func `(\(\*baseToolMessageItem\)\.formatParametersForCopy)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/commands\.go
+        text: 'func `(\(\*Commands\)\.defaultCommands|\(\*Commands\)\.HandleMsg)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/mcp_palette\.go
+        text: 'func `(\(\*MCPPalette\)\.handleNavKey)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/models\.go
+        text: 'func `(\(\*Models\)\.setProviderItems)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/sessions\.go
+        text: 'func `(\(\*Session\)\.HandleMsg)`'
+        linters: [gocognit]
+      - path: internal/ui/dialog/tree\.go
+        text: 'func `(NewTree)`'
+        linters: [gocognit]
+      - path: internal/ui/model/sidebar\.go
+        text: 'func `(\(\*UI\)\.modelInfo)`'
+        linters: [gocognit]
+      - path: internal/ui/model/ui\.go
+        text: 'func `(\(\*UI\)\.appendSessionMessageToChat|\(\*UI\)\.deriveEnabledLazyMCPs|\(\*UI\)\.Draw|\(\*UI\)\.FullHelp|\(\*UI\)\.handleChildSessionMessage|\(\*UI\)\.handleDialogMsg|\(\*UI\)\.handleKeyPressMsg|\(\*UI\)\.loadNestedToolCalls|\(\*UI\)\.update|\(\*UI\)\.updateSessionMessageToChat)`'
+        linters: [gocognit]
+      # Upstream-shaped TUI leaf code that stays over the gocognit limit on
+      # purpose. See docs/adr/0003-ui-complexity.md before changing these.
+      - path: internal/ui/anim/anim\.go
+        text: 'func `(New)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/docker_mcp\.go
+        text: 'func `(\(\*DockerMCPToolRenderContext\)\.RenderTool)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/todos\.go
+        text: 'func `(\(\*TodosToolRenderContext\)\.RenderTool)`'
+        linters: [gocognit]
+      - path: internal/ui/chat/unified_diff\.go
+        text: 'func `(parseUnifiedDiff)`'
+        linters: [gocognit]
+      - path: internal/ui/diffview/diffview\.go
+        text: 'func `(\(\*DiffView\)\.renderSplit|\(\*DiffView\)\.renderUnified)`'
+        linters: [gocognit]
+      - path: internal/ui/list/highlight\.go
+        text: 'func `(HighlightBuffer)`'
+        linters: [gocognit]
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

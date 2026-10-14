@@ -98,7 +98,7 @@ type ProviderConfig struct {
 	// The provider's API endpoint.
 	BaseURL string `json:"base_url,omitempty" jsonschema:"description=Base URL for the provider's API,format=uri,example=https://api.openai.com/v1"`
 	// The provider type, e.g. "openai", "anthropic", etc. if empty it defaults to openai.
-	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,enum=openai,enum=openai-compat,enum=anthropic,enum=gemini,enum=azure,enum=vertexai,default=openai"`
+	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,enum=openai,enum=openai-compat,enum=openrouter,enum=vercel,enum=anthropic,enum=google,enum=azure,enum=bedrock,enum=google-vertex,enum=llamacpp,enum=omlx,enum=lmstudio,enum=litellm,enum=ollama,default=openai"`
 	// Authentication mode: "oauth", "api-key", or "" (auto-detect,
 	// default). When empty, OAuth is preferred over API key for
 	// providers that support it (e.g. Anthropic).
@@ -861,6 +861,8 @@ type Config struct {
 	// the permissions keys are tool-name globs.
 	Bouncer *Bouncer `json:"bouncer,omitempty" jsonschema:"description=Classifier that answers permission prompts. Only read from user-level config files"`
 
+	Yolo YoloMode `json:"yolo,omitempty" jsonschema:"description=Yolo level new sessions start at when --yolo is not passed. Only read from user-level config files,enum=off,enum=standard,enum=full,default=off"`
+
 	Tools Tools `json:"tools,omitzero" jsonschema:"description=Tool configurations"`
 
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
@@ -1156,51 +1158,35 @@ func (c *Config) applyAgentOverrides(userAgents map[string]Agent) {
 // applyOverrides overlays non-zero fields from userAgents onto agents and
 // removes disabled agents. It returns the modified map.
 func applyOverrides(agents map[string]Agent, userAgents map[string]Agent, disabledAgents []string) map[string]Agent {
-	if userAgents != nil {
-		for name, userAgent := range userAgents {
-			def, ok := agents[name]
-			if !ok {
-				// User defined an agent not in the defaults; add it as-is.
-				// Ensure ID and Name are set from the map key if not provided.
-				if userAgent.ID == "" {
-					userAgent.ID = name
-				}
-				if userAgent.Name == "" {
-					userAgent.Name = name
-				}
-				agents[name] = userAgent
-				continue
-			}
-			// Overlay non-zero fields from the user config onto the default.
-			if userAgent.Model != "" {
-				def.Model = userAgent.Model
-			}
-			if userAgent.Variant != "" {
-				def.Variant = userAgent.Variant
-			}
-			if userAgent.ReasoningEffort != "" {
-				def.ReasoningEffort = userAgent.ReasoningEffort
-			}
-			if userAgent.Think != nil {
-				def.Think = userAgent.Think
-			}
-			if userAgent.AllowedTools != nil {
-				def.AllowedTools = userAgent.AllowedTools
-			}
-			if userAgent.AllowedSkills != nil {
-				def.AllowedSkills = userAgent.AllowedSkills
-			}
-			if userAgent.AllowedMCP != nil {
-				def.AllowedMCP = userAgent.AllowedMCP
-			}
-			if userAgent.AppendPrompt != "" {
-				def.AppendPrompt = userAgent.AppendPrompt
-			}
-			if userAgent.Disabled {
-				def.Disabled = true
-			}
-			agents[name] = def
+	for name, userAgent := range userAgents {
+		def, ok := agents[name]
+		if !ok {
+			// User defined an agent not in the defaults; add it as-is.
+			// Ensure ID and Name are set from the map key if not provided.
+			userAgent.ID = cmp.Or(userAgent.ID, name)
+			userAgent.Name = cmp.Or(userAgent.Name, name)
+			agents[name] = userAgent
+			continue
 		}
+		// Overlay non-zero fields from the user config onto the default.
+		def.Model = cmp.Or(userAgent.Model, def.Model)
+		def.Variant = cmp.Or(userAgent.Variant, def.Variant)
+		def.ReasoningEffort = cmp.Or(userAgent.ReasoningEffort, def.ReasoningEffort)
+		def.Think = cmp.Or(userAgent.Think, def.Think)
+		if userAgent.AllowedTools != nil {
+			def.AllowedTools = userAgent.AllowedTools
+		}
+		if userAgent.AllowedSkills != nil {
+			def.AllowedSkills = userAgent.AllowedSkills
+		}
+		if userAgent.AllowedMCP != nil {
+			def.AllowedMCP = userAgent.AllowedMCP
+		}
+		def.AppendPrompt = cmp.Or(userAgent.AppendPrompt, def.AppendPrompt)
+		if userAgent.Disabled {
+			def.Disabled = true
+		}
+		agents[name] = def
 	}
 
 	// Remove any agents whose names appear in disabledAgents and agents

@@ -40,14 +40,13 @@ func (f *fakeHookPermissionService) Request(ctx context.Context, req permission.
 	return permission.RequestResult{Granted: true}, nil
 }
 
-func (f *fakeHookPermissionService) Grant(permission.PermissionRequest)           {}
-func (f *fakeHookPermissionService) Deny(permission.PermissionRequest, string)    {}
-func (f *fakeHookPermissionService) GrantPersistent(permission.PermissionRequest) {}
-func (f *fakeHookPermissionService) AutoApproveSession(string)                    {}
-func (f *fakeHookPermissionService) RevokeAutoApproveSession(string)              {}
-func (f *fakeHookPermissionService) SetYoloLevel(config.YoloLevel)                {}
-func (f *fakeHookPermissionService) YoloLevel() config.YoloLevel                  { return config.YoloOff }
-func (f *fakeHookPermissionService) BouncerConfigured() bool                      { return false }
+func (f *fakeHookPermissionService) Grant(permission.PermissionRequest)        {}
+func (f *fakeHookPermissionService) Deny(permission.PermissionRequest, string) {}
+func (f *fakeHookPermissionService) AutoApproveSession(string)                 {}
+func (f *fakeHookPermissionService) RevokeAutoApproveSession(string)           {}
+func (f *fakeHookPermissionService) SetYoloLevel(config.YoloLevel)             {}
+func (f *fakeHookPermissionService) YoloLevel() config.YoloLevel               { return config.YoloOff }
+func (f *fakeHookPermissionService) BouncerConfigured() bool                   { return false }
 func (f *fakeHookPermissionService) BouncerMode() permission.BouncerMode {
 	return permission.BouncerOff
 }

@@ -22,7 +22,7 @@ func TestHostileDotEnvHandoffIgnored(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	build := exec.Command("go", "build", "-o", bin, "github.com/Broderick-Westrope/anvil")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "github.com/Broderick-Westrope/anvil")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, string(out))
@@ -35,7 +35,7 @@ func TestHostileDotEnvHandoffIgnored(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(project, ".env"), []byte(EnvHandoff+"="+victim+"\n"), 0o600))
 
-	cmd := exec.Command(bin, "preflight", "--cwd", project, "--data-dir", dataDir)
+	cmd := exec.CommandContext(t.Context(), bin, "preflight", "--cwd", project, "--data-dir", dataDir)
 	cmd.Dir = project
 	cmd.Env = append(withoutHandoff(os.Environ()),
 		"ANVIL_GLOBAL_CONFIG="+t.TempDir(),

@@ -3,12 +3,14 @@ package tools
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/jobstore"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
@@ -60,28 +62,17 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse("missing shell_id"), nil
 			}
 
-			var re *regexp.Regexp
-			if params.Pattern != "" {
-				if params.Full {
-					return fantasy.NewTextErrorResponse("pattern cannot be combined with full=true"), nil
-				}
-				var err error
-				if re, err = regexp.Compile(params.Pattern); err != nil {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("invalid pattern: %v", err)), nil
-				}
+			re, err := jobOutputPattern(params)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
 			bgManager := shell.GetBackgroundShellManager()
 			bgShell, ok := bgManager.Get(params.ShellID)
 			if !ok {
-				rec, found, err := lookupArchivedJob(ctx, opts.Archive, params.ShellID)
-				if err != nil {
-					return fantasy.NewTextErrorResponse(err.Error()), nil
-				}
-				if !found {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
-				}
-				return archivedJobOutput(opts.Archive, rec, params, opts.SpillDir), nil
+				return serveArchivedJob(ctx, opts.Archive, params.ShellID, func(rec jobstore.Record) fantasy.ToolResponse {
+					return archivedJobOutput(opts.Archive, rec, params, opts.SpillDir)
+				}), nil
 			}
 
 			// The matcher is created before reading so an unread
@@ -146,6 +137,22 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 			}
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
 		})
+}
+
+// jobOutputPattern compiles the pattern to wait or watch for, or returns
+// nil without one. Its errors are shown to the model as they are.
+func jobOutputPattern(params JobOutputParams) (*regexp.Regexp, error) {
+	if params.Pattern == "" {
+		return nil, nil
+	}
+	if params.Full {
+		return nil, errors.New("pattern cannot be combined with full=true")
+	}
+	re, err := regexp.Compile(params.Pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid pattern: %v", err)
+	}
+	return re, nil
 }
 
 func jobWaitTimeout(seconds int) time.Duration {

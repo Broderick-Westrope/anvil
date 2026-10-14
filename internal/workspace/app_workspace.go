@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
-	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
@@ -241,10 +241,6 @@ func (w *AppWorkspace) GetDefaultSmallModel(providerID string) config.SelectedMo
 
 func (w *AppWorkspace) PermissionGrant(perm permission.PermissionRequest) {
 	w.app.Permissions.Grant(perm)
-}
-
-func (w *AppWorkspace) PermissionGrantPersistent(perm permission.PermissionRequest) {
-	w.app.Permissions.GrantPersistent(perm)
 }
 
 func (w *AppWorkspace) PermissionGrantSession(sessionID, toolPattern, inputPattern string, action config.PermissionAction) error {
@@ -505,7 +501,15 @@ func (w *AppWorkspace) ReadMCPResource(ctx context.Context, name, uri string) ([
 }
 
 func (w *AppWorkspace) GetMCPPrompt(clientID, promptID string, args map[string]string) (string, error) {
-	return commands.GetMCPPrompt(w.store, clientID, promptID, args)
+	// The UI calls this from a tea.Cmd, which has no context to pass in.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := mcptools.GetPromptMessages(ctx, w.store, clientID, promptID, args)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(result, " "), nil
 }
 
 func (w *AppWorkspace) EnableDockerMCP(ctx context.Context) error {

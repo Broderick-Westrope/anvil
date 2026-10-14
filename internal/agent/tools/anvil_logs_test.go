@@ -6,6 +6,8 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -127,15 +129,34 @@ func TestAnvilLogs_MissingFile(t *testing.T) {
 	require.Contains(t, result, "No log file found")
 }
 
-func TestAnvilLogs_EmptyFile(t *testing.T) {
+func TestAnvilLogs_UnreadableFile(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	logFile := filepath.Join(tempDir, "anvil.log")
-	_, err := os.Create(logFile)
-	require.NoError(t, err)
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs file modes that deny reading")
+	}
+	logFile := writeRawLog(t, `{"msg":"a"}`+"\n")
+	require.NoError(t, os.Chmod(logFile, 0o000))
 
 	result := runAnvilLogs(logFile, AnvilLogsParams{Lines: 50})
-	require.Contains(t, result, "Log file is empty")
+
+	require.Equal(t, "Error reading log file: open "+logFile+": permission denied", result)
+}
+
+func TestAnvilLogs_EmptyFile(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"no content":                     "",
+		"only blank and malformed lines": "\nnot json\n",
+	}
+	for name, content := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result := runAnvilLogs(writeRawLog(t, content), AnvilLogsParams{Lines: 50})
+
+			require.Equal(t, "Log file is empty", result)
+		})
+	}
 }
 
 func TestAnvilLogs_MalformedLines(t *testing.T) {
@@ -150,6 +171,7 @@ func TestAnvilLogs_MalformedLines(t *testing.T) {
 	validEntry := makeLogEntry("INFO", "Valid entry", "app.go", 1, nil)
 	line, _ := json.Marshal(validEntry)
 	file.WriteString(string(line) + "\n")
+	file.WriteString("\n")
 	file.WriteString("this is not json\n")
 	file.WriteString(`{"incomplete": "json` + "\n")
 
@@ -300,6 +322,29 @@ func TestAnvilLogs_ReservedFields(t *testing.T) {
 
 func TestAnvilLogs_OversizedLines(t *testing.T) {
 	t.Parallel()
+
+	t.Run("trailing line", func(t *testing.T) {
+		t.Parallel()
+		tests := map[string]struct {
+			size int
+			want int
+		}{
+			"at the limit":   {size: maxLogLineSize, want: 2},
+			"over the limit": {size: maxLogLineSize + 1, want: 1},
+		}
+		for name, tc := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				result := runAnvilLogs(writeRawLog(t, `{"msg":"small"}`+"\n"+jsonLineOfSize(tc.size)), AnvilLogsParams{Lines: 10})
+
+				lines := strings.Split(result, "\n")
+				require.Len(t, lines, tc.want)
+				require.Contains(t, lines, "--:--:-- INFO unknown:0 small")
+			})
+		}
+	})
+
 	tempDir := t.TempDir()
 	logFile := filepath.Join(tempDir, "anvil.log")
 
@@ -526,4 +571,147 @@ func TestAnvilLogs_SourceVariations(t *testing.T) {
 	require.Contains(t, lines[0], "app.go:42")
 	require.Contains(t, lines[1], "handler.go") // String source gets basename too
 	require.Contains(t, lines[2], "unknown:0")  // Missing source
+}
+
+// writeRawLog writes content to a fresh log file and returns its path.
+func writeRawLog(t *testing.T, content string) string {
+	t.Helper()
+	logFile := filepath.Join(t.TempDir(), "anvil.log")
+	require.NoError(t, os.WriteFile(logFile, []byte(content), 0o644))
+	return logFile
+}
+
+// jsonLineOfSize returns a JSON object line exactly size bytes long.
+func jsonLineOfSize(size int) string {
+	const prefix, suffix = `{"msg":"`, `"}`
+	return prefix + strings.Repeat("x", size-len(prefix)-len(suffix)) + suffix
+}
+
+func TestAnvilLogs_TrailingLineWithoutNewline(t *testing.T) {
+	t.Parallel()
+
+	content := `{"msg":"a"}` + "\n" + `{"msg":"b"}` + "\n" + `{"msg":"c"}`
+	tests := map[string]struct {
+		lines int
+		want  string
+	}{
+		"room for every line": {
+			lines: 3,
+			want:  "--:--:-- INFO unknown:0 a\n--:--:-- INFO unknown:0 b\n--:--:-- INFO unknown:0 c",
+		},
+		"room for the newest lines": {
+			lines: 2,
+			want:  "--:--:-- INFO unknown:0 b\n--:--:-- INFO unknown:0 c",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result := runAnvilLogs(writeRawLog(t, content), AnvilLogsParams{Lines: tc.lines})
+
+			require.Equal(t, tc.want, result)
+		})
+	}
+}
+
+func TestAnvilLogs_ReadsAcrossChunks(t *testing.T) {
+	t.Parallel()
+
+	const total = 150
+	var content strings.Builder
+	var starts []int
+	var all []string
+	for i := range total {
+		starts = append(starts, content.Len())
+		line, err := json.Marshal(makeLogEntry("INFO", fmt.Sprintf("entry %03d", i), "app.go", 1, nil))
+		require.NoError(t, err)
+		content.Write(line)
+		content.WriteString("\n")
+		all = append(all, fmt.Sprintf("10:30:00 INFO app.go:1 entry %03d", i))
+	}
+	size := content.Len()
+	require.Greater(t, size, logChunkSize)
+	starts = append(starts, size)
+	crossesChunk := func(i int) bool {
+		for b := size - logChunkSize; b > 0; b -= logChunkSize {
+			if starts[i] < b && b < starts[i+1] {
+				return true
+			}
+		}
+		return false
+	}
+	newest := make([]int, 0, maxLogLines)
+	for i := total - maxLogLines; i < total; i++ {
+		newest = append(newest, i)
+	}
+	require.True(t, slices.ContainsFunc(newest, crossesChunk), "the test needs at least one entry across a chunk boundary")
+
+	result := runAnvilLogs(writeRawLog(t, content.String()), AnvilLogsParams{Lines: maxLogLines})
+
+	require.Equal(t, strings.Join(all[total-maxLogLines:], "\n"), result)
+}
+
+func TestAnvilLogs_ChunkBoundaryPlacement(t *testing.T) {
+	t.Parallel()
+
+	// Every line but the newest is this long, so the newest line's length
+	// sets where the chunk boundaries fall. The placed check fails the case
+	// if the chunk size moves the boundary away from what the case is named
+	// after.
+	const lineSize = 128
+	tests := map[string]struct {
+		eol        string
+		newestSize int
+		placed     func(before, at byte) bool
+	}{
+		"newline is the first byte of a chunk": {
+			eol:        "\n",
+			newestSize: lineSize - 1,
+			placed:     func(before, at byte) bool { return before != '\n' && at == '\n' },
+		},
+		"line starts exactly at a chunk boundary": {
+			eol:        "\n",
+			newestSize: lineSize,
+			placed:     func(before, at byte) bool { return before == '\n' && at != '\n' },
+		},
+		"line straddles a chunk boundary": {
+			eol:        "\n",
+			newestSize: lineSize + 1,
+			placed:     func(before, at byte) bool { return before != '\n' && at != '\n' },
+		},
+		"carriage return is the last byte of a chunk": {
+			eol:        "\r\n",
+			newestSize: lineSize - 1,
+			placed:     func(before, at byte) bool { return before == '\r' && at == '\n' },
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			const total = 150
+			var content strings.Builder
+			var starts []int
+			var all []string
+			for i := range total {
+				size := lineSize
+				if i == total-1 {
+					size = tc.newestSize
+				}
+				starts = append(starts, content.Len())
+				pad := strings.Repeat("x", size-len(fmt.Sprintf(`{"msg":"entry %03d","pad":""}`, i))-len(tc.eol))
+				fmt.Fprintf(&content, `{"msg":"entry %03d","pad":"%s"}`+tc.eol, i, pad)
+				all = append(all, fmt.Sprintf("--:--:-- INFO unknown:0 entry %03d pad=%s", i, pad))
+			}
+			raw := content.String()
+			require.Equal(t, (total-1)*lineSize+tc.newestSize, len(raw))
+			boundary := len(raw) - logChunkSize
+			require.Greater(t, boundary, starts[total-maxLogLines], "the boundary must fall within the lines read")
+			require.True(t, tc.placed(raw[boundary-1], raw[boundary]), "the chunk boundary is not where the case needs it")
+
+			result := runAnvilLogs(writeRawLog(t, raw), AnvilLogsParams{Lines: maxLogLines})
+
+			require.Equal(t, strings.Join(all[total-maxLogLines:], "\n"), result)
+		})
+	}
 }

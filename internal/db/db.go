@@ -72,6 +72,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteSessionMessagesStmt, err = db.PrepareContext(ctx, deleteSessionMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSessionMessages: %w", err)
 	}
+	if q.deleteStepUsageBeforeStmt, err = db.PrepareContext(ctx, deleteStepUsageBefore); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteStepUsageBefore: %w", err)
+	}
 	if q.finalizeBackgroundJobStmt, err = db.PrepareContext(ctx, finalizeBackgroundJob); err != nil {
 		return nil, fmt.Errorf("error preparing query FinalizeBackgroundJob: %w", err)
 	}
@@ -113,6 +116,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.insertPermissionDecisionStmt, err = db.PrepareContext(ctx, insertPermissionDecision); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertPermissionDecision: %w", err)
+	}
+	if q.insertStepUsageStmt, err = db.PrepareContext(ctx, insertStepUsage); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertStepUsage: %w", err)
 	}
 	if q.listAllSessionsStmt, err = db.PrepareContext(ctx, listAllSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAllSessions: %w", err)
@@ -289,6 +295,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteSessionMessagesStmt: %w", cerr)
 		}
 	}
+	if q.deleteStepUsageBeforeStmt != nil {
+		if cerr := q.deleteStepUsageBeforeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteStepUsageBeforeStmt: %w", cerr)
+		}
+	}
 	if q.finalizeBackgroundJobStmt != nil {
 		if cerr := q.finalizeBackgroundJobStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing finalizeBackgroundJobStmt: %w", cerr)
@@ -357,6 +368,11 @@ func (q *Queries) Close() error {
 	if q.insertPermissionDecisionStmt != nil {
 		if cerr := q.insertPermissionDecisionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertPermissionDecisionStmt: %w", cerr)
+		}
+	}
+	if q.insertStepUsageStmt != nil {
+		if cerr := q.insertStepUsageStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertStepUsageStmt: %w", cerr)
 		}
 	}
 	if q.listAllSessionsStmt != nil {
@@ -564,6 +580,7 @@ type Queries struct {
 	deletePermissionDecisionsBeforeStmt         *sql.Stmt
 	deleteSessionStmt                           *sql.Stmt
 	deleteSessionMessagesStmt                   *sql.Stmt
+	deleteStepUsageBeforeStmt                   *sql.Stmt
 	finalizeBackgroundJobStmt                   *sql.Stmt
 	getAllSessionMessagesStmt                   *sql.Stmt
 	getBackgroundJobStmt                        *sql.Stmt
@@ -578,6 +595,7 @@ type Queries struct {
 	getMessageChildrenStmt                      *sql.Stmt
 	getSessionByIDStmt                          *sql.Stmt
 	insertPermissionDecisionStmt                *sql.Stmt
+	insertStepUsageStmt                         *sql.Stmt
 	listAllSessionsStmt                         *sql.Stmt
 	listAnvilInstancesStmt                      *sql.Stmt
 	listBackgroundJobIDsBySessionStmt           *sql.Stmt
@@ -630,6 +648,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deletePermissionDecisionsBeforeStmt:         q.deletePermissionDecisionsBeforeStmt,
 		deleteSessionStmt:                           q.deleteSessionStmt,
 		deleteSessionMessagesStmt:                   q.deleteSessionMessagesStmt,
+		deleteStepUsageBeforeStmt:                   q.deleteStepUsageBeforeStmt,
 		finalizeBackgroundJobStmt:                   q.finalizeBackgroundJobStmt,
 		getAllSessionMessagesStmt:                   q.getAllSessionMessagesStmt,
 		getBackgroundJobStmt:                        q.getBackgroundJobStmt,
@@ -644,6 +663,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getMessageChildrenStmt:                      q.getMessageChildrenStmt,
 		getSessionByIDStmt:                          q.getSessionByIDStmt,
 		insertPermissionDecisionStmt:                q.insertPermissionDecisionStmt,
+		insertStepUsageStmt:                         q.insertStepUsageStmt,
 		listAllSessionsStmt:                         q.listAllSessionsStmt,
 		listAnvilInstancesStmt:                      q.listAnvilInstancesStmt,
 		listBackgroundJobIDsBySessionStmt:           q.listBackgroundJobIDsBySessionStmt,

@@ -84,140 +84,156 @@ func split(command string, depth int) (all, normalized []string) {
 		return []string{command}, []string{command}
 	}
 
-	printer := syntax.NewPrinter()
-	collector := func(out *[]string) func(string) {
-		seen := make(map[string]struct{})
-		return func(seg string) {
-			if seg == "" {
-				return
-			}
-			if _, ok := seen[seg]; ok {
-				return
-			}
-			seen[seg] = struct{}{}
-			*out = append(*out, seg)
-		}
-	}
-	addAll, addNormalized := collector(&all), collector(&normalized)
-	// Normalised segments may carry control characters decoded from
-	// ANSI-C strings; they are replaced with spaces so glob matching sees
-	// one line. Original spellings are added unchanged.
-	addPlain := func(seg string) {
-		seg = strings.Map(func(r rune) rune {
-			if unicode.IsControl(r) {
-				return ' '
-			}
-			return r
-		}, seg)
-		addAll(seg)
-		addNormalized(seg)
-	}
-
+	s := splitter{printer: syntax.NewPrinter(), depth: depth}
 	syntax.Walk(file, func(node syntax.Node) bool {
-		stmt, ok := node.(*syntax.Stmt)
-		if !ok {
-			return true
+		if stmt, ok := node.(*syntax.Stmt); ok {
+			s.addStmt(stmt)
 		}
+		return true
+	})
+	return s.all.segments, s.normalized.segments
+}
 
-		// Redirections are collected for every statement, not just
-		// simple commands, so that a write hidden behind a subshell
-		// such as "(ls) > /etc/passwd" is still surfaced.
-		var inline, writes, plainWrites []string
-		for _, redir := range stmt.Redirs {
-			text, isWrite := formatRedir(printer, redir)
-			switch {
-			case text == "":
-			case isWrite:
-				writes = append(writes, text)
-				plainWrites = append(plainWrites, cmp.Or(plainRedir(redir), text))
-			default:
-				inline = append(inline, text)
-			}
+// segmentList holds segments in first-seen order, skipping empty and
+// duplicate ones.
+type segmentList struct {
+	segments []string
+	seen     map[string]struct{}
+}
+
+func (l *segmentList) add(seg string) {
+	if seg == "" {
+		return
+	}
+	if _, ok := l.seen[seg]; ok {
+		return
+	}
+	if l.seen == nil {
+		l.seen = make(map[string]struct{})
+	}
+	l.seen[seg] = struct{}{}
+	l.segments = append(l.segments, seg)
+}
+
+// splitter collects the segments of one parsed command: every spelling
+// in all, and only the normalised spellings in normalized.
+type splitter struct {
+	printer         *syntax.Printer
+	depth           int
+	all, normalized segmentList
+}
+
+// addPlain records a normalised segment. Normalised segments may carry
+// control characters decoded from ANSI-C strings; they are replaced with
+// spaces so glob matching sees one line. Original spellings are added to
+// all unchanged.
+func (s *splitter) addPlain(seg string) {
+	seg = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
 		}
+		return r
+	}, seg)
+	s.all.add(seg)
+	s.normalized.add(seg)
+}
 
-		var tokens, plain, assigns, plainAssigns []string
-		if call, ok := stmt.Cmd.(*syntax.CallExpr); ok {
-			tokens = make([]string, 0, len(call.Args))
-			for _, arg := range call.Args {
-				var sb strings.Builder
-				if err := printer.Print(&sb, arg); err != nil {
-					continue
-				}
+func (s *splitter) addStmt(stmt *syntax.Stmt) {
+	// Redirections are collected for every statement, not just simple
+	// commands, so that a write hidden behind a subshell such as
+	// "(ls) > /etc/passwd" is still surfaced.
+	var inline, writes, plainWrites []string
+	for _, redir := range stmt.Redirs {
+		text, isWrite := formatRedir(s.printer, redir)
+		if isWrite {
+			writes = append(writes, text)
+			plainWrites = append(plainWrites, cmp.Or(plainRedir(redir), text))
+		} else if text != "" {
+			inline = append(inline, text)
+		}
+	}
+
+	var tokens, plain, assigns, plainAssigns []string
+	switch cmd := stmt.Cmd.(type) {
+	case *syntax.CallExpr:
+		tokens = make([]string, 0, len(cmd.Args))
+		for _, arg := range cmd.Args {
+			var sb strings.Builder
+			if err := s.printer.Print(&sb, arg); err == nil {
 				tokens = append(tokens, sb.String())
 				plain = append(plain, plainWords(arg, sb.String())...)
 			}
-			for _, assign := range call.Assigns {
-				printed, plainAssign, ok := formatAssign(printer, assign)
-				if !ok {
-					continue
-				}
+		}
+		for _, assign := range cmd.Assigns {
+			if printed, plainAssign, ok := formatAssign(s.printer, assign); ok {
 				assigns = append(assigns, printed)
 				plainAssigns = append(plainAssigns, plainAssign)
 			}
 		}
+	case *syntax.DeclClause:
 		// Declaration builtins (export, declare, local, readonly, typeset)
 		// change the environment of every later command, so each one is a
 		// segment of its own rather than being dropped.
-		if decl, ok := stmt.Cmd.(*syntax.DeclClause); ok {
-			var sb strings.Builder
-			if err := printer.Print(&sb, decl); err == nil {
-				addAll(sb.String())
-				addPlain(sb.String())
-			}
+		var sb strings.Builder
+		if err := s.printer.Print(&sb, cmd); err == nil {
+			s.addPlain(sb.String())
 		}
-		if len(plain) > 0 && strings.Contains(plain[0], "/") {
-			plain[0] = path.Base(plain[0])
-		}
-		join := func(words []string) string {
-			if len(words) == 0 {
-				return ""
-			}
-			return strings.Join(append(slices.Clone(words), inline...), " ")
-		}
+	}
+	if len(plain) > 0 && strings.Contains(plain[0], "/") {
+		plain[0] = path.Base(plain[0])
+	}
 
-		addAll(join(tokens))
-		addPlain(join(plain))
-		// Assignments steer the command through its environment
-		// (LD_PRELOAD, PATH, GIT_EXTERNAL_DIFF), so the command is also
-		// emitted with them attached. A rule such as "ls *" then cannot
-		// approve "LD_PRELOAD=x ls", and a pure assignment such as
-		// "PATH=/x", which affects the commands after it, is not dropped.
-		if len(assigns) > 0 {
-			addAll(strings.TrimSpace(strings.Join(append(slices.Clone(assigns), join(tokens)), " ")))
-			addPlain(strings.TrimSpace(strings.Join(append(slices.Clone(plainAssigns), join(plain)), " ")))
-		}
-		for i := range writes {
-			addAll(writes[i])
-			addPlain(plainWrites[i])
-		}
-		for _, nested := range nestedCommands(tokens) {
-			addAll(nested)
-		}
-		for _, nested := range nestedCommands(plain) {
-			addPlain(nested)
-		}
-		// Shell code passed as a string (eval, sh -c, env -S) is split in
-		// its own right so a denied command cannot hide inside it.
-		if depth < maxUnwrapDepth {
-			inner, _ := unwrap(plain, 0)
-			for _, words := range [][]string{plain, inner} {
-				payload, ok := scriptPayload(words)
-				if !ok {
-					continue
-				}
-				inner, innerNormalized := split(payload, depth+1)
-				for _, seg := range inner {
-					addAll(seg)
-				}
-				for _, seg := range innerNormalized {
-					addNormalized(seg)
-				}
-			}
-		}
-		return true
-	})
+	s.all.add(withRedirs(tokens, inline))
+	s.addPlain(withRedirs(plain, inline))
+	// Assignments steer the command through its environment (LD_PRELOAD,
+	// PATH, GIT_EXTERNAL_DIFF), so the command is also emitted with them
+	// attached. A rule such as "ls *" then cannot approve "LD_PRELOAD=x
+	// ls", and a pure assignment such as "PATH=/x", which affects the
+	// commands after it, is not dropped.
+	if len(assigns) > 0 {
+		s.all.add(strings.TrimSpace(strings.Join(append(assigns, withRedirs(tokens, inline)), " ")))
+		s.addPlain(strings.TrimSpace(strings.Join(append(plainAssigns, withRedirs(plain, inline)), " ")))
+	}
+	for i := range writes {
+		s.all.add(writes[i])
+		s.addPlain(plainWrites[i])
+	}
+	for _, nested := range nestedCommands(tokens) {
+		s.all.add(nested)
+	}
+	for _, nested := range nestedCommands(plain) {
+		s.addPlain(nested)
+	}
+	if s.depth < maxUnwrapDepth {
+		s.addScript(plain)
+		inner, _ := unwrap(plain, 0)
+		s.addScript(inner)
+	}
+}
 
-	return all, normalized
+// addScript splits shell code that words run as a string (eval, sh -c,
+// env -S) in its own right, so a denied command cannot hide inside it.
+func (s *splitter) addScript(words []string) {
+	payload, ok := scriptPayload(words)
+	if !ok {
+		return
+	}
+	inner, innerNormalized := split(payload, s.depth+1)
+	for _, seg := range inner {
+		s.all.add(seg)
+	}
+	for _, seg := range innerNormalized {
+		s.normalized.add(seg)
+	}
+}
+
+// withRedirs joins a command's words with its inline redirections, or
+// returns "" when there is no command.
+func withRedirs(words, inline []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	return strings.Join(append(slices.Clone(words), inline...), " ")
 }
 
 // maxBraceWords caps brace expansion, which is exponential in the number
@@ -232,18 +248,31 @@ func plainWords(arg *syntax.Word, printed string) []string {
 	if strings.Contains(printed, "{") {
 		clone := &syntax.Word{Parts: slices.Clone(arg.Parts)}
 		if syntax.SplitBraces(clone) && braceWords(clone.Parts) <= maxBraceWords {
-			words = expand.Braces(clone)
+			if expanded, ok := expandBraces(clone); ok {
+				words = expanded
+			}
 		}
 	}
 	out := make([]string, 0, len(words))
 	for _, w := range words {
-		value, ok := staticWord(w)
+		value, ok := StaticWord(w)
 		if !ok {
 			return []string{printed}
 		}
 		out = append(out, value)
 	}
 	return out
+}
+
+func expandBraces(word *syntax.Word) ([]*syntax.Word, bool) {
+	var words []*syntax.Word
+	for w, err := range expand.BracesSeq(nil, word) {
+		if err != nil {
+			return nil, false
+		}
+		words = append(words, w)
+	}
+	return words, true
 }
 
 // braceWords returns how many words parts expand to, or a value above
@@ -305,35 +334,6 @@ func scriptPayload(words []string) (string, bool) {
 	return "", false
 }
 
-// SimpleCommand returns the argument vector of command when it is exactly
-// one simple command with no redirections, environment assignments,
-// background, or negation, and every word is static: quotes and escapes
-// are resolved, and any word with a variable, command substitution, or
-// other runtime expansion makes it report false.
-func SimpleCommand(command string) ([]string, bool) {
-	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
-	if err != nil || len(file.Stmts) != 1 {
-		return nil, false
-	}
-	stmt := file.Stmts[0]
-	if stmt.Background || stmt.Coprocess || stmt.Negated || len(stmt.Redirs) > 0 {
-		return nil, false
-	}
-	call, ok := stmt.Cmd.(*syntax.CallExpr)
-	if !ok || len(call.Assigns) > 0 || len(call.Args) == 0 {
-		return nil, false
-	}
-	argv := make([]string, 0, len(call.Args))
-	for _, word := range call.Args {
-		value, ok := staticWord(word)
-		if !ok {
-			return nil, false
-		}
-		argv = append(argv, value)
-	}
-	return argv, true
-}
-
 // formatAssign renders an inline assignment as NAME=value, both as
 // printed and with a static value unquoted. Array assignments and other
 // forms without a plain value are printed whole.
@@ -348,7 +348,7 @@ func formatAssign(printer *syntax.Printer, assign *syntax.Assign) (printed, plai
 	printed = sb.String()
 	plain = printed
 	if assign.Value != nil && assign.Index == nil && !assign.Append {
-		if value, static := staticWord(assign.Value); static {
+		if value, static := StaticWord(assign.Value); static {
 			plain = assign.Name.Value + "=" + value
 		}
 	} else if assign.Value == nil && assign.Array == nil && assign.Index == nil && !assign.Append {
@@ -357,10 +357,11 @@ func formatAssign(printer *syntax.Printer, assign *syntax.Assign) (printed, plai
 	return printed, plain, true
 }
 
-// staticWord returns the value a word expands to when it contains only
+// StaticWord returns the value a word expands to when it contains only
 // literal text and quoting. It reports false for any word whose value
-// depends on runtime state.
-func staticWord(w *syntax.Word) (string, bool) {
+// depends on runtime state. Unquoted glob and brace characters are kept
+// as written, so callers that care must check for them.
+func StaticWord(w *syntax.Word) (string, bool) {
 	var sb strings.Builder
 	for _, part := range w.Parts {
 		switch p := part.(type) {
@@ -426,7 +427,7 @@ func plainRedir(redir *syntax.Redirect) string {
 	if redir.Word == nil {
 		return ""
 	}
-	target, ok := staticWord(redir.Word)
+	target, ok := StaticWord(redir.Word)
 	if !ok {
 		return ""
 	}
@@ -555,9 +556,7 @@ func nestedCommands(tokens []string) []string {
 			out = append(out, strings.Join(append(assigns, inner...), " "))
 		}
 	}
-	for _, clause := range execClauses(tokens) {
-		out = append(out, clause)
-	}
+	out = append(out, execClauses(tokens)...)
 	return out
 }
 
@@ -637,7 +636,8 @@ func isAssignment(tok string) bool {
 		c := name[i]
 		isAlpha := c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 		isDigit := c >= '0' && c <= '9'
-		if !isAlpha && !(isDigit && i > 0) {
+		valid := isAlpha || (isDigit && i > 0)
+		if !valid {
 			return false
 		}
 	}

@@ -612,12 +612,20 @@ func TestBackgroundShellManager_ListBySession(t *testing.T) {
 
 	manager := newBackgroundShellManager()
 
+	waitForClockAfter := func(ts time.Time) {
+		for !time.Now().After(ts) {
+			runtime.Gosched()
+		}
+	}
+
 	r1 := startShell(t, manager, "sleep 30")
+	waitForClockAfter(r1.Info().StartedAt)
 	r2 := startShell(t, manager, "sleep 30")
 	var finished []*BackgroundShell
 	for range 3 {
 		bs := startShell(t, manager, "echo done")
 		bs.Wait()
+		waitForClockAfter(bs.Info().CompletedAt)
 		finished = append(finished, bs)
 	}
 	other := startShell(t, manager, "sleep 30")

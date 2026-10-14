@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +43,9 @@ func anvilLogsDescription() string {
 
 // Max line size to prevent memory issues with very long log lines (1 MB).
 const maxLogLineSize = 1024 * 1024
+
+// readLastLines reads the file backwards in chunks of this many bytes.
+const logChunkSize = 8192
 
 // Default and max line limits.
 const (
@@ -143,13 +148,14 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 
 	// Seek to end and read chunks backwards.
 	var entries []map[string]any
-	const chunkSize = 8192 // 8KB chunks
 
 	pos := stat.Size()
-	var remainder []byte
+	// carry holds the start of a line that began in an earlier chunk, which
+	// the next iteration reads.
+	var carry []byte
 
 	for pos > 0 && len(entries) < n {
-		chunkStart := max(pos-chunkSize, 0)
+		chunkStart := max(pos-logChunkSize, 0)
 
 		chunkLen := int(pos - chunkStart)
 		if chunkLen == 0 {
@@ -167,31 +173,20 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 			return nil, err
 		}
 
-		// Combine with remainder from previous (earlier) chunk.
-		data := append(chunk, remainder...)
+		// Complete the line carried over from the later chunk.
+		data := append(chunk, carry...)
 
-		// Split into lines (without the final incomplete line if any).
-		lines := splitLines(data)
-
-		// Keep the incomplete line for next iteration.
-		if len(data) > 0 && data[len(data)-1] != '\n' {
-			remainder = lines[len(lines)-1]
-			lines = lines[:len(lines)-1]
-		} else {
-			remainder = nil
+		// Unless this chunk starts the file, its first line may have begun
+		// in the earlier chunk, so carry it into the next iteration.
+		if chunkStart > 0 {
+			carry, data, _ = bytes.Cut(data, []byte{'\n'})
 		}
 
 		// Parse lines from end to start to get most recent first.
+		lines := splitLines(data)
 		for i := len(lines) - 1; i >= 0; i-- {
-			if len(lines[i]) > maxLogLineSize {
-				// Skip oversized lines silently.
-				continue
-			}
-
-			// Try to parse as JSON.
-			var entry map[string]any
-			if err := json.Unmarshal(lines[i], &entry); err != nil {
-				// Skip malformed lines silently.
+			entry, ok := parseLogLine(lines[i])
+			if !ok {
 				continue
 			}
 
@@ -204,22 +199,24 @@ func readLastLines(filePath string, n int) ([]map[string]any, error) {
 		pos = chunkStart
 	}
 
-	// Handle final remainder.
-	if len(remainder) > 0 && len(remainder) <= maxLogLineSize {
-		var entry map[string]any
-		if err := json.Unmarshal(remainder, &entry); err == nil {
-			if len(entries) < n {
-				entries = append(entries, entry)
-			}
-		}
-	}
-
 	// Reverse to get chronological order (oldest first).
-	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
-		entries[i], entries[j] = entries[j], entries[i]
-	}
+	slices.Reverse(entries)
 
 	return entries, nil
+}
+
+// parseLogLine parses one JSON log line. It reports false for oversized
+// and malformed lines, which the reader skips silently.
+func parseLogLine(line []byte) (map[string]any, bool) {
+	if len(line) > maxLogLineSize {
+		return nil, false
+	}
+	var entry map[string]any
+	err := json.Unmarshal(line, &entry)
+	if err != nil {
+		return nil, false
+	}
+	return entry, true
 }
 
 // splitLines splits data into lines without allocating strings.

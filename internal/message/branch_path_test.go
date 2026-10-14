@@ -12,9 +12,10 @@ import (
 )
 
 // newTestService creates an in-memory SQLite database, runs all
-// migrations, and returns a ready-to-use message.Service and a session
-// ID that can be used to attach messages.
-func newTestService(t *testing.T) (message.Service, string) {
+// migrations, and returns a ready-to-use message.Service, the querier
+// behind it (for writing raw rows the service must read back), and a
+// session ID that can be used to attach messages.
+func newTestService(t *testing.T) (message.Service, db.Querier, string) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -42,7 +43,7 @@ func newTestService(t *testing.T) (message.Service, string) {
 	require.NoError(t, err)
 
 	svc := message.NewService(q, message.WithConn(sqlDB))
-	return svc, sess.ID
+	return svc, q, sess.ID
 }
 
 // createMsg is a helper that creates a message with the given text and
@@ -72,7 +73,7 @@ func extractIDs(msgs []message.Message) []string {
 func TestGetBranchPath_SingleMessage(t *testing.T) {
 	t.Parallel()
 
-	svc, sessionID := newTestService(t)
+	svc, _, sessionID := newTestService(t)
 	ctx := context.Background()
 
 	root := createMsg(t, svc, sessionID, "root", "")
@@ -85,7 +86,7 @@ func TestGetBranchPath_SingleMessage(t *testing.T) {
 func TestGetBranchPath_LinearChain(t *testing.T) {
 	t.Parallel()
 
-	svc, sessionID := newTestService(t)
+	svc, _, sessionID := newTestService(t)
 	ctx := context.Background()
 
 	// Build a chain: m1 → m2 → m3 → m4 → m5.
@@ -105,7 +106,7 @@ func TestGetBranchPath_LinearChain(t *testing.T) {
 func TestGetBranchPath_BranchedTree(t *testing.T) {
 	t.Parallel()
 
-	svc, sessionID := newTestService(t)
+	svc, _, sessionID := newTestService(t)
 	ctx := context.Background()
 
 	// Tree structure:
@@ -134,7 +135,7 @@ func TestGetBranchPath_BranchedTree(t *testing.T) {
 func TestGetBranchPath_NonExistentID(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := newTestService(t)
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
 	// A non-existent ID should produce an empty slice, not an error, because
@@ -147,7 +148,7 @@ func TestGetBranchPath_NonExistentID(t *testing.T) {
 func TestGetBranchPath_EmptyID(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := newTestService(t)
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
 	// An empty leaf ID matches nothing in the CTE.
@@ -159,7 +160,7 @@ func TestGetBranchPath_EmptyID(t *testing.T) {
 func TestGetBranchPathTail_Limit(t *testing.T) {
 	t.Parallel()
 
-	svc, sessionID := newTestService(t)
+	svc, _, sessionID := newTestService(t)
 	ctx := context.Background()
 
 	// Branch: root → a → b → c, plus a sibling branch off a.
@@ -179,7 +180,7 @@ func TestGetBranchPathTail_Limit(t *testing.T) {
 func TestGetBranchPathTail_Paging(t *testing.T) {
 	t.Parallel()
 
-	svc, sessionID := newTestService(t)
+	svc, _, sessionID := newTestService(t)
 	ctx := context.Background()
 
 	root := createMsg(t, svc, sessionID, "root", "")
@@ -201,7 +202,7 @@ func TestGetBranchPathTail_Paging(t *testing.T) {
 func TestGetBranchPathTail_ExcludesSiblingBranches(t *testing.T) {
 	t.Parallel()
 
-	svc, sessionID := newTestService(t)
+	svc, _, sessionID := newTestService(t)
 	ctx := context.Background()
 
 	root := createMsg(t, svc, sessionID, "root", "")
@@ -223,7 +224,7 @@ func TestGetBranchPathTail_ExcludesSiblingBranches(t *testing.T) {
 func TestGetBranchPathTail_UnknownLeaf(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := newTestService(t)
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
 	// A non-existent leaf ID matches nothing in the CTE.
@@ -235,7 +236,7 @@ func TestGetBranchPathTail_UnknownLeaf(t *testing.T) {
 func TestGetBranchPathTail_EmptyLeaf(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := newTestService(t)
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
 	// An empty leaf ID matches nothing in the CTE.
@@ -246,7 +247,7 @@ func TestGetBranchPathTail_EmptyLeaf(t *testing.T) {
 
 func TestGetBranchPathPreservesExplicitRootSibling(t *testing.T) {
 	t.Parallel()
-	svc, sessionID := newTestService(t)
+	svc, _, sessionID := newTestService(t)
 	original := createMsg(t, svc, sessionID, "original", "")
 	continuation := createMsg(t, svc, sessionID, "old continuation", original.ID)
 	replacement := createMsg(t, svc, sessionID, "replacement", "")
