@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -172,6 +173,64 @@ func TestSetProviderAPIKey_SubscriptionLoginsAreEitherOr(t *testing.T) {
 		pc, _ := s.Config().Providers.Get("anthropic")
 		require.Equal(t, "Bearer login-at", pc.APIKey)
 		require.Empty(t, *calls)
+	})
+}
+
+func TestSetProviderAPIKey_RejectsUnknownCredentialTypes(t *testing.T) {
+	s := newDiskStore(t, `{"providers":{"openai":{"id":"openai","api_key":"sk-old"}}}`)
+	before := readDisk(t, s)
+
+	require.ErrorContains(t, s.SetProviderAPIKey(ScopeGlobal, "openai", 42), "unsupported credential type int")
+
+	pc, _ := s.Config().Providers.Get("openai")
+	require.Equal(t, "sk-old", pc.APIKey)
+	require.Equal(t, before, readDisk(t, s))
+}
+
+func TestSetProviderAPIKey_UnconfiguredProvider(t *testing.T) {
+	t.Run("known provider the reload skipped is added from the catalog", func(t *testing.T) {
+		s := newDiskStore(t, `{}`)
+
+		// An empty key leaves the provider unconfigured after the reload
+		// that saving it triggers, so the store builds it from the catalog.
+		require.NoError(t, s.SetProviderAPIKey(ScopeGlobal, "groq", ""))
+
+		idx := slices.IndexFunc(s.KnownProviders(), func(p catwalk.Provider) bool { return p.ID == "groq" })
+		require.GreaterOrEqual(t, idx, 0, "groq must be in the embedded catalog")
+		known := s.KnownProviders()[idx]
+		pc, exists := s.Config().Providers.Get("groq")
+		require.True(t, exists)
+		require.Equal(t, ProviderConfig{
+			ID:           "groq",
+			Name:         known.Name,
+			BaseURL:      known.APIEndpoint,
+			Type:         known.Type,
+			ExtraHeaders: map[string]string{},
+			ExtraParams:  map[string]string{},
+			Models:       known.Models,
+		}, pc)
+	})
+
+	t.Run("a failed save changes nothing in memory", func(t *testing.T) {
+		s := newDiskStore(t, `{"providers":{"openai":{"id":"openai","api_key":"sk-old"}}}`)
+		// A path under a regular file can't be written.
+		s.globalDataPath = filepath.Join(s.globalDataPath, "anvil.json")
+
+		err := s.SetProviderAPIKey(ScopeGlobal, "openai", "sk-new")
+
+		require.ErrorContains(t, err, "failed to save api key to config file")
+		pc, _ := s.Config().Providers.Get("openai")
+		require.Equal(t, "sk-old", pc.APIKey)
+	})
+
+	t.Run("unknown provider is an error", func(t *testing.T) {
+		s := newDiskStore(t, `{}`)
+
+		err := s.SetProviderAPIKey(ScopeGlobal, "nope", "sk-new")
+
+		require.EqualError(t, err, "provider with ID nope not found in known providers")
+		_, exists := s.Config().Providers.Get("nope")
+		require.False(t, exists)
 	})
 }
 
