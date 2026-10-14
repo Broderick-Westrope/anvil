@@ -2,7 +2,6 @@ package model
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -13,9 +12,9 @@ import (
 // existing methods can't express, and it documents its side effects. It
 // never hands out *UI or its fields.
 type featureHost interface {
-	// Session is the root session (UI's m.session), or nil. It is not
-	// the drilled-in child on screen.
-	Session() *session.Session
+	// SessionID is the root session's ID (UI's m.session), or "" when
+	// there is none. It is not the drilled-in child on screen.
+	SessionID() string
 	// EnsureSession returns the current session, creating it and
 	// switching to chat when there's none (assigns the session and
 	// honours forced compact mode). cmd loads a new session. sessionID is
@@ -40,13 +39,18 @@ type featureHost interface {
 	// Reloading reports an instance reload in progress.
 	Reloading() bool
 	// KeyMap is the current key bindings.
-	KeyMap() *KeyMap
+	KeyMap() KeyMap
 }
 
 // uiHost is UI as a featureHost.
 type uiHost struct{ m *UI }
 
-func (h uiHost) Session() *session.Session { return h.m.session }
+func (h uiHost) SessionID() string {
+	if h.m.session == nil {
+		return ""
+	}
+	return h.m.session.ID
+}
 
 func (h uiHost) EnsureSession() (string, tea.Cmd, error) {
 	cmd, err := h.m.ensureSession()
@@ -84,4 +88,4 @@ func (h uiHost) ComposerHasContent() bool {
 
 func (h uiHost) Reloading() bool { return h.m.reloading }
 
-func (h uiHost) KeyMap() *KeyMap { return &h.m.keyMap }
+func (h uiHost) KeyMap() KeyMap { return h.m.keyMap }

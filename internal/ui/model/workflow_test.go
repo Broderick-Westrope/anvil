@@ -38,7 +38,12 @@ type fakeHost struct {
 	keyMap      KeyMap
 }
 
-func (h *fakeHost) Session() *session.Session { return h.session }
+func (h *fakeHost) SessionID() string {
+	if h.session == nil {
+		return ""
+	}
+	return h.session.ID
+}
 
 func (h *fakeHost) EnsureSession() (string, tea.Cmd, error) {
 	if h.session != nil {
@@ -76,7 +81,7 @@ func (h *fakeHost) Notify(n notification.Notification) tea.Cmd {
 func (h *fakeHost) Relayout()                { h.relayouts++ }
 func (h *fakeHost) ComposerHasContent() bool { return h.composer }
 func (h *fakeHost) Reloading() bool          { return h.reloading }
-func (h *fakeHost) KeyMap() *KeyMap          { return &h.keyMap }
+func (h *fakeHost) KeyMap() KeyMap           { return h.keyMap }
 
 // workflowFixture drives a workflow feature through its surface.
 type workflowFixture struct {

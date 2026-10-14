@@ -209,17 +209,9 @@ func (w *workflowFeature) runFor(sessionID string) (invoker string, run *workflo
 	return finishedInvoker, finished
 }
 
-// onScreen returns the root session's ID, or "" when there is none.
-func (w *workflowFeature) onScreen() string {
-	if s := w.host.Session(); s != nil {
-		return s.ID
-	}
-	return ""
-}
-
 // currentRun returns the run involving the session on screen.
 func (w *workflowFeature) currentRun() (invoker string, run *workflowRun) {
-	id := w.onScreen()
+	id := w.host.SessionID()
 	if id == "" {
 		return "", nil
 	}
@@ -369,7 +361,7 @@ func (w *workflowFeature) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case key.Matches(msg, km.WorkflowAbort):
 		return w.control(invoker, dialog.WorkflowAbort), true
 	case key.Matches(msg, km.WorkflowGo):
-		if run.active != w.onScreen() {
+		if run.active != w.host.SessionID() {
 			return w.host.Navigate(run.active), true
 		}
 	}
@@ -414,7 +406,7 @@ func (w *workflowFeature) PaletteEntries() []*dialog.CommandItem {
 		item("workflow_abort", "Abort Workflow /"+run.command, km.WorkflowAbort.Help().Key, dialog.WorkflowAbort),
 		item("workflow_run", "Show Workflow Run /"+run.command, km.WorkflowRun.Help().Key, dialog.WorkflowShowRun),
 	}
-	if run.active != w.onScreen() {
+	if run.active != w.host.SessionID() {
 		entries = append(entries, item("workflow_goto", "Go to Workflow Session", km.WorkflowGo.Help().Key, dialog.WorkflowGoToActive))
 	}
 	if _, ok := latestAgent(run.log.Entries); ok {
@@ -627,7 +619,7 @@ func (w *workflowFeature) handleFocus(msg workflowFocusMsg) tea.Cmd {
 	if msg.title != "" {
 		w.setTitle(msg.target, msg.title)
 	}
-	if w.onScreen() == msg.target {
+	if w.host.SessionID() == msg.target {
 		w.follow = ""
 		return nil
 	}
@@ -706,7 +698,7 @@ func (w *workflowFeature) Panel() panelView {
 		agentKey: km.WorkflowAgent.Help().Key,
 		runKey:   km.WorkflowRun.Help().Key,
 	}
-	if run.active != w.onScreen() {
+	if run.active != w.host.SessionID() {
 		p.elsewhere = w.title(run.active)
 	}
 	return p
