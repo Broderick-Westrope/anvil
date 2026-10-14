@@ -622,6 +622,11 @@ func TestWorkflowFinishReportsOutcome(t *testing.T) {
 			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo aborted",
 			wantPanel: "/demo · aborted",
 		},
+		"interrupted": {
+			ev:       workflowhost.Event{Status: workflowhost.StatusInterrupted, Message: "interrupted: agents reloaded"},
+			wantType: util.InfoTypeWarn, wantMsg: "Workflow /demo interrupted: agents reloaded",
+			wantPanel: "/demo · interrupted",
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
