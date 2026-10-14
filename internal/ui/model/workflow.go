@@ -432,19 +432,19 @@ func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
 		return nil
 	}
 	if ev.Kind != workflowhost.EventFinished {
-		w.requests.observeRun(ev.SessionID, ev.RunID)
+		w.closeRequests(w.requests.observeRun(ev.SessionID, ev.RunID))
 	}
 	defer w.host.Relayout()
 	switch ev.Kind {
 	case workflowhost.EventApproval:
-		w.requests.add(ev)
+		w.closeRequests(w.requests.add(ev))
 		w.host.Dialogs().OpenDialogWithGrace(dialog.NewWorkflowApproval(w.com, ev))
 		return w.host.Notify(notification.Notification{
 			Title:   "Anvil is waiting...",
 			Message: fmt.Sprintf("Workflow /%s needs approval", ev.Command),
 		})
 	case workflowhost.EventAsk:
-		w.requests.add(ev)
+		w.closeRequests(w.requests.add(ev))
 		if run := w.ensureRun(ev); run != nil {
 			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ev.RequestID, Question: ev.Question})
 		}
@@ -514,6 +514,14 @@ func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// closeRequests closes the dialogs of requests that can no longer be
+// answered.
+func (w *workflowFeature) closeRequests(ids []string) {
+	for _, id := range ids {
+		w.host.Dialogs().CloseDialog(dialog.WorkflowRequestDialogID(id))
+	}
 }
 
 // keepAnswer records the answer to a question, lists the exchange in the
@@ -642,9 +650,7 @@ func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
 	}
 	run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: ev.Status, Text: outcome})
 	run.log.Finished = true
-	for _, id := range w.requests.finish(ev.SessionID) {
-		w.host.Dialogs().CloseDialog(dialog.WorkflowRequestDialogID(id))
-	}
+	w.closeRequests(w.requests.drop(ev.SessionID))
 	if ev.Status == workflowhost.StatusCompleted {
 		outcome = ansi.Truncate(outcome, workflowResultMaxWidth, "…")
 	}

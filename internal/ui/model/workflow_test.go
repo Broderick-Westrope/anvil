@@ -1345,3 +1345,27 @@ func TestWorkflowPanelCutsScriptTextAtItsFirstLine(t *testing.T) {
 	f.press(showRunKey)
 	require.Contains(t, f.runDialog(), "build step two", "the run dialog keeps the full text")
 }
+
+func TestWorkflowReplacedInvocationClosesItsOpenRequests(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]workflowhost.Event{
+		"by a new approval": approvalFor("req-2", "sess-1"),
+		"by another run":    {Kind: workflowhost.EventState, RunID: "run-2", Command: "demo", SessionID: "sess-1", State: workflowhost.StateStarted},
+	}
+	for name, next := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			ask := askFor("ask-1", "Go?")
+			ask.RunID = "run-1"
+			f.event(ask)
+			require.True(t, f.requestOpen("ask-1"))
+
+			// run-1's finish was dropped; the next invocation replaces it.
+			f.event(next)
+			require.False(t, f.requestOpen("ask-1"), "the old run's question can't be answered any more")
+		})
+	}
+}

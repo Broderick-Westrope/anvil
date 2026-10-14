@@ -39,23 +39,30 @@ func (r *workflowRequests) seen(ev workflowhost.Event) bool {
 
 // observeRun notes that an event of runID arrived in sessionID. The
 // session's provisional invocation becomes that run; an invocation that
-// already has another run was replaced, its finish lost.
-func (r *workflowRequests) observeRun(sessionID, runID string) {
+// already has another run was replaced, its finish lost. It returns the
+// IDs of the replaced invocation's requests that were still open.
+func (r *workflowRequests) observeRun(sessionID, runID string) []string {
 	inv := r.bySession[sessionID]
 	switch {
 	case inv == nil || runID == "":
 	case inv.runID == "":
 		inv.runID = runID
 	case inv.runID != runID:
-		delete(r.bySession, sessionID)
+		return r.drop(sessionID)
 	}
+	return nil
 }
 
 // add opens ev, a request not seen before. An approval starts a new
-// invocation, replacing any before it in the session.
-func (r *workflowRequests) add(ev workflowhost.Event) {
+// invocation, replacing any before it in the session; add returns the IDs
+// of the replaced invocation's requests that were still open.
+func (r *workflowRequests) add(ev workflowhost.Event) []string {
+	var replaced []string
+	if ev.Kind == workflowhost.EventApproval {
+		replaced = r.drop(ev.SessionID)
+	}
 	inv := r.bySession[ev.SessionID]
-	if inv == nil || ev.Kind == workflowhost.EventApproval {
+	if inv == nil {
 		if r.bySession == nil {
 			r.bySession = map[string]*invocationRequests{}
 		}
@@ -63,6 +70,7 @@ func (r *workflowRequests) add(ev workflowhost.Event) {
 		r.bySession[ev.SessionID] = inv
 	}
 	inv.open[ev.RequestID] = ev
+	return replaced
 }
 
 // take closes the open request id and returns it.
@@ -83,9 +91,9 @@ func (r *workflowRequests) answer(ev workflowhost.Event) {
 	}
 }
 
-// finish forgets sessionID's invocation and returns the IDs of its
-// requests still open.
-func (r *workflowRequests) finish(sessionID string) []string {
+// drop forgets sessionID's invocation, when it finishes or is replaced,
+// and returns the IDs of its requests still open.
+func (r *workflowRequests) drop(sessionID string) []string {
 	inv := r.bySession[sessionID]
 	if inv == nil {
 		return nil
