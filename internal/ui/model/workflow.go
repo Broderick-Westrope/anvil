@@ -431,9 +431,7 @@ func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
 		return nil
 	}
 	if ev.Kind != workflowhost.EventFinished {
-		control := ev.Kind == workflowhost.EventState &&
-			(ev.State == workflowhost.StatePaused || ev.State == workflowhost.StateResumed)
-		w.closeRequests(w.requests.observeRun(ev.SessionID, ev.RunID, !control))
+		w.closeRequests(w.requests.observeRun(ev.SessionID, ev.RunID, !isControl(ev)))
 	}
 	defer w.host.Relayout()
 	switch ev.Kind {
@@ -547,11 +545,11 @@ func (w *workflowFeature) keepAnswer(ask workflowhost.Event, answer string) tea.
 
 // ensureRun returns the run ev belongs to, starting one when the session
 // has none or ev belongs to another run. It returns nil for a late event
-// of a finished run.
+// of a finished run, and for a late control of an earlier run.
 func (w *workflowFeature) ensureRun(ev workflowhost.Event) *workflowRun {
 	run := w.runs[ev.SessionID]
 	if run != nil && (run.log.Finished || otherWorkflowRun(run, ev)) {
-		if ev.RunID == "" || ev.RunID == run.log.RunID {
+		if ev.RunID == "" || ev.RunID == run.log.RunID || isControl(ev) {
 			return nil
 		}
 		run = nil
@@ -566,6 +564,14 @@ func (w *workflowFeature) ensureRun(ev workflowhost.Event) *workflowRun {
 		run.log.RunID = ev.RunID
 	}
 	return run
+}
+
+// isControl reports whether ev is a pause or resume, which the host
+// publishes apart from the run. One can arrive after the run's session
+// moved on to the next run, so it never starts or replaces a run.
+func isControl(ev workflowhost.Event) bool {
+	return ev.Kind == workflowhost.EventState &&
+		(ev.State == workflowhost.StatePaused || ev.State == workflowhost.StateResumed)
 }
 
 // otherWorkflowRun reports whether ev belongs to a run other than run. A

@@ -1435,6 +1435,8 @@ func TestWorkflowLateControlOfAnEarlierRunKeepsTheCurrentRequests(t *testing.T) 
 			f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: state})
 
 			require.True(t, f.requestOpen("ask-open"))
+			require.Contains(t, f.panel(), "? Done? → yes", "run-2's record is kept")
+			require.NotContains(t, f.panel(), "paused")
 			f.requireShownOnce(t, open)
 			done := askFor("ask-done", "Done?")
 			done.RunID = "run-2"
