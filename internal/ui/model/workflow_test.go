@@ -1593,3 +1593,15 @@ func TestWorkflowFinishOfAnotherRunEndsTheLiveRunsRequestsToo(t *testing.T) {
 	require.False(t, f.requestOpen("ask-1"), "run-1's question can't be answered any more")
 	f.requireNothingKept(t)
 }
+
+func TestWorkflowControlErrorIsReported(t *testing.T) {
+	t.Parallel()
+
+	for _, control := range []dialog.WorkflowControl{dialog.WorkflowPause, dialog.WorkflowResume, dialog.WorkflowAbort} {
+		f := newWorkflowFixture(t)
+		f.ws.controlErr = errors.New("no workflow is running")
+		f.event(started("demo", "sess-1"))
+		infos := f.act(dialog.ActionWorkflowControl{SessionID: "sess-1", Control: control})
+		require.Equal(t, []util.InfoMsg{{Type: util.InfoTypeError, Msg: "no workflow is running"}}, infos, control)
+	}
+}

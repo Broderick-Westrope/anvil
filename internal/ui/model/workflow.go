@@ -154,6 +154,12 @@ type workflowFeature struct {
 	follow string
 }
 
+var (
+	_ commandFeature = (*workflowFeature)(nil)
+	_ panelFeature   = (*workflowFeature)(nil)
+	_ paletteFeature = (*workflowFeature)(nil)
+)
+
 func newWorkflowFeature(host featureHost, com *common.Common, ws workflowWorkspace) *workflowFeature {
 	return &workflowFeature{
 		host:   host,

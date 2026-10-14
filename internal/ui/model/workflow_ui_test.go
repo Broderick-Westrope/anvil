@@ -50,6 +50,7 @@ type workflowTestWorkspace struct {
 	controls    []string
 	history     []message.Message
 	notReady    bool
+	controlErr  error
 	createErr   error
 	// projectDir is the project directory commands load from.
 	projectDir string
@@ -157,17 +158,17 @@ func (w *workflowTestWorkspace) WorkflowRespond(requestID, answer string) error 
 
 func (w *workflowTestWorkspace) WorkflowPause(id string) error {
 	w.controls = append(w.controls, "pause:"+id)
-	return nil
+	return w.controlErr
 }
 
 func (w *workflowTestWorkspace) WorkflowResume(id string) error {
 	w.controls = append(w.controls, "resume:"+id)
-	return nil
+	return w.controlErr
 }
 
 func (w *workflowTestWorkspace) WorkflowAbort(id string) error {
 	w.controls = append(w.controls, "abort:"+id)
-	return nil
+	return w.controlErr
 }
 
 type workflowUIFixture struct {
