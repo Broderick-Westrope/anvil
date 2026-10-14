@@ -387,6 +387,20 @@ func TestMapSelectionToSource_Rules(t *testing.T) {
 			from: "x.", to: "x.",
 			want: "x<!--c-->.", wantOK: true,
 		},
+		// The selected run occurs twice in the source, but only once in
+		// full, and only that occurrence keeps the word whole.
+		"run ending the text anchors to its full source copy": {
+			source: "zz abcdefghiXabcdefghij", rendered: "zz abcdefghij",
+			from: "abcdefghij", to: "abcdefghij",
+			want: "abcdefghij", wantOK: true,
+		},
+		// A run that occurs twice in the source is no anchor, so a maps
+		// to its first source copy rather than to the second word rune.
+		"run repeated in the source is not an anchor": {
+			source: "# abcdefghij abcdefghij", rendered: "abcdefghij",
+			from: "a", to: "a",
+			want: "# a", wantOK: true,
+		},
 		"hidden text between two words maps": {
 			source: "x<!--abc--> abcd", rendered: "x abcd",
 			from: "x", to: "abcd",
@@ -399,40 +413,6 @@ func TestMapSelectionToSource_Rules(t *testing.T) {
 			start, end := selectBetween(t, tc.rendered, tc.from, tc.to)
 			got, ok := MapSelectionToSource(tc.source, tc.rendered, start, end)
 			require.Equal(t, tc.wantOK, ok)
-			require.Equal(t, tc.want, got)
-		})
-	}
-}
-
-func TestAnchorChain(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		rendered, source string
-		want             []anchor
-	}{
-		"text exactly one anchor long": {
-			rendered: "abcdefghij", source: "abcdefghij",
-			want: []anchor{{rendered: 0, source: 0}},
-		},
-		"anchor after a rendered decoration": {
-			rendered: "│abcdefghij", source: "abcdefghij",
-			want: []anchor{{rendered: 1, source: 0}},
-		},
-		"run repeated in the source is not an anchor": {
-			rendered: "abcdefghij", source: "abcdefghijabcdefghij",
-			want: []anchor{},
-		},
-		"out of order runs keep the longest ordered chain": {
-			rendered: "abcdefghijklmnopqrstuvwxyzABCD",
-			source:   "klmnopqrstabcdefghijuvwxyzABCD",
-			want:     []anchor{{rendered: 10, source: 0}, {rendered: 20, source: 20}},
-		},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			got := anchorChain([]rune(tc.rendered), []rune(tc.source))
 			require.Equal(t, tc.want, got)
 		})
 	}
