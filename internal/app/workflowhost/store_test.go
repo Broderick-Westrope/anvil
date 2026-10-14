@@ -1,9 +1,12 @@
 package workflowhost_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -296,4 +299,89 @@ func TestStore_PruneRunDirsIgnoresFiles(t *testing.T) {
 	require.NoError(t, s.PruneRunDirs(t.Context(), time.Now()))
 
 	require.FileExists(t, path)
+}
+
+func TestStore_MarkInterruptedChecksEveryRun(t *testing.T) {
+	t.Parallel()
+	s, q, dataDir := newTestStore(t)
+	hb := time.Now().UnixMilli()
+	require.NoError(t, q.UpsertAnvilInstance(t.Context(), db.UpsertAnvilInstanceParams{
+		ID: "live", Pid: 1, StartedAt: hb, HeartbeatAt: hb,
+	}))
+	started := time.Now()
+	require.NoError(t, workflowhost.NewStore(q, dataDir, "live").StartRun(t.Context(), testRun("live-run", started)))
+	require.NoError(t, workflowhost.NewStore(q, dataDir, "gone").StartRun(t.Context(), testRun("gone-run", started.Add(time.Second))))
+
+	require.NoError(t, s.MarkInterrupted(t.Context()))
+
+	for id, want := range map[string]workflowhost.Status{
+		"live-run": workflowhost.StatusRunning,
+		"gone-run": workflowhost.StatusInterrupted,
+	} {
+		got, ok, err := s.GetRun(t.Context(), id)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, want, got.Status, id)
+	}
+}
+
+// faultyQuerier runs hook before each run lookup, failing the lookup when
+// hook returns an error.
+type faultyQuerier struct {
+	db.Querier
+	hook func(id string) error
+}
+
+func (q faultyQuerier) GetWorkflowRun(ctx context.Context, id string) (db.WorkflowRun, error) {
+	if err := q.hook(id); err != nil {
+		return db.WorkflowRun{}, err
+	}
+	return q.Querier.GetWorkflowRun(ctx, id)
+}
+
+func TestStore_PruneRunDirsCarriesOnPastADirectoryItCantCheck(t *testing.T) {
+	t.Parallel()
+	errLookup := errors.New("lookup failed")
+	tests := map[string]struct {
+		staleEntry bool
+		fault      func(dir string) error
+		wantErr    string
+	}{
+		"run lookup fails": {
+			fault:   func(string) error { return errLookup },
+			wantErr: "get workflow run a-faulty: lookup failed",
+		},
+		"directory vanishes": {
+			staleEntry: true,
+			fault:      func(dir string) error { return os.RemoveAll(dir) },
+			wantErr:    "stat workflow run directory a-faulty",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if tc.staleEntry && runtime.GOOS == "windows" {
+				// Windows reads an entry's info with the listing.
+				t.Skip("directory entries can't go stale on Windows")
+			}
+			base, q, dataDir := newTestStore(t)
+			now := time.Now()
+			old := now.Add(-30 * 24 * time.Hour)
+			for _, id := range []string{"a-faulty", "b-old"} {
+				require.NoError(t, os.MkdirAll(base.Tmpdir(id), 0o700))
+				require.NoError(t, os.Chtimes(base.RunDir(id), old, old))
+			}
+			s := workflowhost.NewStore(faultyQuerier{Querier: q, hook: func(id string) error {
+				if id == "a-faulty" {
+					return tc.fault(base.RunDir(id))
+				}
+				return nil
+			}}, dataDir, testInstance)
+
+			err := s.PruneRunDirs(t.Context(), now)
+
+			require.ErrorContains(t, err, tc.wantErr)
+			require.NoDirExists(t, s.RunDir("b-old"), "later directories are still pruned")
+		})
+	}
 }
