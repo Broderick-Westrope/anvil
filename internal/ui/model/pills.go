@@ -249,10 +249,7 @@ func (m *UI) renderPills() {
 	contentWidth := max(width-paddingLeft, 0)
 
 	t := m.com.Styles
-	var panel string
-	if !m.isDrilledIn() {
-		panel = m.features.renderPanels(contentWidth)
-	}
+	panel := m.features.renderPanels(contentWidth)
 
 	hasIncomplete := hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0
