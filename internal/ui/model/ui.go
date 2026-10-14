@@ -4542,10 +4542,7 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		return func() tea.Msg { return action }
 	}
 
-	content := cmd.Content
-	if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
-		content = commands.SubstituteArgs(content, nil, rawArgs)
-	}
+	content := commands.SubstituteArgs(cmd.Content, nil, rawArgs)
 	commandLine := prefix
 	if rawArgs != "" {
 		commandLine += " " + rawArgs
