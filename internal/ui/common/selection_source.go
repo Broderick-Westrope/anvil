@@ -265,7 +265,9 @@ func anchorChain(rendered, source []rune) []anchor {
 }
 
 // wordRunes returns the word runes of runes with their indexes.
-func wordRunes(runes []rune) (words []rune, at []int) {
+func wordRunes(runes []rune) ([]rune, []int) {
+	var words []rune
+	var at []int
 	for i, r := range runes {
 		if isWordRune(r) {
 			words = append(words, r)
