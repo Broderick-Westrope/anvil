@@ -45,6 +45,12 @@ type workflowWorkspace struct {
 	controlErr  error
 	missing     map[string][]string
 	loadErr     map[string]error
+	views       map[string]workflowhost.RunView
+}
+
+func (w *workflowWorkspace) WorkflowRunView(_ context.Context, runID string) (workflowhost.RunView, bool, error) {
+	view, ok := w.views[runID]
+	return view, ok, nil
 }
 
 func newWorkflowWorkspace() *workflowWorkspace {
@@ -181,7 +187,8 @@ func (f *workflowFixture) run(cmd tea.Cmd) []util.InfoMsg {
 		switch msg := msg.(type) {
 		case util.InfoMsg:
 			infos = append(infos, msg)
-		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg, util.AgentDrillInMsg:
+		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg, util.AgentDrillInMsg,
+			util.WorkflowRunDrillInMsg, workflowRunViewLoadedMsg:
 			_, next := f.u.Update(msg)
 			queue = append(queue, cmdMsgs(next)...)
 		}

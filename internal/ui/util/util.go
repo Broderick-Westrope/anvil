@@ -78,6 +78,13 @@ type (
 		Label     string
 	}
 
+	// WorkflowRunDrillInMsg requests the UI to drill into a workflow run's
+	// view.
+	WorkflowRunDrillInMsg struct {
+		RunID string
+		Label string
+	}
+
 	// ToolDrillInMsg is sent when drilling into a tool's detail view.
 	ToolDrillInMsg struct {
 		ToolItem any // chat.ToolMessageItem

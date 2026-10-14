@@ -409,6 +409,7 @@ type drillInEntry struct {
 	label     string           // breadcrumb label, e.g. "Explorer: Search auth"
 	session   *session.Session // cached session for sidebar stats
 	toolView  *ToolDetailView  // non-nil when this entry is a tool drill-in
+	runID     string           // workflow run shown, when this entry is a run view
 }
 
 // ToolDetailView tracks the source tool item for a tool drill-in.
@@ -1096,6 +1097,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handlePermissionNotification(msg.Payload)
 	case pubsub.Event[workflowhost.Event]:
 		cmds = append(cmds, m.handleWorkflowEvent(msg.Payload))
+		if msg.Payload.RunID != "" {
+			cmds = append(cmds, m.loadWorkflowRunView(msg.Payload.RunID))
+		}
 	case workflowSessionTitleMsg:
 		m.setWorkflowTitle(msg.id, msg.title)
 	case workflowFocusMsg:
@@ -1432,6 +1436,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tickElapsedTime())
 		}
 
+	case util.WorkflowRunDrillInMsg:
+		cmds = append(cmds, m.openWorkflowRun(msg.RunID, msg.Label))
+	case workflowRunViewLoadedMsg:
+		m.applyWorkflowRunView(msg)
+
 	case util.ToolDrillInMsg:
 		toolItem, ok := msg.ToolItem.(chat.ToolMessageItem)
 		if !ok {
@@ -1498,6 +1507,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// drill-in, so they're never older than the snapshot.
 			items := mergeLiveItems(m.messagesToChatItems(msg.messages), m.drillStack[i].chat)
 			m.drillStack[i].chat.SetMessages(items...)
+			cmds = append(cmds, m.loadWorkflowRunNodes(items))
 
 			// Start animations for all newly loaded items.
 			for _, item := range items {
@@ -1661,6 +1671,7 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	}
 
 	m.chat.SetMessages(items...)
+	cmds = append(cmds, m.loadWorkflowRunNodes(items))
 	if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -1815,6 +1826,15 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 				if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+			}
+		}
+	case message.System:
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
+		c.AppendMessages(items...)
+		cmds = append(cmds, m.loadWorkflowRunNodes(items))
+		if c == m.activeChat() && c.Follow() {
+			if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
 	case message.Tool:

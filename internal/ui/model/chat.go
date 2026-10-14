@@ -565,6 +565,11 @@ func (m *Chat) isSelectable(index int) bool {
 	return ok
 }
 
+// Selected returns the selected message index, or -1 when none is.
+func (m *Chat) Selected() int {
+	return m.list.Selected()
+}
+
 // SetSelected sets the selected message index in the chat list.
 func (m *Chat) SetSelected(index int) {
 	m.list.SetSelected(index)
@@ -838,6 +843,11 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 
 	// Execute the click action (e.g., expansion or drill-in).
 	selectedItem := m.list.SelectedItem()
+
+	if driller, ok := selectedItem.(chat.WorkflowRunDrillInHandler); ok {
+		runID, label := driller.WorkflowRunDrillIn()
+		return true, func() tea.Msg { return util.WorkflowRunDrillInMsg{RunID: runID, Label: label} }
+	}
 
 	// Check for agent drill-in before Expandable — it takes priority.
 	if driller, ok := selectedItem.(chat.AgentDrillInHandler); ok {
