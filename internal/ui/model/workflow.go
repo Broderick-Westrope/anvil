@@ -432,8 +432,9 @@ func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
 		return nil
 	}
 	if ev.Kind != workflowhost.EventFinished {
-		starts := ev.Kind == workflowhost.EventState && ev.State == workflowhost.StateStarted
-		w.closeRequests(w.requests.observeRun(ev.SessionID, ev.RunID, starts))
+		control := ev.Kind == workflowhost.EventState &&
+			(ev.State == workflowhost.StatePaused || ev.State == workflowhost.StateResumed)
+		w.closeRequests(w.requests.observeRun(ev.SessionID, ev.RunID, !control))
 	}
 	defer w.host.Relayout()
 	switch ev.Kind {
