@@ -802,3 +802,35 @@ func TestRunSendsBinaryAttachmentsAsFiles(t *testing.T) {
 	require.Equal(t, []fantasy.FilePart{{Filename: "shot.png", Data: []byte("png bytes"), MediaType: "image/png"}}, files)
 	require.Contains(t, textOf(last), "text attachment")
 }
+
+func TestWithCachedLastToolLeavesSharedToolsUntouched(t *testing.T) {
+	t.Parallel()
+
+	newTool := func(name string) fantasy.AgentTool {
+		return fantasy.NewAgentTool(name, "", func(context.Context, struct{}, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		})
+	}
+	shared := []fantasy.AgentTool{newTool("view"), newTool("edit")}
+	opts := fantasy.ProviderOptions{anthropic.Name: &anthropic.ProviderCacheControlOptions{
+		CacheControl: anthropic.CacheControl{Type: "ephemeral"},
+	}}
+
+	var wg sync.WaitGroup
+	results := make([][]fantasy.AgentTool, 8)
+	for i := range results {
+		wg.Go(func() { results[i] = withCachedLastTool(shared, opts) })
+	}
+	wg.Wait()
+
+	for _, marked := range results {
+		require.Len(t, marked, 2)
+		require.Same(t, shared[0], marked[0])
+		require.Equal(t, opts, marked[1].ProviderOptions())
+		require.Equal(t, "edit", marked[1].Info().Name)
+	}
+	require.Empty(t, shared[1].ProviderOptions(), "the shared tool must not carry one turn's options")
+	_, isMarked := shared[1].(*cacheMarkedTool)
+	require.False(t, isMarked, "the caller's slice must not be modified")
+	require.Empty(t, withCachedLastTool(nil, opts))
+}

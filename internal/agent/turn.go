@@ -92,17 +92,39 @@ func (t *turn) newAgent(agentTools []fantasy.AgentTool, systemPrompt string) fan
 	if s := mcpInstructions(t.lazyMCPToolMap, t.lazyState); s != "" {
 		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
 	}
-	if len(agentTools) > 0 {
-		// Add Anthropic caching to the last tool.
-		agentTools[len(agentTools)-1].SetProviderOptions(t.a.getCacheControlOptions())
-	}
 	return fantasy.NewAgent(
 		t.largeModel.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
-		fantasy.WithTools(agentTools...),
+		fantasy.WithTools(withCachedLastTool(agentTools, t.a.getCacheControlOptions())...),
 		fantasy.WithUserAgent(userAgent),
 	)
 }
+
+// withCachedLastTool returns a copy of agentTools whose last tool carries
+// opts, which marks the end of the cached prefix for Anthropic. Tool
+// instances are shared by every session of an agent, including ones that
+// run at once (such as parallel workflow subagents), so the options go on
+// a per-turn wrapper rather than on the shared tool.
+func withCachedLastTool(agentTools []fantasy.AgentTool, opts fantasy.ProviderOptions) []fantasy.AgentTool {
+	if len(agentTools) == 0 {
+		return agentTools
+	}
+	marked := slices.Clone(agentTools)
+	last := len(marked) - 1
+	marked[last] = &cacheMarkedTool{AgentTool: marked[last], opts: opts}
+	return marked
+}
+
+// cacheMarkedTool is one turn's view of a shared tool with its own
+// provider options.
+type cacheMarkedTool struct {
+	fantasy.AgentTool
+	opts fantasy.ProviderOptions
+}
+
+func (c *cacheMarkedTool) ProviderOptions() fantasy.ProviderOptions { return c.opts }
+
+func (c *cacheMarkedTool) SetProviderOptions(opts fantasy.ProviderOptions) { c.opts = opts }
 
 // start adds the message this turn begins from to msgs and moves the leaf
 // to it: background job notices for a wake, a new user message for a
@@ -197,7 +219,10 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 
 	// Use latest tools (updated by SetTools when MCP tools change),
 	// filtering out lazy MCP tools that haven't been enabled.
-	prepared.Tools = filterLazyMCPTools(a.tools.Copy(), t.lazyMCPToolMap, t.lazyState)
+	prepared.Tools = withCachedLastTool(
+		filterLazyMCPTools(a.tools.Copy(), t.lazyMCPToolMap, t.lazyState),
+		a.getCacheControlOptions(),
+	)
 
 	if a.jobEvents != nil {
 		noticeMsg, deliverErr := a.deliverJobEvents(callContext, t.call.SessionID, t.currentLeaf())
