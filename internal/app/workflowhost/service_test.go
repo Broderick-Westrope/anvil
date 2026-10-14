@@ -1,14 +1,17 @@
 package workflowhost_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1025,4 +1028,74 @@ func TestServiceShutdownBetweenApprovalAndStartInterruptsTheRun(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, workflowhost.StatusInterrupted, run.Status)
 	require.NoFileExists(t, filepath.Join(h.fixture.Config.WorkingDir(), "should-not-exist"))
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// A run whose outcome can't be recorded still finishes, and the failure is
+// logged. It replaces the default logger, so it doesn't run in parallel.
+func TestServiceLogsAnOutcomeItCantRecord(t *testing.T) {
+	tests := map[string]struct {
+		// stopBeforeStart shuts the service down after approval but before
+		// the run starts.
+		stopBeforeStart bool
+		wantStatus      workflowhost.Status
+	}{
+		"after the run ends":           {wantStatus: workflowhost.StatusCompleted},
+		"for a run that never started": {stopBeforeStart: true, wantStatus: workflowhost.StatusInterrupted},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			logs := &lockedBuffer{}
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			entered, release := make(chan struct{}), make(chan struct{})
+			h := newServiceHarness(t, true, func(d *workflowhost.Deps) {
+				d.SkipApproval = func() bool {
+					close(entered)
+					<-release
+					return true
+				}
+			})
+			_, err := h.fixture.Conn.ExecContext(h.fixture.Context, `CREATE TRIGGER refuse_finish BEFORE UPDATE OF status ON workflow_runs
+BEGIN SELECT RAISE(ABORT, 'finish refused'); END`)
+			require.NoError(t, err)
+			h.start(t, h.write(t, `function main() { return 1 }`), "")
+			<-entered
+			shutdown := make(chan error, 1)
+			if tc.stopBeforeStart {
+				go func() { shutdown <- h.svc.Shutdown(context.WithoutCancel(h.fixture.Context), "agents reloaded") }()
+				require.Eventually(t, func() bool {
+					err := h.svc.Start(h.fixture.Context, workflowhost.Invocation{CommandID: "x", ScriptPath: filepath.Join(h.dir, "workflow.js"), SessionID: h.session})
+					return errors.Is(err, workflowhost.ErrShuttingDown)
+				}, 5*time.Second, time.Millisecond)
+			}
+			close(release)
+
+			done := h.next(t, workflowhost.EventFinished)
+			require.Equal(t, tc.wantStatus, done.Status, done.Message)
+			require.Contains(t, logs.String(), "Failed to record workflow run outcome")
+			require.Contains(t, logs.String(), "finish refused")
+			if tc.stopBeforeStart {
+				require.NoError(t, <-shutdown)
+			}
+		})
+	}
 }
