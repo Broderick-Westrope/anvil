@@ -1121,6 +1121,9 @@ func TestWorkflowRepublishedRequestIsShownOnce(t *testing.T) {
 	f.host.overlay.CloseDialog(dialog.WorkflowRunID)
 
 	f.act(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"})
+	f.press(showRunKey)
+	require.Equal(t, 1, strings.Count(f.runDialog(), "Go?"), "the answer goes on the question's entry")
+	f.host.overlay.CloseDialog(dialog.WorkflowRunID)
 	f.event(ask)
 	require.False(t, f.host.overlay.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")), "an answered request must not reopen")
 	require.Equal(t, [][2]string{{"ask-1", "yes"}}, f.ws.responds)
