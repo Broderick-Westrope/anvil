@@ -91,7 +91,8 @@ func (r *workflowRequests) take(id string) (workflowhost.Event, bool) {
 	return workflowhost.Event{}, false
 }
 
-// answer marks ev, a request taken, as answered.
+// answer marks ev, a request taken, as answered. A zero ev, for a request
+// that wasn't tracked, changes nothing.
 func (r *workflowRequests) answer(ev workflowhost.Event) {
 	if inv := r.bySession[ev.SessionID]; inv != nil {
 		inv.answered[ev.RequestID] = true

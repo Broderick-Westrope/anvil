@@ -279,14 +279,13 @@ func (w *workflowFeature) HandleAction(action dialog.Action) (tea.Cmd, bool) {
 	switch action := action.(type) {
 	case dialog.ActionWorkflowRespond:
 		dialogs.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
-		req, tracked := w.requests.take(action.RequestID)
+		// An untracked request comes back zero, and nothing is kept for
+		// it.
+		req, _ := w.requests.take(action.RequestID)
 		// A request whose answer didn't arrive stays unanswered, so its
 		// republish opens it again rather than leaving the run waiting.
 		if err := w.ws.WorkflowRespond(action.RequestID, action.Answer); err != nil {
 			return util.ReportError(err), true
-		}
-		if !tracked {
-			return nil, true
 		}
 		w.requests.answer(req)
 		if req.Kind == workflowhost.EventAsk {
