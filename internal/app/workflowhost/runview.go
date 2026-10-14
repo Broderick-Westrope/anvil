@@ -116,79 +116,115 @@ func (s *Service) RunView(ctx context.Context, runID string) (RunView, bool, err
 // by seq, and a call's seq is taken when it starts, so this is the order
 // things started in.
 func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Session) (RunView, bool, error) {
-	v := RunView{
-		RunID:             rec.ID,
-		InvokingSessionID: rec.InvokingSessionID,
-		MarkerMessageID:   rec.MarkerMessageID,
-		Input:             rec.Input,
-		Status:            rec.Status,
-		Error:             rec.Error,
-		Result:            rec.Result,
-		StartedAt:         rec.StartedAt,
-		FinishedAt:        rec.FinishedAt,
+	b := viewBuilder{
+		v: RunView{
+			RunID:             rec.ID,
+			InvokingSessionID: rec.InvokingSessionID,
+			MarkerMessageID:   rec.MarkerMessageID,
+			Input:             rec.Input,
+			Status:            rec.Status,
+			Error:             rec.Error,
+			Result:            rec.Result,
+			StartedAt:         rec.StartedAt,
+			FinishedAt:        rec.FinishedAt,
+		},
+		bySeq: make(map[int]session.Session, len(sessions)),
+		at:    map[int]itemPlace{},
 	}
-	bySeq := make(map[int]session.Session, len(sessions))
 	for _, s := range sessions {
-		bySeq[s.WorkflowSeq] = s
-	}
-	// at locates each item by the seq of the call that made it, so the
-	// call's outcome can update it.
-	type place struct{ phase, item int }
-	at := map[int]place{}
-	add := func(seq int, item RunItem) {
-		if len(v.Phases) == 0 {
-			v.Phases = append(v.Phases, RunPhase{})
-		}
-		p := len(v.Phases) - 1
-		v.Phases[p].Items = append(v.Phases[p].Items, item)
-		at[seq] = place{p, len(v.Phases[p].Items) - 1}
+		b.bySeq[s.WorkflowSeq] = s
 	}
 	for _, ev := range events {
-		if ev.Phase != workflow.PhaseStarted {
-			if p, ok := at[ev.Seq]; ok {
-				if err := settle(&v.Phases[p.phase].Items[p.item], ev); err != nil {
-					return RunView{}, false, err
-				}
-			}
-			continue
-		}
-		switch ev.Primitive {
-		case "status":
-			var args struct{ Step, Detail string }
-			if err := json.Unmarshal(ev.Args, &args); err != nil {
-				return RunView{}, false, fmt.Errorf("read status event %d: %w", ev.Seq, err)
-			}
-			v.Phases = append(v.Phases, RunPhase{Step: args.Step, Detail: args.Detail})
-		case "session.new":
-			s := bySeq[ev.Seq]
-			add(ev.Seq, RunItem{Kind: RunItemSession, SessionID: s.ID, Title: s.Title, Status: StatusRunning})
-		case "agent":
-			var args struct{ Agent, Model string }
-			if err := json.Unmarshal(ev.Args, &args); err != nil {
-				return RunView{}, false, fmt.Errorf("read agent event %d: %w", ev.Seq, err)
-			}
-			s := bySeq[ev.Seq]
-			add(ev.Seq, RunItem{Kind: RunItemAgent, SessionID: s.ID, Title: s.Title, Agent: args.Agent, Model: args.Model, Status: StatusRunning})
-		case "ask":
-			var args struct{ Question string }
-			if err := json.Unmarshal(ev.Args, &args); err != nil {
-				return RunView{}, false, fmt.Errorf("read ask event %d: %w", ev.Seq, err)
-			}
-			add(ev.Seq, RunItem{Kind: RunItemAsk, Question: args.Question, Status: StatusRunning})
+		if err := b.apply(ev); err != nil {
+			return RunView{}, false, err
 		}
 	}
-	// A run that ended with calls still open (interrupted, or aborted
-	// mid-call) leaves them as it ended, not running forever.
-	if v.Status != StatusRunning {
-		for p := range v.Phases {
-			for i := range v.Phases[p].Items {
-				if item := &v.Phases[p].Items[i]; item.Status == StatusRunning {
-					item.Status = v.Status
-				}
-			}
+	b.endOpenCalls()
+	return b.v, true, nil
+}
+
+// viewBuilder accumulates a RunView from a run's events.
+type viewBuilder struct {
+	v RunView
+	// bySeq finds the session each event created.
+	bySeq map[int]session.Session
+	// at locates each item by the seq of the call that made it, so the
+	// call's outcome can update it.
+	at map[int]itemPlace
+}
+
+type itemPlace struct{ phase, item int }
+
+// startHandlers turn the start of each call worth showing into the view.
+var startHandlers = map[string]func(b *viewBuilder, ev workflow.Event) error{
+	"status": func(b *viewBuilder, ev workflow.Event) error {
+		var args struct{ Step, Detail string }
+		if err := json.Unmarshal(ev.Args, &args); err != nil {
+			return fmt.Errorf("read status event %d: %w", ev.Seq, err)
+		}
+		b.v.Phases = append(b.v.Phases, RunPhase{Step: args.Step, Detail: args.Detail})
+		return nil
+	},
+	"session.new": func(b *viewBuilder, ev workflow.Event) error {
+		s := b.bySeq[ev.Seq]
+		b.add(ev.Seq, RunItem{Kind: RunItemSession, SessionID: s.ID, Title: s.Title, Status: StatusRunning})
+		return nil
+	},
+	"agent": func(b *viewBuilder, ev workflow.Event) error {
+		var args struct{ Agent, Model string }
+		if err := json.Unmarshal(ev.Args, &args); err != nil {
+			return fmt.Errorf("read agent event %d: %w", ev.Seq, err)
+		}
+		s := b.bySeq[ev.Seq]
+		b.add(ev.Seq, RunItem{Kind: RunItemAgent, SessionID: s.ID, Title: s.Title, Agent: args.Agent, Model: args.Model, Status: StatusRunning})
+		return nil
+	},
+	"ask": func(b *viewBuilder, ev workflow.Event) error {
+		var args struct{ Question string }
+		if err := json.Unmarshal(ev.Args, &args); err != nil {
+			return fmt.Errorf("read ask event %d: %w", ev.Seq, err)
+		}
+		b.add(ev.Seq, RunItem{Kind: RunItemAsk, Question: args.Question, Status: StatusRunning})
+		return nil
+	},
+}
+
+func (b *viewBuilder) apply(ev workflow.Event) error {
+	if ev.Phase != workflow.PhaseStarted {
+		if p, ok := b.at[ev.Seq]; ok {
+			return settle(&b.v.Phases[p.phase].Items[p.item], ev)
+		}
+		return nil
+	}
+	if start, ok := startHandlers[ev.Primitive]; ok {
+		return start(b, ev)
+	}
+	return nil
+}
+
+// add puts item in the current phase, starting one if the run hasn't
+// called status() yet.
+func (b *viewBuilder) add(seq int, item RunItem) {
+	if len(b.v.Phases) == 0 {
+		b.v.Phases = append(b.v.Phases, RunPhase{})
+	}
+	p := len(b.v.Phases) - 1
+	b.v.Phases[p].Items = append(b.v.Phases[p].Items, item)
+	b.at[seq] = itemPlace{p, len(b.v.Phases[p].Items) - 1}
+}
+
+// endOpenCalls ends calls a finished run left open (it was interrupted, or
+// aborted mid-call) the way the run ended, so they don't read as running
+// forever.
+func (b *viewBuilder) endOpenCalls() {
+	if b.v.Status == StatusRunning {
+		return
+	}
+	for _, p := range b.at {
+		if item := &b.v.Phases[p.phase].Items[p.item]; item.Status == StatusRunning {
+			item.Status = b.v.Status
 		}
 	}
-	return v, true, nil
 }
 
 // settle applies a call's outcome to its item.

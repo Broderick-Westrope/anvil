@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -122,31 +123,27 @@ func TestMigrations_WorkflowRunMarkersAreRemovedOnDowngrade(t *testing.T) {
 
 	require.NoError(t, goose.DownTo(conn, "migrations", before))
 
-	parents := map[string]*string{}
-	rows, err := conn.QueryContext(t.Context(), `SELECT id, parent_message_id FROM messages`)
-	require.NoError(t, err)
-	for rows.Next() {
-		var id string
-		var parent *string
-		require.NoError(t, rows.Scan(&id, &parent))
-		parents[id] = parent
-	}
-	require.NoError(t, rows.Err())
-	rows.Close()
 	user := "user"
-	require.Equal(t, map[string]*string{"user": nil, "reply": &user, "user2": nil}, parents)
+	require.Equal(t, map[string]*string{"user": nil, "reply": &user, "user2": nil},
+		queryLinks(t, conn, `SELECT id, parent_message_id FROM messages`))
+	reply, user2 := "reply", "user2"
+	require.Equal(t, map[string]*string{"s1": &reply, "s2": &user2, "s3": nil},
+		queryLinks(t, conn, `SELECT id, leaf_message_id FROM sessions`))
+}
 
-	leaves := map[string]*string{}
-	rows, err = conn.QueryContext(t.Context(), `SELECT id, leaf_message_id FROM sessions`)
+// queryLinks maps the first column of query to its second, nullable one.
+func queryLinks(t *testing.T, conn *sql.DB, query string) map[string]*string {
+	t.Helper()
+	rows, err := conn.QueryContext(t.Context(), query)
 	require.NoError(t, err)
+	defer rows.Close()
+	links := map[string]*string{}
 	for rows.Next() {
 		var id string
-		var leaf *string
-		require.NoError(t, rows.Scan(&id, &leaf))
-		leaves[id] = leaf
+		var link *string
+		require.NoError(t, rows.Scan(&id, &link))
+		links[id] = link
 	}
 	require.NoError(t, rows.Err())
-	rows.Close()
-	reply, user2 := "reply", "user2"
-	require.Equal(t, map[string]*string{"s1": &reply, "s2": &user2, "s3": nil}, leaves)
+	return links
 }
