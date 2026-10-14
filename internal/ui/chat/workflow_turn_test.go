@@ -28,7 +28,7 @@ func TestWorkflowTurnRendersAsWorkflowMessage(t *testing.T) {
 	require.True(t, ok, "workflow turns must not render as user messages")
 
 	out := ansi.Strip(items[0].Render(80))
-	require.Contains(t, out, "Workflow /build")
+	require.Contains(t, out, "Workflow  /build")
 	require.Contains(t, out, "Build the thing.")
 	require.Contains(t, out, "Using skill: go-style")
 	require.NotContains(t, out, "secret skill body")
