@@ -2535,26 +2535,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 
-		// Write a thinking_level_change metadata entry if the effort actually changed.
-		// Skip when the agent is busy to avoid racing the leaf pointer.
-		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort && !m.isAgentBusy() {
-			ws := m.com.Workspace
-			sid := m.session.ID
-			leafID := m.session.LeafMessageID
-			effort := msg.Effort
-			cmds = append(cmds, func() tea.Msg {
-				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					ParentMessageID: leafID,
-					MessageType:     message.MessageTypeThinkingLevelChange,
-					Parts: []message.ContentPart{
-						message.ThinkingLevelChangeContent{ThinkingLevel: effort},
-					},
-				})
-				if err != nil {
-					slog.Error("Failed to write thinking_level_change entry", "error", err)
-				}
-				return nil
-			})
+		// Write a thinking_level_change metadata entry if the effort
+		// actually changed. The busy check above keeps it from racing the
+		// leaf pointer.
+		if oldEffort != msg.Effort {
+			cmds = append(cmds, m.writeMetadataEntry(message.MessageTypeThinkingLevelChange,
+				message.ThinkingLevelChangeContent{ThinkingLevel: msg.Effort}))
 		}
 
 		cmds = append(cmds, func() tea.Msg {
@@ -2692,25 +2678,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				palette.SetEntryEnabled(msg.ServerName, msg.Enabled)
 			}
 		}
-		if m.session != nil && m.session.LeafMessageID != "" {
-			ws := m.com.Workspace
-			sid := m.session.ID
-			leafID := m.session.LeafMessageID
-			serverName := msg.ServerName
-			enabled := msg.Enabled
-			cmds = append(cmds, func() tea.Msg {
-				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					ParentMessageID: leafID,
-					MessageType:     message.MessageTypeMCPToggle,
-					Parts: []message.ContentPart{
-						message.MCPToggleContent{ServerName: serverName, Enabled: enabled},
-					},
-				})
-				if err != nil {
-					slog.Error("Failed to write mcp_toggle entry", "error", err)
-				}
-				return nil
-			})
+		if cmd := m.writeMetadataEntry(message.MessageTypeMCPToggle,
+			message.MCPToggleContent{ServerName: msg.ServerName, Enabled: msg.Enabled}); cmd != nil {
+			cmds = append(cmds, cmd)
 		} else {
 			slog.Debug("MCP toggle not persisted: no active session or leaf message",
 				"server", msg.ServerName, "enabled", msg.Enabled)
@@ -2763,6 +2733,27 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 }
 
 // handleSelectModel performs the model selection.
+// writeMetadataEntry returns a command that records part as a metadata
+// entry of type kind at the tip of the current branch. It returns nil when
+// there is no session or branch tip to attach the entry to.
+func (m *UI) writeMetadataEntry(kind message.MessageType, part message.ContentPart) tea.Cmd {
+	if m.session == nil || m.session.LeafMessageID == "" {
+		return nil
+	}
+	ws, sessionID, leafID := m.com.Workspace, m.session.ID, m.session.LeafMessageID
+	return func() tea.Msg {
+		err := ws.WriteMetadataEntry(context.Background(), sessionID, message.CreateMessageParams{
+			ParentMessageID: leafID,
+			MessageType:     kind,
+			Parts:           []message.ContentPart{part},
+		})
+		if err != nil {
+			slog.Error("Failed to write metadata entry", "type", kind, "error", err)
+		}
+		return nil
+	}
+}
+
 func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	var cmds []tea.Cmd
 
@@ -2815,27 +2806,10 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 
 		// Write a model_change metadata entry if the large model actually changed.
 		// Skip when the agent is busy to avoid racing the leaf pointer.
-		if msg.ModelType == config.SelectedModelTypeLarge && m.session != nil && m.session.LeafMessageID != "" && !m.isAgentBusy() {
-			if oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model {
-				ws := m.com.Workspace
-				sid := m.session.ID
-				leafID := m.session.LeafMessageID
-				provider := msg.Model.Provider
-				modelID := msg.Model.Model
-				cmds = append(cmds, func() tea.Msg {
-					err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-						ParentMessageID: leafID,
-						MessageType:     message.MessageTypeModelChange,
-						Parts: []message.ContentPart{
-							message.ModelChangeContent{Provider: provider, ModelID: modelID},
-						},
-					})
-					if err != nil {
-						slog.Error("Failed to write model_change entry", "error", err)
-					}
-					return nil
-				})
-			}
+		changed := oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model
+		if msg.ModelType == config.SelectedModelTypeLarge && changed && !m.isAgentBusy() {
+			cmds = append(cmds, m.writeMetadataEntry(message.MessageTypeModelChange,
+				message.ModelChangeContent{Provider: msg.Model.Provider, ModelID: msg.Model.Model}))
 		}
 	}
 
