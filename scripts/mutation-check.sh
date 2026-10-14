@@ -2,9 +2,14 @@
 
 set -euo pipefail
 
-# Usage: mutation-check.sh <base-ref>
-# Run by the CI mutation workflow only; it is too slow to run locally.
+# Usage: mutation-check.sh <base-ref> [--list-dirs | <dir>]
+#   --list-dirs  print the package directories to mutate, as a JSON array,
+#                and exit (CI uses it to shard the run).
+#   <dir>        mutate only that directory (one CI shard).
+# With neither, every changed directory is mutated in turn.
+# Run by the CI mutation workflow; a full run is too slow to run locally.
 base="$1"
+mode="${2:-}"
 
 gremlins_version="v0.6.0"
 config=".gremlins.yaml"
@@ -20,12 +25,15 @@ fi
 added_lines=$(git diff --merge-base "$base" -U0 -- '*.go' ':(exclude)*_test.go' |
     grep -E '^\+' | grep -cv '^+++ ' || true)
 if [ "$added_lines" -eq 0 ]; then
+    if [ "$mode" = "--list-dirs" ]; then
+        echo "[]"
+        exit 0
+    fi
     echo "No changed Go lines outside tests since $base; nothing to mutate."
     exit 0
 fi
-echo "Mutating $added_lines changed Go lines since $base."
+[ "$mode" = "--list-dirs" ] || echo "Mutating $added_lines changed Go lines since $base."
 
-GOBIN="$run_dir/bin" go install "github.com/go-gremlins/gremlins/cmd/gremlins@${gremlins_version}"
 
 # Mutate only the packages the PR changes. A whole-repo run spends minutes
 # gathering coverage for packages with nothing to mutate, and gremlins times
@@ -35,6 +43,20 @@ GOBIN="$run_dir/bin" go install "github.com/go-gremlins/gremlins/cmd/gremlins@${
 dirs=$(git diff --merge-base "$base" --name-only --diff-filter=d -- '*.go' ':(exclude)*_test.go' |
     xargs -n1 dirname | sort -u |
     awk '{ for (i = 1; i <= n; i++) if (index($0 "/", kept[i] "/") == 1 || kept[i] == ".") next; kept[++n] = $0; print }')
+
+if [ "$mode" = "--list-dirs" ]; then
+    printf '%s\n' $dirs | jq -R . | jq -sc 'map(select(. != ""))'
+    exit 0
+fi
+if [ -n "$mode" ]; then
+    if ! printf '%s\n' $dirs | grep -qxF "$mode"; then
+        echo "$mode is not one of the directories this diff mutates." >&2
+        exit 1
+    fi
+    dirs="$mode"
+fi
+
+GOBIN="$run_dir/bin" go install "github.com/go-gremlins/gremlins/cmd/gremlins@${gremlins_version}"
 
 repo_root=$(pwd)
 reports=()
