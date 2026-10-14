@@ -591,13 +591,7 @@ func (app *App) startWorkflows() {
 		// Runs of the old service drive a coordinator that's gone. This can
 		// be reached from the UI's Update (onboarding), so stopping them
 		// must not block the caller.
-		app.retiredWorkflows.Go(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), workflowShutdownWait)
-			defer cancel()
-			if err := old.Shutdown(ctx, workflowReloadReason); err != nil {
-				slog.Warn("Previous workflows did not stop in time", "error", err)
-			}
-		})
+		app.retiredWorkflows.Go(func() { stopWorkflows(old, workflowReloadReason, workflowShutdownWait) })
 	}
 	app.Workflows = workflowhost.NewService(app.globalCtx, workflowhost.Deps{
 		Coordinator:  app.AgentCoordinator,
@@ -797,6 +791,16 @@ const (
 	workflowReloadReason   = "agents were reloaded"
 )
 
+// stopWorkflows shuts svc down, waiting up to wait for its runs to record
+// that reason interrupted them.
+func stopWorkflows(svc *workflowhost.Service, reason string, wait time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	if err := svc.Shutdown(ctx, reason); err != nil {
+		slog.Warn("Workflows did not stop in time", "reason", reason, "error", err)
+	}
+}
+
 // Shutdown performs a graceful shutdown of the application.
 func (app *App) Shutdown() {
 	start := time.Now()
@@ -814,11 +818,7 @@ func (app *App) Shutdown() {
 	// and carry on, or be running bash or waiting on a question with no
 	// agent to cancel. Their outcomes must land before the DB closes.
 	if app.Workflows != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), workflowShutdownWait)
-		if err := app.Workflows.Shutdown(ctx, workflowShutdownReason); err != nil {
-			slog.Warn("Workflows did not stop in time", "error", err)
-		}
-		cancel()
+		stopWorkflows(app.Workflows, workflowShutdownReason, workflowShutdownWait)
 	}
 	app.retiredWorkflows.Wait()
 
