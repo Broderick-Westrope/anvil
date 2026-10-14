@@ -150,6 +150,54 @@ type ProviderConfig struct {
 
 	// The provider models
 	Models []catwalk.Model `json:"models,omitempty" jsonschema:"description=List of models available from this provider"`
+
+	// ChatGPTModels lists the models the ChatGPT (Codex) backend grants
+	// when the OpenAI provider is signed in with a ChatGPT account. It is
+	// the provider's whole catalog in that case: the API-key models in
+	// Models are not served by the subscription.
+	ChatGPTModels []catwalk.Model `json:"chatgpt_models,omitempty" jsonschema:"-"`
+
+	// GrokModels lists the models the Grok plan grants when the xAI
+	// provider is signed in with a Grok account. Like ChatGPTModels, it is
+	// the provider's whole catalog in that case.
+	GrokModels []catwalk.Model `json:"grok_models,omitempty" jsonschema:"-"`
+}
+
+// AvailableModels returns the models this provider can serve with its
+// current credential: the subscription catalog when signed in with
+// ChatGPT or Grok (once fetched), otherwise the API-key catalog.
+func (c *ProviderConfig) AvailableModels() []catwalk.Model {
+	if sub := c.SubscriptionModels(); sub != nil {
+		return sub
+	}
+	return c.Models
+}
+
+// FindModel returns the model with the given ID from AvailableModels, or
+// nil.
+func (c *ProviderConfig) FindModel(id string) *catwalk.Model {
+	for _, m := range c.AvailableModels() {
+		if m.ID == id {
+			return &m
+		}
+	}
+	return nil
+}
+
+// SubscriptionModels returns the model catalog an OAuth subscription login
+// grants (ChatGPT for OpenAI, Grok for xAI), or nil when the provider is
+// not signed in with one. When non-nil it replaces Models entirely.
+func (c *ProviderConfig) SubscriptionModels() []catwalk.Model {
+	if c.OAuthToken == nil {
+		return nil
+	}
+	switch c.ID {
+	case string(catwalk.InferenceProviderOpenAI):
+		return c.ChatGPTModels
+	case string(catwalk.InferenceProviderXAI):
+		return c.GrokModels
+	}
+	return nil
 }
 
 // ToProvider converts the [ProviderConfig] to a [catwalk.Provider].
@@ -902,11 +950,16 @@ func (c *Config) ValidateReasoningEffort(provider, modelID, effort string) error
 	)
 }
 
+// GetModel finds a model in any of the provider's catalogs: the API-key
+// list, or the ChatGPT/Grok subscription list fetched on login, which
+// lives outside Models.
 func (c *Config) GetModel(provider, model string) *catwalk.Model {
 	if providerConfig, ok := c.Providers.Get(provider); ok {
-		for _, m := range providerConfig.Models {
-			if m.ID == model {
-				return &m
+		for _, catalog := range [][]catwalk.Model{providerConfig.Models, providerConfig.ChatGPTModels, providerConfig.GrokModels} {
+			for _, m := range catalog {
+				if m.ID == model {
+					return &m
+				}
 			}
 		}
 	}
@@ -1204,14 +1257,7 @@ func resolveModelOverride(agent Agent, base SelectedModel, cfg *Config) (Selecte
 			)
 		}
 
-		var found *catwalk.Model
-		for i := range providerCfg.Models {
-			if providerCfg.Models[i].ID == modelID {
-				m := providerCfg.Models[i]
-				found = &m
-				break
-			}
-		}
+		found := providerCfg.FindModel(modelID)
 		if found == nil {
 			return SelectedModel{}, fmt.Errorf(
 				"agent %q: model %q not found in provider %q",

@@ -16,8 +16,13 @@ const minRefreshBuffer = 30
 type Token struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	ExpiresAt    int64  `json:"expires_at"`
+	IDToken      string `json:"id_token,omitempty"`
+	// AccountID is the provider account the token belongs to, taken from
+	// the ID token when the provider embeds one. The ChatGPT backend
+	// requires it as a header on every request.
+	AccountID string `json:"account_id,omitempty"`
+	ExpiresIn int    `json:"expires_in"`
+	ExpiresAt int64  `json:"expires_at"`
 }
 
 // SetExpiresAt calculates and sets the ExpiresAt field based on the

@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -188,6 +189,13 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Check for updates in the background.
 	go app.checkForUpdates(ctx)
+	// ChatGPT and Grok model catalogs are fetched at login; renew them
+	// once per start so they follow plan changes.
+	go func() {
+		refreshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		store.RefreshSubscriptionModels(refreshCtx)
+	}()
 
 	// Arm initialization synchronously before launching it so WaitForInit
 	// blocks for the in-flight init instead of racing the goroutine and
@@ -504,6 +512,21 @@ func (app *App) GetDefaultSmallModel(providerID string) config.SelectedModel {
 		return largeModelCfg
 	}
 
+	// A ChatGPT or Grok login serves only the models its plan grants, so
+	// the small model has to come from that catalog too.
+	if pc, ok := cfg.Providers.Get(providerID); ok {
+		if sub := pc.SubscriptionModels(); len(sub) > 0 {
+			small := subscriptionSmallModel(sub)
+			slog.Info("Using subscription small model", "provider", providerID, "model", small.ID)
+			return config.SelectedModel{
+				Provider:        providerID,
+				Model:           small.ID,
+				MaxTokens:       small.DefaultMaxTokens,
+				ReasoningEffort: small.DefaultReasoningEffort,
+			}
+		}
+	}
+
 	defaultSmallModelID := knownProvider.DefaultSmallModelID
 	model := cfg.GetModel(providerID, defaultSmallModelID)
 	if model == nil {
@@ -518,6 +541,20 @@ func (app *App) GetDefaultSmallModel(providerID string) config.SelectedModel {
 		MaxTokens:       model.DefaultMaxTokens,
 		ReasoningEffort: model.DefaultReasoningEffort,
 	}
+}
+
+// subscriptionSmallModel picks a lightweight model from a subscription
+// catalog: a "mini" or "fast" variant if there is one, else the last entry
+// (catalogs list heavier models first). models must not be empty.
+func subscriptionSmallModel(models []catwalk.Model) catwalk.Model {
+	for _, marker := range []string{"mini", "fast"} {
+		for _, m := range models {
+			if strings.Contains(m.ID, marker) {
+				return m
+			}
+		}
+	}
+	return models[len(models)-1]
 }
 
 func (app *App) setupEvents() {

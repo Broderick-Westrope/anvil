@@ -1193,19 +1193,10 @@ func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCf
 		return Model{}, Model{}, err
 	}
 
-	var largeCatwalkModel *catwalk.Model
-	var smallCatwalkModel *catwalk.Model
-
-	for _, m := range largeProviderCfg.Models {
-		if m.ID == largeModelCfg.Model {
-			largeCatwalkModel = &m
-		}
-	}
-	for _, m := range smallProviderCfg.Models {
-		if m.ID == smallModelCfg.Model {
-			smallCatwalkModel = &m
-		}
-	}
+	// A ChatGPT or Grok login serves its own catalog, which lives outside
+	// Models; FindModel looks there first.
+	largeCatwalkModel := largeProviderCfg.FindModel(largeModelCfg.Model)
+	smallCatwalkModel := smallProviderCfg.FindModel(smallModelCfg.Model)
 
 	if largeCatwalkModel == nil {
 		return Model{}, Model{}, errLargeModelNotFound
@@ -1305,6 +1296,10 @@ func (c *coordinator) Model() Model {
 // UpdateModels rebuilds the orchestrator with the latest model config and
 // clears the lazy agent map so sub-agents are rebuilt on next delegation.
 func (c *coordinator) UpdateModels(ctx context.Context) error {
+	// A ChatGPT or Grok login whose catalog fetch failed at sign-in would
+	// leave its models missing; fill it in. A no-op once it exists.
+	c.cfg.RefetchMissingSubscriptionModels(ctx)
+
 	orchestratorCfg, ok := c.orchestratorConfig()
 	if !ok {
 		return errOrchestratorAgentNotConfigured
