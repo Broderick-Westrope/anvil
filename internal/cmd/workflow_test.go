@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,6 +39,8 @@ func TestWorkflowCheck(t *testing.T) {
 		noRef     bool
 		wantErr   bool
 		wantLines []string
+		// notLines must not appear, such as a requirement kind with no names.
+		notLines []string
 	}{
 		"everything resolves": {
 			script: "requires({skills: [\"s1\"], agents: [\"a1\"], references: [\"ref.md\"]})\nfunction main(input) {}\n",
@@ -53,6 +56,7 @@ func TestWorkflowCheck(t *testing.T) {
 			noRef:     true,
 			wantErr:   true,
 			wantLines: []string{`missing: reference "ref.md" not found`},
+			notLines:  []string{"requires skills", "requires agents"},
 		},
 		"parse error": {
 			script:    "function main( {",
@@ -84,6 +88,9 @@ func TestWorkflowCheck(t *testing.T) {
 			}
 			for _, line := range tc.wantLines {
 				require.Contains(t, out, line)
+			}
+			for _, line := range tc.notLines {
+				require.NotContains(t, out, line)
 			}
 		})
 	}
@@ -222,4 +229,47 @@ func TestRunRefusesWorkflowCommands(t *testing.T) {
 	require.ErrorContains(t, refuseWorkflowCommand(store.Config(), "/demo some args"), "workflow command")
 	require.NoError(t, refuseWorkflowCommand(store.Config(), "/plain"))
 	require.NoError(t, refuseWorkflowCommand(store.Config(), "demo please"))
+}
+
+// `anvil run` refuses a workflow command before sending anything.
+func TestRunCommandRefusesAWorkflowCommand(t *testing.T) {
+	global, project := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ANVIL_GLOBAL_CONFIG", global)
+	t.Setenv("ANVIL_GLOBAL_DATA", global)
+	t.Setenv("ANVIL_DISABLE_PROVIDER_AUTO_UPDATE", "1")
+	// The run changes into --cwd; this restores the directory afterwards.
+	t.Chdir(project)
+	prevLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+	prevStdin := os.Stdin
+	stdin, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	os.Stdin = stdin
+	t.Cleanup(func() {
+		os.Stdin = prevStdin
+		_ = stdin.Close()
+	})
+	dataDir := filepath.Join(project, ".anvil")
+	// A provider nothing listens on, so a run that got past the refusal
+	// would fail without leaving the machine.
+	writeTestFile(t, filepath.Join(project, "anvil.json"), `{
+  "models": {"large": {"provider": "test", "model": "test"}, "small": {"provider": "test", "model": "test"}},
+  "providers": {"test": {"type": "openai", "api_key": "test", "base_url": "http://127.0.0.1:1", "models": [{"id": "test", "name": "Test", "context_window": 10000}]}},
+  "options": {"disable_default_providers": true, "disable_provider_auto_update": true}
+}`)
+	writeTestFile(t, filepath.Join(dataDir, "commands", "demo", "COMMAND.md"), "---\nworkflow: workflow.js\n---\n")
+	writeTestFile(t, filepath.Join(dataDir, "commands", "demo", "workflow.js"), "function main() {}\n")
+
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+	t.Cleanup(func() {
+		rootCmd.SetOut(nil)
+		rootCmd.SetErr(nil)
+		rootCmd.SetArgs(nil)
+	})
+	rootCmd.SetArgs([]string{"run", "--quiet", "--cwd", project, "--data-dir", dataDir, "/demo now"})
+	err = rootCmd.ExecuteContext(t.Context())
+	require.ErrorContains(t, err, "/demo is a workflow command")
 }
