@@ -83,8 +83,9 @@ When writing new components, follow this pattern:
 ### Feature Routing
 
 A fork feature (one Crush doesn't have) is a type that owns its state and
-plugs into `UI` through the `feature` interface in `model/features.go` (its host surface is in `model/feature_host.go`),
-instead of adding fields to `UI` and cases to the dispatchers. That keeps
+plugs into `UI` through the `feature` interface in `model/features.go`
+(its host surface is in `model/feature_host.go`), instead of adding fields
+to `UI` and cases to the dispatchers. That keeps
 upstream's cases in `update`, `handleDialogMsg` and `handleKeyPressMsg` in
 their Crush shape, so cherry-picks still apply. See
 `docs/adr/0003-ui-complexity.md`. The workflow feature

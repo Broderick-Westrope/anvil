@@ -21,7 +21,10 @@ In scope:
 - **Migrating workflows to it:** this covers all of `internal/ui/model/workflow.go`, the 5 `UI` fields, and the workflow edits in `ui.go`, `pills.go` and `keys.go` wiring.
 - **Moving the two data fixes out of upstream cases to where the data is produced:** requirement annotation of workflow commands, and filtering workflow turns from prompt history.
 - **Clearing a run's answered request IDs when the run is finished or replaced.** This fixes the unbounded `workflowAnswered`.
-- **Cutting multi-line script text in panel rows at its first line,** as the panel already does for errors and answers. See Panels. Together with the previous item, these are the only intended behaviour changes.
+- **Cutting multi-line script text in panel rows at its first line,** as the panel already does for errors and answers. See Panels.
+- **Closing the open request dialogs of an invocation that was replaced** (its finish was lost). Today they stay open until the session's next finish, and answering one fails because the host no longer has the request. See Request tracking.
+
+Together with the previous two items, these are the only intended behaviour changes.
 - **Updating `internal/ui/AGENTS.md`** to document the pattern, and noting the change in ADR 0003's consequences.
 
 Out of scope:
@@ -111,7 +114,7 @@ type feature interface {
 There are also optional interfaces, each checked with a type assertion when the feature is registered:
 - `commandFeature`: `RunCommand(cmd commands.CustomCommand, rawArgs string) (tea.Cmd, bool)`.
 - `panelFeature`: `Panel() panelView` (see Panels).
-- `paletteFeature`: `PaletteEntries() []dialog.CommandItem` (see Palette).
+- `paletteFeature`: `PaletteEntries() []*dialog.CommandItem` (see Palette).
 
 Observing and claiming are separate on purpose:
 - **`Observe`** is for shared messages that upstream handles too. It can't stop them.
@@ -130,7 +133,7 @@ Features never see input through `Observe` or `HandleMsg`: `tea.KeyPressMsg`, `t
 | `Observe` | In `Update` (the fork-owned wrapper that already adds Herdr tracking) | Before calling `update`. The commands are batched with `update`'s result. |
 | `HandleMsg` | At the top of `update`'s `default:` arm | Before `handleDialogMsg`. A claimed message skips the dialog, and `update`'s post-switch steps still run, exactly as for today's workflow cases. |
 | `HandleKey` | As the `default:` arm of `handleGlobalKeys`'s switch | Only when no upstream global case matched. A matched case whose condition is false (`TogglePills`, `PillLeft`, `PillRight`) still blocks features, as it blocks the workflow case today. `handleGlobalKeys` is called from the editor default (before the textarea), the main focus default (after the selected chat item), the sidebar and other states, so precedence is identical in every focus state. |
-| `HandleAction` | In `handleDialogMsg`, after `m.dialog.Update(msg)` and before the action switch | The routing layer turns `ActionRunCustomCommand` into `RunCommand(cmd, "")` for features that implement `commandFeature`. That covers the palette, which passes no arguments today. |
+| `HandleAction` | In `handleDialogMsg`, after `m.dialog.Update(msg)` and before the action switch | The routing layer turns `ActionRunCustomCommand` into `RunCommand(cmd, "")` for features that implement `commandFeature`, and closes the palette when one claims it. The action carries the whole `CustomCommand` (its `Command` field, which replaces the workflow-only `CommandID`, `Source`, `Workflow` and `Problems`), so both paths see the same command. That covers the palette, which passes no arguments today. |
 | `RunCommand` (slash path) | In `tryExecuteSlashCommand`, after `MatchSlash` and before body expansion | Called with the raw arguments. This replaces today's `if cmd.Workflow != ""` line with one generic line. |
 
 *Lifecycle contract.* `Observe` runs before `update`, so a feature sees `UI` state as it was before the upstream case changed it. For workflows that matches today: the title cache already runs before the drill-stack update in the session case. The workflow feature ignores `DeletedEvent` in `Observe`, matching the deletion guard at `ui.go:927-935`. A later adopter that needs the state after the change (for example after `loadSessionMsg`, which has no follow-up message) needs a post-update hook. That is added when such an adopter arrives, not now.
@@ -155,8 +158,6 @@ type featureHost interface {
 	// that delivers util.AgentDrillInMsg for sessionID, labelled label,
 	// asynchronously (today's openWorkflowAgent and run-dialog path).
 	DrillInto(sessionID, label string) tea.Cmd
-	// IsDrilledIn reports whether a drill-in is on screen.
-	IsDrilledIn() bool
 	// Dialogs is the dialog overlay (OpenDialog, OpenDialogWithGrace,
 	// CloseDialog, ContainsDialog).
 	Dialogs() *dialog.Overlay
@@ -186,7 +187,7 @@ The real `Workspace` satisfies it, and tests fake only those seven methods. `Com
 
 *Commands and history (the upstream-case edits).*
 - **Custom-command problems.**
-  - **Annotation:** a shared command loader (fork-owned) loads the custom commands, attaches workflow problems through a `Workspace` method, and builds a generic summary of commands with problems. Both load paths use it: `loadCustomCommands` and `runConfigReload`. The summary isn't workflow-specific, because `Problems` is a generic field on `CustomCommand`.
+  - **Annotation:** a shared command loader (fork-owned) loads the custom commands, attaches workflow problems through a `Workspace` method, and builds the summary of broken workflow commands. Both load paths use it: `loadCustomCommands` and `runConfigReload`. The summary keeps today's filter and wording ("Broken workflow commands"), so behaviour doesn't change. A command whose `workflow:` path leaves its directory has problems but no `Workflow`, so it gets no warning and runs as a prompt command; that predates this change and is a follow-up.
   - **Initial load:** the loader returns the summary as its own warning command alongside `userCommandsLoadedMsg`, so the upstream case doesn't change.
   - **Reload:** `reload_report.go` (fork-owned) keeps folding the summary into its single report and keeps error severity, as today.
 - **Prompt history:** `loadPromptHistory` (`history.go`) drops script-sent turns after either query, before it builds `promptHistoryLoadedMsg`. This is a UI-loader change only; `Workspace` results are unchanged.
@@ -201,17 +202,17 @@ The real `Workspace` satisfies it, and tests fake only those seven methods. `Com
 
 The view-model makes each row a single line. It does this with the rule the panel already applies to agent errors, outcomes, questions and answers (`workflow.go:692`, `:725-726`; `workflow_run.go:269-271`): text is cut at its first line. The rule extends to the script-supplied text that today is passed through whole and can spill extra rows: `status()` step and detail, session titles, and bash commands. This is the second intended behaviour change, and it only affects multi-line inputs. Tests cover multi-line status and title inputs, and widths of 0 and 1.
 
-`pillsAreaHeight` sums `Lines()` over the panel features before the pills rectangle exists, as today. `renderPills` calls `Render` with the content width it computes today. A shared test asserts the `Render`/`Lines` contract at several widths. Panels are suppressed while drilled in, as today, by the pills code checking `isDrilledIn` before asking features.
+`pillsAreaHeight` sums `Lines()` over the panel features before the pills rectangle exists, as today. `renderPills` calls `Render` with the content width it computes today. A shared test asserts the `Render`/`Lines` contract at several widths. Panels are suppressed while drilled in, as today: `pillsAreaHeight` returns 0, so the pills rectangle is empty and nothing is drawn. Features don't need to know about drill-ins.
 - **Declined: `pills.go` calling the workflow feature directly.** The next feature with a panel would edit `pills.go` again.
 
 *Palette.* `paletteFeature.PaletteEntries()` returns the items the feature contributes. The commands dialog shows them where the workflow controls appear today (`dialog/commands.go:595-628`), in registration order, each feature keeping its own order. This replaces `SetWorkflowControls` and `dialog.WorkflowControls`.
 
 *Request tracking.* Requests are owned per invoking session, not per run, because an approval arrives before its run exists. Approval events carry no run ID (`workflowhost/service.go:423-424`, `:442`), the run ID is allocated only after approval (`:344-356`), and a denial or startup failure finishes with an empty run ID. A single type tracks one invocation in a session:
 1. **Approval.** A provisional invocation starts with the approval request, keyed by the invoking session.
-2. **Run starts.** The provisional entry becomes the run when the first event with a run ID arrives for that session.
-3. **Clean-up.** Open and answered request IDs for the invocation are dropped when either of these happens:
-   - its finish arrives, including an empty-run-ID finish (denied, or failed before starting);
-   - a new invocation in the same session replaces it.
+2. **Run starts.** The provisional entry becomes the run when the first event the run published itself arrives for that session. Pause and resume are published by the host's controls, apart from the run, so they can arrive after the next invocation began; they never bind or replace an invocation.
+3. **Clean-up.** Open and answered request IDs for the invocation are dropped, and its open dialogs closed, when either of these happens:
+   - its own finish arrives: the run ID matches, or it is an empty-run-ID finish (denied, or failed before starting), or the invocation is still provisional and the finishing run was never seen (shutdown can end a run before it reports starting). A late finish of a run already seen leaves the next invocation alone, because the host frees the session before it publishes the finish;
+   - a new invocation in the same session replaces it: a new approval, or an event published by another run. A run publishes all its own events before it frees the session, so that event means the old finish was lost.
 
 This fixes the unbounded `workflowAnswered`. The transitions (seen, open, answered, closed) live in that one type.
 
