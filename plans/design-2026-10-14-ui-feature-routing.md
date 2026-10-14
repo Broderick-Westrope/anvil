@@ -186,7 +186,7 @@ Growth rule: a method is added only when a second feature needs it, or when it i
 - `WorkflowStart`, `WorkflowRespond`, `WorkflowPause`, `WorkflowResume` and `WorkflowAbort`
 - `GetSession`
 
-The real `Workspace` satisfies it, and tests fake only those seven methods. `Common` still exposes the full `Workspace`; the workflow feature doesn't use it, and a lint isn't worth adding for one feature.
+The real `Workspace` satisfies it, and the feature's static type allows only those seven methods. Its behaviour tests reuse the UI tests' workspace fake rather than a seven-method one, so one fake serves both. `Common` still exposes the full `Workspace`; the workflow feature doesn't use it, and a lint isn't worth adding for one feature.
 
 *Commands and history (the upstream-case edits).*
 - **Custom-command problems.**
@@ -218,6 +218,10 @@ The view-model makes each row a single line. It does this with the rule the pane
    - a new invocation in the same session replaces it: a new approval, or an event published by another run. A run publishes all its own events before it frees the session, so that event means the old finish was lost.
 
 This fixes the unbounded `workflowAnswered`. The transitions (seen, open, answered, closed) live in that one type.
+
+The run records (`runs`, which the panel and run dialog read) stay a separate store, because an approval exists before its run does. The feature tells the request tracker whether a finishing run is one it has a record of, which is how a provisional invocation tells a late finish of the previous run from the finish of a run that never reported starting.
+
+Known gap, unchanged from before this change: a finish of another run while a run is live is treated as the finish of a newer run whose other events were lost, so the live run's record is replaced. It could instead be a late finish of an earlier run, if the next run started in the microseconds between the host freeing the session and publishing the finish. The event can't tell the two apart.
 
 Surface tests cover:
 - concurrent approvals in two sessions;

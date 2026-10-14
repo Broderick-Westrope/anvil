@@ -98,7 +98,7 @@ what the dispatchers don't own. Each hook is one generic line in `ui.go`:
 | `Observe` | In `Update`, before `update`, for every message except keys, pastes and mouse events. It can't claim a message; its commands are batched with `update`'s. Use it for messages upstream handles too. It sees `UI` as it was before the upstream case ran. |
 | `HandleMsg` | In `update`'s `default:` arm, before the dialog. Claim only your own message types. |
 | `HandleKey` | As the `default:` arm of `handleGlobalKeys`, so only when no global binding matched, from every focus state. A global binding that matches but whose condition fails still blocks it. |
-| `HandleAction` | In `handleDialogMsg`, after the dialog returns an action and before the action switch. |
+| `HandleAction` | In `handleDialogMsg`, after the dialog returns an action and before the action switch. The palette's `ActionRunCustomCommand` never reaches it; it goes to `RunCommand`. A feature closes the dialogs its own actions came from. |
 
 Optional surfaces, found by type assertion when the feature registers:
 
