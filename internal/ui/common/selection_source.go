@@ -186,7 +186,7 @@ func (s selectionScan) mappable() bool {
 func splitsWord(rPos []int, rRunes, sRunes []rune, mapping []int, start, end int) bool {
 	for i := 1; i < len(rRunes); i++ {
 		prev, cur := mapping[i-1], mapping[i]
-		if rPos[i-1] < start || rPos[i] >= end || prev < 0 || cur < 0 {
+		if rPos[i-1] < start || rPos[i] >= end || min(prev, cur) < 0 {
 			continue
 		}
 		adjacent := rPos[i] == rPos[i-1]+utf8.RuneLen(rRunes[i-1])
