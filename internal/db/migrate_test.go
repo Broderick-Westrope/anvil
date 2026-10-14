@@ -93,7 +93,7 @@ func TestMigrations_RenameDecisionSourceToBouncer(t *testing.T) {
 	require.Equal(t, map[string]string{"a": "assessor", "h": "human", "r": "rule"}, sources())
 }
 
-func TestMigrations_WorkflowRunMarkersAreRemovedOnDowngrade(t *testing.T) {
+func TestMigrations_WorkflowRunMarkersBecomeReadableMetadataOnDowngrade(t *testing.T) {
 	t.Parallel()
 
 	require.NoError(t, initGoose())
@@ -106,29 +106,40 @@ func TestMigrations_WorkflowRunMarkersAreRemovedOnDowngrade(t *testing.T) {
 	const before, links = 20261010000000, 20261014000000
 	require.NoError(t, goose.UpTo(conn, "migrations", links))
 
-	// s1: user -> marker A -> marker B -> reply, leaf on reply.
-	// s2: user2 -> marker C, leaf on the marker. s3: a lone root marker.
+	// A marker in the middle of a branch, and one that's a session's leaf.
 	_, err = conn.ExecContext(t.Context(), `
 		INSERT INTO sessions (id, title, updated_at, created_at, leaf_message_id) VALUES
-			('s1', 't', 0, 0, 'reply'), ('s2', 't', 0, 0, 'c'), ('s3', 't', 0, 0, 'lone');
+			('s1', 't', 0, 0, 'reply'), ('s2', 't', 0, 0, 'leaf-marker');
 		INSERT INTO messages (id, session_id, role, parts, created_at, updated_at, parent_message_id, message_type) VALUES
 			('user', 's1', 'user', '[]', 0, 0, NULL, 'message'),
-			('a', 's1', 'system', '[]', 0, 0, 'user', 'workflow_run'),
-			('b', 's1', 'system', '[]', 0, 0, 'a', 'workflow_run'),
-			('reply', 's1', 'user', '[]', 0, 0, 'b', 'message'),
-			('user2', 's2', 'user', '[]', 0, 0, NULL, 'message'),
-			('c', 's2', 'system', '[]', 0, 0, 'user2', 'workflow_run'),
-			('lone', 's3', 'system', '[]', 0, 0, NULL, 'workflow_run');`)
+			('marker', 's1', 'system', '[{"type":"workflow_run","data":{"run_id":"r"}}]', 0, 0, 'user', 'workflow_run'),
+			('reply', 's1', 'user', '[]', 0, 0, 'marker', 'message'),
+			('leaf-marker', 's2', 'system', '[{"type":"workflow_run","data":{"run_id":"r2"}}]', 0, 0, NULL, 'workflow_run');`)
 	require.NoError(t, err)
 
 	require.NoError(t, goose.DownTo(conn, "migrations", before))
 
-	user := "user"
-	require.Equal(t, map[string]*string{"user": nil, "reply": &user, "user2": nil},
-		queryLinks(t, conn, `SELECT id, parent_message_id FROM messages`))
-	reply, user2 := "reply", "user2"
-	require.Equal(t, map[string]*string{"s1": &reply, "s2": &user2, "s3": nil},
-		queryLinks(t, conn, `SELECT id, leaf_message_id FROM sessions`))
+	rows, err := conn.QueryContext(t.Context(), `SELECT id, message_type, parts FROM messages WHERE id IN ('marker', 'leaf-marker') ORDER BY id`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var converted []string
+	for rows.Next() {
+		var id, typ, parts string
+		require.NoError(t, rows.Scan(&id, &typ, &parts))
+		converted = append(converted, id+" "+typ+" "+parts)
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, []string{
+		`leaf-marker model_change [{"type":"model_change","data":{"provider":"","model_id":""}}]`,
+		`marker model_change [{"type":"model_change","data":{"provider":"","model_id":""}}]`,
+	}, converted)
+
+	marker := "marker"
+	require.Equal(t, map[string]*string{"user": nil, "marker": &[]string{"user"}[0], "reply": &marker, "leaf-marker": nil},
+		queryLinks(t, conn, `SELECT id, parent_message_id FROM messages`), "no message moves")
+	reply, leafMarker := "reply", "leaf-marker"
+	require.Equal(t, map[string]*string{"s1": &reply, "s2": &leafMarker},
+		queryLinks(t, conn, `SELECT id, leaf_message_id FROM sessions`), "no leaf moves")
 }
 
 // queryLinks maps the first column of query to its second, nullable one.
