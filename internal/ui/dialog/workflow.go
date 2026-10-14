@@ -106,9 +106,9 @@ func (d *WorkflowApproval) HandleMsg(msg tea.Msg) Action {
 }
 
 func (d *WorkflowApproval) answer(approve bool) Action {
-	answer := "deny"
+	answer := workflowhost.AnswerDeny
 	if approve {
-		answer = "approve"
+		answer = workflowhost.AnswerApprove
 	}
 	return ActionWorkflowRespond{RequestID: d.ev.RequestID, Answer: answer}
 }

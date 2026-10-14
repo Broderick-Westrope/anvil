@@ -426,12 +426,12 @@ func (s *Service) approve(ctx context.Context, inv Invocation, script *workflow.
 			ScriptPath: script.Path, Origin: origin, Requires: script.Requires,
 			Files: approvalFiles(filepath.Base(script.Path), current, previous),
 		},
-		Options: []string{"approve", "deny"},
+		Options: []string{AnswerApprove, AnswerDeny},
 	})
 	if err != nil {
 		return false, err
 	}
-	if answer != "approve" {
+	if answer != AnswerApprove {
 		return false, nil
 	}
 	return true, s.deps.Store.approve(ctx, script.Path, current, origin)
@@ -474,8 +474,14 @@ func (s *Service) request(ctx context.Context, ev Event) (string, error) {
 // is published again.
 const defaultRepublishInterval = 2 * time.Second
 
-// Respond answers an approval ("approve" or "deny") or an ask(). An ask
-// with options accepts only one of them.
+// The answers Respond accepts for an approval.
+const (
+	AnswerApprove = "approve"
+	AnswerDeny    = "deny"
+)
+
+// Respond answers an approval (AnswerApprove or AnswerDeny) or an ask(). An
+// ask with options accepts only one of them.
 func (s *Service) Respond(requestID, answer string) error {
 	s.mu.Lock()
 	req, ok := s.pending[requestID]
