@@ -185,13 +185,16 @@ func TestClassifyCaseConditions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "switch.go")
 	require.NoError(t, os.WriteFile(path, []byte(switchSource), 0o644))
 	in := strings.Join([]string{
-		path + "\t5\t9\tNOT COVERED\tCONDITIONALS_BOUNDARY", // Tagless case condition.
-		path + "\t5\t16\tNOT COVERED\tARITHMETIC_BASE",      // Second expression in the same case.
-		path + "\t6\t12\tNOT COVERED\tARITHMETIC_BASE",      // The case body is instrumented.
-		path + "\t8\t11\tNOT COVERED\tARITHMETIC_BASE",      // A switch tag is instrumented.
-		path + "\t9\t9\tNOT COVERED\tARITHMETIC_BASE",       // Tagged case value.
-		path + "\t5\t9\tLIVED\tCONDITIONALS_BOUNDARY",       // LIVED means a test ran it.
-		path + "\t5\t2\tNOT COVERED\tCONDITIONALS_BOUNDARY", // Before the expression, on the case keyword.
+		path + "\t5\t9\tNOT COVERED\tCONDITIONALS_BOUNDARY",  // Tagless case condition.
+		path + "\t5\t16\tNOT COVERED\tARITHMETIC_BASE",       // Second expression in the same case.
+		path + "\t6\t12\tNOT COVERED\tARITHMETIC_BASE",       // The case body is instrumented.
+		path + "\t8\t11\tNOT COVERED\tARITHMETIC_BASE",       // A switch tag is instrumented.
+		path + "\t9\t9\tNOT COVERED\tARITHMETIC_BASE",        // Tagged case value.
+		path + "\t5\t9\tLIVED\tCONDITIONALS_BOUNDARY",        // LIVED means a test ran it.
+		path + "\t5\t2\tNOT COVERED\tCONDITIONALS_BOUNDARY",  // Before the expression, on the case keyword.
+		path + "\t5\t7\tNOT COVERED\tCONDITIONALS_BOUNDARY",  // The expression's first column.
+		path + "\t5\t11\tNOT COVERED\tCONDITIONALS_BOUNDARY", // The expression's last column.
+		path + "\t5\t12\tNOT COVERED\tCONDITIONALS_BOUNDARY", // The comma just after it.
 	}, "\n")
 
 	var out strings.Builder
@@ -203,5 +206,5 @@ func TestClassifyCaseConditions(t *testing.T) {
 		require.True(t, ok)
 		labels = append(labels, label)
 	}
-	require.Equal(t, []string{"case", "case", "keep", "keep", "case", "keep", "keep"}, labels)
+	require.Equal(t, []string{"case", "case", "keep", "keep", "case", "keep", "keep", "case", "case", "keep"}, labels)
 }
