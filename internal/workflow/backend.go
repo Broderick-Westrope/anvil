@@ -18,7 +18,7 @@ type Backend interface {
 	// turn's own final text once its run finishes.
 	Turn(ctx context.Context, call TurnCall) (string, error)
 	// NewSession creates an interactive orchestrator session for the run.
-	NewSession(ctx context.Context, title string) (string, error)
+	NewSession(ctx context.Context, call SessionCall) (string, error)
 	// Agent runs a fresh, isolated subagent. With a schema, it returns the
 	// validated output or a *SchemaError.
 	Agent(ctx context.Context, call AgentCall) (AgentResult, error)
@@ -50,9 +50,17 @@ type TurnCall struct {
 	Skills    []string
 }
 
+// SessionCall creates a session. Seq is the run's event that creates it.
+type SessionCall struct {
+	Title string
+	Seq   int
+}
+
 // AgentCall runs a subagent. Tools restricts its tool set (fail closed),
 // Model pins a provider/model, and Schema makes it return structured output.
 type AgentCall struct {
+	// Seq is the run's event that runs the subagent.
+	Seq             int
 	ParentSessionID string
 	Agent           string
 	Prompt          string

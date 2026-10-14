@@ -28,15 +28,16 @@ type fakeBackend struct {
 	bashFn  func(ctx context.Context, call workflow.BashCall) (workflow.BashResult, error)
 	askFn   func(ctx context.Context, question string, options []string) (string, error)
 
-	newSessions int
-	statuses    [][2]string
-	focused     []string
-	warnings    []string
-	holds       [][]string
-	stopJobs    []bool
-	holdErr     error
-	released    int
-	bashed      []string
+	newSessions  int
+	sessionCalls []workflow.SessionCall
+	statuses     [][2]string
+	focused      []string
+	warnings     []string
+	holds        [][]string
+	stopJobs     []bool
+	holdErr      error
+	released     int
+	bashed       []string
 }
 
 func (f *fakeBackend) bashCmds() []string {
@@ -72,10 +73,11 @@ func (f *fakeBackend) Turn(ctx context.Context, call workflow.TurnCall) (string,
 	return fn(ctx, call)
 }
 
-func (f *fakeBackend) NewSession(context.Context, string) (string, error) {
+func (f *fakeBackend) NewSession(_ context.Context, call workflow.SessionCall) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.newSessions++
+	f.sessionCalls = append(f.sessionCalls, call)
 	return "new-" + string(rune('0'+f.newSessions)), nil
 }
 

@@ -2,9 +2,11 @@ package workflow_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -807,4 +809,44 @@ func TestScriptErrorAfterAbortCountsAsAborted(t *testing.T) {
 	}
 	_, err := run.Execute(t.Context(), workflow.Input{})
 	require.ErrorIs(t, err, workflow.ErrAborted)
+}
+
+func TestSessionAndAgentCallsCarryTheSeqOfTheirOwnEvent(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	var mu sync.Mutex
+	agentSeqs := map[string]int{}
+	h.backend.agentFn = func(_ context.Context, call workflow.AgentCall) (workflow.AgentResult, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		agentSeqs[call.Prompt] = call.Seq
+		return workflow.AgentResult{Text: "ok"}, nil
+	}
+	_, err := h.run(t, `requires({agents: ["reviewer"]})
+function main() {
+  session.new({title: "builder"})
+  agent("reviewer", "solo")
+  parallel([{agent: "reviewer", prompt: "a"}, {agent: "reviewer", prompt: "b"}])
+}`, "")
+	require.NoError(t, err)
+
+	started := map[string]int{}
+	for _, ev := range h.recorder.events {
+		if ev.Phase != workflow.PhaseStarted {
+			continue
+		}
+		switch ev.Primitive {
+		case "session.new":
+			started["session"] = ev.Seq
+		case "agent":
+			var args struct{ Prompt string }
+			require.NoError(t, json.Unmarshal(ev.Args, &args))
+			started[args.Prompt] = ev.Seq
+		}
+	}
+	require.Len(t, h.backend.sessionCalls, 1)
+	require.Equal(t, workflow.SessionCall{Title: "builder", Seq: started["session"]}, h.backend.sessionCalls[0])
+	require.Equal(t, map[string]int{"solo": started["solo"], "a": started["a"], "b": started["b"]}, agentSeqs)
+	require.Len(t, map[int]bool{started["solo"]: true, started["a"]: true, started["b"]: true}, 3)
 }

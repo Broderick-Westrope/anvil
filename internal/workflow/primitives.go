@@ -150,15 +150,15 @@ type agentArgs struct {
 	Model  string          `json:"model"`
 }
 
-func primAgent(r *Run, _ int, args json.RawMessage) (any, error) {
+func primAgent(r *Run, seq int, args json.RawMessage) (any, error) {
 	in, err := decode[agentArgs](args)
 	if err != nil {
 		return nil, err
 	}
-	return r.runAgent(r.ctx, in)
+	return r.runAgent(r.ctx, seq, in)
 }
 
-func (r *Run) runAgent(ctx context.Context, in agentArgs) (any, error) {
+func (r *Run) runAgent(ctx context.Context, seq int, in agentArgs) (any, error) {
 	if !r.backend.HasAgent(in.Agent) {
 		return nil, fmt.Errorf("agent %q not found", in.Agent)
 	}
@@ -172,6 +172,7 @@ func (r *Run) runAgent(ctx context.Context, in agentArgs) (any, error) {
 		}
 	}
 	res, err := r.backend.Agent(ctx, AgentCall{
+		Seq:             seq,
 		ParentSessionID: r.opts.InvokingSessionID,
 		Agent:           in.Agent,
 		Prompt:          in.Prompt,
@@ -206,12 +207,12 @@ func primParallel(r *Run, seq int, args json.RawMessage) (any, error) {
 	var wg sync.WaitGroup
 	for i, raw := range in.Calls {
 		wg.Go(func() {
-			value, err := r.call(r.ctx, seq, i, "agent", raw, func(int) (any, error) {
+			value, err := r.call(r.ctx, seq, i, "agent", raw, func(childSeq int) (any, error) {
 				desc, err := decode[agentArgs](raw)
 				if err != nil {
 					return nil, err
 				}
-				return r.runAgent(r.ctx, desc)
+				return r.runAgent(r.ctx, childSeq, desc)
 			})
 			if err != nil {
 				info := describeError(err, r.aborted.Load())
@@ -308,7 +309,7 @@ func primSessionCurrent(r *Run, _ int, _ json.RawMessage) (any, error) {
 	return r.opts.InvokingSessionID, nil
 }
 
-func primSessionNew(r *Run, _ int, args json.RawMessage) (any, error) {
+func primSessionNew(r *Run, seq int, args json.RawMessage) (any, error) {
 	in, err := decode[struct {
 		Title  string   `json:"title"`
 		Seed   string   `json:"seed"`
@@ -320,7 +321,7 @@ func primSessionNew(r *Run, _ int, args json.RawMessage) (any, error) {
 	if err := r.checkSkills(in.Skills); err != nil {
 		return nil, err
 	}
-	id, err := r.backend.NewSession(r.ctx, in.Title)
+	id, err := r.backend.NewSession(r.ctx, SessionCall{Title: in.Title, Seq: seq})
 	if err != nil {
 		return nil, err
 	}
