@@ -3269,15 +3269,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 				// A builder still loading can't take a message, and commands
 				// don't run from a builder; either way the draft stays put.
-				if target := m.composeTarget(); target.drilled {
-					if target.session == nil {
-						cmds = append(cmds, util.ReportWarn("The session is still loading; try again in a moment"))
-						return tea.Batch(cmds...)
-					}
-					if cmd := m.refuseInBuilder(slashCommand(strings.TrimSpace(value))); cmd != nil {
-						cmds = append(cmds, cmd)
-						return tea.Batch(cmds...)
-					}
+				if refusal := m.composeTarget().loadingRefusal(); refusal != nil {
+					cmds = append(cmds, refusal)
+					return tea.Batch(cmds...)
+				}
+				if cmd := m.refuseInBuilder(slashCommand(strings.TrimSpace(value))); cmd != nil {
+					cmds = append(cmds, cmd)
+					return tea.Batch(cmds...)
 				}
 
 				// Otherwise, send the message
@@ -3451,7 +3449,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case uiFocusMain:
 			switch {
 			case key.Matches(msg, m.keyMap.Tab):
-				// Do not focus the editor while drilled into a subagent.
+				// Only focus the editor when it's shown: in a drill-in, only a
+				// builder the user talks to shows it.
 				if !m.composeTarget().shown {
 					break
 				}
@@ -4134,7 +4133,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 		},
 	)
 
-	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isAgentBusy() {
+	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isRootBusy() {
 		binds = append(binds, []key.Binding{key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch"))})
 	}
 	if m.focus == uiFocusMain && hasSession && m.session.Conversational() && !m.isDrilledIn() {
@@ -4281,8 +4280,9 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	// The help height
 	helpHeight := 1
 	// The editor height: textarea height + margin for attachments and bottom spacing.
-	// When drilled into a subagent, the editor is hidden (height = 0) so the
-	// main area can use all available vertical space.
+	// In a read-only drill-in (anything but a builder the user talks to),
+	// the editor is hidden (height = 0) so the main area can use all
+	// available vertical space.
 	editorHeight := m.textarea.Height() + editorHeightMargin
 	if !m.composeTarget().shown {
 		editorHeight = 0

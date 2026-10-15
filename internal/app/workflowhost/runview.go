@@ -243,7 +243,14 @@ func (b *viewBuilder) endOpenCalls() {
 func settle(item *RunItem, ev workflow.Event) error {
 	if ev.Phase == workflow.PhaseFailed {
 		var info struct{ Message string }
-		_ = json.Unmarshal(ev.Error, &info)
+		// A failure recorded without details still shows as failed.
+		if len(ev.Error) == 0 {
+			item.Status = StatusFailed
+			return nil
+		}
+		if err := json.Unmarshal(ev.Error, &info); err != nil {
+			return fmt.Errorf("read error of event %d: %w", ev.Seq, err)
+		}
 		item.Status, item.Err = StatusFailed, info.Message
 		return nil
 	}

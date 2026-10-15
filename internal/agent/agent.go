@@ -588,7 +588,13 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	}
 	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
-	call := a.newSideCall(usageKindSummary, sessionID, currentSession.ParentSessionID, largeModel)
+	// A builder's summary is a conversation's, like its turns, not a
+	// subagent's.
+	parentID := currentSession.ParentSessionID
+	if currentSession.Conversational() {
+		parentID = ""
+	}
+	call := a.newSideCall(usageKindSummary, sessionID, parentID, largeModel)
 	msgs, rawPath, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return err
