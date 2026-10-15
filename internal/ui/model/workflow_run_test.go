@@ -633,19 +633,58 @@ func TestPaletteActionsOnTheUsersSessionArentRunFromABuilder(t *testing.T) {
 	}
 }
 
-func TestEscInARunViewStillCancelsTheUsersSession(t *testing.T) {
+func TestEscCancelsWhatsRunningTheViewOnScreen(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
-	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
-	f.markerArrives()
-	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
-	f.run(cmd)
-	f.ws.busy = map[string]bool{"sess-1": true}
-	f.u.focus = uiFocusMain
-	f.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	f.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	require.Equal(t, []string{"sess-1"}, f.ws.cancelled)
+	tests := map[string]struct {
+		open func(f *workflowFixture)
+		want []string
+	}{
+		"a run view: nothing, the run is aborted with alt+x instead": {
+			open: func(f *workflowFixture) {
+				_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+				f.run(cmd)
+			},
+		},
+		"a run's subagent: nothing": {
+			open: func(f *workflowFixture) {
+				_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+				f.run(cmd)
+				_, cmd = f.u.Update(util.AgentDrillInMsg{SessionID: "da-1", Label: "da"})
+				f.run(cmd)
+			},
+		},
+		"a subagent a builder started: the builder": {
+			open: func(f *workflowFixture) {
+				f.drillIntoBuilder(t)
+				_, cmd := f.u.Update(util.AgentDrillInMsg{SessionID: "builder-msg$$agent1", Label: "explorer"})
+				f.run(cmd)
+			},
+			want: []string{"sess-2"},
+		},
+		"a subagent the user's own turn started: the user's session": {
+			open: func(f *workflowFixture) {
+				_, cmd := f.u.Update(util.AgentDrillInMsg{SessionID: "msg$$agent1", Label: "explorer"})
+				f.run(cmd)
+			},
+			want: []string{"sess-1"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newWorkflowFixture(t)
+			f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+			f.markerArrives()
+			tc.open(f)
+			f.ws.busy = map[string]bool{"sess-1": true, "sess-2": true}
+			f.u.focus = uiFocusMain
+			f.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+			f.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+			require.Equal(t, tc.want, f.ws.cancelled)
+		})
+	}
 }
 
 func TestABusyBuilderDoesntMakeTheUsersSessionBusy(t *testing.T) {

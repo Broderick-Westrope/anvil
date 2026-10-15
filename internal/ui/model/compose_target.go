@@ -104,13 +104,21 @@ func (m *UI) isTargetBusy() bool {
 	return m.isBusy(m.composeTargetID())
 }
 
-// cancelTargetID is the session Esc and Ctrl+C cancel: the one the editor
-// sends to, or the user's own session while the editor is hidden (in a
-// subagent's session or a run view), as before builders could be typed
-// into.
+// cancelTargetID is the session Esc and Ctrl+C cancel: the session
+// running what's on screen. Walking down the drill-in stack, that's the
+// first session the user talks to (a builder, for a subagent the builder
+// started), or nothing inside a workflow run's own views, which alt+x
+// aborts instead; with neither, it's the user's own session, whose turn
+// runs the subagents opened from it.
 func (m *UI) cancelTargetID() string {
-	if m.composeTarget().shown {
-		return m.composeTargetID()
+	for i := len(m.drillStack) - 1; i >= 0; i-- {
+		entry := m.drillStack[i]
+		switch {
+		case entry.runID != "":
+			return ""
+		case entry.conversational:
+			return entry.sessionID
+		}
 	}
 	if m.hasSession() {
 		return m.session.ID

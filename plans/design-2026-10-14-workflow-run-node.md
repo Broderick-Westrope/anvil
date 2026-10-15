@@ -409,9 +409,10 @@ they are. The engine is beta, so no backfill.
 - Metadata entries (MCP toggles, model and thinking changes) are written
   through the session's queue onto its current leaf, like the marker.
 - While a builder has the editor, commands and palette actions that act
-  on the user's own session are refused (`refuseInBuilder`), and Esc
-  cancels the builder; elsewhere in a drill-in Esc still cancels the
-  user's session.
+  on the user's own session are refused (`refuseInBuilder`). Esc cancels
+  what's running the view on screen: a builder, for the builder or its
+  subagents; nothing inside a run's own views (alt+x aborts the run); the
+  user's session for its own subagents.
 - Esc keeps silent queued work (markers, metadata, forks): only prompts
   the user can see are dropped.
 - Deleting a session deletes the sessions workflow runs made from it.
