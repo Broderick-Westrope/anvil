@@ -51,6 +51,13 @@ A view that opens on top of the chat to show one item in detail: a subagent's se
 - **Code:** `util.AgentDrillInMsg`, `util.ToolDrillInMsg`, `util.ThinkingDrillInMsg` (`internal/ui/util`)
 - **Not:** dialog. Dialogs ask for input; drill-ins show detail.
 
+## Fork
+
+A new session whose history is a copy of another session's branch, made by a workflow with `s.fork()`. Forking the session a run was started from copies its conversation as it was when the run started. The copy gets new message IDs; the original is untouched.
+
+- **Code:** `message.Service.CopyBranch`, `workflowhost.backend.Fork`, the `session.fork` primitive
+- **Not:** branch. A branch is another path inside the same session; a fork is a separate session.
+
 ## Hook
 
 A user-defined shell command in `anvil.json` that runs before a tool call and can allow, block or rewrite it. Hooks run before permission checks.
