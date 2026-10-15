@@ -821,6 +821,13 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sendMessageMsg:
+		// A command's message (an MCP prompt, /init) is for the user's own
+		// session; if a builder took the editor while it was prepared, it
+		// isn't sent there.
+		if m.composeTarget().drilled {
+			cmds = append(cmds, util.ReportWarn("The command's message wasn't sent, because a workflow session has the editor; run it again from your own session"))
+			break
+		}
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
 	case sendDoneMsg:
 		cmds = append(cmds, m.handleSendDone(msg))
@@ -917,6 +924,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case promptHistoryLoadedMsg:
+		// A load that finishes after the editor moved to another session
+		// is for the wrong one.
+		if msg.sessionID != m.historySessionID() {
+			break
+		}
 		m.promptHistory.messages = nil
 		for _, source := range msg.messages {
 			if isWorkflowTurn(source.Content().Text) {
@@ -2691,6 +2703,11 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		))
 
 	case dialog.ActionRunCustomCommand:
+		if cmd := m.refuseCommandInBuilder("/" + msg.Name); cmd != nil {
+			m.dialog.CloseFrontDialog()
+			cmds = append(cmds, cmd)
+			break
+		}
 		if msg.Workflow != "" {
 			cmds = append(cmds, m.handleWorkflowAction(msg))
 			break
@@ -2720,6 +2737,11 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.sendMessage(content))
 		m.dialog.CloseFrontDialog()
 	case dialog.ActionRunMCPPrompt:
+		if cmd := m.refuseCommandInBuilder("/" + msg.PromptID); cmd != nil {
+			m.dialog.CloseFrontDialog()
+			cmds = append(cmds, cmd)
+			break
+		}
 		if len(msg.Arguments) > 0 && msg.Args == nil {
 			m.dialog.CloseFrontDialog()
 			title := cmp.Or(msg.Title, "MCP Prompt Arguments")

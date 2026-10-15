@@ -534,3 +534,90 @@ func TestARunViewSaysWhichBuildersAreWorking(t *testing.T) {
 	f.u.refreshRunningWorkflowRuns()
 	require.Contains(t, row(), "/demo approach 1 · working")
 }
+
+func TestControlsNeverReachARunTheUserIsntLookingAt(t *testing.T) {
+	t.Parallel()
+
+	finished := runningView()
+	finished.Status = workflowhost.StatusCompleted
+	other := runningView()
+	other.RunID, other.MarkerMessageID = "run-2", "marker-2"
+
+	tests := map[string]func(f *workflowFixture){
+		"a finished run's node is selected": func(f *workflowFixture) {
+			f.u.chat.Focus()
+			f.u.chat.SetSelected(0)
+		},
+		"a finished run's view is open": func(f *workflowFixture) {
+			_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+			f.run(cmd)
+		},
+	}
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newWorkflowFixture(t)
+			f.ws.views = map[string]workflowhost.RunView{"run-1": finished, "run-2": other}
+			f.markerArrives()
+			f.u.workflowRunViews["run-2"] = other
+			setup(f)
+			f.u.focus = uiFocusMain
+
+			f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt})
+			require.Empty(t, f.ws.controls, "aborting must not reach run-2")
+		})
+	}
+}
+
+func TestControlsFromABuilderActOnItsRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	f.u.workflowRunViews["run-2"] = func() workflowhost.RunView {
+		v := runningView()
+		v.RunID = "run-2"
+		return v
+	}()
+	f.u.focus = uiFocusMain
+	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt})
+	require.Equal(t, []string{"abort:run-1"}, f.ws.controls)
+}
+
+func TestAHistoryLoadForAnotherSessionIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	user := message.Message{ID: "u", Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "from the builder"}}}
+	f.u.Update(promptHistoryLoadedMsg{messages: []message.Message{user}, sessionID: "sess-2"})
+	require.Empty(t, f.u.promptHistory.messages, "the editor sends to sess-1, so sess-2's history doesn't apply")
+
+	f.u.Update(promptHistoryLoadedMsg{messages: []message.Message{user}, sessionID: "sess-1"})
+	require.Len(t, f.u.promptHistory.messages, 1)
+}
+
+func TestPaletteCommandsArentRunFromABuilder(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	actions := []dialog.Action{
+		dialog.ActionRunCustomCommand{Name: "review", Content: "Review it"},
+		dialog.ActionRunCustomCommand{Name: "demo", Workflow: "/proj/demo/workflow.js"},
+		dialog.ActionRunMCPPrompt{PromptID: "summarise"},
+	}
+	for _, action := range actions {
+		f.u.dialog.OpenDialog(&stubDialog{id: dialog.CommandsID, action: action})
+		infos := f.run(f.u.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
+		require.Len(t, infos, 1, "%#v", action)
+		require.Equal(t, util.InfoTypeWarn, infos[0].Type, "%#v", action)
+		require.False(t, f.u.dialog.HasDialogs())
+	}
+	_, cmd := f.u.Update(sendMessageMsg{Content: "from /init"})
+	infos := f.run(cmd)
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
+	require.Empty(t, f.ws.runs)
+	require.Empty(t, f.ws.starts)
+}

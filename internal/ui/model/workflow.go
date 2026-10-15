@@ -114,24 +114,25 @@ func (m *UI) controlWorkflow(runID string, control dialog.WorkflowControl) tea.C
 }
 
 // targetWorkflowRun is the running run the workflow controls act on: the
-// one whose view is open, or whose node is selected, or else the latest
-// run started from the session on screen.
+// run whose view is open beneath whatever is on top (such as one of its
+// builders), else the run whose node is selected, else the latest run
+// started from the session on screen. A run picked out by its view or
+// node is the only candidate: if it has finished, nothing is controlled,
+// so a control never reaches a run the user isn't looking at.
 func (m *UI) targetWorkflowRun() (workflowhost.RunView, bool) {
 	running := func(runID string) (workflowhost.RunView, bool) {
 		view, ok := m.workflowRunViews[runID]
 		return view, ok && view.Status == workflowhost.StatusRunning
 	}
-	if m.isDrilledIn() {
-		if runID := m.drillStack[len(m.drillStack)-1].runID; runID != "" {
+	for i := len(m.drillStack) - 1; i >= 0; i-- {
+		if runID := m.drillStack[i].runID; runID != "" {
 			return running(runID)
 		}
 	}
 	if node, ok := m.activeChat().SelectedItem().(*chat.WorkflowRunMessageItem); ok {
-		if view, ok := running(node.RunID()); ok {
-			return view, true
-		}
+		return running(node.RunID())
 	}
-	if !m.hasSession() {
+	if m.isDrilledIn() || !m.hasSession() {
 		return workflowhost.RunView{}, false
 	}
 	var latest workflowhost.RunView

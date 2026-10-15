@@ -489,7 +489,7 @@ func TestPromptHistorySkipsWorkflowTurns(t *testing.T) {
 	f := newWorkflowFixture(t)
 	user := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "mine"}}}
 	turn := message.Message{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: commands.FormatWorkflowTurnXML("demo", "engine")}}}
-	f.u.Update(promptHistoryLoadedMsg{messages: []message.Message{turn, user}})
+	f.u.Update(promptHistoryLoadedMsg{messages: []message.Message{turn, user}, sessionID: "sess-1"})
 	require.Len(t, f.u.promptHistory.messages, 1)
 	require.Equal(t, "mine", f.u.promptHistory.messages[0].text)
 }

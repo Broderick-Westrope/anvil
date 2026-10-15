@@ -12,18 +12,27 @@ import (
 // promptHistoryLoadedMsg is sent when prompt history is loaded.
 type promptHistoryLoadedMsg struct {
 	messages []message.Message
+	// sessionID is the session the history is for, "" for the working
+	// directory's.
+	sessionID string
+}
+
+// historySessionID is the session prompt history comes from: a drilled-in
+// builder's while the editor sends to it, and the root session's
+// otherwise.
+func (m *UI) historySessionID() string {
+	if target := m.composeTarget(); target.drilled && target.session != nil {
+		return target.session.ID
+	}
+	if m.session != nil {
+		return m.session.ID
+	}
+	return ""
 }
 
 // loadPromptHistory loads user messages for history navigation.
 func (m *UI) loadPromptHistory() tea.Cmd {
-	// History is a drilled-in builder's while the editor sends to it, and
-	// the root session's otherwise.
-	var sessionID string
-	if target := m.composeTarget(); target.drilled && target.session != nil {
-		sessionID = target.session.ID
-	} else if m.session != nil {
-		sessionID = m.session.ID
-	}
+	sessionID := m.historySessionID()
 	return func() tea.Msg {
 		ctx := context.Background()
 		var messages []message.Message
@@ -36,10 +45,10 @@ func (m *UI) loadPromptHistory() tea.Cmd {
 		}
 		if err != nil {
 			slog.Error("Failed to load prompt history", "error", err)
-			return promptHistoryLoadedMsg{messages: nil}
+			return promptHistoryLoadedMsg{sessionID: sessionID}
 		}
 
-		return promptHistoryLoadedMsg{messages: messages}
+		return promptHistoryLoadedMsg{messages: messages, sessionID: sessionID}
 	}
 }
 
