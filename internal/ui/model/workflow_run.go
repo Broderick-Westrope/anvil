@@ -116,7 +116,7 @@ func (m *UI) applyWorkflowRunView(msg workflowRunViewLoadedMsg) {
 func (m *UI) showWorkflowRunRows(entry *drillInEntry, view workflowhost.RunView) {
 	selected := entry.chat.Selected()
 	command := strings.TrimPrefix(entry.label, "/")
-	rows := chat.BuildWorkflowRunItems(m.com.Styles, command, view)
+	rows := chat.BuildWorkflowRunItems(m.com.Styles, command, view, m.com.Workspace.AgentIsSessionBusy)
 	if selected < 0 {
 		entry.chat.SetMessages(rows...)
 		entry.chat.SelectFirst()
@@ -126,4 +126,37 @@ func (m *UI) showWorkflowRunRows(entry *drillInEntry, view workflowhost.RunView)
 	}
 	entry.chat.ReplaceMessages(rows...)
 	entry.chat.SetSelected(min(selected, entry.chat.Len()-1))
+}
+
+// refreshRunningWorkflowRuns redraws what changes with time for running
+// runs: their nodes' elapsed time, and which builders are working in their
+// open views. It reports whether any run is still running.
+func (m *UI) refreshRunningWorkflowRuns() bool {
+	running := false
+	for _, view := range m.workflowRunViews {
+		if view.Status == workflowhost.StatusRunning {
+			running = true
+			break
+		}
+	}
+	if !running {
+		return false
+	}
+	chats := []*Chat{m.chat}
+	for i := range m.drillStack {
+		entry := &m.drillStack[i]
+		if view, ok := m.workflowRunViews[entry.runID]; ok && entry.runID != "" && view.Status == workflowhost.StatusRunning {
+			m.showWorkflowRunRows(entry, view)
+			continue
+		}
+		chats = append(chats, entry.chat)
+	}
+	for _, c := range chats {
+		for _, item := range c.MessageItems() {
+			if node, ok := item.(*chat.WorkflowRunMessageItem); ok && !node.Finished() {
+				node.Tick()
+			}
+		}
+	}
+	return true
 }

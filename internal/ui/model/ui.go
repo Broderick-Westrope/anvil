@@ -342,7 +342,7 @@ type UI struct {
 	workflowRunCommands map[string]string
 	// drafts keeps unsent editor text per session while the editor targets
 	// another one; composeFor is the session the editor last targeted.
-	drafts     map[string]string
+	drafts     map[string]composerDraft
 	composeFor string
 	// workflowRunLoads tracks run views being loaded: one load per run at a
 	// time, and true when the run changed during it and needs another.
@@ -1365,7 +1365,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
+		workflowsRunning := m.refreshRunningWorkflowRuns()
+		shouldContinue := anyRunning || workflowsRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
@@ -1443,6 +1444,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.openWorkflowRun(msg.RunID, msg.Label))
 	case workflowRunViewLoadedMsg:
 		cmds = append(cmds, m.workflowRunViewLoaded(msg))
+		if msg.ok && msg.view.Status == workflowhost.StatusRunning && !m.elapsedTickRunning {
+			// A running run's node counts its time and its view shows which
+			// builders are working, so both refresh every second.
+			m.elapsedTickRunning = true
+			cmds = append(cmds, tickElapsedTime())
+		}
 
 	case util.ToolDrillInMsg:
 		toolItem, ok := msg.ToolItem.(chat.ToolMessageItem)
@@ -1511,6 +1518,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items := mergeLiveItems(m.messagesToChatItems(msg.messages), m.drillStack[i].chat)
 			m.drillStack[i].chat.SetMessages(items...)
 			cmds = append(cmds, m.loadWorkflowRunNodes(items))
+			if m.drillStack[i].conversational && i == len(m.drillStack)-1 {
+				// The editor now sends to this session, so its history is
+				// this session's.
+				cmds = append(cmds, m.loadPromptHistory())
+			}
 
 			// Start animations for all newly loaded items.
 			for _, item := range items {
@@ -3038,9 +3050,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			// Priority 4: Cancel streaming agent (immediate, bypasses
 			// two-phase Esc behavior).
-			if m.isAgentBusy() && m.hasSession() {
+			if m.isTargetBusy() {
 				m.isCanceling = false
-				m.com.Workspace.AgentCancel(m.session.ID)
+				m.com.Workspace.AgentCancel(m.composeTargetID())
 				m.todoIsSpinning = false
 				m.renderPills()
 				return tea.Batch(cmds...)
@@ -3059,9 +3071,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handleDialogMsg(msg)
 	}
 
-	// Handle cancel key when agent is busy.
+	// Handle cancel key when the session the editor sends to is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
-		if m.isAgentBusy() {
+		if m.isTargetBusy() {
 			if cmd := m.cancelAgent(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -3230,6 +3242,19 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					return tea.Batch(cmds...)
 				}
 
+				// A builder still loading can't take a message, and commands
+				// don't run from a builder; either way the draft stays put.
+				if target := m.composeTarget(); target.drilled {
+					if target.session == nil {
+						cmds = append(cmds, util.ReportWarn("The session is still loading; try again in a moment"))
+						return tea.Batch(cmds...)
+					}
+					if trimmed := strings.TrimSpace(value); strings.HasPrefix(trimmed, "/") {
+						cmds = append(cmds, m.refuseCommandInBuilder(trimmed))
+						return tea.Batch(cmds...)
+					}
+				}
+
 				// Otherwise, send the message
 				m.textarea.Reset()
 				if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
@@ -3239,14 +3264,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
-				}
-
-				// Commands act on the user's own session, so they aren't
-				// run from a drilled-in builder; the text stays put.
-				if strings.HasPrefix(value, "/") && m.composeTarget().drilled {
-					m.textarea.SetValue(value)
-					cmds = append(cmds, util.ReportWarn("Commands run in your own session; go back to it to run "+strings.Fields(value)[0]))
-					return tea.Batch(cmds...)
 				}
 
 				// Handled before the slash-command path, which drops
@@ -3419,7 +3436,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.activeChat().Blur()
 			case m.isDrilledIn() && key.Matches(msg, m.keyMap.Chat.PillLeft):
 				// Navigate back one drill-in level.
+				left := m.drillStack[len(m.drillStack)-1]
 				m.drillStack = m.drillStack[:len(m.drillStack)-1]
+				if left.conversational {
+					// The editor goes back to the session below, so does
+					// its history.
+					cmds = append(cmds, m.loadPromptHistory())
+				}
 				if m.isDrilledIn() {
 					m.activeChat().Focus()
 				} else {
@@ -4541,6 +4564,9 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 	if !strings.HasPrefix(value, "/") {
 		return nil
 	}
+	if cmd := m.refuseCommandInBuilder(value); cmd != nil {
+		return cmd
+	}
 
 	// Builtin slash commands are checked before user-defined commands.
 	// If a user has a custom command with the same name as a builtin,
@@ -4638,6 +4664,9 @@ func (m *UI) tryExecuteBuiltinCommand(value string) tea.Cmd {
 	name, ok := strings.CutPrefix(value, "/")
 	if !ok {
 		return nil
+	}
+	if cmd := m.refuseCommandInBuilder(value); cmd != nil {
+		return cmd
 	}
 
 	for _, b := range m.builtinCommands() {

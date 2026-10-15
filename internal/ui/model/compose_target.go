@@ -1,7 +1,13 @@
 package model
 
 import (
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 )
 
 // composeTarget is the session the editor writes to. Usually that's the
@@ -62,21 +68,48 @@ func (m *UI) syncDraft() {
 	m.composeFor = key
 }
 
-// switchDraft keeps each session's unsent draft with that session when the
-// editor's target changes, so text typed to a builder is never sent to the
-// root session, or the other way round.
+// composerDraft is a message being written to one target.
+type composerDraft struct {
+	text        string
+	attachments attachments.Draft
+}
+
+// switchDraft keeps each target's unsent draft, text and attachments, with
+// that target when the editor's target changes, so a draft written for a
+// builder is never sent to the root session, or the other way round.
 func (m *UI) switchDraft(from, to string) {
 	if from == to {
 		return
 	}
 	if m.drafts == nil {
-		m.drafts = map[string]string{}
+		m.drafts = map[string]composerDraft{}
 	}
-	if value := m.textarea.Value(); value != "" {
-		m.drafts[from] = value
-	} else {
-		delete(m.drafts, from)
+	draft := composerDraft{text: m.textarea.Value()}
+	if m.attachments != nil {
+		draft.attachments = m.attachments.Take()
 	}
-	m.textarea.SetValue(m.drafts[to])
+	m.drafts[from] = draft
+	next := m.drafts[to]
 	delete(m.drafts, to)
+	m.textarea.SetValue(next.text)
+	if m.attachments != nil {
+		m.attachments.Put(next.attachments)
+	}
+}
+
+// isTargetBusy reports whether the session the editor sends to is busy.
+func (m *UI) isTargetBusy() bool {
+	id := m.composeTargetID()
+	return id != "" && m.com.Workspace.AgentIsReady() && m.com.Workspace.AgentIsSessionBusy(id)
+}
+
+// refuseCommandInBuilder stops a command typed to a drilled-in builder:
+// commands act on the user's own session, so running one from a builder
+// would do it in the wrong place.
+func (m *UI) refuseCommandInBuilder(value string) tea.Cmd {
+	if !m.composeTarget().drilled {
+		return nil
+	}
+	name := strings.Fields(value + " ")[0]
+	return util.ReportWarn("Commands run in your own session; go back to it to run " + name)
 }

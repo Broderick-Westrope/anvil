@@ -137,6 +137,12 @@ func (w *WorkflowRunMessageItem) SetView(view workflowhost.RunView) {
 	w.Bump()
 }
 
+// Tick redraws a running node, whose elapsed time has moved on.
+func (w *WorkflowRunMessageItem) Tick() {
+	w.clearCache()
+	w.Bump()
+}
+
 // Finished implements list.Item. A node changes until its run ends.
 func (w *WorkflowRunMessageItem) Finished() bool {
 	return w.view != nil && w.view.Status != workflowhost.StatusRunning
@@ -204,7 +210,7 @@ func (w *WorkflowRunMessageItem) summary() string {
 			parts = append(parts, detail)
 		}
 	}
-	parts = append(parts, runningState(*v))
+	parts = append(parts, runningState(*v), formatRunDuration(time.Since(v.StartedAt)))
 	return strings.Join(parts, " · ") + formatRunCost(v.Cost)
 }
 
@@ -253,7 +259,9 @@ func (w *WorkflowRunRowItem) Render(width int) string { return w.render(width, w
 // BuildWorkflowRunItems lays out a run's view as rows: a header saying
 // what the run is and how it's going, then each phase with what happened
 // in it.
-func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost.RunView) []MessageItem {
+// busy reports whether a session has work in flight, so a builder row can
+// say it's working.
+func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost.RunView, busy func(sessionID string) bool) []MessageItem {
 	var rows []MessageItem
 	add := func(id, sessionID, label string, line func(width int) string) *WorkflowRunRowItem {
 		row := &WorkflowRunRowItem{
@@ -289,8 +297,9 @@ func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost
 		for i, item := range phase.Items {
 			id := fmt.Sprintf("item-%d-%d", p, i)
 			name := workflowRunItemName(command, item)
+			working := item.Kind == workflowhost.RunItemSession && item.SessionID != "" && busy(item.SessionID)
 			row := add(id, item.SessionID, name, func(width int) string {
-				return ansi.Truncate("  "+workflowRunItemLine(sty, name, item), width, "…")
+				return ansi.Truncate("  "+workflowRunItemLine(sty, name, item, working), width, "…")
 			})
 			row.conversational = item.Kind == workflowhost.RunItemSession
 		}
@@ -312,7 +321,7 @@ func workflowRunItemName(command string, item workflowhost.RunItem) string {
 	}
 }
 
-func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunItem) string {
+func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunItem, working bool) string {
 	sep := sty.Tool.StatsSep.Render(" · ")
 	switch item.Kind {
 	case workflowhost.RunItemAsk:
@@ -327,7 +336,11 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 		return sty.Tool.IconPending.UnsetString().Render("?") + " " + sty.Tool.NameNormal.Render(firstLine(item.Question)) +
 			sty.Tool.StatsSep.Render(" → ") + sty.Tool.StatsLine.Render(answer)
 	case workflowhost.RunItemSession:
-		return sty.Tool.IconSuccess.UnsetString().Render("◆") + " " + sty.Tool.NameNormal.Render(name) + sep + sty.Tool.StatsLine.Render("session")
+		state := "session"
+		if working {
+			state = "working"
+		}
+		return sty.Tool.IconSuccess.UnsetString().Render("◆") + " " + sty.Tool.NameNormal.Render(name) + sep + sty.Tool.StatsLine.Render(state)
 	default:
 		label := sty.Tool.NameNormal.Render(name)
 		if item.Model != "" {

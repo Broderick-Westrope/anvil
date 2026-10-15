@@ -45,6 +45,11 @@ type workflowWorkspace struct {
 	missing     map[string][]string
 	loadErr     map[string]error
 	views       map[string]workflowhost.RunView
+	// busy marks sessions with a run in flight; cancelled and historyFor
+	// record what was cancelled and whose prompt history was loaded.
+	busy       map[string]bool
+	cancelled  []string
+	historyFor []string
 }
 
 func (w *workflowWorkspace) WorkflowRunView(_ context.Context, runID string) (workflowhost.RunView, bool, error) {
@@ -60,7 +65,7 @@ func newWorkflowWorkspace() *workflowWorkspace {
 }
 
 func (*workflowWorkspace) AgentIsReady() bool                        { return true }
-func (*workflowWorkspace) AgentIsSessionBusy(string) bool            { return false }
+func (w *workflowWorkspace) AgentIsSessionBusy(id string) bool       { return w.busy[id] }
 func (*workflowWorkspace) AgentIsBusy() bool                         { return false }
 func (*workflowWorkspace) AgentQueuedPrompts(string) int             { return 0 }
 func (*workflowWorkspace) WorkingDir() string                        { return "/work" }
@@ -87,8 +92,13 @@ func (*workflowWorkspace) ListMessages(context.Context, string) ([]message.Messa
 	return nil, nil
 }
 
-func (*workflowWorkspace) ListUserMessages(context.Context, string) ([]message.Message, error) {
+func (w *workflowWorkspace) ListUserMessages(_ context.Context, id string) ([]message.Message, error) {
+	w.historyFor = append(w.historyFor, id)
 	return nil, nil
+}
+
+func (w *workflowWorkspace) AgentCancel(id string) {
+	w.cancelled = append(w.cancelled, id)
 }
 
 func (w *workflowWorkspace) GetSession(_ context.Context, id string) (session.Session, error) {

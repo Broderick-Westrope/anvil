@@ -11,6 +11,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -202,7 +203,7 @@ func TestWorkflowRunViewShowsCallsLeftOpenByAnInterruptedRun(t *testing.T) {
 	view.Phases[1].Items[1] = workflowhost.RunItem{Kind: workflowhost.RunItemAsk, Question: "Which repo?", Status: workflowhost.StatusInterrupted}
 
 	var rows []string
-	for _, item := range chat.BuildWorkflowRunItems(sty, "demo", view) {
+	for _, item := range chat.BuildWorkflowRunItems(sty, "demo", view, func(string) bool { return false }) {
 		rows = append(rows, ansi.Strip(item.Render(100)))
 	}
 	require.Contains(t, rows[4], "/demo: devils-advocate gpt-6 · interrupted")
@@ -261,7 +262,7 @@ func TestWorkflowRunNodeShowsTheRunsTotalCost(t *testing.T) {
 	f.ws.views = map[string]workflowhost.RunView{"run-1": view}
 	f.markerArrives()
 
-	require.Contains(t, ansi.Strip(f.node(t).Render(120)), "round 1/5 · running · $0.42")
+	require.Regexp(t, `round 1/5 · running · \S+ · \$0\.42`, ansi.Strip(f.node(t).Render(120)))
 }
 
 // drillIntoBuilder opens the run view and then the builder's session, the
@@ -432,4 +433,104 @@ func TestADrilledInBuilderMakesRoomForTheEditor(t *testing.T) {
 	f.press(tea.KeyPressMsg{Code: tea.KeyLeft})
 	f.u.updateLayoutAndSize()
 	require.Zero(t, f.u.layout.editor.Dy(), "the run view has no editor")
+}
+
+func TestAttachmentsStayWithTheSessionTheyWereAddedFor(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	skill := attachments.SkillAttachment{Name: "go-style", Instructions: "x"}
+	f.u.attachments.Update(skill)
+	f.drillIntoBuilder(t)
+	require.False(t, f.u.attachments.HasContent(), "the root's attachments aren't sent to the builder")
+
+	f.u.focus = uiFocusMain
+	f.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	f.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	require.Equal(t, []attachments.SkillAttachment{skill}, f.u.attachments.SkillList())
+}
+
+func TestPromptHistoryFollowsTheEditorsTarget(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	require.Contains(t, f.ws.historyFor, "sess-2", "a builder's own prompts are its history")
+
+	f.ws.historyFor = nil
+	f.u.focus = uiFocusMain
+	f.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	require.Equal(t, []string{"sess-1"}, f.ws.historyFor, "leaving the builder brings back the root's history")
+}
+
+func TestASendWhileTheBuilderLoadsKeepsTheDraft(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.drillStack = append(f.u.drillStack, drillInEntry{sessionID: "sess-2", chat: NewChat(f.u.com), conversational: true})
+	f.u.syncDraft()
+	f.u.updateLayoutAndSize()
+	f.u.focus = uiFocusEditor
+	f.u.textarea.SetValue("hello")
+
+	f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Empty(t, f.ws.runs)
+	require.Equal(t, "hello", f.u.textarea.Value())
+}
+
+func TestCommandsFromAutocompleteArentRunFromABuilder(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	infos := f.run(f.u.tryExecuteBuiltinCommand("/new"))
+	require.Len(t, infos, 1)
+	require.Contains(t, infos[0].Msg, "go back to it to run /new")
+	require.Equal(t, "sess-1", f.u.session.ID, "the root session is untouched")
+}
+
+func TestCancellingInABuilderCancelsTheBuilder(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	f.ws.busy = map[string]bool{"sess-2": true}
+	f.u.focus = uiFocusEditor
+	f.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+	f.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.Equal(t, []string{"sess-2"}, f.ws.cancelled)
+}
+
+func TestARunningNodeCountsItsTime(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	view := runningView()
+	view.StartedAt = time.Now().Add(-90 * time.Second)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": view}
+	f.markerArrives()
+	require.True(t, f.u.elapsedTickRunning, "a running run keeps the elapsed tick going")
+	require.Regexp(t, `running · 1m3[01]s`, ansi.Strip(f.node(t).Render(120)))
+
+	view.StartedAt = view.StartedAt.Add(-time.Minute)
+	f.u.workflowRunViews["run-1"] = view
+	f.node(t).SetView(view)
+	require.True(t, f.u.refreshRunningWorkflowRuns())
+	require.Regexp(t, `running · 2m3[01]s`, ansi.Strip(f.node(t).Render(120)))
+}
+
+func TestARunViewSaysWhichBuildersAreWorking(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+	f.run(cmd)
+	row := func() string { return ansi.Strip(f.u.drillStack[0].chat.MessageItems()[2].Render(100)) }
+	require.Contains(t, row(), "/demo approach 1 · session")
+
+	f.ws.busy = map[string]bool{"sess-2": true}
+	f.u.refreshRunningWorkflowRuns()
+	require.Contains(t, row(), "/demo approach 1 · working")
 }

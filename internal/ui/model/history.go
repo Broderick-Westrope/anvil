@@ -16,13 +16,21 @@ type promptHistoryLoadedMsg struct {
 
 // loadPromptHistory loads user messages for history navigation.
 func (m *UI) loadPromptHistory() tea.Cmd {
+	// History is a drilled-in builder's while the editor sends to it, and
+	// the root session's otherwise.
+	var sessionID string
+	if target := m.composeTarget(); target.drilled && target.session != nil {
+		sessionID = target.session.ID
+	} else if m.session != nil {
+		sessionID = m.session.ID
+	}
 	return func() tea.Msg {
 		ctx := context.Background()
 		var messages []message.Message
 		var err error
 
-		if m.session != nil {
-			messages, err = m.com.Workspace.ListUserMessages(ctx, m.session.ID)
+		if sessionID != "" {
+			messages, err = m.com.Workspace.ListUserMessages(ctx, sessionID)
 		} else {
 			messages, err = m.com.Workspace.ListUserMessagesByWorkingDir(ctx, m.com.Workspace.WorkingDir())
 		}
