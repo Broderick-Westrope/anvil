@@ -1,30 +1,25 @@
-package message
+package message_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Broderick-Westrope/anvil/internal/message"
 )
 
-func TestWorkflowRunMarkerStaysOutOfModelContext(t *testing.T) {
+func TestWorkflowRunMarkerIsStoredAndKeptOutOfModelContext(t *testing.T) {
 	t.Parallel()
 
-	msg := Message{
-		MessageType: MessageTypeWorkflowRun,
-		Parts:       []ContentPart{WorkflowRunContent{RunID: "run-1", Command: "build"}},
-	}
-	require.Nil(t, FilterMetadataMessage(msg))
-}
-
-func TestWorkflowRunContentRoundTrips(t *testing.T) {
-	t.Parallel()
-
-	original := WorkflowRunContent{RunID: "run-1", Command: "build", Input: "track HIP downloads"}
-	data, err := marshalParts([]ContentPart{original})
+	svc, _, sessionID := newTestService(t)
+	marker := message.WorkflowRunContent{RunID: "run-1", Command: "build", Input: "track HIP downloads"}
+	created, err := svc.Create(t.Context(), sessionID, message.CreateMessageParams{
+		Role: message.System, MessageType: message.MessageTypeWorkflowRun, Parts: []message.ContentPart{marker},
+	})
 	require.NoError(t, err)
-	require.JSONEq(t, `[{"type":"workflow_run","data":{"run_id":"run-1","command":"build","input":"track HIP downloads"}}]`, string(data))
 
-	parts, err := unmarshalParts(data)
+	got, err := svc.Get(t.Context(), created.ID)
 	require.NoError(t, err)
-	require.Equal(t, []ContentPart{original}, parts)
+	require.Equal(t, []message.ContentPart{marker}, got.Parts, "a marker gets no Finish part and round-trips as stored")
+	require.Nil(t, message.FilterMetadataMessage(got))
 }

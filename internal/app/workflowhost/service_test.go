@@ -1378,20 +1378,19 @@ func TestServiceAnnouncesTheInvokingSessionsNewLeaf(t *testing.T) {
 	}
 }
 
-// Metadata the UI writes (an MCP toggle, a model change) names the leaf it
-// last saw as its parent. Written beside a turn in flight, it would branch
-// off and take the session's leaf away from the turn's reply, and from a
-// workflow's marker; so it waits its turn and goes on the current leaf.
+// Metadata the UI writes (an MCP toggle, a model change), written beside a
+// turn in flight, would branch off and take the session's leaf away from
+// the turn's reply, and from a workflow's marker; so it waits its turn and
+// goes on the current leaf.
 func TestMetadataWaitsForTheTurnInFlightAndFollowsIt(t *testing.T) {
 	h := newServiceHarness(t, true)
 	ctx := h.fixture.Context
-	stale := leafOf(t, h, h.session)
 	release, turnDone := h.busyInvoker(t)
 
 	written := make(chan error, 1)
 	go func() {
 		written <- h.fixture.Workspace.WriteMetadataEntry(ctx, h.session, message.CreateMessageParams{
-			Role: message.System, ParentMessageID: stale, MessageType: message.MessageTypeMCPToggle,
+			Role: message.System, MessageType: message.MessageTypeMCPToggle,
 			Parts: []message.ContentPart{message.MCPToggleContent{ServerName: "s", Enabled: true}},
 		})
 	}()
@@ -1455,5 +1454,27 @@ function main() { session.current().fork(); agent("reviewer", "look") }`), "")
 	for _, s := range owned {
 		_, err := h.fixture.Sessions.Get(ctx, s.ID)
 		require.Error(t, err, "%s outlived the session it was made from", s.Title)
+	}
+}
+
+// The UI reloads a run's view when it hears a change, so each change must
+// be announced only once its event is in the log.
+func TestServiceAnnouncesAChangeOnlyOnceItsRecorded(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.start(t, h.write(t, `function main() { status("a"); status("b"); return now() }`), "")
+	announced := 0
+	for {
+		ev := <-h.events
+		switch ev.Payload.Kind {
+		case workflowhost.EventChanged:
+			announced++
+			recorded, err := h.store.ListEvents(h.fixture.Context, ev.Payload.RunID)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, len(recorded), announced, "a change was announced before its event was recorded")
+		case workflowhost.EventFinished:
+			require.Equal(t, workflowhost.StatusCompleted, ev.Payload.Status, ev.Payload.Message)
+			require.Positive(t, announced)
+			return
+		}
 	}
 }
