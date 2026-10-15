@@ -2343,6 +2343,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	isOnboarding := m.state == uiOnboarding
 
+	if m.composeTarget().drilled && actsOnOwnSession(action) {
+		// These act on the user's own session; with a builder taking the
+		// editor, doing them there would surprise.
+		m.dialog.CloseFrontDialog()
+		return util.ReportWarn("That acts on your own session; go back to it first")
+	}
+
 	switch msg := action.(type) {
 	// Generic dialog messages
 	case dialog.ActionClose:

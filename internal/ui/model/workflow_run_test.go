@@ -621,3 +621,23 @@ func TestPaletteCommandsArentRunFromABuilder(t *testing.T) {
 	require.Empty(t, f.ws.runs)
 	require.Empty(t, f.ws.starts)
 }
+
+func TestPaletteActionsOnTheUsersSessionArentRunFromABuilder(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []dialog.Action{
+		dialog.ActionSummarize{SessionID: "sess-1"},
+		dialog.ActionRenameSession{},
+		dialog.ActionRegenerateTitle{},
+		dialog.ActionToggleLazyMCP{ServerName: "s", Enabled: true},
+	} {
+		f := newWorkflowFixture(t)
+		f.drillIntoBuilder(t)
+		f.u.dialog.OpenDialog(&stubDialog{id: dialog.CommandsID, action: action})
+		infos := f.run(f.u.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
+		require.Len(t, infos, 1, "%#v", action)
+		require.Contains(t, infos[0].Msg, "acts on your own session", "%#v", action)
+		require.False(t, f.u.dialog.HasDialogs())
+		require.Empty(t, f.u.enabledLazyMCPs, "%#v", action)
+	}
+}

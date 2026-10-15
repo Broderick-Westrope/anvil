@@ -7,6 +7,7 @@ import (
 
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
+	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 )
 
@@ -112,4 +113,17 @@ func (m *UI) refuseCommandInBuilder(value string) tea.Cmd {
 	}
 	name := strings.Fields(value + " ")[0]
 	return util.ReportWarn("Commands run in your own session; go back to it to run " + name)
+}
+
+// actsOnOwnSession reports whether a palette action changes the user's own
+// session: its history, title, branch or metadata.
+func actsOnOwnSession(action dialog.Action) bool {
+	switch action.(type) {
+	case dialog.ActionSummarize, dialog.ActionRenameSession, dialog.ActionRegenerateTitle,
+		dialog.ActionInitializeProject, dialog.ActionNavigateTree, dialog.ActionReturnToPreBranch,
+		dialog.ActionToggleLazyMCP:
+		return true
+	default:
+		return false
+	}
 }
