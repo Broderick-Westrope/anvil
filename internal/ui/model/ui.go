@@ -697,6 +697,28 @@ func (m *UI) clearDrillStack() {
 
 // findMessageItem searches the root chat and all drill-stack chats for
 // an item matching the given ID. Returns nil if not found.
+// findAgentToolItem returns the agent tool item whose child session is
+// childSessionID, in the root chat or any drill-in. A fork copies tool
+// calls with their IDs, so the item must also come from the message that
+// started the session.
+func (m *UI) findAgentToolItem(childSessionID string) (chat.MessageItem, *Chat) {
+	messageID, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
+	if !ok {
+		return nil, nil
+	}
+	chats := []*Chat{m.chat}
+	for _, entry := range m.drillStack {
+		chats = append(chats, entry.chat)
+	}
+	for _, c := range chats {
+		item := c.MessageItem(toolCallID)
+		if tool, ok := item.(chat.ToolMessageItem); ok && tool.MessageID() == messageID {
+			return item, c
+		}
+	}
+	return nil, nil
+}
+
 func (m *UI) findMessageItem(id string) chat.MessageItem {
 	if item := m.chat.MessageItem(id); item != nil {
 		return item
@@ -2056,16 +2078,12 @@ func invalidateRunningAgentsInChat(c *Chat) bool {
 func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.Cmd {
 	var cmds []tea.Cmd
 
-	// Check if this is an agent tool session and parse it.
+	// Find the agent tool item that started this child session, in the
+	// root chat or in a drilled-in session such as a workflow's builder.
 	childSessionID := event.Payload.SessionID
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
-	if !ok {
-		return nil
-	}
-
-	// Find the parent agent tool item by ID lookup.
 	var agentItem chat.NestedToolContainer
-	if item := m.chat.MessageItem(toolCallID); item != nil {
+	item, owner := m.findAgentToolItem(childSessionID)
+	if item != nil {
 		if agent, ok := item.(chat.NestedToolContainer); ok {
 			agentItem = agent
 		}
@@ -2139,13 +2157,13 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	agentItem.SetNestedTools(nestedTools)
 
 	// Update the chat so it updates the index map for animations to work as expected
-	m.chat.UpdateNestedToolIDs(toolCallID)
+	owner.UpdateNestedToolIDs(item.ID())
 
-	if m.chat.Follow() {
-		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+	if owner.Follow() {
+		if cmd := owner.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.chat.SelectLast()
+		owner.SelectLast()
 	}
 
 	// Start the elapsed-time tick when the first child session message arrives.
@@ -2161,12 +2179,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 // parent agent item that owns childSessionID. It searches both the root chat
 // and every drill-stack chat so nested drill-ins are covered.
 func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[message.Message]) {
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
-	if !ok {
-		return
-	}
-
-	item := m.findMessageItem(toolCallID)
+	item, _ := m.findAgentToolItem(childSessionID)
 	if item == nil {
 		return
 	}
