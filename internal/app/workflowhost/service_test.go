@@ -1377,3 +1377,37 @@ func TestServiceAnnouncesTheInvokingSessionsNewLeaf(t *testing.T) {
 		}
 	}
 }
+
+// Metadata the UI writes (an MCP toggle, a model change) names the leaf it
+// last saw as its parent. Written beside a turn in flight, it would branch
+// off and take the session's leaf away from the turn's reply, and from a
+// workflow's marker; so it waits its turn and goes on the current leaf.
+func TestMetadataWaitsForTheTurnInFlightAndFollowsIt(t *testing.T) {
+	h := newServiceHarness(t, true)
+	ctx := h.fixture.Context
+	stale := leafOf(t, h, h.session)
+	release, turnDone := h.busyInvoker(t)
+
+	written := make(chan error, 1)
+	go func() {
+		written <- h.fixture.Workspace.WriteMetadataEntry(ctx, h.session, message.CreateMessageParams{
+			Role: message.System, ParentMessageID: stale, MessageType: message.MessageTypeMCPToggle,
+			Parts: []message.ContentPart{message.MCPToggleContent{ServerName: "s", Enabled: true}},
+		})
+	}()
+	select {
+	case err := <-written:
+		t.Fatalf("metadata was written while a turn was in flight (err %v)", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	release()
+	require.NoError(t, <-turnDone)
+	require.NoError(t, <-written)
+
+	leaf, err := h.fixture.Messages.Get(ctx, leafOf(t, h, h.session))
+	require.NoError(t, err)
+	require.Equal(t, message.MessageTypeMCPToggle, leaf.MessageType)
+	reply, err := h.fixture.Messages.Get(ctx, leaf.ParentMessageID)
+	require.NoError(t, err)
+	require.Equal(t, "still talking", reply.Content().Text, "the metadata follows the turn's reply on the same branch")
+}
