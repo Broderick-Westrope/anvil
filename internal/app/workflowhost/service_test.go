@@ -481,7 +481,7 @@ func TestServiceAbortEndsRun(t *testing.T) {
 func TestServiceTurnRunsInSession(t *testing.T) {
 	h := newServiceHarness(t, true)
 	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "model says hi"})
-	path := h.write(t, `function main() { return session.current().turn("hello") }`)
+	path := h.write(t, `function main() { return session.new().turn("hello") }`)
 	h.start(t, path, "")
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
@@ -523,12 +523,12 @@ func TestServiceBashRunsInEmbeddedShellWithCwd(t *testing.T) {
 func TestServiceTurnIsRecordedAsWorkflowTurn(t *testing.T) {
 	h := newServiceHarness(t, true)
 	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "ok"})
-	path := h.write(t, `function main() { return session.current().turn("do the thing") }`)
+	path := h.write(t, `function main() { const s = session.new(); s.turn("do the thing"); return s.id }`)
 	h.start(t, path, "")
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
 
-	msgs, err := h.fixture.Workspace.ListUserMessages(h.fixture.Context, h.session)
+	msgs, err := h.fixture.Workspace.ListUserMessages(h.fixture.Context, resultString(t, done))
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	command, prompt, ok := commands.ParseWorkflowTurnXML(msgs[0].Content().Text)
@@ -652,24 +652,32 @@ func TestServiceShutdownClosesSubscriptions(t *testing.T) {
 
 func TestServiceExclusiveRefusesThenStopsSessionJobs(t *testing.T) {
 	h := newServiceHarness(t, true)
-	mgr := shell.GetBackgroundShellManager()
-	bs, err := mgr.Start(h.fixture.Context, h.dir, nil, "sleep 30", "watcher")
-	require.NoError(t, err)
-	jobID, err := mgr.Publish(h.fixture.Context, bs.ID(), shell.PublishOptions{SessionID: h.session, Origin: shell.OriginExplicit})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Kill(jobID) })
-
+	// The script makes a session and waits, so the test can give that
+	// session a background job before the script holds it.
 	path := h.write(t, `function main() {
+  const s = session.new()
+  ask(s.id)
   let refused
   try { workflow.exclusive(() => 1) } catch (e) { refused = e instanceof JobsRunning && e.jobs[0].command }
   workflow.exclusive(() => 1, {stopJobs: true})
   return refused
 }`)
 	h.start(t, path, "")
+	ask := h.next(t, workflowhost.EventAsk)
+	owned := ask.Question
+
+	mgr := shell.GetBackgroundShellManager()
+	bs, err := mgr.Start(h.fixture.Context, h.dir, nil, "sleep 30", "watcher")
+	require.NoError(t, err)
+	jobID, err := mgr.Publish(h.fixture.Context, bs.ID(), shell.PublishOptions{SessionID: owned, Origin: shell.OriginExplicit})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mgr.Kill(jobID) })
+	require.NoError(t, h.svc.Respond(ask.RequestID, "go"))
+
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
 	require.JSONEq(t, `"sleep 30"`, string(done.Result))
-	for _, job := range mgr.ListBySession(h.session) {
+	for _, job := range mgr.ListBySession(owned) {
 		require.True(t, job.Done, "job %s still running", job.ID)
 	}
 }
@@ -845,12 +853,12 @@ func TestServiceTurnPreloadsItsSkills(t *testing.T) {
 	h := newServiceHarness(t, true)
 	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "ok"})
 	path := h.write(t, `requires({skills: ["jq"]})
-function main() { return session.current().turn("hello", {skills: ["jq"]}) }`)
+function main() { const s = session.new(); s.turn("hello", {skills: ["jq"]}); return s.id }`)
 	h.start(t, path, "")
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
 
-	msgs, err := h.fixture.Workspace.ListUserMessages(h.fixture.Context, h.session)
+	msgs, err := h.fixture.Workspace.ListUserMessages(h.fixture.Context, resultString(t, done))
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	_, prompt, ok := commands.ParseWorkflowTurnXML(msgs[0].Content().Text)
@@ -1292,4 +1300,89 @@ func TestServiceRunViewEndsOpenCallsTheWayTheRunEnded(t *testing.T) {
 	for _, item := range items {
 		require.Equal(t, workflowhost.StatusInterrupted, item.Status, item.Kind)
 	}
+}
+
+// resultString decodes a run's JSON string result.
+func resultString(t *testing.T, done workflowhost.Event) string {
+	t.Helper()
+	var s string
+	require.NoError(t, json.Unmarshal(done.Result, &s))
+	return s
+}
+
+func TestServiceForkCopiesTheConversationBeforeTheRun(t *testing.T) {
+	h := newServiceHarness(t, true)
+	ctx := h.fixture.Context
+	before, err := h.fixture.Messages.Create(ctx, h.session, message.CreateMessageParams{
+		Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "we agreed: use customer-frontend"}},
+	})
+	require.NoError(t, err)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "building"}, branchfixture.Response{Text: "still building"})
+
+	path := h.write(t, `function main() {
+  const builder = session.current().fork({title: "/demo approach 1"})
+  ask("chat in your session now")
+  builder.turn("build it")
+  const again = builder.fork({title: "/demo approach 2"})
+  return [builder.id, again.id]
+}`)
+	h.start(t, path, "")
+	ask := h.next(t, workflowhost.EventAsk)
+	// The user carries on in their own session while the run works.
+	_, err = h.fixture.Messages.Create(ctx, h.session, message.CreateMessageParams{
+		Role: message.User, ParentMessageID: leafOf(t, h, h.session), Parts: []message.ContentPart{message.TextContent{Text: "said after the run started"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, h.svc.Respond(ask.RequestID, "ok"))
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+
+	var ids []string
+	require.NoError(t, json.Unmarshal(done.Result, &ids))
+	texts := func(sessionID string) []string {
+		path, err := h.fixture.Messages.GetBranchPath(ctx, leafOf(t, h, sessionID))
+		require.NoError(t, err)
+		var out []string
+		for _, m := range path {
+			if m.Role == message.User {
+				out = append(out, m.Content().Text)
+			}
+		}
+		return out
+	}
+	first := texts(ids[0])
+	require.Equal(t, "we agreed: use customer-frontend", first[0])
+	require.Len(t, first, 2, "the fork has what came before the run, then its own turn")
+	require.NotContains(t, strings.Join(first, "\n"), "said after the run started")
+
+	second := texts(ids[1])
+	require.Equal(t, first, second, "forking a run's session copies it as it is")
+
+	for _, id := range ids {
+		s, err := h.fixture.Sessions.Get(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, h.session, s.ParentSessionID)
+		require.Equal(t, session.WorkflowKindSession, s.WorkflowKind)
+	}
+	view, _, err := h.svc.RunView(ctx, done.RunID)
+	require.NoError(t, err)
+	var shown []string
+	for _, item := range view.Phases[0].Items {
+		if item.Kind == workflowhost.RunItemSession {
+			shown = append(shown, item.SessionID)
+		}
+	}
+	require.Equal(t, ids, shown, "the run view lists both forks")
+
+	firstSession, err := h.fixture.Sessions.Get(ctx, ids[0])
+	require.NoError(t, err)
+	require.Equal(t, "/demo approach 1", firstSession.Title)
+	require.NotEqual(t, before.ID, firstSession.LeafMessageID)
+}
+
+func leafOf(t *testing.T, h *serviceHarness, sessionID string) string {
+	t.Helper()
+	s, err := h.fixture.Sessions.Get(h.fixture.Context, sessionID)
+	require.NoError(t, err)
+	return s.LeafMessageID
 }

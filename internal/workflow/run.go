@@ -82,7 +82,7 @@ func NewRun(script *Script, backend Backend, rec Recorder, opts Options) *Run {
 		backend:  backend,
 		rec:      rec,
 		opts:     opts,
-		sessions: []string{opts.InvokingSessionID},
+		sessions: []string{},
 		seeds:    map[string]seed{},
 		warned:   map[string]bool{},
 	}

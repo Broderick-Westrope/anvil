@@ -170,11 +170,8 @@ var startHandlers = map[string]func(b *viewBuilder, ev workflow.Event) error{
 		b.v.Phases = append(b.v.Phases, RunPhase{Step: args.Step, Detail: args.Detail})
 		return nil
 	},
-	"session.new": func(b *viewBuilder, ev workflow.Event) error {
-		s := b.bySeq[ev.Seq]
-		b.add(ev.Seq, RunItem{Kind: RunItemSession, SessionID: s.ID, Title: s.Title, Status: StatusRunning})
-		return nil
-	},
+	"session.new":  (*viewBuilder).addSession,
+	"session.fork": (*viewBuilder).addSession,
 	"agent": func(b *viewBuilder, ev workflow.Event) error {
 		var args struct{ Agent, Model string }
 		if err := json.Unmarshal(ev.Args, &args); err != nil {
@@ -192,6 +189,13 @@ var startHandlers = map[string]func(b *viewBuilder, ev workflow.Event) error{
 		b.add(ev.Seq, RunItem{Kind: RunItemAsk, Question: args.Question, Status: StatusRunning})
 		return nil
 	},
+}
+
+// addSession shows an orchestrator session the event created.
+func (b *viewBuilder) addSession(ev workflow.Event) error {
+	s := b.bySeq[ev.Seq]
+	b.add(ev.Seq, RunItem{Kind: RunItemSession, SessionID: s.ID, Title: s.Title, Status: StatusRunning})
+	return nil
 }
 
 func (b *viewBuilder) apply(ev workflow.Event) error {

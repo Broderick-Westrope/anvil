@@ -80,6 +80,57 @@ func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, err
 }
 
 func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (string, error) {
+	return b.ownedSession(ctx, call, func(string) error { return nil })
+}
+
+// Fork makes a session for the run whose history is a copy of the
+// source's. The invoking session is copied up to the run's marker, so
+// every fork has the conversation the user had before starting the run,
+// whatever they've said there since. One of the run's own sessions is
+// copied as it is once its work in flight settles.
+func (b *backend) Fork(ctx context.Context, call workflow.ForkCall) (string, error) {
+	return b.ownedSession(ctx, call.SessionCall, func(forkID string) error {
+		if call.FromInvoker {
+			leaf, err := b.startBoundary(ctx)
+			if err != nil {
+				return err
+			}
+			_, err = b.svc.deps.Messages.CopyBranch(ctx, leaf, forkID)
+			return err
+		}
+		return b.svc.deps.Coordinator.RunInSession(ctx, call.Source, func(ctx context.Context) error {
+			source, err := b.svc.deps.Sessions.Get(ctx, call.Source)
+			if err != nil {
+				return err
+			}
+			_, err = b.svc.deps.Messages.CopyBranch(ctx, source.LeafMessageID, forkID)
+			return err
+		})
+	})
+}
+
+// startBoundary is the last message of the invoking session before the
+// run's marker.
+func (b *backend) startBoundary(ctx context.Context) (string, error) {
+	run, ok, err := b.svc.deps.Store.GetRun(ctx, b.base.RunID)
+	if err != nil {
+		return "", err
+	}
+	if !ok || run.MarkerMessageID == "" {
+		return "", fmt.Errorf("workflow run %s has no marker to fork from", b.base.RunID)
+	}
+	marker, err := b.svc.deps.Messages.Get(ctx, run.MarkerMessageID)
+	if err != nil {
+		return "", fmt.Errorf("read marker of workflow run %s: %w", b.base.RunID, err)
+	}
+	return marker.ParentMessageID, nil
+}
+
+// ownedSession creates an orchestrator session the run owns, lets fill
+// give it history, then records it as the run's. It's a child of the
+// session that started the run, so it stays out of the session list and is
+// reached through the run's node.
+func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, fill func(sessionID string) error) (string, error) {
 	// A title the script chose is kept; without one, the session starts as
 	// "/cmd" and is auto-titled after its first turn like any session.
 	title := call.Title
@@ -87,9 +138,6 @@ func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (st
 	if !chosen {
 		title = "/" + b.base.Command
 	}
-	// The run owns the session: it's a child of the session that started
-	// the run, so it stays out of the session list and is reached through
-	// the run's node.
 	s, err := b.svc.deps.Sessions.CreateTaskSession(ctx, uuid.NewString(), b.base.SessionID, title)
 	if err != nil {
 		return "", err
@@ -98,6 +146,9 @@ func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (st
 		if err := b.svc.deps.Sessions.Rename(ctx, s.ID, title, true); err != nil {
 			return "", fmt.Errorf("keep session title: %w", err)
 		}
+	}
+	if err := fill(s.ID); err != nil {
+		return "", fmt.Errorf("copy history into session: %w", err)
 	}
 	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, b.base.RunID, call.Seq, session.WorkflowKindSession); err != nil {
 		return "", err

@@ -19,6 +19,9 @@ type Backend interface {
 	Turn(ctx context.Context, call TurnCall) (string, error)
 	// NewSession creates an interactive orchestrator session for the run.
 	NewSession(ctx context.Context, call SessionCall) (string, error)
+	// Fork creates an interactive orchestrator session for the run whose
+	// history is a copy of call.Source's.
+	Fork(ctx context.Context, call ForkCall) (string, error)
 	// Agent runs a fresh, isolated subagent. With a schema, it returns the
 	// validated output or a *SchemaError.
 	Agent(ctx context.Context, call AgentCall) (AgentResult, error)
@@ -54,6 +57,16 @@ type TurnCall struct {
 type SessionCall struct {
 	Title string
 	Seq   int
+}
+
+// ForkCall creates a session copying Source's history. FromInvoker means
+// Source is the session the run was started from, whose history is copied
+// as it was when the run started; otherwise it's one of the run's own
+// sessions, copied as it is now.
+type ForkCall struct {
+	SessionCall
+	Source      string
+	FromInvoker bool
 }
 
 // AgentCall runs a subagent. Tools restricts its tool set (fail closed),

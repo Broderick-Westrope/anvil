@@ -30,6 +30,7 @@ type fakeBackend struct {
 
 	newSessions  int
 	sessionCalls []workflow.SessionCall
+	forks        []workflow.ForkCall
 	statuses     [][2]string
 	focused      []string
 	warnings     []string
@@ -79,6 +80,13 @@ func (f *fakeBackend) NewSession(_ context.Context, call workflow.SessionCall) (
 	f.newSessions++
 	f.sessionCalls = append(f.sessionCalls, call)
 	return "new-" + string(rune('0'+f.newSessions)), nil
+}
+
+func (f *fakeBackend) Fork(ctx context.Context, call workflow.ForkCall) (string, error) {
+	f.mu.Lock()
+	f.forks = append(f.forks, call)
+	f.mu.Unlock()
+	return f.NewSession(ctx, call.SessionCall)
 }
 
 func (f *fakeBackend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.AgentResult, error) {

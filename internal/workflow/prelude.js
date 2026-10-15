@@ -31,6 +31,9 @@
       turn(prompt, opts) {
         return invoke("turn", Object.assign({}, opts, { session: id, prompt }));
       },
+      fork(opts) {
+        return handle(invoke("session.fork", Object.assign({}, opts, { session: id })));
+      },
     });
   }
 

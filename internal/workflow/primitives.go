@@ -28,6 +28,7 @@ var primitives = map[string]primitive{
 	"random":           primRandom,
 	"session.current":  primSessionCurrent,
 	"session.new":      primSessionNew,
+	"session.fork":     primSessionFork,
 	"workflow.tmpdir":  primTmpdir,
 	"workflow.dir":     primDir,
 	"workflow.focus":   primFocus,
@@ -71,6 +72,9 @@ func primTurn(r *Run, _ int, args json.RawMessage) (any, error) {
 	}](args)
 	if err != nil {
 		return nil, err
+	}
+	if in.Session == r.opts.InvokingSessionID {
+		return nil, errors.New("the session the workflow was started from belongs to the user; fork it with session.current().fork() and send turns to the fork")
 	}
 	if !slices.Contains(r.Sessions(), in.Session) {
 		return nil, fmt.Errorf("session %q doesn't belong to this run", in.Session)
@@ -309,21 +313,53 @@ func primSessionCurrent(r *Run, _ int, _ json.RawMessage) (any, error) {
 	return r.opts.InvokingSessionID, nil
 }
 
+// sessionArgs are the options session.new and fork take: a title, and a
+// seed (prompt and skills) prepended to the session's first turn.
+type sessionArgs struct {
+	Session string   `json:"session"` // The session fork copies.
+	Title   string   `json:"title"`
+	Seed    string   `json:"seed"`
+	Skills  []string `json:"skills"`
+}
+
 func primSessionNew(r *Run, seq int, args json.RawMessage) (any, error) {
-	in, err := decode[struct {
-		Title  string   `json:"title"`
-		Seed   string   `json:"seed"`
-		Skills []string `json:"skills"`
-	}](args)
+	in, err := decode[sessionArgs](args)
 	if err != nil {
 		return nil, err
 	}
+	return r.addSession(in, func() (string, error) {
+		return r.backend.NewSession(r.ctx, SessionCall{Title: in.Title, Seq: seq})
+	})
+}
+
+// primSessionFork makes a session whose history is a copy of another's:
+// the invoking session's as it was when the run started, or one of the
+// run's own sessions as it is now.
+func primSessionFork(r *Run, seq int, args json.RawMessage) (any, error) {
+	in, err := decode[sessionArgs](args)
+	if err != nil {
+		return nil, err
+	}
+	if in.Session != r.opts.InvokingSessionID && !slices.Contains(r.Sessions(), in.Session) {
+		return nil, fmt.Errorf("session %q doesn't belong to this run", in.Session)
+	}
+	return r.addSession(in, func() (string, error) {
+		return r.backend.Fork(r.ctx, ForkCall{
+			Source: in.Session, FromInvoker: in.Session == r.opts.InvokingSessionID,
+			SessionCall: SessionCall{Title: in.Title, Seq: seq},
+		})
+	})
+}
+
+// addSession creates a session for the run with create and keeps its seed
+// for its first turn.
+func (r *Run) addSession(in sessionArgs, create func() (string, error)) (string, error) {
 	if err := r.checkSkills(in.Skills); err != nil {
-		return nil, err
+		return "", err
 	}
-	id, err := r.backend.NewSession(r.ctx, SessionCall{Title: in.Title, Seq: seq})
+	id, err := create()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
