@@ -124,6 +124,33 @@ func TestIntentSource_StopsAtAWorkflowBuilder(t *testing.T) {
 	}
 }
 
+// A workflow's agent() subagent is a child of the session that started the
+// run, but acts on the script's prompt, not on whatever the user has said
+// there since; nor do the subagents it starts.
+func TestIntentSource_StopsAtAWorkflowAgent(t *testing.T) {
+	t.Parallel()
+	f := newIntentFixture(t)
+	ctx := t.Context()
+
+	invoker, err := f.sessions.Create(ctx, "invoker", t.TempDir())
+	require.NoError(t, err)
+	f.add(t, invoker.ID, message.User, "unrelated chat", "")
+
+	reviewer, err := f.sessions.CreateTaskSession(ctx, "reviewer", invoker.ID, "/build: reviewer")
+	require.NoError(t, err)
+	require.NoError(t, f.sessions.SetWorkflowOwner(ctx, reviewer.ID, session.WorkflowOwner{RunID: "run-1", Seq: 4, Kind: session.WorkflowKindAgent}))
+	f.add(t, reviewer.ID, message.User, "review the diff on feat/x", "")
+
+	task, err := f.sessions.CreateTaskSession(ctx, "task", reviewer.ID, "task")
+	require.NoError(t, err)
+
+	for _, id := range []string{reviewer.ID, task.ID} {
+		got, err := f.source().RecentUserMessages(ctx, id, 5)
+		require.NoError(t, err)
+		require.Equal(t, []string{"review the diff on feat/x"}, got, id)
+	}
+}
+
 // Job event notices are user-role messages written by Anvil, and they quote
 // background job output. Treating them as user intent would let command
 // output argue that the user asked for an action, and would push real
