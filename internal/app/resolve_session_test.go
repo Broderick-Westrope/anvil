@@ -109,7 +109,7 @@ func (m *mockSessionService) IsAgentToolSession(sessionID string) bool {
 	return ok
 }
 
-func (m *mockSessionService) SetWorkflowOwner(context.Context, string, string, int, session.WorkflowKind) error {
+func (m *mockSessionService) SetWorkflowOwner(context.Context, string, session.WorkflowOwner) error {
 	return nil
 }
 

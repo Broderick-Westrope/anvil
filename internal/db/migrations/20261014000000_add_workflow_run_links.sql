@@ -21,10 +21,18 @@ ALTER TABLE sessions ADD COLUMN workflow_seq INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN workflow_kind TEXT NOT NULL DEFAULT '';
 -- +goose StatementEnd
 -- +goose StatementBegin
+-- For a fork, the message in the source session its copy ends at.
+ALTER TABLE sessions ADD COLUMN forked_from_message_id TEXT NOT NULL DEFAULT '';
+-- +goose StatementEnd
+-- +goose StatementBegin
 CREATE INDEX IF NOT EXISTS idx_sessions_workflow_run ON sessions (workflow_run_id) WHERE workflow_run_id != '';
 -- +goose StatementEnd
 
 -- +goose Down
+-- Down is lossy: it forgets which run made which session and where each
+-- run's node was. Builders' conversations stay, as child sessions an older
+-- version doesn't list. Back up the database first if that matters.
+--
 -- Earlier versions can't read workflow_run marker messages. Each becomes an
 -- empty model_change entry, a type they read, hide from /tree and leave out
 -- of model context, so message IDs, branch links, leaves and compaction
@@ -38,6 +46,9 @@ WHERE message_type = 'workflow_run';
 -- +goose StatementEnd
 -- +goose StatementBegin
 DROP INDEX IF EXISTS idx_sessions_workflow_run;
+-- +goose StatementEnd
+-- +goose StatementBegin
+ALTER TABLE sessions DROP COLUMN forked_from_message_id;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE sessions DROP COLUMN workflow_kind;

@@ -80,7 +80,7 @@ func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, err
 }
 
 func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (string, error) {
-	return b.ownedSession(ctx, call, func(string) error { return nil })
+	return b.ownedSession(ctx, call, func(string) (string, error) { return "", nil })
 }
 
 // Fork makes a session for the run whose history is a copy of the
@@ -89,23 +89,26 @@ func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (st
 // whatever they've said there since. One of the run's own sessions is
 // copied as it is once its work in flight settles.
 func (b *backend) Fork(ctx context.Context, call workflow.ForkCall) (string, error) {
-	return b.ownedSession(ctx, call.SessionCall, func(forkID string) error {
+	return b.ownedSession(ctx, call.SessionCall, func(forkID string) (string, error) {
 		if call.FromInvoker {
 			leaf, err := b.startBoundary(ctx)
 			if err != nil {
-				return err
+				return "", err
 			}
 			_, err = b.svc.deps.Messages.CopyBranch(ctx, leaf, forkID)
-			return err
+			return leaf, err
 		}
-		return b.svc.deps.Coordinator.RunInSession(ctx, call.Source, func(ctx context.Context) error {
+		var leaf string
+		err := b.svc.deps.Coordinator.RunInSession(ctx, call.Source, func(ctx context.Context) error {
 			source, err := b.svc.deps.Sessions.Get(ctx, call.Source)
 			if err != nil {
 				return err
 			}
-			_, err = b.svc.deps.Messages.CopyBranch(ctx, source.LeafMessageID, forkID)
+			leaf = source.LeafMessageID
+			_, err = b.svc.deps.Messages.CopyBranch(ctx, leaf, forkID)
 			return err
 		})
+		return leaf, err
 	})
 }
 
@@ -127,10 +130,11 @@ func (b *backend) startBoundary(ctx context.Context) (string, error) {
 }
 
 // ownedSession creates an orchestrator session the run owns, lets fill
-// give it history, then records it as the run's. It's a child of the
-// session that started the run, so it stays out of the session list and is
-// reached through the run's node.
-func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, fill func(sessionID string) error) (string, error) {
+// give it history (returning the source message the history ends at, if
+// any), then records it as the run's. It's a child of the session that
+// started the run, so it stays out of the session list and is reached
+// through the run's node.
+func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, fill func(sessionID string) (string, error)) (string, error) {
 	// A title the script chose is kept; without one, the session starts as
 	// "/cmd" and is auto-titled after its first turn like any session.
 	title := call.Title
@@ -147,10 +151,13 @@ func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, f
 			return "", fmt.Errorf("keep session title: %w", err)
 		}
 	}
-	if err := fill(s.ID); err != nil {
+	forkedFrom, err := fill(s.ID)
+	if err != nil {
 		return "", fmt.Errorf("copy history into session: %w", err)
 	}
-	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, b.base.RunID, call.Seq, session.WorkflowKindSession); err != nil {
+	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, session.WorkflowOwner{
+		RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindSession, ForkedFrom: forkedFrom,
+	}); err != nil {
 		return "", err
 	}
 	return s.ID, nil
@@ -190,7 +197,9 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 	wc.OnSession = func(sessionID string) {
 		// The run view finds the session by the event that made it, so
 		// it's recorded before anyone hears the subagent started.
-		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, sessionID, b.base.RunID, call.Seq, session.WorkflowKindAgent); err != nil {
+		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, sessionID, session.WorkflowOwner{
+			RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindAgent,
+		}); err != nil {
 			stop(fmt.Errorf("record subagent session: %w", err))
 		}
 		started := ended

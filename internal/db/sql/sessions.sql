@@ -113,7 +113,8 @@ UPDATE sessions
 SET
     workflow_run_id = ?,
     workflow_seq = ?,
-    workflow_kind = ?
+    workflow_kind = ?,
+    forked_from_message_id = ?
 WHERE id = ?;
 
 -- name: ListSessionsByWorkflowRun :many

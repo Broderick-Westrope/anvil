@@ -111,7 +111,7 @@ func TestIntentSource_StopsAtAWorkflowBuilder(t *testing.T) {
 
 	builder, err := f.sessions.CreateTaskSession(ctx, "builder", invoker.ID, "builder")
 	require.NoError(t, err)
-	require.NoError(t, f.sessions.SetWorkflowOwner(ctx, builder.ID, "run-1", 3, session.WorkflowKindSession))
+	require.NoError(t, f.sessions.SetWorkflowOwner(ctx, builder.ID, session.WorkflowOwner{RunID: "run-1", Seq: 3, Kind: session.WorkflowKindSession}))
 	f.add(t, builder.ID, message.User, "build it in customer-frontend", "")
 
 	subagent, err := f.sessions.CreateTaskSession(ctx, "subagent", builder.ID, "task")

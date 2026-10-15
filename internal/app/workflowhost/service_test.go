@@ -1230,7 +1230,7 @@ func TestServiceAbortEndsARunStillWaitingToBeMarked(t *testing.T) {
 // ownerlessSessions can't record which run created a session.
 type ownerlessSessions struct{ session.Service }
 
-func (ownerlessSessions) SetWorkflowOwner(context.Context, string, string, int, session.WorkflowKind) error {
+func (ownerlessSessions) SetWorkflowOwner(context.Context, string, session.WorkflowOwner) error {
 	return errors.New("database is locked")
 }
 
@@ -1341,6 +1341,12 @@ func TestServiceForkCopiesTheConversationBeforeTheRun(t *testing.T) {
 	firstSession, err := h.fixture.Sessions.Get(ctx, ids[0])
 	require.NoError(t, err)
 	require.Equal(t, "/demo approach 1", firstSession.Title)
+	require.Equal(t, before.ID, firstSession.ForkedFrom, "the fork records the source message its copy ends at")
+	secondSession, err := h.fixture.Sessions.Get(ctx, ids[1])
+	require.NoError(t, err)
+	builderPath, err := h.fixture.Messages.GetBranchPath(ctx, leafOf(t, h, ids[0]))
+	require.NoError(t, err)
+	require.Equal(t, builderPath[len(builderPath)-1].ID, secondSession.ForkedFrom)
 	require.NotEqual(t, before.ID, firstSession.LeafMessageID)
 }
 

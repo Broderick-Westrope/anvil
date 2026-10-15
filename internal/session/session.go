@@ -74,8 +74,11 @@ type Session struct {
 	WorkflowSeq   int
 	// WorkflowKind is what a workflow run made the session for.
 	WorkflowKind WorkflowKind
-	CreatedAt    int64
-	UpdatedAt    int64
+	// ForkedFrom is, for a fork, the message in the source session its
+	// copy ends at.
+	ForkedFrom string
+	CreatedAt  int64
+	UpdatedAt  int64
 }
 
 // WorkflowKind is what a workflow run made a session for.
@@ -88,6 +91,16 @@ const (
 	// WorkflowKindAgent is a subagent's session.
 	WorkflowKindAgent WorkflowKind = "agent"
 )
+
+// WorkflowOwner records which workflow run made a session, with the seq of
+// the run's event that made it, what for, and for a fork, the source
+// message its copy ends at.
+type WorkflowOwner struct {
+	RunID      string
+	Seq        int
+	Kind       WorkflowKind
+	ForkedFrom string
+}
 
 // Conversational reports whether the user talks to this session directly:
 // a top-level session, or an orchestrator session a workflow run made. A
@@ -130,9 +143,8 @@ type Service interface {
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
 	Delete(ctx context.Context, id string) error
 
-	// SetWorkflowOwner records that a workflow run's event seq created the
-	// session, and what for.
-	SetWorkflowOwner(ctx context.Context, id, runID string, seq int, kind WorkflowKind) error
+	// SetWorkflowOwner records which workflow run made the session.
+	SetWorkflowOwner(ctx context.Context, id string, owner WorkflowOwner) error
 	// ListByWorkflowRun returns the sessions a workflow run created, in the
 	// order its events created them.
 	ListByWorkflowRun(ctx context.Context, runID string) ([]Session, error)
@@ -469,17 +481,19 @@ func (s *service) fromDBItem(item db.Session) Session {
 		WorkflowRunID:    item.WorkflowRunID,
 		WorkflowSeq:      int(item.WorkflowSeq),
 		WorkflowKind:     WorkflowKind(item.WorkflowKind),
+		ForkedFrom:       item.ForkedFromMessageID,
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
 }
 
-func (s *service) SetWorkflowOwner(ctx context.Context, id, runID string, seq int, kind WorkflowKind) error {
+func (s *service) SetWorkflowOwner(ctx context.Context, id string, owner WorkflowOwner) error {
 	if err := s.q.SetSessionWorkflowOwner(ctx, db.SetSessionWorkflowOwnerParams{
-		ID:            id,
-		WorkflowRunID: runID,
-		WorkflowSeq:   int64(seq),
-		WorkflowKind:  string(kind),
+		ID:                  id,
+		WorkflowRunID:       owner.RunID,
+		WorkflowSeq:         int64(owner.Seq),
+		WorkflowKind:        string(owner.Kind),
+		ForkedFromMessageID: owner.ForkedFrom,
 	}); err != nil {
 		return fmt.Errorf("set workflow owner of session %s: %w", id, err)
 	}
