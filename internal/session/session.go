@@ -224,53 +224,65 @@ func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string
 }
 
 func (s *service) Delete(ctx context.Context, id string) error {
-	// Sessions a workflow run made from this one (builders, which hold a
-	// copy of its conversation, and subagents) are reached only through
-	// it, so they go with it.
-	children, err := s.q.ListWorkflowChildSessionIDs(ctx, sql.NullString{String: id, Valid: true})
-	if err != nil {
-		return fmt.Errorf("listing workflow sessions of %s: %w", id, err)
-	}
-	for _, child := range children {
-		if err := s.Delete(ctx, child); err != nil {
-			return fmt.Errorf("deleting workflow session %s: %w", child, err)
-		}
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	qtx := s.q.WithTx(tx)
-
-	dbSession, err := qtx.GetSessionByID(ctx, id)
+	deleted, jobKeys, err := deleteSessionTree(ctx, s.q.WithTx(tx), id)
 	if err != nil {
 		return err
-	}
-	if err = qtx.DeleteSessionMessages(ctx, dbSession.ID); err != nil {
-		return fmt.Errorf("deleting session messages: %w", err)
-	}
-	jobKeys, err := qtx.ListBackgroundJobIDsBySession(ctx, dbSession.ID)
-	if err != nil {
-		return fmt.Errorf("listing session background jobs: %w", err)
-	}
-	if err = qtx.DeleteBackgroundJobsBySession(ctx, dbSession.ID); err != nil {
-		return fmt.Errorf("deleting session background jobs: %w", err)
-	}
-	if err = qtx.DeleteSession(ctx, dbSession.ID); err != nil {
-		return fmt.Errorf("deleting session: %w", err)
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
 	s.removeJobLogs(jobKeys)
-
-	session := s.fromDBItem(dbSession)
-	s.clearEstimatedUsageState(dbSession.ID)
-	s.Publish(pubsub.DeletedEvent, session)
+	for _, dbSession := range deleted {
+		s.clearEstimatedUsageState(dbSession.ID)
+		s.Publish(pubsub.DeletedEvent, s.fromDBItem(dbSession))
+	}
 	return nil
+}
+
+// deleteSessionTree deletes a session with its messages and background
+// jobs, and first the sessions workflow runs made from it (builders, which
+// hold a copy of its conversation, and subagents), which are reached only
+// through it. It returns what it deleted, children first, and the deleted
+// jobs' log keys.
+func deleteSessionTree(ctx context.Context, qtx *db.Queries, id string) ([]db.Session, []int64, error) {
+	dbSession, err := qtx.GetSessionByID(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	children, err := qtx.ListWorkflowChildSessionIDs(ctx, sql.NullString{String: id, Valid: true})
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing workflow sessions of %s: %w", id, err)
+	}
+	var deleted []db.Session
+	var jobKeys []int64
+	for _, child := range children {
+		childDeleted, childJobs, err := deleteSessionTree(ctx, qtx, child)
+		if err != nil {
+			return nil, nil, fmt.Errorf("deleting workflow session %s: %w", child, err)
+		}
+		deleted = append(deleted, childDeleted...)
+		jobKeys = append(jobKeys, childJobs...)
+	}
+	if err = qtx.DeleteSessionMessages(ctx, dbSession.ID); err != nil {
+		return nil, nil, fmt.Errorf("deleting session messages: %w", err)
+	}
+	keys, err := qtx.ListBackgroundJobIDsBySession(ctx, dbSession.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing session background jobs: %w", err)
+	}
+	if err = qtx.DeleteBackgroundJobsBySession(ctx, dbSession.ID); err != nil {
+		return nil, nil, fmt.Errorf("deleting session background jobs: %w", err)
+	}
+	if err = qtx.DeleteSession(ctx, dbSession.ID); err != nil {
+		return nil, nil, fmt.Errorf("deleting session: %w", err)
+	}
+	return append(deleted, dbSession), append(jobKeys, keys...), nil
 }
 
 func (s *service) Get(ctx context.Context, id string) (Session, error) {
