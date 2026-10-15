@@ -34,7 +34,8 @@ type turn struct {
 	lazyState      *tools.LazyMCPState
 	injected       *injectedMessages
 	runID          string
-	// parentSessionID is set for child sessions.
+	// parentSessionID is set for subagent sessions, not for sessions the
+	// user talks to such as a workflow's builder.
 	parentSessionID string
 
 	// genCtx is the request context. persistCtx survives cancellation and

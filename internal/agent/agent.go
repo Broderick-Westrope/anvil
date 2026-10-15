@@ -315,7 +315,11 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	}
 	t.session = currentSession
 	t.leaf = currentSession.LeafMessageID
-	t.parentSessionID = currentSession.ParentSessionID
+	// A workflow's builder is a child session the user talks to; for cache
+	// tracking it's a conversation of its own, not a one-off subagent.
+	if !currentSession.Conversational() {
+		t.parentSessionID = currentSession.ParentSessionID
+	}
 
 	msgs, raw, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
