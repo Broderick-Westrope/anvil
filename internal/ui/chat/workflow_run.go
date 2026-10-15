@@ -192,7 +192,7 @@ func (w *WorkflowRunMessageItem) summary() string {
 	}
 	v := w.view
 	if v.Status != workflowhost.StatusRunning {
-		return WorkflowOutcomeText(v.Status, outcomeDetail(*v)) + " · " + formatRunDuration(v.FinishedAt.Sub(v.StartedAt))
+		return WorkflowOutcomeText(v.Status, outcomeDetail(*v)) + " · " + formatRunDuration(v.FinishedAt.Sub(v.StartedAt)) + formatRunCost(v.Cost)
 	}
 	parts := []string{}
 	if step, detail := v.Current(); step != "" {
@@ -202,7 +202,7 @@ func (w *WorkflowRunMessageItem) summary() string {
 		}
 	}
 	parts = append(parts, runningState(*v))
-	return strings.Join(parts, " · ")
+	return strings.Join(parts, " · ") + formatRunCost(v.Cost)
 }
 
 // WorkflowRunRowItem is one row of a run view: the header, a phase, or
@@ -363,6 +363,13 @@ func workflowStatusIcon(sty *styles.Styles, status workflowhost.Status) string {
 	default:
 		return sty.Tool.IconCancelled.String()
 	}
+}
+
+func formatRunCost(cost float64) string {
+	if cost <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" · $%.2f", cost)
 }
 
 func formatRunDuration(d time.Duration) string {

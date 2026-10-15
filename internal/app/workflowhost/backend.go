@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
@@ -84,7 +87,10 @@ func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (st
 	if !chosen {
 		title = "/" + b.base.Command
 	}
-	s, err := b.svc.deps.Sessions.Create(ctx, title, b.svc.deps.WorkingDir)
+	// The run owns the session: it's a child of the session that started
+	// the run, so it stays out of the session list and is reached through
+	// the run's node.
+	s, err := b.svc.deps.Sessions.CreateTaskSession(ctx, uuid.NewString(), b.base.SessionID, title)
 	if err != nil {
 		return "", err
 	}
@@ -93,7 +99,7 @@ func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (st
 			return "", fmt.Errorf("keep session title: %w", err)
 		}
 	}
-	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, b.base.RunID, call.Seq); err != nil {
+	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, b.base.RunID, call.Seq, session.WorkflowKindSession); err != nil {
 		return "", err
 	}
 	return s.ID, nil
@@ -133,7 +139,7 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 	wc.OnSession = func(sessionID string) {
 		// The run view finds the session by the event that made it, so
 		// it's recorded before anyone hears the subagent started.
-		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, sessionID, b.base.RunID, call.Seq); err != nil {
+		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, sessionID, b.base.RunID, call.Seq, session.WorkflowKindAgent); err != nil {
 			stop(fmt.Errorf("record subagent session: %w", err))
 		}
 		started := ended

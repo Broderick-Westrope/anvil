@@ -24,6 +24,10 @@ type RunView struct {
 	Result     json.RawMessage
 	StartedAt  time.Time
 	FinishedAt time.Time // Zero while running.
+	// Cost is what every session the run made has cost so far. Builder
+	// sessions keep their own cost rather than adding to the invoking
+	// session's, so this is the one place a run's total shows.
+	Cost float64
 	// Phases are the run's status() labels in order, each with what
 	// happened under it. Anything before the first status() is in a phase
 	// with no step.
@@ -133,6 +137,7 @@ func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Ses
 	}
 	for _, s := range sessions {
 		b.bySeq[s.WorkflowSeq] = s
+		b.v.Cost += s.Cost
 	}
 	for _, ev := range events {
 		if err := b.apply(ev); err != nil {

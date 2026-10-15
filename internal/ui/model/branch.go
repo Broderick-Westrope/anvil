@@ -60,7 +60,7 @@ func (m *Chat) restoreBranchViewport(s branchViewport) {
 }
 
 func (m *UI) branchFromSelectedMessage() tea.Cmd {
-	if !m.hasSession() || m.session.ParentSessionID != "" || m.isDrilledIn() {
+	if !m.hasSession() || !m.session.Conversational() || m.isDrilledIn() {
 		return util.ReportWarn("Branching is only available in the root chat.")
 	}
 	provider, ok := m.chat.SelectedItem().(chat.SourceMessageProvider)

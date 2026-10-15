@@ -97,6 +97,33 @@ func TestIntentSource_ChildResolvesToParentActiveBranch(t *testing.T) {
 	require.Equal(t, []string{"u1", "u2", "u3", "u4"}, got)
 }
 
+// A workflow's builder is a session the user talks to: what they type
+// there is the intent for it and its subagents, not the older conversation
+// in the session that started the run.
+func TestIntentSource_StopsAtAWorkflowBuilder(t *testing.T) {
+	t.Parallel()
+	f := newIntentFixture(t)
+	ctx := t.Context()
+
+	invoker, err := f.sessions.Create(ctx, "invoker", t.TempDir())
+	require.NoError(t, err)
+	f.add(t, invoker.ID, message.User, "old request", "")
+
+	builder, err := f.sessions.CreateTaskSession(ctx, "builder", invoker.ID, "builder")
+	require.NoError(t, err)
+	require.NoError(t, f.sessions.SetWorkflowOwner(ctx, builder.ID, "run-1", 3, session.WorkflowKindSession))
+	f.add(t, builder.ID, message.User, "build it in customer-frontend", "")
+
+	subagent, err := f.sessions.CreateTaskSession(ctx, "subagent", builder.ID, "task")
+	require.NoError(t, err)
+
+	for _, id := range []string{builder.ID, subagent.ID} {
+		got, err := f.source().RecentUserMessages(ctx, id, 5)
+		require.NoError(t, err)
+		require.Equal(t, []string{"build it in customer-frontend"}, got, id)
+	}
+}
+
 // Job event notices are user-role messages written by Anvil, and they quote
 // background job output. Treating them as user intent would let command
 // output argue that the user asked for an action, and would push real

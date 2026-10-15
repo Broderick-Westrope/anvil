@@ -4080,7 +4080,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isAgentBusy() {
 		binds = append(binds, []key.Binding{key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch"))})
 	}
-	if m.focus == uiFocusMain && hasSession && m.session.ParentSessionID == "" && !m.isDrilledIn() {
+	if m.focus == uiFocusMain && hasSession && m.session.Conversational() && !m.isDrilledIn() {
 		binds = append(binds, []key.Binding{k.Chat.Branch})
 	}
 	return binds

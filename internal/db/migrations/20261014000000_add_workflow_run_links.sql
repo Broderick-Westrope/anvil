@@ -12,6 +12,11 @@ ALTER TABLE sessions ADD COLUMN workflow_run_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN workflow_seq INTEGER NOT NULL DEFAULT 0;
 -- +goose StatementEnd
 -- +goose StatementBegin
+-- What the run made it for: 'session' (an orchestrator session the user
+-- can talk to) or 'agent' (a subagent's session).
+ALTER TABLE sessions ADD COLUMN workflow_kind TEXT NOT NULL DEFAULT '';
+-- +goose StatementEnd
+-- +goose StatementBegin
 CREATE INDEX IF NOT EXISTS idx_sessions_workflow_run ON sessions (workflow_run_id) WHERE workflow_run_id != '';
 -- +goose StatementEnd
 
@@ -29,6 +34,9 @@ WHERE message_type = 'workflow_run';
 -- +goose StatementEnd
 -- +goose StatementBegin
 DROP INDEX IF EXISTS idx_sessions_workflow_run;
+-- +goose StatementEnd
+-- +goose StatementBegin
+ALTER TABLE sessions DROP COLUMN workflow_kind;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE sessions DROP COLUMN workflow_seq;

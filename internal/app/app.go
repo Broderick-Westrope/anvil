@@ -288,7 +288,7 @@ func (app *App) resolveSession(ctx context.Context, continueSessionID string, us
 		if err != nil {
 			return session.Session{}, fmt.Errorf("session not found: %s", continueSessionID)
 		}
-		if sess.ParentSessionID != "" {
+		if !sess.Conversational() {
 			return session.Session{}, fmt.Errorf("cannot continue a child session: %s", continueSessionID)
 		}
 		return sess, nil

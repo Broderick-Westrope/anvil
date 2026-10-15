@@ -112,7 +112,8 @@ ORDER BY updated_at DESC;
 UPDATE sessions
 SET
     workflow_run_id = ?,
-    workflow_seq = ?
+    workflow_seq = ?,
+    workflow_kind = ?
 WHERE id = ?;
 
 -- name: ListSessionsByWorkflowRun :many

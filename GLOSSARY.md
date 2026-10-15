@@ -18,9 +18,9 @@ One root-to-leaf path through a session's message tree. Sending from an earlier 
 
 ## Child Session
 
-A session linked to the session that started it: the session a specialist agent runs in (a task session), or the one used to generate a title.
+A session linked to the session that started it: the session a specialist agent runs in (a task session), the one used to generate a title, or a session a workflow run made. Child sessions stay out of the session list. Only a workflow run's orchestrator sessions are **conversational**: the user can talk to them, and what they type there is the intent for them and their subagents.
 
-- **Code:** `session.Session.ParentSessionID`, `CreateTaskSession`, `CreateTitleSession`
+- **Code:** `session.Session.ParentSessionID`, `session.Session.Conversational`, `CreateTaskSession`, `CreateTitleSession`
 - **Not:** branch. A child session is a separate session; a branch is a path inside one.
 
 ## Command
@@ -156,3 +156,17 @@ The write tool's refusal to overwrite a file whose current content the session h
 
 - **Code:** `writeGate` (`internal/agent/tools/write.go`), backed by content hashes in `filetracker.Service`
 - **Not:** permission check. The gate runs before the write permission request.
+
+## Workflow Run
+
+One run of a workflow command. It shows as a node where it was started, and it owns every session it makes: orchestrator sessions such as builders (`session.new`) and subagent sessions (`agent()`). Each records the run and the event that made it.
+
+- **Code:** `workflowhost.RunRecord`, `session.Session.WorkflowRunID`, `message.MessageTypeWorkflowRun` (the node's marker)
+- **Not:** command (the definition it runs), session (a run spans several).
+
+## Run View
+
+The drill-in for one workflow run: its phases and, under each, the sessions, subagents and questions to the user, rebuilt from the database. It's how the user reaches every session a run made.
+
+- **Code:** `workflowhost.RunView`, `chat.BuildWorkflowRunItems`, `drillInEntry.runID`
+- **Not:** the old status bar or details dialog it replaces.

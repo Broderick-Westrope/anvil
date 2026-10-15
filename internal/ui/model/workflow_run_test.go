@@ -250,3 +250,15 @@ func TestWorkflowRunViewKeepsItsScrollWhenTheRunMovesOn(t *testing.T) {
 	require.Equal(t, before, view.list.Offset())
 	require.Equal(t, 8, view.Selected())
 }
+
+func TestWorkflowRunNodeShowsTheRunsTotalCost(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	view := runningView()
+	view.Cost = 0.4231
+	f.ws.views = map[string]workflowhost.RunView{"run-1": view}
+	f.markerArrives()
+
+	require.Contains(t, ansi.Strip(f.node(t).Render(120)), "round 1/5 · running · $0.42")
+}

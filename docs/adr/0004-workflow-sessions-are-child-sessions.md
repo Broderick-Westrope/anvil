@@ -1,0 +1,26 @@
+# 0004: A workflow run's sessions are child sessions of the session that started it
+
+**Status:** Accepted
+**Date:** 2026-10-15
+
+## Context
+
+A workflow run makes sessions: orchestrator sessions such as `/build`'s builders, and subagent sessions for `agent()`. Subagent sessions were already children of the invoking session; orchestrator sessions were top-level, so they cluttered the session list, `--continue` could pick one, and nothing tied them to the run that made them. The run's node and run view need every session a run made to be reachable from the run, and the user needs to keep talking to a builder after the run hands over.
+
+Until now, "child session" meant "a subagent's session". Three places relied on that: continuing a session (`resolveSession` refused children), the job waker (skipped children), and the permission bouncer (followed parents to the root for the user's intent).
+
+## Decision
+
+Every session a run makes is a child of the invoking session and records the run, the seq of the event that made it, and its kind: `session` for orchestrator sessions, `agent` for subagents. `Session.Conversational` (top-level, or a run's orchestrator session) is the one answer to "does the user talk to this session directly", and the three places above use it. A builder's own cost stays on the builder; the run's total is the sum over its sessions.
+
+## Alternatives
+
+- **Keep orchestrator sessions top-level and link them only by run id.** No change to what a child means, but they stay in the session list and `--continue`, and the run isn't their container.
+- **Infer the kind from the creating event instead of storing it.** No extra column, but every guard would need the workflow log to answer a simple question about a session.
+- **Roll builder cost into the invoking session, as subagents do.** Talking to a builder after hand-over would keep growing the invoking session's cost indefinitely.
+
+## Consequences
+
+- A child session is no longer necessarily a subagent's. New code that asks "is this a subagent session" must use `Conversational`, not `ParentSessionID`.
+- Builders are invisible in the session list; they're reached through the run's node. Losing the node's marker would leave them reachable only by id.
+- Revisit if sessions other than workflow builders need to be conversational children (for example, forks the user makes by hand).

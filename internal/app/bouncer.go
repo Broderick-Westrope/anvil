@@ -232,7 +232,9 @@ func (s *intentSource) RecentUserMessages(ctx context.Context, sessionID string,
 		return nil, fmt.Errorf("load session: %w", err)
 	}
 	for range maxIntentParentDepth {
-		if sess.ParentSessionID == "" {
+		// A subagent acts on its parent's instructions; a session the user
+		// talks to, including a workflow's builder, has its own.
+		if sess.Conversational() {
 			break
 		}
 		sess, err = s.sessions.Get(ctx, sess.ParentSessionID)

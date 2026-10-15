@@ -130,6 +130,7 @@ type Session struct {
 	PinNote          string         `json:"pin_note"`
 	WorkflowRunID    string         `json:"workflow_run_id"`
 	WorkflowSeq      int64          `json:"workflow_seq"`
+	WorkflowKind     string         `json:"workflow_kind"`
 }
 
 type StepUsage struct {

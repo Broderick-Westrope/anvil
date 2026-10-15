@@ -206,7 +206,7 @@ func (w *jobWaker) check(ctx context.Context, sessionID string) {
 		slog.Debug("Failed to load session for job wake", "session_id", sessionID, "error", err)
 		return
 	}
-	if sess.ParentSessionID != "" || !w.store.HasPending(sessionID) {
+	if !sess.Conversational() || !w.store.HasPending(sessionID) {
 		return
 	}
 

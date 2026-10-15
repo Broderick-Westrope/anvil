@@ -1153,12 +1153,29 @@ function main() {
 	require.Equal(t, "builder", builder[0].Title)
 	require.NotEmpty(t, builder[0].SessionID)
 
+	// The run owns its builder: it's a child of the invoking session that
+	// the user can still talk to, and it stays out of the session list.
+	owned, err := h.fixture.Sessions.Get(h.fixture.Context, builder[0].SessionID)
+	require.NoError(t, err)
+	require.Equal(t, h.session, owned.ParentSessionID)
+	require.Equal(t, session.WorkflowKindSession, owned.WorkflowKind)
+	require.True(t, owned.Conversational())
+	listed, err := h.fixture.Sessions.List(h.fixture.Context, "")
+	require.NoError(t, err)
+	for _, s := range listed {
+		require.NotEqual(t, owned.ID, s.ID, "a run's sessions stay out of the session list")
+	}
+
 	review := view.Phases[1]
 	require.Equal(t, "review", review.Step)
 	require.Equal(t, "pass 1/3", review.Detail)
 	require.Len(t, review.Items, 3)
 	sessions := map[string]bool{}
 	for _, item := range review.Items {
+		agentSession, err := h.fixture.Sessions.Get(h.fixture.Context, item.SessionID)
+		require.NoError(t, err)
+		require.Equal(t, session.WorkflowKindAgent, agentSession.WorkflowKind)
+		require.False(t, agentSession.Conversational())
 		require.Equal(t, workflowhost.RunItemAgent, item.Kind)
 		require.Equal(t, "reviewer", item.Agent)
 		require.Equal(t, workflowhost.StatusCompleted, item.Status)
@@ -1241,7 +1258,7 @@ func TestServiceAbortEndsARunStillWaitingToBeMarked(t *testing.T) {
 // ownerlessSessions can't record which run created a session.
 type ownerlessSessions struct{ session.Service }
 
-func (ownerlessSessions) SetWorkflowOwner(context.Context, string, string, int) error {
+func (ownerlessSessions) SetWorkflowOwner(context.Context, string, string, int, session.WorkflowKind) error {
 	return errors.New("database is locked")
 }
 

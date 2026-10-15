@@ -72,8 +72,28 @@ type Session struct {
 	// for sessions no run created.
 	WorkflowRunID string
 	WorkflowSeq   int
-	CreatedAt     int64
-	UpdatedAt     int64
+	// WorkflowKind is what a workflow run made the session for.
+	WorkflowKind WorkflowKind
+	CreatedAt    int64
+	UpdatedAt    int64
+}
+
+// WorkflowKind is what a workflow run made a session for.
+type WorkflowKind string
+
+const (
+	// WorkflowKindSession is an orchestrator session the user can talk to,
+	// such as a builder.
+	WorkflowKindSession WorkflowKind = "session"
+	// WorkflowKindAgent is a subagent's session.
+	WorkflowKindAgent WorkflowKind = "agent"
+)
+
+// Conversational reports whether the user talks to this session directly:
+// a top-level session, or an orchestrator session a workflow run made. A
+// subagent's session isn't; its conversation is its parent's.
+func (s Session) Conversational() bool {
+	return s.ParentSessionID == "" || s.WorkflowKind == WorkflowKindSession
 }
 
 // MaxPinNoteLen is the maximum length of a pin note in runes.
@@ -111,8 +131,8 @@ type Service interface {
 	Delete(ctx context.Context, id string) error
 
 	// SetWorkflowOwner records that a workflow run's event seq created the
-	// session.
-	SetWorkflowOwner(ctx context.Context, id, runID string, seq int) error
+	// session, and what for.
+	SetWorkflowOwner(ctx context.Context, id, runID string, seq int, kind WorkflowKind) error
 	// ListByWorkflowRun returns the sessions a workflow run created, in the
 	// order its events created them.
 	ListByWorkflowRun(ctx context.Context, runID string) ([]Session, error)
@@ -448,16 +468,18 @@ func (s *service) fromDBItem(item db.Session) Session {
 		PinNote:          item.PinNote,
 		WorkflowRunID:    item.WorkflowRunID,
 		WorkflowSeq:      int(item.WorkflowSeq),
+		WorkflowKind:     WorkflowKind(item.WorkflowKind),
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
 }
 
-func (s *service) SetWorkflowOwner(ctx context.Context, id, runID string, seq int) error {
+func (s *service) SetWorkflowOwner(ctx context.Context, id, runID string, seq int, kind WorkflowKind) error {
 	if err := s.q.SetSessionWorkflowOwner(ctx, db.SetSessionWorkflowOwnerParams{
 		ID:            id,
 		WorkflowRunID: runID,
 		WorkflowSeq:   int64(seq),
+		WorkflowKind:  string(kind),
 	}); err != nil {
 		return fmt.Errorf("set workflow owner of session %s: %w", id, err)
 	}

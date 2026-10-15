@@ -109,7 +109,7 @@ func (m *mockSessionService) IsAgentToolSession(sessionID string) bool {
 	return ok
 }
 
-func (m *mockSessionService) SetWorkflowOwner(context.Context, string, string, int) error {
+func (m *mockSessionService) SetWorkflowOwner(context.Context, string, string, int, session.WorkflowKind) error {
 	return nil
 }
 
@@ -169,6 +169,20 @@ func TestResolveSession_ContinueByID_ChildSession(t *testing.T) {
 	_, err := app.resolveSession(t.Context(), "child-id", false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cannot continue a child session")
+}
+
+func TestResolveSession_ContinueByID_WorkflowBuilderSession(t *testing.T) {
+	mock := &mockSessionService{
+		sessions: []session.Session{{
+			ID: "builder-id", ParentSessionID: "parent-id", Title: "Builder",
+			WorkflowRunID: "run-1", WorkflowKind: session.WorkflowKindSession,
+		}},
+	}
+	app := newTestApp(t, mock)
+
+	got, err := app.resolveSession(t.Context(), "builder-id", false)
+	require.NoError(t, err)
+	require.Equal(t, "builder-id", got.ID)
 }
 
 func TestResolveSession_ContinueByID_AgentToolSession(t *testing.T) {
