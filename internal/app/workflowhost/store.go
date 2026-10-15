@@ -230,6 +230,36 @@ func (s *Store) SetPaused(ctx context.Context, runID string, paused bool) error 
 	return nil
 }
 
+// listViewEvents returns a run's events with only the payloads its view
+// reads: the arguments of status, agent and ask calls, the answer to each
+// ask, and errors.
+func (s *Store) listViewEvents(ctx context.Context, runID string) ([]workflow.Event, error) {
+	rows, err := s.q.ListWorkflowViewEvents(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list view events of workflow run %s: %w", runID, err)
+	}
+	events := make([]workflow.Event, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, workflow.Event{
+			Seq:       int(row.Seq),
+			Primitive: row.Primitive,
+			Phase:     workflow.Phase(row.Phase),
+			Args:      textJSON(row.Args),
+			Result:    textJSON(row.Result),
+			Error:     textJSON(row.Error),
+		})
+	}
+	return events, nil
+}
+
+// textJSON is raw JSON stored as text, nil when empty.
+func textJSON(s string) json.RawMessage {
+	if s == "" {
+		return nil
+	}
+	return json.RawMessage(s)
+}
+
 // ListEvents returns a run's events ordered by sequence number, each
 // call's events in the order they were recorded.
 func (s *Store) ListEvents(ctx context.Context, runID string) ([]workflow.Event, error) {

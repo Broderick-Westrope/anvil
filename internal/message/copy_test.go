@@ -2,6 +2,7 @@ package message_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -191,4 +192,29 @@ func TestCopyBranchKeepsMetadataAfterAFinishedExchange(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, copied, 3)
 	require.Equal(t, message.MessageTypeModelChange, copied[2].MessageType)
+}
+
+func TestAForksCopiesArentListedAgainInPromptHistory(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	asked := add(t, svc, source, "", message.User, message.TextContent{Text: "asked once"})
+	// Messages the user wrote before the run started are older than the
+	// fork that copies them.
+	time.Sleep(1100 * time.Millisecond) // created_at has one-second resolution
+	fork := newSession(t, q)
+	leaf, end, err := svc.CopyBranch(t.Context(), asked.ID, fork)
+	require.NoError(t, err)
+	require.NoError(t, q.SetSessionWorkflowOwner(t.Context(), db.SetSessionWorkflowOwnerParams{
+		ID: fork, WorkflowRunID: "run-1", WorkflowSeq: 1, WorkflowKind: "session", ForkedFromMessageID: end,
+	}))
+	add(t, svc, fork, leaf, message.User, message.TextContent{Text: "typed to the builder"})
+
+	history, err := svc.ListUserMessagesByWorkingDir(t.Context(), "")
+	require.NoError(t, err)
+	var texts []string
+	for _, m := range history {
+		texts = append(texts, m.Content().Text)
+	}
+	require.ElementsMatch(t, []string{"asked once", "typed to the builder"}, texts)
 }

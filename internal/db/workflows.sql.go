@@ -287,6 +287,60 @@ func (q *Queries) ListWorkflowEvents(ctx context.Context, runID string) ([]Workf
 	return items, nil
 }
 
+const listWorkflowViewEvents = `-- name: ListWorkflowViewEvents :many
+SELECT
+    seq,
+    phase,
+    primitive,
+    CAST(COALESCE(CASE WHEN primitive IN ('status', 'agent', 'ask') AND phase = 'started' THEN args END, '') AS TEXT) AS args,
+    CAST(COALESCE(CASE WHEN primitive = 'ask' AND phase = 'completed' THEN result END, '') AS TEXT) AS result,
+    CAST(COALESCE(CASE WHEN phase = 'failed' THEN error END, '') AS TEXT) AS error
+FROM workflow_events
+WHERE run_id = ?
+ORDER BY seq ASC, id ASC
+`
+
+type ListWorkflowViewEventsRow struct {
+	Seq       int64  `json:"seq"`
+	Phase     string `json:"phase"`
+	Primitive string `json:"primitive"`
+	Args      string `json:"args"`
+	Result    string `json:"result"`
+	Error     string `json:"error"`
+}
+
+// The events a run's view is built from, without the payloads it doesn't
+// read (bash output, turn replies, file contents), which can be large.
+func (q *Queries) ListWorkflowViewEvents(ctx context.Context, runID string) ([]ListWorkflowViewEventsRow, error) {
+	rows, err := q.query(ctx, q.listWorkflowViewEventsStmt, listWorkflowViewEvents, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkflowViewEventsRow{}
+	for rows.Next() {
+		var i ListWorkflowViewEventsRow
+		if err := rows.Scan(
+			&i.Seq,
+			&i.Phase,
+			&i.Primitive,
+			&i.Args,
+			&i.Result,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markWorkflowRunInterrupted = `-- name: MarkWorkflowRunInterrupted :exec
 UPDATE workflow_runs
 SET

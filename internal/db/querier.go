@@ -65,9 +65,15 @@ type Querier interface {
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
 	ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]ListUndeliveredBackgroundJobEventsRow, error)
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
+	// A fork's copies of its source's messages keep their times, so they're
+	// older than the fork itself; they're left out so each prompt is listed
+	// once.
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
 	ListWorkflowChildSessionIDs(ctx context.Context, parentSessionID sql.NullString) ([]string, error)
 	ListWorkflowEvents(ctx context.Context, runID string) ([]WorkflowEvent, error)
+	// The events a run's view is built from, without the payloads it doesn't
+	// read (bash output, turn replies, file contents), which can be large.
+	ListWorkflowViewEvents(ctx context.Context, runID string) ([]ListWorkflowViewEventsRow, error)
 	MarkBackgroundJobLogExpired(ctx context.Context, arg MarkBackgroundJobLogExpiredParams) error
 	MarkBackgroundJobsInterrupted(ctx context.Context, arg MarkBackgroundJobsInterruptedParams) error
 	MarkWorkflowRunInterrupted(ctx context.Context, arg MarkWorkflowRunInterruptedParams) error

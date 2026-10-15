@@ -107,7 +107,7 @@ func (s *Service) RunView(ctx context.Context, runID string) (RunView, bool, err
 	if err != nil || !ok {
 		return RunView{}, ok, err
 	}
-	events, err := s.deps.Store.ListEvents(ctx, runID)
+	events, err := s.deps.Store.listViewEvents(ctx, runID)
 	if err != nil {
 		return RunView{}, false, err
 	}

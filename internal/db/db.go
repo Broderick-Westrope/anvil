@@ -195,6 +195,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listWorkflowEventsStmt, err = db.PrepareContext(ctx, listWorkflowEvents); err != nil {
 		return nil, fmt.Errorf("error preparing query ListWorkflowEvents: %w", err)
 	}
+	if q.listWorkflowViewEventsStmt, err = db.PrepareContext(ctx, listWorkflowViewEvents); err != nil {
+		return nil, fmt.Errorf("error preparing query ListWorkflowViewEvents: %w", err)
+	}
 	if q.markBackgroundJobLogExpiredStmt, err = db.PrepareContext(ctx, markBackgroundJobLogExpired); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkBackgroundJobLogExpired: %w", err)
 	}
@@ -545,6 +548,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listWorkflowEventsStmt: %w", cerr)
 		}
 	}
+	if q.listWorkflowViewEventsStmt != nil {
+		if cerr := q.listWorkflowViewEventsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listWorkflowViewEventsStmt: %w", cerr)
+		}
+	}
 	if q.markBackgroundJobLogExpiredStmt != nil {
 		if cerr := q.markBackgroundJobLogExpiredStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing markBackgroundJobLogExpiredStmt: %w", cerr)
@@ -741,6 +749,7 @@ type Queries struct {
 	listUserMessagesByWorkingDirStmt            *sql.Stmt
 	listWorkflowChildSessionIDsStmt             *sql.Stmt
 	listWorkflowEventsStmt                      *sql.Stmt
+	listWorkflowViewEventsStmt                  *sql.Stmt
 	markBackgroundJobLogExpiredStmt             *sql.Stmt
 	markBackgroundJobsInterruptedStmt           *sql.Stmt
 	markWorkflowRunInterruptedStmt              *sql.Stmt
@@ -824,6 +833,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listUserMessagesByWorkingDirStmt:            q.listUserMessagesByWorkingDirStmt,
 		listWorkflowChildSessionIDsStmt:             q.listWorkflowChildSessionIDsStmt,
 		listWorkflowEventsStmt:                      q.listWorkflowEventsStmt,
+		listWorkflowViewEventsStmt:                  q.listWorkflowViewEventsStmt,
 		markBackgroundJobLogExpiredStmt:             q.markBackgroundJobLogExpiredStmt,
 		markBackgroundJobsInterruptedStmt:           q.markBackgroundJobsInterruptedStmt,
 		markWorkflowRunInterruptedStmt:              q.markWorkflowRunInterruptedStmt,

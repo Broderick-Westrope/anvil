@@ -1478,3 +1478,27 @@ func TestServiceAnnouncesAChangeOnlyOnceItsRecorded(t *testing.T) {
 		}
 	}
 }
+
+// A run's view reloads on every event, so it mustn't read payloads it
+// doesn't show, such as file contents and turn replies.
+func TestServiceRunViewDoesntReadPayloadsItDoesntShow(t *testing.T) {
+	h := newServiceHarness(t, true)
+	ctx := h.fixture.Context
+	require.NoError(t, h.store.StartRun(ctx, workflowhost.RunRecord{ID: "run-big", Command: "project:demo", InvokingSessionID: h.session}))
+	rec := h.store.Recorder("run-big")
+	big := json.RawMessage(`"` + strings.Repeat("x", 1<<16) + `"`)
+	at := time.Now()
+	for _, ev := range []workflow.Event{
+		{Seq: 1, Primitive: "readFile", Phase: workflow.PhaseStarted, Args: json.RawMessage(`{"path":"a"}`), At: at},
+		{Seq: 1, Primitive: "readFile", Phase: workflow.PhaseCompleted, Result: big, At: at},
+		{Seq: 2, Primitive: "ask", Phase: workflow.PhaseStarted, Args: json.RawMessage(`{"question":"q"}`), At: at},
+		{Seq: 2, Primitive: "ask", Phase: workflow.PhaseCompleted, Result: json.RawMessage(`"yes"`), At: at},
+	} {
+		require.NoError(t, rec.Record(ctx, ev))
+	}
+
+	view, ok, err := h.svc.RunView(ctx, "run-big")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "yes", view.Phases[0].Items[0].Answer, "the answers it shows still load")
+}

@@ -67,6 +67,20 @@ FROM workflow_events
 WHERE run_id = ?
 ORDER BY seq ASC, id ASC;
 
+-- name: ListWorkflowViewEvents :many
+-- The events a run's view is built from, without the payloads it doesn't
+-- read (bash output, turn replies, file contents), which can be large.
+SELECT
+    seq,
+    phase,
+    primitive,
+    CAST(COALESCE(CASE WHEN primitive IN ('status', 'agent', 'ask') AND phase = 'started' THEN args END, '') AS TEXT) AS args,
+    CAST(COALESCE(CASE WHEN primitive = 'ask' AND phase = 'completed' THEN result END, '') AS TEXT) AS result,
+    CAST(COALESCE(CASE WHEN phase = 'failed' THEN error END, '') AS TEXT) AS error
+FROM workflow_events
+WHERE run_id = ?
+ORDER BY seq ASC, id ASC;
+
 -- name: GetWorkflowApproval :one
 SELECT *
 FROM workflow_approvals
