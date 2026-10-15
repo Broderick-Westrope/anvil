@@ -641,3 +641,47 @@ func TestPaletteActionsOnTheUsersSessionArentRunFromABuilder(t *testing.T) {
 		require.Empty(t, f.u.enabledLazyMCPs, "%#v", action)
 	}
 }
+
+func TestEscInARunViewStillCancelsTheUsersSession(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+	f.run(cmd)
+	f.ws.busy = map[string]bool{"sess-1": true}
+	f.u.focus = uiFocusMain
+	f.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+	f.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.Equal(t, []string{"sess-1"}, f.ws.cancelled)
+}
+
+func TestABusyBuilderDoesntMakeTheUsersSessionBusy(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.busy = map[string]bool{"sess-2": true}
+	f.ws.anyBusy = true
+	require.False(t, f.u.isRootBusy())
+	f.u.focus = uiFocusEditor
+	f.press(tea.KeyPressMsg{Code: 'a'})
+	require.Equal(t, f.u.readyPlaceholder, f.u.textarea.Placeholder, "the user's own session isn't working")
+
+	f.drillIntoBuilder(t)
+	f.u.focus = uiFocusEditor
+	f.press(tea.KeyPressMsg{Code: 'b'})
+	require.Equal(t, f.u.workingPlaceholder, f.u.textarea.Placeholder, "the builder is")
+}
+
+func TestABuildersQueueShowsWhileTypingToIt(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	f.ws.anyBusy = true
+	f.ws.queued = map[string]int{"sess-2": 2, "sess-1": 0}
+	f.press(tea.KeyPressMsg{Code: 'x'})
+	require.Equal(t, 2, f.u.promptQueue)
+	require.Positive(t, f.u.pillsAreaHeight(), "the builder's queued prompts show")
+}

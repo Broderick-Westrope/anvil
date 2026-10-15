@@ -771,8 +771,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.syncComposerState()
 	defer m.syncDraft()
 	var cmds []tea.Cmd
-	if m.hasSession() && m.isAgentBusy() {
-		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
+	if ps := m.pillsSession(); ps != nil && m.isAgentBusy() {
+		queueSize := m.com.Workspace.AgentQueuedPrompts(ps.ID)
 		if queueSize != m.promptQueue {
 			m.promptQueue = queueSize
 			m.updateLayoutAndSize()
@@ -828,7 +828,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deriveEnabledLazyMCPs(msgs)
 		if hasInProgressTodo(m.session.Todos) {
 			// only start spinner if there is an in-progress todo
-			if m.isAgentBusy() {
+			if m.isRootBusy() {
 				m.todoIsSpinning = true
 				cmds = append(cmds, m.todoSpinner.Tick)
 			}
@@ -983,6 +983,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.drillStack[i].sessionID == msg.Payload.ID {
 				s := msg.Payload
 				m.drillStack[i].session = &s
+				if m.drillStack[i].conversational {
+					// A builder the editor sends to shows its own todos.
+					m.updateLayoutAndSize()
+				}
 			}
 		}
 
@@ -1072,12 +1076,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat.RemoveMessage(msg.Payload.ID)
 		}
 		// start the spinner if there is a new message
-		if hasInProgressTodo(m.session.Todos) && m.isAgentBusy() && !m.todoIsSpinning {
+		if hasInProgressTodo(m.session.Todos) && m.isRootBusy() && !m.todoIsSpinning {
 			m.todoIsSpinning = true
 			cmds = append(cmds, m.todoSpinner.Tick)
 		}
 		// stop the spinner if the agent is not busy anymore
-		if m.todoIsSpinning && !m.isAgentBusy() {
+		if m.todoIsSpinning && !m.isRootBusy() {
 			m.todoIsSpinning = false
 		}
 		// there is a number of things that could change the pills here so we want to re-render
@@ -1604,7 +1608,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case uiFocusMain:
 	case uiFocusEditor:
 		// Textarea placeholder logic
-		if m.isAgentBusy() {
+		if m.isTargetBusy() {
 			m.textarea.Placeholder = m.workingPlaceholder
 		} else {
 			m.textarea.Placeholder = m.readyPlaceholder
@@ -2432,7 +2436,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionNewSession:
-		if m.isAgentBusy() {
+		if m.isRootBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
 			break
 		}
@@ -2441,7 +2445,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionSummarize:
-		if m.isAgentBusy() {
+		if m.isRootBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before summarizing session..."))
 			break
 		}
@@ -2492,7 +2496,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if m.session == nil {
 			break
 		}
-		if m.isAgentBusy() {
+		if m.isRootBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before regenerating title..."))
 			break
 		}
@@ -2509,7 +2513,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionExternalEditor:
-		if m.isAgentBusy() {
+		if m.isTargetBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is working, please wait..."))
 			break
 		}
@@ -2613,7 +2617,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.dialog.CloseDialog(dialog.CommandsID)
 		cmds = append(cmds, m.disableDockerMCP)
 	case dialog.ActionInitializeProject:
-		if m.isAgentBusy() {
+		if m.isRootBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before summarizing session..."))
 			break
 		}
@@ -3092,9 +3096,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			// Priority 4: Cancel streaming agent (immediate, bypasses
 			// two-phase Esc behavior).
-			if m.isTargetBusy() {
+			if id := m.cancelTargetID(); m.isBusy(id) {
 				m.isCanceling = false
-				m.com.Workspace.AgentCancel(m.composeTargetID())
+				m.com.Workspace.AgentCancel(id)
 				m.todoIsSpinning = false
 				m.renderPills()
 				return tea.Batch(cmds...)
@@ -3115,7 +3119,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 	// Handle cancel key when the session the editor sends to is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
-		if m.isTargetBusy() {
+		if m.isBusy(m.cancelTargetID()) {
 			if cmd := m.cancelAgent(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -3243,7 +3247,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			if ok := m.attachments.Update(msg); ok {
 				return tea.Batch(cmds...)
 			}
-			if m.pendingBranch != nil && key.Matches(msg, m.keyMap.Editor.Escape) && !m.isAgentBusy() {
+			if m.pendingBranch != nil && key.Matches(msg, m.keyMap.Editor.Escape) && !m.isRootBusy() {
 				return m.beginBranchReturn(true)
 			}
 
@@ -3356,7 +3360,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if !m.hasSession() {
 					break
 				}
-				if m.isAgentBusy() {
+				if m.isRootBusy() {
 					cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
 					break
 				}
@@ -3371,7 +3375,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					m.activeChat().SetSelected(m.activeChat().Len() - 1)
 				}
 			case key.Matches(msg, m.keyMap.Editor.OpenEditor):
-				if m.isAgentBusy() {
+				if m.isTargetBusy() {
 					cmds = append(cmds, util.ReportWarn("Agent is working, please wait..."))
 					break
 				}
@@ -3500,7 +3504,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if !m.hasSession() {
 					break
 				}
-				if m.isAgentBusy() {
+				if m.isRootBusy() {
 					cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
 					break
 				}
@@ -3719,9 +3723,9 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			m.activeChat().Draw(scr, m.activeChatArea())
 		} else {
 			m.activeChat().Draw(scr, layout.main)
-			if layout.pills.Dy() > 0 && m.pillsView != "" {
-				uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
-			}
+		}
+		if layout.pills.Dy() > 0 && m.pillsView != "" && m.composeTarget().shown {
+			uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 		}
 		// The editor is there for the root session, and for a drilled-in
 		// session the user can talk to, such as a workflow's builder.
@@ -5055,7 +5059,7 @@ func cancelTimerCmd() tea.Cmd {
 // and starts a timer. The second press (before the timer expires) actually
 // cancels the agent.
 func (m *UI) cancelAgent() tea.Cmd {
-	sessionID := m.composeTargetID()
+	sessionID := m.cancelTargetID()
 	if sessionID == "" {
 		return nil
 	}

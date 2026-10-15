@@ -48,6 +48,8 @@ type workflowWorkspace struct {
 	// busy marks sessions with a run in flight; cancelled and historyFor
 	// record what was cancelled and whose prompt history was loaded.
 	busy       map[string]bool
+	anyBusy    bool
+	queued     map[string]int
 	cancelled  []string
 	historyFor []string
 }
@@ -66,8 +68,9 @@ func newWorkflowWorkspace() *workflowWorkspace {
 
 func (*workflowWorkspace) AgentIsReady() bool                        { return true }
 func (w *workflowWorkspace) AgentIsSessionBusy(id string) bool       { return w.busy[id] }
-func (*workflowWorkspace) AgentIsBusy() bool                         { return false }
-func (*workflowWorkspace) AgentQueuedPrompts(string) int             { return 0 }
+func (w *workflowWorkspace) AgentIsBusy() bool                       { return w.anyBusy }
+func (w *workflowWorkspace) AgentQueuedPrompts(id string) int        { return w.queued[id] }
+func (*workflowWorkspace) AgentQueuedPromptsList(string) []string    { return nil }
 func (*workflowWorkspace) WorkingDir() string                        { return "/work" }
 func (*workflowWorkspace) SetComposerState(string, bool, bool, bool) {}
 func (*workflowWorkspace) ListSessionJobs(string) []shell.JobInfo    { return nil }

@@ -100,8 +100,25 @@ func (m *UI) switchDraft(from, to string) {
 
 // isTargetBusy reports whether the session the editor sends to is busy.
 func (m *UI) isTargetBusy() bool {
-	id := m.composeTargetID()
-	return id != "" && m.com.Workspace.AgentIsReady() && m.com.Workspace.AgentIsSessionBusy(id)
+	return m.isBusy(m.composeTargetID())
+}
+
+// cancelTargetID is the session Esc and Ctrl+C cancel: the one the editor
+// sends to, or the user's own session while the editor is hidden (in a
+// subagent's session or a run view), as before builders could be typed
+// into.
+func (m *UI) cancelTargetID() string {
+	if m.composeTarget().shown {
+		return m.composeTargetID()
+	}
+	if m.hasSession() {
+		return m.session.ID
+	}
+	return ""
+}
+
+func (m *UI) isBusy(sessionID string) bool {
+	return sessionID != "" && m.com.Workspace.AgentIsReady() && m.com.Workspace.AgentIsSessionBusy(sessionID)
 }
 
 // refuseCommandInBuilder stops a command typed to a drilled-in builder:
@@ -126,4 +143,22 @@ func actsOnOwnSession(action dialog.Action) bool {
 	default:
 		return false
 	}
+}
+
+// pillsSession is the session whose todos and queued prompts the pills
+// show: the one the editor sends to, once it's loaded, and none while the
+// editor is hidden.
+func (m *UI) pillsSession() *session.Session {
+	target := m.composeTarget()
+	if !target.shown || target.session == nil || target.session.ID == "" {
+		return nil
+	}
+	return target.session
+}
+
+// isRootBusy reports whether the user's own session has work in flight.
+// Work elsewhere (a workflow's builders, other sessions) doesn't stop the
+// user from using their own session.
+func (m *UI) isRootBusy() bool {
+	return m.hasSession() && m.isBusy(m.session.ID)
 }
