@@ -100,3 +100,20 @@ WITH RECURSIVE branch AS (
 SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at,
        provider, parent_message_id, message_type
 FROM branch ORDER BY depth DESC;
+
+-- name: CopyMessage :exec
+INSERT INTO messages (
+    id,
+    session_id,
+    role,
+    parts,
+    model,
+    provider,
+    parent_message_id,
+    message_type,
+    created_at,
+    updated_at,
+    finished_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+);

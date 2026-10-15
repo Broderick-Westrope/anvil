@@ -11,6 +11,7 @@ import (
 
 type Querier interface {
 	ClaimBackgroundJobEvents(ctx context.Context, arg ClaimBackgroundJobEventsParams) ([]string, error)
+	CopyMessage(ctx context.Context, arg CopyMessageParams) error
 	// Mirrors triage.IsSource: keep the two in sync.
 	CountUnresolvedPermissionDecisionsSince(ctx context.Context, createdAt int64) (int64, error)
 	CreateBackgroundJob(ctx context.Context, arg CreateBackgroundJobParams) (int64, error)

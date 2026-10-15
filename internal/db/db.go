@@ -27,6 +27,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.claimBackgroundJobEventsStmt, err = db.PrepareContext(ctx, claimBackgroundJobEvents); err != nil {
 		return nil, fmt.Errorf("error preparing query ClaimBackgroundJobEvents: %w", err)
 	}
+	if q.copyMessageStmt, err = db.PrepareContext(ctx, copyMessage); err != nil {
+		return nil, fmt.Errorf("error preparing query CopyMessage: %w", err)
+	}
 	if q.countUnresolvedPermissionDecisionsSinceStmt, err = db.PrepareContext(ctx, countUnresolvedPermissionDecisionsSince); err != nil {
 		return nil, fmt.Errorf("error preparing query CountUnresolvedPermissionDecisionsSince: %w", err)
 	}
@@ -254,6 +257,11 @@ func (q *Queries) Close() error {
 	if q.claimBackgroundJobEventsStmt != nil {
 		if cerr := q.claimBackgroundJobEventsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing claimBackgroundJobEventsStmt: %w", cerr)
+		}
+	}
+	if q.copyMessageStmt != nil {
+		if cerr := q.copyMessageStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing copyMessageStmt: %w", cerr)
 		}
 	}
 	if q.countUnresolvedPermissionDecisionsSinceStmt != nil {
@@ -661,6 +669,7 @@ type Queries struct {
 	db                                          DBTX
 	tx                                          *sql.Tx
 	claimBackgroundJobEventsStmt                *sql.Stmt
+	copyMessageStmt                             *sql.Stmt
 	countUnresolvedPermissionDecisionsSinceStmt *sql.Stmt
 	createBackgroundJobStmt                     *sql.Stmt
 	createBackgroundJobEventStmt                *sql.Stmt
@@ -741,6 +750,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		db:                           tx,
 		tx:                           tx,
 		claimBackgroundJobEventsStmt: q.claimBackgroundJobEventsStmt,
+		copyMessageStmt:              q.copyMessageStmt,
 		countUnresolvedPermissionDecisionsSinceStmt: q.countUnresolvedPermissionDecisionsSinceStmt,
 		createBackgroundJobStmt:                     q.createBackgroundJobStmt,
 		createBackgroundJobEventStmt:                q.createBackgroundJobEventStmt,
