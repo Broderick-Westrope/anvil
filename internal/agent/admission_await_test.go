@@ -365,3 +365,43 @@ func TestAwaitWithAFinishedOwnersContextIsRefused(t *testing.T) {
 	require.ErrorIs(t, err, ErrSessionBusy)
 	require.False(t, ran.Load())
 }
+
+// Esc cancels the turn and the prompts queued behind it. Silent work (a
+// workflow's marker, a metadata entry) isn't a prompt the user can see, so
+// it survives and runs once the session is free.
+func TestCancellingASessionKeepsItsSilentWork(t *testing.T) {
+	t.Parallel()
+
+	for name, stop := range map[string]func(a *admission){
+		"cancel": func(a *admission) { a.cancel("s") },
+		"clear":  func(a *admission) { a.clear("s") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			a := newAdmission(t.Context())
+			entered, release := make(chan struct{}), make(chan struct{})
+			go func() {
+				_, _ = a.submit(t.Context(), "s", submission{prompt: "user", run: blockingRun("A", entered, release)})
+			}()
+			<-entered
+
+			silent := make(chan error, 1)
+			go func() {
+				_, err := a.submitAwait(t.Context(), "s", submission{silent: true, run: instantRun("marker")})
+				silent <- err
+			}()
+			queuedPrompt := make(chan error, 1)
+			go func() {
+				_, err := a.submitAwait(t.Context(), "s", submission{prompt: "queued", run: instantRun("Q")})
+				queuedPrompt <- err
+			}()
+			require.Eventually(t, func() bool { return len(a.queued("s")) == 1 }, time.Second, time.Millisecond)
+
+			stop(a)
+			require.ErrorIs(t, <-queuedPrompt, context.Canceled, "the user's queued prompt is dropped")
+			close(release)
+			require.NoError(t, <-silent, "the silent work still runs")
+		})
+	}
+}

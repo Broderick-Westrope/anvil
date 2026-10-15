@@ -412,17 +412,36 @@ func (a *admission) queued(id string) []string {
 
 func (a *admission) clear(id string) {
 	a.mu.Lock()
-	dropped := a.queues[id]
-	delete(a.queues, id)
+	dropped := a.dropPrompts(id)
 	a.mu.Unlock()
 	cancelAwaited(dropped)
+}
+
+// dropPrompts removes the queued prompts of a session and returns them.
+// Silent work (a workflow's marker, a metadata entry, a fork's copy) isn't
+// a prompt the user can see or meant to cancel, so it stays queued and
+// runs once the session is free. Callers hold a.mu.
+func (a *admission) dropPrompts(id string) []submission {
+	var kept, dropped []submission
+	for _, job := range a.queues[id] {
+		if job.silent {
+			kept = append(kept, job)
+		} else {
+			dropped = append(dropped, job)
+		}
+	}
+	if len(kept) == 0 {
+		delete(a.queues, id)
+	} else {
+		a.queues[id] = kept
+	}
+	return dropped
 }
 
 func (a *admission) cancel(id string) {
 	a.mu.Lock()
 	owner := a.owners[id]
-	dropped := a.queues[id]
-	delete(a.queues, id)
+	dropped := a.dropPrompts(id)
 	// Cancelled under the lock, so continueWith sees either the queue
 	// before it was cleared or the cancelled context, never neither.
 	if owner != nil {
