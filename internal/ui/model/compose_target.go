@@ -20,8 +20,10 @@ import (
 type composeTarget struct {
 	session *session.Session
 	shown   bool
-	// drilled is set when the target is a drilled-in session.
-	drilled bool
+	// drilled is set when the target is a drilled-in session, whose ID is
+	// drilledID even before it has loaded.
+	drilled   bool
+	drilledID string
 }
 
 // composeTarget returns where the editor sends to right now.
@@ -33,7 +35,29 @@ func (m *UI) composeTarget() composeTarget {
 	if !top.conversational {
 		return composeTarget{}
 	}
-	return composeTarget{session: top.session, shown: true, drilled: true}
+	return composeTarget{session: top.session, shown: true, drilled: true, drilledID: top.sessionID}
+}
+
+// draftKey names a target for keeping drafts apart: the root session
+// (whichever it is), a drilled-in session, or no editor at all.
+func (t composeTarget) draftKey() string {
+	switch {
+	case !t.shown:
+		return "none"
+	case t.drilled:
+		return "session:" + t.drilledID
+	default:
+		return "root"
+	}
+}
+
+// loadingRefusal refuses a message to a drilled-in builder that hasn't
+// loaded yet, or returns nil.
+func (t composeTarget) loadingRefusal() tea.Cmd {
+	if t.drilled && t.session == nil {
+		return util.ReportWarn("The session is still loading; try again in a moment")
+	}
+	return nil
 }
 
 // composeTargetID returns the ID of the session the editor sends to, or
@@ -45,41 +69,22 @@ func (m *UI) composeTargetID() string {
 	return ""
 }
 
-// composeKey names the editor's current target for keeping drafts apart:
-// the root session (whichever it is), a drilled-in session, or no editor
-// at all.
-func (m *UI) composeKey() string {
-	if !m.isDrilledIn() {
-		return "root"
-	}
-	top := m.drillStack[len(m.drillStack)-1]
-	if !top.conversational {
-		return "none"
-	}
-	return "session:" + top.sessionID
-}
-
-// syncDraft swaps drafts when the editor's target has changed since the
-// last update.
-func (m *UI) syncDraft() {
-	key := m.composeKey()
-	if m.composeFor == "" {
-		m.composeFor = "root"
-	}
-	m.switchDraft(m.composeFor, key)
-	m.composeFor = key
-}
-
 // composerDraft is a message being written to one target.
 type composerDraft struct {
 	text        string
 	attachments attachments.Draft
 }
 
-// switchDraft keeps each target's unsent draft, text and attachments, with
-// that target when the editor's target changes, so a draft written for a
-// builder is never sent to the root session, or the other way round.
-func (m *UI) switchDraft(from, to string) {
+// syncDraft keeps each target's unsent draft, text and attachments, with
+// that target when the editor's target has changed since the last update,
+// so a draft written for a builder is never sent to the root session, or
+// the other way round.
+func (m *UI) syncDraft() {
+	from, to := m.composeFor, m.composeTarget().draftKey()
+	if from == "" {
+		from = "root"
+	}
+	m.composeFor = to
 	if from == to {
 		return
 	}
@@ -184,16 +189,16 @@ func (m *UI) isRootBusy() bool {
 	return m.hasSession() && m.isBusy(m.session.ID)
 }
 
-// prepareSend gets the session the editor sends to ready for a message and
-// returns its ID, with any commands that preparing it needs. A drilled-in
+// prepareSend gets the session the editor sends to ready for a message. It
+// returns the session's ID, the commands that preparing it needs, and a
+// refusal, non-nil when nothing is sent. A drilled-in
 // builder is an existing session, so there's nothing to prepare, unless it
 // hasn't loaded yet; the root session may need creating, and gets the
-// pending branch and the file reads it carries. A non-nil refusal means
-// nothing is sent.
-func (m *UI) prepareSend() (sessionID string, cmds []tea.Cmd, refusal tea.Cmd) {
+// pending branch and the file reads it carries.
+func (m *UI) prepareSend() (string, []tea.Cmd, tea.Cmd) {
 	if target := m.composeTarget(); target.drilled {
-		if target.session == nil {
-			return "", nil, util.ReportWarn("The session is still loading; try again in a moment")
+		if refusal := target.loadingRefusal(); refusal != nil {
+			return "", nil, refusal
 		}
 		return target.session.ID, nil, nil
 	}
@@ -205,7 +210,7 @@ func (m *UI) prepareSend() (sessionID string, cmds []tea.Cmd, refusal tea.Cmd) {
 	if err != nil {
 		return "", nil, util.ReportError(err)
 	}
-	cmds = append(cmds, loadCmd)
+	cmds := []tea.Cmd{loadCmd}
 	ctx := context.Background()
 	ws, reads, id := m.com.Workspace, m.sessionFileReads, m.session.ID
 	cmds = append(cmds, func() tea.Msg {

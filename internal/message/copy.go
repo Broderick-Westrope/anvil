@@ -19,7 +19,7 @@ import (
 // unfinished reply, or tool calls without results) is left out, so the
 // copy never starts mid-exchange. It returns the copy's leaf and the
 // source message the copy ends at, both "" when nothing was copied.
-func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (copyLeaf, sourceEnd string, err error) {
+func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (string, string, error) {
 	if leafID == "" {
 		return "", "", nil
 	}
@@ -78,6 +78,7 @@ func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (cop
 	if err := tx.Commit(); err != nil {
 		return "", "", fmt.Errorf("commit copy: %w", err)
 	}
+	sourceEnd := ""
 	if len(path) > 0 {
 		sourceEnd = path[len(path)-1].ID
 	}

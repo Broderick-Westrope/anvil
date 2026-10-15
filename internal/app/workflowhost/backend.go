@@ -85,18 +85,25 @@ func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (st
 }
 
 // Fork makes a session for the run whose history is a copy of the
-// source's. The invoking session is copied up to the run's marker, so
-// every fork has the conversation the user had before starting the run,
-// whatever they've said there since. One of the run's own sessions is
-// copied as it is once its work in flight settles.
+// source's. The invoking session is copied up to the run's marker, its
+// start boundary, so every fork has the conversation the user had before
+// starting the run, whatever they've said there since. One of the run's own
+// sessions is copied as it is once its work in flight settles.
 func (b *backend) Fork(ctx context.Context, call workflow.ForkCall) (string, error) {
 	return b.ownedSession(ctx, call.SessionCall, func(forkID string) (string, error) {
 		if call.FromInvoker {
-			leaf, err := b.startBoundary(ctx)
+			run, ok, err := b.svc.deps.Store.GetRun(ctx, b.base.RunID)
 			if err != nil {
 				return "", err
 			}
-			_, end, err := b.svc.deps.Messages.CopyBranch(ctx, leaf, forkID)
+			if !ok || run.MarkerMessageID == "" {
+				return "", fmt.Errorf("workflow run %s has no marker to fork from", b.base.RunID)
+			}
+			marker, err := b.svc.deps.Messages.Get(ctx, run.MarkerMessageID)
+			if err != nil {
+				return "", fmt.Errorf("read marker of workflow run %s: %w", b.base.RunID, err)
+			}
+			_, end, err := b.svc.deps.Messages.CopyBranch(ctx, marker.ParentMessageID, forkID)
 			return end, err
 		}
 		var end string
@@ -112,23 +119,6 @@ func (b *backend) Fork(ctx context.Context, call workflow.ForkCall) (string, err
 	})
 }
 
-// startBoundary is the last message of the invoking session before the
-// run's marker.
-func (b *backend) startBoundary(ctx context.Context) (string, error) {
-	run, ok, err := b.svc.deps.Store.GetRun(ctx, b.base.RunID)
-	if err != nil {
-		return "", err
-	}
-	if !ok || run.MarkerMessageID == "" {
-		return "", fmt.Errorf("workflow run %s has no marker to fork from", b.base.RunID)
-	}
-	marker, err := b.svc.deps.Messages.Get(ctx, run.MarkerMessageID)
-	if err != nil {
-		return "", fmt.Errorf("read marker of workflow run %s: %w", b.base.RunID, err)
-	}
-	return marker.ParentMessageID, nil
-}
-
 // ownedSession creates an orchestrator session the run owns and lets fill
 // give it history, returning the source message the history ends at, if
 // any. It's a child of the session that started the run, so it stays out of
@@ -136,7 +126,7 @@ func (b *backend) startBoundary(ctx context.Context) (string, error) {
 // the run's before anything goes into it, and deleted if it can't be
 // finished, so a failure never leaves a copy of a conversation nobody can
 // reach.
-func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, fill func(sessionID string) (string, error)) (id string, err error) {
+func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, fill func(sessionID string) (string, error)) (string, error) {
 	// A title the script chose is kept; without one, the session starts as
 	// "/cmd" and is auto-titled after its first turn like any session.
 	title := call.Title
@@ -148,29 +138,29 @@ func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, f
 	if err != nil {
 		return "", err
 	}
-	defer func() {
-		if err == nil {
-			return
-		}
+	fail := func(err error) (string, error) {
 		if derr := b.svc.deps.Sessions.Delete(context.WithoutCancel(ctx), s.ID); derr != nil {
 			slog.Warn("Failed to remove an unfinished workflow session", "session", s.ID, "error", derr)
 		}
-	}()
+		return "", err
+	}
 	owner := session.WorkflowOwner{RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindSession}
 	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, owner); err != nil {
-		return "", err
+		return fail(err)
 	}
 	if chosen {
 		if err := b.svc.deps.Sessions.Rename(ctx, s.ID, title, true); err != nil {
-			return "", fmt.Errorf("keep session title: %w", err)
+			return fail(fmt.Errorf("keep session title: %w", err))
 		}
 	}
-	if owner.ForkedFrom, err = fill(s.ID); err != nil {
-		return "", fmt.Errorf("copy history into session: %w", err)
+	forkedFrom, err := fill(s.ID)
+	if err != nil {
+		return fail(fmt.Errorf("copy history into session: %w", err))
 	}
-	if owner.ForkedFrom != "" {
+	if forkedFrom != "" {
+		owner.ForkedFrom = forkedFrom
 		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, owner); err != nil {
-			return "", err
+			return fail(err)
 		}
 	}
 	return s.ID, nil

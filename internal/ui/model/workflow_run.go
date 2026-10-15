@@ -43,20 +43,6 @@ func (m *UI) loadWorkflowRunView(runID string) tea.Cmd {
 	}
 }
 
-// workflowRunViewLoaded applies a loaded view, then loads again if the run
-// changed while it was loading.
-func (m *UI) workflowRunViewLoaded(msg workflowRunViewLoadedMsg) tea.Cmd {
-	again := m.workflowRunLoads[msg.runID]
-	delete(m.workflowRunLoads, msg.runID)
-	if msg.ok {
-		m.applyWorkflowRunView(msg)
-	}
-	if again {
-		return m.loadWorkflowRunView(msg.runID)
-	}
-	return nil
-}
-
 // loadWorkflowRunNodes loads the view of every run node in items that
 // doesn't have one yet.
 func (m *UI) loadWorkflowRunNodes(items []chat.MessageItem) tea.Cmd {
@@ -80,35 +66,44 @@ func (m *UI) openWorkflowRun(runID, label string) tea.Cmd {
 	return m.loadWorkflowRunView(runID)
 }
 
-// applyWorkflowRunView shows a run's latest view in its node, wherever the
-// node is on screen, and in any open view of the run.
-func (m *UI) applyWorkflowRunView(msg workflowRunViewLoadedMsg) {
-	if m.workflowRunViews == nil {
-		m.workflowRunViews = map[string]workflowhost.RunView{}
-	}
-	m.workflowRunViews[msg.runID] = msg.view
-	chats := []*Chat{m.chat}
-	for i := range m.drillStack {
-		entry := &m.drillStack[i]
-		if entry.runID == msg.runID {
-			m.showWorkflowRunRows(entry, msg.view)
-			continue
+// workflowRunViewLoaded shows a run's latest view in its node, wherever
+// the node is on screen, and in any open view of the run, then loads again
+// if the run changed while it was loading.
+func (m *UI) workflowRunViewLoaded(msg workflowRunViewLoadedMsg) tea.Cmd {
+	again := m.workflowRunLoads[msg.runID]
+	delete(m.workflowRunLoads, msg.runID)
+	if msg.ok {
+		if m.workflowRunViews == nil {
+			m.workflowRunViews = map[string]workflowhost.RunView{}
 		}
-		chats = append(chats, entry.chat)
-	}
-	// A run's node is found by its run, not its message: a fork copies the
-	// marker into other sessions under new message IDs.
-	for _, c := range chats {
-		for _, item := range c.MessageItems() {
-			if node, ok := item.(*chat.WorkflowRunMessageItem); ok && node.RunID() == msg.runID {
-				node.SetView(msg.view)
-				if m.workflowRunCommands == nil {
-					m.workflowRunCommands = map[string]string{}
+		m.workflowRunViews[msg.runID] = msg.view
+		chats := []*Chat{m.chat}
+		for i := range m.drillStack {
+			entry := &m.drillStack[i]
+			if entry.runID == msg.runID {
+				m.showWorkflowRunRows(entry, msg.view)
+				continue
+			}
+			chats = append(chats, entry.chat)
+		}
+		// A run's node is found by its run, not its message: a fork copies
+		// the marker into other sessions under new message IDs.
+		for _, c := range chats {
+			for _, item := range c.MessageItems() {
+				if node, ok := item.(*chat.WorkflowRunMessageItem); ok && node.RunID() == msg.runID {
+					node.SetView(msg.view)
+					if m.workflowRunCommands == nil {
+						m.workflowRunCommands = map[string]string{}
+					}
+					m.workflowRunCommands[msg.runID] = node.Command()
 				}
-				m.workflowRunCommands[msg.runID] = node.Command()
 			}
 		}
 	}
+	if again {
+		return m.loadWorkflowRunView(msg.runID)
+	}
+	return nil
 }
 
 // showWorkflowRunRows lays the run's view out in its drill-in, keeping the
