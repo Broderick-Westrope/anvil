@@ -457,6 +457,12 @@ func (s *Service) writeMarker(ctx context.Context, runID string, inv Invocation)
 		if err != nil {
 			return err
 		}
+		// Creating the marker moved the session's leaf without announcing
+		// it; anyone holding the session (the UI) must see the new leaf, or
+		// what it writes next would branch off before the marker.
+		if err := s.deps.Sessions.MoveLeaf(ctx, inv.SessionID, marker.ID); err != nil {
+			return err
+		}
 		return s.deps.Store.SetMarker(ctx, runID, marker.ID)
 	})
 }

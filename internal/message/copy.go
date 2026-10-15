@@ -3,6 +3,7 @@ package message
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -99,33 +100,60 @@ func (s *service) trimUnfinishedExchange(path []db.Message) ([]db.Message, error
 	return path, nil
 }
 
-// remapPartIDs rewrites message IDs that parts refer to, returning raw
-// unchanged when nothing refers to a copied message, so parts this version
-// can't decode are copied as they are.
+// remapPartIDs rewrites message IDs that parts refer to. Only the parts
+// that refer to messages are decoded; every other part, including ones
+// this version doesn't know, is copied byte for byte.
 func remapPartIDs(raw string, ids map[string]string) (string, error) {
-	parts, err := unmarshalParts([]byte(raw))
-	if err != nil {
+	var wrapped []json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &wrapped); err != nil {
 		return "", err
 	}
 	changed := false
-	for i, part := range parts {
-		switch p := part.(type) {
-		case CompactionContent:
-			if to, ok := ids[p.FirstKeptEntryID]; ok {
-				p.FirstKeptEntryID = to
-				parts[i], changed = p, true
-			}
-		case BranchSummaryContent:
-			if to, ok := ids[p.FromID]; ok {
-				p.FromID = to
-				parts[i], changed = p, true
-			}
+	for i, w := range wrapped {
+		var part struct {
+			Type partType        `json:"type"`
+			Data json.RawMessage `json:"data"`
 		}
+		if err := json.Unmarshal(w, &part); err != nil {
+			return "", err
+		}
+		var remapped ContentPart
+		switch part.Type {
+		case compactionType:
+			var c CompactionContent
+			if err := json.Unmarshal(part.Data, &c); err != nil {
+				return "", err
+			}
+			to, ok := ids[c.FirstKeptEntryID]
+			if !ok {
+				continue
+			}
+			c.FirstKeptEntryID = to
+			remapped = c
+		case branchSummaryType:
+			var b BranchSummaryContent
+			if err := json.Unmarshal(part.Data, &b); err != nil {
+				return "", err
+			}
+			to, ok := ids[b.FromID]
+			if !ok {
+				continue
+			}
+			b.FromID = to
+			remapped = b
+		default:
+			continue
+		}
+		out, err := json.Marshal(partWrapper{Type: part.Type, Data: remapped})
+		if err != nil {
+			return "", fmt.Errorf("encode remapped part: %w", err)
+		}
+		wrapped[i], changed = out, true
 	}
 	if !changed {
 		return raw, nil
 	}
-	out, err := marshalParts(parts)
+	out, err := json.Marshal(wrapped)
 	if err != nil {
 		return "", fmt.Errorf("encode remapped parts: %w", err)
 	}

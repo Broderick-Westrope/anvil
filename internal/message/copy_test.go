@@ -114,3 +114,29 @@ func TestCopyBranchOfNothingCopiesNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, leaf)
 }
+
+func TestCopyBranchKeepsPartsItCantReadWhileRemappingReferences(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	kept := add(t, svc, source, "", message.User, message.TextContent{Text: "kept"})
+	compaction, err := svc.Create(t.Context(), source, message.CreateMessageParams{
+		Role: message.User, ParentMessageID: kept.ID, MessageType: message.MessageTypeCompaction,
+		Parts: []message.ContentPart{message.CompactionContent{Summary: "s", FirstKeptEntryID: kept.ID}},
+	})
+	require.NoError(t, err)
+	// A newer Anvil wrote a part this version doesn't know beside the
+	// compaction.
+	raw := `[{"type":"from_the_future","data":{"x":1}},{"type":"compaction","data":{"summary":"s","first_kept_entry_id":"` + kept.ID + `","tokens_before":0}}]`
+	require.NoError(t, q.UpdateMessage(t.Context(), db.UpdateMessageParams{ID: compaction.ID, Parts: raw}))
+
+	fork := newSession(t, q)
+	leaf, err := svc.CopyBranch(t.Context(), compaction.ID, fork)
+	require.NoError(t, err)
+	stored, err := q.GetMessage(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Contains(t, stored.Parts, `{"type":"from_the_future","data":{"x":1}}`, "the unknown part survives the copy")
+	copied, err := svc.GetBranchPath(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Equal(t, copied[0].ID, copied[1].Parts[0].(message.CompactionContent).FirstKeptEntryID)
+}

@@ -1356,3 +1356,24 @@ func leafOf(t *testing.T, h *serviceHarness, sessionID string) string {
 	require.NoError(t, err)
 	return s.LeafMessageID
 }
+
+func TestServiceAnnouncesTheInvokingSessionsNewLeaf(t *testing.T) {
+	h := newServiceHarness(t, true)
+	updates := h.fixture.Sessions.Subscribe(h.fixture.Context)
+	h.start(t, h.write(t, `function main() { return 1 }`), "")
+	done := h.next(t, workflowhost.EventFinished)
+	run, _, err := h.store.GetRun(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-updates:
+			if ev.Payload.ID == h.session && ev.Payload.LeafMessageID == run.MarkerMessageID {
+				return
+			}
+		case <-timeout:
+			t.Fatal("the invoking session's move to the marker was never announced")
+		}
+	}
+}
