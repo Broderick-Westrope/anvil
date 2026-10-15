@@ -213,7 +213,14 @@ type WorkflowRunRowItem struct {
 	line      func(width int) string
 	sessionID string
 	label     string
+	// conversational marks a builder row, whose session the user can talk
+	// to once they drill in.
+	conversational bool
 }
+
+// AgentDrillInConversational reports whether the row's session is one the
+// user can talk to.
+func (w *WorkflowRunRowItem) AgentDrillInConversational() bool { return w.conversational }
 
 // AgentDrillIn implements [AgentDrillInHandler].
 func (w *WorkflowRunRowItem) AgentDrillIn() string { return w.sessionID }
@@ -228,8 +235,8 @@ func (w *WorkflowRunRowItem) Finished() bool { return true }
 // session.
 func (w *WorkflowRunRowItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	if k := key.String(); (k == "right" || k == "l" || k == "enter") && w.sessionID != "" {
-		sessionID, label := w.sessionID, w.label
-		return true, func() tea.Msg { return util.AgentDrillInMsg{SessionID: sessionID, Label: label} }
+		msg := util.AgentDrillInMsg{SessionID: w.sessionID, Label: w.label, Conversational: w.conversational}
+		return true, func() tea.Msg { return msg }
 	}
 	return false, nil
 }
@@ -245,13 +252,15 @@ func (w *WorkflowRunRowItem) Render(width int) string { return w.render(width, w
 // in it.
 func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost.RunView) []MessageItem {
 	var rows []MessageItem
-	add := func(id, sessionID, label string, line func(width int) string) {
-		rows = append(rows, &WorkflowRunRowItem{
+	add := func(id, sessionID, label string, line func(width int) string) *WorkflowRunRowItem {
+		row := &WorkflowRunRowItem{
 			workflowRunItem: newWorkflowRunItem(sty, id),
 			line:            line,
 			sessionID:       sessionID,
 			label:           label,
-		})
+		}
+		rows = append(rows, row)
+		return row
 	}
 	add("header", "", "", func(width int) string {
 		title := sty.Messages.WorkflowTag.Render("Workflow") + " " + sty.Messages.WorkflowTitle.Render("/"+command)
@@ -277,9 +286,10 @@ func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost
 		for i, item := range phase.Items {
 			id := fmt.Sprintf("item-%d-%d", p, i)
 			name := workflowRunItemName(command, item)
-			add(id, item.SessionID, name, func(width int) string {
+			row := add(id, item.SessionID, name, func(width int) string {
 				return ansi.Truncate("  "+workflowRunItemLine(sty, name, item), width, "…")
 			})
+			row.conversational = item.Kind == workflowhost.RunItemSession
 		}
 	}
 	return rows

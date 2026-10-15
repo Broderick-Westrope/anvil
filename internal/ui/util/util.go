@@ -76,6 +76,9 @@ type (
 	AgentDrillInMsg struct {
 		SessionID string
 		Label     string
+		// Conversational marks a session the user can talk to, such as a
+		// workflow's builder, so the editor sends to it.
+		Conversational bool
 	}
 
 	// WorkflowRunDrillInMsg requests the UI to drill into a workflow run's

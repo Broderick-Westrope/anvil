@@ -262,3 +262,103 @@ func TestWorkflowRunNodeShowsTheRunsTotalCost(t *testing.T) {
 
 	require.Contains(t, ansi.Strip(f.node(t).Render(120)), "round 1/5 · running · $0.42")
 }
+
+// drillIntoBuilder opens the run view and then the builder's session, the
+// way the user would.
+func (f *workflowFixture) drillIntoBuilder(t *testing.T) {
+	t.Helper()
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+	f.run(cmd)
+	view := f.u.drillStack[0].chat
+	view.Focus()
+	view.SetSelected(2)
+	f.u.focus = uiFocusMain
+	f.press(tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Len(t, f.u.drillStack, 2)
+	require.True(t, f.u.drillStack[1].conversational)
+}
+
+func (f *workflowFixture) typeAndSend(t *testing.T, text string) {
+	t.Helper()
+	f.press(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Equal(t, uiFocusEditor, f.u.focus, "the editor takes focus")
+	f.u.textarea.SetValue(text)
+	f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
+}
+
+func TestTypingInADrilledInBuilderSendsToTheBuilder(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	require.True(t, f.u.composeTarget().shown, "a builder can be talked to")
+
+	f.typeAndSend(t, "use the shared analytics hook")
+	require.Equal(t, []string{"use the shared analytics hook"}, f.ws.runs)
+	require.Equal(t, []string{"sess-2"}, f.ws.runSessions)
+	require.Equal(t, "sess-2", f.u.currentComposerSignal().sessionID, "background job wakes treat the builder as the open session")
+}
+
+func TestASubagentSessionStaysReadOnly(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+	f.run(cmd)
+	view := f.u.drillStack[0].chat
+	view.Focus()
+	view.SetSelected(4)
+	f.u.focus = uiFocusMain
+	f.press(tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Len(t, f.u.drillStack, 2)
+
+	require.False(t, f.u.composeTarget().shown)
+	f.press(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Equal(t, uiFocusMain, f.u.focus)
+	require.Empty(t, f.u.currentComposerSignal().sessionID)
+}
+
+func TestNothingIsSentToABuilderThatHasntLoaded(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.drillStack = append(f.u.drillStack, drillInEntry{sessionID: "sess-2", chat: NewChat(f.u.com), conversational: true})
+	f.u.updateLayoutAndSize()
+
+	infos := f.run(f.u.sendMessage("hello"))
+	require.Empty(t, f.ws.runs)
+	require.Len(t, infos, 1)
+	require.Contains(t, infos[0].Msg, "still loading")
+}
+
+func TestDraftsStayWithTheSessionTheyWereTypedFor(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.textarea.SetValue("for my own session")
+	f.drillIntoBuilder(t)
+	require.Empty(t, f.u.textarea.Value(), "the root draft isn't shown to the builder")
+
+	f.u.textarea.SetValue("for the builder")
+	f.u.focus = uiFocusMain
+	f.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	require.Equal(t, "", f.u.textarea.Value(), "the run view has no editor")
+	f.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	require.Equal(t, "for my own session", f.u.textarea.Value())
+}
+
+func TestCommandsArentRunFromABuilder(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	f.typeAndSend(t, "/demo again")
+
+	require.Empty(t, f.ws.starts)
+	require.Empty(t, f.ws.runs)
+	require.Equal(t, "/demo again", f.u.textarea.Value())
+}

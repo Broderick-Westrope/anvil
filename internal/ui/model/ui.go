@@ -340,6 +340,10 @@ type UI struct {
 	workflows map[string]*workflowRun
 	// workflowTitles caches the titles of sessions workflows drive.
 	workflowTitles map[string]string
+	// drafts keeps unsent editor text per session while the editor targets
+	// another one; composeFor is the session the editor last targeted.
+	drafts     map[string]string
+	composeFor string
 	// workflowRunLoads tracks run views being loaded: one load per run at a
 	// time, and true when the run changed during it and needs another.
 	workflowRunLoads map[string]bool
@@ -413,6 +417,9 @@ type drillInEntry struct {
 	session   *session.Session // cached session for sidebar stats
 	toolView  *ToolDetailView  // non-nil when this entry is a tool drill-in
 	runID     string           // workflow run shown, when this entry is a run view
+	// conversational marks a session the user can talk to (a workflow
+	// run's builder), so the editor is shown and sends to it.
+	conversational bool
 }
 
 // ToolDetailView tracks the source tool item for a tool drill-in.
@@ -743,6 +750,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.trackRecoverySession()
 	defer m.syncComposerState()
+	defer m.syncDraft()
 	var cmds []tea.Cmd
 	if m.hasSession() && m.isAgentBusy() {
 		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
@@ -1424,9 +1432,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newChat.SetFollow(true)
 		newChat.Focus()
 		m.drillStack = append(m.drillStack, drillInEntry{
-			sessionID: msg.SessionID,
-			chat:      newChat,
-			label:     msg.Label,
+			sessionID:      msg.SessionID,
+			chat:           newChat,
+			label:          msg.Label,
+			conversational: msg.Conversational,
 		})
 		// Disable the editor while viewing a subagent.
 		m.textarea.Blur()
@@ -3078,8 +3087,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		switch m.focus {
 		case uiFocusEditor:
 			// Redirect to main focus when viewing a subagent — the editor is
-			// disabled while drilled in.
-			if m.isDrilledIn() {
+			// only shown for sessions the user can talk to.
+			if !m.composeTarget().shown {
 				m.focus = uiFocusMain
 				break
 			}
@@ -3243,6 +3252,14 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					return m.openQuitDialog()
 				}
 
+				// Commands act on the user's own session, so they aren't
+				// run from a drilled-in builder; the text stays put.
+				if strings.HasPrefix(value, "/") && m.composeTarget().drilled {
+					m.textarea.SetValue(value)
+					cmds = append(cmds, util.ReportWarn("Commands run in your own session; go back to it to run "+strings.Fields(value)[0]))
+					return tea.Batch(cmds...)
+				}
+
 				// Handled before the slash-command path, which drops
 				// attachments, so a refused or cancelled reload keeps them.
 				if value == "/"+reloadInstanceCommand {
@@ -3404,7 +3421,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			switch {
 			case key.Matches(msg, m.keyMap.Tab):
 				// Do not focus the editor while drilled into a subagent.
-				if m.isDrilledIn() {
+				if !m.composeTarget().shown {
 					break
 				}
 				m.focus = uiFocusEditor
@@ -4227,7 +4244,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	// When drilled into a subagent, the editor is hidden (height = 0) so the
 	// main area can use all available vertical space.
 	editorHeight := m.textarea.Height() + editorHeightMargin
-	if m.isDrilledIn() {
+	if !m.composeTarget().shown {
 		editorHeight = 0
 	}
 	// The sidebar width
@@ -4890,28 +4907,39 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		return util.ReportError(fmt.Errorf("orchestrator agent is not initialized"))
 	}
 
-	if m.pendingBranch != nil {
-		m.branchReturn = m.pendingBranch
-		m.pendingBranch = nil
-	}
-
-	loadCmd, err := m.ensureSession()
-	if err != nil {
-		return util.ReportError(err)
-	}
-	cmds := []tea.Cmd{loadCmd}
-
-	ctx := context.Background()
-	cmds = append(cmds, func() tea.Msg {
-		for _, path := range m.sessionFileReads {
-			m.com.Workspace.FileTrackerRecordRead(ctx, m.session.ID, path)
-			m.com.Workspace.LSPStart(ctx, path)
+	var cmds []tea.Cmd
+	var sessionID string
+	if target := m.composeTarget(); target.drilled {
+		// Talking to a drilled-in builder: it's an existing session, and the
+		// root session's branch and file reads have nothing to do with it.
+		if target.session == nil {
+			return util.ReportWarn("The session is still loading; try again in a moment")
 		}
-		return nil
-	})
+		sessionID = target.session.ID
+	} else {
+		if m.pendingBranch != nil {
+			m.branchReturn = m.pendingBranch
+			m.pendingBranch = nil
+		}
 
-	// Capture session ID to avoid race with main goroutine updating m.session.
-	sessionID := m.session.ID
+		loadCmd, err := m.ensureSession()
+		if err != nil {
+			return util.ReportError(err)
+		}
+		cmds = append(cmds, loadCmd)
+
+		ctx := context.Background()
+		cmds = append(cmds, func() tea.Msg {
+			for _, path := range m.sessionFileReads {
+				m.com.Workspace.FileTrackerRecordRead(ctx, m.session.ID, path)
+				m.com.Workspace.LSPStart(ctx, path)
+			}
+			return nil
+		})
+
+		// Capture session ID to avoid race with main goroutine updating m.session.
+		sessionID = m.session.ID
+	}
 	cmds = append(cmds, m.trackSend(func() tea.Msg {
 		err := m.com.Workspace.AgentRun(context.Background(), sessionID, content, attachments...)
 		if err != nil {
@@ -4964,7 +4992,8 @@ func cancelTimerCmd() tea.Cmd {
 // and starts a timer. The second press (before the timer expires) actually
 // cancels the agent.
 func (m *UI) cancelAgent() tea.Cmd {
-	if !m.hasSession() {
+	sessionID := m.composeTargetID()
+	if sessionID == "" {
 		return nil
 	}
 
@@ -4975,7 +5004,7 @@ func (m *UI) cancelAgent() tea.Cmd {
 	if m.isCanceling {
 		// Second escape press - actually cancel the agent.
 		m.isCanceling = false
-		m.com.Workspace.AgentCancel(m.session.ID)
+		m.com.Workspace.AgentCancel(sessionID)
 		// Stop the spinning todo indicator.
 		m.todoIsSpinning = false
 		m.renderPills()
@@ -4983,8 +5012,8 @@ func (m *UI) cancelAgent() tea.Cmd {
 	}
 
 	// Check if there are queued prompts - if so, clear the queue.
-	if m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
-		m.com.Workspace.AgentClearQueue(m.session.ID)
+	if m.com.Workspace.AgentQueuedPrompts(sessionID) > 0 {
+		m.com.Workspace.AgentClearQueue(sessionID)
 		return nil
 	}
 

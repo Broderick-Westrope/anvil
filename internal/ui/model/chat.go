@@ -870,13 +870,11 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 	if driller, ok := selectedItem.(chat.AgentDrillInHandler); ok {
 		sessionID := driller.AgentDrillIn()
 		if sessionID != "" {
-			cmd := func() tea.Msg {
-				return util.AgentDrillInMsg{
-					SessionID: sessionID,
-					Label:     driller.AgentDrillInLabel(),
-				}
+			msg := util.AgentDrillInMsg{SessionID: sessionID, Label: driller.AgentDrillInLabel()}
+			if c, ok := selectedItem.(interface{ AgentDrillInConversational() bool }); ok {
+				msg.Conversational = c.AgentDrillInConversational()
 			}
-			return true, cmd
+			return true, func() tea.Msg { return msg }
 		}
 	}
 

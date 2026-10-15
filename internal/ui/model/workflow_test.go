@@ -34,6 +34,8 @@ type workflowWorkspace struct {
 	sessions map[string]session.Session
 	created  []string
 	runs     []string
+	// runSessions is the session each of runs was sent to.
+	runSessions []string
 
 	starts     []workflowhost.Invocation
 	startErr   error
@@ -110,8 +112,9 @@ func (w *workflowWorkspace) CreateSession(_ context.Context, title string) (sess
 	return s, nil
 }
 
-func (w *workflowWorkspace) AgentRun(_ context.Context, _ string, prompt string, _ ...message.Attachment) error {
+func (w *workflowWorkspace) AgentRun(_ context.Context, sessionID string, prompt string, _ ...message.Attachment) error {
 	w.runs = append(w.runs, prompt)
+	w.runSessions = append(w.runSessions, sessionID)
 	return nil
 }
 
@@ -188,7 +191,7 @@ func (f *workflowFixture) run(cmd tea.Cmd) []util.InfoMsg {
 		case util.InfoMsg:
 			infos = append(infos, msg)
 		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg, util.AgentDrillInMsg,
-			util.WorkflowRunDrillInMsg, workflowRunViewLoadedMsg:
+			util.WorkflowRunDrillInMsg, workflowRunViewLoadedMsg, agentDrillInSessionLoadedMsg:
 			_, next := f.u.Update(msg)
 			queue = append(queue, cmdMsgs(next)...)
 		}

@@ -11,7 +11,8 @@ type composerSignal struct {
 // currentComposerSignal derives the composer state to report from the
 // UI. The zero value means no session is open.
 func (m *UI) currentComposerSignal() composerSignal {
-	if !m.hasSession() || m.composerClosed {
+	target := m.composeTargetID()
+	if target == "" || m.composerClosed {
 		return composerSignal{}
 	}
 	hasDraft := m.textarea.Value() != ""
@@ -19,7 +20,7 @@ func (m *UI) currentComposerSignal() composerSignal {
 		hasDraft = true
 	}
 	return composerSignal{
-		sessionID:  m.session.ID,
+		sessionID:  target,
 		hasDraft:   hasDraft,
 		navigating: m.navigating,
 	}
