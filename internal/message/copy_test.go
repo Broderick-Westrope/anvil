@@ -40,7 +40,7 @@ func TestCopyBranchCopiesTheBranchIntoAnotherSession(t *testing.T) {
 	u2 := add(t, svc, source, compaction.ID, message.User, message.TextContent{Text: "build it"})
 
 	fork := newSession(t, q)
-	leaf, err := svc.CopyBranch(t.Context(), u2.ID, fork)
+	leaf, _, err := svc.CopyBranch(t.Context(), u2.ID, fork)
 	require.NoError(t, err)
 
 	copied, err := svc.GetBranchPath(t.Context(), leaf)
@@ -96,12 +96,13 @@ func TestCopyBranchLeavesOutAnExchangeItEndsInTheMiddleOf(t *testing.T) {
 			tip := unfinished(svc, source, u.ID)
 
 			fork := newSession(t, q)
-			leaf, err := svc.CopyBranch(t.Context(), tip.ID, fork)
+			leaf, end, err := svc.CopyBranch(t.Context(), tip.ID, fork)
 			require.NoError(t, err)
 			copied, err := svc.GetBranchPath(t.Context(), leaf)
 			require.NoError(t, err)
 			require.Len(t, copied, 1)
 			require.Equal(t, message.User, copied[0].Role)
+			require.Equal(t, u.ID, end, "the copy ends at the last message it kept, not the one asked for")
 		})
 	}
 }
@@ -110,7 +111,7 @@ func TestCopyBranchOfNothingCopiesNothing(t *testing.T) {
 	t.Parallel()
 
 	svc, q, _ := newTestService(t)
-	leaf, err := svc.CopyBranch(t.Context(), "", newSession(t, q))
+	leaf, _, err := svc.CopyBranch(t.Context(), "", newSession(t, q))
 	require.NoError(t, err)
 	require.Empty(t, leaf)
 }
@@ -131,7 +132,7 @@ func TestCopyBranchKeepsPartsItCantReadWhileRemappingReferences(t *testing.T) {
 	require.NoError(t, q.UpdateMessage(t.Context(), db.UpdateMessageParams{ID: compaction.ID, Parts: raw}))
 
 	fork := newSession(t, q)
-	leaf, err := svc.CopyBranch(t.Context(), compaction.ID, fork)
+	leaf, _, err := svc.CopyBranch(t.Context(), compaction.ID, fork)
 	require.NoError(t, err)
 	stored, err := q.GetMessage(t.Context(), leaf)
 	require.NoError(t, err)
@@ -162,7 +163,7 @@ func TestCopyBranchLooksPastMetadataForAnUnfinishedExchange(t *testing.T) {
 			require.NoError(t, err)
 
 			fork := newSession(t, q)
-			leaf, err := svc.CopyBranch(t.Context(), meta.ID, fork)
+			leaf, _, err := svc.CopyBranch(t.Context(), meta.ID, fork)
 			require.NoError(t, err)
 			copied, err := svc.GetBranchPath(t.Context(), leaf)
 			require.NoError(t, err)
@@ -184,7 +185,7 @@ func TestCopyBranchKeepsMetadataAfterAFinishedExchange(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	leaf, err := svc.CopyBranch(t.Context(), meta.ID, newSession(t, q))
+	leaf, _, err := svc.CopyBranch(t.Context(), meta.ID, newSession(t, q))
 	require.NoError(t, err)
 	copied, err := svc.GetBranchPath(t.Context(), leaf)
 	require.NoError(t, err)

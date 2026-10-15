@@ -17,15 +17,15 @@ import (
 // parts refer to (a compaction's first kept entry, a branch summary's
 // origin) follow them. An exchange the branch ends in the middle of (an
 // unfinished reply, or tool calls without results) is left out, so the
-// copy never starts mid-exchange. It returns the copy's leaf, or "" when
-// nothing was copied.
-func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (string, error) {
+// copy never starts mid-exchange. It returns the copy's leaf and the
+// source message the copy ends at, both "" when nothing was copied.
+func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (copyLeaf, sourceEnd string, err error) {
 	if leafID == "" {
-		return "", nil
+		return "", "", nil
 	}
 	rows, err := s.q.GetBranchPath(ctx, leafID)
 	if err != nil {
-		return "", fmt.Errorf("read branch ending at %s: %w", leafID, err)
+		return "", "", fmt.Errorf("read branch ending at %s: %w", leafID, err)
 	}
 	path := make([]db.Message, len(rows))
 	for i, row := range rows {
@@ -33,7 +33,7 @@ func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (str
 	}
 	path, err = s.trimUnfinishedExchange(path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	ids := make(map[string]string, len(path))
@@ -42,7 +42,7 @@ func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (str
 	}
 	tx, err := s.conn.BeginTx(ctx, nil)
 	if err != nil {
-		return "", fmt.Errorf("begin copy: %w", err)
+		return "", "", fmt.Errorf("begin copy: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 	qtx := db.New(tx)
@@ -50,7 +50,7 @@ func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (str
 	for _, m := range path {
 		parts, err := remapPartIDs(m.Parts, ids)
 		if err != nil {
-			return "", fmt.Errorf("copy message %s: %w", m.ID, err)
+			return "", "", fmt.Errorf("copy message %s: %w", m.ID, err)
 		}
 		if err := qtx.CopyMessage(ctx, db.CopyMessageParams{
 			ID:              ids[m.ID],
@@ -65,7 +65,7 @@ func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (str
 			UpdatedAt:       m.UpdatedAt,
 			FinishedAt:      m.FinishedAt,
 		}); err != nil {
-			return "", fmt.Errorf("copy message %s: %w", m.ID, err)
+			return "", "", fmt.Errorf("copy message %s: %w", m.ID, err)
 		}
 		parent = ids[m.ID]
 	}
@@ -73,12 +73,15 @@ func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (str
 		ID:     toSession,
 		LeafID: sql.NullString{String: parent, Valid: parent != ""},
 	}); err != nil {
-		return "", fmt.Errorf("set leaf of copy: %w", err)
+		return "", "", fmt.Errorf("set leaf of copy: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("commit copy: %w", err)
+		return "", "", fmt.Errorf("commit copy: %w", err)
 	}
-	return parent, nil
+	if len(path) > 0 {
+		sourceEnd = path[len(path)-1].ID
+	}
+	return parent, sourceEnd, nil
 }
 
 // trimUnfinishedExchange drops an exchange the conversation ends in the

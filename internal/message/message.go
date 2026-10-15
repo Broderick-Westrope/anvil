@@ -57,8 +57,8 @@ type Service interface {
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	GetBranchPath(ctx context.Context, leafMessageID string) ([]Message, error)
 	// CopyBranch copies the branch ending at leafID into toSession and
-	// returns the copy's leaf.
-	CopyBranch(ctx context.Context, leafID, toSession string) (string, error)
+	// returns the copy's leaf and the source message the copy ends at.
+	CopyBranch(ctx context.Context, leafID, toSession string) (copyLeaf, sourceEnd string, err error)
 	GetBranchPathTail(ctx context.Context, leafMessageID string, limit int64) ([]Message, error)
 	GetChildren(ctx context.Context, messageID string) ([]Message, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)

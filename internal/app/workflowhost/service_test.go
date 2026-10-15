@@ -1411,3 +1411,49 @@ func TestMetadataWaitsForTheTurnInFlightAndFollowsIt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "still talking", reply.Content().Text, "the metadata follows the turn's reply on the same branch")
 }
+
+// brokenCopies can't copy a conversation.
+type brokenCopies struct{ message.Service }
+
+func (brokenCopies) CopyBranch(context.Context, string, string) (string, string, error) {
+	return "", "", errors.New("disk full")
+}
+
+func TestServiceRemovesAForkItCouldntFill(t *testing.T) {
+	h := newServiceHarness(t, true, func(d *workflowhost.Deps) { d.Messages = brokenCopies{d.Messages} })
+	_, err := h.fixture.Messages.Create(h.fixture.Context, h.session, message.CreateMessageParams{
+		Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "hello"}},
+	})
+	require.NoError(t, err)
+	h.start(t, h.write(t, `function main() { try { session.current().fork() } catch (e) { return e.message } }`), "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+	require.Contains(t, string(done.Result), "disk full")
+
+	sessions, err := h.fixture.Sessions.ListByWorkflowRun(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+	require.Empty(t, sessions, "no half-made fork is left behind")
+}
+
+func TestDeletingTheInvokingSessionDeletesWhatItsRunsMade(t *testing.T) {
+	h := newServiceHarness(t, true)
+	ctx := h.fixture.Context
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "sub"})
+	_, err := h.fixture.Messages.Create(ctx, h.session, message.CreateMessageParams{
+		Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "private"}},
+	})
+	require.NoError(t, err)
+	h.start(t, h.write(t, `requires({agents: ["reviewer"]})
+function main() { session.current().fork(); agent("reviewer", "look") }`), "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+	owned, err := h.fixture.Sessions.ListByWorkflowRun(ctx, done.RunID)
+	require.NoError(t, err)
+	require.Len(t, owned, 2)
+
+	require.NoError(t, h.fixture.Sessions.Delete(ctx, h.session))
+	for _, s := range owned {
+		_, err := h.fixture.Sessions.Get(ctx, s.ID)
+		require.Error(t, err, "%s outlived the session it was made from", s.Title)
+	}
+}

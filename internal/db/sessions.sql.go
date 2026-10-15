@@ -400,6 +400,35 @@ func (q *Queries) ListSessionsByWorkingDir(ctx context.Context, workingDir strin
 	return items, nil
 }
 
+const listWorkflowChildSessionIDs = `-- name: ListWorkflowChildSessionIDs :many
+SELECT id
+FROM sessions
+WHERE parent_session_id = ? AND workflow_run_id != ''
+`
+
+func (q *Queries) ListWorkflowChildSessionIDs(ctx context.Context, parentSessionID sql.NullString) ([]string, error) {
+	rows, err := q.query(ctx, q.listWorkflowChildSessionIDsStmt, listWorkflowChildSessionIDs, parentSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const renameSession = `-- name: RenameSession :exec
 UPDATE sessions
 SET

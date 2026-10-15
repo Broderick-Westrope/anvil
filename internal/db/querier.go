@@ -66,6 +66,7 @@ type Querier interface {
 	ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]ListUndeliveredBackgroundJobEventsRow, error)
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
+	ListWorkflowChildSessionIDs(ctx context.Context, parentSessionID sql.NullString) ([]string, error)
 	ListWorkflowEvents(ctx context.Context, runID string) ([]WorkflowEvent, error)
 	MarkBackgroundJobLogExpired(ctx context.Context, arg MarkBackgroundJobLogExpiredParams) error
 	MarkBackgroundJobsInterrupted(ctx context.Context, arg MarkBackgroundJobsInterruptedParams) error

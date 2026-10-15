@@ -224,6 +224,19 @@ func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string
 }
 
 func (s *service) Delete(ctx context.Context, id string) error {
+	// Sessions a workflow run made from this one (builders, which hold a
+	// copy of its conversation, and subagents) are reached only through
+	// it, so they go with it.
+	children, err := s.q.ListWorkflowChildSessionIDs(ctx, sql.NullString{String: id, Valid: true})
+	if err != nil {
+		return fmt.Errorf("listing workflow sessions of %s: %w", id, err)
+	}
+	for _, child := range children {
+		if err := s.Delete(ctx, child); err != nil {
+			return fmt.Errorf("deleting workflow session %s: %w", child, err)
+		}
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)

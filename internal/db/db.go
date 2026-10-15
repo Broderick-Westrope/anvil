@@ -189,6 +189,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listUserMessagesByWorkingDirStmt, err = db.PrepareContext(ctx, listUserMessagesByWorkingDir); err != nil {
 		return nil, fmt.Errorf("error preparing query ListUserMessagesByWorkingDir: %w", err)
 	}
+	if q.listWorkflowChildSessionIDsStmt, err = db.PrepareContext(ctx, listWorkflowChildSessionIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query ListWorkflowChildSessionIDs: %w", err)
+	}
 	if q.listWorkflowEventsStmt, err = db.PrepareContext(ctx, listWorkflowEvents); err != nil {
 		return nil, fmt.Errorf("error preparing query ListWorkflowEvents: %w", err)
 	}
@@ -532,6 +535,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listUserMessagesByWorkingDirStmt: %w", cerr)
 		}
 	}
+	if q.listWorkflowChildSessionIDsStmt != nil {
+		if cerr := q.listWorkflowChildSessionIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listWorkflowChildSessionIDsStmt: %w", cerr)
+		}
+	}
 	if q.listWorkflowEventsStmt != nil {
 		if cerr := q.listWorkflowEventsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listWorkflowEventsStmt: %w", cerr)
@@ -731,6 +739,7 @@ type Queries struct {
 	listUndeliveredBackgroundJobEventsStmt      *sql.Stmt
 	listUserMessagesBySessionStmt               *sql.Stmt
 	listUserMessagesByWorkingDirStmt            *sql.Stmt
+	listWorkflowChildSessionIDsStmt             *sql.Stmt
 	listWorkflowEventsStmt                      *sql.Stmt
 	markBackgroundJobLogExpiredStmt             *sql.Stmt
 	markBackgroundJobsInterruptedStmt           *sql.Stmt
@@ -813,6 +822,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listUndeliveredBackgroundJobEventsStmt:      q.listUndeliveredBackgroundJobEventsStmt,
 		listUserMessagesBySessionStmt:               q.listUserMessagesBySessionStmt,
 		listUserMessagesByWorkingDirStmt:            q.listUserMessagesByWorkingDirStmt,
+		listWorkflowChildSessionIDsStmt:             q.listWorkflowChildSessionIDsStmt,
 		listWorkflowEventsStmt:                      q.listWorkflowEventsStmt,
 		markBackgroundJobLogExpiredStmt:             q.markBackgroundJobLogExpiredStmt,
 		markBackgroundJobsInterruptedStmt:           q.markBackgroundJobsInterruptedStmt,

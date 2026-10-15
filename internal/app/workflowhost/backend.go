@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 
@@ -95,20 +96,19 @@ func (b *backend) Fork(ctx context.Context, call workflow.ForkCall) (string, err
 			if err != nil {
 				return "", err
 			}
-			_, err = b.svc.deps.Messages.CopyBranch(ctx, leaf, forkID)
-			return leaf, err
+			_, end, err := b.svc.deps.Messages.CopyBranch(ctx, leaf, forkID)
+			return end, err
 		}
-		var leaf string
+		var end string
 		err := b.svc.deps.Coordinator.RunInSession(ctx, call.Source, func(ctx context.Context) error {
 			source, err := b.svc.deps.Sessions.Get(ctx, call.Source)
 			if err != nil {
 				return err
 			}
-			leaf = source.LeafMessageID
-			_, err = b.svc.deps.Messages.CopyBranch(ctx, leaf, forkID)
+			_, end, err = b.svc.deps.Messages.CopyBranch(ctx, source.LeafMessageID, forkID)
 			return err
 		})
-		return leaf, err
+		return end, err
 	})
 }
 
@@ -129,12 +129,14 @@ func (b *backend) startBoundary(ctx context.Context) (string, error) {
 	return marker.ParentMessageID, nil
 }
 
-// ownedSession creates an orchestrator session the run owns, lets fill
-// give it history (returning the source message the history ends at, if
-// any), then records it as the run's. It's a child of the session that
-// started the run, so it stays out of the session list and is reached
-// through the run's node.
-func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, fill func(sessionID string) (string, error)) (string, error) {
+// ownedSession creates an orchestrator session the run owns and lets fill
+// give it history, returning the source message the history ends at, if
+// any. It's a child of the session that started the run, so it stays out of
+// the session list and is reached through the run's node. It's recorded as
+// the run's before anything goes into it, and deleted if it can't be
+// finished, so a failure never leaves a copy of a conversation nobody can
+// reach.
+func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, fill func(sessionID string) (string, error)) (id string, err error) {
 	// A title the script chose is kept; without one, the session starts as
 	// "/cmd" and is auto-titled after its first turn like any session.
 	title := call.Title
@@ -146,19 +148,30 @@ func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, f
 	if err != nil {
 		return "", err
 	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if derr := b.svc.deps.Sessions.Delete(context.WithoutCancel(ctx), s.ID); derr != nil {
+			slog.Warn("Failed to remove an unfinished workflow session", "session", s.ID, "error", derr)
+		}
+	}()
+	owner := session.WorkflowOwner{RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindSession}
+	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, owner); err != nil {
+		return "", err
+	}
 	if chosen {
 		if err := b.svc.deps.Sessions.Rename(ctx, s.ID, title, true); err != nil {
 			return "", fmt.Errorf("keep session title: %w", err)
 		}
 	}
-	forkedFrom, err := fill(s.ID)
-	if err != nil {
+	if owner.ForkedFrom, err = fill(s.ID); err != nil {
 		return "", fmt.Errorf("copy history into session: %w", err)
 	}
-	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, session.WorkflowOwner{
-		RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindSession, ForkedFrom: forkedFrom,
-	}); err != nil {
-		return "", err
+	if owner.ForkedFrom != "" {
+		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, owner); err != nil {
+			return "", err
+		}
 	}
 	return s.ID, nil
 }
@@ -201,6 +214,8 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 			RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindAgent,
 		}); err != nil {
 			stop(fmt.Errorf("record subagent session: %w", err))
+			ended.Session = sessionID
+			return
 		}
 		started := ended
 		started.Session, started.Status = sessionID, StatusRunning
