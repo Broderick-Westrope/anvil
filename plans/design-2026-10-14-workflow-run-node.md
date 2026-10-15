@@ -385,6 +385,22 @@ and is hard to reverse.
 run-owned session links. They don't get a node; their sessions stay where
 they are. The engine is beta, so no backfill.
 
+**As built:**
+- Slash commands typed to a builder are refused, not retargeted: every
+  command acts on the user's own session, so the refusal says to go back
+  to it. Retargeting commands one by one wasn't worth it for v1.
+- The run view doesn't show "holding sessions": `/build` no longer uses
+  `workflow.exclusive`, and the hold isn't recorded.
+- `s.fork()` of a run's session inside `workflow.exclusive` throws, since
+  the fork waits for the held session to settle.
+- Each fork records the source message its copy ends at
+  (`sessions.forked_from_message_id`), for replay.
+- Rollout: the commit that skips unknown message parts ships first. The
+  engine and `/build` must move together: an old `/build` on the new
+  engine fails on its first turn (the invoking session refuses turns), and
+  the new `/build` on an old engine fails on `fork`, both before doing any
+  work and with a clear error; `/build-prose` covers the gap.
+
 **Open Questions:**
 - Should the node show "waiting for you" with the question's first line
   while an `ask()` is pending, so you can find it after dismissing a
