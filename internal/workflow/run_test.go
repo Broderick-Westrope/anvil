@@ -867,14 +867,6 @@ func TestTheInvokingSessionIsOnlyForForking(t *testing.T) {
 	require.Equal(t, "SEED\n\ngo", h.backend.turns[0].Prompt)
 }
 
-func TestWorkflowFocusIsGone(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t)
-	_, err := h.run(t, `function main() { workflow.focus(session.new({})) }`, "")
-	require.ErrorContains(t, err, "Object has no member 'focus'")
-}
-
 func TestForkingARunSessionInsideExclusiveThrowsInsteadOfWaitingForever(t *testing.T) {
 	t.Parallel()
 

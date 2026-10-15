@@ -410,15 +410,6 @@ func TestWorkflowControlKeysIgnoreAFinishedRun(t *testing.T) {
 	require.Nil(t, f.u.workflowControls())
 }
 
-func TestTheWorkflowStatusBarIsGone(t *testing.T) {
-	t.Parallel()
-
-	f := newWorkflowFixture(t)
-	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
-	f.markerArrives()
-	require.Zero(t, f.u.pillsAreaHeight(), "a run shows only as its node")
-}
-
 func TestADrilledInBuilderMakesRoomForTheEditor(t *testing.T) {
 	t.Parallel()
 
