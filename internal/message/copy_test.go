@@ -140,3 +140,54 @@ func TestCopyBranchKeepsPartsItCantReadWhileRemappingReferences(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, copied[0].ID, copied[1].Parts[0].(message.CompactionContent).FirstKeptEntryID)
 }
+
+func TestCopyBranchLooksPastMetadataForAnUnfinishedExchange(t *testing.T) {
+	t.Parallel()
+
+	metadata := map[string]message.CreateMessageParams{
+		"model change": {Role: message.System, MessageType: message.MessageTypeModelChange, Parts: []message.ContentPart{message.ModelChangeContent{ModelID: "m"}}},
+		"mcp toggle":   {Role: message.System, MessageType: message.MessageTypeMCPToggle, Parts: []message.ContentPart{message.MCPToggleContent{ServerName: "s"}}},
+		"marker":       {Role: message.System, MessageType: message.MessageTypeWorkflowRun, Parts: []message.ContentPart{message.WorkflowRunContent{RunID: "r"}}},
+	}
+	for name, params := range metadata {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			svc, q, source := newTestService(t)
+			u := add(t, svc, source, "", message.User, message.TextContent{Text: "hello"})
+			call := add(t, svc, source, u.ID, message.Assistant,
+				message.ToolCall{ID: "c1", Name: "view", Input: "{}", Finished: true}, message.Finish{Reason: message.FinishReasonToolUse})
+			params.ParentMessageID = call.ID
+			meta, err := svc.Create(t.Context(), source, params)
+			require.NoError(t, err)
+
+			fork := newSession(t, q)
+			leaf, err := svc.CopyBranch(t.Context(), meta.ID, fork)
+			require.NoError(t, err)
+			copied, err := svc.GetBranchPath(t.Context(), leaf)
+			require.NoError(t, err)
+			require.Len(t, copied, 1, "the unanswered tool call and the metadata after it are left out")
+			require.Equal(t, message.User, copied[0].Role)
+		})
+	}
+}
+
+func TestCopyBranchKeepsMetadataAfterAFinishedExchange(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	u := add(t, svc, source, "", message.User, message.TextContent{Text: "hello"})
+	reply := add(t, svc, source, u.ID, message.Assistant, message.TextContent{Text: "hi"}, message.Finish{Reason: message.FinishReasonEndTurn})
+	meta, err := svc.Create(t.Context(), source, message.CreateMessageParams{
+		Role: message.System, ParentMessageID: reply.ID, MessageType: message.MessageTypeModelChange,
+		Parts: []message.ContentPart{message.ModelChangeContent{ModelID: "m"}},
+	})
+	require.NoError(t, err)
+
+	leaf, err := svc.CopyBranch(t.Context(), meta.ID, newSession(t, q))
+	require.NoError(t, err)
+	copied, err := svc.GetBranchPath(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Len(t, copied, 3)
+	require.Equal(t, message.MessageTypeModelChange, copied[2].MessageType)
+}

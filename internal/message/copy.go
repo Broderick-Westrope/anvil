@@ -81,23 +81,30 @@ func (s *service) CopyBranch(ctx context.Context, leafID, toSession string) (str
 	return parent, nil
 }
 
-// trimUnfinishedExchange drops the end of path back to the last message a
-// conversation can carry on from: not a tool result waiting for its reply,
-// and not a reply that's unfinished or ends in tool calls.
+// trimUnfinishedExchange drops an exchange the conversation ends in the
+// middle of: a tool result waiting for its reply, or a reply that's
+// unfinished or ends in tool calls. Metadata after it (a model change, an
+// MCP toggle, a workflow marker) doesn't finish the exchange, so it's
+// looked past and dropped with it.
 func (s *service) trimUnfinishedExchange(path []db.Message) ([]db.Message, error) {
-	for len(path) > 0 {
-		m, err := s.fromDBItem(path[len(path)-1])
+	end := len(path)
+	for i := len(path) - 1; i >= 0; i-- {
+		m, err := s.fromDBItem(path[i])
 		if err != nil {
 			return nil, err
+		}
+		if FilterMetadataMessage(m) == nil && m.MessageType != MessageTypeCompaction {
+			// Metadata: whether it's kept depends on what's before it.
+			continue
 		}
 		midExchange := m.Role == Tool ||
 			(m.Role == Assistant && (!m.IsFinished() || len(m.ToolCalls()) > 0))
 		if !midExchange {
 			break
 		}
-		path = path[:len(path)-1]
+		end = i
 	}
-	return path, nil
+	return path[:end], nil
 }
 
 // remapPartIDs rewrites message IDs that parts refer to. Only the parts
