@@ -1285,7 +1285,6 @@ func (c *coordinator) HasAgent(name string) bool {
 	return ok && name != config.AgentOrchestrator
 }
 
-// Hold implements Coordinator.
 // RunInSession implements Coordinator.
 func (c *coordinator) RunInSession(ctx context.Context, sessionID string, fn func(ctx context.Context) error) error {
 	_, err := c.admission.submitAwait(ctx, sessionID, submission{silent: true, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
@@ -1294,6 +1293,7 @@ func (c *coordinator) RunInSession(ctx context.Context, sessionID string, fn fun
 	return err
 }
 
+// Hold implements Coordinator.
 func (c *coordinator) Hold(ctx context.Context, sessionIDs []string) (release func(), err error) {
 	return c.admission.hold(ctx, sessionIDs)
 }

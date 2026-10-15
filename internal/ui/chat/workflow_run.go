@@ -252,9 +252,8 @@ func (w *WorkflowRunRowItem) Render(width int) string { return w.render(width, w
 
 // BuildWorkflowRunItems lays out a run's view as rows: a header saying
 // what the run is and how it's going, then each phase with what happened
-// in it.
-// busy reports whether a session has work in flight, so a builder row can
-// say it's working.
+// in it. busy reports whether a session has work in flight, so a builder
+// row can say it's working.
 func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost.RunView, busy func(sessionID string) bool) []MessageItem {
 	var rows []MessageItem
 	add := func(id, sessionID, label string, line func(width int) string) *WorkflowRunRowItem {

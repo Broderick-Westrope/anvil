@@ -130,11 +130,14 @@ func (w *AppWorkspace) MoveLeaf(ctx context.Context, sessionID, leafMessageID st
 }
 
 // WriteMetadataEntry creates a metadata message and advances the leaf.
-// It's written through the session's queue, after work in flight, and its
-// parent is the session's leaf at that point rather than params'
-// ParentMessageID, so it can't land beside something written meanwhile
-// (a turn, or a workflow's marker) on a side branch.
+// It's written through the session's queue, after work in flight, onto the
+// session's leaf at that point, so it can't land beside something written
+// meanwhile (a turn, or a workflow's marker) on a side branch. params'
+// ParentMessageID must be empty; it's decided here.
 func (w *AppWorkspace) WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error {
+	if params.ParentMessageID != "" {
+		return errors.New("metadata entries go on the session's current leaf; leave ParentMessageID empty")
+	}
 	write := func(ctx context.Context) error {
 		s, err := w.app.Sessions.Get(ctx, sessionID)
 		if err != nil {

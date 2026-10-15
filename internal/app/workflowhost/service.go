@@ -252,8 +252,8 @@ func (s *Service) Start(ctx context.Context, inv Invocation) error {
 		s.mu.Unlock()
 		return ErrShuttingDown
 	}
-	// A session belongs to at most one run, so controls and holds always
-	// know which run they mean.
+	// A session runs one workflow at a time, and a run's own sessions
+	// can't start another, so a hold never has to wait on a second run.
 	if _, active := s.findLocked(inv.SessionID); active != nil || s.runs[inv.SessionID] != nil {
 		s.mu.Unlock()
 		return ErrRunInProgress
@@ -566,16 +566,24 @@ func (s *Service) Respond(requestID, answer string) error {
 // Pause, Resume and Abort control a running run by its ID.
 func (s *Service) Pause(runID string) error {
 	return s.control(runID, StatePaused, func(a *activeRun) error {
+		// Recorded first, so a failed write leaves the run as it was
+		// rather than paused without the view knowing.
+		if err := s.deps.Store.SetPaused(context.WithoutCancel(s.lifetime), a.id, true); err != nil {
+			return err
+		}
 		a.run.Pause()
-		return s.deps.Store.SetPaused(context.WithoutCancel(s.lifetime), a.id, true)
+		return nil
 	})
 }
 
 // Resume continues a paused run.
 func (s *Service) Resume(runID string) error {
 	return s.control(runID, StateResumed, func(a *activeRun) error {
+		if err := s.deps.Store.SetPaused(context.WithoutCancel(s.lifetime), a.id, false); err != nil {
+			return err
+		}
 		a.run.Resume()
-		return s.deps.Store.SetPaused(context.WithoutCancel(s.lifetime), a.id, false)
+		return nil
 	})
 }
 
@@ -617,7 +625,8 @@ func (s *Service) findRun(runID string) (string, *activeRun) {
 	return "", nil
 }
 
-// findLocked is find for callers holding s.mu.
+// findLocked returns the run a session started or belongs to, and the
+// session that started it. Callers hold s.mu.
 func (s *Service) findLocked(sessionID string) (string, *activeRun) {
 	for invoker, active := range s.runs {
 		if active.run == nil {

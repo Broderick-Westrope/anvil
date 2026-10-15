@@ -695,8 +695,6 @@ func (m *UI) clearDrillStack() {
 	m.drillStack = nil
 }
 
-// findMessageItem searches the root chat and all drill-stack chats for
-// an item matching the given ID. Returns nil if not found.
 // findAgentToolItem returns the agent tool item whose child session is
 // childSessionID, in the root chat or any drill-in. A fork copies tool
 // calls with their IDs, so the item must also come from the message that
@@ -719,6 +717,8 @@ func (m *UI) findAgentToolItem(childSessionID string) (chat.MessageItem, *Chat) 
 	return nil, nil
 }
 
+// findMessageItem searches the root chat and all drill-stack chats for
+// an item matching the given ID. Returns nil if not found.
 func (m *UI) findMessageItem(id string) chat.MessageItem {
 	if item := m.chat.MessageItem(id); item != nil {
 		return item
@@ -2643,17 +2643,15 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 
-		// Write a thinking_level_change metadata entry if the effort actually changed.
-		// Skip when the agent is busy to avoid racing the leaf pointer.
-		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort && !m.isAgentBusy() {
+		// Write a thinking_level_change metadata entry if the effort actually
+		// changed. It goes through the session's queue onto its current leaf.
+		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort {
 			ws := m.com.Workspace
 			sid := m.session.ID
-			leafID := m.session.LeafMessageID
 			effort := msg.Effort
 			cmds = append(cmds, func() tea.Msg {
 				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					ParentMessageID: leafID,
-					MessageType:     message.MessageTypeThinkingLevelChange,
+					MessageType: message.MessageTypeThinkingLevelChange,
 					Parts: []message.ContentPart{
 						message.ThinkingLevelChangeContent{ThinkingLevel: effort},
 					},
@@ -2809,13 +2807,11 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if m.session != nil && m.session.LeafMessageID != "" {
 			ws := m.com.Workspace
 			sid := m.session.ID
-			leafID := m.session.LeafMessageID
 			serverName := msg.ServerName
 			enabled := msg.Enabled
 			cmds = append(cmds, func() tea.Msg {
 				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					ParentMessageID: leafID,
-					MessageType:     message.MessageTypeMCPToggle,
+					MessageType: message.MessageTypeMCPToggle,
 					Parts: []message.ContentPart{
 						message.MCPToggleContent{ServerName: serverName, Enabled: enabled},
 					},
@@ -2904,19 +2900,17 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 			}
 		}
 
-		// Write a model_change metadata entry if the large model actually changed.
-		// Skip when the agent is busy to avoid racing the leaf pointer.
-		if msg.ModelType == config.SelectedModelTypeLarge && m.session != nil && m.session.LeafMessageID != "" && !m.isAgentBusy() {
+		// Write a model_change metadata entry if the large model actually
+		// changed. It goes through the session's queue onto its current leaf.
+		if msg.ModelType == config.SelectedModelTypeLarge && m.session != nil && m.session.LeafMessageID != "" {
 			if oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model {
 				ws := m.com.Workspace
 				sid := m.session.ID
-				leafID := m.session.LeafMessageID
 				provider := msg.Model.Provider
 				modelID := msg.Model.Model
 				cmds = append(cmds, func() tea.Msg {
 					err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-						ParentMessageID: leafID,
-						MessageType:     message.MessageTypeModelChange,
+						MessageType: message.MessageTypeModelChange,
 						Parts: []message.ContentPart{
 							message.ModelChangeContent{Provider: provider, ModelID: modelID},
 						},
