@@ -3657,7 +3657,10 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			if layout.pills.Dy() > 0 && m.pillsView != "" {
 				uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 			}
-
+		}
+		// The editor is there for the root session, and for a drilled-in
+		// session the user can talk to, such as a workflow's builder.
+		if m.composeTarget().shown {
 			editorWidth := scr.Bounds().Dx()
 			if !m.isCompact {
 				editorWidth -= layout.sidebar.Dx()

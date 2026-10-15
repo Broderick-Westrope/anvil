@@ -417,3 +417,19 @@ func TestTheWorkflowStatusBarIsGone(t *testing.T) {
 	f.markerArrives()
 	require.Zero(t, f.u.pillsAreaHeight(), "a run shows only as its node")
 }
+
+func TestADrilledInBuilderMakesRoomForTheEditor(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.width, f.u.height = 100, 30
+	f.u.state = uiChat
+	f.drillIntoBuilder(t)
+	f.u.updateLayoutAndSize()
+	require.Positive(t, f.u.layout.editor.Dy(), "the editor has room under a builder")
+
+	f.u.focus = uiFocusMain
+	f.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	f.u.updateLayoutAndSize()
+	require.Zero(t, f.u.layout.editor.Dy(), "the run view has no editor")
+}
