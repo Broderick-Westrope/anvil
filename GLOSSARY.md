@@ -176,4 +176,4 @@ One run of a workflow command. It shows as a node where it was started, and it o
 The drill-in for one workflow run: its phases and, under each, the sessions, subagents and questions to the user, rebuilt from the database. It's how the user reaches every session a run made.
 
 - **Code:** `workflowhost.RunView`, `chat.BuildWorkflowRunItems`, `drillInEntry.runID`
-- **Not:** the old status bar or details dialog it replaces.
+- **Not:** the run node, which is the run's one-line summary in the transcript and opens the run view.

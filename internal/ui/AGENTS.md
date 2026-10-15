@@ -153,16 +153,23 @@ tool names to specific types:
 ### Drill-ins
 
 `UI.drillStack` holds the views opened on top of the root chat. There are
-three kinds, each opened by its own message:
+four kinds, each opened by its own message:
 
 - **Agent** (`util.AgentDrillInMsg`): a subagent's session. Its entry has
   a `sessionID`, and child-session events update its chat even when another
-  drill-in sits on top.
+  drill-in sits on top. It's read-only unless it's `conversational` (a
+  workflow's builder, opened from a run view): then the editor is shown and
+  sends to it. `composeTarget` (`model/compose_target.go`) is the one place
+  that decides where the editor sends, what Esc cancels, where drafts and
+  prompt history belong, and what's refused while a builder has the editor.
+- **Run** (`util.WorkflowRunDrillInMsg`): a workflow run's view, rows from
+  `chat.BuildWorkflowRunItems`. Its entry has a `runID`; rows with a
+  session drill into it.
 - **Tool** (`util.ToolDrillInMsg`): a tool call's detail view.
 - **Thinking** (`util.ThinkingDrillInMsg`): an assistant message's full
   thinking, rendered by `chat.ThinkingDetailItem` from the live source item.
 
-Tool and thinking entries have no `sessionID`, so `viewedSessionEntry`
+Run, tool and thinking entries have no `sessionID`, so `viewedSessionEntry`
 skips them when the header and sidebar look for the session being viewed.
 
 ### Styling

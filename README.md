@@ -949,7 +949,7 @@ be called from inside it. The primitives:
   `reference(path)`, `readFile(path)`, `now()`, `random()`.
 - `workflow.tmpdir()`, `workflow.dir()` and
   `workflow.exclusive(fn, {stopJobs})`, which keeps other work out of the
-  run's sessions while `fn` runs.
+  sessions the run made (never yours) while `fn` runs.
 
 A `schema` makes the result a validated object (`SchemaError` otherwise).
 Cancelling a turn throws `Cancelled`.
@@ -959,7 +959,9 @@ into it (→, `l` or a click) to see its phases, the sessions and subagents in
 each, and your answers to its questions; drill further into any session to
 read it. Sessions the run made with `session.new` or `fork`, such as a
 builder, can be typed into once you've drilled in, so you can keep talking
-to them after the run hands over. `ctrl+x` pauses or resumes, and `alt+x`
+to them after the run hands over; while one has the editor, commands and
+palette actions that change your own session (such as summarize or
+rename) are refused until you go back to it. `ctrl+x` pauses or resumes, and `alt+x`
 aborts, the run whose view is open, whose node is selected, or the latest
 one started from the session you're in; the command palette has the same
 controls.

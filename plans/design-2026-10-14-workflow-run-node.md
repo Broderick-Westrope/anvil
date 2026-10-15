@@ -401,6 +401,21 @@ they are. The engine is beta, so no backfill.
   the new `/build` on an old engine fails on `fork`, both before doing any
   work and with a clear error; `/build-prose` covers the gap.
 
+- Sessions carry a `workflow_kind` column (`session`, `agent`) after all:
+  every guard that asks "does the user talk to this session" would
+  otherwise need the run's event log.
+- `/tree` doesn't list the marker; it shows user and assistant messages
+  only.
+- Metadata entries (MCP toggles, model and thinking changes) are written
+  through the session's queue onto its current leaf, like the marker.
+- While a builder has the editor, commands and palette actions that act
+  on the user's own session are refused (`refuseInBuilder`), and Esc
+  cancels the builder; elsewhere in a drill-in Esc still cancels the
+  user's session.
+- Esc keeps silent queued work (markers, metadata, forks): only prompts
+  the user can see are dropped.
+- Deleting a session deletes the sessions workflow runs made from it.
+
 **Open Questions:**
 - Should the node show "waiting for you" with the question's first line
   while an `ask()` is pending, so you can find it after dismissing a
