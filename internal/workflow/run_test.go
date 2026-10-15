@@ -874,3 +874,23 @@ func TestWorkflowFocusIsGone(t *testing.T) {
 	_, err := h.run(t, `function main() { workflow.focus(session.new({})) }`, "")
 	require.ErrorContains(t, err, "Object has no member 'focus'")
 }
+
+func TestForkingARunSessionInsideExclusiveThrowsInsteadOfWaitingForever(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	got, err := h.run(t, `function main() {
+  const s = session.new({})
+  return workflow.exclusive(() => {
+    let refused
+    try { s.fork() } catch (e) { refused = e.message }
+    const fromUser = session.current().fork()
+    return {refused, fromUser: fromUser.id}
+  })
+}`, "")
+	require.NoError(t, err)
+	out := got.(map[string]any)
+	require.Equal(t, "fork() of a run's session can't run inside workflow.exclusive", out["refused"])
+	require.Len(t, h.backend.forks, 1, "forking the user's session doesn't wait on the hold")
+	require.True(t, h.backend.forks[0].FromInvoker)
+}

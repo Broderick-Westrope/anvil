@@ -339,12 +339,21 @@ func primSessionFork(r *Run, seq int, args json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if in.Session != r.opts.InvokingSessionID && !slices.Contains(r.Sessions(), in.Session) {
+	fromInvoker := in.Session == r.opts.InvokingSessionID
+	if !fromInvoker && !slices.Contains(r.Sessions(), in.Session) {
 		return nil, fmt.Errorf("session %q doesn't belong to this run", in.Session)
+	}
+	r.mu.Lock()
+	held := r.release != nil
+	r.mu.Unlock()
+	if held && !fromInvoker {
+		// A fork waits for the session it copies to settle, which a held
+		// session never does until the hold is released.
+		return nil, errors.New("fork() of a run's session can't run inside workflow.exclusive")
 	}
 	return r.addSession(in, func() (string, error) {
 		return r.backend.Fork(r.ctx, ForkCall{
-			Source: in.Session, FromInvoker: in.Session == r.opts.InvokingSessionID,
+			Source: in.Session, FromInvoker: fromInvoker,
 			SessionCall: SessionCall{Title: in.Title, Seq: seq},
 		})
 	})
