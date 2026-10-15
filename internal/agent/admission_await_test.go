@@ -405,3 +405,47 @@ func TestCancellingASessionKeepsItsSilentWork(t *testing.T) {
 		})
 	}
 }
+
+// A failed turn holds back the prompts queued behind it. Silent work queued
+// among them (a model change written while the turn ran) still runs, and
+// mustn't release the prompts when it does.
+func TestSilentWorkAfterAFailedTurnKeepsPromptsHeld(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	entered, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		_, _ = a.submit(t.Context(), "s", submission{prompt: "A", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			close(entered)
+			<-release
+			return nil, errors.New("user turn failed")
+		}})
+	}()
+	<-entered
+	ran := make(chan struct{}, 1)
+	_, err := a.submit(t.Context(), "s", submission{prompt: "B", run: func(context.Context) (*fantasy.AgentResult, error) {
+		ran <- struct{}{}
+		return textResult("B"), nil
+	}})
+	require.NoError(t, err)
+	silent := make(chan error, 1)
+	go func() {
+		_, err := a.submitAwait(t.Context(), "s", submission{silent: true, run: instantRun("meta")})
+		silent <- err
+	}()
+	require.Eventually(t, func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return len(a.queues["s"]) == 2
+	}, time.Second, time.Millisecond)
+
+	close(release)
+	require.NoError(t, <-silent, "the silent work runs")
+	require.Eventually(t, func() bool { return !a.busy("s") }, time.Second, time.Millisecond)
+	select {
+	case <-ran:
+		t.Fatal("the held prompt ran")
+	default:
+	}
+	require.Equal(t, []string{"B"}, a.queued("s"), "the prompt is still queued")
+}
