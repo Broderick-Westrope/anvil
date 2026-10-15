@@ -483,7 +483,7 @@ func TestCommandsFromAutocompleteArentRunFromABuilder(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.drillIntoBuilder(t)
-	infos := f.run(f.u.tryExecuteBuiltinCommand("/new"))
+	infos := f.run(f.u.tryExecuteSlashCommand("/new"))
 	require.Len(t, infos, 1)
 	require.Contains(t, infos[0].Msg, "go back to it to run /new")
 	require.Equal(t, "sess-1", f.u.session.ID, "the root session is untouched")

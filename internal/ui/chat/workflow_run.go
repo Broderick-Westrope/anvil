@@ -18,13 +18,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 )
 
-// WorkflowRunDrillInHandler is implemented by items that open a workflow
-// run's view when drilled into.
-type WorkflowRunDrillInHandler interface {
-	// WorkflowRunDrillIn returns the run to open and the breadcrumb label.
-	WorkflowRunDrillIn() (runID, label string)
-}
-
 // workflowRunItem is the shared base of the run node and the rows of a run
 // view: a focusable, cached, single-purpose renderer.
 type workflowRunItem struct {
@@ -151,8 +144,9 @@ func (w *WorkflowRunMessageItem) Finished() bool {
 // SourceMessage returns a copy of the underlying message.
 func (w *WorkflowRunMessageItem) SourceMessage() message.Message { return w.message.Clone() }
 
-// WorkflowRunDrillIn implements [WorkflowRunDrillInHandler].
-func (w *WorkflowRunMessageItem) WorkflowRunDrillIn() (string, string) {
+// WorkflowRunDrillIn returns the run to open when the node is drilled into,
+// and the breadcrumb label.
+func (w *WorkflowRunMessageItem) WorkflowRunDrillIn() (runID, label string) {
 	return w.marker.RunID, "/" + w.marker.Command
 }
 

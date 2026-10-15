@@ -861,7 +861,7 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 	// Execute the click action (e.g., expansion or drill-in).
 	selectedItem := m.list.SelectedItem()
 
-	if driller, ok := selectedItem.(chat.WorkflowRunDrillInHandler); ok {
+	if driller, ok := selectedItem.(*chat.WorkflowRunMessageItem); ok {
 		runID, label := driller.WorkflowRunDrillIn()
 		return true, func() tea.Msg { return util.WorkflowRunDrillInMsg{RunID: runID, Label: label} }
 	}
@@ -871,8 +871,8 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 		sessionID := driller.AgentDrillIn()
 		if sessionID != "" {
 			msg := util.AgentDrillInMsg{SessionID: sessionID, Label: driller.AgentDrillInLabel()}
-			if c, ok := selectedItem.(interface{ AgentDrillInConversational() bool }); ok {
-				msg.Conversational = c.AgentDrillInConversational()
+			if row, ok := selectedItem.(*chat.WorkflowRunRowItem); ok {
+				msg.Conversational = row.AgentDrillInConversational()
 			}
 			return true, func() tea.Msg { return msg }
 		}

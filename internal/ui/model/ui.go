@@ -843,11 +843,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sendMessageMsg:
-		// A command's message (an MCP prompt, /init) is for the user's own
-		// session; if a builder took the editor while it was prepared, it
-		// isn't sent there.
-		if m.composeTarget().drilled {
-			cmds = append(cmds, util.ReportWarn("The command's message wasn't sent, because a workflow session has the editor; run it again from your own session"))
+		if cmd := m.refuseInBuilder(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 			break
 		}
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
@@ -2360,11 +2357,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	isOnboarding := m.state == uiOnboarding
 
-	if m.composeTarget().drilled && actsOnOwnSession(action) {
-		// These act on the user's own session; with a builder taking the
-		// editor, doing them there would surprise.
+	if cmd := m.refuseInBuilder(action); cmd != nil {
 		m.dialog.CloseFrontDialog()
-		return util.ReportWarn("That acts on your own session; go back to it first")
+		return cmd
 	}
 
 	switch msg := action.(type) {
@@ -2727,11 +2722,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		))
 
 	case dialog.ActionRunCustomCommand:
-		if cmd := m.refuseCommandInBuilder("/" + msg.Name); cmd != nil {
-			m.dialog.CloseFrontDialog()
-			cmds = append(cmds, cmd)
-			break
-		}
 		if msg.Workflow != "" {
 			cmds = append(cmds, m.handleWorkflowAction(msg))
 			break
@@ -2761,11 +2751,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.sendMessage(content))
 		m.dialog.CloseFrontDialog()
 	case dialog.ActionRunMCPPrompt:
-		if cmd := m.refuseCommandInBuilder("/" + msg.PromptID); cmd != nil {
-			m.dialog.CloseFrontDialog()
-			cmds = append(cmds, cmd)
-			break
-		}
 		if len(msg.Arguments) > 0 && msg.Args == nil {
 			m.dialog.CloseFrontDialog()
 			title := cmp.Or(msg.Title, "MCP Prompt Arguments")
@@ -3180,7 +3165,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						// display names ever diverge from execution keys.
 						builtinName := strings.TrimPrefix(selected.ID, "builtin:")
 						m.closeSlashAC(true)
-						cmd := m.tryExecuteBuiltinCommand("/" + builtinName)
+						cmd := m.tryExecuteSlashCommand("/" + builtinName)
 						if cmd != nil {
 							return cmd
 						}
@@ -3295,8 +3280,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						cmds = append(cmds, util.ReportWarn("The session is still loading; try again in a moment"))
 						return tea.Batch(cmds...)
 					}
-					if trimmed := strings.TrimSpace(value); strings.HasPrefix(trimmed, "/") {
-						cmds = append(cmds, m.refuseCommandInBuilder(trimmed))
+					if cmd := m.refuseInBuilder(slashCommand(strings.TrimSpace(value))); cmd != nil {
+						cmds = append(cmds, cmd)
 						return tea.Batch(cmds...)
 					}
 				}
@@ -4610,7 +4595,7 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 	if !strings.HasPrefix(value, "/") {
 		return nil
 	}
-	if cmd := m.refuseCommandInBuilder(value); cmd != nil {
+	if cmd := m.refuseInBuilder(slashCommand(value)); cmd != nil {
 		return cmd
 	}
 
@@ -4710,9 +4695,6 @@ func (m *UI) tryExecuteBuiltinCommand(value string) tea.Cmd {
 	name, ok := strings.CutPrefix(value, "/")
 	if !ok {
 		return nil
-	}
-	if cmd := m.refuseCommandInBuilder(value); cmd != nil {
-		return cmd
 	}
 
 	for _, b := range m.builtinCommands() {
@@ -4974,38 +4956,9 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		return util.ReportError(fmt.Errorf("orchestrator agent is not initialized"))
 	}
 
-	var cmds []tea.Cmd
-	var sessionID string
-	if target := m.composeTarget(); target.drilled {
-		// Talking to a drilled-in builder: it's an existing session, and the
-		// root session's branch and file reads have nothing to do with it.
-		if target.session == nil {
-			return util.ReportWarn("The session is still loading; try again in a moment")
-		}
-		sessionID = target.session.ID
-	} else {
-		if m.pendingBranch != nil {
-			m.branchReturn = m.pendingBranch
-			m.pendingBranch = nil
-		}
-
-		loadCmd, err := m.ensureSession()
-		if err != nil {
-			return util.ReportError(err)
-		}
-		cmds = append(cmds, loadCmd)
-
-		ctx := context.Background()
-		cmds = append(cmds, func() tea.Msg {
-			for _, path := range m.sessionFileReads {
-				m.com.Workspace.FileTrackerRecordRead(ctx, m.session.ID, path)
-				m.com.Workspace.LSPStart(ctx, path)
-			}
-			return nil
-		})
-
-		// Capture session ID to avoid race with main goroutine updating m.session.
-		sessionID = m.session.ID
+	sessionID, cmds, refusal := m.prepareSend()
+	if refusal != nil {
+		return refusal
 	}
 	cmds = append(cmds, m.trackSend(func() tea.Msg {
 		err := m.com.Workspace.AgentRun(context.Background(), sessionID, content, attachments...)

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -45,8 +46,8 @@ func (m *UI) composeTargetID() string {
 }
 
 // composeKey names the editor's current target for keeping drafts apart:
-// the root session (whichever it is, as before drill-ins could be typed
-// into), a drilled-in session, or no editor at all.
+// the root session (whichever it is), a drilled-in session, or no editor
+// at all.
 func (m *UI) composeKey() string {
 	if !m.isDrilledIn() {
 		return "root"
@@ -121,27 +122,39 @@ func (m *UI) isBusy(sessionID string) bool {
 	return sessionID != "" && m.com.Workspace.AgentIsReady() && m.com.Workspace.AgentIsSessionBusy(sessionID)
 }
 
-// refuseCommandInBuilder stops a command typed to a drilled-in builder:
-// commands act on the user's own session, so running one from a builder
-// would do it in the wrong place.
-func (m *UI) refuseCommandInBuilder(value string) tea.Cmd {
+// slashCommand is a command typed or picked as text, such as "/new".
+type slashCommand string
+
+// refuseInBuilder is the one place that decides what can't happen while a
+// workflow's builder has the editor: commands and palette actions that act
+// on the user's own session (its history, title, branch or metadata),
+// since doing them from a builder would act on the wrong session. It
+// returns the refusal to report, or nil.
+//
+// It lists what's refused rather than what's allowed: most palette actions
+// (permission answers, workflow questions, models, dialogs) are global and
+// must keep working while a run is going.
+func (m *UI) refuseInBuilder(x any) tea.Cmd {
 	if !m.composeTarget().drilled {
 		return nil
 	}
-	name := strings.Fields(value + " ")[0]
-	return util.ReportWarn("Commands run in your own session; go back to it to run " + name)
-}
-
-// actsOnOwnSession reports whether a palette action changes the user's own
-// session: its history, title, branch or metadata.
-func actsOnOwnSession(action dialog.Action) bool {
-	switch action.(type) {
-	case dialog.ActionSummarize, dialog.ActionRenameSession, dialog.ActionRegenerateTitle,
+	switch x := x.(type) {
+	case slashCommand:
+		if !strings.HasPrefix(string(x), "/") {
+			return nil
+		}
+		return util.ReportWarn("Commands run in your own session; go back to it to run " + strings.Fields(string(x) + " ")[0])
+	case sendMessageMsg:
+		// A command's message (an MCP prompt, /init) that was being
+		// prepared when the user drilled in.
+		return util.ReportWarn("The command's message wasn't sent, because a workflow session has the editor; run it again from your own session")
+	case dialog.ActionRunCustomCommand, dialog.ActionRunMCPPrompt,
+		dialog.ActionSummarize, dialog.ActionRenameSession, dialog.ActionRegenerateTitle,
 		dialog.ActionInitializeProject, dialog.ActionNavigateTree, dialog.ActionReturnToPreBranch,
 		dialog.ActionToggleLazyMCP:
-		return true
+		return util.ReportWarn("That acts on your own session; go back to it first")
 	default:
-		return false
+		return nil
 	}
 }
 
@@ -161,4 +174,38 @@ func (m *UI) pillsSession() *session.Session {
 // user from using their own session.
 func (m *UI) isRootBusy() bool {
 	return m.hasSession() && m.isBusy(m.session.ID)
+}
+
+// prepareSend gets the session the editor sends to ready for a message and
+// returns its ID, with any commands that preparing it needs. A drilled-in
+// builder is an existing session, so there's nothing to prepare, unless it
+// hasn't loaded yet; the root session may need creating, and gets the
+// pending branch and the file reads it carries. A non-nil refusal means
+// nothing is sent.
+func (m *UI) prepareSend() (sessionID string, cmds []tea.Cmd, refusal tea.Cmd) {
+	if target := m.composeTarget(); target.drilled {
+		if target.session == nil {
+			return "", nil, util.ReportWarn("The session is still loading; try again in a moment")
+		}
+		return target.session.ID, nil, nil
+	}
+	if m.pendingBranch != nil {
+		m.branchReturn = m.pendingBranch
+		m.pendingBranch = nil
+	}
+	loadCmd, err := m.ensureSession()
+	if err != nil {
+		return "", nil, util.ReportError(err)
+	}
+	cmds = append(cmds, loadCmd)
+	ctx := context.Background()
+	ws, reads, id := m.com.Workspace, m.sessionFileReads, m.session.ID
+	cmds = append(cmds, func() tea.Msg {
+		for _, path := range reads {
+			ws.FileTrackerRecordRead(ctx, id, path)
+			ws.LSPStart(ctx, path)
+		}
+		return nil
+	})
+	return id, cmds, nil
 }
