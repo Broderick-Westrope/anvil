@@ -25,14 +25,6 @@ const (
 	WorkflowPause WorkflowControl = iota
 	WorkflowResume
 	WorkflowAbort
-	// WorkflowGoToActive opens the session the run is driving.
-	WorkflowGoToActive
-	// WorkflowOpenAgent opens the session of the run's latest subagent.
-	WorkflowOpenAgent
-	// WorkflowShowRun shows the transcript of the run.
-	WorkflowShowRun
-	// WorkflowDismiss forgets a finished run.
-	WorkflowDismiss
 )
 
 // ActionClose is a message to close the current dialog.
@@ -129,17 +121,10 @@ type (
 		RequestID string
 		Answer    string
 	}
-	// ActionWorkflowControl controls the workflow run involving a
-	// session.
+	// ActionWorkflowControl controls a running workflow run.
 	ActionWorkflowControl struct {
-		SessionID string
-		Control   WorkflowControl
-	}
-	// ActionWorkflowOpenAgent opens the session of a workflow's subagent.
-	ActionWorkflowOpenAgent struct {
-		SessionID string
-		Command   string
-		Agent     string
+		RunID   string
+		Control WorkflowControl
 	}
 	// ActionEnableDockerMCP is a message to enable Docker MCP.
 	ActionEnableDockerMCP struct{}

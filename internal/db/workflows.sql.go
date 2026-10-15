@@ -115,7 +115,7 @@ func (q *Queries) GetWorkflowApproval(ctx context.Context, scriptPath string) (W
 }
 
 const getWorkflowRun = `-- name: GetWorkflowRun :one
-SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at, marker_message_id
+SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at, marker_message_id, paused
 FROM workflow_runs
 WHERE id = ? LIMIT 1
 `
@@ -141,6 +141,7 @@ func (q *Queries) GetWorkflowRun(ctx context.Context, id string) (WorkflowRun, e
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.MarkerMessageID,
+		&i.Paused,
 	)
 	return i, err
 }
@@ -195,7 +196,7 @@ func (q *Queries) InsertWorkflowEvent(ctx context.Context, arg InsertWorkflowEve
 }
 
 const listRunningWorkflowRuns = `-- name: ListRunningWorkflowRuns :many
-SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at, marker_message_id
+SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at, marker_message_id, paused
 FROM workflow_runs
 WHERE status = 'running'
 ORDER BY started_at ASC
@@ -228,6 +229,7 @@ func (q *Queries) ListRunningWorkflowRuns(ctx context.Context) ([]WorkflowRun, e
 			&i.StartedAt,
 			&i.FinishedAt,
 			&i.MarkerMessageID,
+			&i.Paused,
 		); err != nil {
 			return nil, err
 		}
@@ -316,6 +318,22 @@ type SetWorkflowRunMarkerParams struct {
 
 func (q *Queries) SetWorkflowRunMarker(ctx context.Context, arg SetWorkflowRunMarkerParams) error {
 	_, err := q.exec(ctx, q.setWorkflowRunMarkerStmt, setWorkflowRunMarker, arg.MarkerMessageID, arg.ID)
+	return err
+}
+
+const setWorkflowRunPaused = `-- name: SetWorkflowRunPaused :exec
+UPDATE workflow_runs
+SET paused = ?
+WHERE id = ?
+`
+
+type SetWorkflowRunPausedParams struct {
+	Paused int64  `json:"paused"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) SetWorkflowRunPaused(ctx context.Context, arg SetWorkflowRunPausedParams) error {
+	_, err := q.exec(ctx, q.setWorkflowRunPausedStmt, setWorkflowRunPaused, arg.Paused, arg.ID)
 	return err
 }
 

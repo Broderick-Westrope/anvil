@@ -31,7 +31,6 @@ var primitives = map[string]primitive{
 	"session.fork":     primSessionFork,
 	"workflow.tmpdir":  primTmpdir,
 	"workflow.dir":     primDir,
-	"workflow.focus":   primFocus,
 	"workflow.hold":    primHold,
 	"workflow.release": primRelease,
 }
@@ -384,20 +383,6 @@ func primTmpdir(r *Run, _ int, _ json.RawMessage) (any, error) {
 // at files it bundles.
 func primDir(r *Run, _ int, _ json.RawMessage) (any, error) {
 	return r.script.Dir(), nil
-}
-
-func primFocus(r *Run, _ int, args json.RawMessage) (any, error) {
-	in, err := decode[struct {
-		Session string `json:"session"`
-	}](args)
-	if err != nil {
-		return nil, err
-	}
-	if !slices.Contains(r.Sessions(), in.Session) {
-		return nil, fmt.Errorf("session %q doesn't belong to this run", in.Session)
-	}
-	r.backend.Focus(in.Session)
-	return nil, nil
 }
 
 func primHold(r *Run, _ int, args json.RawMessage) (any, error) {

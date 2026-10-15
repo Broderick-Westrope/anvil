@@ -336,10 +336,10 @@ type UI struct {
 	customCommands []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
 
-	// workflows holds the running workflows, keyed by invoking session.
-	workflows map[string]*workflowRun
-	// workflowTitles caches the titles of sessions workflows drive.
-	workflowTitles map[string]string
+	// workflowRunViews holds the latest view of each workflow run loaded,
+	// and workflowRunCommands the command name of each run seen.
+	workflowRunViews    map[string]workflowhost.RunView
+	workflowRunCommands map[string]string
 	// drafts keeps unsent editor text per session while the editor targets
 	// another one; composeFor is the session the editor last targeted.
 	drafts     map[string]string
@@ -352,9 +352,6 @@ type UI struct {
 	// workflowAnswered remembers answered requests so a republished copy
 	// doesn't reopen its dialog.
 	workflowAnswered map[string]bool
-	// workflowFollow is a session a workflow focused while the editor had
-	// text; the go key follows it.
-	workflowFollow string
 
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
@@ -946,10 +943,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		if _, ok := m.workflowTitles[msg.Payload.ID]; ok {
-			m.setWorkflowTitle(msg.Payload.ID, msg.Payload.Title)
-		}
-
 		// Update the cached session for any matching drill-stack entry so the
 		// sidebar reflects live token/cost data for the viewed subagent.
 		for i := range m.drillStack {
@@ -1113,10 +1106,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Payload.RunID != "" {
 			cmds = append(cmds, m.loadWorkflowRunView(msg.Payload.RunID))
 		}
-	case workflowSessionTitleMsg:
-		m.setWorkflowTitle(msg.id, msg.title)
-	case workflowFocusMsg:
-		cmds = append(cmds, m.handleWorkflowFocus(msg))
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
 	case tea.TerminalVersionMsg:
@@ -2753,7 +2742,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.confirmReloadInstance())
 	case dialog.ActionReloadInstanceCancel:
 		cmds = append(cmds, m.cancelReloadInstance())
-	case dialog.ActionWorkflowRespond, dialog.ActionWorkflowControl, dialog.ActionWorkflowOpenAgent:
+	case dialog.ActionWorkflowRespond, dialog.ActionWorkflowControl:
 		cmds = append(cmds, m.handleWorkflowAction(msg))
 	case dialog.ActionAttachSkill:
 		if m.slashACOpen {
@@ -3016,7 +3005,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case key.Matches(msg, m.keyMap.CycleBouncer):
 			cmds = append(cmds, m.handleCycleBouncerKey())
 			return true
-		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort, m.keyMap.WorkflowGo, m.keyMap.WorkflowAgent, m.keyMap.WorkflowRun):
+		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort):
 			if cmd, ok := m.handleWorkflowKey(msg); ok {
 				cmds = append(cmds, cmd)
 				return true

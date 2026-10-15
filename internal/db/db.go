@@ -219,6 +219,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.setWorkflowRunMarkerStmt, err = db.PrepareContext(ctx, setWorkflowRunMarker); err != nil {
 		return nil, fmt.Errorf("error preparing query SetWorkflowRunMarker: %w", err)
 	}
+	if q.setWorkflowRunPausedStmt, err = db.PrepareContext(ctx, setWorkflowRunPaused); err != nil {
+		return nil, fmt.Errorf("error preparing query SetWorkflowRunPaused: %w", err)
+	}
 	if q.touchAnvilInstanceStmt, err = db.PrepareContext(ctx, touchAnvilInstance); err != nil {
 		return nil, fmt.Errorf("error preparing query TouchAnvilInstance: %w", err)
 	}
@@ -579,6 +582,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing setWorkflowRunMarkerStmt: %w", cerr)
 		}
 	}
+	if q.setWorkflowRunPausedStmt != nil {
+		if cerr := q.setWorkflowRunPausedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setWorkflowRunPausedStmt: %w", cerr)
+		}
+	}
 	if q.touchAnvilInstanceStmt != nil {
 		if cerr := q.touchAnvilInstanceStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing touchAnvilInstanceStmt: %w", cerr)
@@ -733,6 +741,7 @@ type Queries struct {
 	setSessionPinStmt                           *sql.Stmt
 	setSessionWorkflowOwnerStmt                 *sql.Stmt
 	setWorkflowRunMarkerStmt                    *sql.Stmt
+	setWorkflowRunPausedStmt                    *sql.Stmt
 	touchAnvilInstanceStmt                      *sql.Stmt
 	transferBackgroundJobsStmt                  *sql.Stmt
 	updateMessageStmt                           *sql.Stmt
@@ -814,6 +823,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		setSessionPinStmt:                           q.setSessionPinStmt,
 		setSessionWorkflowOwnerStmt:                 q.setSessionWorkflowOwnerStmt,
 		setWorkflowRunMarkerStmt:                    q.setWorkflowRunMarkerStmt,
+		setWorkflowRunPausedStmt:                    q.setWorkflowRunPausedStmt,
 		touchAnvilInstanceStmt:                      q.touchAnvilInstanceStmt,
 		transferBackgroundJobsStmt:                  q.transferBackgroundJobsStmt,
 		updateMessageStmt:                           q.updateMessageStmt,

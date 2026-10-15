@@ -174,14 +174,11 @@ type Workspace interface {
 	WorkflowStart(ctx context.Context, inv workflowhost.Invocation) error
 	// WorkflowRespond answers a workflow approval or ask() request.
 	WorkflowRespond(requestID, answer string) error
-	// WorkflowPause, WorkflowResume and WorkflowAbort control the run
-	// involving sessionID: its invoking session or one it created.
-	WorkflowPause(sessionID string) error
-	WorkflowResume(sessionID string) error
-	WorkflowAbort(sessionID string) error
-	// WorkflowRunning reports the invoking session of the run involving
-	// sessionID, if any.
-	WorkflowRunning(sessionID string) (invoker string, ok bool)
+	// WorkflowPause, WorkflowResume and WorkflowAbort control a running
+	// workflow run by its ID.
+	WorkflowPause(runID string) error
+	WorkflowResume(runID string) error
+	WorkflowAbort(runID string) error
 	// WorkflowRunView loads what a workflow run looks like to the user,
 	// reporting false when there's no such run.
 	WorkflowRunView(ctx context.Context, runID string) (workflowhost.RunView, bool, error)

@@ -92,3 +92,8 @@ ON CONFLICT (script_path) DO UPDATE SET
 UPDATE workflow_runs
 SET marker_message_id = ?
 WHERE id = ?;
+
+-- name: SetWorkflowRunPaused :exec
+UPDATE workflow_runs
+SET paused = ?
+WHERE id = ?;

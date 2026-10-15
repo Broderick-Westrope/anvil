@@ -4,6 +4,10 @@
 ALTER TABLE workflow_runs ADD COLUMN marker_message_id TEXT NOT NULL DEFAULT '';
 -- +goose StatementEnd
 -- +goose StatementBegin
+-- Whether the user has paused the running run.
+ALTER TABLE workflow_runs ADD COLUMN paused INTEGER NOT NULL DEFAULT 0;
+-- +goose StatementEnd
+-- +goose StatementBegin
 -- The run that created the session, and the seq of the workflow event that
 -- created it; empty and 0 for sessions no run created.
 ALTER TABLE sessions ADD COLUMN workflow_run_id TEXT NOT NULL DEFAULT '';
@@ -43,6 +47,9 @@ ALTER TABLE sessions DROP COLUMN workflow_seq;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE sessions DROP COLUMN workflow_run_id;
+-- +goose StatementEnd
+-- +goose StatementBegin
+ALTER TABLE workflow_runs DROP COLUMN paused;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE workflow_runs DROP COLUMN marker_message_id;

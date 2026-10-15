@@ -459,12 +459,18 @@ func TestServicePublishesEachRunStateWithItsCommand(t *testing.T) {
 	require.Equal(t, []workflowhost.RunState{workflowhost.StateStarted, workflowhost.StateHeld, workflowhost.StateReleased}, states)
 
 	ask := h.next(t, workflowhost.EventAsk)
-	require.NoError(t, h.svc.Pause(h.session))
+	require.NoError(t, h.svc.Pause(ask.RunID))
 	paused := h.next(t, workflowhost.EventState)
 	require.Equal(t, workflowhost.StatePaused, paused.State)
 	require.Equal(t, "demo", paused.Command)
-	require.NoError(t, h.svc.Resume(h.session))
+	view, _, err := h.svc.RunView(h.fixture.Context, ask.RunID)
+	require.NoError(t, err)
+	require.True(t, view.Paused, "pause is recorded, so the view shows it after a restart")
+	require.NoError(t, h.svc.Resume(ask.RunID))
 	require.Equal(t, workflowhost.StateResumed, h.next(t, workflowhost.EventState).State)
+	view, _, err = h.svc.RunView(h.fixture.Context, ask.RunID)
+	require.NoError(t, err)
+	require.False(t, view.Paused)
 	require.NoError(t, h.svc.Respond(ask.RequestID, "go"))
 	h.next(t, workflowhost.EventFinished)
 }
@@ -473,8 +479,9 @@ func TestServiceAbortEndsRun(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `function main() { ask("wait") }`)
 	h.start(t, path, "")
-	h.next(t, workflowhost.EventAsk)
-	require.NoError(t, h.svc.Abort(h.session))
+	ask := h.next(t, workflowhost.EventAsk)
+	require.ErrorIs(t, h.svc.Abort("another-run"), workflowhost.ErrNoRun)
+	require.NoError(t, h.svc.Abort(ask.RunID))
 	require.Equal(t, workflowhost.StatusAborted, h.next(t, workflowhost.EventFinished).Status)
 }
 
@@ -701,11 +708,10 @@ func TestServiceRepublishesUnansweredRequestsUntilAnswered(t *testing.T) {
 
 func TestServiceRefusesAWorkflowFromASessionAnotherRunUses(t *testing.T) {
 	h := newServiceHarness(t, true)
-	path := h.write(t, `function main() { const s = session.new({}); workflow.focus(s); return ask("hold on") }`)
+	path := h.write(t, `function main() { const s = session.new({}); return ask(s.id) }`)
 	h.start(t, path, "")
-	focus := h.next(t, workflowhost.EventFocus)
 	ask := h.next(t, workflowhost.EventAsk)
-	err := h.svc.Start(h.fixture.Context, workflowhost.Invocation{CommandID: "x", ScriptPath: path, SessionID: focus.Focus})
+	err := h.svc.Start(h.fixture.Context, workflowhost.Invocation{CommandID: "x", ScriptPath: path, SessionID: ask.Question})
 	require.ErrorIs(t, err, workflowhost.ErrRunInProgress)
 	require.NoError(t, h.svc.Respond(ask.RequestID, "ok"))
 	h.next(t, workflowhost.EventFinished)
@@ -918,9 +924,9 @@ func TestServiceRecordsAnInterruptedBashAsFailed(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `function main() { status("go"); return bash("sleep 30", {check: false}) }`)
 	h.start(t, path, "")
-	h.next(t, workflowhost.EventStatus)
+	status := h.next(t, workflowhost.EventStatus)
 	h.next(t, workflowhost.EventStep)
-	require.NoError(t, h.svc.Abort(h.session))
+	require.NoError(t, h.svc.Abort(status.RunID))
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusAborted, done.Status)
 
@@ -933,50 +939,6 @@ func TestServiceRecordsAnInterruptedBashAsFailed(t *testing.T) {
 		}
 	}
 	require.Equal(t, []workflow.Phase{workflow.PhaseStarted, workflow.PhaseFailed}, phases)
-}
-
-func TestServiceRunningFindsOnlyTheRunASessionBelongsTo(t *testing.T) {
-	h := newServiceHarness(t, false)
-	writeFile(t, filepath.Join(h.dir, "a", "workflow.js"),
-		`function main() { const s = session.new({}); workflow.focus(s); return ask("hold on") }`)
-	writeFile(t, filepath.Join(h.dir, "b", "workflow.js"), `function main() { return 1 }`)
-	h.start(t, filepath.Join(h.dir, "a", "workflow.js"), "")
-	approval := h.next(t, workflowhost.EventApproval)
-	require.NoError(t, h.svc.Respond(approval.RequestID, "approve"))
-	created := h.next(t, workflowhost.EventFocus).Focus
-	ask := h.next(t, workflowhost.EventAsk)
-
-	// A second run awaiting approval holds its session before it has a run.
-	waiting, err := h.fixture.Workspace.CreateSession(h.fixture.Context, "waiting")
-	require.NoError(t, err)
-	require.NoError(t, h.svc.Start(h.fixture.Context, workflowhost.Invocation{
-		CommandID: "b", CommandName: "b", ScriptPath: filepath.Join(h.dir, "b", "workflow.js"), SessionID: waiting.ID,
-	}))
-	pending := h.next(t, workflowhost.EventApproval)
-	unrelated, err := h.fixture.Workspace.CreateSession(h.fixture.Context, "unrelated")
-	require.NoError(t, err)
-
-	// Runs are kept in a map, so repeat to meet them in different orders.
-	for range 20 {
-		for _, id := range []string{h.session, created} {
-			invoker, ok := h.svc.Running(id)
-			require.True(t, ok, id)
-			require.Equal(t, h.session, invoker)
-		}
-		for _, id := range []string{waiting.ID, unrelated.ID} {
-			_, ok := h.svc.Running(id)
-			require.False(t, ok, id)
-		}
-	}
-	require.ErrorIs(t, h.svc.Pause(unrelated.ID), workflowhost.ErrNoRun)
-
-	require.NoError(t, h.svc.Respond(pending.RequestID, "deny"))
-	require.NoError(t, h.svc.Respond(ask.RequestID, "ok"))
-	for range 2 {
-		h.next(t, workflowhost.EventFinished)
-	}
-	_, ok := h.svc.Running(h.session)
-	require.False(t, ok, "a finished run no longer involves its session")
 }
 
 func TestServiceRecordsTheCanonicalWorkingDir(t *testing.T) {
@@ -1243,7 +1205,9 @@ func TestServiceAbortEndsARunStillWaitingToBeMarked(t *testing.T) {
 	release, turnDone := h.busyInvoker(t)
 	t.Cleanup(release)
 	h.start(t, h.write(t, `function main() { return 1 }`), "")
-	require.Eventually(t, func() bool { return h.svc.Abort(h.session) == nil }, 5*time.Second, 10*time.Millisecond)
+	started := h.next(t, workflowhost.EventState)
+	require.Equal(t, workflowhost.StateStarted, started.State)
+	require.NoError(t, h.svc.Abort(started.RunID))
 
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusAborted, done.Status)

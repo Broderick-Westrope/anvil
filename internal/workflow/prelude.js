@@ -61,7 +61,6 @@
     workflow: Object.freeze({
       tmpdir: () => invoke("workflow.tmpdir"),
       dir: () => invoke("workflow.dir"),
-      focus: (s) => { invoke("workflow.focus", { session: s.id }); },
       exclusive: (fn, opts) => {
         invoke("workflow.hold", { stopJobs: !!(opts && opts.stopJobs) });
         try {

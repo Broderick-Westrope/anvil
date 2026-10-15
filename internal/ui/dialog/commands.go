@@ -592,32 +592,16 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		}
 	}
 
-	if w := c.workflow; w != nil && w.Finished {
-		commands = append(commands,
-			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, w.Keys.Run,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowShowRun}),
-			NewCommandItem(c.com.Styles, "workflow_dismiss", "Dismiss Workflow Run /"+w.Command, "",
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowDismiss}))
-	} else if w != nil {
+	if w := c.workflow; w != nil {
 		pause := NewCommandItem(c.com.Styles, "workflow_pause", "Pause Workflow /"+w.Command, w.Keys.Pause,
-			ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowPause})
+			ActionWorkflowControl{RunID: w.RunID, Control: WorkflowPause})
 		if w.Paused {
 			pause = NewCommandItem(c.com.Styles, "workflow_pause", "Resume Workflow /"+w.Command, w.Keys.Pause,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowResume})
+				ActionWorkflowControl{RunID: w.RunID, Control: WorkflowResume})
 		}
 		commands = append(commands, pause,
 			NewCommandItem(c.com.Styles, "workflow_abort", "Abort Workflow /"+w.Command, w.Keys.Abort,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowAbort}),
-			NewCommandItem(c.com.Styles, "workflow_run", "Show Workflow Run /"+w.Command, w.Keys.Run,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowShowRun}))
-		if w.CanGoToActive {
-			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_goto", "Go to Workflow Session", w.Keys.GoTo,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowGoToActive}))
-		}
-		if w.CanOpenAgent {
-			commands = append(commands, NewCommandItem(c.com.Styles, "workflow_agent", "Open Workflow Agent Session", w.Keys.Agent,
-				ActionWorkflowControl{SessionID: w.SessionID, Control: WorkflowOpenAgent}))
-		}
+				ActionWorkflowControl{RunID: w.RunID, Control: WorkflowAbort}))
 	}
 
 	commands = append(commands,
@@ -657,20 +641,12 @@ func nextBouncerMode(mode permission.BouncerMode) permission.BouncerMode {
 	}
 }
 
-// WorkflowControls describes the workflow run involving the current
-// session, for the palette's pause, resume, abort and go-to entries.
+// WorkflowControls describes the running workflow run the palette's
+// pause, resume and abort entries act on.
 type WorkflowControls struct {
-	SessionID string
-	Command   string
-	Paused    bool
-	// Finished is set when the run has ended but hasn't been dismissed,
-	// so it can only be shown or dismissed.
-	Finished bool
-	// CanGoToActive is set when the run is driving a session other than
-	// the one shown.
-	CanGoToActive bool
-	// CanOpenAgent is set when the run has a subagent session to open.
-	CanOpenAgent bool
+	RunID   string
+	Command string
+	Paused  bool
 	// Keys are the shortcuts shown beside each control.
 	Keys WorkflowKeys
 }
@@ -678,11 +654,11 @@ type WorkflowControls struct {
 // WorkflowKeys are the help keys of the workflow control bindings, so the
 // palette shows whatever they are bound to.
 type WorkflowKeys struct {
-	Pause, Abort, GoTo, Agent, Run string
+	Pause, Abort string
 }
 
-// SetWorkflowControls shows controls for the workflow run involving the
-// current session, or hides them when w is nil.
+// SetWorkflowControls shows controls for a running workflow run, or hides
+// them when w is nil.
 func (c *Commands) SetWorkflowControls(w *WorkflowControls) {
 	c.workflow = w
 	c.setCommandItems(c.selected)

@@ -254,10 +254,6 @@ func (b *backend) Status(step, detail string) {
 	b.publish(Event{Kind: EventStatus, Progress: &Progress{Step: step, Detail: detail}})
 }
 
-func (b *backend) Focus(sessionID string) {
-	b.publish(Event{Kind: EventFocus, Focus: sessionID})
-}
-
 func (b *backend) Warn(msg string) {
 	b.publish(Event{Kind: EventWarn, Message: msg})
 }

@@ -41,8 +41,6 @@ const (
 	EventAsk EventKind = "ask"
 	// EventStatus is a progress update from status().
 	EventStatus EventKind = "status"
-	// EventFocus asks the UI to move to a session.
-	EventFocus EventKind = "focus"
 	// EventWarn is a non-fatal problem, such as undeclared use.
 	EventWarn EventKind = "warn"
 	// EventStep is a bash command or turn the script started, shown as a
@@ -94,7 +92,6 @@ type Event struct {
 	Progress *Progress  // EventStatus.
 	Activity *Activity  // EventStep.
 	Agent    *AgentCall // EventAgent.
-	Focus    string     // EventFocus: the session to move to.
 	State    RunState   // EventState.
 
 	// Message is an EventWarn's warning, or why an EventFinished run
@@ -560,32 +557,40 @@ func (s *Service) Respond(requestID, answer string) error {
 	return nil
 }
 
-// Pause, Resume and Abort control the run that involves sessionID, which
-// may be its invoking session or any session it created.
-func (s *Service) Pause(sessionID string) error {
-	return s.control(sessionID, StatePaused, func(a *activeRun) { a.run.Pause() })
+// Pause, Resume and Abort control a running run by its ID.
+func (s *Service) Pause(runID string) error {
+	return s.control(runID, StatePaused, func(a *activeRun) error {
+		a.run.Pause()
+		return s.deps.Store.SetPaused(context.WithoutCancel(s.lifetime), a.id, true)
+	})
 }
 
 // Resume continues a paused run.
-func (s *Service) Resume(sessionID string) error {
-	return s.control(sessionID, StateResumed, func(a *activeRun) { a.run.Resume() })
+func (s *Service) Resume(runID string) error {
+	return s.control(runID, StateResumed, func(a *activeRun) error {
+		a.run.Resume()
+		return s.deps.Store.SetPaused(context.WithoutCancel(s.lifetime), a.id, false)
+	})
 }
 
 // Abort cancels a run's in-flight work and ends it as aborted. Its
 // EventFinished reports the outcome, so it publishes no state.
-func (s *Service) Abort(sessionID string) error {
-	return s.control(sessionID, "", func(a *activeRun) {
+func (s *Service) Abort(runID string) error {
+	return s.control(runID, "", func(a *activeRun) error {
 		a.abortStart(workflow.ErrAborted)
 		a.run.Abort()
+		return nil
 	})
 }
 
-func (s *Service) control(sessionID string, state RunState, fn func(*activeRun)) error {
-	invoker, active := s.find(sessionID)
+func (s *Service) control(runID string, state RunState, fn func(*activeRun) error) error {
+	invoker, active := s.findRun(runID)
 	if active == nil {
 		return ErrNoRun
 	}
-	fn(active)
+	if err := fn(active); err != nil {
+		return err
+	}
 	if state != "" {
 		s.events.PublishMustDeliver(context.WithoutCancel(s.lifetime), pubsub.UpdatedEvent, Event{
 			Kind: EventState, RunID: active.id, Command: active.command, SessionID: invoker, State: state,
@@ -594,17 +599,16 @@ func (s *Service) control(sessionID string, state RunState, fn func(*activeRun))
 	return nil
 }
 
-// Running reports the invoking session of the run involving sessionID, if
-// any.
-func (s *Service) Running(sessionID string) (invoker string, ok bool) {
-	invoker, active := s.find(sessionID)
-	return invoker, active != nil
-}
-
-func (s *Service) find(sessionID string) (string, *activeRun) {
+// findRun returns the running run with runID and its invoking session.
+func (s *Service) findRun(runID string) (string, *activeRun) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.findLocked(sessionID)
+	for invoker, active := range s.runs {
+		if active.run != nil && active.id == runID {
+			return invoker, active
+		}
+	}
+	return "", nil
 }
 
 // findLocked is find for callers holding s.mu.

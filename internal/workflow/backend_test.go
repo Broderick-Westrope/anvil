@@ -32,7 +32,6 @@ type fakeBackend struct {
 	sessionCalls []workflow.SessionCall
 	forks        []workflow.ForkCall
 	statuses     [][2]string
-	focused      []string
 	warnings     []string
 	holds        [][]string
 	stopJobs     []bool
@@ -117,12 +116,6 @@ func (f *fakeBackend) Status(step, detail string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.statuses = append(f.statuses, [2]string{step, detail})
-}
-
-func (f *fakeBackend) Focus(sessionID string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.focused = append(f.focused, sessionID)
 }
 
 func (f *fakeBackend) Warn(msg string) {

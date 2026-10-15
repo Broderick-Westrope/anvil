@@ -524,15 +524,6 @@ func TestTmpdirIsCreated(t *testing.T) {
 	require.DirExists(t, got.(string))
 }
 
-func TestFocusMovesToSession(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t)
-	_, err := h.run(t, `function main() { workflow.focus(session.new({})) }`, "")
-	require.NoError(t, err)
-	require.Equal(t, []string{"new-1"}, h.backend.focused)
-}
-
 func TestExclusiveHoldsRunSessionsAndReleasesOnThrow(t *testing.T) {
 	t.Parallel()
 
@@ -874,4 +865,12 @@ func TestTheInvokingSessionIsOnlyForForking(t *testing.T) {
 	require.Len(t, h.backend.turns, 1)
 	require.Equal(t, "new-1", h.backend.turns[0].SessionID)
 	require.Equal(t, "SEED\n\ngo", h.backend.turns[0].Prompt)
+}
+
+func TestWorkflowFocusIsGone(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	_, err := h.run(t, `function main() { workflow.focus(session.new({})) }`, "")
+	require.ErrorContains(t, err, "Object has no member 'focus'")
 }

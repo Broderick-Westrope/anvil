@@ -12,6 +12,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
+	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 )
 
@@ -361,4 +362,58 @@ func TestCommandsArentRunFromABuilder(t *testing.T) {
 	require.Empty(t, f.ws.starts)
 	require.Empty(t, f.ws.runs)
 	require.Equal(t, "/demo again", f.u.textarea.Value())
+}
+
+func TestWorkflowControlKeysActOnTheRunInView(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+
+	// From the session that started it, without selecting anything.
+	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	require.Equal(t, []string{"pause:run-1"}, f.ws.controls)
+
+	paused := runningView()
+	paused.Paused = true
+	f.ws.views["run-1"] = paused
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", Command: "demo", SessionID: "sess-1", State: workflowhost.StatePaused})
+	require.Contains(t, ansi.Strip(f.node(t).Render(120)), "round 1/5 · paused")
+
+	// From the run view, the same key resumes it.
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+	f.run(cmd)
+	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt})
+	require.Equal(t, []string{"pause:run-1", "resume:run-1", "abort:run-1"}, f.ws.controls)
+
+	controls := f.u.workflowControls()
+	require.Equal(t, &dialog.WorkflowControls{
+		RunID: "run-1", Command: "demo", Paused: true,
+		Keys: dialog.WorkflowKeys{Pause: "ctrl+x", Abort: "alt+x"},
+	}, controls)
+}
+
+func TestWorkflowControlKeysIgnoreAFinishedRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	done := runningView()
+	done.Status = workflowhost.StatusCompleted
+	f.ws.views = map[string]workflowhost.RunView{"run-1": done}
+	f.markerArrives()
+
+	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	require.Empty(t, f.ws.controls)
+	require.Nil(t, f.u.workflowControls())
+}
+
+func TestTheWorkflowStatusBarIsGone(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+	require.Zero(t, f.u.pillsAreaHeight(), "a run shows only as its node")
 }

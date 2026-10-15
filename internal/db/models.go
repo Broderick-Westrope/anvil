@@ -216,4 +216,5 @@ type WorkflowRun struct {
 	StartedAt         int64          `json:"started_at"`
 	FinishedAt        sql.NullInt64  `json:"finished_at"`
 	MarkerMessageID   string         `json:"marker_message_id"`
+	Paused            int64          `json:"paused"`
 }

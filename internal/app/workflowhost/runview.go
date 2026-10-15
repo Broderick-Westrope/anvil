@@ -19,6 +19,8 @@ type RunView struct {
 	MarkerMessageID   string
 	Input             string
 	Status            Status
+	// Paused reports whether the user paused the running run.
+	Paused bool
 	// Error says why a run that didn't complete ended.
 	Error      string
 	Result     json.RawMessage
@@ -127,6 +129,7 @@ func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Ses
 			MarkerMessageID:   rec.MarkerMessageID,
 			Input:             rec.Input,
 			Status:            rec.Status,
+			Paused:            rec.Paused && rec.Status == StatusRunning,
 			Error:             rec.Error,
 			Result:            rec.Result,
 			StartedAt:         rec.StartedAt,

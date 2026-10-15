@@ -121,6 +121,9 @@ func NewWorkflowRunMessageItem(sty *styles.Styles, msg *message.Message) (*Workf
 	return nil, false
 }
 
+// Command returns the name of the command the run runs.
+func (w *WorkflowRunMessageItem) Command() string { return w.marker.Command }
+
 // RunID returns the run the node stands for.
 func (w *WorkflowRunMessageItem) RunID() string { return w.marker.RunID }
 
@@ -356,10 +359,14 @@ func outcomeDetail(view workflowhost.RunView) string {
 
 // runningState says how a running run is going.
 func runningState(view workflowhost.RunView) string {
-	if view.WaitingForUser() {
+	switch {
+	case view.WaitingForUser():
 		return "waiting for you"
+	case view.Paused:
+		return "paused"
+	default:
+		return "running"
 	}
-	return "running"
 }
 
 func workflowStatusIcon(sty *styles.Styles, status workflowhost.Status) string {

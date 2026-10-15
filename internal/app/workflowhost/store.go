@@ -60,6 +60,8 @@ type RunRecord struct {
 	// MarkerMessageID is the message marking the run in its invoking
 	// session; empty until it's written.
 	MarkerMessageID string
+	// Paused reports whether the user paused the run.
+	Paused bool
 }
 
 // Store persists workflow state in the database and run directories
@@ -169,6 +171,7 @@ func (s *Store) GetRun(ctx context.Context, id string) (RunRecord, bool, error) 
 		InstanceID:        row.InstanceID,
 		StartedAt:         time.UnixMilli(row.StartedAt),
 		MarkerMessageID:   row.MarkerMessageID,
+		Paused:            row.Paused != 0,
 	}
 	if row.FinishedAt.Valid {
 		rec.FinishedAt = time.UnixMilli(row.FinishedAt.Int64)
@@ -211,6 +214,18 @@ func (r eventRecorder) Record(ctx context.Context, ev workflow.Event) error {
 func (s *Store) SetMarker(ctx context.Context, runID, messageID string) error {
 	if err := s.q.SetWorkflowRunMarker(ctx, db.SetWorkflowRunMarkerParams{ID: runID, MarkerMessageID: messageID}); err != nil {
 		return fmt.Errorf("set marker of workflow run %s: %w", runID, err)
+	}
+	return nil
+}
+
+// SetPaused records whether the user has paused the run.
+func (s *Store) SetPaused(ctx context.Context, runID string, paused bool) error {
+	var v int64
+	if paused {
+		v = 1
+	}
+	if err := s.q.SetWorkflowRunPaused(ctx, db.SetWorkflowRunPausedParams{ID: runID, Paused: v}); err != nil {
+		return fmt.Errorf("set paused of workflow run %s: %w", runID, err)
 	}
 	return nil
 }

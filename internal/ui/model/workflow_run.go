@@ -83,6 +83,10 @@ func (m *UI) openWorkflowRun(runID, label string) tea.Cmd {
 // applyWorkflowRunView shows a run's latest view in its node, wherever the
 // node is on screen, and in any open view of the run.
 func (m *UI) applyWorkflowRunView(msg workflowRunViewLoadedMsg) {
+	if m.workflowRunViews == nil {
+		m.workflowRunViews = map[string]workflowhost.RunView{}
+	}
+	m.workflowRunViews[msg.runID] = msg.view
 	chats := []*Chat{m.chat}
 	for i := range m.drillStack {
 		entry := &m.drillStack[i]
@@ -98,6 +102,10 @@ func (m *UI) applyWorkflowRunView(msg workflowRunViewLoadedMsg) {
 		for _, item := range c.MessageItems() {
 			if node, ok := item.(*chat.WorkflowRunMessageItem); ok && node.RunID() == msg.runID {
 				node.SetView(msg.view)
+				if m.workflowRunCommands == nil {
+					m.workflowRunCommands = map[string]string{}
+				}
+				m.workflowRunCommands[msg.runID] = node.Command()
 			}
 		}
 	}

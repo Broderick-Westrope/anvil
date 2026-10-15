@@ -76,6 +76,7 @@ type Querier interface {
 	SetSessionPin(ctx context.Context, arg SetSessionPinParams) error
 	SetSessionWorkflowOwner(ctx context.Context, arg SetSessionWorkflowOwnerParams) error
 	SetWorkflowRunMarker(ctx context.Context, arg SetWorkflowRunMarkerParams) error
+	SetWorkflowRunPaused(ctx context.Context, arg SetWorkflowRunPausedParams) error
 	TouchAnvilInstance(ctx context.Context, arg TouchAnvilInstanceParams) error
 	TransferBackgroundJobs(ctx context.Context, arg TransferBackgroundJobsParams) error
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error

@@ -638,32 +638,25 @@ func (w *AppWorkspace) WorkflowRespond(requestID, answer string) error {
 	return w.app.Workflows.Respond(requestID, answer)
 }
 
-func (w *AppWorkspace) WorkflowPause(sessionID string) error {
+func (w *AppWorkspace) WorkflowPause(runID string) error {
 	if w.app.Workflows == nil {
 		return ErrWorkflowsUnavailable
 	}
-	return w.app.Workflows.Pause(sessionID)
+	return w.app.Workflows.Pause(runID)
 }
 
-func (w *AppWorkspace) WorkflowResume(sessionID string) error {
+func (w *AppWorkspace) WorkflowResume(runID string) error {
 	if w.app.Workflows == nil {
 		return ErrWorkflowsUnavailable
 	}
-	return w.app.Workflows.Resume(sessionID)
+	return w.app.Workflows.Resume(runID)
 }
 
-func (w *AppWorkspace) WorkflowAbort(sessionID string) error {
+func (w *AppWorkspace) WorkflowAbort(runID string) error {
 	if w.app.Workflows == nil {
 		return ErrWorkflowsUnavailable
 	}
-	return w.app.Workflows.Abort(sessionID)
-}
-
-func (w *AppWorkspace) WorkflowRunning(sessionID string) (string, bool) {
-	if w.app.Workflows == nil {
-		return "", false
-	}
-	return w.app.Workflows.Running(sessionID)
+	return w.app.Workflows.Abort(runID)
 }
 
 func (w *AppWorkspace) WorkflowRunView(ctx context.Context, runID string) (workflowhost.RunView, bool, error) {
