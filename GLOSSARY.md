@@ -166,7 +166,7 @@ The write tool's refusal to overwrite a file whose current content the session h
 
 ## Workflow Run
 
-One run of a workflow command. It shows as a node where it was started, and it owns every session it makes: orchestrator sessions such as builders (`session.new`) and subagent sessions (`agent()`). Each records the run and the event that made it.
+One run of a workflow command. It shows as a node where it was started, and it owns every session it makes: orchestrator sessions such as builders (`session.new`, or `fork()` of a session) and subagent sessions (`agent()`). Each records the run and the event that made it.
 
 - **Code:** `workflowhost.RunRecord`, `session.Session.WorkflowRunID`, `message.MessageTypeWorkflowRun` (the node's marker)
 - **Not:** command (the definition it runs), session (a run spans several).

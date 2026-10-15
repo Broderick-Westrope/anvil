@@ -395,7 +395,9 @@ they are. The engine is beta, so no backfill.
   the fork waits for the held session to settle.
 - Each fork records the source message its copy ends at
   (`sessions.forked_from_message_id`), for replay.
-- Rollout: the commit that skips unknown message parts ships first. The
+- Rollout: the commit that skips unknown message parts is in this change,
+  so an Anvil older than it, sharing the database, fails to load a session
+  with a marker; release it ahead of the rest if that matters. The
   engine and `/build` must move together: an old `/build` on the new
   engine fails on its first turn (the invoking session refuses turns), and
   the new `/build` on an old engine fails on `fork`, both before doing any
