@@ -236,7 +236,7 @@ func (w *workflowFeature) title(sessionID string) string {
 // RunCommand runs a workflow command. A workflow never sends its command
 // body: the script gets the raw arguments instead.
 func (w *workflowFeature) RunCommand(cmd commands.CustomCommand, raw string) (tea.Cmd, bool) {
-	if cmd.Workflow == "" {
+	if !cmd.IsWorkflow() {
 		return nil, false
 	}
 	name := cmd.SlashName()

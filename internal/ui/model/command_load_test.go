@@ -25,6 +25,7 @@ func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
 		{ID: "ok", Name: "ok", Workflow: "/ok.js"},
 		{ID: "prompt", Name: "prompt", Problems: []string{"prompt commands aren't workflows"}},
 		{ID: "project:demo", Name: "demo", Description: "Demo", Workflow: "/w.js", Problems: []string{`skill "x" not found`}},
+		{ID: "escape", Name: "escape", DeclaresWorkflow: true, Problems: []string{"outside the command directory"}},
 	})
 	infos := f.run(func() tea.Msg { return loaded })
 
@@ -32,6 +33,7 @@ func TestCommandsLoadedWarnsAboutBrokenWorkflows(t *testing.T) {
 	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
 	require.Contains(t, infos[0].Msg, "/demo")
 	require.Contains(t, infos[0].Msg, `skill "x" not found`)
+	require.Contains(t, infos[0].Msg, "/escape: outside the command directory", "a workflow whose script can't be used is listed")
 	require.NotContains(t, infos[0].Msg, "/ok")
 	require.NotContains(t, infos[0].Msg, "/prompt")
 

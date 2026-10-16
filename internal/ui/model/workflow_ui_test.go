@@ -617,3 +617,34 @@ func TestPromptCommandAsksForItsArgumentsOnlyWhenNoneAreGiven(t *testing.T) {
 		})
 	}
 }
+
+func TestABrokenWorkflowCommandIsNeverSentAsAPrompt(t *testing.T) {
+	t.Parallel()
+
+	// A workflow: path outside the command's directory leaves no script
+	// to run, only the problem.
+	escape := commands.CustomCommand{
+		ID: "project:escape", Name: "escape", Content: "BODY", DeclaresWorkflow: true,
+		Problems: []string{`workflow "../w.js" is outside the command directory`},
+	}
+
+	tests := map[string]func(f *workflowUIFixture) []util.InfoMsg{
+		"slash": func(f *workflowUIFixture) []util.InfoMsg { return f.submit("/escape") },
+		"palette": func(f *workflowUIFixture) []util.InfoMsg {
+			return f.dialogAction(dialog.ActionRunCustomCommand{Name: "escape", Content: "BODY", Command: escape})
+		},
+	}
+	for name, run := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowUIFixture(t)
+			f.u.customCommands = append(f.u.customCommands, escape)
+			infos := run(f)
+			require.Empty(t, f.ws.runs, "nothing is sent to the model")
+			require.Empty(t, f.ws.starts)
+			require.Len(t, infos, 1)
+			require.Equal(t, util.InfoTypeError, infos[0].Type)
+			require.Contains(t, infos[0].Msg, "outside the command directory")
+		})
+	}
+}

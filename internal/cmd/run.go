@@ -236,7 +236,7 @@ func refuseWorkflowCommand(cfg *config.Config, prompt string) error {
 	if err != nil {
 		return fmt.Errorf("load commands to check %s isn't a workflow: %w", strings.Fields(prompt)[0], err)
 	}
-	if cmd, ok := commands.MatchSlash(cmds, prompt); ok && cmd.Workflow != "" {
+	if cmd, ok := commands.MatchSlash(cmds, prompt); ok && cmd.IsWorkflow() {
 		return fmt.Errorf("/%s is a workflow command; run it in the interactive TUI (anvil)", cmd.ItemName())
 	}
 	return nil

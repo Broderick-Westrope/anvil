@@ -548,6 +548,7 @@ func TestLoadCommand_Workflow(t *testing.T) {
 			cmd, err := loadCommand(filepath.Join(cmdDir, CommandFileName), userCommandPrefix)
 			require.NoError(t, err)
 
+			require.True(t, cmd.IsWorkflow(), "the command declared a workflow, even one that can't load")
 			if tc.wantWorkflow == "" {
 				require.Empty(t, cmd.Workflow)
 			} else {
@@ -667,4 +668,15 @@ func TestSlashNamePrefersDisplayName(t *testing.T) {
 			require.Equal(t, tc.want, tc.cmd.SlashName())
 		})
 	}
+}
+
+func TestIsWorkflow(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeCommand(t, dir, "plain", "Say hi.\n")
+	cmd, err := loadCommand(filepath.Join(dir, "plain", CommandFileName), userCommandPrefix)
+	require.NoError(t, err)
+	require.False(t, cmd.IsWorkflow())
+	require.True(t, (&CustomCommand{Workflow: "/w.js"}).IsWorkflow())
 }

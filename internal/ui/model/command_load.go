@@ -39,7 +39,7 @@ func commandsLoaded(cmds []commands.CustomCommand) tea.Msg {
 func brokenWorkflowsWarning(cmds []commands.CustomCommand) string {
 	var problems []string
 	for _, cmd := range cmds {
-		if cmd.Workflow == "" || len(cmd.Problems) == 0 {
+		if !cmd.IsWorkflow() || len(cmd.Problems) == 0 {
 			continue
 		}
 		problems = append(problems, fmt.Sprintf("/%s: %s", cmd.SlashName(), strings.Join(cmd.Problems, "; ")))
