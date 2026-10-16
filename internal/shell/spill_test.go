@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -68,23 +69,71 @@ func TestSpillOutput_EnforcesDirectoryLimit(t *testing.T) {
 	spillDir := SpillDir(dataDir)
 	require.NoError(t, os.MkdirAll(spillDir, 0o700))
 
-	// Three fresh files, together over the cap. The oldest go first. The
-	// files are sparse, so the test does not write hundreds of megabytes.
-	names := []string{"output-1.log", "output-2.log", "output-3.log"}
-	for i, name := range names {
-		path := filepath.Join(spillDir, name)
-		f, err := os.Create(path)
-		require.NoError(t, err)
-		require.NoError(t, f.Truncate(spillDirLimit/2))
-		require.NoError(t, f.Close())
-		age := time.Duration(len(names)-i) * time.Hour
-		stamp := time.Now().Add(-age)
-		require.NoError(t, os.Chtimes(path, stamp, stamp))
-	}
+	// A stale file listed first must not stop the sweep from counting the
+	// fresh files after it.
+	stale := filepath.Join(spillDir, "output-0.log")
+	require.NoError(t, os.WriteFile(stale, []byte("x"), 0o600))
+	old := time.Now().Add(-spillRetention - time.Hour)
+	require.NoError(t, os.Chtimes(stale, old, old))
+
+	// Three fresh files, together over the cap. The oldest go first.
+	writeSparseSpills(t, spillDir, spillDirLimit/2, spillDirLimit/2, spillDirLimit/2)
 
 	_, err := SpillOutput("hello", dataDir)
 	require.NoError(t, err)
 
+	require.NoFileExists(t, stale)
 	require.NoFileExists(t, filepath.Join(spillDir, "output-1.log"), "oldest goes first")
+	require.FileExists(t, filepath.Join(spillDir, "output-2.log"))
 	require.FileExists(t, filepath.Join(spillDir, "output-3.log"), "newest survives")
+}
+
+func TestSpillOutput_KeepsDirectoryAtLimit(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	spillDir := SpillDir(dataDir)
+	require.NoError(t, os.MkdirAll(spillDir, 0o700))
+
+	writeSparseSpills(t, spillDir, spillDirLimit/2, spillDirLimit/2)
+
+	_, err := SpillOutput("hello", dataDir)
+	require.NoError(t, err)
+
+	require.FileExists(t, filepath.Join(spillDir, "output-1.log"))
+	require.FileExists(t, filepath.Join(spillDir, "output-2.log"))
+}
+
+func TestSpillOutput_PrunesUntilUnderLimit(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	spillDir := SpillDir(dataDir)
+	require.NoError(t, os.MkdirAll(spillDir, 0o700))
+
+	// Dropping the tiny oldest file is not enough; the next one goes too.
+	writeSparseSpills(t, spillDir, 1, spillDirLimit/2, spillDirLimit/2, spillDirLimit/2)
+
+	_, err := SpillOutput("hello", dataDir)
+	require.NoError(t, err)
+
+	require.NoFileExists(t, filepath.Join(spillDir, "output-1.log"))
+	require.NoFileExists(t, filepath.Join(spillDir, "output-2.log"))
+	require.FileExists(t, filepath.Join(spillDir, "output-3.log"))
+	require.FileExists(t, filepath.Join(spillDir, "output-4.log"))
+}
+
+// writeSparseSpills creates fresh spill files output-1.log, output-2.log, ...
+// with the given sizes, oldest first. The files are sparse, so the tests do
+// not write hundreds of megabytes.
+func writeSparseSpills(t *testing.T, dir string, sizes ...int64) {
+	t.Helper()
+	for i, size := range sizes {
+		path := filepath.Join(dir, fmt.Sprintf("output-%d.log", i+1))
+		f, err := os.Create(path)
+		require.NoError(t, err)
+		require.NoError(t, f.Truncate(size))
+		require.NoError(t, f.Close())
+		age := time.Duration(len(sizes)-i) * time.Hour
+		stamp := time.Now().Add(-age)
+		require.NoError(t, os.Chtimes(path, stamp, stamp))
+	}
 }
