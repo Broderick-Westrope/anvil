@@ -1723,9 +1723,15 @@ func TestGetProviderOptionsMalformedFallback(t *testing.T) {
 		},
 	}
 	providerCfg := config.ProviderConfig{ID: "test", Type: "ollama"}
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	opts := getProviderOptions(model, providerCfg)
 
+	require.Contains(t, logs.String(), "falling back to top_k only")
+	require.NotContains(t, logs.String(), "this should never happen", "the top_k-only fallback parses")
 	raw, ok := opts[openaicompat.Name]
 	require.True(t, ok, "malformed provider_options should still fall back to top_k")
 	parsed, ok := raw.(*openaicompat.ProviderOptions)
