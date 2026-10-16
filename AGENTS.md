@@ -256,6 +256,17 @@ COVERED however well they are tested (`scripts/mutation-const/mutationconst`).
 Pin such values and conditions with a test anyway; there's no need to
 rewrite a switch as an `if` chain to make them reachable.
 
+Two patterns produce mutants that are hard to kill, so avoid them in new
+code:
+
+- Capacity hints in `make` (`make(map[K]V, len(x)+1)`). Changing the
+  arithmetic changes nothing observable, so no test can catch it. Leave
+  the hint out unless a benchmark shows it matters.
+- Output built by ranging over a map. Go randomises map order, so a
+  `continue` mutated to `break` is only caught on some runs, and anything
+  that reaches a model request also breaks prompt caching. Sort the keys
+  first.
+
 Some mutants can't be killed because they don't change behaviour, such as
 a boundary flip that both sides of the comparison handle the same. Only
 then, ask the user before adding the `mutation-exempt` label to the PR,

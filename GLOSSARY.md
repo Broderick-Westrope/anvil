@@ -143,6 +143,13 @@ Which tools an agent may use: built-in tools by its `allowed_tools` filter and t
 - **Code:** `toolAccess` (`internal/agent/tool_access.go`)
 - **Not:** permissions. Tool access decides which tools the model sees; the permission service decides whether one call may run.
 
+## Turn
+
+One run of the agent loop for a prompt: the steps between the user's message (or a job wake) and the end of the agent's reply. Each step is one model request, its assistant message, and the tool results that follow.
+
+- **Code:** `agent.turn` (`internal/agent/turn.go`), which holds a turn's state and implements the stream callbacks; `usageKindTurn` marks its rows in `step_usage`
+- **Not:** step. A turn has one or more steps.
+
 ## Workspace
 
 The set of operations a frontend (the TUI or the CLI) performs against a running Anvil instance.
