@@ -49,3 +49,19 @@ func TestGetDefaultSmallModel_UsesTheSubscriptionCatalog(t *testing.T) {
 	require.Equal(t, "gpt-5.1-codex-mini", small.Model, "the plan's catalog, not the API default small model")
 	require.Equal(t, int64(777), small.MaxTokens)
 }
+
+func TestGetDefaultSmallModel_SignedInWithoutACatalogFallsBack(t *testing.T) {
+	// Not parallel: config.Providers caches the catalog process-wide.
+	t.Setenv("ANVIL_DISABLE_PROVIDER_AUTO_UPDATE", "1")
+	providers := csync.NewMap[string, config.ProviderConfig]()
+	providers.Set("openai", config.ProviderConfig{ID: "openai", OAuthToken: &oauth.Token{AccessToken: "at"}})
+	large := config.SelectedModel{Provider: "openai", Model: "gpt-5.1-codex"}
+	cfg := &config.Config{
+		Providers: providers,
+		Options:   &config.Options{DisableProviderAutoUpdate: true},
+		Models:    map[config.SelectedModelType]config.SelectedModel{config.SelectedModelTypeLarge: large},
+	}
+	app := &App{config: config.NewTestStore(cfg)}
+
+	require.Equal(t, large, app.GetDefaultSmallModel("openai"))
+}
