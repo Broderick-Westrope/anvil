@@ -25,6 +25,7 @@ func TestMigrations_RoundTrip(t *testing.T) {
 	// first), then re-apply. Extend this list when adding migrations.
 	recent := []int64{
 		20261014000000, // add_messages_session_role_index
+		20261010000000, // add_workflows
 		20261009000000, // add_step_usage
 		20261003100001, // add_background_job_events
 		20261003100000, // add_background_jobs

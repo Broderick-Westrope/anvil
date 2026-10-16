@@ -10,10 +10,35 @@ concurrency:
   group: mutation-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+# The changed packages are mutated in parallel, one job each, so a large
+# PR doesn't run into a single job's time limit. The `mutation` job is the
+# required check: it passes only when every package's job passed.
 jobs:
-  mutation:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      dirs: ${{ steps.dirs.outputs.dirs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: dirs
+        run: echo "dirs=$(scripts/mutation-check.sh "origin/$BASE_REF" --list-dirs)" >>"$GITHUB_OUTPUT"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+
+  package:
+    needs: plan
+    if: needs.plan.outputs.dirs != '[]'
+    name: mutation (${{ matrix.dir }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJSON(needs.plan.outputs.dirs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -22,7 +47,30 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: scripts/mutation-check.sh "origin/$BASE_REF"
+      - run: scripts/mutation-check.sh "origin/$BASE_REF" "$DIR"
         env:
           BASE_REF: ${{ github.base_ref }}
+          DIR: ${{ matrix.dir }}
           MUTATION_EXEMPT: ${{ contains(github.event.pull_request.labels.*.name, 'mutation-exempt') }}
+
+  mutation:
+    needs: [plan, package]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          if [ "$PLAN" != success ]; then
+            echo "Planning the mutation run failed." >&2
+            exit 1
+          fi
+          case "$PACKAGES" in
+          success | skipped) echo "Every changed package passed." ;;
+          *)
+            echo "A package's mutation run did not pass ($PACKAGES); see its job." >&2
+            exit 1
+            ;;
+          esac
+        env:
+          PLAN: ${{ needs.plan.result }}
+          PACKAGES: ${{ needs.package.result }}

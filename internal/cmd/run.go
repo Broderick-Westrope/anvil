@@ -13,6 +13,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/spinner"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -83,6 +85,23 @@ anvil run --reasoning-effort high "Review this design"
 
 		if prompt == "" {
 			return fmt.Errorf("no prompt provided")
+		}
+
+		// Refuse before Anvil starts, so a refused run opens no database,
+		// log file or app.
+		if strings.HasPrefix(prompt, "/") {
+			cwd, err := ResolveCwd(cmd)
+			if err != nil {
+				return err
+			}
+			dataDir, _ := cmd.Flags().GetString("data-dir")
+			store, err := config.Load(cwd, dataDir, false)
+			if err != nil {
+				return fmt.Errorf("load configuration: %w", err)
+			}
+			if err := refuseWorkflowCommand(store.Config(), prompt); err != nil {
+				return err
+			}
 		}
 
 		ws, cleanup, err := setupLocalWorkspace(cmd)
@@ -211,4 +230,19 @@ func init() {
 	runCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
 	runCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
 	runCmd.MarkFlagsMutuallyExclusive("session", "continue")
+}
+
+// refuseWorkflowCommand stops `anvil run` from sending a workflow command
+// to the model as plain text: workflows need the TUI for approval, ask()
+// and focus, and run without their script they'd skip its gates. A slash
+// prompt is refused when commands can't load, since it might be one.
+func refuseWorkflowCommand(cfg *config.Config, prompt string) error {
+	cmds, err := commands.LoadAllCommands(cfg, nil)
+	if err != nil {
+		return fmt.Errorf("load commands to check %s isn't a workflow: %w", strings.Fields(prompt)[0], err)
+	}
+	if cmd, ok := commands.MatchSlash(cmds, prompt); ok && cmd.Workflow != "" {
+		return fmt.Errorf("/%s is a workflow command; run it in the interactive TUI (anvil)", cmd.ItemName())
+	}
+	return nil
 }

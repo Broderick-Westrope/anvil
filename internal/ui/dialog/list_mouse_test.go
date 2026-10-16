@@ -25,8 +25,8 @@ import (
 
 const mouseScreenW, mouseScreenH = 120, 40
 
-// drawDialog draws d on a fresh screen and returns it.
-func drawDialog(d Dialog) uv.ScreenBuffer {
+// drawMouseDialog draws d on a fresh screen and returns it.
+func drawMouseDialog(d Dialog) uv.ScreenBuffer {
 	scr := uv.NewScreenBuffer(mouseScreenW, mouseScreenH)
 	d.Draw(scr, uv.Rect(0, 0, mouseScreenW, mouseScreenH))
 	return scr
@@ -241,14 +241,14 @@ func TestDialogMouse_ClickSelectsTheRowUnderThePointer(t *testing.T) {
 			t.Parallel()
 			d := tc.build(t)
 			before := tc.selected(d)
-			x, y := findOnScreen(t, drawDialog(d), tc.target)
+			x, y := findOnScreen(t, drawMouseDialog(d), tc.target)
 
 			action := d.HandleMsg(leftClick(x, y))
 
 			require.Nil(t, action, "a single click only selects")
 			require.NotEqual(t, before, tc.selected(d))
 			// The selection must be the row that was clicked, as drawn.
-			row, _ := screenRow(drawDialog(d), y)
+			row, _ := screenRow(drawMouseDialog(d), y)
 			require.Contains(t, row, tc.target)
 		})
 	}
@@ -261,7 +261,7 @@ func TestDialogMouse_DoubleClickConfirms(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			d := tc.build(t)
-			x, y := findOnScreen(t, drawDialog(d), tc.target)
+			x, y := findOnScreen(t, drawMouseDialog(d), tc.target)
 
 			require.Nil(t, d.HandleMsg(leftClick(x, y)))
 			tc.confirm(t, d.HandleMsg(leftClick(x, y)))
@@ -275,7 +275,7 @@ func TestDialogMouse_SlowSecondClickDoesNotConfirm(t *testing.T) {
 	s, _ := newSessionsDeleteDialog(t, 30, 0)
 	now := time.Now()
 	s.mouse.now = func() time.Time { return now }
-	x, y := findOnScreen(t, drawDialog(s), "Session 03")
+	x, y := findOnScreen(t, drawMouseDialog(s), "Session 03")
 
 	require.Nil(t, s.HandleMsg(leftClick(x, y)))
 	now = now.Add(listDoubleClickThreshold + time.Millisecond)
@@ -290,7 +290,7 @@ func TestDialogMouse_ClicksOnDifferentRowsDoNotConfirm(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newSessionsDeleteDialog(t, 30, 0)
-	scr := drawDialog(s)
+	scr := drawMouseDialog(s)
 	x1, y1 := findOnScreen(t, scr, "Session 03")
 	x2, y2 := findOnScreen(t, scr, "Session 04")
 
@@ -303,7 +303,7 @@ func TestDialogMouse_KeyBetweenClicksBreaksTheDoubleClick(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newSessionsDeleteDialog(t, 30, 0)
-	x, y := findOnScreen(t, drawDialog(s), "Session 03")
+	x, y := findOnScreen(t, drawMouseDialog(s), "Session 03")
 
 	require.Nil(t, s.HandleMsg(leftClick(x, y)))
 	s.HandleMsg(tea.KeyPressMsg{Code: tea.KeyLeftShift})
@@ -314,7 +314,7 @@ func TestDialogMouse_ClicksOutsideTheListAreIgnored(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newSessionsDeleteDialog(t, 30, 0)
-	drawDialog(s)
+	drawMouseDialog(s)
 	before := s.list.Selected()
 	area := s.mouse.area
 
@@ -335,7 +335,7 @@ func TestDialogMouse_SessionsIgnoreClicksWhileDeleting(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newSessionsDeleteDialog(t, 30, 0)
-	x, y := findOnScreen(t, drawDialog(s), "Session 03")
+	x, y := findOnScreen(t, drawMouseDialog(s), "Session 03")
 	s.HandleMsg(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 	require.Equal(t, sessionsModeDeleting, s.sessionsMode)
 
@@ -350,7 +350,7 @@ func TestDialogMouse_WheelScrollsAndDrawKeepsTheScroll(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newSessionsDeleteDialog(t, 30, 0)
-	drawDialog(s)
+	drawMouseDialog(s)
 	before := s.list.Offset()
 	over := s.mouse.area.Min
 
@@ -358,12 +358,12 @@ func TestDialogMouse_WheelScrollsAndDrawKeepsTheScroll(t *testing.T) {
 	scrolled := s.list.Offset()
 	require.Greater(t, scrolled, before)
 
-	drawDialog(s)
+	drawMouseDialog(s)
 	require.Equal(t, scrolled, s.list.Offset(), "drawing must not snap back to the selection")
 
 	// The keyboard brings the selection back into view.
 	s.HandleMsg(tea.KeyPressMsg{Code: tea.KeyDown})
-	drawDialog(s)
+	drawMouseDialog(s)
 	require.Less(t, s.list.Offset(), scrolled)
 }
 
@@ -371,7 +371,7 @@ func TestDialogMouse_WheelOutsideTheListDoesNothing(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newSessionsDeleteDialog(t, 30, 0)
-	drawDialog(s)
+	drawMouseDialog(s)
 	before := s.list.Offset()
 
 	s.HandleMsg(common.CoalescedWheelMsg{Mouse: tea.Mouse{X: 0, Y: 0}, DeltaY: 6})
@@ -384,10 +384,10 @@ func TestDialogMouse_ClickSelectsAfterWheelScroll(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newSessionsDeleteDialog(t, 30, 0)
-	drawDialog(s)
+	drawMouseDialog(s)
 	over := s.mouse.area.Min
 	s.HandleMsg(common.CoalescedWheelMsg{Mouse: tea.Mouse{X: over.X, Y: over.Y}, DeltaY: 9})
-	x, y := findOnScreen(t, drawDialog(s), "Session 20")
+	x, y := findOnScreen(t, drawMouseDialog(s), "Session 20")
 
 	s.HandleMsg(leftClick(x, y))
 
@@ -400,7 +400,7 @@ func TestDialogMouse_FilterModeDialogsLeaveFilterOnClick(t *testing.T) {
 	mp := newTestMCPPalette(t, []MCPPaletteEntry{{Name: "alpha"}, {Name: "bravo"}, {Name: "charlie"}})
 	mp.HandleMsg(tea.KeyPressMsg{Code: '/', Text: "/"})
 	require.True(t, mp.filtering)
-	x, y := findOnScreen(t, drawDialog(mp), "bravo")
+	x, y := findOnScreen(t, drawMouseDialog(mp), "bravo")
 
 	mp.HandleMsg(leftClick(x, y))
 

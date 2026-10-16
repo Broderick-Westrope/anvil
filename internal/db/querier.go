@@ -17,6 +17,7 @@ type Querier interface {
 	CreateBackgroundJobEvent(ctx context.Context, arg CreateBackgroundJobEventParams) error
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	CreateWorkflowRun(ctx context.Context, arg CreateWorkflowRunParams) error
 	DeleteAnvilInstance(ctx context.Context, id string) error
 	DeleteBackgroundJob(ctx context.Context, id int64) error
 	DeleteBackgroundJobEvent(ctx context.Context, id string) error
@@ -29,6 +30,7 @@ type Querier interface {
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteStepUsageBefore(ctx context.Context, responseFinishedAt int64) error
 	FinalizeBackgroundJob(ctx context.Context, arg FinalizeBackgroundJobParams) (int64, error)
+	FinishWorkflowRun(ctx context.Context, arg FinishWorkflowRunParams) (int64, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
 	GetBackgroundJob(ctx context.Context, id int64) (BackgroundJob, error)
 	GetBranchPath(ctx context.Context, leafID string) ([]GetBranchPathRow, error)
@@ -41,8 +43,11 @@ type Querier interface {
 	GetMessage(ctx context.Context, id string) (Message, error)
 	GetMessageChildren(ctx context.Context, parentID sql.NullString) ([]Message, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
+	GetWorkflowApproval(ctx context.Context, scriptPath string) (WorkflowApproval, error)
+	GetWorkflowRun(ctx context.Context, id string) (WorkflowRun, error)
 	InsertPermissionDecision(ctx context.Context, arg InsertPermissionDecisionParams) error
 	InsertStepUsage(ctx context.Context, arg InsertStepUsageParams) error
+	InsertWorkflowEvent(ctx context.Context, arg InsertWorkflowEventParams) error
 	ListAllSessions(ctx context.Context) ([]Session, error)
 	ListAnvilInstances(ctx context.Context) ([]AnvilInstance, error)
 	ListBackgroundJobIDsBySession(ctx context.Context, sessionID string) ([]int64, error)
@@ -53,6 +58,7 @@ type Querier interface {
 	ListPermissionDecisionsSince(ctx context.Context, createdAt int64) ([]PermissionDecision, error)
 	ListPinnedSessions(ctx context.Context) ([]Session, error)
 	ListRunningBackgroundJobs(ctx context.Context) ([]BackgroundJob, error)
+	ListRunningWorkflowRuns(ctx context.Context) ([]WorkflowRun, error)
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
 	ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]ListUndeliveredBackgroundJobEventsRow, error)
@@ -62,8 +68,10 @@ type Querier interface {
 	// newest rowids from the covering session/role index, so the sort never
 	// touches message parts; only the rows kept are read in full.
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
+	ListWorkflowEvents(ctx context.Context, runID string) ([]WorkflowEvent, error)
 	MarkBackgroundJobLogExpired(ctx context.Context, arg MarkBackgroundJobLogExpiredParams) error
 	MarkBackgroundJobsInterrupted(ctx context.Context, arg MarkBackgroundJobsInterruptedParams) error
+	MarkWorkflowRunInterrupted(ctx context.Context, arg MarkWorkflowRunInterruptedParams) error
 	RecordFileRead(ctx context.Context, arg RecordFileReadParams) error
 	ReleaseBackgroundJobEvent(ctx context.Context, id string) error
 	RenameSession(ctx context.Context, arg RenameSessionParams) error
@@ -77,6 +85,7 @@ type Querier interface {
 	UpsertAnvilInstance(ctx context.Context, arg UpsertAnvilInstanceParams) error
 	UpsertMCPOAuthClient(ctx context.Context, arg UpsertMCPOAuthClientParams) error
 	UpsertMCPOAuthToken(ctx context.Context, arg UpsertMCPOAuthTokenParams) error
+	UpsertWorkflowApproval(ctx context.Context, arg UpsertWorkflowApprovalParams) error
 }
 
 var _ Querier = (*Queries)(nil)

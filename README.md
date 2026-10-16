@@ -902,7 +902,68 @@ warning for anything it skips: loose `.md` files in a commands directory
 `COMMAND.md` frontmatter takes a `description`, an `argument_hint` shown in
 autocomplete, and `skills`, a list of skill names whose bodies are sent with
 the command. `$ARGUMENTS` in the body is replaced with whatever follows the
-command name.
+command name. `workflow` makes the command run a script instead (see below).
+
+#### Workflow commands
+
+A command can run a JavaScript workflow instead of sending its body to the
+model. The script owns the control flow (loops, caps, which context each step
+sees) and every side effect goes through a primitive that Anvil shows and
+logs. Point `workflow:` at a script inside the command directory:
+
+```markdown
+---
+description: Build, review and fix
+workflow: workflow.js
+---
+```
+
+```js
+requires({ skills: ["go-style"], agents: ["reviewer"], references: ["references/rubric.md"] });
+
+function main(input) {
+  status("review", input.raw);
+  const verdict = agent("reviewer", reference("references/rubric.md"), {
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+  });
+  if (!verdict.ok) session.current().turn("Fix the review findings.");
+  return verdict;
+}
+```
+
+`requires()` is read without running the script, so it must be a single
+literal call; a script whose requirements are missing or can't be read won't
+run. `main(input)` gets the arguments as `input.raw`, and primitives can only
+be called from inside it. The primitives:
+
+- `bash(cmd, {cwd, check})` runs a command without a permission prompt and
+  throws `BashError` on a non-zero exit unless `check: false`.
+- `session.current()` and `session.new({title, seed, skills})` return
+  sessions whose `.turn(prompt, {schema, skills})` runs a visible turn.
+- `agent(name, prompt, {schema, skills, tools, model})` runs a subagent in a
+  fresh child session; `parallel([...])` runs several and settles each.
+- `ask(question, {options})`, `status(step, detail)`, `skill(name)`,
+  `reference(path)`, `readFile(path)`, `now()`, `random()`.
+- `workflow.tmpdir()`, `workflow.dir()`, `workflow.focus(session)` and
+  `workflow.exclusive(fn, {stopJobs})`, which keeps other work out of the
+  run's sessions while `fn` runs.
+
+A `schema` makes the result a validated object (`SchemaError` otherwise).
+Cancelling a turn throws `Cancelled`. You can pause, resume or abort a run
+from the command palette.
+
+The first time a workflow runs, and whenever any file in its command
+directory changes, Anvil shows you every file (as a diff once approved) and
+asks you to approve it. Binary files and files over 256 KiB are shown by
+size and hash only, and `reference()` can't read them. `reference(path)`
+reads the files as they were when the run started, never an edit made during
+it, and can't read through a symlink that leads outside the directory.
+`--yolo=full` skips approval. Workflows need the TUI, so `anvil run` refuses
+them. Check a script without running it with
+`anvil workflow check <path>`, which exits non-zero on a parse error, a
+problem with the script's shape (printed as `error:`) or a missing
+requirement; `--no-catalog` skips loading your config
+and checks only parsing and references.
 
 ### Desktop notifications
 

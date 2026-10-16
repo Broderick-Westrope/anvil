@@ -31,6 +31,7 @@ import (
 	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
@@ -347,6 +348,19 @@ type UI struct {
 	customCommands []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
 
+	// workflows holds the running workflows, keyed by invoking session.
+	workflows map[string]*workflowRun
+	// workflowTitles caches the titles of sessions workflows drive.
+	workflowTitles map[string]string
+	// workflowRequests holds the open approval and ask requests by ID.
+	workflowRequests map[string]workflowhost.Event
+	// workflowAnswered remembers answered requests so a republished copy
+	// doesn't reopen its dialog.
+	workflowAnswered map[string]bool
+	// workflowFollow is a session a workflow focused while the editor had
+	// text; the go key follows it.
+	workflowFollow string
+
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
 
@@ -614,7 +628,7 @@ func (m *UI) loadCustomCommands() tea.Cmd {
 		if err != nil {
 			slog.Error("Failed to load custom commands", "error", err)
 		}
-		return userCommandsLoadedMsg{Commands: customCommands}
+		return userCommandsLoadedMsg{Commands: annotateWorkflowCommands(m.com.Workspace, customCommands)}
 	}
 }
 
@@ -835,6 +849,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
 		m.slashAC.SetItems(m.buildSlashACItems())
+		if warning := brokenWorkflowsWarning(msg.Commands); warning != "" {
+			cmds = append(cmds, util.ReportWarn(warning))
+		}
 		dia := m.dialog.Dialog(dialog.CommandsID)
 		if dia == nil {
 			break
@@ -910,6 +927,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case promptHistoryLoadedMsg:
 		m.promptHistory.messages = nil
 		for _, source := range msg.messages {
+			if isWorkflowTurn(source.Content().Text) {
+				continue
+			}
 			state := composerFromMessage(source, m.com.Workspace.ActiveSkillByName, m.customCommands)
 			if !state.isEmpty() {
 				m.promptHistory.messages = append(m.promptHistory.messages, state)
@@ -929,6 +949,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			break
+		}
+
+		if _, ok := m.workflowTitles[msg.Payload.ID]; ok {
+			m.setWorkflowTitle(msg.Payload.ID, msg.Payload.Title)
 		}
 
 		// Update the cached session for any matching drill-stack entry so the
@@ -1085,6 +1109,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
+	case pubsub.Event[workflowhost.Event]:
+		cmds = append(cmds, m.handleWorkflowEvent(msg.Payload))
+	case workflowSessionTitleMsg:
+		m.setWorkflowTitle(msg.id, msg.title)
+	case workflowFocusMsg:
+		cmds = append(cmds, m.handleWorkflowFocus(msg))
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
 	case tea.TerminalVersionMsg:
@@ -2590,6 +2620,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		))
 
 	case dialog.ActionRunCustomCommand:
+		if msg.Workflow != "" {
+			cmds = append(cmds, m.handleWorkflowAction(msg))
+			break
+		}
 		if customCommandNeedsArgumentDialog(msg) {
 			m.dialog.CloseFrontDialog()
 			argsDialog := dialog.NewArguments(
@@ -2649,6 +2683,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.confirmReloadInstance())
 	case dialog.ActionReloadInstanceCancel:
 		cmds = append(cmds, m.cancelReloadInstance())
+	case dialog.ActionWorkflowRespond, dialog.ActionWorkflowControl, dialog.ActionWorkflowOpenAgent:
+		cmds = append(cmds, m.handleWorkflowAction(msg))
 	case dialog.ActionAttachSkill:
 		if m.slashACOpen {
 			m.closeSlashAC(true)
@@ -3016,6 +3052,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case key.Matches(msg, m.keyMap.CycleBouncer):
 			cmds = append(cmds, m.handleCycleBouncerKey())
 			return true
+		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort, m.keyMap.WorkflowGo, m.keyMap.WorkflowAgent, m.keyMap.WorkflowRun):
+			if cmd, ok := m.handleWorkflowKey(msg); ok {
+				cmds = append(cmds, cmd)
+				return true
+			}
 		}
 		return false
 	}
@@ -4548,17 +4589,11 @@ func (m *UI) buildSlashACItems() []autocomplete.Item {
 	}
 
 	for _, cmd := range m.customCommands {
-		// Use DisplayName if set (collision-resolved), otherwise fall back
-		// to ItemName() which strips the source prefix (e.g., "greet" not
-		// "plugin:test-plugin:greet").
-		displayName := cmd.ItemName()
-		if cmd.DisplayName != "" {
-			displayName = cmd.DisplayName
-		}
+		displayName := cmd.SlashName()
 		items = append(items, autocomplete.Item{
 			Name:         displayName,
 			DisplayName:  displayName,
-			Description:  cmd.Description,
+			Description:  cmd.DisplayDescription(),
 			ArgumentHint: cmd.ArgumentHint,
 			Type:         autocomplete.CommandItem,
 			ID:           "cmd:" + cmd.ID,
@@ -4601,57 +4636,50 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		return cmd
 	}
 
-	for _, cmd := range m.customCommands {
-		argName := cmd.ItemName()
-		if cmd.DisplayName != "" {
-			argName = cmd.DisplayName
-		}
-		rawArgs := extractSlashArgs(value, argName)
-		prefix := "/" + argName
-		// Check for exact prefix match (the value must start with
-		// "/name" followed by a space or end of string).
-		if !strings.HasPrefix(value, prefix) {
-			continue
-		}
-		if len(value) > len(prefix) && value[len(prefix)] != ' ' {
-			continue
-		}
-
-		// Command matched. If it has named arguments and none were
-		// provided inline, open the argument dialog.
-		if len(cmd.Arguments) > 0 && rawArgs == "" {
-			action := dialog.ActionRunCustomCommand{
-				Name:      argName,
-				Content:   cmd.Content,
-				Arguments: cmd.Arguments,
-				Skills:    cmd.Skills,
-				Location:  cmd.Location,
-			}
-			return func() tea.Msg { return action }
-		}
-
-		content := cmd.Content
-		if rawArgs != "" || strings.Contains(content, "$ARGUMENTS") {
-			content = commands.SubstituteArgs(content, nil, rawArgs)
-		}
-		commandLine := prefix
-		if rawArgs != "" {
-			commandLine += " " + rawArgs
-		}
-		content = commands.FormatExpansionXML(commandLine, cmd.Location, content)
-		if resolved := skills.ResolveContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
-			content = resolved + "\n\n" + content
-		}
-
-		// Include any user-attached skill chips so they are not
-		// silently dropped when submitting via a slash command.
-		for _, sa := range m.attachments.SkillList() {
-			content = skills.FormatContentXML(sa.Name, sa.Instructions) + "\n\n" + content
-		}
-
-		return m.sendMessage(content)
+	cmd, ok := commands.MatchSlash(m.customCommands, value)
+	if !ok {
+		return nil
 	}
-	return nil
+	argName := cmd.SlashName()
+	rawArgs := extractSlashArgs(value, argName)
+	prefix := "/" + argName
+
+	// A workflow command runs its script with the raw arguments; it
+	// never sends its body.
+	if cmd.Workflow != "" {
+		return m.startWorkflowCommand(argName, cmd, rawArgs)
+	}
+
+	// Command matched. If it has named arguments and none were
+	// provided inline, open the argument dialog.
+	if len(cmd.Arguments) > 0 && rawArgs == "" {
+		action := dialog.ActionRunCustomCommand{
+			Name:      argName,
+			Content:   cmd.Content,
+			Arguments: cmd.Arguments,
+			Skills:    cmd.Skills,
+			Location:  cmd.Location,
+		}
+		return func() tea.Msg { return action }
+	}
+
+	content := commands.SubstituteArgs(cmd.Content, nil, rawArgs)
+	commandLine := prefix
+	if rawArgs != "" {
+		commandLine += " " + rawArgs
+	}
+	content = commands.FormatExpansionXML(commandLine, cmd.Location, content)
+	if resolved := skills.ResolveContent(cmd.Skills, m.com.Workspace.ActiveSkillByName); resolved != "" {
+		content = resolved + "\n\n" + content
+	}
+
+	// Include any user-attached skill chips so they are not
+	// silently dropped when submitting via a slash command.
+	for _, sa := range m.attachments.SkillList() {
+		content = skills.FormatContentXML(sa.Name, sa.Instructions) + "\n\n" + content
+	}
+
+	return m.sendMessage(content)
 }
 
 // builtinDef defines a single builtin slash command. This is the single
@@ -4973,21 +5001,11 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		m.pendingBranch = nil
 	}
 
-	var cmds []tea.Cmd
-	if !m.hasSession() {
-		newSession, err := m.com.Workspace.CreateSession(context.Background(), "New Session")
-		if err != nil {
-			return util.ReportError(err)
-		}
-		if m.forceCompactMode {
-			m.isCompact = true
-		}
-		if newSession.ID != "" {
-			m.session = &newSession
-			cmds = append(cmds, m.loadSession(newSession.ID))
-		}
-		m.setState(uiChat, m.focus)
+	loadCmd, err := m.ensureSession()
+	if err != nil {
+		return util.ReportError(err)
 	}
+	cmds := []tea.Cmd{loadCmd}
 
 	ctx := context.Background()
 	cmds = append(cmds, func() tea.Msg {
@@ -5015,6 +5033,28 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		return nil
 	}))
 	return tea.Batch(cmds...)
+}
+
+// ensureSession creates a session when none is open, the way the first
+// message of a conversation does, and returns the command that loads it.
+func (m *UI) ensureSession() (tea.Cmd, error) {
+	if m.hasSession() {
+		return nil, nil
+	}
+	newSession, err := m.com.Workspace.CreateSession(context.Background(), "New Session")
+	if err != nil {
+		return nil, err
+	}
+	if m.forceCompactMode {
+		m.isCompact = true
+	}
+	var cmd tea.Cmd
+	if newSession.ID != "" {
+		m.session = &newSession
+		cmd = m.loadSession(newSession.ID)
+	}
+	m.setState(uiChat, m.focus)
+	return cmd, nil
 }
 
 const cancelTimerDuration = 2 * time.Second
@@ -5679,6 +5719,7 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 		return util.ReportError(err)
 	}
 
+	commands.SetWorkflowControls(m.workflowControls())
 	m.dialog.OpenDialog(commands)
 
 	return commands.InitialCmd()

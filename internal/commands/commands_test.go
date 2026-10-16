@@ -486,3 +486,185 @@ func TestLoadFromSource_FollowsSymlinkedCommandDirectory(t *testing.T) {
 	require.Equal(t, []string{"user:shared"}, commandIDs(cmds))
 	require.Equal(t, "shared body", cmds[0].Content)
 }
+
+func TestLoadCommand_Workflow(t *testing.T) {
+	t.Parallel()
+
+	const validScript = "function main(input) {}\n"
+	tests := map[string]struct {
+		workflow     string
+		files        map[string]string
+		wantWorkflow string
+		wantProblem  string
+	}{
+		"valid script": {
+			workflow:     "workflow.js",
+			files:        map[string]string{"workflow.js": validScript},
+			wantWorkflow: "workflow.js",
+		},
+		"script in a subdirectory": {
+			workflow:     "lib/flow.js",
+			files:        map[string]string{"lib/flow.js": validScript},
+			wantWorkflow: "lib/flow.js",
+		},
+		"path escapes the command directory": {
+			workflow:    "../workflow.js",
+			files:       map[string]string{"../workflow.js": validScript},
+			wantProblem: "outside the command directory",
+		},
+		"absolute path": {
+			workflow:    "/tmp/workflow.js",
+			wantProblem: "outside the command directory",
+		},
+		"missing file": {
+			workflow:     "workflow.js",
+			wantWorkflow: "workflow.js",
+			wantProblem:  "read workflow",
+		},
+		"parse error": {
+			workflow:     "workflow.js",
+			files:        map[string]string{"workflow.js": "function main( {"},
+			wantWorkflow: "workflow.js",
+			wantProblem:  "parse workflow",
+		},
+		"non-literal requires": {
+			workflow:     "workflow.js",
+			files:        map[string]string{"workflow.js": "requires(deps)\n" + validScript},
+			wantWorkflow: "workflow.js",
+			wantProblem:  "requires() must be a literal",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			cmdDir := filepath.Join(dir, "flow")
+			writeCommand(t, dir, "flow", "---\nworkflow: "+tc.workflow+"\n---\n")
+			for rel, content := range tc.files {
+				writeFile(t, filepath.Join(cmdDir, rel), content)
+			}
+
+			cmd, err := loadCommand(filepath.Join(cmdDir, CommandFileName), userCommandPrefix)
+			require.NoError(t, err)
+
+			if tc.wantWorkflow == "" {
+				require.Empty(t, cmd.Workflow)
+			} else {
+				require.Equal(t, filepath.Join(cmdDir, tc.wantWorkflow), cmd.Workflow)
+			}
+			if tc.wantProblem == "" {
+				require.Empty(t, cmd.Problems)
+				return
+			}
+			require.Len(t, cmd.Problems, 1)
+			require.Contains(t, cmd.Problems[0], tc.wantProblem)
+		})
+	}
+}
+
+func TestLoadCommand_WorkflowIgnoresBodyArguments(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		workflow string
+	}{
+		"valid workflow":  {workflow: "workflow.js"},
+		"broken workflow": {workflow: "../escape.js"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			cmdDir := filepath.Join(dir, "flow")
+			writeCommand(t, dir, "flow", "---\nworkflow: "+tc.workflow+"\n---\nUse $NAME here.\n")
+			writeFile(t, filepath.Join(cmdDir, "workflow.js"), "function main(input) {}\n")
+
+			cmd, err := loadCommand(filepath.Join(cmdDir, CommandFileName), userCommandPrefix)
+			require.NoError(t, err)
+			require.Empty(t, cmd.Arguments)
+		})
+	}
+}
+
+func TestLoadCommand_BrokenWorkflowStillLoads(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeCommand(t, dir, "flow", "---\nworkflow: missing.js\n---\n")
+
+	cmds, err := loadFromSource(commandSource{path: dir, prefix: userCommandPrefix})
+	require.NoError(t, err)
+	require.Len(t, cmds, 1)
+	require.NotEmpty(t, cmds[0].Problems)
+}
+
+func TestDisplayDescriptionMarksBrokenCommands(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cmd  CustomCommand
+		want string
+	}{
+		"healthy":              {cmd: CustomCommand{Description: "Build it"}, want: "Build it"},
+		"broken with desc":     {cmd: CustomCommand{Description: "Build it", Problems: []string{"x"}}, want: "Build it (broken)"},
+		"broken without desc":  {cmd: CustomCommand{Problems: []string{"x"}}, want: "(broken)"},
+		"healthy without desc": {cmd: CustomCommand{}, want: ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, tc.cmd.DisplayDescription())
+		})
+	}
+}
+
+func TestMatchSlashFindsCommandByInvokedName(t *testing.T) {
+	t.Parallel()
+
+	cmds := []CustomCommand{
+		{ID: "project:build", Name: "project:build", Source: "project", Workflow: "/w/build/workflow.js"},
+		{ID: "user:review", Name: "user:review", DisplayName: "review (user)"},
+	}
+	tests := map[string]struct {
+		line   string
+		want   string
+		wantOK bool
+	}{
+		"with args":    {line: "/build plans/x.md", want: "project:build", wantOK: true},
+		"bare":         {line: "/build", want: "project:build", wantOK: true},
+		"prefix only":  {line: "/builder", wantOK: false},
+		"display name": {line: "/review (user) now", want: "user:review", wantOK: true},
+		"not a slash":  {line: "build it", wantOK: false},
+		"unknown":      {line: "/nope", wantOK: false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := MatchSlash(cmds, tc.line)
+			require.Equal(t, tc.wantOK, ok)
+			if ok {
+				require.Equal(t, tc.want, got.ID)
+			}
+		})
+	}
+}
+
+func TestSlashNamePrefersDisplayName(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cmd  CustomCommand
+		want string
+	}{
+		"logical name": {cmd: CustomCommand{Name: "project:build", Source: "project"}, want: "build"},
+		"display name": {cmd: CustomCommand{Name: "user:review", DisplayName: "review (user)"}, want: "review (user)"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, tc.cmd.SlashName())
+		})
+	}
+}

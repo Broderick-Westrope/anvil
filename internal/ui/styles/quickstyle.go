@@ -781,6 +781,13 @@ func quickStyle(o quickStyleOpts) Styles {
 		Background(o.destructive).Foreground(o.onPrimary)
 	s.Messages.ErrorTitle = lipgloss.NewStyle().Foreground(o.fgSubtle)
 	s.Messages.ErrorDetails = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+	s.Messages.WorkflowBlurred = s.Messages.NoContent.PaddingLeft(1).BorderLeft(true).
+		BorderForeground(o.secondary).BorderStyle(lipgloss.NormalBorder())
+	s.Messages.WorkflowFocused = s.Messages.NoContent.PaddingLeft(1).BorderLeft(true).
+		BorderForeground(o.secondary).BorderStyle(messageFocussedBorder)
+	s.Messages.WorkflowTag = lipgloss.NewStyle().Padding(0, 1).
+		Background(o.secondary).Foreground(o.onPrimary)
+	s.Messages.WorkflowTitle = lipgloss.NewStyle().Foreground(o.fgSubtle)
 
 	// Message item styles
 	s.Messages.ToolCallFocused = muted.PaddingLeft(1).
@@ -906,6 +913,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Status.SuccessIndicator = base.Foreground(o.bgLessVisible).Background(o.success).Padding(0, 1).Bold(true).SetString("OKAY!")
 	s.Status.InfoIndicator = s.Status.SuccessIndicator
 	s.Status.UpdateIndicator = s.Status.SuccessIndicator.SetString("HEY!")
+	s.Pills.WorkflowWarning = lipgloss.NewStyle().Foreground(o.warning)
 	s.Status.WarnIndicator = s.Status.SuccessIndicator.Foreground(o.bgMostVisible).Background(o.warning).SetString("WARNING")
 	s.Status.ErrorIndicator = s.Status.SuccessIndicator.Foreground(o.bgBase).Background(o.destructive).SetString("ERROR")
 	s.Status.SuccessMessage = base.Foreground(o.bgLessVisible).Background(o.successMostSubtle).Padding(0, 1)

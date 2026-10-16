@@ -23,6 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/db"
@@ -40,6 +41,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/update"
 	"github.com/Broderick-Westrope/anvil/internal/version"
+	"github.com/google/uuid"
 )
 
 // UpdateAvailableMsg is sent when a new version is available.
@@ -57,6 +59,9 @@ type App struct {
 	Queries     db.Querier
 
 	AgentCoordinator agent.Coordinator
+	// Workflows runs workflow commands. It is nil until the orchestrator
+	// agent exists.
+	Workflows *workflowhost.Service
 
 	LSPManager *lsp.Manager
 
@@ -84,6 +89,11 @@ type App struct {
 	jobEvents          *jobevents.Store
 	jobWaker           *jobWaker
 	jobs               *jobLifecycle // Nil when job persistence is unavailable.
+	workflowStore      *workflowhost.Store
+	// retiredWorkflows tracks services replaced by startWorkflows that are
+	// still stopping, so Shutdown waits for their outcomes before the DB
+	// closes.
+	retiredWorkflows sync.WaitGroup
 }
 
 // New initializes a new application instance.
@@ -158,7 +168,15 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 		if err := app.jobEvents.Persist(ctx, q, app.jobs.store.InstanceID()); err != nil {
 			slog.Warn("Failed to load background job events; new events will not survive a restart", "error", err)
 		}
+		workflows := workflowhost.NewStore(q, config.GlobalDataDir(), app.jobs.store.InstanceID())
+		app.workflowStore = workflows
+		go startupPrune(ctx, "workflow runs", func(ctx context.Context) error {
+			return errors.Join(workflows.MarkInterrupted(ctx), workflows.PruneRunDirs(ctx, time.Now()))
+		})
 	}
+	// Without job persistence this process has no registered instance, so
+	// its workflow runs get an ID no other instance will consider live.
+	app.workflowStore = cmp.Or(app.workflowStore, workflowhost.NewStore(q, config.GlobalDataDir(), uuid.NewString()))
 	mgr.SetEventSink(app.jobEvents)
 	app.jobWaker = newJobWaker(app.jobEvents, sessions)
 	go app.jobWaker.run(ctx)
@@ -621,7 +639,35 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 	}
 	app.jobWaker.setAgent(app.AgentCoordinator)
 	app.reviewCompleter.set(app.AgentCoordinator)
+	app.startWorkflows()
 	return nil
+}
+
+// startWorkflows builds the workflow service for the current coordinator
+// and forwards its events to the TUI. It runs whenever the coordinator is
+// rebuilt, so a service never drives a coordinator that was replaced.
+func (app *App) startWorkflows() {
+	if old := app.Workflows; old != nil {
+		// Runs of the old service drive a coordinator that's gone. This can
+		// be reached from the UI's Update (onboarding), so stopping them
+		// must not block the caller.
+		app.retiredWorkflows.Go(func() { stopWorkflows(old, workflowReloadReason, workflowShutdownWait) })
+	}
+	app.Workflows = workflowhost.NewService(app.globalCtx, workflowhost.Deps{
+		Coordinator:  app.AgentCoordinator,
+		Sessions:     app.Sessions,
+		Store:        app.workflowStore,
+		WorkingDir:   app.config.WorkingDir(),
+		SkipApproval: app.skipWorkflowApproval,
+	})
+	setupSubscriber(app.eventsCtx, app.serviceEventsWG, "workflows", app.Workflows.Subscribe, app.events)
+}
+
+// skipWorkflowApproval reports whether workflow scripts run without
+// approval. Approval guards a script's own shell commands, so only the
+// yolo level that bypasses every permission check skips it.
+func (app *App) skipWorkflowApproval() bool {
+	return app.Permissions.YoloLevel() == config.YoloFull
 }
 
 // startJobPersistence persists published jobs in the global database
@@ -795,6 +841,26 @@ func waitWithTimeout(wait func(), timeout time.Duration) bool {
 	}
 }
 
+// workflowShutdownWait bounds how long shutdown waits for workflow runs
+// to record that they were interrupted.
+const workflowShutdownWait = 3 * time.Second
+
+// Why workflow runs were interrupted, as shown with their outcome.
+const (
+	workflowShutdownReason = "Anvil shut down"
+	workflowReloadReason   = "agents were reloaded"
+)
+
+// stopWorkflows shuts svc down, waiting up to wait for its runs to record
+// that reason interrupted them.
+func stopWorkflows(svc *workflowhost.Service, reason string, wait time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	if err := svc.Shutdown(ctx, reason); err != nil {
+		slog.Warn("Workflows did not stop in time", "reason", reason, "error", err)
+	}
+}
+
 // Shutdown performs a graceful shutdown of the application.
 func (app *App) Shutdown() {
 	start := time.Now()
@@ -807,6 +873,14 @@ func (app *App) Shutdown() {
 	}
 	mgr := shell.GetBackgroundShellManager()
 	mgr.BeginShutdown()
+
+	// Stop workflows before agents: a script can catch a cancelled turn
+	// and carry on, or be running bash or waiting on a question with no
+	// agent to cancel. Their outcomes must land before the DB closes.
+	if app.Workflows != nil {
+		stopWorkflows(app.Workflows, workflowShutdownReason, workflowShutdownWait)
+	}
+	app.retiredWorkflows.Wait()
 
 	// First, cancel all agents and wait for them to finish. This must complete
 	// before closing the DB so agents can finish writing their state.
