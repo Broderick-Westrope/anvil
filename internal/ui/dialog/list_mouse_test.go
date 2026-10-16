@@ -568,3 +568,37 @@ func TestListMouse_ClickPositionIsRelativeToTheList(t *testing.T) {
 	require.Equal(t, 2, l.y)
 	require.Equal(t, 0, l.selected)
 }
+
+// Draw scrolls the current session into view only when it is off screen;
+// a current session on the first or last visible row stays put.
+func TestDialogMouse_SessionsDrawScrollsOnlyToAnOffScreenCurrentSession(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newSessionsDeleteDialog(t, 60, 25)
+	scr := drawMouseDialog(s)
+	findOnScreen(t, scr, "Session 25")
+
+	over := s.mouse.area.Min
+	scrollTo := func(start int) {
+		t.Helper()
+		first, _ := s.list.VisibleItemIndices()
+		s.HandleMsg(common.CoalescedWheelMsg{Mouse: tea.Mouse{X: over.X, Y: over.Y}, DeltaY: float64(start - first)})
+		// A key hands the view back to the keyboard without moving it.
+		s.HandleMsg(tea.KeyPressMsg{Code: tea.KeyLeftShift})
+	}
+
+	scrollTo(25)
+	start, _ := s.list.VisibleItemIndices()
+	require.Equal(t, 25, start)
+	drawMouseDialog(s)
+	start, _ = s.list.VisibleItemIndices()
+	require.Equal(t, 25, start, "the current session on the top row is in view")
+
+	_, end := s.list.VisibleItemIndices()
+	scrollTo(25 - (end - start))
+	_, end = s.list.VisibleItemIndices()
+	require.Equal(t, 25, end)
+	drawMouseDialog(s)
+	_, end = s.list.VisibleItemIndices()
+	require.Equal(t, 25, end, "the current session on the bottom row is in view")
+}
