@@ -99,3 +99,19 @@ func TestCanceledBannerYieldsToToolCalls(t *testing.T) {
 	out, _ = item.renderMessageContent(80)
 	require.Contains(t, stripStyle(out), "Canceled")
 }
+
+// A turn cancelled before it said anything has nothing above the banner to
+// set it off from, so it must not open with a blank line.
+func TestBannerAloneHasNoLeadingBlank(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	item, ok := NewAssistantMessageItem(&sty, assistantWith(
+		message.Finish{Reason: message.FinishReasonCanceled, Time: 1},
+	)).(*AssistantMessageItem)
+	require.True(t, ok)
+
+	out, height := item.renderMessageContent(80)
+	require.Equal(t, "Canceled", strings.TrimSpace(stripStyle(out)))
+	require.Equal(t, 1, height)
+}

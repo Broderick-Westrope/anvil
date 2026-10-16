@@ -164,3 +164,43 @@ func TestNewlineBefore(t *testing.T) {
 	require.Equal(t, 4, newlineBefore("abc\ndef\n", 8-1))
 	require.Equal(t, 8, newlineBefore("abc\ndef\n", 8))
 }
+
+// The first flush of a document seeds the cache, from a blank-line boundary
+// when there is one and from the relaxed boundary when long prose has none.
+func TestStreamingMarkdown_FirstFlushSeedsTheCache(t *testing.T) {
+	t.Parallel()
+
+	const width = 80
+	prose := longProse(40)
+	require.Greater(t, len(prose), relaxBoundaryAfter)
+	require.Less(t, len(prose), maxUnsafeTrailBytes,
+		"sanity check: the forced cut must not be what seeds the cache")
+
+	for name, doc := range map[string]string{
+		"blank line": "First paragraph.\n\nSecond paragraph.",
+		"long prose": prose,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var sm streamingMarkdown
+			require.NotEmpty(t, sm.Render(doc, width, newTestRenderer(t, width)))
+			require.NotEmpty(t, sm.stablePrefix, "the first flush must seed the cache")
+			require.False(t, sm.forced)
+		})
+	}
+}
+
+func TestStreamingMarkdown_RelaxedBoundaryLiesPastTheStablePrefix(t *testing.T) {
+	t.Parallel()
+
+	// The stable prefix ends on a cut that would itself validate, and every
+	// newline after it is rejected by the table row before it. The prefix
+	// end is not a new boundary.
+	var sm streamingMarkdown
+	prose := longProse(5) + "\n"
+	row := "| " + strings.Repeat("a", 1000) + " | b |\n"
+	content := prose + strings.Repeat(row, 3)
+	require.Equal(t, len(prose), sm.relaxedBoundary(content, 0),
+		"sanity check: the cut at the end of the prose validates")
+	require.Equal(t, -1, sm.relaxedBoundary(content, len(prose)))
+}
