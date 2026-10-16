@@ -30,8 +30,8 @@ type backend struct {
 
 var _ workflow.Backend = (*backend)(nil)
 
-func (b *backend) HasSkill(name string) bool { return b.svc.Catalog().HasSkill(name) }
-func (b *backend) HasAgent(name string) bool { return b.svc.Catalog().HasAgent(name) }
+func (b *backend) HasSkill(name string) bool { return b.svc.catalog().HasSkill(name) }
+func (b *backend) HasAgent(name string) bool { return b.svc.catalog().HasAgent(name) }
 
 func (b *backend) publish(ev Event) {
 	ev.RunID, ev.Command, ev.SessionID = b.base.RunID, b.base.Command, b.base.SessionID

@@ -220,9 +220,9 @@ func (s *Service) Subscribe(ctx context.Context) <-chan pubsub.Event[Event] {
 	return s.events.Subscribe(ctx)
 }
 
-// Catalog reports which skills and agents exist, for checking a script's
+// catalog reports which skills and agents exist, for checking a script's
 // requirements.
-func (s *Service) Catalog() workflow.Catalog { return catalog{s.deps.Coordinator} }
+func (s *Service) catalog() workflow.Catalog { return catalog{s.deps.Coordinator} }
 
 // Check loads the script at path and lists what stops it running: its own
 // problems, then the skills and agents it requires that don't exist. It
@@ -238,7 +238,7 @@ func (s *Service) check(path string) (*workflow.Script, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	problems := append(slices.Clone(script.Problems), script.Missing(s.Catalog())...)
+	problems := append(slices.Clone(script.Problems), script.Missing(s.catalog())...)
 	return script, problems, nil
 }
 
