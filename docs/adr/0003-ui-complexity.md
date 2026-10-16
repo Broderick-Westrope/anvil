@@ -82,3 +82,15 @@ pattern for the whole TUI. Only one agent works in `ui.go` at a time.
   it. At that point, refactor it and delete its entry.
 - The `gocognit` exclusion list won't reach zero while these entries
   remain.
+- The table is the feature registry in `internal/ui/model/features.go`,
+  described under "Feature Routing" in `internal/ui/AGENTS.md`. Workflows
+  were the first feature moved onto it
+  (`plans/completed/design-2026-10-14-ui-feature-routing.md`); the other fork
+  features move one change at a time, extending the surface when one
+  needs more than it offers.
+- The registry's interfaces (`feature`, `featureHost`, `panelView`) start
+  with one real implementation each, plus test fakes. That breaks the usual
+  rule against single-implementation interfaces on purpose: they are the
+  seam every later fork feature plugs into, and the fake host is how a
+  feature is tested without a whole `UI`. If no second feature moves onto
+  the registry, collapse it back.

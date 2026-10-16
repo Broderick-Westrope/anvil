@@ -209,7 +209,7 @@ func (m *UI) pillsAreaHeight() int {
 	if !m.hasSession() || m.isDrilledIn() {
 		return 0
 	}
-	panelHeight := m.workflowPanelHeight()
+	panelHeight := m.features.panelLines()
 	hasIncomplete := hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0
 	hasPills := hasIncomplete || hasQueue
@@ -249,10 +249,7 @@ func (m *UI) renderPills() {
 	contentWidth := max(width-paddingLeft, 0)
 
 	t := m.com.Styles
-	var panel string
-	if p, ok := m.currentWorkflowPanel(); ok {
-		panel = renderWorkflowPanel(t, p, contentWidth)
-	}
+	panel := m.features.renderPanels(contentWidth)
 
 	hasIncomplete := hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0

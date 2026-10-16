@@ -49,7 +49,8 @@ The `UI` struct is the top-level Bubble Tea model. Key fields:
 - `dialog *dialog.Overlay` — stacked dialog system
 - `completions`, `attachments` — sub-components
 
-Keep most logic and state here. This is where:
+Keep upstream logic and state here. Fork features live in their own types
+instead (see Feature Routing). This is where:
 
 - Message routing happens (giant `switch msg.(type)` in `Update`)
 - Focus and UI state is managed
@@ -78,6 +79,46 @@ When writing new components, follow this pattern:
 - Handle rendering via `Render(width int) string` or
   `Draw(scr uv.Screen, area uv.Rectangle)`.
 - Let the main `UI.Update()` decide when and how to call into the component.
+
+### Feature Routing
+
+A fork feature (one Crush doesn't have) is a type that owns its state and
+plugs into `UI` through the `feature` interface in `model/features.go`
+(its host surface is in `model/feature_host.go`), instead of adding fields
+to `UI` and cases to the dispatchers. That keeps upstream's cases in
+`update`, `handleDialogMsg` and `handleKeyPressMsg` in their Crush shape,
+so cherry-picks still apply. See `docs/adr/0003-ui-complexity.md`. The
+workflow feature (`model/workflow.go`) is the worked example.
+
+`UI` registers features in `New`, in precedence order, and offers each one
+what the dispatchers don't own. Each hook is one generic line in `ui.go`:
+
+| Method | Called |
+|---|---|
+| `Observe` | In `Update`, before `update`, for every message except keys, pastes and mouse events. It can't claim a message; its commands are batched with `update`'s. Use it for messages upstream handles too. It sees `UI` as it was before the upstream case ran. |
+| `HandleMsg` | In `update`'s `default:` arm, before the dialog. Claim only your own message types. |
+| `HandleKey` | As the `default:` arm of `handleGlobalKeys`, so only when no global binding matched, from every focus state. A global binding that matches but whose condition fails still blocks it. |
+| `HandleAction` | In `handleDialogMsg`, after the dialog returns an action and before the action switch. The palette's `ActionRunCustomCommand` never reaches it; it goes to `RunCommand`. A feature closes the dialogs its own actions came from. |
+
+Optional surfaces, found by type assertion when the feature registers:
+
+- `commandFeature.RunCommand` runs a custom command the feature owns, from
+  the slash line (with raw arguments) or the palette (with none).
+- `panelFeature.Panel` returns a `panelView` drawn above the pills, or
+  nil. `Lines()` and `Render(width)` come from one view-model, and
+  `Render` returns exactly `Lines()` lines, each one row; cut multi-line
+  text at its first line. A panel with no lines isn't rendered.
+- `paletteFeature.PaletteEntries` adds entries to the command palette.
+
+A feature never holds `*UI`. It asks `UI` for things through `featureHost`,
+and for workspace calls it declares the narrow interface it needs. Add a
+host method only when a second feature needs it, or when it's a `UI`-owned
+operation the others can't express, and document its side effects. Test a
+feature through its surface with a fake host, and its routing through
+`UI.Update`.
+
+This is an exception to "expose imperative methods, not `Update`": `UI`
+still decides when a feature is called, and features aren't `tea.Model`s.
 
 ### Chat View (`model/chat.go`)
 

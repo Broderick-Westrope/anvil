@@ -8,6 +8,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/app"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/stretchr/testify/require"
 )
@@ -29,33 +30,46 @@ func writeWorkflow(t *testing.T, src string) string {
 	return path
 }
 
-func TestWorkflowMissingReportsUnknownRequirements(t *testing.T) {
+func TestAnnotateCommandsAddsWhatStopsAWorkflowRunning(t *testing.T) {
 	t.Parallel()
 
 	coord := catalogCoordinator{agents: map[string]bool{"reviewer": true}}
-	a := &app.App{
-		AgentCoordinator: coord,
-		Workflows:        workflowhost.NewService(t.Context(), workflowhost.Deps{Coordinator: coord}),
-	}
-	w := &AppWorkspace{app: a}
-	path := writeWorkflow(t, `requires({agents: ["reviewer", "ghost"], skills: ["nope"]})
-function main() {}`)
-
-	missing, err := w.WorkflowMissing(path)
-	require.NoError(t, err)
-	require.Equal(t, []string{`skill "nope" not found`, `agent "ghost" not found`}, missing)
-}
-
-func TestWorkflowMissingFailsWhenScriptDoesNotLoad(t *testing.T) {
-	t.Parallel()
-
-	coord := catalogCoordinator{}
 	w := &AppWorkspace{app: &app.App{
 		AgentCoordinator: coord,
 		Workflows:        workflowhost.NewService(t.Context(), workflowhost.Deps{Coordinator: coord}),
 	}}
-	_, err := w.WorkflowMissing(filepath.Join(t.TempDir(), "absent.js"))
-	require.Error(t, err)
+	missing := writeWorkflow(t, `requires({agents: ["reviewer", "ghost"], skills: ["nope"]})
+function main() {}`)
+	ok := writeWorkflow(t, `requires({agents: ["reviewer"]})
+function main() {}`)
+	absent := filepath.Join(t.TempDir(), "absent.js")
+	cmds := []commands.CustomCommand{
+		{Name: "prompt"},
+		{Name: "missing", Workflow: missing},
+		{Name: "ok", Workflow: ok},
+		{Name: "absent", Workflow: absent},
+		{Name: "broken", Workflow: missing, Problems: []string{"already broken"}},
+		{Name: "missing after absent", Workflow: missing},
+	}
+
+	got := w.AnnotateCommands(cmds)
+
+	require.Len(t, got, len(cmds))
+	require.Empty(t, got[0].Problems)
+	require.Equal(t, []string{`skill "nope" not found`, `agent "ghost" not found`}, got[1].Problems)
+	require.Empty(t, got[2].Problems)
+	require.Len(t, got[3].Problems, 1, "a script that doesn't load can't run")
+	require.Equal(t, got[1].Problems, got[5].Problems, "a script that doesn't load doesn't stop the rest being checked")
+	require.Equal(t, []string{"already broken"}, got[4].Problems, "a command that already has problems isn't checked again")
+	require.Empty(t, cmds[1].Problems, "the input is not modified")
+}
+
+func TestAnnotateCommandsLeavesWorkflowsAloneWithoutTheService(t *testing.T) {
+	t.Parallel()
+
+	w := &AppWorkspace{app: &app.App{}}
+	cmds := []commands.CustomCommand{{Name: "a", Workflow: filepath.Join(t.TempDir(), "absent.js")}}
+	require.Equal(t, cmds, w.AnnotateCommands(cmds), "workflows aren't broken just because the agent isn't ready")
 }
 
 func TestWorkflowControlsNeedTheService(t *testing.T) {
@@ -67,17 +81,11 @@ func TestWorkflowControlsNeedTheService(t *testing.T) {
 	require.ErrorIs(t, w.WorkflowPause("s"), ErrWorkflowsUnavailable)
 	require.ErrorIs(t, w.WorkflowResume("s"), ErrWorkflowsUnavailable)
 	require.ErrorIs(t, w.WorkflowAbort("s"), ErrWorkflowsUnavailable)
-	_, err := w.WorkflowMissing("x")
-	require.ErrorIs(t, err, ErrWorkflowsUnavailable)
-	_, ok := w.WorkflowRunning("s")
-	require.False(t, ok)
 }
 
-func TestWorkflowRunningFindsNothingWithoutRuns(t *testing.T) {
+func TestWorkflowControlsReachTheService(t *testing.T) {
 	t.Parallel()
 
 	w := &AppWorkspace{app: &app.App{Workflows: workflowhost.NewService(t.Context(), workflowhost.Deps{})}}
-	_, ok := w.WorkflowRunning("s")
-	require.False(t, ok)
 	require.ErrorIs(t, w.WorkflowPause("s"), workflowhost.ErrNoRun)
 }

@@ -11,14 +11,14 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
-	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
-	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -35,7 +35,6 @@ const (
 // memory after the run finishes until it is dismissed or the session
 // runs another workflow.
 type workflowRun struct {
-	command  string
 	step     string
 	detail   string
 	activity string // The latest bash command or turn.
@@ -49,13 +48,6 @@ type workflowRun struct {
 	// the indices in panel.
 	log   *dialog.WorkflowTranscript
 	panel []int
-}
-
-// record adds e to the run's transcript and returns its index.
-func (r *workflowRun) record(e dialog.WorkflowEntry) int {
-	r.log.Entries = append(r.log.Entries, e)
-	r.log.Version++
-	return len(r.log.Entries) - 1
 }
 
 // show lists the entry at index i in the panel, making room by dropping
@@ -85,7 +77,7 @@ func (r *workflowRun) panelEntries() []dialog.WorkflowEntry {
 // recorded as it ends, with no session to open.
 func (r *workflowRun) agentEvent(a workflowhost.AgentCall) {
 	if a.Status == workflowhost.StatusRunning || a.Session == "" {
-		r.show(r.record(dialog.WorkflowEntry{
+		r.show(r.log.Record(dialog.WorkflowEntry{
 			Kind: dialog.WorkflowEntryAgent, Agent: a.Name, Model: a.Model, SessionID: a.Session,
 			Status: a.Status, Err: a.Err,
 		}))
@@ -93,8 +85,7 @@ func (r *workflowRun) agentEvent(a workflowhost.AgentCall) {
 	}
 	for i, e := range r.log.Entries {
 		if e.Kind == dialog.WorkflowEntryAgent && e.SessionID == a.Session {
-			r.log.Entries[i].Status, r.log.Entries[i].Err = a.Status, a.Err
-			r.log.Version++
+			r.log.Update(i, func(e *dialog.WorkflowEntry) { e.Status, e.Err = a.Status, a.Err })
 		}
 	}
 }
@@ -122,16 +113,88 @@ type workflowFocusMsg struct {
 	target, title string
 }
 
-// workflowFor returns the run involving sessionID, if any.
+// workflowWorkspace is what the workflow feature asks of the workspace.
+type workflowWorkspace interface {
+	AgentIsReady() bool
+	WorkflowStart(ctx context.Context, inv workflowhost.Invocation) error
+	WorkflowRespond(requestID, answer string) error
+	WorkflowPause(sessionID string) error
+	WorkflowResume(sessionID string) error
+	WorkflowAbort(sessionID string) error
+	GetSession(ctx context.Context, id string) (session.Session, error)
+}
+
+// workflowFeature shows workflow runs: their requests as dialogs, their
+// progress as a panel, and their controls as keys and palette entries.
+type workflowFeature struct {
+	host featureHost
+	// com is for styles and dialog constructors only; workspace calls go
+	// through ws.
+	com *common.Common
+	ws  workflowWorkspace
+
+	// runs holds the runs, keyed by invoking session.
+	runs map[string]*workflowRun
+	// titles caches the titles of sessions workflows drive.
+	titles   map[string]string
+	requests workflowRequests
+	// follow is a session a workflow focused while the editor had
+	// text; the go key follows it.
+	follow string
+}
+
+var (
+	_ commandFeature = (*workflowFeature)(nil)
+	_ panelFeature   = (*workflowFeature)(nil)
+	_ paletteFeature = (*workflowFeature)(nil)
+)
+
+func newWorkflowFeature(host featureHost, com *common.Common, ws workflowWorkspace) *workflowFeature {
+	return &workflowFeature{
+		host:   host,
+		com:    com,
+		ws:     ws,
+		runs:   map[string]*workflowRun{},
+		titles: map[string]string{},
+	}
+}
+
+// Observe keeps the cached titles of sessions workflows drive up to date.
+// A deleted session keeps its title.
+func (w *workflowFeature) Observe(msg tea.Msg) tea.Cmd {
+	ev, ok := msg.(pubsub.Event[session.Session])
+	if !ok || ev.Type == pubsub.DeletedEvent {
+		return nil
+	}
+	if _, ok := w.titles[ev.Payload.ID]; ok {
+		w.setTitle(ev.Payload.ID, ev.Payload.Title)
+	}
+	return nil
+}
+
+func (w *workflowFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case pubsub.Event[workflowhost.Event]:
+		return w.handleEvent(msg.Payload), true
+	case workflowSessionTitleMsg:
+		w.setTitle(msg.id, msg.title)
+		return nil, true
+	case workflowFocusMsg:
+		return w.handleFocus(msg), true
+	}
+	return nil, false
+}
+
+// runFor returns the run involving sessionID, if any.
 // A session the user invoked a run from wins, then a running run that
 // used it, so a finished run's leftovers never shadow the live one.
-func (m *UI) workflowFor(sessionID string) (invoker string, run *workflowRun) {
-	if run := m.workflows[sessionID]; run != nil {
+func (w *workflowFeature) runFor(sessionID string) (string, *workflowRun) {
+	if run := w.runs[sessionID]; run != nil {
 		return sessionID, run
 	}
 	var finishedInvoker string
 	var finished *workflowRun
-	for invoker, run := range m.workflows {
+	for invoker, run := range w.runs {
 		if !run.sessions[sessionID] {
 			continue
 		}
@@ -143,119 +206,117 @@ func (m *UI) workflowFor(sessionID string) (invoker string, run *workflowRun) {
 	return finishedInvoker, finished
 }
 
-// currentWorkflow returns the run involving the session on screen.
-func (m *UI) currentWorkflow() (invoker string, run *workflowRun) {
-	if !m.hasSession() {
+// currentRun returns the run involving the session on screen.
+func (w *workflowFeature) currentRun() (string, *workflowRun) {
+	id := w.host.SessionID()
+	if id == "" {
 		return "", nil
 	}
-	return m.workflowFor(m.session.ID)
+	return w.runFor(id)
 }
 
-func (m *UI) workflowTitle(sessionID string) string {
-	if title := m.workflowTitles[sessionID]; title != "" {
+func (w *workflowFeature) title(sessionID string) string {
+	if title := w.titles[sessionID]; title != "" {
 		return title
 	}
 	return "another session"
 }
 
-// startWorkflowCommand runs a workflow command. A workflow never sends
-// its command body: the script gets the raw arguments instead.
-func (m *UI) startWorkflowCommand(name string, cmd commands.CustomCommand, raw string) tea.Cmd {
+// RunCommand runs a workflow command. A workflow never sends its command
+// body: the script gets the raw arguments instead.
+func (w *workflowFeature) RunCommand(cmd commands.CustomCommand, raw string) (tea.Cmd, bool) {
+	if !cmd.IsWorkflow() {
+		return nil, false
+	}
+	name := cmd.SlashName()
 	if len(cmd.Problems) > 0 {
-		return util.ReportError(fmt.Errorf("workflow /%s can't run: %s", name, strings.Join(cmd.Problems, "; ")))
+		return util.ReportError(fmt.Errorf("workflow /%s can't run: %s", name, strings.Join(cmd.Problems, "; "))), true
 	}
-	if m.reloading {
-		return util.ReportWarn(reloadInProgressMsg)
+	if w.host.Reloading() {
+		return util.ReportWarn(reloadInProgressMsg), true
 	}
-	if !m.com.Workspace.AgentIsReady() {
-		return util.ReportError(errors.New("orchestrator agent is not initialized"))
+	if !w.ws.AgentIsReady() {
+		return util.ReportError(errors.New("orchestrator agent is not initialized")), true
 	}
-	loadCmd, err := m.ensureSession()
+	sessionID, loadCmd, err := w.host.EnsureSession()
 	if err != nil {
-		return util.ReportError(err)
+		return util.ReportError(err), true
 	}
-	if !m.hasSession() {
-		return tea.Batch(loadCmd, util.ReportError(errors.New("workflow needs a session")))
+	if sessionID == "" {
+		return tea.Batch(loadCmd, util.ReportError(errors.New("workflow needs a session"))), true
 	}
 	inv := workflowhost.Invocation{
 		CommandID:   cmd.ID,
 		CommandName: name,
 		Source:      cmd.Source,
 		ScriptPath:  cmd.Workflow,
-		SessionID:   m.session.ID,
+		SessionID:   sessionID,
 		Raw:         raw,
 	}
-	ws := m.com.Workspace
+	ws := w.ws
 	return tea.Batch(loadCmd, func() tea.Msg {
 		if err := ws.WorkflowStart(context.Background(), inv); err != nil {
 			return util.NewErrorMsg(err)
 		}
 		return nil
-	})
+	}), true
 }
 
-// handleWorkflowAction handles the dialog actions that drive workflows.
-func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
+// HandleAction handles the dialog actions that drive workflows.
+func (w *workflowFeature) HandleAction(action dialog.Action) (tea.Cmd, bool) {
+	dialogs := w.host.Dialogs()
 	switch action := action.(type) {
-	case dialog.ActionRunCustomCommand:
-		m.dialog.CloseDialog(dialog.CommandsID)
-		return m.startWorkflowCommand(action.Name, commands.CustomCommand{
-			ID: action.CommandID, Source: action.Source, Workflow: action.Workflow, Problems: action.Problems,
-		}, "")
 	case dialog.ActionWorkflowRespond:
-		m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
-		req := m.workflowRequests[action.RequestID]
-		delete(m.workflowRequests, action.RequestID)
+		dialogs.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
+		// An untracked request comes back zero, and nothing is kept for
+		// it.
+		req := w.requests.take(action.RequestID)
 		// A request whose answer didn't arrive stays unanswered, so its
 		// republish opens it again rather than leaving the run waiting.
-		if err := m.com.Workspace.WorkflowRespond(action.RequestID, action.Answer); err != nil {
-			return util.ReportError(err)
+		if err := w.ws.WorkflowRespond(action.RequestID, action.Answer); err != nil {
+			return util.ReportError(err), true
 		}
-		if m.workflowAnswered == nil {
-			m.workflowAnswered = map[string]bool{}
-		}
-		m.workflowAnswered[action.RequestID] = true
+		w.requests.answer(req)
 		if req.Kind == workflowhost.EventAsk {
-			return m.keepWorkflowAnswer(req, action.Answer)
+			return w.keepAnswer(req, action.Answer), true
 		}
+		return nil, true
 	case dialog.ActionWorkflowControl:
-		m.dialog.CloseDialog(dialog.CommandsID)
-		return m.controlWorkflow(action.SessionID, action.Control)
+		dialogs.CloseDialog(dialog.CommandsID)
+		return w.control(action.SessionID, action.Control), true
 	case dialog.ActionWorkflowOpenAgent:
-		m.dialog.CloseDialog(dialog.WorkflowRunID)
-		m.clearDrillStack()
-		return util.CmdHandler(util.AgentDrillInMsg{SessionID: action.SessionID, Label: workflowhost.AgentSessionTitle(action.Command, action.Agent)})
+		dialogs.CloseDialog(dialog.WorkflowRunID)
+		return w.host.DrillInto(action.SessionID, workflowhost.AgentSessionTitle(action.Command, action.Agent)), true
 	}
-	return nil
+	return nil, false
 }
 
-func (m *UI) controlWorkflow(sessionID string, control dialog.WorkflowControl) tea.Cmd {
-	ws := m.com.Workspace
+func (w *workflowFeature) control(sessionID string, control dialog.WorkflowControl) tea.Cmd {
 	var err error
 	switch control {
 	case dialog.WorkflowPause:
-		err = ws.WorkflowPause(sessionID)
+		err = w.ws.WorkflowPause(sessionID)
 	case dialog.WorkflowResume:
-		err = ws.WorkflowResume(sessionID)
+		err = w.ws.WorkflowResume(sessionID)
 	case dialog.WorkflowAbort:
-		err = ws.WorkflowAbort(sessionID)
+		err = w.ws.WorkflowAbort(sessionID)
 	case dialog.WorkflowGoToActive:
-		if _, run := m.workflowFor(sessionID); run != nil {
-			return m.goToSession(run.active)
+		if _, run := w.runFor(sessionID); run != nil {
+			return w.host.Navigate(run.active)
 		}
 	case dialog.WorkflowOpenAgent:
-		if _, run := m.workflowFor(sessionID); run != nil {
-			return m.openWorkflowAgent(run)
+		if _, run := w.runFor(sessionID); run != nil {
+			return w.openAgent(run)
 		}
 	case dialog.WorkflowShowRun:
-		if _, run := m.workflowFor(sessionID); run != nil {
-			m.dialog.OpenDialog(dialog.NewWorkflowRun(m.com, run.log))
+		if _, run := w.runFor(sessionID); run != nil {
+			w.host.Dialogs().OpenDialog(dialog.NewWorkflowRun(w.com, run.log))
 		}
 	case dialog.WorkflowDismiss:
-		m.dialog.CloseDialog(dialog.WorkflowRunID)
-		if invoker, run := m.workflowFor(sessionID); run != nil && run.log.Finished {
-			delete(m.workflows, invoker)
-			m.updateLayoutAndSize()
+		w.host.Dialogs().CloseDialog(dialog.WorkflowRunID)
+		if invoker, run := w.runFor(sessionID); run != nil && run.log.Finished {
+			delete(w.runs, invoker)
+			w.host.Relayout()
 		}
 	}
 	if err != nil {
@@ -264,126 +325,132 @@ func (m *UI) controlWorkflow(sessionID string, control dialog.WorkflowControl) t
 	return nil
 }
 
-// handleWorkflowKey handles the workflow keys. It reports false when
-// there is nothing for the key to act on, so the key falls through.
-func (m *UI) handleWorkflowKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
-	if key.Matches(msg, m.keyMap.WorkflowGo) && m.workflowFollow != "" {
-		target := m.workflowFollow
-		m.workflowFollow = ""
-		return m.goToSession(target), true
+// HandleKey handles the workflow keys. It reports false when there is
+// nothing for the key to act on, so the key falls through.
+func (w *workflowFeature) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	km := w.host.KeyMap()
+	if !key.Matches(msg, km.WorkflowPause, km.WorkflowAbort, km.WorkflowGo, km.WorkflowAgent, km.WorkflowRun) {
+		return nil, false
 	}
-	invoker, run := m.currentWorkflow()
+	if key.Matches(msg, km.WorkflowGo) && w.follow != "" {
+		target := w.follow
+		w.follow = ""
+		return w.host.Navigate(target), true
+	}
+	invoker, run := w.currentRun()
 	if run == nil {
 		return nil, false
 	}
 	switch {
-	case key.Matches(msg, m.keyMap.WorkflowRun):
-		return m.controlWorkflow(invoker, dialog.WorkflowShowRun), true
-	case key.Matches(msg, m.keyMap.WorkflowAgent):
-		if cmd := m.openWorkflowAgent(run); cmd != nil {
+	case key.Matches(msg, km.WorkflowRun):
+		return w.control(invoker, dialog.WorkflowShowRun), true
+	case key.Matches(msg, km.WorkflowAgent):
+		if cmd := w.openAgent(run); cmd != nil {
 			return cmd, true
 		}
 	case run.log.Finished:
 		// A finished run has nothing left to pause, abort or go to.
-	case key.Matches(msg, m.keyMap.WorkflowPause):
+	case key.Matches(msg, km.WorkflowPause):
 		if run.paused {
-			return m.controlWorkflow(invoker, dialog.WorkflowResume), true
+			return w.control(invoker, dialog.WorkflowResume), true
 		}
-		return m.controlWorkflow(invoker, dialog.WorkflowPause), true
-	case key.Matches(msg, m.keyMap.WorkflowAbort):
-		return m.controlWorkflow(invoker, dialog.WorkflowAbort), true
-	case key.Matches(msg, m.keyMap.WorkflowGo):
-		if run.active != m.session.ID {
-			return m.goToSession(run.active), true
+		return w.control(invoker, dialog.WorkflowPause), true
+	case key.Matches(msg, km.WorkflowAbort):
+		return w.control(invoker, dialog.WorkflowAbort), true
+	case key.Matches(msg, km.WorkflowGo):
+		if run.active != w.host.SessionID() {
+			return w.host.Navigate(run.active), true
 		}
 	}
 	return nil, false
 }
 
-// openWorkflowAgent drills into the session of the run's latest subagent,
+// openAgent drills into the session of the run's latest subagent,
 // read-only like a task tool's session, or returns nil when it has none.
 // The subagent's messages live only in that session.
-func (m *UI) openWorkflowAgent(run *workflowRun) tea.Cmd {
+func (w *workflowFeature) openAgent(run *workflowRun) tea.Cmd {
 	e, ok := latestAgent(run.log.Entries)
 	if !ok {
 		return nil
 	}
-	m.clearDrillStack()
-	return util.CmdHandler(util.AgentDrillInMsg{SessionID: e.SessionID, Label: workflowhost.AgentSessionTitle(run.command, e.Agent)})
+	return w.host.DrillInto(e.SessionID, workflowhost.AgentSessionTitle(run.log.Command, e.Agent))
 }
 
-// workflowControls describes the run involving the session on screen for
-// the command palette, or nil when there is none.
-func (m *UI) workflowControls() *dialog.WorkflowControls {
-	invoker, run := m.currentWorkflow()
+// PaletteEntries lists the controls of the run involving the session on
+// screen.
+func (w *workflowFeature) PaletteEntries() []*dialog.CommandItem {
+	invoker, run := w.currentRun()
 	if run == nil {
 		return nil
 	}
-	keys := dialog.WorkflowKeys{
-		Pause: m.keyMap.WorkflowPause.Help().Key,
-		Abort: m.keyMap.WorkflowAbort.Help().Key,
-		GoTo:  m.keyMap.WorkflowGo.Help().Key,
-		Agent: m.keyMap.WorkflowAgent.Help().Key,
-		Run:   m.keyMap.WorkflowRun.Help().Key,
+	t := w.com.Styles
+	km := w.host.KeyMap()
+	item := func(id, title, shortcut string, control dialog.WorkflowControl) *dialog.CommandItem {
+		return dialog.NewCommandItem(t, id, title, shortcut, dialog.ActionWorkflowControl{SessionID: invoker, Control: control})
 	}
 	if run.log.Finished {
-		return &dialog.WorkflowControls{SessionID: invoker, Command: run.command, Finished: true, Keys: keys}
+		return []*dialog.CommandItem{
+			item("workflow_run", "Show Workflow Run /"+run.log.Command, km.WorkflowRun.Help().Key, dialog.WorkflowShowRun),
+			item("workflow_dismiss", "Dismiss Workflow Run /"+run.log.Command, "", dialog.WorkflowDismiss),
+		}
 	}
-	_, hasAgent := latestAgent(run.log.Entries)
-	return &dialog.WorkflowControls{
-		SessionID:     invoker,
-		Command:       run.command,
-		Paused:        run.paused,
-		CanGoToActive: run.active != m.session.ID,
-		CanOpenAgent:  hasAgent,
-		Keys:          keys,
+	pause := item("workflow_pause", "Pause Workflow /"+run.log.Command, km.WorkflowPause.Help().Key, dialog.WorkflowPause)
+	if run.paused {
+		pause = item("workflow_pause", "Resume Workflow /"+run.log.Command, km.WorkflowPause.Help().Key, dialog.WorkflowResume)
 	}
+	entries := []*dialog.CommandItem{
+		pause,
+		item("workflow_abort", "Abort Workflow /"+run.log.Command, km.WorkflowAbort.Help().Key, dialog.WorkflowAbort),
+		item("workflow_run", "Show Workflow Run /"+run.log.Command, km.WorkflowRun.Help().Key, dialog.WorkflowShowRun),
+	}
+	if run.active != w.host.SessionID() {
+		entries = append(entries, item("workflow_goto", "Go to Workflow Session", km.WorkflowGo.Help().Key, dialog.WorkflowGoToActive))
+	}
+	if _, ok := latestAgent(run.log.Entries); ok {
+		entries = append(entries, item("workflow_agent", "Open Workflow Agent Session", km.WorkflowAgent.Help().Key, dialog.WorkflowOpenAgent))
+	}
+	return entries
 }
 
-func (m *UI) goToSession(sessionID string) tea.Cmd {
-	if m.session != nil && m.session.ID == sessionID {
-		return nil
-	}
-	m.clearDrillStack()
-	return m.loadSession(sessionID)
-}
-
-// handleWorkflowEvent applies a workflow event to the UI.
-func (m *UI) handleWorkflowEvent(ev workflowhost.Event) tea.Cmd {
-	if (ev.Kind == workflowhost.EventApproval || ev.Kind == workflowhost.EventAsk) && m.seenWorkflowRequest(ev.RequestID) {
+// handleEvent applies a workflow event.
+func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
+	if (ev.Kind == workflowhost.EventApproval || ev.Kind == workflowhost.EventAsk) && w.requests.seen(ev) {
 		// The host republishes requests until answered, in case one was
 		// dropped; one already shown or answered needs nothing more.
 		return nil
 	}
-	defer m.updateLayoutAndSize()
+	if ev.Kind != workflowhost.EventFinished {
+		w.closeRequests(w.requests.observeRun(ev.SessionID, ev.RunID, !isControl(ev)))
+	}
+	defer w.host.Relayout()
 	switch ev.Kind {
 	case workflowhost.EventApproval:
-		m.trackWorkflowRequest(ev)
-		m.dialog.OpenDialogWithGrace(dialog.NewWorkflowApproval(m.com, ev))
-		return m.sendNotification(notification.Notification{
+		w.closeRequests(w.requests.add(ev))
+		w.host.Dialogs().OpenDialogWithGrace(dialog.NewWorkflowApproval(w.com, ev))
+		return w.host.Notify(notification.Notification{
 			Title:   "Anvil is waiting...",
 			Message: fmt.Sprintf("Workflow /%s needs approval", ev.Command),
 		})
 	case workflowhost.EventAsk:
-		m.trackWorkflowRequest(ev)
-		if run := m.ensureWorkflowRun(ev); run != nil {
-			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ev.RequestID, Question: ev.Question})
+		w.closeRequests(w.requests.add(ev))
+		if run := w.ensureRun(ev); run != nil {
+			run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ev.RequestID, Question: ev.Question})
 		}
-		m.dialog.OpenDialogWithGrace(dialog.NewWorkflowAsk(m.com, ev, m.keyMap.WorkflowAbort))
-		return m.sendNotification(notification.Notification{
+		w.host.Dialogs().OpenDialogWithGrace(dialog.NewWorkflowAsk(w.com, ev, w.host.KeyMap().WorkflowAbort))
+		return w.host.Notify(notification.Notification{
 			Title:   "Anvil is waiting...",
 			Message: fmt.Sprintf("Workflow /%s has a question", ev.Command),
 		})
 	case workflowhost.EventWarn:
-		if run := m.ensureWorkflowRun(ev); run != nil {
-			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryWarning, Text: ev.Message})
+		if run := w.ensureRun(ev); run != nil {
+			run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryWarning, Text: ev.Message})
 		}
 		return util.ReportWarn(fmt.Sprintf("Workflow /%s: %s", ev.Command, ev.Message))
 	case workflowhost.EventFinished:
-		return m.finishWorkflow(ev)
+		return w.finish(ev)
 	}
 
-	run := m.ensureWorkflowRun(ev)
+	run := w.ensureRun(ev)
 	if run == nil {
 		return nil
 	}
@@ -404,20 +471,20 @@ func (m *UI) handleWorkflowEvent(ev workflowhost.Event) tea.Cmd {
 				parts = append(parts, part)
 			}
 		}
-		run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryStatus, Text: strings.Join(parts, " · ")})
+		run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryStatus, Text: strings.Join(parts, " · ")})
 	case workflowhost.EventStep:
 		a := ev.Activity
 		switch a.Kind {
 		case workflowhost.ActivityBash:
 			run.activity = "$ " + a.Cmd
-			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryBash, Text: a.Cmd})
+			run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryBash, Text: a.Cmd})
 		case workflowhost.ActivityTurn:
 			run.activity = "turn"
 			if a.Session != "" {
 				run.active = a.Session
 				run.sessions[a.Session] = true
-				run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryTurn, SessionID: a.Session, Text: m.workflowTitle(a.Session)})
-				return m.fetchWorkflowTitle(a.Session)
+				run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryTurn, SessionID: a.Session, Text: w.title(a.Session)})
+				return w.fetchTitle(a.Session)
 			}
 		}
 	case workflowhost.EventAgent:
@@ -425,7 +492,7 @@ func (m *UI) handleWorkflowEvent(ev workflowhost.Event) tea.Cmd {
 	case workflowhost.EventFocus:
 		run.active = ev.Focus
 		run.sessions[ev.Focus] = true
-		ws := m.com.Workspace
+		ws := w.ws
 		return func() tea.Msg {
 			msg := workflowFocusMsg{target: ev.Focus}
 			if s, err := ws.GetSession(context.Background(), ev.Focus); err == nil {
@@ -437,60 +504,60 @@ func (m *UI) handleWorkflowEvent(ev workflowhost.Event) tea.Cmd {
 	return nil
 }
 
-// seenWorkflowRequest reports whether a request is open or was answered.
-func (m *UI) seenWorkflowRequest(id string) bool {
-	_, open := m.workflowRequests[id]
-	return open || m.workflowAnswered[id]
-}
-
-func (m *UI) trackWorkflowRequest(ev workflowhost.Event) {
-	if m.workflowRequests == nil {
-		m.workflowRequests = map[string]workflowhost.Event{}
+// closeRequests closes the dialogs of requests that can no longer be
+// answered.
+func (w *workflowFeature) closeRequests(ids []string) {
+	for _, id := range ids {
+		w.host.Dialogs().CloseDialog(dialog.WorkflowRequestDialogID(id))
 	}
-	m.workflowRequests[ev.RequestID] = ev
 }
 
-// keepWorkflowAnswer records the answer to a question, lists the exchange
-// in the progress panel and reports it, so it stays visible once its
-// dialog closes.
-func (m *UI) keepWorkflowAnswer(ask workflowhost.Event, answer string) tea.Cmd {
+// keepAnswer records the answer to a question, lists the exchange in the
+// progress panel and reports it, so it stays visible once its dialog
+// closes.
+func (w *workflowFeature) keepAnswer(ask workflowhost.Event, answer string) tea.Cmd {
 	question := firstLine(ask.Question)
-	if run := m.workflows[ask.SessionID]; run != nil {
+	if run := w.runs[ask.SessionID]; run != nil {
 		i := slices.IndexFunc(run.log.Entries, func(e dialog.WorkflowEntry) bool {
 			return e.Kind == dialog.WorkflowEntryAsk && e.RequestID == ask.RequestID
 		})
 		if i < 0 {
-			i = run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ask.RequestID, Question: ask.Question})
+			i = run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ask.RequestID, Question: ask.Question})
 		}
-		run.log.Entries[i].Answer = answer
-		run.log.Version++
+		run.log.Update(i, func(e *dialog.WorkflowEntry) { e.Answer = answer })
 		run.show(i)
-		m.updateLayoutAndSize()
+		w.host.Relayout()
 	}
 	return util.ReportInfo(fmt.Sprintf("Workflow /%s asked: %s → %s", ask.Command, question, firstLine(answer)))
 }
 
-// ensureWorkflowRun returns the run ev belongs to, starting one when the
-// session has none or ev belongs to another run. It returns nil for a late
-// event of a finished run.
-func (m *UI) ensureWorkflowRun(ev workflowhost.Event) *workflowRun {
-	run := m.workflows[ev.SessionID]
+// ensureRun returns the run ev belongs to, starting one when the session
+// has none or ev belongs to another run. It returns nil for a late event
+// of a finished run, and for a late control of an earlier run.
+func (w *workflowFeature) ensureRun(ev workflowhost.Event) *workflowRun {
+	run := w.runs[ev.SessionID]
 	if run != nil && (run.log.Finished || otherWorkflowRun(run, ev)) {
-		if ev.RunID == "" || ev.RunID == run.log.RunID {
+		if ev.RunID == "" || ev.RunID == run.log.RunID || isControl(ev) {
 			return nil
 		}
 		run = nil
 	}
 	if run == nil {
-		run = m.newWorkflowRun(ev)
+		run = w.newRun(ev)
 	}
-	if ev.Command != "" {
-		run.command, run.log.Command = ev.Command, ev.Command
-	}
+	run.log.SetCommand(ev.Command)
 	if run.log.RunID == "" {
 		run.log.RunID = ev.RunID
 	}
 	return run
+}
+
+// isControl reports whether ev is a pause or resume, which the host
+// publishes apart from the run. One can arrive after the run's session
+// moved on to the next run, so it never starts or replaces a run.
+func isControl(ev workflowhost.Event) bool {
+	return ev.Kind == workflowhost.EventState &&
+		(ev.State == workflowhost.StatePaused || ev.State == workflowhost.StateResumed)
 }
 
 // otherWorkflowRun reports whether ev belongs to a run other than run. A
@@ -500,27 +567,24 @@ func otherWorkflowRun(run *workflowRun, ev workflowhost.Event) bool {
 	return ev.RunID != "" && run.log.RunID != "" && ev.RunID != run.log.RunID
 }
 
-// newWorkflowRun starts tracking a run in ev's session, replacing any
-// finished one.
-func (m *UI) newWorkflowRun(ev workflowhost.Event) *workflowRun {
-	if m.workflows == nil {
-		m.workflows = map[string]*workflowRun{}
-	}
+// newRun starts tracking a run in ev's session, replacing any finished
+// one.
+func (w *workflowFeature) newRun(ev workflowhost.Event) *workflowRun {
 	run := &workflowRun{
 		active:   ev.SessionID,
 		sessions: map[string]bool{ev.SessionID: true},
 		log:      &dialog.WorkflowTranscript{RunID: ev.RunID, SessionID: ev.SessionID},
 	}
-	m.workflows[ev.SessionID] = run
-	m.dialog.CloseDialog(dialog.WorkflowRunID)
+	w.runs[ev.SessionID] = run
+	w.host.Dialogs().CloseDialog(dialog.WorkflowRunID)
 	return run
 }
 
-func (m *UI) fetchWorkflowTitle(sessionID string) tea.Cmd {
-	if _, ok := m.workflowTitles[sessionID]; ok {
+func (w *workflowFeature) fetchTitle(sessionID string) tea.Cmd {
+	if _, ok := w.titles[sessionID]; ok {
 		return nil
 	}
-	ws := m.com.Workspace
+	ws := w.ws
 	return func() tea.Msg {
 		s, err := ws.GetSession(context.Background(), sessionID)
 		if err != nil {
@@ -530,64 +594,63 @@ func (m *UI) fetchWorkflowTitle(sessionID string) tea.Cmd {
 	}
 }
 
-func (m *UI) setWorkflowTitle(id, title string) {
-	if m.workflowTitles == nil {
-		m.workflowTitles = map[string]string{}
+// setTitle names a session a workflow drives, in the cache and in every
+// turn entry run there. A title the cache already has changes nothing.
+func (w *workflowFeature) setTitle(id, title string) {
+	if old, ok := w.titles[id]; ok && old == title {
+		return
 	}
-	m.workflowTitles[id] = title
-	for _, run := range m.workflows {
+	w.titles[id] = title
+	for _, run := range w.runs {
 		for i, e := range run.log.Entries {
 			if e.Kind == dialog.WorkflowEntryTurn && e.SessionID == id {
-				run.log.Entries[i].Text = title
-				run.log.Version++
+				run.log.Update(i, func(e *dialog.WorkflowEntry) { e.Text = title })
 			}
 		}
 	}
-	m.updateLayoutAndSize()
+	w.host.Relayout()
 }
 
-// handleWorkflowFocus moves to the session a script focused, unless you
-// have unsent text, in which case it tells you how to follow.
-func (m *UI) handleWorkflowFocus(msg workflowFocusMsg) tea.Cmd {
+// handleFocus moves to the session a script focused, unless you have
+// unsent text, in which case it tells you how to follow.
+func (w *workflowFeature) handleFocus(msg workflowFocusMsg) tea.Cmd {
 	if msg.title != "" {
-		m.setWorkflowTitle(msg.target, msg.title)
+		w.setTitle(msg.target, msg.title)
 	}
-	if m.session != nil && m.session.ID == msg.target {
-		m.workflowFollow = ""
+	if w.host.SessionID() == msg.target {
+		w.follow = ""
 		return nil
 	}
-	if m.textarea.Value() == "" && !m.attachments.HasContent() {
-		m.workflowFollow = ""
-		return m.goToSession(msg.target)
+	if !w.host.ComposerHasContent() {
+		w.follow = ""
+		return w.host.Navigate(msg.target)
 	}
-	m.workflowFollow = msg.target
+	w.follow = msg.target
 	return util.ReportInfo(fmt.Sprintf("workflow moved to %s, press %s to follow",
-		m.workflowTitle(msg.target), m.keyMap.WorkflowGo.Help().Key))
+		w.title(msg.target), w.host.KeyMap().WorkflowGo.Help().Key))
 }
 
-// finishWorkflow records how a run ended and reports it. The run stays
-// as a one-line summary, with its transcript, until it is dismissed or
-// the session runs another workflow.
-func (m *UI) finishWorkflow(ev workflowhost.Event) tea.Cmd {
-	run := m.workflows[ev.SessionID]
+// finish records how a run ended and reports it. The run stays as a
+// one-line summary, with its transcript, until it is dismissed or the
+// session runs another workflow.
+func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
+	run := w.runs[ev.SessionID]
+	if run != nil && !run.log.Finished && otherWorkflowRun(run, ev) {
+		// The live run is taken to be over, its finish lost, so its
+		// requests end with it.
+		w.closeRequests(w.requests.finish(ev.SessionID, run.log.RunID, true))
+	}
+	seen := run != nil && run.log.RunID == ev.RunID
+	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID, seen))
 	if run == nil || run.log.Finished || otherWorkflowRun(run, ev) {
-		run = m.newWorkflowRun(ev)
+		run = w.newRun(ev)
 	}
-	if ev.Command != "" {
-		run.command, run.log.Command = ev.Command, ev.Command
-	}
+	run.log.SetCommand(ev.Command)
 	outcome := ev.Message
 	if ev.Status == workflowhost.StatusCompleted {
 		outcome = compactResult(ev.Result)
 	}
-	run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: ev.Status, Text: outcome})
-	run.log.Finished = true
-	for req, pending := range m.workflowRequests {
-		if pending.SessionID == ev.SessionID {
-			m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(req))
-			delete(m.workflowRequests, req)
-		}
-	}
+	run.log.Finish(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: ev.Status, Text: outcome})
 	if ev.Status == workflowhost.StatusCompleted {
 		outcome = ansi.Truncate(outcome, workflowResultMaxWidth, "…")
 	}
@@ -609,176 +672,4 @@ func compactResult(raw json.RawMessage) string {
 		return ""
 	}
 	return buf.String()
-}
-
-// workflowPanel is what the progress panel shows for one run.
-type workflowPanel struct {
-	command  string
-	step     string
-	detail   string
-	activity string
-	paused   bool
-	held     bool
-	// elsewhere is the title of the session the run is driving when it
-	// isn't the one on screen.
-	elsewhere string
-	entries   []dialog.WorkflowEntry
-	// outcome is how the run ended, set only once it has; the panel is
-	// then a one-line summary.
-	outcome  *dialog.WorkflowEntry
-	pauseKey string
-	abortKey string
-	goKey    string
-	agentKey string
-	runKey   string
-}
-
-// currentWorkflowPanel returns the panel for the session on screen.
-func (m *UI) currentWorkflowPanel() (workflowPanel, bool) {
-	if m.isDrilledIn() {
-		return workflowPanel{}, false
-	}
-	_, run := m.currentWorkflow()
-	if run == nil {
-		return workflowPanel{}, false
-	}
-	p := workflowPanel{
-		command: run.command, step: run.step, detail: run.detail, activity: run.activity,
-		paused: run.paused, held: run.held, entries: run.panelEntries(),
-		pauseKey: m.keyMap.WorkflowPause.Help().Key,
-		abortKey: m.keyMap.WorkflowAbort.Help().Key,
-		goKey:    m.keyMap.WorkflowGo.Help().Key,
-		agentKey: m.keyMap.WorkflowAgent.Help().Key,
-		runKey:   m.keyMap.WorkflowRun.Help().Key,
-	}
-	if run.log.Finished {
-		return workflowPanel{command: run.command, outcome: &run.log.Entries[len(run.log.Entries)-1], runKey: p.runKey}, true
-	}
-	if run.active != m.session.ID {
-		p.elsewhere = m.workflowTitle(run.active)
-	}
-	return p, true
-}
-
-func (m *UI) workflowPanelHeight() int {
-	p, ok := m.currentWorkflowPanel()
-	if !ok {
-		return 0
-	}
-	height := 1 + len(p.entries)
-	if p.elsewhere != "" {
-		height++
-	}
-	return height
-}
-
-// renderWorkflowPanel renders the progress line, plus a warning when the
-// run is driving another session, within width; or, once the run has
-// finished, a one-line summary.
-func renderWorkflowPanel(t *styles.Styles, p workflowPanel, width int) string {
-	sep := t.Pills.HelpText.Render(" · ")
-	hint := func(k, text string) string {
-		return t.Pills.HelpKey.Render(k) + " " + t.Pills.HelpText.Render(text)
-	}
-	fitWithHints := func(text, hints string) string {
-		available := width - lipgloss.Width(hints) - 2
-		line := ansi.Truncate(text, max(available, 0), "…")
-		line += strings.Repeat(" ", max(available-lipgloss.Width(line), 0)) + "  " + hints
-		return ansi.Truncate(line, width, "…")
-	}
-
-	progress := t.Messages.WorkflowTag.Render("Workflow") + " " + t.Pills.TodoLabel.Render("/"+p.command)
-	if o := p.outcome; o != nil {
-		summary := progress + sep + t.Pills.TodoProgress.Render(firstLine(dialog.WorkflowOutcomeText(o.Status, o.Text)))
-		return fitWithHints(summary, hint(p.runKey, "details"))
-	}
-	for _, part := range []string{p.step, p.detail} {
-		if part != "" {
-			progress += sep + t.Pills.TodoProgress.Render(part)
-		}
-	}
-	if p.paused {
-		progress += sep + t.Pills.QueueLabel.Render("paused")
-	}
-	if p.held {
-		progress += sep + t.Pills.QueueLabel.Render("holding sessions")
-	}
-	if p.activity != "" {
-		progress += "  " + t.Pills.TodoCurrentTask.Render(firstLine(p.activity))
-	}
-
-	pauseText := "pause"
-	if p.paused {
-		pauseText = "resume"
-	}
-	hints := hint(p.pauseKey, pauseText) + sep + hint(p.abortKey, "abort")
-	lines := []string{fitWithHints(progress, hints)}
-
-	if p.elsewhere != "" {
-		warning := t.Pills.WorkflowWarning.Render(fmt.Sprintf("workflow /%s is running in %s", p.command, p.elsewhere))
-		lines = append(lines, ansi.Truncate(warning+"  "+hint(p.goKey, "go there"), width, "…"))
-	}
-	latest, _ := latestAgent(p.entries)
-	for _, e := range p.entries {
-		var entry string
-		if e.Kind == dialog.WorkflowEntryAsk {
-			entry = "  " + t.Pills.HelpKey.Render("?") + " " + t.Pills.HelpText.Render(firstLine(e.Question)) +
-				" " + t.Pills.HelpText.Render("→") + " " + t.Pills.TodoProgress.Render(firstLine(e.Answer))
-		} else {
-			entry = "  " + dialog.WorkflowAgentLine(t, p.command, e, true)
-			if e.SessionID == latest.SessionID {
-				entry += "  " + hint(p.agentKey, "open")
-			}
-		}
-		lines = append(lines, ansi.Truncate(entry, width, "…"))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return line
-}
-
-// annotateWorkflowCommands adds the missing requirements of each workflow
-// command to its problems, so a command that can't run is shown as broken.
-// Scripts that already failed to load aren't checked again. It does IO, so
-// call it from a command.
-func annotateWorkflowCommands(ws workspace.Workspace, cmds []commands.CustomCommand) []commands.CustomCommand {
-	out := make([]commands.CustomCommand, len(cmds))
-	for i, cmd := range cmds {
-		out[i] = cmd
-		if cmd.Workflow == "" || len(cmd.Problems) > 0 {
-			continue
-		}
-		missing, err := ws.WorkflowMissing(cmd.Workflow)
-		if err == nil {
-			out[i].Problems = missing
-		} else if !errors.Is(err, workspace.ErrWorkflowsUnavailable) {
-			out[i].Problems = []string{err.Error()}
-		}
-	}
-	return out
-}
-
-// brokenWorkflowsWarning describes the workflow commands that won't run,
-// or returns "" when there are none.
-func brokenWorkflowsWarning(cmds []commands.CustomCommand) string {
-	var problems []string
-	for _, cmd := range cmds {
-		if cmd.Workflow == "" || len(cmd.Problems) == 0 {
-			continue
-		}
-		problems = append(problems, fmt.Sprintf("/%s: %s", cmd.SlashName(), strings.Join(cmd.Problems, "; ")))
-	}
-	if len(problems) == 0 {
-		return ""
-	}
-	return "Broken workflow commands: " + strings.Join(problems, " · ")
-}
-
-// isWorkflowTurn reports whether text is a turn a workflow script sent.
-func isWorkflowTurn(text string) bool {
-	_, _, ok := commands.ParseWorkflowTurnXML(strings.TrimSpace(text))
-	return ok
 }

@@ -1107,3 +1107,30 @@ BEGIN SELECT RAISE(ABORT, 'finish refused'); END`)
 		})
 	}
 }
+
+func TestServiceCheckListsWhatStopsAScriptRunning(t *testing.T) {
+	h := newServiceHarness(t, true)
+	tests := map[string]struct {
+		src  string
+		want []string
+	}{
+		"runnable":            {src: `requires({agents: ["reviewer"]}); function main() {}`},
+		"missing requirement": {src: `requires({agents: ["ghost"], skills: ["nope"]}); function main() {}`, want: []string{`skill "nope" not found`, `agent "ghost" not found`}},
+		"script problem":      {src: "requires(deps)\nfunction main() {}", want: []string{"requires() must be a literal"}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "workflow.js")
+			require.NoError(t, os.WriteFile(path, []byte(tc.src), 0o644))
+			problems, err := h.svc.Check(path)
+			require.NoError(t, err)
+			require.Len(t, problems, len(tc.want))
+			for i, want := range tc.want {
+				require.Contains(t, problems[i], want)
+			}
+		})
+	}
+
+	_, err := h.svc.Check(filepath.Join(t.TempDir(), "absent.js"))
+	require.Error(t, err, "a script that doesn't load is an error, not a problem")
+}

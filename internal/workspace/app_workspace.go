@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
@@ -22,7 +24,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
-	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -659,20 +660,20 @@ func (w *AppWorkspace) WorkflowAbort(sessionID string) error {
 	return w.app.Workflows.Abort(sessionID)
 }
 
-func (w *AppWorkspace) WorkflowRunning(sessionID string) (string, bool) {
+func (w *AppWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand {
+	out := slices.Clone(cmds)
 	if w.app.Workflows == nil {
-		return "", false
+		return out
 	}
-	return w.app.Workflows.Running(sessionID)
-}
-
-func (w *AppWorkspace) WorkflowMissing(scriptPath string) ([]string, error) {
-	if w.app.Workflows == nil {
-		return nil, ErrWorkflowsUnavailable
+	for i, cmd := range out {
+		if cmd.Workflow == "" || len(cmd.Problems) > 0 {
+			continue
+		}
+		problems, err := w.app.Workflows.Check(cmd.Workflow)
+		if err != nil {
+			problems = []string{err.Error()}
+		}
+		out[i].Problems = problems
 	}
-	script, err := workflow.Load(scriptPath)
-	if err != nil {
-		return nil, err
-	}
-	return script.Missing(w.app.Workflows.Catalog()), nil
+	return out
 }

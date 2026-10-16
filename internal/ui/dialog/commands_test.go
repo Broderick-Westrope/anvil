@@ -1,8 +1,10 @@
 package dialog
 
 import (
+	"slices"
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -152,4 +154,48 @@ func TestDefaultCommands_ReloadInstance(t *testing.T) {
 	require.Equal(t, "Reload Instance", item.title)
 	require.Equal(t, ActionReloadInstance{}, item.Action())
 	require.Contains(t, item.Filter(), "restart")
+}
+
+func TestDefaultCommandsListFeatureEntriesInOrderBeforeBrowseSkills(t *testing.T) {
+	t.Parallel()
+
+	s := styles.TokyoNight()
+	com := &common.Common{Styles: &s, Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig()}}
+	c, err := NewCommands(com, "", false, false, false, false, nil, nil)
+	require.NoError(t, err)
+	first := NewCommandItem(&s, "feature_first", "First", "", ActionClose{})
+	second := NewCommandItem(&s, "feature_second", "Second", "", ActionClose{})
+	c.SetFeatureEntries([]*CommandItem{first, second})
+
+	var items []*CommandItem
+	for _, it := range c.list.FilteredItems() {
+		items = append(items, it.(*CommandItem))
+	}
+	at := func(id string) int {
+		return slices.IndexFunc(items, func(item *CommandItem) bool { return item.ID() == id })
+	}
+	require.Equal(t, at("feature_first")+1, at("feature_second"))
+	require.Equal(t, at("feature_second")+1, at("browse_skills"))
+	require.Equal(t, at("toggle_transparent")+1, at("feature_first"))
+}
+
+func TestUserCommandActionCarriesTheWholeCommand(t *testing.T) {
+	t.Parallel()
+
+	s := styles.TokyoNight()
+	com := &common.Common{Styles: &s, Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig()}}
+	cmd := commands.CustomCommand{
+		ID: "project:demo", Name: "demo", DisplayName: "demo-2", Description: "Demo", ArgumentHint: "[x]",
+		Content: "BODY", Source: "project", Location: "/p/COMMAND.md", Workflow: "/p/workflow.js",
+		Problems: []string{"broken"}, Skills: []string{"go-style"},
+	}
+	c, err := NewCommands(com, "", false, false, false, false, []commands.CustomCommand{cmd}, nil)
+	require.NoError(t, err)
+	c.setCommandItems(UserCommands)
+	item, ok := c.list.SelectedItem().(*CommandItem)
+	require.True(t, ok)
+	action, ok := item.Action().(ActionRunCustomCommand)
+	require.True(t, ok)
+	require.Equal(t, cmd, action.Command)
+	require.Equal(t, "demo-2", action.Name)
 }
