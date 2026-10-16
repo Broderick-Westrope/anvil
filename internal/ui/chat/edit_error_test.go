@@ -59,3 +59,37 @@ func TestEditErrorWithoutDiffHasNoTrailingBlank(t *testing.T) {
 		})
 	}
 }
+
+// Only a failure that left both sides empty has no diff to show. A failed
+// edit with content on just one side still has one, and it must be drawn.
+func TestEditErrorWithOneSidedDiffShowsTheDiff(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	for name, meta := range map[string]string{
+		"only new content": `{"new_content":"one_sided_marker\n"}`,
+		"only old content": `{"old_content":"one_sided_marker\n"}`,
+	} {
+		for tool, item := range map[string]func() ToolMessageItem{
+			"edit": func() ToolMessageItem {
+				return NewEditToolMessageItem(&sty,
+					message.ToolCall{ID: "1", Name: "edit", Input: `{"file_path":"/tmp/x.h"}`, Finished: true},
+					&message.ToolResult{ToolCallID: "1", Content: "permission denied", IsError: true, Metadata: meta},
+					false)
+			},
+			"multiedit": func() ToolMessageItem {
+				return NewMultiEditToolMessageItem(&sty,
+					message.ToolCall{ID: "1", Name: "multiedit", Input: `{"file_path":"/tmp/x.h","edits":[]}`, Finished: true},
+					&message.ToolResult{ToolCallID: "1", Content: "permission denied", IsError: true, Metadata: meta},
+					false)
+			},
+		} {
+			t.Run(tool+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				out := stripANSI(item().Render(100))
+				require.Contains(t, out, "permission denied")
+				require.Contains(t, out, "one_sided_marker", "the diff must be drawn under the error: %q", out)
+			})
+		}
+	}
+}

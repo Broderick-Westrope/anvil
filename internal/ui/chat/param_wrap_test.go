@@ -100,3 +100,31 @@ func TestToolHeaderStaysWithinWidth(t *testing.T) {
 		}
 	}
 }
+
+// Wrapping is only for parameters that overflow. One that fits must come out
+// exactly as the plain styled parameter, not padded out to the width, and a
+// width with no room to wrap into must leave it whole rather than blank.
+func TestToolParamListExpandedOnlyWrapsWhatOverflows(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	expanded := &ToolRenderOpts{ExpandedContent: true}
+	want := sty.Tool.ParamMain.Render("short.go")
+
+	for name, tc := range map[string]struct {
+		width int
+		opts  *ToolRenderOpts
+	}{
+		"fits the width":         {80, expanded},
+		"exactly the width":      {len("short.go"), expanded},
+		"zero width":             {0, expanded},
+		"negative width":         {-1, expanded},
+		"negative width no opts": {-1, nil},
+		"negative width compact": {-1, &ToolRenderOpts{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, want, toolParamList(&sty, []string{"short.go"}, tc.width, tc.opts))
+		})
+	}
+}
