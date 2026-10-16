@@ -4,6 +4,7 @@ import (
 	"image"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
@@ -158,6 +159,35 @@ func TestAuthMethodMouseDoubleClickConfirms(t *testing.T) {
 	selected, ok = action.(ActionSelectAuthMethod)
 	require.True(t, ok)
 	require.True(t, selected.UseOAuth)
+}
+
+func TestAuthMethodMouseDoubleClickThreshold(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		gap  time.Duration
+		want bool
+	}{
+		"exactly at the threshold": {gap: authMethodDoubleClickThreshold, want: true},
+		"just past the threshold":  {gap: authMethodDoubleClickThreshold + time.Nanosecond},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			m := newTestAuthMethod()
+			scr := uv.NewScreenBuffer(100, 30)
+			m.Draw(scr, image.Rect(0, 0, 100, 30))
+			now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+			m.now = func() time.Time { return now }
+			click := leftClick(m.apiKeyCardArea.Min.X+1, m.apiKeyCardArea.Min.Y+1)
+
+			require.Nil(t, m.HandleMsg(click))
+			now = now.Add(tc.gap)
+			_, confirmed := m.HandleMsg(click).(ActionSelectAuthMethod)
+
+			require.Equal(t, tc.want, confirmed)
+		})
+	}
 }
 
 func TestAuthMethodMouseClicksOnDifferentCardsDoNotConfirm(t *testing.T) {

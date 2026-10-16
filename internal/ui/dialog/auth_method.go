@@ -51,8 +51,10 @@ type AuthMethod struct {
 	apiKeyCardArea image.Rectangle
 	lastClickCard  int
 	lastClickTime  time.Time
-	help           help.Model
-	keyMap         struct {
+	// now reads the clock for double clicks; nil means time.Now.
+	now    func() time.Time
+	help   help.Model
+	keyMap struct {
 		Choose key.Binding
 		Select key.Binding
 		Close  key.Binding
@@ -150,6 +152,9 @@ func (m *AuthMethod) handleMouseClick(msg tea.MouseClickMsg) Action {
 		return nil
 	}
 	now := time.Now()
+	if m.now != nil {
+		now = m.now()
+	}
 	confirm := m.lastClickCard == card && now.Sub(m.lastClickTime) <= authMethodDoubleClickThreshold
 	m.lastClickCard = card
 	m.lastClickTime = now
