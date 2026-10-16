@@ -205,7 +205,8 @@ Terms with a specific meaning in this codebase are defined in
 - **Lint**: `task lint` (check) or `task lint:fix`. golangci-lint is pinned
   as a Go tool in its own modfile, so nothing needs installing; bump it with
   `go get -tool -modfile=tools/golangci-lint.mod
-  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<version>`.
+  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<version>`, and
+  update the `version:` in `.github/workflows/_lint.yml` to match.
 - **Format**: `task fmt` (`gofumpt -w .`)
 - **Modernize**: `task modernize` (runs `modernize` which makes code
   simplifications)
@@ -226,6 +227,13 @@ Terms with a specific meaning in this codebase are defined in
 and `lint` on Ubuntu, macOS and Windows, `mutation`, and `govulncheck`.
 Never bypass a failing check, merge with `--admin`, or change the ruleset
 to get a PR in.
+
+A PR into `main` that changes only Markdown at the repo root or under
+`plans/` or `docs/` passes `build` and `lint` without running them, and
+skips CodeQL, Grype and `govulncheck`. `scripts/ci-code-changed.sh` decides this, and
+`.github/workflows/_changes.yml` runs it; anything it doesn't recognise
+counts as code. If something starts embedding or testing one of those
+Markdown files, narrow the classifier in the same PR.
 
 `govulncheck` fails when our code calls a function with a known
 vulnerability, including in the Go standard library. It can start failing
