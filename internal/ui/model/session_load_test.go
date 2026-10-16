@@ -1,7 +1,11 @@
 package model
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -99,4 +103,66 @@ func TestLoadSession_ReplaysEventsPublishedDuringRead(t *testing.T) {
 		require.NotNil(t, cmd)
 		require.Equal(t, "s2", u.sessionLoad.sessionID)
 	})
+}
+
+// logCapture collects slog output. The default logger is process-wide, so
+// tests that capture it must not run in parallel.
+type logCapture struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (c *logCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.Write(p)
+}
+
+func (c *logCapture) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
+func captureLogs(t *testing.T) *logCapture {
+	t.Helper()
+	c := &logCapture{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(c, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return c
+}
+
+// readFilesWorkspace serves a session's read files, or fails to.
+type readFilesWorkspace struct {
+	*composerWorkspace
+	err error
+}
+
+func (w *readFilesWorkspace) FileTrackerListReadFiles(context.Context, string) ([]string, error) {
+	if w.err != nil {
+		return nil, w.err
+	}
+	return []string{"main.go"}, nil
+}
+
+func (*readFilesWorkspace) ListMessages(context.Context, string) ([]message.Message, error) {
+	return nil, nil
+}
+
+func TestLoadSession_ReadFilesFailureIsLoggedNotFatal(t *testing.T) {
+	logs := captureLogs(t)
+	u, cw := newComposerTestUI()
+
+	u.com.Workspace = &readFilesWorkspace{composerWorkspace: cw}
+	loaded, ok := u.loadSession("s1")().(loadSessionMsg)
+	require.True(t, ok)
+	require.Equal(t, []string{"main.go"}, loaded.readFiles)
+	require.NotContains(t, logs.String(), "Failed to load read files")
+
+	u.com.Workspace = &readFilesWorkspace{composerWorkspace: cw, err: errors.New("boom")}
+	loaded, ok = u.loadSession("s1")().(loadSessionMsg)
+	require.True(t, ok, "the session still loads without its read files")
+	require.Empty(t, loaded.readFiles)
+	require.Contains(t, logs.String(), "Failed to load read files")
 }

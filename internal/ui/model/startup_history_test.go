@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -113,4 +116,25 @@ func TestStartupPromptHistory(t *testing.T) {
 		require.Zero(t, ws.byWorkingDir)
 		require.Zero(t, ws.bySession)
 	})
+}
+
+func (*startupHistoryWorkspace) MCPGetStates() map[string]mcptools.ClientInfo { return nil }
+
+func (*startupHistoryWorkspace) PermissionUnresolvedCount(context.Context, time.Time) (int, error) {
+	return 0, errors.New("no permission store")
+}
+
+func (*startupHistoryWorkspace) WorkflowMissing(string) ([]string, error) {
+	return nil, workspace.ErrWorkflowsUnavailable
+}
+
+func TestInitLoadsTheStartupSessionInsteadOfHistory(t *testing.T) {
+	t.Parallel()
+
+	u, ws := newStartupHistoryUI(session.Session{ID: "s1"})
+	u.continueLastSession = true
+
+	msgs := runCmds(u.Init())
+	require.Contains(t, msgs, tea.Msg(continueSessionMsg{sessionID: "s1"}))
+	require.Zero(t, ws.byWorkingDir, "the session load brings its own history")
 }

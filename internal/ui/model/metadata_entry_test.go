@@ -229,3 +229,16 @@ func TestToggleLazyMCP_RecordsToggle(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteMetadataEntry_LogsOnlyFailedWrites(t *testing.T) {
+	logs := captureLogs(t)
+	u, ws := newMetadataTestUI(&session.Session{ID: "s1", LeafMessageID: "leaf"})
+	part := message.LabelContent{Label: "x"}
+
+	require.Nil(t, u.writeMetadataEntry(message.MessageTypeLabel, part)())
+	require.NotContains(t, logs.String(), "Failed to write metadata entry")
+
+	ws.failWrite = true
+	require.Nil(t, u.writeMetadataEntry(message.MessageTypeLabel, part)())
+	require.Contains(t, logs.String(), "Failed to write metadata entry")
+}

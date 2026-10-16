@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -45,6 +46,10 @@ func (*composerWorkspace) PermissionYoloLevel() config.YoloLevel { return config
 func (*composerWorkspace) Config() *config.Config                { return &config.Config{Options: &config.Options{}} }
 
 func (*composerWorkspace) ListSessionJobs(string) []shell.JobInfo { return nil }
+
+func (*composerWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand {
+	return cmds
+}
 
 func (*composerWorkspace) MoveLeaf(context.Context, string, string) error { return nil }
 

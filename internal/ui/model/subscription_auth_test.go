@@ -1,9 +1,11 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
@@ -173,4 +175,83 @@ func TestOpenAuthenticationDialogWithMethod(t *testing.T) {
 	u = newAuthUI(t, config.ProviderConfig{ID: "openai"})
 	u.openAuthenticationDialogWithMethod(openAIProvider, model, config.SelectedModelTypeLarge, false)
 	require.True(t, u.dialog.ContainsDialog(dialog.APIKeyInputID))
+}
+
+type oauthCleanupSentinel struct{}
+
+func TestCloseOAuthRunsTheCleanup(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		state      uiState
+		wantModels bool
+	}{
+		"in a session":      {state: uiChat},
+		"during onboarding": {state: uiOnboarding, wantModels: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			u := newAuthUI(t)
+			u.state = tc.state
+			u.dialog.OpenDialog(&fakeActionDialog{id: dialog.OAuthID, action: dialog.ActionCloseOAuth{
+				Cmd: func() tea.Msg { return oauthCleanupSentinel{} },
+			}})
+
+			cmd := u.handleDialogMsg(tea.KeyPressMsg{})
+
+			require.Contains(t, collectMsgs(cmd), tea.Msg(oauthCleanupSentinel{}), "the sign-in cleanup must run")
+			require.False(t, u.dialog.ContainsDialog(dialog.OAuthID))
+			require.Equal(t, tc.wantModels, u.dialog.ContainsDialog(dialog.ModelsID),
+				"onboarding returns to the models list")
+		})
+	}
+}
+
+func TestSelectAuthMethodStartsTheSignIn(t *testing.T) {
+	t.Parallel()
+
+	u := newAuthUI(t, config.ProviderConfig{ID: "openai"})
+	u.dialog.OpenDialog(&fakeActionDialog{id: dialog.AuthMethodID, action: dialog.ActionSelectAuthMethod{
+		Provider:  openAIProvider,
+		Model:     config.SelectedModel{Model: "m"},
+		ModelType: config.SelectedModelTypeLarge,
+		UseOAuth:  true,
+	}})
+
+	cmd := u.handleDialogMsg(tea.KeyPressMsg{})
+
+	require.NotNil(t, cmd, "the sign-in dialog's start command must be returned")
+	require.True(t, u.dialog.ContainsDialog(dialog.OAuthID))
+	require.False(t, u.dialog.ContainsDialog(dialog.AuthMethodID))
+}
+
+// The sign-in dialogs draw bare during onboarding and framed, with a title
+// rule, everywhere else.
+func TestAuthDialogsFollowTheOnboardingLayout(t *testing.T) {
+	t.Parallel()
+
+	model := config.SelectedModel{Model: "m"}
+	for name, tc := range map[string]struct {
+		pc   config.ProviderConfig
+		open func(u *UI)
+	}{
+		"subscription sign-in": {signedIn("openai"), func(u *UI) {
+			u.openAuthenticationDialog(openAIProvider, model, config.SelectedModelTypeLarge)
+		}},
+		"api key": {config.ProviderConfig{ID: "openai"}, func(u *UI) {
+			u.openAuthenticationDialogWithMethod(openAIProvider, model, config.SelectedModelTypeLarge, false)
+		}},
+	} {
+		for _, onboarding := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/onboarding=%t", name, onboarding), func(t *testing.T) {
+				t.Parallel()
+				u := newAuthUI(t, tc.pc)
+				if onboarding {
+					u.state = uiOnboarding
+				}
+				tc.open(u)
+				require.Equal(t, !onboarding, strings.Contains(frontDialogText(t, u), "╱"))
+			})
+		}
+	}
 }

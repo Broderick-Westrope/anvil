@@ -243,3 +243,16 @@ func TestPasteImageKeyWarnsWithoutVision(t *testing.T) {
 	require.True(t, hasNoVisionWarning(msgs))
 	require.Empty(t, attachmentMsgs(msgs))
 }
+
+func TestAddImageKeyWarnsWithoutVision(t *testing.T) {
+	t.Parallel()
+
+	u := newImageAttachUI(t, false)
+	u.keyMap = DefaultKeyMap()
+	u.attachments = attachments.New(attachments.NewRenderer(u.com.Styles.Attachments), attachments.Keymap{})
+
+	msgs := runCmd(u.handleKeyPressMsg(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl}))
+
+	require.True(t, hasNoVisionWarning(msgs))
+	require.False(t, u.dialog.ContainsDialog(dialog.FilePickerID))
+}

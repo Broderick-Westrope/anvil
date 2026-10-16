@@ -150,3 +150,13 @@ func TestShowingTheSidebarKeepsFocus(t *testing.T) {
 	require.False(t, u.isCompact)
 	require.Equal(t, uiFocusMain, u.focus)
 }
+
+func TestHidingTheSidebarFromTheChatKeepsFocus(t *testing.T) {
+	t.Parallel()
+
+	u, _ := newSidebarUI(t, uiFocusMain)
+	u.toggleCompactMode()
+
+	require.True(t, u.isCompact)
+	require.Equal(t, uiFocusMain, u.focus, "only focus on the sidebar itself has to move")
+}

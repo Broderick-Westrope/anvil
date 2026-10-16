@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/stretchr/testify/require"
@@ -58,4 +59,30 @@ func TestDialogMouse_DoubleClickActionReachesTheUI(t *testing.T) {
 
 	require.False(t, u.dialog.ContainsDialog(dialog.CommandsID), "the action closed the palette")
 	require.NotEqual(t, helpBefore, u.status.ShowingAll(), "the action ran")
+}
+
+type dialogMouseSentinel struct{}
+
+// Every kind of mouse event an open dialog consumes has its action run,
+// not only the click.
+func TestDialogMouse_EveryEventsActionReachesTheUI(t *testing.T) {
+	t.Parallel()
+
+	for name, msg := range map[string]tea.Msg{
+		"click":   tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft},
+		"motion":  tea.MouseMotionMsg{X: 1, Y: 1, Button: tea.MouseLeft},
+		"release": tea.MouseReleaseMsg{X: 1, Y: 1, Button: tea.MouseLeft},
+		"wheel":   common.CoalescedWheelMsg{Mouse: tea.Mouse{X: 1, Y: 1, Button: tea.MouseWheelDown}, DeltaY: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			u, _ := newSidebarUI(t, uiFocusEditor)
+			u.dialog.OpenDialog(&fakeActionDialog{id: "fake", action: dialog.ActionCmd{
+				Cmd: func() tea.Msg { return dialogMouseSentinel{} },
+			}})
+
+			_, cmd := u.Update(msg)
+			require.Contains(t, collectMsgs(cmd), tea.Msg(dialogMouseSentinel{}))
+		})
+	}
 }
