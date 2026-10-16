@@ -25,6 +25,9 @@ const (
 
 // Reasoning represents a dialog for selecting reasoning effort.
 type Reasoning struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com   *common.Common
 	help  help.Model
 	list  *list.FilterableList
@@ -111,6 +114,9 @@ func (r *Reasoning) ID() string {
 
 // HandleMsg implements [Dialog].
 func (r *Reasoning) HandleMsg(msg tea.Msg) Action {
+	if action, ok := r.mouse.handle(msg, r.list, nil, nil, func() Action { return r.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
@@ -145,12 +151,15 @@ func (r *Reasoning) HandleMsg(msg tea.Msg) Action {
 			}
 			return ActionSelectReasoningEffort{Effort: reasoningItem.effort}
 		default:
+			prevValue := r.input.Value()
 			var cmd tea.Cmd
 			r.input, cmd = r.input.Update(msg)
 			value := r.input.Value()
-			r.list.SetFilter(value)
-			r.list.ScrollToTop()
-			r.list.SetSelected(0)
+			if value != prevValue {
+				r.list.SetFilter(value)
+				r.list.ScrollToTop()
+				r.list.SetSelected(0)
+			}
 			return ActionCmd{cmd}
 		}
 	}
@@ -190,16 +199,17 @@ func (r *Reasoning) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	visibleCount := len(r.list.FilteredItems())
 	if r.list.Height() >= visibleCount {
 		r.list.ScrollToTop()
-	} else {
+	} else if !r.mouse.scrolled {
 		r.list.ScrollToSelectedWithMargin(listScrollMargin)
 	}
 
 	listView := t.Dialog.List.Height(r.list.Height()).Render(r.list.Render())
 	listView = joinScrollbar(t, listView, listHeight, listTotalHeight, listHeight, r.list.Offset())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, r.list.Width(), r.list.Height())
 	rc.Help = renderDialogHelp(t, &r.help, r, innerWidth)
 
 	view := rc.Render()
+	r.mouse.setArea(rc.ListBounds, centerRect(area, view))
 
 	cur := r.Cursor()
 	DrawCenterCursor(scr, area, view, cur)

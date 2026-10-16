@@ -148,27 +148,25 @@ func NewAssistantMessageItem(sty *styles.Styles, message *message.Message) Messa
 	return a
 }
 
-// StartAnimation starts the assistant message animation if it should be spinning.
-func (a *AssistantMessageItem) StartAnimation() tea.Cmd {
-	if !a.isSpinning() {
-		return nil
-	}
-	return a.anim.Start()
+// Spinning implements [Animatable].
+func (a *AssistantMessageItem) Spinning() bool {
+	return a.isSpinning()
 }
 
-// Animate progresses the assistant message animation if it should be spinning.
-func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
+// Advance implements [Animatable].
+func (a *AssistantMessageItem) Advance() bool {
 	if !a.isSpinning() {
-		return nil
+		return false
 	}
+	a.anim.Advance()
 	// Bump the F6 list-cache version so the next draw re-renders
-	// this item: a spinner tick mutates anim's internal frame
-	// counter, which changes the rendered output but is invisible
-	// to the per-section content hashes. Without the bump the
-	// list cache would serve the previously rendered frame
-	// indefinitely and the spinner would appear frozen.
+	// this item: a spinner frame mutates anim's internal counter,
+	// which changes the rendered output but is invisible to the
+	// per-section content hashes. Without the bump the list cache
+	// would serve the previously rendered frame indefinitely and
+	// the spinner would appear frozen.
 	a.Bump()
-	return a.anim.Animate(msg)
+	return true
 }
 
 // ID implements MessageItem.
@@ -330,11 +328,27 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	}
 
 	if a.message.IsFinished() {
+		var banner string
 		switch {
 		case a.message.FinishReason() == message.FinishReasonCanceled:
-			messageParts = append(messageParts, a.sty.Messages.AssistantCanceled.Render("Canceled"))
+			// Tool calls render below this item, and cancelling a turn
+			// closes each unfinished one out with its own interrupted
+			// result. Saying it here too would put "Canceled" above the
+			// tools it is describing.
+			if len(a.message.ToolCalls()) > 0 {
+				break
+			}
+			banner = a.sty.Messages.AssistantCanceled.Render("Canceled")
 		case a.message.IsErrorLike():
-			messageParts = append(messageParts, a.cachedError(width))
+			banner = a.cachedError(width)
+		}
+		if banner != "" {
+			// Set the banner off from the text above it, or it reads as
+			// the end of the sentence the model was in the middle of.
+			if len(messageParts) > 0 {
+				messageParts = append(messageParts, "")
+			}
+			messageParts = append(messageParts, banner)
 		}
 	}
 
@@ -531,8 +545,7 @@ func (a *AssistantMessageItem) isSpinning() bool {
 // sub-section caches whose source text or extras changed are
 // invalidated; the others survive and serve cache hits on the next
 // RawRender.
-func (a *AssistantMessageItem) SetMessage(msg *message.Message) tea.Cmd {
-	wasSpinning := a.isSpinning()
+func (a *AssistantMessageItem) SetMessage(msg *message.Message) {
 	a.message = msg
 	// Bump the F6 version even if the underlying *message.Message
 	// pointer is identical: callers may have mutated the message in
@@ -544,16 +557,14 @@ func (a *AssistantMessageItem) SetMessage(msg *message.Message) tea.Cmd {
 	// section's source hash, so an unchanged section keeps its prefix
 	// cache valid while a changed section forces a miss naturally.
 	// Section caches themselves are content-keyed, so they do not
-	// need an explicit drop here either.
-	if !wasSpinning && a.isSpinning() {
-		return a.StartAnimation()
-	}
-	return nil
+	// need an explicit drop here either. If the message started
+	// spinning again, the UI's animation clock picks it up on the
+	// next update.
 }
 
 // Finished implements list.Item. The assistant message is freezable
 // once the message reports IsFinished() and is no longer spinning
-// (no animation tick remains pending). Streaming tail animation is
+// (no animation frame remains pending). Streaming tail animation is
 // caught by isSpinning, so freezing only kicks in once the turn is
 // fully terminal. The list cache invalidates the entry on the next
 // version bump if anything (focus, highlight, expansion) changes.

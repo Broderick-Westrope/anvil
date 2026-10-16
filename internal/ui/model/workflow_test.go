@@ -151,7 +151,7 @@ func newWorkflowFixture(t *testing.T) *workflowFixture {
 	u.keyMap = DefaultKeyMap()
 	u.dialog = dialog.NewOverlay()
 	sty := u.com.Styles.Attachments
-	renderer := attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove)
+	renderer := attachments.NewRenderer(sty)
 	u.attachments = attachments.New(renderer, attachments.Keymap{})
 	u.slashAC = autocomplete.New(nil, 10)
 	sess := ws.sessions["sess-1"]

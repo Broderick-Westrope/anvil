@@ -62,7 +62,11 @@ type Querier interface {
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
 	ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]ListUndeliveredBackgroundJobEventsRow, error)
+	// Backs prompt history, which steps back one entry at a time.
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
+	// Backs prompt history when no session is open. The subquery picks the 200
+	// newest rowids from the covering session/role index, so the sort never
+	// touches message parts; only the rows kept are read in full.
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
 	ListWorkflowEvents(ctx context.Context, runID string) ([]WorkflowEvent, error)
 	MarkBackgroundJobLogExpired(ctx context.Context, arg MarkBackgroundJobLogExpiredParams) error

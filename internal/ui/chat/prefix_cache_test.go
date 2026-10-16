@@ -104,14 +104,7 @@ func TestUserMessageItemRender_PrefixCacheFocusBlur(t *testing.T) {
 			message.TextContent{Text: "Hello from the user."},
 		},
 	}
-	r := attachments.NewRenderer(
-		sty.Attachments.Normal,
-		sty.Attachments.Deleting,
-		sty.Attachments.Image,
-		sty.Attachments.Text,
-		sty.Attachments.Skill,
-		sty.Attachments.Remove,
-	)
+	r := attachments.NewRenderer(sty.Attachments)
 	item := NewUserMessageItem(&sty, msg, r).(*UserMessageItem)
 
 	const width = 60
@@ -196,7 +189,7 @@ func TestBaseToolMessageItemRender_PrefixCacheCompactFocusKey(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	tc := message.ToolCall{ID: "tc-cache", Name: "bash", Input: `{"command":"echo hello"}`, Finished: true}
-	item := NewToolMessageItem(&sty, "msg", tc, &message.ToolResult{ToolCallID: "tc-cache", Content: "hello\nworld\ndone"}, false, nil)
+	item := NewToolMessageItem(&sty, "msg", tc, &message.ToolResult{ToolCallID: "tc-cache", Content: "hello\nworld\ndone"}, false, ToolItemOptions{})
 
 	// NewToolMessageItem defaults most tools to compact; start
 	// non-compact so the 4-state matrix exercises both directions.

@@ -162,7 +162,7 @@ func orchestratorAgent(r *vcr.Recorder, env fakeEnv, large, small fantasy.Langua
 	}
 
 	allTools := []fantasy.AgentTool{
-		tools.NewBashTool(env.permissions, env.workingDir, nil),
+		tools.NewBashTool(env.permissions, env.workingDir, env.workingDir, nil),
 		tools.NewDownloadTool(env.permissions, env.workingDir, r.GetDefaultClient()),
 		tools.NewEditTool(nil, env.permissions, *env.filetracker, env.workingDir),
 		tools.NewMultiEditTool(nil, env.permissions, *env.filetracker, env.workingDir),
@@ -171,7 +171,7 @@ func orchestratorAgent(r *vcr.Recorder, env fakeEnv, large, small fantasy.Langua
 		tools.NewGrepTool(env.workingDir, cfg.Config().Tools.Grep),
 		tools.NewLsTool(env.permissions, env.workingDir, cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(r.GetDefaultClient()),
-		tools.NewViewTool(nil, env.permissions, *env.filetracker, nil, nil, env.workingDir),
+		tools.NewViewTool(nil, env.permissions, *env.filetracker, nil, nil, nil, env.workingDir),
 		tools.NewWriteTool(nil, env.permissions, *env.filetracker, env.workingDir),
 	}
 

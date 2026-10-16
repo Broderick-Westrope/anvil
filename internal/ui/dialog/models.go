@@ -73,6 +73,9 @@ const defaultModelsDialogMaxWidth = 73
 
 // Models represents a model selection dialog.
 type Models struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com          *common.Common
 	isOnboarding bool
 
@@ -161,69 +164,73 @@ func (m *Models) ID() string {
 }
 
 // HandleMsg implements Dialog.
+// isModelRow reports whether row i is a model rather than a group header.
+func (m *Models) isModelRow(i int) bool {
+	_, ok := m.list.ItemAt(i).(*ModelItem)
+	return ok
+}
+
 func (m *Models) HandleMsg(msg tea.Msg) Action {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch {
-		case key.Matches(msg, m.keyMap.Close):
-			return ActionClose{}
-		case key.Matches(msg, m.keyMap.Previous):
-			m.list.Focus()
-			if m.list.IsSelectedFirst() {
-				m.list.SelectLast()
-			} else {
-				m.list.SelectPrev()
-			}
-			m.list.ScrollToSelectedWithMargin(listScrollMargin)
-		case key.Matches(msg, m.keyMap.Next):
-			m.list.Focus()
-			if m.list.IsSelectedLast() {
-				m.list.SelectFirst()
-			} else {
-				m.list.SelectNext()
-			}
-			m.list.ScrollToSelectedWithMargin(listScrollMargin)
-		case key.Matches(msg, m.keyMap.Select, m.keyMap.Edit):
-			selectedItem := m.list.SelectedItem()
-			if selectedItem == nil {
-				break
-			}
-
-			modelItem, ok := selectedItem.(*ModelItem)
-			if !ok {
-				break
-			}
-
-			isEdit := key.Matches(msg, m.keyMap.Edit)
-
-			return ActionSelectModel{
-				Provider:       modelItem.prov,
-				Model:          modelItem.SelectedModel(),
-				ModelType:      modelItem.SelectedModelType(),
-				ReAuthenticate: isEdit,
-			}
-		case key.Matches(msg, m.keyMap.Tab):
-			if m.isOnboarding {
-				break
-			}
-			if m.modelType == ModelTypeLarge {
-				m.modelType = ModelTypeSmall
-			} else {
-				m.modelType = ModelTypeLarge
-			}
-			if err := m.setProviderItems(); err != nil {
-				return util.ReportError(err)
-			}
-		default:
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			value := m.input.Value()
+	if action, ok := m.mouse.handle(msg, m.list, m.isModelRow, nil, func() Action { return m.HandleMsg(confirmKey) }); ok {
+		return action
+	}
+	keyMsg, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return nil
+	}
+	switch {
+	case key.Matches(keyMsg, m.keyMap.Close):
+		return ActionClose{}
+	case key.Matches(keyMsg, m.keyMap.Previous):
+		m.list.Focus()
+		if m.list.IsSelectedFirst() {
+			m.list.SelectLast()
+		} else {
+			m.list.SelectPrev()
+		}
+		m.list.ScrollToSelectedWithMargin(listScrollMargin)
+	case key.Matches(keyMsg, m.keyMap.Next):
+		m.list.Focus()
+		if m.list.IsSelectedLast() {
+			m.list.SelectFirst()
+		} else {
+			m.list.SelectNext()
+		}
+		m.list.ScrollToSelectedWithMargin(listScrollMargin)
+	case key.Matches(keyMsg, m.keyMap.Select, m.keyMap.Edit):
+		modelItem, ok := m.list.SelectedItem().(*ModelItem)
+		if !ok {
+			break
+		}
+		return ActionSelectModel{
+			Provider:       modelItem.prov,
+			Model:          modelItem.SelectedModel(),
+			ModelType:      modelItem.SelectedModelType(),
+			ReAuthenticate: key.Matches(keyMsg, m.keyMap.Edit),
+		}
+	case key.Matches(keyMsg, m.keyMap.Tab):
+		if m.isOnboarding {
+			break
+		}
+		if m.modelType == ModelTypeLarge {
+			m.modelType = ModelTypeSmall
+		} else {
+			m.modelType = ModelTypeLarge
+		}
+		if err := m.setProviderItems(); err != nil {
+			return util.ReportError(err)
+		}
+	default:
+		prevValue := m.input.Value()
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(keyMsg)
+		if value := m.input.Value(); value != prevValue {
 			m.list.Focus()
 			m.list.SetFilter(value)
 			m.list.SelectFirst()
 			m.list.ScrollToTop()
-			return ActionCmd{cmd}
 		}
+		return ActionCmd{cmd}
 	}
 	return nil
 }
@@ -277,7 +284,7 @@ func (m *Models) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	listView := t.Dialog.List.Height(m.list.Height()).Render(m.list.Render())
 	listView = joinScrollbar(t, listView, listHeight, listTotalHeight, listHeight, m.list.Offset())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, m.list.Width(), m.list.Height())
 
 	rc.Help = renderDialogHelp(t, &m.help, m, innerWidth)
 
@@ -288,10 +295,12 @@ func (m *Models) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		rc.TitleInfo = ""
 		rc.IsOnboarding = true
 		view := rc.Render()
+		m.mouse.setArea(rc.ListBounds, onboardingRect(area, view))
 		cur = adjustOnboardingInputCursor(t, cur)
 		DrawOnboardingCursor(scr, area, view, cur)
 	} else {
 		view := rc.Render()
+		m.mouse.setArea(rc.ListBounds, centerRect(area, view))
 		DrawCenterCursor(scr, area, view, cur)
 	}
 	return cur
@@ -431,8 +440,17 @@ func (m *Models) setProviderItems() error {
 
 		name := cmp.Or(displayProvider.Name, providerID)
 
+		// Signed in with ChatGPT or Grok, only the models the plan grants
+		// can be served, so they are the whole section; the API catalog
+		// would only fail. Until the plan's catalog arrives the section
+		// falls back to the API catalog, as before sign-in.
+		models := displayProvider.Models
+		if sub := providerConfig.SubscriptionModels(); providerConfigured && sub != nil {
+			models = sub
+		}
+
 		group := NewModelGroup(t, name, providerConfigured)
-		for _, model := range displayProvider.Models {
+		for _, model := range models {
 			item := NewModelItem(t, provider, model, m.modelType, false)
 			group.AppendItems(item)
 			itemsMap[item.ID()] = item

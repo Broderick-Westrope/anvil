@@ -43,6 +43,9 @@ type dockerMCPAvailabilityCheckedMsg struct {
 }
 
 type Commands struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com    *common.Common
 	keyMap struct {
 		Select,
@@ -161,6 +164,9 @@ func (c *Commands) ID() string {
 
 // HandleMsg implements [Dialog].
 func (c *Commands) HandleMsg(msg tea.Msg) Action {
+	if action, ok := c.mouse.handle(msg, c.list, nil, nil, func() Action { return c.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case dockerMCPAvailabilityCheckedMsg:
 		c.dockerMCPAvailable = &msg.available
@@ -234,11 +240,14 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 					}
 				}
 			}
+			prevValue := c.input.Value()
 			c.input, cmd = c.input.Update(msg)
 			value := c.input.Value()
-			c.list.SetFilter(value)
-			c.list.ScrollToTop()
-			c.list.SetSelected(0)
+			if value != prevValue {
+				c.list.SetFilter(value)
+				c.list.ScrollToTop()
+				c.list.SetSelected(0)
+			}
 			return ActionCmd{cmd}
 		}
 	}
@@ -322,7 +331,7 @@ func (c *Commands) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	inputView := t.Dialog.InputPrompt.Render(c.input.View())
 	rc.AddPart(inputView)
 	listView := t.Dialog.List.Height(c.list.Height()).Render(c.list.Render())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, c.list.Width(), c.list.Height())
 	rc.Help = renderDialogHelp(t, &c.help, c, innerWidth)
 
 	if c.loading {
@@ -330,6 +339,7 @@ func (c *Commands) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	}
 
 	view := rc.Render()
+	c.mouse.setArea(rc.ListBounds, centerRect(area, view))
 
 	cur := c.Cursor()
 	DrawCenterCursor(scr, area, view, cur)
@@ -501,7 +511,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	// Only show toggle compact mode command if window width is larger than compact breakpoint (120)
 	if c.windowWidth >= sidebarCompactModeBreakpoint && c.hasSession {
-		commands = append(commands, NewCommandItem(c.com.Styles, "toggle_sidebar", "Toggle Sidebar", "", ActionToggleCompactMode{}))
+		commands = append(commands, NewCommandItem(c.com.Styles, "toggle_sidebar", "Toggle Sidebar", "ctrl+b", ActionToggleCompactMode{}))
 	}
 	if c.hasSession {
 		cfgPrime := c.com.Config()
@@ -575,6 +585,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		transparentLabel = "Enable Background Color"
 	}
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_transparent", transparentLabel, "", ActionToggleTransparentBackground{}))
+
+	// Add mouse support toggle.
+	mouseLabel := "Disable Mouse"
+	if cfg != nil && cfg.Options != nil && cfg.Options.TUI != nil && cfg.Options.TUI.Mouse != nil && !*cfg.Options.TUI.Mouse {
+		mouseLabel = "Enable Mouse"
+	}
+	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_mouse", mouseLabel, "", ActionToggleMouseSupport{}))
 
 	// Add Anthropic auth mode cycle when the Anthropic provider is configured.
 	if cfg != nil {

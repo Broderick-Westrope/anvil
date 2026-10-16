@@ -296,12 +296,12 @@ func (m mockFileTracker) ListReadFiles(ctx context.Context, sessionID string) ([
 
 func newViewToolForTest(workingDir string) fantasy.AgentTool {
 	permissions := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
-	return NewViewTool(nil, permissions, mockFileTracker{}, nil, nil, workingDir)
+	return NewViewTool(nil, permissions, mockFileTracker{}, nil, nil, nil, workingDir)
 }
 
 func newViewToolWithRegistryForTest(registry []*skills.Skill, workingDir string, skillsPaths ...string) fantasy.AgentTool {
 	permissions := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
-	return NewViewTool(nil, permissions, mockFileTracker{}, skills.NewTracker(registry), registry, workingDir, skillsPaths...)
+	return NewViewTool(nil, permissions, mockFileTracker{}, skills.NewTracker(registry), registry, nil, workingDir, skillsPaths...)
 }
 
 func newViewToolWithPermissionsForTest(
@@ -311,7 +311,7 @@ func newViewToolWithPermissionsForTest(
 	workingDir string,
 	skillsPaths ...string,
 ) fantasy.AgentTool {
-	return NewViewTool(nil, permissions, mockFileTracker{}, tracker, registry, workingDir, skillsPaths...)
+	return NewViewTool(nil, permissions, mockFileTracker{}, tracker, registry, nil, workingDir, skillsPaths...)
 }
 
 func runViewTool(t *testing.T, tool fantasy.AgentTool, ctx context.Context, params ViewParams) fantasy.ToolResponse {
@@ -422,4 +422,40 @@ func TestViewDescriptionSelectors(t *testing.T) {
 	for _, text := range []string{"exact name", "exactly one of file_path or skill_name", "complete skill body plus the location", "does not accept offset or limit", "line numbers", "PNG, JPEG, GIF, WebP", fmt.Sprintf("default %d", DefaultReadLimit)} {
 		require.Contains(t, description, text)
 	}
+}
+
+func TestViewTool_TrustedReadDirSkipsPromptButKeepsLimits(t *testing.T) {
+	t.Parallel()
+	workingDir, trustedDir := t.TempDir(), t.TempDir()
+	lines := make([]string, DefaultReadLimit+50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i+1)
+	}
+	path := filepath.Join(trustedDir, "output-1.log")
+	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600))
+
+	permissions := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+	tool := NewViewTool(nil, permissions, mockFileTracker{}, nil, nil, []string{trustedDir}, workingDir)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	resp := runViewTool(t, tool, ctx, ViewParams{FilePath: path})
+
+	require.False(t, resp.IsError, resp.Content)
+	require.Zero(t, permissions.requestCount(), "trusted dirs must not prompt")
+	require.Contains(t, resp.Content, "File has more lines", "trusted dirs keep the default read limit")
+}
+
+func TestViewTool_OutsideTrustedReadDirStillPrompts(t *testing.T) {
+	t.Parallel()
+	workingDir, trustedDir, otherDir := t.TempDir(), t.TempDir(), t.TempDir()
+	path := filepath.Join(otherDir, "secret.txt")
+	require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+
+	permissions := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+	tool := NewViewTool(nil, permissions, mockFileTracker{}, nil, nil, []string{trustedDir}, workingDir)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	runViewTool(t, tool, ctx, ViewParams{FilePath: path})
+
+	require.Equal(t, 1, permissions.requestCount())
 }

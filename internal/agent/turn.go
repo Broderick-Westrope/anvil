@@ -583,8 +583,14 @@ func failureFinish(err error) (reason message.FinishReason, title, detail string
 	const defaultTitle = "Provider Error"
 	var fantasyErr *fantasy.Error
 	var providerErr *fantasy.ProviderError
+	var timeoutErr *requestTimeoutError
 	if errors.Is(err, context.Canceled) {
 		return message.FinishReasonCanceled, "User canceled request", ""
+	}
+	// Before the provider branches, so our own deadline is never reported
+	// as a provider error.
+	if errors.As(err, &timeoutErr) {
+		return message.FinishReasonError, "Request timed out", timeoutErr.userMessage()
 	}
 	if errors.As(err, &providerErr) {
 		return message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message

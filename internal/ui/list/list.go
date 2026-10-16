@@ -125,10 +125,14 @@ func (l *List) AtBottom() bool {
 		return true
 	}
 
-	// Calculate the height from offsetIdx to the end.
+	// Calculate the height from offsetIdx to the end. The comparison is
+	// against the visible height (totalHeight minus the lines of the first
+	// item that are scrolled out of view), otherwise a first item taller
+	// than the viewport reports "not at bottom" while it is in fact
+	// pinned there.
 	var totalHeight int
 	for idx := l.offsetIdx; idx < len(l.items); idx++ {
-		if totalHeight > l.height {
+		if totalHeight-l.offsetLine > l.height {
 			// No need to calculate further, we're already past the viewport height
 			return false
 		}
@@ -224,6 +228,12 @@ func (l *List) Overflows(height int) bool {
 		}
 	}
 	return false
+}
+
+// ItemTopAboveView reports whether the first line of the item at idx is
+// scrolled above the top of the viewport.
+func (l *List) ItemTopAboveView(idx int) bool {
+	return idx < l.offsetIdx || (idx == l.offsetIdx && l.offsetLine > 0)
 }
 
 // Offset returns the current scroll offset in lines from the top.
@@ -726,6 +736,18 @@ func (l *List) ScrollToBottom() {
 // ScrollToSelected scrolls the list to the selected item.
 func (l *List) ScrollToSelected() {
 	if l.selectedIdx < 0 || l.selectedIdx >= len(l.items) {
+		return
+	}
+
+	// The list may not have been sized yet when the caller sets up its
+	// selection, e.g. a dialog constructor that runs before the first
+	// Draw. With no viewport height there is no visibility window to fit
+	// the selection into, so pin the selected item to the top of the
+	// viewport; the first render then shows it instead of computing a
+	// bogus offset that skips past it entirely.
+	if l.height <= 0 {
+		l.offsetIdx = l.selectedIdx
+		l.offsetLine = 0
 		return
 	}
 

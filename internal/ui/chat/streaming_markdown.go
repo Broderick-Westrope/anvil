@@ -77,6 +77,23 @@ const (
 	// well under maxUnsafeTrailBytes so consecutive flushes don't
 	// immediately re-trigger the force-advance.
 	forcedTrailKeepBytes = 2 * 1024
+
+	// relaxBoundaryAfter bounds how much unstable tail a flush will
+	// re-render before a cut at a plain newline is tried. Prose with
+	// no blank line never satisfies the blank-line predicate, so
+	// without it the trailing partial grows until the forced cut at
+	// maxUnsafeTrailBytes, and re-rendering that partial dominates
+	// the streaming frame. Sized just above a prose paragraph so
+	// structured text never reaches it: the blank-line boundary fires
+	// first and the tail stays small. Unlike forceAdvance, the relaxed
+	// cut is validated by the same hazard checks as a blank-line
+	// boundary, so it never splits a fence, table, list or quote.
+	relaxBoundaryAfter = 2 * 1024
+
+	// relaxedBoundaryCandidates caps how many newline candidates one
+	// flush will validate, keeping the search cost flat when none of
+	// them pass.
+	relaxedBoundaryCandidates = 8
 )
 
 // Reset drops every cached field. After Reset the next Render call
@@ -336,7 +353,10 @@ func (s *streamingMarkdown) renderTrailingCtx(text string, renderer *glamour.Ter
 // future cached call.
 func (s *streamingMarkdown) tryAdvanceFromEmpty(content string, width int, renderer *glamour.TermRenderer) {
 	boundary := findSafeMarkdownBoundary(content)
-	if boundary <= 0 {
+	if boundary == -1 {
+		boundary = s.relaxedBoundary(content, 0)
+	}
+	if boundary == -1 {
 		return
 	}
 	prefix := content[:boundary]
@@ -362,7 +382,10 @@ func (s *streamingMarkdown) tryAdvanceFromEmpty(content string, width int, rende
 func (s *streamingMarkdown) findBoundaryAfter(content string) int {
 	// When there is no stable prefix, fall back to the full scan.
 	if len(s.stablePrefix) == 0 {
-		return findSafeMarkdownBoundary(content)
+		if b := findSafeMarkdownBoundary(content); b != -1 {
+			return b
+		}
+		return s.relaxedBoundary(content, 0)
 	}
 
 	// Scan blank-line candidates from latest to earliest, but only
@@ -373,10 +396,51 @@ func (s *streamingMarkdown) findBoundaryAfter(content string) int {
 			return p
 		}
 	}
+	if b := s.relaxedBoundary(content, len(s.stablePrefix)); b != -1 {
+		return b
+	}
 	// No new boundary found after the stable prefix. Return the
 	// stable prefix length so the caller takes the "boundary <=
 	// len(stablePrefix)" path (render trailing fresh, keep cache).
 	return len(s.stablePrefix)
+}
+
+// relaxedBoundary looks for a cut at a plain newline once the tail
+// after `after` has outgrown [relaxBoundaryAfter]. Candidates are
+// validated by the same predicate the blank-line search uses, so every
+// construct check survives; the only conservatism given up is
+// paragraph wrapping across the cut, which costs one re-wrap at a
+// point the reader has usually scrolled past, and which RenderFinal
+// undoes once the stream completes.
+//
+// Returns -1 while the tail is still small, and when no candidate
+// validates; the caller then falls through to the forced cut at
+// maxUnsafeTrailBytes. Content with no newline has nothing to cut on.
+func (s *streamingMarkdown) relaxedBoundary(content string, after int) int {
+	if len(content)-after <= relaxBoundaryAfter {
+		return -1
+	}
+	tried := 0
+	for p := newlineBefore(content, len(content)); p > after; p = newlineBefore(content, p-1) {
+		if s.isSafeBoundaryIncremental(content, p) {
+			return p
+		}
+		if tried++; tried >= relaxedBoundaryCandidates {
+			break
+		}
+	}
+	return -1
+}
+
+// newlineBefore returns the byte offset of the first character after
+// the latest newline that ends strictly before `until`, or -1 when
+// there is none.
+func newlineBefore(content string, until int) int {
+	nl := strings.LastIndexByte(content[:until], '\n')
+	if nl < 0 {
+		return -1
+	}
+	return nl + 1
 }
 
 // isSafeBoundaryIncremental validates a boundary candidate at

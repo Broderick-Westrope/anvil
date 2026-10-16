@@ -153,3 +153,29 @@ func TestDefaultCommands_ReloadInstance(t *testing.T) {
 	require.Equal(t, ActionReloadInstance{}, item.Action())
 	require.Contains(t, item.Filter(), "restart")
 }
+
+func TestDefaultCommands_MouseToggleLabel(t *testing.T) {
+	t.Parallel()
+
+	off := false
+	for name, tc := range map[string]struct {
+		tui  *config.TUIOptions
+		want string
+	}{
+		"mouse unset": {&config.TUIOptions{}, "Disable Mouse"},
+		"mouse off":   {&config.TUIOptions{Mouse: &off}, "Enable Mouse"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := testCommandsConfig()
+			cfg.Options = &config.Options{TUI: tc.tui}
+			s := styles.TokyoNight()
+			c := &Commands{com: &common.Common{Styles: &s, Workspace: &bouncerCommandsWorkspace{cfg: cfg}}}
+
+			item := findCommandItem(c.defaultCommands(), "toggle_mouse")
+			require.NotNil(t, item)
+			require.Equal(t, tc.want, item.title)
+			require.Equal(t, ActionToggleMouseSupport{}, item.Action())
+		})
+	}
+}

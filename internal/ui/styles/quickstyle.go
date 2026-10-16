@@ -106,6 +106,7 @@ func quickStyle(o quickStyleOpts) Styles {
 			CursorLineNumber: base.Foreground(o.fgMostSubtle),
 			Placeholder:      base.Foreground(o.fgMostSubtle),
 			Prompt:           base.Foreground(o.accent),
+			Selection:        base.Foreground(o.onPrimary).Background(o.secondary),
 		},
 		Blurred: textarea.StyleState{
 			Base:             base,
@@ -115,6 +116,7 @@ func quickStyle(o quickStyleOpts) Styles {
 			CursorLineNumber: base.Foreground(o.fgMoreSubtle),
 			Placeholder:      base.Foreground(o.fgMostSubtle),
 			Prompt:           base.Foreground(o.fgMoreSubtle),
+			Selection:        base.Foreground(o.onPrimary).Background(o.secondary),
 		},
 		Cursor: textarea.CursorStyle{
 			Color: o.secondary,
@@ -867,6 +869,10 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Dialog.APIKey.Spinner = base.Foreground(o.success)
 
 	// OAuth dialog
+	s.Dialog.AuthMethod.Prompt = base.Padding(0, 1)
+	s.Dialog.AuthMethod.CardBlurred = base.Border(lipgloss.RoundedBorder()).BorderForeground(o.separator).Foreground(o.fgMostSubtle)
+	s.Dialog.AuthMethod.CardFocused = base.Border(lipgloss.RoundedBorder()).BorderForeground(o.success).Foreground(o.success)
+
 	s.Dialog.OAuth.Spinner = base.Foreground(o.successMoreSubtle)
 	s.Dialog.OAuth.Instructions = lipgloss.NewStyle().Foreground(o.fgBase)
 	s.Dialog.OAuth.UserCode = lipgloss.NewStyle().Bold(true).Foreground(o.fgBase)
@@ -947,6 +953,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	// keeps a transparent gap between adjacent chips.
 	s.Attachments.Remove = base.Padding(0, 1).MarginRight(1).Background(o.bgLessVisible).Foreground(o.fgSubtle).SetString(RemoveIcon)
 	s.Attachments.Deleting = base.Padding(0, 1).MarginRight(1).Bold(true).Background(o.destructive).Foreground(o.fgBase)
+	s.Attachments.More = base.Foreground(o.fgSubtle)
 
 	// Pills styles
 	s.Pills.Base = base.Padding(0, 1)

@@ -67,13 +67,52 @@ var providerOptionsBuilders = map[catwalk.Type]providerOptionsBuilder{
 }
 
 // knownCustomProviderOptions serves the known custom providers (litellm,
-// ollama, omlx), which are openai-compat under the hood but get the
-// user's options unchanged.
+// llamacpp, lmstudio, ollama, omlx), which are openai-compat under the
+// hood.
 var knownCustomProviderOptions = providerOptionsBuilder{
-	name: openaicompat.Name,
-	build: func(opts map[string]any, _ reasoningRequest) (fantasy.ProviderOptionsData, error) {
-		return parsedOptions(openaicompat.ParseOptions(opts))
-	},
+	name:  openaicompat.Name,
+	build: knownCustomOptions,
+}
+
+func knownCustomOptions(opts map[string]any, r reasoningRequest) (fantasy.ProviderOptionsData, error) {
+	if r.wantsEffort(opts, "reasoning_effort") {
+		opts["reasoning_effort"] = r.effort
+	}
+
+	// Set "top_k" under "extra_body", as it is not part of the OpenAI
+	// protocol and will be explicitly omitted by Fantasy downstream.
+	topK := cmp.Or(r.model.ModelCfg.TopK, r.model.CatwalkCfg.Options.TopK)
+	if topK != nil {
+		extraBody, hasExtraBody := opts["extra_body"].(map[string]any)
+		if !hasExtraBody {
+			extraBody = make(map[string]any)
+			opts["extra_body"] = extraBody
+		}
+		if _, hasTopK := extraBody["top_k"]; !hasTopK {
+			extraBody["top_k"] = *topK
+		}
+	}
+
+	parsed, err := openaicompat.ParseOptions(opts)
+	if err == nil || topK == nil {
+		return parsedOptions(parsed, err)
+	}
+	slog.Warn(
+		"Failed to parse provider_options, falling back to top_k only",
+		"provider", r.providerID,
+		"error", err,
+	)
+	fallback, fallbackErr := openaicompat.ParseOptions(map[string]any{
+		"extra_body": map[string]any{"top_k": *topK},
+	})
+	if fallbackErr != nil {
+		slog.Warn(
+			"Failed to parse fallback provider options, this should never happen",
+			"provider", r.providerID,
+			"error", fallbackErr,
+		)
+	}
+	return parsedOptions(fallback, fallbackErr)
 }
 
 func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
@@ -330,4 +369,15 @@ func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderO
 	freqPenalty := cmp.Or(model.ModelCfg.FrequencyPenalty, model.CatwalkCfg.Options.FrequencyPenalty)
 	presPenalty := cmp.Or(model.ModelCfg.PresencePenalty, model.CatwalkCfg.Options.PresencePenalty)
 	return modelOptions, temp, topP, topK, freqPenalty, presPenalty
+}
+
+// callTopK returns topK for use on fantasy.Call.TopK, suppressing it for
+// known custom providers: getProviderOptions already carries top_k for
+// them via extra_body, and passing it here too makes Fantasy emit a
+// spurious "top_k unsupported" warning for every turn.
+func callTopK(providerCfg config.ProviderConfig, topK *int64) *int64 {
+	if discover.IsKnownCustomProvider(string(providerCfg.Type)) {
+		return nil
+	}
+	return topK
 }

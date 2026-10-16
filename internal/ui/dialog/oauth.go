@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
@@ -24,6 +25,14 @@ type OAuthProvider interface {
 	initiateAuth() tea.Msg
 	startPolling(deviceCode string, expiresIn int) tea.Cmd
 	stopPolling() tea.Msg
+	// supportsCodeEntry reports whether the sign-in can finish with a
+	// code pasted back from the authorization page instead of the
+	// loopback redirect — for when the user declines the browser
+	// permission or the browser cannot reach the callback.
+	supportsCodeEntry() bool
+	// submitCode exchanges a pasted code (or full callback URL) for a
+	// token. Only called when supportsCodeEntry is true.
+	submitCode(input string) tea.Cmd
 }
 
 // OAuthState represents the current state of the device flow.
@@ -55,10 +64,11 @@ type OAuth struct {
 	spinner spinner.Model
 	help    help.Model
 	keyMap  struct {
-		Copy    key.Binding
-		CopyURL key.Binding
-		Submit  key.Binding
-		Close   key.Binding
+		Copy      key.Binding
+		CopyURL   key.Binding
+		Submit    key.Binding
+		FocusCode key.Binding
+		Close     key.Binding
 	}
 
 	width           int
@@ -69,6 +79,11 @@ type OAuth struct {
 	interval        int
 	token           *oauth.Token
 	cancelFunc      context.CancelFunc
+	// codeInput is the paste field for providers whose browser flow
+	// can finish with a code entered back in the terminal.
+	codeInput textinput.Model
+	// codeInputRow is the paste field's row within innerDialogContent.
+	codeInputRow int
 }
 
 var _ Dialog = (*OAuth)(nil)
@@ -114,7 +129,20 @@ func newOAuth(
 		key.WithKeys("enter", "ctrl+y"),
 		key.WithHelp("enter", "copy & open"),
 	)
+	m.keyMap.FocusCode = key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "enter code"),
+	)
 	m.keyMap.Close = CloseKey
+
+	if m.oAuthProvider.supportsCodeEntry() {
+		m.codeInput = textinput.New()
+		m.codeInput.SetVirtualCursor(false)
+		m.codeInput.Prompt = "> "
+		m.codeInput.Placeholder = "Paste the code from the browser..."
+		m.codeInput.SetStyles(t.TextInput)
+		m.codeInput.Blur()
+	}
 
 	return &m, tea.Batch(m.spinner.Tick, m.oAuthProvider.initiateAuth)
 }
@@ -138,7 +166,15 @@ func (m *OAuth) HandleMsg(msg tea.Msg) Action {
 		}
 
 	case tea.KeyPressMsg:
+		if m.codeEntryActive() && m.codeInput.Focused() {
+			return m.handleCodeInputKey(msg)
+		}
+
 		switch {
+		case m.codeEntryActive() && key.Matches(msg, m.keyMap.FocusCode):
+			m.codeInput.Focus()
+			return nil
+
 		case key.Matches(msg, m.keyMap.Copy):
 			cmd := m.copyCode()
 			return ActionCmd{cmd}
@@ -171,7 +207,9 @@ func (m *OAuth) HandleMsg(msg tea.Msg) Action {
 				return nil
 
 			default:
-				return ActionClose{}
+				// Cancel the in-flight authorization so a dismissed dialog
+				// does not leave a poller or loopback listener behind.
+				return ActionCloseOAuth{Cmd: m.oAuthProvider.stopPolling}
 			}
 		}
 
@@ -204,6 +242,18 @@ func (m *OAuth) HandleMsg(msg tea.Msg) Action {
 		cmd := tea.Batch(m.oAuthProvider.stopPolling, util.ReportError(msg.Error))
 		return ActionCmd{cmd}
 
+	case tea.PasteMsg:
+		// Pasting into the dialog goes straight into the paste field,
+		// no focus step needed.
+		if m.codeEntryActive() {
+			m.codeInput.Focus()
+			var cmd tea.Cmd
+			m.codeInput, cmd = m.codeInput.Update(msg)
+			if cmd != nil {
+				return ActionCmd{cmd}
+			}
+		}
+
 	case oauthSaveDoneMsg:
 		// Credential saved and models fetched. Present the confirmation
 		// screen; the actual model selection happens when the user
@@ -218,6 +268,33 @@ func (m *OAuth) HandleMsg(msg tea.Msg) Action {
 		return ActionCmd{util.ReportError(msg.err)}
 	}
 	return nil
+}
+
+// handleCodeInputKey handles a key while the paste field has focus. The
+// field swallows keys so typing lands in it: enter submits the pasted
+// code, esc steps back to the buttons.
+func (m *OAuth) handleCodeInputKey(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, m.keyMap.Submit):
+		if value := m.codeInput.Value(); value != "" {
+			m.codeInput.Blur()
+			return ActionCmd{m.oAuthProvider.submitCode(value)}
+		}
+		cmd := m.copyCodeAndOpenURL()
+		return ActionCmd{cmd}
+
+	case key.Matches(msg, m.keyMap.Close):
+		m.codeInput.Blur()
+		return nil
+
+	default:
+		var cmd tea.Cmd
+		m.codeInput, cmd = m.codeInput.Update(msg)
+		if cmd != nil {
+			return ActionCmd{cmd}
+		}
+		return nil
+	}
 }
 
 // oauthSaveDoneMsg is emitted by the background save command once the
@@ -239,14 +316,32 @@ func (m *OAuth) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		dialogStyle = t.Dialog.View.Width(dialogWidth)
 	)
 	m.width = dialogWidth
+	content := m.dialogContent()
+	cur := m.cursor()
 	if m.isOnboarding {
-		view := m.dialogContent()
-		DrawOnboarding(scr, area, view)
-	} else {
-		view := dialogStyle.Render(m.dialogContent())
-		DrawCenter(scr, area, view)
+		DrawOnboardingCursor(scr, area, content, cur)
+		return cur
 	}
-	return nil
+	if cur != nil {
+		cur.X += dialogStyle.GetBorderLeftSize() + dialogStyle.GetPaddingLeft()
+		cur.Y += dialogStyle.GetBorderTopSize() + dialogStyle.GetPaddingTop()
+	}
+	DrawCenterCursor(scr, area, dialogStyle.Render(content), cur)
+	return cur
+}
+
+// cursor reports where the paste field's caret sits in the dialog
+// content when the field is focused, so the terminal caret lands in it.
+// It relies on the row recorded by the last innerDialogContent.
+func (m *OAuth) cursor() *tea.Cursor {
+	if !m.codeEntryActive() || !m.codeInput.Focused() {
+		return nil
+	}
+	cur := m.codeInput.Cursor()
+	// The field is padded one column in, below the header.
+	cur.X++
+	cur.Y += lipgloss.Height(m.headerContent()) + m.codeInputRow
+	return cur
 }
 
 func (m *OAuth) dialogContent() string {
@@ -314,20 +409,29 @@ func (m *OAuth) innerDialogContent() string {
 		// color after enterKeyStyle's reset code.
 		instructionText := instructionStyle.Render("Press ") +
 			enterKeyStyle.Render("enter") +
-			instructionStyle.Render(" to copy the code below and open the browser.")
+			instructionStyle.Render(" to open the browser and authenticate.")
+		if m.userCode != "" {
+			instructionText = instructionStyle.Render("Press ") +
+				enterKeyStyle.Render("enter") +
+				instructionStyle.Render(" to copy the code below and open the browser.")
+		}
 		instructions := lipgloss.NewStyle().
 			Width(innerWidth).
 			Padding(0, 1).
 			Render(instructionText)
 
-		codeBox := lipgloss.NewStyle().
-			Width(innerWidth).
-			Height(7).
-			Align(lipgloss.Center, lipgloss.Center).
-			Background(t.Dialog.OAuth.UserCodeBg).
-			Render(
-				t.Dialog.OAuth.UserCode.Render(m.userCode),
-			)
+		elements := []string{"", instructions, ""}
+		if m.userCode != "" {
+			codeBox := lipgloss.NewStyle().
+				Width(innerWidth).
+				Height(7).
+				Align(lipgloss.Center, lipgloss.Center).
+				Background(t.Dialog.OAuth.UserCodeBg).
+				Render(
+					t.Dialog.OAuth.UserCode.Render(m.userCode),
+				)
+			elements = append(elements, codeBox, "")
+		}
 
 		link := linkStyle.Hyperlink(m.verificationURL, "id=oauth-verify").Render(m.verificationURL)
 		url := statusTextStyle.
@@ -335,25 +439,41 @@ func (m *OAuth) innerDialogContent() string {
 			Padding(0, 1).
 			Render("Browser not opening? Pay a visit to:\n" + link)
 
+		waitingMsg := "Waiting for browser authentication..."
+		if m.userCode != "" {
+			waitingMsg = "Verifying..."
+		}
 		waiting := statusTextStyle.
 			Width(innerWidth).
 			Padding(0, 1).
 			Render(
-				successStyle.Render(m.spinner.View()) + statusTextStyle.Render("Verifying..."),
+				successStyle.Render(m.spinner.View()) + statusTextStyle.Render(waitingMsg),
 			)
 
-		return lipgloss.JoinVertical(
-			lipgloss.Left,
-			"",
-			instructions,
-			"",
-			codeBox,
-			"",
-			url,
-			"",
-			waiting,
-			"",
-		)
+		elements = append(elements, url, "", waiting, "")
+
+		if m.codeEntryActive() {
+			// The manual fallback: the authorization page shows a code
+			// to paste when the redirect cannot come back on its own.
+			m.codeInput.SetWidth(max(0, innerWidth-4))
+			elements = append(elements,
+				statusTextStyle.
+					Width(innerWidth).
+					Padding(0, 1).
+					Render("Declined or browser didn't connect? Enter the code from the page:"),
+				"",
+			)
+			m.codeInputRow = lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, elements...))
+			elements = append(elements,
+				lipgloss.NewStyle().
+					Width(innerWidth).
+					Padding(0, 1).
+					Render(m.codeInput.View()),
+				"",
+			)
+		}
+
+		return lipgloss.JoinVertical(lipgloss.Left, elements...)
 
 	case OAuthStateSuccess:
 		return successStyle.
@@ -405,17 +525,50 @@ func (m *OAuth) ShortHelp() []key.Binding {
 		return nil
 
 	default:
-		return []key.Binding{
-			m.keyMap.Copy,
+		if m.codeEntryActive() && m.codeInput.Focused() {
+			return []key.Binding{
+				key.NewBinding(
+					key.WithKeys("enter", "ctrl+y"),
+					key.WithHelp("enter", "submit code"),
+				),
+				key.NewBinding(
+					key.WithKeys("esc", "alt+esc"),
+					key.WithHelp("esc", "back"),
+				),
+			}
+		}
+		submit := m.keyMap.Submit
+		if m.userCode == "" {
+			submit = key.NewBinding(
+				key.WithKeys("enter", "ctrl+y"),
+				key.WithHelp("enter", "open browser"),
+			)
+		}
+		h := []key.Binding{
 			m.keyMap.CopyURL,
-			m.keyMap.Submit,
+			submit,
 			m.keyMap.Close,
 		}
+		if m.userCode != "" {
+			h = append([]key.Binding{m.keyMap.Copy}, h...)
+		}
+		if m.codeEntryActive() {
+			h = append([]key.Binding{m.keyMap.FocusCode}, h...)
+		}
+		return h
 	}
 }
 
+// codeEntryActive reports whether the paste field is shown: a browser
+// flow in its display state with no device code in play (the device
+// flow's code is only ever copied out, never pasted in).
+func (m *OAuth) codeEntryActive() bool {
+	return m.oAuthProvider.supportsCodeEntry() &&
+		m.State == OAuthStateDisplay && m.userCode == ""
+}
+
 func (m *OAuth) copyCode() tea.Cmd {
-	if m.State != OAuthStateDisplay {
+	if m.State != OAuthStateDisplay || m.userCode == "" {
 		return nil
 	}
 	return common.CopyToClipboard(m.userCode, "Code copied to clipboard")
@@ -431,6 +584,15 @@ func (m *OAuth) copyURL() tea.Cmd {
 func (m *OAuth) copyCodeAndOpenURL() tea.Cmd {
 	if m.State != OAuthStateDisplay {
 		return nil
+	}
+	if m.userCode == "" {
+		// Browser flows have no code to copy; just open the URL.
+		return func() tea.Msg {
+			if err := browser.OpenURL(m.verificationURL); err != nil {
+				return ActionOAuthErrored{fmt.Errorf("failed to open browser: %w", err)}
+			}
+			return nil
+		}
 	}
 	return common.CopyToClipboardWithCallback(
 		m.userCode,

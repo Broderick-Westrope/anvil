@@ -20,7 +20,9 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/discover"
 	"github.com/Broderick-Westrope/anvil/internal/log"
+	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
+	openaioauth "github.com/Broderick-Westrope/anvil/internal/oauth/openai"
 	openaisdk "github.com/charmbracelet/openai-go/option"
 )
 
@@ -90,13 +92,34 @@ func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map
 	return anthropic.New(opts...)
 }
 
-func (c *coordinator) buildOpenaiProvider(baseURL, apiKey string, headers map[string]string) (fantasy.Provider, error) {
+// codexBaseURL is where ChatGPT-login requests go. A variable so tests can
+// point it at a local server.
+var codexBaseURL = openaioauth.CodexBaseURL
+
+func (c *coordinator) buildOpenaiProvider(baseURL, apiKey string, headers map[string]string, chatgpt *oauth.Token) (fantasy.Provider, error) {
 	opts := []openai.Option{
 		openai.WithAPIKey(apiKey),
 		openai.WithUseResponsesAPI(),
 	}
+	if chatgpt != nil {
+		// The Codex backend only speaks the Responses API, for every model
+		// the plan lists; the name-based default would send newer names to
+		// /chat/completions, which it answers with a 404.
+		opts = append(opts, openai.WithResponsesAPIFunc(func(string) bool { return true }))
+	}
+	var httpClient *http.Client
 	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
+		httpClient = log.NewHTTPClient()
+	}
+	if chatgpt != nil {
+		// The Codex backend wants account headers and rejects some request
+		// fields, so ChatGPT requests go through its transport.
+		if httpClient == nil {
+			httpClient = &http.Client{}
+		}
+		httpClient.Transport = &openaioauth.Transport{Base: httpClient.Transport, Token: chatgpt}
+	}
+	if httpClient != nil {
 		opts = append(opts, openai.WithHTTPClient(httpClient))
 	}
 	if len(headers) > 0 {
@@ -293,7 +316,16 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 
 	switch providerCfg.Type {
 	case openai.Name:
-		return c.buildOpenaiProvider(baseURL, apiKey, headers)
+		// A ChatGPT login is the provider's only credential: every request
+		// goes to the Codex backend with the OAuth token.
+		var chatgpt *oauth.Token
+		if providerCfg.ID == string(catwalk.InferenceProviderOpenAI) && providerCfg.OAuthToken != nil {
+			chatgpt = providerCfg.OAuthToken
+			baseURL = codexBaseURL
+			apiKey = chatgpt.AccessToken
+			headers["originator"] = openaioauth.Originator
+		}
+		return c.buildOpenaiProvider(baseURL, apiKey, headers, chatgpt)
 	case anthropic.Name:
 		return c.buildAnthropicProvider(baseURL, apiKey, headers, providerCfg.ID, providerCfg.OAuthToken != nil)
 	case openrouter.Name:
