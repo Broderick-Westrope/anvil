@@ -39,6 +39,15 @@ check true "executable markdown" ":100644 100755 aaaaaaa aaaaaaa M\tdocs/x.md\n"
 check true "symlink markdown" ":000000 120000 0000000 bbbbbbb A\tdocs/x.md\n"
 check true "submodule" ":000000 160000 0000000 bbbbbbb A\tdocs/vendor.md\n"
 check true "quoted path" "$add\t\"docs/caf\\\\303\\\\251.md\"\n"
+check false "nested plans markdown" "$add\tplans/impl/phase-1.md\n"
+check true "uppercase extension" "$add\tdocs/x.MD\n"
+check true "markdown-like extension" "$add\tdocs/x.md.txt\n"
+check false "root dotfile markdown" "$add\t.notes.md\n"
+check true "type change" ":100644 120000 aaaaaaa bbbbbbb T\tdocs/x.md\n"
+check true "rename" ":100644 100644 aaaaaaa bbbbbbb R100\tplans/x.go\tdocs/x.md\n"
+check true "copy" ":100644 100644 aaaaaaa bbbbbbb C100\tplans/x.go\tdocs/x.md\n"
+check true "code on a last line without a newline" "$mod\tdocs/a.md\n$mod\tmain.go"
+check false "prose on a last line without a newline" "$mod\tdocs/a.md"
 
 if [ "$failed" -ne 0 ]; then
     exit 1

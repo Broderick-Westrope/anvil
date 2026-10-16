@@ -17,21 +17,35 @@ regular_or_absent() {
     [ "$1" = 100644 ] || [ "$1" = 000000 ]
 }
 
+# Reports whether one `git diff --raw` line is a prose-only change: an
+# add, modify or delete of a regular Markdown file. Renames and copies carry
+# two paths, so they never count, whatever the caller's diff flags.
+is_prose() {
+    local meta=$1 path=$2 old_mode new_mode status
+    read -r old_mode new_mode _ _ status <<<"${meta#:}"
+    case "$status" in
+    A | M | D) ;;
+    *) return 1 ;;
+    esac
+    regular_or_absent "$old_mode" && regular_or_absent "$new_mode" || return 1
+    # In a case pattern `*` also matches `/`, so these cover nested files.
+    case "$path" in
+    plans/*.md | docs/*.md) return 0 ;;
+    */* | *$'\t'*) return 1 ;;
+    *.md) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
 seen=false
-while IFS=$'\t' read -r meta path; do
+# The `|| [ -n "$meta" ]` keeps a last line that has no trailing newline.
+while IFS=$'\t' read -r meta path || [ -n "$meta" ]; do
     [ -n "$meta" ] || continue
     seen=true
-    read -r old_mode new_mode _ <<<"${meta#:}"
-    if ! regular_or_absent "$old_mode" || ! regular_or_absent "$new_mode"; then
+    if ! is_prose "$meta" "$path"; then
         echo true
         exit 0
     fi
-    case "$path" in
-    plans/*.md | docs/*.md) ;;
-    */*) echo true; exit 0 ;;
-    *.md) ;;
-    *) echo true; exit 0 ;;
-    esac
 done
 
 if [ "$seen" = true ]; then
