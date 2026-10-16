@@ -190,10 +190,10 @@ func (s *splitter) addStmt(stmt *syntax.Stmt) {
 	// attached. A rule such as "ls *" then cannot approve "LD_PRELOAD=x
 	// ls", and a pure assignment such as "PATH=/x", which affects the
 	// commands after it, is not dropped.
-	if len(assigns) > 0 {
-		s.all.add(strings.TrimSpace(strings.Join(append(assigns, withRedirs(tokens, inline)), " ")))
-		s.addPlain(strings.TrimSpace(strings.Join(append(plainAssigns, withRedirs(plain, inline)), " ")))
-	}
+	// With no assignments these are the segments just added, which the
+	// lists drop as duplicates.
+	s.all.add(strings.TrimSpace(strings.Join(append(assigns, withRedirs(tokens, inline)), " ")))
+	s.addPlain(strings.TrimSpace(strings.Join(append(plainAssigns, withRedirs(plain, inline)), " ")))
 	for i := range writes {
 		s.all.add(writes[i])
 		s.addPlain(plainWrites[i])
@@ -347,12 +347,12 @@ func formatAssign(printer *syntax.Printer, assign *syntax.Assign) (printed, plai
 	}
 	printed = sb.String()
 	plain = printed
+	// Only a plain NAME=value is unquoted; NAME+=, NAME[i]= and arrays keep
+	// their printed form, and an empty NAME= already prints as itself.
 	if assign.Value != nil && assign.Index == nil && !assign.Append {
 		if value, static := StaticWord(assign.Value); static {
 			plain = assign.Name.Value + "=" + value
 		}
-	} else if assign.Value == nil && assign.Array == nil && assign.Index == nil && !assign.Append {
-		plain = assign.Name.Value + "="
 	}
 	return printed, plain, true
 }
@@ -550,7 +550,7 @@ var numericRe = regexp.MustCompile(`^[0-9]+$`)
 // split does so for inline assignments.
 func nestedCommands(tokens []string) []string {
 	var out []string
-	if inner, assigns := unwrap(tokens, 0); len(inner) > 0 {
+	if inner, assigns := unwrap(tokens, 0); inner != nil {
 		out = append(out, strings.Join(inner, " "))
 		if len(assigns) > 0 {
 			out = append(out, strings.Join(append(assigns, inner...), " "))
