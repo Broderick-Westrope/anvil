@@ -31,7 +31,7 @@ is_prose() {
     # In a case pattern `*` also matches `/`, so these cover nested files.
     case "$path" in
     plans/*.md | docs/*.md) return 0 ;;
-    */* | *$'\t'*) return 1 ;;
+    */*) return 1 ;;
     *.md) return 0 ;;
     *) return 1 ;;
     esac

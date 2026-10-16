@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks scripts/ci-code-changed.sh against fixed `git diff --raw` inputs.
-# CI runs it before classifying, so a broken classifier fails the changes
-# job instead of skipping checks it shouldn't.
+# The classify job runs it before classifying, on the same Ubuntu runner
+# and bash that run the classifier, so a broken classifier fails that job
+# instead of skipping checks it shouldn't.
 
 set -euo pipefail
 
@@ -39,6 +40,7 @@ check true "executable markdown" ":100644 100755 aaaaaaa aaaaaaa M\tdocs/x.md\n"
 check true "symlink markdown" ":000000 120000 0000000 bbbbbbb A\tdocs/x.md\n"
 check true "submodule" ":000000 160000 0000000 bbbbbbb A\tdocs/vendor.md\n"
 check true "quoted path" "$add\t\"docs/caf\\\\303\\\\251.md\"\n"
+check true "directory named like markdown" "$add\tdocs/x.md/y.go\n"
 check false "nested plans markdown" "$add\tplans/impl/phase-1.md\n"
 check true "uppercase extension" "$add\tdocs/x.MD\n"
 check true "markdown-like extension" "$add\tdocs/x.md.txt\n"
