@@ -30,16 +30,16 @@ func TestModels(t *testing.T) {
 					}
 				},
 				{
+					"id": "grok-imagine-image",
+					"context_length": 1024,
+					"image_price": 200000000
+				},
+				{
 					"id": "grok-code-fast-1",
 					"context_length": 131072,
 					"prompt_text_token_price": 1500,
 					"completion_text_token_price": 7500,
 					"prompt_image_token_price": 0
-				},
-				{
-					"id": "grok-imagine-image",
-					"context_length": 1024,
-					"image_price": 200000000
 				}
 			],
 			"object": "list"
@@ -54,8 +54,8 @@ func TestModels(t *testing.T) {
 	models, err := Models(context.Background(), &oauth.Token{AccessToken: "at-models"})
 	require.NoError(t, err)
 
-	// The image generation entry is dropped; the other two survive in
-	// order.
+	// The image generation entry is dropped; the entries either side of
+	// it survive in order.
 	require.Len(t, models, 2)
 	require.Equal(t, "grok-4", models[0].ID)
 	require.Equal(t, "Grok 4", models[0].Name)
@@ -65,6 +65,7 @@ func TestModels(t *testing.T) {
 	require.Equal(t, int64(256000), models[0].ContextWindow)
 	require.True(t, models[0].SupportsImages)
 
+	require.Equal(t, "grok-code-fast-1", models[1].ID)
 	require.False(t, models[1].CanReason)
 	require.Empty(t, models[1].ReasoningLevels)
 	require.Empty(t, models[1].DefaultReasoningEffort)
@@ -104,4 +105,17 @@ func TestModels_Errors(t *testing.T) {
 		_, err := Models(context.Background(), &oauth.Token{AccessToken: "at"})
 		require.ErrorContains(t, err, "empty")
 	})
+}
+
+func TestModelName(t *testing.T) {
+	t.Parallel()
+
+	for id, want := range map[string]string{
+		"grok-4-fast": "Grok 4 Fast",
+		"grok":        "Grok",
+		"grok--fast-": "Grok Fast",
+		"":            "",
+	} {
+		require.Equal(t, want, modelName(id), "model ID %q", id)
+	}
 }

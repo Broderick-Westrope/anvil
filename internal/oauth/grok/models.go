@@ -7,17 +7,21 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/oauth"
 )
 
-// APIBaseURL is the xAI API the Grok account's access token authorizes.
-const APIBaseURL = "https://api.x.ai/v1"
+const (
+	// APIBaseURL is the xAI API the Grok account's access token
+	// authorizes.
+	APIBaseURL = "https://api.x.ai/v1"
+
+	defaultModelsEndpoint = APIBaseURL + "/models"
+)
 
 // modelsEndpoint is a variable so tests can point it at a stub server.
-var modelsEndpoint = APIBaseURL + "/models"
+var modelsEndpoint = defaultModelsEndpoint
 
 // modelCapabilities mirrors the request parameters a model accepts.
 type modelCapabilities struct {
@@ -62,7 +66,7 @@ func Models(ctx context.Context, token *oauth.Token) ([]catwalk.Model, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: requestTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch Grok model catalog: %w", err)
