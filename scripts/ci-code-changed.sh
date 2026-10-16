@@ -1,23 +1,33 @@
 #!/usr/bin/env bash
-# Reads changed paths, one per line, and prints "true" when any of them can
-# affect the build, tests or lint, and "false" when every one is prose that
-# nothing compiles, embeds or tests.
+# Reads `git diff --raw --no-renames` output and prints "true" when any
+# change can affect the build, tests or lint, and "false" when every change
+# is a regular Markdown file that nothing compiles, embeds or tests.
 #
-# The safe list is deliberately short. A path not on it counts as code, so a
-# new kind of file runs the full checks until someone decides otherwise.
-# Markdown inside internal/ is not safe: tool descriptions, prompt templates
-# and builtin skills are embedded into the binary.
+# Only Markdown is safe, and only at the repo root or under plans/ or docs/.
+# Anything else counts as code: Go files under docs/ still build and test,
+# Markdown inside internal/ is embedded (tool descriptions, prompt templates,
+# builtin skills), and a symlink or executable could point anywhere. A new
+# kind of file runs the full checks until someone decides otherwise.
 #
 # No input at all also prints "true", so a broken diff can't skip checks.
 
 set -euo pipefail
 
+regular_or_absent() {
+    [ "$1" = 100644 ] || [ "$1" = 000000 ]
+}
+
 seen=false
-while IFS= read -r path; do
-    [ -n "$path" ] || continue
+while IFS=$'\t' read -r meta path; do
+    [ -n "$meta" ] || continue
     seen=true
+    read -r old_mode new_mode _ <<<"${meta#:}"
+    if ! regular_or_absent "$old_mode" || ! regular_or_absent "$new_mode"; then
+        echo true
+        exit 0
+    fi
     case "$path" in
-    plans/* | docs/*) ;;
+    plans/*.md | docs/*.md) ;;
     */*) echo true; exit 0 ;;
     *.md) ;;
     *) echo true; exit 0 ;;
