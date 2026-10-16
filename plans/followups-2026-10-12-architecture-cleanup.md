@@ -12,10 +12,13 @@ Check these before starting anything below, because they overlap it.
 
 | Branch or PR | What it covers | Overlaps |
 |---|---|---|
-| #110 `refactor/ui-feature-routing` | ADR 0003's dispatcher redesign: a TUI feature registry, with workflows as the first feature moved onto it | Every remaining `ui/` `gocognit` exclusion. Drill-ins, branching, pins, jobs, Herdr and the MCP palette still need moving. |
 | #109 `docs/upstream-sync-2026-10` | Crush v0.89.0 to v0.97.1 sync | Upstream-owned files below, especially `internal/config/load.go` |
-| `mut/*` worktrees | Tests written so mutation checks pass, apparently stacked on the sync branch | `mut/uimodel` has an uncommitted change to `internal/ui/model/ui.go`, which #110 also rewrites. ADR 0003 allows one agent in that file at a time. |
+| `mut/*` worktrees | Tests written so mutation checks pass, apparently stacked on the sync branch | `mut/uimodel` has an uncommitted change to `internal/ui/model/ui.go`, which #110 has since rewritten, so it needs rebasing onto `main`. ADR 0003 allows one agent in that file at a time. |
 | `feat/workflow-run-node` | Workflow run nodes and run-owned sessions | Cancel, queue and Esc behaviour, which overlaps the run-state candidate |
+
+## Landed since
+
+#110 settled ADR 0003's dispatcher design: fork features plug into `UI` through a feature registry (`internal/ui/model/features.go`, "Feature Routing" in `internal/ui/AGENTS.md`), and workflows were the first to move. Drill-ins, branching, pins, jobs, Herdr and the MCP palette still need moving, one change each, and each move retires the `ui/` `gocognit` exclusions it touches. Its survey (`plans/analysis-2026-10-16-ui-feature-routing-survey.md`) lists what it fixed and what's left.
 
 ## Bugs found but not fixed
 
@@ -45,8 +48,9 @@ Check these before starting anything below, because they overlap it.
 
 These need a design conversation before any code, per the plan. Their evidence is in the survey reports.
 
-- Collapse the `Workspace` forwarding layer (workspace survey, candidate 1). Wait for #110 and #109.
+- Collapse the `Workspace` forwarding layer (workspace survey, candidate 1). Wait for #109.
 - Give cancel, queue and busy state one owner (workspace survey, candidate 2). Wait for `feat/workflow-run-node`.
 - Give job end-state wording one owner and send structured job events to the TUI instead of prose it re-parses (tools survey, candidate 1).
 - Define bouncer modes, hazard axes and thresholds once (permission survey, candidate 2).
 - Move the TUI's grant policy into the permission service (permission survey, candidate 3).
+- Have the workflow host stamp each event with the invocation it belongs to, so the TUI stops inferring runs from publishing order (UI feature routing survey, candidate 2).

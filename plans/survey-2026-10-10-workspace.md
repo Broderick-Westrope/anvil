@@ -25,7 +25,7 @@ removes the stale docs that keep agents adding forwards.
 
 ### 1. `Workspace` is a middle man with one implementation (Strong)
 
-**Status (2026-10-12):** Open. #97 removed the dead `PermissionGrantPersistent` forward; the rest of the layer is untouched.
+**Status (2026-10-16):** Open. #97 removed the dead `PermissionGrantPersistent` forward, and #110 removed `WorkflowRunning` and replaced `WorkflowMissing` with `AnnotateCommands`, which asks the workflow host's `Check`. The rest of the layer is untouched.
 
 - **Flags:** Middle man, Pass-through, Speculative generality
 - **Evidence:**
