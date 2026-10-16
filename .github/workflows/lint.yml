@@ -15,8 +15,7 @@ jobs:
 
   lint:
     needs: changes
-    # Run even if classification failed; only an explicit "false" skips.
     if: ${{ !cancelled() }}
     uses: ./.github/workflows/_lint.yml
     with:
-      run: ${{ needs.changes.outputs.code != 'false' }}
+      lint: ${{ needs.changes.outputs.code != 'false' }}

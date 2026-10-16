@@ -18,10 +18,10 @@ jobs:
   changes:
     uses: ./.github/workflows/_changes.yml
 
-  # These scan code and dependencies, so a pull request that changes
-  # neither skips them. A skipped job counts as passed, which keeps the
-  # required govulncheck check green. Only an explicit "false" skips, so
-  # a failed classification still runs the scans.
+  # These scan the code, so a pull request that changes none skips them. A
+  # skipped job counts as passed, which keeps the required govulncheck
+  # check green. dependency-review still runs: it only reads manifest
+  # diffs and takes seconds.
   codeql:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}

@@ -30,8 +30,10 @@ jobs:
         with:
           # The PR's own commits are needed to find its merge base.
           fetch-depth: 0
+          # Diffs and the merge base need commits and trees, not contents.
+          filter: blob:none
           persist-credentials: false
-      - run: scripts/ci-code-changed_test.sh
+      - run: scripts/ci-code-changed-test.sh
       - id: classify
         run: |
           set -euo pipefail
@@ -49,7 +51,8 @@ jobs:
             # executable never counts as prose. The diffs are captured
             # first so a failing git command fails this step.
             merged=$(git diff --no-renames --raw HEAD^1 HEAD)
-            own=$(git diff --no-renames --raw "$(git merge-base HEAD^1 HEAD^2)" HEAD^2)
+            fork_point=$(git merge-base HEAD^1 HEAD^2)
+            own=$(git diff --no-renames --raw "$fork_point" HEAD^2)
             code=$(printf '%s\n%s\n' "$merged" "$own" | scripts/ci-code-changed.sh)
           fi
           echo "Code changed: $code"

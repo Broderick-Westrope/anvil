@@ -17,7 +17,6 @@ jobs:
 
   build:
     needs: changes
-    # Run even if classification failed; the steps below then run in full.
     if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
@@ -31,7 +30,7 @@ jobs:
       RACE: ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }}
       # The ruleset requires these jobs by their matrix names, which a
       # skipped job never reports, so a change with no code skips the steps
-      # instead of the job. Only an explicit "false" skips anything.
+      # instead of the job. Every step needs the guard.
       CODE: ${{ needs.changes.outputs.code }}
     steps:
       - if: env.CODE == 'false'
