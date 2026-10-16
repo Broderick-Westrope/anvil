@@ -748,9 +748,10 @@ func (l loginCredential) save(s *ConfigStore, scope Scope, providerID string) er
 	// exchange cannot land on top of a credential the user just obtained
 	// interactively — which would silently invalidate the login they only
 	// just completed.
-	if err := s.withRefreshLock(providerID, func() error {
+	write := func() error {
 		return s.SetConfigFields(scope, tokenFields(providerID, l.token))
-	}); err != nil {
+	}
+	if err := s.withRefreshLock(providerID, write); err != nil {
 		return err
 	}
 	if providerID != string(catwalk.InferenceProviderOpenAI) {
@@ -936,7 +937,7 @@ func (s *ConfigStore) refetchSubscriptionModels(ctx context.Context, scope Scope
 		return
 	}
 	field := subscriptionCatalogField(providerID)
-	if err := s.update(scope, func(c *Config) map[string]any {
+	store := func(c *Config) map[string]any {
 		p, ok := c.Providers.Get(providerID)
 		if !ok {
 			return nil
@@ -948,7 +949,8 @@ func (s *ConfigStore) refetchSubscriptionModels(ctx context.Context, scope Scope
 		}
 		c.Providers.Set(providerID, p)
 		return map[string]any{fmt.Sprintf("providers.%s.%s", providerID, field): models}
-	}); err != nil {
+	}
+	if err := s.update(scope, store); err != nil {
 		slog.Warn("Failed to persist the subscription model catalog", "provider", providerID, "error", err)
 	}
 }
