@@ -417,10 +417,7 @@ func (o *Options) GetRequestTimeout() time.Duration {
 	if o == nil || o.RequestTimeout == nil {
 		return DefaultRequestTimeout
 	}
-	if *o.RequestTimeout <= 0 {
-		return 0
-	}
-	return time.Duration(*o.RequestTimeout) * time.Second
+	return time.Duration(max(*o.RequestTimeout, 0)) * time.Second
 }
 
 // WakeOnJobEvent reports whether idle sessions should be woken by

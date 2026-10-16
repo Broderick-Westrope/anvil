@@ -959,9 +959,7 @@ func (s *ConfigStore) refetchSubscriptionModels(ctx context.Context, scope Scope
 // per start. Best effort, like refetchSubscriptionModels.
 func (s *ConfigStore) RefreshSubscriptionModels(ctx context.Context) {
 	for _, providerID := range []string{string(catwalk.InferenceProviderOpenAI), string(catwalk.InferenceProviderXAI)} {
-		if pc, ok := s.Config().Providers.Get(providerID); ok && pc.OAuthToken != nil {
-			s.refetchSubscriptionModels(ctx, ScopeGlobal, providerID)
-		}
+		s.refetchSubscriptionModels(ctx, ScopeGlobal, providerID)
 	}
 }
 
@@ -971,8 +969,7 @@ func (s *ConfigStore) RefreshSubscriptionModels(ctx context.Context) {
 // callers can run it on every model update.
 func (s *ConfigStore) RefetchMissingSubscriptionModels(ctx context.Context) {
 	for _, providerID := range []string{string(catwalk.InferenceProviderOpenAI), string(catwalk.InferenceProviderXAI)} {
-		pc, ok := s.Config().Providers.Get(providerID)
-		if !ok || pc.OAuthToken == nil || len(pc.SubscriptionModels()) > 0 {
+		if pc, _ := s.Config().Providers.Get(providerID); len(pc.SubscriptionModels()) > 0 {
 			continue
 		}
 		s.refetchSubscriptionModels(ctx, ScopeGlobal, providerID)
