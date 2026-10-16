@@ -116,11 +116,10 @@ func pruneSpills(dir string) {
 		return a.ModTime().Compare(b.ModTime())
 	})
 	for _, info := range kept {
-		if keptBytes <= spillDirLimit {
-			break
+		if keptBytes > spillDirLimit {
+			removeSpill(dir, info.Name())
+			keptBytes -= info.Size()
 		}
-		removeSpill(dir, info.Name())
-		keptBytes -= info.Size()
 	}
 }
 
