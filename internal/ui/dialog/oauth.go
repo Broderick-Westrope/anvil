@@ -82,6 +82,8 @@ type OAuth struct {
 	// codeInput is the paste field for providers whose browser flow
 	// can finish with a code entered back in the terminal.
 	codeInput textinput.Model
+	// codeInputRow is the paste field's row within innerDialogContent.
+	codeInputRow int
 }
 
 var _ Dialog = (*OAuth)(nil)
@@ -314,33 +316,32 @@ func (m *OAuth) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		dialogStyle = t.Dialog.View.Width(dialogWidth)
 	)
 	m.width = dialogWidth
+	content := m.dialogContent()
+	cur := m.cursor()
 	if m.isOnboarding {
-		view := m.dialogContent()
-		cur := m.cursor()
-		if cur != nil {
-			cur = adjustOnboardingInputCursor(t, cur)
-			DrawOnboardingCursor(scr, area, view, cur)
-		} else {
-			DrawOnboarding(scr, area, view)
-		}
-	} else {
-		view := dialogStyle.Render(m.dialogContent())
-		if cur := m.cursor(); cur != nil {
-			DrawCenterCursor(scr, area, view, cur)
-		} else {
-			DrawCenter(scr, area, view)
-		}
+		DrawOnboardingCursor(scr, area, content, cur)
+		return cur
 	}
-	return nil
+	if cur != nil {
+		cur.X += dialogStyle.GetBorderLeftSize() + dialogStyle.GetPaddingLeft()
+		cur.Y += dialogStyle.GetBorderTopSize() + dialogStyle.GetPaddingTop()
+	}
+	DrawCenterCursor(scr, area, dialogStyle.Render(content), cur)
+	return cur
 }
 
-// cursor reports the paste field's cursor when it is focused, so the
-// terminal caret sits in the input.
+// cursor reports where the paste field's caret sits in the dialog
+// content when the field is focused, so the terminal caret lands in it.
+// It relies on the row recorded by the last innerDialogContent.
 func (m *OAuth) cursor() *tea.Cursor {
-	if m.codeEntryActive() && m.codeInput.Focused() {
-		return InputCursor(m.com.Styles, m.codeInput.Cursor())
+	if !m.codeEntryActive() || !m.codeInput.Focused() {
+		return nil
 	}
-	return nil
+	cur := m.codeInput.Cursor()
+	// The field is padded one column in, below the header.
+	cur.X++
+	cur.Y += lipgloss.Height(m.headerContent()) + m.codeInputRow
+	return cur
 }
 
 func (m *OAuth) dialogContent() string {
@@ -461,6 +462,9 @@ func (m *OAuth) innerDialogContent() string {
 					Padding(0, 1).
 					Render("Declined or browser didn't connect? Enter the code from the page:"),
 				"",
+			)
+			m.codeInputRow = lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, elements...))
+			elements = append(elements,
 				lipgloss.NewStyle().
 					Width(innerWidth).
 					Padding(0, 1).
