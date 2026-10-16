@@ -27,20 +27,29 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # A pull request checks out its merge commit, whose first parent
-          # is the base, so two commits are enough to diff against it.
-          fetch-depth: 2
+          # The PR's own commits are needed to find its merge base.
+          fetch-depth: 0
           persist-credentials: false
       - run: scripts/ci-code-changed_test.sh
       - id: classify
         run: |
+          set -euo pipefail
           if [ "$EVENT" != pull_request ] || [ "$BASE" != "$DEFAULT_BRANCH" ]; then
             code=true
           else
+            # A pull request checks out its merge commit: HEAD^1 is the base
+            # tip and HEAD^2 the PR's head. Both diffs must be prose. The
+            # merge result alone can look like prose when the PR carries code
+            # main already has, which would merge unchecked if main later
+            # reverted it.
+            #
             # --no-renames lists both sides of a move, so moving code into
-            # docs/ still counts as a code change. --raw carries file modes,
-            # so a symlink or executable never counts as prose.
-            code=$(git diff --no-renames --raw HEAD^1 HEAD | scripts/ci-code-changed.sh)
+            # docs/ still counts. --raw carries file modes, so a symlink or
+            # executable never counts as prose. The diffs are captured
+            # first so a failing git command fails this step.
+            merged=$(git diff --no-renames --raw HEAD^1 HEAD)
+            own=$(git diff --no-renames --raw "$(git merge-base HEAD^1 HEAD^2)" HEAD^2)
+            code=$(printf '%s\n%s\n' "$merged" "$own" | scripts/ci-code-changed.sh)
           fi
           echo "Code changed: $code"
           echo "code=$code" >>"$GITHUB_OUTPUT"
