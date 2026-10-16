@@ -27,6 +27,8 @@ small and makes every later permission change apply to bash uniformly.
 
 ### 1. The bash safe-command list bypasses the permission service (Strong, security)
 
+**Status (2026-10-12):** Done in #91. Safety is now decided from the parsed command.
+
 - **Flags:** Duplicated concept, Information leakage
 - **Evidence:**
   - `tools/bash.go:262-274` marks a command safe when it starts with an
@@ -59,6 +61,8 @@ small and makes every later permission change apply to bash uniformly.
 
 ### 2. Mode and threshold knowledge is restated across packages (Strong)
 
+**Status (2026-10-12):** Open.
+
 - **Flags:** Duplicated concept, Hand-synced state
 - **Evidence:**
   - Bouncer mode exists as `config.BouncerMode` (`config/bouncer.go:27`)
@@ -85,6 +89,8 @@ small and makes every later permission change apply to bash uniformly.
 
 ### 3. Permission policy lives in the UI (Worth exploring)
 
+**Status (2026-10-12):** Open.
+
 - **Flags:** Feature envy, Information leakage
 - **Evidence:** `ui/model/ui.go` (the `PermissionGrant*` response handling)
   decides what "allow for session" and "allow forever" mean, including what
@@ -102,6 +108,8 @@ small and makes every later permission change apply to bash uniformly.
 
 ### 4. Wide `permission.Service` with hand-written fakes (Worth exploring)
 
+**Status (2026-10-12):** Open.
+
 - **Flags:** Mocking your own code, Shotgun surgery
 - **Evidence:** about 17 methods (`permission.go:119-162`), one real
   implementation, and at least seven hand-written fakes
@@ -114,6 +122,8 @@ small and makes every later permission change apply to bash uniformly.
 - **Direction:** narrow the interface type tools depend on to `Request`.
 
 ### 5. Legacy exact-match session grants (Strong, small)
+
+**Status (2026-10-12):** Done in #97.
 
 - **Flags:** Two ways to do one task
 - **Evidence:** `GrantPersistent` and the `sessionPermissions` map
@@ -129,6 +139,8 @@ small and makes every later permission change apply to bash uniformly.
   pass-through.
 
 ### 6. Hook allow beats a config deny rule (Speculative)
+
+**Status (2026-10-12):** Open.
 
 - **Flags:** Information leakage
 - **Evidence:** `permission.go:288` honours `hookApproved` before
