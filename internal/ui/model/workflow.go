@@ -37,7 +37,6 @@ const (
 // memory after the run finishes until it is dismissed or the session
 // runs another workflow.
 type workflowRun struct {
-	command  string
 	step     string
 	detail   string
 	activity string // The latest bash command or turn.
@@ -51,13 +50,6 @@ type workflowRun struct {
 	// the indices in panel.
 	log   *dialog.WorkflowTranscript
 	panel []int
-}
-
-// record adds e to the run's transcript and returns its index.
-func (r *workflowRun) record(e dialog.WorkflowEntry) int {
-	r.log.Entries = append(r.log.Entries, e)
-	r.log.Version++
-	return len(r.log.Entries) - 1
 }
 
 // show lists the entry at index i in the panel, making room by dropping
@@ -87,7 +79,7 @@ func (r *workflowRun) panelEntries() []dialog.WorkflowEntry {
 // recorded as it ends, with no session to open.
 func (r *workflowRun) agentEvent(a workflowhost.AgentCall) {
 	if a.Status == workflowhost.StatusRunning || a.Session == "" {
-		r.show(r.record(dialog.WorkflowEntry{
+		r.show(r.log.Record(dialog.WorkflowEntry{
 			Kind: dialog.WorkflowEntryAgent, Agent: a.Name, Model: a.Model, SessionID: a.Session,
 			Status: a.Status, Err: a.Err,
 		}))
@@ -95,8 +87,7 @@ func (r *workflowRun) agentEvent(a workflowhost.AgentCall) {
 	}
 	for i, e := range r.log.Entries {
 		if e.Kind == dialog.WorkflowEntryAgent && e.SessionID == a.Session {
-			r.log.Entries[i].Status, r.log.Entries[i].Err = a.Status, a.Err
-			r.log.Version++
+			r.log.Update(i, func(e *dialog.WorkflowEntry) { e.Status, e.Err = a.Status, a.Err })
 		}
 	}
 }
@@ -384,7 +375,7 @@ func (w *workflowFeature) openAgent(run *workflowRun) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	return w.host.DrillInto(e.SessionID, workflowhost.AgentSessionTitle(run.command, e.Agent))
+	return w.host.DrillInto(e.SessionID, workflowhost.AgentSessionTitle(run.log.Command, e.Agent))
 }
 
 // PaletteEntries lists the controls of the run involving the session on
@@ -401,18 +392,18 @@ func (w *workflowFeature) PaletteEntries() []*dialog.CommandItem {
 	}
 	if run.log.Finished {
 		return []*dialog.CommandItem{
-			item("workflow_run", "Show Workflow Run /"+run.command, km.WorkflowRun.Help().Key, dialog.WorkflowShowRun),
-			item("workflow_dismiss", "Dismiss Workflow Run /"+run.command, "", dialog.WorkflowDismiss),
+			item("workflow_run", "Show Workflow Run /"+run.log.Command, km.WorkflowRun.Help().Key, dialog.WorkflowShowRun),
+			item("workflow_dismiss", "Dismiss Workflow Run /"+run.log.Command, "", dialog.WorkflowDismiss),
 		}
 	}
-	pause := item("workflow_pause", "Pause Workflow /"+run.command, km.WorkflowPause.Help().Key, dialog.WorkflowPause)
+	pause := item("workflow_pause", "Pause Workflow /"+run.log.Command, km.WorkflowPause.Help().Key, dialog.WorkflowPause)
 	if run.paused {
-		pause = item("workflow_pause", "Resume Workflow /"+run.command, km.WorkflowPause.Help().Key, dialog.WorkflowResume)
+		pause = item("workflow_pause", "Resume Workflow /"+run.log.Command, km.WorkflowPause.Help().Key, dialog.WorkflowResume)
 	}
 	entries := []*dialog.CommandItem{
 		pause,
-		item("workflow_abort", "Abort Workflow /"+run.command, km.WorkflowAbort.Help().Key, dialog.WorkflowAbort),
-		item("workflow_run", "Show Workflow Run /"+run.command, km.WorkflowRun.Help().Key, dialog.WorkflowShowRun),
+		item("workflow_abort", "Abort Workflow /"+run.log.Command, km.WorkflowAbort.Help().Key, dialog.WorkflowAbort),
+		item("workflow_run", "Show Workflow Run /"+run.log.Command, km.WorkflowRun.Help().Key, dialog.WorkflowShowRun),
 	}
 	if run.active != w.host.SessionID() {
 		entries = append(entries, item("workflow_goto", "Go to Workflow Session", km.WorkflowGo.Help().Key, dialog.WorkflowGoToActive))
@@ -445,7 +436,7 @@ func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
 	case workflowhost.EventAsk:
 		w.closeRequests(w.requests.add(ev))
 		if run := w.ensureRun(ev); run != nil {
-			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ev.RequestID, Question: ev.Question})
+			run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ev.RequestID, Question: ev.Question})
 		}
 		w.host.Dialogs().OpenDialogWithGrace(dialog.NewWorkflowAsk(w.com, ev, w.host.KeyMap().WorkflowAbort))
 		return w.host.Notify(notification.Notification{
@@ -454,7 +445,7 @@ func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
 		})
 	case workflowhost.EventWarn:
 		if run := w.ensureRun(ev); run != nil {
-			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryWarning, Text: ev.Message})
+			run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryWarning, Text: ev.Message})
 		}
 		return util.ReportWarn(fmt.Sprintf("Workflow /%s: %s", ev.Command, ev.Message))
 	case workflowhost.EventFinished:
@@ -482,19 +473,19 @@ func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
 				parts = append(parts, part)
 			}
 		}
-		run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryStatus, Text: strings.Join(parts, " · ")})
+		run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryStatus, Text: strings.Join(parts, " · ")})
 	case workflowhost.EventStep:
 		a := ev.Activity
 		switch a.Kind {
 		case workflowhost.ActivityBash:
 			run.activity = "$ " + a.Cmd
-			run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryBash, Text: a.Cmd})
+			run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryBash, Text: a.Cmd})
 		case workflowhost.ActivityTurn:
 			run.activity = "turn"
 			if a.Session != "" {
 				run.active = a.Session
 				run.sessions[a.Session] = true
-				run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryTurn, SessionID: a.Session, Text: w.title(a.Session)})
+				run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryTurn, SessionID: a.Session, Text: w.title(a.Session)})
 				return w.fetchTitle(a.Session)
 			}
 		}
@@ -533,10 +524,9 @@ func (w *workflowFeature) keepAnswer(ask workflowhost.Event, answer string) tea.
 			return e.Kind == dialog.WorkflowEntryAsk && e.RequestID == ask.RequestID
 		})
 		if i < 0 {
-			i = run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ask.RequestID, Question: ask.Question})
+			i = run.log.Record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryAsk, RequestID: ask.RequestID, Question: ask.Question})
 		}
-		run.log.Entries[i].Answer = answer
-		run.log.Version++
+		run.log.Update(i, func(e *dialog.WorkflowEntry) { e.Answer = answer })
 		run.show(i)
 		w.host.Relayout()
 	}
@@ -557,9 +547,7 @@ func (w *workflowFeature) ensureRun(ev workflowhost.Event) *workflowRun {
 	if run == nil {
 		run = w.newRun(ev)
 	}
-	if ev.Command != "" {
-		run.command, run.log.Command = ev.Command, ev.Command
-	}
+	run.log.SetCommand(ev.Command)
 	if run.log.RunID == "" {
 		run.log.RunID = ev.RunID
 	}
@@ -613,8 +601,7 @@ func (w *workflowFeature) setTitle(id, title string) {
 	for _, run := range w.runs {
 		for i, e := range run.log.Entries {
 			if e.Kind == dialog.WorkflowEntryTurn && e.SessionID == id {
-				run.log.Entries[i].Text = title
-				run.log.Version++
+				run.log.Update(i, func(e *dialog.WorkflowEntry) { e.Text = title })
 			}
 		}
 	}
@@ -655,15 +642,12 @@ func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
 	if run == nil || run.log.Finished || otherWorkflowRun(run, ev) {
 		run = w.newRun(ev)
 	}
-	if ev.Command != "" {
-		run.command, run.log.Command = ev.Command, ev.Command
-	}
+	run.log.SetCommand(ev.Command)
 	outcome := ev.Message
 	if ev.Status == workflowhost.StatusCompleted {
 		outcome = compactResult(ev.Result)
 	}
-	run.record(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: ev.Status, Text: outcome})
-	run.log.Finished = true
+	run.log.Finish(dialog.WorkflowEntry{Kind: dialog.WorkflowEntryOutcome, Status: ev.Status, Text: outcome})
 	if ev.Status == workflowhost.StatusCompleted {
 		outcome = ansi.Truncate(outcome, workflowResultMaxWidth, "…")
 	}
@@ -695,15 +679,15 @@ func (w *workflowFeature) Panel() panelView {
 		return nil
 	}
 	km := w.host.KeyMap()
-	if run.log.Finished {
+	if outcome, ok := run.log.Outcome(); ok {
 		return workflowPanel{
-			styles: w.com.Styles, command: run.command,
-			outcome: &run.log.Entries[len(run.log.Entries)-1], runKey: km.WorkflowRun.Help().Key,
+			styles: w.com.Styles, command: run.log.Command,
+			outcome: &outcome, runKey: km.WorkflowRun.Help().Key,
 		}
 	}
 	p := workflowPanel{
 		styles:  w.com.Styles,
-		command: run.command, step: run.step, detail: run.detail, activity: run.activity,
+		command: run.log.Command, step: run.step, detail: run.detail, activity: run.activity,
 		paused: run.paused, held: run.held, entries: run.panelEntries(),
 		pauseKey: km.WorkflowPause.Help().Key,
 		abortKey: km.WorkflowAbort.Help().Key,

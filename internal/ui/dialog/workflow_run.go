@@ -65,8 +65,47 @@ type WorkflowTranscript struct {
 	Entries   []WorkflowEntry
 	Finished  bool
 	// Version changes whenever the transcript does, so an open dialog
-	// renders it again.
+	// renders it again. Change the transcript through its methods, which
+	// keep it current.
 	Version int
+}
+
+// Record appends e and returns its index. Entries are only ever appended
+// or updated in place, never removed, so an index stays valid.
+func (t *WorkflowTranscript) Record(e WorkflowEntry) int {
+	t.Entries = append(t.Entries, e)
+	t.Version++
+	return len(t.Entries) - 1
+}
+
+// Update changes the entry at index i in place.
+func (t *WorkflowTranscript) Update(i int, change func(*WorkflowEntry)) {
+	change(&t.Entries[i])
+	t.Version++
+}
+
+// SetCommand names the run's command, unless command is empty.
+func (t *WorkflowTranscript) SetCommand(command string) {
+	if command == "" || command == t.Command {
+		return
+	}
+	t.Command = command
+	t.Version++
+}
+
+// Finish records how the run ended, as its last entry.
+func (t *WorkflowTranscript) Finish(outcome WorkflowEntry) {
+	t.Entries = append(t.Entries, outcome)
+	t.Finished = true
+	t.Version++
+}
+
+// Outcome returns how the run ended, once it has.
+func (t *WorkflowTranscript) Outcome() (WorkflowEntry, bool) {
+	if !t.Finished || len(t.Entries) == 0 {
+		return WorkflowEntry{}, false
+	}
+	return t.Entries[len(t.Entries)-1], true
 }
 
 // WorkflowRun shows the transcript of a workflow run, and opens the
@@ -96,9 +135,9 @@ type WorkflowRun struct {
 var _ Dialog = (*WorkflowRun)(nil)
 
 // NewWorkflowRun creates the dialog for tr, which the caller may keep
-// updating while it is open as long as it bumps tr.Version. Entries are
-// only appended or edited in place, never removed, so a chosen agent
-// stays in range.
+// changing through its methods while it is open. Entries are only
+// appended or edited in place, never removed, so a chosen agent stays in
+// range.
 func NewWorkflowRun(com *common.Common, tr *WorkflowTranscript) *WorkflowRun {
 	d := &WorkflowRun{com: com, tr: tr, viewport: viewport.New()}
 	d.findAgents()

@@ -432,3 +432,42 @@ func TestWorkflowRunSelectionFollowsNewAgentsFromTheLatest(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowTranscriptChangesItsVersionWithEveryEdit(t *testing.T) {
+	t.Parallel()
+
+	var tr WorkflowTranscript
+	_, ok := tr.Outcome()
+	require.False(t, ok, "a running run has no outcome")
+
+	i := tr.Record(WorkflowEntry{Kind: WorkflowEntryAsk, Question: "Go?"})
+	require.Equal(t, 0, i)
+	require.Equal(t, 1, tr.Version)
+	require.Equal(t, 1, tr.Record(WorkflowEntry{Kind: WorkflowEntryBash, Text: "ls"}))
+	require.Equal(t, 2, tr.Version)
+
+	tr.Update(i, func(e *WorkflowEntry) { e.Answer = "yes" })
+	require.Equal(t, "yes", tr.Entries[0].Answer)
+	require.Equal(t, 3, tr.Version)
+
+	tr.Finish(WorkflowEntry{Kind: WorkflowEntryOutcome, Status: workflowhost.StatusFailed, Text: "boom"})
+	require.True(t, tr.Finished)
+	require.Equal(t, 4, tr.Version)
+	outcome, ok := tr.Outcome()
+	require.True(t, ok)
+	require.Equal(t, "boom", outcome.Text)
+	require.Len(t, tr.Entries, 3)
+}
+
+func TestWorkflowTranscriptRedrawsOnlyWhenItsCommandChanges(t *testing.T) {
+	t.Parallel()
+
+	var tr WorkflowTranscript
+	tr.SetCommand("demo")
+	require.Equal(t, "demo", tr.Command)
+	require.Equal(t, 1, tr.Version)
+	tr.SetCommand("demo")
+	tr.SetCommand("")
+	require.Equal(t, "demo", tr.Command, "an event without a command keeps it")
+	require.Equal(t, 1, tr.Version)
+}
