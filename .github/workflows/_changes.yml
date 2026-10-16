@@ -20,6 +20,7 @@ permissions:
 
 jobs:
   classify:
+    name: classify changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

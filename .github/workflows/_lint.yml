@@ -1,9 +1,8 @@
 name: lint
 
-# A copy of charmbracelet/meta's lint workflow with one addition: every
-# step can be skipped. The ruleset requires the "lint / lint (<os>)" checks
-# by name, and only a called workflow's matrix job reports those names, so
-# skipping has to happen inside it rather than on the calling job.
+# Every step can be skipped. The ruleset requires the "lint / lint (<os>)"
+# checks by name, and only a called workflow's matrix job reports those
+# names, so skipping has to happen inside it rather than on the caller.
 on:
   workflow_call:
     inputs:
@@ -28,18 +27,19 @@ jobs:
         run: echo "No code changed, so there is nothing to lint."
       # By default, the GitHub Action on Windows uses core.autocrlf=true,
       # which makes formatters report every line as changed.
-      - if: ${{ inputs.run }}
+      - if: inputs.run
         run: git config --global core.autocrlf input
-      - if: ${{ inputs.run }}
+      - if: inputs.run
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - if: ${{ inputs.run }}
+      - if: inputs.run
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - if: ${{ inputs.run }}
+      - if: inputs.run
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           args: --config=.golangci.yml --timeout=10m ./...
+          # Keep in step with tools/golangci-lint.mod, which local runs use.
           version: v2.14
