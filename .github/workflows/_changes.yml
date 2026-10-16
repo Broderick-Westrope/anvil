@@ -1,13 +1,18 @@
 name: changes
 
 # Reports whether a pull request changes anything the code checks look at.
-# Pushes, schedules and manual runs always count as code, so main and the
-# nightly security scan run in full.
+# Only a pull request into the default branch can skip: pushes, schedules
+# and manual runs always count as code, so main and the nightly security
+# scan run in full. Stacked pull requests always run in full too, because
+# retargeting one to main changes what it merges without a new run.
+#
+# Callers skip work only when the output is exactly "false". If this
+# workflow fails, the output is empty and the checks run.
 on:
   workflow_call:
     outputs:
       code:
-        description: '"true" unless every changed path is prose (see scripts/ci-code-changed.sh)'
+        description: '"false" only when every change is prose (see scripts/ci-code-changed.sh)'
         value: ${{ jobs.classify.outputs.code }}
 
 permissions:
@@ -26,16 +31,20 @@ jobs:
           # is the base, so two commits are enough to diff against it.
           fetch-depth: 2
           persist-credentials: false
+      - run: scripts/ci-code-changed_test.sh
       - id: classify
         run: |
-          if [ "$EVENT" != pull_request ]; then
+          if [ "$EVENT" != pull_request ] || [ "$BASE" != "$DEFAULT_BRANCH" ]; then
             code=true
           else
             # --no-renames lists both sides of a move, so moving code into
-            # docs/ still counts as a code change.
-            code=$(git diff --no-renames --name-only HEAD^1 HEAD | scripts/ci-code-changed.sh)
+            # docs/ still counts as a code change. --raw carries file modes,
+            # so a symlink or executable never counts as prose.
+            code=$(git diff --no-renames --raw HEAD^1 HEAD | scripts/ci-code-changed.sh)
           fi
           echo "Code changed: $code"
           echo "code=$code" >>"$GITHUB_OUTPUT"
         env:
           EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

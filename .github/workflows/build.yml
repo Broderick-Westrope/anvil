@@ -17,6 +17,8 @@ jobs:
 
   build:
     needs: changes
+    # Run even if classification failed; the steps below then run in full.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -29,24 +31,24 @@ jobs:
       RACE: ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }}
       # The ruleset requires these jobs by their matrix names, which a
       # skipped job never reports, so a change with no code skips the steps
-      # instead of the job.
+      # instead of the job. Only an explicit "false" skips anything.
       CODE: ${{ needs.changes.outputs.code }}
     steps:
-      - if: env.CODE != 'true'
+      - if: env.CODE == 'false'
         run: echo "No code changed, so there is nothing to build or test."
-      - if: env.CODE == 'true'
+      - if: env.CODE != 'false'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - if: env.CODE == 'true'
+      - if: env.CODE != 'false'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - if: env.CODE == 'true'
+      - if: env.CODE != 'false'
         run: go mod tidy
-      - if: env.CODE == 'true'
+      - if: env.CODE != 'false'
         run: git diff --exit-code
-      - if: env.CODE == 'true'
+      - if: env.CODE != 'false'
         run: go build ${{ env.RACE }} ./...
-      - if: env.CODE == 'true'
+      - if: env.CODE != 'false'
         run: go test ${{ env.RACE }} -failfast ./...

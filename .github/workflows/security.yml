@@ -20,11 +20,11 @@ jobs:
 
   # These scan code and dependencies, so a pull request that changes
   # neither skips them. A skipped job counts as passed, which keeps the
-  # required govulncheck check green; pushes to main and the nightly
-  # schedule always run them.
+  # required govulncheck check green. Only an explicit "false" skips, so
+  # a failed classification still runs the scans.
   codeql:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -47,7 +47,7 @@ jobs:
 
   grype:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -69,7 +69,7 @@ jobs:
 
   govulncheck:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       security-events: write
