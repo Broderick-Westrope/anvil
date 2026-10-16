@@ -8,8 +8,11 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -397,4 +400,60 @@ func TestEditorSelectionKeysAreInHelp(t *testing.T) {
 	for _, k := range []string{"ctrl+shift+v", "ctrl+shift+a", "ctrl+shift+c", "ctrl+shift+x"} {
 		require.Contains(t, keys, k)
 	}
+}
+
+func TestEditorVisible(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		rows             int
+		compact, details bool
+		want             bool
+	}{
+		"shown":                     {rows: 5, want: true},
+		"no rows":                   {rows: 0},
+		"compact":                   {rows: 5, compact: true, want: true},
+		"details in a wide layout":  {rows: 5, details: true, want: true},
+		"compact with details open": {rows: 5, compact: true, details: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			u := newEditorUI(t)
+			u.layout.editor = image.Rect(0, editorTop, 60, editorTop+tc.rows)
+			u.isCompact, u.detailsOpen = tc.compact, tc.details
+			require.Equal(t, tc.want, u.editorVisible())
+		})
+	}
+}
+
+func TestEditorMouseDragSelectsInAnIndentedEditor(t *testing.T) {
+	t.Parallel()
+
+	const indent = 7
+	u, col := newMouseEditorUI(t)
+	u.layout.editor = u.layout.editor.Add(image.Pt(indent, 0))
+	u.Update(click(indent+col, textRow))
+	u.Update(release(indent+col+5, textRow))
+
+	require.Equal(t, "hello", u.textarea.SelectedText())
+}
+
+func TestEditorCursorSitsBelowTheAttachmentsRow(t *testing.T) {
+	t.Parallel()
+
+	u := newEditorUI(t)
+	u.com.Config().Options = &config.Options{}
+	u.status = NewStatus(u.com, u)
+	u.session = &session.Session{ID: "s1"}
+	u.textarea.SetValue("first\nsecond")
+	u.textarea.MoveToEnd()
+	u.updateLayoutAndSize()
+	require.Positive(t, u.layout.editor.Min.Y)
+	line := u.textarea.Cursor().Y
+	require.Positive(t, line, "the cursor must be off the first line for this to mean anything")
+
+	scr := uv.NewScreenBuffer(u.width, u.height)
+	cur := u.Draw(scr, scr.Bounds())
+	require.NotNil(t, cur)
+	require.Equal(t, u.layout.editor.Min.Y+editorAttachmentsRow+line, cur.Y)
 }

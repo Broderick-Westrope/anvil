@@ -4,7 +4,10 @@ import (
 	"strconv"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
+	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -158,4 +161,58 @@ func TestApplyChatScroll_ScrollsDrilledInChat(t *testing.T) {
 	require.Equal(t, drillBefore-30, drill.list.Offset(), "the drilled-in chat must scroll")
 	require.Equal(t, rootBefore, u.chat.list.Offset(), "the root chat must not move")
 	require.True(t, drill.SelectedItemInView())
+}
+
+func TestChatUpKeyScrollsUpOneLine(t *testing.T) {
+	t.Parallel()
+	u := newScrollTestUI(t)
+	u.com.Workspace = &composerWorkspace{}
+	u.keyMap = DefaultKeyMap()
+	u.dialog = dialog.NewOverlay()
+	u.focus = uiFocusMain
+	u.chat.ScrollToBottom()
+	u.chat.SelectLast()
+	before := u.chat.list.Offset()
+
+	u.handleKeyPressMsg(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
+	require.Equal(t, before-1, u.chat.list.Offset())
+}
+
+func TestAppendedUserMessageScrollsTheActiveChatToTheBottom(t *testing.T) {
+	t.Parallel()
+	u := newScrollTestUI(t)
+	u.com.Workspace = &composerWorkspace{}
+	u.chat.ScrollToTop()
+
+	u.appendSessionMessageToChat(u.chat, message.Message{
+		ID:    "u-new",
+		Role:  message.User,
+		Parts: []message.ContentPart{message.TextContent{Text: "next"}},
+	})
+	require.True(t, u.chat.AtBottom(), "the user's own message must come into view")
+}
+
+func TestSetSessionMessages_InfoLineFollowsOnlyCompletedTurns(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		reason message.FinishReason
+		items  int
+	}{
+		"end of turn": {message.FinishReasonEndTurn, 2},
+		"cancelled":   {message.FinishReasonCanceled, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			u := newImageAttachUI(t, false)
+			u.setSessionMessages([]message.Message{{
+				ID:   "a1",
+				Role: message.Assistant,
+				Parts: []message.ContentPart{
+					message.TextContent{Text: "done"},
+					message.Finish{Reason: tc.reason, Time: 1},
+				},
+			}})
+			require.Equal(t, tc.items, u.chat.Len())
+		})
+	}
 }
