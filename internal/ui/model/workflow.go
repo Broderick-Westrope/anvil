@@ -596,7 +596,12 @@ func (w *workflowFeature) fetchTitle(sessionID string) tea.Cmd {
 	}
 }
 
+// setTitle names a session a workflow drives, in the cache and in every
+// turn entry run there. A title the cache already has changes nothing.
 func (w *workflowFeature) setTitle(id, title string) {
+	if old, ok := w.titles[id]; ok && old == title {
+		return
+	}
 	w.titles[id] = title
 	for _, run := range w.runs {
 		for i, e := range run.log.Entries {

@@ -1451,3 +1451,19 @@ func TestWorkflowFinishTruncatesOnlyAResult(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowUnchangedTitleChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
+	relayouts := f.host.relayouts
+
+	// Token and cost updates republish the session with the same title.
+	f.wf.Observe(pubsub.Event[session.Session]{Type: pubsub.UpdatedEvent, Payload: session.Session{ID: "sess-2", Title: "Builder"}})
+	require.Equal(t, relayouts, f.host.relayouts)
+
+	f.wf.Observe(pubsub.Event[session.Session]{Type: pubsub.UpdatedEvent, Payload: session.Session{ID: "sess-2", Title: "Renamed"}})
+	require.Greater(t, f.host.relayouts, relayouts)
+}
