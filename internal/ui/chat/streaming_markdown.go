@@ -353,10 +353,10 @@ func (s *streamingMarkdown) renderTrailingCtx(text string, renderer *glamour.Ter
 // future cached call.
 func (s *streamingMarkdown) tryAdvanceFromEmpty(content string, width int, renderer *glamour.TermRenderer) {
 	boundary := findSafeMarkdownBoundary(content)
-	if boundary <= 0 {
+	if boundary == -1 {
 		boundary = s.relaxedBoundary(content, 0)
 	}
-	if boundary <= 0 {
+	if boundary == -1 {
 		return
 	}
 	prefix := content[:boundary]
@@ -382,7 +382,7 @@ func (s *streamingMarkdown) tryAdvanceFromEmpty(content string, width int, rende
 func (s *streamingMarkdown) findBoundaryAfter(content string) int {
 	// When there is no stable prefix, fall back to the full scan.
 	if len(s.stablePrefix) == 0 {
-		if b := findSafeMarkdownBoundary(content); b > 0 {
+		if b := findSafeMarkdownBoundary(content); b != -1 {
 			return b
 		}
 		return s.relaxedBoundary(content, 0)
@@ -396,7 +396,7 @@ func (s *streamingMarkdown) findBoundaryAfter(content string) int {
 			return p
 		}
 	}
-	if b := s.relaxedBoundary(content, len(s.stablePrefix)); b > len(s.stablePrefix) {
+	if b := s.relaxedBoundary(content, len(s.stablePrefix)); b != -1 {
 		return b
 	}
 	// No new boundary found after the stable prefix. Return the
@@ -436,9 +436,6 @@ func (s *streamingMarkdown) relaxedBoundary(content string, after int) int {
 // the latest newline that ends strictly before `until`, or -1 when
 // there is none.
 func newlineBefore(content string, until int) int {
-	if until <= 0 {
-		return -1
-	}
 	nl := strings.LastIndexByte(content[:until], '\n')
 	if nl < 0 {
 		return -1

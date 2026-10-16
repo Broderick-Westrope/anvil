@@ -794,9 +794,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The snapshot was read off the event loop; replay what arrived for
 		// this session since, or it would be lost under the snapshot.
 		for _, event := range m.takeSessionLoadEvents(m.session.ID) {
-			if cmd := m.applySessionMessageEvent(event); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			cmds = append(cmds, m.applySessionMessageEvent(event))
 		}
 		if hasInProgressTodo(m.session.Todos) {
 			// only start spinner if there is an in-progress todo

@@ -762,9 +762,7 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 func capLineWidths(s string, width int) string {
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
-		if lipgloss.Width(line) > width {
-			lines[i] = ansi.Truncate(line, width, "")
-		}
+		lines[i] = ansi.Truncate(line, width, "")
 	}
 	return strings.Join(lines, "\n")
 }
