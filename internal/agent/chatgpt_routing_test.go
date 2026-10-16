@@ -80,7 +80,7 @@ func TestChatGPTLoginRoutesToTheCodexBackend(t *testing.T) {
 		Type:       catwalk.TypeOpenAI,
 		BaseURL:    "https://api.openai.com/v1",
 		OAuthToken: &oauth.Token{AccessToken: "chatgpt-at", AccountID: "acct-1"},
-	}, "gpt-6-codex-future")
+	}, "codex-future")
 
 	req := got()
 	require.Equal(t, "/responses", req.path, "every Codex request uses the Responses API, even for names the heuristic doesn't know")
