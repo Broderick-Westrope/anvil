@@ -172,6 +172,16 @@ func TestCompleteWithCode_BareCodeSkipsState(t *testing.T) {
 	require.Equal(t, "at-bare", token.AccessToken)
 }
 
+// TestCompleteWithCode_UnparsableBareCode proves a paste that is not even
+// a valid URL is still taken as a bare code.
+func TestCompleteWithCode_UnparsableBareCode(t *testing.T) {
+	flow := newTestFlow(t, tokenResponse{AccessToken: "at-odd", ExpiresIn: 60})
+
+	token, err := flow.CompleteWithCode(context.Background(), "code%zz")
+	require.NoError(t, err)
+	require.Equal(t, "at-odd", token.AccessToken)
+}
+
 func TestCompleteWithCode_StateMismatch(t *testing.T) {
 	flow := newTestFlow(t, tokenResponse{AccessToken: "x", ExpiresIn: 60})
 
@@ -206,4 +216,27 @@ func TestStartBrowserFlow(t *testing.T) {
 	require.Contains(t, flow.URL(), url.QueryEscape(flow.RedirectURI()))
 	// The OS assigns the port, so it is neither fixed nor privileged.
 	require.NotEqual(t, 0, flow.RedirectURI())
+
+	get := func() error {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, flow.StartURL(), nil)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		return nil
+	}
+	require.NoError(t, get())
+
+	// Close stops the listener, so the handoff page is gone.
+	flow.Close()
+	require.Error(t, get())
+}
+
+func TestBrowserFlow_CloseUnstarted(t *testing.T) {
+	t.Parallel()
+
+	require.NotPanics(t, (&BrowserFlow{}).Close)
 }

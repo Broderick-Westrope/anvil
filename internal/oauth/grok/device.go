@@ -14,9 +14,11 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/oauth"
 )
 
+const defaultDeviceCodeEndpoint = Issuer + "/oauth2/device/code"
+
 // deviceCodeEndpoint is a variable so tests can point it at a stub
 // server.
-var deviceCodeEndpoint = Issuer + "/oauth2/device/code"
+var deviceCodeEndpoint = defaultDeviceCodeEndpoint
 
 // DeviceCode is the RFC 8628 device authorization grant issued by the
 // authorization server.
@@ -73,9 +75,11 @@ func RequestDeviceCode(ctx context.Context) (*DeviceCode, error) {
 	return &dc, nil
 }
 
+const defaultPollInterval = 5 * time.Second
+
 // pollInterval is the RFC 8628 polling interval used when the server
 // does not advertise one. A variable so tests can shorten the sleeps.
-var pollInterval = 5 * time.Second
+var pollInterval = defaultPollInterval
 
 // PollForToken polls the token endpoint until the user approves the
 // device code on the verification page, it expires, or the authorization

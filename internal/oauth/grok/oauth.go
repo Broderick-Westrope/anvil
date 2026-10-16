@@ -41,18 +41,24 @@ const (
 	Scope = "openid profile email offline_access grok-cli:access " +
 		"api:access conversations:read conversations:write " +
 		"workspaces:read workspaces:write"
+
+	defaultAuthorizeEndpoint = Issuer + "/oauth2/authorize"
+	defaultTokenEndpoint     = Issuer + "/oauth2/token"
+
+	// requestTimeout bounds each request to xAI's servers.
+	requestTimeout = 30 * time.Second
 )
 
 // authorizeEndpoint and tokenEndpoint are variables so tests can point
 // them at a stub server.
 var (
-	authorizeEndpoint = Issuer + "/oauth2/authorize"
-	tokenEndpoint     = Issuer + "/oauth2/token"
+	authorizeEndpoint = defaultAuthorizeEndpoint
+	tokenEndpoint     = defaultTokenEndpoint
 )
 
 // HTTPClient allows tests to stub out the token endpoint. Production
 // leaves it as a plain client with a generous timeout.
-var HTTPClient = &http.Client{Timeout: 30 * time.Second}
+var HTTPClient = new(http.Client{Timeout: requestTimeout})
 
 // PKCE holds the proof key for the code exchange.
 type PKCE struct {

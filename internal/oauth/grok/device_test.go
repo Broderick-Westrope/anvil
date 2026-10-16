@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -98,6 +99,60 @@ func TestPollForToken_PendingThenApproved(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "at-device", token.AccessToken)
 	require.Equal(t, "rt-device", token.RefreshToken)
+}
+
+// TestPollForToken_NoExpiry proves a grant that advertises no expiry is
+// still polled rather than treated as already expired.
+func TestPollForToken_NoExpiry(t *testing.T) {
+	// Not parallel: shortens the package poll interval.
+	orig := pollInterval
+	pollInterval = 10 * time.Millisecond
+	t.Cleanup(func() { pollInterval = orig })
+
+	stubTokenSequence(t, "authorization_pending")
+
+	token, err := PollForToken(context.Background(), "dc-123", 0)
+	require.NoError(t, err)
+	require.Equal(t, "at-device", token.AccessToken)
+}
+
+// TestPollForToken_SlowDownBacksOff proves slow_down lengthens the wait
+// before the next poll by one interval, as RFC 8628 requires.
+func TestPollForToken_SlowDownBacksOff(t *testing.T) {
+	// Not parallel: shortens the package poll interval.
+	orig := pollInterval
+	pollInterval = 50 * time.Millisecond
+	t.Cleanup(func() { pollInterval = orig })
+
+	var (
+		mu    sync.Mutex
+		times []time.Time
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		times = append(times, time.Now())
+		n := len(times)
+		mu.Unlock()
+		if n == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"slow_down"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "at-slow", ExpiresIn: 60})
+	}))
+	t.Cleanup(server.Close)
+
+	origEndpoint := tokenEndpoint
+	tokenEndpoint = server.URL
+	t.Cleanup(func() { tokenEndpoint = origEndpoint })
+
+	_, err := PollForToken(context.Background(), "dc-123", 900)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, times, 2)
+	require.GreaterOrEqual(t, times[1].Sub(times[0]), 2*pollInterval)
 }
 
 func TestPollForToken_Denied(t *testing.T) {
