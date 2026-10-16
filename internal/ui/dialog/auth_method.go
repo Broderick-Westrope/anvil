@@ -243,9 +243,9 @@ func (m *AuthMethod) updateCardAreas(area uv.Rectangle, view string, sideBySide 
 	contentLeft := origin.X + frame.GetMarginLeft() + frame.GetBorderLeftSize() + frame.GetPaddingLeft()
 	contentTop := origin.Y + frame.GetMarginTop() + frame.GetBorderTopSize() + frame.GetPaddingTop()
 
-	// Lines above the cards: the prompt, plus the title and its blank line
-	// outside onboarding.
-	cardsTop := contentTop + 1
+	// Lines above the cards: the prompt and the blank line under it, plus
+	// the title and its blank line outside onboarding.
+	cardsTop := contentTop + 2
 	if !m.isOnboarding {
 		cardsTop += 2
 	}
