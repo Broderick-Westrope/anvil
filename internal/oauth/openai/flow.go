@@ -141,11 +141,9 @@ func (f *BrowserFlow) handleCallback(w http.ResponseWriter, r *http.Request) {
 		ErrorCode:        query.Get("error"),
 		ErrorDescription: query.Get("error_description"),
 	}
-	if err := callback.Serve(w, result); err != nil {
-		// The browser is committed to whatever we send at this point;
-		// there is nothing useful left to do with the error.
-		_ = err
-	}
+	// The browser is committed to whatever we send at this point; there
+	// is nothing useful left to do with an error.
+	_ = callback.Serve(w, result)
 
 	select {
 	case f.result <- r:
