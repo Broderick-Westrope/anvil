@@ -153,3 +153,16 @@ func TestLoadingCommandsLogsNoErrorWhenItWorks(t *testing.T) {
 	loadCommands(f.u.com)
 	require.Empty(t, rec.errors)
 }
+
+func TestCommandsLoadedWithHealthyWorkflowsWarnsNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowUIFixture(t)
+	infos := f.run(func() tea.Msg {
+		return commandsLoaded([]commands.CustomCommand{
+			{ID: "ok", Name: "ok", Workflow: "/ok.js"},
+			{ID: "prompt", Name: "prompt", Problems: []string{"prompt commands aren't workflows"}},
+		})
+	})
+	require.Empty(t, infos)
+}

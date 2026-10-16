@@ -392,3 +392,16 @@ func TestWorkflowFinishOfAnotherRunEndsTheLiveRunsRequestsToo(t *testing.T) {
 	require.False(t, f.requestOpen("ask-1"), "run-1's question can't be answered any more")
 	f.requireNothingKept(t)
 }
+
+func TestWorkflowRepublishedApprovalIsShownOnce(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	approval := approvalFor("req-1", "sess-1")
+	f.event(approval)
+	f.act(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: workflowhost.AnswerApprove})
+	f.event(approval)
+
+	require.False(t, f.requestOpen("req-1"), "an answered approval must not reopen")
+	require.Equal(t, [][2]string{{"req-1", workflowhost.AnswerApprove}}, f.ws.responds)
+}

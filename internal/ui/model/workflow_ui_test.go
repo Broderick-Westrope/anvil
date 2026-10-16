@@ -574,3 +574,46 @@ func TestWorkflowFollowToTheSessionOnScreenKeepsTheDrillIn(t *testing.T) {
 		require.False(t, loads, "nothing is loaded")
 	}
 }
+
+func TestPromptCommandAsksForItsArgumentsOnlyWhenNoneAreGiven(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		arguments  []commands.Argument
+		line       string
+		wantDialog bool
+		wantSent   string
+	}{
+		"declared arguments and none given": {
+			arguments: []commands.Argument{{ID: "target"}}, line: "/fix", wantDialog: true,
+		},
+		"declared arguments given inline": {
+			arguments: []commands.Argument{{ID: "target"}}, line: "/fix the retry loop", wantSent: "Fix the retry loop.",
+		},
+		"no declared arguments": {line: "/fix", wantSent: "Fix ."},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowUIFixture(t)
+			f.u.customCommands = append(f.u.customCommands, commands.CustomCommand{
+				ID: "user:fix", Name: "fix", Content: "Fix $ARGUMENTS.", Arguments: tc.arguments,
+			})
+			var dialogs []dialog.ActionRunCustomCommand
+			for _, msg := range cmdMsgs(f.u.tryExecuteSlashCommand(tc.line)) {
+				if action, ok := msg.(dialog.ActionRunCustomCommand); ok {
+					dialogs = append(dialogs, action)
+				}
+			}
+			if tc.wantDialog {
+				require.Equal(t, []dialog.ActionRunCustomCommand{{Name: "fix", Content: "Fix $ARGUMENTS.", Arguments: tc.arguments}}, dialogs)
+				require.Empty(t, f.ws.runs)
+				return
+			}
+			require.Empty(t, dialogs)
+			require.Len(t, f.ws.runs, 1)
+			require.Contains(t, f.ws.runs[0], tc.wantSent)
+			require.NotContains(t, f.ws.runs[0], "$ARGUMENTS")
+		})
+	}
+}

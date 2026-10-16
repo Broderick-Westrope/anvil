@@ -1223,3 +1223,231 @@ func TestWorkflowControlErrorIsReported(t *testing.T) {
 		require.Equal(t, []util.InfoMsg{{Type: util.InfoTypeError, Msg: "no workflow is running"}}, infos, control)
 	}
 }
+
+func TestWorkflowRunRedrawsChangesMadeBetweenDraws(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.press(showRunKey)
+	require.NotContains(t, f.runDialog(), "reviewer")
+
+	// Two changes between draws must not look like none.
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
+	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusCompleted))
+	require.Contains(t, f.runDialog(), "/demo: reviewer · done")
+}
+
+func TestWorkflowFindsTheRunThatUsedASessionAmongOthers(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	for i := range 10 {
+		id := string(rune('a' + i))
+		f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-" + id, Command: "other", SessionID: "other-" + id, State: workflowhost.StateStarted})
+	}
+	f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-old", Command: "old", SessionID: "sess-0", State: workflowhost.StateStarted})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-old", Command: "old", SessionID: "sess-0", Focus: "sess-2"})
+	f.event(workflowhost.Event{Kind: workflowhost.EventFinished, RunID: "run-old", Command: "old", SessionID: "sess-0", Status: workflowhost.StatusCompleted})
+	f.event(started("demo", "sess-1"))
+	f.event(workflowhost.Event{Kind: workflowhost.EventStep, RunID: "run-1", Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
+
+	f.host.session = &session.Session{ID: "sess-2"}
+	// Map order is random, so look many times.
+	for range 30 {
+		pause := f.paletteEntry("workflow_pause")
+		require.NotNil(t, pause)
+		require.Equal(t, dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowPause}, pause.Action())
+		require.Contains(t, f.panel(), "/demo")
+	}
+}
+
+func TestWorkflowDismissKeepsARunningRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	dismiss := dialog.ActionWorkflowControl{SessionID: "sess-1", Control: dialog.WorkflowDismiss}
+	require.Empty(t, f.act(dismiss), "dismissing without a run does nothing")
+
+	f.event(started("demo", "sess-1"))
+	f.act(dismiss)
+	require.Contains(t, f.panel(), "/demo")
+	require.NotEmpty(t, f.wf.PaletteEntries())
+}
+
+func TestWorkflowLateEventOfAFinishedRunIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"same run ID": "run-1",
+		"no run ID":   "",
+	}
+	for name, runID := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			f.event(workflowhost.Event{Kind: workflowhost.EventFinished, RunID: "run-1", Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusCompleted})
+			f.event(workflowhost.Event{Kind: workflowhost.EventStatus, RunID: runID, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "LATE"}})
+
+			require.Contains(t, f.panel(), "/demo · completed")
+			require.NotContains(t, f.panel(), "LATE")
+			f.press(showRunKey)
+			require.NotContains(t, f.runDialog(), "LATE")
+		})
+	}
+}
+
+func TestWorkflowRunKeepsTheFirstRunIDItLearns(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string][]workflowhost.Event{
+		"learned from a later event": {
+			{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "first run"}},
+			{Kind: workflowhost.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "first run again"}},
+		},
+		"kept through an event without one": {
+			started("demo", "sess-1"),
+			{Kind: workflowhost.EventStatus, Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "first run"}},
+			{Kind: workflowhost.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "first run again"}},
+		},
+	}
+	for name, events := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			for _, ev := range events {
+				f.event(ev)
+			}
+			f.press(showRunKey)
+			out := f.runDialog()
+			require.Contains(t, out, "status first run ")
+			require.Contains(t, out, "first run again", "run-1's events stay on one record")
+			f.host.overlay.CloseDialog(dialog.WorkflowRunID)
+
+			next := started("demo", "sess-1")
+			next.RunID = "run-2"
+			f.event(next)
+			f.press(showRunKey)
+			require.NotEmpty(t, f.runDialog())
+			require.NotContains(t, f.runDialog(), "first run", "run-2 starts a new record")
+		})
+	}
+}
+
+func TestWorkflowAnswerIsRecordedOnItsQuestion(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	f.answer("ask-1", "Ship it?", "yes")
+
+	f.press(showRunKey)
+	out := f.runDialog()
+	require.Contains(t, out, "Ship it? → yes")
+	require.Equal(t, 1, strings.Count(out, "Ship it?"))
+	require.NotContains(t, out, "waiting for an answer")
+}
+
+func TestWorkflowControlKeyErrorIsReported(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	require.Empty(t, f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}), "a control that worked reports nothing")
+
+	f.ws.controlErr = errors.New("no running workflow")
+	infos := f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeError, infos[0].Type)
+	require.Contains(t, infos[0].Msg, "no running workflow")
+}
+
+func TestWorkflowRunRedrawsAnAnswerAndATitle(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		change func(f *workflowFixture)
+		want   string
+	}{
+		"answer": {
+			change: func(f *workflowFixture) { f.answer("ask-1", "Ship it?", "yes") },
+			want:   "Ship it? → yes",
+		},
+		"title": {
+			change: func(f *workflowFixture) {
+				f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
+			},
+			want: "turn in Builder",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			f.press(showRunKey)
+			require.NotContains(t, f.runDialog(), tc.want)
+
+			// Each change records an entry and then updates it.
+			tc.change(f)
+			require.Contains(t, f.runDialog(), tc.want)
+		})
+	}
+}
+
+func TestWorkflowTitleRenamesOnlyTurnsInItsSession(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.event(started("demo", "sess-1"))
+	for _, sess := range []string{"sess-unknown", "sess-2"} {
+		f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: sess}})
+	}
+
+	f.press(showRunKey)
+	out := f.runDialog()
+	require.Contains(t, out, "turn in another session")
+	require.Contains(t, out, "turn in Builder")
+}
+
+func TestWorkflowFinishWithoutATrackedRunIsShown(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFinished, RunID: "run-1", Command: "demo", SessionID: "sess-1", Status: workflowhost.StatusFailed, Message: "boom"})
+	require.Len(t, infos, 1)
+	require.Equal(t, "Workflow /demo failed: boom", infos[0].Msg)
+	require.Contains(t, f.panel(), "/demo · failed: boom")
+}
+
+func TestWorkflowFinishTruncatesOnlyAResult(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("x", workflowResultMaxWidth+10)
+	tests := map[string]struct {
+		ev      workflowhost.Event
+		wantMsg string
+	}{
+		"completed": {
+			ev:      workflowhost.Event{Status: workflowhost.StatusCompleted, Result: []byte(`"` + long + `"`)},
+			wantMsg: "Workflow /demo completed: " + ansi.Truncate(`"`+long+`"`, workflowResultMaxWidth, "…"),
+		},
+		"failed": {
+			ev:      workflowhost.Event{Status: workflowhost.StatusFailed, Message: long},
+			wantMsg: "Workflow /demo failed: " + long,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowFixture(t)
+			f.event(started("demo", "sess-1"))
+			ev := tc.ev
+			ev.Kind, ev.Command, ev.SessionID = workflowhost.EventFinished, "demo", "sess-1"
+			infos := f.event(ev)
+			require.Len(t, infos, 1)
+			require.Equal(t, tc.wantMsg, infos[0].Msg)
+		})
+	}
+}
