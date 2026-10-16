@@ -98,16 +98,17 @@ func pruneSpills(dir string) {
 		if match, _ := filepath.Match(spillPattern, entry.Name()); !match {
 			continue
 		}
+		// Info fails only when the file vanished since ReadDir, which
+		// leaves nothing to prune.
 		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().Before(cutoff) {
+		switch {
+		case err != nil:
+		case info.ModTime().Before(cutoff):
 			removeSpill(dir, info.Name())
-			continue
+		default:
+			kept = append(kept, info)
+			keptBytes += info.Size()
 		}
-		kept = append(kept, info)
-		keptBytes += info.Size()
 	}
 
 	// Still over the cap once the stale files are gone: drop the oldest
