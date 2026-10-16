@@ -301,8 +301,8 @@ func TestRender_SkillsShareTheRowAndTheCount(t *testing.T) {
 	t.Run("delete mode numbers skills after files", func(t *testing.T) {
 		t.Parallel()
 		r := newTestRenderer()
-		out := ansi.Strip(r.Render([]message.Attachment{textFile("a.go")}, skills[:1], true, true, 80))
-		require.Equal(t, []string{"≡", "a.go", "0", "1", "go-style"}, strings.Fields(out))
+		out := ansi.Strip(r.Render([]message.Attachment{textFile("a.go")}, skills, true, true, 80))
+		require.Equal(t, []string{"≡", "a.go", "0", "1", "go-style", "2", "writer"}, strings.Fields(out))
 	})
 
 	t.Run("skill chips carry no remove button", func(t *testing.T) {
@@ -376,4 +376,79 @@ func TestHitTestRemove_ClippedButtonIsNotClickable(t *testing.T) {
 
 	_ = r.Render(files, nil, false, true, width)
 	require.Empty(t, r.bounds, "a remove button cut off the row must not be clickable")
+}
+
+func TestHitTestRemove_EachButtonCoversExactlyItsDrawnCells(t *testing.T) {
+	t.Parallel()
+
+	// The expected regions come from where each ✕ is actually drawn, not
+	// from the recorded bounds, so this cannot pass by agreeing with itself.
+	// A button is its icon plus one cell of padding either side; its
+	// trailing margin belongs to the gap before the next chip.
+	r := newTestRenderer()
+	files := []message.Attachment{textFile("a.go"), textFile("bb.go"), textFile("ccc.go")}
+	out := ansi.Strip(r.Render(files, nil, false, true, 120))
+
+	var icons []int
+	col := 0
+	for _, ch := range out {
+		if string(ch) == styles.RemoveIcon {
+			icons = append(icons, col)
+		}
+		col += ansi.StringWidth(string(ch))
+	}
+	require.Len(t, icons, len(files), "%q", out)
+
+	for x := range col + 2 {
+		want := -1
+		for i, k := range icons {
+			if x >= k-1 && x <= k+1 {
+				want = i
+			}
+		}
+		require.Equal(t, want, r.HitTestRemove(files, x), "column %d of %q", x, out)
+	}
+}
+
+func TestHitTestRemove_ChipFillingTheRowExactlyIsClickable(t *testing.T) {
+	t.Parallel()
+
+	r := newTestRenderer()
+	files := []message.Attachment{textFile("a.go")}
+	_ = r.Render(files, nil, false, true, chipWidth(r, "a.go"))
+	require.Len(t, r.bounds, 1, "a button that ends on the row's last cell is fully drawn")
+}
+
+func TestRender_TrimmedLoneChipEndsTheRow(t *testing.T) {
+	t.Parallel()
+
+	// Once the lone chip has been trimmed to keep the hint, the row is
+	// full. A short chip after it must not be laid out over it.
+	r := newTestRenderer()
+	sty := styles.TokyoNight().Attachments
+	files := []message.Attachment{textFile("abcdefghijklmnop.txt"), textFile("b.txt")}
+	width := lipgloss.Width(sty.Text.String()) + lipgloss.Width(sty.Remove.String()) +
+		lipgloss.Width(r.more(1)) + sty.Normal.GetHorizontalFrameSize() + minFilename
+
+	out := r.Render(files, nil, false, true, width)
+	require.Equal(t, 1, hintCount(out), "%q", ansi.Strip(out))
+	require.Len(t, r.bounds, 1, "only the drawn chip may carry a remove button")
+}
+
+func TestRender_HintRoomIsMeasuredForTheChipsActuallyLeft(t *testing.T) {
+	t.Parallel()
+
+	// With ten files the first chip must leave room for "9 more…", which
+	// is a cell narrower than a two-digit count. Budgeting for the wrong
+	// count would trim a name that fits.
+	r := newTestRenderer()
+	files := overflowFixture()
+	for i := len(files); i < 10; i++ {
+		files = append(files, message.Attachment{FileName: fmt.Sprintf("file-%d.txt", i)})
+	}
+	width := chipWidth(r, "file-0.txt") + lipgloss.Width(r.more(9))
+
+	out := r.Render(files, nil, false, true, width)
+	require.Contains(t, ansi.Strip(out), "file-0.txt")
+	require.Equal(t, 9, hintCount(out))
 }
