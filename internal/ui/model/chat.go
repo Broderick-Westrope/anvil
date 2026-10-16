@@ -446,9 +446,6 @@ func (m *Chat) AdvanceVisible() bool {
 // FreezeSpinners stops every item that currently reports spinning from
 // animating until [Chat.UnfreezeSpinners] names it.
 func (m *Chat) FreezeSpinners() {
-	if m.frozenSpinners == nil {
-		m.frozenSpinners = make(map[string]struct{})
-	}
 	for idx := range m.list.Len() {
 		item := m.list.ItemAt(idx)
 		animatable, ok := item.(chat.Animatable)
