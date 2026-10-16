@@ -660,13 +660,6 @@ func (w *AppWorkspace) WorkflowAbort(sessionID string) error {
 	return w.app.Workflows.Abort(sessionID)
 }
 
-func (w *AppWorkspace) WorkflowRunning(sessionID string) (string, bool) {
-	if w.app.Workflows == nil {
-		return "", false
-	}
-	return w.app.Workflows.Running(sessionID)
-}
-
 func (w *AppWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand {
 	out := slices.Clone(cmds)
 	if w.app.Workflows == nil {

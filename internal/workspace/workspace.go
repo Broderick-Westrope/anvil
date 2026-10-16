@@ -180,9 +180,6 @@ type Workspace interface {
 	WorkflowPause(sessionID string) error
 	WorkflowResume(sessionID string) error
 	WorkflowAbort(sessionID string) error
-	// WorkflowRunning reports the invoking session of the run involving
-	// sessionID, if any.
-	WorkflowRunning(sessionID string) (invoker string, ok bool)
 
 	// Commands
 
