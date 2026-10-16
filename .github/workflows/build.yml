@@ -12,7 +12,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    uses: ./.github/workflows/_changes.yml
+
   build:
+    needs: changes
     strategy:
       fail-fast: false
       matrix:
@@ -23,14 +27,26 @@ jobs:
       # depend on the OS, so only Linux runs it. An env var rather than a
       # matrix key keeps the job names the ruleset requires.
       RACE: ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }}
+      # The ruleset requires these jobs by their matrix names, which a
+      # skipped job never reports, so a change with no code skips the steps
+      # instead of the job.
+      CODE: ${{ needs.changes.outputs.code }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: env.CODE != 'true'
+        run: echo "No code changed, so there is nothing to build or test."
+      - if: env.CODE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - if: env.CODE == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: go mod tidy
-      - run: git diff --exit-code
-      - run: go build ${{ env.RACE }} ./...
-      - run: go test ${{ env.RACE }} -failfast ./...
+      - if: env.CODE == 'true'
+        run: go mod tidy
+      - if: env.CODE == 'true'
+        run: git diff --exit-code
+      - if: env.CODE == 'true'
+        run: go build ${{ env.RACE }} ./...
+      - if: env.CODE == 'true'
+        run: go test ${{ env.RACE }} -failfast ./...
