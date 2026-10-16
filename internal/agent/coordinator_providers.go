@@ -324,9 +324,6 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 			baseURL = codexBaseURL
 			apiKey = chatgpt.AccessToken
 			headers["originator"] = openaioauth.Originator
-			if chatgpt.AccountID != "" {
-				headers["chatgpt-account-id"] = chatgpt.AccountID
-			}
 		}
 		return c.buildOpenaiProvider(baseURL, apiKey, headers, chatgpt)
 	case anthropic.Name:
