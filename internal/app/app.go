@@ -192,7 +192,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	// ChatGPT and Grok model catalogs are fetched at login; renew them
 	// once per start so they follow plan changes.
 	go func() {
-		refreshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		refreshCtx, cancel := context.WithTimeout(ctx, subscriptionRefreshTimeout)
 		defer cancel()
 		store.RefreshSubscriptionModels(refreshCtx)
 	}()
@@ -818,6 +818,10 @@ func initFailure(ctx context.Context, err error, logs ...namedLog) error {
 		closeLogs(ctx, logs...),
 	)
 }
+
+// subscriptionRefreshTimeout bounds the startup refresh of the ChatGPT and
+// Grok model catalogs.
+const subscriptionRefreshTimeout = 30 * time.Second
 
 // backgroundJobsShutdownWait bounds how long shutdown waits for agent
 // background jobs such as title generation.
