@@ -160,3 +160,30 @@ func TestServe_ContinueStatusCode(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 }
+
+// TestWrite_DetailSentence proves each page state words its detail line to
+// fit whether a subject follows it, so the sentence neither dangles nor
+// ends before naming the subject.
+func TestWrite_DetailSentence(t *testing.T) {
+	t.Parallel()
+
+	const continueURL = "https://auth.openai.com/x"
+	for name, tc := range map[string]struct {
+		result Result
+		want   string
+	}{
+		"continue with subject":    {Result{Subject: "OpenAI", ContinueURL: continueURL}, `Continue to the authorization page for <span class="subject">OpenAI</span>`},
+		"continue without subject": {Result{ContinueURL: continueURL}, "Continue to the authorization page.\n"},
+		"failed with subject":      {Result{Subject: "sentry", ErrorCode: "access_denied"}, `Anvil was not granted access to <span class="subject">sentry</span>`},
+		"failed without subject":   {Result{ErrorCode: "access_denied"}, "Anvil was not granted access.\n"},
+		"ok with subject":          {Result{Subject: "linear"}, `Anvil is now connected to <span class="subject">linear</span>`},
+		"ok without subject":       {Result{}, "Anvil is now connected.\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var b strings.Builder
+			require.NoError(t, Write(&b, tc.result))
+			require.Contains(t, b.String(), tc.want)
+		})
+	}
+}
