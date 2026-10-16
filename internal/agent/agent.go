@@ -852,23 +852,23 @@ func newToolResultIndex(msgs []message.Message) toolResultIndex {
 	for _, aiMsg := range toolMsgs {
 		for _, part := range aiMsg.Content {
 			tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
-			if !ok {
+			_, known := knownCalls[tr.ToolCallID]
+			switch {
+			case !ok:
 				// Tool-role ToAIMessage only emits ToolResultParts today;
 				// log so unexpected parts do not vanish silently.
 				slog.Warn(
 					"Dropping unexpected non-tool-result part from tool message",
 					"part_type", fmt.Sprintf("%T", part),
 				)
-				continue
-			}
-			if _, known := knownCalls[tr.ToolCallID]; !known {
+			case !known:
 				slog.Warn(
 					"Dropping orphaned tool result with no matching tool call",
 					"tool_call_id", tr.ToolCallID,
 				)
-				continue
+			default:
+				index[tr.ToolCallID] = append(index[tr.ToolCallID], part)
 			}
-			index[tr.ToolCallID] = append(index[tr.ToolCallID], part)
 		}
 	}
 	return index
