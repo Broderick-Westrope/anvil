@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -98,4 +100,41 @@ func TestPingSession_NewProtocol(t *testing.T) {
 	require.GreaterOrEqual(t, sess.InitializeResult().ProtocolVersion, "2026-07-28",
 		"the test must exercise the new protocol")
 	require.NoError(t, pingSession(context.Background(), sess, time.Second))
+}
+
+func TestPingParams(t *testing.T) {
+	t.Run("stateless protocol carries the SEP-2575 meta", func(t *testing.T) {
+		sess := noPingSession(t)
+		t.Cleanup(func() { _ = sess.Close() })
+
+		params := pingParams(sess)
+
+		require.NotNil(t, params)
+		require.Equal(t, sess.InitializeResult().ProtocolVersion, params.Meta[mcp.MetaKeyProtocolVersion])
+		require.Equal(t, map[string]any{}, params.Meta[mcp.MetaKeyClientCapabilities])
+	})
+
+	t.Run("older protocol sends a bare ping", func(t *testing.T) {
+		serverTransport, clientTransport := mcp.NewInMemoryTransports()
+		server := mcp.NewServer(&mcp.Implementation{Name: "old-protocol"}, nil)
+		serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = serverSession.Close() })
+		ctx, cancel := context.WithCancel(context.Background())
+		clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "anvil-test"}, nil).Connect(ctx, clientTransport, &mcp.ClientSessionOptions{ProtocolVersion: "2025-06-18"})
+		require.NoError(t, err)
+		sess := &ClientSession{ClientSession: clientSession, cancel: cancel}
+		t.Cleanup(func() { _ = sess.Close() })
+		require.Equal(t, "2025-06-18", sess.InitializeResult().ProtocolVersion)
+
+		require.Nil(t, pingParams(sess))
+	})
+}
+
+func TestStdioCheck_CommandWithoutArgs(t *testing.T) {
+	t.Parallel()
+
+	err := stdioCheck(&exec.Cmd{Path: filepath.Join(t.TempDir(), "missing")})
+
+	require.Error(t, err)
 }
