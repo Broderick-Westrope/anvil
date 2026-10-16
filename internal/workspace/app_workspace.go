@@ -24,7 +24,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
-	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -673,17 +672,15 @@ func (w *AppWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []command
 	if w.app.Workflows == nil {
 		return out
 	}
-	catalog := w.app.Workflows.Catalog()
 	for i, cmd := range out {
 		if cmd.Workflow == "" || len(cmd.Problems) > 0 {
 			continue
 		}
-		script, err := workflow.Load(cmd.Workflow)
+		problems, err := w.app.Workflows.Check(cmd.Workflow)
 		if err != nil {
-			out[i].Problems = []string{err.Error()}
-			continue
+			problems = []string{err.Error()}
 		}
-		out[i].Problems = script.Missing(catalog)
+		out[i].Problems = problems
 	}
 	return out
 }
