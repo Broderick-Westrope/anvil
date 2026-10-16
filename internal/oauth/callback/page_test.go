@@ -183,7 +183,8 @@ func TestWrite_DetailSentence(t *testing.T) {
 			t.Parallel()
 			var b strings.Builder
 			require.NoError(t, Write(&b, tc.result))
-			require.Contains(t, b.String(), tc.want)
+			// A Windows checkout may give the template CRLF line endings.
+			require.Contains(t, strings.ReplaceAll(b.String(), "\r\n", "\n"), tc.want)
 		})
 	}
 }
