@@ -540,3 +540,31 @@ func TestDialogMouse_ModelsSkipsGroupHeaders(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "gpt-b", sel.Model.Model)
 }
+
+// recordingList is a one-row list that records where it was asked to
+// look for a row.
+type recordingList struct {
+	x, y     int
+	selected int
+}
+
+func (l *recordingList) ScrollBy(int) {}
+
+func (l *recordingList) ItemIndexAtPosition(x, y int) (int, int) {
+	l.x, l.y = x, y
+	return 0, 0
+}
+
+func (l *recordingList) SetSelected(index int) { l.selected = index }
+
+func TestListMouse_ClickPositionIsRelativeToTheList(t *testing.T) {
+	t.Parallel()
+
+	lm := listMouse{area: image.Rect(10, 5, 50, 15)}
+	l := &recordingList{selected: -1}
+
+	require.False(t, lm.click(leftClick(13, 7), l, nil))
+	require.Equal(t, 3, l.x)
+	require.Equal(t, 2, l.y)
+	require.Equal(t, 0, l.selected)
+}

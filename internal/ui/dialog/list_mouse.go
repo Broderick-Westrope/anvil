@@ -61,31 +61,30 @@ func (lm *listMouse) wheel(msg common.CoalescedWheelMsg, l mouseList) bool {
 }
 
 // click selects the row under a left click. selectable, when non-nil,
-// rejects rows that can't be selected, such as group headers. It returns
-// the row and whether this click completed a double click on it; idx is
-// -1 when the click selected nothing.
-func (lm *listMouse) click(msg tea.MouseClickMsg, l mouseList, selectable func(int) bool) (idx int, double bool) {
+// rejects rows that can't be selected, such as group headers. It reports
+// whether this click completed a double click on the row.
+func (lm *listMouse) click(msg tea.MouseClickMsg, l mouseList, selectable func(int) bool) bool {
 	pt := image.Pt(msg.X, msg.Y)
 	if msg.Button != tea.MouseLeft || !pt.In(lm.area) {
 		lm.resetClick()
-		return -1, false
+		return false
 	}
-	idx, _ = l.ItemIndexAtPosition(pt.X-lm.area.Min.X, pt.Y-lm.area.Min.Y)
+	idx, _ := l.ItemIndexAtPosition(pt.X-lm.area.Min.X, pt.Y-lm.area.Min.Y)
 	if idx < 0 || (selectable != nil && !selectable(idx)) {
 		lm.resetClick()
-		return -1, false
+		return false
 	}
 	now := lm.clock()
-	double = idx == lm.lastClickIdx && !lm.lastClick.IsZero() &&
+	double := idx == lm.lastClickIdx && !lm.lastClick.IsZero() &&
 		now.Sub(lm.lastClick) <= listDoubleClickThreshold
 	l.SetSelected(idx)
 	if double {
 		lm.resetClick()
-		return idx, true
+		return true
 	}
 	lm.lastClick = now
 	lm.lastClickIdx = idx
-	return idx, false
+	return false
 }
 
 // keyboard records keyboard input: the selection should be kept in view
@@ -95,9 +94,10 @@ func (lm *listMouse) keyboard() {
 	lm.resetClick()
 }
 
+// resetClick forgets the pending first click. lastClickIdx is left as
+// is: with no first click recorded it can't complete a double click.
 func (lm *listMouse) resetClick() {
 	lm.lastClick = time.Time{}
-	lm.lastClickIdx = -1
 }
 
 func (lm *listMouse) clock() time.Time {
@@ -121,7 +121,7 @@ func (lm *listMouse) handle(msg tea.Msg, l mouseList, selectable func(int) bool,
 		if onClick != nil && msg.Button == tea.MouseLeft && image.Pt(msg.X, msg.Y).In(lm.area) {
 			onClick()
 		}
-		if _, double := lm.click(msg, l, selectable); double {
+		if lm.click(msg, l, selectable) {
 			return confirm(), true
 		}
 		return nil, true
