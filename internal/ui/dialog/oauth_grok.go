@@ -26,6 +26,10 @@ func NewOAuthGrok(
 	return newOAuth(com, isOnboarding, provider, model, modelType, &OAuthGrok{})
 }
 
+// startGrokBrowserFlow is a variable so tests can make the loopback
+// listener unavailable.
+var startGrokBrowserFlow = grok.StartBrowserFlow
+
 type OAuthGrok struct {
 	flow       *grok.BrowserFlow
 	cancelFunc context.CancelFunc
@@ -38,7 +42,7 @@ func (m *OAuthGrok) name() string {
 }
 
 func (m *OAuthGrok) initiateAuth() tea.Msg {
-	flow, err := grok.StartBrowserFlow()
+	flow, err := startGrokBrowserFlow()
 	if err == nil {
 		m.flow = flow
 
