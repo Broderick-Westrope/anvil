@@ -441,6 +441,16 @@ func TestGeneralize(t *testing.T) {
 			want:    "PATH=/tmp/evil",
 		},
 		{
+			name:    "bare export",
+			segment: "export",
+			want:    "export *",
+		},
+		{
+			name:    "assignment-shaped argument of another command",
+			segment: "git FOO=bar",
+			want:    "git *",
+		},
+		{
 			name:    "export is kept verbatim",
 			segment: "export LD_PRELOAD=/tmp/x.so",
 			want:    "export LD_PRELOAD=/tmp/x.so",
@@ -579,6 +589,10 @@ func TestSplitKeepsEnvironment(t *testing.T) {
 		{"(FOO=bar ls)", []string{"ls", "FOO=bar ls"}},
 		{"FOO='a b' ls", []string{"ls", "FOO='a b' ls", "FOO=a b ls"}},
 		{"PATH=/evil:$PATH ls", []string{"ls", "PATH=/evil:$PATH ls"}},
+		{"FOO= ls", []string{"ls", "FOO= ls"}},
+		{"FOO+=bar ls", []string{"ls", "FOO+=bar ls"}},
+		{"a[1]=x", []string{"a[1]=x"}},
+		{"FOO='' ls", []string{"ls", "FOO='' ls", "FOO= ls"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
@@ -586,4 +600,18 @@ func TestSplitKeepsEnvironment(t *testing.T) {
 			require.Equal(t, tt.want, Split(tt.command))
 		})
 	}
+}
+
+// TestSplitUnwrapDepthLimit pins where wrapper unwrapping stops: eight
+// nested wrappers resolve to their target, and a ninth is left unresolved,
+// so its target is never offered on its own.
+func TestSplitUnwrapDepthLimit(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t,
+		[]string{strings.Repeat("env ", 8) + "ls", "ls"},
+		Split(strings.Repeat("env ", 8)+"ls"))
+	require.Equal(t,
+		[]string{strings.Repeat("env ", 9) + "ls", "env ls"},
+		Split(strings.Repeat("env ", 9)+"ls"))
 }
