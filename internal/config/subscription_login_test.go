@@ -211,6 +211,38 @@ func TestSetProviderAPIKey_UnconfiguredProvider(t *testing.T) {
 		}, pc)
 	})
 
+	t.Run("the first provider in the catalog is found", func(t *testing.T) {
+		primer := newDiskStore(t, `{}`)
+		require.NoError(t, primer.SetProviderAPIKey(ScopeGlobal, "groq", ""))
+		known := primer.KnownProviders()[0]
+		first := string(known.ID)
+		// With default providers off the reload skips it whatever the
+		// host's credentials, so the store has to look it up in the
+		// catalog.
+		s := newDiskStore(t, `{"options":{"disable_default_providers":true},"providers":{"custom":{
+			"type":"openai-compat","base_url":"http://127.0.0.1:1","api_key":"sk","models":[{"id":"m"}]}}}`)
+
+		require.NoError(t, s.SetProviderAPIKey(ScopeGlobal, first, "sk-first"))
+
+		pc, exists := s.Config().Providers.Get(first)
+		require.True(t, exists)
+		require.Equal(t, known.Name, pc.Name)
+	})
+
+	t.Run("a failed login save changes nothing in memory", func(t *testing.T) {
+		calls := stubSubscriptionFetch(t, nil, nil)
+		s := newDiskStore(t, `{"providers":{"openai":{"id":"openai","api_key":"sk-old"}}}`)
+		s.globalDataPath = filepath.Join(s.globalDataPath, "anvil.json")
+
+		err := s.SetProviderAPIKey(ScopeGlobal, "openai", &oauth.Token{AccessToken: "at"})
+
+		require.Error(t, err)
+		pc, _ := s.Config().Providers.Get("openai")
+		require.Equal(t, "sk-old", pc.APIKey)
+		require.Nil(t, pc.OAuthToken)
+		require.Empty(t, *calls)
+	})
+
 	t.Run("a failed save changes nothing in memory", func(t *testing.T) {
 		s := newDiskStore(t, `{"providers":{"openai":{"id":"openai","api_key":"sk-old"}}}`)
 		// A path under a regular file can't be written.
@@ -273,6 +305,64 @@ func TestRefetchSubscriptionModels_RefreshesAnExpiredToken(t *testing.T) {
 			disk := readDisk(t, s)
 			require.Contains(t, disk, "fresh-model")
 			require.Contains(t, disk, "fresh-rt")
+		})
+	}
+}
+
+func TestRefetchSubscriptionModels_SkipsProvidersWithoutALogin(t *testing.T) {
+	providers := csync.NewMap[string, ProviderConfig]()
+	providers.Set("openai", ProviderConfig{ID: "openai", APIKey: "sk"})
+	s := &ConfigStore{config: &Config{Providers: providers}, globalDataPath: filepath.Join(t.TempDir(), "anvil.json")}
+	calls := stubSubscriptionFetch(t, nil, nil)
+
+	s.refetchSubscriptionModels(t.Context(), ScopeGlobal, "openai")
+	s.refetchSubscriptionModels(t.Context(), ScopeGlobal, "xai")
+
+	require.Empty(t, *calls)
+}
+
+func TestRefetchSubscriptionModels_SignOutDuringRefreshKeepsTheOldToken(t *testing.T) {
+	expired := &oauth.Token{AccessToken: "expired-at", RefreshToken: "expired-rt", ExpiresAt: time.Now().Add(-time.Hour).Unix()}
+	providers := csync.NewMap[string, ProviderConfig]()
+	providers.Set("openai", ProviderConfig{ID: "openai", OAuthToken: expired})
+	s := &ConfigStore{
+		config:         &Config{Providers: providers},
+		globalDataPath: filepath.Join(t.TempDir(), "anvil.json"),
+		exchangeToken: func(context.Context, string, string) (*oauth.Token, error) {
+			providers.Set("openai", ProviderConfig{ID: "openai"})
+			return nil, errors.New("signed out")
+		},
+	}
+	calls := stubSubscriptionFetch(t, nil, nil)
+
+	s.refetchSubscriptionModels(t.Context(), ScopeGlobal, "openai")
+
+	require.Equal(t, []string{"openai:expired-at"}, *calls)
+}
+
+func TestFetchSubscriptionModels_PicksTheProvidersBackend(t *testing.T) {
+	// A nil token fails before any request, naming the backend it would
+	// have called.
+	_, err := fetchSubscriptionModels(t.Context(), "xai", nil)
+	require.ErrorContains(t, err, "Grok")
+	_, err = fetchSubscriptionModels(t.Context(), "openai", nil)
+	require.ErrorContains(t, err, "ChatGPT")
+}
+
+func TestProviderConfigHasAPIKey(t *testing.T) {
+	t.Parallel()
+
+	resolver := NewShellVariableResolver(env.NewFromMap(map[string]string{"SET_KEY": "sk-env"}))
+	for apiKey, want := range map[string]bool{
+		"":                     false,
+		"sk-literal":           true,
+		"$SET_KEY":             true,
+		"$UNSET_KEY":           false,
+		"${UNSET_KEY:?needed}": false,
+	} {
+		t.Run(apiKey, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, want, (&ProviderConfig{APIKey: apiKey}).HasAPIKey(resolver))
 		})
 	}
 }
