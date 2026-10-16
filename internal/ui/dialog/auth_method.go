@@ -71,12 +71,11 @@ func NewAuthMethod(
 	modelType config.SelectedModelType,
 ) *AuthMethod {
 	m := &AuthMethod{
-		com:           com,
-		isOnboarding:  isOnboarding,
-		provider:      provider,
-		model:         model,
-		modelType:     modelType,
-		lastClickCard: -1,
+		com:          com,
+		isOnboarding: isOnboarding,
+		provider:     provider,
+		model:        model,
+		modelType:    modelType,
 	}
 
 	m.help = help.New()
@@ -183,7 +182,7 @@ func (m *AuthMethod) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	prompt += "\n"
 	rc.AddPart(prompt)
 
-	cardWidth := max(0, (innerWidth-authMethodCardGap-2*authMethodCardMargin)/2)
+	cardWidth := max(0, (innerWidth-authMethodCardGap-authMethodCardMargin*2)/2)
 	sideBySide := cardWidth >= authMethodMinCardWidth
 	if !sideBySide {
 		cardWidth = innerWidth
