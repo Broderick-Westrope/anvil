@@ -27,7 +27,9 @@ is_prose() {
     A | M | D) ;;
     *) return 1 ;;
     esac
-    regular_or_absent "$old_mode" && regular_or_absent "$new_mode" || return 1
+    if ! regular_or_absent "$old_mode" || ! regular_or_absent "$new_mode"; then
+        return 1
+    fi
     # In a case pattern `*` also matches `/`, so these cover nested files.
     case "$path" in
     plans/*.md | docs/*.md) return 0 ;;
@@ -43,6 +45,8 @@ while IFS=$'\t' read -r meta path || [ -n "$meta" ]; do
     [ -n "$meta" ] || continue
     seen=true
     if ! is_prose "$meta" "$path"; then
+        # Drain the rest so a large diff piped in doesn't die of SIGPIPE.
+        cat >/dev/null
         echo true
         exit 0
     fi

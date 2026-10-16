@@ -30,14 +30,14 @@ jobs:
         with:
           # The PR's own commits are needed to find its merge base.
           fetch-depth: 0
-          # Diffs and the merge base need commits and trees, not contents.
-          filter: blob:none
           persist-credentials: false
       - run: scripts/ci-code-changed-test.sh
       - id: classify
         run: |
           set -euo pipefail
-          if [ "$EVENT" != pull_request ] || [ "$BASE" != "$DEFAULT_BRANCH" ]; then
+          if [ "$EVENT" != pull_request ] || [ "$BASE" != "$DEFAULT_BRANCH" ] ||
+            ! git cat-file -e HEAD^1:scripts/ci-code-changed.sh 2>/dev/null; then
+            # A base without the classifier (the PR that adds it) runs in full.
             code=true
           else
             # A pull request checks out its merge commit: HEAD^1 is the base
@@ -53,7 +53,11 @@ jobs:
             merged=$(git diff --no-renames --raw HEAD^1 HEAD)
             fork_point=$(git merge-base HEAD^1 HEAD^2)
             own=$(git diff --no-renames --raw "$fork_point" HEAD^2)
-            code=$(printf '%s\n%s\n' "$merged" "$own" | scripts/ci-code-changed.sh)
+            # Classify with the base branch's copy of the classifier, so a PR
+            # can't loosen the rule that decides whether its own checks run.
+            classifier="$RUNNER_TEMP/ci-code-changed.sh"
+            git show HEAD^1:scripts/ci-code-changed.sh >"$classifier"
+            code=$(printf '%s\n%s\n' "$merged" "$own" | bash "$classifier")
           fi
           echo "Code changed: $code"
           echo "code=$code" >>"$GITHUB_OUTPUT"

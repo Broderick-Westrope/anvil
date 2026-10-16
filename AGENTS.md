@@ -230,7 +230,7 @@ to get a PR in.
 
 A PR into `main` that changes only Markdown at the repo root or under
 `plans/` or `docs/` passes `build` and `lint` without running them, and
-skips the security scans. `scripts/ci-code-changed.sh` decides this, and
+skips CodeQL, Grype and `govulncheck`. `scripts/ci-code-changed.sh` decides this, and
 `.github/workflows/_changes.yml` runs it; anything it doesn't recognise
 counts as code. If something starts embedding or testing one of those
 Markdown files, narrow the classifier in the same PR.

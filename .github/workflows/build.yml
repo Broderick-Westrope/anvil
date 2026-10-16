@@ -33,6 +33,12 @@ jobs:
       # instead of the job. Every step needs the guard.
       CODE: ${{ needs.changes.outputs.code }}
     steps:
+      # A failed classification fails the build, so a broken classifier
+      # blocks the merge. Lint and the scans still run in full.
+      - if: needs.changes.result == 'failure'
+        run: |
+          echo "Classifying the changes failed; see the changes job." >&2
+          exit 1
       - if: env.CODE == 'false'
         run: echo "No code changed, so there is nothing to build or test."
       - if: env.CODE != 'false'

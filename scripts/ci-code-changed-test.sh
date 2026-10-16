@@ -11,7 +11,7 @@ failed=0
 
 check() {
     local want=$1 name=$2 input=$3 got
-    got=$(printf '%b' "$input" | "$classifier")
+    got=$(printf '%b' "$input" | "$classifier") || got="exit $?"
     if [ "$got" != "$want" ]; then
         echo "FAIL: $name: want $want, got $got" >&2
         failed=1
@@ -50,6 +50,15 @@ check true "rename" ":100644 100644 aaaaaaa bbbbbbb R100\tplans/x.go\tdocs/x.md\
 check true "copy" ":100644 100644 aaaaaaa bbbbbbb C100\tplans/x.go\tdocs/x.md\n"
 check true "code on a last line without a newline" "$mod\tdocs/a.md\n$mod\tmain.go"
 check false "prose on a last line without a newline" "$mod\tdocs/a.md"
+
+# A diff larger than a pipe buffer must be read to the end, or the writer
+# dies of SIGPIPE and fails the pipeline under pipefail.
+big=$(for i in $(seq 1 4000); do printf '%s\tinternal/f%04d.go\n' "$mod" "$i"; done)
+got=$(printf '%s\n' "$big" | "$classifier") || got="exit $?"
+if [ "$got" != true ]; then
+    echo "FAIL: large code diff: want true, got $got" >&2
+    failed=1
+fi
 
 if [ "$failed" -ne 0 ]; then
     exit 1
