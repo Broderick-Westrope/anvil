@@ -160,14 +160,25 @@ onto main's new code, not conflict-picked.
 Every item has a decision. The work was done on this branch item by item, so
 what's left is wrap-up.
 
-1. **Verify the branch as a whole.** `go build ./...`, `task test`,
-   `task lint` and `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`
-   on the branch tip, then a short end-to-end TUI session (load the
-   `tui-manual-testing` skill).
-2. **Close the F15/F16 gap.** Sign in with a real ChatGPT account and a real
-   Grok account and send one turn on each. If OpenAI rejects
-   `originator=anvil`, change `openaioauth.Originator`. Needs the user's
-   accounts.
+1. **Verify the branch as a whole.** Done 2026-10-16 after a second merge
+   of `origin/main` (`2a5b4093`, #104–#108): build, `go test ./...`, race
+   on the merged areas, `task lint` (0 issues) and govulncheck (no
+   reachable vulnerabilities) all pass. Sandboxed TUI session with Claude
+   Haiku over Anthropic OAuth: a 30,000-line `cat` was truncated and spilled
+   to `global-data/shell-output/`, the view tool read it back without a
+   prompt, and the file held all 30,000 lines; `LD_PRELOAD=/tmp/x.so ls`
+   prompted with the assignment kept in the suggested pattern, and denying
+   it ended the turn with a finish banner; the models dialog filtered,
+   and choosing an unconfigured OpenAI model opened the ChatGPT/API key
+   chooser; quitting printed the resume hint. The renumbered index
+   migration (`20261014000000`) applied to a read-only snapshot of the real
+   DB (already at `20261010000000`), created the index, and
+   `integrity_check` passed. Not exercised live: the thinking drill-in
+   (main's code, covered by its tests).
+2. **F15/F16 real sign-in: deferred** (user decision). Not tested with real
+   ChatGPT or Grok accounts before merge. When it is: sign in with each and
+   send one turn; if OpenAI rejects `originator=anvil`, change
+   `openaioauth.Originator`.
 3. **Bump `upstream-tracking.json`** to `140e8cb97` (upstream/main at triage
    time), in its own commit.
 4. **Move this file** to `plans/completed/`.
@@ -189,3 +200,7 @@ what's left is wrap-up.
 - **C5:** revisit post-summary reads if compacted sessions grow a lot.
 - **F14:** a `none` switch for our resume hint, if wanted.
 - **F5:** restore last model on resume, tracked under model-routing Phase 1.
+- **F15/F16:** the real-account sign-in check above.
+- **Not from this sync:** the models dialog lists GitHub Copilot from the
+  catwalk catalog even though the simplification removed the provider. Main
+  does the same; filter it if it gets in the way.
