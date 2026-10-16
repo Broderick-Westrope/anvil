@@ -1,7 +1,9 @@
 package shell
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -136,4 +138,22 @@ func writeSparseSpills(t *testing.T, dir string, sizes ...int64) {
 		stamp := time.Now().Add(-age)
 		require.NoError(t, os.Chtimes(path, stamp, stamp))
 	}
+}
+
+// TestRemoveSpill_LogsOnlyFailures pins the debug line a failed prune
+// leaves, the only trace of it since pruning is best effort.
+func TestRemoveSpill_LogsOnlyFailures(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "present"), nil, 0o600))
+
+	removeSpill(dir, "present")
+	require.NoFileExists(t, filepath.Join(dir, "present"))
+	require.NotContains(t, buf.String(), "Could not prune spill file")
+
+	removeSpill(dir, "missing")
+	require.Contains(t, buf.String(), "Could not prune spill file")
 }
