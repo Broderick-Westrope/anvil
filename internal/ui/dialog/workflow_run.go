@@ -100,9 +100,10 @@ func (t *WorkflowTranscript) Finish(outcome WorkflowEntry) {
 	t.Version++
 }
 
-// Outcome returns how the run ended, once it has.
+// Outcome returns how the run ended, once it has. Finish records the
+// outcome as the last entry.
 func (t *WorkflowTranscript) Outcome() (WorkflowEntry, bool) {
-	if !t.Finished || len(t.Entries) == 0 {
+	if !t.Finished {
 		return WorkflowEntry{}, false
 	}
 	return t.Entries[len(t.Entries)-1], true

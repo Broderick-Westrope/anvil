@@ -449,6 +449,8 @@ func TestWorkflowTranscriptChangesItsVersionWithEveryEdit(t *testing.T) {
 	tr.Update(i, func(e *WorkflowEntry) { e.Answer = "yes" })
 	require.Equal(t, "yes", tr.Entries[0].Answer)
 	require.Equal(t, 3, tr.Version)
+	_, ok = tr.Outcome()
+	require.False(t, ok, "entries alone are no outcome")
 
 	tr.Finish(WorkflowEntry{Kind: WorkflowEntryOutcome, Status: workflowhost.StatusFailed, Text: "boom"})
 	require.True(t, tr.Finished)
