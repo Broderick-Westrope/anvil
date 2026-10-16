@@ -32,16 +32,16 @@ func TestModels(t *testing.T) {
 					]
 				},
 				{
-					"slug": "gpt-5.1-codex-mini",
-					"display_name": "GPT-5.1 Codex Mini",
-					"visibility": "list",
-					"context_window": 272000
-				},
-				{
 					"slug": "internal-model",
 					"display_name": "Internal",
 					"visibility": "hide",
 					"context_window": 100
+				},
+				{
+					"slug": "gpt-5.1-codex-mini",
+					"display_name": "GPT-5.1 Codex Mini",
+					"visibility": "list",
+					"context_window": 272000
 				}
 			]
 		}`))
@@ -58,7 +58,8 @@ func TestModels(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// The hidden entry is dropped; the other two survive in order.
+	// The hidden entry is dropped; the entries either side of it survive
+	// in order.
 	require.Len(t, models, 2)
 	require.Equal(t, "gpt-5.1-codex", models[0].ID)
 	require.Equal(t, "GPT-5.1 Codex", models[0].Name)
@@ -67,6 +68,7 @@ func TestModels(t *testing.T) {
 	require.Equal(t, "medium", models[0].DefaultReasoningEffort)
 	require.Equal(t, int64(272000), models[0].ContextWindow)
 
+	require.Equal(t, "gpt-5.1-codex-mini", models[1].ID)
 	require.False(t, models[1].CanReason)
 	require.Empty(t, models[1].ReasoningLevels)
 }

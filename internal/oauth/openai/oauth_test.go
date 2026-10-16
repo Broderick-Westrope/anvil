@@ -120,6 +120,17 @@ func TestExchangeCode_NestedAccountClaim(t *testing.T) {
 	require.Equal(t, "nested-acct", token.AccountID)
 }
 
+// TestExchangeCode_AccountFromAccessToken covers servers that omit the ID
+// token: the account ID is read from the access token instead.
+func TestExchangeCode_AccountFromAccessToken(t *testing.T) {
+	accessToken := signClaims(t, map[string]any{"chatgpt_account_id": "acct-access"})
+	_, _ = stubTokenServer(t, tokenResponse{AccessToken: accessToken, ExpiresIn: 60})
+
+	token, err := ExchangeCode(context.Background(), "code", "uri", PKCE{Verifier: "v"})
+	require.NoError(t, err)
+	require.Equal(t, "acct-access", token.AccountID)
+}
+
 func TestRefreshToken(t *testing.T) {
 	_, got := stubTokenServer(t, tokenResponse{
 		AccessToken: "at-new",

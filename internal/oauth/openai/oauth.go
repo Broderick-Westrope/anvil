@@ -42,18 +42,24 @@ const (
 	// Scope requests the claims needed to identify the account plus a
 	// refresh token via offline_access.
 	Scope = "openid profile email offline_access"
+
+	defaultTokenEndpoint  = Issuer + "/oauth/token"
+	defaultModelsEndpoint = CodexBaseURL + "/models"
+
+	// requestTimeout bounds each request to OpenAI's servers.
+	requestTimeout = 30 * time.Second
 )
 
 // tokenEndpoint and modelsEndpoint are variables so tests can point them
 // at a stub server.
 var (
-	tokenEndpoint  = Issuer + "/oauth/token"
-	modelsEndpoint = CodexBaseURL + "/models"
+	tokenEndpoint  = defaultTokenEndpoint
+	modelsEndpoint = defaultModelsEndpoint
 )
 
 // HTTPClient allows tests to stub out the token endpoint. Production
 // leaves it as a plain client with a generous timeout.
-var HTTPClient = &http.Client{Timeout: 30 * time.Second}
+var HTTPClient = new(http.Client{Timeout: requestTimeout})
 
 // PKCE holds the proof key for the code exchange.
 type PKCE struct {
@@ -199,7 +205,7 @@ func requestToken(ctx context.Context, vals url.Values) (*oauth.Token, error) {
 	// requires it on every request to attribute usage to the right
 	// account.
 	claims, err := ParseJWTClaims(token.IDToken)
-	if err != nil || claims == nil {
+	if err != nil {
 		claims, _ = ParseJWTClaims(token.AccessToken)
 	}
 	token.AccountID = ExtractAccountID(claims)

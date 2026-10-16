@@ -120,3 +120,25 @@ func TestTransport_NilTokenPassThrough(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, "Bearer user-key", gotReq.Header.Get("Authorization"))
 }
+
+// TestCodexRequestBody_NoBody proves requests without a body pass through
+// untouched, whatever length they report.
+func TestCodexRequestBody_NoBody(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		body   io.ReadCloser
+		length int64
+	}{
+		"nil body":              {nil, -1},
+		"no body":               {http.NoBody, -1},
+		"no body with zero len": {http.NoBody, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			body, length := codexRequestBody(tc.body, tc.length)
+			require.Equal(t, tc.body, body)
+			require.Equal(t, tc.length, length)
+		})
+	}
+}
