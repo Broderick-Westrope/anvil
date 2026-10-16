@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -407,5 +409,85 @@ func TestConfigureProviders_SubscriptionLoginCountsAsACredential(t *testing.T) {
 		pc, ok := cfg.Providers.Get(id)
 		require.True(t, ok, "%s signed in without an API key must stay configured", id)
 		require.Equal(t, model, pc.SubscriptionModels()[0].ID, "%s keeps its subscription catalog through load", id)
+	}
+}
+
+// logsTo routes slog to a buffer for the rest of the test. Tests that use
+// it must not run in parallel, since the default logger is process-wide.
+func logsTo(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// TestRefetchSubscriptionModels_LogsOnlyFailures pins the warnings the
+// best-effort catalog refetch leaves behind, since a failed token refresh
+// or catalog write is otherwise silent.
+func TestRefetchSubscriptionModels_LogsOnlyFailures(t *testing.T) {
+	const (
+		refreshFailed = "Failed to refresh the subscription token"
+		persistFailed = "Failed to persist the subscription model catalog"
+	)
+	tests := map[string]struct {
+		refreshErr  error
+		unwritable  bool
+		wantLogs    []string
+		wantNotLogs []string
+	}{
+		"everything succeeds": {wantNotLogs: []string{refreshFailed, persistFailed}},
+		"the token refresh fails": {
+			refreshErr:  errors.New("refresh rejected"),
+			wantLogs:    []string{refreshFailed},
+			wantNotLogs: []string{persistFailed},
+		},
+		"the catalog can't be written": {
+			unwritable:  true,
+			wantLogs:    []string{persistFailed},
+			wantNotLogs: []string{refreshFailed},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			// An expired token makes the refetch renew it first. The write
+			// case uses a live one, since the unwritable path would fail the
+			// refresh too.
+			expiresAt := time.Now().Add(-time.Hour).Unix()
+			if tc.unwritable {
+				expiresAt = time.Now().Add(time.Hour).Unix()
+			}
+			token := &oauth.Token{AccessToken: "old-at", RefreshToken: "old-rt", ExpiresIn: 3600, ExpiresAt: expiresAt}
+			providers := csync.NewMap[string, ProviderConfig]()
+			providers.Set("openai", ProviderConfig{ID: "openai", OAuthToken: token})
+			path := filepath.Join(t.TempDir(), "anvil.json")
+			if tc.unwritable {
+				// A path under a regular file can't be written.
+				require.NoError(t, os.WriteFile(path, []byte("{}"), 0o600))
+				path = filepath.Join(path, "anvil.json")
+			}
+			s := &ConfigStore{
+				config:         &Config{Providers: providers},
+				globalDataPath: path,
+				exchangeToken: func(context.Context, string, string) (*oauth.Token, error) {
+					if tc.refreshErr != nil {
+						return nil, tc.refreshErr
+					}
+					return &oauth.Token{AccessToken: "new-at", RefreshToken: "new-rt", ExpiresIn: 3600, ExpiresAt: time.Now().Add(time.Hour).Unix()}, nil
+				},
+			}
+			stubSubscriptionFetch(t, map[string][]catwalk.Model{"openai": {{ID: "m"}}}, nil)
+			logs := logsTo(t)
+
+			s.refetchSubscriptionModels(t.Context(), ScopeGlobal, "openai")
+
+			for _, want := range tc.wantLogs {
+				require.Contains(t, logs.String(), want)
+			}
+			for _, unwanted := range tc.wantNotLogs {
+				require.NotContains(t, logs.String(), unwanted)
+			}
+		})
 	}
 }
