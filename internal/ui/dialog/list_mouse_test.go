@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
+	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -457,9 +458,35 @@ func TestRenderContext_ListBounds(t *testing.T) {
 	t.Run("no list leaves bounds empty", func(t *testing.T) {
 		t.Parallel()
 		rc := NewRenderContext(&sty, 40)
-		rc.AddPart("only")
+		rc.AddPart("first")
+		rc.AddPart("second")
 		rc.Render()
-		require.True(t, rc.ListBounds.Empty())
+		require.Equal(t, image.Rectangle{}, rc.ListBounds)
+	})
+
+	t.Run("list on the first line", func(t *testing.T) {
+		t.Parallel()
+		rc := NewRenderContext(&sty, 40)
+		rc.IsOnboarding = true
+		rc.AddList("row0\nrow1", lipgloss.NewStyle(), 30, 2)
+		rc.Render()
+		require.Equal(t, image.Rect(0, 0, 30, 2), rc.ListBounds)
+	})
+
+	t.Run("framed list in a padded dialog", func(t *testing.T) {
+		t.Parallel()
+		rc := NewRenderContext(&sty, 60)
+		rc.ViewStyle = sty.Dialog.View.Margin(1, 2).Padding(1, 3)
+		framed := lipgloss.NewStyle().Margin(1, 1).Border(lipgloss.NormalBorder()).Padding(1, 2)
+		rc.AddPart("input")
+		rc.AddList(framed.Render("row0\nrow1"), framed, 4, 2)
+		lines := strings.Split(rc.Render(), "\n")
+
+		// Margin, border and padding: 2+1+3 for the dialog and 1+1+2 for
+		// the list across; 1+1+1 each down, after the one input line.
+		require.Equal(t, image.Rect(10, 7, 14, 9), rc.ListBounds)
+		require.Equal(t, 10, cellColumn(t, lines[7], "row0"))
+		require.Equal(t, 10, cellColumn(t, lines[8], "row1"))
 	})
 }
 
