@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -65,6 +66,16 @@ func TestOverrideReasoningEffort(t *testing.T) {
 		require.ErrorContains(t, err, `does not support reasoning effort "max"`)
 		require.ErrorContains(t, err, "low, medium, high")
 		require.Equal(t, "low", app.config.Config().Models[config.SelectedModelTypeLarge].ReasoningEffort)
+		require.Zero(t, rec.updates)
+	})
+
+	t.Run("a non-interactive run stops on an unsupported effort", func(t *testing.T) {
+		t.Parallel()
+		app, rec := newReasoningEffortApp(t, config.SelectedModel{Provider: "openai", Model: "gpt-5", ReasoningEffort: "low"})
+
+		err := app.RunNonInteractive(t.Context(), io.Discard, "prompt", "", "", "max", func() {}, "", false)
+
+		require.ErrorContains(t, err, `does not support reasoning effort "max"`)
 		require.Zero(t, rec.updates)
 	})
 
