@@ -789,9 +789,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sidebarOffset = 0
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		msgs := msg.messages
-		if cmd := m.setSessionMessages(msgs); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		m.setSessionMessages(msgs)
 		m.deriveEnabledLazyMCPs(msgs)
 		// The snapshot was read off the event loop; replay what arrived for
 		// this session since, or it would be lost under the snapshot.
@@ -1591,8 +1589,7 @@ func (m *UI) expandedToolPatterns() []string {
 }
 
 // setSessionMessages sets the messages for the current session in the chat
-func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
-	var cmds []tea.Cmd
+func (m *UI) setSessionMessages(msgs []message.Message) {
 	// Build tool result map to link tool calls with their results
 	msgPtrs := make([]*message.Message, len(msgs))
 	for i := range msgs {
@@ -1634,7 +1631,6 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 		m.chat.FreezeSpinners()
 	}
 	m.chat.ScrollToBottomAndSelectLast()
-	return tea.Sequence(cmds...)
 }
 
 // loadNestedToolCalls recursively loads nested tool calls for agent/agentic_fetch tools.
@@ -2713,9 +2709,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, msg.Cmd)
 		}
 		if m.state == uiOnboarding {
-			if cmd := m.openModelsDialog(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			cmds = append(cmds, m.openModelsDialog())
 		}
 	case dialog.ActionSelectAuthMethod:
 		m.dialog.CloseDialog(dialog.AuthMethodID)
@@ -5503,9 +5497,7 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.session = msg.session
 	m.clearDrillStack()
 
-	if cmd := m.setSessionMessages(msg.messages); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
+	m.setSessionMessages(msg.messages)
 
 	if len(msg.messages) == 0 {
 		m.lastUserMessageTime = 0

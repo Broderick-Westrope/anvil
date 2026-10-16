@@ -384,10 +384,10 @@ func TestAnimation_GhostSpinnerStaysStill(t *testing.T) {
 	s.ws.busy.Store(false)
 	seen := s.track(func() *Chat { return s.u.chat })
 
-	s.r.exec(s.u.setSessionMessages([]message.Message{
+	s.u.setSessionMessages([]message.Message{
 		{ID: "u1", SessionID: sceneSession, Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "go"}}},
 		{ID: "a-think", SessionID: sceneSession, Role: message.Assistant},
-	}))
+	})
 	s.r.send(tea.FocusMsg{})
 	s.r.awaitQuiet(2 * time.Second)
 	require.LessOrEqual(t, len(seen["a-think"]), 1, "ghost spinner must not animate")

@@ -107,9 +107,9 @@ func TestAnimation_GhostSpinnerResumesOnActivity(t *testing.T) {
 	t.Parallel()
 	s := newSpinScene(t)
 	s.ws.busy.Store(false)
-	s.r.exec(s.u.setSessionMessages([]message.Message{
+	s.u.setSessionMessages([]message.Message{
 		{ID: "a-think", SessionID: sceneSession, Role: message.Assistant},
-	}))
+	})
 	s.r.send(nil)
 	require.False(t, s.u.animClock.running)
 
@@ -118,4 +118,12 @@ func TestAnimation_GhostSpinnerResumesOnActivity(t *testing.T) {
 	s.r.send(updated(sceneSession, message.Message{ID: "a-think", Role: message.Assistant}))
 	s.r.run(600 * time.Millisecond)
 	require.GreaterOrEqual(t, len(seen["a-think"]), 3)
+}
+
+func TestAnimClock_TickOverdueByExactlyTheLimitIsLost(t *testing.T) {
+	t.Parallel()
+	u, now := newClockUI(t)
+
+	*now = now.Add(animClockLostAfter)
+	require.NotNil(t, u.ensureAnimating())
 }
