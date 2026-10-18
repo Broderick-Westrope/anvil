@@ -109,6 +109,14 @@ type Service interface {
 	CreateAgentToolSessionID(messageID, toolCallID string) string
 	ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool)
 	IsAgentToolSession(sessionID string) bool
+
+	// Subagent identity and task call links.
+	CreateSubagent(ctx context.Context, sub Subagent) (Subagent, error)
+	GetSubagent(ctx context.Context, sessionID string) (Subagent, error)
+	GetSubagentByHandle(ctx context.Context, parentID, handle string) (Subagent, error)
+	CreateSubagentCall(ctx context.Context, call SubagentCall) error
+	GetSubagentCall(ctx context.Context, id string) (SubagentCall, error)
+	RollUpChildCost(ctx context.Context, childID string) error
 }
 
 type service struct {
