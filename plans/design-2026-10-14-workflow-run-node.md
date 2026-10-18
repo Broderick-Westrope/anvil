@@ -415,8 +415,10 @@ they are. The engine is beta, so no backfill.
   what's running the view on screen: a builder, for the builder or its
   subagents; nothing inside a run's own views (alt+x aborts the run); the
   user's session for its own subagents.
-- Esc keeps silent queued work (markers, metadata, forks): only prompts
-  the user can see are dropped.
+- Esc keeps silent queued work (markers, metadata, forks) and a script's
+  queued turns: only the user's own queued prompts are dropped, so typing
+  into a builder and then clearing it can't end the run. A running script
+  turn still cancels; alt+x aborts the run.
 - Deleting a session deletes the sessions workflow runs made from it.
 
 **Open Questions:**

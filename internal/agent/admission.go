@@ -452,14 +452,15 @@ func (a *admission) clear(id string) {
 	cancelAwaited(dropped)
 }
 
-// dropPrompts removes the queued prompts of a session and returns them.
-// Silent work (a workflow's marker, a metadata entry, a fork's copy) isn't
-// a prompt the user can see or meant to cancel, so it stays queued and
-// runs once the session is free. Callers hold a.mu.
+// dropPrompts removes the queued prompts of a session and returns them:
+// the user's, which Esc clears. Silent work (a workflow's marker, a
+// metadata entry, a fork's copy) and a workflow script's queued turns
+// aren't the user's to clear, so they stay queued and run once the session
+// is free; a script is stopped by aborting its run. Callers hold a.mu.
 func (a *admission) dropPrompts(id string) []submission {
 	var kept, dropped []submission
 	for _, job := range a.queues[id] {
-		if job.silent {
+		if job.silent || isScriptTurn(job) {
 			kept = append(kept, job)
 		} else {
 			dropped = append(dropped, job)
