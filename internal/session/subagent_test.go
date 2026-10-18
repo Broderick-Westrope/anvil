@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"database/sql"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -238,4 +239,16 @@ func TestRollUpChildCostAlsoChargesTheCall(t *testing.T) {
 	require.NotZero(t, second.FinishedAt)
 	require.NotZero(t, second.CreatedAt)
 	requireCost(t, svc, parent.ID, 0.40)
+}
+
+func TestCostNeverShrinks(t *testing.T) {
+	t.Parallel()
+	svc := newSubagentTestService(t)
+	parent, err := svc.Create(t.Context(), "parent", "/tmp")
+	require.NoError(t, err)
+	require.NoError(t, svc.AddCost(t.Context(), parent.ID, 0.5))
+
+	require.ErrorContains(t, svc.AddCost(t.Context(), parent.ID, -0.1), "cost can't shrink")
+	require.ErrorContains(t, svc.AddCost(t.Context(), parent.ID, math.NaN()), "cost can't shrink")
+	requireCost(t, svc, parent.ID, 0.5)
 }

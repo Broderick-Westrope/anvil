@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -281,6 +282,9 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 
 // AddCost adds delta to the session's cost and publishes the update.
 func (s *service) AddCost(ctx context.Context, id string, delta float64) error {
+	if delta < 0 || math.IsNaN(delta) {
+		return fmt.Errorf("add cost %v to session %s: cost can't shrink", delta, id)
+	}
 	if delta == 0 {
 		return nil
 	}
