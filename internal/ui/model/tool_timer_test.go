@@ -334,3 +334,22 @@ func TestToolTimerRestartLeavesACanceledCallCanceled(t *testing.T) {
 	_, _ = u.Update(assistantUpdate("s1", restarted))
 	require.Equal(t, chat.ToolStatusCanceled, item.Status())
 }
+
+func TestToolTimerEveryTickInvalidatesALiveCall(t *testing.T) {
+	t.Parallel()
+	u, ws := newTimerTestUI()
+	item := toolItemIn(u, "a1", runningBash("tc1", 30*time.Second))
+	u.chat.SetMessages(item)
+	ws.running["a1"] = true
+	u.elapsedTickRunning = true
+
+	// The list cache serves an item until its version moves, so every
+	// tick must bump a live call, not just the first.
+	last := item.Version()
+	for range 3 {
+		_ = item.Render(100)
+		_, _ = u.Update(tickElapsedTimeMsg{})
+		require.Greater(t, item.Version(), last)
+		last = item.Version()
+	}
+}
