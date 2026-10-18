@@ -19,7 +19,7 @@ In:
   nested (subagent drill-in, compact nested headers).
 - Persisting a per-call start time and end time so durations survive
   restarts and session reloads.
-- Restarting the clock when the user grants a permission prompt.
+- Restarting the clock when a human grants a permission prompt.
 - Keeping the existing 1-second elapsed tick alive while a tool call is
   running.
 
@@ -28,6 +28,9 @@ Out:
   (`waiting 1m04s`) and subagent nodes (`agent`, `agentic_fetch` and any
   other `NestedToolContainer`). They keep their current display and do
   not get this suffix.
+- Provider-executed tool calls (e.g. provider web search). Fantasy never
+  runs them locally, so there is no authoritative start; they show no
+  duration.
 - Configuration (no `anvil.json` option; the threshold is a constant).
 - Sidebar, logs, status bar, telemetry, or the `step_usage` table.
 - Backfilling timestamps for existing sessions.
@@ -37,130 +40,183 @@ Out:
 - The timestamps are display-only. `Message.ToAIMessage` must not include
   them, so provider requests (and prompt caching) are byte-identical to
   today.
-- Recording a start time happens on parallel tool goroutines (fantasy runs
-  up to 5 parallel tools, `agent.go` executeTools). Updates to the shared
-  assistant message must be serialised with the existing turn lock, as
-  `onToolResult` already does.
+- Tool instances are shared across concurrent sessions
+  (`internal/agent/turn.go` ~103) and refreshed in `prepareStep`, so no
+  per-turn state may live on a tool. Per-call state travels in the
+  `context.Context` fantasy passes to `Run`.
+- Parallel tools (up to 5 at once in fantasy `executeTools`) record their
+  start on separate goroutines. Every write to the shared assistant
+  message goes through the existing turn lock, as `onToolResult` does.
 - No new per-tool tick: reuse `tickElapsedTimeMsg` (1s) and only keep it
   running while something needs it, so an idle UI does no work.
-- Follow the layering in `AGENTS.md`: the agent layer records times, the
-  UI only reads them.
+- Follow the layering in `AGENTS.md`: `permission` and `message` stay
+  ignorant of the agent; the agent layer records times; the UI only reads
+  them.
 - New code stays under the `gocognit` limit and must survive the CI
   mutation check (pin the 10s threshold boundary in tests).
 
 **Success Criteria:**
-- [ ] A running tool call shows no duration for its first 10 seconds,
-      then shows ` · 10s` at the end of its header line, updating each
-      second (`11s`, ..., `1m4s`, `1h2m`).
-- [ ] The suffix uses `common.FormatDuration` and a muted style, and the
-      header params are truncated to make room, so long commands never
-      push it off screen.
-- [ ] When a call that crossed 10s finishes (success, error or cancel),
-      its header keeps the final duration. A canceled call shows the time
-      up to cancellation.
-- [ ] A call that finishes in under 10s never shows a duration, live or
+- [ ] A running tool call shows no duration while its unrounded elapsed
+      time is under 10s. The first tick at or after 10s adds ` · 10s`
+      (or ` · 11s` if the tick lands late) to the end of its header, and
+      it updates every second after that (`1m4s`, `1h2m`, ...). The
+      boundary is pinned with an injected clock at 9,999 ms (hidden) and
+      10,000 ms (shown).
+- [ ] The suffix is muted and formatted with `common.FormatDuration`. On
+      a single-line header the params are truncated to reserve its width,
+      so it is never pushed off screen. On an expanded (multi-line)
+      header it goes at the end of the last line, and that line's width
+      is reserved the same way.
+- [ ] When a call whose final duration (`FinishedAt - StartedAt`) is at
+      least 10s finishes, whether by success, error or cancel, its header
+      keeps that duration. A call under 10s never shows one, live or
       afterwards.
 - [ ] A tool queued behind other tools (sequential tools, or parallel
-      tools beyond the 5-slot limit) starts its clock when it actually
-      begins executing, not when the assistant message was created.
-- [ ] While a permission prompt is open, no timer is shown. After the
-      user grants it, the clock restarts from the grant time. Auto-approved
-      calls (allow-list, `--yolo`) do not restart.
-- [ ] After quitting and reopening a session, finished calls that crossed
-      10s still show the same final duration; calls from sessions recorded
-      before this change show none.
-- [ ] Nested tool calls inside a subagent drill-in view show the timer the
-      same way.
-- [ ] `job_output` (wait) and subagent nodes render exactly as before.
-- [ ] Provider requests built from messages are unchanged (covered by a
-      `ToAIMessage` test).
-- [ ] The elapsed tick stops when no tool call, subagent or job is
+      tools beyond the 5-slot limit) starts its clock when its `Run`
+      actually begins, not when the assistant message was created.
+- [ ] While a permission prompt is open, no timer is shown. When a human
+      grants it, the clock restarts at the grant time. Allow-list rules,
+      hook approvals, bouncer approvals, the bouncer allow cache and
+      `--yolo` never restart the clock (each covered by a test).
+- [ ] After quitting and reopening a session, finished calls with a final
+      duration of 10s or more still show it. Calls from sessions recorded
+      before this change show nothing.
+- [ ] A call that was left without a result (crash or killed process) and
+      whose session is no longer running shows no timer, and never shows
+      one that keeps growing.
+- [ ] Nested tool calls in a subagent drill-in view, and in the compact
+      nested list under a subagent node, show the timer the same way.
+- [ ] `job_output` (wait), subagent nodes and provider-executed calls
+      render exactly as before.
+- [ ] `ToAIMessage` output for a message with timestamps is byte-identical
+      to the same message without them (test).
+- [ ] The elapsed tick stops once no tool call, subagent or job is
       running.
 
 **Design Decisions:**
 
 - **Measure from real execution start, persisted.** Fantasy dispatches
-  tools only after the whole step has streamed, then queues sequential
-  tools behind each other. The existing `ToolRenderOpts.StartedAt` is the
-  assistant message `CreatedAt` in whole seconds, which over-counts by the
-  streaming time and any queueing. The start is instead recorded when the
-  tool's `Run` begins, in the coordinator-level wrapper that already wraps
-  every tool (alongside `hookedTool` in `internal/agent/hooked_tool.go`),
-  and written to the tool call in the assistant message. Declined: a
-  UI-only timestamp (wrong for queued tools, lost on reload) and keeping
-  message `CreatedAt` (inaccurate).
+  tools only after the whole step has streamed, and every `OnToolCall`
+  callback (which persists the call) finishes before any dispatch
+  (fantasy `agent.go` ~1781-1796). Sequential tools then queue behind
+  each other. The existing `ToolRenderOpts.StartedAt` is the assistant
+  message `CreatedAt` in whole seconds, which over-counts by the
+  streaming time and any queueing. Declined: a UI-only timestamp (wrong
+  for queued tools, lost on reload) and keeping message `CreatedAt`
+  (inaccurate).
 - **Data model.** Add `StartedAt int64` (Unix milliseconds,
   `json:"started_at,omitempty"`) to `message.ToolCall` and
   `FinishedAt int64` (`json:"finished_at,omitempty"`) to
   `message.ToolResult`. Message parts are stored as JSON, so no SQL
-  migration is needed and old rows decode with zero values, which mean
-  "unknown, show nothing". Milliseconds so the 10s boundary is exact.
-  `FinishedAt` is set in `turn.onToolResult` when the result message is
-  created.
-- **Permission grants restart the clock.** Permission prompts are raised
-  from inside each tool's `Run`, after the wrapper has started the clock.
-  The goal is to show how slow the tool is, not how long the user took to
-  read the prompt, so a granted prompt overwrites `StartedAt` with the
-  grant time. The permission service already publishes a
-  `PermissionNotification{ToolCallID, Granted: true}` from `Grant`; the
-  turn reacts to grants for its in-flight tool call IDs and updates the
-  stored start time. Only prompts the user answered reset the clock;
-  auto-approvals never publish a prompt. Declined: counting the wait
-  (misleading) and storing start plus wait duration (same result, more
-  fiddly).
+  migration is needed. Old rows decode as zero, meaning "unknown, show
+  nothing". Milliseconds so the 10s boundary is exact.
+- **A dedicated timing wrapper, applied to every tool.** `hookedTool`
+  isn't universal: it is skipped when there are no hook runners and for
+  subagents (`hooked_tool.go` ~28-40). Add a separate `timedTool`
+  decorator, applied wherever the coordinator builds or refreshes a
+  session's tool set (including subagent and workflow agents), and placed
+  outermost so the clock starts before hooks run. Its `Run` reads a
+  per-turn recorder from `ctx` (installed by the turn, like the session
+  ID) and calls `recorder.Started(call.ID, now)`. If the context has no
+  recorder, it does nothing. The recorder sets `StartedAt` on the
+  matching tool call in `t.assistant` under the turn lock and persists
+  it.
+- **Human grants restart the clock through a synchronous callback.** A
+  `Granted: true` notification can't be used: allow-list, hook, bouncer
+  and yolo approvals publish it too, the broker can drop it, and it
+  carries no session or timestamp. Instead `permission` exposes a small
+  context hook, e.g. `permission.WithGrantObserver(ctx, func(at
+  time.Time))`. The timing wrapper installs it on the `ctx` passed to the
+  inner `Run`, bound to that call's ID. `promptHuman` calls it, before
+  returning, only when a human response granted the request. Because it
+  runs before the tool continues, the reset always lands before the
+  result. Time spent in hooks and in a bouncer assessment that settles
+  without a prompt still counts towards the tool. Declined: counting the
+  prompt wait (misleading) and storing start plus wait duration (same
+  result, more fiddly).
 - **Hidden while awaiting permission.** The header already says
-  "Requesting permission..."; showing a timer that will reset on grant
-  would be noise.
+  "Requesting permission..."; a timer that resets on grant would be
+  noise.
+- **End time on every result path.** `FinishedAt` is set in
+  `turn.onToolResult`, and also on the synthetic results created on
+  failure or cancel (`turn.go` ~550-557) and by orphan recovery
+  (`agent.go` ~875-905). A canceled call's end time is when its result is
+  recorded, so the final duration covers the time up to cancellation.
+- **Live timer only while the session is running.** A result-less call
+  shows a live timer only if its session's agent is busy. Otherwise the
+  call is orphaned history and shows no duration. This stops a crashed
+  turn's call from ticking forever after a reload.
+- **Timestamp updates must reach the UI.** Today an existing tool item is
+  updated only when its input or `Finished` flag changes (`ui.go`
+  ~1901-1907), and a timestamp-only message update isn't treated as a
+  structural flush, so it is debounced and may be dropped
+  (`message/message.go` ~488-515). Both are extended: a `StartedAt`
+  change is pushed to the item, and start/reset updates flush promptly
+  and are never lost or reordered after the result.
 - **10s fixed threshold, no config.** Most calls (view, grep, edit) finish
   well inside it, so normal turns stay quiet. A config option can be added
   if someone asks. Declined: 5s (noisier), an `anvil.json` option (YAGNI).
+  The comparison uses unrounded elapsed time; only the display rounds.
 - **Keep the final duration for calls that crossed the threshold.**
   Matches the subagent node, which keeps its finished elapsed time, and
   answers "which call was slow?" when scrolling back. Declined: hiding it
   on finish, and showing it on every call.
-- **Header suffix, subagent formatting.** ` · 23s` at the end of the
-  header, rendered with the same reserve-width approach
-  `pendingToolWithParams` uses for the spinner, formatted with
-  `common.FormatDuration` to match the subagent stats line. Declined: a
-  body line ("Running for 23s...") because the body becomes the output
-  after finishing, and `shell.FormatRuntime` (job timers) because the
-  user wanted parity with subagents.
-- **One shared implementation.** The suffix is added in the shared header
-  path (`toolHeaderWithIcon` / `pendingToolWithParams` via
-  `ToolRenderOpts`), not per renderer, so every tool gets it. Tools with
-  their own timer opt out in one place.
-- **Refresh via the existing tick.** A running (non-pending) tool call is
-  not "spinning", so nothing re-renders it today. The
-  `tickElapsedTimeMsg` handler gains a pass that invalidates the render
-  cache of running tool items (like `invalidateRunningAgentCaches` does
-  for agents) and keeps the tick alive while any exist. The tick is
-  started when a tool call enters the running state. `RawRender`'s cache
-  must include the rendered duration (or be bypassed while running) so a
-  tick actually changes the output.
-- **Replace the old `StartedAt` plumbing.** `SetToolCallStartedAt`
-  currently feeds the message `CreatedAt` into `ToolRenderOpts.StartedAt`,
-  used only by `job_output`'s wait timer. The build should decide whether
-  `job_output` moves to the new per-call start time (more accurate) or
-  keeps its current source; either way, the two must not be confused.
+- **Header suffix, subagent formatting.** ` · 23s`, using the same
+  reserve-width approach `pendingToolWithParams` uses for the spinner,
+  formatted with `common.FormatDuration` to match the subagent stats
+  line. Declined: a body line ("Running for 23s...") because the body
+  becomes the output after finishing, and `shell.FormatRuntime` (job
+  timers) because the user wanted parity with subagents.
+- **One shared implementation.** `ToolRenderOpts` carries the duration
+  (or the start/finish times plus `Now`), and the suffix is added in the
+  shared header path (`toolHeaderWithIcon` / `pendingToolWithParams`), not
+  per renderer, so every tool gets it. Tools with their own timer opt out
+  in one place.
+- **Refresh via the existing tick, through every cache layer.** A
+  running (non-pending) tool call isn't "spinning", so nothing redraws it
+  today. The `tickElapsedTimeMsg` handler gains a pass over running tool
+  items in the root chat, every drill-stack chat, and nested children of
+  `NestedToolContainer`s. For each one it clears the `RawRender` cache and
+  the prefixed `Render` cache, and bumps the item's list version. For a
+  nested child it also invalidates its rendered ancestor. That pass also
+  reports whether any tool is running, which keeps the tick alive. The
+  tick starts when a tool call starts running (live start update, session
+  load with a running call, drill-in, permission resume).
+- **Replace the old `StartedAt` plumbing.** `SetToolCallStartedAt` feeds
+  message `CreatedAt` into `ToolRenderOpts.StartedAt`, which only
+  `job_output`'s wait timer uses. Rename the field to make its meaning
+  clear (e.g. `MessageCreatedAt`) or move `job_output` to the new
+  per-call `StartedAt`. The build picks one; the two meanings must not
+  share a name.
 
 **Context Files:**
 - `internal/ui/chat/tools.go` - `ToolRenderOpts`, `baseToolMessageItem`
-  (`RawRender`, `isSpinning`, `SetCallStartedAt`), `pendingToolWithParams`,
-  `toolHeaderWithIcon`, `toolEarlyStateContent`
-- `internal/ui/chat/bash.go` - `job_output` wait timer (lines ~150-200)
+  (`RawRender`, `Render` prefix cache, `isSpinning`, `computeStatus`,
+  `SetCallStartedAt`), `pendingToolWithParams`, `toolHeaderWithIcon`,
+  `toolParamList`, `toolEarlyStateContent`
+- `internal/ui/chat/bash.go` - `job_output` wait timer (~150-200)
 - `internal/ui/chat/agent.go` - subagent `elapsed()` and `formatStatsLine`
-  (the behaviour being matched)
+  (the behaviour being matched), nested tool handling
 - `internal/ui/common/elements.go` - `FormatDuration`
+- `internal/ui/list/list.go` - versioned list cache (~298-338)
 - `internal/ui/model/ui.go` - `tickElapsedTimeMsg` handler (~1329),
-  `tickElapsedTime`, `invalidateRunningAgentCaches`, permission status
-  handling (~5651), `SetToolCallStartedAt` call sites (~1911, ~2044)
+  `tickElapsedTime`, `invalidateRunningAgentCaches` (~1944-1978), tool
+  item update comparison (~1901-1907), permission status handling
+  (~5651), `SetToolCallStartedAt` call sites (~1911, ~2044)
 - `internal/ui/chat/messages.go` - `SetToolCallStartedAt` on load (~426)
 - `internal/ui/model/jobs.go` - other elapsed tick starters
 - `internal/message/content.go` - `ToolCall`, `ToolResult`, `AddToolCall`,
   `ToAIMessage`
-- `internal/agent/turn.go` - `onToolCall`, `onToolResult`, turn lock
-- `internal/agent/hooked_tool.go` - coordinator-level tool wrapper
-- `internal/permission/permission.go` - `Grant`, `PermissionNotification`
-- fantasy `agent.go` (`executeTools`, dispatch ~1660-1790) - when tools
-  actually start and how they queue
+- `internal/message/message.go` - update debounce/flush classification
+  (~488-515)
+- `internal/agent/turn.go` - `onToolCall`, `onToolResult`, failure-path
+  synthetic results (~550-557), turn lock, `prepareStep`
+- `internal/agent/agent.go` - orphan recovery (~875-905), session agent
+  wiring
+- `internal/agent/hooked_tool.go` and `coordinator.go` - where tools are
+  wrapped
+- `internal/permission/permission.go` - `Request`, `promptHuman`, `Grant`;
+  `internal/permission/decision.go` - auto-approval paths
+- fantasy `agent.go` (`executeTools`, dispatch ~1610-1796) - when tools
+  actually start, how they queue, provider-executed results
 - `internal/ui/AGENTS.md` - required reading for the TUI part
