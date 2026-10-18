@@ -1750,7 +1750,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 			// Populate token/cost stats and timestamps: a linked task
 			// call's own, otherwise the child session's.
 			if sess, err := m.com.Workspace.GetSession(context.Background(), agentSessionID); err == nil {
-				m.features.seenCost(agentSessionID, sess.Cost)
+				m.features.calls.SeenCost(agentSessionID, sess.Cost)
 				stats := loadedCallStats(sess, call, linked)
 				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
 				da.SetCost(stats.cost)
@@ -2171,7 +2171,7 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 // updateAgentItemSessionStats propagates token, cost, and timestamp data from
 // a child session update onto the parent agent item that owns that session.
 func (m *UI) updateAgentItemSessionStats(s session.Session) {
-	stats := m.features.callStats(s)
+	stats := m.features.calls.CallStats(s)
 	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(stats.callID)
 	if !ok {
 		return

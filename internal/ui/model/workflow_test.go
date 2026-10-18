@@ -34,9 +34,9 @@ type fakeHost struct {
 	composer    bool
 	reloading   bool
 	keyMap      KeyMap
-	// viewedSubagent is the drilled-in subagent session on screen.
-	viewedSubagent string
-	restored       []string
+	// viewedChild is the drilled-in subagent session on screen.
+	viewedChild string
+	restored    []string
 }
 
 func (h *fakeHost) SessionID() string {
@@ -79,11 +79,11 @@ func (h *fakeHost) Notify(n notification.Notification) tea.Cmd {
 	return nil
 }
 
-func (h *fakeHost) Relayout()                { h.relayouts++ }
-func (h *fakeHost) ComposerHasContent() bool { return h.composer }
-func (h *fakeHost) Reloading() bool          { return h.reloading }
-func (h *fakeHost) KeyMap() KeyMap           { return h.keyMap }
-func (h *fakeHost) ViewedSubagentID() string { return h.viewedSubagent }
+func (h *fakeHost) Relayout()                    { h.relayouts++ }
+func (h *fakeHost) ComposerHasContent() bool     { return h.composer }
+func (h *fakeHost) Reloading() bool              { return h.reloading }
+func (h *fakeHost) KeyMap() KeyMap               { return h.keyMap }
+func (h *fakeHost) ViewedChildSessionID() string { return h.viewedChild }
 func (h *fakeHost) RestoreToComposer(text string) {
 	h.restored = append(h.restored, text)
 }

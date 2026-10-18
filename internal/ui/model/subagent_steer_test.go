@@ -72,7 +72,7 @@ type steerFixture struct {
 func newSteerFixture(t *testing.T) *steerFixture {
 	t.Helper()
 	ws := &steerTestWorkspace{running: map[string]bool{"msg$$child": true}, pending: map[string][]string{}}
-	host := &fakeHost{overlay: dialog.NewOverlay(), keyMap: DefaultKeyMap(), viewedSubagent: "msg$$child"}
+	host := &fakeHost{overlay: dialog.NewOverlay(), keyMap: DefaultKeyMap(), viewedChild: "msg$$child"}
 	return &steerFixture{f: newSubagentSteer(host, common.DefaultCommon(nil), ws), host: host, ws: ws}
 }
 
@@ -101,7 +101,7 @@ var (
 func TestSteerIgnoresKeysOutsideASubagentView(t *testing.T) {
 	t.Parallel()
 	s := newSteerFixture(t)
-	s.host.viewedSubagent = ""
+	s.host.viewedChild = ""
 
 	_, claimed := s.press(tabKey)
 	require.False(t, claimed)
@@ -268,7 +268,7 @@ func TestFooterRenderingChangesNoState(t *testing.T) {
 	s.press(tabKey)
 	s.press(typeKeys("draft")...)
 
-	s.host.viewedSubagent = "msg$$other"
+	s.host.viewedChild = "msg$$other"
 	s.f.DrillInFooter().Render(80)
 	require.Equal(t, "msg$$child", s.f.child, "only input and messages switch subagents")
 	require.True(t, s.f.input.Focused())
@@ -277,9 +277,20 @@ func TestFooterRenderingChangesNoState(t *testing.T) {
 func TestWorkflowChildrenGetNoFooterAndKeepEsc(t *testing.T) {
 	t.Parallel()
 	s := newSteerFixture(t)
-	s.host.viewedSubagent = "3f2a0c1e-workflow-uuid"
+	s.host.viewedChild = "3f2a0c1e-workflow-uuid"
 
 	require.Nil(t, s.f.DrillInFooter())
 	_, claimed := s.press(escKey)
 	require.False(t, claimed)
+}
+
+func TestPasteIntoAStoppedSubagentsInputIsRefused(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+	s.press(tabKey)
+	s.ws.running["msg$$child"] = false
+
+	_, claimed := s.f.PreemptInput(tea.PasteMsg{Content: "late"})
+	require.False(t, claimed)
+	require.Empty(t, s.f.input.Value())
 }

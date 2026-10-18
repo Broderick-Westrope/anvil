@@ -118,14 +118,3 @@ func TestSeenCostBaselinesALaterResume(t *testing.T) {
 	stats := calls.CallStats(session.Session{ID: "m1$$c1", Cost: 0.50})
 	require.InDelta(t, 0.10, stats.cost, 1e-9)
 }
-
-func TestFeaturesRouteCallOwnershipToTheTracker(t *testing.T) {
-	t.Parallel()
-	var fs features
-	require.Equal(t, "m1$$c1", fs.ownerCall("m1$$c1"), "no tracker: a child is owned by its own call")
-
-	calls := newSubagentCalls()
-	fs.register(calls)
-	fs.observe(resumeEvent("m1$$c1", "m2$$c2"))
-	require.Equal(t, "m2$$c2", fs.ownerCall("m1$$c1"))
-}

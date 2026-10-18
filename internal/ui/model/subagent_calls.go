@@ -76,18 +76,26 @@ func (c *subagentCalls) Observe(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// OwnerCall implements callTrackerFeature.
+// OwnerCall returns the task call ID (messageID$$toolCallID) whose item
+// shows childSessionID's activity. Like the other queries, it's safe on a
+// nil tracker, which knows of no resumes.
 func (c *subagentCalls) OwnerCall(childSessionID string) string {
+	if c == nil {
+		return childSessionID
+	}
 	if ch, ok := c.children[childSessionID]; ok && ch.owner != "" {
 		return ch.owner
 	}
 	return childSessionID
 }
 
-// CallStats implements callTrackerFeature. The call that created the
-// child counts from the session's start; a resume counts from when it
-// took over.
+// CallStats returns the owning call's view of a child session update. The
+// call that created the child counts from the session's start; a resume
+// counts from when it took over.
 func (c *subagentCalls) CallStats(s session.Session) subagentCallStats {
+	if c == nil {
+		return subagentCallStats{callID: s.ID, cost: s.Cost}
+	}
 	if ch, ok := c.children[s.ID]; ok && ch.owner != "" {
 		return subagentCallStats{callID: ch.owner, cost: s.Cost - ch.baseCost, startedAt: ch.startedAt}
 	}
@@ -98,8 +106,11 @@ func (c *subagentCalls) CallStats(s session.Session) subagentCallStats {
 	return subagentCallStats{callID: s.ID, cost: s.Cost, startedAt: startedAt}
 }
 
-// SeenCost implements callTrackerFeature.
+// SeenCost records a child's cost as loaded from the database.
 func (c *subagentCalls) SeenCost(childSessionID string, cost float64) {
+	if c == nil {
+		return
+	}
 	c.child(childSessionID).lastCost = cost
 }
 
@@ -110,7 +121,7 @@ func (c *subagentCalls) HandleAction(dialog.Action) (tea.Cmd, bool) { return nil
 // agentItemToolCallID returns the tool call ID of the task item that shows
 // childSessionID's live activity.
 func (m *UI) agentItemToolCallID(childSessionID string) (string, bool) {
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(m.features.ownerCall(childSessionID))
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(m.features.calls.OwnerCall(childSessionID))
 	return toolCallID, ok
 }
 

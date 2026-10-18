@@ -116,13 +116,14 @@ Optional surfaces, found by type assertion when the feature registers:
 - `drillInFeature.DrillInFooter` returns a `panelView` drawn under a
   drilled-in chat, or nil. It's called while rendering and laying out, so
   it must only read state.
-- `callTrackerFeature` says which task call owns a subagent child
-  session's activity, so a resumed call's item gets its events and stats.
-  `UI` asks the first one registered.
 
 The subagent steer feature (`model/subagent_steer.go`) adds two host
-methods: `ViewedSubagentID`, the topmost drilled-in session (read only),
-and `RestoreToComposer`, which appends text to the main editor.
+methods: `ViewedChildSessionID`, the topmost drilled-in session (read
+only), and `RestoreToComposer`, which appends text to the main editor.
+The task call tracker (`model/subagent_calls.go`) is a feature that only
+observes; `UI` asks it, through `features.calls`, which task call owns a
+child session's activity, so a resumed call's item gets its events and
+stats.
 
 A feature never holds `*UI`. It asks `UI` for things through `featureHost`,
 and for workspace calls it declares the narrow interface it needs. Add a

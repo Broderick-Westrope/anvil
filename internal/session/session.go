@@ -98,8 +98,9 @@ type Service interface {
 	GetLastGlobal(ctx context.Context) (Session, error)
 	List(ctx context.Context, workingDir string) ([]Session, error)
 	// Save writes the session's title, token counters and todos. It never
-	// writes Cost: cost only grows, through AddCost and RollUpChildCost, so
-	// a stale copy can't undo cost another writer added.
+	// writes Cost: cost only grows, through AddCost, UpdateTitleAndUsage
+	// and RollUpChildCost, so a stale copy can't undo cost another writer
+	// added.
 	Save(ctx context.Context, session Session) (Session, error)
 	// AddCost adds delta to the session's cost.
 	AddCost(ctx context.Context, id string, delta float64) error

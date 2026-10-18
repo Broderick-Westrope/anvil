@@ -76,7 +76,7 @@ func newSubagentSteer(host featureHost, com *common.Common, ws subagentSteerWork
 // viewedChild returns the subagent on screen when it's one a task call
 // can run in, or "". Workflow children have no task call to steer.
 func (f *subagentSteer) viewedChild() string {
-	child := f.host.ViewedSubagentID()
+	child := f.host.ViewedChildSessionID()
 	if _, _, ok := f.ws.ParseAgentToolSessionID(child); !ok {
 		return ""
 	}
@@ -109,7 +109,7 @@ func (f *subagentSteer) PreemptInput(msg tea.Msg) (tea.Cmd, bool) {
 		return nil, false
 	}
 	if paste, ok := msg.(tea.PasteMsg); ok {
-		if !f.input.Focused() {
+		if !f.input.Focused() || !f.ws.AgentSubagentRunning(child) {
 			return nil, false
 		}
 		var cmd tea.Cmd
