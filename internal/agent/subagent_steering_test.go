@@ -148,3 +148,31 @@ func TestInterruptGivesInFlightToolsAnInterruptedResult(t *testing.T) {
 	}
 	require.Equal(t, []string{"Interrupted by user"}, results)
 }
+
+func TestInterruptKeepsToolErrorsThatWerentCutOff(t *testing.T) {
+	t.Parallel()
+	env, sessionID, lease := steeredAgentEnv(t)
+
+	tool := fantasy.NewAgentTool("work", "Test tool.",
+		func(_ context.Context, _ struct{}, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			// A real failure (or a grandchild task's error result) that
+			// finished just as the interrupt landed.
+			require.NoError(t, lease.steer("stop", true))
+			return fantasy.NewTextErrorResponse("exit 1: tests failed\n\nsubagent_id: worker-1234"), nil
+		})
+	model := &scriptedModel{toolName: "work", toolSteps: 1}
+	a := jobEventsAgent(env, env.messages, model, nil, tool)
+
+	attemptCtx, _ := lease.beginAttempt(t.Context())
+	_, _ = a.Run(attemptCtx, SessionAgentCall{SessionID: sessionID, Prompt: "start", NonInteractive: true, steering: lease})
+
+	msgs, err := env.messages.List(t.Context(), sessionID)
+	require.NoError(t, err)
+	var results []string
+	for _, msg := range msgs {
+		for _, tr := range msg.ToolResults() {
+			results = append(results, tr.Content)
+		}
+	}
+	require.Equal(t, []string{"exit 1: tests failed\n\nsubagent_id: worker-1234"}, results)
+}

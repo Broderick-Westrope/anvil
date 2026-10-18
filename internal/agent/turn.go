@@ -532,6 +532,17 @@ func (t *turn) onToolCall(tc fantasy.ToolCallContent) error {
 // interruptedToolResult answers tool calls that interrupt+steer cut off.
 const interruptedToolResult = "Interrupted by user"
 
+// cutOffByInterrupt reports whether result is a tool that failed only
+// because interrupt+steer cancelled it. Errors a tool returned on its own,
+// including a nested task call's result, are kept as they are.
+func cutOffByInterrupt(ctx context.Context, result fantasy.ToolResultContent) bool {
+	if !errors.Is(context.Cause(ctx), errSubagentInterrupted) {
+		return false
+	}
+	out, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result)
+	return ok && errors.Is(out.Error, context.Canceled)
+}
+
 func (t *turn) onToolResult(result fantasy.ToolResultContent) error {
 	toolResult := t.a.convertToToolResult(result)
 	toolResult.FinishedAt = time.Now().UnixMilli()
@@ -542,7 +553,7 @@ func (t *turn) onToolResult(result fantasy.ToolResultContent) error {
 		toolResult.Content = "Tool call failed: arguments were not valid JSON. Please check your tool call format and try again."
 		toolResult.IsError = true
 	}
-	if toolResult.IsError && errors.Is(context.Cause(t.genCtx), errSubagentInterrupted) {
+	if cutOffByInterrupt(t.genCtx, result) {
 		toolResult.Content = interruptedToolResult
 	}
 	// Hold the lock across the entire read→create→update sequence.
