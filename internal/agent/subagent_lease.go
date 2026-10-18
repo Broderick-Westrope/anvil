@@ -100,15 +100,20 @@ func (l *subagentLease) deliveredInjections() []message.InjectionContent {
 // left by an interrupt of the previous attempt, so the next backoff isn't
 // cut short by it.
 func (l *subagentLease) beginAttempt(callCtx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(callCtx)
+	l.mu.Lock()
 	select {
 	case <-l.wake:
 	default:
 	}
-	ctx, cancel := context.WithCancelCause(callCtx)
-	l.mu.Lock()
 	l.cancelAttempt = cancel
 	l.mu.Unlock()
-	return ctx, func() { cancel(nil) }
+	return ctx, func() {
+		l.mu.Lock()
+		l.cancelAttempt = nil
+		l.mu.Unlock()
+		cancel(nil)
+	}
 }
 
 // steer queues a human message for the subagent. With interrupt, it also
@@ -127,16 +132,20 @@ func (l *subagentLease) steer(text string, interrupt bool) error {
 	l.pending = append(l.pending, message.InjectionContent{
 		Source: message.InjectionSourceHuman, Kind: kind, Text: text, CallID: l.callID,
 	})
-	cancelAttempt := l.cancelAttempt
-	l.mu.Unlock()
-	if interrupt {
-		if cancelAttempt != nil {
-			cancelAttempt(errSubagentInterrupted)
-		}
-		select {
-		case l.wake <- struct{}{}:
-		default:
-		}
+	defer l.mu.Unlock()
+	if !interrupt {
+		return nil
+	}
+	// Under the lock, so the attempt this cancels is the one running now.
+	// Between attempts there's none to cancel; the wake ends a retry
+	// backoff instead, and the next attempt delivers the steer first.
+	if l.cancelAttempt != nil {
+		l.cancelAttempt(errSubagentInterrupted)
+		return nil
+	}
+	select {
+	case l.wake <- struct{}{}:
+	default:
 	}
 	return nil
 }

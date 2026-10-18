@@ -170,3 +170,49 @@ func TestSubagentLeaseCancelAfterFinalisingIsRejected(t *testing.T) {
 	require.False(t, lease.cancel(errCancelledByHuman))
 	require.False(t, cancelled)
 }
+
+func TestInterruptBetweenAttemptsLeavesNoStaleWake(t *testing.T) {
+	t.Parallel()
+	var leases subagentLeases
+	lease, err := leases.acquire("child", "call", func(error) {})
+	require.NoError(t, err)
+
+	_, end := lease.beginAttempt(t.Context())
+	end()
+	// Between attempts: the steer waits for the next attempt's first step,
+	// and its wake must not cut that attempt's later backoff short.
+	require.NoError(t, lease.steer("stop", true))
+	_, end = lease.beginAttempt(t.Context())
+	defer end()
+	select {
+	case <-lease.wake:
+		t.Fatal("a stale wake survived into the new attempt")
+	default:
+	}
+	require.Equal(t, []string{"stop"}, lease.pendingTexts())
+}
+
+func TestInterruptRacingBeginAttemptCancelsTheNewAttemptOrWaits(t *testing.T) {
+	t.Parallel()
+	for range 200 {
+		var leases subagentLeases
+		lease, err := leases.acquire("child", "call", func(error) {})
+		require.NoError(t, err)
+
+		var attemptCtx context.Context
+		var end func()
+		var wg sync.WaitGroup
+		wg.Go(func() { attemptCtx, end = lease.beginAttempt(t.Context()) })
+		wg.Go(func() { require.NoError(t, lease.steer("stop", true)) })
+		wg.Wait()
+
+		cancelled := attemptCtx.Err() != nil
+		select {
+		case <-lease.wake:
+			require.False(t, cancelled, "a wake only survives when the attempt wasn't cut off")
+		default:
+		}
+		require.Equal(t, []string{"stop"}, lease.pendingTexts())
+		end()
+	}
+}
