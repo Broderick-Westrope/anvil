@@ -157,6 +157,9 @@ type activeRun struct {
 	// abortStart cancels the wait to mark the run in its session, which
 	// happens before the script runs and so before Run.Abort can reach it.
 	abortStart context.CancelCauseFunc
+	// controlMu orders controls of the run, so a pause and a resume pressed
+	// together can't leave its recorded state and the run disagreeing.
+	controlMu sync.Mutex
 }
 
 // NewService creates a Service. Runs live as long as lifetime.
@@ -566,6 +569,8 @@ func (s *Service) control(runID string, state RunState, fn func(*activeRun) erro
 	if active == nil {
 		return ErrNoRun
 	}
+	active.controlMu.Lock()
+	defer active.controlMu.Unlock()
 	if err := fn(active); err != nil {
 		return err
 	}
