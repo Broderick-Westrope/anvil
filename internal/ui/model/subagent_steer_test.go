@@ -324,3 +324,37 @@ func TestFooterInputLineDropsPaddingWithoutAnEllipsis(t *testing.T) {
 	line, _, _ := strings.Cut(ansi.Strip(s.f.DrillInFooter().Render(60)), "\n")
 	require.NotContains(t, line, "…")
 }
+
+func TestDraftsFollowTheirSubagent(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+	s.press(tabKey)
+	s.press(typeKeys("for child")...)
+
+	s.host.viewedChild = "msg$$other"
+	s.f.Observe(nil)
+	require.Empty(t, s.f.input.Value())
+
+	s.host.viewedChild = "msg$$child"
+	s.f.Observe(nil)
+	require.Equal(t, "for child", s.f.input.Value())
+}
+
+func TestFooterHidesTheQueueWhenNothingIsQueued(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+	require.NotContains(t, ansi.Strip(s.f.DrillInFooter().Render(200)), "queued")
+}
+
+func TestFeaturesFindTheDrillInFooter(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+	var fs features
+	fs.register(s.f)
+	require.NotNil(t, fs.drillInFooter())
+	require.Equal(t, subagentSteerFooterLines, fs.drillInFooterLines())
+
+	s.host.viewedChild = ""
+	require.Nil(t, fs.drillInFooter())
+	require.Zero(t, fs.drillInFooterLines())
+}

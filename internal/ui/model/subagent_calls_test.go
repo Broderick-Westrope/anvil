@@ -151,3 +151,19 @@ func TestDeletedChildIsForgotten(t *testing.T) {
 	calls.Observe(pubsub.Event[session.Session]{Type: pubsub.DeletedEvent, Payload: session.Session{ID: "m1$$c1", ParentSessionID: "root"}})
 	require.Empty(t, calls.children)
 }
+
+func TestCallStatsBoundaries(t *testing.T) {
+	t.Parallel()
+	calls := newSubagentCalls()
+	require.True(t, calls.CallStats(session.Session{ID: "m$$c"}).startedAt.IsZero(), "no creation time means no start")
+
+	require.True(t, loadedCallStats(session.Session{}, session.SubagentCall{CreatedAt: 5}, true).finishedAt.IsZero(), "an unfinished call has no finish")
+	unlinked := loadedCallStats(session.Session{CreatedAt: 0, UpdatedAt: 0}, session.SubagentCall{}, false)
+	require.True(t, unlinked.startedAt.IsZero())
+	require.True(t, loadedCallStats(session.Session{CreatedAt: 7, UpdatedAt: 7}, session.SubagentCall{}, false).finishedAt.IsZero(), "an untouched session hasn't finished")
+}
+
+func TestLatestResumeCallSeesAResumeAtTheStart(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "m2$$c2", latestResumeCall([]message.Message{resumeEvent("m1$$c1", "m2$$c2").Payload}))
+}
