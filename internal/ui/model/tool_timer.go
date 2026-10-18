@@ -94,3 +94,17 @@ func (m *UI) startElapsedTickForToolStart(msg message.Message) tea.Cmd {
 	}
 	return nil
 }
+
+// reconcileToolStart returns the start time to keep for item when an update
+// carries startedAt. A start only moves forward (a human answering a prompt
+// restarts the clock), so an older snapshot arriving late never moves it
+// back. A restart means a human answered the call's prompt even if the
+// notification was lost, so an item awaiting permission goes back to
+// running. The first start can't mean that: it lands before the call asks.
+func reconcileToolStart(item chat.ToolMessageItem, startedAt int64) int64 {
+	current := item.ToolCall().StartedAt
+	if current != 0 && startedAt > current && item.Status() == chat.ToolStatusAwaitingPermission {
+		item.SetStatus(chat.ToolStatusRunning)
+	}
+	return max(startedAt, current)
+}
