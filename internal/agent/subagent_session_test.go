@@ -45,11 +45,7 @@ func TestRunSubAgentChildSessionLifecycle(t *testing.T) {
 			agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
 				require.Equal(t, setupID, call.SessionID, "setup runs before the turn, on the child session")
 				startTestJob(t, call.SessionID, "sleep 30", shell.OriginExplicit)
-				child, err := env.sessions.Get(t.Context(), call.SessionID)
-				require.NoError(t, err)
-				child.Cost = 1.5
-				_, err = env.sessions.Save(t.Context(), child)
-				require.NoError(t, err)
+				require.NoError(t, env.sessions.AddCost(t.Context(), call.SessionID, 1.5))
 				if tc.runErr != nil {
 					return nil, tc.runErr
 				}

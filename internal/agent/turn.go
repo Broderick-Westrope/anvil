@@ -102,8 +102,7 @@ func (t *turn) chargeUnfinishedStep() {
 	}
 	sess, err := t.a.sessions.Get(t.persistCtx, t.call.SessionID)
 	if err == nil {
-		t.a.updateSessionUsage(t.largeModel, &sess, charge.usage, t.a.openrouterCost(charge.meta), false)
-		_, err = t.a.sessions.Save(t.persistCtx, sess)
+		err = t.a.saveSessionUsage(t.persistCtx, t.largeModel, &sess, charge.usage, t.a.openrouterCost(charge.meta), false)
 	}
 	if err != nil {
 		slog.Warn("Failed to charge an unfinished step", "session_id", t.call.SessionID, "error", err)
@@ -607,8 +606,7 @@ func (t *turn) onStepFinish(stepResult fantasy.StepResult) error {
 		return t.failPersist(err)
 	}
 	usage, estimated := fallbackStepUsage(t.stepMessages, stepResult)
-	t.a.updateSessionUsage(t.largeModel, &updatedSession, usage, t.a.openrouterCost(stepResult.ProviderMetadata), estimated)
-	if _, err := t.a.sessions.Save(t.genCtx, updatedSession); err != nil {
+	if err := t.a.saveSessionUsage(t.genCtx, t.largeModel, &updatedSession, usage, t.a.openrouterCost(stepResult.ProviderMetadata), estimated); err != nil {
 		return t.failPersist(err)
 	}
 	t.uncharged = nil

@@ -313,11 +313,7 @@ func TestEachAttemptRollsUpOnlyNewCost(t *testing.T) {
 	attempt := 0
 	agent := newMockAgent(testProvider, 1000, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
 		attempt++
-		child, err := env.sessions.Get(ctx, call.SessionID)
-		require.NoError(t, err)
-		child.Cost += 0.10
-		_, err = env.sessions.Save(ctx, child)
-		require.NoError(t, err)
+		require.NoError(t, env.sessions.AddCost(ctx, call.SessionID, 0.10))
 		if attempt == 1 {
 			return nil, overloaded()
 		}

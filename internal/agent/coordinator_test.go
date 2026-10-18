@@ -489,13 +489,7 @@ func TestRunSubAgent(t *testing.T) {
 
 		agent := newMockAgent(providerID, 4096, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
 			// Simulate the agent incurring cost by updating the child session.
-			childSession, err := env.sessions.Get(ctx, call.SessionID)
-			if err != nil {
-				return nil, err
-			}
-			childSession.Cost = 0.05
-			_, err = env.sessions.Save(ctx, childSession)
-			if err != nil {
+			if err := env.sessions.AddCost(ctx, call.SessionID, 0.05); err != nil {
 				return nil, err
 			}
 			return agentResultWithText("ok"), nil

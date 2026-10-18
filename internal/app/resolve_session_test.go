@@ -219,3 +219,5 @@ func (m *mockSessionService) GetSubagentCall(context.Context, string) (session.S
 func (m *mockSessionService) RollUpChildCost(context.Context, string, string) error { return nil }
 
 func (m *mockSessionService) FinishSubagentCall(context.Context, string) error { return nil }
+
+func (m *mockSessionService) AddCost(context.Context, string, float64) error { return nil }

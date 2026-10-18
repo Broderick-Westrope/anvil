@@ -170,9 +170,7 @@ func setCost(t *testing.T, svc session.Service, id string, cost float64) {
 	t.Helper()
 	s, err := svc.Get(t.Context(), id)
 	require.NoError(t, err)
-	s.Cost = cost
-	_, err = svc.Save(t.Context(), s)
-	require.NoError(t, err)
+	require.NoError(t, svc.AddCost(t.Context(), id, cost-s.Cost))
 }
 
 func requireCost(t *testing.T, svc session.Service, id string, want float64) {
@@ -207,12 +205,12 @@ func TestStaleParentSaveKeepsRolledUpCost(t *testing.T) {
 	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID, ""))
 
 	// A save from a copy read before the rollup, such as a todos update,
-	// adds its own change without undoing the rollup.
+	// never touches cost, so it can't undo the rollup.
 	stale.Todos = []session.Todo{{Content: "x", Status: session.TodoStatusPending}}
-	stale.Cost += 0.05
+	stale.Cost = 0
 	_, err = svc.Save(t.Context(), stale)
 	require.NoError(t, err)
-	requireCost(t, svc, parent.ID, 0.35)
+	requireCost(t, svc, parent.ID, 0.30)
 }
 
 func TestRollUpChildCostAlsoChargesTheCall(t *testing.T) {

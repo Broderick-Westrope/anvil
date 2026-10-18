@@ -63,7 +63,6 @@ SET
     title_is_custom = sqlc.arg(title_is_custom),
     prompt_tokens = sqlc.arg(prompt_tokens),
     completion_tokens = sqlc.arg(completion_tokens),
-    cost = cost + sqlc.arg(cost_delta),
     todos = sqlc.arg(todos)
 WHERE id = sqlc.arg(id)
 RETURNING *;

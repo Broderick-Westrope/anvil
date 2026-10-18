@@ -69,11 +69,6 @@ type Session struct {
 	PinNote          string
 	CreatedAt        int64
 	UpdatedAt        int64
-
-	// loadedCost is Cost as it was read from the database. Save applies
-	// only the change since then, so a stale copy can't undo cost another
-	// writer added meanwhile, such as a subagent's cost rollup.
-	loadedCost float64
 }
 
 // MaxPinNoteLen is the maximum length of a pin note in runes.
@@ -102,7 +97,12 @@ type Service interface {
 	GetLast(ctx context.Context, workingDir string) (Session, error)
 	GetLastGlobal(ctx context.Context) (Session, error)
 	List(ctx context.Context, workingDir string) ([]Session, error)
+	// Save writes the session's title, token counters and todos. It never
+	// writes Cost: cost only grows, through AddCost and RollUpChildCost, so
+	// a stale copy can't undo cost another writer added.
 	Save(ctx context.Context, session Session) (Session, error)
+	// AddCost adds delta to the session's cost.
+	AddCost(ctx context.Context, id string, delta float64) error
 	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, titleIsCustom bool, promptTokens, completionTokens int64, cost float64) error
 	Rename(ctx context.Context, id string, title string, titleIsCustom bool) error
 	SetPin(ctx context.Context, id string, pinned bool, note string) error
@@ -262,7 +262,6 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 		TitleIsCustom:    boolToInt64(session.TitleIsCustom),
 		PromptTokens:     session.PromptTokens,
 		CompletionTokens: session.CompletionTokens,
-		CostDelta:        session.Cost - session.loadedCost,
 		Todos: sql.NullString{
 			String: todosJSON,
 			Valid:  todosJSON != "",
@@ -277,6 +276,26 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 	session.EstimatedUsage = estimatedUsage
 	s.Publish(pubsub.UpdatedEvent, session)
 	return session, nil
+}
+
+// AddCost adds delta to the session's cost and publishes the update.
+func (s *service) AddCost(ctx context.Context, id string, delta float64) error {
+	if delta == 0 {
+		return nil
+	}
+	n, err := s.q.AddSessionCost(ctx, db.AddSessionCostParams{Delta: delta, ID: id})
+	if err != nil {
+		return fmt.Errorf("add cost to session %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("add cost to session %s: %w", id, sql.ErrNoRows)
+	}
+	session, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.Publish(pubsub.UpdatedEvent, session)
+	return nil
 }
 
 // UpdateTitleAndUsage updates only the title and usage fields atomically.
@@ -445,7 +464,6 @@ func (s *service) fromDBItem(item db.Session) Session {
 		LeafMessageID:    item.LeafMessageID.String,
 		WorkingDir:       item.WorkingDir,
 		Cost:             item.Cost,
-		loadedCost:       item.Cost,
 		Todos:            todos,
 		Pinned:           item.Pinned != 0,
 		PinNote:          item.PinNote,

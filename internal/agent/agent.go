@@ -723,8 +723,6 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		return localPersistence(persistCtx, err)
 	}
 
-	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
-
 	// Update session usage. The leaf already points to the compaction
 	// message (advanced atomically by Create() above).
 	usage := resp.Response.Usage
@@ -733,6 +731,10 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	currentSession.EstimatedUsage = usageIsZero(usage)
 	_, err = a.sessions.Save(genCtx, currentSession)
 	if err != nil {
+		return localPersistence(genCtx, err)
+	}
+	cost := usageCost(largeModel, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
+	if err := a.sessions.AddCost(genCtx, sessionID, cost); err != nil {
 		return localPersistence(genCtx, err)
 	}
 
@@ -1204,13 +1206,26 @@ func usageCost(model Model, usage fantasy.Usage, overrideCost *float64, estimate
 		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
 }
 
-func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) {
+// updateSessionUsage applies usage to session in memory and returns the
+// cost it added.
+func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) float64 {
 	if !usageIsZero(usage) {
 		session.EstimatedUsage = estimated
 	}
-
-	session.Cost += usageCost(model, usage, overrideCost, estimated)
+	cost := usageCost(model, usage, overrideCost, estimated)
+	session.Cost += cost
 	updateSessionTokenCounters(session, usage)
+	return cost
+}
+
+// saveSessionUsage applies usage to sess and saves it. Cost is added
+// separately, because Save never writes it.
+func (a *sessionAgent) saveSessionUsage(ctx context.Context, model Model, sess *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) error {
+	cost := a.updateSessionUsage(model, sess, usage, overrideCost, estimated)
+	if _, err := a.sessions.Save(ctx, *sess); err != nil {
+		return err
+	}
+	return a.sessions.AddCost(ctx, sess.ID, cost)
 }
 
 func updateSessionTokenCounters(session *session.Session, usage fantasy.Usage) {
