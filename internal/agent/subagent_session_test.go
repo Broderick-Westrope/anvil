@@ -29,9 +29,9 @@ func TestRunSubAgentChildSessionLifecycle(t *testing.T) {
 		"success hands jobs back with the output": {
 			wantContent: "done", wantCostUp: true, wantHandedOn: true,
 		},
-		"run failure still hands jobs back": {
+		"run failure still hands jobs back and rolls its cost up": {
 			runErr: errors.New("provider down"), wantContent: "Failed to generate response: provider down",
-			wantIsError: true, wantHandedOn: true,
+			wantCostUp: true, wantIsError: true, wantHandedOn: true,
 		},
 	}
 	for name, tc := range tests {
@@ -138,6 +138,6 @@ func TestRunSubAgentLogsWhatItCannotReturn(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, resp.IsError)
 		require.Equal(t, "done", resp.Content)
-		require.Contains(t, logs.String(), "Failed to update parent session cost")
+		require.Contains(t, logs.String(), "Failed to roll up subagent cost")
 	})
 }

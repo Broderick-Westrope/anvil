@@ -37,7 +37,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
-	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"golang.org/x/sync/errgroup"
 
@@ -189,6 +188,14 @@ type coordinator struct {
 	// plugins holds the discovered plugins so their skills paths can be
 	// included in the View tool's auto-approval list. Protected by orchestratorMu.
 	plugins []*plugin.Plugin
+
+	// leases holds the child sessions task calls are running in.
+	leases subagentLeases
+	// subagentRetryDelays are the waits before each automatic resume of a
+	// failed subagent; nil means defaultSubagentRetryDelays.
+	subagentRetryDelays []time.Duration
+	subagentEventsOnce  sync.Once
+	subagentEvents      *pubsub.Broker[SubagentSteersReturned]
 }
 
 func NewCoordinator(
@@ -1572,114 +1579,6 @@ func (c *coordinator) refreshApiKeyTemplate(ctx context.Context, providerCfg con
 	return nil
 }
 
-// subAgentParams holds the parameters for running a sub-agent.
-type subAgentParams struct {
-	Agent          SessionAgent
-	SessionID      string
-	AgentMessageID string
-	ToolCallID     string
-	Prompt         string
-	SessionTitle   string
-	// OnSession, when set, is called with the child session's ID before
-	// the agent runs, for custom session configuration.
-	OnSession func(sessionID string)
-}
-
-// childSession describes the session a subagent runs in.
-type childSession struct {
-	ID, ParentID, Title string
-	// OnCreate, when set, is called once the session exists.
-	OnCreate func(sessionID string)
-}
-
-// inChildSession runs fn in a new child session of s.ParentID, then rolls
-// the child's cost up to the parent (only when fn succeeds) and hands its
-// surviving background jobs to the parent. It returns the hand-off
-// inventory, empty when there were no jobs. Every subagent run, from the
-// task tool or a workflow, goes through here.
-func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn func(ctx context.Context, sessionID string) error) (handedOff string, err error) {
-	// Detach from any submission owner ctx carries: the child's turns are
-	// admitted as their own submissions, not run in place as, or rejected
-	// as, the parent's owner.
-	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
-	session, err := c.sessions.CreateTaskSession(ctx, s.ID, s.ParentID, s.Title)
-	if err != nil {
-		return "", fmt.Errorf("create session: %w", err)
-	}
-	defer func() {
-		handedOff = handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, s.ParentID)
-	}()
-	defer c.permissions.RevokeAutoApproveSession(session.ID)
-	if s.OnCreate != nil {
-		s.OnCreate(session.ID)
-	}
-	if err := fn(ctx, session.ID); err != nil {
-		return "", err
-	}
-	// Best effort: a failure here must not discard output the subagent
-	// already produced.
-	if err := c.updateParentSessionCost(ctx, session.ID, s.ParentID); err != nil {
-		slog.Warn("Failed to update parent session cost",
-			"child_session", session.ID,
-			"parent_session", s.ParentID,
-			"error", err,
-		)
-	}
-	return "", nil
-}
-
-// errSubAgentRun marks a failure the task tool reports back to the model
-// as a tool error rather than failing the tool call.
-type errSubAgentRun struct{ msg string }
-
-func (e errSubAgentRun) Error() string { return e.msg }
-
-// runSubAgent runs a sub-agent for the task tool in a child session and
-// returns its output as the tool's response.
-func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, error) {
-	var output string
-	handedOff, err := c.inChildSession(ctx, childSession{
-		ID:       c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID),
-		ParentID: params.SessionID,
-		Title:    params.SessionTitle,
-		OnCreate: params.OnSession,
-	}, func(ctx context.Context, sessionID string) error {
-		call, err := c.subAgentCall(ctx, params.Agent, sessionID, params.Prompt)
-		if errors.Is(err, errRefreshSubAgentModels) {
-			return errSubAgentRun{"Failed to " + err.Error()}
-		}
-		if err != nil {
-			return err
-		}
-		result, err := params.Agent.Run(ctx, call)
-		if err != nil {
-			return errSubAgentRun{fmt.Sprintf("Failed to generate response: %s", err)}
-		}
-		output = subAgentOutput(result)
-		return nil
-	})
-	var runErr errSubAgentRun
-	var resp fantasy.ToolResponse
-	// An if chain, not a tagless switch: coverage never marks a case
-	// expression as run, so mutation testing would skip its conditions.
-	if errors.As(err, &runErr) {
-		resp = fantasy.NewTextErrorResponse(runErr.msg)
-	} else if err != nil {
-		if handedOff != "" {
-			slog.Warn("Subagent jobs handed off after error", "parent_session", params.SessionID, "inventory", handedOff)
-		}
-		return fantasy.ToolResponse{}, err
-	} else if output == "" {
-		resp = fantasy.NewTextErrorResponse("Sub-agent completed but produced no text output.")
-	} else {
-		resp = fantasy.NewTextResponse(output)
-	}
-	if handedOff != "" {
-		resp.Content += "\n\n" + handedOff
-	}
-	return resp, nil
-}
-
 var errRefreshSubAgentModels = errors.New("refresh sub-agent models")
 
 // subAgentCall prepares a non-interactive run of agent in a sub-session,
@@ -1762,27 +1661,6 @@ func subAgentOutput(result *fantasy.AgentResult) string {
 		return ""
 	}
 	return result.Response.Content.Text()
-}
-
-// updateParentSessionCost accumulates the cost from a child session to its parent session.
-func (c *coordinator) updateParentSessionCost(ctx context.Context, childSessionID, parentSessionID string) error {
-	childSession, err := c.sessions.Get(ctx, childSessionID)
-	if err != nil {
-		return fmt.Errorf("get child session: %w", err)
-	}
-
-	parentSession, err := c.sessions.Get(ctx, parentSessionID)
-	if err != nil {
-		return fmt.Errorf("get parent session: %w", err)
-	}
-
-	parentSession.Cost += childSession.Cost
-
-	if _, err := c.sessions.Save(ctx, parentSession); err != nil {
-		return fmt.Errorf("save parent session: %w", err)
-	}
-
-	return nil
 }
 
 // SkillStates returns a copy of the combined builtin and user skill

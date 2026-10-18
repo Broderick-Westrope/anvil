@@ -29,7 +29,7 @@ VALUES (?, ?, ?, strftime('%s', 'now'));
 -- name: GetSubagentCall :one
 SELECT * FROM subagent_calls WHERE id = ? LIMIT 1;
 
--- name: AddUnrolledChildCostToParent :exec
+-- name: AddUnrolledChildCostToParent :execrows
 UPDATE sessions
 SET cost = cost + (
     SELECT child.cost - child.cost_rolled_up FROM sessions AS child WHERE child.id = sqlc.arg(child_id)

@@ -78,8 +78,14 @@ type subagentLease struct {
 	finalising    bool
 }
 
-// beginAttempt returns the context of a new attempt within the call.
+// beginAttempt returns the context of a new attempt within the call. It
+// clears any wake left by an interrupt of the previous attempt, so the
+// next backoff isn't cut short by it.
 func (l *subagentLease) beginAttempt(callCtx context.Context) context.Context {
+	select {
+	case <-l.wake:
+	default:
+	}
 	ctx, cancel := context.WithCancelCause(callCtx)
 	l.mu.Lock()
 	l.cancelAttempt = cancel

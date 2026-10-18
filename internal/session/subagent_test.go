@@ -179,3 +179,15 @@ func requireCost(t *testing.T, svc session.Service, id string, want float64) {
 	require.NoError(t, err)
 	require.InDelta(t, want, s.Cost, 1e-9)
 }
+
+func TestRollUpChildCostFailsWhenTheParentIsGone(t *testing.T) {
+	t.Parallel()
+	svc := newSubagentTestService(t)
+	parent, err := svc.Create(t.Context(), "parent", "/tmp")
+	require.NoError(t, err)
+	child := newChild(t, svc, parent.ID, "msg$$call")
+	setCost(t, svc, child.ID, 0.25)
+	require.NoError(t, svc.Delete(t.Context(), parent.ID))
+
+	require.ErrorContains(t, svc.RollUpChildCost(t.Context(), child.ID), "parent session")
+}

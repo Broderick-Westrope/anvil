@@ -10,7 +10,7 @@ import (
 )
 
 type Querier interface {
-	AddUnrolledChildCostToParent(ctx context.Context, childID string) error
+	AddUnrolledChildCostToParent(ctx context.Context, childID string) (int64, error)
 	ClaimBackgroundJobEvents(ctx context.Context, arg ClaimBackgroundJobEventsParams) ([]string, error)
 	// Mirrors triage.IsSource: keep the two in sync.
 	CountUnresolvedPermissionDecisionsSince(ctx context.Context, createdAt int64) (int64, error)

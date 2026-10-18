@@ -150,8 +150,12 @@ func (s *service) RollUpChildCost(ctx context.Context, childID string) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	qtx := s.q.WithTx(tx)
-	if err := qtx.AddUnrolledChildCostToParent(ctx, childID); err != nil {
+	rolled, err := qtx.AddUnrolledChildCostToParent(ctx, childID)
+	if err != nil {
 		return fmt.Errorf("add cost of %s to parent: %w", childID, err)
+	}
+	if rolled == 0 {
+		return fmt.Errorf("add cost of %s to parent: parent session not found", childID)
 	}
 	if err := qtx.MarkChildCostRolledUp(ctx, childID); err != nil {
 		return fmt.Errorf("mark cost of %s rolled up: %w", childID, err)

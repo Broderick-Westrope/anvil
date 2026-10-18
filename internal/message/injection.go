@@ -29,6 +29,9 @@ const (
 	// InjectionKindRetry is the harness's continue message after a
 	// transient failure.
 	InjectionKindRetry InjectionKind = "retry"
+	// InjectionKindContinue is the harness's continue message after an
+	// interrupt whose steer was already delivered.
+	InjectionKindContinue InjectionKind = "continue"
 )
 
 // InjectionContent is the audit record of one injected message. It lives
@@ -44,6 +47,8 @@ type InjectionContent struct {
 	Attempt int `json:"attempt,omitempty"`
 	// MaxAttempts is the retry budget Attempt counts against.
 	MaxAttempts int `json:"max_attempts,omitempty"`
+	// Reason names the failure a harness retry recovers from.
+	Reason string `json:"reason,omitempty"`
 }
 
 func (InjectionContent) isPart() {}

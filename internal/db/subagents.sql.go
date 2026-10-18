@@ -9,7 +9,7 @@ import (
 	"context"
 )
 
-const addUnrolledChildCostToParent = `-- name: AddUnrolledChildCostToParent :exec
+const addUnrolledChildCostToParent = `-- name: AddUnrolledChildCostToParent :execrows
 UPDATE sessions
 SET cost = cost + (
     SELECT child.cost - child.cost_rolled_up FROM sessions AS child WHERE child.id = ?1
@@ -19,9 +19,12 @@ WHERE id = (
 )
 `
 
-func (q *Queries) AddUnrolledChildCostToParent(ctx context.Context, childID string) error {
-	_, err := q.exec(ctx, q.addUnrolledChildCostToParentStmt, addUnrolledChildCostToParent, childID)
-	return err
+func (q *Queries) AddUnrolledChildCostToParent(ctx context.Context, childID string) (int64, error) {
+	result, err := q.exec(ctx, q.addUnrolledChildCostToParentStmt, addUnrolledChildCostToParent, childID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const createSubagent = `-- name: CreateSubagent :exec

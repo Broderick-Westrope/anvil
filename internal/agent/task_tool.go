@@ -76,6 +76,8 @@ func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDep
 
 			return c.runSubAgent(ctx, subAgentParams{
 				Agent:          agent,
+				AgentType:      params.SubagentType,
+				Depth:          targetDepth,
 				SessionID:      sessionID,
 				AgentMessageID: agentMessageID,
 				ToolCallID:     call.ID,
