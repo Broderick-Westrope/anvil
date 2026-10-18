@@ -132,10 +132,7 @@ func TestWorkflowRunViewKeepsItsSelectionWhenTheRunMovesOn(t *testing.T) {
 	next := runningView()
 	next.Phases = append(next.Phases, workflowhost.RunPhase{Step: "review", Detail: "pass 1/3"})
 	f.ws.views["run-1"] = next
-	f.event(workflowhost.Event{
-		Kind: workflowhost.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1",
-		Progress: &workflowhost.Progress{Step: "review", Detail: "pass 1/3"},
-	})
+	f.event(workflowhost.Event{Kind: workflowhost.EventChanged, RunID: "run-1", Command: "demo", SessionID: "sess-1"})
 
 	require.Equal(t, 7, view.Len())
 	require.Equal(t, 2, view.Selected())

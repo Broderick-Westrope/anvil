@@ -39,18 +39,10 @@ const (
 	EventApproval EventKind = "approval"
 	// EventAsk is a question from ask().
 	EventAsk EventKind = "ask"
-	// EventStatus is a progress update from status().
-	EventStatus EventKind = "status"
 	// EventWarn is a non-fatal problem, such as undeclared use.
 	EventWarn EventKind = "warn"
-	// EventStep is a bash command or turn the script started, shown as a
-	// workflow step.
-	EventStep EventKind = "step"
 	// EventState reports a change in a run's State.
 	EventState EventKind = "state"
-	// EventAgent reports a subagent starting (Status running) and ending
-	// (completed or failed, with Err).
-	EventAgent EventKind = "agent"
 	// EventFinished ends an invocation.
 	EventFinished EventKind = "finished"
 	// EventChanged says the run's log gained an event. It's published
@@ -69,10 +61,6 @@ const (
 	StatePaused RunState = "paused"
 	// StateResumed is a paused run continuing.
 	StateResumed RunState = "resumed"
-	// StateHeld is a run holding its sessions inside workflow.exclusive.
-	StateHeld RunState = "held"
-	// StateReleased is a run whose sessions are no longer held.
-	StateReleased RunState = "released"
 )
 
 // Event is everything the UI needs to show a workflow. Fields beyond the
@@ -89,10 +77,7 @@ type Event struct {
 	Question  string
 	Options   []string
 
-	Progress *Progress  // EventStatus.
-	Activity *Activity  // EventStep.
-	Agent    *AgentCall // EventAgent.
-	State    RunState   // EventState.
+	State RunState // EventState.
 
 	// Message is an EventWarn's warning, or why an EventFinished run
 	// didn't complete.
@@ -100,42 +85,6 @@ type Event struct {
 	// Status and Result are how an EventFinished run ended.
 	Status Status
 	Result json.RawMessage
-}
-
-// Progress is what a script last reported with status().
-type Progress struct {
-	Step, Detail string
-}
-
-// ActivityKind says what an EventStep started.
-type ActivityKind string
-
-const (
-	// ActivityBash is a bash command.
-	ActivityBash ActivityKind = "bash"
-	// ActivityTurn is a turn sent to a session.
-	ActivityTurn ActivityKind = "turn"
-)
-
-// Activity is a bash command or turn a script started.
-type Activity struct {
-	Kind ActivityKind
-	// Cmd is an ActivityBash's command line.
-	Cmd string
-	// Session is the session an ActivityTurn runs in.
-	Session string
-}
-
-// AgentCall is a subagent a script ran.
-type AgentCall struct {
-	Name  string
-	Model string // The pinned model, if any.
-	// Session is the subagent's child session, empty when it failed
-	// before it had one.
-	Session string
-	// Status is running, completed or failed, with Err saying why.
-	Status Status
-	Err    string
 }
 
 // ApprovalRequest is what the user reviews before a workflow first runs

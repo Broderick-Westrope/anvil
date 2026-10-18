@@ -67,7 +67,6 @@ func (b *backend) withSkills(names []string, prompt string) string {
 }
 
 func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, error) {
-	b.publish(Event{Kind: EventStep, Activity: &Activity{Kind: ActivityTurn, Session: call.SessionID}})
 	prompt := commands.FormatWorkflowTurnXML(b.base.Command, b.withSkills(call.Skills, call.Prompt))
 	result, err := b.svc.deps.Coordinator.RunTurn(ctx, call.SessionID, prompt)
 	if err != nil {
@@ -167,10 +166,9 @@ func AgentSessionTitle(command, agent string) string {
 	return "/" + command + ": " + agent
 }
 
-// Agent runs a subagent in a child session whose ID is published once the
-// session exists, so the UI can open it while it runs. Its messages stay
-// in that session and never reach the invoking one. An agent that fails
-// before its session exists is published only as failed, with no session.
+// Agent runs a subagent in a child session, recorded as the run's once it
+// exists so the run view can open it while it runs. Its messages stay in
+// that session and never reach the invoking one.
 func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.AgentResult, error) {
 	wc := agent.WorkflowAgentCall{
 		ParentSessionID: call.ParentSessionID,
@@ -187,34 +185,22 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 		}
 		wc.Schema, wc.Validate = call.Schema, schema.Validate
 	}
-	ended := AgentCall{Name: call.Agent, Model: call.Model, Status: StatusCompleted}
 	// A subagent whose session can't be tied to the run would be
 	// unreachable from it, so failing to record that stops the subagent.
 	ctx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
+	errUnrecorded := errors.New("record subagent session")
 	wc.OnSession = func(sessionID string) {
-		// The run view finds the session by the event that made it, so
-		// it's recorded before anyone hears the subagent started.
 		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, sessionID, session.WorkflowOwner{
 			RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindAgent,
 		}); err != nil {
-			stop(fmt.Errorf("record subagent session: %w", err))
-			ended.Session = sessionID
-			return
+			stop(fmt.Errorf("%w: %w", errUnrecorded, err))
 		}
-		started := ended
-		started.Session, started.Status = sessionID, StatusRunning
-		b.publishState(ctx, Event{Kind: EventAgent, Agent: &started})
-		ended.Session = sessionID
 	}
 	res, err := b.runAgent(ctx, wc)
-	if cause := context.Cause(ctx); err != nil && cause != nil && !errors.Is(cause, context.Canceled) {
+	if cause := context.Cause(ctx); err != nil && errors.Is(cause, errUnrecorded) {
 		err = cause
 	}
-	if err != nil {
-		ended.Status, ended.Err = StatusFailed, err.Error()
-	}
-	b.publishState(ctx, Event{Kind: EventAgent, Agent: &ended})
 	return res, err
 }
 
@@ -236,7 +222,6 @@ func (b *backend) Bash(ctx context.Context, call workflow.BashCall) (workflow.Ba
 	if cwd == "" {
 		cwd = b.svc.deps.WorkingDir
 	}
-	b.publish(Event{Kind: EventStep, Activity: &Activity{Kind: ActivityBash, Cmd: call.Cmd}})
 	sh := shell.NewShell(&shell.Options{WorkingDir: cwd})
 	// wtp runs as a child process so cancelling a workflow kills hooks
 	// it started too; in-process it can't stop them.
@@ -259,9 +244,8 @@ func (b *backend) Ask(ctx context.Context, question string, options []string) (s
 	})
 }
 
-func (b *backend) Status(step, detail string) {
-	b.publish(Event{Kind: EventStatus, Progress: &Progress{Step: step, Detail: detail}})
-}
+// Status needs nothing beyond its recorded event, which the run view shows.
+func (b *backend) Status(string, string) {}
 
 func (b *backend) Warn(msg string) {
 	b.publish(Event{Kind: EventWarn, Message: msg})
@@ -291,11 +275,7 @@ func (b *backend) Hold(ctx context.Context, call workflow.HoldCall) (func(), err
 		release()
 		return nil, err
 	}
-	b.publishState(ctx, Event{Kind: EventState, State: StateHeld})
-	return func() {
-		release()
-		b.publishState(ctx, Event{Kind: EventState, State: StateReleased})
-	}, nil
+	return release, nil
 }
 
 // settleJobs refuses with *workflow.JobsRunningError while the sessions own

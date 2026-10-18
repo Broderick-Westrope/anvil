@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -103,10 +104,13 @@ func TestServiceRunsWorkflowAndRecordsIt(t *testing.T) {
 }`)
 	h.start(t, path, "hello")
 
-	require.Equal(t, "echo", h.next(t, workflowhost.EventStatus).Progress.Step)
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
 	require.JSONEq(t, `"hello"`, string(done.Result))
+	view, _, err := h.svc.RunView(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+	step, detail := view.Current()
+	require.Equal(t, []string{"echo", "hello"}, []string{step, detail})
 
 	run, ok, err := h.store.GetRun(h.fixture.Context, done.RunID)
 	require.NoError(t, err)
@@ -449,14 +453,10 @@ func TestServicePublishesEachRunStateWithItsCommand(t *testing.T) {
 	path := h.write(t, `function main() { workflow.exclusive(() => 1); return ask("wait") }`)
 	h.start(t, path, "")
 
-	var states []workflowhost.RunState
-	for len(states) < 3 {
-		ev := h.next(t, workflowhost.EventState)
-		require.Equal(t, "demo", ev.Command)
-		require.Equal(t, h.session, ev.SessionID)
-		states = append(states, ev.State)
-	}
-	require.Equal(t, []workflowhost.RunState{workflowhost.StateStarted, workflowhost.StateHeld, workflowhost.StateReleased}, states)
+	started := h.next(t, workflowhost.EventState)
+	require.Equal(t, workflowhost.StateStarted, started.State)
+	require.Equal(t, "demo", started.Command)
+	require.Equal(t, h.session, started.SessionID)
 
 	ask := h.next(t, workflowhost.EventAsk)
 	require.NoError(t, h.svc.Pause(ask.RunID))
@@ -465,7 +465,7 @@ func TestServicePublishesEachRunStateWithItsCommand(t *testing.T) {
 	require.Equal(t, "demo", paused.Command)
 	view, _, err := h.svc.RunView(h.fixture.Context, ask.RunID)
 	require.NoError(t, err)
-	require.True(t, view.Paused, "pause is recorded, so the view shows it after a restart")
+	require.True(t, view.Paused, "pause is recorded, so a reloaded view shows it")
 	require.NoError(t, h.svc.Resume(ask.RunID))
 	require.Equal(t, workflowhost.StateResumed, h.next(t, workflowhost.EventState).State)
 	view, _, err = h.svc.RunView(h.fixture.Context, ask.RunID)
@@ -544,67 +544,72 @@ func TestServiceTurnIsRecordedAsWorkflowTurn(t *testing.T) {
 	require.Equal(t, "do the thing", prompt)
 }
 
-func TestServiceAgentPublishesItsSession(t *testing.T) {
+// agentItems returns the subagents a finished run's view shows.
+func agentItems(t *testing.T, h *serviceHarness, runID string) []workflowhost.RunItem {
+	t.Helper()
+	view, ok, err := h.svc.RunView(h.fixture.Context, runID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	var items []workflowhost.RunItem
+	for _, p := range view.Phases {
+		for _, item := range p.Items {
+			if item.Kind == workflowhost.RunItemAgent {
+				items = append(items, item)
+			}
+		}
+	}
+	return items
+}
+
+func TestServiceAgentRecordsItsSession(t *testing.T) {
 	h := newServiceHarness(t, true)
 	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "looks fine"})
 	path := h.write(t, `requires({agents: ["reviewer"]})
 function main() { return agent("reviewer", "review") }`)
 	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
 
-	start := h.next(t, workflowhost.EventAgent)
-	require.Equal(t, "demo", start.Command)
-	require.Equal(t, h.session, start.SessionID)
-	require.Equal(t, "reviewer", start.Agent.Name)
-	require.Empty(t, start.Agent.Model, "no model was pinned")
-	require.Equal(t, workflowhost.StatusRunning, start.Agent.Status)
-	_, err := h.fixture.Workspace.GetSession(h.fixture.Context, start.Agent.Session)
-	require.NoError(t, err, "the session exists when it's published")
-
-	end := h.next(t, workflowhost.EventAgent)
-	require.Equal(t, start.Agent.Session, end.Agent.Session)
-	require.Equal(t, "reviewer", end.Agent.Name)
-	require.Equal(t, workflowhost.StatusCompleted, end.Agent.Status)
-	require.Equal(t, workflowhost.StatusCompleted, h.next(t, workflowhost.EventFinished).Status)
-
-	child, err := h.fixture.Workspace.GetSession(h.fixture.Context, start.Agent.Session)
+	items := agentItems(t, h, done.RunID)
+	require.Len(t, items, 1)
+	require.Equal(t, "reviewer", items[0].Agent)
+	require.Empty(t, items[0].Model, "no model was pinned")
+	require.Equal(t, workflowhost.StatusCompleted, items[0].Status)
+	child, err := h.fixture.Workspace.GetSession(h.fixture.Context, items[0].SessionID)
 	require.NoError(t, err)
 	require.Equal(t, h.session, child.ParentSessionID)
 	require.Equal(t, "/demo: reviewer", child.Title)
 }
 
-func TestServiceAgentPublishesFailure(t *testing.T) {
+func TestServiceAgentRecordsFailure(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `requires({agents: ["reviewer"]})
 function main() { return agent("reviewer", "review", {model: "nope/nope"}) }`)
 	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusFailed, done.Status)
 
-	failed := h.next(t, workflowhost.EventAgent)
-	require.Equal(t, "nope/nope", failed.Agent.Model)
-	require.Equal(t, workflowhost.StatusFailed, failed.Agent.Status, "an agent that never got a session never shows as running")
-	require.Empty(t, failed.Agent.Session, "it has no session to open")
-	require.Contains(t, failed.Agent.Err, "nope/nope")
-	require.Equal(t, workflowhost.StatusFailed, h.next(t, workflowhost.EventFinished).Status)
+	items := agentItems(t, h, done.RunID)
+	require.Len(t, items, 1)
+	require.Equal(t, "nope/nope", items[0].Model)
+	require.Equal(t, workflowhost.StatusFailed, items[0].Status)
+	require.Empty(t, items[0].SessionID, "it has no session to open")
+	require.Contains(t, items[0].Err, "nope/nope")
 }
 
-func TestServiceParallelAgentsEachPublishTheirSession(t *testing.T) {
+func TestServiceParallelAgentsEachRecordTheirSession(t *testing.T) {
 	h := newServiceHarness(t, true)
 	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "a"}, branchfixture.Response{Text: "b"})
 	path := h.write(t, `requires({agents: ["reviewer"]})
 function main() { parallel([{agent: "reviewer", prompt: "a"}, {agent: "reviewer", prompt: "b"}]) }`)
 	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
 
-	running, ended := map[string]bool{}, map[string]bool{}
-	for range 4 {
-		ev := h.next(t, workflowhost.EventAgent)
-		if ev.Agent.Status == workflowhost.StatusRunning {
-			running[ev.Agent.Session] = true
-		} else {
-			ended[ev.Agent.Session] = true
-		}
-	}
-	require.Len(t, running, 2)
-	require.Equal(t, running, ended)
-	require.Equal(t, workflowhost.StatusCompleted, h.next(t, workflowhost.EventFinished).Status)
+	items := agentItems(t, h, done.RunID)
+	require.Len(t, items, 2)
+	require.NotEmpty(t, items[0].SessionID)
+	require.NotEqual(t, items[0].SessionID, items[1].SessionID)
 }
 
 func TestServiceShutdownInterruptsRunsAndRefusesNewOnes(t *testing.T) {
@@ -924,9 +929,14 @@ func TestServiceRecordsAnInterruptedBashAsFailed(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `function main() { status("go"); return bash("sleep 30", {check: false}) }`)
 	h.start(t, path, "")
-	status := h.next(t, workflowhost.EventStatus)
-	h.next(t, workflowhost.EventStep)
-	require.NoError(t, h.svc.Abort(status.RunID))
+	started := h.next(t, workflowhost.EventState)
+	require.Eventually(t, func() bool {
+		events, err := h.store.ListEvents(h.fixture.Context, started.RunID)
+		return err == nil && slices.ContainsFunc(events, func(ev workflow.Event) bool {
+			return ev.Primitive == "bash" && ev.Phase == workflow.PhaseStarted
+		})
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, h.svc.Abort(started.RunID))
 	done := h.next(t, workflowhost.EventFinished)
 	require.Equal(t, workflowhost.StatusAborted, done.Status)
 
