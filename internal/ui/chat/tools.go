@@ -185,9 +185,6 @@ type baseToolMessageItem struct {
 	// messageCreatedAt is when the assistant message carrying the tool
 	// call was created.
 	messageCreatedAt time.Time
-	// ownTimer marks tools that show their own elapsed time, so the
-	// header gets no duration.
-	ownTimer bool
 	// stepRunning reports whether the step that made the call is still
 	// in flight.
 	stepRunning bool
@@ -210,12 +207,6 @@ func newBaseToolMessageItem(
 		tools.WebSearchToolName, tools.AgenticFetchToolName, agent.TaskToolName:
 		hasCappedWidth = true
 	}
-	// These tools show their own elapsed time.
-	var ownTimer bool
-	switch toolCall.Name {
-	case tools.JobOutputToolName, tools.AgenticFetchToolName, agent.TaskToolName:
-		ownTimer = true
-	}
 
 	status := ToolStatusRunning
 	if canceled {
@@ -234,7 +225,6 @@ func newBaseToolMessageItem(
 		result:                   result,
 		status:                   status,
 		hasCappedWidth:           hasCappedWidth,
-		ownTimer:                 ownTimer,
 	}
 	t.anim = anim.New(anim.Settings{
 		ID:          toolCall.ID,
@@ -525,12 +515,22 @@ func (t *baseToolMessageItem) SetStepRunning(running bool) {
 
 // TimerCandidate implements [TimedTool].
 func (t *baseToolMessageItem) TimerCandidate() bool {
-	return !t.ownTimer && t.toolCall.StartedAt != 0 && t.computeStatus() == ToolStatusRunning
+	return !t.hasOwnTimer() && t.toolCall.StartedAt != 0 && t.computeStatus() == ToolStatusRunning
+}
+
+// hasOwnTimer reports whether the tool shows its own elapsed time, so its
+// header gets no duration.
+func (t *baseToolMessageItem) hasOwnTimer() bool {
+	switch t.toolCall.Name {
+	case tools.AgenticFetchToolName, agent.TaskToolName:
+		return true
+	}
+	return IsJobOutputWait(t.toolCall)
 }
 
 // timerDuration returns the duration the header shows at now.
 func (t *baseToolMessageItem) timerDuration(now time.Time) time.Duration {
-	if t.ownTimer {
+	if t.hasOwnTimer() {
 		return 0
 	}
 	running := t.stepRunning && t.computeStatus() == ToolStatusRunning

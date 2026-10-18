@@ -233,6 +233,10 @@ func TestToolItemTimerOtherHeaders(t *testing.T) {
 			call:   message.ToolCall{ID: "tc", Name: tools.JobKillToolName, Input: `{"shell_id":"05A"}`, Finished: true, StartedAt: started},
 			result: message.ToolResult{ToolCallID: "tc", Content: "killed", FinishedAt: started + 12_000},
 		},
+		"job output without wait": {
+			call:   message.ToolCall{ID: "tc", Name: tools.JobOutputToolName, Input: `{"shell_id":"05A"}`, Finished: true, StartedAt: started},
+			result: message.ToolResult{ToolCallID: "tc", Content: "output", FinishedAt: started + 12_000},
+		},
 		"docker mcp": {
 			call:   message.ToolCall{ID: "tc", Name: "mcp_docker_mcp-find", Input: `{"query":"github"}`, Finished: true, StartedAt: started},
 			result: message.ToolResult{ToolCallID: "tc", Content: "[]", FinishedAt: started + 12_000},
