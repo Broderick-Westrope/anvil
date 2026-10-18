@@ -220,7 +220,11 @@ func (d *DockerMCPToolRenderContext) makeHeader(sty *styles.Styles, tool string,
 	}
 	prefix := fmt.Sprintf("%s %s ", icon, d.formatToolName(sty, tool))
 	suffix, remaining := fitToolTimerSuffix(sty, opts.Duration, width, lipgloss.Width(prefix))
-	return prefix + toolParamList(sty, params, remaining, opts) + suffix
+	paramsStr := toolParamList(sty, params, remaining, opts)
+	if paramsStr == "" && suffix != "" {
+		prefix = strings.TrimSuffix(prefix, " ")
+	}
+	return prefix + paramsStr + suffix
 }
 
 func (d *DockerMCPToolRenderContext) formatToolName(sty *styles.Styles, tool string) string {

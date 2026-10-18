@@ -297,3 +297,12 @@ func TestToolHeaderDurationWithoutParams(t *testing.T) {
 	out := ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Diagnostics", 80, &ToolRenderOpts{Duration: 12 * time.Second}))
 	require.Equal(t, "● Diagnostics · 12s", out)
 }
+
+func TestDockerMCPHeaderDurationWithoutParams(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+	r := &DockerMCPToolRenderContext{}
+	out := ansi.Strip(r.makeHeader(&sty, "mcp-find", 80, &ToolRenderOpts{Status: ToolStatusSuccess, Duration: 12 * time.Second}))
+	require.NotContains(t, out, "  · ")
+	require.True(t, strings.HasSuffix(out, " · 12s"), out)
+}
