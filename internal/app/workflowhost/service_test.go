@@ -1514,3 +1514,42 @@ func TestServiceReportsARunningRunUntilItEnds(t *testing.T) {
 	h.next(t, workflowhost.EventFinished)
 	require.Eventually(t, func() bool { return !h.svc.Running(h.session) }, time.Second, 10*time.Millisecond)
 }
+
+// A subagent's surviving jobs stay in its session, so workflow.exclusive
+// waits for them (or stops them) like a held session's own.
+func TestServiceExclusiveSeesASubagentsSurvivingJobs(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "looked"})
+	path := h.write(t, `requires({agents: ["reviewer"]})
+function main() {
+  const s = session.new()
+  agent("reviewer", "look")
+  ask("go?")
+  let refused
+  try { workflow.exclusive(() => 1) } catch (e) { refused = e instanceof JobsRunning && e.jobs[0].command }
+  return refused
+}`)
+	h.start(t, path, "")
+	ask := h.next(t, workflowhost.EventAsk)
+	owned, err := h.fixture.Sessions.ListByWorkflowRun(h.fixture.Context, ask.RunID)
+	require.NoError(t, err)
+	var sub string
+	for _, s := range owned {
+		if s.WorkflowKind == session.WorkflowKindAgent {
+			sub = s.ID
+		}
+	}
+	require.NotEmpty(t, sub)
+
+	mgr := shell.GetBackgroundShellManager()
+	bs, err := mgr.Start(h.fixture.Context, h.dir, nil, "sleep 31", "left by the subagent")
+	require.NoError(t, err)
+	jobID, err := mgr.Publish(h.fixture.Context, bs.ID(), shell.PublishOptions{SessionID: sub, Origin: shell.OriginExplicit})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mgr.Kill(jobID) })
+	require.NoError(t, h.svc.Respond(ask.RequestID, "go"))
+
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+	require.JSONEq(t, `"sleep 31"`, string(done.Result))
+}

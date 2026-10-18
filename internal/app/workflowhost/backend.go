@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
@@ -271,10 +272,22 @@ func (b *backend) Hold(ctx context.Context, call workflow.HoldCall) (func(), err
 	if err != nil {
 		return nil, err
 	}
-	// The hold has waited out in-flight runs, so subagents have handed
-	// their surviving jobs to these sessions; what's left can still write
-	// to the workspace the script is about to change.
-	if err := settleJobs(call.SessionIDs, call.StopJobs); err != nil {
+	// The hold has waited out in-flight runs, so subagents have finished.
+	// Their surviving jobs stay in their own sessions, and with the held
+	// sessions' own jobs can still write to the workspace the script is
+	// about to change.
+	owned, err := b.svc.deps.Sessions.ListByWorkflowRun(ctx, b.base.RunID)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	jobSessions := slices.Clone(call.SessionIDs)
+	for _, s := range owned {
+		if s.WorkflowKind == session.WorkflowKindAgent {
+			jobSessions = append(jobSessions, s.ID)
+		}
+	}
+	if err := settleJobs(jobSessions, call.StopJobs); err != nil {
 		release()
 		return nil, err
 	}

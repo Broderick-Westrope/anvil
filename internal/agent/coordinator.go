@@ -1590,11 +1590,14 @@ type childSession struct {
 	ID, ParentID, Title string
 	// OnCreate, when set, is called once the session exists.
 	OnCreate func(sessionID string)
+	// KeepJobs keeps the child's surviving background jobs in its own
+	// session rather than handing them to the parent.
+	KeepJobs bool
 }
 
 // inChildSession runs fn in a new child session of s.ParentID, then rolls
 // the child's cost up to the parent (only when fn succeeds) and hands its
-// surviving background jobs to the parent. It returns the hand-off
+// surviving background jobs to the parent, unless s.KeepJobs. It returns the hand-off
 // inventory, empty when there were no jobs. Every subagent run, from the
 // task tool or a workflow, goes through here.
 func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn func(ctx context.Context, sessionID string) error) (handedOff string, err error) {
@@ -1606,8 +1609,12 @@ func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn fun
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
+	jobOwner := s.ParentID
+	if s.KeepJobs {
+		jobOwner = session.ID
+	}
 	defer func() {
-		handedOff = handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, s.ParentID)
+		handedOff = handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, session.ID, jobOwner)
 	}()
 	defer c.permissions.RevokeAutoApproveSession(session.ID)
 	if s.OnCreate != nil {

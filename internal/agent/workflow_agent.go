@@ -95,8 +95,11 @@ func (c *coordinator) RunWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 		sessionID = uuid.NewString()
 	}
 	out := WorkflowAgentOutput{SessionID: sessionID}
+	// The parent is the user's own session, which the run never works in,
+	// so a subagent's surviving jobs stay with the run: in the subagent's
+	// session, where workflow.exclusive finds them.
 	handedOff, err := c.inChildSession(ctx, childSession{
-		ID: sessionID, ParentID: call.ParentSessionID, Title: title, OnCreate: call.OnSession,
+		ID: sessionID, ParentID: call.ParentSessionID, Title: title, OnCreate: call.OnSession, KeepJobs: true,
 	}, func(ctx context.Context, sessionID string) error {
 		text, err := c.runWorkflowTurn(ctx, sub, sessionID, call.Prompt)
 		if err != nil {
@@ -114,7 +117,7 @@ func (c *coordinator) RunWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 		return nil
 	})
 	if handedOff != "" {
-		slog.Info("Workflow subagent jobs handed off", "parent_session", call.ParentSessionID, "inventory", handedOff)
+		slog.Info("Workflow subagent jobs left running", "session", sessionID, "inventory", handedOff)
 	}
 	if err != nil {
 		return WorkflowAgentOutput{}, err
