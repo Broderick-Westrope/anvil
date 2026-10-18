@@ -259,8 +259,18 @@ func TestToolTimerSuffixFitsExactly(t *testing.T) {
 	opts := &ToolRenderOpts{Duration: 23 * time.Second}
 	exact := ansi.StringWidth(ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", 200, opts)))
 
-	require.Contains(t, ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", exact, opts)), "23s")
-	require.NotContains(t, ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", exact-1, opts)), "23s")
+	// The params need at least one column, or an expanded header can't
+	// wrap them and the suffix lands off screen.
+	require.Contains(t, ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", exact+1, opts)), "23s")
+	require.NotContains(t, ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", exact, opts)), "23s")
+
+	expanded := &ToolRenderOpts{Duration: 23 * time.Second, ExpandedContent: true}
+	for _, width := range []int{exact, exact + 1, exact + 2} {
+		out := ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", width, expanded, "ls -la"))
+		for _, line := range strings.Split(out, "\n") {
+			require.LessOrEqual(t, ansi.StringWidth(line), width, out)
+		}
+	}
 }
 
 func TestJobHeaderDescriptionNeedsTenColumns(t *testing.T) {

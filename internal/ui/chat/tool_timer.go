@@ -62,7 +62,9 @@ func fitToolTimerSuffix(sty *styles.Styles, d time.Duration, width, fixed int) (
 		return "", remaining
 	}
 	suffix = sty.Tool.StatsSep.Render(" · ") + sty.Tool.StatsLine.Render(common.FormatDuration(d))
-	if withSuffix := remaining - lipgloss.Width(suffix); withSuffix >= 0 {
+	// Leave the params at least one column: an expanded header can't wrap
+	// them into none.
+	if withSuffix := remaining - lipgloss.Width(suffix); withSuffix > 0 {
 		return suffix, withSuffix
 	}
 	return "", remaining
