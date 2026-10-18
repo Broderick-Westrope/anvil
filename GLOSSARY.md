@@ -109,6 +109,13 @@ A directory with an `anvil-plugin.json` manifest that supplies skills, commands 
 - **Code:** `plugin.Plugin` (`internal/plugin`)
 - **Not:** MCP server, extension.
 
+## Run View
+
+The drill-in for one workflow run: its phases and, under each, the sessions, subagents and questions to the user, rebuilt from the database. It's how the user reaches every session a run made.
+
+- **Code:** `workflowhost.RunView`, `chat.BuildWorkflowRunItems`, `drillInEntry.runID`
+- **Not:** the run node, which is the run's one-line summary in the transcript and opens the run view.
+
 ## Session
 
 A conversation between the user and an agent, stored with its message tree, usage and todos. Sessions are stored in one global database and remember the directory they started in.
@@ -150,6 +157,13 @@ Which tools an agent may use: built-in tools by its `allowed_tools` filter and t
 - **Code:** `toolAccess` (`internal/agent/tool_access.go`)
 - **Not:** permissions. Tool access decides which tools the model sees; the permission service decides whether one call may run.
 
+## Workflow Run
+
+One run of a workflow command. It shows as a node where it was started, and it owns every session it makes: orchestrator sessions such as builders (`session.new`, or `fork()` of a session) and subagent sessions (`agent()`). Each records the run and the event that made it.
+
+- **Code:** `workflowhost.RunRecord`, `session.Session.WorkflowRunID`, `message.MessageTypeWorkflowRun` (the node's marker)
+- **Not:** command (the definition it runs), session (a run spans several).
+
 ## Workspace
 
 The set of operations a frontend (the TUI or the CLI) performs against a running Anvil instance.
@@ -163,17 +177,3 @@ The write tool's refusal to overwrite a file whose current content the session h
 
 - **Code:** `writeGate` (`internal/agent/tools/write.go`), backed by content hashes in `filetracker.Service`
 - **Not:** permission check. The gate runs before the write permission request.
-
-## Workflow Run
-
-One run of a workflow command. It shows as a node where it was started, and it owns every session it makes: orchestrator sessions such as builders (`session.new`, or `fork()` of a session) and subagent sessions (`agent()`). Each records the run and the event that made it.
-
-- **Code:** `workflowhost.RunRecord`, `session.Session.WorkflowRunID`, `message.MessageTypeWorkflowRun` (the node's marker)
-- **Not:** command (the definition it runs), session (a run spans several).
-
-## Run View
-
-The drill-in for one workflow run: its phases and, under each, the sessions, subagents and questions to the user, rebuilt from the database. It's how the user reaches every session a run made.
-
-- **Code:** `workflowhost.RunView`, `chat.BuildWorkflowRunItems`, `drillInEntry.runID`
-- **Not:** the run node, which is the run's one-line summary in the transcript and opens the run view.
