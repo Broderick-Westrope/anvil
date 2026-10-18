@@ -52,19 +52,15 @@ func (p *toolTimerPass) refresh(c *Chat) bool {
 	found := false
 	for i := range c.Len() {
 		item, ok := c.ItemAt(i).(chat.ToolMessageItem)
-		if !ok {
-			continue
-		}
-		timed, ok := item.(chat.TimedTool)
-		if !ok || !timed.TimerCandidate() {
+		if !ok || !item.TimerCandidate() {
 			continue
 		}
 		if p.awaitingPermission(item.ID()) {
 			item.SetStatus(chat.ToolStatusAwaitingPermission)
 			continue
 		}
-		running := p.ws.AgentIsStepRunning(timed.MessageID())
-		timed.SetStepRunning(running)
+		running := p.ws.AgentIsStepRunning(item.MessageID())
+		item.SetStepRunning(running)
 		if running {
 			chat.ClearItemCaches([]chat.MessageItem{item})
 			found = true

@@ -14,19 +14,6 @@ import (
 // quiet.
 const toolTimerThreshold = 10 * time.Second
 
-// TimedTool is a tool item whose header can show how long its call ran.
-type TimedTool interface {
-	// SetStepRunning records whether the step that made the call is still
-	// in flight. A call without a result only shows a live duration while
-	// its step runs; otherwise it was orphaned, such as by a crash.
-	SetStepRunning(running bool)
-	// TimerCandidate reports whether the call is running and would show a
-	// live duration if its step is still in flight.
-	TimerCandidate() bool
-	// MessageID is the ID of the assistant message holding the call.
-	MessageID() string
-}
-
 // toolTimerDuration returns the duration a tool call's header shows, or
 // zero for none: the final duration once the call has a result, the time
 // so far while it runs, and nothing below the threshold or when a time is

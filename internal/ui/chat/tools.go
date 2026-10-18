@@ -60,6 +60,13 @@ type ToolMessageItem interface {
 	SetStatus(status ToolStatus)
 	Status() ToolStatus
 	HasResult() bool
+	// SetStepRunning records whether the step that made the call is still
+	// in flight. A call without a result only shows a live duration while
+	// its step runs; otherwise it was orphaned, such as by a crash.
+	SetStepRunning(running bool)
+	// TimerCandidate reports whether the call is running and would show a
+	// live duration if its step is still in flight.
+	TimerCandidate() bool
 }
 
 // Compactable is an interface for tool items that can render in a compacted mode.
@@ -503,7 +510,7 @@ func (t *baseToolMessageItem) MessageID() string {
 	return t.messageID
 }
 
-// SetStepRunning implements [TimedTool].
+// SetStepRunning implements [ToolMessageItem].
 func (t *baseToolMessageItem) SetStepRunning(running bool) {
 	if t.stepRunning == running {
 		return
@@ -513,9 +520,10 @@ func (t *baseToolMessageItem) SetStepRunning(running bool) {
 	t.Bump()
 }
 
-// TimerCandidate implements [TimedTool].
+// TimerCandidate implements [ToolMessageItem]. It runs for every item on
+// every tick, so the cheap checks come before hasOwnTimer's JSON parse.
 func (t *baseToolMessageItem) TimerCandidate() bool {
-	return !t.hasOwnTimer() && t.toolCall.StartedAt != 0 && t.computeStatus() == ToolStatusRunning
+	return t.toolCall.StartedAt != 0 && t.computeStatus() == ToolStatusRunning && !t.hasOwnTimer()
 }
 
 // hasOwnTimer reports whether the tool shows its own elapsed time, so its
