@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/google/uuid"
-
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -122,10 +120,9 @@ func (b *backend) Fork(ctx context.Context, call workflow.ForkCall) (string, err
 // ownedSession creates an orchestrator session the run owns and lets fill
 // give it history, returning the source message the history ends at, if
 // any. It's a child of the session that started the run, so it stays out of
-// the session list and is reached through the run's node. It's recorded as
-// the run's before anything goes into it, and deleted if it can't be
-// finished, so a failure never leaves a copy of a conversation nobody can
-// reach.
+// the session list and is reached through the run's node. It's created as
+// the run's, and deleted if it can't be finished, so a failure never leaves
+// a copy of a conversation nobody can reach.
 func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, fill func(sessionID string) (string, error)) (string, error) {
 	// A title the script chose is kept; without one, the session starts as
 	// "/cmd" and is auto-titled after its first turn like any session.
@@ -134,7 +131,8 @@ func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, f
 	if !chosen {
 		title = "/" + b.base.Command
 	}
-	s, err := b.svc.deps.Sessions.CreateTaskSession(ctx, uuid.NewString(), b.base.SessionID, title)
+	owner := session.WorkflowOwner{RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindSession}
+	s, err := b.svc.deps.Sessions.CreateWorkflowSession(ctx, b.base.SessionID, title, owner)
 	if err != nil {
 		return "", err
 	}
@@ -143,10 +141,6 @@ func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, f
 			slog.Warn("Failed to remove an unfinished workflow session", "session", s.ID, "error", derr)
 		}
 		return "", err
-	}
-	owner := session.WorkflowOwner{RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindSession}
-	if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, owner); err != nil {
-		return fail(err)
 	}
 	if chosen {
 		if err := b.svc.deps.Sessions.Rename(ctx, s.ID, title, true); err != nil {

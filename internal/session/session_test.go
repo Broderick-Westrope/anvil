@@ -480,3 +480,32 @@ func TestDeleteRemovesBackgroundJobsAndLogs(t *testing.T) {
 		require.FileExists(t, p)
 	}
 }
+
+// A workflow's session is never seen, even by the event announcing it,
+// without the run that owns it.
+func TestCreateWorkflowSessionIsOwnedFromTheStart(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+	sessions := NewService(db.New(conn), conn)
+	events := sessions.Subscribe(t.Context())
+
+	parent, err := sessions.Create(t.Context(), "parent", "/home/user/project")
+	require.NoError(t, err)
+	<-events
+	owner := WorkflowOwner{RunID: "run-1", Seq: 2, Kind: WorkflowKindSession}
+	child, err := sessions.CreateWorkflowSession(t.Context(), parent.ID, "/build approach 1", owner)
+	require.NoError(t, err)
+
+	created := (<-events).Payload
+	for _, s := range []Session{child, created} {
+		require.Equal(t, parent.ID, s.ParentSessionID)
+		require.Equal(t, "run-1", s.WorkflowRunID)
+		require.True(t, s.Conversational())
+		require.Equal(t, "/home/user/project", s.WorkingDir)
+	}
+}

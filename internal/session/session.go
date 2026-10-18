@@ -143,6 +143,10 @@ type Service interface {
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
 	Delete(ctx context.Context, id string) error
 
+	// CreateWorkflowSession creates a child session a workflow run owns,
+	// recording its owner in the same write, so it's never seen without
+	// one.
+	CreateWorkflowSession(ctx context.Context, parentSessionID, title string, owner WorkflowOwner) (Session, error)
 	// SetWorkflowOwner records which workflow run made the session.
 	SetWorkflowOwner(ctx context.Context, id string, owner WorkflowOwner) error
 	// ListByWorkflowRun returns the sessions a workflow run created, in the
@@ -510,6 +514,47 @@ func (s *service) fromDBItem(item db.Session) Session {
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
+}
+
+func (s *service) CreateWorkflowSession(ctx context.Context, parentSessionID, title string, owner WorkflowOwner) (Session, error) {
+	parent, err := s.q.GetSessionByID(ctx, parentSessionID)
+	if err != nil {
+		return Session{}, fmt.Errorf("looking up parent session: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Session{}, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	qtx := s.q.WithTx(tx)
+	id := uuid.NewString()
+	if _, err := qtx.CreateSession(ctx, db.CreateSessionParams{
+		ID:              id,
+		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
+		Title:           title,
+		WorkingDir:      parent.WorkingDir,
+	}); err != nil {
+		return Session{}, err
+	}
+	if err := qtx.SetSessionWorkflowOwner(ctx, db.SetSessionWorkflowOwnerParams{
+		ID:                  id,
+		WorkflowRunID:       owner.RunID,
+		WorkflowSeq:         int64(owner.Seq),
+		WorkflowKind:        string(owner.Kind),
+		ForkedFromMessageID: owner.ForkedFrom,
+	}); err != nil {
+		return Session{}, fmt.Errorf("set workflow owner of session %s: %w", id, err)
+	}
+	dbSession, err := qtx.GetSessionByID(ctx, id)
+	if err != nil {
+		return Session{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Session{}, fmt.Errorf("committing transaction: %w", err)
+	}
+	session := s.fromDBItem(dbSession)
+	s.Publish(pubsub.CreatedEvent, session)
+	return session, nil
 }
 
 func (s *service) SetWorkflowOwner(ctx context.Context, id string, owner WorkflowOwner) error {
