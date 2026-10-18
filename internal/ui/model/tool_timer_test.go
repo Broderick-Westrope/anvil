@@ -26,6 +26,10 @@ func (w *timerWorkspace) AgentIsStepRunning(assistantMessageID string) bool {
 	return w.running[assistantMessageID]
 }
 
+func (*timerWorkspace) PermissionPending() (permission.PendingPermission, bool) {
+	return permission.PendingPermission{}, false
+}
+
 func newTimerTestUI() (*UI, *timerWorkspace) {
 	u, jw := newJobsTestUI(nil)
 	ws := &timerWorkspace{jobsWorkspace: jw, running: map[string]bool{}}
@@ -252,4 +256,34 @@ func TestToolTimerIgnoresAStaleStartTime(t *testing.T) {
 	_, _ = u.Update(assistantUpdate("s1", unstarted))
 	require.Equal(t, restarted.StartedAt, item.ToolCall().StartedAt, "an older snapshot never moves the clock back")
 	require.Equal(t, unstarted.Input, item.ToolCall().Input)
+}
+
+// pendingWorkspace has a permission prompt open for one tool call.
+type pendingWorkspace struct {
+	*timerWorkspace
+	pending permission.PendingPermission
+}
+
+func (w *pendingWorkspace) PermissionPending() (permission.PendingPermission, bool) {
+	return w.pending, w.pending.ID != ""
+}
+
+func TestToolTimerHidesWhileItsPromptIsOpen(t *testing.T) {
+	t.Parallel()
+	u, tw := newTimerTestUI()
+	ws := &pendingWorkspace{timerWorkspace: tw, pending: permission.PendingPermission{ID: "p1", ToolCallID: "tc1"}}
+	u.com.Workspace = ws
+	// The item was built after its request notification went by, such as
+	// by a drill-in load that finished during the prompt, so it still
+	// says running.
+	item := toolItemIn(u, "a1", runningBash("tc1", 30*time.Second))
+	other := toolItemIn(u, "a1", runningBash("tc2", 30*time.Second))
+	u.chat.SetMessages(item, other)
+	tw.running["a1"] = true
+
+	u.elapsedTickRunning = true
+	_, _ = u.Update(tickElapsedTimeMsg{})
+	require.Equal(t, chat.ToolStatusAwaitingPermission, item.Status())
+	require.NotContains(t, renderedHeader(item), " · ")
+	require.Contains(t, renderedHeader(other), " · ", "other calls keep their timers")
 }

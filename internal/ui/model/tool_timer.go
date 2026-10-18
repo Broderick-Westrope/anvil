@@ -3,6 +3,7 @@ package model
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 )
 
@@ -11,21 +12,46 @@ import (
 // render caches of calls showing a live duration so the next draw shows
 // the new time. It reports whether any call shows one, which keeps the
 // elapsed tick alive.
+//
+// A call whose permission prompt is open is marked as awaiting permission.
+// Its request notification only reaches items that exist, so an item built
+// after it (such as by a drill-in load that finished during the prompt)
+// would otherwise time the prompt.
 func (m *UI) refreshToolTimers() bool {
-	found := m.refreshToolTimersInChat(m.chat)
+	pass := toolTimerPass{ws: m.com.Workspace}
+	found := pass.refresh(m.chat)
 	for _, entry := range m.drillStack {
-		found = m.refreshToolTimersInChat(entry.chat) || found
+		found = pass.refresh(entry.chat) || found
 	}
 	return found
 }
 
-func (m *UI) refreshToolTimersInChat(c *Chat) bool {
+// toolTimerPass is one refresh of the tool timers. It asks for the open
+// permission prompt at most once, and only when a call might be timed.
+type toolTimerPass struct {
+	ws interface {
+		AgentIsStepRunning(assistantMessageID string) bool
+		PermissionPending() (permission.PendingPermission, bool)
+	}
+	pending       permission.PendingPermission
+	pendingLoaded bool
+}
+
+func (p *toolTimerPass) awaitingPermission(toolCallID string) bool {
+	if !p.pendingLoaded {
+		p.pending, _ = p.ws.PermissionPending()
+		p.pendingLoaded = true
+	}
+	return p.pending.ToolCallID != "" && p.pending.ToolCallID == toolCallID
+}
+
+func (p *toolTimerPass) refresh(c *Chat) bool {
 	if c == nil {
 		return false
 	}
 	found := false
 	for i := range c.Len() {
-		item, ok := c.ItemAt(i).(chat.MessageItem)
+		item, ok := c.ItemAt(i).(chat.ToolMessageItem)
 		if !ok {
 			continue
 		}
@@ -33,7 +59,11 @@ func (m *UI) refreshToolTimersInChat(c *Chat) bool {
 		if !ok || !timed.TimerCandidate() {
 			continue
 		}
-		running := m.com.Workspace.AgentIsStepRunning(timed.MessageID())
+		if p.awaitingPermission(item.ID()) {
+			item.SetStatus(chat.ToolStatusAwaitingPermission)
+			continue
+		}
+		running := p.ws.AgentIsStepRunning(timed.MessageID())
 		timed.SetStepRunning(running)
 		if running {
 			chat.ClearItemCaches([]chat.MessageItem{item})
