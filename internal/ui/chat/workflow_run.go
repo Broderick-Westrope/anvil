@@ -329,6 +329,10 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 		return sty.Tool.IconPending.UnsetString().Render("?") + " " + sty.Tool.NameNormal.Render(FirstLine(item.Question)) +
 			sty.Tool.StatsSep.Render(" → ") + sty.Tool.StatsLine.Render(answer)
 	case workflowhost.RunItemSession:
+		if item.Status == workflowhost.StatusFailed {
+			return sty.Tool.IconError.String() + " " + sty.Tool.NameNormal.Render(name) + sep +
+				sty.Tool.StatsLine.Render("failed: "+FirstLine(item.Err))
+		}
 		state := "session"
 		if working {
 			state = "working"

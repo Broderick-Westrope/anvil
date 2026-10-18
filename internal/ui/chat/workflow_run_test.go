@@ -5,7 +5,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 )
 
 func TestWorkflowOutcomeTextDescribesEveryStatus(t *testing.T) {
@@ -31,4 +34,20 @@ func TestWorkflowOutcomeTextDescribesEveryStatus(t *testing.T) {
 		})
 	}
 	require.Len(t, tests, len(workflowhost.Statuses()))
+}
+
+func TestAFailedSessionRowSaysItFailed(t *testing.T) {
+	t.Parallel()
+
+	view := workflowhost.RunView{RunID: "run-1", Command: "build", Status: workflowhost.StatusRunning, Phases: []workflowhost.RunPhase{{
+		Items: []workflowhost.RunItem{{Kind: workflowhost.RunItemSession, Status: workflowhost.StatusFailed, Err: "fork() of a run's session can't run inside workflow.exclusive\nmore"}},
+	}}}
+	sty := styles.TokyoNight()
+	rows := BuildWorkflowRunItems(&sty, "build", view, func(string) bool { return false })
+	var text string
+	for _, row := range rows {
+		text += ansi.Strip(row.(*WorkflowRunRowItem).RawRender(200)) + "\n"
+	}
+	require.Contains(t, text, "failed: fork() of a run's session can't run inside workflow.exclusive")
+	require.NotContains(t, text, "· session")
 }

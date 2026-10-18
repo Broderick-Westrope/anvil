@@ -3889,12 +3889,12 @@ func (m *UI) ShortHelp() []key.Binding {
 
 	switch m.state {
 	case uiChat:
-		// Show cancel binding if agent is busy.
-		if m.isAgentBusy() {
+		// Show the cancel binding when Esc would cancel something.
+		if m.isBusy(m.cancelTargetID()) {
 			cancelBinding := k.Chat.Cancel
 			if m.isCanceling {
 				cancelBinding.SetHelp("esc", "press again to cancel")
-			} else if m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
+			} else if m.com.Workspace.AgentQueuedPrompts(m.cancelTargetID()) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
 			}
 			binds = append(binds, cancelBinding)
@@ -3961,7 +3961,7 @@ func (m *UI) ShortHelp() []key.Binding {
 		k.Help,
 	)
 
-	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isAgentBusy() {
+	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isRootBusy() {
 		binds = append(binds, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch")))
 	}
 	return binds
@@ -3982,12 +3982,12 @@ func (m *UI) FullHelp() [][]key.Binding {
 
 	switch m.state {
 	case uiChat:
-		// Show cancel binding if agent is busy.
-		if m.isAgentBusy() {
+		// Show the cancel binding when Esc would cancel something.
+		if m.isBusy(m.cancelTargetID()) {
 			cancelBinding := k.Chat.Cancel
 			if m.isCanceling {
 				cancelBinding.SetHelp("esc", "press again to cancel")
-			} else if m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
+			} else if m.com.Workspace.AgentQueuedPrompts(m.cancelTargetID()) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
 			}
 			binds = append(binds, []key.Binding{cancelBinding})
@@ -4144,7 +4144,7 @@ func (m *UI) quitBinding() key.Binding {
 		switch {
 		case m.textarea.Value() != "" || m.attachments.HasContent():
 			quit.SetHelp("ctrl+c", "clear")
-		case m.isAgentBusy():
+		case m.isBusy(m.cancelTargetID()):
 			quit.SetHelp("ctrl+c", "cancel")
 		}
 	}
