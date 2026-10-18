@@ -93,7 +93,7 @@ func TestSubagentIdentityIsStoredBeforeTheFirstStep(t *testing.T) {
 	c, env, parent := newSubagentCallCoordinator(t)
 
 	agent := newMockAgent(testProvider, 1000, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
-		sub, err := env.sessions.GetSubagent(ctx, call.SessionID)
+		sub, err := env.sessions.GetSubagentByHandle(ctx, parent.ID, "fixer-"+session.HashID(call.SessionID)[:4])
 		require.NoError(t, err)
 		require.Equal(t, session.Subagent{
 			SessionID: call.SessionID, ParentSessionID: parent.ID, Handle: sub.Handle,

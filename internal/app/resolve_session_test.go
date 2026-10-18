@@ -200,10 +200,6 @@ func (m *mockSessionService) CreateSubagent(context.Context, session.Subagent) (
 	return session.Subagent{}, nil
 }
 
-func (m *mockSessionService) GetSubagent(context.Context, string) (session.Subagent, error) {
-	return session.Subagent{}, sql.ErrNoRows
-}
-
 func (m *mockSessionService) GetSubagentByHandle(context.Context, string, string) (session.Subagent, error) {
 	return session.Subagent{}, sql.ErrNoRows
 }

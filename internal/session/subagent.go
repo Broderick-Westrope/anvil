@@ -99,15 +99,6 @@ func (s *service) CreateSubagent(ctx context.Context, sub Subagent) (Subagent, e
 	return sub, nil
 }
 
-// GetSubagent returns the identity of the child session sessionID.
-func (s *service) GetSubagent(ctx context.Context, sessionID string) (Subagent, error) {
-	row, err := s.q.GetSubagent(ctx, sessionID)
-	if err != nil {
-		return Subagent{}, err
-	}
-	return subagentFromDB(row), nil
-}
-
 // GetSubagentByHandle returns the direct child of parentID called handle.
 func (s *service) GetSubagentByHandle(ctx context.Context, parentID, handle string) (Subagent, error) {
 	row, err := s.q.GetSubagentByHandle(ctx, db.GetSubagentByHandleParams{ParentSessionID: parentID, Handle: handle})

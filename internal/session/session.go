@@ -119,7 +119,6 @@ type Service interface {
 
 	// Subagent identity and task call links.
 	CreateSubagent(ctx context.Context, sub Subagent) (Subagent, error)
-	GetSubagent(ctx context.Context, sessionID string) (Subagent, error)
 	GetSubagentByHandle(ctx context.Context, parentID, handle string) (Subagent, error)
 	CreateSubagentCall(ctx context.Context, call SubagentCall) error
 	GetSubagentCall(ctx context.Context, id string) (SubagentCall, error)

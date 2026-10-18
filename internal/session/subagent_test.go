@@ -53,9 +53,7 @@ func TestCreateSubagentAssignsATypedHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, created, got)
 
-	byID, err := svc.GetSubagent(t.Context(), child.ID)
-	require.NoError(t, err)
-	require.Equal(t, created, byID)
+	require.Equal(t, child.ID, got.SessionID)
 }
 
 func TestCreateSubagentLengthensACollidingHandle(t *testing.T) {
