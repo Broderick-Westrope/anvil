@@ -147,6 +147,9 @@ type Service interface {
 	// recording its owner in the same write, so it's never seen without
 	// one.
 	CreateWorkflowSession(ctx context.Context, parentSessionID, title string, owner WorkflowOwner) (Session, error)
+	// WorkflowDescendants lists the sessions workflow runs made from id,
+	// and from those, all the way down: what deleting id deletes with it.
+	WorkflowDescendants(ctx context.Context, id string) ([]string, error)
 	// SetWorkflowOwner records which workflow run made the session.
 	SetWorkflowOwner(ctx context.Context, id string, owner WorkflowOwner) error
 	// ListByWorkflowRun returns the sessions a workflow run created, in the
@@ -555,6 +558,20 @@ func (s *service) CreateWorkflowSession(ctx context.Context, parentSessionID, ti
 	session := s.fromDBItem(dbSession)
 	s.Publish(pubsub.CreatedEvent, session)
 	return session, nil
+}
+
+func (s *service) WorkflowDescendants(ctx context.Context, id string) ([]string, error) {
+	var out []string
+	queue := []string{id}
+	for len(queue) > 0 {
+		children, err := s.q.ListWorkflowChildSessionIDs(ctx, sql.NullString{String: queue[0], Valid: true})
+		if err != nil {
+			return nil, fmt.Errorf("listing workflow sessions of %s: %w", queue[0], err)
+		}
+		queue = append(queue[1:], children...)
+		out = append(out, children...)
+	}
+	return out, nil
 }
 
 func (s *service) SetWorkflowOwner(ctx context.Context, id string, owner WorkflowOwner) error {

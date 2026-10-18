@@ -10,6 +10,19 @@ import (
 	"database/sql"
 )
 
+const countRunningWorkflowRunsFrom = `-- name: CountRunningWorkflowRunsFrom :one
+SELECT COUNT(*)
+FROM workflow_runs
+WHERE status = 'running' AND invoking_session_id = ?
+`
+
+func (q *Queries) CountRunningWorkflowRunsFrom(ctx context.Context, invokingSessionID string) (int64, error) {
+	row := q.queryRow(ctx, q.countRunningWorkflowRunsFromStmt, countRunningWorkflowRunsFrom, invokingSessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createWorkflowRun = `-- name: CreateWorkflowRun :exec
 INSERT INTO workflow_runs (
     id,

@@ -37,6 +37,11 @@ FROM workflow_runs
 WHERE status = 'running'
 ORDER BY started_at ASC;
 
+-- name: CountRunningWorkflowRunsFrom :one
+SELECT COUNT(*)
+FROM workflow_runs
+WHERE status = 'running' AND invoking_session_id = ?;
+
 -- name: MarkWorkflowRunInterrupted :exec
 UPDATE workflow_runs
 SET

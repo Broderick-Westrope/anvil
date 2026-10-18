@@ -14,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
@@ -196,7 +197,7 @@ func (s *Session) HandleMsg(msg tea.Msg) Action {
 					return ActionCmd{util.ReportWarn("Agent is busy, please wait...")}
 				}
 				if item := s.selectedSessionItem(); item != nil && s.com.Workspace.WorkflowRunning(item.ID()) {
-					return ActionCmd{util.ReportWarn("A workflow is running from this session; abort it (alt+x) before deleting the session")}
+					return ActionCmd{util.ReportWarn(workspace.ErrSessionHasRunningWorkflow.Error())}
 				}
 				s.sessionsMode = sessionsModeDeleting
 				s.list.SetItems(sessionItems(s.com.Styles, sessionsModeDeleting, s.sessions...)...)

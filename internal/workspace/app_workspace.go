@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -85,14 +86,37 @@ func (w *AppWorkspace) SetSessionPin(ctx context.Context, sessionID string, pinn
 	return w.app.Sessions.SetPin(ctx, sessionID, pinned, note)
 }
 
-// ErrSessionHasRunningWorkflow refuses deleting a session while a workflow
-// run started from it is going: deleting it deletes the run's sessions,
-// which the run is still using.
-var ErrSessionHasRunningWorkflow = errors.New("a workflow is running from this session; abort it (alt+x) before deleting the session")
+// Deleting a session deletes the sessions workflow runs made from it, so
+// it's refused while they're in use.
+var (
+	// ErrSessionHasRunningWorkflow refuses it while a run started from the
+	// session is going, in this Anvil or another.
+	ErrSessionHasRunningWorkflow = errors.New("a workflow is running from this session; open the session and abort it before deleting it")
+	// ErrSessionHasWorkingWorkflowSession refuses it while a session a run
+	// made from it, such as a builder after hand-over, is working or has
+	// background jobs running.
+	ErrSessionHasWorkingWorkflowSession = errors.New("a workflow session made from this session is working or has background jobs running; stop them before deleting it")
+)
 
 func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
-	if w.WorkflowRunning(sessionID) {
-		return ErrSessionHasRunningWorkflow
+	if w.app.Workflows != nil {
+		running, err := w.app.Workflows.RunningAnywhere(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		if running {
+			return ErrSessionHasRunningWorkflow
+		}
+	}
+	descendants, err := w.app.Sessions.WorkflowDescendants(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	mgr := shell.GetBackgroundShellManager()
+	for _, id := range descendants {
+		if w.AgentIsSessionBusy(id) || slices.ContainsFunc(mgr.ListBySession(id), func(j shell.JobInfo) bool { return !j.Done }) {
+			return ErrSessionHasWorkingWorkflowSession
+		}
 	}
 	return w.app.Sessions.Delete(ctx, sessionID)
 }

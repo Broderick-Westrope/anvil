@@ -12,6 +12,7 @@ import (
 type Querier interface {
 	ClaimBackgroundJobEvents(ctx context.Context, arg ClaimBackgroundJobEventsParams) ([]string, error)
 	CopyMessage(ctx context.Context, arg CopyMessageParams) error
+	CountRunningWorkflowRunsFrom(ctx context.Context, invokingSessionID string) (int64, error)
 	// Mirrors triage.IsSource: keep the two in sync.
 	CountUnresolvedPermissionDecisionsSince(ctx context.Context, createdAt int64) (int64, error)
 	CreateBackgroundJob(ctx context.Context, arg CreateBackgroundJobParams) (int64, error)
@@ -69,6 +70,7 @@ type Querier interface {
 	// newer than the fork itself (times are whole seconds, so one can share
 	// its second); they're left out so each prompt is listed once.
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
+	// The sessions workflow runs made from a session.
 	ListWorkflowChildSessionIDs(ctx context.Context, parentSessionID sql.NullString) ([]string, error)
 	ListWorkflowEvents(ctx context.Context, runID string) ([]WorkflowEvent, error)
 	// The events a run's view is built from, without the payloads it doesn't

@@ -545,12 +545,21 @@ const (
 )
 
 // Running reports whether a run started from sessionID, or one sessionID
-// belongs to, is still going.
+// belongs to, is still going in this Anvil.
 func (s *Service) Running(sessionID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, active := s.findLocked(sessionID)
 	return active != nil || s.runs[sessionID] != nil
+}
+
+// RunningAnywhere is Running, also counting runs started from sessionID by
+// another Anvil sharing the database.
+func (s *Service) RunningAnywhere(ctx context.Context, sessionID string) (bool, error) {
+	if s.Running(sessionID) {
+		return true, nil
+	}
+	return s.deps.Store.HasRunningRunFrom(ctx, sessionID)
 }
 
 // Respond answers an approval (AnswerApprove or AnswerDeny) or an ask(). An

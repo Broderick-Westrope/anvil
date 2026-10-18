@@ -406,6 +406,7 @@ FROM sessions
 WHERE parent_session_id = ? AND workflow_run_id != ''
 `
 
+// The sessions workflow runs made from a session.
 func (q *Queries) ListWorkflowChildSessionIDs(ctx context.Context, parentSessionID sql.NullString) ([]string, error) {
 	rows, err := q.query(ctx, q.listWorkflowChildSessionIDsStmt, listWorkflowChildSessionIDs, parentSessionID)
 	if err != nil {

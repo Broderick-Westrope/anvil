@@ -965,7 +965,8 @@ rename) are refused until you go back to it. `ctrl+x` pauses or resumes,
 and `alt+x` aborts, the run whose view is open, whose node is selected, or
 the latest one started from the session you're in; the command palette has
 the same controls. A session can't be deleted while a run started from it
-is going, since deleting it deletes the sessions the run made.
+is going, or while a builder made from it is working or has background
+jobs running, since deleting it deletes the sessions its runs made.
 
 The first time a workflow runs, and whenever any file in its command
 directory changes, Anvil shows you every file (as a diff once approved) and

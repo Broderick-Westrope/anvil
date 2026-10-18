@@ -25,6 +25,6 @@ Every session a run makes is a child of the invoking session and records the run
 - Builders are invisible in the session list; they're reached through the run's node. Losing the node's marker would leave them reachable only by id.
 - The bouncer takes a workflow `agent()` subagent's intent from its own session (the script's prompt), not from the session that started the run, which is a sibling conversation by then.
 - A workflow `agent()` subagent's surviving background jobs stay in its own session instead of passing to its parent (the user's session, which the run never works in); `workflow.exclusive` waits for them or stops them with the held sessions' jobs.
-- Deleting a session deletes the sessions workflow runs made from it, since builders hold a copy of its conversation and nothing else reaches them; it's refused while one of its runs is going.
+- Deleting a session deletes the sessions workflow runs made from it, since builders hold a copy of its conversation and nothing else reaches them; it's refused while one of its runs is going (in any Anvil sharing the database) or while a session a run made from it is working or has background jobs running.
 - The jobs sidebar still lists a builder's background jobs under the invoking session, marked like a subagent's: they're work started from that session.
 - Revisit if sessions other than workflow builders need to be conversational children (for example, forks the user makes by hand).

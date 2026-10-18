@@ -124,6 +124,7 @@ WHERE workflow_run_id = ? AND workflow_run_id != ''
 ORDER BY workflow_seq ASC, created_at ASC;
 
 -- name: ListWorkflowChildSessionIDs :many
+-- The sessions workflow runs made from a session.
 SELECT id
 FROM sessions
 WHERE parent_session_id = ? AND workflow_run_id != '';
