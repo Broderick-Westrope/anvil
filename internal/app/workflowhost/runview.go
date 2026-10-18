@@ -1,6 +1,7 @@
 package workflowhost
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -117,10 +118,7 @@ func (s *Service) RunView(ctx context.Context, runID string) (RunView, bool, err
 	if err != nil {
 		return RunView{}, false, err
 	}
-	view, err := buildRunView(rec, events, sessions)
-	if err != nil {
-		return RunView{}, false, err
-	}
+	view := buildRunView(rec, events, sessions)
 	// The run row records the command's ID; the name it was started as is
 	// on its marker.
 	if rec.MarkerMessageID != "" {
@@ -140,7 +138,7 @@ func (s *Service) RunView(ctx context.Context, runID string) (RunView, bool, err
 // buildRunView replays a run's events into its view. Events arrive ordered
 // by seq, and a call's seq is taken when it starts, so this is the order
 // things started in.
-func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Session) (RunView, error) {
+func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Session) RunView {
 	b := viewBuilder{
 		v: RunView{
 			RunID:             rec.ID,
@@ -161,12 +159,10 @@ func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Ses
 		b.v.Cost += s.Cost
 	}
 	for _, ev := range events {
-		if err := b.apply(ev); err != nil {
-			return RunView{}, err
-		}
+		b.apply(ev)
 	}
 	b.endOpenCalls()
-	return b.v, nil
+	return b.v
 }
 
 // viewBuilder accumulates a RunView from a run's events.
@@ -182,54 +178,71 @@ type viewBuilder struct {
 type itemPlace struct{ phase, item int }
 
 // startHandlers turn the start of each call worth showing into the view.
-var startHandlers = map[string]func(b *viewBuilder, ev workflow.Event) error{
-	"status": func(b *viewBuilder, ev workflow.Event) error {
-		var args struct{ Step, Detail string }
-		if err := json.Unmarshal(ev.Args, &args); err != nil {
-			return fmt.Errorf("read status event %d: %w", ev.Seq, err)
-		}
-		b.v.Phases = append(b.v.Phases, RunPhase{Step: args.Step, Detail: args.Detail})
-		return nil
+// A call's arguments are as the script passed them, so they're read
+// leniently: a script bug shows as an odd row, never as a view that can't
+// load, which would leave every session the run made unreachable.
+var startHandlers = map[string]func(b *viewBuilder, ev workflow.Event){
+	"status": func(b *viewBuilder, ev workflow.Event) {
+		args := fields(ev.Args)
+		b.v.Phases = append(b.v.Phases, RunPhase{Step: args.text("step"), Detail: args.text("detail")})
 	},
 	"session.new":  (*viewBuilder).addSession,
 	"session.fork": (*viewBuilder).addSession,
-	"agent": func(b *viewBuilder, ev workflow.Event) error {
-		var args struct{ Agent, Model string }
-		if err := json.Unmarshal(ev.Args, &args); err != nil {
-			return fmt.Errorf("read agent event %d: %w", ev.Seq, err)
-		}
+	"agent": func(b *viewBuilder, ev workflow.Event) {
+		args := fields(ev.Args)
 		s := b.bySeq[ev.Seq]
-		b.add(ev.Seq, RunItem{Kind: RunItemAgent, SessionID: s.ID, Title: s.Title, Agent: args.Agent, Model: args.Model, Status: StatusRunning})
-		return nil
+		b.add(ev.Seq, RunItem{Kind: RunItemAgent, SessionID: s.ID, Title: s.Title, Agent: args.text("agent"), Model: args.text("model"), Status: StatusRunning})
 	},
-	"ask": func(b *viewBuilder, ev workflow.Event) error {
-		var args struct{ Question string }
-		if err := json.Unmarshal(ev.Args, &args); err != nil {
-			return fmt.Errorf("read ask event %d: %w", ev.Seq, err)
-		}
-		b.add(ev.Seq, RunItem{Kind: RunItemAsk, Question: args.Question, Status: StatusRunning})
-		return nil
+	"ask": func(b *viewBuilder, ev workflow.Event) {
+		b.add(ev.Seq, RunItem{Kind: RunItemAsk, Question: fields(ev.Args).text("question"), Status: StatusRunning})
 	},
+}
+
+// eventFields is a recorded JSON object's fields.
+type eventFields map[string]json.RawMessage
+
+// fields reads raw as a JSON object, empty when it isn't one.
+func fields(raw json.RawMessage) eventFields {
+	var f eventFields
+	_ = json.Unmarshal(raw, &f) // Not an object: no fields.
+	return f
+}
+
+// text is a field as text: a string's value, or other JSON as written.
+func (f eventFields) text(name string) string {
+	return jsonText(f[name])
+}
+
+// jsonText is raw as text: a string's value, other JSON compacted, or ""
+// for none.
+func jsonText(raw json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var buf bytes.Buffer
+	if json.Compact(&buf, raw) != nil || buf.String() == "null" {
+		return ""
+	}
+	return buf.String()
 }
 
 // addSession shows an orchestrator session the event created.
-func (b *viewBuilder) addSession(ev workflow.Event) error {
+func (b *viewBuilder) addSession(ev workflow.Event) {
 	s := b.bySeq[ev.Seq]
 	b.add(ev.Seq, RunItem{Kind: RunItemSession, SessionID: s.ID, Title: s.Title, Status: StatusRunning})
-	return nil
 }
 
-func (b *viewBuilder) apply(ev workflow.Event) error {
+func (b *viewBuilder) apply(ev workflow.Event) {
 	if ev.Phase != workflow.PhaseStarted {
 		if p, ok := b.at[ev.Seq]; ok {
-			return settle(&b.v.Phases[p.phase].Items[p.item], ev)
+			settle(&b.v.Phases[p.phase].Items[p.item], ev)
 		}
-		return nil
+		return
 	}
 	if start, ok := startHandlers[ev.Primitive]; ok {
-		return start(b, ev)
+		start(b, ev)
 	}
-	return nil
 }
 
 // add puts item in the current phase, starting one if the run hasn't
@@ -258,25 +271,13 @@ func (b *viewBuilder) endOpenCalls() {
 }
 
 // settle applies a call's outcome to its item.
-func settle(item *RunItem, ev workflow.Event) error {
+func settle(item *RunItem, ev workflow.Event) {
 	if ev.Phase == workflow.PhaseFailed {
-		var info struct{ Message string }
-		// A failure recorded without details still shows as failed.
-		if len(ev.Error) == 0 {
-			item.Status = StatusFailed
-			return nil
-		}
-		if err := json.Unmarshal(ev.Error, &info); err != nil {
-			return fmt.Errorf("read error of event %d: %w", ev.Seq, err)
-		}
-		item.Status, item.Err = StatusFailed, info.Message
-		return nil
+		item.Status, item.Err = StatusFailed, fields(ev.Error).text("message")
+		return
 	}
 	item.Status = StatusCompleted
 	if item.Kind == RunItemAsk {
-		if err := json.Unmarshal(ev.Result, &item.Answer); err != nil {
-			return fmt.Errorf("read answer of ask event %d: %w", ev.Seq, err)
-		}
+		item.Answer = jsonText(ev.Result)
 	}
-	return nil
 }

@@ -1586,3 +1586,29 @@ function main() { return agent("reviewer", "review") }`)
 		}
 	}
 }
+
+// A script that passes the wrong types still gets a view: its sessions are
+// reached only through it.
+func TestServiceRunViewSurvivesABadlyTypedCall(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `function main() {
+  session.new({ title: "kept reachable" })
+  try { ask(42) } catch (e) {}
+  return "done"
+}`)
+	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+
+	view, ok, err := h.svc.RunView(h.fixture.Context, done.RunID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	var titles []string
+	for _, p := range view.Phases {
+		for _, item := range p.Items {
+			titles = append(titles, item.Title+"|"+item.Question)
+		}
+	}
+	require.Contains(t, titles, "kept reachable|")
+	require.Contains(t, titles, "|42")
+}
