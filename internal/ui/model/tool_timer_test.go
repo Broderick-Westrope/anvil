@@ -1,10 +1,12 @@
 package model
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -20,6 +22,15 @@ import (
 type timerWorkspace struct {
 	*jobsWorkspace
 	running map[string]bool
+	branch  []message.Message
+}
+
+func (w *timerWorkspace) GetBranchPath(context.Context, string) ([]message.Message, error) {
+	return w.branch, nil
+}
+
+func (*timerWorkspace) ListUserMessages(context.Context, string) ([]message.Message, error) {
+	return nil, nil
 }
 
 func (w *timerWorkspace) AgentIsStepRunning(assistantMessageID string) bool {
@@ -154,16 +165,27 @@ func TestToolTimerStart(t *testing.T) {
 		require.True(t, u.elapsedTickRunning)
 	})
 
-	t.Run("loading a session with a running call starts the tick", func(t *testing.T) {
+	t.Run("loading a session starts the tick only for a running call", func(t *testing.T) {
 		t.Parallel()
-		u, ws := newTimerTestUI()
-		ws.running["a1"] = true
-		_, _ = u.Update(loadSessionMsg{session: &session.Session{ID: "s1", LeafMessageID: "leaf"}})
-		require.False(t, u.elapsedTickRunning, "nothing is running yet")
+		load := func(running bool) (*UI, int) {
+			u, ws := newTimerTestUI()
+			ws.running["a1"] = running
+			ws.branch = []message.Message{{
+				ID: "a1", Role: message.Assistant, SessionID: "s1",
+				Parts: []message.ContentPart{runningBash("tc1", 30*time.Second)},
+			}}
+			_, cmd := u.Update(loadSessionMsg{session: &session.Session{ID: "s1", LeafMessageID: "a1"}})
+			if batch, ok := cmd().(tea.BatchMsg); ok {
+				return u, len(batch)
+			}
+			return u, 1
+		}
 
-		u.chat.SetMessages(toolItemIn(u, "a1", runningBash("tc1", 30*time.Second)))
-		require.NotNil(t, u.startElapsedTickForTools())
-		require.True(t, u.elapsedTickRunning)
+		live, withTick := load(true)
+		require.True(t, live.elapsedTickRunning)
+		orphan, withoutTick := load(false)
+		require.False(t, orphan.elapsedTickRunning)
+		require.Equal(t, withoutTick+1, withTick, "the load returns the tick command")
 	})
 }
 
