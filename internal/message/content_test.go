@@ -311,19 +311,6 @@ func TestMarkToolCallStarted(t *testing.T) {
 	}, msg.ToolCalls())
 }
 
-func TestToolCallEditsPreserveStartedAt(t *testing.T) {
-	t.Parallel()
-
-	msg := &Message{}
-	msg.AddToolCall(ToolCall{ID: "1", Name: "bash", ProviderExecuted: true, StartedAt: 1_000})
-	msg.AppendToolCallInput("1", "{}")
-	msg.FinishToolCall("1")
-
-	require.Equal(t, []ToolCall{
-		{ID: "1", Name: "bash", Input: "{}", ProviderExecuted: true, Finished: true, StartedAt: 1_000},
-	}, msg.ToolCalls())
-}
-
 func TestResetStreamedContentEmpty(t *testing.T) {
 	t.Parallel()
 

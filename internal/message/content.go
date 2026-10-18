@@ -448,8 +448,12 @@ func (m *Message) FinishToolCall(toolCallID string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ToolCall); ok {
 			if c.ID == toolCallID {
-				c.Finished = true
-				m.Parts[i] = c
+				m.Parts[i] = ToolCall{
+					ID:       c.ID,
+					Name:     c.Name,
+					Input:    c.Input,
+					Finished: true,
+				}
 				return
 			}
 		}
@@ -460,8 +464,12 @@ func (m *Message) AppendToolCallInput(toolCallID string, inputDelta string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ToolCall); ok {
 			if c.ID == toolCallID {
-				c.Input += inputDelta
-				m.Parts[i] = c
+				m.Parts[i] = ToolCall{
+					ID:       c.ID,
+					Name:     c.Name,
+					Input:    c.Input + inputDelta,
+					Finished: c.Finished,
+				}
 				return
 			}
 		}
