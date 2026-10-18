@@ -265,7 +265,7 @@ func (c *coordinator) recordTaskCall(ctx context.Context, tc *taskCall, sessionI
 // attempt continues the same child session with a new message: the
 // orchestrator's prompt, a human steer, or the harness's continue.
 func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, sessionID string) error {
-	next := SessionAgentCall{Prompt: tc.params.Prompt}
+	next := SessionAgentCall{Prompt: message.EscapeInjectionTags(tc.params.Prompt)}
 	if tc.params.Resume != nil {
 		next = tc.injection(message.InjectionContent{
 			Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, Text: tc.params.Prompt,

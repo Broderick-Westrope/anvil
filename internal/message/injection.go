@@ -59,14 +59,19 @@ func (InjectionContent) isPart() {}
 func RenderInjections(injections []InjectionContent) string {
 	var rendered []string
 	for _, inj := range injections {
-		rendered = append(rendered, fmt.Sprintf("<injected_message source=%q>%s</injected_message>", inj.Source, injectionTag.ReplaceAllString(inj.Text, "&lt;$1")))
+		rendered = append(rendered, fmt.Sprintf("<injected_message source=%q>%s</injected_message>", inj.Source, EscapeInjectionTags(inj.Text)))
 	}
 	return strings.Join(rendered, "\n\n")
 }
 
-// injectionTag matches the start of an injected_message tag in any case,
-// so injected text can't open or close one and claim another source.
+// injectionTag matches the start of an injected_message tag in any case.
 var injectionTag = regexp.MustCompile(`(?i)<(\s*/?\s*injected_message)`)
+
+// EscapeInjectionTags neutralises injected_message tags in text a subagent
+// will read, so the text can't open or close one and claim a source.
+func EscapeInjectionTags(text string) string {
+	return injectionTag.ReplaceAllString(text, "&lt;$1")
+}
 
 // InjectionParts returns the parts of a subagent_injection message: the
 // rendered text the model sees, then one audit record per injection.
