@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -261,4 +262,25 @@ func TestCostRejectsInfiniteDeltas(t *testing.T) {
 	require.ErrorContains(t, svc.AddCost(t.Context(), parent.ID, math.Inf(1)), "cost can't")
 	require.Error(t, svc.UpdateTitleAndUsage(t.Context(), parent.ID, "t", false, 0, 0, -1))
 	requireCost(t, svc, parent.ID, 0)
+}
+
+func TestRollUpWithNothingNewWritesNothing(t *testing.T) {
+	t.Parallel()
+	svc := newSubagentTestService(t)
+	parent, err := svc.Create(t.Context(), "parent", "/tmp")
+	require.NoError(t, err)
+	child := newChild(t, svc, parent.ID, "msg$$call")
+	before, err := svc.Get(t.Context(), parent.ID)
+	require.NoError(t, err)
+
+	events := svc.Subscribe(t.Context())
+	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID, ""))
+	select {
+	case ev := <-events:
+		t.Fatalf("published %v for a rollup with nothing new", ev.Type)
+	case <-time.After(50 * time.Millisecond):
+	}
+	after, err := svc.Get(t.Context(), parent.ID)
+	require.NoError(t, err)
+	require.Equal(t, before.UpdatedAt, after.UpdatedAt)
 }

@@ -122,7 +122,8 @@ func TestRunSubAgentLogsWhatItCannotReturn(t *testing.T) {
 		coord := newTestCoordinator(t, env, providerID, config.ProviderConfig{ID: providerID})
 		parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
-		agent := newMockAgent(providerID, 4096, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+		agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+			require.NoError(t, env.sessions.AddCost(t.Context(), call.SessionID, 0.1))
 			require.NoError(t, env.sessions.Delete(t.Context(), parent.ID))
 			return agentResultWithText("done"), nil
 		})

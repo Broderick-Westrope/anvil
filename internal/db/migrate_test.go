@@ -112,6 +112,16 @@ func TestMigrations_SubagentsRoundTripKeepsSessionsAndCost(t *testing.T) {
 
 	require.NoError(t, goose.UpTo(conn, "migrations", subagents))
 	q := New(conn)
+	migrated, err := q.GetSessionByID(t.Context(), "m$$c")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), migrated.UpdatedAt, "marking cost rolled up isn't activity")
+	_, err = conn.ExecContext(t.Context(), `UPDATE sessions SET cost_rolled_up = 0.7 WHERE id = 'm$$c'`)
+	require.NoError(t, err)
+	migrated, err = q.GetSessionByID(t.Context(), "m$$c")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), migrated.UpdatedAt)
+	_, err = conn.ExecContext(t.Context(), `UPDATE sessions SET cost_rolled_up = cost WHERE id = 'm$$c'`)
+	require.NoError(t, err)
 	require.NoError(t, q.CreateSubagent(t.Context(), CreateSubagentParams{
 		SessionID: "m$$c", ParentSessionID: "p", Handle: "fixer-abcd", Origin: "task", AgentType: "fixer", Provider: "p", Model: "m",
 	}))

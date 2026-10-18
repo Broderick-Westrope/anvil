@@ -5,6 +5,22 @@
 ALTER TABLE sessions ADD COLUMN cost_rolled_up REAL NOT NULL DEFAULT 0.0;
 -- +goose StatementEnd
 -- +goose StatementBegin
+-- Moving the watermark isn't activity, so it doesn't touch updated_at,
+-- which task items use for their finish time.
+DROP TRIGGER IF EXISTS update_sessions_updated_at;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE TRIGGER IF NOT EXISTS update_sessions_updated_at
+AFTER UPDATE ON sessions
+FOR EACH ROW
+WHEN old.pinned = new.pinned AND old.pin_note = new.pin_note
+    AND old.cost_rolled_up = new.cost_rolled_up
+BEGIN
+UPDATE sessions SET updated_at = strftime('%s', 'now')
+WHERE id = new.id;
+END;
+-- +goose StatementEnd
+-- +goose StatementBegin
 -- Existing children were rolled up by the old code, or never will be, so
 -- none of their cost is due again.
 UPDATE sessions SET cost_rolled_up = cost WHERE parent_session_id IS NOT NULL;
@@ -66,6 +82,19 @@ DROP TABLE IF EXISTS subagent_calls;
 -- +goose StatementEnd
 -- +goose StatementBegin
 DROP TABLE IF EXISTS subagents;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DROP TRIGGER IF EXISTS update_sessions_updated_at;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE TRIGGER IF NOT EXISTS update_sessions_updated_at
+AFTER UPDATE ON sessions
+FOR EACH ROW
+WHEN old.pinned = new.pinned AND old.pin_note = new.pin_note
+BEGIN
+UPDATE sessions SET updated_at = strftime('%s', 'now')
+WHERE id = new.id;
+END;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE sessions DROP COLUMN cost_rolled_up;

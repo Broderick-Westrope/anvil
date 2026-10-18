@@ -168,9 +168,14 @@ func (s *service) RollUpChildCost(ctx context.Context, childID, callID string) e
 	if err != nil {
 		return fmt.Errorf("get child session %s: %w", childID, err)
 	}
-	// Cost only grows, so the watermark is never ahead; clamp anyway so a
-	// bad row can't take cost off the parent.
-	delta := max(child.Cost-child.CostRolledUp, 0)
+	delta := child.Cost - child.CostRolledUp
+	if err := validCostDelta(delta); err != nil {
+		return fmt.Errorf("roll up cost of %s: %w", childID, err)
+	}
+	if delta == 0 {
+		// Nothing new: writing anything would only bump updated_at.
+		return nil
+	}
 	rolled, err := qtx.AddSessionCost(ctx, db.AddSessionCostParams{Delta: delta, ID: child.ParentSessionID.String})
 	if err != nil {
 		return fmt.Errorf("add cost of %s to parent: %w", childID, err)
