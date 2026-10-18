@@ -237,18 +237,21 @@ Out:
 **Context Files:**
 - `internal/ui/chat/tools.go` - `ToolRenderOpts`, `baseToolMessageItem`
   (`RawRender`, `Render` prefix cache, `isSpinning`, `computeStatus`,
-  `SetCallStartedAt`, now `SetMessageCreatedAt`), `pendingToolWithParams`, `toolHeaderWithIcon`,
-  `toolParamList`, `toolEarlyStateContent`
+  `SetCallStartedAt`, renamed `SetMessageCreatedAt`),
+  `pendingToolWithParams`, `toolHeaderWithIcon`, `toolParamList`,
+  `toolEarlyStateContent`
 - `internal/ui/chat/bash.go` - `job_output` wait timer (~150-200)
 - `internal/ui/chat/agent.go` - subagent `elapsed()` and `formatStatsLine`
   (the behaviour being matched), nested tool handling
 - `internal/ui/common/elements.go` - `FormatDuration`
 - `internal/ui/list/list.go` - versioned list cache (~298-338)
 - `internal/ui/model/ui.go` - `tickElapsedTimeMsg` handler (~1329),
-  `tickElapsedTime`, `invalidateRunningAgentCaches` (~1944-1978), tool
-  item update comparison (~1901-1907), permission status handling
-  (~5651), `SetToolCallStartedAt` call sites (~1911, ~2044)
-- `internal/ui/chat/messages.go` - `SetToolCallStartedAt` on load (~426)
+  `tickElapsedTime`, `invalidateRunningAgentCaches` (~1944-1978), tool item
+  update comparison (~1901-1907), permission status handling (~5651),
+  `SetToolCallStartedAt` (renamed `SetToolMessageCreatedAt`) call sites
+  (~1911, ~2044)
+- `internal/ui/chat/messages.go` - `SetToolCallStartedAt` (renamed
+  `SetToolMessageCreatedAt`) on load (~426)
 - `internal/ui/model/jobs.go` - other elapsed tick starters
 - `internal/message/content.go` - `ToolCall`, `ToolResult`, `AddToolCall`,
   `ToAIMessage`

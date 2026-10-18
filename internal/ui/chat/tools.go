@@ -64,8 +64,9 @@ type ToolMessageItem interface {
 	// in flight. A call without a result only shows a live duration while
 	// its step runs; otherwise it was orphaned, such as by a crash.
 	SetStepRunning(running bool)
-	// TimerCandidate reports whether the call is running and would show a
-	// live duration if its step is still in flight.
+	// TimerCandidate reports whether the call is running with a known
+	// start, so it needs refreshing each tick while its step is in flight
+	// (it shows a duration once it reaches the threshold).
 	TimerCandidate() bool
 }
 

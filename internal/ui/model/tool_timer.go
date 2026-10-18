@@ -10,9 +10,9 @@ import (
 
 // syncToolTimers updates whether each running tool call's step is still
 // in flight, in the root chat and every drill-stack chat, and clears the
-// render caches of calls showing a live duration so the next draw shows
-// the new time. It reports whether any call shows one, which keeps the
-// elapsed tick alive.
+// render caches of live calls so the next draw shows the new time. It
+// reports whether any call is live, even below the threshold, which keeps
+// the elapsed tick alive until the call can show a duration.
 //
 // A call whose permission prompt is open is marked as awaiting permission.
 // Its request notification only reaches items that exist, so an item built
