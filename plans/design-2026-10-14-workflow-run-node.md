@@ -421,6 +421,10 @@ they are. The engine is beta, so no backfill.
   turn still cancels; alt+x aborts the run.
 - Deleting a session deletes the sessions workflow runs made from it.
 
+- There is no seq-gap check: the UI reloads a run's view whenever a change
+  is announced, and every few seconds while a running run is on screen,
+  which also catches a dropped announcement and runs another Anvil drives.
+
 **Open Questions:**
 - Should the node show "waiting for you" with the question's first line
   while an `ask()` is pending, so you can find it after dismissing a

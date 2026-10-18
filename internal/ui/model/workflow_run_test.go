@@ -515,7 +515,8 @@ func TestARunningNodeCountsItsTime(t *testing.T) {
 	view.StartedAt = view.StartedAt.Add(-time.Minute)
 	f.u.workflowRuns.views["run-1"] = view
 	f.node(t).SetView(view)
-	require.True(t, f.u.refreshRunningWorkflowRuns())
+	running, _ := f.u.refreshRunningWorkflowRuns()
+	require.True(t, running)
 	require.Regexp(t, `running · 2m3[01]s`, ansi.Strip(f.node(t).Render(120)))
 }
 
@@ -531,7 +532,7 @@ func TestARunViewSaysWhichBuildersAreWorking(t *testing.T) {
 	require.Contains(t, row(), "/demo approach 1 · session")
 
 	f.ws.busy = map[string]bool{"sess-2": true}
-	f.u.refreshRunningWorkflowRuns()
+	_, _ = f.u.refreshRunningWorkflowRuns()
 	require.Contains(t, row(), "/demo approach 1 · working")
 }
 
@@ -757,4 +758,24 @@ func TestAStashedDraftDoesntFollowTheUserToAnotherSession(t *testing.T) {
 	f.u.session = &other
 	f.press(tea.KeyPressMsg{Code: tea.KeyEnd})
 	require.NotContains(t, f.u.textarea.Value(), "for session one")
+}
+
+// A change announcement can be dropped, and a run another Anvil drives
+// announces nothing here, so a running run on screen is reloaded now and
+// then regardless.
+func TestARunningRunOnScreenIsReloadedWithoutAnnouncements(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+	next := runningView()
+	next.Phases = append(next.Phases, workflowhost.RunPhase{Step: "audit", Detail: "pass 2"})
+	f.ws.views["run-1"] = next
+
+	for range workflowRunReloadTicks {
+		_, cmd := f.u.refreshRunningWorkflowRuns()
+		f.run(cmd)
+	}
+	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "audit · pass 2")
 }

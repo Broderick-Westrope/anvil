@@ -18,7 +18,17 @@ type workflowRuns struct {
 	// loads is true for a run that changed while its load was in flight,
 	// so it needs another.
 	loads map[string]bool
+	// ticks counts elapsed-time ticks, for reloading running runs now and
+	// then.
+	ticks int
 }
+
+// workflowRunReloadTicks is how many elapsed-time ticks (seconds) pass
+// between reloads of the running runs on screen. A change is announced
+// when it's recorded, but the announcement can be dropped, and a run
+// another Anvil is driving announces nothing here, so a view can't be
+// trusted to stay current on announcements alone.
+const workflowRunReloadTicks = 5
 
 // view returns a run's latest view, if it has loaded.
 func (r *workflowRuns) view(runID string) (workflowhost.RunView, bool) {
@@ -164,15 +174,26 @@ func (m *UI) showWorkflowRunRows(entry *drillInEntry, view workflowhost.RunView)
 // refreshRunningWorkflowRuns redraws what changes with time for running
 // runs: their nodes' elapsed time, and which builders are working in their
 // open views. It reports whether any run is still running.
-func (m *UI) refreshRunningWorkflowRuns() bool {
+func (m *UI) refreshRunningWorkflowRuns() (bool, tea.Cmd) {
 	if !m.workflowRuns.anyRunning() {
-		return false
+		return false, nil
+	}
+	m.workflowRuns.ticks++
+	reload := m.workflowRuns.ticks%workflowRunReloadTicks == 0
+	var reloads []tea.Cmd
+	running := func(runID string) bool {
+		view, ok := m.workflowRuns.view(runID)
+		return ok && view.Status == workflowhost.StatusRunning
 	}
 	chats := []*Chat{m.chat}
 	for i := range m.drillStack {
 		entry := &m.drillStack[i]
-		if view, ok := m.workflowRuns.view(entry.runID); ok && entry.runID != "" && view.Status == workflowhost.StatusRunning {
+		if entry.runID != "" && running(entry.runID) {
+			view, _ := m.workflowRuns.view(entry.runID)
 			m.showWorkflowRunRows(entry, view)
+			if reload {
+				reloads = append(reloads, m.loadWorkflowRunView(entry.runID))
+			}
 			continue
 		}
 		chats = append(chats, entry.chat)
@@ -181,8 +202,11 @@ func (m *UI) refreshRunningWorkflowRuns() bool {
 		for _, item := range c.MessageItems() {
 			if node, ok := item.(*chat.WorkflowRunMessageItem); ok && !node.Finished() {
 				node.Tick()
+				if reload && running(node.RunID()) {
+					reloads = append(reloads, m.loadWorkflowRunView(node.RunID()))
+				}
 			}
 		}
 	}
-	return true
+	return true, tea.Batch(reloads...)
 }

@@ -199,7 +199,8 @@ Terms with a specific meaning in this codebase are defined in
   the user's: scripts can only `fork()` it (`message.Service.CopyBranch`).
   `workflowhost.RunView` rebuilds what the node and its drill-in show from
   the database; the UI reloads it on every run event (`EventChanged` is
-  published after each event is recorded).
+  published after each event is recorded) and every few seconds while a
+  running run is on screen, since announcements can be dropped.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 

@@ -1397,7 +1397,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		workflowsRunning := m.refreshRunningWorkflowRuns()
+		workflowsRunning, reloads := m.refreshRunningWorkflowRuns()
+		cmds = append(cmds, reloads)
 		shouldContinue := anyRunning || workflowsRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
