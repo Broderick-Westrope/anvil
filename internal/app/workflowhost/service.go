@@ -41,7 +41,9 @@ const (
 	EventAsk EventKind = "ask"
 	// EventWarn is a non-fatal problem, such as undeclared use.
 	EventWarn EventKind = "warn"
-	// EventState reports a change in a run's State.
+	// EventState reports a change in a run's State: it starting, or being
+	// paused or resumed, which records no event in its log. The UI reads
+	// the change from the run's view, which it reloads on this.
 	EventState EventKind = "state"
 	// EventFinished ends an invocation.
 	EventFinished EventKind = "finished"

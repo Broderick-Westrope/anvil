@@ -458,7 +458,6 @@ func TestEventsLogStartedThenCompletedPerPrimitive(t *testing.T) {
 	require.Equal(t, 1, first.Seq)
 	require.JSONEq(t, `{"step":"build","detail":"1/3"}`, string(first.Args))
 	require.Len(t, first.ArgsHash, 64)
-	require.Equal(t, [][2]string{{"build", "1/3"}}, h.backend.statuses)
 }
 
 func TestAskReturnsAnswer(t *testing.T) {

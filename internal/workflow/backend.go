@@ -27,7 +27,6 @@ type Backend interface {
 	Agent(ctx context.Context, call AgentCall) (AgentResult, error)
 	Bash(ctx context.Context, call BashCall) (BashResult, error)
 	Ask(ctx context.Context, question string, options []string) (string, error)
-	Status(step, detail string)
 	// Warn shows a non-fatal problem, such as undeclared use of a skill.
 	Warn(msg string)
 	// Hold stops new runs from starting in the given sessions and waits for

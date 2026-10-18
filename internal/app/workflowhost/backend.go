@@ -248,9 +248,6 @@ func (b *backend) Ask(ctx context.Context, question string, options []string) (s
 	})
 }
 
-// Status needs nothing beyond its recorded event, which the run view shows.
-func (b *backend) Status(string, string) {}
-
 func (b *backend) Warn(msg string) {
 	b.publish(Event{Kind: EventWarn, Message: msg})
 }

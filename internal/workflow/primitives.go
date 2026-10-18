@@ -240,16 +240,14 @@ func primAsk(r *Run, _ int, args json.RawMessage) (any, error) {
 	return r.backend.Ask(r.ctx, in.Question, in.Options)
 }
 
-func primStatus(r *Run, _ int, args json.RawMessage) (any, error) {
-	in, err := decode[struct {
+// primStatus only checks its arguments: the call's recorded event is the
+// status, which the run's view shows.
+func primStatus(_ *Run, _ int, args json.RawMessage) (any, error) {
+	_, err := decode[struct {
 		Step   string `json:"step"`
 		Detail string `json:"detail"`
 	}](args)
-	if err != nil {
-		return nil, err
-	}
-	r.backend.Status(in.Step, in.Detail)
-	return nil, nil
+	return nil, err
 }
 
 func primSkill(r *Run, _ int, args json.RawMessage) (any, error) {
