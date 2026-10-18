@@ -487,3 +487,44 @@ func TestSilentWorkOnAnIdleSessionKeepsHeldPromptsHeld(t *testing.T) {
 	}
 	require.Equal(t, []string{"B"}, a.queued("s"))
 }
+
+// Silent work that fails, or is cancelled, isn't a failed turn of the
+// user's: the prompts queued behind it still run.
+func TestAFailedSilentJobDoesntHoldThePromptsBehindIt(t *testing.T) {
+	t.Parallel()
+
+	for name, run := range map[string]func(ctx context.Context) (*fantasy.AgentResult, error){
+		"fails":     func(context.Context) (*fantasy.AgentResult, error) { return nil, errors.New("disk full") },
+		"cancelled": func(context.Context) (*fantasy.AgentResult, error) { return nil, context.Canceled },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			a := newAdmission(t.Context())
+			entered, release := make(chan struct{}), make(chan struct{})
+			silentDone := make(chan struct{})
+			go func() {
+				_, _ = a.submitAwait(t.Context(), "s", submission{silent: true, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+					close(entered)
+					<-release
+					return run(ctx)
+				}})
+				close(silentDone)
+			}()
+			<-entered
+			ran := make(chan struct{}, 1)
+			_, err := a.submit(t.Context(), "s", submission{prompt: "B", run: func(context.Context) (*fantasy.AgentResult, error) {
+				ran <- struct{}{}
+				return textResult("B"), nil
+			}})
+			require.NoError(t, err)
+			close(release)
+			<-silentDone
+			select {
+			case <-ran:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the prompt behind the silent job was held")
+			}
+		})
+	}
+}

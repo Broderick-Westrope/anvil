@@ -334,7 +334,7 @@ func (a *admission) claimIdle(ctx context.Context, id string, check func() error
 func (a *admission) execute(owner *submissionOwner, job submission) (result *fantasy.AgentResult, err error) {
 	a.mu.Lock()
 	owner.done = job.done
-	scriptTurn := isScriptTurn(job)
+	scriptTurn, silent := isScriptTurn(job), job.silent
 	a.mu.Unlock()
 	defer func() {
 		a.mu.Lock()
@@ -359,7 +359,7 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 			a.queues[owner.sessionID] = append(q[:i:i], q[i+1:]...)
 			next = a.claimFor(queued, owner.sessionID)
 		} else if len(q) > 0 && a.held[owner.sessionID] == 0 {
-			if i, holding := a.nextInQueue(owner, scriptTurn, err, q); i >= 0 {
+			if i, holding := a.nextInQueue(owner, scriptTurn, silent, err, q); i >= 0 {
 				queued = q[i]
 				a.queues[owner.sessionID] = append(q[:i:i], q[i+1:]...)
 				next = a.claimFor(queued, owner.sessionID)
@@ -399,15 +399,20 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 // follow-up message to unblock itself, so the work queued ahead of its
 // turn runs and then its turn does. While prompts are held, silent work (a
 // marker, a metadata entry, a fork's copy) still runs, and the prompts stay
-// held after it.
-func (a *admission) nextInQueue(owner *submissionOwner, scriptTurn bool, err error, queue []submission) (int, bool) {
+// held after it. Silent work's own outcome never holds them: the user
+// can't see it, so its failure says nothing about their prompts.
+func (a *admission) nextInQueue(owner *submissionOwner, scriptTurn, silent bool, err error, queue []submission) (int, bool) {
 	if a.lifetime.Err() != nil {
 		return -1, false
 	}
 	if scriptTurn || slices.ContainsFunc(queue, isScriptTurn) {
 		return 0, false
 	}
-	if (err == nil || owner.handoffOnError) && owner.ctx.Err() == nil && !owner.holdingPrompts {
+	held := owner.holdingPrompts
+	if !silent {
+		held = held || (err != nil && !owner.handoffOnError) || owner.ctx.Err() != nil
+	}
+	if !held {
 		return 0, false
 	}
 	return slices.IndexFunc(queue, func(job submission) bool { return job.silent }), true
