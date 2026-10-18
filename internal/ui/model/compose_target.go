@@ -193,10 +193,10 @@ func (m *UI) isRootBusy() bool {
 
 // prepareSend gets the session the editor sends to ready for a message. It
 // returns the session's ID, the commands that preparing it needs, and a
-// refusal, non-nil when nothing is sent. A drilled-in
-// builder is an existing session, so there's nothing to prepare, unless it
-// hasn't loaded yet; the root session may need creating, and gets the
-// pending branch and the file reads it carries.
+// refusal, non-nil when nothing is sent. A drilled-in builder is an
+// existing session, so there's nothing to prepare, unless it hasn't loaded
+// yet; the root session may need creating, and gets the pending branch and
+// the file reads it carries.
 func (m *UI) prepareSend() (string, []tea.Cmd, tea.Cmd) {
 	if target := m.composeTarget(); target.drilled {
 		if refusal := target.loadingRefusal(); refusal != nil {

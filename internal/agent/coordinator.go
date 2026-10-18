@@ -1597,9 +1597,9 @@ type childSession struct {
 
 // inChildSession runs fn in a new child session of s.ParentID, then rolls
 // the child's cost up to the parent (only when fn succeeds) and hands its
-// surviving background jobs to the parent, unless s.KeepJobs. It returns the hand-off
-// inventory, empty when there were no jobs. Every subagent run, from the
-// task tool or a workflow, goes through here.
+// surviving background jobs to the parent, unless s.KeepJobs. It returns
+// the hand-off inventory, empty when there were no jobs. Every subagent
+// run, from the task tool or a workflow, goes through here.
 func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn func(ctx context.Context, sessionID string) error) (handedOff string, err error) {
 	// Detach from any submission owner ctx carries: the child's turns are
 	// admitted as their own submissions, not run in place as, or rejected

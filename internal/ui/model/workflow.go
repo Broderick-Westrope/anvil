@@ -46,6 +46,13 @@ func (m *UI) startWorkflowCommand(name string, cmd commands.CustomCommand, raw s
 	if !m.hasSession() {
 		return tea.Batch(loadCmd, util.ReportError(errors.New("workflow needs a session")))
 	}
+	// The run's marker lands on the branch on screen, which the user has
+	// now chosen, as sending a message does; returning to the old branch
+	// would leave the run's node behind.
+	if m.pendingBranch != nil {
+		m.branchReturn = m.pendingBranch
+		m.pendingBranch = nil
+	}
 	inv := workflowhost.Invocation{
 		CommandID:   cmd.ID,
 		CommandName: name,

@@ -79,7 +79,12 @@ SELECT
     seq,
     phase,
     primitive,
-    CAST(COALESCE(CASE WHEN primitive IN ('status', 'agent', 'ask') AND phase = 'started' THEN args END, '') AS TEXT) AS args,
+    CAST(COALESCE(CASE
+        WHEN phase != 'started' THEN NULL
+        WHEN primitive IN ('status', 'ask') THEN args
+        -- A subagent's prompt can be long; the view names only the agent.
+        WHEN primitive = 'agent' THEN json_object('agent', json_extract(args, '$.agent'), 'model', json_extract(args, '$.model'))
+    END, '') AS TEXT) AS args,
     CAST(COALESCE(CASE WHEN primitive = 'ask' AND phase = 'completed' THEN result END, '') AS TEXT) AS result,
     CAST(COALESCE(CASE WHEN phase = 'failed' THEN error END, '') AS TEXT) AS error
 FROM workflow_events
