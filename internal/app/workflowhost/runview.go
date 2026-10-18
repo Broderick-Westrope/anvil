@@ -117,9 +117,9 @@ func (s *Service) RunView(ctx context.Context, runID string) (RunView, bool, err
 	if err != nil {
 		return RunView{}, false, err
 	}
-	view, ok, err := buildRunView(rec, events, sessions)
-	if err != nil || !ok {
-		return view, ok, err
+	view, err := buildRunView(rec, events, sessions)
+	if err != nil {
+		return RunView{}, false, err
 	}
 	// The run row records the command's ID; the name it was started as is
 	// on its marker.
@@ -140,7 +140,7 @@ func (s *Service) RunView(ctx context.Context, runID string) (RunView, bool, err
 // buildRunView replays a run's events into its view. Events arrive ordered
 // by seq, and a call's seq is taken when it starts, so this is the order
 // things started in.
-func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Session) (RunView, bool, error) {
+func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Session) (RunView, error) {
 	b := viewBuilder{
 		v: RunView{
 			RunID:             rec.ID,
@@ -162,11 +162,11 @@ func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Ses
 	}
 	for _, ev := range events {
 		if err := b.apply(ev); err != nil {
-			return RunView{}, false, err
+			return RunView{}, err
 		}
 	}
 	b.endOpenCalls()
-	return b.v, true, nil
+	return b.v, nil
 }
 
 // viewBuilder accumulates a RunView from a run's events.

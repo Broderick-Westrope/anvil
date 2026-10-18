@@ -146,8 +146,11 @@ func (m *UI) targetWorkflowRun() (workflowhost.RunView, bool) {
 	}
 	var latest workflowhost.RunView
 	for _, view := range m.workflowRuns.views {
-		if view.InvokingSessionID == m.session.ID && view.Status == workflowhost.StatusRunning &&
-			(latest.RunID == "" || view.StartedAt.After(latest.StartedAt)) {
+		// Ties on start time go to the larger run ID, so the choice
+		// doesn't depend on map order.
+		newer := latest.RunID == "" || view.StartedAt.After(latest.StartedAt) ||
+			(view.StartedAt.Equal(latest.StartedAt) && view.RunID > latest.RunID)
+		if view.InvokingSessionID == m.session.ID && view.Status == workflowhost.StatusRunning && newer {
 			latest = view
 		}
 	}

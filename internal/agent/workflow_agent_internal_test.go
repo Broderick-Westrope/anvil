@@ -53,11 +53,9 @@ func TestLazyServersForToolNames(t *testing.T) {
 	}
 }
 
-// A workflow gets only the subagent's text and output, so jobs handed to
-// the parent session are logged instead. It replaces the default logger,
-// so it doesn't run in parallel.
 // A workflow subagent's parent is the user's own session, which the run
-// never works in, so its surviving jobs stay in its own session.
+// never works in, so its surviving jobs stay in its own session, and are
+// logged. It replaces the default logger, so it doesn't run in parallel.
 func TestWorkflowAgentKeepsItsSurvivingJobs(t *testing.T) {
 	logs := captureLogs(t)
 	env := testEnv(t)
