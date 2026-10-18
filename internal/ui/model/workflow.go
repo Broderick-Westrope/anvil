@@ -94,21 +94,25 @@ func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
 	return nil
 }
 
+// controlWorkflow pauses, resumes or aborts a run. Pausing and resuming
+// write to the database, so it runs as a command, off Update.
 func (m *UI) controlWorkflow(runID string, control dialog.WorkflowControl) tea.Cmd {
 	ws := m.com.Workspace
-	var err error
-	switch control {
-	case dialog.WorkflowPause:
-		err = ws.WorkflowPause(runID)
-	case dialog.WorkflowResume:
-		err = ws.WorkflowResume(runID)
-	case dialog.WorkflowAbort:
-		err = ws.WorkflowAbort(runID)
+	return func() tea.Msg {
+		var err error
+		switch control {
+		case dialog.WorkflowPause:
+			err = ws.WorkflowPause(runID)
+		case dialog.WorkflowResume:
+			err = ws.WorkflowResume(runID)
+		case dialog.WorkflowAbort:
+			err = ws.WorkflowAbort(runID)
+		}
+		if err != nil {
+			return util.NewErrorMsg(err)
+		}
+		return nil
 	}
-	if err != nil {
-		return util.ReportError(err)
-	}
-	return nil
 }
 
 // targetWorkflowRun is the running run the workflow controls act on: the

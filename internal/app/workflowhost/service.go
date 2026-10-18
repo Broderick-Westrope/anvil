@@ -544,8 +544,6 @@ const (
 	AnswerDeny    = "deny"
 )
 
-// Respond answers an approval (AnswerApprove or AnswerDeny) or an ask(). An
-// ask with options accepts only one of them.
 // Running reports whether a run started from sessionID, or one sessionID
 // belongs to, is still going.
 func (s *Service) Running(sessionID string) bool {
@@ -555,6 +553,8 @@ func (s *Service) Running(sessionID string) bool {
 	return active != nil || s.runs[sessionID] != nil
 }
 
+// Respond answers an approval (AnswerApprove or AnswerDeny) or an ask(). An
+// ask with options accepts only one of them.
 func (s *Service) Respond(requestID, answer string) error {
 	s.mu.Lock()
 	req, ok := s.pending[requestID]
