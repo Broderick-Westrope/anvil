@@ -136,9 +136,9 @@ type Workspace interface {
 	// GetSubagentCall returns the stored link of the task call callID. It
 	// fails with sql.ErrNoRows for calls made before links were stored.
 	GetSubagentCall(ctx context.Context, callID string) (session.SubagentCall, error)
-	// AgentTakeReturnedSteers returns, and forgets, steers task calls
-	// ended without delivering.
-	AgentTakeReturnedSteers() []agent.SubagentSteersReturned
+	// AgentTakeReturnedSteers returns, and forgets, steers that task calls
+	// working for rootSessionID ended without delivering.
+	AgentTakeReturnedSteers(rootSessionID string) []agent.SubagentSteersReturned
 	// AgentSubagentPendingSteers lists steers sent to childSessionID's
 	// subagent that it hasn't read yet.
 	AgentSubagentPendingSteers(childSessionID string) []string

@@ -24,6 +24,8 @@ func (w *jobsWorkspace) GetSubagentCall(context.Context, string) (session.Subage
 	return session.SubagentCall{}, sql.ErrNoRows
 }
 
-func (w *workflowTestWorkspace) AgentTakeReturnedSteers() []agent.SubagentSteersReturned { return nil }
+func (w *workflowTestWorkspace) AgentTakeReturnedSteers(string) []agent.SubagentSteersReturned {
+	return nil
+}
 
-func (w *jobsWorkspace) AgentTakeReturnedSteers() []agent.SubagentSteersReturned { return nil }
+func (w *jobsWorkspace) AgentTakeReturnedSteers(string) []agent.SubagentSteersReturned { return nil }

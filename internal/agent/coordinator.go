@@ -144,8 +144,8 @@ type Coordinator interface {
 	// steers wait in TakeReturnedSteers.
 	SubscribeSubagentEvents(ctx context.Context) <-chan pubsub.Event[SubagentSteersReturned]
 	// TakeReturnedSteers returns, and forgets, the steers task calls
-	// ended without delivering.
-	TakeReturnedSteers() []SubagentSteersReturned
+	// working for rootSessionID ended without delivering.
+	TakeReturnedSteers(rootSessionID string) []SubagentSteersReturned
 }
 
 type coordinator struct {

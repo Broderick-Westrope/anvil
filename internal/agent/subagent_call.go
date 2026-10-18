@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"charm.land/fantasy"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -42,6 +44,9 @@ const (
 // SubagentSteersReturned reports human steers that a task call ended
 // without delivering, so the UI can give the text back.
 type SubagentSteersReturned struct {
+	// RootSessionID is the top-level session the subagent works for,
+	// whose editor gets the steers back.
+	RootSessionID string
 	// SessionID is the subagent's child session.
 	SessionID string
 	Steers    []string
@@ -49,7 +54,7 @@ type SubagentSteersReturned struct {
 	Reason string
 }
 
-// subAgentParams holds the parameters for running a sub-agent.
+// subAgentParams holds the parameters for running a subagent.
 type subAgentParams struct {
 	Agent SessionAgent
 	// AgentType and Depth are stored as the new subagent's identity. A
@@ -178,7 +183,8 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		return c.runTaskAttempts(ctx, tc, sessionID)
 	})
 	if undelivered := lease.finalise(); len(undelivered) > 0 {
-		c.handBackSteers(child.ID, undelivered, err)
+		root := cmp.Or(tools.GetRootSessionFromContext(ctx), params.SessionID)
+		c.handBackSteers(root, child.ID, undelivered, err)
 	}
 	if child.CallID != "" {
 		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentCostTimeout)
@@ -452,7 +458,7 @@ func injectionSummaryLine(inj message.InjectionContent) string {
 
 // handBackSteers queues the accepted steers a call ended without
 // delivering, so the human gets their text back, and tells the UI.
-func (c *coordinator) handBackSteers(childID string, undelivered []message.InjectionContent, callErr error) {
+func (c *coordinator) handBackSteers(rootID, childID string, undelivered []message.InjectionContent, callErr error) {
 	var texts []string
 	for _, inj := range undelivered {
 		texts = append(texts, inj.Text)
@@ -461,7 +467,7 @@ func (c *coordinator) handBackSteers(childID string, undelivered []message.Injec
 	if callErr != nil {
 		reason = "The subagent's task call ended before it could read your message: " + callErr.Error()
 	}
-	returned := SubagentSteersReturned{SessionID: childID, Steers: texts, Reason: reason}
+	returned := SubagentSteersReturned{RootSessionID: rootID, SessionID: childID, Steers: texts, Reason: reason}
 	c.returnedMu.Lock()
 	c.returned = append(c.returned, returned)
 	c.returnedMu.Unlock()
@@ -471,11 +477,18 @@ func (c *coordinator) handBackSteers(childID string, undelivered []message.Injec
 }
 
 // TakeReturnedSteers implements Coordinator.
-func (c *coordinator) TakeReturnedSteers() []SubagentSteersReturned {
+func (c *coordinator) TakeReturnedSteers(rootSessionID string) []SubagentSteersReturned {
 	c.returnedMu.Lock()
 	defer c.returnedMu.Unlock()
-	taken := c.returned
-	c.returned = nil
+	var taken, kept []SubagentSteersReturned
+	for _, r := range c.returned {
+		if r.RootSessionID == rootSessionID {
+			taken = append(taken, r)
+		} else {
+			kept = append(kept, r)
+		}
+	}
+	c.returned = kept
 	return taken
 }
 
@@ -497,7 +510,7 @@ func (c *coordinator) SubscribeSubagentEvents(ctx context.Context) <-chan pubsub
 func (c *coordinator) SteerSubagent(childID, text string, interrupt bool) error {
 	lease := c.leases.get(childID)
 	if lease == nil {
-		return fmt.Errorf("subagent is not running: %w", errSteerRejected)
+		return errSteerRejected
 	}
 	return lease.steer(text, interrupt)
 }

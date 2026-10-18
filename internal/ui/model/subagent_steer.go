@@ -27,7 +27,7 @@ type subagentSteerWorkspace interface {
 	AgentCancelSubagent(childSessionID string) bool
 	AgentSubagentRunning(childSessionID string) bool
 	AgentSubagentPendingSteers(childSessionID string) []string
-	AgentTakeReturnedSteers() []agent.SubagentSteersReturned
+	AgentTakeReturnedSteers(rootSessionID string) []agent.SubagentSteersReturned
 	ParseAgentToolSessionID(sessionID string) (messageID, toolCallID string, ok bool)
 }
 
@@ -185,13 +185,17 @@ func (f *subagentSteer) send(child string, interrupt bool) tea.Cmd {
 }
 
 // Observe implements feature. On every message it gives back the steers
-// task calls ended without delivering, so a dropped nudge event can't
-// lose them. Their call is over, so the subagent's input is closed; they
-// go to the main editor, where the human can pass them to the
-// orchestrator.
+// the current session's task calls ended without delivering, so a dropped
+// nudge event can't lose them; another session's wait until it's shown.
+// Their call is over, so the subagent's input is closed; they go to the
+// main editor, where the human can pass them to the orchestrator.
 func (f *subagentSteer) Observe(tea.Msg) tea.Cmd {
 	f.sync()
-	returned := f.ws.AgentTakeReturnedSteers()
+	root := f.host.SessionID()
+	if root == "" {
+		return nil
+	}
+	returned := f.ws.AgentTakeReturnedSteers(root)
 	if len(returned) == 0 {
 		return nil
 	}

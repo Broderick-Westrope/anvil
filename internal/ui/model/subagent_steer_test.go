@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -30,9 +31,16 @@ type steerTestWorkspace struct {
 	refuseCancel bool
 }
 
-func (w *steerTestWorkspace) AgentTakeReturnedSteers() []agent.SubagentSteersReturned {
-	taken := w.returned
-	w.returned = nil
+func (w *steerTestWorkspace) AgentTakeReturnedSteers(rootSessionID string) []agent.SubagentSteersReturned {
+	var taken, kept []agent.SubagentSteersReturned
+	for _, r := range w.returned {
+		if r.RootSessionID == rootSessionID {
+			taken = append(taken, r)
+		} else {
+			kept = append(kept, r)
+		}
+	}
+	w.returned = kept
 	return taken
 }
 
@@ -72,7 +80,7 @@ type steerFixture struct {
 func newSteerFixture(t *testing.T) *steerFixture {
 	t.Helper()
 	ws := &steerTestWorkspace{running: map[string]bool{"msg$$child": true}, pending: map[string][]string{}}
-	host := &fakeHost{overlay: dialog.NewOverlay(), keyMap: DefaultKeyMap(), viewedChild: "msg$$child"}
+	host := &fakeHost{session: &session.Session{ID: "root"}, overlay: dialog.NewOverlay(), keyMap: DefaultKeyMap(), viewedChild: "msg$$child"}
 	return &steerFixture{f: newSubagentSteer(host, common.DefaultCommon(nil), ws), host: host, ws: ws}
 }
 
@@ -196,7 +204,10 @@ func TestReturnedSteersComeBackToTheMainEditor(t *testing.T) {
 	t.Parallel()
 	s := newSteerFixture(t)
 
-	s.ws.returned = []agent.SubagentSteersReturned{{SessionID: "msg$$child", Steers: []string{"first", "second"}, Reason: "It failed."}}
+	s.ws.returned = []agent.SubagentSteersReturned{
+		{RootSessionID: "root", SessionID: "msg$$child", Steers: []string{"first", "second"}, Reason: "It failed."},
+		{RootSessionID: "other-root", SessionID: "msg$$elsewhere", Steers: []string{"not here"}, Reason: "It failed."},
+	}
 
 	// Any message picks them up, so a dropped nudge can't lose them.
 	msgs := cmdMsgs(s.f.Observe(spinnerTickMsgForTest{}))

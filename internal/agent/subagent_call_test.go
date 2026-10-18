@@ -300,12 +300,12 @@ func TestPendingSteersAreHandedBackWhenTheCallFails(t *testing.T) {
 			_, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
 			require.NoError(t, err)
 
-			returned := c.TakeReturnedSteers()
+			returned := c.TakeReturnedSteers(parent.ID)
 			require.Len(t, returned, 1)
 			require.Equal(t, childID, returned[0].SessionID)
 			require.Contains(t, returned[0].Steers, "never delivered")
 			require.NotEmpty(t, returned[0].Reason)
-			require.Empty(t, c.TakeReturnedSteers(), "taking them clears the queue")
+			require.Empty(t, c.TakeReturnedSteers(parent.ID), "taking them clears the queue")
 		})
 	}
 }
@@ -365,7 +365,7 @@ func TestSteersTakenForATurnThatNeverStartedAreHandedBack(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError)
 
-	returned := c.TakeReturnedSteers()
+	returned := c.TakeReturnedSteers(parent.ID)
 	require.Len(t, returned, 1)
 	require.Equal(t, []string{"also X"}, returned[0].Steers)
 }
@@ -385,7 +385,7 @@ func TestInterruptDoesNotOverrideAPersistenceFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError)
 	require.Equal(t, int32(1), runs.Load())
-	returned := c.TakeReturnedSteers()
+	returned := c.TakeReturnedSteers(parent.ID)
 	require.Len(t, returned, 1)
 	require.Equal(t, []string{"stop"}, returned[0].Steers)
 }
@@ -483,4 +483,21 @@ func TestInjectionSummaryListsWhatTheCallDelivered(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, resp.IsError, resp.Content)
 	require.Contains(t, resp.Content, "Injected during this run:\n- human (steer): use the v2 API")
+}
+
+func TestReturnedSteersAreTakenPerRootSession(t *testing.T) {
+	t.Parallel()
+	c, _, parent := newSubagentCallCoordinator(t)
+	agent := newMockAgent(testProvider, 1000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		_ = c.SteerSubagent(call.SessionID, "late", false)
+		return nil, &fantasy.ProviderError{StatusCode: 400}
+	})
+	ctx := context.WithValue(t.Context(), tools.RootSessionIDContextKey, "root-a")
+	_, err := c.runSubAgent(ctx, fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+
+	require.Empty(t, c.TakeReturnedSteers("root-b"))
+	returned := c.TakeReturnedSteers("root-a")
+	require.Len(t, returned, 1)
+	require.Equal(t, "root-a", returned[0].RootSessionID)
 }
