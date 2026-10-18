@@ -148,8 +148,8 @@ func (t *turn) timed(agentTools []fantasy.AgentTool) []fantasy.AgentTool {
 
 // timedTool is one turn's view of a shared tool that records when each of
 // its calls starts running, and restarts that clock when a human answers a
-// permission prompt the call raised, so the wait isn't counted. It is outermost, so time spent in hooks
-// counts towards the call.
+// permission prompt the call raised, so the wait isn't counted. It wraps
+// the hooks wrapper, so time spent in hooks counts towards the call.
 type timedTool struct {
 	fantasy.AgentTool
 	turn *turn

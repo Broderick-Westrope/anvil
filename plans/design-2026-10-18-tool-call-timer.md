@@ -225,19 +225,19 @@ Out:
   parent agent and set the parent's status.
 - Known gaps, accepted: whether a call is awaiting permission comes from
   lossy notifications. The tick reconciles the open prompt, and a clock
-  restart (only a human grant causes one) marks a call granted. Still, a
-  dropped "granted" notification after an automatic approval leaves the
-  call untimed until its result, and a call queued behind another prompt
-  whose request notification arrived before its item existed shows a
-  timer while it waits. Both need a dropped or reordered event and a slow
-  tool. Fixing them properly means driving the whole permission status
-  (including "Requesting permission...") from the permission service, a
-  separate change.
+  restart (only a human answering a prompt causes one) marks the call
+  running again. Still, a dropped "granted" notification after an automatic
+  approval leaves the call untimed until its result, and a call queued
+  behind another prompt whose request notification arrived before its item
+  existed shows a timer while it waits. Both need a dropped or reordered
+  event and a slow tool. Fixing them properly means driving the whole
+  permission status (including "Requesting permission...") from the
+  permission service, a separate change.
 
 **Context Files:**
 - `internal/ui/chat/tools.go` - `ToolRenderOpts`, `baseToolMessageItem`
   (`RawRender`, `Render` prefix cache, `isSpinning`, `computeStatus`,
-  `SetCallStartedAt`, since renamed `SetMessageCreatedAt`), `pendingToolWithParams`, `toolHeaderWithIcon`,
+  `SetCallStartedAt`, now `SetMessageCreatedAt`), `pendingToolWithParams`, `toolHeaderWithIcon`,
   `toolParamList`, `toolEarlyStateContent`
 - `internal/ui/chat/bash.go` - `job_output` wait timer (~150-200)
 - `internal/ui/chat/agent.go` - subagent `elapsed()` and `formatStatsLine`

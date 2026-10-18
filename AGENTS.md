@@ -153,17 +153,17 @@ Terms with a specific meaning in this codebase are defined in
   behaviour and the isolated-session test recipe live in
   `plans/completed/design-2026-10-08-herdr-integration.md`; never test
   against the user's default Herdr session.
-- **Tool call timers**: each `message.ToolCall` records `StartedAt` and
-  each `message.ToolResult` records `FinishedAt` (Unix ms, display only;
+- **Tool call timers**: each `message.ToolCall` records `StartedAt` and each
+  `message.ToolResult` records `FinishedAt` (Unix ms, display only;
   `ToAIMessage` drops them). The per-turn `timedTool` wrapper in
-  `internal/agent/turn.go` is outermost on every tool, sets the start when
-  `Run` begins, and restarts it through `permission.WithPromptObserver`
-  when a human closes the call's prompt. The coordinator's `runningSteps`
-  set (`Coordinator.IsStepRunning`) says whether a result-less call is
-  still running or was orphaned. The UI shows the duration once it
-  reaches 10s (`internal/ui/chat/tool_timer.go`, refreshed by the elapsed
-  tick in `internal/ui/model/tool_timer.go`). Design:
-  `plans/design-2026-10-18-tool-call-timer.md`.
+  `internal/agent/turn.go` wraps every tool outside its hooks, sets the
+  start when `Run` begins, and restarts it through
+  `permission.WithPromptObserver` when a human closes the call's prompt. The
+  coordinator's `runningSteps` set (`Coordinator.IsStepRunning`) says
+  whether a result-less call is still running or was orphaned. The UI shows
+  the duration once it reaches 10s (`internal/ui/chat/tool_timer.go`,
+  refreshed by the elapsed tick in `internal/ui/model/tool_timer.go`).
+  Design: `plans/design-2026-10-18-tool-call-timer.md`.
 - **Cache usage metrics**: every model response (turn steps, summaries,
   titles, `CompleteSmall`) is recorded as a `step_usage` row with
   normalised token counts, prices and hashed request fingerprints. The
