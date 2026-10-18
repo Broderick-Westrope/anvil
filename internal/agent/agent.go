@@ -387,19 +387,19 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			defer a.lastTurn.Del(call.SessionID)
 		}
 	}
+	// Deferred so that no exit, including a panic recovered upstream,
+	// leaves the last step looking in flight and its calls timing forever.
+	defer t.endStep()
 	result, err := agent.Stream(ctx, t.streamCall(history, files))
 	if err != nil {
 		if t.assistant == nil {
 			return result, err
 		}
-		recordErr := t.recordFailure(err)
-		t.endStep()
-		if recordErr != nil {
+		if recordErr := t.recordFailure(err); recordErr != nil {
 			return nil, recordErr
 		}
 		return nil, err
 	}
-	t.endStep()
 	if t.shouldSummarize {
 		if err := a.summarizeAndResume(ctx, call, len(t.assistant.ToolCalls()) > 0); err != nil {
 			return nil, err

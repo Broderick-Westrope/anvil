@@ -127,7 +127,8 @@ func (c *cacheMarkedTool) ProviderOptions() fantasy.ProviderOptions { return c.o
 
 func (c *cacheMarkedTool) SetProviderOptions(opts fantasy.ProviderOptions) { c.opts = opts }
 
-// endStep marks the current step as no longer in flight.
+// endStep marks the current step as no longer in flight. prepareStep calls
+// it before starting the next step, and the run when it ends.
 func (t *turn) endStep() {
 	if t.assistant != nil {
 		t.a.runningSteps.Del(t.assistant.ID)

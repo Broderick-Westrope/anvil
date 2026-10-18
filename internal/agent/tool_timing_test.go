@@ -330,3 +330,30 @@ func TestRunStartsParallelToolQueuedBehindFullSlotsWhenItRuns(t *testing.T) {
 	require.GreaterOrEqual(t, calls["call_5"].StartedAt, firstFinish,
 		"the sixth call waits for a slot, and its clock starts when it gets one")
 }
+
+func TestStepIsNotLeftRunningWhenTheStreamPanics(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	sess := newTestSession(t, env)
+
+	var a *sessionAgent
+	var stepID string
+	tool := stepTool("work", func(ctx context.Context, _ int) fantasy.ToolResponse {
+		stepID, _ = ctx.Value(tools.MessageIDContextKey).(string)
+		return fantasy.NewTextResponse("ok")
+	})
+	model := &recordingModel{respond: func(call int) ([]fantasy.StreamPart, error) {
+		if call > 0 {
+			_, running := a.runningSteps.Get(stepID)
+			require.False(t, running, "the first step ended before the second began")
+			panic("stream blew up")
+		}
+		return toolCallsThenStop("work", "call_0")(call)
+	}}
+	a = turnAgent(env, model, "system", 200_000, tool)
+
+	require.Panics(t, func() {
+		_, _ = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+	})
+	require.Zero(t, a.runningSteps.Len(), "a panic that escapes the run leaves no step running")
+}
