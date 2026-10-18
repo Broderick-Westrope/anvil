@@ -126,3 +126,9 @@ func TestLocalPersistenceStillMarksAStorageFailureThatRacedACancel(t *testing.T)
 	cancel()
 	require.ErrorIs(t, localPersistence(cancelled, errors.New("disk full")), errLocalPersistence)
 }
+
+func TestSubagentRetryDelayCapsTheProviderHint(t *testing.T) {
+	t.Parallel()
+	err := &fantasy.ProviderError{StatusCode: 429, ResponseHeaders: map[string]string{"retry-after": "3600"}}
+	require.Equal(t, maxSubagentRetryDelay, subagentRetryDelay(err, 5*time.Second))
+}

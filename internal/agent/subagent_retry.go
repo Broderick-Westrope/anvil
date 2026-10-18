@@ -99,14 +99,19 @@ func networkFailure(err error) string {
 	return ""
 }
 
+// maxSubagentRetryDelay caps a provider's retry hint, so a quota reset
+// hours away can't leave the orchestrator's task call waiting silently.
+const maxSubagentRetryDelay = 2 * time.Minute
+
 // subagentRetryDelay returns how long to wait before resuming after err:
-// base, or the provider's retry hint when it asks for longer.
+// base, or the provider's retry hint when it asks for longer, up to
+// maxSubagentRetryDelay.
 func subagentRetryDelay(err error, base time.Duration) time.Duration {
 	var providerErr *fantasy.ProviderError
 	if !errors.As(err, &providerErr) {
 		return base
 	}
-	return max(base, retryHint(providerErr.ResponseHeaders))
+	return min(max(base, retryHint(providerErr.ResponseHeaders)), maxSubagentRetryDelay)
 }
 
 func retryHint(headers map[string]string) time.Duration {
