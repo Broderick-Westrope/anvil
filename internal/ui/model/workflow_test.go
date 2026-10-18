@@ -36,6 +36,7 @@ type fakeHost struct {
 	keyMap      KeyMap
 	// viewedSubagent is the drilled-in subagent session on screen.
 	viewedSubagent string
+	restored       []string
 }
 
 func (h *fakeHost) SessionID() string {
@@ -83,6 +84,9 @@ func (h *fakeHost) ComposerHasContent() bool { return h.composer }
 func (h *fakeHost) Reloading() bool          { return h.reloading }
 func (h *fakeHost) KeyMap() KeyMap           { return h.keyMap }
 func (h *fakeHost) ViewedSubagentID() string { return h.viewedSubagent }
+func (h *fakeHost) RestoreToComposer(text string) {
+	h.restored = append(h.restored, text)
+}
 
 // workflowFixture drives a workflow feature through its surface.
 type workflowFixture struct {

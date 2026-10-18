@@ -87,14 +87,30 @@ func (f *subagentSteer) sync() string {
 	return child
 }
 
-// PreemptKey implements preemptKeyFeature. It claims keys while a
-// subagent's chat is on screen: Esc always (so it can't cancel the main
-// run from here), and the input's keys while it has focus.
-func (f *subagentSteer) PreemptKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+// PreemptInput implements preemptInputFeature. While a subagent's chat is
+// on screen it claims Esc (so Esc can't cancel the main run from here),
+// and keys and pastes while the input has focus.
+func (f *subagentSteer) PreemptInput(msg tea.Msg) (tea.Cmd, bool) {
 	child := f.sync()
 	if child == "" {
 		return nil, false
 	}
+	if paste, ok := msg.(tea.PasteMsg); ok {
+		if !f.input.Focused() {
+			return nil, false
+		}
+		var cmd tea.Cmd
+		f.input, cmd = f.input.Update(paste)
+		return cmd, true
+	}
+	keyMsg, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return nil, false
+	}
+	return f.handleKey(child, keyMsg)
+}
+
+func (f *subagentSteer) handleKey(child string, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	running := f.ws.AgentSubagentRunning(child)
 	if key.Matches(msg, f.keys.Cancel) {
 		f.input.Blur()
@@ -143,26 +159,16 @@ func (f *subagentSteer) send(child string, interrupt bool) tea.Cmd {
 }
 
 // HandleMsg implements feature. It gives back steers a task call ended
-// without delivering, in the draft of the subagent they were sent to.
+// without delivering. The call is over, so the subagent's input is
+// closed; they go to the main editor, where the human can pass them to
+// the orchestrator.
 func (f *subagentSteer) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	ev, ok := msg.(pubsub.Event[agent.SubagentSteersReturned])
 	if !ok {
 		return nil, false
 	}
-	returned := strings.Join(ev.Payload.Steers, "\n\n")
-	if ev.Payload.SessionID == f.child {
-		f.input.SetValue(joinDraft(f.input.Value(), returned))
-	} else {
-		f.drafts[ev.Payload.SessionID] = joinDraft(f.drafts[ev.Payload.SessionID], returned)
-	}
-	return util.ReportWarn(ev.Payload.Reason + " Your message is back in its editor."), true
-}
-
-func joinDraft(draft, returned string) string {
-	if draft == "" {
-		return returned
-	}
-	return draft + "\n\n" + returned
+	f.host.RestoreToComposer(strings.Join(ev.Payload.Steers, "\n\n"))
+	return util.ReportWarn(ev.Payload.Reason + " Your message is back in the main editor."), true
 }
 
 func (f *subagentSteer) Observe(tea.Msg) tea.Cmd                    { return nil }

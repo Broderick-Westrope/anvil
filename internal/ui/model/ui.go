@@ -3037,7 +3037,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handleDialogMsg(msg)
 	}
 
-	if cmd, ok := m.features.preemptKey(msg); ok {
+	if cmd, ok := m.features.preemptInput(msg); ok {
 		return tea.Batch(append(cmds, cmd)...)
 	}
 
@@ -5744,6 +5744,10 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 
 	if m.dialog.HasDialogs() {
 		return m.handleDialogMsg(msg)
+	}
+
+	if cmd, ok := m.features.preemptInput(msg); ok {
+		return cmd
 	}
 
 	if m.focus != uiFocusEditor {

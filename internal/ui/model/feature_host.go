@@ -44,6 +44,9 @@ type featureHost interface {
 	// (the top of the drill stack), or "" when the root chat, a tool or a
 	// thinking view is.
 	ViewedSubagentID() string
+	// RestoreToComposer puts text back in the main editor, after any text
+	// already there, so the human can send or edit it.
+	RestoreToComposer(text string)
 }
 
 // uiHost is UI as a featureHost.
@@ -99,4 +102,11 @@ func (h uiHost) ViewedSubagentID() string {
 		return h.m.drillStack[n-1].sessionID
 	}
 	return ""
+}
+
+func (h uiHost) RestoreToComposer(text string) {
+	if current := h.m.textarea.Value(); current != "" {
+		text = current + "\n\n" + text
+	}
+	h.m.textarea.SetValue(text)
 }

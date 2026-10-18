@@ -64,7 +64,7 @@ func (s *steerFixture) press(keys ...tea.KeyPressMsg) ([]util.InfoMsg, bool) {
 	var infos []util.InfoMsg
 	claimed := true
 	for _, k := range keys {
-		cmd, ok := s.f.PreemptKey(k)
+		cmd, ok := s.f.PreemptInput(k)
 		claimed = claimed && ok
 		for _, msg := range cmdMsgs(cmd) {
 			if info, ok := msg.(util.InfoMsg); ok {
@@ -176,21 +176,30 @@ func TestFooterShowsQueuedSteers(t *testing.T) {
 	require.Len(t, strings.Split(rendered, "\n"), subagentSteerFooterLines)
 }
 
-func TestReturnedSteersComeBackToTheirSubagentsDraft(t *testing.T) {
+func TestReturnedSteersComeBackToTheMainEditor(t *testing.T) {
 	t.Parallel()
 	s := newSteerFixture(t)
-	s.host.viewedSubagent = "other"
 
 	cmd, handled := s.f.HandleMsg(pubsub.Event[agent.SubagentSteersReturned]{
 		Type:    pubsub.CreatedEvent,
-		Payload: agent.SubagentSteersReturned{SessionID: "child", Steers: []string{"first", "second"}, Reason: "it failed"},
+		Payload: agent.SubagentSteersReturned{SessionID: "child", Steers: []string{"first", "second"}, Reason: "It failed."},
 	})
 	require.True(t, handled)
 	msgs := cmdMsgs(cmd)
 	require.Len(t, msgs, 1)
-	require.Contains(t, msgs[0].(util.InfoMsg).Msg, "it failed")
+	require.Contains(t, msgs[0].(util.InfoMsg).Msg, "It failed.")
+	require.Equal(t, []string{"first\n\nsecond"}, s.host.restored)
+}
 
-	s.host.viewedSubagent = "child"
+func TestPasteGoesToTheFocusedSteerInput(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+
+	_, claimed := s.f.PreemptInput(tea.PasteMsg{Content: "pasted"})
+	require.False(t, claimed, "an unfocused input leaves paste to the editor")
+
 	s.press(tabKey)
-	require.Equal(t, "first\n\nsecond", s.f.input.Value())
+	_, claimed = s.f.PreemptInput(tea.PasteMsg{Content: "pasted"})
+	require.True(t, claimed)
+	require.Equal(t, "pasted", s.f.input.Value())
 }

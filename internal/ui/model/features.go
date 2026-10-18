@@ -58,11 +58,11 @@ type panelView interface {
 	Render(width int) string
 }
 
-// preemptKeyFeature is offered keys before Esc and focus dispatch, once
-// no dialog is open. Use it only for input surfaces that must own keys
-// the chat or editor would otherwise take.
-type preemptKeyFeature interface {
-	PreemptKey(msg tea.KeyPressMsg) (tea.Cmd, bool)
+// preemptInputFeature is offered key presses and pastes before Esc, focus
+// and paste dispatch, once no dialog is open. Use it only for input
+// surfaces that must own input the chat or editor would otherwise take.
+type preemptInputFeature interface {
+	PreemptInput(msg tea.Msg) (tea.Cmd, bool)
 }
 
 // drillInFeature draws a footer under a drilled-in chat.
@@ -83,7 +83,7 @@ type features struct {
 	commands []commandFeature
 	panels   []panelFeature
 	palettes []paletteFeature
-	preempts []preemptKeyFeature
+	preempts []preemptInputFeature
 	footers  []drillInFeature
 }
 
@@ -100,7 +100,7 @@ func (fs *features) register(f feature) {
 	if p, ok := f.(paletteFeature); ok {
 		fs.palettes = append(fs.palettes, p)
 	}
-	if p, ok := f.(preemptKeyFeature); ok {
+	if p, ok := f.(preemptInputFeature); ok {
 		fs.preempts = append(fs.preempts, p)
 	}
 	if d, ok := f.(drillInFeature); ok {
@@ -108,9 +108,9 @@ func (fs *features) register(f feature) {
 	}
 }
 
-func (fs *features) preemptKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+func (fs *features) preemptInput(msg tea.Msg) (tea.Cmd, bool) {
 	for _, f := range fs.preempts {
-		if cmd, ok := f.PreemptKey(msg); ok {
+		if cmd, ok := f.PreemptInput(msg); ok {
 			return cmd, true
 		}
 	}
