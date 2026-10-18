@@ -139,7 +139,7 @@ func (m *UI) isBusy(sessionID string) bool {
 // slashCommand is a command typed or picked as text, such as "/new".
 type slashCommand string
 
-// refuseInBuilder is the one place that decides what can't happen while a
+// refuseInOrchestratorSession is the one place that decides what can't happen while a
 // workflow's builder has the editor: commands and palette actions that act
 // on the user's own session (its history, title, branch or metadata),
 // since doing them from a builder would act on the wrong session. It
@@ -148,7 +148,7 @@ type slashCommand string
 // It lists what's refused rather than what's allowed: most palette actions
 // (permission answers, workflow questions, models, dialogs) are global and
 // must keep working while a run is going.
-func (m *UI) refuseInBuilder(x any) tea.Cmd {
+func (m *UI) refuseInOrchestratorSession(x any) tea.Cmd {
 	if !m.composeTarget().drilled {
 		return nil
 	}

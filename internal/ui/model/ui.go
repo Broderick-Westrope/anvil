@@ -838,7 +838,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sendMessageMsg:
-		if cmd := m.refuseInBuilder(msg); cmd != nil {
+		if cmd := m.refuseInOrchestratorSession(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 			break
 		}
@@ -2352,7 +2352,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	isOnboarding := m.state == uiOnboarding
 
-	if cmd := m.refuseInBuilder(action); cmd != nil {
+	if cmd := m.refuseInOrchestratorSession(action); cmd != nil {
 		m.dialog.CloseFrontDialog()
 		return cmd
 	}
@@ -3268,7 +3268,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					cmds = append(cmds, refusal)
 					return tea.Batch(cmds...)
 				}
-				if cmd := m.refuseInBuilder(slashCommand(strings.TrimSpace(value))); cmd != nil {
+				if cmd := m.refuseInOrchestratorSession(slashCommand(strings.TrimSpace(value))); cmd != nil {
 					cmds = append(cmds, cmd)
 					return tea.Batch(cmds...)
 				}
@@ -4584,7 +4584,7 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 	if !strings.HasPrefix(value, "/") {
 		return nil
 	}
-	if cmd := m.refuseInBuilder(slashCommand(value)); cmd != nil {
+	if cmd := m.refuseInOrchestratorSession(slashCommand(value)); cmd != nil {
 		return cmd
 	}
 
