@@ -41,6 +41,22 @@ CREATE INDEX IF NOT EXISTS idx_subagent_calls_session ON subagent_calls (session
 
 -- +goose Down
 -- +goose StatementBegin
+-- Builds before this migration can't decode injection parts and would fail
+-- to load the session, so injected messages become plain user messages
+-- that keep the text the model saw.
+UPDATE messages
+SET
+    message_type = 'message',
+    parts = json_insert(
+        (SELECT json_group_array(json(part.value))
+         FROM json_each(messages.parts) AS part
+         WHERE json_extract(part.value, '$.type') != 'injection'),
+        '$[#]',
+        json('{"type":"finish","data":{"reason":"stop"}}')
+    )
+WHERE message_type = 'subagent_injection';
+-- +goose StatementEnd
+-- +goose StatementBegin
 DROP INDEX IF EXISTS idx_subagent_calls_session;
 -- +goose StatementEnd
 -- +goose StatementBegin

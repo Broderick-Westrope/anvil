@@ -116,6 +116,12 @@ func TestMigrations_SubagentsRoundTripKeepsSessionsAndCost(t *testing.T) {
 		SessionID: "m$$c", ParentSessionID: "p", Handle: "fixer-abcd", Origin: "task", AgentType: "fixer", Provider: "p", Model: "m",
 	}))
 	require.NoError(t, q.CreateSubagentCall(t.Context(), CreateSubagentCallParams{ID: "m$$c", SessionID: "m$$c", Kind: "new"}))
+	_, err = q.CreateMessage(t.Context(), CreateMessageParams{
+		ID: "steer", SessionID: "m$$c", Role: "user", MessageType: "subagent_injection",
+		Parts: `[{"type":"text","data":{"text":"<injected_message source=\"human\">use v2</injected_message>"}},` +
+			`{"type":"injection","data":{"source":"human","kind":"steer","text":"use v2","call_id":"m$$c"}}]`,
+	})
+	require.NoError(t, err)
 	child, err := q.GetSessionByID(t.Context(), "m$$c")
 	require.NoError(t, err)
 	require.InDelta(t, 0.5, child.CostRolledUp, 1e-9, "existing children's cost is never rolled up again")
@@ -126,6 +132,13 @@ func TestMigrations_SubagentsRoundTripKeepsSessionsAndCost(t *testing.T) {
 	var cost float64
 	require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT cost FROM sessions WHERE id = 'p'`).Scan(&cost))
 	require.InDelta(t, 0.5, cost, 1e-9)
+
+	// Builds before this migration can't decode injection parts, so Down
+	// turns injected messages into plain user messages with their text.
+	var parts, msgType string
+	require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT parts, message_type FROM messages WHERE id = 'steer'`).Scan(&parts, &msgType))
+	require.Equal(t, "message", msgType)
+	require.JSONEq(t, `[{"type":"text","data":{"text":"<injected_message source=\"human\">use v2</injected_message>"}},{"type":"finish","data":{"reason":"stop"}}]`, parts)
 
 	require.NoError(t, goose.UpTo(conn, "migrations", subagents))
 	_, err = q.GetSubagent(t.Context(), "m$$c")
