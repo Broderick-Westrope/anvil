@@ -113,6 +113,10 @@ func (m *mockSessionService) SetWorkflowOwner(context.Context, string, session.W
 	return nil
 }
 
+func (m *mockSessionService) Discard(context.Context, string) error {
+	return nil
+}
+
 func (m *mockSessionService) WorkflowDescendants(context.Context, string) ([]string, error) {
 	return nil, nil
 }

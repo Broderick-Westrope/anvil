@@ -147,6 +147,10 @@ type Service interface {
 	// recording its owner in the same write, so it's never seen without
 	// one.
 	CreateWorkflowSession(ctx context.Context, parentSessionID, title string, owner WorkflowOwner) (Session, error)
+	// Discard deletes a session a workflow run made but couldn't finish
+	// making, which nothing has used yet, so it skips Delete's checks that
+	// the run is done with it.
+	Discard(ctx context.Context, id string) error
 	// WorkflowDescendants lists the sessions workflow runs made from id,
 	// and from those, all the way down: what deleting id deletes with it.
 	WorkflowDescendants(ctx context.Context, id string) ([]string, error)
@@ -233,14 +237,31 @@ func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string
 // Deleting a session deletes the sessions workflow runs made from it, so
 // it's refused while they're in use, whichever Anvil is using them.
 var (
-	// ErrWorkflowRunning refuses it while a run started from the session
-	// is recorded as running.
-	ErrWorkflowRunning = errors.New("a workflow is running from this session; open the session and abort it before deleting it")
+	// ErrWorkflowRunning refuses it while a run started from the session,
+	// or one that made it, is recorded as running.
+	ErrWorkflowRunning = errors.New("a workflow using this session is still running; abort it (or wait for it to finish) before deleting the session")
 	// ErrWorkflowSessionInUse refuses it while a session a run made from
 	// it, such as a builder after hand-over, is working or has background
 	// jobs running.
 	ErrWorkflowSessionInUse = errors.New("a workflow session made from this session is working or has background jobs running; stop them before deleting it")
 )
+
+func (s *service) Discard(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	deleted, jobKeys, err := deleteSessionTree(ctx, s.q.WithTx(tx), id)
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+	s.finishDelete(deleted, jobKeys)
+	return nil
+}
 
 func (s *service) Delete(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -257,6 +278,20 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	if running > 0 {
 		return ErrWorkflowRunning
 	}
+	// Nor is a session a running run made, which the run still uses.
+	own, err := qtx.GetSessionByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if own.WorkflowRunID != "" {
+		run, err := qtx.GetWorkflowRun(ctx, own.WorkflowRunID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("checking the workflow run of %s: %w", id, err)
+		}
+		if err == nil && run.Status == "running" {
+			return ErrWorkflowRunning
+		}
+	}
 	deleted, jobKeys, err := deleteSessionTree(ctx, qtx, id)
 	if err != nil {
 		return err
@@ -264,12 +299,17 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
+	s.finishDelete(deleted, jobKeys)
+	return nil
+}
+
+// finishDelete cleans up after deleted sessions once their rows are gone.
+func (s *service) finishDelete(deleted []db.Session, jobKeys []int64) {
 	s.removeJobLogs(jobKeys)
 	for _, dbSession := range deleted {
 		s.clearEstimatedUsageState(dbSession.ID)
 		s.Publish(pubsub.DeletedEvent, s.fromDBItem(dbSession))
 	}
-	return nil
 }
 
 // deleteSessionTree deletes a session with its messages and background

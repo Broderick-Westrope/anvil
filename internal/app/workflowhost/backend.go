@@ -137,7 +137,7 @@ func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, f
 		return "", err
 	}
 	fail := func(err error) (string, error) {
-		if derr := b.svc.deps.Sessions.Delete(context.WithoutCancel(ctx), s.ID); derr != nil {
+		if derr := b.svc.deps.Sessions.Discard(context.WithoutCancel(ctx), s.ID); derr != nil {
 			slog.Warn("Failed to remove an unfinished workflow session", "session", s.ID, "error", derr)
 		}
 		return "", err

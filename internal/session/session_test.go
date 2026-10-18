@@ -536,6 +536,18 @@ func TestDeleteRefusesWhileWhatAWorkflowMadeIsInUse(t *testing.T) {
 			want: ErrWorkflowSessionInUse,
 		},
 	}
+	// The builder itself, deleted while the run that made it is going.
+	tests["a session a running run made"] = struct {
+		setup func(t *testing.T, q *db.Queries, invoker, builder string)
+		want  error
+	}{
+		setup: func(t *testing.T, q *db.Queries, invoker, _ string) {
+			require.NoError(t, q.CreateWorkflowRun(t.Context(), db.CreateWorkflowRunParams{
+				ID: "run-0", Command: "project:build", InvokingSessionID: invoker, InstanceID: "other", StartedAt: 1,
+			}))
+		},
+		want: ErrWorkflowRunning,
+	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			dataDir := t.TempDir()
@@ -554,7 +566,11 @@ func TestDeleteRefusesWhileWhatAWorkflowMadeIsInUse(t *testing.T) {
 			require.NoError(t, err)
 
 			tc.setup(t, q, invoker.ID, builder.ID)
-			require.ErrorIs(t, sessions.Delete(t.Context(), invoker.ID), tc.want)
+			target := invoker.ID
+			if name == "a session a running run made" {
+				target = builder.ID
+			}
+			require.ErrorIs(t, sessions.Delete(t.Context(), target), tc.want)
 			_, err = sessions.Get(t.Context(), builder.ID)
 			require.NoError(t, err, "nothing was deleted")
 		})
