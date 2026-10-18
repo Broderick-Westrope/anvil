@@ -128,12 +128,21 @@ func (a *admission) submitAwait(ctx context.Context, id string, job submission) 
 		return nil, err
 	}
 	// The job joins the queue and, on an idle session, starts from its head,
-	// which is the job itself unless earlier work is still waiting.
+	// which is the job itself unless earlier work is still waiting. Prompts
+	// waiting on an idle session were held back by a failed turn; silent
+	// work runs past them and leaves them held, as it does behind a turn.
 	a.queues[id] = append(a.queues[id], job)
 	if a.owners[id] == nil && a.held[id] == 0 {
-		job = a.queues[id][0]
-		a.queues[id] = a.queues[id][1:]
+		q := a.queues[id]
+		i, holding := 0, false
+		if job.silent && !slices.ContainsFunc(q, isScriptTurn) {
+			i = slices.IndexFunc(q, func(j submission) bool { return j.silent })
+			holding = slices.ContainsFunc(q, func(j submission) bool { return !j.silent })
+		}
+		job = q[i]
+		a.queues[id] = append(q[:i:i], q[i+1:]...)
 		owner := a.claimFor(job, id)
+		owner.holdingPrompts = holding
 		a.mu.Unlock()
 		a.start(owner, job)
 	} else {

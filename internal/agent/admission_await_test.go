@@ -449,3 +449,41 @@ func TestSilentWorkAfterAFailedTurnKeepsPromptsHeld(t *testing.T) {
 	}
 	require.Equal(t, []string{"B"}, a.queued("s"), "the prompt is still queued")
 }
+
+// The same, when the silent work arrives after the failed turn has ended
+// and the session is idle with the prompt still held.
+func TestSilentWorkOnAnIdleSessionKeepsHeldPromptsHeld(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	entered, release := make(chan struct{}), make(chan struct{})
+	failed := make(chan struct{})
+	go func() {
+		_, _ = a.submit(t.Context(), "s", submission{prompt: "A", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			close(entered)
+			<-release
+			return nil, errors.New("user turn failed")
+		}})
+		close(failed)
+	}()
+	<-entered
+	ran := make(chan struct{}, 1)
+	_, err := a.submit(t.Context(), "s", submission{prompt: "B", run: func(context.Context) (*fantasy.AgentResult, error) {
+		ran <- struct{}{}
+		return textResult("B"), nil
+	}})
+	require.NoError(t, err)
+	close(release)
+	<-failed
+	require.Eventually(t, func() bool { return !a.busy("s") }, time.Second, time.Millisecond)
+
+	_, err = a.submitAwait(t.Context(), "s", submission{silent: true, run: instantRun("meta")})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return !a.busy("s") }, time.Second, time.Millisecond)
+	select {
+	case <-ran:
+		t.Fatal("the held prompt ran")
+	default:
+	}
+	require.Equal(t, []string{"B"}, a.queued("s"))
+}
