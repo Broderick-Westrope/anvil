@@ -212,3 +212,44 @@ func TestToolTimerStartIsIdempotent(t *testing.T) {
 		require.Nil(t, u.startElapsedTickForToolStart(assistantUpdate("s1", runningBash("tc1", 0)).Payload))
 	})
 }
+
+func TestToolTimerResumesAfterAutomaticApproval(t *testing.T) {
+	t.Parallel()
+	u, ws := newTimerTestUI()
+	item := toolItemIn(u, "a1", runningBash("tc1", 30*time.Second))
+	u.chat.SetMessages(item)
+	ws.running["a1"] = true
+
+	// The request flips the call to awaiting permission, so the tick
+	// finds nothing live and stops.
+	_, _ = u.Update(pubsub.Event[permission.PermissionNotification]{Payload: permission.PermissionNotification{ToolCallID: "tc1"}})
+	u.elapsedTickRunning = true
+	_, _ = u.Update(tickElapsedTimeMsg{})
+	require.False(t, u.elapsedTickRunning)
+
+	// A bouncer or rule approves it without a human, so StartedAt doesn't
+	// change; the approval itself must bring the tick back.
+	_, cmd := u.Update(pubsub.Event[permission.PermissionNotification]{Payload: permission.PermissionNotification{ToolCallID: "tc1", Granted: true}})
+	require.True(t, u.elapsedTickRunning)
+	require.NotNil(t, cmd)
+}
+
+func TestToolTimerIgnoresAStaleStartTime(t *testing.T) {
+	t.Parallel()
+	u, _ := newTimerTestUI()
+	restarted := runningBash("tc1", 0)
+	item := toolItemIn(u, "a1", restarted)
+	u.chat.SetMessages(item)
+
+	stale := restarted
+	stale.StartedAt -= 5_000
+	_, _ = u.Update(assistantUpdate("s1", stale))
+	require.Equal(t, restarted.StartedAt, item.ToolCall().StartedAt)
+
+	unstarted := restarted
+	unstarted.StartedAt = 0
+	unstarted.Input = `{"command":"sleep 61"}`
+	_, _ = u.Update(assistantUpdate("s1", unstarted))
+	require.Equal(t, restarted.StartedAt, item.ToolCall().StartedAt, "an older snapshot never moves the clock back")
+	require.Equal(t, unstarted.Input, item.ToolCall().Input)
+}

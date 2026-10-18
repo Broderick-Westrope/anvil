@@ -1111,6 +1111,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
+		// An automatic approval moves a call back to running without a new
+		// start time, so nothing else restarts a tick that stopped while
+		// it awaited permission.
+		if cmd := m.startElapsedTickForTools(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
 	case tea.TerminalVersionMsg:
@@ -1940,6 +1946,10 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 		existingToolItem := c.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {
 			existingToolCall := toolItem.ToolCall()
+			// A start time only moves forward (a permission grant restarts
+			// the clock), so an older snapshot arriving late never moves
+			// it back.
+			tc.StartedAt = max(tc.StartedAt, existingToolCall.StartedAt)
 			// Only update if finished state, input or start time changed
 			// to avoid clearing the cache.
 			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input || tc.StartedAt != existingToolCall.StartedAt {
