@@ -56,6 +56,8 @@ func (s *stubAgent) MessageID() string               { return s.id }
 func (s *stubAgent) SetMessageID(_ string)           {}
 func (s *stubAgent) SetStatus(_ chat.ToolStatus)     {}
 func (s *stubAgent) HasResult() bool                 { return !s.running }
+func (s *stubAgent) SetStepRunning(bool)             {}
+func (s *stubAgent) TimerCandidate() bool            { return false }
 func (s *stubAgent) Status() chat.ToolStatus {
 	if s.running {
 		return chat.ToolStatusRunning

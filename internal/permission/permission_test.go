@@ -655,10 +655,11 @@ func TestPendingRequest(t *testing.T) {
 			wg.Go(func() {
 				var err error
 				result, err = service.Request(t.Context(), CreatePermissionRequest{
-					SessionID: "s1",
-					ToolName:  "bash",
-					Action:    "execute",
-					Input:     "echo hello",
+					SessionID:  "s1",
+					ToolCallID: "tc1",
+					ToolName:   "bash",
+					Action:     "execute",
+					Input:      "echo hello",
 				})
 				require.NoError(t, err)
 			})
@@ -667,9 +668,10 @@ func TestPendingRequest(t *testing.T) {
 			pending, ok := service.PendingRequest()
 			require.True(t, ok)
 			require.Equal(t, PendingPermission{
-				ID:        event.Payload.ID,
-				SessionID: "s1",
-				ToolName:  "bash",
+				ID:         event.Payload.ID,
+				SessionID:  "s1",
+				ToolCallID: "tc1",
+				ToolName:   "bash",
 			}, pending)
 
 			tt.resolve(service, event.Payload)

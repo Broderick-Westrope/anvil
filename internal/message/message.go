@@ -442,9 +442,10 @@ func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) erro
 			return err
 		}
 
-		// Terminal events — message finished, tool call added or
-		// finished, reasoning ended — use the bounded must-deliver
-		// path so they never get dropped under channel contention.
+		// Terminal events — message finished, tool call added,
+		// finished or started, reasoning ended — use the bounded
+		// must-deliver path so they never get dropped under channel
+		// contention.
 		if isTerminal {
 			s.PublishMustDeliver(ctx, pubsub.UpdatedEvent, snap)
 		} else {
@@ -483,8 +484,9 @@ func (s *service) write(ctx context.Context, msg Message) error {
 // shouldFlushNow returns true when next represents a structural
 // change that must not be silently coalesced: the message just
 // finished, the tool-call set grew, a tool call transitioned to
-// finished, or reasoning just finished. prev is the last-flushed
-// snapshot (or nil if no write has landed yet).
+// finished, a tool call's start time changed, or reasoning just
+// finished. prev is the last-flushed snapshot (or nil if no write has
+// landed yet).
 func shouldFlushNow(prev, next *Message) bool {
 	if next.IsFinished() {
 		return true
@@ -503,6 +505,11 @@ func shouldFlushNow(prev, next *Message) bool {
 	for i := range nextCalls {
 		// Bounds-safe: lengths are equal here.
 		if nextCalls[i].Finished != prevCalls[i].Finished {
+			return true
+		}
+		// The UI times a running tool from StartedAt, so a start or a
+		// restart after a permission grant must not wait out the debounce.
+		if nextCalls[i].StartedAt != prevCalls[i].StartedAt {
 			return true
 		}
 		// A tool call's input only matters once it has landed (Finished

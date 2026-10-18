@@ -2,10 +2,12 @@ package message
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
@@ -270,6 +272,43 @@ func TestResetStreamedContent(t *testing.T) {
 	// Non-streamed parts survive.
 	require.Len(t, msg.ImageURLContent(), 1, "image should survive")
 	require.Len(t, msg.ToolResults(), 1, "tool results should survive")
+}
+
+func TestToAIMessage_IgnoresToolTimestamps(t *testing.T) {
+	t.Parallel()
+
+	untimed := []Message{
+		{Role: Assistant, Parts: []ContentPart{ToolCall{ID: "1", Name: "bash", Input: "{}", Finished: true}}},
+		{Role: Tool, Parts: []ContentPart{ToolResult{ToolCallID: "1", Name: "bash", Content: "out"}}},
+	}
+	timed := []Message{
+		{Role: Assistant, Parts: []ContentPart{ToolCall{ID: "1", Name: "bash", Input: "{}", Finished: true, StartedAt: 1_000}}},
+		{Role: Tool, Parts: []ContentPart{ToolResult{ToolCallID: "1", Name: "bash", Content: "out", FinishedAt: 12_000}}},
+	}
+
+	for i := range untimed {
+		want, err := json.Marshal(untimed[i].ToAIMessage())
+		require.NoError(t, err)
+		got, err := json.Marshal(timed[i].ToAIMessage())
+		require.NoError(t, err)
+		require.Equal(t, string(want), string(got))
+	}
+}
+
+func TestMarkToolCallStarted(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{}
+	msg.AddToolCall(ToolCall{ID: "1", Name: "bash", Input: "{}", Finished: true})
+	msg.AddToolCall(ToolCall{ID: "2", Name: "view", Input: "{}", Finished: true})
+
+	require.True(t, msg.MarkToolCallStarted("2", time.UnixMilli(1_234)))
+	require.False(t, msg.MarkToolCallStarted("missing", time.UnixMilli(5_000)))
+
+	require.Equal(t, []ToolCall{
+		{ID: "1", Name: "bash", Input: "{}", Finished: true},
+		{ID: "2", Name: "view", Input: "{}", Finished: true, StartedAt: 1_234},
+	}, msg.ToolCalls())
 }
 
 func TestResetStreamedContentEmpty(t *testing.T) {

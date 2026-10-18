@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
@@ -38,6 +39,31 @@ func hookApproved(ctx context.Context, toolCallID string) bool {
 	}
 	v, _ := ctx.Value(hookApprovalKey{}).(string)
 	return v == toolCallID
+}
+
+type promptObserverKey struct{}
+
+type promptObserver struct {
+	toolCallID string
+	observe    func(at time.Time)
+}
+
+// WithPromptObserver returns a context whose permission request for the
+// given tool call calls observe when a human prompt for it closes, by a
+// grant, a deny or cancellation, before Request returns. Requests settled
+// without a prompt (rules, hooks, the bouncer, yolo) never call it.
+func WithPromptObserver(ctx context.Context, toolCallID string, observe func(at time.Time)) context.Context {
+	return context.WithValue(ctx, promptObserverKey{}, promptObserver{toolCallID: toolCallID, observe: observe})
+}
+
+// notifyPromptClosed calls the context's prompt observer if it watches the
+// given tool call.
+func notifyPromptClosed(ctx context.Context, toolCallID string, at time.Time) {
+	o, ok := ctx.Value(promptObserverKey{}).(promptObserver)
+	if !ok || o.toolCallID != toolCallID {
+		return
+	}
+	o.observe(at)
 }
 
 // RequestResult holds the outcome of a permission request.
@@ -111,9 +137,10 @@ type PermissionRequest struct {
 
 // PendingPermission identifies the prompt waiting for a human decision.
 type PendingPermission struct {
-	ID        string
-	SessionID string
-	ToolName  string
+	ID         string
+	SessionID  string
+	ToolCallID string
+	ToolName   string
 }
 
 type Service interface {
@@ -398,6 +425,7 @@ func (s *permissionService) promptHuman(ctx context.Context, opts CreatePermissi
 
 	select {
 	case <-ctx.Done():
+		notifyPromptClosed(ctx, opts.ToolCallID, time.Now())
 		s.activeRequestMu.Lock()
 		if s.activeRequest != nil && s.activeRequest.ID == r.perm.ID {
 			s.activeRequest = nil
@@ -407,6 +435,7 @@ func (s *permissionService) promptHuman(ctx context.Context, opts CreatePermissi
 		s.recordReviewed(opts, VerdictCancelled, r.details, r.review)
 		return RequestResult{}, ctx.Err()
 	case resp := <-respCh:
+		notifyPromptClosed(ctx, opts.ToolCallID, time.Now())
 		verdict := VerdictDeny
 		if resp.Granted {
 			verdict = VerdictAllow
@@ -550,9 +579,10 @@ func (s *permissionService) PendingRequest() (PendingPermission, bool) {
 	// Only fields never written after the request is stored; Review is
 	// updated concurrently without this lock.
 	return PendingPermission{
-		ID:        s.activeRequest.ID,
-		SessionID: s.activeRequest.SessionID,
-		ToolName:  s.activeRequest.ToolName,
+		ID:         s.activeRequest.ID,
+		SessionID:  s.activeRequest.SessionID,
+		ToolCallID: s.activeRequest.ToolCallID,
+		ToolName:   s.activeRequest.ToolName,
 	}, true
 }
 

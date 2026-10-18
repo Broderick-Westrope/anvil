@@ -798,6 +798,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.startElapsedTickForJobs(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		if cmd := m.startElapsedTickForTools(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
@@ -991,6 +994,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+				if cmd := m.startElapsedTickForToolStart(msg.Payload); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 			break
 		}
@@ -1005,6 +1011,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
 			m.applyLazyMCPMessageParts(msg.Payload)
 			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if cmd := m.startElapsedTickForToolStart(msg.Payload); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		case pubsub.DeletedEvent:
@@ -1072,6 +1081,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
+		// An automatic approval moves a call back to running without a new
+		// start time, so nothing else restarts a tick that stopped while
+		// it awaited permission.
+		if cmd := m.startElapsedTickForTools(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
 	case tea.TerminalVersionMsg:
@@ -1331,7 +1346,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
+		anyTimed := m.syncToolTimers()
+		shouldContinue := anyRunning || anyTimed || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
@@ -1900,15 +1916,16 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 		existingToolItem := c.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {
 			existingToolCall := toolItem.ToolCall()
-			// Only update if finished state changed or input changed
+			tc.StartedAt = applyToolStart(toolItem, tc.StartedAt)
+			// Only update if finished state, input or start time changed
 			// to avoid clearing the cache.
-			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input {
+			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input || tc.StartedAt != existingToolCall.StartedAt {
 				toolItem.SetToolCall(tc)
 			}
 		}
 		if existingToolItem == nil {
 			item := chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.expandedToolPatterns())
-			chat.SetToolCallStartedAt(item, msg.CreatedAt)
+			chat.SetToolMessageCreatedAt(item, msg.CreatedAt)
 			items = append(items, item)
 		}
 	}
@@ -2041,7 +2058,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		if !found {
 			// Create a new nested tool item.
 			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false, m.expandedToolPatterns())
-			chat.SetToolCallStartedAt(nestedItem, event.Payload.CreatedAt)
+			chat.SetToolMessageCreatedAt(nestedItem, event.Payload.CreatedAt)
 			if simplifiable, ok := nestedItem.(chat.Compactable); ok {
 				simplifiable.SetCompact(true)
 			}
@@ -5639,19 +5656,14 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 
 // handlePermissionNotification updates tool items when permission state changes.
 func (m *UI) handlePermissionNotification(notification permission.PermissionNotification) {
-	// Search the root and every drill-in chat, not just the visible one:
+	// Update the root and every drill-in chat, not just the visible one:
 	// a subagent's tool may sit under a thinking or tool drill-in.
-	toolItem := m.findMessageItem(notification.ToolCallID)
-	if toolItem == nil {
-		return
+	status := chat.ToolStatusAwaitingPermission
+	if notification.Granted {
+		status = chat.ToolStatusRunning
 	}
-
-	if permItem, ok := toolItem.(chat.ToolMessageItem); ok {
-		if notification.Granted {
-			permItem.SetStatus(chat.ToolStatusRunning)
-		} else {
-			permItem.SetStatus(chat.ToolStatusAwaitingPermission)
-		}
+	for _, item := range m.toolItemsByCallID(notification.ToolCallID) {
+		item.SetStatus(status)
 	}
 }
 

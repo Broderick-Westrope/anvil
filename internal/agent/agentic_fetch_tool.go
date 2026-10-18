@@ -128,6 +128,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 
 			agent := NewSessionAgent(SessionAgentOptions{
 				admission:            c.admission,
+				runningSteps:         c.runningSteps,
 				IsSubAgent:           true,
 				LargeModel:           fetchModel,
 				SmallModel:           smallModel,
