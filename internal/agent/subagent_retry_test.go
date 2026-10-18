@@ -93,7 +93,7 @@ func TestSubagentRetryDelayHonoursALongerProviderHint(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			require.Equal(t, tc.want, subagentRetryDelay(fmt.Errorf("w: %w", tc.err), tc.base))
+			require.Equal(t, tc.want, withProviderHint(fmt.Errorf("w: %w", tc.err), tc.base))
 		})
 	}
 }
@@ -102,7 +102,7 @@ func TestSubagentRetryDelayReadsAnHTTPDateHint(t *testing.T) {
 	t.Parallel()
 	at := time.Now().Add(20 * time.Second).UTC().Format(http.TimeFormat)
 	err := &fantasy.ProviderError{StatusCode: 503, ResponseHeaders: map[string]string{"retry-after": at}}
-	got := subagentRetryDelay(err, 5*time.Second)
+	got := withProviderHint(err, 5*time.Second)
 	require.Greater(t, got, 15*time.Second)
 	require.LessOrEqual(t, got, 20*time.Second)
 }
@@ -130,5 +130,5 @@ func TestLocalPersistenceStillMarksAStorageFailureThatRacedACancel(t *testing.T)
 func TestSubagentRetryDelayCapsTheProviderHint(t *testing.T) {
 	t.Parallel()
 	err := &fantasy.ProviderError{StatusCode: 429, ResponseHeaders: map[string]string{"retry-after": "3600"}}
-	require.Equal(t, maxSubagentRetryDelay, subagentRetryDelay(err, 5*time.Second))
+	require.Equal(t, maxSubagentRetryDelay, withProviderHint(err, 5*time.Second))
 }

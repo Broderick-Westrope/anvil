@@ -45,7 +45,7 @@ func (c *coordinator) taskTool(ctx context.Context, callerName string, callerDep
 				return fantasy.NewTextErrorResponse("prompt is required"), nil
 			}
 			if params.Resume != "" {
-				return c.resumeSubAgent(ctx, callerName, callerDepth, params, call)
+				return c.resumeSubagent(ctx, callerName, callerDepth, params, call)
 			}
 			if params.SubagentType == "" {
 				return fantasy.NewTextErrorResponse("subagent_type is required"), nil
@@ -161,9 +161,9 @@ func subAgentOrigin(ctx context.Context) (string, string, error) {
 	return sessionID, agentMessageID, nil
 }
 
-// resumeSubAgent continues a direct child subagent of the calling session
+// resumeSubagent continues a direct child subagent of the calling session
 // with params.Prompt, on the agent type and model it was stored with.
-func (c *coordinator) resumeSubAgent(ctx context.Context, callerName string, callerDepth int, params TaskParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+func (c *coordinator) resumeSubagent(ctx context.Context, callerName string, callerDepth int, params TaskParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	sessionID, agentMessageID, err := subAgentOrigin(ctx)
 	if err != nil {
 		return fantasy.ToolResponse{}, err

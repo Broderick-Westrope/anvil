@@ -139,6 +139,9 @@ type taskCall struct {
 	output string
 	// recoveries names each transient failure the call resumed after.
 	recoveries []string
+	// costCall is the call charged the child's cost: id for task calls,
+	// "" for callers without call links.
+	costCall string
 }
 
 // runSubAgent runs a task call in its child session and returns the
@@ -155,7 +158,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		tc.handle = params.Resume.Handle
 	}
 	if params.AgentType != "" {
-		child.CallID = callID
+		child.CallID, tc.costCall = callID, callID
 	}
 
 	callCtx, cancelCall := context.WithCancelCause(ctx)
@@ -274,7 +277,7 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 		call.Injections, call.steering, call.state = next.Injections, tc.lease, &runState{}
 		attemptCtx := tc.lease.beginAttempt(ctx)
 		result, runErr := tc.params.Agent.Run(attemptCtx, call)
-		c.rollUpChildCost(ctx, sessionID, tc.costCallID())
+		c.rollUpChildCost(ctx, sessionID, tc.costCall)
 		if runErr != nil && call.state.acceptedUserID == "" {
 			// The turn never persisted its message, so steers it carried
 			// weren't delivered.
@@ -306,7 +309,7 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 		if !retry || resumes >= maxSubagentResumes || tc.params.AgentType == "" {
 			return tc.failure(ctx, runErr)
 		}
-		if err := waitBeforeResume(ctx, tc.lease, subagentRetryDelay(runErr, c.subagentRetryDelay(resumes))); err != nil {
+		if err := waitBeforeResume(ctx, tc.lease, withProviderHint(runErr, c.backoffFor(resumes))); err != nil {
 			return tc.failure(ctx, err)
 		}
 		tc.recoveries = append(tc.recoveries, reason)
@@ -317,7 +320,9 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 	}
 }
 
-func (c *coordinator) subagentRetryDelay(resumes int) time.Duration {
+// backoffFor returns the wait before the automatic resume that follows
+// resumes earlier ones.
+func (c *coordinator) backoffFor(resumes int) time.Duration {
 	delays := c.subagentRetryDelays
 	if delays == nil {
 		delays = defaultSubagentRetryDelays
@@ -338,15 +343,6 @@ func waitBeforeResume(ctx context.Context, lease *subagentLease, delay time.Dura
 	case <-timer.C:
 		return nil
 	}
-}
-
-// costCallID is the call charged the child's cost, or "" for callers
-// without call links.
-func (tc *taskCall) costCallID() string {
-	if tc.params.AgentType == "" {
-		return ""
-	}
-	return tc.id
 }
 
 // humanSteers returns the steers among injections, which go back to the
