@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -287,6 +288,9 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 			prepared.Messages = append(prepared.Messages, aiMessages...)
 		}
 	}
+	if err := t.deliverSteers(callContext, options.Messages, &prepared); err != nil {
+		return callContext, prepared, err
+	}
 
 	prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, t.largeModel)
 	t.addCacheControl(prepared.Messages)
@@ -330,6 +334,34 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 	callContext = context.WithValue(callContext, ownerKey{}, struct{}{})
 	t.assistant = &assistantMsg
 	return callContext, prepared, nil
+}
+
+// deliverSteers persists the human steers pending for a subagent run as
+// one subagent_injection message and adds it to the step. Steers that
+// can't be persisted stay pending, so the call hands them back.
+func (t *turn) deliverSteers(ctx context.Context, stepMessages []fantasy.Message, prepared *fantasy.PrepareStepResult) error {
+	if t.call.steering == nil {
+		return nil
+	}
+	steers := t.call.steering.takePending()
+	if len(steers) == 0 {
+		return nil
+	}
+	msg, err := t.a.messages.Create(ctx, t.call.SessionID, message.CreateMessageParams{
+		Role:            message.User,
+		MessageType:     message.MessageTypeSubagentInjection,
+		Parts:           message.InjectionParts(steers),
+		ParentMessageID: t.currentLeaf(),
+	})
+	if err != nil {
+		t.call.steering.restore(steers)
+		return persistenceError{fmt.Errorf("deliver steer: %w", err)}
+	}
+	t.setLeaf(msg.ID)
+	aiMessages := msg.ToAIMessage()
+	t.injected.add(stepMessages, aiMessages...)
+	prepared.Messages = append(prepared.Messages, aiMessages...)
+	return nil
 }
 
 // addCacheControl marks the last system message and the last two messages
@@ -454,6 +486,9 @@ func (t *turn) onToolCall(tc fantasy.ToolCallContent) error {
 	return t.a.messages.Update(t.persistCtx, *t.assistant)
 }
 
+// interruptedToolResult answers tool calls that interrupt+steer cut off.
+const interruptedToolResult = "Interrupted by user"
+
 func (t *turn) onToolResult(result fantasy.ToolResultContent) error {
 	toolResult := t.a.convertToToolResult(result)
 	toolResult.FinishedAt = time.Now().UnixMilli()
@@ -463,6 +498,9 @@ func (t *turn) onToolResult(result fantasy.ToolResultContent) error {
 	if wasSanitized {
 		toolResult.Content = "Tool call failed: arguments were not valid JSON. Please check your tool call format and try again."
 		toolResult.IsError = true
+	}
+	if toolResult.IsError && errors.Is(context.Cause(t.genCtx), errSubagentInterrupted) {
+		toolResult.Content = interruptedToolResult
 	}
 	// Hold the lock across the entire read→create→update sequence.
 	// OnToolResult may be called from parallel tool-execution goroutines;
@@ -588,6 +626,9 @@ func (t *turn) recordFailure(err error) error {
 	content := "There was an error while executing the tool"
 	if isCancelErr {
 		content = "Error: user cancelled assistant tool calling"
+	}
+	if errors.Is(context.Cause(t.genCtx), errSubagentInterrupted) {
+		content = interruptedToolResult
 	}
 	for _, tc := range t.assistant.ToolCalls() {
 		if !tc.Finished {

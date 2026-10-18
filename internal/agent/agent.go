@@ -92,6 +92,14 @@ type SessionAgentCall struct {
 	// instead of a user prompt.
 	wake bool
 
+	// Injections, when set, start the run instead of a user prompt: they
+	// are persisted as one subagent_injection message, and Prompt becomes
+	// their rendered text.
+	Injections []message.InjectionContent
+	// steering, when set, supplies human steers to deliver at each step
+	// boundary of a subagent run.
+	steering *subagentLease
+
 	// OnAuthRefresh, when non-nil, is called by fantasy when a stream
 	// fails with an authentication error (HTTP 401). The callback should
 	// refresh credentials and return nil on success, in which case
@@ -272,6 +280,9 @@ func NewSessionAgent(
 }
 
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+	if len(call.Injections) > 0 {
+		call.Prompt = message.RenderInjections(call.Injections)
+	}
 	if call.Prompt == "" && !message.ContainsTextAttachment(call.Attachments) {
 		return nil, ErrEmptyPrompt
 	}
@@ -396,7 +407,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			return result, err
 		}
 		if recordErr := t.recordFailure(err); recordErr != nil {
-			return nil, recordErr
+			return nil, persistenceError{recordErr}
 		}
 		return nil, err
 	}
@@ -565,8 +576,16 @@ func (a *sessionAgent) abortSetup(ctx context.Context, err error) (*fantasy.Agen
 	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil {
 		owner.handoffOnError = true
 	}
-	return nil, err
+	return nil, persistenceError{err}
 }
+
+// persistenceError marks err as a failure of local persistence, without
+// changing its message.
+type persistenceError struct{ err error }
+
+func (e persistenceError) Error() string        { return e.err.Error() }
+func (e persistenceError) Unwrap() error        { return e.err }
+func (e persistenceError) Is(target error) bool { return target == errLocalPersistence }
 
 func (a *sessionAgent) reportIdleWhenDone(ctx context.Context, sessionID string) {
 	if a.onIdle == nil {
@@ -741,6 +760,18 @@ func sessionHeaders(sessionID string) map[string]string {
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall, parentMessageID string) (message.Message, error) {
+	if len(call.Injections) > 0 {
+		msg, err := a.messages.Create(ctx, call.SessionID, message.CreateMessageParams{
+			Role:            message.User,
+			MessageType:     message.MessageTypeSubagentInjection,
+			Parts:           message.InjectionParts(call.Injections),
+			ParentMessageID: parentMessageID,
+		})
+		if err != nil {
+			return message.Message{}, fmt.Errorf("failed to create injection message: %w", err)
+		}
+		return msg, nil
+	}
 	parts := []message.ContentPart{message.TextContent{Text: call.Prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
