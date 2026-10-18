@@ -271,14 +271,7 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	qtx := s.q.WithTx(tx)
-	running, err := qtx.CountRunningWorkflowRunsFrom(ctx, id)
-	if err != nil {
-		return fmt.Errorf("checking for running workflows: %w", err)
-	}
-	if running > 0 {
-		return ErrWorkflowRunning
-	}
-	// Nor is a session a running run made, which the run still uses.
+	// A session a running run made is still in use by it.
 	own, err := qtx.GetSessionByID(ctx, id)
 	if err != nil {
 		return err
@@ -321,6 +314,15 @@ func deleteSessionTree(ctx context.Context, qtx *db.Queries, id string) ([]db.Se
 	dbSession, err := qtx.GetSessionByID(ctx, id)
 	if err != nil {
 		return nil, nil, err
+	}
+	// A run started from any session in the tree, such as a builder the
+	// user continued and ran another workflow from, still uses it.
+	running, err := qtx.CountRunningWorkflowRunsFrom(ctx, id)
+	if err != nil {
+		return nil, nil, fmt.Errorf("checking for running workflows from %s: %w", id, err)
+	}
+	if running > 0 {
+		return nil, nil, ErrWorkflowRunning
 	}
 	children, err := qtx.ListWorkflowChildSessionIDs(ctx, sql.NullString{String: id, Valid: true})
 	if err != nil {

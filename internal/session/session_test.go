@@ -536,6 +536,17 @@ func TestDeleteRefusesWhileWhatAWorkflowMadeIsInUse(t *testing.T) {
 			want: ErrWorkflowSessionInUse,
 		},
 	}
+	tests["a run started from a builder"] = struct {
+		setup func(t *testing.T, q *db.Queries, invoker, builder string)
+		want  error
+	}{
+		setup: func(t *testing.T, q *db.Queries, _, builder string) {
+			require.NoError(t, q.CreateWorkflowRun(t.Context(), db.CreateWorkflowRunParams{
+				ID: "run-nested", Command: "project:build", InvokingSessionID: builder, InstanceID: "other", StartedAt: 1,
+			}))
+		},
+		want: ErrWorkflowRunning,
+	}
 	// The builder itself, deleted while the run that made it is going.
 	tests["a session a running run made"] = struct {
 		setup func(t *testing.T, q *db.Queries, invoker, builder string)

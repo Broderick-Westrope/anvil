@@ -395,6 +395,10 @@ func (n changeNotifier) Record(ctx context.Context, ev workflow.Event) error {
 // run's start boundary.
 func (s *Service) writeMarker(ctx context.Context, runID string, inv Invocation) error {
 	return s.deps.Coordinator.RunInSession(ctx, inv.SessionID, func(ctx context.Context) error {
+		// An abort can stop the wait for the session, but once the marker
+		// is being written it's written whole: a marker the leaf never
+		// reached would branch the user's next message off before it.
+		ctx = context.WithoutCancel(ctx)
 		invoker, err := s.deps.Sessions.Get(ctx, inv.SessionID)
 		if err != nil {
 			return err
