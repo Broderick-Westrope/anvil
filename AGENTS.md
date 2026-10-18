@@ -186,7 +186,7 @@ Terms with a specific meaning in this codebase are defined in
   Session cost only grows, through `AddCost`, `UpdateTitleAndUsage` and
   `RollUpChildCost`; `Session.Save` never writes it. See
   `docs/adr/0004-session-cost-only-grows.md` and
-  `plans/design-2026-10-18-subagent-resume-and-steering.md`.
+  `plans/completed/design-2026-10-18-subagent-resume-and-steering.md`.
 - **Workflows**: a command whose `COMMAND.md` sets `workflow:` runs a
   JavaScript script (see `plans/completed/design-2026-10-10-workflows.md`).
   `internal/workflow` is the engine: it parses `requires()` without running

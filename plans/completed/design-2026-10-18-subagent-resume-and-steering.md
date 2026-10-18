@@ -305,14 +305,38 @@ the first match wins:
   Done on every resume, that would double count, and two sibling rollups at
   once can lose an update.
 
-**Open for the build:**
+**Resolved in the build:**
 
-- The interrupt+steer key binding. Check for conflicts in the TUI keymap
-  (`internal/ui/AGENTS.md`).
-- Where to store the identity and the call link: new columns on `sessions`,
-  or a `subagent_calls` table. A table is likely, because one child has many
-  calls.
-- The suffix scheme for `subagent_id`.
+- **Interrupt+steer key:** `alt+i`, plus `ctrl+enter` on terminals that
+  report it. `alt+enter` and `shift+enter` are already newline.
+- **Storage:** a `subagents` table for identity and a `subagent_calls`
+  table for call links. Each `subagent_calls` row also holds that call's
+  own cost and its start and finish times.
+- **`subagent_id` suffix:** the first four hex digits of the xxh3 hash of
+  the child session ID, lengthened one digit at a time on a collision
+  within the parent.
+
+**Where the build differs from this spec:**
+
+- **Queued steers:** they show as a "N queued" count in the steer footer,
+  not as pills. Pills belong to the root editor, which is hidden while
+  drilled in.
+- **The steer input:** it's a one-line input in a footer under the
+  drilled-in chat, not the main editor. Tab focuses it. Esc first leaves
+  a focused input, so abandoning a draft never cancels the subagent.
+- **Returned steers:** a steer the call ends without delivering goes to
+  the main editor of the session the subagent works for, with a warning.
+  It doesn't go back to the subagent's input, whose call is over.
+- **Retry rule 5:** it covers a 401 that survives fantasy's refresh, and a
+  refresh that fails inside a step, which surfaces as that 401. A
+  failure to rebuild the subagent's models before its first step is a
+  local setup error and isn't retried.
+- **Provider retry hints:** they're honoured up to two minutes, so a quota
+  reset hours away can't leave a task call waiting silently.
+- **Cost:** `Session.Save` no longer writes cost; it only grows through
+  explicit deltas (`docs/adr/0004-session-cost-only-grows.md`).
+- **Tokens on a task item:** they're the child session's context size, as
+  before, not a per-call sum. Cost and time are per call.
 
 **Context Files:**
 
