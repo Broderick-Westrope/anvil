@@ -239,9 +239,8 @@ func (w *AppWorkspace) AgentSubagentPendingSteers(childSessionID string) []strin
 	return w.app.AgentCoordinator.SubagentPendingSteers(childSessionID)
 }
 
-func (w *AppWorkspace) SubagentCall(ctx context.Context, callID string) (session.SubagentCall, bool) {
-	call, err := w.app.Sessions.GetSubagentCall(ctx, callID)
-	return call, err == nil
+func (w *AppWorkspace) GetSubagentCall(ctx context.Context, callID string) (session.SubagentCall, error) {
+	return w.app.Sessions.GetSubagentCall(ctx, callID)
 }
 
 func (w *AppWorkspace) AgentTakeReturnedSteers() []agent.SubagentSteersReturned {

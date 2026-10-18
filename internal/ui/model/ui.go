@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1687,9 +1688,12 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// the child session it continued.
 		callID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
 		agentSessionID := callID
-		call, linked := m.com.Workspace.SubagentCall(context.Background(), callID)
+		call, err := m.com.Workspace.GetSubagentCall(context.Background(), callID)
+		linked := err == nil
 		if linked {
 			agentSessionID = call.SessionID
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("Failed to load task call link", "call", callID, "error", err)
 		}
 
 		// Fetch nested messages, keeping only those this call produced.

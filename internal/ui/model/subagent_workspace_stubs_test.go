@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -13,14 +14,14 @@ import (
 
 func (w *workflowTestWorkspace) AgentSubagentRunning(string) bool           { return false }
 func (w *workflowTestWorkspace) AgentSubagentPendingSteers(string) []string { return nil }
-func (w *workflowTestWorkspace) SubagentCall(context.Context, string) (session.SubagentCall, bool) {
-	return session.SubagentCall{}, false
+func (w *workflowTestWorkspace) GetSubagentCall(context.Context, string) (session.SubagentCall, error) {
+	return session.SubagentCall{}, sql.ErrNoRows
 }
 
 func (w *jobsWorkspace) AgentSubagentRunning(string) bool           { return false }
 func (w *jobsWorkspace) AgentSubagentPendingSteers(string) []string { return nil }
-func (w *jobsWorkspace) SubagentCall(context.Context, string) (session.SubagentCall, bool) {
-	return session.SubagentCall{}, false
+func (w *jobsWorkspace) GetSubagentCall(context.Context, string) (session.SubagentCall, error) {
+	return session.SubagentCall{}, sql.ErrNoRows
 }
 
 func (w *workflowTestWorkspace) AgentTakeReturnedSteers() []agent.SubagentSteersReturned { return nil }
