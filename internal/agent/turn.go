@@ -308,7 +308,7 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 		ParentMessageID: t.currentLeaf(),
 	})
 	if err != nil {
-		return callContext, prepared, err
+		return callContext, prepared, localPersistence(callContext, err)
 	}
 	t.call.state.assistantIDs = append(t.call.state.assistantIDs, assistantMsg.ID)
 	t.setLeaf(assistantMsg.ID)
@@ -355,7 +355,7 @@ func (t *turn) deliverSteers(ctx context.Context, stepMessages []fantasy.Message
 	})
 	if err != nil {
 		t.call.steering.restore(steers)
-		return persistenceError{fmt.Errorf("deliver steer: %w", err)}
+		return localPersistence(ctx, fmt.Errorf("deliver steer: %w", err))
 	}
 	t.setLeaf(msg.ID)
 	aiMessages := msg.ToAIMessage()
@@ -561,15 +561,15 @@ func (t *turn) onStepFinish(stepResult fantasy.StepResult) error {
 
 	updatedSession, err := t.a.sessions.Get(t.genCtx, t.call.SessionID)
 	if err != nil {
-		return err
+		return localPersistence(t.genCtx, err)
 	}
 	usage, estimated := fallbackStepUsage(t.stepMessages, stepResult)
 	t.a.updateSessionUsage(t.largeModel, &updatedSession, usage, t.a.openrouterCost(stepResult.ProviderMetadata), estimated)
 	if _, err := t.a.sessions.Save(t.genCtx, updatedSession); err != nil {
-		return err
+		return localPersistence(t.genCtx, err)
 	}
 	t.session = updatedSession
-	return t.a.messages.Update(t.genCtx, *t.assistant)
+	return localPersistence(t.genCtx, t.a.messages.Update(t.genCtx, *t.assistant))
 }
 
 func stopsTurn(stepResult fantasy.StepResult) bool {

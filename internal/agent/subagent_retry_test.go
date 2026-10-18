@@ -106,3 +106,16 @@ func TestSubagentRetryDelayReadsAnHTTPDateHint(t *testing.T) {
 	require.Greater(t, got, 15*time.Second)
 	require.LessOrEqual(t, got, 20*time.Second)
 }
+
+func TestLocalPersistenceMarksOnlyRealFailures(t *testing.T) {
+	t.Parallel()
+	live := t.Context()
+	cancelled, cancel := context.WithCancelCause(t.Context())
+	cancel(errSubagentInterrupted)
+
+	require.ErrorIs(t, localPersistence(live, errors.New("disk full")), errLocalPersistence)
+	require.NotErrorIs(t, localPersistence(cancelled, context.Canceled), errLocalPersistence,
+		"a write cut off by an interrupt is a cancellation, not a persistence failure")
+	require.NoError(t, localPersistence(live, nil))
+	require.Equal(t, "disk full", localPersistence(live, errors.New("disk full")).Error())
+}

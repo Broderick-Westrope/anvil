@@ -407,7 +407,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			return result, err
 		}
 		if recordErr := t.recordFailure(err); recordErr != nil {
-			return nil, persistenceError{recordErr}
+			return nil, localPersistence(t.persistCtx, recordErr)
 		}
 		return nil, err
 	}
@@ -579,7 +579,18 @@ func (a *sessionAgent) abortSetup(ctx context.Context, err error) (*fantasy.Agen
 	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil {
 		owner.handoffOnError = true
 	}
-	return nil, persistenceError{err}
+	return nil, localPersistence(ctx, err)
+}
+
+// localPersistence marks err from a database write or read made with ctx
+// as a failure of local persistence, so a task call doesn't retry it. A
+// failure that only happened because ctx was cancelled, such as by an
+// interrupt, isn't one.
+func localPersistence(ctx context.Context, err error) error {
+	if err == nil || ctx.Err() != nil {
+		return err
+	}
+	return persistenceError{err}
 }
 
 // persistenceError marks err as a failure of local persistence, without
