@@ -189,7 +189,10 @@ func (f *subagentSteer) send(child string, interrupt bool) tea.Cmd {
 // nudge event can't lose them; another session's wait until it's shown.
 // Their call is over, so the subagent's input is closed; they go to the
 // main editor, where the human can pass them to the orchestrator.
-func (f *subagentSteer) Observe(tea.Msg) tea.Cmd {
+func (f *subagentSteer) Observe(msg tea.Msg) tea.Cmd {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		f.input.SetWidth(size.Width)
+	}
 	f.sync()
 	root := f.host.SessionID()
 	if root == "" {
@@ -227,25 +230,27 @@ func (f *subagentSteer) DrillInFooter() panelView {
 	if child == "" {
 		return nil
 	}
-	input := f.input
-	if child != f.child {
-		input.SetValue(f.drafts[child])
-		input.Blur()
-	}
-	return subagentSteerFooter{
+	footer := subagentSteerFooter{
 		f:       f,
-		input:   input,
 		running: f.ws.AgentSubagentRunning(child),
 		queued:  len(f.ws.AgentSubagentPendingSteers(child)),
 	}
+	if child == f.child {
+		footer.inputView, footer.focused = firstLine(f.input.View()), f.input.Focused()
+	} else {
+		footer.inputView = f.input.Prompt + f.drafts[child]
+	}
+	return footer
 }
 
-// subagentSteerFooter is the footer's view-model.
+// subagentSteerFooter is the footer's view-model. It holds the input's
+// rendered line rather than the input, whose copies share state.
 type subagentSteerFooter struct {
-	f       *subagentSteer
-	input   textarea.Model
-	running bool
-	queued  int
+	f         *subagentSteer
+	inputView string
+	focused   bool
+	running   bool
+	queued    int
 }
 
 func (v subagentSteerFooter) Lines() int { return subagentSteerFooterLines }
@@ -257,16 +262,14 @@ func (v subagentSteerFooter) Render(width int) string {
 		hint := muted.Render("This subagent isn't running. To continue it, ask the orchestrator to resume it.")
 		return ansi.Truncate(hint, width, "…") + "\n"
 	}
-	input := v.input
-	input.SetWidth(width)
 	cancel := v.f.keys.Cancel.Help().Key + " cancel subagent"
 	help := []string{v.f.keys.Focus.Help().Key + " message subagent", cancel}
-	if input.Focused() {
+	if v.focused {
 		help = []string{bindingHelp(v.f.keys.Send), bindingHelp(v.f.keys.Interrupt), v.f.keys.Focus.Help().Key + " back to chat", cancel}
 	}
 	if v.queued > 0 {
 		help = append(help, fmt.Sprintf("%d queued", v.queued))
 	}
 	line := muted.Render(strings.Join(help, " · "))
-	return ansi.Truncate(firstLine(input.View()), width, "…") + "\n" + ansi.Truncate(line, width, "…")
+	return ansi.Truncate(v.inputView, width, "…") + "\n" + ansi.Truncate(line, width, "…")
 }

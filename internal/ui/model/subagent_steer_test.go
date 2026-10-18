@@ -305,3 +305,13 @@ func TestPasteIntoAStoppedSubagentsInputIsRefused(t *testing.T) {
 	require.False(t, claimed)
 	require.Empty(t, s.f.input.Value())
 }
+
+func TestRenderingLeavesTheLiveInputsWidthAlone(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+	s.f.Observe(tea.WindowSizeMsg{Width: 100, Height: 40})
+	width := s.f.input.Width()
+
+	s.f.DrillInFooter().Render(37)
+	require.Equal(t, width, s.f.input.Width())
+}
