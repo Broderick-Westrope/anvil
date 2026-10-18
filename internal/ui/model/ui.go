@@ -476,6 +476,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
+	ui.features.register(newSubagentSteer(uiHost{ui}, com, com.Workspace))
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -712,6 +713,7 @@ func (m *UI) activeChatArea() image.Rectangle {
 	area := m.layout.main
 	if m.isDrilledIn() {
 		area.Min.Y = min(area.Min.Y+drillInChatTopMargin, area.Max.Y)
+		area.Max.Y = max(area.Min.Y, area.Max.Y-m.features.drillInFooterLines())
 	}
 	return area
 }
@@ -3027,6 +3029,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handleDialogMsg(msg)
 	}
 
+	if cmd, ok := m.features.preemptKey(msg); ok {
+		return tea.Batch(append(cmds, cmd)...)
+	}
+
 	// Handle cancel key when agent is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
 		if m.isAgentBusy() {
@@ -3611,7 +3617,12 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			)
 			uv.NewStyledString(breadcrumb).Draw(scr, bcArea)
 
-			m.activeChat().Draw(scr, m.activeChatArea())
+			chatArea := m.activeChatArea()
+			m.activeChat().Draw(scr, chatArea)
+			if footer := m.features.drillInFooter(); footer != nil {
+				footerArea := image.Rect(layout.main.Min.X, chatArea.Max.Y, layout.main.Max.X, layout.main.Max.Y)
+				uv.NewStyledString(footer.Render(footerArea.Dx())).Draw(scr, footerArea)
+			}
 		} else {
 			m.activeChat().Draw(scr, layout.main)
 			if layout.pills.Dy() > 0 && m.pillsView != "" {
@@ -4163,7 +4174,7 @@ func (m *UI) updateSize() {
 	for i, entry := range m.drillStack {
 		h := chatHeight
 		if i == len(m.drillStack)-1 {
-			h = max(0, chatHeight-drillInChatTopMargin)
+			h = max(0, chatHeight-drillInChatTopMargin-m.features.drillInFooterLines())
 		}
 		entry.chat.SetSize(chatWidth, h)
 	}

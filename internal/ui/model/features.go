@@ -58,6 +58,19 @@ type panelView interface {
 	Render(width int) string
 }
 
+// preemptKeyFeature is offered keys before Esc and focus dispatch, once
+// no dialog is open. Use it only for input surfaces that must own keys
+// the chat or editor would otherwise take.
+type preemptKeyFeature interface {
+	PreemptKey(msg tea.KeyPressMsg) (tea.Cmd, bool)
+}
+
+// drillInFeature draws a footer under a drilled-in chat.
+type drillInFeature interface {
+	// DrillInFooter returns the footer, or nil when it has none.
+	DrillInFooter() panelView
+}
+
 // paletteFeature contributes entries to the command palette.
 type paletteFeature interface {
 	PaletteEntries() []*dialog.CommandItem
@@ -70,6 +83,8 @@ type features struct {
 	commands []commandFeature
 	panels   []panelFeature
 	palettes []paletteFeature
+	preempts []preemptKeyFeature
+	footers  []drillInFeature
 }
 
 // register adds f, and the optional surfaces it implements, after the
@@ -85,6 +100,40 @@ func (fs *features) register(f feature) {
 	if p, ok := f.(paletteFeature); ok {
 		fs.palettes = append(fs.palettes, p)
 	}
+	if p, ok := f.(preemptKeyFeature); ok {
+		fs.preempts = append(fs.preempts, p)
+	}
+	if d, ok := f.(drillInFeature); ok {
+		fs.footers = append(fs.footers, d)
+	}
+}
+
+func (fs *features) preemptKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	for _, f := range fs.preempts {
+		if cmd, ok := f.PreemptKey(msg); ok {
+			return cmd, true
+		}
+	}
+	return nil, false
+}
+
+// drillInFooter returns the first footer a feature has for the drilled-in
+// chat, or nil.
+func (fs *features) drillInFooter() panelView {
+	for _, f := range fs.footers {
+		if v := f.DrillInFooter(); v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// drillInFooterLines is the height of drillInFooter.
+func (fs *features) drillInFooterLines() int {
+	if v := fs.drillInFooter(); v != nil {
+		return v.Lines()
+	}
+	return 0
 }
 
 // isInput reports whether msg is keyboard, paste or mouse input, which

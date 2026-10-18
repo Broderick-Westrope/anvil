@@ -52,6 +52,10 @@ type KeyMap struct {
 		Branch         key.Binding
 	}
 
+	// SubagentInterrupt sends a drilled-in subagent a message and cuts
+	// off its current attempt.
+	SubagentInterrupt key.Binding
+
 	// Global key maps
 	Quit       key.Binding
 	Help       key.Binding
@@ -144,6 +148,12 @@ func DefaultKeyMap() KeyMap {
 	km.Editor.SendMessage = key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "send"),
+	)
+	km.SubagentInterrupt = key.NewBinding(
+		// ctrl+enter only reaches terminals that disambiguate it; alt+i
+		// works everywhere.
+		key.WithKeys("ctrl+enter", "alt+i"),
+		key.WithHelp("alt+i", "interrupt and send"),
 	)
 	km.Editor.OpenEditor = key.NewBinding(
 		key.WithKeys("ctrl+o"),
