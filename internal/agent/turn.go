@@ -67,6 +67,47 @@ type turn struct {
 	sanitized   map[string]bool
 
 	shouldSummarize bool
+
+	// uncharged is the usage the provider reported for the current step,
+	// until onStepFinish saves it to the session. A step cut off before
+	// then, such as by an interrupt during its tools, is charged on the
+	// way out instead.
+	uncharged *stepCharge
+	// persistErr is the persistence failure that stopped the turn. Fantasy
+	// ignores OnStepFinish's error, so the turn keeps it and stops itself.
+	persistErr error
+}
+
+// stepCharge is usage a provider reported for one step.
+type stepCharge struct {
+	usage fantasy.Usage
+	meta  fantasy.ProviderMetadata
+}
+
+func (t *turn) persistFailure() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.persistErr
+}
+
+// chargeUnfinishedStep saves the usage of a step that ended before
+// onStepFinish could, so cost the provider billed is never lost.
+func (t *turn) chargeUnfinishedStep() {
+	t.mu.Lock()
+	charge := t.uncharged
+	t.uncharged = nil
+	t.mu.Unlock()
+	if charge == nil || usageIsZero(charge.usage) {
+		return
+	}
+	sess, err := t.a.sessions.Get(t.persistCtx, t.call.SessionID)
+	if err == nil {
+		t.a.updateSessionUsage(t.largeModel, &sess, charge.usage, t.a.openrouterCost(charge.meta), false)
+		_, err = t.a.sessions.Save(t.persistCtx, sess)
+	}
+	if err != nil {
+		slog.Warn("Failed to charge an unfinished step", "session_id", t.call.SessionID, "error", err)
+	}
 }
 
 func (t *turn) currentLeaf() string {
@@ -254,6 +295,7 @@ func (t *turn) streamCall(history []fantasy.Message, files []fantasy.FilePart) f
 		OnToolResult: t.onToolResult,
 		OnStepFinish: t.onStepFinish,
 		StopWhen: []fantasy.StopCondition{
+			func([]fantasy.StepResult) bool { return t.persistFailure() != nil },
 			t.contextNearlyFull,
 			func(steps []fantasy.StepResult) bool {
 				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
@@ -454,6 +496,7 @@ func (t *turn) onRetry(err *fantasy.ProviderError, delay time.Duration) {
 func (t *turn) onStreamFinish(usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata) error {
 	finished := time.Now()
 	t.mu.Lock()
+	t.uncharged = &stepCharge{usage: usage, meta: meta}
 	if t.capture == nil {
 		t.mu.Unlock()
 		return nil
@@ -561,15 +604,29 @@ func (t *turn) onStepFinish(stepResult fantasy.StepResult) error {
 
 	updatedSession, err := t.a.sessions.Get(t.genCtx, t.call.SessionID)
 	if err != nil {
-		return localPersistence(t.genCtx, err)
+		return t.failPersist(err)
 	}
 	usage, estimated := fallbackStepUsage(t.stepMessages, stepResult)
 	t.a.updateSessionUsage(t.largeModel, &updatedSession, usage, t.a.openrouterCost(stepResult.ProviderMetadata), estimated)
 	if _, err := t.a.sessions.Save(t.genCtx, updatedSession); err != nil {
-		return localPersistence(t.genCtx, err)
+		return t.failPersist(err)
 	}
+	t.uncharged = nil
 	t.session = updatedSession
-	return localPersistence(t.genCtx, t.a.messages.Update(t.genCtx, *t.assistant))
+	if err := t.a.messages.Update(t.genCtx, *t.assistant); err != nil {
+		return t.failPersist(err)
+	}
+	return nil
+}
+
+// failPersist records err from onStepFinish so the turn stops and reports
+// it. The caller must hold t.mu.
+func (t *turn) failPersist(err error) error {
+	err = localPersistence(t.genCtx, err)
+	if t.persistErr == nil {
+		t.persistErr = err
+	}
+	return err
 }
 
 func stopsTurn(stepResult fantasy.StepResult) bool {

@@ -402,11 +402,18 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	// leaves the last step looking in flight and its calls timing forever.
 	defer t.endStep()
 	result, err := agent.Stream(ctx, t.streamCall(history, files))
+	if err == nil {
+		// Fantasy ignores OnStepFinish's error, so a failed step save
+		// surfaces here.
+		err = t.persistFailure()
+	}
 	if err != nil {
 		if t.assistant == nil {
 			return result, err
 		}
-		if recordErr := t.recordFailure(err); recordErr != nil {
+		recordErr := t.recordFailure(err)
+		t.chargeUnfinishedStep()
+		if recordErr != nil {
 			return nil, localPersistence(t.persistCtx, recordErr)
 		}
 		return nil, err
@@ -587,7 +594,10 @@ func (a *sessionAgent) abortSetup(ctx context.Context, err error) (*fantasy.Agen
 // failure that only happened because ctx was cancelled, such as by an
 // interrupt, isn't one.
 func localPersistence(ctx context.Context, err error) error {
-	if err == nil || ctx.Err() != nil {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return err
 	}
 	return persistenceError{err}

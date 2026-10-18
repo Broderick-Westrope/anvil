@@ -119,3 +119,10 @@ func TestLocalPersistenceMarksOnlyRealFailures(t *testing.T) {
 	require.NoError(t, localPersistence(live, nil))
 	require.Equal(t, "disk full", localPersistence(live, errors.New("disk full")).Error())
 }
+
+func TestLocalPersistenceStillMarksAStorageFailureThatRacedACancel(t *testing.T) {
+	t.Parallel()
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, localPersistence(cancelled, errors.New("disk full")), errLocalPersistence)
+}
