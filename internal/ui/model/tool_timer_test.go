@@ -388,3 +388,74 @@ func TestToolTimerUnchangedStartKeepsAPromptOpen(t *testing.T) {
 	_, _ = u.Update(assistantUpdate("s1", call))
 	require.Equal(t, chat.ToolStatusAwaitingPermission, item.Status())
 }
+
+func TestToolTimerSkipsItemsItCantTime(t *testing.T) {
+	t.Parallel()
+	u, ws := newTimerTestUI()
+	finished := toolItemIn(u, "a0", runningBash("tc0", time.Minute))
+	finished.SetResult(&message.ToolResult{ToolCallID: "tc0", Content: "ok"})
+	live := toolItemIn(u, "a1", runningBash("tc1", 30*time.Second))
+	u.chat.SetMessages(finished, live)
+	ws.running["a1"] = true
+
+	u.elapsedTickRunning = true
+	_, _ = u.Update(tickElapsedTimeMsg{})
+	require.True(t, u.elapsedTickRunning, "a call that can't be timed doesn't end the pass")
+	require.Regexp(t, ` · 3\ds$`, renderedHeader(live))
+}
+
+func TestPermissionNotificationReachesATopLevelCallInEveryChat(t *testing.T) {
+	t.Parallel()
+	u, _ := newTimerTestUI()
+	root := toolItemIn(u, "a1", runningBash("tc1", 0))
+	u.chat.SetMessages(root)
+	drillChat := NewChat(u.com)
+	drilled := toolItemIn(u, "a1", runningBash("tc1", 0))
+	drillChat.SetMessages(drilled)
+	u.drillStack = []drillInEntry{{sessionID: "child", chat: drillChat}}
+
+	u.handlePermissionNotification(permission.PermissionNotification{ToolCallID: "tc1"})
+	require.Equal(t, chat.ToolStatusAwaitingPermission, root.Status())
+	require.Equal(t, chat.ToolStatusAwaitingPermission, drilled.Status())
+}
+
+func TestToolTimerChildStartReturnsTheTick(t *testing.T) {
+	t.Parallel()
+	count := func(startedAt bool) int {
+		u, _ := newTimerTestUI()
+		call := runningBash("tc1", 0)
+		if !startedAt {
+			call.StartedAt = 0
+		}
+		_, cmd := u.Update(assistantUpdate("child", call))
+		if cmd == nil {
+			return 0
+		}
+		if batch, ok := cmd().(tea.BatchMsg); ok {
+			return len(batch)
+		}
+		return 1
+	}
+	require.Equal(t, count(false)+1, count(true), "a child call's start returns the tick command")
+}
+
+func TestToolTimerTickStopsWhenDrilledIntoAnIdleView(t *testing.T) {
+	t.Parallel()
+	u, _ := newTimerTestUI()
+	u.drillStack = []drillInEntry{{sessionID: "child", chat: NewChat(u.com)}}
+	u.elapsedTickRunning = true
+	_, _ = u.Update(tickElapsedTimeMsg{})
+	require.False(t, u.elapsedTickRunning)
+}
+
+func TestToolTimerUnchangedUpdateKeepsTheItemCached(t *testing.T) {
+	t.Parallel()
+	u, _ := newTimerTestUI()
+	call := runningBash("tc1", 0)
+	item := toolItemIn(u, "a1", call)
+	u.chat.SetMessages(item)
+	before := item.Version()
+
+	_, _ = u.Update(assistantUpdate("s1", call))
+	require.Equal(t, before, item.Version())
+}

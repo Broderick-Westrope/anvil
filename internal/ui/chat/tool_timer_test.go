@@ -306,3 +306,11 @@ func TestDockerMCPHeaderDurationWithoutParams(t *testing.T) {
 	require.NotContains(t, out, "  · ")
 	require.True(t, strings.HasSuffix(out, " · 12s"), out)
 }
+
+func TestDockerMCPHeaderDurationWithParams(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+	r := &DockerMCPToolRenderContext{}
+	out := ansi.Strip(r.makeHeader(&sty, "mcp-find", 80, &ToolRenderOpts{Status: ToolStatusSuccess, Duration: 12 * time.Second}, "github"))
+	require.True(t, strings.HasSuffix(out, "Docker MCP → Find github · 12s"), out)
+}
