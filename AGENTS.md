@@ -190,7 +190,7 @@ Terms with a specific meaning in this codebase are defined in
   Startup marks runs of dead instances interrupted and prunes run
   directories older than 14 days (`Store.PruneRunDirs`).
   A run shows as a node where it started (see
-  `plans/design-2026-10-14-workflow-run-node.md`): a `workflow_run` marker
+  `plans/completed/design-2026-10-14-workflow-run-node.md`): a `workflow_run` marker
   message, written through the session's queue (`Coordinator.RunInSession`,
   which also carries metadata entries and forks). Every session a run makes
   is a child of the invoking session recording its run, creating event and
