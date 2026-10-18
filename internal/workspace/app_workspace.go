@@ -247,6 +247,13 @@ func (w *AppWorkspace) SubagentCallSession(ctx context.Context, callID string) s
 	return call.SessionID
 }
 
+func (w *AppWorkspace) AgentTakeReturnedSteers() []agent.SubagentSteersReturned {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.TakeReturnedSteers()
+}
+
 func (w *AppWorkspace) AgentClearQueue(sessionID string) {
 	if w.app.AgentCoordinator != nil {
 		w.app.AgentCoordinator.ClearQueue(sessionID)

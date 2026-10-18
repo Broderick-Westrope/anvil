@@ -27,6 +27,7 @@ type subagentSteerWorkspace interface {
 	AgentCancelSubagent(childSessionID string) bool
 	AgentSubagentRunning(childSessionID string) bool
 	AgentSubagentPendingSteers(childSessionID string) []string
+	AgentTakeReturnedSteers() []agent.SubagentSteersReturned
 }
 
 // subagentSteer lets a human drilled into a running subagent send it a
@@ -158,20 +159,31 @@ func (f *subagentSteer) send(child string, interrupt bool) tea.Cmd {
 	return util.ReportInfo("Message queued for the subagent's next step")
 }
 
-// HandleMsg implements feature. It gives back steers a task call ended
-// without delivering. The call is over, so the subagent's input is
-// closed; they go to the main editor, where the human can pass them to
-// the orchestrator.
-func (f *subagentSteer) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
-	ev, ok := msg.(pubsub.Event[agent.SubagentSteersReturned])
-	if !ok {
-		return nil, false
+// Observe implements feature. On every message it gives back the steers
+// task calls ended without delivering, so a dropped nudge event can't
+// lose them. Their call is over, so the subagent's input is closed; they
+// go to the main editor, where the human can pass them to the
+// orchestrator.
+func (f *subagentSteer) Observe(tea.Msg) tea.Cmd {
+	returned := f.ws.AgentTakeReturnedSteers()
+	if len(returned) == 0 {
+		return nil
 	}
-	f.host.RestoreToComposer(strings.Join(ev.Payload.Steers, "\n\n"))
-	return util.ReportWarn(ev.Payload.Reason + " Your message is back in the main editor."), true
+	cmds := make([]tea.Cmd, 0, len(returned))
+	for _, r := range returned {
+		f.host.RestoreToComposer(strings.Join(r.Steers, "\n\n"))
+		cmds = append(cmds, util.ReportWarn(r.Reason+" Your message is back in the main editor."))
+	}
+	return tea.Batch(cmds...)
 }
 
-func (f *subagentSteer) Observe(tea.Msg) tea.Cmd                    { return nil }
+// HandleMsg implements feature. It claims the nudge that steers were
+// handed back; Observe has already taken them.
+func (f *subagentSteer) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
+	_, ok := msg.(pubsub.Event[agent.SubagentSteersReturned])
+	return nil, ok
+}
+
 func (f *subagentSteer) HandleKey(tea.KeyPressMsg) (tea.Cmd, bool)  { return nil, false }
 func (f *subagentSteer) HandleAction(dialog.Action) (tea.Cmd, bool) { return nil, false }
 

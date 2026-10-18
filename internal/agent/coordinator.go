@@ -139,9 +139,13 @@ type Coordinator interface {
 	// SubagentPendingSteers lists the human steers accepted for
 	// childSessionID's running task call but not yet delivered.
 	SubagentPendingSteers(childSessionID string) []string
-	// SubscribeSubagentEvents reports steers a task call ended without
-	// delivering.
+	// SubscribeSubagentEvents nudges subscribers when a task call ends
+	// with steers it never delivered. The events can be dropped; the
+	// steers wait in TakeReturnedSteers.
 	SubscribeSubagentEvents(ctx context.Context) <-chan pubsub.Event[SubagentSteersReturned]
+	// TakeReturnedSteers returns, and forgets, the steers task calls
+	// ended without delivering.
+	TakeReturnedSteers() []SubagentSteersReturned
 }
 
 type coordinator struct {
@@ -215,6 +219,9 @@ type coordinator struct {
 	subagentRetryDelays []time.Duration
 	subagentEventsOnce  sync.Once
 	subagentEvents      *pubsub.Broker[SubagentSteersReturned]
+	// returned holds steers handed back until the UI takes them.
+	returnedMu sync.Mutex
+	returned   []SubagentSteersReturned
 }
 
 func NewCoordinator(

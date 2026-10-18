@@ -136,6 +136,9 @@ type Workspace interface {
 	// SubagentCallSession returns the child session the task call callID
 	// ran in, or callID itself when no link was stored.
 	SubagentCallSession(ctx context.Context, callID string) string
+	// AgentTakeReturnedSteers returns, and forgets, steers task calls
+	// ended without delivering.
+	AgentTakeReturnedSteers() []agent.SubagentSteersReturned
 	// AgentSubagentPendingSteers lists steers sent to childSessionID's
 	// subagent that it hasn't read yet.
 	AgentSubagentPendingSteers(childSessionID string) []string

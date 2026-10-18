@@ -283,7 +283,6 @@ func TestPendingSteersAreHandedBackWhenTheCallFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			c, _, parent := newSubagentCallCoordinator(t)
-			events := c.SubscribeSubagentEvents(t.Context())
 
 			var childID string
 			agent := newMockAgent(testProvider, 1000, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -294,14 +293,12 @@ func TestPendingSteersAreHandedBackWhenTheCallFails(t *testing.T) {
 			_, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
 			require.NoError(t, err)
 
-			select {
-			case ev := <-events:
-				require.Equal(t, childID, ev.Payload.SessionID)
-				require.Contains(t, ev.Payload.Steers, "never delivered")
-				require.NotEmpty(t, ev.Payload.Reason)
-			case <-time.After(5 * time.Second):
-				t.Fatal("no steers handed back")
-			}
+			returned := c.TakeReturnedSteers()
+			require.Len(t, returned, 1)
+			require.Equal(t, childID, returned[0].SessionID)
+			require.Contains(t, returned[0].Steers, "never delivered")
+			require.NotEmpty(t, returned[0].Reason)
+			require.Empty(t, c.TakeReturnedSteers(), "taking them clears the queue")
 		})
 	}
 }
@@ -345,7 +342,6 @@ func TestTaskRunsAreAwaitedSoCancelReachesCompactionContinuations(t *testing.T) 
 func TestSteersTakenForATurnThatNeverStartedAreHandedBack(t *testing.T) {
 	t.Parallel()
 	c, _, parent := newSubagentCallCoordinator(t)
-	events := c.SubscribeSubagentEvents(t.Context())
 
 	runs := 0
 	agent := newMockAgent(testProvider, 1000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -361,18 +357,14 @@ func TestSteersTakenForATurnThatNeverStartedAreHandedBack(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError)
 
-	select {
-	case ev := <-events:
-		require.Equal(t, []string{"also X"}, ev.Payload.Steers)
-	case <-time.After(5 * time.Second):
-		t.Fatal("steer was lost")
-	}
+	returned := c.TakeReturnedSteers()
+	require.Len(t, returned, 1)
+	require.Equal(t, []string{"also X"}, returned[0].Steers)
 }
 
 func TestInterruptDoesNotOverrideAPersistenceFailure(t *testing.T) {
 	t.Parallel()
 	c, _, parent := newSubagentCallCoordinator(t)
-	events := c.SubscribeSubagentEvents(t.Context())
 
 	var runs atomic.Int32
 	agent := newMockAgent(testProvider, 1000, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -385,12 +377,9 @@ func TestInterruptDoesNotOverrideAPersistenceFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError)
 	require.Equal(t, int32(1), runs.Load())
-	select {
-	case ev := <-events:
-		require.Equal(t, []string{"stop"}, ev.Payload.Steers)
-	case <-time.After(5 * time.Second):
-		t.Fatal("steer was lost")
-	}
+	returned := c.TakeReturnedSteers()
+	require.Len(t, returned, 1)
+	require.Equal(t, []string{"stop"}, returned[0].Steers)
 }
 
 func TestNoTextOutputIsNotRetried(t *testing.T) {

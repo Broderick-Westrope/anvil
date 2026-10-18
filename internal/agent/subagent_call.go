@@ -420,8 +420,8 @@ func injectionSummaryLine(inj message.InjectionContent) string {
 	}
 }
 
-// handBackSteers tells the UI which accepted steers the call ended without
-// delivering, so the human gets their text back.
+// handBackSteers queues the accepted steers a call ended without
+// delivering, so the human gets their text back, and tells the UI.
 func (c *coordinator) handBackSteers(childID string, undelivered []message.InjectionContent, callErr error) {
 	texts := make([]string, 0, len(undelivered))
 	for _, inj := range undelivered {
@@ -431,7 +431,22 @@ func (c *coordinator) handBackSteers(childID string, undelivered []message.Injec
 	if callErr != nil {
 		reason = "The subagent's task call ended before it could read your message: " + callErr.Error()
 	}
-	c.subagentBroker().PublishMustDeliver(context.Background(), pubsub.CreatedEvent, SubagentSteersReturned{SessionID: childID, Steers: texts, Reason: reason})
+	returned := SubagentSteersReturned{SessionID: childID, Steers: texts, Reason: reason}
+	c.returnedMu.Lock()
+	c.returned = append(c.returned, returned)
+	c.returnedMu.Unlock()
+	// Only a nudge: the steers stay queued until the UI takes them, so a
+	// dropped event can't lose them.
+	c.subagentBroker().Publish(pubsub.CreatedEvent, returned)
+}
+
+// TakeReturnedSteers implements Coordinator.
+func (c *coordinator) TakeReturnedSteers() []SubagentSteersReturned {
+	c.returnedMu.Lock()
+	defer c.returnedMu.Unlock()
+	taken := c.returned
+	c.returned = nil
+	return taken
 }
 
 func (c *coordinator) subagentBroker() *pubsub.Broker[SubagentSteersReturned] {

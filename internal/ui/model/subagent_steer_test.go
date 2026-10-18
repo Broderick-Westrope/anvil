@@ -26,6 +26,13 @@ type steerTestWorkspace struct {
 	sent     []steerSent
 	cancels  []string
 	steerErr error
+	returned []agent.SubagentSteersReturned
+}
+
+func (w *steerTestWorkspace) AgentTakeReturnedSteers() []agent.SubagentSteersReturned {
+	taken := w.returned
+	w.returned = nil
+	return taken
 }
 
 func (w *steerTestWorkspace) AgentSteerSubagent(child, text string, interrupt bool) error {
@@ -180,16 +187,20 @@ func TestReturnedSteersComeBackToTheMainEditor(t *testing.T) {
 	t.Parallel()
 	s := newSteerFixture(t)
 
-	cmd, handled := s.f.HandleMsg(pubsub.Event[agent.SubagentSteersReturned]{
-		Type:    pubsub.CreatedEvent,
-		Payload: agent.SubagentSteersReturned{SessionID: "child", Steers: []string{"first", "second"}, Reason: "It failed."},
-	})
-	require.True(t, handled)
-	msgs := cmdMsgs(cmd)
+	s.ws.returned = []agent.SubagentSteersReturned{{SessionID: "child", Steers: []string{"first", "second"}, Reason: "It failed."}}
+
+	// Any message picks them up, so a dropped nudge can't lose them.
+	msgs := cmdMsgs(s.f.Observe(spinnerTickMsgForTest{}))
 	require.Len(t, msgs, 1)
 	require.Contains(t, msgs[0].(util.InfoMsg).Msg, "It failed.")
 	require.Equal(t, []string{"first\n\nsecond"}, s.host.restored)
+	require.Nil(t, s.f.Observe(spinnerTickMsgForTest{}), "taken only once")
+
+	_, handled := s.f.HandleMsg(pubsub.Event[agent.SubagentSteersReturned]{Type: pubsub.CreatedEvent})
+	require.True(t, handled, "the nudge itself is claimed")
 }
+
+type spinnerTickMsgForTest struct{}
 
 func TestPasteGoesToTheFocusedSteerInput(t *testing.T) {
 	t.Parallel()
