@@ -248,7 +248,17 @@ func TestCostNeverShrinks(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, svc.AddCost(t.Context(), parent.ID, 0.5))
 
-	require.ErrorContains(t, svc.AddCost(t.Context(), parent.ID, -0.1), "cost can't shrink")
-	require.ErrorContains(t, svc.AddCost(t.Context(), parent.ID, math.NaN()), "cost can't shrink")
+	require.ErrorContains(t, svc.AddCost(t.Context(), parent.ID, -0.1), "cost can't change")
+	require.ErrorContains(t, svc.AddCost(t.Context(), parent.ID, math.NaN()), "cost can't change")
 	requireCost(t, svc, parent.ID, 0.5)
+}
+
+func TestCostRejectsInfiniteDeltas(t *testing.T) {
+	t.Parallel()
+	svc := newSubagentTestService(t)
+	parent, err := svc.Create(t.Context(), "parent", "/tmp")
+	require.NoError(t, err)
+	require.ErrorContains(t, svc.AddCost(t.Context(), parent.ID, math.Inf(1)), "cost can't")
+	require.Error(t, svc.UpdateTitleAndUsage(t.Context(), parent.ID, "t", false, 0, 0, -1))
+	requireCost(t, svc, parent.ID, 0)
 }

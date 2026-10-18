@@ -114,13 +114,17 @@ func withProviderHint(err error, base time.Duration) time.Duration {
 	return min(max(base, retryHint(providerErr.ResponseHeaders)), maxSubagentRetryDelay)
 }
 
+// retryHint returns the wait a provider asks for, no longer than
+// maxSubagentRetryDelay. Values are clamped before they become a
+// Duration, since converting a huge float is implementation-defined.
 func retryHint(headers map[string]string) time.Duration {
+	limit := maxSubagentRetryDelay.Seconds()
 	if ms, err := strconv.ParseFloat(headers["retry-after-ms"], 64); err == nil && ms > 0 {
-		return time.Duration(ms * float64(time.Millisecond))
+		return time.Duration(min(ms/1000, limit) * float64(time.Second))
 	}
 	retryAfter := headers["retry-after"]
 	if secs, err := strconv.ParseFloat(retryAfter, 64); err == nil && secs > 0 {
-		return time.Duration(secs * float64(time.Second))
+		return time.Duration(min(secs, limit) * float64(time.Second))
 	}
 	if at, err := http.ParseTime(retryAfter); err == nil {
 		return max(time.Until(at), 0)

@@ -280,10 +280,19 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 	return session, nil
 }
 
+// validCostDelta rejects a delta that would shrink cost or leave it
+// unrepairable, since cost only grows.
+func validCostDelta(delta float64) error {
+	if delta < 0 || math.IsNaN(delta) || math.IsInf(delta, 0) {
+		return fmt.Errorf("cost can't change by %v", delta)
+	}
+	return nil
+}
+
 // AddCost adds delta to the session's cost and publishes the update.
 func (s *service) AddCost(ctx context.Context, id string, delta float64) error {
-	if delta < 0 || math.IsNaN(delta) {
-		return fmt.Errorf("add cost %v to session %s: cost can't shrink", delta, id)
+	if err := validCostDelta(delta); err != nil {
+		return fmt.Errorf("add cost to session %s: %w", id, err)
 	}
 	if delta == 0 {
 		return nil
@@ -306,6 +315,9 @@ func (s *service) AddCost(ctx context.Context, id string, delta float64) error {
 // UpdateTitleAndUsage updates only the title and usage fields atomically.
 // This is safer than fetching, modifying, and saving the entire session.
 func (s *service) UpdateTitleAndUsage(ctx context.Context, sessionID, title string, titleIsCustom bool, promptTokens, completionTokens int64, cost float64) error {
+	if err := validCostDelta(cost); err != nil {
+		return fmt.Errorf("update title and usage of session %s: %w", sessionID, err)
+	}
 	err := s.q.UpdateSessionTitleAndUsage(ctx, db.UpdateSessionTitleAndUsageParams{
 		ID:               sessionID,
 		Title:            title,

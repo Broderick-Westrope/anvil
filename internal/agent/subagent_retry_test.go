@@ -132,3 +132,19 @@ func TestSubagentRetryDelayCapsTheProviderHint(t *testing.T) {
 	err := &fantasy.ProviderError{StatusCode: 429, ResponseHeaders: map[string]string{"retry-after": "3600"}}
 	require.Equal(t, maxSubagentRetryDelay, withProviderHint(err, 5*time.Second))
 }
+
+func TestSubagentRetryDelaySurvivesAbsurdHints(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"huge seconds": "1e300",
+		"infinite":     "Inf",
+	}
+	for name, hint := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := &fantasy.ProviderError{StatusCode: 429, ResponseHeaders: map[string]string{"retry-after": hint, "retry-after-ms": hint}}
+			require.Equal(t, maxSubagentRetryDelay, withProviderHint(err, 5*time.Second))
+		})
+	}
+}
