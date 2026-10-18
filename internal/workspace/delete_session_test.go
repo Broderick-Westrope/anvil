@@ -89,7 +89,7 @@ func TestASessionCantBeDeletedWhileWhatItsRunsMadeIsInUse(t *testing.T) {
 			ws := workspace.NewAppWorkspace(&app.App{Sessions: f.Sessions, Workflows: svc, AgentCoordinator: f.Coordinator}, f.Config)
 			invoker, err := f.Workspace.CreateSession(ctx, "invoker")
 			require.NoError(t, err)
-			builder, err := f.Sessions.CreateWorkflowSession(ctx, invoker.ID, "/demo approach 1", session.WorkflowOwner{RunID: "run-done", Seq: 1, Kind: session.WorkflowKindSession})
+			builder, err := f.Sessions.CreateWorkflowSession(ctx, "", invoker.ID, "/demo approach 1", session.WorkflowOwner{RunID: "run-done", Seq: 1, Kind: session.WorkflowKindSession})
 			require.NoError(t, err)
 
 			inUse(t, f, store, invoker.ID, builder.ID)

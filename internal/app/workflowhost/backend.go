@@ -132,7 +132,7 @@ func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, f
 		title = "/" + b.base.Command
 	}
 	owner := session.WorkflowOwner{RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindSession}
-	s, err := b.svc.deps.Sessions.CreateWorkflowSession(ctx, b.base.SessionID, title, owner)
+	s, err := b.svc.deps.Sessions.CreateWorkflowSession(ctx, "", b.base.SessionID, title, owner)
 	if err != nil {
 		return "", err
 	}
@@ -185,27 +185,14 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 		}
 		wc.Schema, wc.Validate = call.Schema, schema.Validate
 	}
-	// A subagent whose session can't be tied to the run would be
-	// unreachable from it, so failing to record that stops the subagent.
-	ctx, stop := context.WithCancelCause(ctx)
-	defer stop(nil)
-	errUnrecorded := errors.New("record subagent session")
-	wc.OnSession = func(sessionID string) {
-		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, sessionID, session.WorkflowOwner{
-			RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindAgent,
-		}); err != nil {
-			stop(fmt.Errorf("%w: %w", errUnrecorded, err))
-			return
-		}
-		// The run view finds the session through its owner, recorded after
-		// the call's started event, so it's told to look again.
+	// The session is created as the run's, so the run view can open it
+	// from the start; the view finds it through that owner, which the
+	// call's started event came before, so it's told to look again.
+	wc.Owner = &session.WorkflowOwner{RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindAgent}
+	wc.OnSession = func(string) {
 		b.publishState(ctx, Event{Kind: EventChanged})
 	}
-	res, err := b.runAgent(ctx, wc)
-	if cause := context.Cause(ctx); err != nil && errors.Is(cause, errUnrecorded) {
-		err = cause
-	}
-	return res, err
+	return b.runAgent(ctx, wc)
 }
 
 func (b *backend) runAgent(ctx context.Context, wc agent.WorkflowAgentCall) (workflow.AgentResult, error) {

@@ -498,7 +498,7 @@ func TestCreateWorkflowSessionIsOwnedFromTheStart(t *testing.T) {
 	require.NoError(t, err)
 	<-events
 	owner := WorkflowOwner{RunID: "run-1", Seq: 2, Kind: WorkflowKindSession}
-	child, err := sessions.CreateWorkflowSession(t.Context(), parent.ID, "/build approach 1", owner)
+	child, err := sessions.CreateWorkflowSession(t.Context(), "", parent.ID, "/build approach 1", owner)
 	require.NoError(t, err)
 
 	created := (<-events).Payload
@@ -572,7 +572,7 @@ func TestDeleteRefusesWhileWhatAWorkflowMadeIsInUse(t *testing.T) {
 			sessions := NewService(q, conn)
 			invoker, err := sessions.Create(t.Context(), "invoker", "/w")
 			require.NoError(t, err)
-			builder, err := sessions.CreateWorkflowSession(t.Context(), invoker.ID, "/build approach 1",
+			builder, err := sessions.CreateWorkflowSession(t.Context(), "", invoker.ID, "/build approach 1",
 				WorkflowOwner{RunID: "run-0", Seq: 1, Kind: WorkflowKindSession})
 			require.NoError(t, err)
 

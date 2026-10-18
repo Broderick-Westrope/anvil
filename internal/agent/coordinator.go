@@ -1593,6 +1593,9 @@ type childSession struct {
 	// KeepJobs keeps the child's surviving background jobs in its own
 	// session rather than handing them to the parent.
 	KeepJobs bool
+	// Owner, when set, is the workflow run the session belongs to,
+	// recorded as the session is created.
+	Owner *session.WorkflowOwner
 }
 
 // inChildSession runs fn in a new child session of s.ParentID, then rolls
@@ -1605,7 +1608,12 @@ func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn fun
 	// admitted as their own submissions, not run in place as, or rejected
 	// as, the parent's owner.
 	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
-	session, err := c.sessions.CreateTaskSession(ctx, s.ID, s.ParentID, s.Title)
+	var session session.Session
+	if s.Owner != nil {
+		session, err = c.sessions.CreateWorkflowSession(ctx, s.ID, s.ParentID, s.Title, *s.Owner)
+	} else {
+		session, err = c.sessions.CreateTaskSession(ctx, s.ID, s.ParentID, s.Title)
+	}
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}

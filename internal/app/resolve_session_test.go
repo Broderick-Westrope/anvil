@@ -121,7 +121,7 @@ func (m *mockSessionService) WorkflowDescendants(context.Context, string) ([]str
 	return nil, nil
 }
 
-func (m *mockSessionService) CreateWorkflowSession(context.Context, string, string, session.WorkflowOwner) (session.Session, error) {
+func (m *mockSessionService) CreateWorkflowSession(context.Context, string, string, string, session.WorkflowOwner) (session.Session, error) {
 	return session.Session{}, nil
 }
 

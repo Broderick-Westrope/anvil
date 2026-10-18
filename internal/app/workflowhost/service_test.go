@@ -1237,22 +1237,30 @@ func TestServiceAbortEndsARunStillWaitingToBeMarked(t *testing.T) {
 	require.NotEqual(t, message.MessageTypeWorkflowRun, leaf.MessageType)
 }
 
-// ownerlessSessions can't record which run created a session.
-type ownerlessSessions struct{ session.Service }
-
-func (ownerlessSessions) SetWorkflowOwner(context.Context, string, session.WorkflowOwner) error {
-	return errors.New("database is locked")
-}
-
-func TestServiceStopsASubagentItCantTieToTheRun(t *testing.T) {
-	h := newServiceHarness(t, true, func(d *workflowhost.Deps) { d.Sessions = ownerlessSessions{d.Sessions} })
-	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "should never be asked"})
+// A subagent's session is never seen without the run that made it, not
+// even by the event announcing it.
+func TestServiceCreatesASubagentsSessionAsTheRuns(t *testing.T) {
+	h := newServiceHarness(t, true)
+	created := h.fixture.Sessions.Subscribe(h.fixture.Context)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "looked"})
 	h.start(t, h.write(t, `requires({agents: ["reviewer"]})
-function main() { try { agent("reviewer", "look") } catch (e) { return e.message } }`), "")
-
+function main() { return agent("reviewer", "look") }`), "")
 	done := h.next(t, workflowhost.EventFinished)
-	require.Equal(t, workflowhost.StatusCompleted, done.Status)
-	require.JSONEq(t, `"record subagent session: database is locked"`, string(done.Result))
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+
+	for {
+		select {
+		case ev := <-created:
+			if ev.Type != pubsub.CreatedEvent || ev.Payload.ParentSessionID != h.session {
+				continue
+			}
+			require.Equal(t, done.RunID, ev.Payload.WorkflowRunID)
+			require.Equal(t, session.WorkflowKindAgent, ev.Payload.WorkflowKind)
+			return
+		case <-time.After(5 * time.Second):
+			t.Fatal("no subagent session was created")
+		}
+	}
 }
 
 func TestServiceRunViewEndsOpenCallsTheWayTheRunEnded(t *testing.T) {

@@ -145,8 +145,8 @@ type Service interface {
 
 	// CreateWorkflowSession creates a child session a workflow run owns,
 	// recording its owner in the same write, so it's never seen without
-	// one.
-	CreateWorkflowSession(ctx context.Context, parentSessionID, title string, owner WorkflowOwner) (Session, error)
+	// one. An empty id gets a new one.
+	CreateWorkflowSession(ctx context.Context, id, parentSessionID, title string, owner WorkflowOwner) (Session, error)
 	// Discard deletes a session a workflow run made but couldn't finish
 	// making, which nothing has used yet, so it skips Delete's checks that
 	// the run is done with it.
@@ -588,7 +588,7 @@ func (s *service) fromDBItem(item db.Session) Session {
 	}
 }
 
-func (s *service) CreateWorkflowSession(ctx context.Context, parentSessionID, title string, owner WorkflowOwner) (Session, error) {
+func (s *service) CreateWorkflowSession(ctx context.Context, id, parentSessionID, title string, owner WorkflowOwner) (Session, error) {
 	parent, err := s.q.GetSessionByID(ctx, parentSessionID)
 	if err != nil {
 		return Session{}, fmt.Errorf("looking up parent session: %w", err)
@@ -599,7 +599,9 @@ func (s *service) CreateWorkflowSession(ctx context.Context, parentSessionID, ti
 	}
 	defer tx.Rollback() //nolint:errcheck
 	qtx := s.q.WithTx(tx)
-	id := uuid.NewString()
+	if id == "" {
+		id = uuid.NewString()
+	}
 	if _, err := qtx.CreateSession(ctx, db.CreateSessionParams{
 		ID:              id,
 		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
