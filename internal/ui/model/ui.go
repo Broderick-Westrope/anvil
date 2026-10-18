@@ -336,17 +336,12 @@ type UI struct {
 	customCommands []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
 
-	// workflowRunViews holds the latest view of each workflow run loaded,
-	// and workflowRunCommands the command name of each run seen.
-	workflowRunViews    map[string]workflowhost.RunView
-	workflowRunCommands map[string]string
+	// workflowRuns holds the workflow run views loaded and being loaded.
+	workflowRuns workflowRuns
 	// drafts keeps unsent editor text per session while the editor targets
 	// another one; composeFor is the session the editor last targeted.
 	drafts     map[string]composerDraft
 	composeFor string
-	// workflowRunLoads tracks run views being loaded: one load per run at a
-	// time, and true when the run changed during it and needs another.
-	workflowRunLoads map[string]bool
 	// workflowRequests holds the open approval and ask requests by ID.
 	workflowRequests map[string]workflowhost.Event
 	// workflowAnswered remembers answered requests so a republished copy

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
@@ -16,9 +17,10 @@ import (
 type RunView struct {
 	RunID             string
 	InvokingSessionID string
-	MarkerMessageID   string
-	Input             string
-	Status            Status
+	// Command is the name the run was started as, without the slash.
+	Command string
+	Input   string
+	Status  Status
 	// Paused reports whether the user paused the running run.
 	Paused bool
 	// Error says why a run that didn't complete ended.
@@ -115,7 +117,24 @@ func (s *Service) RunView(ctx context.Context, runID string) (RunView, bool, err
 	if err != nil {
 		return RunView{}, false, err
 	}
-	return buildRunView(rec, events, sessions)
+	view, ok, err := buildRunView(rec, events, sessions)
+	if err != nil || !ok {
+		return view, ok, err
+	}
+	// The run row records the command's ID; the name it was started as is
+	// on its marker.
+	if rec.MarkerMessageID != "" {
+		marker, err := s.deps.Messages.Get(ctx, rec.MarkerMessageID)
+		if err != nil {
+			return RunView{}, false, fmt.Errorf("read marker of workflow run %s: %w", runID, err)
+		}
+		for _, part := range marker.Parts {
+			if c, ok := part.(message.WorkflowRunContent); ok {
+				view.Command = c.Command
+			}
+		}
+	}
+	return view, true, nil
 }
 
 // buildRunView replays a run's events into its view. Events arrive ordered
@@ -126,7 +145,6 @@ func buildRunView(rec RunRecord, events []workflow.Event, sessions []session.Ses
 		v: RunView{
 			RunID:             rec.ID,
 			InvokingSessionID: rec.InvokingSessionID,
-			MarkerMessageID:   rec.MarkerMessageID,
 			Input:             rec.Input,
 			Status:            rec.Status,
 			Paused:            rec.Paused && rec.Status == StatusRunning,

@@ -19,7 +19,7 @@ import (
 
 func runningView() workflowhost.RunView {
 	return workflowhost.RunView{
-		RunID: "run-1", InvokingSessionID: "sess-1", MarkerMessageID: "marker-1",
+		RunID: "run-1", InvokingSessionID: "sess-1", Command: "demo",
 		Input: "track downloads", Status: workflowhost.StatusRunning, StartedAt: time.Unix(0, 0),
 		Phases: []workflowhost.RunPhase{
 			{Step: "build", Detail: "approach 1/3", Items: []workflowhost.RunItem{
@@ -172,7 +172,7 @@ func TestWorkflowRunViewLoadsNeverLetAnOlderViewWin(t *testing.T) {
 	_, cmd := f.u.Update(stale)
 	f.run(cmd)
 	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "review · running")
-	require.Empty(t, f.u.workflowRunLoads)
+	require.Empty(t, f.u.workflowRuns.loads)
 }
 
 func TestWorkflowRunNodeIsFoundByItsRunWhateverMessageCarriesIt(t *testing.T) {
@@ -515,7 +515,7 @@ func TestARunningNodeCountsItsTime(t *testing.T) {
 	require.Regexp(t, `running · 1m3[01]s`, ansi.Strip(f.node(t).Render(120)))
 
 	view.StartedAt = view.StartedAt.Add(-time.Minute)
-	f.u.workflowRunViews["run-1"] = view
+	f.u.workflowRuns.views["run-1"] = view
 	f.node(t).SetView(view)
 	require.True(t, f.u.refreshRunningWorkflowRuns())
 	require.Regexp(t, `running · 2m3[01]s`, ansi.Strip(f.node(t).Render(120)))
@@ -543,7 +543,7 @@ func TestControlsNeverReachARunTheUserIsntLookingAt(t *testing.T) {
 	finished := runningView()
 	finished.Status = workflowhost.StatusCompleted
 	other := runningView()
-	other.RunID, other.MarkerMessageID = "run-2", "marker-2"
+	other.RunID = "run-2"
 
 	tests := map[string]func(f *workflowFixture){
 		"a finished run's node is selected": func(f *workflowFixture) {
@@ -562,7 +562,7 @@ func TestControlsNeverReachARunTheUserIsntLookingAt(t *testing.T) {
 			f := newWorkflowFixture(t)
 			f.ws.views = map[string]workflowhost.RunView{"run-1": finished, "run-2": other}
 			f.markerArrives()
-			f.u.workflowRunViews["run-2"] = other
+			f.u.workflowRuns.views["run-2"] = other
 			setup(f)
 			f.u.focus = uiFocusMain
 
@@ -577,7 +577,7 @@ func TestControlsFromABuilderActOnItsRun(t *testing.T) {
 
 	f := newWorkflowFixture(t)
 	f.drillIntoBuilder(t)
-	f.u.workflowRunViews["run-2"] = func() workflowhost.RunView {
+	f.u.workflowRuns.views["run-2"] = func() workflowhost.RunView {
 		v := runningView()
 		v.RunID = "run-2"
 		return v

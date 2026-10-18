@@ -3,13 +3,66 @@ package model
 import (
 	"context"
 	"log/slog"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 )
+
+// workflowRuns holds the latest view of each workflow run loaded, and the
+// loads in flight: one per run at a time, so a slow, older load can't
+// overwrite a newer one.
+type workflowRuns struct {
+	views map[string]workflowhost.RunView
+	// loads is true for a run that changed while its load was in flight,
+	// so it needs another.
+	loads map[string]bool
+}
+
+// view returns a run's latest view, if it has loaded.
+func (r *workflowRuns) view(runID string) (workflowhost.RunView, bool) {
+	v, ok := r.views[runID]
+	return v, ok
+}
+
+// beginLoad reports whether a load of the run should start now; when one
+// is in flight, it marks the run to load again once that one lands.
+func (r *workflowRuns) beginLoad(runID string) bool {
+	if r.loads == nil {
+		r.loads = map[string]bool{}
+	}
+	if _, loading := r.loads[runID]; loading {
+		r.loads[runID] = true
+		return false
+	}
+	r.loads[runID] = false
+	return true
+}
+
+// endLoad records a finished load, keeping its view if it loaded, and
+// reports whether the run changed meanwhile and needs loading again.
+func (r *workflowRuns) endLoad(msg workflowRunViewLoadedMsg) bool {
+	again := r.loads[msg.runID]
+	delete(r.loads, msg.runID)
+	if msg.ok {
+		if r.views == nil {
+			r.views = map[string]workflowhost.RunView{}
+		}
+		r.views[msg.runID] = msg.view
+	}
+	return again
+}
+
+// anyRunning reports whether any loaded run is still running.
+func (r *workflowRuns) anyRunning() bool {
+	for _, v := range r.views {
+		if v.Status == workflowhost.StatusRunning {
+			return true
+		}
+	}
+	return false
+}
 
 // workflowRunViewLoadedMsg carries a run's view, loaded from the database;
 // ok is false when it couldn't be loaded.
@@ -25,14 +78,9 @@ type workflowRunViewLoadedMsg struct {
 // overlap: a change while one is in flight queues one more, so a slow,
 // older load can't overwrite a newer one.
 func (m *UI) loadWorkflowRunView(runID string) tea.Cmd {
-	if m.workflowRunLoads == nil {
-		m.workflowRunLoads = map[string]bool{}
-	}
-	if _, loading := m.workflowRunLoads[runID]; loading {
-		m.workflowRunLoads[runID] = true
+	if !m.workflowRuns.beginLoad(runID) {
 		return nil
 	}
-	m.workflowRunLoads[runID] = false
 	ws := m.com.Workspace
 	return func() tea.Msg {
 		view, ok, err := ws.WorkflowRunView(context.Background(), runID)
@@ -70,13 +118,8 @@ func (m *UI) openWorkflowRun(runID, label string) tea.Cmd {
 // the node is on screen, and in any open view of the run, then loads again
 // if the run changed while it was loading.
 func (m *UI) workflowRunViewLoaded(msg workflowRunViewLoadedMsg) tea.Cmd {
-	again := m.workflowRunLoads[msg.runID]
-	delete(m.workflowRunLoads, msg.runID)
+	again := m.workflowRuns.endLoad(msg)
 	if msg.ok {
-		if m.workflowRunViews == nil {
-			m.workflowRunViews = map[string]workflowhost.RunView{}
-		}
-		m.workflowRunViews[msg.runID] = msg.view
 		chats := []*Chat{m.chat}
 		for i := range m.drillStack {
 			entry := &m.drillStack[i]
@@ -92,10 +135,6 @@ func (m *UI) workflowRunViewLoaded(msg workflowRunViewLoadedMsg) tea.Cmd {
 			for _, item := range c.MessageItems() {
 				if node, ok := item.(*chat.WorkflowRunMessageItem); ok && node.RunID() == msg.runID {
 					node.SetView(msg.view)
-					if m.workflowRunCommands == nil {
-						m.workflowRunCommands = map[string]string{}
-					}
-					m.workflowRunCommands[msg.runID] = node.Command()
 				}
 			}
 		}
@@ -110,8 +149,7 @@ func (m *UI) workflowRunViewLoaded(msg workflowRunViewLoadedMsg) tea.Cmd {
 // selected row where it was.
 func (m *UI) showWorkflowRunRows(entry *drillInEntry, view workflowhost.RunView) {
 	selected := entry.chat.Selected()
-	command := strings.TrimPrefix(entry.label, "/")
-	rows := chat.BuildWorkflowRunItems(m.com.Styles, command, view, m.com.Workspace.AgentIsSessionBusy)
+	rows := chat.BuildWorkflowRunItems(m.com.Styles, view.Command, view, m.com.Workspace.AgentIsSessionBusy)
 	if selected < 0 {
 		entry.chat.SetMessages(rows...)
 		entry.chat.SelectFirst()
@@ -127,20 +165,13 @@ func (m *UI) showWorkflowRunRows(entry *drillInEntry, view workflowhost.RunView)
 // runs: their nodes' elapsed time, and which builders are working in their
 // open views. It reports whether any run is still running.
 func (m *UI) refreshRunningWorkflowRuns() bool {
-	running := false
-	for _, view := range m.workflowRunViews {
-		if view.Status == workflowhost.StatusRunning {
-			running = true
-			break
-		}
-	}
-	if !running {
+	if !m.workflowRuns.anyRunning() {
 		return false
 	}
 	chats := []*Chat{m.chat}
 	for i := range m.drillStack {
 		entry := &m.drillStack[i]
-		if view, ok := m.workflowRunViews[entry.runID]; ok && entry.runID != "" && view.Status == workflowhost.StatusRunning {
+		if view, ok := m.workflowRuns.view(entry.runID); ok && entry.runID != "" && view.Status == workflowhost.StatusRunning {
 			m.showWorkflowRunRows(entry, view)
 			continue
 		}

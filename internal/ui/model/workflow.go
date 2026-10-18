@@ -119,7 +119,7 @@ func (m *UI) controlWorkflow(runID string, control dialog.WorkflowControl) tea.C
 // so a control never reaches a run the user isn't looking at.
 func (m *UI) targetWorkflowRun() (workflowhost.RunView, bool) {
 	running := func(runID string) (workflowhost.RunView, bool) {
-		view, ok := m.workflowRunViews[runID]
+		view, ok := m.workflowRuns.view(runID)
 		return view, ok && view.Status == workflowhost.StatusRunning
 	}
 	for i := len(m.drillStack) - 1; i >= 0; i-- {
@@ -134,7 +134,7 @@ func (m *UI) targetWorkflowRun() (workflowhost.RunView, bool) {
 		return workflowhost.RunView{}, false
 	}
 	var latest workflowhost.RunView
-	for _, view := range m.workflowRunViews {
+	for _, view := range m.workflowRuns.views {
 		if view.InvokingSessionID == m.session.ID && view.Status == workflowhost.StatusRunning &&
 			(latest.RunID == "" || view.StartedAt.After(latest.StartedAt)) {
 			latest = view
@@ -171,7 +171,7 @@ func (m *UI) workflowControls() *dialog.WorkflowControls {
 	}
 	return &dialog.WorkflowControls{
 		RunID:   view.RunID,
-		Command: m.workflowRunCommands[view.RunID],
+		Command: view.Command,
 		Paused:  view.Paused,
 		Keys: dialog.WorkflowKeys{
 			Pause: m.keyMap.WorkflowPause.Help().Key,
@@ -183,12 +183,6 @@ func (m *UI) workflowControls() *dialog.WorkflowControls {
 // handleWorkflowEvent shows what a workflow event needs from the user. A
 // run's node and view reload from the database on every event separately.
 func (m *UI) handleWorkflowEvent(ev workflowhost.Event) tea.Cmd {
-	if ev.RunID != "" && ev.Command != "" {
-		if m.workflowRunCommands == nil {
-			m.workflowRunCommands = map[string]string{}
-		}
-		m.workflowRunCommands[ev.RunID] = ev.Command
-	}
 	if (ev.Kind == workflowhost.EventApproval || ev.Kind == workflowhost.EventAsk) && m.seenWorkflowRequest(ev.RequestID) {
 		// The host republishes requests until answered, in case one was
 		// dropped; one already shown or answered needs nothing more.
