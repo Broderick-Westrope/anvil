@@ -136,6 +136,9 @@ type Coordinator interface {
 	// SubagentRunning reports whether a task call is running in
 	// childSessionID.
 	SubagentRunning(childSessionID string) bool
+	// SubagentActiveCall returns the ID (messageID$$toolCallID) of the task
+	// call running in childSessionID, or "" when none is.
+	SubagentActiveCall(childSessionID string) string
 	// SubagentPendingSteers lists the human steers accepted for
 	// childSessionID's running task call but not yet delivered.
 	SubagentPendingSteers(childSessionID string) []string

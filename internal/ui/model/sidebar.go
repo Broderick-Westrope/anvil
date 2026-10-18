@@ -147,6 +147,9 @@ func (m *UI) isViewedSubagentRunning() bool {
 		return false
 	}
 	sid := entry.sessionID
+	if m.com.Workspace.AgentSubagentRunning(sid) {
+		return true
+	}
 	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(sid)
 	if !ok {
 		return false

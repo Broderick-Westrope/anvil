@@ -452,3 +452,12 @@ func (c *coordinator) SubagentPendingSteers(childID string) []string {
 	}
 	return lease.pendingTexts()
 }
+
+// SubagentActiveCall implements Coordinator.
+func (c *coordinator) SubagentActiveCall(childID string) string {
+	lease := c.leases.get(childID)
+	if lease == nil {
+		return ""
+	}
+	return lease.callID
+}

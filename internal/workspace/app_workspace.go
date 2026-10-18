@@ -239,6 +239,21 @@ func (w *AppWorkspace) AgentSubagentPendingSteers(childSessionID string) []strin
 	return w.app.AgentCoordinator.SubagentPendingSteers(childSessionID)
 }
 
+func (w *AppWorkspace) AgentSubagentActiveCall(childSessionID string) string {
+	if w.app.AgentCoordinator == nil {
+		return ""
+	}
+	return w.app.AgentCoordinator.SubagentActiveCall(childSessionID)
+}
+
+func (w *AppWorkspace) SubagentCallSession(ctx context.Context, callID string) string {
+	call, err := w.app.Sessions.GetSubagentCall(ctx, callID)
+	if err != nil {
+		return callID
+	}
+	return call.SessionID
+}
+
 func (w *AppWorkspace) AgentClearQueue(sessionID string) {
 	if w.app.AgentCoordinator != nil {
 		w.app.AgentCoordinator.ClearQueue(sessionID)

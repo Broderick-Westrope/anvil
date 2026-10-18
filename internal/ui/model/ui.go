@@ -1677,14 +1677,17 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		tc := toolItem.ToolCall()
 		messageID := toolItem.MessageID()
 
-		// Get the agent tool session ID.
-		agentSessionID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
+		// Get the agent tool session ID: the call's own, or for a resume,
+		// the child session it continued.
+		callID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
+		agentSessionID := m.com.Workspace.SubagentCallSession(context.Background(), callID)
 
-		// Fetch nested messages.
+		// Fetch nested messages, keeping only those this call produced.
 		nestedMsgs, err := m.com.Workspace.ListMessages(context.Background(), agentSessionID)
 		if err != nil || len(nestedMsgs) == 0 {
 			continue
 		}
+		nestedMsgs = messagesOfCall(nestedMsgs, agentSessionID, callID)
 
 		// Build tool result map for nested messages.
 		nestedMsgPtrs := make([]*message.Message, len(nestedMsgs))
@@ -2006,7 +2009,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	// Check if this is an agent tool session and parse it.
 	childSessionID := event.Payload.SessionID
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
+	toolCallID, ok := m.agentItemToolCallID(childSessionID)
 	if !ok {
 		return nil
 	}
@@ -2109,7 +2112,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 // parent agent item that owns childSessionID. It searches both the root chat
 // and every drill-stack chat so nested drill-ins are covered.
 func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[message.Message]) {
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
+	toolCallID, ok := m.agentItemToolCallID(childSessionID)
 	if !ok {
 		return
 	}
@@ -2156,7 +2159,7 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 // updateAgentItemSessionStats propagates token, cost, and timestamp data from
 // a child session update onto the parent agent item that owns that session.
 func (m *UI) updateAgentItemSessionStats(s session.Session) {
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(s.ID)
+	toolCallID, ok := m.agentItemToolCallID(s.ID)
 	if !ok {
 		return
 	}
