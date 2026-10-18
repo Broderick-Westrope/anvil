@@ -14,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,18 +41,21 @@ func toolCallsThenStop(toolName string, ids ...string) func(int) ([]fantasy.Stre
 }
 
 // persistedCall reads the tool call with the given ID from the assistant
-// message the running tool belongs to.
+// message the running tool belongs to. Tools run on fantasy's goroutines,
+// so it reports failures with assert rather than stopping the test.
 func persistedCall(ctx context.Context, t *testing.T, env fakeEnv, callID string) message.ToolCall {
 	t.Helper()
 	msgID, _ := ctx.Value(tools.MessageIDContextKey).(string)
 	msg, err := env.messages.Get(ctx, msgID)
-	require.NoError(t, err)
+	if !assert.NoError(t, err) {
+		return message.ToolCall{}
+	}
 	for _, tc := range msg.ToolCalls() {
 		if tc.ID == callID {
 			return tc
 		}
 	}
-	t.Fatalf("tool call %s not found", callID)
+	assert.Failf(t, "tool call not found", "tool call %s not found", callID)
 	return message.ToolCall{}
 }
 
@@ -166,8 +170,8 @@ func TestRunRestartsToolClockWhenHumanAnswersPermission(t *testing.T) {
 					Action:     "execute",
 					Path:       env.workingDir,
 				})
-				require.NoError(t, err)
-				require.Equal(t, tc.wantGranted, res.Granted)
+				assert.NoError(t, err)
+				assert.Equal(t, tc.wantGranted, res.Granted)
 				return fantasy.NewTextResponse("ok")
 			})
 			a := turnAgent(env, model, "system", 200_000, tool)
@@ -345,7 +349,7 @@ func TestStepIsNotLeftRunningWhenTheStreamPanics(t *testing.T) {
 	model := &recordingModel{respond: func(call int) ([]fantasy.StreamPart, error) {
 		if call > 0 {
 			_, running := a.runningSteps.Get(stepID)
-			require.False(t, running, "the first step ended before the second began")
+			assert.False(t, running, "the first step ended before the second began")
 			panic("stream blew up")
 		}
 		return toolCallsThenStop("work", "call_0")(call)
