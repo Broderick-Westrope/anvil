@@ -112,6 +112,9 @@ type ToolRenderOpts struct {
 	MessageCreatedAt time.Time
 	// Now is the render time, used for live elapsed counters.
 	Now time.Time
+	// Duration is how long the call ran, shown at the end of its header;
+	// zero shows nothing.
+	Duration time.Duration
 }
 
 // IsPending returns true if the tool call is still pending (not finished and
@@ -182,6 +185,12 @@ type baseToolMessageItem struct {
 	// messageCreatedAt is when the assistant message carrying the tool
 	// call was created.
 	messageCreatedAt time.Time
+	// ownTimer marks tools that show their own elapsed time, so the
+	// header gets no duration.
+	ownTimer bool
+	// stepRunning reports whether the step that made the call is still
+	// in flight.
+	stepRunning bool
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -201,6 +210,12 @@ func newBaseToolMessageItem(
 		tools.WebSearchToolName, tools.AgenticFetchToolName, agent.TaskToolName:
 		hasCappedWidth = true
 	}
+	// These tools show their own elapsed time.
+	var ownTimer bool
+	switch toolCall.Name {
+	case tools.JobOutputToolName, tools.AgenticFetchToolName, agent.TaskToolName:
+		ownTimer = true
+	}
 
 	status := ToolStatusRunning
 	if canceled {
@@ -219,6 +234,7 @@ func newBaseToolMessageItem(
 		result:                   result,
 		status:                   status,
 		hasCappedWidth:           hasCappedWidth,
+		ownTimer:                 ownTimer,
 	}
 	t.anim = anim.New(anim.Settings{
 		ID:          toolCall.ID,
@@ -384,6 +400,7 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 	content, height, ok := t.getCachedRender(toolItemWidth)
 	// if we are spinning or there is no cache rerender
 	if !ok || t.isSpinning() {
+		now := time.Now()
 		content = t.toolRenderer.RenderTool(t.sty, toolItemWidth, &ToolRenderOpts{
 			ToolCall:         t.toolCall,
 			Result:           t.result,
@@ -394,7 +411,8 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 			Status:           t.computeStatus(),
 			NoTruncate:       t.noTruncate,
 			MessageCreatedAt: t.messageCreatedAt,
-			Now:              time.Now(),
+			Now:              now,
+			Duration:         t.timerDuration(now),
 		})
 
 		// Prepend hook indicator if hooks ran for this tool call.
@@ -493,6 +511,30 @@ func SetToolMessageCreatedAt(item MessageItem, unixSeconds int64) {
 // MessageID returns the ID of the message containing this tool call.
 func (t *baseToolMessageItem) MessageID() string {
 	return t.messageID
+}
+
+// SetStepRunning implements [TimedTool].
+func (t *baseToolMessageItem) SetStepRunning(running bool) {
+	if t.stepRunning == running {
+		return
+	}
+	t.stepRunning = running
+	t.clearCache()
+	t.Bump()
+}
+
+// TimerCandidate implements [TimedTool].
+func (t *baseToolMessageItem) TimerCandidate() bool {
+	return !t.ownTimer && t.toolCall.StartedAt != 0 && t.computeStatus() == ToolStatusRunning
+}
+
+// timerDuration returns the duration the header shows at now.
+func (t *baseToolMessageItem) timerDuration(now time.Time) time.Duration {
+	if t.ownTimer {
+		return 0
+	}
+	running := t.stepRunning && t.computeStatus() == ToolStatusRunning
+	return toolTimerDuration(t.toolCall, t.result, running, now)
 }
 
 // SetMessageID sets the ID of the message containing this tool call.
@@ -751,10 +793,14 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 	if nested {
 		nameStyle = sty.Tool.NameNested
 	}
+	var suffix string
+	if opts != nil {
+		suffix = toolTimerSuffix(sty, opts.Duration)
+	}
 	toolName := nameStyle.Render(name)
 	prefix := fmt.Sprintf("%s %s ", icon, toolName)
 	prefixWidth := lipgloss.Width(prefix)
-	remainingWidth := width - prefixWidth
+	remainingWidth := width - prefixWidth - lipgloss.Width(suffix)
 	paramsStr := toolParamList(sty, params, remainingWidth, opts)
 
 	// When expanded, toolParamList may return multiple lines. Indent
@@ -765,9 +811,9 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 		for i := 1; i < len(lines); i++ {
 			lines[i] = indent + lines[i]
 		}
-		return prefix + strings.Join(lines, "\n")
+		return prefix + strings.Join(lines, "\n") + suffix
 	}
-	return prefix + paramsStr
+	return prefix + paramsStr + suffix
 }
 
 // toolOutputPlainContent renders plain text with optional expansion support.

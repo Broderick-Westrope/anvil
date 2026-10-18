@@ -1,0 +1,60 @@
+package chat
+
+import (
+	"time"
+
+	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+)
+
+// toolTimerThreshold is how long a tool call must run before its header
+// shows a duration. Most calls finish well inside it, so normal turns stay
+// quiet.
+const toolTimerThreshold = 10 * time.Second
+
+// TimedTool is a tool item whose header can show how long its call ran.
+type TimedTool interface {
+	// SetStepRunning records whether the step that made the call is still
+	// in flight. A call without a result only shows a live duration while
+	// its step runs; otherwise it was orphaned, such as by a crash.
+	SetStepRunning(running bool)
+	// TimerCandidate reports whether the call is running and would show a
+	// live duration if its step is still in flight.
+	TimerCandidate() bool
+	// MessageID is the ID of the assistant message holding the call.
+	MessageID() string
+}
+
+// toolTimerDuration returns the duration a tool call's header shows, or
+// zero for none: the final duration once the call has a result, the time
+// so far while it runs, and nothing below the threshold or when a time is
+// unknown. The threshold compares unrounded durations.
+func toolTimerDuration(call message.ToolCall, result *message.ToolResult, running bool, now time.Time) time.Duration {
+	if call.StartedAt == 0 {
+		return 0
+	}
+	end := now
+	switch {
+	case result != nil:
+		if result.FinishedAt == 0 {
+			return 0
+		}
+		end = time.UnixMilli(result.FinishedAt)
+	case !running:
+		return 0
+	}
+	elapsed := end.Sub(time.UnixMilli(call.StartedAt))
+	if elapsed < toolTimerThreshold {
+		return 0
+	}
+	return elapsed
+}
+
+// toolTimerSuffix renders the header suffix for d, or "" when d is zero.
+func toolTimerSuffix(sty *styles.Styles, d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return sty.Tool.StatsSep.Render(" · ") + sty.Tool.StatsLine.Render(common.FormatDuration(d))
+}
