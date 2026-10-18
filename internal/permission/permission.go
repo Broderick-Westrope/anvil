@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
@@ -38,6 +39,31 @@ func hookApproved(ctx context.Context, toolCallID string) bool {
 	}
 	v, _ := ctx.Value(hookApprovalKey{}).(string)
 	return v == toolCallID
+}
+
+type grantObserverKey struct{}
+
+type grantObserver struct {
+	toolCallID string
+	observe    func(at time.Time)
+}
+
+// WithGrantObserver returns a context whose permission requests for the
+// given tool call call observe when a human grants them, before Request
+// returns. Automatic approvals (rules, hooks, the bouncer, yolo) never
+// call it.
+func WithGrantObserver(ctx context.Context, toolCallID string, observe func(at time.Time)) context.Context {
+	return context.WithValue(ctx, grantObserverKey{}, grantObserver{toolCallID: toolCallID, observe: observe})
+}
+
+// notifyHumanGrant calls the context's grant observer if it watches the
+// given tool call.
+func notifyHumanGrant(ctx context.Context, toolCallID string, at time.Time) {
+	o, ok := ctx.Value(grantObserverKey{}).(grantObserver)
+	if !ok || o.toolCallID != toolCallID {
+		return
+	}
+	o.observe(at)
 }
 
 // RequestResult holds the outcome of a permission request.
@@ -410,6 +436,7 @@ func (s *permissionService) promptHuman(ctx context.Context, opts CreatePermissi
 		verdict := VerdictDeny
 		if resp.Granted {
 			verdict = VerdictAllow
+			notifyHumanGrant(ctx, opts.ToolCallID, time.Now())
 		}
 		s.recordReviewed(opts, verdict, r.details, r.review)
 		reason := resp.Reason
