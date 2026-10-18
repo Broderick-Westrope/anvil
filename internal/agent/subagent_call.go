@@ -175,7 +175,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 	defer cancelCall(nil)
 	lease, err := c.leases.acquire(child.ID, callID, cancelCall)
 	if err != nil {
-		return fantasy.NewTextErrorResponse(fmt.Sprintf("Subagent %s is running. Resume it after its current task call returns.", tc.handle)), nil
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("Subagent %s is running. Resume it after its current task call returns.\n\nsubagent_id: %s", tc.handle, tc.handle)), nil
 	}
 	defer c.leases.release(lease)
 	tc.lease = lease
@@ -455,8 +455,12 @@ func injectionSummaryLine(inj message.InjectionContent) string {
 		return fmt.Sprintf("harness: resumed after %s (retry %d/%d)", inj.Reason, inj.Attempt, inj.MaxAttempts)
 	case message.InjectionKindContinue:
 		return "harness: continued after an interrupt"
-	default:
+	case message.InjectionKindSteer:
 		return "human (steer): " + inj.Text
+	default:
+		// An unknown kind is labelled by its source, so nothing passes as
+		// a human message.
+		return fmt.Sprintf("%s: %s", inj.Source, inj.Text)
 	}
 }
 

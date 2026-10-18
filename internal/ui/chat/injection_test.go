@@ -29,6 +29,10 @@ func TestInjectedMessagesRenderWithTheirSource(t *testing.T) {
 			inj:  message.InjectionContent{Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, Text: "now add tests"},
 			want: "Orchestrator · resume", withText: true,
 		},
+		"unknown harness kind is never labelled as you": {
+			inj:  message.InjectionContent{Source: message.InjectionSourceHarness, Kind: "future", Text: "x"},
+			want: "Harness",
+		},
 		"harness retry": {
 			inj: message.InjectionContent{
 				Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry, Text: "Continue.",

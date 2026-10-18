@@ -182,7 +182,17 @@ func injectionBlock(inj message.InjectionContent) string {
 		return "**Orchestrator · resume**\n\n" + inj.Text
 	case message.InjectionKindInterruptSteer:
 		return "**You · interrupt**\n\n" + inj.Text
-	default:
+	case message.InjectionKindSteer:
 		return "**You · steer**\n\n" + inj.Text
+	default:
+		// An unknown kind is labelled by its source, so nothing passes as
+		// the user's own message.
+		return fmt.Sprintf("**%s**\n\n%s", injectionSourceLabels[inj.Source], inj.Text)
 	}
+}
+
+var injectionSourceLabels = map[message.InjectionSource]string{
+	message.InjectionSourceHuman:        "You",
+	message.InjectionSourceOrchestrator: "Orchestrator",
+	message.InjectionSourceHarness:      "Harness",
 }

@@ -160,7 +160,7 @@ func TestTaskResumeRejects(t *testing.T) {
 				_, err = f.c.leases.acquire(sub.SessionID, "msg-9$$call-9", func(error) {})
 				require.NoError(t, err)
 			},
-			want: "is running",
+			want: "returns.\n\nsubagent_id: helper-",
 		},
 	}
 	for name, tc := range tests {
