@@ -163,7 +163,7 @@ Terms with a specific meaning in this codebase are defined in
   whether a result-less call is still running or was orphaned. The UI shows
   the duration once it reaches 10s (`internal/ui/chat/tool_timer.go`,
   refreshed by the elapsed tick in `internal/ui/model/tool_timer.go`).
-  Design: `plans/design-2026-10-18-tool-call-timer.md`.
+  Design: `plans/completed/design-2026-10-18-tool-call-timer.md`.
 - **Cache usage metrics**: every model response (turn steps, summaries,
   titles, `CompleteSmall`) is recorded as a `step_usage` row with
   normalised token counts, prices and hashed request fingerprints. The
