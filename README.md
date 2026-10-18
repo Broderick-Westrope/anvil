@@ -949,10 +949,19 @@ be called from inside it. The primitives:
   `reference(path)`, `readFile(path)`, `now()`, `random()`.
 - `workflow.tmpdir()`, `workflow.dir()` and
   `workflow.exclusive(fn, {stopJobs})`, which keeps other work out of the
-  sessions the run made (never yours) while `fn` runs.
+  sessions the run made while `fn` runs, and waits for (or with
+  `stopJobs`, stops) their background jobs and those its subagents left.
+  It never holds your session: you can keep working, and running jobs,
+  there, so it doesn't stop you changing the workspace meanwhile.
 
 A `schema` makes the result a validated object (`SchemaError` otherwise).
 Cancelling a turn throws `Cancelled`.
+
+Scripts written before run nodes need two changes:
+`session.current().turn(...)` now throws, since your session stays
+yours; fork it and take turns on the fork instead
+(`session.current().fork().turn(...)`). `workflow.focus()` is gone: drill
+into a session from the run's node to watch or talk to it.
 
 A run shows as a node where you started it, saying where it's up to. Drill
 into it (→, `l` or a click) to see its phases, the sessions and subagents in
