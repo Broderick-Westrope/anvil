@@ -1502,3 +1502,15 @@ func TestServiceRunViewDoesntReadPayloadsItDoesntShow(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "yes", view.Phases[0].Items[0].Answer, "the answers it shows still load")
 }
+
+func TestServiceReportsARunningRunUntilItEnds(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.start(t, h.write(t, `function main() { return ask("go on?") }`), "")
+	asked := h.next(t, workflowhost.EventAsk)
+	require.True(t, h.svc.Running(h.session))
+	require.False(t, h.svc.Running("someone-else"))
+
+	require.NoError(t, h.svc.Respond(asked.RequestID, "yes"))
+	h.next(t, workflowhost.EventFinished)
+	require.Eventually(t, func() bool { return !h.svc.Running(h.session) }, time.Second, 10*time.Millisecond)
+}

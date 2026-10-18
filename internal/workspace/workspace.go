@@ -179,6 +179,9 @@ type Workspace interface {
 	WorkflowPause(runID string) error
 	WorkflowResume(runID string) error
 	WorkflowAbort(runID string) error
+	// WorkflowRunning reports whether a run started from the session, or
+	// one it belongs to, is still going.
+	WorkflowRunning(sessionID string) bool
 	// WorkflowRunView loads what a workflow run looks like to the user,
 	// reporting false when there's no such run.
 	WorkflowRunView(ctx context.Context, runID string) (workflowhost.RunView, bool, error)

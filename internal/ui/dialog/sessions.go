@@ -195,6 +195,9 @@ func (s *Session) HandleMsg(msg tea.Msg) Action {
 				if s.isCurrentSessionBusy() {
 					return ActionCmd{util.ReportWarn("Agent is busy, please wait...")}
 				}
+				if item := s.selectedSessionItem(); item != nil && s.com.Workspace.WorkflowRunning(item.ID()) {
+					return ActionCmd{util.ReportWarn("A workflow is running from this session; abort it (alt+x) before deleting the session")}
+				}
 				s.sessionsMode = sessionsModeDeleting
 				s.list.SetItems(sessionItems(s.com.Styles, sessionsModeDeleting, s.sessions...)...)
 			case key.Matches(msg, s.keyMap.Previous):

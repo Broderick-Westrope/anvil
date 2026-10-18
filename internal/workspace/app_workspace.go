@@ -85,7 +85,15 @@ func (w *AppWorkspace) SetSessionPin(ctx context.Context, sessionID string, pinn
 	return w.app.Sessions.SetPin(ctx, sessionID, pinned, note)
 }
 
+// ErrSessionHasRunningWorkflow refuses deleting a session while a workflow
+// run started from it is going: deleting it deletes the run's sessions,
+// which the run is still using.
+var ErrSessionHasRunningWorkflow = errors.New("a workflow is running from this session; abort it (alt+x) before deleting the session")
+
 func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
+	if w.WorkflowRunning(sessionID) {
+		return ErrSessionHasRunningWorkflow
+	}
 	return w.app.Sessions.Delete(ctx, sessionID)
 }
 
@@ -666,6 +674,10 @@ func (w *AppWorkspace) WorkflowResume(runID string) error {
 		return ErrWorkflowsUnavailable
 	}
 	return w.app.Workflows.Resume(runID)
+}
+
+func (w *AppWorkspace) WorkflowRunning(sessionID string) bool {
+	return w.app.Workflows != nil && w.app.Workflows.Running(sessionID)
 }
 
 func (w *AppWorkspace) WorkflowAbort(runID string) error {
