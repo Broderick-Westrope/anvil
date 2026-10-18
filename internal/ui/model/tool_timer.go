@@ -5,9 +5,10 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
+	"github.com/Broderick-Westrope/anvil/internal/workspace"
 )
 
-// refreshToolTimers updates whether each running tool call's step is still
+// syncToolTimers updates whether each running tool call's step is still
 // in flight, in the root chat and every drill-stack chat, and clears the
 // render caches of calls showing a live duration so the next draw shows
 // the new time. It reports whether any call shows one, which keeps the
@@ -17,7 +18,7 @@ import (
 // Its request notification only reaches items that exist, so an item built
 // after it (such as by a drill-in load that finished during the prompt)
 // would otherwise time the prompt.
-func (m *UI) refreshToolTimers() bool {
+func (m *UI) syncToolTimers() bool {
 	pass := toolTimerPass{ws: m.com.Workspace}
 	found := pass.refresh(m.chat)
 	for _, entry := range m.drillStack {
@@ -29,10 +30,7 @@ func (m *UI) refreshToolTimers() bool {
 // toolTimerPass is one refresh of the tool timers. It asks for the open
 // permission prompt at most once, and only when a call might be timed.
 type toolTimerPass struct {
-	ws interface {
-		AgentIsStepRunning(assistantMessageID string) bool
-		PermissionPending() (permission.PendingPermission, bool)
-	}
+	ws            workspace.Workspace
 	pending       permission.PendingPermission
 	pendingLoaded bool
 }
@@ -72,7 +70,7 @@ func (p *toolTimerPass) refresh(c *Chat) bool {
 // startElapsedTickForTools starts the elapsed-time tick when a tool call
 // in view shows a live duration and the tick isn't already running.
 func (m *UI) startElapsedTickForTools() tea.Cmd {
-	if m.elapsedTickRunning || !m.refreshToolTimers() {
+	if m.elapsedTickRunning || !m.syncToolTimers() {
 		return nil
 	}
 	m.elapsedTickRunning = true
@@ -95,16 +93,46 @@ func (m *UI) startElapsedTickForToolStart(msg message.Message) tea.Cmd {
 	return nil
 }
 
-// reconcileToolStart returns the start time to keep for item when an update
+// applyToolStart returns the start time to keep for item when an update
 // carries startedAt. A start only moves forward (a human answering a prompt
 // restarts the clock), so an older snapshot arriving late never moves it
 // back. A restart means a human answered the call's prompt even if the
 // notification was lost, so an item awaiting permission goes back to
 // running. The first start can't mean that: it lands before the call asks.
-func reconcileToolStart(item chat.ToolMessageItem, startedAt int64) int64 {
+func applyToolStart(item chat.ToolMessageItem, startedAt int64) int64 {
 	current := item.ToolCall().StartedAt
 	if current != 0 && startedAt > current && item.Status() == chat.ToolStatusAwaitingPermission {
 		item.SetStatus(chat.ToolStatusRunning)
 	}
 	return max(startedAt, current)
+}
+
+// toolItemsByCallID returns every tool item for the tool call in the root
+// chat and the drill-stack chats, including the nested children of agent
+// items. A subagent's call can appear both under its agent and in that
+// agent's drill-in, and a nested call's ID resolves to its parent's list
+// entry.
+func (m *UI) toolItemsByCallID(id string) []chat.ToolMessageItem {
+	chats := []*Chat{m.chat}
+	for _, entry := range m.drillStack {
+		chats = append(chats, entry.chat)
+	}
+	var found []chat.ToolMessageItem
+	for _, c := range chats {
+		item := c.MessageItem(id)
+		if tool, ok := item.(chat.ToolMessageItem); ok && tool.ID() == id {
+			found = append(found, tool)
+			continue
+		}
+		container, ok := item.(chat.NestedToolContainer)
+		if !ok {
+			continue
+		}
+		for _, nested := range container.NestedTools() {
+			if nested.ID() == id {
+				found = append(found, nested)
+			}
+		}
+	}
+	return found
 }

@@ -688,36 +688,6 @@ func (m *UI) findMessageItem(id string) chat.MessageItem {
 	return nil
 }
 
-// toolItemsByCallID returns every tool item for the tool call in the root
-// chat and the drill-stack chats, including the nested children of agent
-// items. A subagent's call can appear both under its agent and in that
-// agent's drill-in, and a nested call's ID resolves to its parent's list
-// entry.
-func (m *UI) toolItemsByCallID(id string) []chat.ToolMessageItem {
-	chats := []*Chat{m.chat}
-	for _, entry := range m.drillStack {
-		chats = append(chats, entry.chat)
-	}
-	var found []chat.ToolMessageItem
-	for _, c := range chats {
-		item := c.MessageItem(id)
-		if tool, ok := item.(chat.ToolMessageItem); ok && tool.ID() == id {
-			found = append(found, tool)
-			continue
-		}
-		container, ok := item.(chat.NestedToolContainer)
-		if !ok {
-			continue
-		}
-		for _, nested := range container.NestedTools() {
-			if nested.ID() == id {
-				found = append(found, nested)
-			}
-		}
-	}
-	return found
-}
-
 // findParentMessageItem searches the root chat and the drill-stack chats
 // below the viewed subagent session for an item matching the given ID. The
 // viewed session's parent agent item lives in one of those.
@@ -1376,7 +1346,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		anyTimed := m.refreshToolTimers()
+		anyTimed := m.syncToolTimers()
 		shouldContinue := anyRunning || anyTimed || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
@@ -1946,7 +1916,7 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 		existingToolItem := c.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {
 			existingToolCall := toolItem.ToolCall()
-			tc.StartedAt = reconcileToolStart(toolItem, tc.StartedAt)
+			tc.StartedAt = applyToolStart(toolItem, tc.StartedAt)
 			// Only update if finished state, input or start time changed
 			// to avoid clearing the cache.
 			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input || tc.StartedAt != existingToolCall.StartedAt {
