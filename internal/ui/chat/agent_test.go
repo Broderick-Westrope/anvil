@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -373,4 +374,25 @@ func TestFormatStatsLine(t *testing.T) {
 		require.NotContains(t, plain, "tools")
 		require.NotContains(t, plain, "tokens")
 	})
+}
+
+func TestTaskAgentTypeFallsBackToTheResumedHandle(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		params agent.TaskParams
+		want   string
+	}{
+		"explicit type":           {params: agent.TaskParams{SubagentType: "fixer"}, want: "fixer"},
+		"resume without type":     {params: agent.TaskParams{Resume: "devils-advocate-41e2"}, want: "devils-advocate"},
+		"resume with type":        {params: agent.TaskParams{Resume: "fixer-41e2", SubagentType: "fixer"}, want: "fixer"},
+		"handle without suffix":   {params: agent.TaskParams{Resume: "fixer"}, want: ""},
+		"neither type nor handle": {want: ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, taskAgentType(tc.params))
+		})
+	}
 }

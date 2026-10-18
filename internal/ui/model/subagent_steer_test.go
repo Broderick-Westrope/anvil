@@ -214,3 +214,15 @@ func TestPasteGoesToTheFocusedSteerInput(t *testing.T) {
 	require.True(t, claimed)
 	require.Equal(t, "pasted", s.f.input.Value())
 }
+
+func TestFooterHelpReadsCleanly(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+
+	rendered := ansi.Strip(s.f.DrillInFooter().Render(200))
+	require.Contains(t, rendered, "tab message subagent · esc cancel subagent")
+
+	s.press(tabKey)
+	rendered = ansi.Strip(s.f.DrillInFooter().Render(200))
+	require.Contains(t, rendered, "enter send · alt+i interrupt and send · tab back to chat · esc cancel subagent")
+}

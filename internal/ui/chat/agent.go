@@ -294,7 +294,7 @@ func (a *AgentToolMessageItem) AddNestedTool(tool ToolMessageItem) {
 func (a *AgentToolMessageItem) AgentDrillInLabel() string {
 	var params agent.TaskParams
 	_ = json.Unmarshal([]byte(a.toolCall.Input), &params)
-	return agentBreadcrumbLabel(params.SubagentType, params.Description)
+	return agentBreadcrumbLabel(taskAgentType(params), params.Description)
 }
 
 // ToolDrillIn shadows baseToolMessageItem — agents use session drill-in, not
@@ -338,7 +338,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		model = r.agent.model
 	}
 
-	displayName := agentDisplayName(params.SubagentType, params.Description, model)
+	displayName := agentDisplayName(taskAgentType(params), params.Description, model)
 
 	// Line 1: status icon + display name.
 	// While the tool is running, override the icon to reflect the two running
@@ -671,4 +671,17 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 	statsLine := formatStatsLine(sty, r.fetch.turns, r.fetch.toolCalls, r.fetch.tokens, r.fetch.cost, r.fetch.elapsed(), width)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, statsLine)
+}
+
+// taskAgentType returns the agent type a task call runs. A resume usually
+// omits subagent_type, so the type comes from its handle,
+// "<type>-<suffix>".
+func taskAgentType(params agent.TaskParams) string {
+	if params.SubagentType != "" || params.Resume == "" {
+		return params.SubagentType
+	}
+	if i := strings.LastIndexByte(params.Resume, '-'); i > 0 {
+		return params.Resume[:i]
+	}
+	return ""
 }

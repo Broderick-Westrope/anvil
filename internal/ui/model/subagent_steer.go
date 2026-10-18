@@ -220,11 +220,10 @@ func (v subagentSteerFooter) Render(width int) string {
 	}
 	input := v.f.input
 	input.SetWidth(width)
-	help := []string{bindingHelp(v.f.keys.Cancel) + " cancel subagent"}
+	cancel := v.f.keys.Cancel.Help().Key + " cancel subagent"
+	help := []string{v.f.keys.Focus.Help().Key + " message subagent", cancel}
 	if input.Focused() {
-		help = append([]string{bindingHelp(v.f.keys.Send), bindingHelp(v.f.keys.Interrupt), "tab back to chat"}, help...)
-	} else {
-		help = append([]string{bindingHelp(v.f.keys.Focus) + " to this subagent"}, help...)
+		help = []string{bindingHelp(v.f.keys.Send), bindingHelp(v.f.keys.Interrupt), v.f.keys.Focus.Help().Key + " back to chat", cancel}
 	}
 	if v.queued > 0 {
 		help = append(help, fmt.Sprintf("%d queued", v.queued))
