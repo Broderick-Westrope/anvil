@@ -129,16 +129,16 @@ type Coordinator interface {
 type coordinator struct {
 	admission    *admission
 	runningSteps *csync.Map[string, struct{}]
-	cfg         *config.ConfigStore
-	sessions    session.Service
-	messages    message.Service
-	permissions permission.Service
-	filetracker filetracker.Service
-	lspManager  *lsp.Manager
-	notify      pubsub.Publisher[notify.Notification]
-	jobEvents   *jobevents.Store // Nil disables job notifications.
-	jobArchive  tools.JobArchive // Nil disables persisted job fallbacks.
-	onIdle      func(sessionID string)
+	cfg          *config.ConfigStore
+	sessions     session.Service
+	messages     message.Service
+	permissions  permission.Service
+	filetracker  filetracker.Service
+	lspManager   *lsp.Manager
+	notify       pubsub.Publisher[notify.Notification]
+	jobEvents    *jobevents.Store // Nil disables job notifications.
+	jobArchive   tools.JobArchive // Nil disables persisted job fallbacks.
+	onIdle       func(sessionID string)
 	// jobWakeEnabled reports whether job events wake idle sessions; nil
 	// means they never do.
 	jobWakeEnabled func() bool

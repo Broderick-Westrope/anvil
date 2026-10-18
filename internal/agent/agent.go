@@ -1203,7 +1203,6 @@ func (a *sessionAgent) IsSessionBusy(sessionID string) bool {
 	return a.admission.busy(sessionID)
 }
 
-
 func (a *sessionAgent) QueuedPrompts(sessionID string) int {
 	return len(a.admission.queued(sessionID))
 }
