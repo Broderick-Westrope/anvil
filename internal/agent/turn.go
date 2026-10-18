@@ -146,8 +146,8 @@ func (t *turn) timed(agentTools []fantasy.AgentTool) []fantasy.AgentTool {
 }
 
 // timedTool is one turn's view of a shared tool that records when each of
-// its calls starts running, and restarts that clock when a human grants a
-// permission the call asked for. It is outermost, so time spent in hooks
+// its calls starts running, and restarts that clock when a human answers a
+// permission prompt the call raised, so the wait isn't counted. It is outermost, so time spent in hooks
 // counts towards the call.
 type timedTool struct {
 	fantasy.AgentTool
@@ -156,7 +156,7 @@ type timedTool struct {
 
 func (tt *timedTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	tt.turn.toolStarted(call.ID, time.Now())
-	ctx = permission.WithGrantObserver(ctx, call.ID, func(at time.Time) {
+	ctx = permission.WithPromptObserver(ctx, call.ID, func(at time.Time) {
 		tt.turn.toolStarted(call.ID, at)
 	})
 	return tt.AgentTool.Run(ctx, call)

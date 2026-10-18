@@ -41,25 +41,25 @@ func hookApproved(ctx context.Context, toolCallID string) bool {
 	return v == toolCallID
 }
 
-type grantObserverKey struct{}
+type promptObserverKey struct{}
 
-type grantObserver struct {
+type promptObserver struct {
 	toolCallID string
 	observe    func(at time.Time)
 }
 
-// WithGrantObserver returns a context whose permission requests for the
-// given tool call call observe when a human grants them, before Request
-// returns. Automatic approvals (rules, hooks, the bouncer, yolo) never
-// call it.
-func WithGrantObserver(ctx context.Context, toolCallID string, observe func(at time.Time)) context.Context {
-	return context.WithValue(ctx, grantObserverKey{}, grantObserver{toolCallID: toolCallID, observe: observe})
+// WithPromptObserver returns a context whose permission request for the
+// given tool call calls observe when a human prompt for it closes, by a
+// grant, a deny or cancellation, before Request returns. Requests settled
+// without a prompt (rules, hooks, the bouncer, yolo) never call it.
+func WithPromptObserver(ctx context.Context, toolCallID string, observe func(at time.Time)) context.Context {
+	return context.WithValue(ctx, promptObserverKey{}, promptObserver{toolCallID: toolCallID, observe: observe})
 }
 
-// notifyHumanGrant calls the context's grant observer if it watches the
+// notifyPromptClosed calls the context's prompt observer if it watches the
 // given tool call.
-func notifyHumanGrant(ctx context.Context, toolCallID string, at time.Time) {
-	o, ok := ctx.Value(grantObserverKey{}).(grantObserver)
+func notifyPromptClosed(ctx context.Context, toolCallID string, at time.Time) {
+	o, ok := ctx.Value(promptObserverKey{}).(promptObserver)
 	if !ok || o.toolCallID != toolCallID {
 		return
 	}
@@ -425,6 +425,7 @@ func (s *permissionService) promptHuman(ctx context.Context, opts CreatePermissi
 
 	select {
 	case <-ctx.Done():
+		notifyPromptClosed(ctx, opts.ToolCallID, time.Now())
 		s.activeRequestMu.Lock()
 		if s.activeRequest != nil && s.activeRequest.ID == r.perm.ID {
 			s.activeRequest = nil
@@ -434,10 +435,10 @@ func (s *permissionService) promptHuman(ctx context.Context, opts CreatePermissi
 		s.recordReviewed(opts, VerdictCancelled, r.details, r.review)
 		return RequestResult{}, ctx.Err()
 	case resp := <-respCh:
+		notifyPromptClosed(ctx, opts.ToolCallID, time.Now())
 		verdict := VerdictDeny
 		if resp.Granted {
 			verdict = VerdictAllow
-			notifyHumanGrant(ctx, opts.ToolCallID, time.Now())
 		}
 		s.recordReviewed(opts, verdict, r.details, r.review)
 		reason := resp.Reason

@@ -1950,9 +1950,9 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			// the clock), so an older snapshot arriving late never moves
 			// it back.
 			tc.StartedAt = max(tc.StartedAt, existingToolCall.StartedAt)
-			// A restart means a human granted the call's prompt, even if
-			// the granted notification was lost. The first start can't:
-			// it lands before the call asks for permission.
+			// A restart means a human answered the call's prompt, even if
+			// the notification was lost. The first start can't: it lands
+			// before the call asks for permission.
 			if existingToolCall.StartedAt != 0 && tc.StartedAt > existingToolCall.StartedAt &&
 				toolItem.Status() == chat.ToolStatusAwaitingPermission {
 				toolItem.SetStatus(chat.ToolStatusRunning)

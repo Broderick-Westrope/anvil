@@ -137,51 +137,64 @@ func TestRunStartsQueuedSequentialToolWhenItRuns(t *testing.T) {
 		"the queued call's clock starts after the call ahead of it finishes")
 }
 
-func TestRunRestartsToolClockWhenHumanGrantsPermission(t *testing.T) {
+func TestRunRestartsToolClockWhenHumanAnswersPermission(t *testing.T) {
 	t.Parallel()
-	env := testEnv(t)
-	env.permissions = permission.NewPermissionService(env.workingDir, config.YoloOff, nil, nil)
-	sess := newTestSession(t, env)
-	prompts := env.permissions.Subscribe(t.Context())
 
-	model := &recordingModel{respond: toolCallsThenStop("work", "call_0")}
-	var beforePrompt message.ToolCall
-	tool := stepTool("work", func(ctx context.Context, _ int) fantasy.ToolResponse {
-		beforePrompt = persistedCall(ctx, t, env, "call_0")
-		res, err := env.permissions.Request(ctx, permission.CreatePermissionRequest{
-			SessionID:  sess.ID,
-			ToolCallID: "call_0",
-			ToolName:   "work",
-			Action:     "execute",
-			Path:       env.workingDir,
+	tests := map[string]struct {
+		answer      func(permission.Service, permission.PermissionRequest)
+		wantGranted bool
+	}{
+		"grant": {answer: func(s permission.Service, p permission.PermissionRequest) { s.Grant(p) }, wantGranted: true},
+		"deny":  {answer: func(s permission.Service, p permission.PermissionRequest) { s.Deny(p, "") }},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := testEnv(t)
+			env.permissions = permission.NewPermissionService(env.workingDir, config.YoloOff, nil, nil)
+			sess := newTestSession(t, env)
+			prompts := env.permissions.Subscribe(t.Context())
+
+			model := &recordingModel{respond: toolCallsThenStop("work", "call_0")}
+			var beforePrompt message.ToolCall
+			tool := stepTool("work", func(ctx context.Context, _ int) fantasy.ToolResponse {
+				beforePrompt = persistedCall(ctx, t, env, "call_0")
+				res, err := env.permissions.Request(ctx, permission.CreatePermissionRequest{
+					SessionID:  sess.ID,
+					ToolCallID: "call_0",
+					ToolName:   "work",
+					Action:     "execute",
+					Path:       env.workingDir,
+				})
+				require.NoError(t, err)
+				require.Equal(t, tc.wantGranted, res.Granted)
+				return fantasy.NewTextResponse("ok")
+			})
+			a := turnAgent(env, model, "system", 200_000, tool)
+
+			var answeredAfter time.Time
+			var wg sync.WaitGroup
+			wg.Go(func() {
+				select {
+				case ev := <-prompts:
+					time.Sleep(5 * time.Millisecond)
+					answeredAfter = time.Now()
+					tc.answer(env.permissions, ev.Payload)
+				case <-time.After(10 * time.Second):
+					t.Error("permission prompt was not published")
+				}
+			})
+
+			_, err := a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+			require.NoError(t, err)
+			wg.Wait()
+
+			restarted := toolCallsByID(t, env, sess.ID)["call_0"].StartedAt
+			require.NotZero(t, beforePrompt.StartedAt)
+			require.Greater(t, restarted, beforePrompt.StartedAt)
+			require.GreaterOrEqual(t, restarted, answeredAfter.UnixMilli())
 		})
-		require.NoError(t, err)
-		require.True(t, res.Granted)
-		return fantasy.NewTextResponse("ok")
-	})
-	a := turnAgent(env, model, "system", 200_000, tool)
-
-	var grantedAfter time.Time
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		select {
-		case ev := <-prompts:
-			time.Sleep(5 * time.Millisecond)
-			grantedAfter = time.Now()
-			env.permissions.Grant(ev.Payload)
-		case <-time.After(10 * time.Second):
-			t.Error("permission prompt was not published")
-		}
-	})
-
-	_, err := a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
-	require.NoError(t, err)
-	wg.Wait()
-
-	restarted := toolCallsByID(t, env, sess.ID)["call_0"].StartedAt
-	require.NotZero(t, beforePrompt.StartedAt)
-	require.Greater(t, restarted, beforePrompt.StartedAt)
-	require.GreaterOrEqual(t, restarted, grantedAfter.UnixMilli())
+	}
 }
 
 func TestRunFailureStampsSyntheticResultsWithFinishTime(t *testing.T) {

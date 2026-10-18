@@ -10,29 +10,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// grantRecorder collects the times a grant observer was called with.
-type grantRecorder struct {
+// promptRecorder collects the times a prompt observer was called with.
+type promptRecorder struct {
 	mu    sync.Mutex
 	times []time.Time
 }
 
-func (g *grantRecorder) observe(at time.Time) {
+func (g *promptRecorder) observe(at time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.times = append(g.times, at)
 }
 
-func (g *grantRecorder) calls() []time.Time {
+func (g *promptRecorder) calls() []time.Time {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return append([]time.Time(nil), g.times...)
 }
 
-func TestGrantObserver_HumanGrantNotifiesBeforeReturning(t *testing.T) {
+func TestPromptObserver_HumanGrantNotifiesBeforeReturning(t *testing.T) {
 	t.Parallel()
 	h := newBouncerHarness(t, nil, BouncerOff, nil, nil)
-	rec := &grantRecorder{}
-	ctx := WithGrantObserver(testCtx(t), "a", rec.observe)
+	rec := &promptRecorder{}
+	ctx := WithPromptObserver(testCtx(t), "a", rec.observe)
 
 	done := requestAsync(ctx, h.svc, h.req("a", "rm -rf build"))
 	prompt := waitPrompt(t, h.events)
@@ -49,11 +49,11 @@ func TestGrantObserver_HumanGrantNotifiesBeforeReturning(t *testing.T) {
 	require.False(t, calls[0].After(after))
 }
 
-func TestGrantObserver_HumanDenyDoesNotNotify(t *testing.T) {
+func TestPromptObserver_HumanDenyNotifies(t *testing.T) {
 	t.Parallel()
 	h := newBouncerHarness(t, nil, BouncerOff, nil, nil)
-	rec := &grantRecorder{}
-	ctx := WithGrantObserver(testCtx(t), "a", rec.observe)
+	rec := &promptRecorder{}
+	ctx := WithPromptObserver(testCtx(t), "a", rec.observe)
 
 	done := requestAsync(ctx, h.svc, h.req("a", "rm -rf build"))
 	h.svc.Deny(waitPrompt(t, h.events), "")
@@ -61,14 +61,42 @@ func TestGrantObserver_HumanDenyDoesNotNotify(t *testing.T) {
 
 	require.NoError(t, res.err)
 	require.False(t, res.result.Granted)
+	require.Len(t, rec.calls(), 1)
+}
+
+func TestPromptObserver_CancelDuringPromptNotifies(t *testing.T) {
+	t.Parallel()
+	h := newBouncerHarness(t, nil, BouncerOff, nil, nil)
+	rec := &promptRecorder{}
+	ctx, cancel := context.WithCancel(testCtx(t))
+	ctx = WithPromptObserver(ctx, "a", rec.observe)
+
+	done := requestAsync(ctx, h.svc, h.req("a", "rm -rf build"))
+	waitPrompt(t, h.events)
+	cancel()
+	res := waitResult(t, done)
+
+	require.ErrorIs(t, res.err, context.Canceled)
+	require.Len(t, rec.calls(), 1)
+}
+
+func TestPromptObserver_CancelBeforePromptDoesNotNotify(t *testing.T) {
+	t.Parallel()
+	h := newBouncerHarness(t, nil, BouncerOff, nil, nil)
+	rec := &promptRecorder{}
+	ctx, cancel := context.WithCancel(testCtx(t))
+	cancel()
+
+	_, err := h.svc.Request(WithPromptObserver(ctx, "a", rec.observe), h.req("a", "rm -rf build"))
+	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, rec.calls())
 }
 
-func TestGrantObserver_OtherToolCallIsNotNotified(t *testing.T) {
+func TestPromptObserver_OtherToolCallIsNotNotified(t *testing.T) {
 	t.Parallel()
 	h := newBouncerHarness(t, nil, BouncerOff, nil, nil)
-	rec := &grantRecorder{}
-	ctx := WithGrantObserver(testCtx(t), "other", rec.observe)
+	rec := &promptRecorder{}
+	ctx := WithPromptObserver(testCtx(t), "other", rec.observe)
 
 	done := requestAsync(ctx, h.svc, h.req("a", "rm -rf build"))
 	h.svc.Grant(waitPrompt(t, h.events))
@@ -78,7 +106,7 @@ func TestGrantObserver_OtherToolCallIsNotNotified(t *testing.T) {
 	require.Empty(t, rec.calls())
 }
 
-func TestGrantObserver_AutomaticApprovalsDoNotNotify(t *testing.T) {
+func TestPromptObserver_AutomaticApprovalsDoNotNotify(t *testing.T) {
 	t.Parallel()
 
 	allowBash := []config.PermissionRule{{ToolPattern: "bash", Action: config.PermissionAllow}}
@@ -130,8 +158,8 @@ func TestGrantObserver_AutomaticApprovalsDoNotNotify(t *testing.T) {
 	for name, run := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			rec := &grantRecorder{}
-			result := run(t, WithGrantObserver(testCtx(t), "a", rec.observe))
+			rec := &promptRecorder{}
+			result := run(t, WithPromptObserver(testCtx(t), "a", rec.observe))
 			require.True(t, result.Granted)
 			require.Empty(t, rec.calls())
 		})
