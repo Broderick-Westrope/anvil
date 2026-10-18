@@ -287,3 +287,50 @@ func TestToolTimerHidesWhileItsPromptIsOpen(t *testing.T) {
 	require.NotContains(t, renderedHeader(item), " · ")
 	require.Contains(t, renderedHeader(other), " · ", "other calls keep their timers")
 }
+
+func TestToolTimerRecoversAMissedGrant(t *testing.T) {
+	t.Parallel()
+	u, ws := newTimerTestUI()
+	call := runningBash("tc1", 30*time.Second)
+	item := toolItemIn(u, "a1", call)
+	u.chat.SetMessages(item)
+	ws.running["a1"] = true
+	_, _ = u.Update(pubsub.Event[permission.PermissionNotification]{Payload: permission.PermissionNotification{ToolCallID: "tc1"}})
+	require.Equal(t, chat.ToolStatusAwaitingPermission, item.Status())
+
+	// The granted notification is lost, but the human grant restarted the
+	// clock, which only happens once the prompt is answered.
+	restarted := call
+	restarted.StartedAt = time.Now().UnixMilli()
+	_, _ = u.Update(assistantUpdate("s1", restarted))
+	require.Equal(t, chat.ToolStatusRunning, item.Status())
+}
+
+func TestToolTimerFirstStartDoesNotEndAPrompt(t *testing.T) {
+	t.Parallel()
+	u, _ := newTimerTestUI()
+	call := runningBash("tc1", 0)
+	unstarted := call
+	unstarted.StartedAt = 0
+	item := toolItemIn(u, "a1", unstarted)
+	u.chat.SetMessages(item)
+
+	// The request notification overtook the first start update.
+	_, _ = u.Update(pubsub.Event[permission.PermissionNotification]{Payload: permission.PermissionNotification{ToolCallID: "tc1"}})
+	_, _ = u.Update(assistantUpdate("s1", call))
+	require.Equal(t, chat.ToolStatusAwaitingPermission, item.Status())
+}
+
+func TestToolTimerRestartLeavesACanceledCallCanceled(t *testing.T) {
+	t.Parallel()
+	u, _ := newTimerTestUI()
+	call := runningBash("tc1", 30*time.Second)
+	item := toolItemIn(u, "a1", call)
+	u.chat.SetMessages(item)
+	item.SetStatus(chat.ToolStatusCanceled)
+
+	restarted := call
+	restarted.StartedAt = time.Now().UnixMilli()
+	_, _ = u.Update(assistantUpdate("s1", restarted))
+	require.Equal(t, chat.ToolStatusCanceled, item.Status())
+}
