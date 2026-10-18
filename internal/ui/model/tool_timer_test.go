@@ -37,8 +37,7 @@ func newTimerTestUI() (*UI, *timerWorkspace) {
 	return u, ws
 }
 
-// runningBash returns a bash tool call in assistant message msgID that
-// started ago.
+// runningBash returns a bash tool call with the given ID that started ago.
 func runningBash(id string, ago time.Duration) message.ToolCall {
 	return message.ToolCall{
 		ID: id, Name: tools.BashToolName, Input: `{"command":"sleep 60"}`, Finished: true,
@@ -352,4 +351,18 @@ func TestToolTimerEveryTickInvalidatesALiveCall(t *testing.T) {
 		require.Greater(t, item.Version(), last)
 		last = item.Version()
 	}
+}
+
+func TestToolTimerUnchangedStartKeepsAPromptOpen(t *testing.T) {
+	t.Parallel()
+	u, _ := newTimerTestUI()
+	call := runningBash("tc1", 0)
+	item := toolItemIn(u, "a1", call)
+	u.chat.SetMessages(item)
+	_, _ = u.Update(pubsub.Event[permission.PermissionNotification]{Payload: permission.PermissionNotification{ToolCallID: "tc1"}})
+
+	// A parallel sibling starting re-sends the whole message with this
+	// call's start unchanged; the prompt is still open.
+	_, _ = u.Update(assistantUpdate("s1", call))
+	require.Equal(t, chat.ToolStatusAwaitingPermission, item.Status())
 }

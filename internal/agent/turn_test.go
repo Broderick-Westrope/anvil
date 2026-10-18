@@ -734,6 +734,10 @@ func TestRunLogsOnlyRealProblems(t *testing.T) {
 			wantLogs:    []string{"Provider request failed, retrying"},
 			notWantLogs: []string{resetLog, flushLog},
 		},
+		"tool call": {
+			respond:     toolCallsThenStop("work", "call_0"),
+			notWantLogs: []string{"Failed to record tool call start", flushLog},
+		},
 		"failed stream": {
 			respond: func(int) ([]fantasy.StreamPart, error) {
 				return toolInputThenError("call_0", "work", errors.New("stream broke")), nil

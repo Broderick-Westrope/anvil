@@ -208,7 +208,7 @@ func TestRunFailureStampsSyntheticResultsWithFinishTime(t *testing.T) {
 
 	before := time.Now()
 	_, err := a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
-	require.Error(t, err)
+	require.ErrorContains(t, err, "stream broke")
 	after := time.Now()
 
 	result := toolResultsByID(t, env, sess.ID)["call_0"]
@@ -221,7 +221,7 @@ func TestStepIsRunningOnlyWhileItsToolsRun(t *testing.T) {
 
 	tests := map[string]struct {
 		respond func(int) ([]fantasy.StreamPart, error)
-		wantErr bool
+		wantErr string
 	}{
 		"turn ends normally": {respond: toolCallsThenStop("work", "call_0")},
 		"turn fails after the tool ran": {
@@ -231,7 +231,7 @@ func TestStepIsRunningOnlyWhileItsToolsRun(t *testing.T) {
 				}
 				return toolCallsThenStop("work", "call_0")(call)
 			},
-			wantErr: true,
+			wantErr: "stream broke",
 		},
 	}
 	for name, tc := range tests {
@@ -251,8 +251,8 @@ func TestStepIsRunningOnlyWhileItsToolsRun(t *testing.T) {
 			a = turnAgent(env, &recordingModel{respond: tc.respond}, "system", 200_000, tool)
 
 			_, err := a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
-			if tc.wantErr {
-				require.Error(t, err)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
 			} else {
 				require.NoError(t, err)
 			}
