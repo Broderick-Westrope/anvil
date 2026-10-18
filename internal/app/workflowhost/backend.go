@@ -195,7 +195,11 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 			RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindAgent,
 		}); err != nil {
 			stop(fmt.Errorf("%w: %w", errUnrecorded, err))
+			return
 		}
+		// The run view finds the session through its owner, recorded after
+		// the call's started event, so it's told to look again.
+		b.publishState(ctx, Event{Kind: EventChanged})
 	}
 	res, err := b.runAgent(ctx, wc)
 	if cause := context.Cause(ctx); err != nil && errors.Is(cause, errUnrecorded) {

@@ -45,9 +45,9 @@ const (
 	EventState EventKind = "state"
 	// EventFinished ends an invocation.
 	EventFinished EventKind = "finished"
-	// EventChanged says the run's log gained an event. It's published
-	// after the event is recorded, so a view reloaded on it is never
-	// behind the log.
+	// EventChanged says the run's view changed: its log gained an event
+	// (published after the event is recorded), or a session was tied to
+	// the run.
 	EventChanged EventKind = "changed"
 )
 

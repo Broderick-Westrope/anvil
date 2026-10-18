@@ -1563,3 +1563,26 @@ function main() {
 	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
 	require.JSONEq(t, `"sleep 31"`, string(done.Result))
 }
+
+// A running subagent can be opened from the run view: its session shows as
+// soon as it's tied to the run, not only once something else happens.
+func TestServiceRunViewShowsARunningSubagentsSession(t *testing.T) {
+	h := newServiceHarness(t, true)
+	entered, release := make(chan struct{}), make(chan struct{})
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "looked", Started: entered, Release: release})
+	path := h.write(t, `requires({agents: ["reviewer"]})
+function main() { return agent("reviewer", "review") }`)
+	h.start(t, path, "")
+	defer close(release)
+
+	// Nothing else is recorded while the subagent works, so only the
+	// change announced when its session is tied to the run shows it.
+	for {
+		ev := h.next(t, workflowhost.EventChanged)
+		items := agentItems(t, h, ev.RunID)
+		if len(items) == 1 && items[0].SessionID != "" {
+			require.Equal(t, workflowhost.StatusRunning, items[0].Status)
+			return
+		}
+	}
+}
