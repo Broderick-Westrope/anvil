@@ -40,9 +40,9 @@ type featureHost interface {
 	Reloading() bool
 	// KeyMap is a copy of the current key bindings.
 	KeyMap() KeyMap
-	// ViewedSubagentID is the subagent session whose chat is on screen
-	// (the top of the drill stack), or "" when the root chat, a tool or a
-	// thinking view is.
+	// ViewedSubagentID is the subagent session being viewed: the topmost
+	// drill-in with a session, which a tool or thinking view on top still
+	// belongs to. It's "" when the root chat is viewed.
 	ViewedSubagentID() string
 	// RestoreToComposer puts text back in the main editor, after any text
 	// already there, so the human can send or edit it.
@@ -98,10 +98,8 @@ func (h uiHost) Reloading() bool { return h.m.reloading }
 func (h uiHost) KeyMap() KeyMap { return h.m.keyMap }
 
 func (h uiHost) ViewedSubagentID() string {
-	if n := len(h.m.drillStack); n > 0 {
-		return h.m.drillStack[n-1].sessionID
-	}
-	return ""
+	entry, _ := h.m.viewedSessionEntry()
+	return entry.sessionID
 }
 
 func (h uiHost) RestoreToComposer(text string) {

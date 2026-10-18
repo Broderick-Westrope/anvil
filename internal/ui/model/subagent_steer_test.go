@@ -21,12 +21,13 @@ type steerSent struct {
 }
 
 type steerTestWorkspace struct {
-	running  map[string]bool
-	pending  map[string][]string
-	sent     []steerSent
-	cancels  []string
-	steerErr error
-	returned []agent.SubagentSteersReturned
+	running      map[string]bool
+	pending      map[string][]string
+	sent         []steerSent
+	cancels      []string
+	steerErr     error
+	returned     []agent.SubagentSteersReturned
+	refuseCancel bool
 }
 
 func (w *steerTestWorkspace) AgentTakeReturnedSteers() []agent.SubagentSteersReturned {
@@ -44,11 +45,19 @@ func (w *steerTestWorkspace) AgentSteerSubagent(child, text string, interrupt bo
 }
 
 func (w *steerTestWorkspace) AgentCancelSubagent(child string) bool {
+	if w.refuseCancel {
+		return false
+	}
 	w.cancels = append(w.cancels, child)
 	return w.running[child]
 }
 
 func (w *steerTestWorkspace) AgentSubagentRunning(child string) bool { return w.running[child] }
+
+func (w *steerTestWorkspace) ParseAgentToolSessionID(id string) (string, string, bool) {
+	msg, call, ok := strings.Cut(id, "$$")
+	return msg, call, ok
+}
 
 func (w *steerTestWorkspace) AgentSubagentPendingSteers(child string) []string {
 	return w.pending[child]
@@ -62,8 +71,8 @@ type steerFixture struct {
 
 func newSteerFixture(t *testing.T) *steerFixture {
 	t.Helper()
-	ws := &steerTestWorkspace{running: map[string]bool{"child": true}, pending: map[string][]string{}}
-	host := &fakeHost{overlay: dialog.NewOverlay(), keyMap: DefaultKeyMap(), viewedSubagent: "child"}
+	ws := &steerTestWorkspace{running: map[string]bool{"msg$$child": true}, pending: map[string][]string{}}
+	host := &fakeHost{overlay: dialog.NewOverlay(), keyMap: DefaultKeyMap(), viewedSubagent: "msg$$child"}
 	return &steerFixture{f: newSubagentSteer(host, common.DefaultCommon(nil), ws), host: host, ws: ws}
 }
 
@@ -109,7 +118,7 @@ func TestSteerSendsTypedTextOnEnter(t *testing.T) {
 	s.press(typeKeys("use v2")...)
 	infos, _ := s.press(steerEnter)
 
-	require.Equal(t, []steerSent{{"child", "use v2", false}}, s.ws.sent)
+	require.Equal(t, []steerSent{{"msg$$child", "use v2", false}}, s.ws.sent)
 	require.Empty(t, s.f.input.Value())
 	require.NotEmpty(t, infos)
 }
@@ -122,7 +131,7 @@ func TestInterruptSteerSendsWithInterrupt(t *testing.T) {
 	s.press(typeKeys("stop")...)
 	s.press(interruptKey)
 
-	require.Equal(t, []steerSent{{"child", "stop", true}}, s.ws.sent)
+	require.Equal(t, []steerSent{{"msg$$child", "stop", true}}, s.ws.sent)
 }
 
 func TestRejectedSteerKeepsTheTextAndSaysWhy(t *testing.T) {
@@ -146,13 +155,13 @@ func TestEscCancelsTheViewedSubagent(t *testing.T) {
 
 	_, claimed := s.press(escKey)
 	require.True(t, claimed)
-	require.Equal(t, []string{"child"}, s.ws.cancels)
+	require.Equal(t, []string{"msg$$child"}, s.ws.cancels)
 }
 
 func TestEscOnAFinishedSubagentDoesNotCancelTheRun(t *testing.T) {
 	t.Parallel()
 	s := newSteerFixture(t)
-	s.ws.running["child"] = false
+	s.ws.running["msg$$child"] = false
 
 	_, claimed := s.press(escKey)
 	require.True(t, claimed, "Esc is swallowed so it can't cancel the main run")
@@ -162,7 +171,7 @@ func TestEscOnAFinishedSubagentDoesNotCancelTheRun(t *testing.T) {
 func TestFinishedSubagentKeepsTheEditorDisabledWithAHint(t *testing.T) {
 	t.Parallel()
 	s := newSteerFixture(t)
-	s.ws.running["child"] = false
+	s.ws.running["msg$$child"] = false
 
 	_, claimed := s.press(tabKey)
 	require.False(t, claimed)
@@ -174,7 +183,7 @@ func TestFinishedSubagentKeepsTheEditorDisabledWithAHint(t *testing.T) {
 func TestFooterShowsQueuedSteers(t *testing.T) {
 	t.Parallel()
 	s := newSteerFixture(t)
-	s.ws.pending["child"] = []string{"a", "b"}
+	s.ws.pending["msg$$child"] = []string{"a", "b"}
 
 	footer := s.f.DrillInFooter()
 	require.Equal(t, subagentSteerFooterLines, footer.Lines())
@@ -187,7 +196,7 @@ func TestReturnedSteersComeBackToTheMainEditor(t *testing.T) {
 	t.Parallel()
 	s := newSteerFixture(t)
 
-	s.ws.returned = []agent.SubagentSteersReturned{{SessionID: "child", Steers: []string{"first", "second"}, Reason: "It failed."}}
+	s.ws.returned = []agent.SubagentSteersReturned{{SessionID: "msg$$child", Steers: []string{"first", "second"}, Reason: "It failed."}}
 
 	// Any message picks them up, so a dropped nudge can't lose them.
 	msgs := cmdMsgs(s.f.Observe(spinnerTickMsgForTest{}))
@@ -225,4 +234,52 @@ func TestFooterHelpReadsCleanly(t *testing.T) {
 	s.press(tabKey)
 	rendered = ansi.Strip(s.f.DrillInFooter().Render(200))
 	require.Contains(t, rendered, "enter send · alt+i interrupt and send · tab back to chat · esc cancel subagent")
+}
+
+func TestEscInAFocusedInputLeavesItBeforeCancelling(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+
+	s.press(tabKey)
+	s.press(typeKeys("half a thought")...)
+	_, claimed := s.press(escKey)
+	require.True(t, claimed)
+	require.Empty(t, s.ws.cancels, "the first Esc only leaves the input")
+	require.False(t, s.f.input.Focused())
+	require.Equal(t, "half a thought", s.f.input.Value())
+
+	s.press(escKey)
+	require.Equal(t, []string{"msg$$child"}, s.ws.cancels)
+}
+
+func TestEscOnAFinishingSubagentSaysSo(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+	s.ws.refuseCancel = true
+
+	infos, _ := s.press(escKey)
+	require.Len(t, infos, 1)
+	require.Contains(t, infos[0].Msg, "already returning its result")
+}
+
+func TestFooterRenderingChangesNoState(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+	s.press(tabKey)
+	s.press(typeKeys("draft")...)
+
+	s.host.viewedSubagent = "msg$$other"
+	s.f.DrillInFooter().Render(80)
+	require.Equal(t, "msg$$child", s.f.child, "only input and messages switch subagents")
+	require.True(t, s.f.input.Focused())
+}
+
+func TestWorkflowChildrenGetNoFooterAndKeepEsc(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+	s.host.viewedSubagent = "3f2a0c1e-workflow-uuid"
+
+	require.Nil(t, s.f.DrillInFooter())
+	_, claimed := s.press(escKey)
+	require.False(t, claimed)
 }

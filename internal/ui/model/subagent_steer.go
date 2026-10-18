@@ -28,6 +28,7 @@ type subagentSteerWorkspace interface {
 	AgentSubagentRunning(childSessionID string) bool
 	AgentSubagentPendingSteers(childSessionID string) []string
 	AgentTakeReturnedSteers() []agent.SubagentSteersReturned
+	ParseAgentToolSessionID(sessionID string) (messageID, toolCallID string, ok bool)
 }
 
 // subagentSteer lets a human drilled into a running subagent send it a
@@ -72,9 +73,20 @@ func newSubagentSteer(host featureHost, com *common.Common, ws subagentSteerWork
 	}
 }
 
-// sync switches the input to the draft of the subagent on screen.
-func (f *subagentSteer) sync() string {
+// viewedChild returns the subagent on screen when it's one a task call
+// can run in, or "". Workflow children have no task call to steer.
+func (f *subagentSteer) viewedChild() string {
 	child := f.host.ViewedSubagentID()
+	if _, _, ok := f.ws.ParseAgentToolSessionID(child); !ok {
+		return ""
+	}
+	return child
+}
+
+// sync switches the input to the draft of the subagent on screen. It runs
+// on input and messages, never while rendering.
+func (f *subagentSteer) sync() string {
+	child := f.viewedChild()
 	if child == f.child {
 		return child
 	}
@@ -114,11 +126,7 @@ func (f *subagentSteer) PreemptInput(msg tea.Msg) (tea.Cmd, bool) {
 func (f *subagentSteer) handleKey(child string, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	running := f.ws.AgentSubagentRunning(child)
 	if key.Matches(msg, f.keys.Cancel) {
-		f.input.Blur()
-		if running && f.ws.AgentCancelSubagent(child) {
-			return util.ReportInfo("Cancelled subagent"), true
-		}
-		return util.ReportInfo("This subagent isn't running. Go back to cancel the main run."), true
+		return f.cancel(child, running), true
 	}
 	if !running {
 		f.input.Blur()
@@ -144,6 +152,23 @@ func (f *subagentSteer) handleKey(child string, msg tea.KeyPressMsg) (tea.Cmd, b
 	return cmd, true
 }
 
+// cancel handles Esc: it leaves a focused input first, so abandoning a
+// draft never ends the subagent, then cancels the subagent's task call.
+func (f *subagentSteer) cancel(child string, running bool) tea.Cmd {
+	if f.input.Focused() {
+		f.input.Blur()
+		return nil
+	}
+	switch {
+	case !running:
+		return util.ReportInfo("This subagent isn't running. Go back to cancel the main run.")
+	case f.ws.AgentCancelSubagent(child):
+		return util.ReportInfo("Cancelled subagent")
+	default:
+		return util.ReportInfo("The subagent is already returning its result.")
+	}
+}
+
 func (f *subagentSteer) send(child string, interrupt bool) tea.Cmd {
 	text := strings.TrimSpace(f.input.Value())
 	if text == "" {
@@ -165,6 +190,7 @@ func (f *subagentSteer) send(child string, interrupt bool) tea.Cmd {
 // go to the main editor, where the human can pass them to the
 // orchestrator.
 func (f *subagentSteer) Observe(tea.Msg) tea.Cmd {
+	f.sync()
 	returned := f.ws.AgentTakeReturnedSteers()
 	if len(returned) == 0 {
 		return nil
@@ -189,14 +215,22 @@ func (f *subagentSteer) HandleAction(dialog.Action) (tea.Cmd, bool) { return nil
 
 func bindingHelp(k key.Binding) string { return k.Help().Key + " " + k.Help().Desc }
 
-// DrillInFooter implements drillInFeature.
+// DrillInFooter implements drillInFeature. It only reads: until the next
+// input or message syncs the feature to a newly viewed subagent, the
+// footer shows that subagent's saved draft, unfocused.
 func (f *subagentSteer) DrillInFooter() panelView {
-	child := f.sync()
+	child := f.viewedChild()
 	if child == "" {
 		return nil
 	}
+	input := f.input
+	if child != f.child {
+		input.SetValue(f.drafts[child])
+		input.Blur()
+	}
 	return subagentSteerFooter{
 		f:       f,
+		input:   input,
 		running: f.ws.AgentSubagentRunning(child),
 		queued:  len(f.ws.AgentSubagentPendingSteers(child)),
 	}
@@ -205,6 +239,7 @@ func (f *subagentSteer) DrillInFooter() panelView {
 // subagentSteerFooter is the footer's view-model.
 type subagentSteerFooter struct {
 	f       *subagentSteer
+	input   textarea.Model
 	running bool
 	queued  int
 }
@@ -218,7 +253,7 @@ func (v subagentSteerFooter) Render(width int) string {
 		hint := muted.Render("This subagent isn't running. To continue it, ask the orchestrator to resume it.")
 		return ansi.Truncate(hint, width, "…") + "\n"
 	}
-	input := v.f.input
+	input := v.input
 	input.SetWidth(width)
 	cancel := v.f.keys.Cancel.Help().Key + " cancel subagent"
 	help := []string{v.f.keys.Focus.Help().Key + " message subagent", cancel}
