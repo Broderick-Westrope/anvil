@@ -396,13 +396,10 @@ func (s *streamingMarkdown) findBoundaryAfter(content string) int {
 			return p
 		}
 	}
-	if b := s.relaxedBoundary(content, len(s.stablePrefix)); b != -1 {
-		return b
-	}
-	// No new boundary found after the stable prefix. Return the
-	// stable prefix length so the caller takes the "boundary <=
+	// relaxedBoundary returns -1 or a cut past the stable prefix. With no
+	// cut, the stable prefix length sends the caller down the "boundary <=
 	// len(stablePrefix)" path (render trailing fresh, keep cache).
-	return len(s.stablePrefix)
+	return max(s.relaxedBoundary(content, len(s.stablePrefix)), len(s.stablePrefix))
 }
 
 // relaxedBoundary looks for a cut at a plain newline once the tail
