@@ -81,6 +81,17 @@ type composerDraft struct {
 // so a draft written for a builder is never sent to the root session, or
 // the other way round.
 func (m *UI) syncDraft() {
+	// The root draft stashed while drilled in belongs to the root session
+	// it was written in; once the root is another session, it's dropped
+	// rather than turning up there.
+	rootID := ""
+	if m.hasSession() {
+		rootID = m.session.ID
+	}
+	if rootID != m.draftsRoot {
+		delete(m.drafts, "root")
+		m.draftsRoot = rootID
+	}
 	from, to := m.composeFor, m.composeTarget().draftKey()
 	if from == "" {
 		from = "root"
@@ -99,7 +110,11 @@ func (m *UI) syncDraft() {
 	m.drafts[from] = draft
 	next := m.drafts[to]
 	delete(m.drafts, to)
+	prevHeight := m.textarea.Height()
 	m.textarea.SetValue(next.text)
+	if m.textarea.Height() != prevHeight {
+		m.updateLayoutAndSize()
+	}
 	if m.attachments != nil {
 		m.attachments.Put(next.attachments)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
@@ -737,4 +738,23 @@ func TestBrowsingARunViewKeepsTheUsersSessionOpenWithItsDraft(t *testing.T) {
 	signal := f.u.currentComposerSignal()
 	require.Equal(t, "sess-1", signal.sessionID)
 	require.True(t, signal.hasDraft, "job wakes still wait for the user's draft")
+}
+
+// A draft written in one session and stashed while drilled into a builder
+// stays with that session: switching to another session from the builder
+// doesn't bring it along.
+func TestAStashedDraftDoesntFollowTheUserToAnotherSession(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.u.textarea.SetValue("for session one")
+	f.drillIntoBuilder(t)
+	f.press(tea.KeyPressMsg{Code: 'x'})
+	require.Empty(t, f.u.textarea.Value(), "the builder has its own draft")
+
+	other := session.Session{ID: "sess-other", Title: "other"}
+	f.u.clearDrillStack()
+	f.u.session = &other
+	f.press(tea.KeyPressMsg{Code: tea.KeyEnd})
+	require.NotContains(t, f.u.textarea.Value(), "for session one")
 }

@@ -342,6 +342,8 @@ type UI struct {
 	// another one; composeFor is the session the editor last targeted.
 	drafts     map[string]composerDraft
 	composeFor string
+	// draftsRoot is the root session the stashed root draft was written in.
+	draftsRoot string
 	// workflowRequests holds the open approval and ask requests by ID.
 	workflowRequests map[string]workflowhost.Event
 	// workflowAnswered remembers answered requests so a republished copy
