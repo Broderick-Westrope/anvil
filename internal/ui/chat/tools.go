@@ -793,14 +793,14 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 	if nested {
 		nameStyle = sty.Tool.NameNested
 	}
-	var suffix string
+	var duration time.Duration
 	if opts != nil {
-		suffix = toolTimerSuffix(sty, opts.Duration)
+		duration = opts.Duration
 	}
 	toolName := nameStyle.Render(name)
 	prefix := fmt.Sprintf("%s %s ", icon, toolName)
 	prefixWidth := lipgloss.Width(prefix)
-	remainingWidth := width - prefixWidth - lipgloss.Width(suffix)
+	suffix, remainingWidth := fitToolTimerSuffix(sty, duration, width, prefixWidth)
 	paramsStr := toolParamList(sty, params, remainingWidth, opts)
 
 	// When expanded, toolParamList may return multiple lines. Indent

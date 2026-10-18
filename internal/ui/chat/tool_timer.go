@@ -3,6 +3,7 @@ package chat
 import (
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -51,10 +52,18 @@ func toolTimerDuration(call message.ToolCall, result *message.ToolResult, runnin
 	return elapsed
 }
 
-// toolTimerSuffix renders the header suffix for d, or "" when d is zero.
-func toolTimerSuffix(sty *styles.Styles, d time.Duration) string {
+// fitToolTimerSuffix returns the header suffix showing d and the width
+// left for the rest of a header of the given width whose fixed part (icon,
+// name) takes fixed columns. The suffix is "" when d is zero or the header
+// has no room for it, so it never pushes the header further off screen.
+func fitToolTimerSuffix(sty *styles.Styles, d time.Duration, width, fixed int) (suffix string, remaining int) {
+	remaining = width - fixed
 	if d <= 0 {
-		return ""
+		return "", remaining
 	}
-	return sty.Tool.StatsSep.Render(" · ") + sty.Tool.StatsLine.Render(common.FormatDuration(d))
+	suffix = sty.Tool.StatsSep.Render(" · ") + sty.Tool.StatsLine.Render(common.FormatDuration(d))
+	if withSuffix := remaining - lipgloss.Width(suffix); withSuffix >= 0 {
+		return suffix, withSuffix
+	}
+	return "", remaining
 }

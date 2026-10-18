@@ -251,7 +251,7 @@ func (j *JobKillToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 // renderJobTool renders a job-related tool with the common pattern:
 // header → nested check → early state → body.
 func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, shellID, description, content string) string {
-	header := jobHeader(sty, opts.Status, action, shellID, description, width)
+	header := jobHeader(sty, opts.Status, action, shellID, description, width, opts.Duration)
 	if opts.Compact {
 		return header
 	}
@@ -272,7 +272,7 @@ func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, 
 // jobHeader builds a header for job-related tools.
 // Format: "● Job (Action) ID 05A description...". The ID is the job ID
 // Anvil assigned, not an operating system process ID.
-func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, description string, width int) string {
+func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, description string, width int, duration time.Duration) string {
 	icon := toolIcon(sty, status)
 	jobPart := sty.Tool.JobToolName.Render("Job")
 	actionPart := sty.Tool.JobAction.Render("(" + action + ")")
@@ -282,18 +282,13 @@ func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, descripti
 		prefix += " " + sty.Tool.JobID.Render(jobIDLabel(shellID))
 	}
 
-	if description == "" {
-		return prefix
-	}
-
-	prefixWidth := lipgloss.Width(prefix)
-	availableWidth := width - prefixWidth - 1
-	if availableWidth < 10 {
-		return prefix
+	suffix, availableWidth := fitToolTimerSuffix(sty, duration, width, lipgloss.Width(prefix)+1)
+	if description == "" || availableWidth < 10 {
+		return prefix + suffix
 	}
 
 	truncatedDesc := ansi.Truncate(description, availableWidth, "…")
-	return prefix + " " + sty.Tool.JobDescription.Render(truncatedDesc)
+	return prefix + " " + sty.Tool.JobDescription.Render(truncatedDesc) + suffix
 }
 
 // jobIDLabel labels a job ID in tool and notice headers.

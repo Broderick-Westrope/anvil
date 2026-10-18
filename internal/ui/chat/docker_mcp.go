@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
@@ -210,7 +211,7 @@ func (d *DockerMCPToolRenderContext) renderMCPServers(sty *styles.Styles, opts *
 
 func (d *DockerMCPToolRenderContext) makeHeader(sty *styles.Styles, tool string, width int, opts *ToolRenderOpts, params ...string) string {
 	if opts.Compact {
-		return d.makeCompactHeader(sty, tool, width, params...)
+		return d.makeCompactHeader(sty, tool, width, opts.Duration, params...)
 	}
 
 	icon := toolIcon(sty, opts.Status)
@@ -218,7 +219,8 @@ func (d *DockerMCPToolRenderContext) makeHeader(sty *styles.Styles, tool string,
 		icon = sty.Tool.IconPending.Render()
 	}
 	prefix := fmt.Sprintf("%s %s ", icon, d.formatToolName(sty, tool))
-	return prefix + toolParamList(sty, params, width-lipgloss.Width(prefix), opts)
+	suffix, remaining := fitToolTimerSuffix(sty, opts.Duration, width, lipgloss.Width(prefix))
+	return prefix + toolParamList(sty, params, remaining, opts) + suffix
 }
 
 func (d *DockerMCPToolRenderContext) formatToolName(sty *styles.Styles, tool string) string {
@@ -251,7 +253,7 @@ func (d *DockerMCPToolRenderContext) formatToolName(sty *styles.Styles, tool str
 	return fmt.Sprintf("%s %s %s", toolNameStyled, arrow, actionStyle.Render(action))
 }
 
-func (d *DockerMCPToolRenderContext) makeCompactHeader(sty *styles.Styles, tool string, width int, params ...string) string {
+func (d *DockerMCPToolRenderContext) makeCompactHeader(sty *styles.Styles, tool string, width int, duration time.Duration, params ...string) string {
 	action := tool
 	switch tool {
 	case "mcp-exec":
@@ -272,7 +274,7 @@ func (d *DockerMCPToolRenderContext) makeCompactHeader(sty *styles.Styles, tool 
 	}
 
 	name := fmt.Sprintf("Docker MCP: %s", action)
-	return toolHeader(sty, ToolStatusSuccess, name, width, &ToolRenderOpts{Compact: true}, params...)
+	return toolHeader(sty, ToolStatusSuccess, name, width, &ToolRenderOpts{Compact: true, Duration: duration}, params...)
 }
 
 // IsDockerMCPTool returns true if the tool name is a Docker MCP tool.

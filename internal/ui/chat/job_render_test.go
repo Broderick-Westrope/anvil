@@ -124,10 +124,10 @@ func TestJobHeaderLabelsJobIDNotPID(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	out := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Output", "05A", "dev server", 100))
+	out := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Output", "05A", "dev server", 100, 0))
 	require.Equal(t, "✓ Job (Output) ID 05A dev server", out)
 	require.NotContains(t, out, "PID")
 
-	noID := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Start", "", "quick exit", 100))
+	noID := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Start", "", "quick exit", 100, 0))
 	require.Equal(t, "✓ Job (Start) quick exit", noID)
 }

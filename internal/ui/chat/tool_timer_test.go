@@ -190,3 +190,65 @@ func TestToolItemTimerOptOuts(t *testing.T) {
 		})
 	}
 }
+
+func TestToolHeaderDurationNarrowWidth(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+	opts := &ToolRenderOpts{Duration: 23 * time.Second}
+
+	out := ansi.Strip(toolHeader(&sty, ToolStatusRunning, "mcp_some_very_long_server_name_tool", 30, opts, "param"))
+	require.NotContains(t, out, "23s", "a header with no room for the duration drops it rather than overflowing further")
+}
+
+func TestJobHeaderDuration(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+
+	out := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Start", "05A", strings.Repeat("d", 200), 60, 23*time.Second))
+	require.True(t, strings.HasSuffix(out, "… · 23s"), out)
+	require.Equal(t, 60, ansi.StringWidth(out))
+
+	noDesc := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Kill", "05A", "", 60, 23*time.Second))
+	require.Equal(t, "✓ Job (Kill) ID 05A · 23s", noDesc)
+
+	untimed := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Kill", "05A", "", 60, 0))
+	require.Equal(t, "✓ Job (Kill) ID 05A", untimed)
+}
+
+func TestToolItemTimerOtherHeaders(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+	started := time.Now().Add(-time.Minute).UnixMilli()
+
+	tests := map[string]struct {
+		call     message.ToolCall
+		result   message.ToolResult
+		expanded []string
+	}{
+		"bash moved to the background": {
+			call:   message.ToolCall{ID: "tc", Name: tools.BashToolName, Input: `{"command":"make build"}`, Finished: true, StartedAt: started},
+			result: message.ToolResult{ToolCallID: "tc", Content: "started", Metadata: `{"background":true,"shell_id":"05A"}`, FinishedAt: started + 12_000},
+		},
+		"job kill": {
+			call:   message.ToolCall{ID: "tc", Name: tools.JobKillToolName, Input: `{"shell_id":"05A"}`, Finished: true, StartedAt: started},
+			result: message.ToolResult{ToolCallID: "tc", Content: "killed", FinishedAt: started + 12_000},
+		},
+		"docker mcp": {
+			call:   message.ToolCall{ID: "tc", Name: "mcp_docker_mcp-find", Input: `{"query":"github"}`, Finished: true, StartedAt: started},
+			result: message.ToolResult{ToolCallID: "tc", Content: "[]", FinishedAt: started + 12_000},
+		},
+		"docker mcp expanded": {
+			call:     message.ToolCall{ID: "tc", Name: "mcp_docker_mcp-find", Input: `{"query":"github"}`, Finished: true, StartedAt: started},
+			result:   message.ToolResult{ToolCallID: "tc", Content: "[]", FinishedAt: started + 12_000},
+			expanded: []string{"mcp_docker_mcp-find"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			item := NewToolMessageItem(&sty, "msg", tc.call, nil, false, tc.expanded)
+			item.SetResult(&tc.result)
+			require.True(t, strings.HasSuffix(headerLine(item), " · 12s"), headerLine(item))
+		})
+	}
+}
