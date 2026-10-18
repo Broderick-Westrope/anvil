@@ -347,6 +347,11 @@ credentials, such as the Claude CLI's.
   `docs:`, `sec:`, etc).
 - Try to keep commits to one line, not including your attribution. Only use
   multi-line commits when additional context is truly necessary.
+- Land a feature's docs in the PR that ships it, not a follow-up: move its
+  design doc (and any plans) from `plans/` to `plans/completed/`, update
+  every link to them, and make the `AGENTS.md`, `GLOSSARY.md` and ADR
+  changes there too. Earlier designs were moved after they shipped; don't
+  copy that.
 
 ## Working on the TUI (UI)
 
