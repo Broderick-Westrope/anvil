@@ -56,43 +56,43 @@ Out:
   mutation check (pin the 10s threshold boundary in tests).
 
 **Success Criteria:**
-- [ ] A running tool call shows no duration while its unrounded elapsed
+- [x] A running tool call shows no duration while its unrounded elapsed
       time is under 10s. The first tick at or after 10s adds ` · 10s`
       (or ` · 11s` if the tick lands late) to the end of its header, and
       it updates every second after that (`1m4s`, `1h2m`, ...). The
       boundary is pinned with an injected clock at 9,999 ms (hidden) and
       10,000 ms (shown).
-- [ ] The suffix is muted and formatted with `common.FormatDuration`. On
+- [x] The suffix is muted and formatted with `common.FormatDuration`. On
       a single-line header the params are truncated to reserve its width,
       so it is never pushed off screen. On an expanded (multi-line)
       header it goes at the end of the last line, and that line's width
       is reserved the same way.
-- [ ] When a call whose final duration (`FinishedAt - StartedAt`) is at
+- [x] When a call whose final duration (`FinishedAt - StartedAt`) is at
       least 10s finishes, whether by success, error or cancel, its header
       keeps that duration. A call under 10s never shows one, live or
       afterwards.
-- [ ] A tool queued behind other tools (sequential tools, or parallel
+- [x] A tool queued behind other tools (sequential tools, or parallel
       tools beyond the 5-slot limit) starts its clock when its `Run`
       actually begins, not when the assistant message was created.
-- [ ] While a permission prompt is open, no timer is shown. When a human
+- [x] While a permission prompt is open, no timer is shown. When a human
       grants it, the clock restarts at the grant time. Allow-list rules,
       hook approvals, bouncer approvals, the bouncer allow cache and
       `--yolo` never restart the clock (each covered by a test).
-- [ ] After quitting and reopening a session, finished calls with a final
+- [x] After quitting and reopening a session, finished calls with a final
       duration of 10s or more still show it. Calls from sessions recorded
       before this change show nothing.
-- [ ] A call that was left without a result (crash or killed process) and
+- [x] A call that was left without a result (crash or killed process) and
       whose session is no longer running shows no timer, and never shows
       one that keeps growing, including after a new turn starts in that
       session (test: reopen an interrupted session, start a turn, the old
       call stays untimed).
-- [ ] Nested tool calls in a subagent drill-in view, and in the compact
-      nested list under a subagent node, show the timer the same way.
-- [ ] `job_output` (wait), subagent nodes and provider-executed calls
+- [x] Nested tool calls in a subagent drill-in view show the timer the
+      same way. (The compact nested list no longer exists; see below.)
+- [x] `job_output` (wait), subagent nodes and provider-executed calls
       render exactly as before.
-- [ ] `ToAIMessage` output for a message with timestamps is byte-identical
+- [x] `ToAIMessage` output for a message with timestamps is byte-identical
       to the same message without them (test).
-- [ ] The elapsed tick stops once no tool call, subagent or job is
+- [x] The elapsed tick stops once no tool call, subagent or job is
       running.
 
 **Design Decisions:**
@@ -208,6 +208,21 @@ Out:
   the context and covers every agent.
 - Agent cards no longer render their nested tools; only the subagent
   drill-in does. The "compact nested list" criterion has nothing to draw.
+- `job_output` only opts out when it waits; a non-wait call gets the
+  suffix like any other tool.
+- A human answer of any kind (grant, deny, cancel while prompting)
+  restarts the clock, so a denied call never reports the prompt wait.
+- Not routed through the `feature` registry (ADR 0003), on purpose. The
+  timer's state is the elapsed tick, which `UI` owns and shares with
+  subagent elapsed time and the jobs sidebar, neither of which is a
+  feature yet; and two of its hooks sit inside upstream functions
+  (`updateSessionMessageToChat`'s tool update and
+  `handlePermissionNotification`), which a feature can't reach. Its
+  logic lives in `model/tool_timer.go`, with one call per site in
+  `ui.go`. Moving the elapsed tick (all three users) onto the registry
+  is a separate change. `handlePermissionNotification` diverges from
+  upstream deliberately: upstream resolved a subagent call's ID to its
+  parent agent and set the parent's status.
 - Known gaps, accepted: whether a call is awaiting permission comes from
   lossy notifications. The tick reconciles the open prompt, and a clock
   restart (only a human grant causes one) marks a call granted. Still, a
@@ -222,7 +237,7 @@ Out:
 **Context Files:**
 - `internal/ui/chat/tools.go` - `ToolRenderOpts`, `baseToolMessageItem`
   (`RawRender`, `Render` prefix cache, `isSpinning`, `computeStatus`,
-  `SetCallStartedAt`), `pendingToolWithParams`, `toolHeaderWithIcon`,
+  `SetCallStartedAt`, since renamed `SetMessageCreatedAt`), `pendingToolWithParams`, `toolHeaderWithIcon`,
   `toolParamList`, `toolEarlyStateContent`
 - `internal/ui/chat/bash.go` - `job_output` wait timer (~150-200)
 - `internal/ui/chat/agent.go` - subagent `elapsed()` and `formatStatsLine`
