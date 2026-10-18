@@ -57,6 +57,11 @@ type Draft struct {
 	skills []SkillAttachment
 }
 
+// IsEmpty reports whether the draft has no attachments.
+func (d Draft) IsEmpty() bool {
+	return len(d.list) == 0 && len(d.skills) == 0
+}
+
 // Take removes the attachments and returns them as a draft.
 func (m *Attachments) Take() Draft {
 	d := Draft{list: m.list, skills: m.skills}

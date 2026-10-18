@@ -11,8 +11,24 @@ type composerSignal struct {
 // currentComposerSignal derives the composer state to report from the
 // UI. The zero value means no session is open.
 func (m *UI) currentComposerSignal() composerSignal {
+	if m.composerClosed {
+		return composerSignal{}
+	}
+	if !m.composeTarget().shown {
+		// Browsing a read-only drill-in (a subagent, a run view) is still
+		// using the user's own session, with the draft kept for it.
+		if !m.hasSession() {
+			return composerSignal{}
+		}
+		root := m.drafts["root"]
+		return composerSignal{
+			sessionID:  m.session.ID,
+			hasDraft:   root.text != "" || !root.attachments.IsEmpty(),
+			navigating: m.navigating,
+		}
+	}
 	target := m.composeTargetID()
-	if target == "" || m.composerClosed {
+	if target == "" {
 		return composerSignal{}
 	}
 	hasDraft := m.textarea.Value() != ""

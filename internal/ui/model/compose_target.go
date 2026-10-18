@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
@@ -153,7 +154,8 @@ func (m *UI) refuseInBuilder(x any) tea.Cmd {
 	}
 	switch x := x.(type) {
 	case slashCommand:
-		if !strings.HasPrefix(string(x), "/") {
+		if !m.isCommand(string(x)) {
+			// Text like "/path/to/file is failing" is a message.
 			return nil
 		}
 		return util.ReportWarn("Commands run in your own session; go back to it to run " + strings.Fields(string(x) + " ")[0])
@@ -221,4 +223,20 @@ func (m *UI) prepareSend() (string, []tea.Cmd, tea.Cmd) {
 		return nil
 	})
 	return id, cmds, nil
+}
+
+// isCommand reports whether text runs a builtin or custom command when
+// sent, rather than going to the model as a message.
+func (m *UI) isCommand(text string) bool {
+	name, ok := strings.CutPrefix(text, "/")
+	if !ok {
+		return false
+	}
+	for _, b := range m.builtinCommands() {
+		if name == b.name {
+			return true
+		}
+	}
+	_, ok = commands.MatchSlash(m.customCommands, text)
+	return ok
 }

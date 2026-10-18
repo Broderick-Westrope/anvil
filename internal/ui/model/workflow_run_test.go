@@ -321,7 +321,7 @@ func TestASubagentSessionStaysReadOnly(t *testing.T) {
 	require.False(t, f.u.composeTarget().shown)
 	f.press(tea.KeyPressMsg{Code: tea.KeyTab})
 	require.Equal(t, uiFocusMain, f.u.focus)
-	require.Empty(t, f.u.currentComposerSignal().sessionID)
+	require.Equal(t, "sess-1", f.u.currentComposerSignal().sessionID, "the user is still in their own session for job wakes")
 }
 
 func TestNothingIsSentToABuilderThatHasntLoaded(t *testing.T) {
@@ -363,6 +363,17 @@ func TestCommandsArentRunFromABuilder(t *testing.T) {
 	require.Empty(t, f.ws.starts)
 	require.Empty(t, f.ws.runs)
 	require.Equal(t, "/demo again", f.u.textarea.Value())
+}
+
+func TestTextThatOnlyLooksLikeACommandIsSentToABuilder(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	f.typeAndSend(t, "/src/app.ts is failing")
+
+	require.Equal(t, []string{"/src/app.ts is failing"}, f.ws.runs)
+	require.Equal(t, []string{"sess-2"}, f.ws.runSessions)
 }
 
 func TestWorkflowControlKeysActOnTheRunInView(t *testing.T) {
@@ -714,4 +725,19 @@ func TestABuildersQueueShowsWhileTypingToIt(t *testing.T) {
 	f.press(tea.KeyPressMsg{Code: 'x'})
 	require.Equal(t, 2, f.u.promptQueue)
 	require.Positive(t, f.u.pillsAreaHeight(), "the builder's queued prompts show")
+}
+
+func TestBrowsingARunViewKeepsTheUsersSessionOpenWithItsDraft(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+	f.u.textarea.SetValue("half-written")
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+	f.run(cmd)
+
+	signal := f.u.currentComposerSignal()
+	require.Equal(t, "sess-1", signal.sessionID)
+	require.True(t, signal.hasDraft, "job wakes still wait for the user's draft")
 }
