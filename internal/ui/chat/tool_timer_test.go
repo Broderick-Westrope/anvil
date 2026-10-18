@@ -261,7 +261,9 @@ func TestToolTimerSuffixFitsExactly(t *testing.T) {
 	t.Parallel()
 	sty := styles.TokyoNight()
 	opts := &ToolRenderOpts{Duration: 23 * time.Second}
-	exact := ansi.StringWidth(ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", 200, opts)))
+	// The prefix ("● Bash ") plus the suffix; a header with no params drops
+	// the prefix's trailing space, so add it back.
+	exact := ansi.StringWidth(ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", 200, opts))) + 1
 
 	// The params need at least one column, or an expanded header can't
 	// wrap them and the suffix lands off screen.
@@ -287,4 +289,11 @@ func TestJobHeaderDescriptionNeedsTenColumns(t *testing.T) {
 
 	hidden := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Kill", "05A", "dev server 1", prefix+1+9, 0))
 	require.Equal(t, "✓ Job (Kill) ID 05A", hidden)
+}
+
+func TestToolHeaderDurationWithoutParams(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+	out := ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Diagnostics", 80, &ToolRenderOpts{Duration: 12 * time.Second}))
+	require.Equal(t, "● Diagnostics · 12s", out)
 }

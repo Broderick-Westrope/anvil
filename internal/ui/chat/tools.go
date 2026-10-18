@@ -821,6 +821,9 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 		}
 		return prefix + strings.Join(lines, "\n") + suffix
 	}
+	if paramsStr == "" && suffix != "" {
+		prefix = strings.TrimSuffix(prefix, " ")
+	}
 	return prefix + paramsStr + suffix
 }
 
