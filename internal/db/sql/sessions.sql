@@ -59,13 +59,13 @@ ORDER BY updated_at DESC;
 -- name: UpdateSession :one
 UPDATE sessions
 SET
-    title = ?,
-    title_is_custom = ?,
-    prompt_tokens = ?,
-    completion_tokens = ?,
-    cost = ?,
-    todos = ?
-WHERE id = ?
+    title = sqlc.arg(title),
+    title_is_custom = sqlc.arg(title_is_custom),
+    prompt_tokens = sqlc.arg(prompt_tokens),
+    completion_tokens = sqlc.arg(completion_tokens),
+    cost = cost + sqlc.arg(cost_delta),
+    todos = sqlc.arg(todos)
+WHERE id = sqlc.arg(id)
 RETURNING *;
 
 -- name: UpdateSessionTitleAndUsage :exec

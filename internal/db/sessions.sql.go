@@ -370,13 +370,13 @@ func (q *Queries) SetSessionPin(ctx context.Context, arg SetSessionPinParams) er
 const updateSession = `-- name: UpdateSession :one
 UPDATE sessions
 SET
-    title = ?,
-    title_is_custom = ?,
-    prompt_tokens = ?,
-    completion_tokens = ?,
-    cost = ?,
-    todos = ?
-WHERE id = ?
+    title = ?1,
+    title_is_custom = ?2,
+    prompt_tokens = ?3,
+    completion_tokens = ?4,
+    cost = cost + ?5,
+    todos = ?6
+WHERE id = ?7
 RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, todos, leaf_message_id, working_dir, title_is_custom, pinned, pin_note, cost_rolled_up
 `
 
@@ -385,7 +385,7 @@ type UpdateSessionParams struct {
 	TitleIsCustom    int64          `json:"title_is_custom"`
 	PromptTokens     int64          `json:"prompt_tokens"`
 	CompletionTokens int64          `json:"completion_tokens"`
-	Cost             float64        `json:"cost"`
+	CostDelta        float64        `json:"cost_delta"`
 	Todos            sql.NullString `json:"todos"`
 	ID               string         `json:"id"`
 }
@@ -396,7 +396,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 		arg.TitleIsCustom,
 		arg.PromptTokens,
 		arg.CompletionTokens,
-		arg.Cost,
+		arg.CostDelta,
 		arg.Todos,
 		arg.ID,
 	)

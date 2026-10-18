@@ -191,3 +191,24 @@ func TestRollUpChildCostFailsWhenTheParentIsGone(t *testing.T) {
 
 	require.ErrorContains(t, svc.RollUpChildCost(t.Context(), child.ID), "parent session")
 }
+
+func TestStaleParentSaveKeepsRolledUpCost(t *testing.T) {
+	t.Parallel()
+	svc := newSubagentTestService(t)
+	parent, err := svc.Create(t.Context(), "parent", "/tmp")
+	require.NoError(t, err)
+	child := newChild(t, svc, parent.ID, "msg$$call")
+
+	stale, err := svc.Get(t.Context(), parent.ID)
+	require.NoError(t, err)
+	setCost(t, svc, child.ID, 0.30)
+	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID))
+
+	// A save from a copy read before the rollup, such as a todos update,
+	// adds its own change without undoing the rollup.
+	stale.Todos = []session.Todo{{Content: "x", Status: session.TodoStatusPending}}
+	stale.Cost += 0.05
+	_, err = svc.Save(t.Context(), stale)
+	require.NoError(t, err)
+	requireCost(t, svc, parent.ID, 0.35)
+}

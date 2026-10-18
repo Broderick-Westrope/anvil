@@ -69,6 +69,11 @@ type Session struct {
 	PinNote          string
 	CreatedAt        int64
 	UpdatedAt        int64
+
+	// loadedCost is Cost as it was read from the database. Save applies
+	// only the change since then, so a stale copy can't undo cost another
+	// writer added meanwhile, such as a subagent's cost rollup.
+	loadedCost float64
 }
 
 // MaxPinNoteLen is the maximum length of a pin note in runes.
@@ -256,7 +261,7 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 		TitleIsCustom:    boolToInt64(session.TitleIsCustom),
 		PromptTokens:     session.PromptTokens,
 		CompletionTokens: session.CompletionTokens,
-		Cost:             session.Cost,
+		CostDelta:        session.Cost - session.loadedCost,
 		Todos: sql.NullString{
 			String: todosJSON,
 			Valid:  todosJSON != "",
@@ -439,6 +444,7 @@ func (s *service) fromDBItem(item db.Session) Session {
 		LeafMessageID:    item.LeafMessageID.String,
 		WorkingDir:       item.WorkingDir,
 		Cost:             item.Cost,
+		loadedCost:       item.Cost,
 		Todos:            todos,
 		Pinned:           item.Pinned != 0,
 		PinNote:          item.PinNote,
