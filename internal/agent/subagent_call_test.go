@@ -6,11 +6,14 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -453,4 +456,31 @@ func TestInterruptBeforeTheTurnSavesKeepsThePrompt(t *testing.T) {
 	require.Len(t, calls, 2)
 	require.Equal(t, "fix it", calls[1].Prompt, "the original prompt still starts the call")
 	require.Empty(t, calls[1].Injections)
+}
+
+func TestInjectionSummaryListsWhatTheCallDelivered(t *testing.T) {
+	t.Parallel()
+	c, env, parent := newSubagentCallCoordinator(t)
+
+	var steerOnce sync.Once
+	tool := stepTool("work", func(ctx context.Context, _ int) fantasy.ToolResponse {
+		steerOnce.Do(func() {
+			require.NoError(t, c.SteerSubagent(tools.GetSessionFromContext(ctx), "use the v2 API", false))
+		})
+		return fantasy.NewTextResponse("ok")
+	})
+	m := Model{
+		Model:      &scriptedModel{toolName: "work", toolSteps: 1},
+		CatwalkCfg: catwalk.Model{ContextWindow: 200000, DefaultMaxTokens: 1000},
+		ModelCfg:   config.SelectedModel{Provider: testProvider, Model: "m"},
+	}
+	agent := NewSessionAgent(SessionAgentOptions{
+		LargeModel: m, SmallModel: m, SystemPrompt: "system", IsYolo: true,
+		Sessions: env.sessions, Messages: env.messages, Tools: []fantasy.AgentTool{tool},
+	})
+
+	resp, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+	require.False(t, resp.IsError, resp.Content)
+	require.Contains(t, resp.Content, "Injected during this run:\n- human (steer): use the v2 API")
 }

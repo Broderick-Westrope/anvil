@@ -213,7 +213,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 	if handedOff != "" {
 		resp.Content += "\n\n" + handedOff
 	}
-	if summary := c.injectionSummary(ctx, child.ID, callID); summary != "" {
+	if summary := injectionSummary(lease.deliveredInjections()); summary != "" {
 		resp.Content += "\n\n" + summary
 	}
 	if tc.handle != "" {
@@ -281,7 +281,9 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 		interrupted := errors.Is(context.Cause(attemptCtx), errSubagentInterrupted)
 		endAttempt()
 		c.rollUpChildCost(ctx, sessionID, tc.costCall)
-		if runErr != nil && call.state.acceptedUserID == "" {
+		if call.state.acceptedUserID != "" {
+			tc.lease.recordDelivered(next.Injections...)
+		} else if runErr != nil {
 			// The turn never persisted its message, so steers it carried
 			// weren't delivered.
 			tc.lease.restore(humanSteers(next.Injections))
@@ -418,26 +420,15 @@ func (tc *taskCall) recoveryLine() string {
 	return fmt.Sprintf("recovered after %d transient %s: %s", n, noun, strings.Join(tc.recoveries, ", "))
 }
 
-// injectionSummary lists what was injected into the child during the call,
-// from the persisted injection records, so compaction can't drop entries.
-// The orchestrator's own resume prompt is left out.
-func (c *coordinator) injectionSummary(ctx context.Context, childID, callID string) string {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentCostTimeout)
-	defer cancel()
-	msgs, err := c.messages.List(ctx, childID)
-	if err != nil {
-		slog.Warn("Failed to list subagent messages for injection summary", "child_session", childID, "error", err)
-		return ""
-	}
+// injectionSummary lists what was injected into the child during the call.
+// The orchestrator's own resume prompt is left out. The list comes from
+// what the call persisted, not from the model's context, so compaction
+// can't drop entries.
+func injectionSummary(delivered []message.InjectionContent) string {
 	var lines []string
-	for _, msg := range msgs {
-		if msg.MessageType != message.MessageTypeSubagentInjection {
-			continue
-		}
-		for _, inj := range msg.Injections() {
-			if inj.CallID == callID && inj.Source != message.InjectionSourceOrchestrator {
-				lines = append(lines, "- "+injectionSummaryLine(inj))
-			}
+	for _, inj := range delivered {
+		if inj.Source != message.InjectionSourceOrchestrator {
+			lines = append(lines, "- "+injectionSummaryLine(inj))
 		}
 	}
 	if len(lines) == 0 {
@@ -462,7 +453,7 @@ func injectionSummaryLine(inj message.InjectionContent) string {
 // handBackSteers queues the accepted steers a call ended without
 // delivering, so the human gets their text back, and tells the UI.
 func (c *coordinator) handBackSteers(childID string, undelivered []message.InjectionContent, callErr error) {
-	texts := make([]string, 0, len(undelivered))
+	var texts []string
 	for _, inj := range undelivered {
 		texts = append(texts, inj.Text)
 	}

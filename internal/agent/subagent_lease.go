@@ -75,7 +75,24 @@ type subagentLease struct {
 	mu            sync.Mutex
 	cancelAttempt context.CancelCauseFunc
 	pending       []message.InjectionContent
-	finalising    bool
+	// delivered are the injections persisted into the child during the
+	// call, in order, for the result's summary.
+	delivered  []message.InjectionContent
+	finalising bool
+}
+
+// recordDelivered notes injections persisted into the child.
+func (l *subagentLease) recordDelivered(injections ...message.InjectionContent) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.delivered = append(l.delivered, injections...)
+}
+
+// deliveredInjections returns the injections persisted during the call.
+func (l *subagentLease) deliveredInjections() []message.InjectionContent {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.delivered)
 }
 
 // beginAttempt returns the context of a new attempt within the call, and
@@ -189,7 +206,7 @@ func (l *subagentLease) finalise() []message.InjectionContent {
 func (l *subagentLease) pendingTexts() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	texts := make([]string, 0, len(l.pending))
+	var texts []string
 	for _, inj := range l.pending {
 		texts = append(texts, inj.Text)
 	}

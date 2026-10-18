@@ -398,6 +398,7 @@ func (t *turn) deliverSteers(ctx context.Context, stepMessages []fantasy.Message
 		t.call.steering.restore(steers)
 		return localPersistence(ctx, fmt.Errorf("deliver steer: %w", err))
 	}
+	t.call.steering.recordDelivered(steers...)
 	t.setLeaf(msg.ID)
 	aiMessages := msg.ToAIMessage()
 	t.injected.add(stepMessages, aiMessages...)

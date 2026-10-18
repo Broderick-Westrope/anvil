@@ -195,7 +195,7 @@ func (f *subagentSteer) Observe(tea.Msg) tea.Cmd {
 	if len(returned) == 0 {
 		return nil
 	}
-	cmds := make([]tea.Cmd, 0, len(returned))
+	var cmds []tea.Cmd
 	for _, r := range returned {
 		f.host.RestoreToComposer(strings.Join(r.Steers, "\n\n"))
 		cmds = append(cmds, util.ReportWarn(r.Reason+" Your message is back in the main editor."))
