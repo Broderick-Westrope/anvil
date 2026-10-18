@@ -680,8 +680,6 @@ func taskAgentType(params agent.TaskParams) string {
 	if params.SubagentType != "" || params.Resume == "" {
 		return params.SubagentType
 	}
-	if i := strings.LastIndexByte(params.Resume, '-'); i > 0 {
-		return params.Resume[:i]
-	}
-	return ""
+	// A handle without a dash gives no type.
+	return params.Resume[:max(strings.LastIndexByte(params.Resume, '-'), 0)]
 }

@@ -89,7 +89,7 @@ func (m *UserMessageItem) RawRender(width int) string {
 // injected message shows each injection under a label naming its source,
 // instead of the tagged text the model sees.
 func (m *UserMessageItem) displayContent() string {
-	if injections := m.message.Injections(); len(injections) > 0 {
+	if injections := m.message.Injections(); injections != nil {
 		var blocks []string
 		for _, inj := range injections {
 			blocks = append(blocks, injectionBlock(inj))
