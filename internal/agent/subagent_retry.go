@@ -118,8 +118,12 @@ func retryHint(headers map[string]string) time.Duration {
 	if ms, err := strconv.ParseFloat(headers["retry-after-ms"], 64); err == nil && ms > 0 {
 		return time.Duration(ms * float64(time.Millisecond))
 	}
-	if secs, err := strconv.ParseFloat(headers["retry-after"], 64); err == nil && secs > 0 {
+	retryAfter := headers["retry-after"]
+	if secs, err := strconv.ParseFloat(retryAfter, 64); err == nil && secs > 0 {
 		return time.Duration(secs * float64(time.Second))
+	}
+	if at, err := http.ParseTime(retryAfter); err == nil {
+		return max(time.Until(at), 0)
 	}
 	return 0
 }

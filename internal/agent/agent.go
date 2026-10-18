@@ -467,6 +467,9 @@ func (a *sessionAgent) summarizeAndResume(ctx context.Context, call SessionAgent
 	if !interrupted {
 		return nil
 	}
+	// The injections were persisted by the interrupted turn; the
+	// continuation starts from its own prompt.
+	call.Injections = nil
 	if call.wake {
 		call.wake = false
 		call.Prompt = "The previous session was interrupted because it got too long while handling background job updates. Continue from the summary."

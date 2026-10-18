@@ -242,16 +242,27 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 	}
 	for {
 		call, err := c.subAgentCall(ctx, tc.params.Agent, sessionID, next.Prompt)
+		if err != nil {
+			tc.lease.restore(humanSteers(next.Injections))
+		}
 		if errors.Is(err, errRefreshSubAgentModels) {
 			return errSubAgentRun{"Failed to " + err.Error()}
 		}
 		if err != nil {
 			return err
 		}
-		call.Injections, call.steering = next.Injections, tc.lease
+		// Awaited, so the call's and attempt's contexts govern the run
+		// even after it continues past auto-compaction.
+		call.Await = true
+		call.Injections, call.steering, call.state = next.Injections, tc.lease, &runState{}
 		attemptCtx := tc.lease.beginAttempt(ctx)
 		result, runErr := tc.params.Agent.Run(attemptCtx, call)
 		c.rollUpChildCost(ctx, sessionID)
+		if runErr != nil && call.state.acceptedUserID == "" {
+			// The turn never persisted its message, so steers it carried
+			// weren't delivered.
+			tc.lease.restore(humanSteers(next.Injections))
+		}
 
 		if runErr == nil {
 			if steers := tc.lease.finaliseOrTake(); len(steers) > 0 {
@@ -260,6 +271,9 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 			}
 			tc.output = subAgentOutput(result)
 			return nil
+		}
+		if errors.Is(runErr, errLocalPersistence) {
+			return tc.failure(ctx, runErr)
 		}
 		if ctx.Err() == nil && errors.Is(context.Cause(attemptCtx), errSubagentInterrupted) {
 			next = tc.afterInterrupt()
@@ -302,6 +316,18 @@ func waitBeforeResume(ctx context.Context, lease *subagentLease, delay time.Dura
 	case <-timer.C:
 		return nil
 	}
+}
+
+// humanSteers returns the steers among injections, which go back to the
+// human when they aren't delivered.
+func humanSteers(injections []message.InjectionContent) []message.InjectionContent {
+	var steers []message.InjectionContent
+	for _, inj := range injections {
+		if inj.Source == message.InjectionSourceHuman {
+			steers = append(steers, inj)
+		}
+	}
+	return steers
 }
 
 // injection returns a run that starts with inj, recorded against the call.
@@ -403,7 +429,7 @@ func (c *coordinator) handBackSteers(childID string, undelivered []message.Injec
 	if callErr != nil {
 		reason = "The subagent's task call ended before it could read your message: " + callErr.Error()
 	}
-	c.subagentBroker().Publish(pubsub.CreatedEvent, SubagentSteersReturned{SessionID: childID, Steers: texts, Reason: reason})
+	c.subagentBroker().PublishMustDeliver(context.Background(), pubsub.CreatedEvent, SubagentSteersReturned{SessionID: childID, Steers: texts, Reason: reason})
 }
 
 func (c *coordinator) subagentBroker() *pubsub.Broker[SubagentSteersReturned] {

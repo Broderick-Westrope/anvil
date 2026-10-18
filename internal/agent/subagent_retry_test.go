@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"syscall"
 	"testing"
 	"time"
@@ -96,4 +97,13 @@ func TestSubagentRetryDelayHonoursALongerProviderHint(t *testing.T) {
 			require.Equal(t, tc.want, subagentRetryDelay(fmt.Errorf("w: %w", tc.err), tc.base))
 		})
 	}
+}
+
+func TestSubagentRetryDelayReadsAnHTTPDateHint(t *testing.T) {
+	t.Parallel()
+	at := time.Now().Add(20 * time.Second).UTC().Format(http.TimeFormat)
+	err := &fantasy.ProviderError{StatusCode: 503, ResponseHeaders: map[string]string{"retry-after": at}}
+	got := subagentRetryDelay(err, 5*time.Second)
+	require.Greater(t, got, 15*time.Second)
+	require.LessOrEqual(t, got, 20*time.Second)
 }

@@ -330,3 +330,65 @@ func TestEachAttemptRollsUpOnlyNewCost(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 0.20, updated.Cost, 1e-9)
 }
+
+func TestTaskRunsAreAwaitedSoCancelReachesCompactionContinuations(t *testing.T) {
+	t.Parallel()
+	c, _, parent := newSubagentCallCoordinator(t)
+	agent := newMockAgent(testProvider, 1000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		require.True(t, call.Await)
+		return agentResultWithText("done"), nil
+	})
+	_, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+}
+
+func TestSteersTakenForATurnThatNeverStartedAreHandedBack(t *testing.T) {
+	t.Parallel()
+	c, _, parent := newSubagentCallCoordinator(t)
+	events := c.SubscribeSubagentEvents(t.Context())
+
+	runs := 0
+	agent := newMockAgent(testProvider, 1000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		runs++
+		if runs == 1 {
+			require.NoError(t, c.SteerSubagent(call.SessionID, "also X", false))
+			return agentResultWithText("first"), nil
+		}
+		// The turn fails before it persists its injection message.
+		return nil, persistenceError{io.ErrClosedPipe}
+	})
+	resp, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+	require.True(t, resp.IsError)
+
+	select {
+	case ev := <-events:
+		require.Equal(t, []string{"also X"}, ev.Payload.Steers)
+	case <-time.After(5 * time.Second):
+		t.Fatal("steer was lost")
+	}
+}
+
+func TestInterruptDoesNotOverrideAPersistenceFailure(t *testing.T) {
+	t.Parallel()
+	c, _, parent := newSubagentCallCoordinator(t)
+	events := c.SubscribeSubagentEvents(t.Context())
+
+	var runs atomic.Int32
+	agent := newMockAgent(testProvider, 1000, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		runs.Add(1)
+		require.NoError(t, c.SteerSubagent(call.SessionID, "stop", true))
+		<-ctx.Done()
+		return nil, persistenceError{io.ErrClosedPipe}
+	})
+	resp, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+	require.True(t, resp.IsError)
+	require.Equal(t, int32(1), runs.Load())
+	select {
+	case ev := <-events:
+		require.Equal(t, []string{"stop"}, ev.Payload.Steers)
+	case <-time.After(5 * time.Second):
+		t.Fatal("steer was lost")
+	}
+}
