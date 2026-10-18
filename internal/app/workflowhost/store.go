@@ -145,16 +145,6 @@ func (s *Store) FinishRun(ctx context.Context, id string, status Status, result 
 	return nil
 }
 
-// HasRunningRunFrom reports whether a run started from sessionID is
-// recorded as running, by this Anvil or another sharing the database.
-func (s *Store) HasRunningRunFrom(ctx context.Context, sessionID string) (bool, error) {
-	n, err := s.q.CountRunningWorkflowRunsFrom(ctx, sessionID)
-	if err != nil {
-		return false, fmt.Errorf("count running workflow runs from %s: %w", sessionID, err)
-	}
-	return n > 0, nil
-}
-
 // GetRun returns a persisted run, reporting false when it doesn't exist.
 func (s *Store) GetRun(ctx context.Context, id string) (RunRecord, bool, error) {
 	row, err := s.q.GetWorkflowRun(ctx, id)

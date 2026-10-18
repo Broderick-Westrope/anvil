@@ -504,15 +504,6 @@ func (s *Service) Running(sessionID string) bool {
 	return active != nil || s.runs[sessionID] != nil
 }
 
-// RunningAnywhere is Running, also counting runs started from sessionID by
-// another Anvil sharing the database.
-func (s *Service) RunningAnywhere(ctx context.Context, sessionID string) (bool, error) {
-	if s.Running(sessionID) {
-		return true, nil
-	}
-	return s.deps.Store.HasRunningRunFrom(ctx, sessionID)
-}
-
 // Respond answers an approval (AnswerApprove or AnswerDeny) or an ask(). An
 // ask with options accepts only one of them.
 func (s *Service) Respond(requestID, answer string) error {

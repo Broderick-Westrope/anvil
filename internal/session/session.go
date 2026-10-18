@@ -230,6 +230,18 @@ func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string
 	return session, nil
 }
 
+// Deleting a session deletes the sessions workflow runs made from it, so
+// it's refused while they're in use, whichever Anvil is using them.
+var (
+	// ErrWorkflowRunning refuses it while a run started from the session
+	// is recorded as running.
+	ErrWorkflowRunning = errors.New("a workflow is running from this session; open the session and abort it before deleting it")
+	// ErrWorkflowSessionInUse refuses it while a session a run made from
+	// it, such as a builder after hand-over, is working or has background
+	// jobs running.
+	ErrWorkflowSessionInUse = errors.New("a workflow session made from this session is working or has background jobs running; stop them before deleting it")
+)
+
 func (s *service) Delete(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -237,7 +249,15 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	deleted, jobKeys, err := deleteSessionTree(ctx, s.q.WithTx(tx), id)
+	qtx := s.q.WithTx(tx)
+	running, err := qtx.CountRunningWorkflowRunsFrom(ctx, id)
+	if err != nil {
+		return fmt.Errorf("checking for running workflows: %w", err)
+	}
+	if running > 0 {
+		return ErrWorkflowRunning
+	}
+	deleted, jobKeys, err := deleteSessionTree(ctx, qtx, id)
 	if err != nil {
 		return err
 	}
@@ -269,9 +289,16 @@ func deleteSessionTree(ctx context.Context, qtx *db.Queries, id string) ([]db.Se
 	var deleted []db.Session
 	var jobKeys []int64
 	for _, child := range children {
+		jobs, err := qtx.CountRunningBackgroundJobsBySession(ctx, child)
+		if err != nil {
+			return nil, nil, fmt.Errorf("checking jobs of workflow session %s: %w", child, err)
+		}
+		if jobs > 0 {
+			return nil, nil, ErrWorkflowSessionInUse
+		}
 		childDeleted, childJobs, err := deleteSessionTree(ctx, qtx, child)
 		if err != nil {
-			return nil, nil, fmt.Errorf("deleting workflow session %s: %w", child, err)
+			return nil, nil, err
 		}
 		deleted = append(deleted, childDeleted...)
 		jobKeys = append(jobKeys, childJobs...)

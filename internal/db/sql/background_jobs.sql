@@ -113,3 +113,8 @@ ORDER BY id ASC;
 -- name: DeleteAnvilInstance :exec
 DELETE FROM anvil_instances
 WHERE id = ?;
+
+-- name: CountRunningBackgroundJobsBySession :one
+SELECT COUNT(*)
+FROM background_jobs
+WHERE session_id = ? AND completed_at IS NULL;

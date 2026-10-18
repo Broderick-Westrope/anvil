@@ -30,6 +30,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.copyMessageStmt, err = db.PrepareContext(ctx, copyMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query CopyMessage: %w", err)
 	}
+	if q.countRunningBackgroundJobsBySessionStmt, err = db.PrepareContext(ctx, countRunningBackgroundJobsBySession); err != nil {
+		return nil, fmt.Errorf("error preparing query CountRunningBackgroundJobsBySession: %w", err)
+	}
 	if q.countRunningWorkflowRunsFromStmt, err = db.PrepareContext(ctx, countRunningWorkflowRunsFrom); err != nil {
 		return nil, fmt.Errorf("error preparing query CountRunningWorkflowRunsFrom: %w", err)
 	}
@@ -274,6 +277,11 @@ func (q *Queries) Close() error {
 	if q.copyMessageStmt != nil {
 		if cerr := q.copyMessageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing copyMessageStmt: %w", cerr)
+		}
+	}
+	if q.countRunningBackgroundJobsBySessionStmt != nil {
+		if cerr := q.countRunningBackgroundJobsBySessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countRunningBackgroundJobsBySessionStmt: %w", cerr)
 		}
 	}
 	if q.countRunningWorkflowRunsFromStmt != nil {
@@ -702,6 +710,7 @@ type Queries struct {
 	tx                                          *sql.Tx
 	claimBackgroundJobEventsStmt                *sql.Stmt
 	copyMessageStmt                             *sql.Stmt
+	countRunningBackgroundJobsBySessionStmt     *sql.Stmt
 	countRunningWorkflowRunsFromStmt            *sql.Stmt
 	countUnresolvedPermissionDecisionsSinceStmt *sql.Stmt
 	createBackgroundJobStmt                     *sql.Stmt
@@ -783,11 +792,12 @@ type Queries struct {
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                               tx,
-		tx:                               tx,
-		claimBackgroundJobEventsStmt:     q.claimBackgroundJobEventsStmt,
-		copyMessageStmt:                  q.copyMessageStmt,
-		countRunningWorkflowRunsFromStmt: q.countRunningWorkflowRunsFromStmt,
+		db:                                      tx,
+		tx:                                      tx,
+		claimBackgroundJobEventsStmt:            q.claimBackgroundJobEventsStmt,
+		copyMessageStmt:                         q.copyMessageStmt,
+		countRunningBackgroundJobsBySessionStmt: q.countRunningBackgroundJobsBySessionStmt,
+		countRunningWorkflowRunsFromStmt:        q.countRunningWorkflowRunsFromStmt,
 		countUnresolvedPermissionDecisionsSinceStmt: q.countUnresolvedPermissionDecisionsSinceStmt,
 		createBackgroundJobStmt:                     q.createBackgroundJobStmt,
 		createBackgroundJobEventStmt:                q.createBackgroundJobEventStmt,

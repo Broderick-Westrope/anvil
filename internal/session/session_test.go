@@ -509,3 +509,54 @@ func TestCreateWorkflowSessionIsOwnedFromTheStart(t *testing.T) {
 		require.Equal(t, "/home/user/project", s.WorkingDir)
 	}
 }
+
+// The CLI deletes through the service too, from a process that knows
+// nothing of runs in flight, so the service refuses what the database
+// shows is still in use.
+func TestDeleteRefusesWhileWhatAWorkflowMadeIsInUse(t *testing.T) {
+	tests := map[string]struct {
+		setup func(t *testing.T, q *db.Queries, invoker, builder string)
+		want  error
+	}{
+		"a run recorded as running": {
+			setup: func(t *testing.T, q *db.Queries, invoker, _ string) {
+				require.NoError(t, q.CreateWorkflowRun(t.Context(), db.CreateWorkflowRunParams{
+					ID: "run-1", Command: "project:build", InvokingSessionID: invoker, InstanceID: "other", StartedAt: 1,
+				}))
+			},
+			want: ErrWorkflowRunning,
+		},
+		"a builder with a job still running": {
+			setup: func(t *testing.T, q *db.Queries, _, builder string) {
+				_, err := q.CreateBackgroundJob(t.Context(), db.CreateBackgroundJobParams{
+					SessionID: builder, Origin: "explicit", Command: "npm run dev", WorkingDir: "/w", StartedAt: 1, InstanceID: "other",
+				})
+				require.NoError(t, err)
+			},
+			want: ErrWorkflowSessionInUse,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			t.Cleanup(func() {
+				require.NoError(t, db.Release(dataDir))
+				db.ResetPool()
+			})
+			conn, err := db.Connect(t.Context(), dataDir)
+			require.NoError(t, err)
+			q := db.New(conn)
+			sessions := NewService(q, conn)
+			invoker, err := sessions.Create(t.Context(), "invoker", "/w")
+			require.NoError(t, err)
+			builder, err := sessions.CreateWorkflowSession(t.Context(), invoker.ID, "/build approach 1",
+				WorkflowOwner{RunID: "run-0", Seq: 1, Kind: WorkflowKindSession})
+			require.NoError(t, err)
+
+			tc.setup(t, q, invoker.ID, builder.ID)
+			require.ErrorIs(t, sessions.Delete(t.Context(), invoker.ID), tc.want)
+			_, err = sessions.Get(t.Context(), builder.ID)
+			require.NoError(t, err, "nothing was deleted")
+		})
+	}
+}

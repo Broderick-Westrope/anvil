@@ -12,6 +12,7 @@ import (
 type Querier interface {
 	ClaimBackgroundJobEvents(ctx context.Context, arg ClaimBackgroundJobEventsParams) ([]string, error)
 	CopyMessage(ctx context.Context, arg CopyMessageParams) error
+	CountRunningBackgroundJobsBySession(ctx context.Context, sessionID string) (int64, error)
 	CountRunningWorkflowRunsFrom(ctx context.Context, invokingSessionID string) (int64, error)
 	// Mirrors triage.IsSource: keep the two in sync.
 	CountUnresolvedPermissionDecisionsSince(ctx context.Context, createdAt int64) (int64, error)

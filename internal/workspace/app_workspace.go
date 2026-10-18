@@ -86,27 +86,17 @@ func (w *AppWorkspace) SetSessionPin(ctx context.Context, sessionID string, pinn
 	return w.app.Sessions.SetPin(ctx, sessionID, pinned, note)
 }
 
-// Deleting a session deletes the sessions workflow runs made from it, so
-// it's refused while they're in use.
+// The refusals of DeleteSession. The session service refuses what the
+// database shows, from any Anvil; this one also knows what's in flight in
+// this Anvil: a run not yet recorded, and turns.
 var (
-	// ErrSessionHasRunningWorkflow refuses it while a run started from the
-	// session is going, in this Anvil or another.
-	ErrSessionHasRunningWorkflow = errors.New("a workflow is running from this session; open the session and abort it before deleting it")
-	// ErrSessionHasWorkingWorkflowSession refuses it while a session a run
-	// made from it, such as a builder after hand-over, is working or has
-	// background jobs running.
-	ErrSessionHasWorkingWorkflowSession = errors.New("a workflow session made from this session is working or has background jobs running; stop them before deleting it")
+	ErrSessionHasRunningWorkflow        = session.ErrWorkflowRunning
+	ErrSessionHasWorkingWorkflowSession = session.ErrWorkflowSessionInUse
 )
 
 func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
-	if w.app.Workflows != nil {
-		running, err := w.app.Workflows.RunningAnywhere(ctx, sessionID)
-		if err != nil {
-			return err
-		}
-		if running {
-			return ErrSessionHasRunningWorkflow
-		}
+	if w.WorkflowRunning(sessionID) {
+		return ErrSessionHasRunningWorkflow
 	}
 	descendants, err := w.app.Sessions.WorkflowDescendants(ctx, sessionID)
 	if err != nil {
