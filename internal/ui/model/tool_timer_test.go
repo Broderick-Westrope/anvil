@@ -189,3 +189,26 @@ func TestPermissionNotificationReachesEveryInstanceOfANestedCall(t *testing.T) {
 	require.Equal(t, chat.ToolStatusRunning, nested.Status())
 	require.Equal(t, chat.ToolStatusRunning, drilled.Status())
 }
+
+func TestToolTimerStartIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a finished message doesn't start the tick", func(t *testing.T) {
+		t.Parallel()
+		u, _ := newTimerTestUI()
+		ev := assistantUpdate("s1", runningBash("tc1", 0))
+		ev.Payload.AddFinish(message.FinishReasonToolUse, "", "")
+		_, _ = u.Update(ev)
+		require.False(t, u.elapsedTickRunning)
+	})
+
+	t.Run("a running tick isn't scheduled twice", func(t *testing.T) {
+		t.Parallel()
+		u, ws := newTimerTestUI()
+		ws.running["a1"] = true
+		u.chat.SetMessages(toolItemIn(u, "a1", runningBash("tc1", 30*time.Second)))
+		u.elapsedTickRunning = true
+		require.Nil(t, u.startElapsedTickForTools())
+		require.Nil(t, u.startElapsedTickForToolStart(assistantUpdate("s1", runningBash("tc1", 0)).Payload))
+	})
+}

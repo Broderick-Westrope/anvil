@@ -252,3 +252,25 @@ func TestToolItemTimerOtherHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestToolTimerSuffixFitsExactly(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+	opts := &ToolRenderOpts{Duration: 23 * time.Second}
+	exact := ansi.StringWidth(ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", 200, opts)))
+
+	require.Contains(t, ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", exact, opts)), "23s")
+	require.NotContains(t, ansi.Strip(toolHeader(&sty, ToolStatusRunning, "Bash", exact-1, opts)), "23s")
+}
+
+func TestJobHeaderDescriptionNeedsTenColumns(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+	prefix := ansi.StringWidth("✓ Job (Kill) ID 05A")
+
+	shown := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Kill", "05A", "dev server 1", prefix+1+10, 0))
+	require.Equal(t, "✓ Job (Kill) ID 05A dev serve…", shown)
+
+	hidden := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Kill", "05A", "dev server 1", prefix+1+9, 0))
+	require.Equal(t, "✓ Job (Kill) ID 05A", hidden)
+}
