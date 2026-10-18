@@ -114,3 +114,40 @@ func resumeCallID(msg message.Message) string {
 	}
 	return ""
 }
+
+// seenCost records childSessionID's cost as loaded, so a resume observed
+// later counts only what it adds.
+func (c *subagentCalls) seenCost(childSessionID string, cost float64) {
+	if c.lastCost == nil {
+		c.lastCost = make(map[string]float64)
+	}
+	c.lastCost[childSessionID] = cost
+}
+
+// loadedStats is what a reloaded task item shows.
+type loadedStats struct {
+	cost                  float64
+	startedAt, finishedAt time.Time
+}
+
+// loadedCallStats picks a reloaded item's stats: the call's own when it
+// has a stored link, otherwise the child session's, as before links were
+// stored. finishedAt is zero while the call or session hasn't ended.
+func loadedCallStats(sess session.Session, call session.SubagentCall, linked bool) loadedStats {
+	if linked {
+		stats := loadedStats{cost: call.Cost, startedAt: time.Unix(call.CreatedAt, 0)}
+		if call.FinishedAt > 0 {
+			stats.finishedAt = time.Unix(call.FinishedAt, 0)
+		}
+		return stats
+	}
+	var stats loadedStats
+	stats.cost = sess.Cost
+	if sess.CreatedAt > 0 {
+		stats.startedAt = time.Unix(sess.CreatedAt, 0)
+	}
+	if sess.UpdatedAt > sess.CreatedAt {
+		stats.finishedAt = time.Unix(sess.UpdatedAt, 0)
+	}
+	return stats
+}

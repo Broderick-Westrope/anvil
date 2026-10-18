@@ -1748,23 +1748,18 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 				da.IncrementToolCalls(len(nm.ToolCalls()))
 			}
 
-			// Populate token/cost stats and timestamps from the child session.
+			// Populate token/cost stats and timestamps: a linked task
+			// call's own, otherwise the child session's.
 			if sess, err := m.com.Workspace.GetSession(context.Background(), agentSessionID); err == nil {
+				m.subagentCalls.seenCost(agentSessionID, sess.Cost)
+				stats := loadedCallStats(sess, call, linked)
 				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
-				da.SetCost(sess.Cost)
-				if sess.CreatedAt > 0 {
-					da.SetStartedAt(time.Unix(sess.CreatedAt, 0))
+				da.SetCost(stats.cost)
+				if !stats.startedAt.IsZero() {
+					da.SetStartedAt(stats.startedAt)
 				}
-				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && sess.UpdatedAt > sess.CreatedAt {
-					da.SetFinishedAt(time.Unix(sess.UpdatedAt, 0))
-				}
-			}
-			// A linked task call shows its own cost and time.
-			if linked {
-				da.SetCost(call.Cost)
-				da.SetStartedAt(time.Unix(call.CreatedAt, 0))
-				if call.FinishedAt > 0 {
-					da.SetFinishedAt(time.Unix(call.FinishedAt, 0))
+				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && !stats.finishedAt.IsZero() {
+					da.SetFinishedAt(stats.finishedAt)
 				}
 			}
 		}
