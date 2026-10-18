@@ -473,13 +473,13 @@ SELECT m.id, m.session_id, m.role, m.parts, m.model, m.created_at, m.updated_at,
 FROM messages m
 JOIN sessions s ON m.session_id = s.id
 WHERE m.role = 'user' AND s.working_dir = ?
-    AND NOT (s.forked_from_message_id != '' AND m.created_at < s.created_at)
+    AND NOT (s.forked_from_message_id != '' AND m.created_at <= s.created_at)
 ORDER BY m.created_at DESC
 `
 
-// A fork's copies of its source's messages keep their times, so they're
-// older than the fork itself; they're left out so each prompt is listed
-// once.
+// A fork's copies of its source's messages keep their times, so none is
+// newer than the fork itself (times are whole seconds, so one can share
+// its second); they're left out so each prompt is listed once.
 func (q *Queries) ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error) {
 	rows, err := q.query(ctx, q.listUserMessagesByWorkingDirStmt, listUserMessagesByWorkingDir, workingDir)
 	if err != nil {

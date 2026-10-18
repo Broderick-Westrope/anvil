@@ -65,9 +65,9 @@ type Querier interface {
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
 	ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]ListUndeliveredBackgroundJobEventsRow, error)
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
-	// A fork's copies of its source's messages keep their times, so they're
-	// older than the fork itself; they're left out so each prompt is listed
-	// once.
+	// A fork's copies of its source's messages keep their times, so none is
+	// newer than the fork itself (times are whole seconds, so one can share
+	// its second); they're left out so each prompt is listed once.
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
 	ListWorkflowChildSessionIDs(ctx context.Context, parentSessionID sql.NullString) ([]string, error)
 	ListWorkflowEvents(ctx context.Context, runID string) ([]WorkflowEvent, error)

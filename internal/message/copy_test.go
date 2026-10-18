@@ -201,13 +201,14 @@ func TestAForksCopiesArentListedAgainInPromptHistory(t *testing.T) {
 	asked := add(t, svc, source, "", message.User, message.TextContent{Text: "asked once"})
 	// Messages the user wrote before the run started are older than the
 	// fork that copies them.
-	time.Sleep(1100 * time.Millisecond) // created_at has one-second resolution
+	// A prompt from the same second as the fork is a copy too.
 	fork := newSession(t, q)
 	leaf, end, err := svc.CopyBranch(t.Context(), asked.ID, fork)
 	require.NoError(t, err)
 	require.NoError(t, q.SetSessionWorkflowOwner(t.Context(), db.SetSessionWorkflowOwnerParams{
 		ID: fork, WorkflowRunID: "run-1", WorkflowSeq: 1, WorkflowKind: "session", ForkedFromMessageID: end,
 	}))
+	time.Sleep(1100 * time.Millisecond) // created_at has one-second resolution
 	add(t, svc, fork, leaf, message.User, message.TextContent{Text: "typed to the builder"})
 
 	history, err := svc.ListUserMessagesByWorkingDir(t.Context(), "")
