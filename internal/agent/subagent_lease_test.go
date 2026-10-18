@@ -158,14 +158,3 @@ func TestSubagentPendingSteersListsUndeliveredText(t *testing.T) {
 	require.Empty(t, c.SubagentPendingSteers("child"))
 	require.Empty(t, c.SubagentPendingSteers("not-running"))
 }
-
-func TestSubagentActiveCallFollowsTheLease(t *testing.T) {
-	t.Parallel()
-	c := &coordinator{}
-	require.Empty(t, c.SubagentActiveCall("child"))
-	lease, err := c.leases.acquire("child", "msg-2$$call-2", func(error) {})
-	require.NoError(t, err)
-	require.Equal(t, "msg-2$$call-2", c.SubagentActiveCall("child"))
-	c.leases.release(lease)
-	require.Empty(t, c.SubagentActiveCall("child"))
-}

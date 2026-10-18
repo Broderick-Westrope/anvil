@@ -1,17 +1,42 @@
 package model
 
 import (
-	"cmp"
-
 	"github.com/Broderick-Westrope/anvil/internal/message"
 )
 
+// subagentCalls tracks which task call owns each child session's live
+// activity. A child starts owned by the call that created it, whose ID is
+// the child's own; each resume message it receives hands it to that
+// resume's call. Ownership comes from the event stream itself, so events
+// are attributed to the call that produced them however late they're read.
+type subagentCalls struct {
+	owner map[string]string
+}
+
+// observe records the call a child's resume message starts.
+func (c *subagentCalls) observe(msg message.Message) {
+	callID := resumeCallID(msg)
+	if callID == "" {
+		return
+	}
+	if c.owner == nil {
+		c.owner = make(map[string]string)
+	}
+	c.owner[msg.SessionID] = callID
+}
+
+// current returns the call that owns childSessionID's activity.
+func (c *subagentCalls) current(childSessionID string) string {
+	if callID, ok := c.owner[childSessionID]; ok {
+		return callID
+	}
+	return childSessionID
+}
+
 // agentItemToolCallID returns the tool call ID of the task item that shows
-// childSessionID's live activity: the call holding the child's lease, which
-// is a resume's own item, or else the call that created the child.
+// childSessionID's live activity.
 func (m *UI) agentItemToolCallID(childSessionID string) (string, bool) {
-	callID := cmp.Or(m.com.Workspace.AgentSubagentActiveCall(childSessionID), childSessionID)
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(callID)
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(m.subagentCalls.current(childSessionID))
 	return toolCallID, ok
 }
 

@@ -48,3 +48,22 @@ func TestMessagesOfCallSplitsAChildAtEachResume(t *testing.T) {
 	require.Equal(t, []string{"r2", "a3"}, ids("m2$$c2"))
 	require.Equal(t, []string{"r3", "a4"}, ids("m3$$c3"))
 }
+
+func TestSubagentCallOwnershipFollowsResumeMessages(t *testing.T) {
+	t.Parallel()
+	var calls subagentCalls
+
+	require.Equal(t, "m1$$c1", calls.current("m1$$c1"))
+
+	calls.observe(message.Message{
+		SessionID: "m1$$c1", Role: message.User, MessageType: message.MessageTypeSubagentInjection,
+		Parts: message.InjectionParts([]message.InjectionContent{{
+			Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, CallID: "m2$$c2",
+		}}),
+	})
+	require.Equal(t, "m2$$c2", calls.current("m1$$c1"))
+
+	calls.observe(message.Message{SessionID: "m1$$c1", Role: message.Assistant})
+	require.Equal(t, "m2$$c2", calls.current("m1$$c1"), "ordinary messages don't change ownership")
+	require.Equal(t, "other$$c", calls.current("other$$c"))
+}

@@ -133,9 +133,6 @@ type Workspace interface {
 	// AgentSubagentRunning reports whether a task call is running in
 	// childSessionID.
 	AgentSubagentRunning(childSessionID string) bool
-	// AgentSubagentActiveCall returns the task call running in
-	// childSessionID, or "" when none is.
-	AgentSubagentActiveCall(childSessionID string) string
 	// SubagentCallSession returns the child session the task call callID
 	// ran in, or callID itself when no link was stored.
 	SubagentCallSession(ctx context.Context, callID string) string

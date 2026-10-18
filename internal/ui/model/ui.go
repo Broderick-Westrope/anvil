@@ -337,6 +337,8 @@ type UI struct {
 
 	// features are the fork features routed to from the dispatchers.
 	features features
+	// subagentCalls attributes child session activity to task calls.
+	subagentCalls subagentCalls
 
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
@@ -965,6 +967,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update live stats on agent items for any child session message.
 		// This runs regardless of whether we are drilled in.
 		if msg.Payload.SessionID != m.session.ID {
+			if msg.Type == pubsub.CreatedEvent {
+				m.subagentCalls.observe(msg.Payload)
+			}
 			m.updateAgentItemStats(msg.Payload.SessionID, msg)
 		}
 
