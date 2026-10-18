@@ -315,3 +315,12 @@ func TestRenderingLeavesTheLiveInputsWidthAlone(t *testing.T) {
 	s.f.DrillInFooter().Render(37)
 	require.Equal(t, width, s.f.input.Width())
 }
+
+func TestFooterInputLineDropsPaddingWithoutAnEllipsis(t *testing.T) {
+	t.Parallel()
+	s := newSteerFixture(t)
+	s.f.Observe(tea.WindowSizeMsg{Width: 200, Height: 40})
+
+	line, _, _ := strings.Cut(ansi.Strip(s.f.DrillInFooter().Render(60)), "\n")
+	require.NotContains(t, line, "…")
+}

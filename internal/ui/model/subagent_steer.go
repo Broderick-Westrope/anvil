@@ -271,5 +271,7 @@ func (v subagentSteerFooter) Render(width int) string {
 		help = append(help, fmt.Sprintf("%d queued", v.queued))
 	}
 	line := muted.Render(strings.Join(help, " · "))
-	return ansi.Truncate(v.inputView, width, "…") + "\n" + ansi.Truncate(line, width, "…")
+	// The input pads its line to the window's width, so what's cut is
+	// padding and needs no ellipsis.
+	return ansi.Truncate(v.inputView, width, "") + "\n" + ansi.Truncate(line, width, "…")
 }
