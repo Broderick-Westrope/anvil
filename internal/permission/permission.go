@@ -137,9 +137,10 @@ type PermissionRequest struct {
 
 // PendingPermission identifies the prompt waiting for a human decision.
 type PendingPermission struct {
-	ID        string
-	SessionID string
-	ToolName  string
+	ID         string
+	SessionID  string
+	ToolCallID string
+	ToolName   string
 }
 
 type Service interface {
@@ -577,9 +578,10 @@ func (s *permissionService) PendingRequest() (PendingPermission, bool) {
 	// Only fields never written after the request is stored; Review is
 	// updated concurrently without this lock.
 	return PendingPermission{
-		ID:        s.activeRequest.ID,
-		SessionID: s.activeRequest.SessionID,
-		ToolName:  s.activeRequest.ToolName,
+		ID:         s.activeRequest.ID,
+		SessionID:  s.activeRequest.SessionID,
+		ToolCallID: s.activeRequest.ToolCallID,
+		ToolName:   s.activeRequest.ToolName,
 	}, true
 }
 
