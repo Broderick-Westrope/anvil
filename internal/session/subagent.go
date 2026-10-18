@@ -65,10 +65,11 @@ func (s *service) CreateSubagent(ctx context.Context, sub Subagent) (Subagent, e
 	defer tx.Rollback() //nolint:errcheck
 	qtx := s.q.WithTx(tx)
 
+	// Take the shortest free suffix, adding one hash digit per collision.
 	hash := HashID(sub.SessionID)
-	sub.Handle = ""
-	for n := minHandleSuffix; n <= len(hash); n++ {
-		candidate := sub.AgentType + "-" + hash[:n]
+	suffix, rest := hash[:minHandleSuffix], hash[minHandleSuffix:]
+	for {
+		candidate := sub.AgentType + "-" + suffix
 		taken, err := qtx.SubagentHandleExists(ctx, db.SubagentHandleExistsParams{ParentSessionID: sub.ParentSessionID, Handle: candidate})
 		if err != nil {
 			return Subagent{}, fmt.Errorf("check subagent handle %s: %w", candidate, err)
@@ -77,9 +78,10 @@ func (s *service) CreateSubagent(ctx context.Context, sub Subagent) (Subagent, e
 			sub.Handle = candidate
 			break
 		}
-	}
-	if sub.Handle == "" {
-		return Subagent{}, fmt.Errorf("no free handle for subagent %s", sub.SessionID)
+		if rest == "" {
+			return Subagent{}, fmt.Errorf("no free handle for subagent %s", sub.SessionID)
+		}
+		suffix, rest = suffix+rest[:1], rest[1:]
 	}
 	if err := qtx.CreateSubagent(ctx, db.CreateSubagentParams{
 		SessionID:       sub.SessionID,

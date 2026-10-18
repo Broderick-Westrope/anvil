@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
 )
@@ -281,4 +282,43 @@ func TestRollUpWithNothingNewWritesNothing(t *testing.T) {
 	after, err := svc.Get(t.Context(), parent.ID)
 	require.NoError(t, err)
 	require.Equal(t, before.UpdatedAt, after.UpdatedAt)
+}
+
+func nextUpdate(t *testing.T, events <-chan pubsub.Event[session.Session], id string) session.Session {
+	t.Helper()
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type == pubsub.UpdatedEvent && ev.Payload.ID == id {
+				return ev.Payload
+			}
+		case <-timeout:
+			t.Fatalf("no update published for %s", id)
+		}
+	}
+}
+
+func TestAddCostPublishesTheNewCost(t *testing.T) {
+	t.Parallel()
+	svc := newSubagentTestService(t)
+	parent, err := svc.Create(t.Context(), "parent", "/tmp")
+	require.NoError(t, err)
+	events := svc.Subscribe(t.Context())
+
+	require.NoError(t, svc.AddCost(t.Context(), parent.ID, 0.2))
+	require.InDelta(t, 0.2, nextUpdate(t, events, parent.ID).Cost, 1e-9)
+}
+
+func TestRollUpPublishesTheParentsNewCost(t *testing.T) {
+	t.Parallel()
+	svc := newSubagentTestService(t)
+	parent, err := svc.Create(t.Context(), "parent", "/tmp")
+	require.NoError(t, err)
+	child := newChild(t, svc, parent.ID, "msg$$call")
+	setCost(t, svc, child.ID, 0.3)
+	events := svc.Subscribe(t.Context())
+
+	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID, ""))
+	require.InDelta(t, 0.3, nextUpdate(t, events, parent.ID).Cost, 1e-9)
 }
