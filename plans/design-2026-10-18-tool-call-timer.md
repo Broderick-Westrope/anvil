@@ -199,6 +199,26 @@ Out:
   per-call `StartedAt`. The build picks one; the two meanings must not
   share a name.
 
+**Learned While Building:**
+
+- "Active turn" is tracked per step: the coordinator shares one set of
+  in-flight assistant message IDs between all its agents, and the UI asks
+  `AgentIsStepRunning(messageID)`. The timing wrapper is applied per turn,
+  next to the existing per-turn cache wrapper, so it needs no recorder in
+  the context and covers every agent.
+- Agent cards no longer render their nested tools; only the subagent
+  drill-in does. The "compact nested list" criterion has nothing to draw.
+- Known gaps, accepted: whether a call is awaiting permission comes from
+  lossy notifications. The tick reconciles the open prompt, and a clock
+  restart (only a human grant causes one) marks a call granted. Still, a
+  dropped "granted" notification after an automatic approval leaves the
+  call untimed until its result, and a call queued behind another prompt
+  whose request notification arrived before its item existed shows a
+  timer while it waits. Both need a dropped or reordered event and a slow
+  tool. Fixing them properly means driving the whole permission status
+  (including "Requesting permission...") from the permission service, a
+  separate change.
+
 **Context Files:**
 - `internal/ui/chat/tools.go` - `ToolRenderOpts`, `baseToolMessageItem`
   (`RawRender`, `Render` prefix cache, `isSpinning`, `computeStatus`,
