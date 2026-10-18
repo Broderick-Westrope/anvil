@@ -83,7 +83,9 @@ Out:
       before this change show nothing.
 - [ ] A call that was left without a result (crash or killed process) and
       whose session is no longer running shows no timer, and never shows
-      one that keeps growing.
+      one that keeps growing, including after a new turn starts in that
+      session (test: reopen an interrupted session, start a turn, the old
+      call stays untimed).
 - [ ] Nested tool calls in a subagent drill-in view, and in the compact
       nested list under a subagent node, show the timer the same way.
 - [ ] `job_output` (wait), subagent nodes and provider-executed calls
@@ -139,13 +141,21 @@ Out:
   noise.
 - **End time on every result path.** `FinishedAt` is set in
   `turn.onToolResult`, and also on the synthetic results created on
-  failure or cancel (`turn.go` ~550-557) and by orphan recovery
-  (`agent.go` ~875-905). A canceled call's end time is when its result is
-  recorded, so the final duration covers the time up to cancellation.
-- **Live timer only while the session is running.** A result-less call
-  shows a live timer only if its session's agent is busy. Otherwise the
-  call is orphaned history and shows no duration. This stops a crashed
-  turn's call from ticking forever after a reload.
+  failure or cancel (`turn.go` ~550-557). A canceled call's end time is
+  when its result is recorded, so the final duration covers the time up
+  to cancellation. Orphan recovery (`agent.go` ~875-905) builds
+  model-history-only results that are never persisted, so a call
+  orphaned by a crash keeps no `FinishedAt` and its duration stays
+  unknown. Recovery time is never stamped as completion.
+- **Live timer only for calls in the active turn.** A result-less call
+  shows a live timer only if it belongs to the assistant message of the
+  turn currently running in its session. The agent layer exposes that
+  identity (e.g. the in-flight assistant message ID per session, through
+  the workspace) so the UI can check it for top-level, drill-in and
+  nested items. "Session is busy" alone isn't enough: admission only
+  tracks session ownership (`admission.go` ~390-396), so an old orphaned
+  call would start ticking again when the next turn begins. Any other
+  result-less call is orphaned history and shows no duration.
 - **Timestamp updates must reach the UI.** Today an existing tool item is
   updated only when its input or `Finished` flag changes (`ui.go`
   ~1901-1907), and a timestamp-only message update isn't treated as a
@@ -211,6 +221,7 @@ Out:
   (~488-515)
 - `internal/agent/turn.go` - `onToolCall`, `onToolResult`, failure-path
   synthetic results (~550-557), turn lock, `prepareStep`
+- `internal/agent/admission.go` - session busy/ownership (~390-396)
 - `internal/agent/agent.go` - orphan recovery (~875-905), session agent
   wiring
 - `internal/agent/hooked_tool.go` and `coordinator.go` - where tools are
