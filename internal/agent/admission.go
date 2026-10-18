@@ -438,7 +438,8 @@ func (a *admission) queued(id string) []string {
 	defer a.mu.Unlock()
 	var prompts []string
 	for _, job := range a.queues[id] {
-		if !job.silent {
+		// The user's prompts: what the queue pill lists and Esc clears.
+		if !job.silent && !isScriptTurn(job) {
 			prompts = append(prompts, job.prompt)
 		}
 	}
