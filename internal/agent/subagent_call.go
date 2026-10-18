@@ -443,3 +443,12 @@ func (c *coordinator) CancelSubagent(childID string) bool {
 func (c *coordinator) SubagentRunning(childID string) bool {
 	return c.leases.get(childID) != nil
 }
+
+// SubagentPendingSteers implements Coordinator.
+func (c *coordinator) SubagentPendingSteers(childID string) []string {
+	lease := c.leases.get(childID)
+	if lease == nil {
+		return nil
+	}
+	return lease.pendingTexts()
+}

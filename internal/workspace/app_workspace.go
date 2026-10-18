@@ -232,6 +232,13 @@ func (w *AppWorkspace) AgentSubagentRunning(childSessionID string) bool {
 	return w.app.AgentCoordinator.SubagentRunning(childSessionID)
 }
 
+func (w *AppWorkspace) AgentSubagentPendingSteers(childSessionID string) []string {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.SubagentPendingSteers(childSessionID)
+}
+
 func (w *AppWorkspace) AgentClearQueue(sessionID string) {
 	if w.app.AgentCoordinator != nil {
 		w.app.AgentCoordinator.ClearQueue(sessionID)

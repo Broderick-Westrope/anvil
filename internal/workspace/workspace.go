@@ -133,6 +133,9 @@ type Workspace interface {
 	// AgentSubagentRunning reports whether a task call is running in
 	// childSessionID.
 	AgentSubagentRunning(childSessionID string) bool
+	// AgentSubagentPendingSteers lists steers sent to childSessionID's
+	// subagent that it hasn't read yet.
+	AgentSubagentPendingSteers(childSessionID string) []string
 	AgentSummarize(ctx context.Context, sessionID string) error
 	AgentRegenerateTitle(ctx context.Context, sessionID string) error
 	// AgentPause stops new top-level runs from being admitted and waits up

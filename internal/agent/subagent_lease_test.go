@@ -142,3 +142,19 @@ func TestSubagentLeaseRestorePutsUndeliveredSteersFirst(t *testing.T) {
 	}
 	require.Equal(t, []string{"a", "b"}, texts)
 }
+
+func TestSubagentPendingSteersListsUndeliveredText(t *testing.T) {
+	t.Parallel()
+	c := &coordinator{}
+	lease, err := c.leases.acquire("child", "call", func(error) {})
+	require.NoError(t, err)
+	require.Empty(t, c.SubagentPendingSteers("child"))
+
+	require.NoError(t, lease.steer("first", false))
+	require.NoError(t, lease.steer("second", true))
+	require.Equal(t, []string{"first", "second"}, c.SubagentPendingSteers("child"))
+
+	lease.takePending()
+	require.Empty(t, c.SubagentPendingSteers("child"))
+	require.Empty(t, c.SubagentPendingSteers("not-running"))
+}

@@ -175,3 +175,14 @@ func (l *subagentLease) finalise() []message.InjectionContent {
 	l.pending = nil
 	return undelivered
 }
+
+// pendingTexts returns the text of each steer not yet delivered.
+func (l *subagentLease) pendingTexts() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	texts := make([]string, 0, len(l.pending))
+	for _, inj := range l.pending {
+		texts = append(texts, inj.Text)
+	}
+	return texts
+}

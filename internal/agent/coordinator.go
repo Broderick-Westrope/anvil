@@ -136,6 +136,9 @@ type Coordinator interface {
 	// SubagentRunning reports whether a task call is running in
 	// childSessionID.
 	SubagentRunning(childSessionID string) bool
+	// SubagentPendingSteers lists the human steers accepted for
+	// childSessionID's running task call but not yet delivered.
+	SubagentPendingSteers(childSessionID string) []string
 	// SubscribeSubagentEvents reports steers a task call ended without
 	// delivering.
 	SubscribeSubagentEvents(ctx context.Context) <-chan pubsub.Event[SubagentSteersReturned]
