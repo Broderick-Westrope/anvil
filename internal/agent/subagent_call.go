@@ -185,9 +185,12 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 	}
 
 	var runErr errSubAgentRun
+	if err != nil && !errors.As(err, &runErr) && tc.handle != "" {
+		// The subagent exists, so the orchestrator gets its handle to
+		// resume it, rather than a failed tool call.
+		err = errSubAgentRun{fmt.Sprintf("Failed to run subagent: %s", err)}
+	}
 	var resp fantasy.ToolResponse
-	// An if chain, not a tagless switch: coverage never marks a case
-	// expression as run, so mutation testing would skip its conditions.
 	if errors.As(err, &runErr) {
 		resp = fantasy.NewTextErrorResponse(runErr.msg)
 	} else if err != nil {

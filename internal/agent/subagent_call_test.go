@@ -412,3 +412,17 @@ func TestCancelBeforeFinalisingWinsOverASuccessfulAttempt(t *testing.T) {
 	require.True(t, resp.IsError)
 	require.Contains(t, resp.Content, "cancelled by human")
 }
+
+func TestTaskCallSetupFailureStillEndsWithSubagentID(t *testing.T) {
+	t.Parallel()
+	c, _, parent := newSubagentCallCoordinator(t)
+	agent := newMockAgent("unconfigured-provider", 1000, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+		t.Fatal("ran without a provider")
+		return nil, nil
+	})
+	resp, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "model provider not configured")
+	require.Regexp(t, subagentIDLine, resp.Content)
+}
