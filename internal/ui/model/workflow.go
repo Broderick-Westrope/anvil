@@ -1,9 +1,7 @@
 package model
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -87,7 +85,7 @@ func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
 		}
 		m.workflowAnswered[action.RequestID] = true
 		if req.Kind == workflowhost.EventAsk {
-			return util.ReportInfo(fmt.Sprintf("Workflow /%s asked: %s → %s", req.Command, firstLine(req.Question), firstLine(action.Answer)))
+			return util.ReportInfo(fmt.Sprintf("Workflow /%s asked: %s → %s", req.Command, chat.FirstLine(req.Question), chat.FirstLine(action.Answer)))
 		}
 	case dialog.ActionWorkflowControl:
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -245,7 +243,7 @@ func (m *UI) finishWorkflow(ev workflowhost.Event) tea.Cmd {
 	}
 	outcome := ev.Message
 	if ev.Status == workflowhost.StatusCompleted {
-		outcome = ansi.Truncate(compactResult(ev.Result), workflowResultMaxWidth, "…")
+		outcome = ansi.Truncate(chat.CompactResult(ev.Result), workflowResultMaxWidth, "…")
 	}
 	severity := util.InfoTypeError
 	switch ev.Status {
@@ -255,21 +253,6 @@ func (m *UI) finishWorkflow(ev workflowhost.Event) tea.Cmd {
 		severity = util.InfoTypeWarn
 	}
 	return util.CmdHandler(util.InfoMsg{Type: severity, Msg: "Workflow /" + ev.Command + " " + chat.WorkflowOutcomeText(ev.Status, outcome)})
-}
-
-// compactResult renders a run's JSON result on one line, or "" when it
-// returned nothing.
-func compactResult(raw json.RawMessage) string {
-	var buf bytes.Buffer
-	if len(raw) == 0 || json.Compact(&buf, raw) != nil || buf.String() == "null" {
-		return ""
-	}
-	return buf.String()
-}
-
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return line
 }
 
 // annotateWorkflowCommands adds the missing requirements of each workflow

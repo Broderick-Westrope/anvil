@@ -75,8 +75,8 @@ type RunItem struct {
 	Question, Answer string
 }
 
-// Current returns the run's latest status() label.
-func (v RunView) Current() (step, detail string) {
+// Current returns the run's latest status() label: its step and detail.
+func (v RunView) Current() (string, string) {
 	if len(v.Phases) == 0 {
 		return "", ""
 	}

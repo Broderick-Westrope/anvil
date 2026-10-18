@@ -144,9 +144,9 @@ func (w *WorkflowRunMessageItem) Finished() bool {
 // SourceMessage returns a copy of the underlying message.
 func (w *WorkflowRunMessageItem) SourceMessage() message.Message { return w.message.Clone() }
 
-// WorkflowRunDrillIn returns the run to open when the node is drilled into,
-// and the breadcrumb label.
-func (w *WorkflowRunMessageItem) WorkflowRunDrillIn() (runID, label string) {
+// WorkflowRunDrillIn returns the ID of the run to open when the node is
+// drilled into, and the breadcrumb label.
+func (w *WorkflowRunMessageItem) WorkflowRunDrillIn() (string, string) {
 	return w.marker.RunID, "/" + w.marker.Command
 }
 
@@ -173,7 +173,7 @@ func (w *WorkflowRunMessageItem) build(width int) string {
 	sty := w.sty
 	title := sty.Messages.WorkflowTag.Render("Workflow") + " " + sty.Messages.WorkflowTitle.Render("/"+w.marker.Command)
 	header := workflowStatusIcon(sty, w.status()) + " " + title
-	if input := firstLine(w.marker.Input); input != "" {
+	if input := FirstLine(w.marker.Input); input != "" {
 		header += " " + sty.Tool.ParamMain.Render(ansi.Truncate(input, max(width-lipgloss.Width(header)-1, 0), "…"))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, ansi.Truncate(header, width, "…"),
@@ -268,7 +268,7 @@ func BuildWorkflowRunItems(sty *styles.Styles, command string, view workflowhost
 	}
 	add("header", "", "", func(width int) string {
 		title := sty.Messages.WorkflowTag.Render("Workflow") + " " + sty.Messages.WorkflowTitle.Render("/"+command)
-		if input := firstLine(view.Input); input != "" {
+		if input := FirstLine(view.Input); input != "" {
 			title += " " + sty.Tool.ParamMain.Render(input)
 		}
 		state := WorkflowOutcomeText(view.Status, outcomeDetail(view))
@@ -318,7 +318,7 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 	sep := sty.Tool.StatsSep.Render(" · ")
 	switch item.Kind {
 	case workflowhost.RunItemAsk:
-		answer := firstLine(item.Answer)
+		answer := FirstLine(item.Answer)
 		switch item.Status {
 		case workflowhost.StatusRunning:
 			answer = "waiting for you"
@@ -326,7 +326,7 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 		default:
 			answer = "unanswered (" + string(item.Status) + ")"
 		}
-		return sty.Tool.IconPending.UnsetString().Render("?") + " " + sty.Tool.NameNormal.Render(firstLine(item.Question)) +
+		return sty.Tool.IconPending.UnsetString().Render("?") + " " + sty.Tool.NameNormal.Render(FirstLine(item.Question)) +
 			sty.Tool.StatsSep.Render(" → ") + sty.Tool.StatsLine.Render(answer)
 	case workflowhost.RunItemSession:
 		state := "session"
@@ -344,7 +344,7 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 		case workflowhost.StatusCompleted:
 			state = "done"
 		case workflowhost.StatusFailed:
-			state = "failed: " + firstLine(item.Err)
+			state = "failed: " + FirstLine(item.Err)
 		}
 		return workflowStatusIcon(sty, item.Status) + " " + label + sep + sty.Tool.StatsLine.Render(state)
 	}
@@ -354,10 +354,15 @@ func workflowRunItemLine(sty *styles.Styles, name string, item workflowhost.RunI
 // when it completed, its error otherwise.
 func outcomeDetail(view workflowhost.RunView) string {
 	if view.Status != workflowhost.StatusCompleted {
-		return firstLine(view.Error)
+		return FirstLine(view.Error)
 	}
+	return CompactResult(view.Result)
+}
+
+// CompactResult is a workflow's JSON result on one line, or "" for none.
+func CompactResult(raw json.RawMessage) string {
 	var buf bytes.Buffer
-	if len(view.Result) == 0 || json.Compact(&buf, view.Result) != nil || buf.String() == "null" {
+	if len(raw) == 0 || json.Compact(&buf, raw) != nil || buf.String() == "null" {
 		return ""
 	}
 	return buf.String()
@@ -402,7 +407,8 @@ func formatRunDuration(d time.Duration) string {
 	return d.Round(time.Second).String()
 }
 
-func firstLine(s string) string {
+// FirstLine is the first line of s, trimmed of surrounding space.
+func FirstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return line
 }
