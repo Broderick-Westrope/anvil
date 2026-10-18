@@ -688,6 +688,36 @@ func (m *UI) findMessageItem(id string) chat.MessageItem {
 	return nil
 }
 
+// toolItemsByCallID returns every tool item for the tool call in the root
+// chat and the drill-stack chats, including the nested children of agent
+// items. A subagent's call can appear both under its agent and in that
+// agent's drill-in, and a nested call's ID resolves to its parent's list
+// entry.
+func (m *UI) toolItemsByCallID(id string) []chat.ToolMessageItem {
+	chats := []*Chat{m.chat}
+	for _, entry := range m.drillStack {
+		chats = append(chats, entry.chat)
+	}
+	var found []chat.ToolMessageItem
+	for _, c := range chats {
+		item := c.MessageItem(id)
+		if tool, ok := item.(chat.ToolMessageItem); ok && tool.ID() == id {
+			found = append(found, tool)
+			continue
+		}
+		container, ok := item.(chat.NestedToolContainer)
+		if !ok {
+			continue
+		}
+		for _, nested := range container.NestedTools() {
+			if nested.ID() == id {
+				found = append(found, nested)
+			}
+		}
+	}
+	return found
+}
+
 // findParentMessageItem searches the root chat and the drill-stack chats
 // below the viewed subagent session for an item matching the given ID. The
 // viewed session's parent agent item lives in one of those.
@@ -5649,19 +5679,14 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 
 // handlePermissionNotification updates tool items when permission state changes.
 func (m *UI) handlePermissionNotification(notification permission.PermissionNotification) {
-	// Search the root and every drill-in chat, not just the visible one:
+	// Update the root and every drill-in chat, not just the visible one:
 	// a subagent's tool may sit under a thinking or tool drill-in.
-	toolItem := m.findMessageItem(notification.ToolCallID)
-	if toolItem == nil {
-		return
+	status := chat.ToolStatusAwaitingPermission
+	if notification.Granted {
+		status = chat.ToolStatusRunning
 	}
-
-	if permItem, ok := toolItem.(chat.ToolMessageItem); ok {
-		if notification.Granted {
-			permItem.SetStatus(chat.ToolStatusRunning)
-		} else {
-			permItem.SetStatus(chat.ToolStatusAwaitingPermission)
-		}
+	for _, item := range m.toolItemsByCallID(notification.ToolCallID) {
+		item.SetStatus(status)
 	}
 }
 

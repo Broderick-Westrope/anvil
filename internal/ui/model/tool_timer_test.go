@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
@@ -160,4 +162,30 @@ func TestToolTimerStart(t *testing.T) {
 		require.NotNil(t, u.startElapsedTickForTools())
 		require.True(t, u.elapsedTickRunning)
 	})
+}
+
+func TestPermissionNotificationReachesEveryInstanceOfANestedCall(t *testing.T) {
+	t.Parallel()
+	u, _ := newTimerTestUI()
+
+	agentItem := chat.NewToolMessageItem(u.com.Styles, "a1", message.ToolCall{
+		ID: "agent-call", Name: agent.TaskToolName, Input: `{"description":"look"}`, Finished: true,
+	}, nil, false, nil)
+	nested := toolItemIn(u, "child-a1", runningBash("tc1", 0))
+	agentItem.(chat.NestedToolContainer).SetNestedTools([]chat.ToolMessageItem{nested})
+	u.chat.SetMessages(agentItem)
+
+	drillChat := NewChat(u.com)
+	drilled := toolItemIn(u, "child-a1", runningBash("tc1", 0))
+	drillChat.SetMessages(drilled)
+	u.drillStack = []drillInEntry{{sessionID: "child", chat: drillChat}}
+
+	u.handlePermissionNotification(permission.PermissionNotification{ToolCallID: "tc1"})
+	require.Equal(t, chat.ToolStatusAwaitingPermission, nested.Status())
+	require.Equal(t, chat.ToolStatusAwaitingPermission, drilled.Status())
+	require.Equal(t, chat.ToolStatusRunning, agentItem.Status(), "the parent agent isn't the call asking")
+
+	u.handlePermissionNotification(permission.PermissionNotification{ToolCallID: "tc1", Granted: true})
+	require.Equal(t, chat.ToolStatusRunning, nested.Status())
+	require.Equal(t, chat.ToolStatusRunning, drilled.Status())
 }
