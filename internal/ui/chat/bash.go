@@ -156,8 +156,8 @@ func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	waiting := params.Wait && paramsErr == nil && !opts.HasResult() && !opts.IsCanceled()
 	if opts.IsPending() || waiting {
 		header := pendingTool(sty, "Job", opts.Anim, opts.Compact)
-		if waiting && !opts.StartedAt.IsZero() {
-			elapsed := max(opts.Now.Sub(opts.StartedAt), 0)
+		if waiting && !opts.MessageCreatedAt.IsZero() {
+			elapsed := max(opts.Now.Sub(opts.MessageCreatedAt), 0)
 			header += " " + sty.Tool.StateWaiting.Render("waiting "+shell.FormatRuntime(elapsed))
 		}
 		return header

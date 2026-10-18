@@ -107,9 +107,9 @@ type ToolRenderOpts struct {
 	IsSpinning      bool
 	Status          ToolStatus
 	NoTruncate      bool
-	// StartedAt is when the assistant message carrying the tool call was
-	// created; zero when unknown.
-	StartedAt time.Time
+	// MessageCreatedAt is when the assistant message carrying the tool call
+	// was created, in whole seconds; zero when unknown.
+	MessageCreatedAt time.Time
 	// Now is the render time, used for live elapsed counters.
 	Now time.Time
 }
@@ -179,7 +179,9 @@ type baseToolMessageItem struct {
 	expandedContent bool
 	noTruncate      bool
 	resultVersion   uint64
-	startedAt       time.Time
+	// messageCreatedAt is when the assistant message carrying the tool
+	// call was created.
+	messageCreatedAt time.Time
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -383,16 +385,16 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 	// if we are spinning or there is no cache rerender
 	if !ok || t.isSpinning() {
 		content = t.toolRenderer.RenderTool(t.sty, toolItemWidth, &ToolRenderOpts{
-			ToolCall:        t.toolCall,
-			Result:          t.result,
-			Anim:            t.anim,
-			ExpandedContent: t.expandedContent,
-			Compact:         t.isCompact,
-			IsSpinning:      t.isSpinning(),
-			Status:          t.computeStatus(),
-			NoTruncate:      t.noTruncate,
-			StartedAt:       t.startedAt,
-			Now:             time.Now(),
+			ToolCall:         t.toolCall,
+			Result:           t.result,
+			Anim:             t.anim,
+			ExpandedContent:  t.expandedContent,
+			Compact:          t.isCompact,
+			IsSpinning:       t.isSpinning(),
+			Status:           t.computeStatus(),
+			NoTruncate:       t.noTruncate,
+			MessageCreatedAt: t.messageCreatedAt,
+			Now:              time.Now(),
 		})
 
 		// Prepend hook indicator if hooks ran for this tool call.
@@ -465,25 +467,26 @@ func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.Bump()
 }
 
-// SetCallStartedAt records when the tool call started, for elapsed-time
-// displays.
-func (t *baseToolMessageItem) SetCallStartedAt(at time.Time) {
-	if t.startedAt.Equal(at) {
+// SetMessageCreatedAt records when the assistant message carrying the tool
+// call was created.
+func (t *baseToolMessageItem) SetMessageCreatedAt(at time.Time) {
+	if t.messageCreatedAt.Equal(at) {
 		return
 	}
-	t.startedAt = at
+	t.messageCreatedAt = at
 	t.clearCache()
 	t.Bump()
 }
 
-// SetToolCallStartedAt records the start time on tool items that track it.
-// unixSeconds is a message CreatedAt timestamp; zero leaves it unset.
-func SetToolCallStartedAt(item MessageItem, unixSeconds int64) {
+// SetToolMessageCreatedAt records when the tool call's assistant message
+// was created on tool items that track it. unixSeconds is a message
+// CreatedAt timestamp; zero leaves it unset.
+func SetToolMessageCreatedAt(item MessageItem, unixSeconds int64) {
 	if unixSeconds == 0 {
 		return
 	}
-	if st, ok := item.(interface{ SetCallStartedAt(time.Time) }); ok {
-		st.SetCallStartedAt(time.Unix(unixSeconds, 0))
+	if st, ok := item.(interface{ SetMessageCreatedAt(time.Time) }); ok {
+		st.SetMessageCreatedAt(time.Unix(unixSeconds, 0))
 	}
 }
 
