@@ -9,7 +9,7 @@ A parent session's cost includes what its subagents spent. Subagents can now be 
 
 ## Decision
 
-`Session.Save` never writes cost. Cost only grows, through `AddCost(id, delta)` for model usage and `RollUpChildCost(child, call)` for subagents, each a single SQL update that adds to the stored value. Each child session keeps a `cost_rolled_up` watermark. A rollup adds `cost - cost_rolled_up` to the parent and to the task call it ran in, then advances the watermark, all in one transaction. Rollups run after every attempt and once more as the call ends, on a context that isn't cancelled.
+`Session.Save` never writes cost. Cost only grows, through `AddCost(id, delta)` for model usage, `UpdateTitleAndUsage` for title generation, and `RollUpChildCost(child, call)` for subagents, each a single SQL update that adds to the stored value. Each child session keeps a `cost_rolled_up` watermark. A rollup adds `cost - cost_rolled_up` to the parent and to the task call it ran in, then advances the watermark, all in one transaction. Rollups run after every attempt and once more as the call ends, on a context that isn't cancelled.
 
 ## Alternatives
 

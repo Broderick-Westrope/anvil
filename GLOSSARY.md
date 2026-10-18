@@ -178,7 +178,6 @@ One instance of a specialist agent running in a child session for task calls. It
 - **Code:** `session.Subagent`, the `subagents` table (`internal/session/subagent.go`)
 - **Not:** specialist agent (the definition), child session (the storage, which title generation and workflows also use).
 
-
 ## Task Call
 
 One call of the `task` tool: it either starts a new subagent or resumes one. It holds a lease on the subagent's child session for its whole life, including automatic resumes after transient failures, and its result always ends with the `subagent_id`.
