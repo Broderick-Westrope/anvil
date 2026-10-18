@@ -798,6 +798,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.startElapsedTickForJobs(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		if cmd := m.startElapsedTickForTools(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
@@ -991,6 +994,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+				if cmd := m.startElapsedTickForToolStart(msg.Payload); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 			break
 		}
@@ -1005,6 +1011,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
 			m.applyLazyMCPMessageParts(msg.Payload)
 			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if cmd := m.startElapsedTickForToolStart(msg.Payload); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		case pubsub.DeletedEvent:
@@ -1331,7 +1340,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
+		anyTimed := m.refreshToolTimers()
+		shouldContinue := anyRunning || anyTimed || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
@@ -1900,9 +1910,9 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 		existingToolItem := c.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {
 			existingToolCall := toolItem.ToolCall()
-			// Only update if finished state changed or input changed
+			// Only update if finished state, input or start time changed
 			// to avoid clearing the cache.
-			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input {
+			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input || tc.StartedAt != existingToolCall.StartedAt {
 				toolItem.SetToolCall(tc)
 			}
 		}
