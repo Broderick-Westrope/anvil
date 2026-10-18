@@ -123,6 +123,22 @@ type Coordinator interface {
 	// PrepareStep would still use a stale snapshot that omits the
 	// server's tools.
 	RefreshMCPTools(ctx context.Context, name string) error
+
+	// SteerSubagent sends a human message to the subagent running in
+	// childSessionID, delivered at its next step boundary. With interrupt,
+	// it also cancels the subagent's current attempt and continues the
+	// same task call with the message. It fails once the call has started
+	// building its result, or when no call is running there.
+	SteerSubagent(childSessionID, text string, interrupt bool) error
+	// CancelSubagent ends the task call running in childSessionID, as
+	// cancelled by a human. It reports false when none is running.
+	CancelSubagent(childSessionID string) bool
+	// SubagentRunning reports whether a task call is running in
+	// childSessionID.
+	SubagentRunning(childSessionID string) bool
+	// SubscribeSubagentEvents reports steers a task call ended without
+	// delivering.
+	SubscribeSubagentEvents(ctx context.Context) <-chan pubsub.Event[SubagentSteersReturned]
 }
 
 type coordinator struct {

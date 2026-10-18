@@ -125,6 +125,14 @@ type Workspace interface {
 	AgentQueuedPrompts(sessionID string) int
 	AgentQueuedPromptsList(sessionID string) []string
 	AgentClearQueue(sessionID string)
+	// AgentSteerSubagent sends a human message to the subagent running in
+	// childSessionID; with interrupt it also cuts off its current attempt.
+	AgentSteerSubagent(childSessionID, text string, interrupt bool) error
+	// AgentCancelSubagent cancels the task call running in childSessionID.
+	AgentCancelSubagent(childSessionID string) bool
+	// AgentSubagentRunning reports whether a task call is running in
+	// childSessionID.
+	AgentSubagentRunning(childSessionID string) bool
 	AgentSummarize(ctx context.Context, sessionID string) error
 	AgentRegenerateTitle(ctx context.Context, sessionID string) error
 	// AgentPause stops new top-level runs from being admitted and waits up

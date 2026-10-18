@@ -211,6 +211,27 @@ func (w *AppWorkspace) AgentQueuedPromptsList(sessionID string) []string {
 	return w.app.AgentCoordinator.QueuedPromptsList(sessionID)
 }
 
+func (w *AppWorkspace) AgentSteerSubagent(childSessionID, text string, interrupt bool) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.SteerSubagent(childSessionID, text, interrupt)
+}
+
+func (w *AppWorkspace) AgentCancelSubagent(childSessionID string) bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.CancelSubagent(childSessionID)
+}
+
+func (w *AppWorkspace) AgentSubagentRunning(childSessionID string) bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.SubagentRunning(childSessionID)
+}
+
 func (w *AppWorkspace) AgentClearQueue(sessionID string) {
 	if w.app.AgentCoordinator != nil {
 		w.app.AgentCoordinator.ClearQueue(sessionID)
