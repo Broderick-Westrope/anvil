@@ -9,6 +9,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
 )
@@ -171,4 +172,29 @@ func TestPartiallySavedStepIsNotCountedTwice(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 3.0, got.Cost, 1e-9, "the step is charged exactly once, on the way out")
 	require.Equal(t, int64(1_000_000), got.PromptTokens)
+}
+
+// failingFinishUpdates fails saving an assistant message once its step
+// has finished.
+type failingFinishUpdates struct {
+	message.Service
+}
+
+func (f *failingFinishUpdates) Update(ctx context.Context, msg message.Message) error {
+	if msg.Role == message.Assistant && msg.FinishPart() != nil {
+		return errors.New("disk full")
+	}
+	return f.Service.Update(ctx, msg)
+}
+
+func TestStepFinishMessageSaveFailureFailsTheRun(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Failing", t.TempDir())
+	require.NoError(t, err)
+	model := &scriptedModel{}
+	a := jobEventsAgent(env, &failingFinishUpdates{Service: env.messages}, model, nil)
+
+	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "start", NonInteractive: true})
+	require.ErrorIs(t, err, errLocalPersistence)
 }

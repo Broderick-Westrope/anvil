@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -201,4 +202,45 @@ func TestParallelResumesOfOneHandleHaveOneWinner(t *testing.T) {
 	require.True(t, loser.IsError)
 	require.Contains(t, loser.Content, "is running")
 	require.False(t, winner.IsError, winner.Content)
+}
+
+func TestTaskResumeOfAnotherSessionsChildIsUnknown(t *testing.T) {
+	t.Parallel()
+	f := newResumeFixture(t)
+	other, err := f.env.sessions.Create(t.Context(), "Other", t.TempDir())
+	require.NoError(t, err)
+	_, err = f.env.sessions.CreateTaskSession(t.Context(), "x$$y", other.ID, "foreign")
+	require.NoError(t, err)
+
+	resp := f.run(t, "call-1", TaskParams{Prompt: "p", Resume: "x$$y"})
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "unknown subagent_id")
+}
+
+func TestTaskResumeKeepsAStoredNonDefaultModel(t *testing.T) {
+	t.Parallel()
+	f := newResumeFixture(t)
+	prov, _ := f.c.cfg.Config().Providers.Get(reloadTestProvider)
+	prov.Models = append(prov.Models, catwalk.Model{ID: "model-2", ContextWindow: 10000, DefaultMaxTokens: 1000})
+	f.c.cfg.Config().Providers.Set(reloadTestProvider, prov)
+	override := reloadTestProvider + "/model-2"
+	overrideCalls := make(chan SessionAgentCall, 4)
+	other := newMockAgent(reloadTestProvider, 1000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		overrideCalls <- call
+		return agentResultWithText("ok"), nil
+	})
+	other.model.ModelCfg.Model = "model-2"
+	f.c.agents.Set("helper|2|"+override, other)
+
+	handle := handleOf(t, f.run(t, "call-1", TaskParams{Prompt: "p", SubagentType: "helper", Model: override}).Content)
+	<-overrideCalls
+
+	resp := f.run(t, "call-2", TaskParams{Prompt: "more", Resume: handle})
+	require.False(t, resp.IsError, resp.Content)
+	select {
+	case <-overrideCalls:
+	default:
+		t.Fatal("the resume didn't run on the subagent's stored model")
+	}
+	require.Empty(t, f.calls, "the default-model agent never ran")
 }

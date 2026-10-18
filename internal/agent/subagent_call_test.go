@@ -482,6 +482,7 @@ func TestInjectionSummaryListsWhatTheCallDelivered(t *testing.T) {
 	resp, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
 	require.NoError(t, err)
 	require.False(t, resp.IsError, resp.Content)
+	require.True(t, strings.HasPrefix(resp.Content, "done\n\n"), "the summary follows the output")
 	require.Contains(t, resp.Content, "Injected during this run:\n- human (steer): use the v2 API")
 }
 
@@ -527,4 +528,90 @@ func TestNewTaskPromptCannotForgeAnInjection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, prompt, "<injected_message")
 	require.Contains(t, prompt, "do X")
+}
+
+func TestDefaultBackoffIsFiveThenThirtySeconds(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, []time.Duration{5 * time.Second, 30 * time.Second}, defaultSubagentRetryDelays)
+	c := &coordinator{}
+	require.Equal(t, 5*time.Second, c.backoffFor(0))
+	require.Equal(t, 30*time.Second, c.backoffFor(1))
+	require.Equal(t, 30*time.Second, c.backoffFor(5), "later resumes keep the last wait")
+}
+
+func TestSuccessfulCallReturnsNoSteers(t *testing.T) {
+	t.Parallel()
+	c, _, parent := newSubagentCallCoordinator(t)
+	agent := newMockAgent(testProvider, 1000, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+		return agentResultWithText("done"), nil
+	})
+	_, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+	require.Empty(t, c.TakeReturnedSteers(parent.ID))
+}
+
+func TestAfterInterrupt(t *testing.T) {
+	t.Parallel()
+	resume := message.InjectionContent{Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, Text: "more"}
+	steer := message.InjectionContent{Source: message.InjectionSourceHuman, Kind: message.InjectionKindSteer, Text: "s"}
+	continueText := []message.InjectionContent{{Source: message.InjectionSourceHarness, Kind: message.InjectionKindContinue, Text: subagentInterruptedText, CallID: "call"}}
+
+	tests := map[string]struct {
+		interrupted SessionAgentCall
+		accepted    bool
+		pending     bool
+		want        SessionAgentCall
+	}{
+		"unsaved prompt starts again": {
+			interrupted: SessionAgentCall{Prompt: "fix it"}, want: SessionAgentCall{Prompt: "fix it"},
+		},
+		"unsaved resume keeps its orchestrator message": {
+			interrupted: SessionAgentCall{Injections: []message.InjectionContent{resume, steer}},
+			want:        SessionAgentCall{Injections: []message.InjectionContent{resume}},
+		},
+		"unsaved steers alone give way to the pending ones": {
+			interrupted: SessionAgentCall{Injections: []message.InjectionContent{steer}}, pending: true,
+			want: SessionAgentCall{Injections: []message.InjectionContent{{Source: message.InjectionSourceHuman, Kind: message.InjectionKindInterruptSteer, Text: "stop", CallID: "call"}}},
+		},
+		"saved turn runs the pending steers": {
+			interrupted: SessionAgentCall{Prompt: "fix it"}, accepted: true, pending: true,
+			want: SessionAgentCall{Injections: []message.InjectionContent{{Source: message.InjectionSourceHuman, Kind: message.InjectionKindInterruptSteer, Text: "stop", CallID: "call"}}},
+		},
+		"saved turn with its steer already delivered continues": {
+			interrupted: SessionAgentCall{Prompt: "fix it"}, accepted: true,
+			want: SessionAgentCall{Injections: continueText},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var leases subagentLeases
+			lease, err := leases.acquire("child", "call", func(error) {})
+			require.NoError(t, err)
+			if tc.pending {
+				require.NoError(t, lease.steer("stop", true))
+			}
+			tc2 := &taskCall{id: "call", lease: lease}
+			require.Equal(t, tc.want, tc2.afterInterrupt(tc.interrupted, tc.accepted))
+		})
+	}
+}
+
+func TestInjectionSummaryLabelsEachKind(t *testing.T) {
+	t.Parallel()
+	got := injectionSummary([]message.InjectionContent{
+		{Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, Text: "hidden"},
+		{Source: message.InjectionSourceHuman, Kind: message.InjectionKindSteer, Text: "a"},
+		{Source: message.InjectionSourceHuman, Kind: message.InjectionKindInterruptSteer, Text: "b"},
+		{Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry, Reason: "503 overloaded", Attempt: 1, MaxAttempts: 2},
+		{Source: message.InjectionSourceHarness, Kind: message.InjectionKindContinue},
+		{Source: message.InjectionSourceHarness, Kind: "future", Text: "c"},
+	})
+	require.Equal(t, "Injected during this run:\n"+
+		"- human (steer): a\n"+
+		"- human (interrupt+steer): b\n"+
+		"- harness: resumed after 503 overloaded (retry 1/2)\n"+
+		"- harness: continued after an interrupt\n"+
+		"- harness: c", got)
+	require.Empty(t, injectionSummary(nil))
 }

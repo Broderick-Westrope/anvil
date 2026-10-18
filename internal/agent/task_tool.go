@@ -179,11 +179,12 @@ func (c *coordinator) resumeSubagent(ctx context.Context, callerName string, cal
 	if refusal := c.delegationRefusal(callerName, sub.AgentType); refusal != "" {
 		return fantasy.NewTextErrorResponse(refusal), nil
 	}
-	agent, err := c.getOrBuildAgent(ctx, sub.AgentType, callerDepth-1, override)
+	depth := callerDepth - 1
+	agent, err := c.getOrBuildAgent(ctx, sub.AgentType, depth, override)
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("building agent %q: %w", sub.AgentType, err)
 	}
-	slog.Info("Resuming subagent", "subagent_id", sub.Handle, "agent", sub.AgentType, "depth", callerDepth-1)
+	slog.Info("Resuming subagent", "subagent_id", sub.Handle, "agent", sub.AgentType, "depth", depth)
 	return c.runSubAgent(ctx, subAgentParams{
 		Agent:          agent,
 		AgentType:      sub.AgentType,
@@ -230,11 +231,11 @@ func (c *coordinator) storedModelOverride(sub session.Subagent) (string, string)
 		return "", fmt.Sprintf("subagent_id %q can't be resumed: its agent %q is no longer configured", sub.Handle, sub.AgentType)
 	}
 	stored := sub.Provider + "/" + sub.Model
-	resolved, err := config.ResolveAgentModel(config.Agent{ID: sub.AgentType, Model: stored}, c.cfg.Config())
-	if _, providerOK := c.cfg.Config().Providers.Get(sub.Provider); err != nil || !providerOK || resolved.Provider != sub.Provider || resolved.Model != sub.Model {
+	// Resolution fails unless the provider is configured and has the model.
+	if _, err := config.ResolveAgentModel(config.Agent{ID: sub.AgentType, Model: stored}, c.cfg.Config()); err != nil {
 		return "", fmt.Sprintf("subagent_id %q can't be resumed: its model %q is no longer available", sub.Handle, stored)
 	}
-	if def, err := config.ResolveAgentModel(agentCfg, c.cfg.Config()); err == nil && def.Provider == sub.Provider && def.Model == sub.Model {
+	if def, err := config.ResolveAgentModel(agentCfg, c.cfg.Config()); err == nil && def.Provider+"/"+def.Model == stored {
 		return "", ""
 	}
 	return stored, ""

@@ -50,6 +50,8 @@ func TestClassifySubagentFailure(t *testing.T) {
 		"7 connection reset":                  {err: wrap(syscall.ECONNRESET), retry: true},
 		"7 http2 stream reset":                {err: wrap(http2.StreamError{StreamID: 3, Code: http2.ErrCodeInternal}), retry: true},
 		"7 request timeout, call still alive": {err: wrap(context.DeadlineExceeded), retry: true},
+		"7 provider error caused by a reset":  {err: wrap(&fantasy.ProviderError{Cause: syscall.ECONNRESET}), retry: true},
+		"8 unknown provider status":           {err: provider(418), retry: false},
 		"8 anything else":                     {err: wrap(errors.New("boom")), retry: false},
 		"8 cancelled attempt, call alive":     {err: wrap(context.Canceled), retry: false},
 	}
@@ -145,6 +147,26 @@ func TestSubagentRetryDelaySurvivesAbsurdHints(t *testing.T) {
 			t.Parallel()
 			err := &fantasy.ProviderError{StatusCode: 429, ResponseHeaders: map[string]string{"retry-after": hint, "retry-after-ms": hint}}
 			require.Equal(t, maxSubagentRetryDelay, withProviderHint(err, 5*time.Second))
+		})
+	}
+}
+
+func TestSubagentRetryHintFallsBackAndIgnoresNaN(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		headers map[string]string
+		want    time.Duration
+	}{
+		"bad ms falls back to seconds": {headers: map[string]string{"retry-after-ms": "soon", "retry-after": "12"}, want: 12 * time.Second},
+		"NaN is no hint":               {headers: map[string]string{"retry-after": "NaN"}, want: 5 * time.Second},
+		"negative is no hint":          {headers: map[string]string{"retry-after": "-30"}, want: 5 * time.Second},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := &fantasy.ProviderError{StatusCode: 429, ResponseHeaders: tc.headers}
+			require.Equal(t, tc.want, withProviderHint(err, 5*time.Second))
 		})
 	}
 }

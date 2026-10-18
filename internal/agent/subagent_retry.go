@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -119,15 +120,24 @@ func withProviderHint(err error, base time.Duration) time.Duration {
 // Duration, since converting a huge float is implementation-defined.
 func retryHint(headers map[string]string) time.Duration {
 	limit := maxSubagentRetryDelay.Seconds()
-	if ms, err := strconv.ParseFloat(headers["retry-after-ms"], 64); err == nil && ms > 0 {
-		return time.Duration(min(ms/1000, limit) * float64(time.Second))
+	if ms, err := strconv.ParseFloat(headers["retry-after-ms"], 64); err == nil {
+		return clampedSeconds(ms/1000, limit)
 	}
 	retryAfter := headers["retry-after"]
-	if secs, err := strconv.ParseFloat(retryAfter, 64); err == nil && secs > 0 {
-		return time.Duration(min(secs, limit) * float64(time.Second))
+	if secs, err := strconv.ParseFloat(retryAfter, 64); err == nil {
+		return clampedSeconds(secs, limit)
 	}
 	if at, err := http.ParseTime(retryAfter); err == nil {
-		return max(time.Until(at), 0)
+		return clampedSeconds(time.Until(at).Seconds(), limit)
 	}
 	return 0
+}
+
+// clampedSeconds converts secs to a Duration between 0 and limit seconds.
+// A NaN hint is no hint.
+func clampedSeconds(secs, limit float64) time.Duration {
+	if math.IsNaN(secs) {
+		return 0
+	}
+	return time.Duration(min(max(secs, 0), limit) * float64(time.Second))
 }
