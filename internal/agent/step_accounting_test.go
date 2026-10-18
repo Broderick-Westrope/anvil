@@ -142,14 +142,14 @@ func TestCompactionPersistenceFailureIsMarked(t *testing.T) {
 	require.ErrorIs(t, err, errLocalPersistence)
 }
 
-// failingCostAdds fails cost additions once armed, after saves succeed.
+// failingCostAdds fails the first cost addition, after its save succeeds.
 type failingCostAdds struct {
 	session.Service
-	armed atomic.Bool
+	failed atomic.Bool
 }
 
 func (f *failingCostAdds) AddCost(ctx context.Context, id string, delta float64) error {
-	if f.armed.Load() {
+	if f.failed.CompareAndSwap(false, true) {
 		return errors.New("disk full")
 	}
 	return f.Service.AddCost(ctx, id, delta)
@@ -161,7 +161,6 @@ func TestPartiallySavedStepIsNotCountedTwice(t *testing.T) {
 	sess, err := env.sessions.Create(t.Context(), "Partial", t.TempDir())
 	require.NoError(t, err)
 	sessions := &failingCostAdds{Service: env.sessions}
-	sessions.armed.Store(true)
 	tool := stepTool("work", func(context.Context, int) fantasy.ToolResponse { return fantasy.NewTextResponse("ok") })
 	a := pricedAgent(env, sessions, &billedToolModel{}, tool)
 
@@ -170,5 +169,6 @@ func TestPartiallySavedStepIsNotCountedTwice(t *testing.T) {
 
 	got, err := env.sessions.Get(t.Context(), sess.ID)
 	require.NoError(t, err)
-	require.Equal(t, int64(1_000_000), got.PromptTokens, "the step's tokens are saved once")
+	require.InDelta(t, 3.0, got.Cost, 1e-9, "the step is charged exactly once, on the way out")
+	require.Equal(t, int64(1_000_000), got.PromptTokens)
 }
