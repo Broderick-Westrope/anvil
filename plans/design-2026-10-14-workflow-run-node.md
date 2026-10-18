@@ -411,8 +411,8 @@ they are. The engine is beta, so no backfill.
 - Metadata entries (MCP toggles, model and thinking changes) are written
   through the session's queue onto its current leaf, like the marker.
 - While a builder has the editor, commands and palette actions that act
-  on the user's own session are refused (`refuseInOrchestratorSession`). Esc cancels
-  what's running the view on screen: a builder, for the builder or its
+  on the user's own session are refused (`refuseInOrchestratorSession`).
+  Esc cancels what's running the view on screen: a builder, for the builder or its
   subagents; nothing inside a run's own views (alt+x aborts the run); the
   user's session for its own subagents.
 - Esc keeps silent queued work (markers, metadata, forks) and a script's
@@ -429,7 +429,7 @@ they are. The engine is beta, so no backfill.
   copied, should drilling in fall back to the original session's
   transcript (read-only), rather than being disabled?
 
-**Context Files:**
+**Context Files** (as they were before this change):
 - `plans/completed/design-2026-10-10-workflows.md`: the workflow engine,
   primitives, replay-based resume.
 - `internal/ui/model/workflow.go`: today's status bar, focus handling and
