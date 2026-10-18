@@ -5,6 +5,11 @@
 ALTER TABLE sessions ADD COLUMN cost_rolled_up REAL NOT NULL DEFAULT 0.0;
 -- +goose StatementEnd
 -- +goose StatementBegin
+-- Existing children were rolled up by the old code, or never will be, so
+-- none of their cost is due again.
+UPDATE sessions SET cost_rolled_up = cost WHERE parent_session_id IS NOT NULL;
+-- +goose StatementEnd
+-- +goose StatementBegin
 -- The identity of a subagent's child session, so it can be resumed with
 -- the agent and model it ran with.
 CREATE TABLE IF NOT EXISTS subagents (

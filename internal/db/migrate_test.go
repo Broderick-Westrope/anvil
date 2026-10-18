@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -90,4 +91,43 @@ func TestMigrations_RenameDecisionSourceToBouncer(t *testing.T) {
 
 	require.NoError(t, goose.DownTo(conn, "migrations", before))
 	require.Equal(t, map[string]string{"a": "assessor", "h": "human", "r": "rule"}, sources())
+}
+
+func TestMigrations_SubagentsRoundTripKeepsSessionsAndCost(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, initGoose())
+
+	conn, err := openDB(filepath.Join(t.TempDir(), "anvil.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	conn.SetMaxOpenConns(1)
+
+	const before, subagents = 20261010000000, 20261018000000
+	require.NoError(t, goose.UpTo(conn, "migrations", before))
+	_, err = conn.ExecContext(t.Context(), `INSERT INTO sessions (id, title, cost, updated_at, created_at) VALUES ('p', 'parent', 0.5, 1, 1)`)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(t.Context(), `INSERT INTO sessions (id, parent_session_id, title, cost, updated_at, created_at) VALUES ('m$$c', 'p', 'child', 0.5, 1, 1)`)
+	require.NoError(t, err)
+
+	require.NoError(t, goose.UpTo(conn, "migrations", subagents))
+	q := New(conn)
+	require.NoError(t, q.CreateSubagent(t.Context(), CreateSubagentParams{
+		SessionID: "m$$c", ParentSessionID: "p", Handle: "fixer-abcd", Origin: "task", AgentType: "fixer", Provider: "p", Model: "m",
+	}))
+	require.NoError(t, q.CreateSubagentCall(t.Context(), CreateSubagentCallParams{ID: "m$$c", SessionID: "m$$c", Kind: "new"}))
+	child, err := q.GetSessionByID(t.Context(), "m$$c")
+	require.NoError(t, err)
+	require.InDelta(t, 0.5, child.CostRolledUp, 1e-9, "existing children's cost is never rolled up again")
+
+	// Down drops identities, links and watermarks, but keeps sessions and
+	// their accumulated cost.
+	require.NoError(t, goose.DownTo(conn, "migrations", before))
+	var cost float64
+	require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT cost FROM sessions WHERE id = 'p'`).Scan(&cost))
+	require.InDelta(t, 0.5, cost, 1e-9)
+
+	require.NoError(t, goose.UpTo(conn, "migrations", subagents))
+	_, err = q.GetSubagent(t.Context(), "m$$c")
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }
