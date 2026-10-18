@@ -200,3 +200,51 @@ func TestRunFailureStampsSyntheticResultsWithFinishTime(t *testing.T) {
 	require.GreaterOrEqual(t, result.FinishedAt, before.UnixMilli())
 	require.LessOrEqual(t, result.FinishedAt, after.UnixMilli())
 }
+
+func TestStepIsRunningOnlyWhileItsToolsRun(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		respond func(int) ([]fantasy.StreamPart, error)
+		wantErr bool
+	}{
+		"turn ends normally": {respond: toolCallsThenStop("work", "call_0")},
+		"turn fails after the tool ran": {
+			respond: func(call int) ([]fantasy.StreamPart, error) {
+				if call > 0 {
+					return nil, fmt.Errorf("stream broke")
+				}
+				return toolCallsThenStop("work", "call_0")(call)
+			},
+			wantErr: true,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := testEnv(t)
+			sess := newTestSession(t, env)
+
+			var a *sessionAgent
+			var stepID string
+			var runningDuringTool bool
+			tool := stepTool("work", func(ctx context.Context, _ int) fantasy.ToolResponse {
+				stepID, _ = ctx.Value(tools.MessageIDContextKey).(string)
+				_, runningDuringTool = a.runningSteps.Get(stepID)
+				return fantasy.NewTextResponse("ok")
+			})
+			a = turnAgent(env, &recordingModel{respond: tc.respond}, "system", 200_000, tool)
+
+			_, err := a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			require.True(t, runningDuringTool)
+			_, stillRunning := a.runningSteps.Get(stepID)
+			require.False(t, stillRunning, "a finished step's tool calls are no longer running")
+		})
+	}
+}

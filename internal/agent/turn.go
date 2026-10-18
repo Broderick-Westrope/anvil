@@ -127,6 +127,13 @@ func (c *cacheMarkedTool) ProviderOptions() fantasy.ProviderOptions { return c.o
 
 func (c *cacheMarkedTool) SetProviderOptions(opts fantasy.ProviderOptions) { c.opts = opts }
 
+// endStep marks the current step as no longer in flight.
+func (t *turn) endStep() {
+	if t.assistant != nil {
+		t.a.runningSteps.Del(t.assistant.ID)
+	}
+}
+
 // timed returns a copy of agentTools whose tools record on this turn when
 // they start running. Like cacheMarkedTool, the wrapper is per turn so the
 // shared tool instances carry no per-turn state.
@@ -300,6 +307,8 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 	}
 	t.call.state.assistantIDs = append(t.call.state.assistantIDs, assistantMsg.ID)
 	t.setLeaf(assistantMsg.ID)
+	t.endStep()
+	a.runningSteps.Set(assistantMsg.ID, struct{}{})
 	// The capture starts after the message is created so
 	// request_started_at is as close to the provider request as
 	// PrepareStep allows.

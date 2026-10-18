@@ -140,6 +140,9 @@ type sessionAgent struct {
 	tools              *csync.Slice[fantasy.AgentTool]
 	lazyMCPToolMap     *csync.Map[string, string]
 	connectFn          *csync.Value[tools.ConnectFn]
+	// runningSteps holds the assistant message IDs of steps in flight.
+	// The coordinator shares one set between all its agents.
+	runningSteps *csync.Map[string, struct{}]
 
 	depth                int
 	isSubAgent           bool
@@ -202,6 +205,7 @@ func (a *sessionAgent) WaitBackgroundJobs() {
 
 type SessionAgentOptions struct {
 	admission            *admission
+	runningSteps         *csync.Map[string, struct{}]
 	LargeModel           Model
 	SmallModel           Model
 	SystemPromptPrefix   string
@@ -233,7 +237,11 @@ func NewSessionAgent(
 	if opts.admission == nil {
 		opts.admission = newAdmission(context.Background())
 	}
+	if opts.runningSteps == nil {
+		opts.runningSteps = csync.NewMap[string, struct{}]()
+	}
 	return &sessionAgent{
+		runningSteps:         opts.runningSteps,
 		largeModel:           csync.NewValue(opts.LargeModel),
 		smallModel:           csync.NewValue(opts.SmallModel),
 		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
@@ -384,11 +392,14 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		if t.assistant == nil {
 			return result, err
 		}
-		if recordErr := t.recordFailure(err); recordErr != nil {
+		recordErr := t.recordFailure(err)
+		t.endStep()
+		if recordErr != nil {
 			return nil, recordErr
 		}
 		return nil, err
 	}
+	t.endStep()
 	if t.shouldSummarize {
 		if err := a.summarizeAndResume(ctx, call, len(t.assistant.ToolCalls()) > 0); err != nil {
 			return nil, err
@@ -1191,6 +1202,7 @@ func (a *sessionAgent) IsBusy() bool {
 func (a *sessionAgent) IsSessionBusy(sessionID string) bool {
 	return a.admission.busy(sessionID)
 }
+
 
 func (a *sessionAgent) QueuedPrompts(sessionID string) int {
 	return len(a.admission.queued(sessionID))

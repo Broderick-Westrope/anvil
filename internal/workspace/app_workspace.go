@@ -175,6 +175,13 @@ func (w *AppWorkspace) AgentIsSessionBusy(sessionID string) bool {
 	return w.app.AgentCoordinator.IsSessionBusy(sessionID)
 }
 
+func (w *AppWorkspace) AgentIsStepRunning(assistantMessageID string) bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.IsStepRunning(assistantMessageID)
+}
+
 func (w *AppWorkspace) AgentModel() AgentModel {
 	if w.app.AgentCoordinator == nil {
 		return AgentModel{}
