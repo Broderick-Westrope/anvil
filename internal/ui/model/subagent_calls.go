@@ -69,11 +69,26 @@ func (c *subagentCalls) Observe(msg tea.Msg) tea.Cmd {
 			ch.owner, ch.startedAt, ch.baseCost = callID, c.now(), ch.lastCost
 		}
 	case pubsub.Event[session.Session]:
-		if ev.Payload.ParentSessionID != "" {
+		switch {
+		case ev.Payload.ParentSessionID == "":
+		case ev.Type == pubsub.DeletedEvent:
+			delete(c.children, ev.Payload.ID)
+		default:
 			c.child(ev.Payload.ID).lastCost = ev.Payload.Cost
 		}
 	}
 	return nil
+}
+
+// LoadedResume records, from a reload, that the resume callID owns child
+// childSessionID's activity: it started at startedAt, when the child had
+// cost baseCost.
+func (c *subagentCalls) LoadedResume(childSessionID, callID string, startedAt time.Time, baseCost float64) {
+	if c == nil {
+		return
+	}
+	ch := c.child(childSessionID)
+	ch.owner, ch.startedAt, ch.baseCost = callID, startedAt, baseCost
 }
 
 // OwnerCall returns the task call ID (messageID$$toolCallID) whose item
@@ -141,6 +156,17 @@ func messagesOfCall(msgs []message.Message, firstCallID, callID string) []messag
 		}
 	}
 	return out
+}
+
+// latestResumeCall returns the call of the last resume message in a child
+// session's msgs, or "" when it was never resumed.
+func latestResumeCall(msgs []message.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if callID := resumeCallID(msgs[i]); callID != "" {
+			return callID
+		}
+	}
+	return ""
 }
 
 // resumeCallID returns the call a message's resume injection started, or

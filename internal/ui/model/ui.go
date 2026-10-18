@@ -1696,6 +1696,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		if err != nil || len(nestedMsgs) == 0 {
 			continue
 		}
+		ownsChild := linked && latestResumeCall(nestedMsgs) == callID
 		nestedMsgs = messagesOfCall(nestedMsgs, agentSessionID, callID)
 
 		// Build tool result map for nested messages.
@@ -1751,6 +1752,11 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 			// call's own, otherwise the child session's.
 			if sess, err := m.com.Workspace.GetSession(context.Background(), agentSessionID); err == nil {
 				m.features.calls.SeenCost(agentSessionID, sess.Cost)
+				if ownsChild {
+					// Live activity after the reload belongs to this
+					// resume, not to the call that created the child.
+					m.features.calls.LoadedResume(agentSessionID, callID, time.Unix(call.CreatedAt, 0), max(sess.Cost-call.Cost, 0))
+				}
 				stats := loadedCallStats(sess, call, linked)
 				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
 				da.SetCost(stats.cost)

@@ -501,3 +501,14 @@ func TestReturnedSteersAreTakenPerRootSession(t *testing.T) {
 	require.Len(t, returned, 1)
 	require.Equal(t, "root-a", returned[0].RootSessionID)
 }
+
+func TestReturnedSteersQueueIsBounded(t *testing.T) {
+	t.Parallel()
+	c := &coordinator{}
+	for i := range maxReturnedSteers + 5 {
+		c.handBackSteers("root", fmt.Sprintf("child-%d", i), []message.InjectionContent{{Text: "x"}}, nil)
+	}
+	returned := c.TakeReturnedSteers("root")
+	require.Len(t, returned, maxReturnedSteers)
+	require.Equal(t, "child-5", returned[0].SessionID, "the oldest are dropped")
+}

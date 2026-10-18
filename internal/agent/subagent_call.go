@@ -19,6 +19,10 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
+// maxReturnedSteers bounds the returned steers waiting for their session
+// to be shown; the oldest are dropped beyond it.
+const maxReturnedSteers = 50
+
 // maxSubagentResumes is how many times one task call resumes its subagent
 // after a transient failure. Fantasy has already retried each step by the
 // time a failure ends a run, so a couple of widely spaced resumes is enough.
@@ -470,6 +474,11 @@ func (c *coordinator) handBackSteers(rootID, childID string, undelivered []messa
 	returned := SubagentSteersReturned{RootSessionID: rootID, SessionID: childID, Steers: texts, Reason: reason}
 	c.returnedMu.Lock()
 	c.returned = append(c.returned, returned)
+	if over := len(c.returned) - maxReturnedSteers; over > 0 {
+		// Steers for sessions nobody reopens would otherwise pile up.
+		slog.Warn("Dropping returned subagent steers nobody took", "count", over)
+		c.returned = slices.Delete(c.returned, 0, over)
+	}
 	c.returnedMu.Unlock()
 	// Only a nudge: the steers stay queued until the UI takes them, so a
 	// dropped event can't lose them.
