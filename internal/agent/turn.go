@@ -17,6 +17,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
 )
@@ -95,7 +96,7 @@ func (t *turn) newAgent(agentTools []fantasy.AgentTool, systemPrompt string) fan
 	return fantasy.NewAgent(
 		t.largeModel.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
-		fantasy.WithTools(withCachedLastTool(agentTools, t.a.getCacheControlOptions())...),
+		fantasy.WithTools(withCachedLastTool(t.timed(agentTools), t.a.getCacheControlOptions())...),
 		fantasy.WithUserAgent(userAgent),
 	)
 }
@@ -125,6 +126,48 @@ type cacheMarkedTool struct {
 func (c *cacheMarkedTool) ProviderOptions() fantasy.ProviderOptions { return c.opts }
 
 func (c *cacheMarkedTool) SetProviderOptions(opts fantasy.ProviderOptions) { c.opts = opts }
+
+// timed returns a copy of agentTools whose tools record on this turn when
+// they start running. Like cacheMarkedTool, the wrapper is per turn so the
+// shared tool instances carry no per-turn state.
+func (t *turn) timed(agentTools []fantasy.AgentTool) []fantasy.AgentTool {
+	timed := make([]fantasy.AgentTool, len(agentTools))
+	for i, tool := range agentTools {
+		timed[i] = &timedTool{AgentTool: tool, turn: t}
+	}
+	return timed
+}
+
+// timedTool is one turn's view of a shared tool that records when each of
+// its calls starts running, and restarts that clock when a human grants a
+// permission the call asked for. It is outermost, so time spent in hooks
+// counts towards the call.
+type timedTool struct {
+	fantasy.AgentTool
+	turn *turn
+}
+
+func (tt *timedTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	tt.turn.toolStarted(call.ID, time.Now())
+	ctx = permission.WithGrantObserver(ctx, call.ID, func(at time.Time) {
+		tt.turn.toolStarted(call.ID, at)
+	})
+	return tt.AgentTool.Run(ctx, call)
+}
+
+// toolStarted records that the tool call began running at at. Parallel
+// tools call it from their own goroutines, so it holds the turn lock.
+func (t *turn) toolStarted(toolCallID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.assistant.MarkToolCallStarted(toolCallID, at) {
+		return
+	}
+	// Use persistCtx so a start that races cancellation is still recorded.
+	if err := t.a.messages.Update(t.persistCtx, *t.assistant); err != nil {
+		slog.Warn("Failed to record tool call start", "tool_call_id", toolCallID, "error", err)
+	}
+}
 
 // start adds the message this turn begins from to msgs and moves the leaf
 // to it: background job notices for a wake, a new user message for a
@@ -220,7 +263,7 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 	// Use latest tools (updated by SetTools when MCP tools change),
 	// filtering out lazy MCP tools that haven't been enabled.
 	prepared.Tools = withCachedLastTool(
-		filterLazyMCPTools(a.tools.Copy(), t.lazyMCPToolMap, t.lazyState),
+		t.timed(filterLazyMCPTools(a.tools.Copy(), t.lazyMCPToolMap, t.lazyState)),
 		a.getCacheControlOptions(),
 	)
 
@@ -403,6 +446,7 @@ func (t *turn) onToolCall(tc fantasy.ToolCallContent) error {
 
 func (t *turn) onToolResult(result fantasy.ToolResultContent) error {
 	toolResult := t.a.convertToToolResult(result)
+	toolResult.FinishedAt = time.Now().UnixMilli()
 	t.sanitizedMu.Lock()
 	wasSanitized := t.sanitized[result.ToolCallID]
 	t.sanitizedMu.Unlock()
@@ -554,6 +598,7 @@ func (t *turn) recordFailure(err error) error {
 				Name:       tc.Name,
 				Content:    content,
 				IsError:    true,
+				FinishedAt: time.Now().UnixMilli(),
 			}},
 			ParentMessageID: t.currentLeaf(),
 		})

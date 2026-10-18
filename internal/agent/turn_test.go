@@ -507,9 +507,13 @@ func TestRunFailureClosesOpenToolCall(t *testing.T) {
 			toolMsgs := listMessages(t, env, sess.ID, message.Tool)
 			require.Len(t, toolMsgs, 1)
 			require.Equal(t, assistant.ID, toolMsgs[0].ParentMessageID)
+			results := toolMsgs[0].ToolResults()
+			require.Len(t, results, 1)
+			require.NotZero(t, results[0].FinishedAt)
+			results[0].FinishedAt = 0
 			require.Equal(t, []message.ToolResult{{
 				ToolCallID: "call_0", Name: "work", Content: tc.wantResult, IsError: true,
-			}}, toolMsgs[0].ToolResults())
+			}}, results)
 
 			current, err := env.sessions.Get(t.Context(), sess.ID)
 			require.NoError(t, err)
