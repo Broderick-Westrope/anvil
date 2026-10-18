@@ -276,8 +276,10 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 		// even after it continues past auto-compaction.
 		call.Await = true
 		call.Injections, call.steering, call.state = next.Injections, tc.lease, &runState{}
-		attemptCtx := tc.lease.beginAttempt(ctx)
+		attemptCtx, endAttempt := tc.lease.beginAttempt(ctx)
 		result, runErr := tc.params.Agent.Run(attemptCtx, call)
+		interrupted := errors.Is(context.Cause(attemptCtx), errSubagentInterrupted)
+		endAttempt()
 		c.rollUpChildCost(ctx, sessionID, tc.costCall)
 		if runErr != nil && call.state.acceptedUserID == "" {
 			// The turn never persisted its message, so steers it carried
@@ -301,7 +303,7 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 		if errors.Is(runErr, errLocalPersistence) {
 			return tc.failure(ctx, runErr)
 		}
-		if ctx.Err() == nil && errors.Is(context.Cause(attemptCtx), errSubagentInterrupted) {
+		if ctx.Err() == nil && interrupted {
 			next = tc.afterInterrupt(next, call.state.acceptedUserID != "")
 			continue
 		}

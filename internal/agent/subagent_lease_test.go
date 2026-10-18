@@ -102,7 +102,7 @@ func TestSubagentLeaseInterruptCancelsOnlyTheAttempt(t *testing.T) {
 	lease, err := leases.acquire("child", "call", cancelCall)
 	require.NoError(t, err)
 
-	attemptCtx := lease.beginAttempt(callCtx)
+	attemptCtx, _ := lease.beginAttempt(callCtx)
 	require.NoError(t, lease.steer("stop, do X instead", true))
 
 	require.ErrorIs(t, context.Cause(attemptCtx), errSubagentInterrupted)
@@ -118,7 +118,7 @@ func TestSubagentLeaseCancelEndsTheCallWithItsCause(t *testing.T) {
 	lease, err := leases.acquire("child", "call", cancelCall)
 	require.NoError(t, err)
 
-	attemptCtx := lease.beginAttempt(callCtx)
+	attemptCtx, _ := lease.beginAttempt(callCtx)
 	lease.cancel(errCancelledByHuman)
 
 	require.ErrorIs(t, context.Cause(callCtx), errCancelledByHuman)

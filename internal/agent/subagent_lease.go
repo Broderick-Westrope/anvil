@@ -78,10 +78,11 @@ type subagentLease struct {
 	finalising    bool
 }
 
-// beginAttempt returns the context of a new attempt within the call. It
-// clears any wake left by an interrupt of the previous attempt, so the
-// next backoff isn't cut short by it.
-func (l *subagentLease) beginAttempt(callCtx context.Context) context.Context {
+// beginAttempt returns the context of a new attempt within the call, and
+// the function that releases it once the attempt ends. It clears any wake
+// left by an interrupt of the previous attempt, so the next backoff isn't
+// cut short by it.
+func (l *subagentLease) beginAttempt(callCtx context.Context) (context.Context, func()) {
 	select {
 	case <-l.wake:
 	default:
@@ -90,7 +91,7 @@ func (l *subagentLease) beginAttempt(callCtx context.Context) context.Context {
 	l.mu.Lock()
 	l.cancelAttempt = cancel
 	l.mu.Unlock()
-	return ctx
+	return ctx, func() { cancel(nil) }
 }
 
 // steer queues a human message for the subagent. With interrupt, it also

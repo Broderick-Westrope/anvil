@@ -134,7 +134,7 @@ func TestInterruptGivesInFlightToolsAnInterruptedResult(t *testing.T) {
 	model := &scriptedModel{toolName: "work", toolSteps: 1}
 	a := jobEventsAgent(env, env.messages, model, nil, tool)
 
-	attemptCtx := lease.beginAttempt(t.Context())
+	attemptCtx, _ := lease.beginAttempt(t.Context())
 	_, err := a.Run(attemptCtx, SessionAgentCall{SessionID: sessionID, Prompt: "start", NonInteractive: true, steering: lease})
 	require.ErrorIs(t, err, context.Canceled)
 

@@ -729,13 +729,16 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	currentSession.CompletionTokens = summaryCompletionTokens(usage, compactionMsg)
 	currentSession.PromptTokens = 0
 	currentSession.EstimatedUsage = usageIsZero(usage)
-	_, err = a.sessions.Save(genCtx, currentSession)
+	// The summary is finished and billed, so it's recorded even if the
+	// user cancels now.
+	_, err = a.sessions.Save(persistCtx, currentSession)
 	if err != nil {
-		return localPersistence(genCtx, err)
+		return localPersistence(persistCtx, err)
 	}
 	cost := usageCost(largeModel, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
-	if err := a.sessions.AddCost(genCtx, sessionID, cost); err != nil {
-		return localPersistence(genCtx, err)
+	err = a.sessions.AddCost(persistCtx, sessionID, cost)
+	if err != nil {
+		return localPersistence(persistCtx, err)
 	}
 
 	a.reportIdleWhenDone(ctx, sessionID)
