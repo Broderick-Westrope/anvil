@@ -141,3 +141,34 @@ func TestCompactionPersistenceFailureIsMarked(t *testing.T) {
 	err = a.Summarize(t.Context(), sess.ID, nil)
 	require.ErrorIs(t, err, errLocalPersistence)
 }
+
+// failingCostAdds fails cost additions once armed, after saves succeed.
+type failingCostAdds struct {
+	session.Service
+	armed atomic.Bool
+}
+
+func (f *failingCostAdds) AddCost(ctx context.Context, id string, delta float64) error {
+	if f.armed.Load() {
+		return errors.New("disk full")
+	}
+	return f.Service.AddCost(ctx, id, delta)
+}
+
+func TestPartiallySavedStepIsNotCountedTwice(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Partial", t.TempDir())
+	require.NoError(t, err)
+	sessions := &failingCostAdds{Service: env.sessions}
+	sessions.armed.Store(true)
+	tool := stepTool("work", func(context.Context, int) fantasy.ToolResponse { return fantasy.NewTextResponse("ok") })
+	a := pricedAgent(env, sessions, &billedToolModel{}, tool)
+
+	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "start", NonInteractive: true})
+	require.ErrorIs(t, err, errLocalPersistence)
+
+	got, err := env.sessions.Get(t.Context(), sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1_000_000), got.PromptTokens, "the step's tokens are saved once")
+}
