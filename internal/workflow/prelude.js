@@ -69,6 +69,11 @@
           invoke("workflow.release");
         }
       },
+      // Removed with run nodes; scripts written before them get told why
+      // rather than "not a function".
+      focus: () => {
+        throw new Error("workflow.focus() was removed: the user drills into a session from the run's node to watch or talk to it; drop the call");
+      },
     }),
   });
 

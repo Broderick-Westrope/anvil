@@ -885,3 +885,11 @@ func TestForkingARunSessionInsideExclusiveThrowsInsteadOfWaitingForever(t *testi
 	require.Len(t, h.backend.forks, 1, "forking the user's session doesn't wait on the hold")
 	require.True(t, h.backend.forks[0].FromInvoker)
 }
+
+func TestWorkflowFocusSaysItWasRemoved(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	_, err := h.run(t, `function main() { workflow.focus(session.current()) }`, "")
+	require.ErrorContains(t, err, "workflow.focus() was removed")
+}
