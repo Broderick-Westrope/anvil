@@ -3,24 +3,39 @@ package model
 import (
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 )
 
-// subagentCalls tracks which task call owns each child session's live
-// activity. A child starts owned by the call that created it, whose ID is
-// the child's own; each resume message it receives hands it to that
-// resume's call. Ownership comes from the event stream itself, so events
-// are attributed to the call that produced them however late they're read.
+// subagentCalls is the feature that tracks which task call owns each
+// child session's live activity. A child starts owned by the call that
+// created it, whose ID is the child's own; each resume message it receives
+// hands it to that resume's call. Ownership comes from the event stream
+// itself, so events are attributed to the call that produced them however
+// late they're read. It never claims a message.
 type subagentCalls struct {
-	owner map[string]string
-	// started is when each resumed call took over its child, and
-	// baseCost the child's cost at that moment, so its item shows only
-	// what it spent.
-	started  map[string]time.Time
-	baseCost map[string]float64
-	// lastCost is each child's cost as last seen.
-	lastCost map[string]float64
+	children map[string]*childCalls
+	now      func() time.Time
+}
+
+// childCalls is what the tracker knows about one child session.
+type childCalls struct {
+	// owner is the call that owns the child's activity, "" for the call
+	// that created it.
+	owner string
+	// startedAt and baseCost are when owner took over and the child's
+	// cost then, so its item shows only what it spent.
+	startedAt time.Time
+	baseCost  float64
+	// lastCost is the child's cost as last seen.
+	lastCost float64
+}
+
+func newSubagentCalls() *subagentCalls {
+	return &subagentCalls{children: make(map[string]*childCalls), now: time.Now}
 }
 
 // subagentCallStats is what one call's item shows from a child session
@@ -31,55 +46,71 @@ type subagentCallStats struct {
 	startedAt time.Time
 }
 
-// observe records the call a child's resume message starts.
-func (c *subagentCalls) observe(msg message.Message) { c.observeAt(msg, time.Now()) }
-
-func (c *subagentCalls) observeAt(msg message.Message, now time.Time) {
-	callID := resumeCallID(msg)
-	if callID == "" || c.owner[msg.SessionID] == callID {
-		return
+func (c *subagentCalls) child(id string) *childCalls {
+	ch, ok := c.children[id]
+	if !ok {
+		ch = &childCalls{}
+		c.children[id] = ch
 	}
-	if c.owner == nil {
-		c.owner = make(map[string]string)
-		c.started = make(map[string]time.Time)
-		c.baseCost = make(map[string]float64)
-	}
-	c.owner[msg.SessionID] = callID
-	c.started[callID] = now
-	c.baseCost[callID] = c.lastCost[msg.SessionID]
+	return ch
 }
 
-// sessionUpdated returns the stats of the call that owns child s. The
-// call that created the child counts from the session's start; a resume
-// counts from when it took over.
-func (c *subagentCalls) sessionUpdated(s session.Session) subagentCallStats {
-	if c.lastCost == nil {
-		c.lastCost = make(map[string]float64)
+// Observe implements feature. It follows resume messages, from creation
+// or update events in case the creation was dropped, and child costs.
+func (c *subagentCalls) Observe(msg tea.Msg) tea.Cmd {
+	switch ev := msg.(type) {
+	case pubsub.Event[message.Message]:
+		callID := resumeCallID(ev.Payload)
+		if ev.Type == pubsub.DeletedEvent || callID == "" {
+			return nil
+		}
+		ch := c.child(ev.Payload.SessionID)
+		if ch.owner != callID {
+			ch.owner, ch.startedAt, ch.baseCost = callID, c.now(), ch.lastCost
+		}
+	case pubsub.Event[session.Session]:
+		if ev.Payload.ParentSessionID != "" {
+			c.child(ev.Payload.ID).lastCost = ev.Payload.Cost
+		}
 	}
-	c.lastCost[s.ID] = s.Cost
-	callID := c.current(s.ID)
-	if started, ok := c.started[callID]; ok {
-		return subagentCallStats{callID: callID, cost: s.Cost - c.baseCost[callID], startedAt: started}
+	return nil
+}
+
+// OwnerCall implements callTrackerFeature.
+func (c *subagentCalls) OwnerCall(childSessionID string) string {
+	if ch, ok := c.children[childSessionID]; ok && ch.owner != "" {
+		return ch.owner
+	}
+	return childSessionID
+}
+
+// CallStats implements callTrackerFeature. The call that created the
+// child counts from the session's start; a resume counts from when it
+// took over.
+func (c *subagentCalls) CallStats(s session.Session) subagentCallStats {
+	if ch, ok := c.children[s.ID]; ok && ch.owner != "" {
+		return subagentCallStats{callID: ch.owner, cost: s.Cost - ch.baseCost, startedAt: ch.startedAt}
 	}
 	var startedAt time.Time
 	if s.CreatedAt > 0 {
 		startedAt = time.Unix(s.CreatedAt, 0)
 	}
-	return subagentCallStats{callID: callID, cost: s.Cost, startedAt: startedAt}
+	return subagentCallStats{callID: s.ID, cost: s.Cost, startedAt: startedAt}
 }
 
-// current returns the call that owns childSessionID's activity.
-func (c *subagentCalls) current(childSessionID string) string {
-	if callID, ok := c.owner[childSessionID]; ok {
-		return callID
-	}
-	return childSessionID
+// SeenCost implements callTrackerFeature.
+func (c *subagentCalls) SeenCost(childSessionID string, cost float64) {
+	c.child(childSessionID).lastCost = cost
 }
+
+func (c *subagentCalls) HandleMsg(tea.Msg) (tea.Cmd, bool)          { return nil, false }
+func (c *subagentCalls) HandleKey(tea.KeyPressMsg) (tea.Cmd, bool)  { return nil, false }
+func (c *subagentCalls) HandleAction(dialog.Action) (tea.Cmd, bool) { return nil, false }
 
 // agentItemToolCallID returns the tool call ID of the task item that shows
 // childSessionID's live activity.
 func (m *UI) agentItemToolCallID(childSessionID string) (string, bool) {
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(m.subagentCalls.current(childSessionID))
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(m.features.ownerCall(childSessionID))
 	return toolCallID, ok
 }
 
@@ -113,15 +144,6 @@ func resumeCallID(msg message.Message) string {
 		}
 	}
 	return ""
-}
-
-// seenCost records childSessionID's cost as loaded, so a resume observed
-// later counts only what it adds.
-func (c *subagentCalls) seenCost(childSessionID string, cost float64) {
-	if c.lastCost == nil {
-		c.lastCost = make(map[string]float64)
-	}
-	c.lastCost[childSessionID] = cost
 }
 
 // loadedStats is what a reloaded task item shows.

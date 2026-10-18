@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 )
@@ -71,6 +72,18 @@ type drillInFeature interface {
 	DrillInFooter() panelView
 }
 
+// callTrackerFeature knows which task call owns each subagent child
+// session's live activity. UI uses the first registered one.
+type callTrackerFeature interface {
+	// OwnerCall returns the task call ID (messageID$$toolCallID) whose
+	// item shows childSessionID's activity.
+	OwnerCall(childSessionID string) string
+	// CallStats returns the owning call's view of a child session update.
+	CallStats(s session.Session) subagentCallStats
+	// SeenCost records a child's cost as loaded from the database.
+	SeenCost(childSessionID string, cost float64)
+}
+
 // paletteFeature contributes entries to the command palette.
 type paletteFeature interface {
 	PaletteEntries() []*dialog.CommandItem
@@ -85,6 +98,7 @@ type features struct {
 	palettes []paletteFeature
 	preempts []preemptInputFeature
 	footers  []drillInFeature
+	tracker  callTrackerFeature
 }
 
 // register adds f, and the optional surfaces it implements, after the
@@ -105,6 +119,33 @@ func (fs *features) register(f feature) {
 	}
 	if d, ok := f.(drillInFeature); ok {
 		fs.footers = append(fs.footers, d)
+	}
+	if t, ok := f.(callTrackerFeature); ok && fs.tracker == nil {
+		fs.tracker = t
+	}
+}
+
+// ownerCall returns the task call that owns childSessionID's activity: by
+// default the call that created it, whose ID is the child's own.
+func (fs *features) ownerCall(childSessionID string) string {
+	if fs.tracker == nil {
+		return childSessionID
+	}
+	return fs.tracker.OwnerCall(childSessionID)
+}
+
+// callStats returns the owning call's view of child session s.
+func (fs *features) callStats(s session.Session) subagentCallStats {
+	if fs.tracker == nil {
+		return subagentCallStats{callID: s.ID, cost: s.Cost}
+	}
+	return fs.tracker.CallStats(s)
+}
+
+// seenCost tells the tracker a child's cost as loaded.
+func (fs *features) seenCost(childSessionID string, cost float64) {
+	if fs.tracker != nil {
+		fs.tracker.SeenCost(childSessionID, cost)
 	}
 }
 

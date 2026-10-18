@@ -338,8 +338,6 @@ type UI struct {
 
 	// features are the fork features routed to from the dispatchers.
 	features features
-	// subagentCalls attributes child session activity to task calls.
-	subagentCalls subagentCalls
 
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
@@ -480,6 +478,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
 	ui.features.register(newSubagentSteer(uiHost{ui}, com, com.Workspace))
+	ui.features.register(newSubagentCalls())
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -968,10 +967,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update live stats on agent items for any child session message.
 		// This runs regardless of whether we are drilled in.
 		if msg.Payload.SessionID != m.session.ID {
-			// Updates count too, in case the creation event was dropped.
-			if msg.Type != pubsub.DeletedEvent {
-				m.subagentCalls.observe(msg.Payload)
-			}
 			m.updateAgentItemStats(msg.Payload.SessionID, msg)
 		}
 
@@ -1755,7 +1750,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 			// Populate token/cost stats and timestamps: a linked task
 			// call's own, otherwise the child session's.
 			if sess, err := m.com.Workspace.GetSession(context.Background(), agentSessionID); err == nil {
-				m.subagentCalls.seenCost(agentSessionID, sess.Cost)
+				m.features.seenCost(agentSessionID, sess.Cost)
 				stats := loadedCallStats(sess, call, linked)
 				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
 				da.SetCost(stats.cost)
@@ -2176,7 +2171,7 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 // updateAgentItemSessionStats propagates token, cost, and timestamp data from
 // a child session update onto the parent agent item that owns that session.
 func (m *UI) updateAgentItemSessionStats(s session.Session) {
-	stats := m.subagentCalls.sessionUpdated(s)
+	stats := m.features.callStats(s)
 	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(stats.callID)
 	if !ok {
 		return

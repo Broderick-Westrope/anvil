@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
 )
@@ -51,41 +52,48 @@ func TestMessagesOfCallSplitsAChildAtEachResume(t *testing.T) {
 	require.Equal(t, []string{"r3", "a4"}, ids("m3$$c3"))
 }
 
+func resumeEvent(childID, callID string) pubsub.Event[message.Message] {
+	return pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		SessionID: childID, Role: message.User, MessageType: message.MessageTypeSubagentInjection,
+		Parts: message.InjectionParts([]message.InjectionContent{{
+			Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, CallID: callID,
+		}}),
+	}}
+}
+
+func sessionEvent(s session.Session) pubsub.Event[session.Session] {
+	return pubsub.Event[session.Session]{Type: pubsub.UpdatedEvent, Payload: s}
+}
+
 func TestSubagentCallOwnershipFollowsResumeMessages(t *testing.T) {
 	t.Parallel()
-	var calls subagentCalls
+	calls := newSubagentCalls()
 
-	require.Equal(t, "m1$$c1", calls.current("m1$$c1"))
+	require.Equal(t, "m1$$c1", calls.OwnerCall("m1$$c1"))
 
-	calls.observe(message.Message{
-		SessionID: "m1$$c1", Role: message.User, MessageType: message.MessageTypeSubagentInjection,
-		Parts: message.InjectionParts([]message.InjectionContent{{
-			Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, CallID: "m2$$c2",
-		}}),
-	})
-	require.Equal(t, "m2$$c2", calls.current("m1$$c1"))
+	calls.Observe(resumeEvent("m1$$c1", "m2$$c2"))
+	require.Equal(t, "m2$$c2", calls.OwnerCall("m1$$c1"))
 
-	calls.observe(message.Message{SessionID: "m1$$c1", Role: message.Assistant})
-	require.Equal(t, "m2$$c2", calls.current("m1$$c1"), "ordinary messages don't change ownership")
-	require.Equal(t, "other$$c", calls.current("other$$c"))
+	calls.Observe(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{SessionID: "m1$$c1", Role: message.Assistant}})
+	require.Equal(t, "m2$$c2", calls.OwnerCall("m1$$c1"), "ordinary messages don't change ownership")
+	require.Equal(t, "other$$c", calls.OwnerCall("other$$c"))
 }
 
 func TestSubagentCallStatsCountOnlyTheirOwnCost(t *testing.T) {
 	t.Parallel()
-	var calls subagentCalls
+	calls := newSubagentCalls()
 	now := time.Unix(2000, 0)
+	calls.now = func() time.Time { return now }
 
-	stats := calls.sessionUpdated(session.Session{ID: "m1$$c1", Cost: 0.25, CreatedAt: 1000})
-	require.Equal(t, subagentCallStats{callID: "m1$$c1", cost: 0.25, startedAt: time.Unix(1000, 0)}, stats)
+	first := session.Session{ID: "m1$$c1", ParentSessionID: "root", Cost: 0.25, CreatedAt: 1000}
+	calls.Observe(sessionEvent(first))
+	require.Equal(t, subagentCallStats{callID: "m1$$c1", cost: 0.25, startedAt: time.Unix(1000, 0)}, calls.CallStats(first))
 
-	calls.observeAt(message.Message{
-		SessionID: "m1$$c1", Role: message.User, MessageType: message.MessageTypeSubagentInjection,
-		Parts: message.InjectionParts([]message.InjectionContent{{
-			Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, CallID: "m2$$c2",
-		}}),
-	}, now)
+	calls.Observe(resumeEvent("m1$$c1", "m2$$c2"))
 
-	stats = calls.sessionUpdated(session.Session{ID: "m1$$c1", Cost: 0.40, CreatedAt: 1000})
+	later := session.Session{ID: "m1$$c1", ParentSessionID: "root", Cost: 0.40, CreatedAt: 1000}
+	calls.Observe(sessionEvent(later))
+	stats := calls.CallStats(later)
 	require.Equal(t, "m2$$c2", stats.callID)
 	require.InDelta(t, 0.15, stats.cost, 1e-9)
 	require.Equal(t, now, stats.startedAt)
@@ -104,14 +112,20 @@ func TestLoadedCallStatsPreferTheCallsOwn(t *testing.T) {
 
 func TestSeenCostBaselinesALaterResume(t *testing.T) {
 	t.Parallel()
-	var calls subagentCalls
-	calls.seenCost("m1$$c1", 0.40)
-	calls.observeAt(message.Message{
-		SessionID: "m1$$c1", Role: message.User, MessageType: message.MessageTypeSubagentInjection,
-		Parts: message.InjectionParts([]message.InjectionContent{{
-			Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, CallID: "m3$$c3",
-		}}),
-	}, time.Unix(5000, 0))
-	stats := calls.sessionUpdated(session.Session{ID: "m1$$c1", Cost: 0.50})
+	calls := newSubagentCalls()
+	calls.SeenCost("m1$$c1", 0.40)
+	calls.Observe(resumeEvent("m1$$c1", "m3$$c3"))
+	stats := calls.CallStats(session.Session{ID: "m1$$c1", Cost: 0.50})
 	require.InDelta(t, 0.10, stats.cost, 1e-9)
+}
+
+func TestFeaturesRouteCallOwnershipToTheTracker(t *testing.T) {
+	t.Parallel()
+	var fs features
+	require.Equal(t, "m1$$c1", fs.ownerCall("m1$$c1"), "no tracker: a child is owned by its own call")
+
+	calls := newSubagentCalls()
+	fs.register(calls)
+	fs.observe(resumeEvent("m1$$c1", "m2$$c2"))
+	require.Equal(t, "m2$$c2", fs.ownerCall("m1$$c1"))
 }
