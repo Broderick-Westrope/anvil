@@ -10,7 +10,8 @@ import (
 )
 
 type Querier interface {
-	AddUnrolledChildCostToParent(ctx context.Context, childID string) (int64, error)
+	AddSessionCost(ctx context.Context, arg AddSessionCostParams) (int64, error)
+	AddSubagentCallCost(ctx context.Context, arg AddSubagentCallCostParams) error
 	ClaimBackgroundJobEvents(ctx context.Context, arg ClaimBackgroundJobEventsParams) ([]string, error)
 	// Mirrors triage.IsSource: keep the two in sync.
 	CountUnresolvedPermissionDecisionsSince(ctx context.Context, createdAt int64) (int64, error)
@@ -33,6 +34,7 @@ type Querier interface {
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteStepUsageBefore(ctx context.Context, responseFinishedAt int64) error
 	FinalizeBackgroundJob(ctx context.Context, arg FinalizeBackgroundJobParams) (int64, error)
+	FinishSubagentCall(ctx context.Context, id string) error
 	FinishWorkflowRun(ctx context.Context, arg FinishWorkflowRunParams) (int64, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
 	GetBackgroundJob(ctx context.Context, id int64) (BackgroundJob, error)

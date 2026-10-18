@@ -29,14 +29,14 @@ VALUES (?, ?, ?, strftime('%s', 'now'));
 -- name: GetSubagentCall :one
 SELECT * FROM subagent_calls WHERE id = ? LIMIT 1;
 
--- name: AddUnrolledChildCostToParent :execrows
-UPDATE sessions
-SET cost = cost + (
-    SELECT child.cost - child.cost_rolled_up FROM sessions AS child WHERE child.id = sqlc.arg(child_id)
-)
-WHERE id = (
-    SELECT child.parent_session_id FROM sessions AS child WHERE child.id = sqlc.arg(child_id)
-);
+-- name: AddSessionCost :execrows
+UPDATE sessions SET cost = cost + sqlc.arg(delta) WHERE id = sqlc.arg(id);
+
+-- name: AddSubagentCallCost :exec
+UPDATE subagent_calls SET cost = cost + sqlc.arg(delta) WHERE id = sqlc.arg(id);
+
+-- name: FinishSubagentCall :exec
+UPDATE subagent_calls SET finished_at = strftime('%s', 'now') WHERE id = ?;
 
 -- name: MarkChildCostRolledUp :exec
 UPDATE sessions SET cost_rolled_up = cost WHERE id = ?;

@@ -76,6 +76,8 @@ type childSession struct {
 	// Existing marks a child session that already exists, such as a
 	// resumed subagent's.
 	Existing bool
+	// CallID, when set, is the task call charged the child's new cost.
+	CallID string
 	// OnCreate, when set, is called once the session exists.
 	OnCreate func(sessionID string)
 }
@@ -102,7 +104,7 @@ func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn fun
 		handedOff = handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, sessionID, s.ParentID)
 	}()
 	defer c.permissions.RevokeAutoApproveSession(sessionID)
-	defer c.rollUpChildCost(ctx, sessionID)
+	defer c.rollUpChildCost(ctx, sessionID, s.CallID)
 	if s.OnCreate != nil {
 		s.OnCreate(sessionID)
 	}
@@ -112,10 +114,10 @@ func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn fun
 // rollUpChildCost adds the child's cost since the last rollup to its
 // parent. It's best effort, and runs even after cancellation: a failure
 // here must not discard output the subagent already produced.
-func (c *coordinator) rollUpChildCost(ctx context.Context, childID string) {
+func (c *coordinator) rollUpChildCost(ctx context.Context, childID, callID string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentCostTimeout)
 	defer cancel()
-	if err := c.sessions.RollUpChildCost(ctx, childID); err != nil {
+	if err := c.sessions.RollUpChildCost(ctx, childID, callID); err != nil {
 		slog.Warn("Failed to roll up subagent cost", "child_session", childID, "error", err)
 	}
 }
@@ -152,6 +154,9 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		child.ID, child.Existing, kind = params.Resume.SessionID, true, session.SubagentCallResume
 		tc.handle = params.Resume.Handle
 	}
+	if params.AgentType != "" {
+		child.CallID = callID
+	}
 
 	callCtx, cancelCall := context.WithCancelCause(ctx)
 	defer cancelCall(nil)
@@ -170,6 +175,13 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 	})
 	if undelivered := lease.finalise(); len(undelivered) > 0 {
 		c.handBackSteers(child.ID, undelivered, err)
+	}
+	if child.CallID != "" {
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentCostTimeout)
+		if finishErr := c.sessions.FinishSubagentCall(finishCtx, callID); finishErr != nil {
+			slog.Warn("Failed to record the end of a task call", "call", callID, "error", finishErr)
+		}
+		cancel()
 	}
 
 	var runErr errSubAgentRun
@@ -259,7 +271,7 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 		call.Injections, call.steering, call.state = next.Injections, tc.lease, &runState{}
 		attemptCtx := tc.lease.beginAttempt(ctx)
 		result, runErr := tc.params.Agent.Run(attemptCtx, call)
-		c.rollUpChildCost(ctx, sessionID)
+		c.rollUpChildCost(ctx, sessionID, tc.costCallID())
 		if runErr != nil && call.state.acceptedUserID == "" {
 			// The turn never persisted its message, so steers it carried
 			// weren't delivered.
@@ -318,6 +330,15 @@ func waitBeforeResume(ctx context.Context, lease *subagentLease, delay time.Dura
 	case <-timer.C:
 		return nil
 	}
+}
+
+// costCallID is the call charged the child's cost, or "" for callers
+// without call links.
+func (tc *taskCall) costCallID() string {
+	if tc.params.AgentType == "" {
+		return ""
+	}
+	return tc.id
 }
 
 // humanSteers returns the steers among injections, which go back to the

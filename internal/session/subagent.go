@@ -44,6 +44,11 @@ type SubagentCall struct {
 	ID        string
 	SessionID string
 	Kind      SubagentCallKind
+	// Cost is what the child spent during this call. CreatedAt and
+	// FinishedAt are Unix seconds; FinishedAt is 0 while it runs.
+	Cost       float64
+	CreatedAt  int64
+	FinishedAt int64
 }
 
 // minHandleSuffix is the shortest hex suffix a handle gets; a suffix that
@@ -137,32 +142,47 @@ func (s *service) GetSubagentCall(ctx context.Context, id string) (SubagentCall,
 	if err != nil {
 		return SubagentCall{}, err
 	}
-	return SubagentCall{ID: row.ID, SessionID: row.SessionID, Kind: SubagentCallKind(row.Kind)}, nil
+	return SubagentCall{
+		ID: row.ID, SessionID: row.SessionID, Kind: SubagentCallKind(row.Kind),
+		Cost: row.Cost, CreatedAt: row.CreatedAt, FinishedAt: row.FinishedAt.Int64,
+	}, nil
 }
 
-// RollUpChildCost adds to its parent the cost childID incurred since the
-// last rollup. It's atomic, so concurrent rollups of siblings, and
-// repeated rollups of one child, never lose or double count cost.
-func (s *service) RollUpChildCost(ctx context.Context, childID string) error {
+// FinishSubagentCall records that the task call id has returned.
+func (s *service) FinishSubagentCall(ctx context.Context, id string) error {
+	return s.q.FinishSubagentCall(ctx, id)
+}
+
+// RollUpChildCost adds to its parent, and to the task call callID when it
+// isn't "", the cost childID incurred since the last rollup. It's atomic,
+// so concurrent rollups of siblings, and repeated rollups of one child,
+// never lose or double count cost.
+func (s *service) RollUpChildCost(ctx context.Context, childID, callID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 	qtx := s.q.WithTx(tx)
-	rolled, err := qtx.AddUnrolledChildCostToParent(ctx, childID)
+	child, err := qtx.GetSessionByID(ctx, childID)
+	if err != nil {
+		return fmt.Errorf("get child session %s: %w", childID, err)
+	}
+	delta := child.Cost - child.CostRolledUp
+	rolled, err := qtx.AddSessionCost(ctx, db.AddSessionCostParams{Delta: delta, ID: child.ParentSessionID.String})
 	if err != nil {
 		return fmt.Errorf("add cost of %s to parent: %w", childID, err)
 	}
 	if rolled == 0 {
 		return fmt.Errorf("add cost of %s to parent: parent session not found", childID)
 	}
+	if callID != "" {
+		if err := qtx.AddSubagentCallCost(ctx, db.AddSubagentCallCostParams{Delta: delta, ID: callID}); err != nil {
+			return fmt.Errorf("add cost of %s to call %s: %w", childID, callID, err)
+		}
+	}
 	if err := qtx.MarkChildCostRolledUp(ctx, childID); err != nil {
 		return fmt.Errorf("mark cost of %s rolled up: %w", childID, err)
-	}
-	child, err := qtx.GetSessionByID(ctx, childID)
-	if err != nil {
-		return fmt.Errorf("get child session %s: %w", childID, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit cost rollup of %s: %w", childID, err)

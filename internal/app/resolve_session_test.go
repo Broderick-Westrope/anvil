@@ -216,4 +216,6 @@ func (m *mockSessionService) GetSubagentCall(context.Context, string) (session.S
 	return session.SubagentCall{}, sql.ErrNoRows
 }
 
-func (m *mockSessionService) RollUpChildCost(context.Context, string) error { return nil }
+func (m *mockSessionService) RollUpChildCost(context.Context, string, string) error { return nil }
+
+func (m *mockSessionService) FinishSubagentCall(context.Context, string) error { return nil }

@@ -1,7 +1,10 @@
 package model
 
 import (
+	"time"
+
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 )
 
 // subagentCalls tracks which task call owns each child session's live
@@ -11,18 +14,58 @@ import (
 // are attributed to the call that produced them however late they're read.
 type subagentCalls struct {
 	owner map[string]string
+	// started is when each resumed call took over its child, and
+	// baseCost the child's cost at that moment, so its item shows only
+	// what it spent.
+	started  map[string]time.Time
+	baseCost map[string]float64
+	// lastCost is each child's cost as last seen.
+	lastCost map[string]float64
+}
+
+// subagentCallStats is what one call's item shows from a child session
+// update.
+type subagentCallStats struct {
+	callID    string
+	cost      float64
+	startedAt time.Time
 }
 
 // observe records the call a child's resume message starts.
-func (c *subagentCalls) observe(msg message.Message) {
+func (c *subagentCalls) observe(msg message.Message) { c.observeAt(msg, time.Now()) }
+
+func (c *subagentCalls) observeAt(msg message.Message, now time.Time) {
 	callID := resumeCallID(msg)
-	if callID == "" {
+	if callID == "" || c.owner[msg.SessionID] == callID {
 		return
 	}
 	if c.owner == nil {
 		c.owner = make(map[string]string)
+		c.started = make(map[string]time.Time)
+		c.baseCost = make(map[string]float64)
 	}
 	c.owner[msg.SessionID] = callID
+	c.started[callID] = now
+	c.baseCost[callID] = c.lastCost[msg.SessionID]
+}
+
+// sessionUpdated returns the stats of the call that owns child s. The
+// call that created the child counts from the session's start; a resume
+// counts from when it took over.
+func (c *subagentCalls) sessionUpdated(s session.Session) subagentCallStats {
+	if c.lastCost == nil {
+		c.lastCost = make(map[string]float64)
+	}
+	c.lastCost[s.ID] = s.Cost
+	callID := c.current(s.ID)
+	if started, ok := c.started[callID]; ok {
+		return subagentCallStats{callID: callID, cost: s.Cost - c.baseCost[callID], startedAt: started}
+	}
+	var startedAt time.Time
+	if s.CreatedAt > 0 {
+		startedAt = time.Unix(s.CreatedAt, 0)
+	}
+	return subagentCallStats{callID: callID, cost: s.Cost, startedAt: startedAt}
 }
 
 // current returns the call that owns childSessionID's activity.

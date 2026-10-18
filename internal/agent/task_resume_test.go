@@ -79,7 +79,8 @@ func TestTaskResumeContinuesTheSameChildAsAnOrchestratorInjection(t *testing.T) 
 
 	link, err := f.env.sessions.GetSubagentCall(t.Context(), "msg-1$$call-2")
 	require.NoError(t, err)
-	require.Equal(t, session.SubagentCall{ID: "msg-1$$call-2", SessionID: firstCall.SessionID, Kind: session.SubagentCallResume}, link)
+	require.Equal(t, firstCall.SessionID, link.SessionID)
+	require.Equal(t, session.SubagentCallResume, link.Kind)
 }
 
 func TestTaskResumeAcceptsMatchingTypeAndModel(t *testing.T) {

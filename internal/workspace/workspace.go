@@ -133,9 +133,9 @@ type Workspace interface {
 	// AgentSubagentRunning reports whether a task call is running in
 	// childSessionID.
 	AgentSubagentRunning(childSessionID string) bool
-	// SubagentCallSession returns the child session the task call callID
-	// ran in, or callID itself when no link was stored.
-	SubagentCallSession(ctx context.Context, callID string) string
+	// SubagentCall returns the stored link of the task call callID, and
+	// false when there is none (calls from before resume support).
+	SubagentCall(ctx context.Context, callID string) (session.SubagentCall, bool)
 	// AgentTakeReturnedSteers returns, and forgets, steers task calls
 	// ended without delivering.
 	AgentTakeReturnedSteers() []agent.SubagentSteersReturned

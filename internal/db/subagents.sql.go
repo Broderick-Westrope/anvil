@@ -9,22 +9,35 @@ import (
 	"context"
 )
 
-const addUnrolledChildCostToParent = `-- name: AddUnrolledChildCostToParent :execrows
-UPDATE sessions
-SET cost = cost + (
-    SELECT child.cost - child.cost_rolled_up FROM sessions AS child WHERE child.id = ?1
-)
-WHERE id = (
-    SELECT child.parent_session_id FROM sessions AS child WHERE child.id = ?1
-)
+const addSessionCost = `-- name: AddSessionCost :execrows
+UPDATE sessions SET cost = cost + ?1 WHERE id = ?2
 `
 
-func (q *Queries) AddUnrolledChildCostToParent(ctx context.Context, childID string) (int64, error) {
-	result, err := q.exec(ctx, q.addUnrolledChildCostToParentStmt, addUnrolledChildCostToParent, childID)
+type AddSessionCostParams struct {
+	Delta float64 `json:"delta"`
+	ID    string  `json:"id"`
+}
+
+func (q *Queries) AddSessionCost(ctx context.Context, arg AddSessionCostParams) (int64, error) {
+	result, err := q.exec(ctx, q.addSessionCostStmt, addSessionCost, arg.Delta, arg.ID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const addSubagentCallCost = `-- name: AddSubagentCallCost :exec
+UPDATE subagent_calls SET cost = cost + ?1 WHERE id = ?2
+`
+
+type AddSubagentCallCostParams struct {
+	Delta float64 `json:"delta"`
+	ID    string  `json:"id"`
+}
+
+func (q *Queries) AddSubagentCallCost(ctx context.Context, arg AddSubagentCallCostParams) error {
+	_, err := q.exec(ctx, q.addSubagentCallCostStmt, addSubagentCallCost, arg.Delta, arg.ID)
+	return err
 }
 
 const createSubagent = `-- name: CreateSubagent :exec
@@ -82,6 +95,15 @@ func (q *Queries) CreateSubagentCall(ctx context.Context, arg CreateSubagentCall
 	return err
 }
 
+const finishSubagentCall = `-- name: FinishSubagentCall :exec
+UPDATE subagent_calls SET finished_at = strftime('%s', 'now') WHERE id = ?
+`
+
+func (q *Queries) FinishSubagentCall(ctx context.Context, id string) error {
+	_, err := q.exec(ctx, q.finishSubagentCallStmt, finishSubagentCall, id)
+	return err
+}
+
 const getSubagent = `-- name: GetSubagent :one
 SELECT session_id, parent_session_id, handle, origin, agent_type, depth, provider, model, created_at FROM subagents WHERE session_id = ? LIMIT 1
 `
@@ -130,7 +152,7 @@ func (q *Queries) GetSubagentByHandle(ctx context.Context, arg GetSubagentByHand
 }
 
 const getSubagentCall = `-- name: GetSubagentCall :one
-SELECT id, session_id, kind, created_at FROM subagent_calls WHERE id = ? LIMIT 1
+SELECT id, session_id, kind, cost, created_at, finished_at FROM subagent_calls WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetSubagentCall(ctx context.Context, id string) (SubagentCall, error) {
@@ -140,7 +162,9 @@ func (q *Queries) GetSubagentCall(ctx context.Context, id string) (SubagentCall,
 		&i.ID,
 		&i.SessionID,
 		&i.Kind,
+		&i.Cost,
 		&i.CreatedAt,
+		&i.FinishedAt,
 	)
 	return i, err
 }

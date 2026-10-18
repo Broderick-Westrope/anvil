@@ -124,7 +124,9 @@ func TestSubagentCallLinksACallToItsChildSession(t *testing.T) {
 
 	got, err := svc.GetSubagentCall(t.Context(), call.ID)
 	require.NoError(t, err)
-	require.Equal(t, call, got)
+	require.Equal(t, call.ID, got.ID)
+	require.Equal(t, call.SessionID, got.SessionID)
+	require.Equal(t, call.Kind, got.Kind)
 }
 
 func TestRollUpChildCostAddsOnlyNewCost(t *testing.T) {
@@ -135,12 +137,12 @@ func TestRollUpChildCostAddsOnlyNewCost(t *testing.T) {
 	child := newChild(t, svc, parent.ID, "msg$$call")
 
 	setCost(t, svc, child.ID, 0.25)
-	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID))
-	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID))
+	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID, ""))
+	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID, ""))
 	requireCost(t, svc, parent.ID, 0.25)
 
 	setCost(t, svc, child.ID, 0.40)
-	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID))
+	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID, ""))
 	requireCost(t, svc, parent.ID, 0.40)
 }
 
@@ -158,7 +160,7 @@ func TestRollUpChildCostFromSiblingsAtOnceLosesNothing(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for _, id := range ids {
-		wg.Go(func() { require.NoError(t, svc.RollUpChildCost(t.Context(), id)) })
+		wg.Go(func() { require.NoError(t, svc.RollUpChildCost(t.Context(), id, "")) })
 	}
 	wg.Wait()
 	requireCost(t, svc, parent.ID, 0.8)
@@ -189,7 +191,7 @@ func TestRollUpChildCostFailsWhenTheParentIsGone(t *testing.T) {
 	setCost(t, svc, child.ID, 0.25)
 	require.NoError(t, svc.Delete(t.Context(), parent.ID))
 
-	require.ErrorContains(t, svc.RollUpChildCost(t.Context(), child.ID), "parent session")
+	require.ErrorContains(t, svc.RollUpChildCost(t.Context(), child.ID, ""), "parent session")
 }
 
 func TestStaleParentSaveKeepsRolledUpCost(t *testing.T) {
@@ -202,7 +204,7 @@ func TestStaleParentSaveKeepsRolledUpCost(t *testing.T) {
 	stale, err := svc.Get(t.Context(), parent.ID)
 	require.NoError(t, err)
 	setCost(t, svc, child.ID, 0.30)
-	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID))
+	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID, ""))
 
 	// A save from a copy read before the rollup, such as a todos update,
 	// adds its own change without undoing the rollup.
@@ -211,4 +213,31 @@ func TestStaleParentSaveKeepsRolledUpCost(t *testing.T) {
 	_, err = svc.Save(t.Context(), stale)
 	require.NoError(t, err)
 	requireCost(t, svc, parent.ID, 0.35)
+}
+
+func TestRollUpChildCostAlsoChargesTheCall(t *testing.T) {
+	t.Parallel()
+	svc := newSubagentTestService(t)
+	parent, err := svc.Create(t.Context(), "parent", "/tmp")
+	require.NoError(t, err)
+	child := newChild(t, svc, parent.ID, "m1$$c1")
+	require.NoError(t, svc.CreateSubagentCall(t.Context(), session.SubagentCall{ID: "m1$$c1", SessionID: child.ID, Kind: session.SubagentCallNew}))
+	require.NoError(t, svc.CreateSubagentCall(t.Context(), session.SubagentCall{ID: "m2$$c2", SessionID: child.ID, Kind: session.SubagentCallResume}))
+
+	setCost(t, svc, child.ID, 0.25)
+	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID, "m1$$c1"))
+	setCost(t, svc, child.ID, 0.40)
+	require.NoError(t, svc.RollUpChildCost(t.Context(), child.ID, "m2$$c2"))
+	require.NoError(t, svc.FinishSubagentCall(t.Context(), "m2$$c2"))
+
+	first, err := svc.GetSubagentCall(t.Context(), "m1$$c1")
+	require.NoError(t, err)
+	second, err := svc.GetSubagentCall(t.Context(), "m2$$c2")
+	require.NoError(t, err)
+	require.InDelta(t, 0.25, first.Cost, 1e-9)
+	require.InDelta(t, 0.15, second.Cost, 1e-9)
+	require.Zero(t, first.FinishedAt)
+	require.NotZero(t, second.FinishedAt)
+	require.NotZero(t, second.CreatedAt)
+	requireCost(t, svc, parent.ID, 0.40)
 }

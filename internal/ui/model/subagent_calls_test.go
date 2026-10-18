@@ -2,8 +2,10 @@ package model
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,4 +68,25 @@ func TestSubagentCallOwnershipFollowsResumeMessages(t *testing.T) {
 	calls.observe(message.Message{SessionID: "m1$$c1", Role: message.Assistant})
 	require.Equal(t, "m2$$c2", calls.current("m1$$c1"), "ordinary messages don't change ownership")
 	require.Equal(t, "other$$c", calls.current("other$$c"))
+}
+
+func TestSubagentCallStatsCountOnlyTheirOwnCost(t *testing.T) {
+	t.Parallel()
+	var calls subagentCalls
+	now := time.Unix(2000, 0)
+
+	stats := calls.sessionUpdated(session.Session{ID: "m1$$c1", Cost: 0.25, CreatedAt: 1000})
+	require.Equal(t, subagentCallStats{callID: "m1$$c1", cost: 0.25, startedAt: time.Unix(1000, 0)}, stats)
+
+	calls.observeAt(message.Message{
+		SessionID: "m1$$c1", Role: message.User, MessageType: message.MessageTypeSubagentInjection,
+		Parts: message.InjectionParts([]message.InjectionContent{{
+			Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, CallID: "m2$$c2",
+		}}),
+	}, now)
+
+	stats = calls.sessionUpdated(session.Session{ID: "m1$$c1", Cost: 0.40, CreatedAt: 1000})
+	require.Equal(t, "m2$$c2", stats.callID)
+	require.InDelta(t, 0.15, stats.cost, 1e-9)
+	require.Equal(t, now, stats.startedAt)
 }

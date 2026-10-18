@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS subagent_calls (
     id TEXT PRIMARY KEY,              -- <assistant message ID>$$<tool call ID>.
     session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
     kind TEXT NOT NULL,               -- new, resume.
-    created_at INTEGER NOT NULL       -- Unix seconds.
+    cost REAL NOT NULL DEFAULT 0.0,   -- The child's cost during this call.
+    created_at INTEGER NOT NULL,      -- Unix seconds.
+    finished_at INTEGER               -- Unix seconds; null while running.
 );
 -- +goose StatementEnd
 -- +goose StatementBegin

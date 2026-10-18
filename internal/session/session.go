@@ -121,7 +121,8 @@ type Service interface {
 	GetSubagentByHandle(ctx context.Context, parentID, handle string) (Subagent, error)
 	CreateSubagentCall(ctx context.Context, call SubagentCall) error
 	GetSubagentCall(ctx context.Context, id string) (SubagentCall, error)
-	RollUpChildCost(ctx context.Context, childID string) error
+	FinishSubagentCall(ctx context.Context, id string) error
+	RollUpChildCost(ctx context.Context, childID, callID string) error
 }
 
 type service struct {

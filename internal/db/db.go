@@ -24,8 +24,11 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
-	if q.addUnrolledChildCostToParentStmt, err = db.PrepareContext(ctx, addUnrolledChildCostToParent); err != nil {
-		return nil, fmt.Errorf("error preparing query AddUnrolledChildCostToParent: %w", err)
+	if q.addSessionCostStmt, err = db.PrepareContext(ctx, addSessionCost); err != nil {
+		return nil, fmt.Errorf("error preparing query AddSessionCost: %w", err)
+	}
+	if q.addSubagentCallCostStmt, err = db.PrepareContext(ctx, addSubagentCallCost); err != nil {
+		return nil, fmt.Errorf("error preparing query AddSubagentCallCost: %w", err)
 	}
 	if q.claimBackgroundJobEventsStmt, err = db.PrepareContext(ctx, claimBackgroundJobEvents); err != nil {
 		return nil, fmt.Errorf("error preparing query ClaimBackgroundJobEvents: %w", err)
@@ -89,6 +92,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.finalizeBackgroundJobStmt, err = db.PrepareContext(ctx, finalizeBackgroundJob); err != nil {
 		return nil, fmt.Errorf("error preparing query FinalizeBackgroundJob: %w", err)
+	}
+	if q.finishSubagentCallStmt, err = db.PrepareContext(ctx, finishSubagentCall); err != nil {
+		return nil, fmt.Errorf("error preparing query FinishSubagentCall: %w", err)
 	}
 	if q.finishWorkflowRunStmt, err = db.PrepareContext(ctx, finishWorkflowRun); err != nil {
 		return nil, fmt.Errorf("error preparing query FinishWorkflowRun: %w", err)
@@ -266,9 +272,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
-	if q.addUnrolledChildCostToParentStmt != nil {
-		if cerr := q.addUnrolledChildCostToParentStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing addUnrolledChildCostToParentStmt: %w", cerr)
+	if q.addSessionCostStmt != nil {
+		if cerr := q.addSessionCostStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addSessionCostStmt: %w", cerr)
+		}
+	}
+	if q.addSubagentCallCostStmt != nil {
+		if cerr := q.addSubagentCallCostStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addSubagentCallCostStmt: %w", cerr)
 		}
 	}
 	if q.claimBackgroundJobEventsStmt != nil {
@@ -374,6 +385,11 @@ func (q *Queries) Close() error {
 	if q.finalizeBackgroundJobStmt != nil {
 		if cerr := q.finalizeBackgroundJobStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing finalizeBackgroundJobStmt: %w", cerr)
+		}
+	}
+	if q.finishSubagentCallStmt != nil {
+		if cerr := q.finishSubagentCallStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing finishSubagentCallStmt: %w", cerr)
 		}
 	}
 	if q.finishWorkflowRunStmt != nil {
@@ -700,7 +716,8 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                                          DBTX
 	tx                                          *sql.Tx
-	addUnrolledChildCostToParentStmt            *sql.Stmt
+	addSessionCostStmt                          *sql.Stmt
+	addSubagentCallCostStmt                     *sql.Stmt
 	claimBackgroundJobEventsStmt                *sql.Stmt
 	countUnresolvedPermissionDecisionsSinceStmt *sql.Stmt
 	createBackgroundJobStmt                     *sql.Stmt
@@ -722,6 +739,7 @@ type Queries struct {
 	deleteSessionMessagesStmt                   *sql.Stmt
 	deleteStepUsageBeforeStmt                   *sql.Stmt
 	finalizeBackgroundJobStmt                   *sql.Stmt
+	finishSubagentCallStmt                      *sql.Stmt
 	finishWorkflowRunStmt                       *sql.Stmt
 	getAllSessionMessagesStmt                   *sql.Stmt
 	getBackgroundJobStmt                        *sql.Stmt
@@ -783,10 +801,11 @@ type Queries struct {
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                               tx,
-		tx:                               tx,
-		addUnrolledChildCostToParentStmt: q.addUnrolledChildCostToParentStmt,
-		claimBackgroundJobEventsStmt:     q.claimBackgroundJobEventsStmt,
+		db:                           tx,
+		tx:                           tx,
+		addSessionCostStmt:           q.addSessionCostStmt,
+		addSubagentCallCostStmt:      q.addSubagentCallCostStmt,
+		claimBackgroundJobEventsStmt: q.claimBackgroundJobEventsStmt,
 		countUnresolvedPermissionDecisionsSinceStmt: q.countUnresolvedPermissionDecisionsSinceStmt,
 		createBackgroundJobStmt:                     q.createBackgroundJobStmt,
 		createBackgroundJobEventStmt:                q.createBackgroundJobEventStmt,
@@ -807,6 +826,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteSessionMessagesStmt:                   q.deleteSessionMessagesStmt,
 		deleteStepUsageBeforeStmt:                   q.deleteStepUsageBeforeStmt,
 		finalizeBackgroundJobStmt:                   q.finalizeBackgroundJobStmt,
+		finishSubagentCallStmt:                      q.finishSubagentCallStmt,
 		finishWorkflowRunStmt:                       q.finishWorkflowRunStmt,
 		getAllSessionMessagesStmt:                   q.getAllSessionMessagesStmt,
 		getBackgroundJobStmt:                        q.getBackgroundJobStmt,

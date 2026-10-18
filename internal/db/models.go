@@ -186,10 +186,12 @@ type Subagent struct {
 }
 
 type SubagentCall struct {
-	ID        string `json:"id"`
-	SessionID string `json:"session_id"`
-	Kind      string `json:"kind"`
-	CreatedAt int64  `json:"created_at"`
+	ID         string        `json:"id"`
+	SessionID  string        `json:"session_id"`
+	Kind       string        `json:"kind"`
+	Cost       float64       `json:"cost"`
+	CreatedAt  int64         `json:"created_at"`
+	FinishedAt sql.NullInt64 `json:"finished_at"`
 }
 
 type WorkflowApproval struct {

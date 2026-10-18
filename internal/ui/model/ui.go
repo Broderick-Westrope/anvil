@@ -1686,7 +1686,11 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// Get the agent tool session ID: the call's own, or for a resume,
 		// the child session it continued.
 		callID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
-		agentSessionID := m.com.Workspace.SubagentCallSession(context.Background(), callID)
+		agentSessionID := callID
+		call, linked := m.com.Workspace.SubagentCall(context.Background(), callID)
+		if linked {
+			agentSessionID = call.SessionID
+		}
 
 		// Fetch nested messages, keeping only those this call produced.
 		nestedMsgs, err := m.com.Workspace.ListMessages(context.Background(), agentSessionID)
@@ -1753,6 +1757,14 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 				}
 				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && sess.UpdatedAt > sess.CreatedAt {
 					da.SetFinishedAt(time.Unix(sess.UpdatedAt, 0))
+				}
+			}
+			// A linked task call shows its own cost and time.
+			if linked {
+				da.SetCost(call.Cost)
+				da.SetStartedAt(time.Unix(call.CreatedAt, 0))
+				if call.FinishedAt > 0 {
+					da.SetFinishedAt(time.Unix(call.FinishedAt, 0))
 				}
 			}
 		}
@@ -2165,7 +2177,8 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 // updateAgentItemSessionStats propagates token, cost, and timestamp data from
 // a child session update onto the parent agent item that owns that session.
 func (m *UI) updateAgentItemSessionStats(s session.Session) {
-	toolCallID, ok := m.agentItemToolCallID(s.ID)
+	stats := m.subagentCalls.sessionUpdated(s)
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(stats.callID)
 	if !ok {
 		return
 	}
@@ -2177,9 +2190,9 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 
 	if da, ok := item.(chat.DrillableAgent); ok {
 		da.SetTokens(s.PromptTokens + s.CompletionTokens)
-		da.SetCost(s.Cost)
-		if s.CreatedAt > 0 {
-			da.SetStartedAt(time.Unix(s.CreatedAt, 0))
+		da.SetCost(stats.cost)
+		if !stats.startedAt.IsZero() {
+			da.SetStartedAt(stats.startedAt)
 		}
 		if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && s.UpdatedAt > s.CreatedAt {
 			da.SetFinishedAt(time.Unix(s.UpdatedAt, 0))

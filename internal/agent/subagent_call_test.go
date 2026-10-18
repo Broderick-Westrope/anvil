@@ -98,7 +98,10 @@ func TestSubagentIdentityIsStoredBeforeTheFirstStep(t *testing.T) {
 		}, sub)
 		link, err := env.sessions.GetSubagentCall(ctx, "msg-1$$call-1")
 		require.NoError(t, err)
-		require.Equal(t, session.SubagentCall{ID: "msg-1$$call-1", SessionID: call.SessionID, Kind: session.SubagentCallNew}, link)
+		require.Equal(t, "msg-1$$call-1", link.ID)
+		require.Equal(t, call.SessionID, link.SessionID)
+		require.Equal(t, session.SubagentCallNew, link.Kind)
+		require.Zero(t, link.FinishedAt)
 		return agentResultWithText("done"), nil
 	})
 	agent.model.ModelCfg.Model = "m-1"
@@ -326,6 +329,11 @@ func TestEachAttemptRollsUpOnlyNewCost(t *testing.T) {
 	updated, err := env.sessions.Get(t.Context(), parent.ID)
 	require.NoError(t, err)
 	require.InDelta(t, 0.20, updated.Cost, 1e-9)
+
+	call, err := env.sessions.GetSubagentCall(t.Context(), "msg-1$$call-1")
+	require.NoError(t, err)
+	require.InDelta(t, 0.20, call.Cost, 1e-9, "the call is charged what its attempts cost")
+	require.NotZero(t, call.FinishedAt)
 }
 
 func TestTaskRunsAreAwaitedSoCancelReachesCompactionContinuations(t *testing.T) {
