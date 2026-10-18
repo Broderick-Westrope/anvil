@@ -249,6 +249,7 @@ func TestInterruptSteerContinuesTheSameCall(t *testing.T) {
 	agent := newMockAgent(testProvider, 1000, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
 		calls = append(calls, call)
 		if len(calls) == 1 {
+			call.state.acceptedUserID = "persisted-prompt"
 			require.NoError(t, c.SteerSubagent(call.SessionID, "stop, use v2", true))
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -425,4 +426,31 @@ func TestTaskCallSetupFailureStillEndsWithSubagentID(t *testing.T) {
 	require.True(t, resp.IsError)
 	require.Contains(t, resp.Content, "model provider not configured")
 	require.Regexp(t, subagentIDLine, resp.Content)
+}
+
+func TestInterruptBeforeTheTurnSavesKeepsThePrompt(t *testing.T) {
+	t.Parallel()
+	c, _, parent := newSubagentCallCoordinator(t)
+
+	var calls []SessionAgentCall
+	agent := newMockAgent(testProvider, 1000, func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		calls = append(calls, call)
+		if len(calls) == 1 {
+			// Interrupted before the turn persisted its message, so
+			// call.state.acceptedUserID stays empty.
+			require.NoError(t, c.SteerSubagent(call.SessionID, "use v2", true))
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		if len(calls) == 2 {
+			require.Equal(t, []string{"use v2"}, call.steering.pendingTexts(), "the steer waits for the first step boundary")
+			call.steering.takePending() // As prepareStep delivers it.
+		}
+		return agentResultWithText("done"), nil
+	})
+	_, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+	require.Len(t, calls, 2)
+	require.Equal(t, "fix it", calls[1].Prompt, "the original prompt still starts the call")
+	require.Empty(t, calls[1].Injections)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -301,7 +302,7 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 			return tc.failure(ctx, runErr)
 		}
 		if ctx.Err() == nil && errors.Is(context.Cause(attemptCtx), errSubagentInterrupted) {
-			next = tc.afterInterrupt()
+			next = tc.afterInterrupt(next, call.state.acceptedUserID != "")
 			continue
 		}
 		retry, reason := classifySubagentFailure(ctx, runErr)
@@ -364,9 +365,20 @@ func (tc *taskCall) injection(inj message.InjectionContent) SessionAgentCall {
 }
 
 // afterInterrupt returns the run that continues the call after
-// interrupt+steer: the human's pending steers, or a harness continue when
-// the cancelled attempt had already delivered them.
-func (tc *taskCall) afterInterrupt() SessionAgentCall {
+// interrupt+steer. If the interrupted attempt never saved its message, the
+// call starts that message again, without its human steers, which went
+// back to the lease and reach the first step boundary. Otherwise it runs
+// the human's pending steers, or a harness continue when the cancelled
+// attempt had already delivered them.
+func (tc *taskCall) afterInterrupt(interrupted SessionAgentCall, accepted bool) SessionAgentCall {
+	if !accepted {
+		rest := slices.DeleteFunc(slices.Clone(interrupted.Injections), func(inj message.InjectionContent) bool {
+			return inj.Source == message.InjectionSourceHuman
+		})
+		if len(interrupted.Injections) == 0 || len(rest) > 0 {
+			return SessionAgentCall{Prompt: interrupted.Prompt, Injections: rest}
+		}
+	}
 	if steers := tc.lease.takePending(); len(steers) > 0 {
 		return SessionAgentCall{Injections: steers}
 	}
