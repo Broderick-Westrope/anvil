@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/stretchr/testify/require"
@@ -247,4 +249,71 @@ func TestStepIsRunningOnlyWhileItsToolsRun(t *testing.T) {
 			require.False(t, stillRunning, "a finished step's tool calls are no longer running")
 		})
 	}
+}
+
+func TestCoordinatorIsStepRunningReadsSharedSteps(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	steps := csync.NewMap[string, struct{}]()
+	c := &coordinator{runningSteps: steps}
+	sess := newTestSession(t, env)
+
+	var duringTool bool
+	var stepID string
+	tool := stepTool("work", func(ctx context.Context, _ int) fantasy.ToolResponse {
+		stepID, _ = ctx.Value(tools.MessageIDContextKey).(string)
+		duringTool = c.IsStepRunning(stepID)
+		return fantasy.NewTextResponse("ok")
+	})
+	a := NewSessionAgent(SessionAgentOptions{
+		runningSteps: steps,
+		LargeModel:   Model{Model: &recordingModel{respond: toolCallsThenStop("work", "call_0")}, CatwalkCfg: catwalk.Model{ContextWindow: 200_000, DefaultMaxTokens: 1000}},
+		IsYolo:       true,
+		Sessions:     env.sessions,
+		Messages:     env.messages,
+		Tools:        []fantasy.AgentTool{tool},
+	})
+
+	_, err := a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+	require.NoError(t, err)
+	require.True(t, duringTool, "an agent given the coordinator's set reports its steps there")
+	require.False(t, c.IsStepRunning(stepID))
+}
+
+func TestRunStartsParallelToolQueuedBehindFullSlotsWhenItRuns(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	sess := newTestSession(t, env)
+
+	ids := []string{"call_0", "call_1", "call_2", "call_3", "call_4", "call_5"}
+	var entered sync.WaitGroup
+	entered.Add(5)
+	var mu sync.Mutex
+	seen := 0
+	tool := fantasy.NewParallelAgentTool("work", "Test tool.",
+		func(context.Context, struct{}, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			mu.Lock()
+			seen++
+			first := seen <= 5
+			mu.Unlock()
+			if first {
+				entered.Done()
+				entered.Wait()
+				time.Sleep(10 * time.Millisecond)
+			}
+			return fantasy.NewTextResponse("ok"), nil
+		})
+	a := turnAgent(env, &recordingModel{respond: toolCallsThenStop("work", ids...)}, "system", 200_000, tool)
+
+	_, err := a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+	require.NoError(t, err)
+
+	calls := toolCallsByID(t, env, sess.ID)
+	results := toolResultsByID(t, env, sess.ID)
+	firstFinish := results["call_0"].FinishedAt
+	for _, id := range ids[:5] {
+		firstFinish = min(firstFinish, results[id].FinishedAt)
+	}
+	require.GreaterOrEqual(t, calls["call_5"].StartedAt, firstFinish,
+		"the sixth call waits for a slot, and its clock starts when it gets one")
 }

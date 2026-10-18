@@ -259,3 +259,23 @@ func TestAgentPause_PassesThrough(t *testing.T) {
 	_, err = ws.AgentPause(t.Context(), time.Second)
 	require.ErrorIs(t, err, agent.ErrBusy)
 }
+
+// stepCoordinator reports one running step.
+type stepCoordinator struct {
+	agent.Coordinator
+	running string
+}
+
+func (c *stepCoordinator) IsStepRunning(assistantMessageID string) bool {
+	return assistantMessageID == c.running
+}
+
+func TestAgentIsStepRunning(t *testing.T) {
+	t.Parallel()
+
+	require.False(t, NewAppWorkspace(&app.App{}, nil).AgentIsStepRunning("a1"))
+
+	ws := NewAppWorkspace(&app.App{AgentCoordinator: &stepCoordinator{running: "a1"}}, nil)
+	require.True(t, ws.AgentIsStepRunning("a1"))
+	require.False(t, ws.AgentIsStepRunning("a2"))
+}
