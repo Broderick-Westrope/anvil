@@ -125,6 +125,10 @@ type ToolCall struct {
 	Input            string `json:"input"`
 	ProviderExecuted bool   `json:"provider_executed"`
 	Finished         bool   `json:"finished"`
+	// StartedAt is when the tool began running, in Unix milliseconds, or
+	// zero when unknown. It is for display only and never reaches the
+	// model.
+	StartedAt int64 `json:"started_at,omitempty"`
 }
 
 func (ToolCall) isPart() {}
@@ -137,6 +141,10 @@ type ToolResult struct {
 	MIMEType   string `json:"mime_type"`
 	Metadata   string `json:"metadata"`
 	IsError    bool   `json:"is_error"`
+	// FinishedAt is when the result was recorded, in Unix milliseconds, or
+	// zero when unknown. It is for display only and never reaches the
+	// model.
+	FinishedAt int64 `json:"finished_at,omitempty"`
 }
 
 func (ToolResult) isPart() {}
@@ -440,12 +448,8 @@ func (m *Message) FinishToolCall(toolCallID string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ToolCall); ok {
 			if c.ID == toolCallID {
-				m.Parts[i] = ToolCall{
-					ID:       c.ID,
-					Name:     c.Name,
-					Input:    c.Input,
-					Finished: true,
-				}
+				c.Finished = true
+				m.Parts[i] = c
 				return
 			}
 		}
@@ -456,12 +460,8 @@ func (m *Message) AppendToolCallInput(toolCallID string, inputDelta string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ToolCall); ok {
 			if c.ID == toolCallID {
-				m.Parts[i] = ToolCall{
-					ID:       c.ID,
-					Name:     c.Name,
-					Input:    c.Input + inputDelta,
-					Finished: c.Finished,
-				}
+				c.Input += inputDelta
+				m.Parts[i] = c
 				return
 			}
 		}
@@ -478,6 +478,19 @@ func (m *Message) AddToolCall(tc ToolCall) {
 		}
 	}
 	m.Parts = append(m.Parts, tc)
+}
+
+// MarkToolCallStarted records when the tool call began running. It
+// reports whether the message holds a tool call with that ID.
+func (m *Message) MarkToolCallStarted(toolCallID string, at time.Time) bool {
+	for i, part := range m.Parts {
+		if c, ok := part.(ToolCall); ok && c.ID == toolCallID {
+			c.StartedAt = at.UnixMilli()
+			m.Parts[i] = c
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Message) SetToolCalls(tc []ToolCall) {

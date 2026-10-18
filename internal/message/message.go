@@ -505,6 +505,11 @@ func shouldFlushNow(prev, next *Message) bool {
 		if nextCalls[i].Finished != prevCalls[i].Finished {
 			return true
 		}
+		// The UI times a running tool from StartedAt, so a start or a
+		// restart after a permission grant must not wait out the debounce.
+		if nextCalls[i].StartedAt != prevCalls[i].StartedAt {
+			return true
+		}
 		// A tool call's input only matters once it has landed (Finished
 		// flips true). Earlier deltas to Input are debounced with the
 		// rest of the streaming state.
