@@ -126,3 +126,18 @@ func TestStepFinishPersistenceFailureFailsTheRun(t *testing.T) {
 	require.ErrorContains(t, err, "disk full")
 	require.Len(t, model.prompts, 1, "no further steps after the failed save")
 }
+
+func TestCompactionPersistenceFailureIsMarked(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Compacting", t.TempDir())
+	require.NoError(t, err)
+	sessions := &failingSaves{Service: env.sessions}
+	a := pricedAgent(env, sessions, &scriptedModel{})
+	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "start", NonInteractive: true})
+	require.NoError(t, err)
+
+	sessions.armed.Store(true)
+	err = a.Summarize(t.Context(), sess.ID, nil)
+	require.ErrorIs(t, err, errLocalPersistence)
+}

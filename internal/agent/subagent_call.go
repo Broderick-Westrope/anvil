@@ -283,6 +283,11 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 				next = SessionAgentCall{Injections: steers}
 				continue
 			}
+			// Finalising now rejects cancels, so one that landed before it
+			// still wins.
+			if ctx.Err() != nil {
+				return tc.failure(ctx, ctx.Err())
+			}
 			tc.output = subAgentOutput(result)
 			return nil
 		}
@@ -499,8 +504,7 @@ func (c *coordinator) CancelSubagent(childID string) bool {
 	if lease == nil {
 		return false
 	}
-	lease.cancel(errCancelledByHuman)
-	return true
+	return lease.cancel(errCancelledByHuman)
 }
 
 // SubagentRunning implements Coordinator.

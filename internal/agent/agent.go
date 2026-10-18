@@ -634,14 +634,14 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	}
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
+		return localPersistence(ctx, fmt.Errorf("failed to get session: %w", err))
 	}
 	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
 	call := a.newSideCall(usageKindSummary, sessionID, currentSession.ParentSessionID, largeModel)
 	msgs, rawPath, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
-		return err
+		return localPersistence(ctx, err)
 	}
 	if len(msgs) == 0 {
 		// Nothing to summarize.
@@ -684,7 +684,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		MessageType:     message.MessageTypeCompaction,
 	})
 	if err != nil {
-		return err
+		return localPersistence(ctx, err)
 	}
 
 	call.messageID = compactionMsg.ID
@@ -720,7 +720,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	// silently losing all compacted history.
 	err = a.messages.Update(persistCtx, compactionMsg)
 	if err != nil {
-		return err
+		return localPersistence(persistCtx, err)
 	}
 
 	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
@@ -733,7 +733,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	currentSession.EstimatedUsage = usageIsZero(usage)
 	_, err = a.sessions.Save(genCtx, currentSession)
 	if err != nil {
-		return err
+		return localPersistence(genCtx, err)
 	}
 
 	a.reportIdleWhenDone(ctx, sessionID)

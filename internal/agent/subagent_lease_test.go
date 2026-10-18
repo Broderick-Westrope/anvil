@@ -158,3 +158,15 @@ func TestSubagentPendingSteersListsUndeliveredText(t *testing.T) {
 	require.Empty(t, c.SubagentPendingSteers("child"))
 	require.Empty(t, c.SubagentPendingSteers("not-running"))
 }
+
+func TestSubagentLeaseCancelAfterFinalisingIsRejected(t *testing.T) {
+	t.Parallel()
+	var leases subagentLeases
+	cancelled := false
+	lease, err := leases.acquire("child", "call", func(error) { cancelled = true })
+	require.NoError(t, err)
+
+	lease.finaliseOrTake()
+	require.False(t, lease.cancel(errCancelledByHuman))
+	require.False(t, cancelled)
+}

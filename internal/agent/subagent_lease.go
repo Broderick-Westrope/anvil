@@ -123,9 +123,17 @@ func (l *subagentLease) steer(text string, interrupt bool) error {
 	return nil
 }
 
-// cancel ends the whole call, recording cause.
-func (l *subagentLease) cancel(cause error) {
+// cancel ends the whole call, recording cause, unless the call has
+// started building its final result. It reports whether it did, so a
+// cancel and a successful finish never both win.
+func (l *subagentLease) cancel(cause error) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.finalising {
+		return false
+	}
 	l.cancelCall(cause)
+	return true
 }
 
 // takePending claims every pending steer for delivery. A caller that

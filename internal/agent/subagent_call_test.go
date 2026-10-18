@@ -403,3 +403,16 @@ func TestNoTextOutputIsNotRetried(t *testing.T) {
 	require.True(t, resp.IsError)
 	require.Equal(t, int32(1), runs.Load())
 }
+
+func TestCancelBeforeFinalisingWinsOverASuccessfulAttempt(t *testing.T) {
+	t.Parallel()
+	c, _, parent := newSubagentCallCoordinator(t)
+	agent := newMockAgent(testProvider, 1000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		require.True(t, c.CancelSubagent(call.SessionID))
+		return agentResultWithText("done anyway"), nil
+	})
+	resp, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "cancelled by human")
+}
