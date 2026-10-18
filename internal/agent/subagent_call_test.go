@@ -392,3 +392,17 @@ func TestInterruptDoesNotOverrideAPersistenceFailure(t *testing.T) {
 		t.Fatal("steer was lost")
 	}
 }
+
+func TestNoTextOutputIsNotRetried(t *testing.T) {
+	t.Parallel()
+	c, _, parent := newSubagentCallCoordinator(t)
+	var runs atomic.Int32
+	agent := newMockAgent(testProvider, 1000, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+		runs.Add(1)
+		return &fantasy.AgentResult{}, nil
+	})
+	resp, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+	require.True(t, resp.IsError)
+	require.Equal(t, int32(1), runs.Load())
+}

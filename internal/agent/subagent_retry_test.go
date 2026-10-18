@@ -31,7 +31,6 @@ func TestClassifySubagentFailure(t *testing.T) {
 		"1 call cancelled":                    {cancelCall: true, err: provider(503), retry: false},
 		"2 tool error wrapping network":       {err: wrap(&fantasy.ToolExecutionError{ToolName: "fetch", Err: io.ErrUnexpectedEOF}), retry: false},
 		"2 local persistence":                 {err: wrap(fmt.Errorf("save message: %w", errLocalPersistence)), retry: false},
-		"3 no text output":                    {err: wrap(errNoTextOutput), retry: false},
 		"4 bad request":                       {err: provider(400), retry: false},
 		"4 forbidden":                         {err: provider(403), retry: false},
 		"4 not found":                         {err: provider(404), retry: false},

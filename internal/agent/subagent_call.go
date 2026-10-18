@@ -25,6 +25,8 @@ const maxSubagentResumes = 2
 var defaultSubagentRetryDelays = []time.Duration{5 * time.Second, 30 * time.Second}
 
 const (
+	// noTextOutput is the result of a subagent that finished without text.
+	noTextOutput = "Sub-agent completed but produced no text output."
 	// subagentContinueText is the harness's message to a subagent resumed
 	// after a transient failure.
 	subagentContinueText = "Your previous attempt stopped because of a transient error. Continue where you left off."
@@ -182,7 +184,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		}
 		return fantasy.ToolResponse{}, err
 	} else if tc.output == "" {
-		resp = fantasy.NewTextErrorResponse(errNoTextOutput.Error())
+		resp = fantasy.NewTextErrorResponse(noTextOutput)
 	} else {
 		resp = fantasy.NewTextResponse(tc.output)
 		if recovered := tc.recoveryLine(); recovered != "" {

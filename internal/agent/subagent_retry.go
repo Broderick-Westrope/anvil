@@ -18,10 +18,6 @@ import (
 // local database rather than from the provider. Retrying can't fix it.
 var errLocalPersistence = errors.New("local persistence")
 
-// errNoTextOutput is the failure of a subagent that finished without
-// producing any text.
-var errNoTextOutput = errors.New("Sub-agent completed but produced no text output.") //nolint:staticcheck // Shown to the model verbatim.
-
 // permanentProviderStatuses are HTTP statuses a provider returns for a
 // request that will fail the same way however often it's sent.
 var permanentProviderStatuses = map[int]bool{
@@ -36,16 +32,15 @@ var permanentProviderStatuses = map[int]bool{
 // err should be resumed automatically, and if so names the failure for the
 // task result. The rules are checked in order and the first match wins;
 // callCtx is the task call's context. The order is load-bearing: a tool or
-// a 400 can wrap a network error, and neither is worth retrying.
+// a 400 can wrap a network error, and neither is worth retrying. A run that
+// finished without text isn't a failure here at all, so it's never
+// retried either.
 func classifySubagentFailure(callCtx context.Context, err error) (retry bool, reason string) {
 	if callCtx.Err() != nil {
 		return false, ""
 	}
 	var toolErr *fantasy.ToolExecutionError
 	if errors.As(err, &toolErr) || errors.Is(err, errLocalPersistence) {
-		return false, ""
-	}
-	if errors.Is(err, errNoTextOutput) {
 		return false, ""
 	}
 	var providerErr *fantasy.ProviderError
