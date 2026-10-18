@@ -36,7 +36,7 @@ func TestASessionCantBeDeletedWhileItsRunIsGoing(t *testing.T) {
 	require.NoError(t, svc.Start(ctx, workflowhost.Invocation{CommandID: "project:demo", CommandName: "demo", Source: "project", SessionID: invoker.ID, ScriptPath: script}))
 	asked := next(t, events, workflowhost.EventAsk)
 
-	require.ErrorIs(t, ws.DeleteSession(ctx, invoker.ID), workspace.ErrSessionHasRunningWorkflow)
+	require.ErrorIs(t, ws.DeleteSession(ctx, invoker.ID), session.ErrWorkflowRunning)
 	_, err = f.Sessions.Get(ctx, invoker.ID)
 	require.NoError(t, err, "the session is still there")
 

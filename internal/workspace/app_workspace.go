@@ -86,17 +86,12 @@ func (w *AppWorkspace) SetSessionPin(ctx context.Context, sessionID string, pinn
 	return w.app.Sessions.SetPin(ctx, sessionID, pinned, note)
 }
 
-// The refusals of DeleteSession. The session service refuses what the
-// database shows, from any Anvil; this one also knows what's in flight in
-// this Anvil: a run not yet recorded, and turns.
-var (
-	ErrSessionHasRunningWorkflow        = session.ErrWorkflowRunning
-	ErrSessionHasWorkingWorkflowSession = session.ErrWorkflowSessionInUse
-)
-
+// DeleteSession refuses, as the session service does for what the
+// database shows, what's in flight in this Anvil: a run not yet recorded,
+// and turns.
 func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
 	if w.WorkflowRunning(sessionID) {
-		return ErrSessionHasRunningWorkflow
+		return session.ErrWorkflowRunning
 	}
 	descendants, err := w.app.Sessions.WorkflowDescendants(ctx, sessionID)
 	if err != nil {
@@ -105,7 +100,7 @@ func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) erro
 	mgr := shell.GetBackgroundShellManager()
 	for _, id := range descendants {
 		if w.AgentIsSessionBusy(id) || slices.ContainsFunc(mgr.ListBySession(id), func(j shell.JobInfo) bool { return !j.Done }) {
-			return ErrSessionHasWorkingWorkflowSession
+			return session.ErrWorkflowSessionInUse
 		}
 	}
 	return w.app.Sessions.Delete(ctx, sessionID)
