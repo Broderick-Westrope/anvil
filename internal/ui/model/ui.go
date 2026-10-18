@@ -967,7 +967,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update live stats on agent items for any child session message.
 		// This runs regardless of whether we are drilled in.
 		if msg.Payload.SessionID != m.session.ID {
-			if msg.Type == pubsub.CreatedEvent {
+			// Updates count too, in case the creation event was dropped.
+			if msg.Type != pubsub.DeletedEvent {
 				m.subagentCalls.observe(msg.Payload)
 			}
 			m.updateAgentItemStats(msg.Payload.SessionID, msg)
