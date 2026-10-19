@@ -476,6 +476,9 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
+	diagrams := newMermaidFeature(uiHost{ui}, &ui.caps)
+	ui.features.register(diagrams)
+	chat.Diagrams = diagrams
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)

@@ -476,6 +476,10 @@ func (a *AssistantMessageItem) thinkingFinished() bool {
 func (a *AssistantMessageItem) renderMarkdown(content string, width int) string {
 	renderer := common.MarkdownRenderer(a.sty, width)
 	if a.message.IsFinished() {
+		if out, ok := renderWithDiagrams(content, width, renderer); ok {
+			a.streamingContent.Reset()
+			return out
+		}
 		// Stream complete: take the definitive render so any
 		// force-advanced (seamed) streaming output is replaced.
 		return a.streamingContent.RenderFinal(content, width, renderer)
