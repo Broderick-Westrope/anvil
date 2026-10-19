@@ -122,6 +122,25 @@ func HasTransmitted(id string, cols, rows int) bool {
 	return ok
 }
 
+// Forget drops one image from the cache and, for Kitty, returns the command
+// that deletes it and frees its data in the terminal.
+func (e Encoding) Forget(id string, cols, rows int, tmux bool) tea.Cmd {
+	key := imageKey{id: id, cols: cols, rows: rows}
+
+	cachedMutex.Lock()
+	delete(cachedImages, key)
+	cachedMutex.Unlock()
+
+	if e != EncodingKitty {
+		return nil
+	}
+	seq := ansi.KittyGraphics(nil, "a=d", "d=I", fmt.Sprintf("i=%d", key.Hash()), "q=2")
+	if tmux {
+		seq = ansi.TmuxPassthrough(seq)
+	}
+	return func() tea.Msg { return tea.RawMsg{Msg: seq} }
+}
+
 // Transmit transmits the image data to the terminal if needed. This is used to
 // cache the image on the terminal for later rendering.
 func (e Encoding) Transmit(id string, img image.Image, cs CellSize, cols, rows int, tmux bool) tea.Cmd {

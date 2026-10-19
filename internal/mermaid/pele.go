@@ -5,26 +5,12 @@ package mermaid
 import (
 	_ "embed"
 	"fmt"
-	"sync"
 
 	"github.com/dop251/goja"
 )
 
 //go:embed pele.global.js
 var peleSource string
-
-var (
-	peleProgram     *goja.Program
-	peleProgramErr  error
-	peleProgramOnce sync.Once
-)
-
-func compiledPele() (*goja.Program, error) {
-	peleProgramOnce.Do(func() {
-		peleProgram, peleProgramErr = goja.Compile("pele.global.js", peleSource, true)
-	})
-	return peleProgram, peleProgramErr
-}
 
 // Options controls Pele's layout.
 type Options struct {
@@ -45,7 +31,8 @@ type Result struct {
 }
 
 // Renderer owns one goja runtime with Pele loaded. It is not safe for
-// concurrent use.
+// concurrent use. Nothing is shared between Renderers, so dropping one
+// frees all of it.
 type Renderer struct {
 	vm       *goja.Runtime
 	render   goja.Callable
@@ -54,7 +41,7 @@ type Renderer struct {
 
 // NewRenderer loads Pele into a fresh goja runtime.
 func NewRenderer() (*Renderer, error) {
-	prog, err := compiledPele()
+	prog, err := goja.Compile("pele.global.js", peleSource, true)
 	if err != nil {
 		return nil, fmt.Errorf("compile pele: %w", err)
 	}

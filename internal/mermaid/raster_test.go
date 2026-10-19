@@ -73,8 +73,9 @@ func TestRasterizeDiagrams(t *testing.T) {
 	require.NoError(t, err)
 
 	start := time.Now()
-	_, err = sharedRasterizer()
+	rast, err := NewRasterizer(t.Context())
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = rast.Close() })
 	t.Logf("resvg init: %s", time.Since(start))
 
 	out := os.Getenv("MERMAID_SPIKE_OUT")
@@ -85,7 +86,7 @@ func TestRasterizeDiagrams(t *testing.T) {
 		peleTime := time.Since(start)
 
 		start = time.Now()
-		img, err := Rasterize(res, TokyoNight, 2)
+		img, err := rast.Rasterize(res, TokyoNight, 2)
 		require.NoError(t, err, name)
 		t.Logf("%-9s pele %8s  raster %8s  %vx%v -> %v", name, peleTime, time.Since(start), res.Width, res.Height, img.Bounds().Size())
 		require.NotContains(t, ResolveVars(res.SVG, TokyoNight), "var(", name)
@@ -98,6 +99,22 @@ func TestRasterizeDiagrams(t *testing.T) {
 			require.NoError(t, f.Close())
 		}
 	}
+}
+
+func TestRasterizeRejectsOversizedDiagram(t *testing.T) {
+	t.Parallel()
+
+	rast, err := NewRasterizer(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rast.Close() })
+	res := Result{SVG: `<svg xmlns="http://www.w3.org/2000/svg" width="4096" height="2048"><rect width="10" height="10"/></svg>`, Width: 4096, Height: 2048}
+
+	_, err = rast.Rasterize(res, TokyoNight, 1)
+	require.NoError(t, err, "exactly MaxPixels is allowed")
+	_, err = rast.Rasterize(res, TokyoNight, 1.001)
+	require.ErrorContains(t, err, "exceeds")
+	_, err = rast.Rasterize(Result{SVG: res.SVG}, TokyoNight, 1)
+	require.ErrorContains(t, err, "empty")
 }
 
 func TestResolveVars(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
-// These are the same DejaVu Sans subsets baked into go-resvg's wasm, so
+// These are the same DejaVu Sans subsets baked into resvg/resvg.wasm, so
 // Pele lays labels out with the widths resvg will actually draw.
 //
 //go:embed fonts/*.ttf

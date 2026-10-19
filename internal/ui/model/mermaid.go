@@ -1,13 +1,18 @@
 package model
 
 import (
+	"cmp"
+	"context"
 	"fmt"
 	"hash/fnv"
 	"image"
 	"image/draw"
 	"log/slog"
 	"math"
+	"slices"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
@@ -40,6 +45,13 @@ const (
 	// fraction of a terminal cell, so diagram text reads like the chat's.
 	diagramTextCellRatio = 0.8
 	peleBaseFontPx       = 16
+	// diagramIdleTimeout is how long the render engines (about 95 MB of
+	// process memory together) stay loaded after the last render.
+	diagramIdleTimeout = 2 * time.Minute
+	// diagramCacheBudget caps the decoded pixels kept for diagrams that
+	// are already in the terminal. Past it, the least recently drawn are
+	// dropped and render again if they scroll back into view.
+	diagramCacheBudget = 32 << 20
 )
 
 type diagramKey struct {
@@ -60,6 +72,11 @@ const (
 type diagramEntry struct {
 	state      diagramState
 	cols, rows int
+	// bytes is the decoded image held in the image cache once the
+	// diagram is transmitted.
+	bytes int
+	// lastUsed orders entries for eviction.
+	lastUsed uint64
 }
 
 type diagramRequest struct {
@@ -86,26 +103,36 @@ type mermaidFeature struct {
 
 	mu      sync.Mutex
 	entries map[diagramKey]*diagramEntry
+	// width is the chat width diagrams were last drawn at. Entries for
+	// other widths are stale after a resize.
+	width int
+	clock uint64
 
-	requests  chan diagramRequest
-	results   chan diagramReadyMsg
-	startOnce sync.Once
-	listening bool
-	supported bool
+	requests    chan diagramRequest
+	results     chan diagramReadyMsg
+	startOnce   sync.Once
+	idleTimeout time.Duration
+	cacheBudget int
+	// enginesLoaded reports whether the worker holds the render engines.
+	enginesLoaded atomic.Bool
+	listening     bool
+	supported     bool
 }
 
 func newMermaidFeature(host diagramHost, caps *common.Capabilities) *mermaidFeature {
 	return &mermaidFeature{
-		host:     host,
-		caps:     caps,
-		entries:  map[diagramKey]*diagramEntry{},
-		requests: make(chan diagramRequest, 64),
-		results:  make(chan diagramReadyMsg, 64),
+		host:        host,
+		caps:        caps,
+		entries:     map[diagramKey]*diagramEntry{},
+		requests:    make(chan diagramRequest, 64),
+		results:     make(chan diagramReadyMsg, 64),
+		idleTimeout: diagramIdleTimeout,
+		cacheBudget: diagramCacheBudget,
 	}
 }
 
 // Diagram implements chat.DiagramRenderer. It runs during rendering, so it
-// only reads state and queues work.
+// only touches the feature's own state and queues work.
 func (f *mermaidFeature) Diagram(source string, width int) (string, bool) {
 	if !f.caps.SupportsKittyGraphics() {
 		return "", false
@@ -120,16 +147,23 @@ func (f *mermaidFeature) Diagram(source string, width int) (string, bool) {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.width = width
+	f.clock++
 	if e, ok := f.entries[key]; ok {
+		e.lastUsed = f.clock
 		if e.state != diagramReady {
 			return "", false
 		}
-		out := fimage.EncodingKitty.Render(key.id(), e.cols, e.rows)
-		return out, out != ""
+		if out := fimage.EncodingKitty.Render(key.id(), e.cols, e.rows); out != "" {
+			return out, true
+		}
+		// The image cache was reset (e.g. on session switch) or the
+		// entry was evicted: render it again.
+		delete(f.entries, key)
 	}
 	select {
 	case f.requests <- diagramRequest{key: key, source: source, cellW: cellW, cellH: cellH, maxCols: width}:
-		f.entries[key] = &diagramEntry{state: diagramPending}
+		f.entries[key] = &diagramEntry{state: diagramPending, lastUsed: f.clock}
 		f.startOnce.Do(func() { go f.work() })
 	default:
 		// Queue full: try again on a later render.
@@ -137,26 +171,62 @@ func (f *mermaidFeature) Diagram(source string, width int) (string, bool) {
 	return "", false
 }
 
-// work renders diagrams one at a time; the goja runtime isn't safe for
-// concurrent use.
+// diagramEngines is everything a render needs. The worker owns it alone,
+// since neither engine is safe for concurrent use.
+type diagramEngines struct {
+	pele   *mermaid.Renderer
+	raster *mermaid.Rasterizer
+}
+
+func loadDiagramEngines() (*diagramEngines, error) {
+	pele, err := mermaid.NewRenderer()
+	if err != nil {
+		return nil, err
+	}
+	raster, err := mermaid.NewRasterizer(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &diagramEngines{pele: pele, raster: raster}, nil
+}
+
+// work renders diagrams one at a time. It loads the engines on the first
+// request and drops them after idleTimeout without one, so a session that
+// stops drawing diagrams gives the memory back.
 func (f *mermaidFeature) work() {
-	r, err := mermaid.NewRenderer()
-	for req := range f.requests {
-		if err != nil {
-			f.results <- diagramReadyMsg{key: req.key, err: err}
-			continue
+	var engines *diagramEngines
+	idle := time.NewTimer(f.idleTimeout)
+	idle.Stop()
+	for {
+		select {
+		case req := <-f.requests:
+			if engines == nil {
+				var err error
+				if engines, err = loadDiagramEngines(); err != nil {
+					f.results <- diagramReadyMsg{key: req.key, err: err}
+					continue
+				}
+				f.enginesLoaded.Store(true)
+			}
+			f.results <- renderDiagram(engines, req)
+			idle.Reset(f.idleTimeout)
+		case <-idle.C:
+			if engines != nil {
+				_ = engines.raster.Close()
+				engines = nil
+				f.enginesLoaded.Store(false)
+			}
 		}
-		f.results <- renderDiagram(r, req)
 	}
 }
 
-func renderDiagram(r *mermaid.Renderer, req diagramRequest) diagramReadyMsg {
+func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 	fail := func(err error) diagramReadyMsg { return diagramReadyMsg{key: req.key, err: err} }
 	cw, ch := float64(req.cellW), float64(req.cellH)
 	maxPx := float64(req.maxCols) * cw
 	scale := diagramTextCellRatio * ch / peleBaseFontPx
 
-	res, err := r.Render(req.source, mermaid.Options{MaxWidth: int(maxPx / scale)})
+	res, err := e.pele.Render(req.source, mermaid.Options{MaxWidth: int(maxPx / scale)})
 	if err != nil {
 		return fail(err)
 	}
@@ -166,7 +236,7 @@ func renderDiagram(r *mermaid.Renderer, req diagramRequest) diagramReadyMsg {
 	scale = math.Min(scale, maxPx/res.Width)
 	scale = math.Min(scale, diagramMaxRows*ch/res.Height)
 
-	img, err := mermaid.Rasterize(res, mermaid.TokyoNight, scale)
+	img, err := e.raster.Rasterize(res, mermaid.TokyoNight, scale)
 	if err != nil {
 		return fail(err)
 	}
@@ -202,33 +272,84 @@ func (f *mermaidFeature) Observe(tea.Msg) tea.Cmd {
 func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case diagramReadyMsg:
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		if msg.err != nil {
 			slog.Warn("Failed to render mermaid diagram", "err", msg.err)
-			f.setState(msg.key, diagramFailed, 0, 0)
+			f.entries[msg.key] = &diagramEntry{state: diagramFailed}
 			return f.listen, true
 		}
-		f.setState(msg.key, diagramPending, msg.cols, msg.rows)
-		_, tmux := f.caps.Env.LookupEnv("TMUX")
+		e := f.entries[msg.key]
+		if e == nil || msg.key.width != f.width {
+			// Resized while it rendered; it would be evicted at once.
+			delete(f.entries, msg.key)
+			return f.listen, true
+		}
+		e.cols, e.rows = msg.cols, msg.rows
+		e.bytes = msg.cols * msg.cellW * msg.rows * msg.cellH * 4
 		cs := fimage.CellSize{Width: msg.cellW, Height: msg.cellH}
-		transmit := fimage.EncodingKitty.Transmit(msg.key.id(), msg.img, cs, msg.cols, msg.rows, tmux)
+		transmit := fimage.EncodingKitty.Transmit(msg.key.id(), msg.img, cs, msg.cols, msg.rows, f.tmux())
 		shown := func() tea.Msg { return diagramShownMsg{key: msg.key} }
 		return tea.Batch(f.listen, tea.Sequence(transmit, shown)), true
 	case diagramShownMsg:
 		f.mu.Lock()
-		if e, ok := f.entries[msg.key]; ok {
+		e, ok := f.entries[msg.key]
+		if ok {
 			e.state = diagramReady
 		}
+		evict := f.evictLocked(msg.key)
 		f.mu.Unlock()
-		f.host.InvalidateChat()
-		return nil, true
+		if ok {
+			f.host.InvalidateChat()
+		}
+		return evict, true
 	}
 	return nil, false
 }
 
-func (f *mermaidFeature) setState(key diagramKey, state diagramState, cols, rows int) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.entries[key] = &diagramEntry{state: state, cols: cols, rows: rows}
+func (f *mermaidFeature) tmux() bool {
+	_, ok := f.caps.Env.LookupEnv("TMUX")
+	return ok
+}
+
+// evictLocked drops transmitted diagrams drawn at another width, then the
+// least recently drawn until the rest fit cacheBudget. keep is never
+// dropped. It returns the commands that free them in the terminal.
+func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
+	var held []diagramKey
+	total := 0
+	var cmds []tea.Cmd
+	for key, e := range f.entries {
+		if e.bytes == 0 {
+			continue
+		}
+		if key.width != f.width && key != keep {
+			cmds = append(cmds, f.forgetLocked(key))
+			continue
+		}
+		held = append(held, key)
+		total += e.bytes
+	}
+	slices.SortFunc(held, func(a, b diagramKey) int {
+		return cmp.Compare(f.entries[a].lastUsed, f.entries[b].lastUsed)
+	})
+	for _, key := range held {
+		if total <= f.cacheBudget {
+			break
+		}
+		if key == keep {
+			continue
+		}
+		total -= f.entries[key].bytes
+		cmds = append(cmds, f.forgetLocked(key))
+	}
+	return tea.Batch(cmds...)
+}
+
+func (f *mermaidFeature) forgetLocked(key diagramKey) tea.Cmd {
+	e := f.entries[key]
+	delete(f.entries, key)
+	return fimage.EncodingKitty.Forget(key.id(), e.cols, e.rows, f.tmux())
 }
 
 func (f *mermaidFeature) HandleKey(tea.KeyPressMsg) (tea.Cmd, bool)  { return nil, false }

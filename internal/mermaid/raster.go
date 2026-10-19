@@ -1,29 +1,39 @@
 package mermaid
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 
-	resvg "github.com/boolean-maybe/go-resvg"
+	"github.com/Broderick-Westrope/anvil/internal/mermaid/resvg"
 )
 
-var (
-	rasterizer     *resvg.Renderer
-	rasterizerErr  error
-	rasterizerOnce sync.Once
-)
+// MaxPixels caps a rasterized diagram's area (32 MB of RGBA) so one diagram
+// can't grow resvg's memory without bound. The chat scales diagrams to its
+// width and 40 rows, well inside this.
+const MaxPixels = 4096 * 2048
 
-func sharedRasterizer() (*resvg.Renderer, error) {
-	rasterizerOnce.Do(func() {
-		rasterizer, rasterizerErr = resvg.New()
-	})
-	return rasterizer, rasterizerErr
+// Rasterizer turns Pele SVG into pixels. It is not safe for concurrent use;
+// Close frees everything it holds.
+type Rasterizer struct {
+	engine *resvg.Engine
 }
+
+// NewRasterizer compiles resvg, which takes a few hundred milliseconds.
+func NewRasterizer(ctx context.Context) (*Rasterizer, error) {
+	e, err := resvg.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &Rasterizer{engine: e}, nil
+}
+
+// Close frees resvg's compiled code and memory.
+func (r *Rasterizer) Close() error { return r.engine.Close() }
 
 var rootFontShorthand = regexp.MustCompile(`font:(\d+(?:\.\d+)?)px`)
 
@@ -86,16 +96,17 @@ func parseHex(s string) ([3]uint8, bool) {
 
 // Rasterize renders a Pele result to pixels at scale times its natural size,
 // after resolving its CSS variables against theme.
-func Rasterize(res Result, theme Theme, scale float64) (image.Image, error) {
-	r, err := sharedRasterizer()
-	if err != nil {
-		return nil, fmt.Errorf("init resvg: %w", err)
+func (r *Rasterizer) Rasterize(res Result, theme Theme, scale float64) (*image.RGBA, error) {
+	w := int(math.Ceil(res.Width * scale))
+	h := int(math.Ceil(res.Height * scale))
+	if w <= 0 || h <= 0 {
+		return nil, fmt.Errorf("rasterize: empty %dx%d diagram", w, h)
+	}
+	if w*h > MaxPixels {
+		return nil, fmt.Errorf("rasterize: %dx%d exceeds %d pixels", w, h, MaxPixels)
 	}
 	svg := normalizeRootFont(resolveColorMix(ResolveVars(res.SVG, theme)), theme["pele-bg"])
-	img, err := r.Render([]byte(svg), resvg.RenderOptions{
-		Width:  int(math.Ceil(res.Width * scale)),
-		Height: int(math.Ceil(res.Height * scale)),
-	})
+	img, err := r.engine.Render([]byte(svg), w, h)
 	if err != nil {
 		return nil, fmt.Errorf("rasterize: %w", err)
 	}
