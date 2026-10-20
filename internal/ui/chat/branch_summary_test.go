@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -48,4 +49,38 @@ func TestBranchSummaryMessageItem(t *testing.T) {
 	handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: tea.KeyRight})
 	require.True(t, handled)
 	require.Equal(t, util.AgentDrillInMsg{SessionID: "child-1", Label: "Branch summary"}, cmd())
+}
+
+func TestBranchSummaryMessageItem_ExpandedWrapsLongLines(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	msg := branchSummaryMessage()
+	msg.Parts = []message.ContentPart{message.BranchSummaryContent{
+		Summary: "- Pushed to github.com/acme/app/pull/4242 at the very end of a long line, SHA 3f2a9c1e5b7d",
+	}}
+	item := NewBranchSummaryMessageItem(&sty, msg).(*BranchSummaryMessageItem)
+	item.ToggleExpanded()
+
+	out := ansi.Strip(item.Render(50))
+
+	require.Contains(t, strings.ReplaceAll(out, "\n", ""), "3f2a9c1e5b7d", "nothing is cut off once expanded")
+	for line := range strings.SplitSeq(out, "\n") {
+		require.LessOrEqual(t, ansi.StringWidth(line), 50)
+	}
+}
+
+func TestBranchSummaryMessageItem_StripsControlSequences(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	msg := branchSummaryMessage()
+	msg.Parts = []message.ContentPart{message.BranchSummaryContent{Summary: "safe \x1b]52;c;ZXZpbA==\x07text \x1b[2J"}}
+	item := NewBranchSummaryMessageItem(&sty, msg)
+
+	out := item.Render(80)
+
+	require.NotContains(t, out, "\x1b]52")
+	require.NotContains(t, out, "\x1b[2J")
+	require.Contains(t, ansi.Strip(out), "safe text")
 }

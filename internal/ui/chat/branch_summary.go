@@ -110,7 +110,9 @@ func (b *BranchSummaryMessageItem) render(width int) string {
 	}
 	out := []string{ansi.Truncate(header, width, "…")}
 	var body []string
-	for line := range strings.SplitSeq(strings.TrimSpace(b.summary.Summary), "\n") {
+	// The summary is model output: strip any escape sequences before it
+	// reaches the terminal.
+	for line := range strings.SplitSeq(strings.TrimSpace(ansi.Strip(b.summary.Summary)), "\n") {
 		if strings.TrimSpace(line) != "" {
 			body = append(body, line)
 		}
@@ -120,7 +122,14 @@ func (b *BranchSummaryMessageItem) render(width int) string {
 		shown = body[:branchSummaryCollapsedLines]
 	}
 	for _, line := range shown {
-		out = append(out, b.sty.Tool.JobID.Render(ansi.Truncate("  "+line, width, "…")))
+		if !b.expanded {
+			out = append(out, b.sty.Tool.JobID.Render(ansi.Truncate("  "+line, width, "…")))
+			continue
+		}
+		// Expanded, nothing is cut: paths, SHAs and URLs are the point.
+		for wrapped := range strings.SplitSeq(ansi.Wrap(line, max(width-2, 1), ""), "\n") {
+			out = append(out, b.sty.Tool.JobID.Render("  "+wrapped))
+		}
 	}
 	if len(shown) < len(body) {
 		out = append(out, b.sty.Tool.JobID.Render(ansi.Truncate("  …", width, "…")))
