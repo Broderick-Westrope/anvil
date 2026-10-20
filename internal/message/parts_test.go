@@ -27,7 +27,13 @@ func TestStoredParts_RoundTripEveryPartType(t *testing.T) {
 		message.ToolCall{ID: "call", Name: "bash", Input: "{}", ProviderExecuted: true, Finished: true, StartedAt: 1_000},
 		message.ToolResult{ToolCallID: "call", Name: "bash", Content: "out", Data: "ZGF0YQ==", MIMEType: "text/plain", Metadata: "{}", IsError: true, FinishedAt: 2_000},
 		message.CompactionContent{Summary: "sum", FirstKeptEntryID: "kept", TokensBefore: 10},
-		message.BranchSummaryContent{Summary: "branch", FromID: "from"},
+		message.BranchSummaryContent{
+			Summary: "branch", FromID: "from", ChildSessionID: "child", Agent: "branch-summarizer",
+			Ledger: message.BranchLedger{
+				Modified: []string{"a.go"}, Read: []string{"b.go"},
+				Events: []message.LedgerEvent{{Tool: "bash", Command: "git commit -m x", Dir: "/repo", Status: message.LedgerSucceeded, Refs: []string{"abc1234"}}},
+			},
+		},
 		message.LabelContent{TargetID: "target", Label: "label"},
 		message.ModelChangeContent{Provider: "anthropic", ModelID: "model"},
 		message.ThinkingLevelChangeContent{ThinkingLevel: "high"},

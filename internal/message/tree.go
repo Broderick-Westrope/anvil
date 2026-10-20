@@ -146,6 +146,8 @@ func EstimateMessageTokens(msg Message) int {
 			total += (len(p.Input) + 3) / 4
 		case ToolResult:
 			total += (len(p.Content) + 3) / 4
+		case BranchSummaryContent:
+			total += (len(p.Summary) + 3) / 4
 		}
 	}
 	if total == 0 {

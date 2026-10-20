@@ -171,6 +171,45 @@ func (CompactionContent) isPart() {}
 type BranchSummaryContent struct {
 	Summary string `json:"summary"`
 	FromID  string `json:"from_id"`
+	// ChildSessionID is the session the summarizer agent ran in.
+	ChildSessionID string `json:"child_session_id,omitempty"`
+	// Agent is the summarizer agent's name.
+	Agent string `json:"agent,omitempty"`
+	// Ledger is what the abandoned branch's tool calls did, extracted
+	// in code. Later summaries carry it forward.
+	Ledger BranchLedger `json:"ledger,omitzero"`
+}
+
+// BranchLedger records the effects of an abandoned branch's tool calls.
+type BranchLedger struct {
+	// Modified lists files a successful edit or write changed.
+	Modified []string `json:"modified,omitempty"`
+	// Read lists files viewed but not modified.
+	Read []string `json:"read,omitempty"`
+	// Events are state-changing commands, in the order they ran.
+	Events []LedgerEvent `json:"events,omitempty"`
+}
+
+// LedgerStatus is how a recorded tool call ended.
+type LedgerStatus string
+
+const (
+	LedgerSucceeded LedgerStatus = "succeeded"
+	LedgerFailed    LedgerStatus = "failed"
+	LedgerDenied    LedgerStatus = "denied"
+	// LedgerUnknown means no result was recorded, or the command moved to
+	// a background job.
+	LedgerUnknown LedgerStatus = "unknown"
+)
+
+// LedgerEvent is one state-changing command from an abandoned branch.
+type LedgerEvent struct {
+	Tool    string       `json:"tool"`
+	Command string       `json:"command"`
+	Dir     string       `json:"dir,omitempty"`
+	Status  LedgerStatus `json:"status"`
+	// Refs are commit SHAs and URLs the command printed.
+	Refs []string `json:"refs,omitempty"`
 }
 
 func (BranchSummaryContent) isPart() {}
