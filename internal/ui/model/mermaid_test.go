@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -578,4 +579,33 @@ func TestMermaidFeatureDropsAFailureForAForgottenDiagram(t *testing.T) {
 	f.Observe(nil)
 	f.HandleMsg(failed)
 	require.NotContains(t, f.entries, failed.key, "nothing is kept for the old cells")
+}
+
+func TestMermaidFeatureExportPrunesOldPages(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	old := filepath.Join(f.exportDir, "old.html")
+	recent := filepath.Join(f.exportDir, "recent.html")
+	for _, p := range []string{old, recent} {
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+	}
+	stale := time.Now().Add(-2 * diagramExportMaxAge)
+	require.NoError(t, os.Chtimes(old, stale, stale))
+
+	f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n Prune --> Old\n", External: true})
+	exported, ok := waitResult(t, f).(diagramExportedMsg)
+	require.True(t, ok)
+	require.NoError(t, exported.err)
+	require.NoFileExists(t, old)
+	require.FileExists(t, recent)
+	require.FileExists(t, exported.path)
+}
+
+func TestDiagramExportDirIsPerUser(t *testing.T) {
+	t.Parallel()
+
+	cache, err := os.UserCacheDir()
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(cache, "anvil", "diagrams"), diagramExportDir())
 }

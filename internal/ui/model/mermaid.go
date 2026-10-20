@@ -53,7 +53,39 @@ const (
 	// terminal (Anvil keeps none once sent). Past it, the least recently
 	// drawn are deleted and render again if they scroll back into view.
 	diagramCacheBudget = 32 << 20
+	// diagramExportMaxAge is how long a page exported for the browser is
+	// kept; older ones are deleted when the next is written.
+	diagramExportMaxAge = 24 * time.Hour
 )
+
+// diagramExportDir is where pages for the browser are written: the user's
+// own cache directory, not a shared temp directory another user could
+// plant files in.
+func diagramExportDir() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		dir = filepath.Join(os.TempDir(), fmt.Sprintf("anvil-%d", os.Getuid()))
+	}
+	return filepath.Join(dir, "anvil", "diagrams")
+}
+
+// pruneExports deletes pages in dir older than diagramExportMaxAge.
+func pruneExports(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-diagramExportMaxAge)
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() || info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+			slog.Warn("Failed to remove old diagram page", "err", err)
+		}
+	}
+}
 
 // diagramKind is where a diagram is drawn.
 type diagramKind int
@@ -202,7 +234,7 @@ func newMermaidFeature(host featureHost, caps *common.Capabilities, com *common.
 		results:      make(chan tea.Msg, 64),
 		idleTimeout:  diagramIdleTimeout,
 		cacheBudget:  diagramCacheBudget,
-		exportDir:    filepath.Join(os.TempDir(), "anvil-diagrams"),
+		exportDir:    diagramExportDir(),
 		returnMemory: debug.FreeOSMemory,
 	}
 }
@@ -445,6 +477,7 @@ func (f *mermaidFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {
 	if err := os.MkdirAll(f.exportDir, 0o700); err != nil {
 		return diagramExportedMsg{err: err}
 	}
+	pruneExports(f.exportDir)
 	path := filepath.Join(f.exportDir, fmt.Sprintf("%x.html", req.key.hash))
 	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
 		return diagramExportedMsg{err: err}
