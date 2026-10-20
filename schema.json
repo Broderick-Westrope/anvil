@@ -1020,6 +1020,11 @@
           "type": "boolean",
           "description": "Enable transparent background for the TUI interface",
           "default": false
+        },
+        "diagrams": {
+          "type": "boolean",
+          "description": "Render Mermaid diagrams in assistant messages as images where the terminal supports it",
+          "default": true
         }
       },
       "additionalProperties": false,

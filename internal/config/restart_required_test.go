@@ -138,6 +138,15 @@ func TestRestartRequired(t *testing.T) {
 			want:   []string{"options.tui"},
 		},
 		{
+			name:   "diagrams turned off",
+			mutate: func(c *Config) { no := false; c.Options.TUI.Diagrams = &no },
+			want:   []string{"options.tui"},
+		},
+		{
+			name:   "diagrams unset equals on",
+			mutate: func(c *Config) { c.Options.TUI.Diagrams = &yes },
+		},
+		{
 			name:   "transparent unset equals false",
 			mutate: func(c *Config) { no := false; c.Options.TUI.Transparent = &no },
 		},
