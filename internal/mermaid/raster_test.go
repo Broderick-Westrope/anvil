@@ -88,7 +88,7 @@ func TestRasterizeDiagrams(t *testing.T) {
 	require.NoError(t, err)
 
 	start := time.Now()
-	rast, err := NewRasterizer(t.Context())
+	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
 	t.Logf("resvg init: %s", time.Since(start))
@@ -120,7 +120,7 @@ func TestRasterizeDiagrams(t *testing.T) {
 func TestRasterizeShrinksOversizedDiagramToFit(t *testing.T) {
 	t.Parallel()
 
-	rast, err := NewRasterizer(t.Context())
+	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
 	res := Result{SVG: `<svg xmlns="http://www.w3.org/2000/svg" width="4096" height="2048"><rect width="10" height="10"/></svg>`, Width: 4096, Height: 2048}
@@ -141,7 +141,7 @@ func TestRasterizeShrinksOversizedDiagramToFit(t *testing.T) {
 func TestRasterizeFitsCallerPixelBudget(t *testing.T) {
 	t.Parallel()
 
-	rast, err := NewRasterizer(t.Context())
+	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
 	res := Result{SVG: `<svg xmlns="http://www.w3.org/2000/svg" width="120.3" height="830.7"><rect width="10" height="10"/></svg>`, Width: 120.3, Height: 830.7}
@@ -157,7 +157,7 @@ func TestRasterizeFitsCallerPixelBudget(t *testing.T) {
 func TestRasterizeHugeScaleFitsThePixelCap(t *testing.T) {
 	t.Parallel()
 
-	rast, err := NewRasterizer(t.Context())
+	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
 	res := Result{SVG: `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="10" height="10"/></svg>`, Width: 40, Height: 20}
@@ -189,7 +189,7 @@ func TestRasterizeRejectsUnusableSize(t *testing.T) {
 			t.Parallel()
 
 			// A Rasterizer is not safe for concurrent use.
-			rast, err := NewRasterizer(t.Context())
+			rast, err := NewRasterizer(t.Context(), "")
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = rast.Close() })
 			_, err = rast.Rasterize(Result{SVG: svg, Width: tc.width, Height: tc.height}, testTheme, RasterOptions{Scale: tc.scale})
@@ -203,7 +203,7 @@ func TestRasterizeTransparentBackground(t *testing.T) {
 
 	r, err := NewRenderer()
 	require.NoError(t, err)
-	rast, err := NewRasterizer(t.Context())
+	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
 	res, err := r.Render(sampleFlowchart, Options{})
@@ -231,7 +231,7 @@ var explodingVarsSVG = func() string {
 func TestRasterizeRejectsExplodingVariables(t *testing.T) {
 	t.Parallel()
 
-	rast, err := NewRasterizer(t.Context())
+	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
 
@@ -247,7 +247,7 @@ func TestRenderLabelDeclaringVariablesStaysSmall(t *testing.T) {
 
 	r, err := NewRenderer()
 	require.NoError(t, err)
-	rast, err := NewRasterizer(t.Context())
+	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
 	res, err := r.Render(`flowchart LR
@@ -273,7 +273,7 @@ func TestRenderLabelDeclaringVariablesStaysSmall(t *testing.T) {
 func TestRasterizeResolvesColorMix(t *testing.T) {
 	t.Parallel()
 
-	rast, err := NewRasterizer(t.Context())
+	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
 	svg := `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" style="--_a:#ff0000;--_bg:var(--pele-bg)"><rect width="10" height="10" fill="color-mix(in srgb,var(--_a) 50%,var(--_bg))"/></svg>`

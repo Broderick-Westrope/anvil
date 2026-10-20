@@ -38,9 +38,10 @@ const (
 	// fraction of a terminal cell, so diagram text reads like the chat's.
 	diagramTextCellRatio = 0.8
 	peleBaseFontPx       = 16
-	// diagramIdleTimeout is how long the render engines (about 95 MB of
+	// diagramIdleTimeout is how long the render engines (about 30 MB of
 	// process memory together) stay loaded after the last render.
-	// Reloading them costs about 370 ms.
+	// Reloading them costs about 90 ms once resvg is in the compile
+	// cache, 370 ms before.
 	diagramIdleTimeout = 20 * time.Second
 	// diagramCacheBudget caps the pixels of the diagrams held in the
 	// terminal (Anvil keeps none once sent) that are out of view. Past it,
@@ -163,6 +164,9 @@ type mermaidFeature struct {
 	idleTimeout time.Duration
 	cacheBudget int
 	exportDir   string
+	// compileCacheDir is where resvg's compiled code is shared between
+	// processes; empty compiles it on every load.
+	compileCacheDir string
 	// palette is the theme without its background, and paletteHash its
 	// hash; see initPalette.
 	paletteOnce sync.Once
@@ -200,18 +204,19 @@ func (c drawConditions) usable() bool { return c.kitty && c.cellW > 0 && c.cellH
 
 func newMermaidFeature(host featureHost, caps *common.Capabilities, com *common.Common) *mermaidFeature {
 	return &mermaidFeature{
-		host:         host,
-		caps:         caps,
-		com:          com,
-		entries:      map[diagramKey]*diagramEntry{},
-		requests:     make(chan diagramRequest, 64),
-		results:      make(chan tea.Msg, 64),
-		idleTimeout:  diagramIdleTimeout,
-		cacheBudget:  diagramCacheBudget,
-		exportDir:    diagramExportDir(),
-		returnMemory: debug.FreeOSMemory,
-		newRenderer:  mermaid.NewRenderer,
-		openURL:      browser.OpenURL,
+		host:            host,
+		caps:            caps,
+		com:             com,
+		entries:         map[diagramKey]*diagramEntry{},
+		requests:        make(chan diagramRequest, 64),
+		results:         make(chan tea.Msg, 64),
+		idleTimeout:     diagramIdleTimeout,
+		cacheBudget:     diagramCacheBudget,
+		exportDir:       diagramExportDir(),
+		compileCacheDir: diagramCompileCacheDir(),
+		returnMemory:    debug.FreeOSMemory,
+		newRenderer:     mermaid.NewRenderer,
+		openURL:         browser.OpenURL,
 	}
 }
 

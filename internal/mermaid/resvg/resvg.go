@@ -73,8 +73,12 @@ const defaultMaxMemory = 32 << 20
 
 // Engine rasterizes SVG. It is not safe for concurrent use.
 type Engine struct {
-	ctx       context.Context
-	rt        wazero.Runtime
+	ctx context.Context
+	rt  wazero.Runtime
+	// cache is nil without a cache directory. With one, wazero keeps the
+	// compiled code in the cache rather than the runtime, so Close has to
+	// close both to free it.
+	cache     wazero.CompilationCache
 	compiled  wazero.CompiledModule
 	inst      *instance
 	maxMemory uint32
@@ -89,39 +93,69 @@ type instance struct {
 }
 
 // New compiles the module with the default render limits. Compiling takes a
-// few hundred milliseconds and the compiled code is most of the Engine's
-// memory.
-func New(ctx context.Context) (*Engine, error) {
-	return newWithLimits(ctx, defaultLimits)
+// few hundred milliseconds and allocates about 75 MB that is garbage
+// straight after, so when cacheDir isn't empty New keeps the compiled code
+// there and later Engines, in any process, load it in milliseconds instead.
+// A cache that can't be used is skipped, not reported: it only saves time
+// and memory. The directory must be writable only by the user, since its
+// contents run as native code.
+func New(ctx context.Context, cacheDir string) (*Engine, error) {
+	return newWithLimits(ctx, defaultLimits, cacheDir)
 }
 
 // newRuntimeMu serialises creating runtimes: wazero v1.12 sets a package
 // global on first use without synchronising it, so two at once race.
 var newRuntimeMu sync.Mutex
 
-func newWithLimits(ctx context.Context, limits renderLimits) (*Engine, error) {
+func newWithLimits(ctx context.Context, limits renderLimits, cacheDir string) (*Engine, error) {
+	if cacheDir != "" {
+		// wazero fails the compile when it can't write the cache, and a
+		// corrupt entry fails it too; both still compile without one.
+		if e, err := compile(ctx, limits, cacheDir); err == nil {
+			return e, nil
+		}
+	}
+	return compile(ctx, limits, "")
+}
+
+func compile(ctx context.Context, limits renderLimits, cacheDir string) (*Engine, error) {
 	cfg := wazero.NewRuntimeConfig().
 		WithMemoryLimitPages(limits.Memory / wasmPageSize).
 		WithCloseOnContextDone(true)
+	e := &Engine{ctx: ctx, maxMemory: defaultMaxMemory, limits: limits}
+	if cacheDir != "" {
+		cache, err := wazero.NewCompilationCacheWithDir(cacheDir)
+		if err != nil {
+			return nil, fmt.Errorf("resvg: cache %s: %w", cacheDir, err)
+		}
+		e.cache = cache
+		cfg = cfg.WithCompilationCache(cache)
+	}
 	newRuntimeMu.Lock()
-	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
+	e.rt = wazero.NewRuntimeWithConfig(ctx, cfg)
 	newRuntimeMu.Unlock()
-	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
-		_ = rt.Close(ctx)
+	if _, err := wasi_snapshot_preview1.Instantiate(ctx, e.rt); err != nil {
+		_ = e.Close()
 		return nil, fmt.Errorf("resvg: wasi: %w", err)
 	}
-	compiled, err := rt.CompileModule(ctx, wasmBytes)
+	compiled, err := e.rt.CompileModule(ctx, wasmBytes)
 	if err != nil {
-		_ = rt.Close(ctx)
+		_ = e.Close()
 		return nil, fmt.Errorf("resvg: compile: %w", err)
 	}
-	return &Engine{ctx: ctx, rt: rt, compiled: compiled, maxMemory: defaultMaxMemory, limits: limits}, nil
+	e.compiled = compiled
+	return e, nil
 }
 
-// Close frees the instance, the compiled code and the runtime.
+// Close frees the instance, the compiled code and the runtime. The cache
+// directory is left for the next Engine.
 func (e *Engine) Close() error {
 	e.inst = nil
-	return e.rt.Close(e.ctx)
+	err := e.rt.Close(e.ctx)
+	if e.cache != nil {
+		err = errors.Join(err, e.cache.Close(e.ctx))
+	}
+	return err
 }
 
 // Render rasterizes svg at width x height pixels. A zero dimension is

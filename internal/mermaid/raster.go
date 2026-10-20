@@ -32,9 +32,11 @@ type Rasterizer struct {
 	engine *resvg.Engine
 }
 
-// NewRasterizer compiles resvg, which takes a few hundred milliseconds.
-func NewRasterizer(ctx context.Context) (*Rasterizer, error) {
-	e, err := resvg.New(ctx)
+// NewRasterizer compiles resvg, which takes a few hundred milliseconds, or
+// loads it from cacheDir when an earlier Rasterizer left it there. An empty
+// cacheDir always compiles.
+func NewRasterizer(ctx context.Context, cacheDir string) (*Rasterizer, error) {
+	e, err := resvg.New(ctx, cacheDir)
 	if err != nil {
 		return nil, err
 	}

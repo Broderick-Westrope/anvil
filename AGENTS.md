@@ -221,7 +221,11 @@ Terms with a specific meaning in this codebase are defined in
   position. The terminal holds the pixels; Anvil keeps none once sent, and
   deletes the least recently drawn images out of view past 128 MB (a wide
   diagram on a HiDPI screen is ~17 MB). The engines load on
-  the first diagram and drop after 20 seconds idle. Colours come from
+  the first diagram and drop after 20 seconds idle. resvg's compiled
+  code goes in wazero's compilation cache under the user cache dir
+  (`anvil/wasm`), shared by every process, so only the first load after
+  an upgrade compiles it (~300 ms and ~50 MB peak, against ~11 ms).
+  Colours come from
   `Styles.Diagram`. `options.tui.diagrams` (default on) needs a restart:
   `ConfigStore.DiagramsEnabled` reads the startup snapshot, and both the
   UI (a nil renderer means no split) and the system prompt line gate on

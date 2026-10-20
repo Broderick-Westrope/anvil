@@ -63,10 +63,17 @@ The spike (`plans/completed/spike-2026-10-20-mermaid-rendering.md`) found:
 
 ## Consequences
 
-- The binary grows by about 7.6 MB, and the engines take about 95 MB of
-  process memory while loaded. They load on the first diagram and are
-  dropped after 20 seconds idle, and nothing loads when
+- The binary grows by about 7.6 MB. Loading the engines peaks at about
+  95 MB of process memory and settles near 30 MB. They load on the first
+  diagram and are dropped after 20 seconds idle, and nothing loads when
   `options.tui.diagrams` is off.
+- Compiling resvg takes about 300 ms and half of that peak, so the
+  compiled code is kept in wazero's compilation cache in the user cache
+  directory, where every Anvil process loads it in about 11 ms. Pele
+  (about 48 MB at load) is the peak after that. The cache holds native
+  code, so it never falls back to a shared temp directory, and an unusable
+  or corrupt cache compiles without it. Each wazero or `resvg.wasm`
+  upgrade leaves about 5 MB of old entries behind.
 - We own the resvg Go wrapper and its ABI assumptions. A new resvg build
   needs the steps above, not a `go get`.
 - Pele implements a subset of Mermaid. Diagrams it rejects fall back to

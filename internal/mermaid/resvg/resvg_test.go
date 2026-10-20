@@ -2,6 +2,8 @@ package resvg
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
@@ -24,7 +26,7 @@ func heapAlloc() uint64 {
 func TestRender(t *testing.T) {
 	t.Parallel()
 
-	e, err := New(t.Context())
+	e, err := New(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
 
@@ -46,7 +48,7 @@ func TestRender(t *testing.T) {
 //
 //nolint:paralleltest // Measures the process heap.
 func TestRenderAcrossGCsDoesNotGrow(t *testing.T) {
-	e, err := New(t.Context())
+	e, err := New(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
 
@@ -68,7 +70,7 @@ func TestRenderAcrossGCsDoesNotGrow(t *testing.T) {
 //
 //nolint:paralleltest // Measures the process heap.
 func TestRenderReleasesGrownMemory(t *testing.T) {
-	e, err := New(t.Context())
+	e, err := New(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
 	e.maxMemory = 8 << 20
@@ -89,7 +91,7 @@ func TestRenderReleasesGrownMemory(t *testing.T) {
 func TestRenderPastTheMemoryLimitFailsAndRecovers(t *testing.T) {
 	t.Parallel()
 
-	e, err := newWithLimits(t.Context(), renderLimits{Memory: 16 << 20, Timeout: defaultLimits.Timeout})
+	e, err := newWithLimits(t.Context(), renderLimits{Memory: 16 << 20, Timeout: defaultLimits.Timeout}, "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
 
@@ -104,7 +106,7 @@ func TestRenderPastItsDeadlineFailsAndRecovers(t *testing.T) {
 
 	// A deadline already past, so the render can't finish first however
 	// coarse the platform's timers are.
-	e, err := newWithLimits(t.Context(), renderLimits{Memory: defaultLimits.Memory, Timeout: -time.Second})
+	e, err := newWithLimits(t.Context(), renderLimits{Memory: defaultLimits.Memory, Timeout: -time.Second}, "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
 
@@ -121,7 +123,7 @@ func TestNewIsSafeToCallConcurrently(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			e, err := New(t.Context())
+			e, err := New(t.Context(), "")
 			if assert.NoError(t, err) {
 				_ = e.Close()
 			}
@@ -143,7 +145,7 @@ func TestDefaultLimits(t *testing.T) {
 func TestRenderKeepsAnInstanceAtMaxMemory(t *testing.T) {
 	t.Parallel()
 
-	e, err := New(t.Context())
+	e, err := New(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
 
@@ -159,4 +161,75 @@ func TestRenderKeepsAnInstanceAtMaxMemory(t *testing.T) {
 	_, err = e.Render([]byte(rectSVG), 10, 10)
 	require.NoError(t, err)
 	require.Nil(t, e.inst, "an instance past maxMemory is dropped")
+}
+
+// cacheEntries returns the compiled modules wazero has written under dir.
+func cacheEntries(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := filepath.Glob(filepath.Join(dir, "wazero-*", "*"))
+	require.NoError(t, err)
+	return entries
+}
+
+func requireRenders(t *testing.T, e *Engine) {
+	t.Helper()
+	img, err := e.Render([]byte(rectSVG), 40, 20)
+	require.NoError(t, err)
+	r, _, _, _ := img.At(5, 5).RGBA()
+	require.Equal(t, uint32(0xffff), r)
+}
+
+func TestNewLoadsCompiledCodeFromTheCacheDir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	first, err := New(t.Context(), dir)
+	require.NoError(t, err)
+	require.NotNil(t, first.cache, "the engine uses the cache")
+	requireRenders(t, first)
+	require.NoError(t, first.Close())
+
+	entries := cacheEntries(t, dir)
+	require.Len(t, entries, 1, "compiling writes the module to the cache")
+	// Backdate the entry, so a second compile writing it again would show.
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	require.NoError(t, os.Chtimes(entries[0], old, old))
+
+	second, err := New(t.Context(), dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	requireRenders(t, second)
+	st, err := os.Stat(entries[0])
+	require.NoError(t, err)
+	require.True(t, st.ModTime().Equal(old), "the second engine loads the entry instead of compiling")
+}
+
+func TestNewCompilesPastACorruptCacheEntry(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	first, err := New(t.Context(), dir)
+	require.NoError(t, err)
+	require.NoError(t, first.Close())
+	entries := cacheEntries(t, dir)
+	require.Len(t, entries, 1)
+	require.NoError(t, os.WriteFile(entries[0], []byte("not compiled code"), 0o600))
+
+	e, err := New(t.Context(), dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = e.Close() })
+	requireRenders(t, e)
+}
+
+func TestNewCompilesWhenTheCacheDirIsUnusable(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(file, nil, 0o600))
+
+	e, err := New(t.Context(), file)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = e.Close() })
+	require.Nil(t, e.cache, "the engine runs without the cache")
+	requireRenders(t, e)
 }

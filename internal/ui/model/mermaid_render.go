@@ -35,6 +35,18 @@ func diagramExportDir() string {
 	return filepath.Join(dir, "anvil", "diagrams")
 }
 
+// diagramCompileCacheDir is where resvg's compiled code is kept for every
+// Anvil process to load, or empty to compile it each time. Unlike exports
+// there's no temp directory fallback: the cache runs as native code, so it
+// must not be somewhere another user could write.
+func diagramCompileCacheDir() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "anvil", "wasm")
+}
+
 // pruneExports deletes pages in dir older than diagramExportMaxAge.
 func pruneExports(dir string) {
 	entries, err := os.ReadDir(dir)
@@ -70,11 +82,13 @@ func transientRenderError(err error) bool {
 type diagramEngines struct {
 	pele   *mermaid.Renderer
 	raster *mermaid.Rasterizer
+	// cacheDir is where the rasterizer keeps its compiled code.
+	cacheDir string
 }
 
 func (e *diagramEngines) rasterizer() (*mermaid.Rasterizer, error) {
 	if e.raster == nil {
-		r, err := mermaid.NewRasterizer(context.Background())
+		r, err := mermaid.NewRasterizer(context.Background(), e.cacheDir)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", errEnginesUnavailable, err)
 		}
@@ -121,7 +135,7 @@ func (f *mermaidFeature) serve(engines *diagramEngines, req diagramRequest) (*di
 		if err != nil {
 			return nil, requestFailed(req, fmt.Errorf("%w: %w", errEnginesUnavailable, err))
 		}
-		engines = &diagramEngines{pele: pele}
+		engines = &diagramEngines{pele: pele, cacheDir: f.compileCacheDir}
 	}
 	msg, ok := f.runRequest(engines, req)
 	if !ok {
