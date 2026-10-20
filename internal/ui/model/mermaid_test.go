@@ -60,6 +60,7 @@ func newTestMermaidFeature(t *testing.T, host *fakeDiagramHost, caps *common.Cap
 	st := uistyles.TokyoNight()
 	f := newMermaidFeature(host, caps, &common.Common{Styles: &st})
 	f.exportDir = t.TempDir()
+	f.compileCacheDir = t.TempDir()
 	// Free the engines soon after a test stops using them.
 	f.idleTimeout = 200 * time.Millisecond
 	// Tests read results straight off the channel, so Observe mustn't
@@ -628,6 +629,26 @@ func TestMermaidFeatureExportsToTheUsersCacheDir(t *testing.T) {
 	st := uistyles.TokyoNight()
 	f := newMermaidFeature(&fakeDiagramHost{}, kittyCaps(), &common.Common{Styles: &st})
 	require.Equal(t, filepath.Join(cache, "anvil", "diagrams"), f.exportDir)
+}
+
+func TestMermaidFeatureCachesCompiledCodeInTheUsersCacheDir(t *testing.T) {
+	t.Parallel()
+
+	cache, err := os.UserCacheDir()
+	require.NoError(t, err)
+	st := uistyles.TokyoNight()
+	f := newMermaidFeature(&fakeDiagramHost{}, kittyCaps(), &common.Common{Styles: &st})
+	require.Equal(t, filepath.Join(cache, "anvil", "wasm"), f.compileCacheDir)
+}
+
+func TestMermaidFeatureRendersThroughTheCompileCache(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	showDiagram(t, f, "flowchart LR\n  A --> B", 60)
+	entries, err := filepath.Glob(filepath.Join(f.compileCacheDir, "wazero-*", "*"))
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "the rasterizer wrote its compiled code to the cache")
 }
 
 // TestFileURL tests the URL directly, since the path that uses it opens the
