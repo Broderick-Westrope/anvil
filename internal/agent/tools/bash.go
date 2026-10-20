@@ -46,8 +46,10 @@ type BashResponseMetadata struct {
 	Background       bool   `json:"background,omitempty"`
 	ShellID          string `json:"shell_id,omitempty"`
 	// ExitCode and Interrupted say how a finished command ended. They are
-	// zero for a command still running as a job.
-	ExitCode    int  `json:"exit_code,omitempty"`
+	// zero for a command still running as a job. ExitCode is always
+	// written, so a reader can tell a recorded zero from a result stored
+	// before exit codes were.
+	ExitCode    int  `json:"exit_code"`
 	Interrupted bool `json:"interrupted,omitempty"`
 }
 

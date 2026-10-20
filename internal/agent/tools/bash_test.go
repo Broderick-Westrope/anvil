@@ -883,6 +883,10 @@ func TestBashTool_CompletedCommandOutput(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
 			require.Equal(t, tc.wantOutput, meta.Output)
 			require.Equal(t, tc.wantExit, meta.ExitCode)
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &raw))
+			require.Contains(t, raw, "exit_code", "a finished command always records its exit code")
+			require.NotContains(t, raw, "interrupted")
 			require.Equal(t, tc.background, meta.Background)
 			require.Equal(t, workingDir, meta.WorkingDirectory)
 			require.Equal(t, name, meta.Description)
