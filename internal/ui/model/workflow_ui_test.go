@@ -558,20 +558,6 @@ func TestNewRoutesWorkflowEvents(t *testing.T) {
 	require.Equal(t, 1, u.features.panelLines())
 }
 
-func TestNewRendersDiagramsOnlyWhenTheyAreOn(t *testing.T) {
-	t.Parallel()
-
-	for name, off := range map[string]bool{"on": false, "off": true} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			ws := newWorkflowTestWorkspace()
-			ws.diagramsOff = off
-			u := New(common.DefaultCommon(ws), "", false)
-			require.Equal(t, off, u.diagrams == nil)
-		})
-	}
-}
-
 func TestWorkflowFollowToTheSessionOnScreenKeepsTheDrillIn(t *testing.T) {
 	t.Parallel()
 

@@ -341,3 +341,31 @@ func TestInvalidateDiagramsLeavesOtherItemsCached(t *testing.T) {
 	require.Equal(t, textVersion, text.Version(), "text keeps its render")
 	require.NotEqual(t, diagramVersion, diagram.Version(), "the diagram renders again")
 }
+
+func TestNewRendersDiagramsOnlyWhenTheyAreOn(t *testing.T) {
+	t.Parallel()
+
+	for name, off := range map[string]bool{"on": false, "off": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ws := newWorkflowTestWorkspace()
+			ws.diagramsOff = off
+			u := New(common.DefaultCommon(ws), "", false)
+			require.Equal(t, off, u.diagrams == nil)
+		})
+	}
+}
+
+func TestUIRoutesADiagramOpenToADrillIn(t *testing.T) {
+	t.Parallel()
+
+	u := New(common.DefaultCommon(newWorkflowTestWorkspace()), "", false)
+	u.Update(chat.DiagramOpenMsg{Source: "flowchart LR\n Routed --> DrillIn\n"})
+	require.True(t, u.isDrilledIn())
+	entry := u.drillStack[len(u.drillStack)-1]
+	require.Equal(t, "Diagram", entry.label)
+	item, ok := entry.chat.MessageItems()[0].(*chat.DiagramDetailItem)
+	require.True(t, ok)
+	require.Contains(t, ansi.Strip(item.RawRender(80)), "Routed --> DrillIn", "without kitty, the code block")
+	require.Equal(t, uiFocusMain, u.focus)
+}
