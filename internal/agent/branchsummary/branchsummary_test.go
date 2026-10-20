@@ -133,7 +133,7 @@ func TestLedger_CommandStatus(t *testing.T) {
 			result("ok", "[feat/x 3f2a9c1] fix", false),
 			result("fail", "rejected", true),
 			result("deny", "Permission denied", true),
-			message.ToolResult{ToolCallID: "bg", Content: "moved to background", Metadata: `{"background":true}`},
+			message.ToolResult{ToolCallID: "bg", Content: "moved to background", Metadata: `{"background":true,"shell_id":"019"}`},
 			result("ignored", "ok", false),
 		),
 	}
@@ -379,4 +379,52 @@ func TestFinalize_CapsTheWholeSummary(t *testing.T) {
 	got := branchsummary.Finalize(strings.Repeat("word ", 10_000), message.BranchLedger{Modified: modified})
 
 	require.LessOrEqual(t, len(got), 20_000)
+}
+
+func TestLedger_ReadsBashOutcomes(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		result message.ToolResult
+		want   message.LedgerStatus
+	}{
+		"exit zero": {
+			result: message.ToolResult{Content: "ok", Metadata: `{"output":"ok"}`},
+			want:   message.LedgerSucceeded,
+		},
+		"non-zero exit": {
+			result: message.ToolResult{Content: "rejected\nExit code 1", Metadata: `{"exit_code":1}`},
+			want:   message.LedgerFailed,
+		},
+		"interrupted": {
+			result: message.ToolResult{Content: "Command was aborted before completion", Metadata: `{"interrupted":true}`},
+			want:   message.LedgerFailed,
+		},
+		"non-zero exit before exit codes were recorded": {
+			result: message.ToolResult{Content: "out\n\nexit status 3\nExit code 3\n\n<cwd>/r</cwd>", Metadata: `{"output":"out"}`},
+			want:   message.LedgerFailed,
+		},
+		"still running as a job": {
+			result: message.ToolResult{Content: "moved to background", Metadata: `{"background":true,"shell_id":"019"}`},
+			want:   message.LedgerUnknown,
+		},
+		"background command that finished at once": {
+			result: message.ToolResult{Content: "done", Metadata: `{"background":true}`},
+			want:   message.LedgerSucceeded,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tc.result.ToolCallID = "c"
+			rng := []message.Message{
+				msg("a1", message.Assistant, call("c", "bash", map[string]string{"command": "git push"})),
+				msg("t1", message.Tool, tc.result),
+			}
+
+			got := branchsummary.Ledger(rng, noChildren)
+
+			require.Equal(t, tc.want, got.Events[0].Status)
+		})
+	}
 }

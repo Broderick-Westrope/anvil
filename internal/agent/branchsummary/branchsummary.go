@@ -77,6 +77,9 @@ var (
 	hasDigit      = regexp.MustCompile(`[0-9]`)
 	hasHexLetter  = regexp.MustCompile(`[a-f]`)
 	permissionErr = "Permission denied"
+	// failedOutput matches the lines bash adds to a failed command's
+	// output, for results recorded before bash stored exit codes.
+	failedOutput = regexp.MustCompile(`(?m)^(Exit code [1-9]\d*|Command was aborted before completion)$`)
 )
 
 // Ledger extracts what the range's tool calls did. children returns the
@@ -185,25 +188,30 @@ func commandDir(command, workingDir string) string {
 }
 
 func status(res message.ToolResult, hasResult bool) message.LedgerStatus {
-	switch {
-	case !hasResult:
+	if !hasResult {
 		return message.LedgerUnknown
-	case res.IsError && strings.HasPrefix(res.Content, permissionErr):
-		return message.LedgerDenied
-	case res.IsError:
+	}
+	if res.IsError {
+		if strings.HasPrefix(res.Content, permissionErr) {
+			return message.LedgerDenied
+		}
 		return message.LedgerFailed
-	case isBackground(res):
+	}
+	var meta struct {
+		Background  bool   `json:"background"`
+		ShellID     string `json:"shell_id"`
+		ExitCode    int    `json:"exit_code"`
+		Interrupted bool   `json:"interrupted"`
+	}
+	_ = json.Unmarshal([]byte(res.Metadata), &meta)
+	switch {
+	case meta.Background && meta.ShellID != "":
 		return message.LedgerUnknown
+	case meta.ExitCode != 0, meta.Interrupted, failedOutput.MatchString(res.Content):
+		return message.LedgerFailed
 	default:
 		return message.LedgerSucceeded
 	}
-}
-
-func isBackground(res message.ToolResult) bool {
-	var meta struct {
-		Background bool `json:"background"`
-	}
-	return json.Unmarshal([]byte(res.Metadata), &meta) == nil && meta.Background
 }
 
 func refs(output string) []string {
