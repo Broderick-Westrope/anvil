@@ -145,7 +145,7 @@ func (b *ledgerBuilder) addCall(messageID string, call message.ToolCall, res mes
 		if command := inputField(call, "command"); stateChangingCommand.MatchString(command) {
 			b.events = append(b.events, message.LedgerEvent{
 				Tool:    call.Name,
-				Command: truncate(command, maxEntryChars),
+				Command: truncate(redact(command), maxEntryChars),
 				Dir:     commandDir(command, inputField(call, "working_dir")),
 				Status:  status(res, hasResult),
 				Refs:    refs(res.Content),
@@ -314,11 +314,14 @@ func writeLedger(sb *strings.Builder, l message.BranchLedger) {
 	writeList(sb, "Files read", l.Read)
 	if len(l.Events) > 0 {
 		sb.WriteString("Commands, in order:\n")
-		for i, e := range l.Events {
-			if i == maxListEntries {
-				fmt.Fprintf(sb, "+%d more\n", len(l.Events)-i)
-				break
-			}
+		// The latest commands say what state the branch left, so the
+		// oldest are the ones dropped.
+		events := l.Events
+		if omitted := len(events) - maxListEntries; omitted > 0 {
+			fmt.Fprintf(sb, "[%d earlier commands omitted]\n", omitted)
+			events = events[omitted:]
+		}
+		for _, e := range events {
 			fmt.Fprintf(sb, "- [%s] %s", e.Status, e.Command)
 			if e.Dir != "" {
 				fmt.Fprintf(sb, " (in %s)", e.Dir)
@@ -374,7 +377,7 @@ func serialise(m message.Message) string {
 			}
 			fmt.Fprintf(&sb, "[%s]: %s\n", role, p.Text)
 		case message.ToolCall:
-			fmt.Fprintf(&sb, "[Tool call] %s: %s\n", p.Name, truncate(compactJSON(p.Input), maxToolInputChars))
+			fmt.Fprintf(&sb, "[Tool call] %s: %s\n", p.Name, truncate(redactedInput(p.Input), maxToolInputChars))
 		case message.ToolResult:
 			label := "Tool result"
 			if p.IsError {
@@ -386,18 +389,35 @@ func serialise(m message.Message) string {
 	return sb.String()
 }
 
-// compactJSON re-encodes a tool input with sorted keys, so the same call
-// serialises to the same bytes.
-func compactJSON(input string) string {
+// redactedInput redacts a tool input's decoded string values, where
+// quoting can't hide a secret from the patterns, and re-encodes it with
+// sorted keys, so the same call serialises to the same bytes.
+func redactedInput(input string) string {
 	var v any
 	if json.Unmarshal([]byte(input), &v) != nil {
-		return input
+		return redact(input)
 	}
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(redactValues(v))
 	if err != nil {
-		return input
+		return redact(input)
 	}
 	return string(b)
+}
+
+func redactValues(v any) any {
+	switch v := v.(type) {
+	case string:
+		return redact(v)
+	case map[string]any:
+		for k, item := range v {
+			v[k] = redactValues(item)
+		}
+	case []any:
+		for i, item := range v {
+			v[i] = redactValues(item)
+		}
+	}
+	return v
 }
 
 func truncate(s string, maxChars int) string {

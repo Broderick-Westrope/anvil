@@ -25,6 +25,7 @@ var redactions = []redaction{
 	{regexp.MustCompile(`\bxox[abpr]-[A-Za-z0-9-]{10,}`), redacted},
 	{regexp.MustCompile(`\b(Bearer|Api-Key) [A-Za-z0-9._-]{20,}`), "$1 " + redacted},
 	{regexp.MustCompile(`(?i)("[A-Za-z0-9_-]*(?:password|passwd|token|secret|api_?key)[A-Za-z0-9_-]*"\s*:\s*)"[^"]*"`), `$1"` + redacted + `"`},
+	{regexp.MustCompile(`(?i)\b([A-Za-z0-9_-]*(?:password|passwd|token|secret|api_?key)[A-Za-z0-9_-]*=)(?:"[^"]*"|'[^']*')`), "${1}" + redacted},
 	{regexp.MustCompile(`(?i)\b([A-Za-z0-9_-]*(?:password|passwd|token|secret|api_?key)[A-Za-z0-9_-]*=)[^&\s'"]+`), "${1}" + redacted},
 }
 

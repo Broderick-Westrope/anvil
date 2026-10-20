@@ -481,3 +481,37 @@ func TestLedger_ReadsPushAndResetSHAs(t *testing.T) {
 	require.Equal(t, []string{"1a2b3c4", "5d6e7f8"}, got.Events[0].Refs)
 	require.Equal(t, []string{"9a8b7c6"}, got.Events[1].Refs)
 }
+
+func TestPrompt_RedactsQuotedCredentialsInToolInput(t *testing.T) {
+	t.Parallel()
+
+	rng := []message.Message{
+		msg("a1", message.Assistant, call("c", "bash", map[string]string{"command": `TOKEN="short-cred" git push`})),
+		msg("t1", message.Tool, result("c", "", false)),
+	}
+	ledger := branchsummary.Ledger(rng, noChildren)
+
+	prompt := branchsummary.Prompt(rng, ledger, "", 10_000)
+	stored := branchsummary.Finalize("done", ledger)
+
+	require.NotContains(t, prompt, "short-cred")
+	require.NotContains(t, stored, "short-cred")
+	require.NotContains(t, ledger.Events[0].Command, "short-cred", "the ledger is stored")
+}
+
+func TestPrompt_KeepsTheNewestCommandsWhenThereAreTooMany(t *testing.T) {
+	t.Parallel()
+
+	var events []message.LedgerEvent
+	for i := range 60 {
+		events = append(events, message.LedgerEvent{Command: fmt.Sprintf("git commit -m step-%02d", i), Status: message.LedgerSucceeded})
+	}
+	events = append(events, message.LedgerEvent{Command: "git merge feat", Status: message.LedgerSucceeded})
+
+	got := branchsummary.Prompt(nil, message.BranchLedger{Events: events}, "", 100_000)
+
+	require.Contains(t, got, "git merge feat")
+	require.NotContains(t, got, "step-00")
+	require.Contains(t, got, "11 earlier commands omitted")
+	require.Less(t, strings.Index(got, "step-50"), strings.Index(got, "git merge feat"))
+}

@@ -31,6 +31,8 @@ func TestRedact(t *testing.T) {
 		{"env token", "GITHUB_TOKEN=tok123 gh pr list", "tok123"},
 		{"json api key", `{"api_key": "plainvalue"}`, "plainvalue"},
 		{"url credentials", "psql postgresql://app:hunter2@127.0.0.1:5432/db", "hunter2"},
+		{"double-quoted env token", `GITHUB_TOKEN="tok 123" gh pr list`, "tok 123"},
+		{"single-quoted env secret", `API_KEY='abc def' ./run`, "abc def"},
 		{"long run", "x " + "QWxhZGRpbjpvcGVuIHNlc2FtZQ0123456789abcdef", "QWxhZGRpbjpvcGVuIHNlc2FtZQ0123456789abcdef"},
 		{"one slash split", "echo AbCdEfGhIjKlMnOpQrSt/UvWxYz0123456789ABCDEF", "AbCdEfGhIjKlMnOpQrSt/UvWxYz0123456789ABCDEF"},
 		{"symmetric split", "KEY Zx9Qw3Er5Ty7Ui1Op2As/" + "Df4Gh6Jk8Lz0Xc5Vb7Nm", "Zx9Qw3Er5Ty7Ui1Op2As/" + "Df4Gh6Jk8Lz0Xc5Vb7Nm"},
