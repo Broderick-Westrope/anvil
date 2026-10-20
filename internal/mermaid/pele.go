@@ -55,6 +55,8 @@ type Renderer struct {
 	vm       *goja.Runtime
 	render   goja.Callable
 	measurer goja.Value
+	// afterFunc schedules the layout deadline; tests replace it.
+	afterFunc func(time.Duration, func()) *time.Timer
 }
 
 // NewRenderer loads Pele into a fresh goja runtime.
@@ -83,7 +85,7 @@ func NewRenderer() (*Renderer, error) {
 	if err := jsMeasurer.Set("width", m.width); err != nil {
 		return nil, err
 	}
-	return &Renderer{vm: vm, render: render, measurer: jsMeasurer}, nil
+	return &Renderer{vm: vm, render: render, measurer: jsMeasurer, afterFunc: time.AfterFunc}, nil
 }
 
 // Render converts Mermaid source into SVG.
@@ -101,11 +103,17 @@ func (r *Renderer) Render(source string, opts Options) (Result, error) {
 	if opts.FontSize > 0 {
 		jsOpts["fontSize"] = opts.FontSize
 	}
-	timer := time.AfterFunc(cmp.Or(opts.Timeout, DefaultTimeout), func() { r.vm.Interrupt(ErrRenderTimeout) })
+	fired := make(chan struct{})
+	timer := r.afterFunc(cmp.Or(opts.Timeout, DefaultTimeout), func() {
+		r.vm.Interrupt(ErrRenderTimeout)
+		close(fired)
+	})
 	val, err := r.render(goja.Undefined(), r.vm.ToValue(source), r.vm.ToValue(jsOpts))
-	timer.Stop()
-	// An interrupt that fired just as the render finished would stop the
-	// next one.
+	if !timer.Stop() {
+		// The deadline has fired or is firing: wait for its interrupt,
+		// then clear it, or it would stop the next render.
+		<-fired
+	}
 	r.vm.ClearInterrupt()
 	if interrupted, ok := errors.AsType[*goja.InterruptedError](err); ok && interrupted.Value() == ErrRenderTimeout {
 		return Result{}, ErrRenderTimeout

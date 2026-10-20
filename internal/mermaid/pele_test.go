@@ -48,11 +48,41 @@ func TestRenderStopsAtItsDeadline(t *testing.T) {
 
 	r, err := NewRenderer()
 	require.NoError(t, err)
-	_, err = r.Render(sampleFlowchart, Options{Timeout: time.Nanosecond})
+	// The deadline passes before layout starts.
+	r.afterFunc = func(_ time.Duration, fire func()) *time.Timer {
+		fire()
+		return time.AfterFunc(time.Hour, func() {})
+	}
+	_, err = r.Render(sampleFlowchart, Options{})
 	require.ErrorIs(t, err, ErrRenderTimeout)
+
+	r.afterFunc = time.AfterFunc
 
 	_, err = r.Render(sampleFlowchart, Options{})
 	require.NoError(t, err, "the renderer still works after an interrupted render")
+}
+
+func TestRenderWaitsForALateDeadlineBeforeTheNextRender(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewRenderer()
+	require.NoError(t, err)
+	// The deadline fires after layout finishes but before Stop.
+	var pending func()
+	r.afterFunc = func(_ time.Duration, fire func()) *time.Timer {
+		pending = fire
+		timer := time.AfterFunc(time.Hour, func() {})
+		timer.Stop()
+		go func() { time.Sleep(10 * time.Millisecond); pending() }()
+		return timer
+	}
+	_, _ = r.Render(sampleFlowchart, Options{})
+	r.afterFunc = time.AfterFunc
+	// Long enough for an unawaited interrupt to land while idle, where it
+	// would stop the next render.
+	time.Sleep(50 * time.Millisecond)
+	_, err = r.Render(sampleFlowchart, Options{})
+	require.NoError(t, err, "the late interrupt doesn't stop the next render")
 }
 
 func TestRenderRefusesHugeSources(t *testing.T) {
