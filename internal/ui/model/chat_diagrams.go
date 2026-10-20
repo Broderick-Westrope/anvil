@@ -31,7 +31,7 @@ func (m *Chat) SyncAssistantSegments(sty *styles.Styles, msg *message.Message, d
 		return
 	}
 	n := 1
-	for idx+n < m.list.Len() {
+	for {
 		item, ok := m.list.ItemAt(idx + n).(chat.MessageItem)
 		if !ok || !chat.IsSegmentOf(item.ID(), msg.ID) {
 			break
@@ -74,7 +74,8 @@ func sameSegments(l *list.List, idx, n int, want []chat.MessageItem) bool {
 // reindexFrom rebuilds the ID index for every item from idx on, including
 // nested tool IDs, as SetMessages does.
 func (m *Chat) reindexFrom(idx int) {
-	for i := idx; i < m.list.Len(); i++ {
+	// ItemAt returns nil past the end, which stops the loop.
+	for i := idx; m.list.ItemAt(i) != nil; i++ {
 		item, ok := m.list.ItemAt(i).(chat.MessageItem)
 		if !ok {
 			continue

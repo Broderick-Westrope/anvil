@@ -755,8 +755,9 @@ func (m *Chat) RemoveMessage(id string) {
 	// Remove from index map
 	delete(m.idInxMap, id)
 
-	// Remove the nodes a split message shows after its head.
-	for idx < m.list.Len() {
+	// Remove the nodes a split message shows after its head. ItemAt is nil
+	// past the end.
+	for {
 		item, ok := m.list.ItemAt(idx).(chat.MessageItem)
 		if !ok || !chat.IsSegmentOf(item.ID(), id) {
 			break

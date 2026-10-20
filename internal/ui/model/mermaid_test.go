@@ -1,12 +1,18 @@
 package model
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"image"
 	"image/color"
+	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	fimage "github.com/Broderick-Westrope/anvil/internal/ui/image"
 	uistyles "github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/stretchr/testify/require"
@@ -733,4 +740,348 @@ func TestMermaidFeatureDropsFailuresAtOldWidths(t *testing.T) {
 
 	showDiagram(t, f, "flowchart LR\n New --> Width\n", 80)
 	require.NotContains(t, f.entries, failed.key, "a failure for a width no longer drawn is dropped")
+}
+
+// newIdleMermaidFeature is a mermaid feature for tests that never queue a
+// render, so it takes no engine slot. It never opens a browser.
+func newIdleMermaidFeature(host *fakeDiagramHost, caps *common.Capabilities) *mermaidFeature {
+	st := uistyles.TokyoNight()
+	f := newMermaidFeature(host, caps, &common.Common{Styles: &st})
+	f.listening = true
+	f.openURL = func(string) error { return errors.New("no browser in tests") }
+	return f
+}
+
+func TestMermaidDiagramLimits(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 16_777_216, diagramFullMaxPixels)
+	require.Equal(t, 33_554_432, diagramCacheBudget)
+	require.Equal(t, 20*time.Second, diagramIdleTimeout)
+	require.Equal(t, 24*time.Hour, diagramExportMaxAge)
+}
+
+func TestDrawConditionsUsable(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		c    drawConditions
+		want bool
+	}{
+		"kitty with a cell size": {c: drawConditions{kitty: true, cellW: 10, cellH: 20}, want: true},
+		"no kitty":               {c: drawConditions{cellW: 10, cellH: 20}},
+		"no cell width":          {c: drawConditions{kitty: true, cellH: 20}},
+		"no cell height":         {c: drawConditions{kitty: true, cellW: 10}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, tc.c.usable())
+		})
+	}
+}
+
+func TestDiagramFitLaysOutWithinTheChatAtTheTextScale(t *testing.T) {
+	t.Parallel()
+
+	// 40px cells draw Pele's 16px text at twice its size.
+	fit := newDiagramFit(diagramRequest{cellW: 10, cellH: 40, maxCols: 80})
+	require.Equal(t, 400, fit.maxWidth, "800px of chat at scale 2")
+}
+
+func TestDiagramFitScale(t *testing.T) {
+	t.Parallel()
+
+	inline := diagramRequest{cellW: 10, cellH: 40, maxCols: 80}
+	full := inline
+	full.key.kind = diagramFull
+	// Big cells, so the pixel cap binds before the width and height do.
+	bigCells := diagramRequest{key: diagramKey{kind: diagramFull}, cellW: 100, cellH: 400, maxCols: 80}
+
+	tests := map[string]struct {
+		req          diagramRequest
+		w, h         float64
+		scale        float64
+		squeezed     bool
+		wantEmptyErr bool
+	}{
+		"small, at the text scale":    {req: inline, w: 100, h: 100, scale: 2},
+		"filling the layout width":    {req: inline, w: 399, h: 100, scale: 2, squeezed: true},
+		"wider than the chat":         {req: inline, w: 1600, h: 100, scale: 0.5, squeezed: true},
+		"taller than the chat allows": {req: inline, w: 100, h: 3200, scale: 0.5, squeezed: true},
+		"tall in the drill-in":        {req: full, w: 100, h: 3200, scale: 2},
+		"over the pixel cap":          {req: bigCells, w: 400, h: 400, scale: math.Sqrt(float64(diagramFullMaxPixels) / (400 * 400)), squeezed: true},
+		"no width":                    {req: inline, w: 0, h: 100, wantEmptyErr: true},
+		"no height":                   {req: inline, w: 100, h: 0, wantEmptyErr: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			scale, squeezed, err := newDiagramFit(tc.req).scale(tc.w, tc.h)
+			if tc.wantEmptyErr {
+				require.EqualError(t, err, "empty diagram")
+				return
+			}
+			require.NoError(t, err)
+			require.InDelta(t, tc.scale, scale, 1e-9)
+			require.Equal(t, tc.squeezed, squeezed)
+		})
+	}
+}
+
+// heldDiagram puts a transmitted diagram of n bytes in f, last drawn at
+// clock lastUsed.
+func heldDiagram(f *mermaidFeature, hash uint64, width int, lastUsed uint64, n int) diagramKey {
+	key := diagramKey{hash: hash, width: width, kind: diagramInline, cellW: 10, cellH: 20}
+	f.entries[key] = &diagramEntry{state: diagramReady, cols: 1, rows: 1, bytes: n, lastUsed: lastUsed}
+	return key
+}
+
+func TestMermaidFeatureEvictLocked(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		budget int
+		// keepIdx is the index into the three diagrams, oldest first, that
+		// was just shown.
+		keepIdx int
+		// oldWidth draws the oldest at a width no longer used.
+		oldWidth bool
+		want     []bool
+	}{
+		"all fit exactly":                 {budget: 30, keepIdx: 2, want: []bool{true, true, true}},
+		"one over: the oldest goes":       {budget: 20, keepIdx: 2, want: []bool{false, true, true}},
+		"the shown one stays over budget": {budget: 10, keepIdx: 0, want: []bool{true, false, false}},
+		"an old width goes first":         {budget: 10, keepIdx: 2, oldWidth: true, want: []bool{false, false, true}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+			f.widths[diagramInline] = 80
+			f.cacheBudget = tc.budget
+			oldest := 80
+			if tc.oldWidth {
+				oldest = 40
+			}
+			keys := []diagramKey{
+				heldDiagram(f, 1, oldest, 1, 10),
+				heldDiagram(f, 2, 80, 2, 10),
+				heldDiagram(f, 3, 80, 3, 10),
+			}
+			f.evictLocked(keys[tc.keepIdx])
+			for i, key := range keys {
+				_, held := f.entries[key]
+				require.Equal(t, tc.want[i], held, "diagram %d", i)
+			}
+		})
+	}
+}
+
+func TestMermaidFeatureEvictLockedOnlyDropsFailuresAtOldWidths(t *testing.T) {
+	t.Parallel()
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	f.widths[diagramInline] = 80
+	at := func(hash uint64, width int, state diagramState) diagramKey {
+		key := diagramKey{hash: hash, width: width, kind: diagramInline, cellW: 10, cellH: 20}
+		f.entries[key] = &diagramEntry{state: state}
+		return key
+	}
+	oldFailure := at(1, 40, diagramFailed)
+	failure := at(2, 80, diagramFailed)
+	pending := at(3, 40, diagramPending)
+
+	f.evictLocked(diagramKey{})
+	require.NotContains(t, f.entries, oldFailure)
+	require.Contains(t, f.entries, failure)
+	require.Contains(t, f.entries, pending, "still rendering; dropped when it arrives")
+}
+
+// heldInline is a ready inline diagram of src, cols wide, that the terminal
+// holds.
+func heldInline(t *testing.T, f *mermaidFeature, src string, cols int) *diagramEntry {
+	t.Helper()
+	f.widths[diagramInline] = 80
+	key := diagramKey{hash: f.imageHash(src, f.background()), width: 80, kind: diagramInline, cellW: 10, cellH: 20}
+	e := &diagramEntry{state: diagramReady, cols: cols, rows: 1}
+	f.entries[key] = e
+	img := image.NewRGBA(image.Rect(0, 0, cols*10, 20))
+	if cmd := fimage.EncodingKitty.Transmit(key.id(), img, fimage.CellSize{Width: 10, Height: 20}, cols, 1, false); cmd != nil {
+		cmd()
+	}
+	return e
+}
+
+func TestMermaidFeatureInlineImageFitsTheDrillInExactly(t *testing.T) {
+	t.Parallel()
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	const src = "flowchart LR\n Exactly --> Fits\n"
+	e := heldInline(t, f, src, 60)
+	f.clock = 5
+
+	out, _ := f.inlineImage(src, 60)
+	require.NotEmpty(t, out, "as wide as the drill-in")
+	require.Equal(t, uint64(6), e.lastUsed, "counts as drawn now")
+
+	out, _ = f.inlineImage(src, 59)
+	require.Empty(t, out, "wider than the drill-in")
+}
+
+func TestMermaidFeatureCountsTheBytesTheTerminalHolds(t *testing.T) {
+	t.Parallel()
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	key := diagramKey{hash: 0xb17e5, width: 80, kind: diagramInline, cellW: 10, cellH: 20}
+	f.widths[diagramInline] = 80
+	f.entries[key] = &diagramEntry{state: diagramPending}
+
+	img := image.NewRGBA(image.Rect(0, 0, 30, 40))
+	_, handled := f.HandleMsg(diagramReadyMsg{key: key, img: img, cols: 3, rows: 2, cellW: 10, cellH: 20})
+	require.True(t, handled)
+	require.Equal(t, 3*10*2*20*4, f.entries[key].bytes, "RGBA for every pixel of the cells")
+}
+
+func fullEntry(f *mermaidFeature) diagramKey {
+	key := diagramKey{hash: 0xf011, width: 100, kind: diagramFull, cellW: 10, cellH: 20}
+	f.entries[key] = &diagramEntry{state: diagramPending}
+	return key
+}
+
+func TestMermaidFeatureObserveKeepsFullImagesWithoutAClosedDrillIn(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	f := newIdleMermaidFeature(host, kittyCaps())
+	key := fullEntry(f)
+	f.Observe(nil)
+	require.Contains(t, f.entries, key, "no drill-in was open")
+
+	f.drill = NewChat(f.com)
+	host.drills = []*Chat{f.drill}
+	f.Observe(nil)
+	require.Contains(t, f.entries, key, "its drill-in is still open")
+}
+
+func TestMermaidFeatureFirstDrillInKeepsFullImages(t *testing.T) {
+	t.Parallel()
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, &common.Capabilities{})
+	key := fullEntry(f)
+	f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n A --> B\n"})
+	require.Contains(t, f.entries, key, "nothing to replace")
+
+	f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n C --> D\n"})
+	require.NotContains(t, f.entries, key, "the replaced drill-in's image is freed")
+}
+
+// browserCmdMsg runs the command a diagramExportedMsg produced, skipping
+// the listen it batches, which would block.
+func browserCmdMsg(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok)
+	require.Len(t, batch, 2)
+	return batch[1]()
+}
+
+func TestMermaidFeatureOpensAnExportedPage(t *testing.T) {
+	t.Parallel()
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	var opened []string
+	f.openURL = func(u string) error {
+		opened = append(opened, u)
+		return nil
+	}
+	cmd, handled := f.HandleMsg(diagramExportedMsg{path: "/tmp/d.html"})
+	require.True(t, handled)
+	require.Equal(t, util.NewInfoMsg("Opened diagram in browser"), browserCmdMsg(t, cmd))
+	require.Equal(t, []string{"file:///tmp/d.html"}, opened)
+}
+
+func TestMermaidFeatureReportsAFailedExport(t *testing.T) {
+	t.Parallel()
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	f.openURL = func(string) error { t.Fatal("a failed export opened the browser"); return nil }
+	cmd, handled := f.HandleMsg(diagramExportedMsg{err: errors.New("disk full")})
+	require.True(t, handled)
+	require.Equal(t, util.NewErrorMsg(errors.New("open diagram: disk full")), browserCmdMsg(t, cmd))
+}
+
+func TestMermaidFeatureReportsABrowserThatWontOpen(t *testing.T) {
+	t.Parallel()
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	require.Equal(t, util.NewErrorMsg(errors.New("open diagram: no browser in tests")), f.openInBrowser("/tmp/d.html")())
+}
+
+func TestPruneExportsKeepsDirectories(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	require.NoError(t, os.Mkdir(sub, 0o700))
+	stale := time.Now().Add(-2 * diagramExportMaxAge)
+	require.NoError(t, os.Chtimes(sub, stale, stale))
+
+	pruneExports(dir)
+	require.DirExists(t, sub)
+}
+
+func TestPruneExportsLooksPastRecentPages(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	recent := filepath.Join(dir, "a-recent.html")
+	old := filepath.Join(dir, "b-old.html")
+	for _, p := range []string{recent, old} {
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+	}
+	stale := time.Now().Add(-2 * diagramExportMaxAge)
+	require.NoError(t, os.Chtimes(old, stale, stale))
+
+	pruneExports(dir)
+	require.FileExists(t, recent)
+	require.NoFileExists(t, old)
+}
+
+// warnRecorder is a slog handler that keeps warning records.
+type warnRecorder struct {
+	mu    sync.Mutex
+	warns []string
+}
+
+func (*warnRecorder) Enabled(context.Context, slog.Level) bool { return true }
+
+func (r *warnRecorder) Handle(_ context.Context, rec slog.Record) error {
+	if rec.Level >= slog.LevelWarn {
+		r.mu.Lock()
+		r.warns = append(r.warns, rec.Message)
+		r.mu.Unlock()
+	}
+	return nil
+}
+
+func (r *warnRecorder) WithAttrs([]slog.Attr) slog.Handler { return r }
+func (r *warnRecorder) WithGroup(string) slog.Handler      { return r }
+
+// Not parallel: it swaps the default logger.
+func TestPruneExportsWarnsNothingWhenItWorks(t *testing.T) {
+	rec := &warnRecorder{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old.html")
+	require.NoError(t, os.WriteFile(old, []byte("x"), 0o600))
+	stale := time.Now().Add(-2 * diagramExportMaxAge)
+	require.NoError(t, os.Chtimes(old, stale, stale))
+
+	pruneExports(dir)
+	require.NoFileExists(t, old)
+	require.Empty(t, rec.warns)
 }

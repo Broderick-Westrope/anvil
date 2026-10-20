@@ -470,3 +470,101 @@ func TestChatPrefetchesOnlyWhenTheViewMoves(t *testing.T) {
 	c.prefetchNearby()
 	require.Greater(t, diagrams.asked, first, "scrolling looks again")
 }
+
+func TestUpdateRebuildsASplitWhoseDiagramChanges(t *testing.T) {
+	t.Parallel()
+
+	m := newSplitTestUI()
+	m.appendSessionMessage(assistantWithTool(twoDiagrams, message.FinishReasonToolUse))
+	changed := strings.Replace(twoDiagrams, "B\n", "C\n", 1)
+	m.updateSessionMessage(assistantWithTool(changed, message.FinishReasonToolUse))
+	require.Equal(t, []string{"m", "m#1", "m#2", "m#3", "tool-1"}, chatIDs(m.chat), "as many nodes")
+	diagram, ok := m.chat.MessageItem("m#3").(*chat.DiagramItem)
+	require.True(t, ok)
+	require.Equal(t, "diagram:C\n", diagram.SegmentKey())
+}
+
+func TestUpdateKeepsTheMessagesBeforeASplitIndexed(t *testing.T) {
+	t.Parallel()
+
+	m := newSplitTestUI()
+	m.appendSessionMessage(message.Message{ID: "u", Role: message.User, Parts: []message.ContentPart{
+		message.TextContent{Text: "Draw two"},
+	}})
+	m.appendSessionMessage(assistantWithTool(twoDiagrams, message.FinishReasonToolUse))
+	require.Equal(t, []string{"u", "m", "m#1", "m#2", "m#3", "tool-1"}, chatIDs(m.chat))
+
+	m.updateSessionMessage(assistantWithTool("Only one\n\n```mermaid\nC\n```\n", message.FinishReasonToolUse))
+	require.Equal(t, []string{"u", "m", "m#1", "tool-1"}, chatIDs(m.chat))
+	requireIndexed(t, m.chat)
+	require.Nil(t, m.chat.MessageItem("m#3"), "the dropped nodes are gone from the index")
+}
+
+// unkeyedItem is a message item that isn't a segment of a split message.
+type unkeyedItem struct {
+	*list.Versioned
+	id string
+}
+
+func (u unkeyedItem) Render(int) string    { return u.id }
+func (u unkeyedItem) RawRender(int) string { return u.id }
+func (u unkeyedItem) Finished() bool       { return true }
+func (u unkeyedItem) ID() string           { return u.id }
+
+func TestUpdateReplacesANodeThatIsntASegment(t *testing.T) {
+	t.Parallel()
+
+	m := newSplitTestUI()
+	finished := assistantWithTool(twoDiagrams, message.FinishReasonToolUse)
+	m.appendSessionMessage(finished)
+	m.chat.list.SpliceItems(1, 1, unkeyedItem{Versioned: list.NewVersioned(), id: "m#1"})
+
+	m.updateSessionMessage(finished)
+	_, ok := m.chat.MessageItem("m#1").(*chat.DiagramItem)
+	require.True(t, ok)
+}
+
+// plainItem is a list item that isn't a message.
+type plainItem struct{ *list.Versioned }
+
+func (plainItem) Render(int) string { return "" }
+func (plainItem) Finished() bool    { return true }
+
+func TestReindexSkipsItemsThatArentMessages(t *testing.T) {
+	t.Parallel()
+
+	com := common.DefaultCommon(nil)
+	c := NewChat(com)
+	c.SetMessages(
+		chat.NewAssistantMessageItem(com.Styles, finishedText("a", "A")),
+		chat.NewAssistantMessageItem(com.Styles, finishedText("b", "B")),
+	)
+	c.list.SpliceItems(1, 0, plainItem{list.NewVersioned()})
+	c.reindexFrom(0)
+	require.Equal(t, 2, c.idInxMap["b"])
+}
+
+func TestUIHostInvalidatesDiagramsInEveryChat(t *testing.T) {
+	t.Parallel()
+
+	m := newSplitTestUI()
+	m.appendSessionMessage(assistantWithTool(twoDiagrams, message.FinishReasonToolUse))
+	drill, _ := diagramChat(t)
+	m.drillStack = []drillInEntry{{chat: drill}}
+	main, drilled := m.chat.MessageItem("m#1"), drill.MessageItems()[1]
+	mainVersion, drillVersion := main.Version(), drilled.Version()
+
+	uiHost{m}.InvalidateDiagrams()
+	require.NotEqual(t, mainVersion, main.Version())
+	require.NotEqual(t, drillVersion, drilled.Version())
+}
+
+func TestUIHostDrillInOpen(t *testing.T) {
+	t.Parallel()
+
+	m := newSplitTestUI()
+	open, other := NewChat(m.com), NewChat(m.com)
+	m.drillStack = []drillInEntry{{chat: open}}
+	require.True(t, uiHost{m}.DrillInOpen(open))
+	require.False(t, uiHost{m}.DrillInOpen(other))
+}

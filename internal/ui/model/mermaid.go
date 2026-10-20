@@ -22,6 +22,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	fimage "github.com/Broderick-Westrope/anvil/internal/ui/image"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	"github.com/pkg/browser"
 )
 
 const (
@@ -166,7 +167,9 @@ type mermaidFeature struct {
 	// the OS; Go would otherwise keep it, and the process stays at its
 	// peak.
 	returnMemory func()
-	listening    bool
+	// openURL opens a page in the user's browser.
+	openURL   func(string) error
+	listening bool
 	// drawn is what diagrams were last drawn under.
 	drawn drawConditions
 }
@@ -200,6 +203,7 @@ func newMermaidFeature(host featureHost, caps *common.Capabilities, com *common.
 		cacheBudget:  diagramCacheBudget,
 		exportDir:    diagramExportDir(),
 		returnMemory: debug.FreeOSMemory,
+		openURL:      browser.OpenURL,
 	}
 }
 
@@ -424,7 +428,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 			slog.Warn("Failed to export mermaid diagram", "err", msg.err)
 			return tea.Batch(f.listen, util.ReportError(fmt.Errorf("open diagram: %w", msg.err))), true
 		}
-		return tea.Batch(f.listen, openInBrowser(msg.path)), true
+		return tea.Batch(f.listen, f.openInBrowser(msg.path)), true
 	case diagramReadyMsg:
 		if msg.err != nil {
 			slog.Warn("Failed to render mermaid diagram", "err", msg.err)
@@ -531,14 +535,10 @@ func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
 		total += f.entries[key].bytes
 	}
 	for _, key := range held {
-		if total <= f.cacheBudget {
-			break
+		if total > f.cacheBudget && key != keep {
+			total -= f.entries[key].bytes
+			cmds = append(cmds, f.forgetLocked(key))
 		}
-		if key == keep {
-			continue
-		}
-		total -= f.entries[key].bytes
-		cmds = append(cmds, f.forgetLocked(key))
 	}
 	return tea.Batch(cmds...)
 }

@@ -18,7 +18,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid/resvg"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
-	"github.com/pkg/browser"
 )
 
 // This file is the mermaid feature's worker side: it owns the render
@@ -178,31 +177,17 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 		return fail(err)
 	}
 	cw, ch := float64(req.cellW), float64(req.cellH)
-	maxPx := float64(req.maxCols) * cw
-	natural := diagramTextCellRatio * ch / peleBaseFontPx
-	scale := natural
-
-	maxWidth := int(maxPx / scale)
-	res, err := e.pele.Render(req.source, mermaid.Options{MaxWidth: maxWidth})
+	fit := newDiagramFit(req)
+	res, err := e.pele.Render(req.source, mermaid.Options{MaxWidth: fit.maxWidth})
 	if err != nil {
 		return fail(err)
 	}
-	if res.Width <= 0 || res.Height <= 0 {
-		return fail(errors.New("empty diagram"))
+	scale, squeezed, err := fit.scale(res.Width, res.Height)
+	if err != nil {
+		return fail(err)
 	}
-	scale = math.Min(scale, maxPx/res.Width)
-	maxRows, maxPixels := diagramMaxRows, mermaid.MaxPixels
-	if req.key.kind == diagramFull {
-		maxRows, maxPixels = diagramMaxFullRows, diagramFullMaxPixels
-	}
-	scale = math.Min(scale, float64(maxRows)*ch/res.Height)
-	scale = math.Min(scale, math.Sqrt(float64(maxPixels)/(res.Width*res.Height)))
 
-	// Pele lays a diagram out narrower when it reaches MaxWidth, so one
-	// that fills it may have been rearranged to fit.
-	squeezed := scale < natural || res.Width >= float64(maxWidth-1)
-
-	img, err := raster.Rasterize(res, req.theme, mermaid.RasterOptions{Scale: scale, MaxPixels: maxPixels})
+	img, err := raster.Rasterize(res, req.theme, mermaid.RasterOptions{Scale: scale, MaxPixels: fit.maxPixels})
 	if err != nil {
 		return fail(err)
 	}
@@ -218,9 +203,46 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 	return diagramReadyMsg{key: req.key, img: padded, cols: cols, rows: rows, squeezed: squeezed, cellW: req.cellW, cellH: req.cellH}
 }
 
-func openInBrowser(path string) tea.Cmd {
+// diagramFit sizes one image: Pele lays the diagram out within maxWidth,
+// and scale fits the layout it returns to the chat.
+type diagramFit struct {
+	maxPx, cellH       float64
+	natural            float64
+	maxWidth           int
+	maxRows, maxPixels int
+}
+
+func newDiagramFit(req diagramRequest) diagramFit {
+	ch := float64(req.cellH)
+	maxPx := float64(req.maxCols) * float64(req.cellW)
+	natural := diagramTextCellRatio * ch / peleBaseFontPx
+	fit := diagramFit{
+		maxPx: maxPx, cellH: ch, natural: natural, maxWidth: int(maxPx / natural),
+		maxRows: diagramMaxRows, maxPixels: mermaid.MaxPixels,
+	}
+	if req.key.kind == diagramFull {
+		fit.maxRows, fit.maxPixels = diagramMaxFullRows, diagramFullMaxPixels
+	}
+	return fit
+}
+
+// scale is the scale to draw a w×h layout at, and whether a cap or the
+// width squeezed it.
+func (s diagramFit) scale(w, h float64) (scale float64, squeezed bool, err error) {
+	if w <= 0 || h <= 0 {
+		return 0, false, errors.New("empty diagram")
+	}
+	scale = math.Min(s.natural, s.maxPx/w)
+	scale = math.Min(scale, float64(s.maxRows)*s.cellH/h)
+	scale = math.Min(scale, math.Sqrt(float64(s.maxPixels)/(w*h)))
+	// Pele lays a diagram out narrower when it reaches MaxWidth, so one
+	// that fills it may have been rearranged to fit.
+	return scale, scale < s.natural || w >= float64(s.maxWidth-1), nil
+}
+
+func (f *mermaidFeature) openInBrowser(path string) tea.Cmd {
 	return func() tea.Msg {
-		if err := browser.OpenURL(fileURL(path)); err != nil {
+		if err := f.openURL(fileURL(path)); err != nil {
 			return util.NewErrorMsg(fmt.Errorf("open diagram: %w", err))
 		}
 		return util.NewInfoMsg("Opened diagram in browser")
