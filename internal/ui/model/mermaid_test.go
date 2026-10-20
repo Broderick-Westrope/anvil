@@ -688,3 +688,34 @@ func TestMermaidFeaturePrefetchQueuesAndKeepsDiagrams(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestMermaidFeatureRetriesATransientFailureOnce(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	const src = "flowchart LR\n Slow --> Retry\n"
+	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State)
+	first := waitReady(t, f)
+
+	f.HandleMsg(diagramReadyMsg{key: first.key, err: mermaid.ErrRenderTimeout})
+	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State, "a timeout is tried again")
+	waitReady(t, f)
+
+	f.HandleMsg(diagramReadyMsg{key: first.key, err: mermaid.ErrRenderTimeout})
+	require.Equal(t, chat.DiagramFailed, f.Diagram(src, 80).State, "but only once")
+}
+
+func TestMermaidFeatureDropsFailuresAtOldWidths(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	const bad = "notADiagram, at an old width\n"
+	f.Diagram(bad, 40)
+	failed, ok := waitResult(t, f).(diagramReadyMsg)
+	require.True(t, ok)
+	f.HandleMsg(failed)
+	require.Contains(t, f.entries, failed.key)
+
+	showDiagram(t, f, "flowchart LR\n New --> Width\n", 80)
+	require.NotContains(t, f.entries, failed.key, "a failure for a width no longer drawn is dropped")
+}

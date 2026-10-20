@@ -16,6 +16,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
+	"github.com/Broderick-Westrope/anvil/internal/mermaid/resvg"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/pkg/browser"
 )
@@ -53,6 +54,17 @@ func pruneExports(dir string) {
 	}
 }
 
+// errEnginesUnavailable wraps a failure to load a render engine, which
+// says nothing about the diagram.
+var errEnginesUnavailable = errors.New("load diagram renderer")
+
+// transientRenderError reports whether err may not happen again, so the
+// diagram is worth one more try: it ran out of time, or an engine didn't
+// load.
+func transientRenderError(err error) bool {
+	return errors.Is(err, mermaid.ErrRenderTimeout) || errors.Is(err, resvg.ErrRenderTimeout) || errors.Is(err, errEnginesUnavailable)
+}
+
 // diagramEngines is everything a render needs. The worker owns it alone,
 // since neither engine is safe for concurrent use. The rasterizer loads on
 // the first image, so exporting alone doesn't compile resvg.
@@ -65,7 +77,7 @@ func (e *diagramEngines) rasterizer() (*mermaid.Rasterizer, error) {
 	if e.raster == nil {
 		r, err := mermaid.NewRasterizer(context.Background())
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", errEnginesUnavailable, err)
 		}
 		e.raster = r
 	}
@@ -91,7 +103,7 @@ func (f *mermaidFeature) work() {
 			if engines == nil {
 				pele, err := mermaid.NewRenderer()
 				if err != nil {
-					f.results <- f.failure(req, err)
+					f.results <- f.failure(req, fmt.Errorf("%w: %w", errEnginesUnavailable, err))
 					continue
 				}
 				engines = &diagramEngines{pele: pele}

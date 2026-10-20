@@ -93,6 +93,9 @@ type diagramEntry struct {
 	// squeezed reports that a cap or the width shrank the image, so the
 	// full-size view would differ from it.
 	squeezed bool
+	// transient reports that the failure may not happen again, and
+	// retried that the diagram was already tried again after one.
+	transient, retried bool
 }
 
 type diagramRequest struct {
@@ -346,7 +349,14 @@ func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw
 		case diagramPending:
 			return chat.DiagramView{State: chat.DiagramPending}
 		case diagramFailed:
-			return chat.DiagramView{State: chat.DiagramFailed, Err: e.err}
+			if !e.transient || e.retried {
+				return chat.DiagramView{State: chat.DiagramFailed, Err: e.err}
+			}
+			req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: cellW, cellH: cellH, maxCols: width}
+			if f.enqueue(req) {
+				e.state, e.retried = diagramPending, true
+			}
+			return chat.DiagramView{State: chat.DiagramPending}
 		}
 		if !draw {
 			if fimage.HasTransmitted(key.id(), e.cols, e.rows) {
@@ -429,7 +439,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 			f.mu.Lock()
 			e := f.entries[msg.key]
 			if e != nil {
-				e.state, e.err = diagramFailed, msg.err.Error()
+				e.state, e.err, e.transient = diagramFailed, msg.err.Error(), transientRenderError(msg.err)
 			}
 			f.mu.Unlock()
 			if e != nil {
@@ -504,8 +514,12 @@ func (f *mermaidFeature) tmux() bool {
 func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
 	var sent []diagramKey
 	for key, e := range f.entries {
-		if e.bytes > 0 {
+		switch {
+		case e.bytes > 0:
 			sent = append(sent, key)
+		case e.state == diagramFailed && key.width != f.widths[key.kind]:
+			// Nothing to free in the terminal.
+			delete(f.entries, key)
 		}
 	}
 	// Oldest first, in a fixed order, so eviction doesn't depend on map
