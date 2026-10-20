@@ -3010,7 +3010,12 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				return tea.Batch(cmds...)
 			}
 			// Priority 4: Cancel streaming agent (immediate, bypasses
-			// two-phase Esc behavior).
+			// two-phase Esc behavior). A branch summary comes first: its
+			// summarizer makes the app busy, but cancelling the root
+			// session would drop the sends queued behind the summary.
+			if cmd := m.cancelBranchSummaryFirst(); cmd != nil {
+				return tea.Batch(append(cmds, cmd)...)
+			}
 			if m.isAgentBusy() && m.hasSession() {
 				m.isCanceling = false
 				m.com.Workspace.AgentCancel(m.session.ID)
@@ -3034,6 +3039,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 	// Handle cancel key when agent is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
+		if cmd := m.cancelBranchSummaryFirst(); cmd != nil {
+			return tea.Batch(append(cmds, cmd)...)
+		}
 		if m.isAgentBusy() {
 			if cmd := m.cancelAgent(); cmd != nil {
 				cmds = append(cmds, cmd)

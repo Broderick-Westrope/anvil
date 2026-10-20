@@ -7,25 +7,28 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/app/branchsummaries"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
 // branchSummaryTestWorkspace serves a conversation u1, a1 with a tangent
-// u2, a2 off a1, and records summary requests.
+// u2, a2 off a1, and records what the feature asks of the service.
 type branchSummaryTestWorkspace struct {
 	cfg       *config.Config
 	paths     map[string][]message.Message
 	agents    []string
-	requests  []agent.BranchSummaryRequest
-	ctxs      []context.Context
-	result    message.Message
-	err       error
+	starts    []agent.BranchSummaryRequest
+	startErr  error
+	running   map[string]bool
+	cancelled []string
 	discarded []string
 }
 
@@ -41,8 +44,8 @@ func newBranchSummaryTestWorkspace() *branchSummaryTestWorkspace {
 			"u2": {u1, a1, u2},
 			"a2": {u1, a1, u2, a2},
 		},
-		agents: []string{agent.BuiltinBranchSummarizer, "pr-summarizer"},
-		result: message.Message{ID: "summary-1", MessageType: message.MessageTypeBranchSummary},
+		agents:  []string{agent.BuiltinBranchSummarizer, "pr-summarizer"},
+		running: map[string]bool{},
 	}
 }
 
@@ -50,10 +53,21 @@ func (w *branchSummaryTestWorkspace) GetBranchPath(_ context.Context, leaf strin
 	return w.paths[leaf], nil
 }
 
-func (w *branchSummaryTestWorkspace) AgentSummarizeBranch(ctx context.Context, req agent.BranchSummaryRequest) (message.Message, error) {
-	w.requests = append(w.requests, req)
-	w.ctxs = append(w.ctxs, ctx)
-	return w.result, w.err
+func (w *branchSummaryTestWorkspace) AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error) {
+	if w.startErr != nil {
+		return "", w.startErr
+	}
+	w.starts = append(w.starts, req)
+	w.running[req.SessionID] = true
+	return "run-1", nil
+}
+
+func (w *branchSummaryTestWorkspace) AgentCancelBranchSummary(sessionID string) {
+	w.cancelled = append(w.cancelled, sessionID)
+}
+
+func (w *branchSummaryTestWorkspace) AgentBranchSummaryRunning(sessionID string) bool {
+	return w.running[sessionID]
 }
 
 func (w *branchSummaryTestWorkspace) AgentDiscardBranchSummary(_ context.Context, _, summaryID string) error {
@@ -78,27 +92,31 @@ func newBranchSummaryFixture(t *testing.T) *branchSummaryFixture {
 	return &branchSummaryFixture{f: newBranchSummaryFeature(host, common.DefaultCommon(nil), ws), host: host, ws: ws}
 }
 
-// rewind reports a finished rewind from one leaf to another and feeds the
-// feature its own follow-up messages until none are left.
+// run runs cmd and feeds the feature its own messages until none are
+// left, returning the status messages.
+func (b *branchSummaryFixture) run(cmd tea.Cmd) []util.InfoMsg {
+	var infos []util.InfoMsg
+	queue := cmdMsgs(cmd)
+	for len(queue) > 0 {
+		msg := queue[0]
+		queue = queue[1:]
+		if info, ok := msg.(util.InfoMsg); ok {
+			infos = append(infos, info)
+			continue
+		}
+		if next, ok := b.f.HandleMsg(msg); ok {
+			queue = append(queue, cmdMsgs(next)...)
+		}
+	}
+	return infos
+}
+
 func (b *branchSummaryFixture) rewind(from, target string) {
 	b.run(b.f.Observe(navigateTreeDoneMsg{
 		session:  &session.Session{ID: "sess-1"},
 		leafID:   target,
 		snapshot: &branchReturnSnapshot{sessionID: "sess-1", leafID: from},
 	}))
-}
-
-// run runs cmd and feeds the feature its own messages until none are
-// left.
-func (b *branchSummaryFixture) run(cmd tea.Cmd) {
-	queue := cmdMsgs(cmd)
-	for len(queue) > 0 {
-		msg := queue[0]
-		queue = queue[1:]
-		if next, ok := b.f.HandleMsg(msg); ok {
-			queue = append(queue, cmdMsgs(next)...)
-		}
-	}
 }
 
 func (b *branchSummaryFixture) pick(agentName, focus string) {
@@ -109,6 +127,25 @@ func (b *branchSummaryFixture) pick(agentName, focus string) {
 		panic("pick not handled")
 	}
 	b.run(cmd)
+}
+
+// event delivers a service event for sess-1's run-1.
+func (b *branchSummaryFixture) event(state branchsummaries.State, summaryID string, err error) []util.InfoMsg {
+	if state != branchsummaries.StateRunning {
+		b.ws.running["sess-1"] = false
+	}
+	cmd, ok := b.f.HandleMsg(pubsub.Event[branchsummaries.Event]{Type: pubsub.UpdatedEvent, Payload: branchsummaries.Event{
+		SessionID: "sess-1", RunID: "run-1", Agent: "pr-summarizer", State: state, SummaryID: summaryID, Err: err,
+	}})
+	if !ok {
+		panic("event not handled")
+	}
+	return b.run(cmd)
+}
+
+func (b *branchSummaryFixture) runPicked() {
+	b.pick("pr-summarizer", "")
+	b.event(branchsummaries.StateRunning, "", nil)
 }
 
 func TestBranchSummary_OffersPickerAfterRewind(t *testing.T) {
@@ -127,7 +164,22 @@ func TestBranchSummary_NoOfferWithoutAnAssistantReply(t *testing.T) {
 	b.rewind("u2", "a1")
 
 	require.False(t, b.host.overlay.HasDialogs())
-	require.Empty(t, b.ws.requests)
+}
+
+func TestBranchSummary_StaleOfferIsDropped(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	offer := b.f.Observe(navigateTreeDoneMsg{
+		session: &session.Session{ID: "sess-1"}, leafID: "a1",
+		snapshot: &branchReturnSnapshot{sessionID: "sess-1", leafID: "a2"},
+	})
+
+	b.f.Observe(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		ID: "u3", SessionID: "sess-1", Role: message.User, ParentMessageID: "a1",
+	}})
+	b.run(offer)
+
+	require.False(t, b.host.overlay.HasDialogs(), "a send after the rewind makes its offer stale")
 }
 
 func TestBranchSummary_PromptSetting(t *testing.T) {
@@ -141,7 +193,7 @@ func TestBranchSummary_PromptSetting(t *testing.T) {
 		b.rewind("a2", "a1")
 
 		require.False(t, b.host.overlay.HasDialogs())
-		require.Empty(t, b.ws.requests)
+		require.Empty(t, b.ws.starts)
 	})
 	t.Run("always", func(t *testing.T) {
 		t.Parallel()
@@ -151,35 +203,48 @@ func TestBranchSummary_PromptSetting(t *testing.T) {
 		b.rewind("a2", "a1")
 
 		require.False(t, b.host.overlay.HasDialogs())
-		require.Len(t, b.ws.requests, 1)
-		require.Equal(t, agent.BuiltinBranchSummarizer, b.ws.requests[0].Agent)
+		require.Len(t, b.ws.starts, 1)
+		require.Equal(t, agent.BuiltinBranchSummarizer, b.ws.starts[0].Agent)
 	})
 }
 
-func TestBranchSummary_PickRunsTheSummarizer(t *testing.T) {
+func TestBranchSummary_PickStartsTheSummarizer(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
 
-	cmd, ok := b.f.HandleAction(dialog.ActionBranchSummaryPick{
+	_, ok := b.f.HandleAction(dialog.ActionBranchSummaryPick{
 		SessionID: "sess-1", FromLeafID: "a2", TargetID: "a1", Agent: "pr-summarizer", Focus: "the PR",
 	})
+
 	require.True(t, ok)
+	require.Equal(t, []agent.BranchSummaryRequest{{
+		SessionID: "sess-1", FromLeafID: "a2", TargetID: "a1", Agent: "pr-summarizer", Focus: "the PR",
+	}}, b.ws.starts, "started synchronously, so the session is reserved before any send")
 	require.True(t, b.f.Busy("sess-1"))
+}
+
+func TestBranchSummary_StartError(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.ws.startErr = branchsummaries.ErrAlreadyRunning
+
+	cmd, _ := b.f.HandleAction(dialog.ActionBranchSummaryPick{SessionID: "sess-1", FromLeafID: "a2", TargetID: "a1", Agent: "pr-summarizer"})
+
+	infos := b.run(cmd)
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeError, infos[0].Type)
+}
+
+func TestBranchSummary_RunningShowsAPanelUntilStored(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
 	panel := b.f.Panel()
 	require.NotNil(t, panel)
 	require.Contains(t, ansi.Strip(panel.Render(120)), "pr-summarizer")
 
-	b.run(cmd)
-
-	require.Len(t, b.ws.requests, 1)
-	req := b.ws.requests[0]
-	require.Equal(t, "sess-1", req.SessionID)
-	require.Equal(t, "a2", req.FromLeafID)
-	require.Equal(t, "a1", req.TargetID)
-	require.Equal(t, "pr-summarizer", req.Agent)
-	require.Equal(t, "the PR", req.Focus)
-	require.NotEmpty(t, req.ChildSessionID)
-	require.False(t, b.f.Busy("sess-1"))
+	b.event(branchsummaries.StateStored, "summary-1", nil)
 	require.Nil(t, b.f.Panel())
 }
 
@@ -201,58 +266,75 @@ func TestBranchSummary_NoSummaryPicked(t *testing.T) {
 
 	b.pick("", "")
 
-	require.Empty(t, b.ws.requests)
-	require.False(t, b.f.Busy("sess-1"))
+	require.Empty(t, b.ws.starts)
 }
 
-func TestBranchSummary_Cancel(t *testing.T) {
+func TestBranchSummary_RunsAreKeptPerSession(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
-	cmd, _ := b.f.HandleAction(dialog.ActionBranchSummaryPick{SessionID: "sess-1", FromLeafID: "a2", TargetID: "a1", Agent: "pr-summarizer"})
+	b.runPicked()
 
-	b.run(b.f.Cancel())
-	b.ws.err = context.Canceled
-	b.run(cmd)
-
-	require.ErrorIs(t, b.ws.ctxs[0].Err(), context.Canceled)
-	require.False(t, b.f.Busy("sess-1"))
+	b.host.session = &session.Session{ID: "sess-2"}
 	require.Nil(t, b.f.Panel())
+	require.Empty(t, b.f.PaletteEntries())
+
+	b.host.session = &session.Session{ID: "sess-1"}
+	require.NotNil(t, b.f.Panel())
 }
 
-func TestBranchSummary_FailureShowsUntilDismissed(t *testing.T) {
+func TestBranchSummary_PaletteCancelsARunningSummary(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
-	b.ws.err = errors.New("provider exploded")
-
-	b.pick("pr-summarizer", "")
-
-	panel := b.f.Panel()
-	require.NotNil(t, panel)
-	require.Contains(t, ansi.Strip(panel.Render(120)), "provider exploded")
-	require.False(t, b.f.Busy("sess-1"))
+	b.runPicked()
 
 	entries := b.f.PaletteEntries()
 	require.Len(t, entries, 1)
 	cmd, ok := b.f.HandleAction(entries[0].Action())
 	require.True(t, ok)
 	b.run(cmd)
+
+	require.Equal(t, []string{"sess-1"}, b.ws.cancelled)
+	infos := b.event(branchsummaries.StateCancelled, "", nil)
+	require.Len(t, infos, 1)
 	require.Nil(t, b.f.Panel())
 }
 
-func TestBranchSummary_StaleCompletionIsQuiet(t *testing.T) {
+func TestBranchSummary_FailureShowsUntilDismissed(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
-	b.ws.err = agent.ErrStaleBranchSummary
+	b.runPicked()
 
-	b.pick("pr-summarizer", "")
+	b.event(branchsummaries.StateFailed, "", errors.New("provider exploded"))
 
+	panel := b.f.Panel()
+	require.NotNil(t, panel)
+	require.Contains(t, ansi.Strip(panel.Render(120)), "provider exploded")
+	entries := b.f.PaletteEntries()
+	require.Len(t, entries, 1)
+	cmd, ok := b.f.HandleAction(entries[0].Action())
+	require.True(t, ok)
+	b.run(cmd)
 	require.Nil(t, b.f.Panel())
+	require.Empty(t, b.ws.discarded)
+}
+
+func TestBranchSummary_StaleEndIsQuiet(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
+	infos := b.event(branchsummaries.StateStale, "", nil)
+
+	require.Empty(t, infos)
+	require.Nil(t, b.f.Panel())
+	require.Empty(t, b.f.PaletteEntries())
 }
 
 func TestBranchSummary_DiscardBeforeSend(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
-	b.pick("pr-summarizer", "")
+	b.runPicked()
+	b.event(branchsummaries.StateStored, "summary-1", nil)
 
 	entries := b.f.PaletteEntries()
 	require.Len(t, entries, 1)
@@ -264,31 +346,44 @@ func TestBranchSummary_DiscardBeforeSend(t *testing.T) {
 	require.Empty(t, b.f.PaletteEntries())
 }
 
-func TestBranchSummary_ReturnToPreBranchDiscards(t *testing.T) {
+func TestBranchSummary_SendRetiresDiscard(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
-	b.pick("pr-summarizer", "")
+	b.runPicked()
+	b.event(branchsummaries.StateStored, "summary-1", nil)
 
-	b.run(b.f.Observe(navigateTreeDoneMsg{
+	b.f.Observe(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		ID: "u3", SessionID: "sess-1", Role: message.User, ParentMessageID: "summary-1",
+	}})
+
+	require.Empty(t, b.f.PaletteEntries())
+}
+
+func TestBranchSummary_ReturnToPreBranch(t *testing.T) {
+	t.Parallel()
+
+	returnMsg := navigateTreeDoneMsg{
 		session: &session.Session{ID: "sess-1"},
 		leafID:  "a2",
 		restore: &branchReturnSnapshot{sessionID: "sess-1", leafID: "a2"},
-	}))
+	}
+	t.Run("discards a stored summary", func(t *testing.T) {
+		t.Parallel()
+		b := newBranchSummaryFixture(t)
+		b.runPicked()
+		b.event(branchsummaries.StateStored, "summary-1", nil)
 
-	require.Equal(t, []string{"summary-1"}, b.ws.discarded)
-}
+		b.run(b.f.Observe(returnMsg))
 
-func TestBranchSummary_PaletteCancelsARunningSummary(t *testing.T) {
-	t.Parallel()
-	b := newBranchSummaryFixture(t)
-	_, _ = b.f.HandleAction(dialog.ActionBranchSummaryPick{SessionID: "sess-1", FromLeafID: "a2", TargetID: "a1", Agent: "pr-summarizer"})
-	cancelled := false
-	b.f.op.cancel = func() { cancelled = true }
+		require.Equal(t, []string{"summary-1"}, b.ws.discarded)
+	})
+	t.Run("cancels a running summary", func(t *testing.T) {
+		t.Parallel()
+		b := newBranchSummaryFixture(t)
+		b.runPicked()
 
-	entries := b.f.PaletteEntries()
-	require.Len(t, entries, 1)
-	_, ok := b.f.HandleAction(entries[0].Action())
+		b.run(b.f.Observe(returnMsg))
 
-	require.True(t, ok)
-	require.True(t, cancelled)
+		require.Equal(t, []string{"sess-1"}, b.ws.cancelled)
+	})
 }
