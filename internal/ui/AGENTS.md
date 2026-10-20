@@ -91,13 +91,21 @@ so cherry-picks still apply. See `docs/adr/0003-ui-complexity.md`. The
 workflow feature (`model/workflow.go`) is the worked example. The Mermaid
 diagram feature (`model/mermaid.go`) is the other.
 
-Diagrams are the one exception that touches `UI`'s upstream-shaped code
-directly: chat items are built in `UI` (`ExtractMessageItems`), so `UI`
-holds the feature's `chat.DiagramRenderer` in `m.diagrams` and passes it
-to every call (nil when `options.tui.diagrams` is off), calls
-`Chat.SyncAssistantSegments` from `updateSessionMessageToChat`, and adds
-the diagram node's help entry in `selectedItemBindings`. Keep any new
-diagram wiring behind those three.
+Diagrams are the one exception that touches upstream-shaped code
+directly, because chat items are built in `UI` (`ExtractMessageItems`):
+
+- `UI` holds the feature's `chat.DiagramRenderer` in `m.diagrams`, set in
+  `New` (nil when `options.tui.diagrams` is off, when `New` also skips
+  `Chat.SetPrefetch`), and passes it to every `ExtractMessageItems` call
+  except `loadNestedToolCalls`, whose assistant text is never shown.
+- `updateSessionMessageToChat` calls `Chat.SyncAssistantSegments`.
+- `selectedItemBindings` adds the diagram node's help entry.
+- `Chat.Draw` prefetches nearby diagrams, `Chat.RemoveMessage` removes a
+  message's `<id>#<n>` nodes, and `Chat.HandleDelayedClick` opens drill-ins
+  through `chat.ClickDrillInHandler`.
+- `list.List` gained `SpliceItems`, `NearbyItems` and `ClampOffset`.
+
+Keep any new diagram wiring behind these.
 
 `UI` registers features in `New`, in precedence order, and offers each one
 what the dispatchers don't own. Each hook is one generic line in `ui.go`:

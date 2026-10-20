@@ -72,44 +72,47 @@ Out:
 
 **Success Criteria:**
 
+Ticked items are covered by tests or the local run. The rest need a real
+Kitty terminal, CI or the user's manual checklist.
+
 - [ ] With the option on (default) in Ghostty and in Herdr, a finished
       message's top-level Mermaid fences show as diagram nodes in document
       order, coloured from the theme, with a transparent background.
-- [ ] `options.tui.diagrams: false` makes fences render as ordinary code
+- [x] `options.tui.diagrams: false` makes fences render as ordinary code
       blocks in the assistant message (no split, no diagram nodes), and
       neither engine loads (no goja runtime or wazero compile happens).
-- [ ] `→`/`l`/click on a diagram node opens the full-size drill-in; with no
+- [x] `→`/`l`/click on a diagram node opens the full-size drill-in; with no
       Kitty support the drill-in shows the code block and nothing opens a
       browser.
 - [ ] `o` on a diagram node or in its drill-in opens the themed HTML page;
       `c`/`y` copies the Mermaid source. `v` does nothing special.
-- [ ] A diagram Pele or resvg rejects shows its code block plus a muted
+- [x] A diagram Pele or resvg rejects shows its code block plus a muted
       one-line note `Diagram not rendered: <error>` (newlines collapsed,
       truncated to the width), in both the chat node and the drill-in. A
       terminal without Kitty support shows the code block with no note.
       The drill-in never shows "Rendering diagram…" for a failed or
       unsupported diagram.
-- [ ] The help bar shows `o` and `c`/`y` hints when a diagram node is
+- [x] The help bar shows `o` and `c`/`y` hints when a diagram node is
       focused.
-- [ ] The fallback code block has no blank glamour padding lines inside the
+- [x] The fallback code block has no blank glamour padding lines inside the
       focus border.
-- [ ] No hex colour for diagrams is defined outside
+- [x] No hex colour for diagrams is defined outside
       `internal/ui/styles/themes.go`; `mermaid.TokyoNight` is gone.
-- [ ] With the option on (or omitted), the orchestrator and specialist
+- [x] With the option on (or omitted), the orchestrator and specialist
       system prompts include the diagram line; with it `false`, neither
       does. Tested for omitted, true and false on both prompt paths.
-- [ ] Changing `options.tui.diagrams` in `anvil.json` while Anvil runs is
+- [x] Changing `options.tui.diagrams` in `anvil.json` while Anvil runs is
       reported as needing a restart, like `compact_mode`; the running
       session keeps its startup value.
-- [ ] The package-level `chat.Diagrams` hook is gone.
-- [ ] Node IDs stay stable and lookups keep working across: a message
+- [x] The package-level `chat.Diagrams` hook is gone.
+- [x] Node IDs stay stable and lookups keep working across: a message
       finishing, history reload, branching from any node, message removal,
       and re-splits when text changes. Covered by model tests.
 - [ ] `go test ./...`, `task lint` (0 issues), mutation, build on all three
       OSes and `govulncheck` pass.
 - [ ] The user runs the manual checklist (below) in Ghostty and Herdr and
       it passes.
-- [ ] Docs landed in the same PR: this spec and the spike doc moved to
+- [x] Docs landed in the same PR: this spec and the spike doc moved to
       `plans/completed/` with links updated, `AGENTS.md` architecture and
       key-patterns entries, `GLOSSARY.md` terms (e.g. diagram node, head
       node), and the option documented in the schema/README where TUI
