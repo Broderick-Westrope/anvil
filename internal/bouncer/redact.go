@@ -18,6 +18,7 @@ type redaction struct {
 var redactions = []redaction{
 	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----(?:.*?-----END [A-Z ]*PRIVATE KEY-----|.*)`), redacted},
 	{regexp.MustCompile(`AKIA[0-9A-Z]{16}`), redacted},
+	{regexp.MustCompile(`\b([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)[^\s@/]+@`), "${1}" + redacted + "@"},
 	{regexp.MustCompile(`\b(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{16,}`), redacted},
 	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{16,}`), redacted},
 	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{20,}`), redacted},
