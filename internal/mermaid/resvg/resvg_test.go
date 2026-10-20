@@ -39,9 +39,8 @@ func TestRender(t *testing.T) {
 	require.NoError(t, err, "the engine recovers after an error")
 }
 
-// Upstream go-resvg pooled instances in a sync.Pool and also kept every one
-// for Close, so each GC orphaned an instance (about 5 MB). Renders across
-// GCs must reuse the one instance.
+// Renders across GCs reuse the Engine's one instance, so the heap stays
+// flat.
 //
 //nolint:paralleltest // Measures the process heap.
 func TestRenderAcrossGCsDoesNotGrow(t *testing.T) {
@@ -92,7 +91,7 @@ func TestRenderPastTheMemoryLimitFailsAndRecovers(t *testing.T) {
 	t.Cleanup(func() { _ = e.Close() })
 
 	_, err = e.Render([]byte(rectSVG), 4000, 2000) // 32 MB of pixels.
-	require.Error(t, err)
+	require.ErrorContains(t, err, "wasm error", "the module traps when it can't grow its memory")
 	_, err = e.Render([]byte(rectSVG), 40, 20)
 	require.NoError(t, err, "the next render starts from a fresh instance")
 }

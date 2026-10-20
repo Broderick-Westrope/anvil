@@ -3,10 +3,8 @@
 //
 // resvg.wasm and the ABI below come from github.com/boolean-maybe/go-resvg
 // v0.0.2 (Apache-2.0, see LICENSE): resvg 0.44 with DejaVu Sans built in.
-// The Go side is rewritten so one Engine owns its runtime and its only
-// instance, and Close frees all of it. Upstream keeps a package-level
-// runtime for the life of the process and pools instances in a sync.Pool
-// while also tracking them for Close, so every GC leaks an instance.
+// The Go side is rewritten: one Engine owns its runtime and its single
+// instance, and Close frees all of it.
 //
 // The fonts are compiled into resvg.wasm, so changing them means rebuilding
 // it from the Rust crate in the go-resvg repository at v0.0.2 for the

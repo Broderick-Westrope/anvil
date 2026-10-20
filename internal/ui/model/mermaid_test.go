@@ -168,7 +168,7 @@ func TestMermaidFeatureReportsFailures(t *testing.T) {
 	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State)
 	failed, ok := waitResult(t, f).(diagramReadyMsg)
 	require.True(t, ok)
-	require.Error(t, failed.err)
+	require.ErrorContains(t, failed.err, "No diagram type detected")
 
 	_, handled := f.HandleMsg(failed)
 	require.True(t, handled)

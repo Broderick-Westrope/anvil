@@ -64,11 +64,11 @@ func NewRenderer() (*Renderer, error) {
 	}
 	pele := vm.Get("pele")
 	if pele == nil || goja.IsUndefined(pele) {
-		return nil, fmt.Errorf("pele global not defined")
+		return nil, errors.New("pele global not defined")
 	}
 	render, ok := goja.AssertFunction(pele.ToObject(vm).Get("render"))
 	if !ok {
-		return nil, fmt.Errorf("pele.render is not a function")
+		return nil, errors.New("pele.render is not a function")
 	}
 	m, err := newMeasurer()
 	if err != nil {
@@ -76,7 +76,7 @@ func NewRenderer() (*Renderer, error) {
 	}
 	jsMeasurer := vm.NewObject()
 	if err := jsMeasurer.Set("width", m.width); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set measurer: %w", err)
 	}
 	return &Renderer{vm: vm, render: render, measurer: jsMeasurer, afterFunc: time.AfterFunc}, nil
 }
