@@ -378,10 +378,12 @@ func (f *mermaidFeature) Observe(msg tea.Msg) tea.Cmd {
 			// arrive, as their entries are gone.
 			cmds = append(cmds, f.forgetAll())
 		}
-		f.drawn = now
-		if now.usable() {
+		if f.drawn.usable() || now.usable() {
+			// Placeholders for forgotten images, or code blocks that
+			// can now be images, are cached in the chat.
 			f.host.InvalidateDiagrams()
 		}
+		f.drawn = now
 	}
 	if f.drill != nil && !f.host.DrillInOpen(f.drill) {
 		f.drill = nil

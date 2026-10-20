@@ -624,3 +624,17 @@ func TestFileURL(t *testing.T) {
 		})
 	}
 }
+
+func TestMermaidFeatureRedrawsWhenDiagramsBecomeUndrawable(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	caps := kittyCaps()
+	f := newTestMermaidFeature(t, host, caps)
+	f.Observe(nil)
+	before := host.invalidations
+
+	caps.KittyGraphics = false
+	f.Observe(nil)
+	require.Equal(t, before+1, host.invalidations, "the images are gone, so their placeholders must go too")
+}
