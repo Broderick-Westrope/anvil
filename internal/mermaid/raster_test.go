@@ -216,13 +216,16 @@ func TestRasterizeTransparentBackground(t *testing.T) {
 }
 
 // explodingVarsSVG declares a chain of variables that each use the next
-// twice, so substituting them doubles at every link.
+// twice, so substituting them doubles at every link. Twenty links expand
+// to about 4 MB, past the 1 MiB cap but small enough that a test run with
+// the cap broken (as mutation testing does) doesn't exhaust memory.
 var explodingVarsSVG = func() string {
+	const links = 20
 	var decls strings.Builder
-	for i := range 40 {
+	for i := range links {
 		fmt.Fprintf(&decls, "--v%d:var(--v%d)var(--v%d);", i, i+1, i+1)
 	}
-	return `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" style="` + decls.String() + `--v40:#fff"><rect width="10" height="10" fill="var(--v0)"/></svg>`
+	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" style="%s--v%d:#fff"><rect width="10" height="10" fill="var(--v0)"/></svg>`, decls.String(), links)
 }()
 
 func TestRasterizeRejectsExplodingVariables(t *testing.T) {
@@ -237,7 +240,8 @@ func TestRasterizeRejectsExplodingVariables(t *testing.T) {
 }
 
 // A label is text, so a declaration written in one is neither collected
-// nor expanded; expanding this one would take hundreds of megabytes.
+// nor expanded. The label is short so that code which wrongly expanded it
+// still fails quickly rather than exhausting memory.
 func TestRenderLabelDeclaringVariablesStaysSmall(t *testing.T) {
 	t.Parallel()
 
@@ -247,7 +251,7 @@ func TestRenderLabelDeclaringVariablesStaysSmall(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
 	res, err := r.Render(`flowchart LR
-  A["--zz:var(--zz)var(--zz)var(--zz)var(--zz)var(--zz)var(--zz)"] --> B`, Options{})
+  A["--zz:var(--zz)var(--zz)"] --> B`, Options{})
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
