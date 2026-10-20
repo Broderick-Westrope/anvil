@@ -157,6 +157,7 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		c.deleteChildSession(childID)
 		return message.Message{}, fmt.Errorf("store branch summary: %w", err)
 	}
+	c.refreshSession(req.SessionID)
 	return summary, nil
 }
 
@@ -186,6 +187,7 @@ func (c *coordinator) DiscardBranchSummary(ctx context.Context, sessionID, summa
 		}
 		return fmt.Errorf("delete branch summary %s: %w", summaryID, err)
 	}
+	c.refreshSession(sessionID)
 	for _, p := range summary.Parts {
 		if s, ok := p.(message.BranchSummaryContent); ok {
 			c.deleteChildSession(s.ChildSessionID)
@@ -222,6 +224,14 @@ func (c *coordinator) delegatedMessages(ctx context.Context, messageID string, c
 		return nil
 	}
 	return msgs
+}
+
+// refreshSession publishes the session after the message store moved its
+// leaf, so the UI's copy, which later messages are parented on, follows.
+func (c *coordinator) refreshSession(id string) {
+	if err := c.sessions.Refresh(context.Background(), id); err != nil {
+		slog.Warn("Failed to publish session after a branch summary change", "session", id, "error", err)
+	}
 }
 
 func (c *coordinator) deleteChildSession(id string) {

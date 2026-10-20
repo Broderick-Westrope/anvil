@@ -103,6 +103,9 @@ type Service interface {
 	SetPin(ctx context.Context, id string, pinned bool, note string) error
 	ListPinned(ctx context.Context) ([]Session, error)
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
+	// Refresh publishes the session as stored, for changes made to it
+	// outside this service, such as a message store moving its leaf.
+	Refresh(ctx context.Context, sessionID string) error
 	Delete(ctx context.Context, id string) error
 
 	// Agent tool session management
@@ -297,6 +300,15 @@ func (s *service) MoveLeaf(ctx context.Context, sessionID, leafMessageID string)
 	if err != nil {
 		return fmt.Errorf("updating session leaf: %w", err)
 	}
+	session, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	s.Publish(pubsub.UpdatedEvent, session)
+	return nil
+}
+
+func (s *service) Refresh(ctx context.Context, sessionID string) error {
 	session, err := s.Get(ctx, sessionID)
 	if err != nil {
 		return err

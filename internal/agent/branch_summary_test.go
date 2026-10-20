@@ -3,9 +3,12 @@ package agent
 import (
 	"context"
 	"testing"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -260,4 +263,45 @@ func TestReserveSession_QueuesSendsAtOnce(t *testing.T) {
 
 	release()
 	<-ran
+}
+
+// waitForLeafUpdate waits for an update to sessionID that shows leaf.
+func waitForLeafUpdate(t *testing.T, events <-chan pubsub.Event[session.Session], sessionID, leaf string) {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type == pubsub.UpdatedEvent && ev.Payload.ID == sessionID && ev.Payload.LeafMessageID == leaf {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("no session update with leaf %s", leaf)
+		}
+	}
+}
+
+func TestSummarizeBranch_PublishesTheNewLeaf(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	f.setSummarizer(reply("summary"))
+	events := f.env.sessions.Subscribe(t.Context())
+
+	summary, err := f.c.SummarizeBranch(t.Context(), f.request())
+	require.NoError(t, err)
+
+	waitForLeafUpdate(t, events, f.sessionID, summary.ID)
+}
+
+func TestDiscardBranchSummary_PublishesTheRestoredLeaf(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	f.setSummarizer(reply("summary"))
+	summary, err := f.c.SummarizeBranch(t.Context(), f.request())
+	require.NoError(t, err)
+	events := f.env.sessions.Subscribe(t.Context())
+
+	require.NoError(t, f.c.DiscardBranchSummary(t.Context(), f.sessionID, summary.ID))
+
+	waitForLeafUpdate(t, events, f.sessionID, f.a1)
 }
