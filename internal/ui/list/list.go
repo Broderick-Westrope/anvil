@@ -226,6 +226,10 @@ func (l *List) Overflows(height int) bool {
 	return false
 }
 
+// ScrollPosition is the first visible item and the line within it, which
+// is cheaper to read than Offset.
+func (l *List) ScrollPosition() (idx, line int) { return l.offsetIdx, l.offsetLine }
+
 // Offset returns the current scroll offset in lines from the top.
 func (l *List) Offset() int {
 	offset := 0
@@ -545,6 +549,35 @@ func (l *List) VisibleItemIndices() (startIdx, endIdx int) {
 	return startIdx, endIdx
 }
 
+// NearbyItems returns the items outside the viewport that start within
+// margin lines of it, nearest first, alternating below and above. It
+// renders them to measure them, as scrolling would.
+func (l *List) NearbyItems(margin int) []Item {
+	if len(l.items) == 0 {
+		return nil
+	}
+	start, end := l.VisibleItemIndices()
+	var below, above []Item
+	for idx, lines := end+1, 0; idx < len(l.items) && lines < margin; idx++ {
+		below = append(below, l.items[idx])
+		lines += l.getItem(idx).height + l.gap
+	}
+	for idx, lines := start-1, l.offsetLine; idx >= 0 && lines < margin; idx-- {
+		above = append(above, l.items[idx])
+		lines += l.getItem(idx).height + l.gap
+	}
+	var nearby []Item
+	for i := range max(len(below), len(above)) {
+		if i < len(below) {
+			nearby = append(nearby, below[i])
+		}
+		if i < len(above) {
+			nearby = append(nearby, above[i])
+		}
+	}
+	return nearby
+}
+
 // Render renders the list and returns the visible lines.
 //
 // F7: per-item slicing is bounded by the remaining viewport budget so
@@ -658,6 +691,43 @@ func (l *List) AppendItems(items ...Item) {
 	l.totalHeightValid = false
 }
 
+// SpliceItems replaces the n items starting at idx with items. A selection
+// or view anchored inside the replaced run moves to its first new item;
+// one after it shifts with it.
+func (l *List) SpliceItems(idx, n int, items ...Item) {
+	if idx < 0 || n < 0 || idx+n > len(l.items) {
+		return
+	}
+	for _, removed := range l.items[idx : idx+n] {
+		delete(l.cache, removed)
+		delete(l.freezeSuppressed, removed)
+	}
+	tail := append([]Item(nil), l.items[idx+n:]...)
+	l.items = append(append(l.items[:idx], items...), tail...)
+
+	shift := func(i int) int {
+		switch {
+		case i < idx:
+			return i
+		case i < idx+n:
+			if len(items) == 0 {
+				return min(idx, len(l.items)-1)
+			}
+			return idx
+		default:
+			return i - n + len(items)
+		}
+	}
+	if l.selectedIdx >= 0 {
+		l.selectedIdx = shift(l.selectedIdx)
+	}
+	if l.offsetIdx >= idx && l.offsetIdx < idx+n {
+		l.offsetLine = 0
+	}
+	l.offsetIdx = max(0, shift(l.offsetIdx))
+	l.totalHeightValid = false
+}
+
 // RemoveItem removes the item at the given index from the list.
 func (l *List) RemoveItem(idx int) {
 	if idx < 0 || idx >= len(l.items) {
@@ -721,6 +791,14 @@ func (l *List) ScrollToBottom() {
 	lastOffsetIdx, lastOffsetLine, _ := l.lastOffsetItem()
 	l.offsetIdx = lastOffsetIdx
 	l.offsetLine = lastOffsetLine
+}
+
+// ClampOffset moves the scroll offset back onto its item's last line when
+// the item has shrunk past it since the offset was set, so the view doesn't
+// start in the gap after the item or beyond.
+func (l *List) ClampOffset() {
+	height := l.getItem(l.offsetIdx).height
+	l.offsetLine = max(min(l.offsetLine, height-1), 0)
 }
 
 // ScrollToSelected scrolls the list to the selected item.

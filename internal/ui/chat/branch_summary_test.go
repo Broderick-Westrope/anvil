@@ -29,7 +29,7 @@ func TestBranchSummaryMessageItem(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	items := ExtractMessageItems(&sty, branchSummaryMessage(), nil, nil)
+	items := ExtractMessageItems(&sty, branchSummaryMessage(), nil, nil, nil)
 	require.Len(t, items, 1)
 	item, ok := items[0].(*BranchSummaryMessageItem)
 	require.True(t, ok, "branch summaries must not render as user bubbles")

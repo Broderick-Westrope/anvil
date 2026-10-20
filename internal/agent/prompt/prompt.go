@@ -56,6 +56,9 @@ type PromptDat struct {
 	AgentBody string
 	// AppendPrompt is optional text appended at the end of the prompt, after skills and context files.
 	AppendPrompt string
+	// Diagrams reports whether the UI may render Mermaid fences as
+	// diagrams (config.ConfigStore.DiagramsEnabled).
+	Diagrams bool
 }
 
 type ContextFile struct {
@@ -288,6 +291,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 		DelegationWorkflow: p.delegationWorkflow,
 		AgentBody:          p.agentBody,
 		AppendPrompt:       p.appendPrompt,
+		Diagrams:           store.DiagramsEnabled(),
 	}
 	if isGit {
 		var err error

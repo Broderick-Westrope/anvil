@@ -338,6 +338,10 @@ type UI struct {
 	// features are the fork features routed to from the dispatchers.
 	features features
 
+	// diagrams renders Mermaid diagrams in the chat, or is nil when
+	// options.tui.diagrams is off.
+	diagrams chat.DiagramRenderer
+
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
 
@@ -476,6 +480,12 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
+	if com.Workspace.DiagramsEnabled() {
+		diagrams := newMermaidFeature(uiHost{ui}, &ui.caps, com)
+		ui.features.register(diagrams)
+		ui.diagrams = diagrams
+		ui.chat.SetDiagrams(diagrams)
+	}
 	ui.features.register(newBranchSummaryFeature(uiHost{ui}, com, com.Workspace))
 
 	// Initialize slash-command autocomplete.
@@ -1621,15 +1631,15 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 		switch msg.Role {
 		case message.User:
 			m.lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns(), m.diagrams)...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns(), m.diagrams)...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns(), m.diagrams)...)
 		}
 	}
 
@@ -1695,7 +1705,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// Extract nested tool items.
 		var nestedTools []chat.ToolMessageItem
 		for _, nestedMsg := range nestedMsgPtrs {
-			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.expandedToolPatterns())
+			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.expandedToolPatterns(), nil)
 			for _, nestedItem := range nestedItems {
 				if nestedToolItem, ok := nestedItem.(chat.ToolMessageItem); ok {
 					// Mark nested tools as simple (compact) rendering.
@@ -1770,7 +1780,7 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	switch msg.Role {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns(), m.diagrams)
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
 				if cmd := animatable.StartAnimation(); cmd != nil {
@@ -1786,7 +1796,7 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			}
 		}
 	case message.Assistant:
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns(), m.diagrams)
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
 				if cmd := animatable.StartAnimation(); cmd != nil {
@@ -1888,6 +1898,9 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+		// A message that just finished with diagrams becomes several
+		// nodes; see chat.NewAssistantMessageItems.
+		c.SyncAssistantSegments(m.com.Styles, &msg, m.diagrams)
 	}
 
 	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
@@ -2262,9 +2275,9 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 		switch msg.Role {
 		case message.User:
 			lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns(), m.diagrams)...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns(), m.diagrams)...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(
 					m.com.Styles, msg, m.com.Config(),
@@ -2273,7 +2286,7 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns(), m.diagrams)...)
 		}
 	}
 
@@ -3861,6 +3874,7 @@ func (m *UI) ShortHelp() []key.Binding {
 				k.Chat.PageDown,
 				k.Chat.Copy,
 			)
+			binds = append(binds, m.selectedItemBindings()...)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, k.Chat.PillLeft)
 			}
@@ -3887,6 +3901,15 @@ func (m *UI) ShortHelp() []key.Binding {
 		binds = append(binds, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch")))
 	}
 	return binds
+}
+
+// selectedItemBindings are the help entries for keys only the selected chat
+// item handles.
+func (m *UI) selectedItemBindings() []key.Binding {
+	if diagram, ok := m.activeChat().SelectedItem().(*chat.DiagramItem); ok && !diagram.Failed() {
+		return []key.Binding{m.keyMap.Chat.OpenDiagram}
+	}
+	return nil
 }
 
 // FullHelp implements [help.KeyMap].
@@ -3996,10 +4019,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.Chat.End,
 					k.Chat.FocusSidebar,
 				},
-				[]key.Binding{
+				append([]key.Binding{
 					k.Chat.Copy,
 					k.Chat.ClearHighlight,
-				},
+				}, m.selectedItemBindings()...),
 			)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, []key.Binding{k.Chat.PillLeft})

@@ -47,7 +47,7 @@ func TestJobEventMessageRendersCompactNotice(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	msg := jobEventMessage(t)
-	items := ExtractMessageItems(&sty, msg, nil, nil)
+	items := ExtractMessageItems(&sty, msg, nil, nil, nil)
 	require.Len(t, items, 1)
 	item, ok := items[0].(*JobEventMessageItem)
 	require.True(t, ok, "job_event messages must not render as user bubbles")
@@ -96,7 +96,7 @@ func TestUserMessageStillRendersAsUserItem(t *testing.T) {
 		Role:  message.User,
 		Parts: []message.ContentPart{message.TextContent{Text: "hello"}},
 	}
-	items := ExtractMessageItems(&sty, msg, nil, nil)
+	items := ExtractMessageItems(&sty, msg, nil, nil, nil)
 	require.Len(t, items, 1)
 	_, ok := items[0].(*UserMessageItem)
 	require.True(t, ok)

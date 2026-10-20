@@ -217,6 +217,8 @@ type Workspace interface {
 
 	// Config (read-only data)
 	Config() *config.Config
+	// DiagramsEnabled reports options.tui.diagrams as it was at startup.
+	DiagramsEnabled() bool
 	WorkingDir() string
 	Resolver() config.VariableResolver
 
