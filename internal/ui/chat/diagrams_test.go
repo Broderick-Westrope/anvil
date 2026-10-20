@@ -27,9 +27,9 @@ func TestSplitMermaidLeavesExamplesInsideOtherFences(t *testing.T) {
 	t.Parallel()
 
 	for name, content := range map[string]string{
-		"tilde fence":         "~~~markdown\n```mermaid\nA --> B\n```\n~~~\n",
-		"longer backtick":     "````markdown\n```mermaid\nA --> B\n```\n````\n",
-		"longer, then outro":  "````md\n```mermaid\nA\n```\n````\n\nOutro\n",
+		"tilde fence":          "~~~markdown\n```mermaid\nA --> B\n```\n~~~\n",
+		"longer backtick":      "````markdown\n```mermaid\nA --> B\n```\n````\n",
+		"longer, then outro":   "````md\n```mermaid\nA\n```\n````\n\nOutro\n",
 		"info string not ours": "```mermaidjs\nA\n```\n",
 	} {
 		t.Run(name, func(t *testing.T) {
