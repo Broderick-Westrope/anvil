@@ -10,17 +10,22 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 const (
 	// maxListEntries caps each file list and the command list, in the
 	// prompt and in the stored summary.
 	maxListEntries = 50
-	maxFocusChars  = 2_000
+	// maxStoredEvents and maxStoredFiles cap what a ledger stores.
+	maxStoredEvents = 200
+	maxStoredFiles  = 500
+	maxFocusChars   = 2_000
 	// maxEarlierSummaryChars caps each compaction or branch summary
 	// inside the range.
 	maxEarlierSummaryChars = 4_000
@@ -55,13 +60,9 @@ func Abandoned(fromPath, targetPath []message.Message) []message.Message {
 // message isn't worth summarising.
 func Worthwhile(rng []message.Message) bool {
 	return slices.ContainsFunc(rng, func(m message.Message) bool {
-		return m.Role == message.Assistant && isConversation(m) &&
+		return m.Role == message.Assistant && (m.MessageType == message.MessageTypeMessage || m.MessageType == "") &&
 			(strings.TrimSpace(m.Content().Text) != "" || len(m.ToolCalls()) > 0)
 	})
-}
-
-func isConversation(m message.Message) bool {
-	return m.MessageType == message.MessageTypeMessage || m.MessageType == ""
 }
 
 // gitOptions matches git's global options before its subcommand, such as
@@ -73,11 +74,7 @@ var (
 		`\bgit` + gitOptions + `\s+(commit|push|merge|rebase|reset|cherry-pick|tag|checkout\s+-b|switch\s+-c)\b` +
 			`|\bgh\s+pr\s+(create|edit|merge|comment|close|ready)\b` +
 			`|\bwtp\s+(add|remove)\b`)
-	// compoundCommand matches a command that runs more than one step;
-	// looseChain one whose exit status can hide a failed step.
-	compoundCommand = regexp.MustCompile(`&&|\|\||;|\||\n`)
-	looseChain      = regexp.MustCompile(`\|\||;|\||\n`)
-	gitDirOption    = regexp.MustCompile(`-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))`)
+	gitDirOption = regexp.MustCompile(`-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))`)
 )
 
 var (
@@ -88,16 +85,19 @@ var (
 	prURLPattern  = regexp.MustCompile(`https://[^\s"')]+/pull/\d+`)
 	permissionErr = "Permission denied"
 	// failedOutput matches the lines bash adds to a failed command's
-	// output, for results recorded before bash stored exit codes.
+	// output. It is read only for results recorded before bash stored exit
+	// codes, since a successful command can print the same line.
 	failedOutput = regexp.MustCompile(`(?m)^(Exit code [1-9]\d*|Command was aborted before completion)$`)
 )
 
-// Ledger extracts what the range's tool calls did. children returns the
-// messages of the session a tool call (in the message with messageID)
-// delegated to, or nil; their effects
-// are folded in where the call happened. Ledgers of branch summaries in
-// the range carry forward.
-func Ledger(rng []message.Message, children func(messageID string, call message.ToolCall) []message.Message) message.BranchLedger {
+// ChildLoader returns the messages of the session a tool call (in the
+// message with messageID) delegated to, or nil.
+type ChildLoader func(messageID string, call message.ToolCall) []message.Message
+
+// Ledger extracts what the range's tool calls did. The effects of the
+// sessions children returns are folded in where the delegating call
+// happened. Ledgers of branch summaries in the range carry forward.
+func Ledger(rng []message.Message, children ChildLoader) message.BranchLedger {
 	var b ledgerBuilder
 	b.add(rng, children)
 	return b.ledger()
@@ -108,7 +108,7 @@ type ledgerBuilder struct {
 	events         []message.LedgerEvent
 }
 
-func (b *ledgerBuilder) add(rng []message.Message, children func(messageID string, call message.ToolCall) []message.Message) {
+func (b *ledgerBuilder) add(rng []message.Message, children ChildLoader) {
 	results := map[string]message.ToolResult{}
 	for _, m := range rng {
 		for _, r := range m.ToolResults() {
@@ -139,7 +139,7 @@ func (b *ledgerBuilder) carryForward(m message.Message) {
 }
 
 // addCall records one tool call's effect, by tool.
-func (b *ledgerBuilder) addCall(messageID string, call message.ToolCall, res message.ToolResult, hasResult bool, children func(messageID string, call message.ToolCall) []message.Message) {
+func (b *ledgerBuilder) addCall(messageID string, call message.ToolCall, res message.ToolResult, hasResult bool, children ChildLoader) {
 	succeeded := hasResult && !res.IsError
 	switch call.Name {
 	case tools.ViewToolName:
@@ -154,7 +154,7 @@ func (b *ledgerBuilder) addCall(messageID string, call message.ToolCall, res mes
 		if command := inputField(call, "command"); stateChangingCommand.MatchString(command) {
 			b.events = append(b.events, message.LedgerEvent{
 				Tool:    call.Name,
-				Command: truncate(redact(command), maxEntryChars),
+				Command: truncate(bouncer.Redact(command), maxEntryChars),
 				Dir:     commandDir(command, inputField(call, "working_dir")),
 				Status:  commandStatus(command, res, hasResult),
 				Refs:    refs(res.Content),
@@ -175,7 +175,18 @@ func (b *ledgerBuilder) ledger() message.BranchLedger {
 			read = append(read, p)
 		}
 	}
-	return message.BranchLedger{Modified: modified, Read: read, Events: b.events}
+	// Ledgers carry forward through every later branch summary, so what
+	// one stores is capped. The newest events say what state the branch
+	// left, so the oldest are dropped.
+	events := b.events
+	if omitted := len(events) - maxStoredEvents; omitted > 0 {
+		events = events[omitted:]
+	}
+	return message.BranchLedger{
+		Modified: modified[:min(len(modified), maxStoredFiles)],
+		Read:     read[:min(len(read), maxStoredFiles)],
+		Events:   events,
+	}
 }
 
 func sortedUnique(s []string) []string {
@@ -203,16 +214,44 @@ func commandDir(command, workingDir string) string {
 // as a whole.
 func commandStatus(command string, res message.ToolResult, hasResult bool) message.LedgerStatus {
 	st := status(res, hasResult)
-	if !compoundCommand.MatchString(command) {
-		return st
-	}
-	if st == message.LedgerSucceeded && !looseChain.MatchString(command) {
-		return st
-	}
-	if st == message.LedgerDenied {
+	compound, loose := chainShape(command)
+	if !compound || st == message.LedgerDenied || (st == message.LedgerSucceeded && !loose) {
 		return st
 	}
 	return message.LedgerUnknown
+}
+
+// chainShape reports whether command runs more than one step, and whether
+// its exit status can hide a failed step: anything but an && chain. It
+// reads the shell's syntax, so separators inside quotes, heredocs and
+// command substitutions don't count. A command that doesn't parse counts
+// as both.
+func chainShape(command string) (compound, loose bool) {
+	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	if err != nil {
+		return true, true
+	}
+	var walk func(stmts ...*syntax.Stmt)
+	walk = func(stmts ...*syntax.Stmt) {
+		if len(stmts) > 1 {
+			compound, loose = true, true
+		}
+		for _, s := range stmts {
+			switch c := s.Cmd.(type) {
+			case *syntax.BinaryCmd:
+				compound = true
+				loose = loose || c.Op != syntax.AndStmt
+				walk(c.X)
+				walk(c.Y)
+			case *syntax.Subshell:
+				walk(c.Stmts...)
+			case *syntax.Block:
+				walk(c.Stmts...)
+			}
+		}
+	}
+	walk(file.Stmts...)
+	return compound, loose
 }
 
 func status(res message.ToolResult, hasResult bool) message.LedgerStatus {
@@ -228,14 +267,16 @@ func status(res message.ToolResult, hasResult bool) message.LedgerStatus {
 	var meta struct {
 		Background  bool   `json:"background"`
 		ShellID     string `json:"shell_id"`
-		ExitCode    int    `json:"exit_code"`
+		ExitCode    *int   `json:"exit_code"`
 		Interrupted bool   `json:"interrupted"`
 	}
 	_ = json.Unmarshal([]byte(res.Metadata), &meta)
 	switch {
 	case meta.Background && meta.ShellID != "":
 		return message.LedgerUnknown
-	case meta.ExitCode != 0, meta.Interrupted, failedOutput.MatchString(res.Content):
+	case meta.Interrupted, meta.ExitCode != nil && *meta.ExitCode != 0:
+		return message.LedgerFailed
+	case meta.ExitCode == nil && failedOutput.MatchString(res.Content):
 		return message.LedgerFailed
 	default:
 		return message.LedgerSucceeded
@@ -247,16 +288,22 @@ func status(res message.ToolResult, hasResult bool) message.LedgerStatus {
 // printed. Other hex strings in the output are left out, since a compound
 // command can print anything.
 func refs(output string) []string {
-	var out []string
+	var found []string
 	for _, m := range gitSHARecord.FindAllStringSubmatch(output, -1) {
 		for _, sha := range m[1:] {
 			if sha != "" {
-				out = append(out, sha)
+				found = append(found, sha)
 			}
 		}
 	}
-	out = append(out, prURLPattern.FindAllString(output, -1)...)
-	return slices.Compact(out)
+	found = append(found, prURLPattern.FindAllString(output, -1)...)
+	var out []string
+	for _, r := range found {
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func inputField(call message.ToolCall, field string) string {
@@ -276,8 +323,8 @@ func inputField(call message.ToolCall, field string) string {
 func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, budget int) string {
 	// Every piece is redacted whole before it's cut to size, so a cut can't
 	// split a secret the patterns would have matched.
-	keep := ledgerRefs(ledger)
-	clean := func(s string) string { return redactKeeping(s, keep) }
+	redact := redactKeeping(ledgerRefs(ledger))
+	clean := func(s string) string { return defuseClosingTags(redact(s)) }
 	var summaries, conversation []string
 	for _, m := range rng {
 		switch m.MessageType {
@@ -295,11 +342,9 @@ func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, bu
 	var sb strings.Builder
 	sb.WriteString("Summarise the abandoned conversation branch below for the conversation it branched from. ")
 	sb.WriteString("The ledger was extracted from the branch's tool calls in code: it records what was attempted and observed, not verified current state.\n\n")
-	var ledgerText strings.Builder
-	writeLedger(&ledgerText, ledger)
 	// The ledger may take at most half the budget, so the conversation
 	// always gets the rest.
-	sb.WriteString(truncate(clean(ledgerText.String()), budget*charsPerToken/2))
+	sb.WriteString(ledgerBlock(ledger, budget*charsPerToken/2, clean))
 	if focus = strings.TrimSpace(focus); focus != "" {
 		fmt.Fprintf(&sb, "<focus>\n%s\n</focus>\n\n", truncate(clean(focus), maxFocusChars))
 	}
@@ -341,47 +386,61 @@ func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, bu
 		sb.WriteString(s)
 	}
 	sb.WriteString("</conversation>\n")
-	return clean(sb.String())
+	return redact(sb.String())
 }
 
-func writeLedger(sb *strings.Builder, l message.BranchLedger) {
+// ledgerBlock serialises the ledger in at most maxChars, cutting whole
+// entries rather than the block so it always closes: each section shows
+// at most maxListEntries entries, and fewer when they don't fit.
+func ledgerBlock(l message.BranchLedger, maxChars int, clean func(string) string) string {
+	for n := maxListEntries; n >= 0; n-- {
+		if s := renderLedger(l, n, clean); len(s) <= maxChars {
+			return s
+		}
+	}
+	return ""
+}
+
+func renderLedger(l message.BranchLedger, n int, clean func(string) string) string {
+	var sb strings.Builder
 	sb.WriteString("<ledger>\n")
-	writeList(sb, "Modified files", l.Modified)
-	writeList(sb, "Files read", l.Read)
+	writeList(&sb, "Modified files", l.Modified, n, clean)
+	writeList(&sb, "Files read", l.Read, n, clean)
 	if len(l.Events) > 0 {
 		sb.WriteString("Commands, in order:\n")
 		// The latest commands say what state the branch left, so the
 		// oldest are the ones dropped.
 		events := l.Events
-		if omitted := len(events) - maxListEntries; omitted > 0 {
-			fmt.Fprintf(sb, "[%d earlier commands omitted]\n", omitted)
+		if omitted := len(events) - n; omitted > 0 {
+			fmt.Fprintf(&sb, "[%d earlier commands omitted]\n", omitted)
 			events = events[omitted:]
 		}
 		for _, e := range events {
-			fmt.Fprintf(sb, "- [%s] %s", e.Status, e.Command)
+			fmt.Fprintf(&sb, "- [%s] %s", e.Status, truncate(clean(e.Command), maxEntryChars))
 			if e.Dir != "" {
-				fmt.Fprintf(sb, " (in %s)", e.Dir)
+				fmt.Fprintf(&sb, " (in %s)", truncate(clean(e.Dir), maxEntryChars))
 			}
 			if len(e.Refs) > 0 {
-				fmt.Fprintf(sb, " refs: %s", strings.Join(e.Refs, ", "))
+				fmt.Fprintf(&sb, " refs: %s", clean(strings.Join(e.Refs, ", ")))
 			}
 			sb.WriteString("\n")
 		}
 	}
 	sb.WriteString("</ledger>\n\n")
+	return sb.String()
 }
 
-func writeList(sb *strings.Builder, title string, items []string) {
+func writeList(sb *strings.Builder, title string, items []string, n int, clean func(string) string) {
 	if len(items) == 0 {
 		return
 	}
 	sb.WriteString(title + ":\n")
 	for i, item := range items {
-		if i == maxListEntries {
+		if i == n {
 			fmt.Fprintf(sb, "+%d more\n", len(items)-i)
 			return
 		}
-		sb.WriteString("- " + item + "\n")
+		sb.WriteString("- " + truncate(clean(item), maxEntryChars) + "\n")
 	}
 }
 
@@ -427,17 +486,20 @@ func serialise(m message.Message, clean func(string) string) string {
 
 // redactedInput redacts a tool input's decoded string values, where
 // quoting can't hide a secret from the patterns, and re-encodes it with
-// sorted keys, so the same call serialises to the same bytes.
+// sorted keys, so the same call serialises to the same bytes. HTML
+// escaping is off so shell operators such as && and > stay readable.
 func redactedInput(input string, clean func(string) string) string {
 	var v any
 	if json.Unmarshal([]byte(input), &v) != nil {
 		return clean(input)
 	}
-	b, err := json.Marshal(redactValues(v, clean))
-	if err != nil {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if enc.Encode(redactValues(v, clean)) != nil {
 		return clean(input)
 	}
-	return string(b)
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func redactValues(v any, clean func(string) string) any {
@@ -473,22 +535,32 @@ func truncate(s string, maxChars int) string {
 	if len(s) <= maxChars {
 		return s
 	}
-	return s[:maxChars] + "…[truncated]"
+	return cut(s, maxChars) + "…[truncated]"
+}
+
+// cut returns at most n bytes of s, backing up to a rune boundary so it
+// never splits a character.
+func cut(s string, n int) string {
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // Finalize prepares the agent's output for storage: it redacts it, caps
 // its length and appends the ledger's file lists verbatim, so they reach
-// later turns exactly as extracted.
+// later turns exactly as extracted. Closing tags that could end the
+// summary's wrapper are escaped.
 func Finalize(summary string, ledger message.BranchLedger) string {
-	summary = strings.TrimSpace(redactKeeping(summary, ledgerRefs(ledger)))
+	summary = strings.TrimSpace(redactKeeping(ledgerRefs(ledger))(summary))
 	if len(summary) > maxSummaryChars {
-		summary = summary[:maxSummaryChars] + "\n[summary truncated]"
+		summary = cut(summary, maxSummaryChars) + "\n[summary truncated]"
 	}
 	var sb strings.Builder
 	sb.WriteString(summary)
 	writeTagged(&sb, "modified-files", ledger.Modified)
 	writeTagged(&sb, "read-files", ledger.Read)
-	return truncate(sb.String(), maxStoredChars)
+	return truncate(defuseClosingTags(sb.String()), maxStoredChars)
 }
 
 func writeTagged(sb *strings.Builder, tag string, items []string) {
@@ -501,28 +573,52 @@ func writeTagged(sb *strings.Builder, tag string, items []string) {
 			fmt.Fprintf(sb, "+%d more\n", len(items)-i)
 			break
 		}
-		sb.WriteString(truncate(redact(item), maxEntryChars) + "\n")
+		sb.WriteString(truncate(bouncer.Redact(item), maxEntryChars) + "\n")
 	}
 	fmt.Fprintf(sb, "</%s>", tag)
 }
 
-func redact(s string) string { return bouncer.Redact(s) }
+// closingTag matches a closing tag of a section the prompt wraps branch
+// content in, or of the summary wrapper the stored summary is later read
+// in.
+var closingTag = regexp.MustCompile(`(?i)</(conversation|ledger|earlier-summaries|focus|summary)`)
 
-// redactKeeping redacts s but keeps the given refs: commit SHAs the
-// ledger took from git's own output, which the generic long-run rule
-// would otherwise remove.
-func redactKeeping(s string, keep []string) string {
-	placeholders := make([]string, 0, 2*len(keep))
-	for i, ref := range keep {
-		placeholder := fmt.Sprintf("\x00%d\x00", i)
-		s = regexp.MustCompile(`\b`+ref+`\b`).ReplaceAllLiteralString(s, placeholder)
-		placeholders = append(placeholders, placeholder, ref)
-	}
-	return strings.NewReplacer(placeholders...).Replace(redact(s))
+// defuseClosingTags escapes those closing tags, so branch content can't
+// end the section it sits in and pass as framing.
+func defuseClosingTags(s string) string {
+	return closingTag.ReplaceAllString(s, `<\/$1`)
 }
 
-// ledgerRefs returns the ledger's commit SHAs, longest first so a short
-// SHA never splits a longer one.
+// secretRun matches a run of the characters the redactor's long-run rule
+// counts, so a ref is kept only when it is a whole run. Keeping a ref
+// inside a longer run would split the run into pieces short enough to
+// slip past that rule.
+var secretRun = regexp.MustCompile(`[A-Za-z0-9+/=_-]+`)
+
+// redactKeeping returns a redactor that keeps the given refs: commit SHAs
+// the ledger took from git's own output, which the generic long-run rule
+// would otherwise remove.
+func redactKeeping(keep []string) func(string) string {
+	if len(keep) == 0 {
+		return bouncer.Redact
+	}
+	var pairs []string
+	for i, ref := range keep {
+		pairs = append(pairs, fmt.Sprintf("\x00%d\x00", i), ref)
+	}
+	restore := strings.NewReplacer(pairs...)
+	return func(s string) string {
+		s = secretRun.ReplaceAllStringFunc(s, func(run string) string {
+			if i := slices.Index(keep, run); i >= 0 {
+				return pairs[2*i]
+			}
+			return run
+		})
+		return restore.Replace(bouncer.Redact(s))
+	}
+}
+
+// ledgerRefs returns the ledger's commit SHAs.
 func ledgerRefs(l message.BranchLedger) []string {
 	var refs []string
 	for _, e := range l.Events {
@@ -532,6 +628,5 @@ func ledgerRefs(l message.BranchLedger) []string {
 			}
 		}
 	}
-	slices.SortFunc(refs, func(a, b string) int { return len(b) - len(a) })
 	return refs
 }
