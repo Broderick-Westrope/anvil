@@ -216,7 +216,7 @@ func TestChatFollowsTheBottomWhenADiagramShrinks(t *testing.T) {
 	require.True(t, c.AtBottom())
 
 	diagrams.view = chat.DiagramView{State: chat.DiagramReady, Image: "IMG1\nIMG2"}
-	c.InvalidateRenderCaches()
+	c.InvalidateDiagrams()
 	require.Contains(t, ansi.Strip(c.list.Render()), "IMG2")
 	require.True(t, c.AtBottom())
 }
@@ -230,7 +230,7 @@ func TestChatKeepsAShrunkDiagramInView(t *testing.T) {
 	require.False(t, c.Follow())
 
 	diagrams.view = chat.DiagramView{State: chat.DiagramReady, Image: "IMG1\nIMG2"}
-	c.InvalidateRenderCaches()
+	c.InvalidateDiagrams()
 	require.Contains(t, ansi.Strip(c.list.Render()), "IMG", "the offset no longer points past the diagram")
 }
 
@@ -247,7 +247,7 @@ func TestChatOpenedAtTheTopStaysThereWhenADiagramGrows(t *testing.T) {
 	require.True(t, c.AtBottom(), "the pending view fits on screen")
 
 	diagrams.view = chat.DiagramView{State: chat.DiagramReady, Image: strings.TrimSuffix(strings.Repeat("ROW\n", 30), "\n")}
-	c.InvalidateRenderCaches()
+	c.InvalidateDiagrams()
 	require.Zero(t, c.list.Offset(), "the drill-in still starts at the top of the diagram")
 }
 
@@ -327,4 +327,17 @@ func finishedText(id, text string) *message.Message {
 	return &message.Message{ID: id, Role: message.Assistant, Parts: []message.ContentPart{
 		message.TextContent{Text: text}, message.Finish{Reason: message.FinishReasonEndTurn},
 	}}
+}
+
+func TestInvalidateDiagramsLeavesOtherItemsCached(t *testing.T) {
+	t.Parallel()
+
+	c, _ := diagramChat(t)
+	text := c.MessageItems()[0]
+	diagram := c.MessageItems()[1]
+	textVersion, diagramVersion := text.Version(), diagram.Version()
+
+	c.InvalidateDiagrams()
+	require.Equal(t, textVersion, text.Version(), "text keeps its render")
+	require.NotEqual(t, diagramVersion, diagram.Version(), "the diagram renders again")
 }

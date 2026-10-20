@@ -49,6 +49,15 @@ type DiagramRenderer interface {
 	FullDiagram(source string, width int) DiagramView
 }
 
+// DiagramShower is implemented by items that draw a diagram, so they can be
+// re-rendered alone when its image changes.
+type DiagramShower interface {
+	showsDiagram()
+}
+
+func (*DiagramItem) showsDiagram()       {}
+func (*DiagramDetailItem) showsDiagram() {}
+
 // Prefetcher is implemented by items that can start slow work before they
 // scroll into view.
 type Prefetcher interface {

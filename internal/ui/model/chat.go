@@ -342,11 +342,23 @@ func (m *Chat) ItemAt(i int) list.Item {
 // InvalidateRenderCaches drops cached rendered output on every message
 // item so the next draw re-renders with the current styles.
 func (m *Chat) InvalidateRenderCaches() {
-	// Items may change height, which leaves the line offset stale: stay
-	// pinned to the bottom if following, otherwise keep the offset inside
-	// its item. Being at the bottom isn't enough: a drill-in whose short
-	// placeholder fits on screen must stay at the top when it grows.
 	chat.ClearItemCaches(m.MessageItems())
+}
+
+// InvalidateDiagrams re-renders the items that show diagrams, after an
+// image arrives or the terminal's capabilities change. They may change
+// height, which leaves the line offset stale: stay pinned to the bottom if
+// following, otherwise keep the offset inside its item. Being at the
+// bottom isn't enough: a drill-in whose short placeholder fits on screen
+// must stay at the top when it grows.
+func (m *Chat) InvalidateDiagrams() {
+	var diagrams []chat.MessageItem
+	for _, item := range m.MessageItems() {
+		if _, ok := item.(chat.DiagramShower); ok {
+			diagrams = append(diagrams, item)
+		}
+	}
+	chat.ClearItemCaches(diagrams)
 	if m.follow {
 		m.ScrollToBottom()
 		return

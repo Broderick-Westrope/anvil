@@ -38,7 +38,7 @@ import (
 
 // diagramHost is what the mermaid feature needs from UI.
 type diagramHost interface {
-	// InvalidateChat drops every chat item's render cache, in the root
+	// InvalidateChat re-renders every diagram item, in the root
 	// chat and every drill-in, so diagrams that just became ready replace
 	// their placeholders.
 	InvalidateChat()
@@ -54,11 +54,11 @@ type diagramHost interface {
 
 func (h uiHost) InvalidateChat() {
 	if h.m.chat != nil {
-		h.m.chat.InvalidateRenderCaches()
+		h.m.chat.InvalidateDiagrams()
 	}
 	for _, entry := range h.m.drillStack {
 		if entry.chat != nil {
-			entry.chat.InvalidateRenderCaches()
+			entry.chat.InvalidateDiagrams()
 		}
 	}
 }
