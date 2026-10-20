@@ -32,59 +32,6 @@ import (
 	"github.com/pkg/browser"
 )
 
-// mermaidFeature renders ```mermaid fences in finished assistant messages
-// as Kitty graphics, shows one full size in a drill-in, and opens one in
-// the browser. See internal/mermaid.
-
-// diagramHost is what the mermaid feature needs from UI.
-type diagramHost interface {
-	// InvalidateChat re-renders every diagram item, in the root
-	// chat and every drill-in, so diagrams that just became ready replace
-	// their placeholders.
-	InvalidateChat()
-	// AppBackground is the background Anvil paints the terminal with, or
-	// nil when the TUI is transparent and the terminal's own shows.
-	AppBackground() color.Color
-	// PushDrillIn opens c as a drill-in labelled label, focuses it and
-	// blurs the editor, as the tool and thinking drill-ins do.
-	PushDrillIn(c *Chat, label string)
-	// DrillInOpen reports whether c is still on the drill-in stack.
-	DrillInOpen(c *Chat) bool
-}
-
-func (h uiHost) InvalidateChat() {
-	if h.m.chat != nil {
-		h.m.chat.InvalidateDiagrams()
-	}
-	for _, entry := range h.m.drillStack {
-		if entry.chat != nil {
-			entry.chat.InvalidateDiagrams()
-		}
-	}
-}
-
-func (h uiHost) AppBackground() color.Color {
-	if h.m.isTransparent {
-		return nil
-	}
-	return h.m.com.Styles.Background
-}
-
-func (h uiHost) PushDrillIn(c *Chat, label string) {
-	c.SetFollow(false)
-	c.Focus()
-	h.m.drillStack = append(h.m.drillStack, drillInEntry{chat: c, label: label})
-	h.m.textarea.Blur()
-	h.m.focus = uiFocusMain
-	h.m.updateLayoutAndSize()
-	// Sizing a new chat pins it to the bottom; start at the top.
-	c.ScrollToTop()
-}
-
-func (h uiHost) DrillInOpen(c *Chat) bool {
-	return slices.ContainsFunc(h.m.drillStack, func(e drillInEntry) bool { return e.chat == c })
-}
-
 const (
 	// diagramMaxRows caps a diagram's height in the chat so one diagram
 	// can't take over. The drill-in shows it uncapped.
@@ -185,8 +132,11 @@ type diagramExportedMsg struct {
 	err  error
 }
 
+// mermaidFeature renders ```mermaid fences in finished assistant messages
+// as Kitty graphics, shows one full size in a drill-in, and opens one in
+// the browser. See internal/mermaid.
 type mermaidFeature struct {
-	host diagramHost
+	host featureHost
 	caps *common.Capabilities
 	com  *common.Common
 
@@ -242,7 +192,7 @@ func (f *mermaidFeature) conditions() drawConditions {
 // usable reports whether diagrams can be drawn at all.
 func (c drawConditions) usable() bool { return c.kitty && c.cellW > 0 && c.cellH > 0 }
 
-func newMermaidFeature(host diagramHost, caps *common.Capabilities, com *common.Common) *mermaidFeature {
+func newMermaidFeature(host featureHost, caps *common.Capabilities, com *common.Common) *mermaidFeature {
 	return &mermaidFeature{
 		host:         host,
 		caps:         caps,
@@ -568,7 +518,7 @@ func (f *mermaidFeature) Observe(msg tea.Msg) tea.Cmd {
 		}
 		f.drawn = now
 		if now.usable() {
-			f.host.InvalidateChat()
+			f.host.InvalidateDiagrams()
 		}
 	}
 	if f.drill != nil && !f.host.DrillInOpen(f.drill) {
@@ -602,7 +552,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 			}
 			f.mu.Unlock()
 			if e != nil {
-				f.host.InvalidateChat()
+				f.host.InvalidateDiagrams()
 			}
 			return f.listen, true
 		}
@@ -632,7 +582,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 		e.state = diagramReady
 		evict := f.evictLocked(msg.key)
 		f.mu.Unlock()
-		f.host.InvalidateChat()
+		f.host.InvalidateDiagrams()
 		return evict, true
 	}
 	return nil, false

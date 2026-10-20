@@ -21,14 +21,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fakeDiagramHost is the featureHost surface diagrams use; the rest is
+// unimplemented.
 type fakeDiagramHost struct {
+	featureHost
 	invalidations int
 	bg            color.Color
 	drills        []*Chat
 	labels        []string
 }
 
-func (h *fakeDiagramHost) InvalidateChat()            { h.invalidations++ }
+func (h *fakeDiagramHost) InvalidateDiagrams()        { h.invalidations++ }
 func (h *fakeDiagramHost) AppBackground() color.Color { return h.bg }
 func (h *fakeDiagramHost) PushDrillIn(c *Chat, label string) {
 	h.drills = append(h.drills, c)
