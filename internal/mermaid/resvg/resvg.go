@@ -82,8 +82,9 @@ type instance struct {
 	render api.Function
 }
 
-// New compiles the module with the default render limits. Compiling takes a few hundred
-// milliseconds and the compiled code is most of the Engine's memory.
+// New compiles the module with the default render limits. Compiling takes a
+// few hundred milliseconds and the compiled code is most of the Engine's
+// memory.
 func New(ctx context.Context) (*Engine, error) {
 	return newWithLimits(ctx, defaultLimits)
 }
@@ -109,15 +110,6 @@ func newWithLimits(ctx context.Context, limits renderLimits) (*Engine, error) {
 func (e *Engine) Close() error {
 	e.inst = nil
 	return e.rt.Close(e.ctx)
-}
-
-// memorySize is the current instance's linear memory in bytes, or 0 when
-// there is no instance.
-func (e *Engine) memorySize() uint32 {
-	if e.inst == nil {
-		return 0
-	}
-	return e.inst.mod.Memory().Size()
 }
 
 // Render rasterizes svg at width x height pixels. A zero dimension is

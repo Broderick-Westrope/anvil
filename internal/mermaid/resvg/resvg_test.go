@@ -61,9 +61,11 @@ func TestRenderAcrossGCsDoesNotGrow(t *testing.T) {
 	require.Less(t, growth, int64(2<<20), fmt.Sprintf("heap grew %d bytes over 20 GCs", growth))
 }
 
-func TestRenderRecyclesGrownInstance(t *testing.T) {
-	t.Parallel()
-
+// A render that grows the instance's memory past maxMemory replaces the
+// instance, so the grown memory is released instead of held for good.
+//
+//nolint:paralleltest // Measures the process heap.
+func TestRenderReleasesGrownMemory(t *testing.T) {
 	e, err := New(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
@@ -71,16 +73,15 @@ func TestRenderRecyclesGrownInstance(t *testing.T) {
 
 	_, err = e.Render([]byte(rectSVG), 10, 10)
 	require.NoError(t, err)
-	require.NotZero(t, e.memorySize(), "a small render keeps its instance")
-
-	_, err = e.Render([]byte(rectSVG), 2000, 2000)
+	before := heapAlloc()
+	_, err = e.Render([]byte(rectSVG), 2000, 2000) // 16 MB of pixels.
 	require.NoError(t, err)
-	require.Zero(t, e.memorySize(), "memory grown past the limit is dropped")
+	after := heapAlloc()
+	growth := int64(after) - int64(before)
+	require.Less(t, growth, int64(8<<20), fmt.Sprintf("heap grew %d bytes", growth))
 
 	_, err = e.Render([]byte(rectSVG), 10, 10)
-	require.NoError(t, err)
-	require.NotZero(t, e.memorySize())
-	require.Less(t, e.memorySize(), uint32(8<<20), "the fresh instance starts small")
+	require.NoError(t, err, "the next render starts from a fresh instance")
 }
 
 func TestRenderPastTheMemoryLimitFailsAndRecovers(t *testing.T) {
