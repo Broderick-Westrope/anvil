@@ -243,6 +243,9 @@ func (s *service) DeleteChildless(ctx context.Context, sessionID, id string) err
 	if err != nil {
 		return fmt.Errorf("get message %s: %w", id, err)
 	}
+	if dbMessage.SessionID != sessionID {
+		return fmt.Errorf("delete message %s: belongs to session %s, not %s", id, dbMessage.SessionID, sessionID)
+	}
 	sess, err := qtx.GetSessionByID(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("get session %s: %w", sessionID, err)

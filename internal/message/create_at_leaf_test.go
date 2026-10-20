@@ -3,7 +3,9 @@ package message_test
 import (
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,6 +73,20 @@ func TestDeleteChildless(t *testing.T) {
 		err = svc.DeleteChildless(t.Context(), sessionID, a.ID)
 
 		require.ErrorIs(t, err, message.ErrHasChildren)
+		_, err = svc.Get(t.Context(), a.ID)
+		require.NoError(t, err)
+	})
+	t.Run("refuses a message from another session", func(t *testing.T) {
+		t.Parallel()
+		svc, q, sessionID := newTestService(t)
+		other, err := q.CreateSession(t.Context(), db.CreateSessionParams{ID: uuid.New().String(), Title: "other"})
+		require.NoError(t, err)
+		a, err := svc.Create(t.Context(), other.ID, message.CreateMessageParams{Role: message.User})
+		require.NoError(t, err)
+
+		err = svc.DeleteChildless(t.Context(), sessionID, a.ID)
+
+		require.ErrorContains(t, err, "belongs to session "+other.ID)
 		_, err = svc.Get(t.Context(), a.ID)
 		require.NoError(t, err)
 	})
