@@ -71,7 +71,7 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 			bgShell, ok := bgManager.Get(params.ShellID)
 			if !ok {
 				return serveArchivedJob(ctx, opts.Archive, params.ShellID, func(rec jobstore.Record) fantasy.ToolResponse {
-					return archivedJobOutput(opts.Archive, rec, params)
+					return archivedJobOutput(opts.Archive, rec, params, opts.SpillDir)
 				}), nil
 			}
 
@@ -104,7 +104,7 @@ func NewJobOutputTool(opts JobToolOptions) fantasy.AgentTool {
 			}
 			now := time.Now()
 
-			output := formatJobReadOutput(res, params.TailLines)
+			output := formatJobReadOutput(res, params.TailLines, opts.SpillDir)
 			if output == "" {
 				output = BashNoOutput
 				if res.HadPrevious {
@@ -167,7 +167,7 @@ func jobWaitTimeout(seconds int) time.Duration {
 
 // formatJobReadOutput joins a read's streams and applies the reset note,
 // tail_lines, and truncation. It returns "" when there is no output.
-func formatJobReadOutput(res shell.ReadResult, tailLines int) string {
+func formatJobReadOutput(res shell.ReadResult, tailLines int, spillDir string) string {
 	body := joinOutput(res.Stdout, res.Stderr)
 
 	var prefix string
@@ -184,5 +184,5 @@ func formatJobReadOutput(res shell.ReadResult, tailLines int) string {
 	if body == "" {
 		return ""
 	}
-	return TruncateOutput(prefix + body)
+	return TruncateOutput(prefix+body, spillDir)
 }

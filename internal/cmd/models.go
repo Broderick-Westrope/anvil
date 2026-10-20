@@ -56,7 +56,7 @@ anvil models gpt5`,
 				name:       provider.Name,
 				configured: true,
 			}
-			for _, model := range provider.Models {
+			for _, model := range provider.AvailableModels() {
 				if term != "" {
 					matched := false
 					for _, s := range []string{provider.ID, provider.Name, model.ID, model.Name} {

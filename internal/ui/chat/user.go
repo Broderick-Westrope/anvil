@@ -57,7 +57,7 @@ func (m *UserMessageItem) RawRender(width int) string {
 	}
 
 	msgContent := m.displayContent()
-	renderer := common.MarkdownRenderer(m.sty, cappedWidth)
+	renderer := common.UserMarkdownRenderer(m.sty, cappedWidth)
 	mu := common.LockMarkdownRenderer(renderer)
 
 	mu.Lock()

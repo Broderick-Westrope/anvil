@@ -117,6 +117,9 @@ func (i *MCPPaletteItem) Render(width int) string {
 // MCPPalette is a dialog that shows available MCP servers for toggling.
 // MCPPalette is a dialog that shows available MCP servers for toggling.
 type MCPPalette struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com    *common.Common
 	keyMap struct {
 		Select,
@@ -246,7 +249,19 @@ func (mp *MCPPalette) SetEntryNeedsAuth(name string, needsAuth bool) {
 // HandleMsg implements Dialog.
 // HandleMsg implements Dialog. It delegates to handleNavKey in the default
 // navigation mode and handleFilterKey when the filter input is active.
+// leaveFilterForClick ends filter mode, keeping the results, before a
+// click selects a row; it matches pressing Enter while filtering.
+func (mp *MCPPalette) leaveFilterForClick() {
+	if mp.filtering {
+		mp.filtering = false
+		mp.input.Blur()
+	}
+}
+
 func (mp *MCPPalette) HandleMsg(msg tea.Msg) Action {
+	if action, ok := mp.mouse.handle(msg, mp.list, nil, mp.leaveFilterForClick, func() Action { return mp.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		if mp.filtering {
@@ -341,11 +356,15 @@ func (mp *MCPPalette) handleFilterKey(msg tea.KeyPressMsg) Action {
 		mp.filtering = false
 		mp.input.Blur()
 	default:
+		prevValue := mp.input.Value()
 		var cmd tea.Cmd
 		mp.input, cmd = mp.input.Update(msg)
-		mp.list.SetFilter(mp.input.Value())
-		mp.list.ScrollToTop()
-		mp.list.SetSelected(0)
+		value := mp.input.Value()
+		if value != prevValue {
+			mp.list.SetFilter(value)
+			mp.list.ScrollToTop()
+			mp.list.SetSelected(0)
+		}
 		return ActionCmd{cmd}
 	}
 	return nil
@@ -382,10 +401,11 @@ func (mp *MCPPalette) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	inputView := t.Dialog.InputPrompt.Render(mp.input.View())
 	rc.AddPart(inputView)
 	listView := t.Dialog.List.Height(mp.list.Height()).Render(mp.list.Render())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, mp.list.Width(), mp.list.Height())
 	rc.Help = mp.help.View(mp)
 
 	view := rc.Render()
+	mp.mouse.setArea(rc.ListBounds, centerRect(area, view))
 
 	cur := mp.Cursor()
 	DrawCenterCursor(scr, area, view, cur)

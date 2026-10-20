@@ -165,7 +165,7 @@ func TestHelpShowsDiagramKeysOnADiagramNode(t *testing.T) {
 	m := newSplitTestUI()
 	m.keyMap = DefaultKeyMap()
 	sty := m.com.Styles.Attachments
-	m.attachments = attachments.New(attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove), attachments.Keymap{})
+	m.attachments = attachments.New(attachments.NewRenderer(sty), attachments.Keymap{})
 	m.state = uiChat
 	m.session = &session.Session{ID: "s"}
 	m.focus = uiFocusMain
@@ -410,7 +410,7 @@ func TestHelpHidesTheBrowserKeyOnAFailedDiagram(t *testing.T) {
 	m := newSplitTestUI()
 	m.keyMap = DefaultKeyMap()
 	sty := m.com.Styles.Attachments
-	m.attachments = attachments.New(attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove), attachments.Keymap{})
+	m.attachments = attachments.New(attachments.NewRenderer(sty), attachments.Keymap{})
 	m.state = uiChat
 	m.session = &session.Session{ID: "s"}
 	m.focus = uiFocusMain

@@ -14,7 +14,7 @@ import (
 // run in parallel.
 //
 //nolint:paralleltest // Replaces os.Stdout.
-func TestOutputSessionHumanPrintsTheTranscript(t *testing.T) {
+func TestOutputSessionHumanKeepsMermaidAsCodeBlock(t *testing.T) {
 	out, err := os.Create(filepath.Join(t.TempDir(), "stdout"))
 	require.NoError(t, err)
 	stdout := os.Stdout

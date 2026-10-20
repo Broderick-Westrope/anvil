@@ -382,8 +382,10 @@ SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, 
 FROM messages
 WHERE session_id = ? AND role = 'user'
 ORDER BY created_at DESC
+LIMIT 200
 `
 
+// Backs prompt history, which steps back one entry at a time.
 func (q *Queries) ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error) {
 	rows, err := q.query(ctx, q.listUserMessagesBySessionStmt, listUserMessagesBySession, sessionID)
 	if err != nil {
@@ -420,13 +422,22 @@ func (q *Queries) ListUserMessagesBySession(ctx context.Context, sessionID strin
 }
 
 const listUserMessagesByWorkingDir = `-- name: ListUserMessagesByWorkingDir :many
-SELECT m.id, m.session_id, m.role, m.parts, m.model, m.created_at, m.updated_at, m.finished_at, m.provider, m.parent_message_id, m.message_type
-FROM messages m
-JOIN sessions s ON m.session_id = s.id
-WHERE m.role = 'user' AND s.working_dir = ?
-ORDER BY m.created_at DESC
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider, parent_message_id, message_type
+FROM messages
+WHERE rowid IN (
+    SELECT m.rowid
+    FROM messages m
+    JOIN sessions s ON m.session_id = s.id
+    WHERE m.role = 'user' AND s.working_dir = ?
+    ORDER BY m.created_at DESC
+    LIMIT 200
+)
+ORDER BY created_at DESC
 `
 
+// Backs prompt history when no session is open. The subquery picks the 200
+// newest rowids from the covering session/role index, so the sort never
+// touches message parts; only the rows kept are read in full.
 func (q *Queries) ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error) {
 	rows, err := q.query(ctx, q.listUserMessagesByWorkingDirStmt, listUserMessagesByWorkingDir, workingDir)
 	if err != nil {

@@ -55,7 +55,7 @@ func BenchmarkResizeSession(b *testing.B) {
 	sty := styles.TokyoNight()
 	var items []list.Item
 	for _, m := range ptrs {
-		for _, it := range ExtractMessageItems(&sty, m, toolResults, nil, nil) {
+		for _, it := range ExtractMessageItems(&sty, m, toolResults, ToolItemOptions{}, nil) {
 			items = append(items, it)
 		}
 	}
