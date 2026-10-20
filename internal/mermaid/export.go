@@ -28,7 +28,10 @@ func HTMLDocument(res Result, theme Theme, title string) (string, error) {
 	}
 	bg := theme["pele-bg"]
 	fg := theme["pele-fg"]
-	svg := resolveVars(res.SVG, theme)
+	svg, err := resolveVars(res.SVG, theme)
+	if err != nil {
+		return "", fmt.Errorf("export diagram: %w", err)
+	}
 	return `<!doctype html>
 <html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:">

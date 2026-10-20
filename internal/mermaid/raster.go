@@ -21,7 +21,8 @@ const MaxPixels = 4096 * 2048
 type RasterOptions struct {
 	// Scale multiplies the diagram's natural size.
 	Scale float64
-	// MaxPixels caps width x height; zero uses [MaxPixels].
+	// MaxPixels caps width x height, shrinking Scale as far as it must to
+	// fit; zero uses [MaxPixels].
 	MaxPixels int
 }
 
@@ -62,7 +63,7 @@ func normalizeRootFont(svg string) string {
 var colorMix = regexp.MustCompile(`color-mix\(in srgb,\s*(#[0-9a-fA-F]{3,6})\s+([\d.]+)%\s*,\s*(#[0-9a-fA-F]{3,6})\s*\)`)
 
 // resolveColorMix evaluates the srgb color-mix() Pele uses for nested
-// cluster titles, which resvg cannot parse.
+// cluster titles, which resvg cannot parse, in one attribute value.
 func resolveColorMix(svg string) string {
 	return colorMix.ReplaceAllStringFunc(svg, func(expr string) string {
 		m := colorMix.FindStringSubmatch(expr)
@@ -96,23 +97,47 @@ func parseHex(s string) ([3]uint8, bool) {
 	return [3]uint8{uint8(v >> 16), uint8(v >> 8), uint8(v)}, true
 }
 
+// fitPixels returns the whole-pixel size of a width x height diagram at
+// scale, shrinking the scale when rounding each side up would take the area
+// past limit.
+func fitPixels(width, height, scale float64, limit int) (w, h int, err error) {
+	fw, fh := width*scale, height*scale
+	unusable := fmt.Errorf("rasterize: unusable size %vx%v at scale %v", width, height, scale)
+	if !(fw > 0 && fh > 0) || math.IsInf(fw, 0) || math.IsInf(fh, 0) {
+		return 0, 0, unusable
+	}
+	if math.Ceil(fw)*math.Ceil(fh) > float64(limit) {
+		// Rounding adds less than a pixel to each side, so the largest s
+		// with (width*s+1)*(height*s+1) <= limit always fits. This is the
+		// positive root of that quadratic, in a form that keeps its
+		// precision when the area is large.
+		l := float64(limit) - 1
+		s := 2 * l / (width + height + math.Sqrt((width+height)*(width+height)+4*width*height*l))
+		fw, fh = width*s, height*s
+	}
+	w, h = int(math.Ceil(fw)), int(math.Ceil(fh))
+	if w <= 0 || h <= 0 || w*h > limit {
+		return 0, 0, unusable
+	}
+	return w, h, nil
+}
+
 // Rasterize renders a Pele result to pixels after resolving its CSS
 // variables against theme.
 func (r *Rasterizer) Rasterize(res Result, theme Theme, opts RasterOptions) (*image.RGBA, error) {
-	w := int(math.Ceil(res.Width * opts.Scale))
-	h := int(math.Ceil(res.Height * opts.Scale))
-	if w <= 0 || h <= 0 {
-		return nil, fmt.Errorf("rasterize: empty %dx%d diagram", w, h)
-	}
 	limit := opts.MaxPixels
 	if limit <= 0 {
 		limit = MaxPixels
 	}
-	if w*h > limit {
-		return nil, fmt.Errorf("rasterize: %dx%d exceeds %d pixels", w, h, limit)
+	w, h, err := fitPixels(res.Width, res.Height, opts.Scale, limit)
+	if err != nil {
+		return nil, err
 	}
-	svg := normalizeRootFont(resolveColorMix(resolveVars(res.SVG, theme)))
-	img, err := r.engine.Render([]byte(svg), w, h)
+	svg, err := resolveVars(res.SVG, theme, resolveColorMix)
+	if err != nil {
+		return nil, fmt.Errorf("rasterize: %w", err)
+	}
+	img, err := r.engine.Render([]byte(normalizeRootFont(svg)), w, h)
 	if err != nil {
 		return nil, fmt.Errorf("rasterize: %w", err)
 	}
