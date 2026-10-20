@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/app/branchsummaries"
@@ -431,9 +432,13 @@ func TestBranchSummary_ALostEndEventDoesNotLeaveTheRunStuck(t *testing.T) {
 	b.runPicked()
 
 	b.ws.running["sess-1"] = false
+	require.NotNil(t, b.f.Panel(), "rendering never changes state")
+
+	b.f.Observe(spinner.TickMsg{})
 
 	require.Nil(t, b.f.Panel())
 	require.Empty(t, b.f.PaletteEntries())
+	require.Positive(t, b.host.relayouts)
 }
 
 func TestBranchSummary_AnEndEventAfterReconcilingStillCounts(t *testing.T) {
@@ -441,6 +446,7 @@ func TestBranchSummary_AnEndEventAfterReconcilingStillCounts(t *testing.T) {
 	b := newBranchSummaryFixture(t)
 	b.runPicked()
 	b.ws.running["sess-1"] = false
+	b.f.Observe(spinner.TickMsg{})
 	require.Nil(t, b.f.Panel())
 
 	b.event(branchsummaries.StateStored, "summary-1", nil)

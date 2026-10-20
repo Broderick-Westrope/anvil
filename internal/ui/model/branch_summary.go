@@ -132,8 +132,10 @@ func (b *branchSummaryFeature) cancelSession(sessionID string) tea.Cmd {
 
 // Observe implements feature. After a rewind it offers a summary; on a
 // return to the pre-branch conversation it drops the summary; once a
-// message follows a stored summary, the summary can't be discarded.
+// message follows a stored summary, the summary can't be discarded. On
+// every message it marks runs the service has finished as lost.
 func (b *branchSummaryFeature) Observe(msg tea.Msg) tea.Cmd {
+	b.markLost()
 	switch msg := msg.(type) {
 	case navigateTreeDoneMsg:
 		return b.observeRewind(msg)
@@ -259,17 +261,29 @@ func (b *branchSummaryFeature) offer(offer dialog.BranchSummaryOffer) tea.Cmd {
 }
 
 // run returns sessionID's latest summary for display and controls, or nil.
-// A run shown as running that the service has finished is lost.
+// It only reads state: Observe marks runs lost.
 func (b *branchSummaryFeature) run(sessionID string) *branchSummaryRun {
 	r := b.runs[sessionID]
 	if r == nil || r.lost {
 		return nil
 	}
-	if r.state == branchsummaries.StateRunning && !b.Busy(sessionID) {
-		r.lost = true
-		return nil
-	}
 	return r
+}
+
+// markLost marks the runs shown as running that the service has finished
+// as lost, so a dropped end event can't leave a panel stuck, and relays
+// out when one changed.
+func (b *branchSummaryFeature) markLost() {
+	changed := false
+	for sessionID, r := range b.runs {
+		if r.state == branchsummaries.StateRunning && !r.lost && !b.Busy(sessionID) {
+			r.lost = true
+			changed = true
+		}
+	}
+	if changed {
+		b.host.Relayout()
+	}
 }
 
 func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
