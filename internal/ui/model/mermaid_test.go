@@ -638,3 +638,31 @@ func TestMermaidFeatureRedrawsWhenDiagramsBecomeUndrawable(t *testing.T) {
 	f.Observe(nil)
 	require.Equal(t, before+1, host.invalidations, "the images are gone, so their placeholders must go too")
 }
+
+func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
+	t.Parallel()
+
+	// Engines with no Pele make any render panic, as a renderer bug would.
+	broken := &diagramEngines{}
+	tests := map[string]diagramRequest{
+		"image":  {key: diagramKey{hash: 1}, source: "A"},
+		"export": {key: diagramKey{hash: 2}, source: "A", export: true},
+	}
+	for name, req := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+			msg, ok := f.runRequest(broken, req)
+			require.False(t, ok, "the engines are dropped")
+			switch msg := msg.(type) {
+			case diagramReadyMsg:
+				require.Equal(t, req.key, msg.key)
+				require.ErrorContains(t, msg.err, "diagram renderer crashed")
+			case diagramExportedMsg:
+				require.ErrorContains(t, msg.err, "diagram renderer crashed")
+			default:
+				t.Fatalf("unexpected %T", msg)
+			}
+		})
+	}
+}

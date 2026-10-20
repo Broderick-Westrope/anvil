@@ -97,11 +97,15 @@ func (f *mermaidFeature) work() {
 				engines = &diagramEngines{pele: pele}
 				f.enginesLoaded.Store(true)
 			}
-			if req.export {
-				f.results <- f.export(engines, req)
-			} else {
-				f.results <- renderDiagram(engines, req)
+			msg, ok := f.runRequest(engines, req)
+			if !ok {
+				// A panic can leave either engine mid-call; start the next
+				// request from fresh ones.
+				engines.close()
+				engines = nil
+				f.enginesLoaded.Store(false)
 			}
+			f.results <- msg
 			idle.Reset(f.idleTimeout)
 		case <-idle.C:
 			if engines != nil {
@@ -112,6 +116,22 @@ func (f *mermaidFeature) work() {
 			}
 		}
 	}
+}
+
+// runRequest renders or exports req. Pele and resvg run model-written
+// source, so a panic in either is reported as the request failing, and ok
+// is false, rather than taking the TUI down.
+func (f *mermaidFeature) runRequest(e *diagramEngines, req diagramRequest) (msg tea.Msg, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Mermaid renderer panicked", "panic", r)
+			msg, ok = f.failure(req, fmt.Errorf("diagram renderer crashed: %v", r)), false
+		}
+	}()
+	if req.export {
+		return f.export(e, req), true
+	}
+	return renderDiagram(e, req), true
 }
 
 func (f *mermaidFeature) failure(req diagramRequest, err error) tea.Msg {
