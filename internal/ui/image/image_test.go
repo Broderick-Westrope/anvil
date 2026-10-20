@@ -1,11 +1,13 @@
 package image
 
 import (
+	"fmt"
 	"image"
 	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -113,4 +115,66 @@ func TestKittyTransmitConcurrentlyForOneKeySendsItOnce(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, sent)
+}
+
+func TestResizeToCells(t *testing.T) {
+	t.Parallel()
+
+	img := image.NewRGBA(image.Rect(0, 0, 100, 200))
+	tests := []struct {
+		name string
+		cs   CellSize
+		want image.Rectangle
+	}{
+		{"unknown width keeps it", CellSize{Width: 0, Height: 20}, img.Bounds()},
+		{"unknown height keeps it", CellSize{Width: 10, Height: 0}, img.Bounds()},
+		{"fits the taller limit", CellSize{Width: 10, Height: 20}, image.Rect(0, 0, 30, 60)},
+		{"fits the wider limit", CellSize{Width: 5, Height: 40}, image.Rect(0, 0, 20, 40)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, resizeToCells(img, tt.cs, 4, 3).Bounds())
+		})
+	}
+}
+
+func TestForgetDropsTheImage(t *testing.T) {
+	t.Parallel()
+
+	const id = "forget-drops"
+	img := image.NewRGBA(image.Rect(0, 0, 20, 40))
+	EncodingKitty.Transmit(id, img, CellSize{Width: 10, Height: 20}, 2, 2, false)()
+	require.True(t, HasTransmitted(id, 2, 2))
+
+	EncodingKitty.Forget(id, 2, 2, false)
+	require.False(t, HasTransmitted(id, 2, 2))
+}
+
+func TestForgetDeletesKittyImagesInTheTerminal(t *testing.T) {
+	t.Parallel()
+
+	const id = "forget-kitty"
+	key := imageKey{id: id, cols: 2, rows: 2}
+	want := ansi.KittyGraphics(nil, "a=d", "d=I", fmt.Sprintf("i=%d", key.Hash()), "q=2")
+
+	cmd := EncodingKitty.Forget(id, 2, 2, false)
+	require.NotNil(t, cmd)
+	require.Equal(t, tea.RawMsg{Msg: want}, cmd())
+
+	cmd = EncodingKitty.Forget(id, 2, 2, true)
+	require.NotNil(t, cmd)
+	require.Equal(t, tea.RawMsg{Msg: ansi.TmuxPassthrough(want)}, cmd())
+}
+
+func TestForgetBlocksImageSendsNothing(t *testing.T) {
+	t.Parallel()
+
+	const id = "forget-blocks"
+	img := image.NewRGBA(image.Rect(0, 0, 20, 40))
+	EncodingBlocks.Transmit(id, img, CellSize{Width: 10, Height: 20}, 2, 2, false)()
+	require.True(t, HasTransmitted(id, 2, 2))
+
+	require.Nil(t, EncodingBlocks.Forget(id, 2, 2, false), "the terminal holds nothing to delete")
+	require.False(t, HasTransmitted(id, 2, 2))
 }
