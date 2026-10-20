@@ -152,7 +152,6 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 	}
 	call.Prompt = branchsummary.Prompt(rng, ledger, req.Focus, budget)
 
-	childID := call.SessionID
 	// The summarizer acts for the root session, as a task subagent would.
 	runCtx := context.WithValue(ctx, tools.RootSessionIDContextKey, req.SessionID)
 	out, err := c.runWorkflowAgent(runCtx, call, sub, nil)
@@ -160,7 +159,7 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		err = errors.New("summarizer returned no summary")
 	}
 	if err != nil {
-		c.deleteChildSession(childID)
+		c.deleteChildSession(call.SessionID)
 		return message.Message{}, err
 	}
 
@@ -174,7 +173,7 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		Parts: []message.ContentPart{message.BranchSummaryContent{
 			Summary:        branchsummary.Finalize(out.Text, ledger),
 			FromID:         req.FromLeafID,
-			ChildSessionID: childID,
+			ChildSessionID: call.SessionID,
 			Agent:          req.Agent,
 			Ledger:         ledger,
 		}},
@@ -183,7 +182,7 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		err = ErrStaleBranchSummary
 	}
 	if err != nil {
-		c.deleteChildSession(childID)
+		c.deleteChildSession(call.SessionID)
 		return message.Message{}, fmt.Errorf("store branch summary: %w", err)
 	}
 	c.refreshSession(req.SessionID)

@@ -71,9 +71,11 @@ func (c *coordinator) RunWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 		}
 	}
 
-	// Restrictions and schemas build their own instance rather than using
-	// the shared agent cache, so they can't leak between calls. A pinned
-	// model is part of the cache key, so it can share.
+	// A workflow's restrictions and schemas build their own instance rather
+	// than using the shared agent cache, so they can't leak between calls.
+	// A pinned model is part of the cache key, so it can share. (Branch
+	// summaries cache their restricted instance under a key that includes
+	// the tool set; see summarizerCacheKey.)
 	var sub SessionAgent
 	var submit *submitResultTool
 	var err error
@@ -142,8 +144,10 @@ func (c *coordinator) runWorkflowTurn(ctx context.Context, sub SessionAgent, ses
 	return subAgentOutput(result), nil
 }
 
-// buildWorkflowAgent builds an uncached agent whose tools are restricted to
-// call.Tools (when set) plus submit_result (when a schema is set).
+// buildWorkflowAgent builds an agent whose tools are restricted to
+// call.Tools (when set) plus submit_result (when a schema is set). It
+// doesn't cache it; a caller that does must key the cache on the
+// restriction.
 func (c *coordinator) buildWorkflowAgent(ctx context.Context, call WorkflowAgentCall, agentCfg config.Agent) (SessionAgent, *submitResultTool, error) {
 	// MCP servers register their tools during initialisation; listing tools
 	// before it finishes would reject valid MCP tool names and snapshot an
