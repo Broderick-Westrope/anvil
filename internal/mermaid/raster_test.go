@@ -86,7 +86,7 @@ func TestRasterizeDiagrams(t *testing.T) {
 		peleTime := time.Since(start)
 
 		start = time.Now()
-		img, err := rast.Rasterize(res, TokyoNight, 2)
+		img, err := rast.Rasterize(res, TokyoNight, RasterOptions{Scale: 2, Opaque: true})
 		require.NoError(t, err, name)
 		t.Logf("%-9s pele %8s  raster %8s  %vx%v -> %v", name, peleTime, time.Since(start), res.Width, res.Height, img.Bounds().Size())
 		require.NotContains(t, ResolveVars(res.SVG, TokyoNight), "var(", name)
@@ -109,12 +109,33 @@ func TestRasterizeRejectsOversizedDiagram(t *testing.T) {
 	t.Cleanup(func() { _ = rast.Close() })
 	res := Result{SVG: `<svg xmlns="http://www.w3.org/2000/svg" width="4096" height="2048"><rect width="10" height="10"/></svg>`, Width: 4096, Height: 2048}
 
-	_, err = rast.Rasterize(res, TokyoNight, 1)
+	_, err = rast.Rasterize(res, TokyoNight, RasterOptions{Scale: 1})
 	require.NoError(t, err, "exactly MaxPixels is allowed")
-	_, err = rast.Rasterize(res, TokyoNight, 1.001)
+	_, err = rast.Rasterize(res, TokyoNight, RasterOptions{Scale: 1.001})
 	require.ErrorContains(t, err, "exceeds")
-	_, err = rast.Rasterize(Result{SVG: res.SVG}, TokyoNight, 1)
+	_, err = rast.Rasterize(Result{SVG: res.SVG}, TokyoNight, RasterOptions{Scale: 1})
 	require.ErrorContains(t, err, "empty")
+}
+
+func TestRasterizeTransparentBackground(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewRenderer()
+	require.NoError(t, err)
+	rast, err := NewRasterizer(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rast.Close() })
+	res, err := r.Render(sampleFlowchart, Options{})
+	require.NoError(t, err)
+
+	clearImg, err := rast.Rasterize(res, TokyoNight, RasterOptions{Scale: 1})
+	require.NoError(t, err)
+	_, _, _, a := clearImg.At(0, 0).RGBA()
+	require.Zero(t, a, "the corner is transparent")
+
+	opaque, err := rast.Rasterize(res, TokyoNight, RasterOptions{Scale: 1, Opaque: true})
+	require.NoError(t, err)
+	require.Equal(t, [4]uint8{0x1a, 0x1b, 0x26, 0xff}, [4]uint8(opaque.Pix[0:4]), "the corner is pele-bg")
 }
 
 func TestResolveVars(t *testing.T) {

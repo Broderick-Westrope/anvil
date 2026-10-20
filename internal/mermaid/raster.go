@@ -12,10 +12,21 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/mermaid/resvg"
 )
 
-// MaxPixels caps a rasterized diagram's area (32 MB of RGBA) so one diagram
-// can't grow resvg's memory without bound. The chat scales diagrams to its
-// width and 40 rows, well inside this.
+// MaxPixels is the default cap on a rasterized diagram's area (32 MB of
+// RGBA), so one diagram can't grow resvg's memory without bound. The chat
+// scales diagrams to its width and 40 rows, well inside this.
 const MaxPixels = 4096 * 2048
+
+// RasterOptions controls how a diagram is rasterized.
+type RasterOptions struct {
+	// Scale multiplies the diagram's natural size.
+	Scale float64
+	// Opaque paints the theme's pele-bg behind the diagram. Otherwise the
+	// background is transparent and the terminal shows through.
+	Opaque bool
+	// MaxPixels caps width x height; zero uses [MaxPixels].
+	MaxPixels int
+}
 
 // Rasterizer turns Pele SVG into pixels. It is not safe for concurrent use;
 // Close frees everything it holds.
@@ -39,8 +50,8 @@ var rootFontShorthand = regexp.MustCompile(`font:(\d+(?:\.\d+)?)px`)
 
 // normalizeRootFont copies the root `font:` shorthand's size into a
 // font-size attribute, because resvg ignores the shorthand and would fall
-// back to 12px for every label that inherits it. It also paints bg behind
-// the diagram so translucent fills look the same on any terminal.
+// back to 12px for every label that inherits it. A non-empty bg is painted
+// behind the diagram.
 func normalizeRootFont(svg, bg string) string {
 	if !strings.HasPrefix(svg, "<svg ") {
 		return svg
@@ -94,18 +105,26 @@ func parseHex(s string) ([3]uint8, bool) {
 	return [3]uint8{uint8(v >> 16), uint8(v >> 8), uint8(v)}, true
 }
 
-// Rasterize renders a Pele result to pixels at scale times its natural size,
-// after resolving its CSS variables against theme.
-func (r *Rasterizer) Rasterize(res Result, theme Theme, scale float64) (*image.RGBA, error) {
-	w := int(math.Ceil(res.Width * scale))
-	h := int(math.Ceil(res.Height * scale))
+// Rasterize renders a Pele result to pixels after resolving its CSS
+// variables against theme.
+func (r *Rasterizer) Rasterize(res Result, theme Theme, opts RasterOptions) (*image.RGBA, error) {
+	w := int(math.Ceil(res.Width * opts.Scale))
+	h := int(math.Ceil(res.Height * opts.Scale))
 	if w <= 0 || h <= 0 {
 		return nil, fmt.Errorf("rasterize: empty %dx%d diagram", w, h)
 	}
-	if w*h > MaxPixels {
-		return nil, fmt.Errorf("rasterize: %dx%d exceeds %d pixels", w, h, MaxPixels)
+	limit := opts.MaxPixels
+	if limit <= 0 {
+		limit = MaxPixels
 	}
-	svg := normalizeRootFont(resolveColorMix(ResolveVars(res.SVG, theme)), theme["pele-bg"])
+	if w*h > limit {
+		return nil, fmt.Errorf("rasterize: %dx%d exceeds %d pixels", w, h, limit)
+	}
+	var bg string
+	if opts.Opaque {
+		bg = theme["pele-bg"]
+	}
+	svg := normalizeRootFont(resolveColorMix(ResolveVars(res.SVG, theme)), bg)
 	img, err := r.engine.Render([]byte(svg), w, h)
 	if err != nil {
 		return nil, fmt.Errorf("rasterize: %w", err)

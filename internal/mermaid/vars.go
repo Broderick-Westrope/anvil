@@ -118,3 +118,13 @@ func matchParen(s string) (body, rest string, ok bool) {
 	}
 	return "", "", false
 }
+
+// With returns a copy of t with name set to value.
+func (t Theme) With(name, value string) Theme {
+	out := make(Theme, len(t)+1)
+	for k, v := range t {
+		out[k] = v
+	}
+	out[name] = value
+	return out
+}
