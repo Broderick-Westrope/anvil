@@ -18,6 +18,9 @@ import (
 // ErrAlreadyRunning means the session already has a summary running.
 var ErrAlreadyRunning = errors.New("a branch summary is already running for this session")
 
+// ErrShutDown means the service has shut down and starts no more runs.
+var ErrShutDown = errors.New("branch summaries have shut down")
+
 // State is where a run is.
 type State string
 
@@ -27,8 +30,11 @@ const (
 	StateFailed    State = "failed"
 	StateCancelled State = "cancelled"
 	// StateStale means nothing was stored because the conversation moved
-	// on, or there was nothing to summarize.
+	// on.
 	StateStale State = "stale"
+	// StateNothing means nothing was stored because the branch had nothing
+	// to summarize.
+	StateNothing State = "nothing"
 )
 
 // Event reports a run starting or ending.
@@ -60,9 +66,10 @@ type Service struct {
 	ctx         context.Context
 	coordinator func() Coordinator
 
-	mu   sync.Mutex
-	runs map[string]*run
-	wg   sync.WaitGroup
+	mu     sync.Mutex
+	runs   map[string]*run
+	closed bool
+	wg     sync.WaitGroup
 }
 
 // New returns a service whose runs live until ctx ends. coordinator
@@ -91,6 +98,10 @@ func (s *Service) Start(req agent.BranchSummaryRequest) (string, error) {
 	}
 
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return "", ErrShutDown
+	}
 	if _, ok := s.runs[req.SessionID]; ok {
 		s.mu.Unlock()
 		return "", ErrAlreadyRunning
@@ -123,10 +134,12 @@ func (s *Service) Start(req agent.BranchSummaryRequest) (string, error) {
 		switch {
 		case err == nil:
 			end.State, end.SummaryID = StateStored, summary.ID
-		case errors.Is(err, context.Canceled):
+		case ctx.Err() != nil:
 			end.State = StateCancelled
-		case errors.Is(err, agent.ErrStaleBranchSummary), errors.Is(err, agent.ErrNothingToSummarize):
+		case errors.Is(err, agent.ErrStaleBranchSummary):
 			end.State = StateStale
+		case errors.Is(err, agent.ErrNothingToSummarize):
+			end.State = StateNothing
 		default:
 			slog.Warn("Branch summary failed", "session", req.SessionID, "agent", req.Agent, "error", err)
 			end.State, end.Err = StateFailed, err
@@ -156,9 +169,11 @@ func (s *Service) Running(sessionID string) bool {
 	return ok
 }
 
-// Shutdown cancels every run and waits for them to end.
+// Shutdown cancels every run, waits for them to end, and refuses later
+// starts.
 func (s *Service) Shutdown() {
 	s.mu.Lock()
+	s.closed = true
 	for _, r := range s.runs {
 		r.cancel()
 	}

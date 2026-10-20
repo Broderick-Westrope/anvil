@@ -20,6 +20,9 @@ type fakeCoordinator struct {
 	reserved map[string]int
 	results  chan result
 	requests chan agent.BranchSummaryRequest
+	// cancelErr, if set, is what a cancelled summary returns instead of
+	// the context's error.
+	cancelErr error
 }
 
 type result struct {
@@ -62,6 +65,9 @@ func (f *fakeCoordinator) SummarizeBranch(ctx context.Context, req agent.BranchS
 	case r := <-f.results:
 		return r.summary, r.err
 	case <-ctx.Done():
+		if f.cancelErr != nil {
+			return message.Message{}, f.cancelErr
+		}
 		return message.Message{}, ctx.Err()
 	}
 }
@@ -150,6 +156,34 @@ func TestCancel(t *testing.T) {
 	require.False(t, svc.Cancel("s"))
 }
 
+func TestCancel_ReportsCancelledWhateverTheRunReturns(t *testing.T) {
+	t.Parallel()
+	svc, fc, events := setup(t)
+	fc.cancelErr = errors.New("stream closed")
+	_, err := svc.Start(request())
+	require.NoError(t, err)
+	next(t, events)
+	<-fc.requests
+
+	require.True(t, svc.Cancel("s"))
+
+	ended := next(t, events)
+	require.Equal(t, branchsummaries.StateCancelled, ended.State)
+	require.NoError(t, ended.Err)
+}
+
+func TestStart_RefusesAfterShutdown(t *testing.T) {
+	t.Parallel()
+	svc, fc, _ := setup(t)
+	svc.Shutdown()
+
+	_, err := svc.Start(request())
+
+	require.ErrorIs(t, err, branchsummaries.ErrShutDown)
+	require.False(t, svc.Running("s"))
+	require.Zero(t, fc.reservations("s"))
+}
+
 func TestOutcomes(t *testing.T) {
 	t.Parallel()
 
@@ -158,7 +192,7 @@ func TestOutcomes(t *testing.T) {
 		want branchsummaries.State
 	}{
 		"stale":   {err: agent.ErrStaleBranchSummary, want: branchsummaries.StateStale},
-		"nothing": {err: agent.ErrNothingToSummarize, want: branchsummaries.StateStale},
+		"nothing": {err: agent.ErrNothingToSummarize, want: branchsummaries.StateNothing},
 		"failed":  {err: errors.New("boom"), want: branchsummaries.StateFailed},
 	}
 	for name, tc := range tests {
