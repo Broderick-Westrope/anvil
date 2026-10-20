@@ -456,6 +456,12 @@ func redactValues(v any, clean func(string) string) any {
 	return v
 }
 
+// Tokens estimates how many tokens chars characters take, rounding up,
+// at the same conservative rate Prompt budgets with.
+func Tokens(chars int) int {
+	return (chars + charsPerToken - 1) / charsPerToken
+}
+
 func endLine(s string) string {
 	if strings.HasSuffix(s, "\n") {
 		return s

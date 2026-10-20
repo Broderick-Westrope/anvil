@@ -24,9 +24,9 @@ const (
 	// defaultSummarizerContextWindow is assumed when the summarizer's model
 	// doesn't report a context window.
 	defaultSummarizerContextWindow = 128_000
-	// summarizerOverheadTokens reserves room for the summarizer's system
-	// prompt, tool schemas and the tool calls it may make.
-	summarizerOverheadTokens = 16_000
+	// toolLoopShare is the share of the window (one in toolLoopShare)
+	// kept free for the tool calls and results of a summarizer with tools.
+	toolLoopShare = 8
 	// minSummarizerInputTokens is the least room worth sending a branch
 	// in; with less, the model would see almost nothing.
 	minSummarizerInputTokens = 4_000
@@ -112,7 +112,12 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 	if err != nil {
 		return message.Message{}, err
 	}
-	budget, err := summarizerBudget(sub.Model())
+	c.orchestratorMu.RLock()
+	allowedTools := c.agentConfigs[req.Agent].AllowedTools
+	c.orchestratorMu.RUnlock()
+	// A nil allow-list means every tool.
+	hasTools := allowedTools == nil || len(allowedTools) > 0
+	budget, err := summarizerBudget(sub.Model(), sub.RequestOverhead(), hasTools)
 	if err != nil {
 		return message.Message{}, err
 	}
@@ -244,16 +249,24 @@ func (c *coordinator) deleteChildSession(id string) {
 }
 
 // summarizerBudget is how many tokens of branch the summarizer's model
-// can take, after its overhead and output.
-func summarizerBudget(model Model) (int, error) {
+// can take. It subtracts the model's output, the agent's measured request
+// overhead (overheadChars, see SessionAgent.RequestOverhead) and, for an
+// agent with tools, room for its tool loop. When too little is left, it
+// fails, so nothing is sent.
+func summarizerBudget(model Model, overheadChars int, hasTools bool) (int, error) {
 	window := int(model.CatwalkCfg.ContextWindow)
 	if window == 0 {
 		window = defaultSummarizerContextWindow
 	}
 	output := int(cmp.Or(model.ModelCfg.MaxTokens, model.CatwalkCfg.DefaultMaxTokens))
-	budget := window - output - summarizerOverheadTokens
+	overhead := branchsummary.Tokens(overheadChars)
+	budget := window - output - overhead
+	if hasTools {
+		budget -= window / toolLoopShare
+	}
 	if budget < minSummarizerInputTokens {
-		return 0, fmt.Errorf("summarizer model %s has a %d-token context window, too small to summarize a branch", model.CatwalkCfg.ID, window)
+		return 0, fmt.Errorf("summarizer on %s: its %d-token prompt and tools and %d-token output leave only %d of the %d-token window for the branch",
+			model.CatwalkCfg.ID, overhead, output, max(budget, 0), window)
 	}
 	return budget, nil
 }

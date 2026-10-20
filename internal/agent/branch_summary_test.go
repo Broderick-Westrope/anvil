@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -304,4 +305,53 @@ func TestDiscardBranchSummary_PublishesTheRestoredLeaf(t *testing.T) {
 	require.NoError(t, f.c.DiscardBranchSummary(t.Context(), f.sessionID, summary.ID))
 
 	waitForLeafUpdate(t, events, f.sessionID, f.a1)
+}
+
+func TestSummarizerBudget(t *testing.T) {
+	t.Parallel()
+
+	model := func(window, output int64) Model {
+		return Model{CatwalkCfg: catwalk.Model{ID: "m", ContextWindow: window, DefaultMaxTokens: output}}
+	}
+	tests := map[string]struct {
+		model    Model
+		overhead int
+		hasTools bool
+		want     int
+		wantErr  string
+	}{
+		"measured overhead": {model: model(100_000, 10_000), overhead: 30_000, want: 80_000},
+		"tool loop room":    {model: model(100_000, 10_000), overhead: 30_000, hasTools: true, want: 67_500},
+		"unknown window":    {model: model(0, 8_000), overhead: 3_000, want: 119_000},
+		"overhead too big":  {model: model(32_000, 8_000), overhead: 66_000, wantErr: "leave only"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := summarizerBudget(tc.model, tc.overhead, tc.hasTools)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestSummarizeBranch_RefusesWhenTheAgentLeavesNoRoom(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	called := false
+	summarizer := newMockAgent(reloadTestProvider, 1000, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+		called = true
+		return agentResultWithText("summary"), nil
+	})
+	summarizer.overhead = 1_000_000
+	f.c.agents.Set(BuiltinBranchSummarizer+"|2", summarizer)
+
+	_, err := f.c.SummarizeBranch(t.Context(), f.request())
+
+	require.ErrorContains(t, err, "leave only")
+	require.False(t, called, "nothing is sent")
 }

@@ -123,6 +123,11 @@ type SessionAgent interface {
 	RunWake(ctx context.Context, call SessionAgentCall, eligible func() bool) (*fantasy.AgentResult, error)
 	IsSummarizing(sessionID string) bool
 	Model() Model
+	// RequestOverhead is the size, in characters, of what every request
+	// this agent sends carries besides the conversation: its system
+	// prompt, with the MCP instructions a run adds, and the schemas of the
+	// tools its model sees, with every lazy MCP server off.
+	RequestOverhead() int
 }
 
 type Model struct {
@@ -1230,6 +1235,29 @@ func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
 
 func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
 	a.connectFn.Set(fn)
+}
+
+func (a *sessionAgent) RequestOverhead() int {
+	off := tools.NewLazyMCPState(nil)
+	lazy := a.lazyMCPToolMap.Copy()
+	size := len(a.systemPromptPrefix.Get()) + len(a.systemPrompt.Get()) + len(mcpInstructions(lazy, off))
+	for _, tool := range filterLazyMCPTools(a.tools.Copy(), lazy, off) {
+		info := tool.Info()
+		schema, err := json.Marshal(struct {
+			Name        string   `json:"name"`
+			Description string   `json:"description"`
+			Parameters  any      `json:"parameters"`
+			Required    []string `json:"required"`
+		}{info.Name, info.Description, info.Parameters, info.Required})
+		if err != nil {
+			// Unencodable parameters can't be sent either; count what is
+			// known.
+			size += len(info.Name) + len(info.Description)
+			continue
+		}
+		size += len(schema)
+	}
+	return size
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
