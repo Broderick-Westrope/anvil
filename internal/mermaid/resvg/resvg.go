@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -40,7 +41,25 @@ var (
 	// ErrRenderFailed is returned when rasterization fails, e.g. for a zero
 	// or oversized canvas.
 	ErrRenderFailed = errors.New("resvg: render failed")
+	// ErrRenderTimeout is returned when a render runs past Limits.Timeout.
+	ErrRenderTimeout = errors.New("resvg: render took too long")
 )
+
+// Limits bound what one render may use. Running past either fails the
+// render, and the next one starts from a fresh instance.
+type Limits struct {
+	// Memory caps the WebAssembly linear memory, in bytes.
+	Memory uint32
+	// Timeout bounds one render.
+	Timeout time.Duration
+}
+
+// DefaultLimits leave room for the largest image Anvil asks for (a 64 MB
+// full-size diagram) and its working memory.
+var DefaultLimits = Limits{Memory: 256 << 20, Timeout: 10 * time.Second}
+
+// wasmPageSize is the size of a WebAssembly memory page.
+const wasmPageSize = 64 << 10
 
 // DefaultMaxMemory is the WebAssembly memory size above which an Engine
 // replaces its instance after a render. Linear memory never shrinks, so
@@ -55,6 +74,7 @@ type Engine struct {
 	compiled  wazero.CompiledModule
 	inst      *instance
 	maxMemory uint32
+	limits    Limits
 }
 
 type instance struct {
@@ -64,10 +84,18 @@ type instance struct {
 	render api.Function
 }
 
-// New compiles the module. Compiling takes a few hundred milliseconds and
-// the compiled code is most of the Engine's memory.
+// New compiles the module with DefaultLimits. Compiling takes a few hundred
+// milliseconds and the compiled code is most of the Engine's memory.
 func New(ctx context.Context) (*Engine, error) {
-	rt := wazero.NewRuntime(ctx)
+	return NewWithLimits(ctx, DefaultLimits)
+}
+
+// NewWithLimits compiles the module with limits.
+func NewWithLimits(ctx context.Context, limits Limits) (*Engine, error) {
+	cfg := wazero.NewRuntimeConfig().
+		WithMemoryLimitPages(limits.Memory / wasmPageSize).
+		WithCloseOnContextDone(true)
+	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
 		_ = rt.Close(ctx)
 		return nil, fmt.Errorf("resvg: wasi: %w", err)
@@ -77,7 +105,7 @@ func New(ctx context.Context) (*Engine, error) {
 		_ = rt.Close(ctx)
 		return nil, fmt.Errorf("resvg: compile: %w", err)
 	}
-	return &Engine{ctx: ctx, rt: rt, compiled: compiled, maxMemory: DefaultMaxMemory}, nil
+	return &Engine{ctx: ctx, rt: rt, compiled: compiled, maxMemory: DefaultMaxMemory, limits: limits}, nil
 }
 
 // Close frees the instance, the compiled code and the runtime.
@@ -106,7 +134,12 @@ func (e *Engine) Render(svg []byte, width, height int) (*image.RGBA, error) {
 		}
 		e.inst = inst
 	}
-	img, err := e.inst.renderRaw(e.ctx, svg, width, height)
+	ctx, cancel := context.WithTimeout(e.ctx, e.limits.Timeout)
+	img, err := e.inst.renderRaw(ctx, svg, width, height)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		err = ErrRenderTimeout
+	}
+	cancel()
 	if err != nil || e.inst.mod.Memory().Size() > e.maxMemory {
 		// A trap can leave the instance unusable, and a grown memory
 		// never shrinks; start the next render from a fresh one.

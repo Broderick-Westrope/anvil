@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -81,4 +82,31 @@ func TestRenderRecyclesGrownInstance(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, e.MemorySize())
 	require.Less(t, e.MemorySize(), uint32(8<<20), "the fresh instance starts small")
+}
+
+func TestRenderPastTheMemoryLimitFailsAndRecovers(t *testing.T) {
+	t.Parallel()
+
+	e, err := NewWithLimits(t.Context(), Limits{Memory: 16 << 20, Timeout: DefaultLimits.Timeout})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = e.Close() })
+
+	_, err = e.Render([]byte(rectSVG), 4000, 2000) // 32 MB of pixels.
+	require.Error(t, err)
+	_, err = e.Render([]byte(rectSVG), 40, 20)
+	require.NoError(t, err, "the next render starts from a fresh instance")
+}
+
+func TestRenderPastItsDeadlineFailsAndRecovers(t *testing.T) {
+	t.Parallel()
+
+	e, err := NewWithLimits(t.Context(), Limits{Memory: DefaultLimits.Memory, Timeout: time.Nanosecond})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = e.Close() })
+
+	_, err = e.Render([]byte(rectSVG), 40, 20)
+	require.ErrorIs(t, err, ErrRenderTimeout)
+	e.limits.Timeout = DefaultLimits.Timeout
+	_, err = e.Render([]byte(rectSVG), 40, 20)
+	require.NoError(t, err, "the next render starts from a fresh instance")
 }
