@@ -369,3 +369,22 @@ func TestUIRoutesADiagramOpenToADrillIn(t *testing.T) {
 	require.Contains(t, ansi.Strip(item.RawRender(80)), "Routed --> DrillIn", "without kitty, the code block")
 	require.Equal(t, uiFocusMain, u.focus)
 }
+
+func TestSidebarCountsASplitMessageAsOneTurn(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"text, diagram, text, diagram": twoDiagrams,
+		"headed by a diagram":          "```mermaid\nA\n```\n",
+	}
+	for name, text := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			m := newSplitTestUI()
+			m.appendSessionMessage(assistantWithTool(text, message.FinishReasonToolUse))
+			turns, toolCalls := m.viewedSessionStats()
+			require.Equal(t, 1, turns)
+			require.Equal(t, 1, toolCalls)
+		})
+	}
+}

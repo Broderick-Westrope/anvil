@@ -88,6 +88,18 @@ func diagramOpenCmd(source string, external bool) tea.Cmd {
 	return func() tea.Msg { return DiagramOpenMsg{Source: source, External: external} }
 }
 
+// IsAssistantHead reports whether item is the first node of an assistant
+// message: the message itself, or the head of its split around diagrams.
+func IsAssistantHead(item list.Item) bool {
+	switch item := item.(type) {
+	case *AssistantMessageItem:
+		return item.segment == nil || item.segment.index == 0
+	case *DiagramItem:
+		return item.index == 0
+	}
+	return false
+}
+
 // segmentID is the ID of a message's index-th node after its head.
 func segmentID(messageID string, index int) string {
 	return fmt.Sprintf("%s#%d", messageID, index)
