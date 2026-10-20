@@ -52,6 +52,10 @@ type Service interface {
 	// still leaf, checked in the same transaction, and returns
 	// ErrLeafMoved otherwise.
 	CreateAtLeaf(ctx context.Context, sessionID, leaf string, params CreateMessageParams) (Message, error)
+	// DeleteChildless deletes a message that has no children, and moves
+	// the session's leaf to its parent if the message was the leaf, in
+	// one transaction. It returns ErrHasChildren otherwise.
+	DeleteChildless(ctx context.Context, sessionID, id string) error
 	Update(ctx context.Context, message Message) error
 	Get(ctx context.Context, id string) (Message, error)
 	List(ctx context.Context, sessionID string) ([]Message, error)
@@ -206,20 +210,70 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	// Drop any pending coalesced state for this ID. We never want to
-	// flush back over a deleted row.
+	s.forget(id)
+	// Clone the message before publishing to avoid race conditions with
+	// concurrent modifications to the Parts slice.
+	s.Publish(pubsub.DeletedEvent, message.Clone())
+	return nil
+}
+
+// ErrHasChildren means DeleteChildless found the message has children.
+var ErrHasChildren = errors.New("message has children")
+
+func (s *service) DeleteChildless(ctx context.Context, sessionID, id string) error {
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	qtx := db.New(tx)
+	children, err := qtx.GetMessageChildren(ctx, sql.NullString{String: id, Valid: true})
+	if err != nil {
+		return fmt.Errorf("get children of %s: %w", id, err)
+	}
+	if len(children) > 0 {
+		return ErrHasChildren
+	}
+	dbMessage, err := qtx.GetMessage(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get message %s: %w", id, err)
+	}
+	sess, err := qtx.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("get session %s: %w", sessionID, err)
+	}
+	if sess.LeafMessageID.String == id {
+		if err := qtx.UpdateSessionLeaf(ctx, db.UpdateSessionLeafParams{ID: sessionID, LeafID: dbMessage.ParentMessageID}); err != nil {
+			return fmt.Errorf("move leaf: %w", err)
+		}
+	}
+	if err := qtx.DeleteMessage(ctx, id); err != nil {
+		return fmt.Errorf("delete message %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+	message, err := s.fromDBItem(dbMessage)
+	if err != nil {
+		return err
+	}
+	s.forget(id)
+	s.Publish(pubsub.DeletedEvent, message.Clone())
+	return nil
+}
+
+// forget drops any pending coalesced state for a deleted message, so it
+// is never flushed back over the deleted row.
+func (s *service) forget(id string) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if p, ok := s.pending[id]; ok {
 		if p.timer != nil {
 			p.timer.Stop()
 		}
 		delete(s.pending, id)
 	}
-	s.mu.Unlock()
-	// Clone the message before publishing to avoid race conditions with
-	// concurrent modifications to the Parts slice.
-	s.Publish(pubsub.DeletedEvent, message.Clone())
-	return nil
 }
 
 // ErrLeafMoved means CreateAtLeaf found the session's leaf had moved.
