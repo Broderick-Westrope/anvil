@@ -3,7 +3,6 @@
 package mermaid
 
 import (
-	"cmp"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -15,8 +14,8 @@ import (
 // MaxSourceBytes is the largest diagram source Render accepts.
 const MaxSourceBytes = 64 << 10
 
-// DefaultTimeout bounds a render when Options.Timeout is zero.
-const DefaultTimeout = 5 * time.Second
+// renderTimeout bounds one layout.
+const renderTimeout = 5 * time.Second
 
 var (
 	// ErrSourceTooLarge is returned for sources over MaxSourceBytes.
@@ -32,12 +31,6 @@ var peleSource string
 type Options struct {
 	// MaxWidth is the available width in pixels; zero leaves it unset.
 	MaxWidth int
-	// FontFamily is the label font Pele measures against.
-	FontFamily string
-	// FontSize is the base font size in pixels; zero uses Pele's default.
-	FontSize int
-	// Timeout bounds the layout; zero uses DefaultTimeout.
-	Timeout time.Duration
 }
 
 // Result is a rendered diagram.
@@ -97,14 +90,8 @@ func (r *Renderer) Render(source string, opts Options) (Result, error) {
 	if opts.MaxWidth > 0 {
 		jsOpts["maxWidth"] = opts.MaxWidth
 	}
-	if opts.FontFamily != "" {
-		jsOpts["fontFamily"] = opts.FontFamily
-	}
-	if opts.FontSize > 0 {
-		jsOpts["fontSize"] = opts.FontSize
-	}
 	fired := make(chan struct{})
-	timer := r.afterFunc(cmp.Or(opts.Timeout, DefaultTimeout), func() {
+	timer := r.afterFunc(renderTimeout, func() {
 		r.vm.Interrupt(ErrRenderTimeout)
 		close(fired)
 	})

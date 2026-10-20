@@ -86,7 +86,7 @@ func TestRasterizeDiagrams(t *testing.T) {
 		peleTime := time.Since(start)
 
 		start = time.Now()
-		img, err := rast.Rasterize(res, testTheme, RasterOptions{Scale: 2, Opaque: true})
+		img, err := rast.Rasterize(res, testTheme, RasterOptions{Scale: 2})
 		require.NoError(t, err, name)
 		t.Logf("%-9s pele %8s  raster %8s  %vx%v -> %v", name, peleTime, time.Since(start), res.Width, res.Height, img.Bounds().Size())
 		require.NotContains(t, ResolveVars(res.SVG, testTheme), "var(", name)
@@ -132,10 +132,6 @@ func TestRasterizeTransparentBackground(t *testing.T) {
 	require.NoError(t, err)
 	_, _, _, a := clearImg.At(0, 0).RGBA()
 	require.Zero(t, a, "the corner is transparent")
-
-	opaque, err := rast.Rasterize(res, testTheme, RasterOptions{Scale: 1, Opaque: true})
-	require.NoError(t, err)
-	require.Equal(t, [4]uint8{0x10, 0x10, 0x10, 0xff}, [4]uint8(opaque.Pix[0:4]), "the corner is pele-bg")
 }
 
 func TestResolveVars(t *testing.T) {

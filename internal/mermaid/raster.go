@@ -21,9 +21,6 @@ const MaxPixels = 4096 * 2048
 type RasterOptions struct {
 	// Scale multiplies the diagram's natural size.
 	Scale float64
-	// Opaque paints the theme's pele-bg behind the diagram. Otherwise the
-	// background is transparent and the terminal shows through.
-	Opaque bool
 	// MaxPixels caps width x height; zero uses [MaxPixels].
 	MaxPixels int
 }
@@ -52,7 +49,7 @@ var rootFontShorthand = regexp.MustCompile(`font:(\d+(?:\.\d+)?)px`)
 // font-size attribute, because resvg ignores the shorthand and would fall
 // back to 12px for every label that inherits it. A non-empty bg is painted
 // behind the diagram.
-func normalizeRootFont(svg, bg string) string {
+func normalizeRootFont(svg string) string {
 	if !strings.HasPrefix(svg, "<svg ") {
 		return svg
 	}
@@ -60,12 +57,7 @@ func normalizeRootFont(svg, bg string) string {
 	if m := rootFontShorthand.FindStringSubmatch(svg); m != nil {
 		size = m[1]
 	}
-	svg = `<svg font-size="` + size + `" ` + strings.TrimPrefix(svg, "<svg ")
-	if bg == "" {
-		return svg
-	}
-	end := strings.Index(svg, ">")
-	return svg[:end+1] + `<rect width="100%" height="100%" fill="` + bg + `"/>` + svg[end+1:]
+	return `<svg font-size="` + size + `" ` + strings.TrimPrefix(svg, "<svg ")
 }
 
 var colorMix = regexp.MustCompile(`color-mix\(in srgb,\s*(#[0-9a-fA-F]{3,6})\s+([\d.]+)%\s*,\s*(#[0-9a-fA-F]{3,6})\s*\)`)
@@ -120,11 +112,7 @@ func (r *Rasterizer) Rasterize(res Result, theme Theme, opts RasterOptions) (*im
 	if w*h > limit {
 		return nil, fmt.Errorf("rasterize: %dx%d exceeds %d pixels", w, h, limit)
 	}
-	var bg string
-	if opts.Opaque {
-		bg = theme["pele-bg"]
-	}
-	svg := normalizeRootFont(resolveColorMix(ResolveVars(res.SVG, theme)), bg)
+	svg := normalizeRootFont(resolveColorMix(ResolveVars(res.SVG, theme)))
 	img, err := r.engine.Render([]byte(svg), w, h)
 	if err != nil {
 		return nil, fmt.Errorf("rasterize: %w", err)

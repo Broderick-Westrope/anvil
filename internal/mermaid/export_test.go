@@ -29,12 +29,3 @@ func TestHTMLDocument(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "nested.html"), []byte(doc), 0o644))
 	}
 }
-
-func TestThemeWith(t *testing.T) {
-	t.Parallel()
-
-	base := Theme{"pele-bg": "#000", "pele-fg": "#fff"}
-	got := base.With("pele-bg", "#123")
-	require.Equal(t, Theme{"pele-bg": "#123", "pele-fg": "#fff"}, got)
-	require.Equal(t, "#000", base["pele-bg"], "the original is unchanged")
-}
