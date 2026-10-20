@@ -112,13 +112,14 @@ func (b *branchSummaryFeature) Cancel() (tea.Cmd, bool) {
 	return b.cancelSession(sessionID), true
 }
 
-// BlockNavigation implements navigationGuard: no rewind while the
-// summary of the last one runs.
+// BlockNavigation implements navigationGuard: nothing may move the leaf
+// (a rewind, a return, or a metadata entry such as an MCP toggle) while
+// the summary of the last rewind runs, or the summary would be dropped.
 func (b *branchSummaryFeature) BlockNavigation() tea.Cmd {
 	if !b.Busy(b.host.SessionID()) {
 		return nil
 	}
-	return util.ReportWarn("Wait for the branch summary, or cancel it with esc, before rewinding again.")
+	return util.ReportWarn("Wait for the branch summary, or cancel it with esc, first.")
 }
 
 // cancelSession cancels sessionID's running summary. The rewind stays.
@@ -310,13 +311,6 @@ func (b *branchSummaryFeature) HandleAction(action dialog.Action) (tea.Cmd, bool
 			return nil, true
 		}
 		return b.start(action), true
-	case dialog.ActionToggleLazyMCP, dialog.ActionSelectModel, dialog.ActionSelectReasoningEffort:
-		// Each is stored as a message under the leaf, which would move the
-		// leaf off the target the running summary is stored under.
-		if b.Busy(b.host.SessionID()) {
-			return util.ReportWarn("Wait for the branch summary, or cancel it, before changing this."), true
-		}
-		return nil, false
 	case actionBranchSummaryCancel:
 		b.host.Dialogs().CloseDialog(dialog.CommandsID)
 		return b.cancelSession(b.host.SessionID()), true

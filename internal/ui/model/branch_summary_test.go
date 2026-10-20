@@ -425,41 +425,6 @@ func TestBranchSummary_TheSummaryItselfDoesNotRetireDiscard(t *testing.T) {
 	require.Len(t, b.f.PaletteEntries(), 1)
 }
 
-func TestBranchSummary_HoldsMCPTogglesWhileRunning(t *testing.T) {
-	t.Parallel()
-	b := newBranchSummaryFixture(t)
-	toggle := dialog.ActionToggleLazyMCP{ServerName: "linear", Enabled: true}
-
-	_, claimed := b.f.HandleAction(toggle)
-	require.False(t, claimed, "toggles pass through when no summary runs")
-
-	b.runPicked()
-	cmd, claimed := b.f.HandleAction(toggle)
-	require.True(t, claimed, "a toggle would move the leaf off the summary's target")
-	infos := b.run(cmd)
-	require.Len(t, infos, 1)
-	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
-}
-
-func TestBranchSummary_HoldsModelAndReasoningChangesWhileRunning(t *testing.T) {
-	t.Parallel()
-	actions := map[string]dialog.Action{
-		"model":     dialog.ActionSelectModel{},
-		"reasoning": dialog.ActionSelectReasoningEffort{Effort: "high"},
-	}
-	for name, action := range actions {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			b := newBranchSummaryFixture(t)
-			b.ws.running["sess-1"] = true
-
-			_, claimed := b.f.HandleAction(action)
-
-			require.True(t, claimed, "the change writes metadata under the summary's target")
-		})
-	}
-}
-
 func TestBranchSummary_ALostEndEventDoesNotLeaveTheRunStuck(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
@@ -481,4 +446,24 @@ func TestBranchSummary_AnEndEventAfterReconcilingStillCounts(t *testing.T) {
 	b.event(branchsummaries.StateStored, "summary-1", nil)
 
 	require.Len(t, b.f.PaletteEntries(), 1, "the stored summary can still be discarded")
+}
+
+func TestBranchSummary_GuardsLeafMovesOnlyWhileRunning(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	require.Nil(t, b.f.BlockNavigation())
+
+	b.runPicked()
+
+	require.NotNil(t, b.f.BlockNavigation())
+}
+
+func TestBranchSummary_LeavesModelChangesToUpstream(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
+	_, claimed := b.f.HandleAction(dialog.ActionSelectModel{})
+
+	require.False(t, claimed, "the OAuth and API key dialogs finish with this action")
 }

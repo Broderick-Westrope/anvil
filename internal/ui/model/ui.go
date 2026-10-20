@@ -2738,6 +2738,11 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			Source:       msg.Source,
 		})
 	case dialog.ActionToggleLazyMCP:
+		// The toggle is stored under the leaf, so it is a move of the leaf.
+		if cmd := m.features.blockNavigation(); cmd != nil {
+			cmds = append(cmds, cmd)
+			break
+		}
 		m.enabledLazyMCPs[msg.ServerName] = msg.Enabled
 		// Update the open dialog's item state so the label refreshes.
 		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {

@@ -425,3 +425,29 @@ func TestNavigationGuardRefusesARewind(t *testing.T) {
 	require.Len(t, msgs, 1)
 	require.Equal(t, "guarded", msgs[0].(util.InfoMsg).Msg)
 }
+
+func TestNavigationGuardRefusesAReturnToPreBranch(t *testing.T) {
+	t.Parallel()
+	u, _ := newGuardTestUI(t)
+	u.pendingBranch = &branchReturnSnapshot{sessionID: u.session.ID, leafID: "old"}
+
+	cmd := u.beginBranchReturn(true)
+
+	require.False(t, u.branchRestoring)
+	msgs := cmdMsgs(cmd)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "guarded", msgs[0].(util.InfoMsg).Msg)
+}
+
+func TestNavigationGuardRefusesAnMCPToggle(t *testing.T) {
+	t.Parallel()
+	u, _ := newGuardTestUI(t)
+	u.enabledLazyMCPs = map[string]bool{}
+
+	u.dialog.OpenDialog(&stubDialog{id: "stub", action: dialog.ActionToggleLazyMCP{ServerName: "linear", Enabled: true}})
+
+	cmd := u.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	require.False(t, u.enabledLazyMCPs["linear"], "a toggle would move the leaf")
+	require.Contains(t, cmdMsgs(cmd), tea.Msg(util.NewWarnMsg("guarded")))
+}
