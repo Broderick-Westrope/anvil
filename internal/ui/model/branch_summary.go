@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
-	"github.com/Broderick-Westrope/anvil/internal/agent/branchsummary"
 	"github.com/Broderick-Westrope/anvil/internal/app/branchsummaries"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
@@ -24,7 +23,7 @@ import (
 // branchSummaryWorkspace is what the branch summary feature asks of the
 // workspace.
 type branchSummaryWorkspace interface {
-	GetBranchPath(ctx context.Context, leafMessageID string) ([]message.Message, error)
+	AgentBranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error)
 	AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error)
 	AgentCancelBranchSummary(sessionID string)
 	AgentBranchSummaryRunning(sessionID string) bool
@@ -145,20 +144,12 @@ func (b *branchSummaryFeature) observeRewind(done navigateTreeDoneMsg) tea.Cmd {
 	offer := dialog.BranchSummaryOffer{SessionID: sessionID, FromLeafID: done.snapshot.leafID, TargetID: done.leafID}
 	b.pending = offer
 	return func() tea.Msg {
-		ctx := context.Background()
-		from, err := b.ws.GetBranchPath(ctx, offer.FromLeafID)
+		worth, err := b.ws.AgentBranchWorthSummarizing(context.Background(), offer.FromLeafID, offer.TargetID)
 		if err != nil {
-			slog.Warn("Failed to load the branch left by a rewind", "error", err)
+			slog.Warn("Failed to check the branch left by a rewind", "error", err)
 			return nil
 		}
-		var target []message.Message
-		if offer.TargetID != "" {
-			if target, err = b.ws.GetBranchPath(ctx, offer.TargetID); err != nil {
-				slog.Warn("Failed to load the branch a rewind moved to", "error", err)
-				return nil
-			}
-		}
-		if !branchsummary.Worthwhile(branchsummary.Abandoned(from, target)) {
+		if !worth {
 			return nil
 		}
 		return branchSummaryOfferMsg{offer: offer}

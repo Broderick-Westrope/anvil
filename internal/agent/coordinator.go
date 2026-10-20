@@ -100,6 +100,9 @@ type Coordinator interface {
 	DiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error
 	// BranchSummarizers lists the agents that can summarize branches.
 	BranchSummarizers() []string
+	// BranchWorthSummarizing reports whether rewinding from fromLeaf to
+	// target leaves anything a summary could say.
+	BranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error)
 	IsSummarizing(sessionID string) bool
 	Cancel(sessionID string)
 	CancelAll()

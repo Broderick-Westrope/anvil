@@ -225,6 +225,13 @@ func (w *AppWorkspace) AgentSummarize(ctx context.Context, sessionID string) err
 	return w.app.AgentCoordinator.Summarize(ctx, sessionID)
 }
 
+func (w *AppWorkspace) AgentBranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error) {
+	if w.app.AgentCoordinator == nil {
+		return false, errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.BranchWorthSummarizing(ctx, fromLeaf, target)
+}
+
 func (w *AppWorkspace) AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error) {
 	return w.app.BranchSummaries.Start(req)
 }

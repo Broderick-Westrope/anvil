@@ -206,6 +206,16 @@ func (c *coordinator) DiscardBranchSummary(ctx context.Context, sessionID, summa
 	return nil
 }
 
+// BranchWorthSummarizing reports whether rewinding from fromLeaf to target
+// leaves anything a summary could say.
+func (c *coordinator) BranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error) {
+	rng, err := c.abandonedRange(ctx, fromLeaf, target)
+	if err != nil {
+		return false, err
+	}
+	return branchsummary.Worthwhile(rng), nil
+}
+
 // abandonedRange returns the messages on the path to fromLeaf that aren't
 // on the path to target.
 func (c *coordinator) abandonedRange(ctx context.Context, fromLeaf, target string) ([]message.Message, error) {

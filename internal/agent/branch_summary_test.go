@@ -366,3 +366,16 @@ func TestSummarizeBranch_RefusesAgentsThatAreNotSummarizers(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrNotABranchSummarizer)
 }
+
+func TestBranchWorthSummarizing(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+
+	worth, err := f.c.BranchWorthSummarizing(t.Context(), f.a2, f.a1)
+	require.NoError(t, err)
+	require.True(t, worth)
+
+	worth, err = f.c.BranchWorthSummarizing(t.Context(), f.a1, f.a1)
+	require.NoError(t, err)
+	require.False(t, worth)
+}

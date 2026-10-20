@@ -49,8 +49,16 @@ func newBranchSummaryTestWorkspace() *branchSummaryTestWorkspace {
 	}
 }
 
-func (w *branchSummaryTestWorkspace) GetBranchPath(_ context.Context, leaf string) ([]message.Message, error) {
-	return w.paths[leaf], nil
+// AgentBranchWorthSummarizing reports a rewind worthwhile when the
+// abandoned part of the fixture's paths holds an assistant message.
+func (w *branchSummaryTestWorkspace) AgentBranchWorthSummarizing(_ context.Context, from, target string) (bool, error) {
+	shared := len(w.paths[target])
+	for _, m := range w.paths[from][shared:] {
+		if m.Role == message.Assistant {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (w *branchSummaryTestWorkspace) AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error) {

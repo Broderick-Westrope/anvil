@@ -144,6 +144,9 @@ type Workspace interface {
 	// AgentBranchSummarizers lists the agents that can summarize branches,
 	// the built-in first.
 	AgentBranchSummarizers() []string
+	// AgentBranchWorthSummarizing reports whether rewinding from fromLeaf
+	// to target leaves anything a summary could say.
+	AgentBranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error)
 	AgentRegenerateTitle(ctx context.Context, sessionID string) error
 	// AgentPause stops new top-level runs from being admitted and waits up
 	// to budget for active ones to finish. On success the caller must call
