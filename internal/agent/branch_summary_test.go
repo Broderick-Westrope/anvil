@@ -126,13 +126,13 @@ func TestSummarizeBranch_SendDuringSummaryRunsAfterIt(t *testing.T) {
 func TestSummarizeBranch_StaleCompletionStoresNothing(t *testing.T) {
 	t.Parallel()
 	f := newBranchFixture(t)
-	f.setSummarizer(func(ctx context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+	var child string
+	f.setSummarizer(func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		child = call.SessionID
 		require.NoError(t, f.env.sessions.MoveLeaf(ctx, f.sessionID, f.a2))
 		return agentResultWithText("summary"), nil
 	})
-	child := "summary-child"
 	req := f.request()
-	req.ChildSessionID = child
 
 	_, err := f.c.SummarizeBranch(t.Context(), req)
 
@@ -148,13 +148,13 @@ func TestSummarizeBranch_CancelStoresNothing(t *testing.T) {
 	t.Parallel()
 	f := newBranchFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
-	f.setSummarizer(func(ctx context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+	var child string
+	f.setSummarizer(func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		child = call.SessionID
 		cancel()
 		return nil, ctx.Err()
 	})
-	child := "summary-child"
 	req := f.request()
-	req.ChildSessionID = child
 
 	_, err := f.c.SummarizeBranch(ctx, req)
 
@@ -354,4 +354,15 @@ func TestSummarizeBranch_RefusesWhenTheAgentLeavesNoRoom(t *testing.T) {
 
 	require.ErrorContains(t, err, "leave only")
 	require.False(t, called, "nothing is sent")
+}
+
+func TestSummarizeBranch_RefusesAgentsThatAreNotSummarizers(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	req := f.request()
+	req.Agent = "helper"
+
+	_, err := f.c.SummarizeBranch(t.Context(), req)
+
+	require.ErrorIs(t, err, ErrNotABranchSummarizer)
 }

@@ -33,11 +33,10 @@ const (
 
 // Event reports a run starting or ending.
 type Event struct {
-	SessionID      string
-	RunID          string
-	Agent          string
-	ChildSessionID string
-	State          State
+	SessionID string
+	RunID     string
+	Agent     string
+	State     State
 	// SummaryID is the stored summary, for StateStored.
 	SummaryID string
 	// Err is why the run failed, for StateFailed.
@@ -90,9 +89,6 @@ func (s *Service) Start(req agent.BranchSummaryRequest) (string, error) {
 	if c == nil {
 		return "", errors.New("agent coordinator not initialized")
 	}
-	if req.ChildSessionID == "" {
-		req.ChildSessionID = uuid.NewString()
-	}
 
 	s.mu.Lock()
 	if _, ok := s.runs[req.SessionID]; ok {
@@ -105,7 +101,7 @@ func (s *Service) Start(req agent.BranchSummaryRequest) (string, error) {
 	release := c.ReserveSession(req.SessionID)
 	s.mu.Unlock()
 
-	base := Event{SessionID: req.SessionID, RunID: r.id, Agent: req.Agent, ChildSessionID: req.ChildSessionID}
+	base := Event{SessionID: req.SessionID, RunID: r.id, Agent: req.Agent}
 	running := base
 	running.State = StateRunning
 	s.events.PublishMustDeliver(s.ctx, pubsub.UpdatedEvent, running)

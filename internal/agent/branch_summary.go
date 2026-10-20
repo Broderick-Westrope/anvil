@@ -39,6 +39,9 @@ var (
 	// ErrStaleBranchSummary means the session moved away from the rewind
 	// target while the summary was generating, so it was thrown away.
 	ErrStaleBranchSummary = errors.New("conversation moved on before the summary finished")
+	// ErrNotABranchSummarizer means the requested agent isn't marked
+	// branch_summarizer, so it may not be run over a branch.
+	ErrNotABranchSummarizer = errors.New("agent is not a branch summarizer")
 	// ErrBranchSummaryInUse means a message was sent after the summary,
 	// so it can no longer be discarded.
 	ErrBranchSummaryInUse = errors.New("branch summary is already part of the conversation")
@@ -55,10 +58,6 @@ type BranchSummaryRequest struct {
 	TargetID string
 	Agent    string
 	Focus    string
-	// ChildSessionID, when set, is the ID of the session the summarizer
-	// runs in, so a caller can point at it before the summary finishes.
-	// Otherwise one is generated.
-	ChildSessionID string
 }
 
 // BranchSummarizers lists the agents that can summarize branches: marked
@@ -91,6 +90,12 @@ func (c *coordinator) BranchSummarizers() []string {
 // moved off the target by the time the summary is ready, nothing is
 // stored. On any failure the summarizer's child session is deleted.
 func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequest) (message.Message, error) {
+	c.orchestratorMu.RLock()
+	summarizer := c.agentMDs[req.Agent].BranchSummarizer
+	c.orchestratorMu.RUnlock()
+	if !summarizer {
+		return message.Message{}, fmt.Errorf("summarize branch with %q: %w", req.Agent, ErrNotABranchSummarizer)
+	}
 	release, err := c.Hold(ctx, []string{req.SessionID})
 	if err != nil {
 		return message.Message{}, err
@@ -122,7 +127,7 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		return message.Message{}, err
 	}
 
-	childID := cmp.Or(req.ChildSessionID, uuid.NewString())
+	childID := uuid.NewString()
 	// The summarizer acts for the root session, as a task subagent would.
 	runCtx := context.WithValue(ctx, tools.RootSessionIDContextKey, req.SessionID)
 	out, err := c.RunWorkflowAgent(runCtx, WorkflowAgentCall{

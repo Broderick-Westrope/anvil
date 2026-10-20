@@ -100,7 +100,6 @@ func TestStart_ReservesTheSessionBeforeReturning(t *testing.T) {
 	require.True(t, svc.Running("s"))
 	running := next(t, events)
 	require.Equal(t, branchsummaries.StateRunning, running.State)
-	require.NotEmpty(t, running.ChildSessionID)
 	require.Equal(t, "summarizer", running.Agent)
 }
 
