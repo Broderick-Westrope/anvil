@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -81,5 +82,33 @@ func TestDiagramDetailItemCopiesTheSource(t *testing.T) {
 		handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: rune(key[0]), Text: key})
 		require.True(t, handled, key)
 		require.NotNil(t, cmd, key)
+	}
+}
+
+func TestDiagramDetailItemHints(t *testing.T) {
+	t.Parallel()
+
+	const src = "A\n"
+	sty := styles.TokyoNight()
+	tests := map[string]struct {
+		view    DiagramView
+		want    []string
+		wantNot []string
+	}{
+		"ready":  {view: DiagramView{State: DiagramReady, Image: "IMG"}, want: []string{"open in browser", "copy source"}},
+		"failed": {view: DiagramView{State: DiagramFailed, Err: "bad"}, want: []string{"copy source"}, wantNot: []string{"open in browser"}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			item := NewDiagramDetailItem(&sty, src, fakeDiagrams{full: map[string]DiagramView{src: tc.view}})
+			hint := strings.Split(ansi.Strip(item.RawRender(80)), "\n")[0]
+			for _, want := range tc.want {
+				require.Contains(t, hint, want)
+			}
+			for _, not := range tc.wantNot {
+				require.NotContains(t, hint, not)
+			}
+		})
 	}
 }

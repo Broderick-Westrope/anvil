@@ -42,8 +42,14 @@ func (d *DiagramDetailItem) Render(width int) string { return d.RawRender(width)
 // RawRender implements list.RawRenderable: a key hint, then the diagram,
 // a placeholder while it renders, or the code block when it can't be shown.
 func (d *DiagramDetailItem) RawRender(width int) string {
-	hint := d.sty.Header.Keystroke.Render("o") + " " + d.sty.Header.KeystrokeTip.Render("open in browser")
 	view := d.diagrams.FullDiagram(d.source, width)
+	keys := d.sty.Header.Keystroke.Render("c/y") + " " + d.sty.Header.KeystrokeTip.Render("copy source")
+	hint := keys
+	if view.State != DiagramFailed {
+		// A diagram the renderer rejects can't be opened in the browser
+		// either.
+		hint = d.sty.Header.Keystroke.Render("o") + " " + d.sty.Header.KeystrokeTip.Render("open in browser") + "  " + keys
+	}
 	var body string
 	switch view.State {
 	case DiagramReady:
