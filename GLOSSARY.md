@@ -44,18 +44,25 @@ A provider the user defines in `anvil.json` that isn't in the Catwalk catalog, o
 - **Code:** `prepareCustomProvider`, `discoverCustomProviderModels` (`internal/config/load.go`)
 - **Not:** known provider.
 
+## Diagram Node
+
+A chat item showing one top-level Mermaid fence from a finished assistant message, as an image where the terminal can show it and as its code block otherwise. The message stays one `message.Message`; the UI shows it as several nodes in document order. The first node is the head and keeps the message ID; the others are `<id>#<n>`.
+
+- **Code:** `chat.DiagramItem`, `chat.NewAssistantMessageItems` (`internal/ui/chat/diagrams.go`); `mermaidFeature` (`internal/ui/model/mermaid.go`)
+- **Not:** a message. Lookups by message ID find the head, and branching from any node branches from the message.
+
 ## Drill-in
 
-A view that opens on top of the chat to show one item in detail: a subagent's session, a tool call, or a message's thinking.
+A view that opens on top of the chat to show one item in detail: a subagent's session, a tool call, a message's thinking, or a diagram at full size.
 
-- **Code:** `util.AgentDrillInMsg`, `util.ToolDrillInMsg`, `util.ThinkingDrillInMsg` (`internal/ui/util`)
+- **Code:** `util.AgentDrillInMsg`, `util.ToolDrillInMsg`, `util.ThinkingDrillInMsg` (`internal/ui/util`), `chat.DiagramOpenMsg`
 - **Not:** dialog. Dialogs ask for input; drill-ins show detail.
 
 ## Feature
 
-In the TUI, a fork feature (one upstream Crush doesn't have) built as a type that owns its state and is routed to from `UI`'s dispatchers through one surface, instead of adding fields to `UI` and cases to its switches. Workflows are the first.
+In the TUI, a fork feature (one upstream Crush doesn't have) built as a type that owns its state and is routed to from `UI`'s dispatchers through one surface, instead of adding fields to `UI` and cases to its switches. Workflows and Mermaid diagrams are features.
 
-- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`)
+- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`); `mermaidFeature` (`internal/ui/model/mermaid.go`)
 - **Not:** sub-component such as `Chat` or `Attachments`, which `UI` calls directly; feature flag.
 
 ## Hook

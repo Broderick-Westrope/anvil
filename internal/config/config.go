@@ -291,6 +291,13 @@ type TUIOptions struct {
 
 	Completions Completions `json:"completions,omitzero" jsonschema:"description=Completions UI options"`
 	Transparent *bool       `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
+	Diagrams    *bool       `json:"diagrams,omitempty" jsonschema:"description=Render Mermaid diagrams in assistant messages as images where the terminal supports it,default=true"`
+}
+
+// DiagramsEnabled reports whether Mermaid fences render as diagrams. Unset
+// means on.
+func (o *TUIOptions) DiagramsEnabled() bool {
+	return o == nil || o.Diagrams == nil || *o.Diagrams
 }
 
 // Completions defines options for the completions UI.

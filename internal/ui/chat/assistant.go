@@ -123,6 +123,18 @@ type AssistantMessageItem struct {
 	// docs/notes/2026-05-12-chat-rendering-perf.md. See
 	// streaming_markdown.go for the full algorithm.
 	streamingContent streamingMarkdown
+
+	// segment is set when the message is shown as several nodes around
+	// its diagrams; this item then shows only one run of its text.
+	segment *assistantSegment
+}
+
+// assistantSegment is one run of a message's text between its diagrams.
+// Index 0 is the head: it keeps the message's ID and its "Thought for"
+// line, so lookups by message ID still find it.
+type assistantSegment struct {
+	index int
+	text  string
 }
 
 // NewAssistantMessageItem creates a new AssistantMessageItem.
@@ -173,7 +185,27 @@ func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
 
 // ID implements MessageItem.
 func (a *AssistantMessageItem) ID() string {
+	if a.segment != nil && a.segment.index > 0 {
+		return segmentID(a.message.ID, a.segment.index)
+	}
 	return a.message.ID
+}
+
+// text is the markdown this item shows: its segment, or the whole content.
+func (a *AssistantMessageItem) text() string {
+	if a.segment != nil {
+		return a.segment.text
+	}
+	return a.message.Content().Text
+}
+
+// SegmentKey identifies what a segment shows, so an unchanged split isn't
+// rebuilt. It is empty for an unsplit message.
+func (a *AssistantMessageItem) SegmentKey() string {
+	if a.segment == nil {
+		return ""
+	}
+	return "text:" + a.segment.text
 }
 
 func (a *AssistantMessageItem) SourceMessage() message.Message {
@@ -205,7 +237,7 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 // markdown of the content. Thinking text isn't shown here, so it isn't
 // selectable either.
 func (a *AssistantMessageItem) SelectionSource() string {
-	return strings.TrimSpace(a.message.Content().Text)
+	return strings.TrimSpace(a.text())
 }
 
 // Render implements MessageItem.
@@ -310,7 +342,7 @@ func (a *AssistantMessageItem) compositionKey() uint64 {
 // render is recomputed.
 func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	var messageParts []string
-	content := strings.TrimSpace(a.message.Content().Text)
+	content := strings.TrimSpace(a.text())
 
 	var footer string
 	if a.hasThinking() {
@@ -373,7 +405,7 @@ func (a *AssistantMessageItem) contentKey() (uint64, uint64) {
 	if a.message.IsFinished() {
 		fin = 1
 	}
-	return fnv64(a.message.Content().Text), fin
+	return fnv64(a.text()), fin
 }
 
 // errorKey returns the (srcHash, extra) cache key components for the
@@ -418,7 +450,7 @@ func (a *AssistantMessageItem) cachedContent(width int) string {
 	if a.contentSec.hit(width, srcHash, extra) {
 		return a.contentSec.out
 	}
-	out := a.renderMarkdown(a.message.Content().Text, width)
+	out := a.renderMarkdown(a.text(), width)
 	a.contentSec.store(width, srcHash, extra, out, 0)
 	return out
 }
@@ -454,6 +486,9 @@ func (a *AssistantMessageItem) renderThinkingFooter() string {
 
 // hasThinking reports whether the message has any thinking text.
 func (a *AssistantMessageItem) hasThinking() bool {
+	if a.segment != nil && a.segment.index > 0 {
+		return false
+	}
 	return strings.TrimSpace(a.message.ReasoningContent().Thinking) != ""
 }
 
@@ -584,6 +619,10 @@ func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) 
 	}
 	return y < a.thinkingFooterHeight
 }
+
+// ClickDrillIn implements ClickDrillInHandler: a handled click is on the
+// "Thought for" line.
+func (a *AssistantMessageItem) ClickDrillIn() tea.Cmd { return a.ThinkingDrillIn() }
 
 // ThinkingDrillIn returns a command that opens the thinking text in a
 // drill-in view, or nil when the message has no thinking.

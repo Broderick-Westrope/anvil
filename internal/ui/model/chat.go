@@ -115,6 +115,11 @@ type Chat struct {
 	// bottom on new messages.
 	follow bool
 
+	// prefetch starts slow work for items near the view when it moves;
+	// prefetchedView is the view it last did so for.
+	prefetch       bool
+	prefetchedView prefetchView
+
 	// drawCache memoizes the decoded form of the last list.Render output so
 	// repeat frames with byte-identical content skip the per-cell ANSI
 	// reparse that uv.StyledString.Draw performs every call. See F9
@@ -179,6 +184,7 @@ func (m *Chat) Height() int {
 // invalidate it.
 func (m *Chat) Draw(scr uv.Screen, area uv.Rectangle) {
 	rendered := m.list.Render()
+	m.prefetchNearby()
 	method, ok := scr.WidthMethod().(ansi.Method)
 	if !ok {
 		// Width method isn't an ansi.Method (unlikely in practice — both
@@ -193,6 +199,36 @@ func (m *Chat) Draw(scr uv.Screen, area uv.Rectangle) {
 		m.drawCache = newChatDrawCache(rendered, method)
 	}
 	drawCachedBuffer(scr, area, m.drawCache.buf)
+}
+
+// prefetchView is where a chat's view is: what decides which items are
+// near it.
+type prefetchView struct {
+	idx, line, items, width, height int
+}
+
+// SetPrefetch sets whether drawing starts the slow work for items near the
+// view (see prefetchNearby). Only chats that can hold such items need it.
+func (m *Chat) SetPrefetch(on bool) { m.prefetch = on }
+
+// prefetchNearby starts the slow work, such as rendering diagrams, for
+// items within a screen above or below the view, so they are ready when
+// scrolled to.
+func (m *Chat) prefetchNearby() {
+	if !m.prefetch {
+		return
+	}
+	idx, line := m.list.ScrollPosition()
+	view := prefetchView{idx: idx, line: line, items: m.list.Len(), width: m.list.Width(), height: m.list.Height()}
+	if view == m.prefetchedView {
+		return
+	}
+	m.prefetchedView = view
+	for _, item := range m.list.NearbyItems(m.list.Height()) {
+		if diagram, ok := item.(*chat.DiagramItem); ok {
+			diagram.Prefetch(m.list.Width())
+		}
+	}
 }
 
 // newChatDrawCache builds a chatDrawCache for the given rendered string by
@@ -321,6 +357,27 @@ func (m *Chat) ItemAt(i int) list.Item {
 // item so the next draw re-renders with the current styles.
 func (m *Chat) InvalidateRenderCaches() {
 	chat.ClearItemCaches(m.MessageItems())
+}
+
+// InvalidateDiagrams re-renders the items that show diagrams, after an
+// image arrives or the terminal's capabilities change. They may change
+// height, which leaves the line offset stale: stay pinned to the bottom if
+// following, otherwise keep the offset inside its item. Being at the
+// bottom isn't enough: a drill-in whose short placeholder fits on screen
+// must stay at the top when it grows.
+func (m *Chat) InvalidateDiagrams() {
+	var diagrams []chat.MessageItem
+	for _, item := range m.MessageItems() {
+		if _, ok := item.(chat.DiagramShower); ok {
+			diagrams = append(diagrams, item)
+		}
+	}
+	chat.ClearItemCaches(diagrams)
+	if m.follow {
+		m.ScrollToBottom()
+		return
+	}
+	m.list.ClampOffset()
 }
 
 // MessageItems returns the chat's message items in order.
@@ -698,12 +755,19 @@ func (m *Chat) RemoveMessage(id string) {
 	// Remove from index map
 	delete(m.idInxMap, id)
 
-	// Rebuild index map for all items after the removed one
-	for i := idx; i < m.list.Len(); i++ {
-		if item, ok := m.list.ItemAt(i).(chat.MessageItem); ok {
-			m.idInxMap[item.ID()] = i
+	// Remove the nodes a split message shows after its head. ItemAt is nil
+	// past the end.
+	for {
+		item, ok := m.list.ItemAt(idx).(chat.MessageItem)
+		if !ok || !chat.IsSegmentOf(item.ID(), id) {
+			break
 		}
+		m.list.RemoveItem(idx)
+		delete(m.idInxMap, item.ID())
 	}
+
+	// Rebuild index map for all items after the removed one
+	m.reindexFrom(idx)
 
 	// Clean up any paused animations for this message
 	delete(m.pausedAnimations, id)
@@ -868,10 +932,10 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 
 	if clickable, ok := selectedItem.(list.MouseClickable); ok {
 		handled := clickable.HandleMouseClick(ansi.MouseButton1, msg.X, msg.Y)
-		// A handled click on an assistant message is on its "Thought for"
-		// line, which opens the thinking drill-in.
-		if assistant, ok := selectedItem.(*chat.AssistantMessageItem); ok && handled {
-			return true, assistant.ThinkingDrillIn()
+		// A handled click on an assistant message's "Thought for" line or
+		// on a diagram opens its drill-in.
+		if driller, ok := selectedItem.(chat.ClickDrillInHandler); ok && handled {
+			return true, driller.ClickDrillIn()
 		}
 		// Toggle expansion only when the item signalled it handled the
 		// click, so clicks outside an item's expandable region (such as a
@@ -977,6 +1041,9 @@ func (m *Chat) HighlightContent() string {
 // its formatting. ok is false when the item has no source or the selection
 // cannot be mapped.
 func sourceSelection(item list.Item, rendered string, area uv.Rectangle, startLine, startCol, endLine, endCol int) (string, bool) {
+	if whole, ok := item.(chat.WholeSelectable); ok {
+		return whole.SelectedText(), true
+	}
 	ss, ok := item.(list.SourceSelectable)
 	if !ok {
 		return "", false
