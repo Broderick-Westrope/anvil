@@ -75,7 +75,8 @@ func (c *coordinator) BranchSummarizers() []string {
 		if !md.BranchSummarizer || !ok {
 			continue
 		}
-		if _, err := config.ResolveAgentModel(agentCfg, c.cfg.Config()); err != nil {
+		_, err := config.ResolveAgentModel(agentCfg, c.cfg.Config())
+		if err != nil {
 			continue
 		}
 		names = append(names, name)
@@ -209,7 +210,8 @@ func (c *coordinator) DiscardBranchSummary(ctx context.Context, sessionID, summa
 	if summary.MessageType != message.MessageTypeBranchSummary || summary.SessionID != sessionID {
 		return fmt.Errorf("message %s is not a branch summary in session %s", summaryID, sessionID)
 	}
-	if err := c.messages.DeleteChildless(ctx, sessionID, summaryID); err != nil {
+	err = c.messages.DeleteChildless(ctx, sessionID, summaryID)
+	if err != nil {
 		if errors.Is(err, message.ErrHasChildren) {
 			return ErrBranchSummaryInUse
 		}
@@ -267,7 +269,8 @@ func (c *coordinator) delegatedMessages(ctx context.Context, messageID string, c
 // refreshSession publishes the session after the message store moved its
 // leaf, so the UI's copy, which later messages are parented on, follows.
 func (c *coordinator) refreshSession(id string) {
-	if err := c.sessions.Refresh(context.Background(), id); err != nil {
+	err := c.sessions.Refresh(context.Background(), id)
+	if err != nil {
 		slog.Warn("Failed to publish session after a branch summary change", "session", id, "error", err)
 	}
 }
@@ -276,7 +279,8 @@ func (c *coordinator) deleteChildSession(id string) {
 	if id == "" {
 		return
 	}
-	if err := c.sessions.Delete(context.Background(), id); err != nil {
+	err := c.sessions.Delete(context.Background(), id)
+	if err != nil {
 		slog.Warn("Failed to delete branch summary session", "session", id, "error", err)
 	}
 }

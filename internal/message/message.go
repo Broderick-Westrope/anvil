@@ -251,14 +251,17 @@ func (s *service) DeleteChildless(ctx context.Context, sessionID, id string) err
 		return fmt.Errorf("get session %s: %w", sessionID, err)
 	}
 	if sess.LeafMessageID.String == id {
-		if err := qtx.UpdateSessionLeaf(ctx, db.UpdateSessionLeafParams{ID: sessionID, LeafID: dbMessage.ParentMessageID}); err != nil {
+		err = qtx.UpdateSessionLeaf(ctx, db.UpdateSessionLeafParams{ID: sessionID, LeafID: dbMessage.ParentMessageID})
+		if err != nil {
 			return fmt.Errorf("move leaf: %w", err)
 		}
 	}
-	if err := qtx.DeleteMessage(ctx, id); err != nil {
+	err = qtx.DeleteMessage(ctx, id)
+	if err != nil {
 		return fmt.Errorf("delete message %s: %w", id, err)
 	}
-	if err := tx.Commit(); err != nil {
+	err = tx.Commit()
+	if err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
 	message, err := s.fromDBItem(dbMessage)

@@ -1,27 +1,32 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
-func TestOrchestratorBlocksOmitBranchSummarizers(t *testing.T) {
+func TestOrchestratorPromptOmitsBranchSummarizers(t *testing.T) {
 	t.Parallel()
+	env := testEnv(t)
+	c, pluginDir := newReloadTestCoordinator(t, env)
+	summarizer := []byte("---\nrole: summarizes branches\nbranch_summarizer: true\n---\nSummarize.\n")
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "agents", "plugsum.md"), summarizer, 0o644))
+	_, err := c.ReloadPlugins(t.Context())
+	require.NoError(t, err)
+	require.Contains(t, c.agentConfigs, "plugsum")
 
-	mds := map[string]prompt.AgentMD{
-		"fixer":      {Name: "fixer", Role: "Fixes things", RoutingHint: "Route fixes to @fixer."},
-		"summarizer": {Name: "summarizer", Role: "Summarizes branches", RoutingHint: "Route to @summarizer.", BranchSummarizer: true},
-	}
-	cfgs := map[string]config.Agent{"fixer": {ID: "fixer"}, "summarizer": {ID: "summarizer"}}
+	p, err := c.buildPrompt(config.AgentOrchestrator, c.agentConfigs[config.AgentOrchestrator])
+	require.NoError(t, err)
+	built, err := p.Build(t.Context(), reloadTestProvider, reloadTestModel, c.cfg)
+	require.NoError(t, err)
 
-	agents, workflow := buildOrchestratorBlocksFromState(mds, cfgs)
-
-	require.Contains(t, agents, "@fixer")
-	require.NotContains(t, agents, "summarizer")
-	require.NotContains(t, workflow, "summarizer")
+	require.Contains(t, built, "@helper")
+	require.NotContains(t, built, "plugsum")
+	require.NotContains(t, built, BuiltinBranchSummarizer)
 }
 
 func TestBuiltinBranchSummarizer(t *testing.T) {
