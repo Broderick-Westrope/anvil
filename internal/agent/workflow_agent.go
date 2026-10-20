@@ -85,7 +85,11 @@ func (c *coordinator) RunWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 	if err != nil {
 		return WorkflowAgentOutput{}, err
 	}
+	return c.runWorkflowAgent(ctx, call, sub, submit)
+}
 
+// runWorkflowAgent runs sub, built for call, in a new child session.
+func (c *coordinator) runWorkflowAgent(ctx context.Context, call WorkflowAgentCall, sub SessionAgent, submit *submitResultTool) (WorkflowAgentOutput, error) {
 	title := call.Title
 	if title == "" {
 		title = "workflow: " + call.Agent

@@ -2,10 +2,15 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
-	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -49,7 +54,64 @@ func newBranchFixture(t *testing.T) branchFixture {
 }
 
 func (f branchFixture) setSummarizer(run func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)) {
-	f.c.agents.Set(BuiltinBranchSummarizer+"|2", newMockAgent(reloadTestProvider, 1000, run))
+	f.setSummarizerAgent(newMockAgent(reloadTestProvider, 1000, run))
+}
+
+// setSummarizerAgent caches a as the built-in summarizer, which may use
+// every read-only tool.
+func (f branchFixture) setSummarizerAgent(a SessionAgent) {
+	f.c.agents.Set(summarizerCacheKey(BuiltinBranchSummarizer, readOnlySummarizerTools), a)
+}
+
+// addSummarizer registers a marked summarizer that may use allowed.
+func (f branchFixture) addSummarizer(name string, allowed []string) {
+	f.c.orchestratorMu.Lock()
+	defer f.c.orchestratorMu.Unlock()
+	md := f.c.agentMDs[BuiltinBranchSummarizer]
+	md.Name = name
+	f.c.agentMDs[name] = md
+	agentCfg := f.c.agentConfigs[BuiltinBranchSummarizer]
+	agentCfg.ID, agentCfg.Name, agentCfg.AllowedTools = name, name, allowed
+	f.c.agentConfigs[name] = agentCfg
+}
+
+// recordProviderRequests points the test provider at a server that
+// records each request body and refuses it.
+func (f branchFixture) recordProviderRequests(t *testing.T) <-chan string {
+	t.Helper()
+	bodies := make(chan string, 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		bodies <- string(body)
+		http.Error(w, `{"error":{"message":"refused by test"}}`, http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+	providerCfg, ok := f.c.cfg.Config().Providers.Get(reloadTestProvider)
+	require.True(t, ok)
+	providerCfg.BaseURL, providerCfg.APIKey = server.URL, "test-key"
+	// Room for the summarizer's real prompt and tools.
+	providerCfg.Models = slices.Clone(providerCfg.Models)
+	providerCfg.Models[0].ContextWindow = 100_000
+	f.c.cfg.Config().Providers.Set(reloadTestProvider, providerCfg)
+	return bodies
+}
+
+// extendBranch adds n long messages to the end of the abandoned branch.
+func (f *branchFixture) extendBranch(t *testing.T, n int) {
+	t.Helper()
+	for i := range n {
+		role := message.User
+		if i%2 == 1 {
+			role = message.Assistant
+		}
+		m, err := f.env.messages.Create(t.Context(), f.sessionID, message.CreateMessageParams{
+			Role: role, ParentMessageID: f.a2,
+			Parts: []message.ContentPart{message.TextContent{Text: fmt.Sprintf("step-%02d ", i) + strings.Repeat("word ", 1_400)}},
+		})
+		require.NoError(t, err)
+		f.a2 = m.ID
+	}
+	require.NoError(t, f.env.sessions.MoveLeaf(t.Context(), f.sessionID, f.a1))
 }
 
 func (f branchFixture) request() BranchSummaryRequest {
@@ -74,7 +136,7 @@ func TestSummarizeBranch_StoresSummaryUnderTarget(t *testing.T) {
 	got, err := f.c.SummarizeBranch(t.Context(), f.request())
 	require.NoError(t, err)
 
-	require.Contains(t, prompt, "[User]: do item 1")
+	require.Contains(t, prompt, "<message role=\"user\">\ndo item 1\n</message>")
 	require.NotContains(t, prompt, "plan the work")
 	require.Equal(t, f.a1, got.ParentMessageID)
 	require.Equal(t, message.MessageTypeBranchSummary, got.MessageType)
@@ -101,26 +163,249 @@ func TestSummarizeBranch_SendDuringSummaryRunsAfterIt(t *testing.T) {
 		<-release
 		return agentResultWithText("summary"), nil
 	})
-	done := make(chan message.Message, 1)
-	go func() {
-		m, err := f.c.SummarizeBranch(t.Context(), f.request())
-		require.NoError(t, err)
-		done <- m
-	}()
+	done := summarizeAsync(t.Context(), f)
 	<-started
 
-	leafAtSend := make(chan string, 1)
+	leafAtSend := f.submitLeafProbe(t)
+	close(release)
+
+	got := <-done
+	require.NoError(t, got.err)
+	leaf := <-leafAtSend
+	require.NoError(t, leaf.err)
+	require.Equal(t, got.summary.ID, leaf.id)
+}
+
+type summarizeResult struct {
+	summary message.Message
+	err     error
+}
+
+func summarizeAsync(ctx context.Context, f branchFixture) <-chan summarizeResult {
+	done := make(chan summarizeResult, 1)
+	go func() {
+		m, err := f.c.SummarizeBranch(ctx, f.request())
+		done <- summarizeResult{m, err}
+	}()
+	return done
+}
+
+type leafResult struct {
+	id  string
+	err error
+}
+
+// submitLeafProbe queues a send that reports the session's leaf when it
+// runs.
+func (f branchFixture) submitLeafProbe(t *testing.T) <-chan leafResult {
+	t.Helper()
+	leafAtSend := make(chan leafResult, 1)
 	_, err := f.c.admission.submit(t.Context(), f.sessionID, submission{prompt: "next", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
 		sess, err := f.env.sessions.Get(ctx, f.sessionID)
-		require.NoError(t, err)
-		leafAtSend <- sess.LeafMessageID
+		leafAtSend <- leafResult{sess.LeafMessageID, err}
 		return nil, nil
 	}})
 	require.NoError(t, err)
-	close(release)
+	return leafAtSend
+}
 
-	summary := <-done
-	require.Equal(t, summary.ID, <-leafAtSend)
+func TestSummarizeBranch_CancelLetsAQueuedSendRunAtTheTarget(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	started := make(chan struct{})
+	f.setSummarizer(func(ctx context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := summarizeAsync(ctx, f)
+	<-started
+	leafAtSend := f.submitLeafProbe(t)
+
+	cancel()
+
+	require.ErrorIs(t, (<-done).err, context.Canceled)
+	leaf := <-leafAtSend
+	require.NoError(t, leaf.err)
+	require.Equal(t, f.a1, leaf.id)
+}
+
+func TestSummarizeBranch_RefusesWhenTheLeafMovedBeforeItStarts(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	called := false
+	f.setSummarizer(func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+		called = true
+		return agentResultWithText("summary"), nil
+	})
+	require.NoError(t, f.env.sessions.MoveLeaf(t.Context(), f.sessionID, f.a2))
+
+	_, err := f.c.SummarizeBranch(t.Context(), f.request())
+
+	require.ErrorIs(t, err, ErrStaleBranchSummary)
+	require.False(t, called, "nothing is sent")
+	children, err := f.env.messages.GetChildren(t.Context(), f.a1)
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+}
+
+func TestSummarizeBranch_RunsWithOnlyReadOnlyTools(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		allowed     []string
+		wantTools   []string
+		unwantTools []string
+	}{
+		"read-only subset": {allowed: []string{"view", "grep", "bash", "edit"}, wantTools: []string{"view", "grep"}, unwantTools: []string{"bash", "edit", "glob", "ls"}},
+		"every tool":       {allowed: nil, wantTools: []string{"view", "grep", "glob", "ls"}, unwantTools: []string{"bash", "edit", "write", "fetch"}},
+		"no read-only":     {allowed: []string{"bash", "edit"}, unwantTools: []string{"bash", "edit", "view"}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newBranchFixture(t)
+			bodies := f.recordProviderRequests(t)
+			f.addSummarizer("marked", tc.allowed)
+			req := f.request()
+			req.Agent = "marked"
+
+			_, err := f.c.SummarizeBranch(t.Context(), req)
+
+			require.ErrorContains(t, err, "refused by test")
+			body := <-bodies
+			for _, tool := range tc.wantTools {
+				require.Contains(t, body, `"name":"`+tool+`"`)
+			}
+			for _, tool := range tc.unwantTools {
+				require.NotContains(t, body, `"name":"`+tool+`"`)
+			}
+			if tc.wantTools == nil {
+				require.NotContains(t, body, `"tools"`)
+			}
+		})
+	}
+}
+
+func TestSummarizeBranch_FitsTheBranchInWhatTheAgentLeaves(t *testing.T) {
+	t.Parallel()
+
+	// A 40,000-token window, less 1,000 for output and 5,000 for the tool
+	// loop, leaves 34,000 tokens, less the agent's measured overhead.
+	tests := map[string]struct {
+		overhead     int
+		wantOmitted  bool
+		minPromptLen int
+		maxPromptLen int
+	}{
+		"no overhead": {overhead: 0, maxPromptLen: 34_000 * 3},
+		// Within one message of the 14,000 tokens left.
+		"measured overhead": {overhead: 60_000, wantOmitted: true, minPromptLen: 14_000*3 - 8_000, maxPromptLen: 14_000 * 3},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newBranchFixture(t)
+			f.extendBranch(t, 10)
+			var prompt string
+			summarizer := newMockAgent(reloadTestProvider, 1_000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+				prompt = call.Prompt
+				return agentResultWithText("summary"), nil
+			})
+			summarizer.model.CatwalkCfg.ContextWindow = 40_000
+			summarizer.overhead = tc.overhead
+			f.setSummarizerAgent(summarizer)
+
+			_, err := f.c.SummarizeBranch(t.Context(), f.request())
+
+			require.NoError(t, err)
+			require.Contains(t, prompt, "step-09")
+			require.Equal(t, tc.wantOmitted, strings.Contains(prompt, "earlier messages omitted"))
+			require.LessOrEqual(t, len(prompt), tc.maxPromptLen)
+			require.GreaterOrEqual(t, len(prompt), tc.minPromptLen)
+		})
+	}
+}
+
+func TestSummarizeBranch_StoredSummaryReachesTheConversationAfterIt(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	f.setSummarizer(reply("## Outcome\nItem 1 done."))
+	summary, err := f.c.SummarizeBranch(t.Context(), f.request())
+	require.NoError(t, err)
+	returned, err := f.env.messages.Create(t.Context(), f.sessionID, message.CreateMessageParams{
+		Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "carry on"}}, ParentMessageID: summary.ID,
+	})
+	require.NoError(t, err)
+	path, err := f.env.messages.GetBranchPath(t.Context(), returned.ID)
+	require.NoError(t, err)
+
+	got := message.FilterBranchPathForContext(path)
+
+	stored := summary.Parts[0].(message.BranchSummaryContent).Summary
+	require.Len(t, got, 4)
+	require.Contains(t, got[2].Content().Text, stored)
+	require.Equal(t, "carry on", got[3].Content().Text)
+}
+
+func TestDiscardBranchSummary_WaitsForASendInFlight(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	f.setSummarizer(reply("summary"))
+	summary, err := f.c.SummarizeBranch(t.Context(), f.request())
+	require.NoError(t, err)
+
+	readLeaf, proceed := make(chan struct{}), make(chan struct{})
+	sent := make(chan error, 1)
+	// An idle session runs a send at once, so submit returns only after it.
+	go func() {
+		_, err := f.c.admission.submit(t.Context(), f.sessionID, submission{prompt: "next", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			sess, err := f.env.sessions.Get(ctx, f.sessionID)
+			if err != nil {
+				return nil, err
+			}
+			close(readLeaf)
+			<-proceed
+			_, err = f.env.messages.Create(ctx, f.sessionID, message.CreateMessageParams{
+				Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "next"}}, ParentMessageID: sess.LeafMessageID,
+			})
+			return nil, err
+		}})
+		sent <- err
+	}()
+	select {
+	case <-readLeaf:
+	case err := <-sent:
+		t.Fatalf("send ended before reading the leaf: %v", err)
+	}
+
+	discarded := make(chan error, 1)
+	go func() { discarded <- f.c.DiscardBranchSummary(t.Context(), f.sessionID, summary.ID) }()
+	select {
+	case err := <-discarded:
+		t.Fatalf("discard returned while a send was in flight: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(proceed)
+
+	require.NoError(t, <-sent)
+	require.ErrorIs(t, <-discarded, ErrBranchSummaryInUse)
+	children, err := f.env.messages.GetChildren(t.Context(), f.a1)
+	require.NoError(t, err)
+	require.Contains(t, ids(children), summary.ID)
+	after, err := f.env.messages.GetChildren(t.Context(), summary.ID)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	require.Equal(t, "next", after[0].Content().Text)
+}
+
+func ids(msgs []message.Message) []string {
+	out := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, m.ID)
+	}
+	return out
 }
 
 func TestSummarizeBranch_StaleCompletionStoresNothing(t *testing.T) {
@@ -307,38 +592,6 @@ func TestDiscardBranchSummary_PublishesTheRestoredLeaf(t *testing.T) {
 	waitForLeafUpdate(t, events, f.sessionID, f.a1)
 }
 
-func TestSummarizerBudget(t *testing.T) {
-	t.Parallel()
-
-	model := func(window, output int64) Model {
-		return Model{CatwalkCfg: catwalk.Model{ID: "m", ContextWindow: window, DefaultMaxTokens: output}}
-	}
-	tests := map[string]struct {
-		model    Model
-		overhead int
-		hasTools bool
-		want     int
-		wantErr  string
-	}{
-		"measured overhead": {model: model(100_000, 10_000), overhead: 30_000, want: 80_000},
-		"tool loop room":    {model: model(100_000, 10_000), overhead: 30_000, hasTools: true, want: 67_500},
-		"unknown window":    {model: model(0, 8_000), overhead: 3_000, want: 119_000},
-		"overhead too big":  {model: model(32_000, 8_000), overhead: 66_000, wantErr: "leave only"},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			got, err := summarizerBudget(tc.model, tc.overhead, tc.hasTools)
-			if tc.wantErr != "" {
-				require.ErrorContains(t, err, tc.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, tc.want, got)
-		})
-	}
-}
-
 func TestSummarizeBranch_RefusesWhenTheAgentLeavesNoRoom(t *testing.T) {
 	t.Parallel()
 	f := newBranchFixture(t)
@@ -348,7 +601,7 @@ func TestSummarizeBranch_RefusesWhenTheAgentLeavesNoRoom(t *testing.T) {
 		return agentResultWithText("summary"), nil
 	})
 	summarizer.overhead = 1_000_000
-	f.c.agents.Set(BuiltinBranchSummarizer+"|2", summarizer)
+	f.setSummarizerAgent(summarizer)
 
 	_, err := f.c.SummarizeBranch(t.Context(), f.request())
 

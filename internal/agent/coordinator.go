@@ -932,7 +932,22 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 	if modelOverride != "" {
 		cacheKey = fmt.Sprintf("%s|%d|%s", agentName, depth, modelOverride)
 	}
+	return c.getOrBuild(cacheKey, agentName, func(agentCfg config.Agent) (SessionAgent, error) {
+		// Apply model override to a copy of the agent config when requested.
+		if modelOverride != "" {
+			agentCfg.Model = modelOverride
+		}
+		// Lazily-built specialist agents pass waitForMCP=true: by the time a
+		// specialist is requested (via the task tool during a Run), MCP init has
+		// already completed, so the wait is instant in practice, but keeping it
+		// explicit makes correctness independent of that call-order assumption.
+		return c.buildAgent(ctx, agentName, agentCfg, depth, true)
+	})
+}
 
+// getOrBuild returns the agent cached under cacheKey, or builds it from
+// agentName's config and caches it. Only one goroutine builds at a time.
+func (c *coordinator) getOrBuild(cacheKey, agentName string, build func(config.Agent) (SessionAgent, error)) (SessionAgent, error) {
 	if existing, ok := c.agents.Get(cacheKey); ok {
 		return existing, nil
 	}
@@ -953,16 +968,7 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 		return nil, fmt.Errorf("agent %q not configured", agentName)
 	}
 
-	// Apply model override to a copy of the agent config when requested.
-	if modelOverride != "" {
-		agentCfg.Model = modelOverride
-	}
-
-	// Lazily-built specialist agents pass waitForMCP=true: by the time a
-	// specialist is requested (via the task tool during a Run), MCP init has
-	// already completed, so the wait is instant in practice, but keeping it
-	// explicit makes correctness independent of that call-order assumption.
-	built, err := c.buildAgent(ctx, agentName, agentCfg, depth, true)
+	built, err := build(agentCfg)
 	if err != nil {
 		return nil, err
 	}

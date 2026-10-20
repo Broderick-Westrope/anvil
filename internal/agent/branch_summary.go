@@ -32,6 +32,10 @@ const (
 	minSummarizerInputTokens = 4_000
 )
 
+// readOnlySummarizerTools are the most a summarizer may use. It reads a
+// branch's untrusted content, so it gets no tool that changes anything.
+var readOnlySummarizerTools = []string{tools.ViewToolName, tools.GrepToolName, tools.GlobToolName, tools.LSToolName}
+
 var (
 	// ErrNothingToSummarize means the abandoned range has no assistant
 	// reply, so there is nothing a summary could say.
@@ -88,10 +92,12 @@ func (c *coordinator) BranchSummarizers() []string {
 // the target. It holds the session for the whole run, so a message sent
 // meanwhile queues and lands after the summary. If the session's leaf has
 // moved off the target by the time the summary is ready, nothing is
-// stored. On any failure the summarizer's child session is deleted.
+// stored. On any failure the summarizer's child session is deleted. The
+// summarizer runs with only the read-only tools its agent allows.
 func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequest) (message.Message, error) {
 	c.orchestratorMu.RLock()
 	summarizer := c.agentMDs[req.Agent].BranchSummarizer
+	agentCfg := c.agentConfigs[req.Agent]
 	c.orchestratorMu.RUnlock()
 	if !summarizer {
 		return message.Message{}, fmt.Errorf("summarize branch with %q: %w", req.Agent, ErrNotABranchSummarizer)
@@ -101,6 +107,16 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		return message.Message{}, err
 	}
 	defer release()
+
+	// A send that got in before the hold has moved the leaf, and the
+	// summary could never be stored, so it isn't worth paying for.
+	sess, err := c.sessions.Get(ctx, req.SessionID)
+	if err != nil {
+		return message.Message{}, fmt.Errorf("get session %s: %w", req.SessionID, err)
+	}
+	if sess.LeafMessageID != req.TargetID {
+		return message.Message{}, ErrStaleBranchSummary
+	}
 
 	rng, err := c.abandonedRange(ctx, req.FromLeafID, req.TargetID)
 	if err != nil {
@@ -113,30 +129,32 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		return c.delegatedMessages(ctx, messageID, call)
 	})
 
-	sub, err := c.getOrBuildAgent(ctx, req.Agent, workflowAgentDepth, "")
-	if err != nil {
-		return message.Message{}, err
-	}
-	c.orchestratorMu.RLock()
-	allowedTools := c.agentConfigs[req.Agent].AllowedTools
-	c.orchestratorMu.RUnlock()
-	// A nil allow-list means every tool.
-	hasTools := allowedTools == nil || len(allowedTools) > 0
-	budget, err := summarizerBudget(sub.Model(), sub.RequestOverhead(), hasTools)
-	if err != nil {
-		return message.Message{}, err
-	}
-
-	childID := uuid.NewString()
-	// The summarizer acts for the root session, as a task subagent would.
-	runCtx := context.WithValue(ctx, tools.RootSessionIDContextKey, req.SessionID)
-	out, err := c.RunWorkflowAgent(runCtx, WorkflowAgentCall{
+	call := WorkflowAgentCall{
 		ParentSessionID: req.SessionID,
 		Agent:           req.Agent,
-		Prompt:          branchsummary.Prompt(rng, ledger, req.Focus, budget),
 		Title:           "Branch summary",
-		SessionID:       childID,
+		SessionID:       uuid.NewString(),
+		Tools:           summarizerTools(agentCfg, c.cfg.Config().Options),
+	}
+	// The budget is measured on the agent that runs, with its restricted
+	// tools.
+	sub, err := c.getOrBuild(summarizerCacheKey(req.Agent, call.Tools), req.Agent, func(agentCfg config.Agent) (SessionAgent, error) {
+		sub, _, err := c.buildWorkflowAgent(ctx, call, agentCfg)
+		return sub, err
 	})
+	if err != nil {
+		return message.Message{}, err
+	}
+	budget, err := summarizerBudget(sub.Model(), sub.RequestOverhead(), len(call.Tools) > 0)
+	if err != nil {
+		return message.Message{}, err
+	}
+	call.Prompt = branchsummary.Prompt(rng, ledger, req.Focus, budget)
+
+	childID := call.SessionID
+	// The summarizer acts for the root session, as a task subagent would.
+	runCtx := context.WithValue(ctx, tools.RootSessionIDContextKey, req.SessionID)
+	out, err := c.runWorkflowAgent(runCtx, call, sub, nil)
 	if err == nil && strings.TrimSpace(out.Text) == "" {
 		err = errors.New("summarizer returned no summary")
 	}
@@ -261,6 +279,26 @@ func (c *coordinator) deleteChildSession(id string) {
 	if err := c.sessions.Delete(context.Background(), id); err != nil {
 		slog.Warn("Failed to delete branch summary session", "session", id, "error", err)
 	}
+}
+
+// summarizerTools is the read-only tools agentCfg allows. It is never nil:
+// empty means no tools.
+func summarizerTools(agentCfg config.Agent, opts *config.Options) []string {
+	// An invalid filter allows every tool, and the read-only set still caps it.
+	access, _ := newToolAccess(agentCfg, opts)
+	allowed := []string{}
+	for _, name := range readOnlySummarizerTools {
+		if access.allowsTool(name) {
+			allowed = append(allowed, name)
+		}
+	}
+	return allowed
+}
+
+// summarizerCacheKey caches a summarizer per tool set, apart from the
+// agent's unrestricted instance.
+func summarizerCacheKey(agentName string, toolNames []string) string {
+	return fmt.Sprintf("%s|%d|tools=%s", agentName, workflowAgentDepth, strings.Join(toolNames, ","))
 }
 
 // summarizerBudget is how many tokens of branch the summarizer's model
