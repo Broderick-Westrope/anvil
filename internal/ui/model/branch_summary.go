@@ -42,6 +42,10 @@ type branchSummaryRun struct {
 	state     branchsummaries.State
 	summaryID string
 	err       error
+	// lost is set when the service no longer runs a summary this UI still
+	// shows as running: its end event was dropped, or hasn't arrived yet.
+	// A lost run shows nothing, but a late end event still applies.
+	lost bool
 	// used is set when a user message is created while the run is
 	// running. Sends queue behind the summary, so that message follows
 	// it, even when its event arrives before the summary's.
@@ -198,7 +202,7 @@ func sameRewind(a, b dialog.BranchSummaryOffer) bool {
 
 // drop cancels sessionID's running summary or discards its stored one.
 func (b *branchSummaryFeature) drop(sessionID string) tea.Cmd {
-	r := b.runs[sessionID]
+	r := b.run(sessionID)
 	switch {
 	case r == nil:
 		return nil
@@ -253,6 +257,20 @@ func (b *branchSummaryFeature) offer(offer dialog.BranchSummaryOffer) tea.Cmd {
 	return nil
 }
 
+// run returns sessionID's latest summary for display and controls, or nil.
+// A run shown as running that the service has finished is lost.
+func (b *branchSummaryFeature) run(sessionID string) *branchSummaryRun {
+	r := b.runs[sessionID]
+	if r == nil || r.lost {
+		return nil
+	}
+	if r.state == branchsummaries.StateRunning && !b.Busy(sessionID) {
+		r.lost = true
+		return nil
+	}
+	return r
+}
+
 func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
 	defer b.host.Relayout()
 	if ev.State == branchsummaries.StateRunning {
@@ -263,6 +281,7 @@ func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
 	if r == nil || r.runID != ev.RunID {
 		return nil
 	}
+	r.lost = false
 	switch ev.State {
 	case branchsummaries.StateStored:
 		if r.used {
@@ -277,6 +296,7 @@ func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
 		return util.ReportInfo("Branch summary cancelled.")
 	default:
 		delete(b.runs, ev.SessionID)
+		return util.ReportInfo("Branch summary not kept: the conversation moved on before it finished.")
 	}
 	return nil
 }
@@ -324,7 +344,7 @@ func (b *branchSummaryFeature) start(pick dialog.ActionBranchSummaryPick) tea.Cm
 
 // dismiss discards sessionID's stored summary, or forgets a failed one.
 func (b *branchSummaryFeature) dismiss(sessionID string) tea.Cmd {
-	r := b.runs[sessionID]
+	r := b.run(sessionID)
 	if r == nil || r.state == branchsummaries.StateRunning {
 		return nil
 	}
@@ -343,7 +363,7 @@ func (b *branchSummaryFeature) HandleKey(tea.KeyPressMsg) (tea.Cmd, bool) { retu
 
 // PaletteEntries implements paletteFeature.
 func (b *branchSummaryFeature) PaletteEntries() []*dialog.CommandItem {
-	r := b.runs[b.host.SessionID()]
+	r := b.run(b.host.SessionID())
 	if r == nil {
 		return nil
 	}
@@ -360,7 +380,7 @@ func (b *branchSummaryFeature) PaletteEntries() []*dialog.CommandItem {
 // Panel implements panelFeature: one line while the summary runs or after
 // it failed.
 func (b *branchSummaryFeature) Panel() panelView {
-	r := b.runs[b.host.SessionID()]
+	r := b.run(b.host.SessionID())
 	if r == nil || r.state == branchsummaries.StateStored {
 		return nil
 	}

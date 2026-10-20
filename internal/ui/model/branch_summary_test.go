@@ -328,14 +328,15 @@ func TestBranchSummary_FailureShowsUntilDismissed(t *testing.T) {
 	require.Empty(t, b.ws.discarded)
 }
 
-func TestBranchSummary_StaleEndIsQuiet(t *testing.T) {
+func TestBranchSummary_StaleEndSaysSo(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
 	b.runPicked()
 
 	infos := b.event(branchsummaries.StateStale, "", nil)
 
-	require.Empty(t, infos)
+	require.Len(t, infos, 1)
+	require.Contains(t, infos[0].Msg, "moved on")
 	require.Nil(t, b.f.Panel())
 	require.Empty(t, b.f.PaletteEntries())
 }
@@ -457,4 +458,27 @@ func TestBranchSummary_HoldsModelAndReasoningChangesWhileRunning(t *testing.T) {
 			require.True(t, claimed, "the change writes metadata under the summary's target")
 		})
 	}
+}
+
+func TestBranchSummary_ALostEndEventDoesNotLeaveTheRunStuck(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
+	b.ws.running["sess-1"] = false
+
+	require.Nil(t, b.f.Panel())
+	require.Empty(t, b.f.PaletteEntries())
+}
+
+func TestBranchSummary_AnEndEventAfterReconcilingStillCounts(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+	b.ws.running["sess-1"] = false
+	require.Nil(t, b.f.Panel())
+
+	b.event(branchsummaries.StateStored, "summary-1", nil)
+
+	require.Len(t, b.f.PaletteEntries(), 1, "the stored summary can still be discarded")
 }
