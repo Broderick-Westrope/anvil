@@ -156,8 +156,9 @@ Kitty terminal, CI or the user's manual checklist.
 - **Agents are told, not constrained.** When the option is on, the shared
   `internal/agent/templates/base.md.tpl` (prepended to both
   `orchestrator.md.tpl` and `specialist.md.tpl` in
-  `internal/agent/prompts.go`) gets one line, gated through a nil-safe
-  accessor on `PromptDat.Config` (`internal/agent/prompt/prompt.go`), saying Mermaid fences may be rendered as
+  `internal/agent/prompts.go`) gets one line, gated on
+  `PromptDat.Diagrams` (`internal/agent/prompt/prompt.go`), saying Mermaid
+  fences may be rendered as
   diagrams, so agents should pick the diagram type that best fits. No
   supported-types list, so agents don't quietly limit themselves; the
   failure notes show which unsupported types they actually want. "May"
@@ -171,8 +172,9 @@ Kitty terminal, CI or the user's manual checklist.
   and changing the system prompt mid-session. Reporting alone doesn't stop
   live reads: `PromptDat.Config` reads the live config on every prompt
   rebuild (`internal/agent/coordinator.go`). So the effective value is read
-  once at startup into one place (e.g. resolved in `app` and passed to
-  both the UI feature and the prompt data), and both gates use only that.
+  from the config store's startup snapshot
+  (`ConfigStore.DiagramsEnabled`), which both the UI and
+  `PromptDat.Diagrams` use.
   Tests cover toggling each way across a reload, including a specialist
   created after it. Declined: live toggling (a lot of lifecycle for a
   setting changed rarely).

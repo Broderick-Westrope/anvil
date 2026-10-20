@@ -214,7 +214,8 @@ Terms with a specific meaning in this codebase are defined in
   as a `chat.DiagramRenderer`, which reports a `chat.DiagramState`: the
   code block shows while pending, without Kitty support, or (with a note)
   after a failure. Drawing a chat starts renders for diagrams within a
-  screen of the view (`chat.Prefetcher`). An image arriving re-renders
+  screen of the view when the view moves (`Chat.SetPrefetch`,
+  `chat.DiagramRenderer.Prefetch`). An image arriving re-renders
   only diagram items (`Chat.InvalidateDiagrams`), which keeps the scroll
   position. The terminal holds the pixels; Anvil keeps none once sent, and
   deletes the least recently drawn images past 32 MB. The engines load on

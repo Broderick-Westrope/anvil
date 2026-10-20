@@ -101,9 +101,12 @@ directly, because chat items are built in `UI` (`ExtractMessageItems`):
 - `updateSessionMessageToChat` calls `Chat.SyncAssistantSegments`.
 - `selectedItemBindings` adds the diagram node's help entry.
 - `Chat.Draw` prefetches nearby diagrams, `Chat.RemoveMessage` removes a
-  message's `<id>#<n>` nodes, and `Chat.HandleDelayedClick` opens drill-ins
-  through `chat.ClickDrillInHandler`.
-- `list.List` gained `SpliceItems`, `NearbyItems` and `ClampOffset`.
+  message's `<id>#<n>` nodes, `Chat.HandleDelayedClick` opens drill-ins
+  through `chat.ClickDrillInHandler`, and `sourceSelection` copies a
+  `chat.WholeSelectable` item's whole text.
+- `list.List` gained `SpliceItems`, `NearbyItems`, `ClampOffset` and
+  `ScrollPosition`.
+- `image.ResetCache` keeps the records of images a Kitty terminal holds.
 
 Keep any new diagram wiring behind these.
 
