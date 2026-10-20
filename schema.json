@@ -186,7 +186,7 @@
     },
     "BranchSummaryOptions": {
       "properties": {
-        "prompt": {
+        "offer": {
           "type": "string",
           "enum": [
             "ask",

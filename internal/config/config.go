@@ -342,27 +342,27 @@ type Options struct {
 // BranchSummaryOptions configures the summary offered when the user
 // rewinds to an earlier message.
 type BranchSummaryOptions struct {
-	Prompt BranchSummaryPrompt `json:"prompt,omitempty" jsonschema:"description=Whether rewinding asks which summarizer to use (ask)\\, always uses the default summarizer without asking (always)\\, or never summarizes (never),enum=ask,enum=always,enum=never,default=ask"`
+	Offer BranchSummaryOffer `json:"offer,omitempty" jsonschema:"description=Whether rewinding asks which summarizer to use (ask)\\, always uses the default summarizer without asking (always)\\, or never summarizes (never),enum=ask,enum=always,enum=never,default=ask"`
 }
 
-// BranchSummaryPrompt says whether a rewind offers a branch summary.
-type BranchSummaryPrompt string
+// BranchSummaryOffer says whether a rewind offers a branch summary.
+type BranchSummaryOffer string
 
 const (
-	BranchSummaryAsk    BranchSummaryPrompt = "ask"
-	BranchSummaryAlways BranchSummaryPrompt = "always"
-	BranchSummaryNever  BranchSummaryPrompt = "never"
+	BranchSummaryAsk    BranchSummaryOffer = "ask"
+	BranchSummaryAlways BranchSummaryOffer = "always"
+	BranchSummaryNever  BranchSummaryOffer = "never"
 )
 
-// BranchSummaryPrompt returns the configured branch summary prompt mode.
+// BranchSummaryOffer returns whether a rewind offers a branch summary.
 // Unset and unknown values mean ask.
-func (o *Options) BranchSummaryPrompt() BranchSummaryPrompt {
+func (o *Options) BranchSummaryOffer() BranchSummaryOffer {
 	if o == nil || o.BranchSummary == nil {
 		return BranchSummaryAsk
 	}
-	switch o.BranchSummary.Prompt {
+	switch o.BranchSummary.Offer {
 	case BranchSummaryAlways, BranchSummaryNever:
-		return o.BranchSummary.Prompt
+		return o.BranchSummary.Offer
 	default:
 		return BranchSummaryAsk
 	}

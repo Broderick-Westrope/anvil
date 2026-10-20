@@ -199,7 +199,7 @@ func TestBranchSummary_PromptSetting(t *testing.T) {
 	t.Run("never", func(t *testing.T) {
 		t.Parallel()
 		b := newBranchSummaryFixture(t)
-		b.ws.cfg.Options.BranchSummary = &config.BranchSummaryOptions{Prompt: config.BranchSummaryNever}
+		b.ws.cfg.Options.BranchSummary = &config.BranchSummaryOptions{Offer: config.BranchSummaryNever}
 
 		b.rewind("a2", "a1")
 
@@ -209,7 +209,7 @@ func TestBranchSummary_PromptSetting(t *testing.T) {
 	t.Run("always", func(t *testing.T) {
 		t.Parallel()
 		b := newBranchSummaryFixture(t)
-		b.ws.cfg.Options.BranchSummary = &config.BranchSummaryOptions{Prompt: config.BranchSummaryAlways}
+		b.ws.cfg.Options.BranchSummary = &config.BranchSummaryOptions{Offer: config.BranchSummaryAlways}
 
 		b.rewind("a2", "a1")
 

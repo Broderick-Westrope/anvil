@@ -175,7 +175,7 @@ func (b *branchSummaryFeature) observeRewind(done navigateTreeDoneMsg) tea.Cmd {
 	if done.snapshot == nil || done.snapshot.leafID == "" || done.snapshot.leafID == done.leafID {
 		return nil
 	}
-	if b.ws.Config().Options.BranchSummaryPrompt() == config.BranchSummaryNever {
+	if b.ws.Config().Options.BranchSummaryOffer() == config.BranchSummaryNever {
 		return nil
 	}
 	offer := dialog.BranchSummaryOffer{SessionID: sessionID, FromLeafID: done.snapshot.leafID, TargetID: done.leafID}
@@ -245,7 +245,7 @@ func (b *branchSummaryFeature) offer(offer dialog.BranchSummaryOffer) tea.Cmd {
 		return util.ReportWarn("No branch summarizer is available.")
 	}
 	offer.DefaultAgent = b.lastAgent
-	if b.ws.Config().Options.BranchSummaryPrompt() == config.BranchSummaryAlways {
+	if b.ws.Config().Options.BranchSummaryOffer() == config.BranchSummaryAlways {
 		agentName := offer.Agents[0]
 		for _, a := range offer.Agents {
 			if a == b.lastAgent {
