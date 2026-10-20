@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -679,23 +680,28 @@ func (f *mermaidFeature) tmux() bool {
 // cacheBudget. keep is never dropped. It returns the commands that free
 // them in the terminal.
 func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
+	var sent []diagramKey
+	for key, e := range f.entries {
+		if e.bytes > 0 {
+			sent = append(sent, key)
+		}
+	}
+	// Oldest first, in a fixed order, so eviction doesn't depend on map
+	// order.
+	slices.SortFunc(sent, func(a, b diagramKey) int {
+		return cmp.Or(cmp.Compare(f.entries[a].lastUsed, f.entries[b].lastUsed), strings.Compare(a.id(), b.id()))
+	})
 	var held []diagramKey
 	total := 0
 	var cmds []tea.Cmd
-	for key, e := range f.entries {
-		if e.bytes == 0 {
-			continue
-		}
+	for _, key := range sent {
 		if key.width != f.widths[key.kind] && key != keep {
 			cmds = append(cmds, f.forgetLocked(key))
 			continue
 		}
 		held = append(held, key)
-		total += e.bytes
+		total += f.entries[key].bytes
 	}
-	slices.SortFunc(held, func(a, b diagramKey) int {
-		return cmp.Compare(f.entries[a].lastUsed, f.entries[b].lastUsed)
-	})
 	for _, key := range held {
 		if total <= f.cacheBudget {
 			break
