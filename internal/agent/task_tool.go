@@ -98,14 +98,18 @@ func (c *coordinator) delegationRefusal(callerName, target string) string {
 	if !configured {
 		validTypes = make([]string, 0, len(c.agentConfigs))
 		for name := range c.agentConfigs {
-			if name != config.AgentOrchestrator {
+			if name != config.AgentOrchestrator && !c.agentMDs[name].BranchSummarizer {
 				validTypes = append(validTypes, name)
 			}
 		}
 	}
 	callerMD, hasMD := c.agentMDs[callerName]
+	summarizer := c.agentMDs[target].BranchSummarizer
 	c.orchestratorMu.RUnlock()
 
+	if summarizer {
+		return fmt.Sprintf("agent %q summarizes branches and can't be delegated to", target)
+	}
 	if !configured {
 		slices.Sort(validTypes)
 		return fmt.Sprintf("unknown subagent_type %q; valid types: %s", target, strings.Join(validTypes, ", "))

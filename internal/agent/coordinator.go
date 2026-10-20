@@ -890,8 +890,9 @@ func buildOrchestratorBlocksFromState(
 ) (agentsBlock, delegationWorkflow string) {
 	activeAgents := make([]prompt.AgentMD, 0, len(agentMDs))
 	for name, md := range agentMDs {
-		// Only include agents that are configured and not the orchestrator itself.
-		if _, ok := agentConfigs[name]; ok && name != config.AgentOrchestrator {
+		// Only include agents that are configured, not the orchestrator
+		// itself, and not branch summarizers, which the user runs.
+		if _, ok := agentConfigs[name]; ok && name != config.AgentOrchestrator && !md.BranchSummarizer {
 			activeAgents = append(activeAgents, md)
 		}
 	}
