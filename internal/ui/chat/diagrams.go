@@ -178,12 +178,12 @@ func splitMermaid(content string) []markdownSegment {
 			inFence = !fence.closedBy(line)
 		default:
 			f, lang, ok := openCodeFence(line)
-			if ok && lang == "mermaid" {
-				fence, opening, inFence, inMermaid = f, line, true, true
-				continue
-			}
 			fence, inFence = f, ok
-			text.WriteString(line)
+			if ok && lang == "mermaid" {
+				opening, inMermaid = line, true
+			} else {
+				text.WriteString(line)
+			}
 		}
 	}
 	if inMermaid {

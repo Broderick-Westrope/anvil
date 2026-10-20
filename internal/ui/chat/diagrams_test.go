@@ -345,3 +345,98 @@ func TestDiagramItemDoesNotOpenAFailedDiagramInTheBrowser(t *testing.T) {
 	require.True(t, handled)
 	require.Nil(t, cmd, "the export would fail the same way")
 }
+
+func TestOpenCodeFenceInfoString(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		content string
+		want    []string
+	}{
+		"two backticks are no fence": {
+			content: "``mermaid\nA\n``\n",
+		},
+		"a backtick in a backtick info string is no fence": {
+			content: "```mermaid `x`\nA\n```\n",
+		},
+		"a backtick in a tilde info string is fine": {
+			content: "~~~mermaid `x`\nA\n~~~\n",
+			want:    []string{"diagram:A\n"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, segmentKeys(tc.content))
+		})
+	}
+}
+
+func TestSplitMermaidMakesNoEmptyTextSegments(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, []markdownSegment{{text: "A\n", mermaid: true}}, splitMermaid("```mermaid\nA\n```\n"))
+}
+
+func TestIsAssistantHead(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	heads := func(text string) []bool {
+		items := NewAssistantMessageItems(&sty, finishedMessage("m", message.TextContent{Text: text}), fakeDiagrams{})
+		out := make([]bool, len(items))
+		for i, item := range items {
+			out[i] = IsAssistantHead(item)
+		}
+		return out
+	}
+	require.Equal(t, []bool{true}, heads("plain"), "an unsplit message")
+	require.Equal(t, []bool{true, false, false}, heads("Intro\n\n```mermaid\nA\n```\n\nOutro\n"), "text first")
+	require.Equal(t, []bool{true, false}, heads("```mermaid\nA\n```\n\nOutro\n"), "diagram first")
+	require.False(t, IsAssistantHead(NewDiagramDetailItem(&sty, "A\n", fakeDiagrams{})), "not a message node")
+}
+
+func TestDiagramItemSelectedTextIsTheFence(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	item := NewDiagramItem(&sty, finishedMessage("m"), 1, "A\n", fakeDiagrams{})
+	require.Equal(t, "```mermaid\nA\n```", item.SelectedText())
+}
+
+func TestTrimBlankLines(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct{ in, want string }{
+		"all blank":     {in: "  \n\x1b[0m \n", want: ""},
+		"empty":         {in: "", want: ""},
+		"padded code":   {in: " \n  code\n more\n\t\n", want: "  code\n more"},
+		"already tight": {in: "code", want: "code"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, trimBlankLines(tc.in))
+		})
+	}
+}
+
+func TestDiagramCodeBlockCachesPerWidth(t *testing.T) {
+	t.Parallel()
+
+	const src = "flowchart LR\n  A --> B\n"
+	sty := styles.TokyoNight()
+
+	cached := diagramCodeBlock{out: "cached", width: 80}
+	require.Equal(t, "cached", cached.render(&sty, src, 80, DiagramView{}), "same width reuses the render")
+
+	stale := diagramCodeBlock{out: "cached", width: 40}
+	out := stale.render(&sty, src, 80, DiagramView{})
+	require.Contains(t, ansi.Strip(out), "A --> B", "a new width renders again")
+	require.Equal(t, 80, stale.width)
+
+	var fresh diagramCodeBlock
+	out = fresh.render(&sty, src, 80, DiagramView{})
+	require.NotEqual(t, ansi.Strip(out), out, "glamour styles the code block")
+	require.Contains(t, ansi.Strip(out), "A --> B")
+}
