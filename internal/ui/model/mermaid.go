@@ -365,8 +365,8 @@ func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw
 		} else if out := fimage.EncodingKitty.Render(key.id(), e.cols, e.rows); out != "" {
 			return chat.DiagramView{State: chat.DiagramReady, Image: out}
 		}
-		// The image cache was reset (e.g. on session switch) or the
-		// entry was evicted: render it again.
+		// The image cache no longer has it, so the terminal may not
+		// either: render it again.
 		delete(f.entries, key)
 	}
 	req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: cellW, cellH: cellH, maxCols: width}

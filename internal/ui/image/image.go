@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"io"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 
@@ -69,9 +70,11 @@ var (
 )
 
 // ResetCache clears the image cache, freeing all cached decoded images.
+// Records of images sent to a Kitty terminal hold no pixels and stay, since
+// the terminal still has those images.
 func ResetCache() {
 	cachedMutex.Lock()
-	clear(cachedImages)
+	maps.DeleteFunc(cachedImages, func(_ imageKey, c cachedImage) bool { return c.img != nil })
 	cachedMutex.Unlock()
 }
 

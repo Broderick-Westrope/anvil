@@ -37,6 +37,18 @@ func TestResetCache(t *testing.T) {
 }
 
 //nolint:paralleltest // Clears the package-level cache.
+func TestResetCacheKeepsImagesTheTerminalHolds(t *testing.T) {
+	const id = "reset-keeps-sent"
+	img := image.NewRGBA(image.Rect(0, 0, 20, 40))
+	EncodingKitty.Transmit(id, img, CellSize{Width: 10, Height: 20}, 2, 2, false)()
+
+	ResetCache()
+	require.True(t, HasTransmitted(id, 2, 2), "it holds no pixels, and the terminal still has it")
+	require.NotEmpty(t, EncodingKitty.Render(id, 2, 2))
+	EncodingKitty.Forget(id, 2, 2, false)
+}
+
+//nolint:paralleltest // Clears the package-level cache.
 func TestResetIdempotent(t *testing.T) {
 	// Calling Reset on an empty cache should not panic.
 	ResetCache()
