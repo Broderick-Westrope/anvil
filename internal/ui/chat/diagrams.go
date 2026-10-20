@@ -86,54 +86,75 @@ type markdownSegment struct {
 	mermaid bool
 }
 
-// isFenceClose reports whether line closes a backtick fence at the top
-// level.
-func isFenceClose(line string) bool {
-	trimmed := strings.TrimRight(line, " \t\r\n")
-	return strings.HasPrefix(trimmed, "```") && strings.Trim(trimmed, "`") == ""
+// codeFence is an open fenced code block: its fence character and length.
+type codeFence struct {
+	char byte
+	n    int
 }
 
-// splitMermaid cuts content at every closed ```mermaid fence that starts a
+// openCodeFence reports whether line opens a fenced code block at the top
+// level, and returns the first word of its info string.
+func openCodeFence(line string) (codeFence, string, bool) {
+	line = strings.TrimRight(line, "\r\n")
+	if line == "" || (line[0] != '`' && line[0] != '~') {
+		return codeFence{}, "", false
+	}
+	char := line[0]
+	n := len(line) - len(strings.TrimLeft(line, string(char)))
+	info := strings.TrimSpace(line[n:])
+	if n < 3 || (char == '`' && strings.Contains(info, "`")) {
+		return codeFence{}, "", false
+	}
+	lang, _, _ := strings.Cut(info, " ")
+	return codeFence{char: char, n: n}, lang, true
+}
+
+// closedBy reports whether line closes the fence: the same character, at
+// least as many times, and nothing else.
+func (f codeFence) closedBy(line string) bool {
+	line = strings.TrimRight(line, " \t\r\n")
+	return len(line) >= f.n && strings.Trim(line, string(f.char)) == ""
+}
+
+// splitMermaid cuts content at every closed mermaid fence that starts a
 // line at the top level. Fences indented into a list item or quoted in a
 // blockquote stay in the text, since cutting there would break the list or
-// quote in two. Mermaid segments hold the diagram source without the fence
-// lines.
+// quote in two, and so do mermaid examples inside another fence. Mermaid
+// segments hold the diagram source without the fence lines.
 func splitMermaid(content string) []markdownSegment {
 	var segs []markdownSegment
 	var text, diagram strings.Builder
-	inMermaid := false
-	inOtherFence := false
+	var fence codeFence
+	var opening string
+	inFence, inMermaid := false, false
 	for line := range strings.SplitAfterSeq(content, "\n") {
 		switch {
+		case inMermaid && fence.closedBy(line):
+			if text.Len() > 0 {
+				segs = append(segs, markdownSegment{text: text.String()})
+				text.Reset()
+			}
+			segs = append(segs, markdownSegment{text: diagram.String(), mermaid: true})
+			diagram.Reset()
+			inFence, inMermaid = false, false
 		case inMermaid:
-			if isFenceClose(line) {
-				if text.Len() > 0 {
-					segs = append(segs, markdownSegment{text: text.String()})
-					text.Reset()
-				}
-				segs = append(segs, markdownSegment{text: diagram.String(), mermaid: true})
-				diagram.Reset()
-				inMermaid = false
+			diagram.WriteString(line)
+		case inFence:
+			text.WriteString(line)
+			inFence = !fence.closedBy(line)
+		default:
+			f, lang, ok := openCodeFence(line)
+			if ok && lang == "mermaid" {
+				fence, opening, inFence, inMermaid = f, line, true, true
 				continue
 			}
-			diagram.WriteString(line)
-		case inOtherFence:
-			text.WriteString(line)
-			if isFenceClose(line) {
-				inOtherFence = false
-			}
-		case strings.HasPrefix(line, "```mermaid"):
-			inMermaid = true
-		case strings.HasPrefix(line, "```"):
-			inOtherFence = true
-			text.WriteString(line)
-		default:
+			fence, inFence = f, ok
 			text.WriteString(line)
 		}
 	}
 	if inMermaid {
 		// Unclosed: keep it as the markdown it was.
-		text.WriteString("```mermaid\n" + diagram.String())
+		text.WriteString(opening + diagram.String())
 	}
 	if text.Len() > 0 {
 		segs = append(segs, markdownSegment{text: text.String()})
@@ -149,7 +170,7 @@ func splittable(msg *message.Message) bool {
 	if !msg.IsFinished() || msg.IsErrorLike() || msg.FinishReason() == message.FinishReasonCanceled {
 		return false
 	}
-	return strings.Contains(msg.Content().Text, "```mermaid")
+	return strings.Contains(msg.Content().Text, "mermaid")
 }
 
 // NewAssistantMessageItems returns the nodes an assistant message is shown

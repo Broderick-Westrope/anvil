@@ -23,6 +23,54 @@ func TestSplitMermaid(t *testing.T) {
 	}, segs)
 }
 
+func TestSplitMermaidLeavesExamplesInsideOtherFences(t *testing.T) {
+	t.Parallel()
+
+	for name, content := range map[string]string{
+		"tilde fence":         "~~~markdown\n```mermaid\nA --> B\n```\n~~~\n",
+		"longer backtick":     "````markdown\n```mermaid\nA --> B\n```\n````\n",
+		"longer, then outro":  "````md\n```mermaid\nA\n```\n````\n\nOutro\n",
+		"info string not ours": "```mermaidjs\nA\n```\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, []markdownSegment{{text: content}}, splitMermaid(content))
+		})
+	}
+}
+
+func TestSplitMermaidFenceVariants(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		content string
+		want    []markdownSegment
+	}{
+		"tilde mermaid": {
+			content: "~~~mermaid\nA\n~~~\n",
+			want:    []markdownSegment{{text: "A\n", mermaid: true}},
+		},
+		"longer fence holds a shorter one": {
+			content: "````mermaid\nA\n```\nB\n````\n",
+			want:    []markdownSegment{{text: "A\n```\nB\n", mermaid: true}},
+		},
+		"other fence char does not close": {
+			content: "```mermaid\nA\n~~~\n```\n",
+			want:    []markdownSegment{{text: "A\n~~~\n", mermaid: true}},
+		},
+		"info string with attributes": {
+			content: "```mermaid title\nA\n```\n",
+			want:    []markdownSegment{{text: "A\n", mermaid: true}},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, splitMermaid(tc.content))
+		})
+	}
+}
+
 func TestSplitMermaidLeavesNestedFences(t *testing.T) {
 	t.Parallel()
 
