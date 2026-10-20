@@ -818,6 +818,7 @@ func TestBashTool_CompletedCommandOutput(t *testing.T) {
 		background  bool
 		wantContent func(cwd string) string
 		wantOutput  string
+		wantExit    int
 	}{
 		"foreground output": {
 			command:     "echo hi",
@@ -832,6 +833,7 @@ func TestBashTool_CompletedCommandOutput(t *testing.T) {
 			command:     "echo out; exit 3",
 			wantContent: func(cwd string) string { return "out\n\nexit status 3\nExit code 3\n\n<cwd>" + cwd + "</cwd>" },
 			wantOutput:  "out\n\nexit status 3\nExit code 3",
+			wantExit:    3,
 		},
 		"background fast completion": {
 			command:     "echo hi",
@@ -860,6 +862,7 @@ func TestBashTool_CompletedCommandOutput(t *testing.T) {
 			background:  true,
 			wantContent: func(cwd string) string { return "\nexit status 4\nExit code 4\n\n<cwd>" + cwd + "</cwd>" },
 			wantOutput:  "\nexit status 4\nExit code 4",
+			wantExit:    4,
 		},
 	}
 	for name, tc := range tests {
@@ -879,6 +882,7 @@ func TestBashTool_CompletedCommandOutput(t *testing.T) {
 			var meta BashResponseMetadata
 			require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
 			require.Equal(t, tc.wantOutput, meta.Output)
+			require.Equal(t, tc.wantExit, meta.ExitCode)
 			require.Equal(t, tc.background, meta.Background)
 			require.Equal(t, workingDir, meta.WorkingDirectory)
 			require.Equal(t, name, meta.Description)
