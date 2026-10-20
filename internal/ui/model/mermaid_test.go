@@ -1085,3 +1085,27 @@ func TestPruneExportsWarnsNothingWhenItWorks(t *testing.T) {
 	require.NoFileExists(t, old)
 	require.Empty(t, rec.warns)
 }
+
+func TestMermaidFeatureReportsEnginesThatWontLoad(t *testing.T) {
+	t.Parallel()
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	loads := 0
+	f.newRenderer = func() (*mermaid.Renderer, error) {
+		loads++
+		return nil, errors.New("no goja today")
+	}
+	for _, src := range []string{"flowchart LR\n Wont --> Load\n", "flowchart LR\n Still --> Wont\n"} {
+		f.Diagram(src, 80)
+		failed, ok := waitResult(t, f).(diagramReadyMsg)
+		require.True(t, ok)
+		require.ErrorIs(t, failed.err, errEnginesUnavailable)
+		require.ErrorContains(t, failed.err, "no goja today")
+	}
+	require.Equal(t, 2, loads, "each request tries to load the engines again")
+	select {
+	case msg := <-f.results:
+		t.Fatalf("one failure per request, got another %T", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}

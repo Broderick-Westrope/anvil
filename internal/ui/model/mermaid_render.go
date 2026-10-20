@@ -99,21 +99,8 @@ func (f *mermaidFeature) work() {
 	for {
 		select {
 		case req := <-f.requests:
-			if engines == nil {
-				pele, err := mermaid.NewRenderer()
-				if err != nil {
-					f.results <- requestFailed(req, fmt.Errorf("%w: %w", errEnginesUnavailable, err))
-					continue
-				}
-				engines = &diagramEngines{pele: pele}
-			}
-			msg, ok := f.runRequest(engines, req)
-			if !ok {
-				// A panic can leave either engine mid-call; start the next
-				// request from fresh ones.
-				engines.close()
-				engines = nil
-			}
+			var msg tea.Msg
+			engines, msg = f.serve(engines, req)
 			f.results <- msg
 			idle.Reset(f.idleTimeout)
 		case <-idle.C:
@@ -124,6 +111,26 @@ func (f *mermaidFeature) work() {
 			}
 		}
 	}
+}
+
+// serve answers req with engines, loading them first if they're nil, and
+// returns the engines to keep for the next request.
+func (f *mermaidFeature) serve(engines *diagramEngines, req diagramRequest) (*diagramEngines, tea.Msg) {
+	if engines == nil {
+		pele, err := f.newRenderer()
+		if err != nil {
+			return nil, requestFailed(req, fmt.Errorf("%w: %w", errEnginesUnavailable, err))
+		}
+		engines = &diagramEngines{pele: pele}
+	}
+	msg, ok := f.runRequest(engines, req)
+	if !ok {
+		// A panic can leave either engine mid-call; start the next request
+		// from fresh ones.
+		engines.close()
+		return nil, msg
+	}
+	return engines, msg
 }
 
 // runRequest renders or exports req. Pele and resvg run model-written

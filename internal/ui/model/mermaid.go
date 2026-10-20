@@ -167,6 +167,8 @@ type mermaidFeature struct {
 	// the OS; Go would otherwise keep it, and the process stays at its
 	// peak.
 	returnMemory func()
+	// newRenderer loads the layout engine; tests make it fail.
+	newRenderer func() (*mermaid.Renderer, error)
 	// openURL opens a page in the user's browser.
 	openURL   func(string) error
 	listening bool
@@ -203,6 +205,7 @@ func newMermaidFeature(host featureHost, caps *common.Capabilities, com *common.
 		cacheBudget:  diagramCacheBudget,
 		exportDir:    diagramExportDir(),
 		returnMemory: debug.FreeOSMemory,
+		newRenderer:  mermaid.NewRenderer,
 		openURL:      browser.OpenURL,
 	}
 }
