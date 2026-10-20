@@ -321,11 +321,11 @@ func (m *Chat) ItemAt(i int) list.Item {
 // item so the next draw re-renders with the current styles.
 func (m *Chat) InvalidateRenderCaches() {
 	// Items may change height, which leaves the line offset stale: stay
-	// pinned to the bottom if we were, otherwise keep the offset inside
-	// its item.
-	wasFollowing := m.follow || m.AtBottom()
+	// pinned to the bottom if following, otherwise keep the offset inside
+	// its item. Being at the bottom isn't enough: a drill-in whose short
+	// placeholder fits on screen must stay at the top when it grows.
 	chat.ClearItemCaches(m.MessageItems())
-	if wasFollowing {
+	if m.follow {
 		m.ScrollToBottom()
 		return
 	}

@@ -232,3 +232,20 @@ func TestChatKeepsAShrunkDiagramInView(t *testing.T) {
 	c.InvalidateRenderCaches()
 	require.Contains(t, ansi.Strip(c.list.Render()), "IMG", "the offset no longer points past the diagram")
 }
+
+func TestChatOpenedAtTheTopStaysThereWhenADiagramGrows(t *testing.T) {
+	t.Parallel()
+
+	com := common.DefaultCommon(nil)
+	diagrams := &switchDiagrams{}
+	c := NewChat(com)
+	c.SetSize(80, 10)
+	c.SetMessages(chat.NewDiagramDetailItem(com.Styles, "A\n", diagrams))
+	c.SetFollow(false)
+	c.ScrollToTop()
+	require.True(t, c.AtBottom(), "the pending view fits on screen")
+
+	diagrams.view = chat.DiagramView{State: chat.DiagramReady, Image: strings.TrimSuffix(strings.Repeat("ROW\n", 30), "\n")}
+	c.InvalidateRenderCaches()
+	require.Zero(t, c.list.Offset(), "the drill-in still starts at the top of the diagram")
+}
