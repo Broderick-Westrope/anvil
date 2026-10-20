@@ -345,3 +345,4 @@ func TestDiagramCodeBlockHasNoBlankPaddingLines(t *testing.T) {
 		})
 	}
 }
+

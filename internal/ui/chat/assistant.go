@@ -639,7 +639,7 @@ func (a *AssistantMessageItem) ThinkingDrillIn() tea.Cmd {
 func (a *AssistantMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	switch key.String() {
 	case "c", "y":
-		text := a.text()
+		text := a.message.Content().Text
 		return true, common.CopyToClipboard(text, "Message copied to clipboard")
 	case "right", "l":
 		// Drill into the thinking, matching the tool and agent →/l pattern.
