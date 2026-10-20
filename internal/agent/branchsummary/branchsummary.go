@@ -27,9 +27,12 @@ const (
 	maxToolInputChars      = 500
 	maxToolResultChars     = 2_000
 	// maxSummaryChars caps the agent's output before the file lists are
-	// appended.
+	// appended, and maxStoredChars caps the stored summary as a whole.
 	maxSummaryChars = 12_000
-	charsPerToken   = 4
+	maxStoredChars  = 16_000
+	// maxEntryChars caps one ledger entry: a path or a command.
+	maxEntryChars = 300
+	charsPerToken = 4
 )
 
 // Abandoned returns the messages on fromPath after its deepest common
@@ -56,10 +59,17 @@ func isConversation(m message.Message) bool {
 	return m.MessageType == message.MessageTypeMessage || m.MessageType == ""
 }
 
-var stateChangingCommand = regexp.MustCompile(
-	`\bgit\s+(commit|push|merge|rebase|reset|cherry-pick|tag|checkout\s+-b|switch\s+-c)\b` +
-		`|\bgh\s+pr\s+(create|edit|merge|comment|close|ready)\b` +
-		`|\bwtp\s+(add|remove)\b`)
+// gitOptions matches git's global options before its subcommand, such as
+// -C <dir>, which worktree workflows use for nearly every command.
+const gitOptions = `((?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--[\w-]+(?:=\S+)?))*)`
+
+var (
+	stateChangingCommand = regexp.MustCompile(
+		`\bgit` + gitOptions + `\s+(commit|push|merge|rebase|reset|cherry-pick|tag|checkout\s+-b|switch\s+-c)\b` +
+			`|\bgh\s+pr\s+(create|edit|merge|comment|close|ready)\b` +
+			`|\bwtp\s+(add|remove)\b`)
+	gitDirOption = regexp.MustCompile(`-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))`)
+)
 
 var (
 	shaPattern    = regexp.MustCompile(`\b[0-9a-f]{7,40}\b`)
@@ -131,8 +141,8 @@ func (b *ledgerBuilder) addCall(messageID string, call message.ToolCall, res mes
 		if command := inputField(call, "command"); stateChangingCommand.MatchString(command) {
 			b.events = append(b.events, message.LedgerEvent{
 				Tool:    call.Name,
-				Command: command,
-				Dir:     inputField(call, "working_dir"),
+				Command: truncate(command, maxEntryChars),
+				Dir:     commandDir(command, inputField(call, "working_dir")),
 				Status:  status(res, hasResult),
 				Refs:    refs(res.Content),
 			})
@@ -159,6 +169,19 @@ func sortedUnique(s []string) []string {
 	out := slices.Clone(s)
 	slices.Sort(out)
 	return slices.Compact(out)
+}
+
+// commandDir is the directory a git command acted in: its -C option if it
+// has one, otherwise the directory it ran in.
+func commandDir(command, workingDir string) string {
+	m := stateChangingCommand.FindStringSubmatch(command)
+	if m == nil || m[1] == "" {
+		return workingDir
+	}
+	if d := gitDirOption.FindStringSubmatch(m[1]); d != nil {
+		return d[1] + d[2] + d[3]
+	}
+	return workingDir
 }
 
 func status(res message.ToolResult, hasResult bool) message.LedgerStatus {
@@ -226,7 +249,11 @@ func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, bu
 	var sb strings.Builder
 	sb.WriteString("Summarise the abandoned conversation branch below for the conversation it branched from. ")
 	sb.WriteString("The ledger was extracted from the branch's tool calls in code: it records what was attempted and observed, not verified current state.\n\n")
-	writeLedger(&sb, ledger)
+	var ledgerText strings.Builder
+	writeLedger(&ledgerText, ledger)
+	// The ledger may take at most half the budget, so the conversation
+	// always gets the rest.
+	sb.WriteString(truncate(ledgerText.String(), budget*charsPerToken/2))
 	if focus = strings.TrimSpace(focus); focus != "" {
 		fmt.Fprintf(&sb, "<focus>\n%s\n</focus>\n\n", truncate(focus, maxFocusChars))
 	}
@@ -377,7 +404,7 @@ func Finalize(summary string, ledger message.BranchLedger) string {
 	sb.WriteString(summary)
 	writeTagged(&sb, "modified-files", ledger.Modified)
 	writeTagged(&sb, "read-files", ledger.Read)
-	return sb.String()
+	return truncate(sb.String(), maxStoredChars)
 }
 
 func writeTagged(sb *strings.Builder, tag string, items []string) {
@@ -390,7 +417,7 @@ func writeTagged(sb *strings.Builder, tag string, items []string) {
 			fmt.Fprintf(sb, "+%d more\n", len(items)-i)
 			break
 		}
-		sb.WriteString(redact(item) + "\n")
+		sb.WriteString(redact(truncate(item, maxEntryChars)) + "\n")
 	}
 	fmt.Fprintf(sb, "</%s>", tag)
 }

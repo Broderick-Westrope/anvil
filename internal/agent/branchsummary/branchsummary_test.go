@@ -338,3 +338,45 @@ func TestFinalize_CapsAndRedactsText(t *testing.T) {
 	require.Less(t, len(got), 20_000)
 	require.Contains(t, got, "[summary truncated]")
 }
+
+func TestLedger_UnderstandsGitDirectoryOption(t *testing.T) {
+	t.Parallel()
+
+	rng := []message.Message{
+		msg("a1", message.Assistant,
+			call("c", "bash", map[string]string{"command": `git -C "/wt/feat x" commit -m fix`, "working_dir": "/repo"}),
+			call("p", "bash", map[string]string{"command": "git -C /wt/feat push -u origin feat"}),
+			call("l", "bash", map[string]string{"command": "git -C /wt/feat log -5"}),
+		),
+		msg("t1", message.Tool, result("c", "[feat 9ab12cd] fix", false), result("p", "", false), result("l", "", false)),
+	}
+
+	got := branchsummary.Ledger(rng, noChildren)
+
+	require.Len(t, got.Events, 2)
+	require.Equal(t, "/wt/feat x", got.Events[0].Dir)
+	require.Equal(t, "/wt/feat", got.Events[1].Dir)
+}
+
+func TestPrompt_BoundsTheLedger(t *testing.T) {
+	t.Parallel()
+
+	huge := message.BranchLedger{Events: []message.LedgerEvent{{Command: "git commit -m " + strings.Repeat("w ", 20_000), Status: message.LedgerSucceeded}}}
+
+	got := branchsummary.Prompt(nil, huge, "", 2_000)
+
+	require.LessOrEqual(t, len(got)/4, 2_000)
+}
+
+func TestFinalize_CapsTheWholeSummary(t *testing.T) {
+	t.Parallel()
+
+	var modified []string
+	for i := range 50 {
+		modified = append(modified, "/"+strings.Repeat("d", 1_000)+fmt.Sprint(i))
+	}
+
+	got := branchsummary.Finalize(strings.Repeat("word ", 10_000), message.BranchLedger{Modified: modified})
+
+	require.LessOrEqual(t, len(got), 20_000)
+}
