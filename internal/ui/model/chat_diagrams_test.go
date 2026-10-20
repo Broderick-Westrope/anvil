@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/key"
@@ -9,6 +10,8 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -180,4 +183,52 @@ func TestHelpShowsDiagramKeysOnADiagramNode(t *testing.T) {
 
 	m.focus = uiFocusEditor
 	require.NotContains(t, helpTexts(m.ShortHelp()), "o open in browser", "the editor has focus")
+}
+
+// switchDiagrams answers every request with view, which a test can change.
+type switchDiagrams struct{ view chat.DiagramView }
+
+func (s *switchDiagrams) Diagram(string, int) chat.DiagramView     { return s.view }
+func (s *switchDiagrams) FullDiagram(string, int) chat.DiagramView { return s.view }
+
+// diagramChat is a 10-row chat holding a text message, then a diagram whose
+// code block is far taller than the image it turns into.
+func diagramChat(t *testing.T) (*Chat, *switchDiagrams) {
+	t.Helper()
+	com := common.DefaultCommon(nil)
+	src := strings.Repeat("  A --> B\n", 30)
+	diagrams := &switchDiagrams{}
+	msg := &message.Message{ID: "m", Role: message.Assistant, Parts: []message.ContentPart{
+		message.TextContent{Text: "Intro"}, message.Finish{Reason: message.FinishReasonEndTurn},
+	}}
+	c := NewChat(com)
+	c.SetSize(80, 10)
+	c.SetMessages(chat.NewAssistantMessageItem(com.Styles, msg), chat.NewDiagramItem(com.Styles, msg, 1, src, diagrams))
+	return c, diagrams
+}
+
+func TestChatFollowsTheBottomWhenADiagramShrinks(t *testing.T) {
+	t.Parallel()
+
+	c, diagrams := diagramChat(t)
+	c.ScrollToBottom()
+	require.True(t, c.AtBottom())
+
+	diagrams.view = chat.DiagramView{State: chat.DiagramReady, Image: "IMG1\nIMG2"}
+	c.InvalidateRenderCaches()
+	require.Contains(t, ansi.Strip(c.list.Render()), "IMG2")
+	require.True(t, c.AtBottom())
+}
+
+func TestChatKeepsAShrunkDiagramInView(t *testing.T) {
+	t.Parallel()
+
+	c, diagrams := diagramChat(t)
+	c.ScrollToBottom()
+	c.ScrollBy(-3)
+	require.False(t, c.Follow())
+
+	diagrams.view = chat.DiagramView{State: chat.DiagramReady, Image: "IMG1\nIMG2"}
+	c.InvalidateRenderCaches()
+	require.Contains(t, ansi.Strip(c.list.Render()), "IMG", "the offset no longer points past the diagram")
 }

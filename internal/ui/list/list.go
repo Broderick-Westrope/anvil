@@ -760,6 +760,14 @@ func (l *List) ScrollToBottom() {
 	l.offsetLine = lastOffsetLine
 }
 
+// ClampOffset moves the scroll offset back onto its item's last line when
+// the item has shrunk past it since the offset was set, so the view doesn't
+// start in the gap after the item or beyond.
+func (l *List) ClampOffset() {
+	height := l.getItem(l.offsetIdx).height
+	l.offsetLine = max(min(l.offsetLine, height-1), 0)
+}
+
 // ScrollToSelected scrolls the list to the selected item.
 func (l *List) ScrollToSelected() {
 	if l.selectedIdx < 0 || l.selectedIdx >= len(l.items) {

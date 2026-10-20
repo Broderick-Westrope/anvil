@@ -1,6 +1,7 @@
 package list
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -68,4 +69,27 @@ func TestList_SpliceItemsRejectsBadRange(t *testing.T) {
 	l.SpliceItems(2, 2, newTrackedItem("x", "body", true))
 	l.SpliceItems(-1, 1)
 	require.Equal(t, []string{"0", "1", "2"}, itemBodies(l))
+}
+
+func TestList_ClampOffsetAfterAnItemShrinks(t *testing.T) {
+	t.Parallel()
+
+	tall := newTrackedItem("tall", strings.TrimSuffix(strings.Repeat("line\n", 20), "\n"), false)
+	l := NewList(newTrackedItem("top", "top", false), tall)
+	l.SetGap(1)
+	l.SetSize(40, 5)
+	l.ScrollToBottom()
+	offsetIdx, offsetLine := l.offsetIdx, l.offsetLine
+	require.Equal(t, 1, offsetIdx)
+	require.Positive(t, offsetLine)
+
+	tall.body = "short"
+	tall.Bump()
+	l.ClampOffset()
+	require.Equal(t, 1, l.offsetIdx)
+	require.Zero(t, l.offsetLine, "the offset is back inside the one-line item")
+	require.Contains(t, l.Render(), "short")
+
+	l.ClampOffset()
+	require.Zero(t, l.offsetLine, "an offset already inside is kept")
 }

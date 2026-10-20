@@ -320,7 +320,16 @@ func (m *Chat) ItemAt(i int) list.Item {
 // InvalidateRenderCaches drops cached rendered output on every message
 // item so the next draw re-renders with the current styles.
 func (m *Chat) InvalidateRenderCaches() {
+	// Items may change height, which leaves the line offset stale: stay
+	// pinned to the bottom if we were, otherwise keep the offset inside
+	// its item.
+	wasFollowing := m.follow || m.AtBottom()
 	chat.ClearItemCaches(m.MessageItems())
+	if wasFollowing {
+		m.ScrollToBottom()
+		return
+	}
+	m.list.ClampOffset()
 }
 
 // MessageItems returns the chat's message items in order.
