@@ -595,9 +595,14 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 		if msg.err != nil {
 			slog.Warn("Failed to render mermaid diagram", "err", msg.err)
 			f.mu.Lock()
-			f.entries[msg.key] = &diagramEntry{state: diagramFailed, err: msg.err.Error()}
+			e := f.entries[msg.key]
+			if e != nil {
+				e.state, e.err = diagramFailed, msg.err.Error()
+			}
 			f.mu.Unlock()
-			f.host.InvalidateChat()
+			if e != nil {
+				f.host.InvalidateChat()
+			}
 			return f.listen, true
 		}
 		f.mu.Lock()

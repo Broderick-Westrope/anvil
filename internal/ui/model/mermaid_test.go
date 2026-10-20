@@ -554,3 +554,20 @@ func TestMermaidFeatureImageHashCoversThePalette(t *testing.T) {
 	require.NotEqual(t, plain.imageHash("A", "#000000"), changed.imageHash("A", "#000000"))
 	require.Equal(t, plain.imageHash("A", "#000000"), plain.imageHash("A", "#000000"))
 }
+
+func TestMermaidFeatureDropsAFailureForAForgottenDiagram(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	caps := kittyCaps()
+	f := newTestMermaidFeature(t, host, caps)
+	f.Observe(nil)
+	f.Diagram("notADiagram at all\n", 80)
+	failed, ok := waitResult(t, f).(diagramReadyMsg)
+	require.True(t, ok)
+
+	caps.PixelX = 1200 // Forgets every entry.
+	f.Observe(nil)
+	f.HandleMsg(failed)
+	require.NotContains(t, f.entries, failed.key, "nothing is kept for the old cells")
+}
