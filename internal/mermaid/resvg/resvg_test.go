@@ -71,22 +71,22 @@ func TestRenderRecyclesGrownInstance(t *testing.T) {
 
 	_, err = e.Render([]byte(rectSVG), 10, 10)
 	require.NoError(t, err)
-	require.NotZero(t, e.MemorySize(), "a small render keeps its instance")
+	require.NotZero(t, e.memorySize(), "a small render keeps its instance")
 
 	_, err = e.Render([]byte(rectSVG), 2000, 2000)
 	require.NoError(t, err)
-	require.Zero(t, e.MemorySize(), "memory grown past the limit is dropped")
+	require.Zero(t, e.memorySize(), "memory grown past the limit is dropped")
 
 	_, err = e.Render([]byte(rectSVG), 10, 10)
 	require.NoError(t, err)
-	require.NotZero(t, e.MemorySize())
-	require.Less(t, e.MemorySize(), uint32(8<<20), "the fresh instance starts small")
+	require.NotZero(t, e.memorySize())
+	require.Less(t, e.memorySize(), uint32(8<<20), "the fresh instance starts small")
 }
 
 func TestRenderPastTheMemoryLimitFailsAndRecovers(t *testing.T) {
 	t.Parallel()
 
-	e, err := NewWithLimits(t.Context(), Limits{Memory: 16 << 20, Timeout: DefaultLimits.Timeout})
+	e, err := newWithLimits(t.Context(), renderLimits{Memory: 16 << 20, Timeout: defaultLimits.Timeout})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
 
@@ -99,13 +99,13 @@ func TestRenderPastTheMemoryLimitFailsAndRecovers(t *testing.T) {
 func TestRenderPastItsDeadlineFailsAndRecovers(t *testing.T) {
 	t.Parallel()
 
-	e, err := NewWithLimits(t.Context(), Limits{Memory: DefaultLimits.Memory, Timeout: time.Nanosecond})
+	e, err := newWithLimits(t.Context(), renderLimits{Memory: defaultLimits.Memory, Timeout: time.Nanosecond})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
 
 	_, err = e.Render([]byte(rectSVG), 40, 20)
 	require.ErrorIs(t, err, ErrRenderTimeout)
-	e.limits.Timeout = DefaultLimits.Timeout
+	e.limits.Timeout = defaultLimits.Timeout
 	_, err = e.Render([]byte(rectSVG), 40, 20)
 	require.NoError(t, err, "the next render starts from a fresh instance")
 }

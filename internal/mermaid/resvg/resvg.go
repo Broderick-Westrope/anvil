@@ -3,8 +3,8 @@
 //
 // resvg.wasm and the ABI below come from github.com/boolean-maybe/go-resvg
 // v0.0.2 (Apache-2.0, see LICENSE): resvg 0.44 with DejaVu Sans built in.
-// The Go side is rewritten: one Engine owns its runtime and its single
-// instance, and Close frees all of it.
+// One Engine owns its runtime and its single instance, and Close frees all
+// of it.
 //
 // The fonts are compiled into resvg.wasm, so changing them means rebuilding
 // it from the Rust crate in the go-resvg repository at v0.0.2 for the
@@ -39,31 +39,31 @@ var (
 	// ErrRenderFailed is returned when rasterization fails, e.g. for a zero
 	// or oversized canvas.
 	ErrRenderFailed = errors.New("resvg: render failed")
-	// ErrRenderTimeout is returned when a render runs past Limits.Timeout.
+	// ErrRenderTimeout is returned when a render runs past its deadline.
 	ErrRenderTimeout = errors.New("resvg: render took too long")
 )
 
-// Limits bound what one render may use. Running past either fails the
+// renderLimits bound what one render may use. Running past either fails the
 // render, and the next one starts from a fresh instance.
-type Limits struct {
+type renderLimits struct {
 	// Memory caps the WebAssembly linear memory, in bytes.
 	Memory uint32
 	// Timeout bounds one render.
 	Timeout time.Duration
 }
 
-// DefaultLimits leave room for the largest image Anvil asks for (a 64 MB
+// defaultLimits leave room for the largest image Anvil asks for (a 64 MB
 // full-size diagram) and its working memory.
-var DefaultLimits = Limits{Memory: 256 << 20, Timeout: 10 * time.Second}
+var defaultLimits = renderLimits{Memory: 256 << 20, Timeout: 10 * time.Second}
 
 // wasmPageSize is the size of a WebAssembly memory page.
 const wasmPageSize = 64 << 10
 
-// DefaultMaxMemory is the WebAssembly memory size above which an Engine
+// defaultMaxMemory is the WebAssembly memory size above which an Engine
 // replaces its instance after a render. Linear memory never shrinks, so
 // one huge diagram would otherwise pin its peak for good. Typical diagrams
 // settle at about 10 MB.
-const DefaultMaxMemory = 32 << 20
+const defaultMaxMemory = 32 << 20
 
 // Engine rasterizes SVG. It is not safe for concurrent use.
 type Engine struct {
@@ -72,7 +72,7 @@ type Engine struct {
 	compiled  wazero.CompiledModule
 	inst      *instance
 	maxMemory uint32
-	limits    Limits
+	limits    renderLimits
 }
 
 type instance struct {
@@ -82,14 +82,13 @@ type instance struct {
 	render api.Function
 }
 
-// New compiles the module with DefaultLimits. Compiling takes a few hundred
+// New compiles the module with the default render limits. Compiling takes a few hundred
 // milliseconds and the compiled code is most of the Engine's memory.
 func New(ctx context.Context) (*Engine, error) {
-	return NewWithLimits(ctx, DefaultLimits)
+	return newWithLimits(ctx, defaultLimits)
 }
 
-// NewWithLimits compiles the module with limits.
-func NewWithLimits(ctx context.Context, limits Limits) (*Engine, error) {
+func newWithLimits(ctx context.Context, limits renderLimits) (*Engine, error) {
 	cfg := wazero.NewRuntimeConfig().
 		WithMemoryLimitPages(limits.Memory / wasmPageSize).
 		WithCloseOnContextDone(true)
@@ -103,7 +102,7 @@ func NewWithLimits(ctx context.Context, limits Limits) (*Engine, error) {
 		_ = rt.Close(ctx)
 		return nil, fmt.Errorf("resvg: compile: %w", err)
 	}
-	return &Engine{ctx: ctx, rt: rt, compiled: compiled, maxMemory: DefaultMaxMemory, limits: limits}, nil
+	return &Engine{ctx: ctx, rt: rt, compiled: compiled, maxMemory: defaultMaxMemory, limits: limits}, nil
 }
 
 // Close frees the instance, the compiled code and the runtime.
@@ -112,9 +111,9 @@ func (e *Engine) Close() error {
 	return e.rt.Close(e.ctx)
 }
 
-// MemorySize is the current instance's linear memory in bytes, or 0 when
+// memorySize is the current instance's linear memory in bytes, or 0 when
 // there is no instance.
-func (e *Engine) MemorySize() uint32 {
+func (e *Engine) memorySize() uint32 {
 	if e.inst == nil {
 		return 0
 	}
