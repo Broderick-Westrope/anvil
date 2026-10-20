@@ -109,6 +109,9 @@ type Workspace interface {
 	GetBranchPath(ctx context.Context, leafMessageID string) ([]message.Message, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]message.Message, error)
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
+	// WriteMetadataEntry creates a metadata message under the session's
+	// current leaf, whatever params.ParentMessageID says, and advances the
+	// leaf to it.
 	WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error
 
 	// Agent

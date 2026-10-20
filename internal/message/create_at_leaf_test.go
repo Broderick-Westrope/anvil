@@ -75,3 +75,18 @@ func TestDeleteChildless(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestAppendToLeaf(t *testing.T) {
+	t.Parallel()
+
+	svc, _, sessionID := newTestService(t)
+	a, err := svc.Create(t.Context(), sessionID, message.CreateMessageParams{Role: message.User})
+	require.NoError(t, err)
+
+	b, err := svc.AppendToLeaf(t.Context(), sessionID, message.CreateMessageParams{
+		Role: message.User, MessageType: message.MessageTypeMCPToggle, ParentMessageID: "stale-parent",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, a.ID, b.ParentMessageID, "parented on the leaf read in the same transaction")
+}

@@ -2584,12 +2584,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort && !m.isAgentBusy() {
 			ws := m.com.Workspace
 			sid := m.session.ID
-			leafID := m.session.LeafMessageID
 			effort := msg.Effort
 			cmds = append(cmds, func() tea.Msg {
 				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					ParentMessageID: leafID,
-					MessageType:     message.MessageTypeThinkingLevelChange,
+					MessageType: message.MessageTypeThinkingLevelChange,
 					Parts: []message.ContentPart{
 						message.ThinkingLevelChangeContent{ThinkingLevel: effort},
 					},
@@ -2739,13 +2737,11 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if m.session != nil && m.session.LeafMessageID != "" {
 			ws := m.com.Workspace
 			sid := m.session.ID
-			leafID := m.session.LeafMessageID
 			serverName := msg.ServerName
 			enabled := msg.Enabled
 			cmds = append(cmds, func() tea.Msg {
 				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					ParentMessageID: leafID,
-					MessageType:     message.MessageTypeMCPToggle,
+					MessageType: message.MessageTypeMCPToggle,
 					Parts: []message.ContentPart{
 						message.MCPToggleContent{ServerName: serverName, Enabled: enabled},
 					},
@@ -2840,13 +2836,11 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 			if oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model {
 				ws := m.com.Workspace
 				sid := m.session.ID
-				leafID := m.session.LeafMessageID
 				provider := msg.Model.Provider
 				modelID := msg.Model.Model
 				cmds = append(cmds, func() tea.Msg {
 					err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-						ParentMessageID: leafID,
-						MessageType:     message.MessageTypeModelChange,
+						MessageType: message.MessageTypeModelChange,
 						Parts: []message.ContentPart{
 							message.ModelChangeContent{Provider: provider, ModelID: modelID},
 						},

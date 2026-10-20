@@ -106,3 +106,22 @@ func TestCancelKeysReachARunningBranchSummaryFirst(t *testing.T) {
 		})
 	}
 }
+
+func TestMetadataEntriesFollowTheStoredLeaf(t *testing.T) {
+	m, f, source := branchUI(t)
+	summary, err := f.Messages.Create(f.Context, m.session.ID, message.CreateMessageParams{
+		ParentMessageID: source.ID, Role: message.User, MessageType: message.MessageTypeBranchSummary,
+		Parts: []message.ContentPart{message.BranchSummaryContent{Summary: "s"}},
+	})
+	require.NoError(t, err)
+
+	// The UI's cached leaf is still the source when the toggle is written.
+	require.NoError(t, f.Workspace.WriteMetadataEntry(f.Context, m.session.ID, message.CreateMessageParams{
+		ParentMessageID: source.ID, MessageType: message.MessageTypeMCPToggle,
+		Parts: []message.ContentPart{message.MCPToggleContent{ServerName: "linear", Enabled: true}},
+	}))
+
+	children, err := f.Messages.GetChildren(f.Context, summary.ID)
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+}

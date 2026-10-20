@@ -56,6 +56,10 @@ type Service interface {
 	// the session's leaf to its parent if the message was the leaf, in
 	// one transaction. It returns ErrHasChildren otherwise.
 	DeleteChildless(ctx context.Context, sessionID, id string) error
+	// AppendToLeaf creates the message as a child of the session's current
+	// leaf, read in the same transaction, whatever params.ParentMessageID
+	// says.
+	AppendToLeaf(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error)
 	Update(ctx context.Context, message Message) error
 	Get(ctx context.Context, id string) (Message, error)
 	List(ctx context.Context, sessionID string) ([]Message, error)
@@ -279,17 +283,35 @@ func (s *service) forget(id string) {
 // ErrLeafMoved means CreateAtLeaf found the session's leaf had moved.
 var ErrLeafMoved = errors.New("session leaf moved")
 
+// leafRule says how create treats the session's leaf before inserting.
+type leafRule int
+
+const (
+	// leafAny inserts under params.ParentMessageID whatever the leaf is.
+	leafAny leafRule = iota
+	// leafMustBeParent inserts only if the leaf is params.ParentMessageID.
+	leafMustBeParent
+	// leafIsParent inserts under the leaf, ignoring params.ParentMessageID.
+	leafIsParent
+)
+
 func (s *service) Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error) {
-	return s.create(ctx, sessionID, nil, params)
+	return s.create(ctx, sessionID, leafAny, params)
 }
 
 func (s *service) CreateAtLeaf(ctx context.Context, sessionID, leaf string, params CreateMessageParams) (Message, error) {
-	return s.create(ctx, sessionID, &leaf, params)
+	params.ParentMessageID = leaf
+	return s.create(ctx, sessionID, leafMustBeParent, params)
 }
 
-// create inserts the message and advances the session's leaf to it. When
-// expectedLeaf is set, it first checks the leaf in the same transaction.
-func (s *service) create(ctx context.Context, sessionID string, expectedLeaf *string, params CreateMessageParams) (Message, error) {
+func (s *service) AppendToLeaf(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error) {
+	return s.create(ctx, sessionID, leafIsParent, params)
+}
+
+// create inserts the message and advances the session's leaf to it,
+// first checking or reading the leaf in the same transaction as rule
+// says.
+func (s *service) create(ctx context.Context, sessionID string, rule leafRule, params CreateMessageParams) (Message, error) {
 	if params.Role != Assistant && (params.MessageType == "" || params.MessageType == MessageTypeMessage) {
 		params.Parts = append(params.Parts, Finish{
 			Reason: "stop",
@@ -328,13 +350,16 @@ func (s *service) create(ctx context.Context, sessionID string, expectedLeaf *st
 	defer tx.Rollback() //nolint:errcheck
 
 	qtx := db.New(tx)
-	if expectedLeaf != nil {
+	if rule != leafAny {
 		sess, err := qtx.GetSessionByID(ctx, sessionID)
 		if err != nil {
 			return Message{}, fmt.Errorf("get session %s: %w", sessionID, err)
 		}
-		if sess.LeafMessageID.String != *expectedLeaf {
+		if rule == leafMustBeParent && sess.LeafMessageID.String != params.ParentMessageID {
 			return Message{}, ErrLeafMoved
+		}
+		if rule == leafIsParent {
+			createParams.ParentMessageID = sess.LeafMessageID
 		}
 	}
 	dbMessage, err = qtx.CreateMessage(ctx, createParams)
