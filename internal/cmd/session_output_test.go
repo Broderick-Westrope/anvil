@@ -31,6 +31,8 @@ func TestOutputSessionHumanPrintsTheTranscript(t *testing.T) {
 	err = outputSessionHuman(t.Context(), nil, session.Session{ID: "0123456789abcdef", Title: "Diagram"}, msgs)
 	os.Stdout = stdout
 	require.NoError(t, err)
+	// Windows can't remove the temp dir while the file is open.
+	require.NoError(t, out.Close())
 
 	printed, err := os.ReadFile(out.Name())
 	require.NoError(t, err)
