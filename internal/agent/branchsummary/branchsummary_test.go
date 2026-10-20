@@ -428,3 +428,20 @@ func TestLedger_ReadsBashOutcomes(t *testing.T) {
 		})
 	}
 }
+
+func TestRedaction_KeepsLedgerCommitSHAs(t *testing.T) {
+	t.Parallel()
+
+	sha := "3f2a9c1e5b7d4a6f8e0c2b4d6a8f0e2c4b6d8a0f"
+	other := "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d"
+	ledger := message.BranchLedger{Events: []message.LedgerEvent{{Command: "git commit -m x", Status: message.LedgerSucceeded, Refs: []string{sha}}}}
+	rng := []message.Message{msg("a1", message.Assistant, text("Committed "+sha+"; unrelated "+other))}
+
+	prompt := branchsummary.Prompt(rng, ledger, "", 10_000)
+	stored := branchsummary.Finalize("Commit "+sha+" is pushed. Token "+other, ledger)
+
+	require.Equal(t, 2, strings.Count(prompt, sha), "in the ledger and the conversation")
+	require.NotContains(t, prompt, other)
+	require.Contains(t, stored, sha)
+	require.NotContains(t, stored, other)
+}

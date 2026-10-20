@@ -298,7 +298,7 @@ func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, bu
 		sb.WriteString(s)
 	}
 	sb.WriteString("</conversation>\n")
-	return redact(sb.String())
+	return redactKeeping(sb.String(), ledgerRefs(ledger))
 }
 
 func writeLedger(sb *strings.Builder, l message.BranchLedger) {
@@ -404,7 +404,7 @@ func truncate(s string, maxChars int) string {
 // its length and appends the ledger's file lists verbatim, so they reach
 // later turns exactly as extracted.
 func Finalize(summary string, ledger message.BranchLedger) string {
-	summary = strings.TrimSpace(redact(summary))
+	summary = strings.TrimSpace(redactKeeping(summary, ledgerRefs(ledger)))
 	if len(summary) > maxSummaryChars {
 		summary = summary[:maxSummaryChars] + "\n[summary truncated]"
 	}
@@ -431,3 +431,31 @@ func writeTagged(sb *strings.Builder, tag string, items []string) {
 }
 
 func redact(s string) string { return bouncer.Redact(s) }
+
+// redactKeeping redacts s but keeps the given refs: commit SHAs the
+// ledger took from git's own output, which the generic long-run rule
+// would otherwise remove.
+func redactKeeping(s string, keep []string) string {
+	placeholders := make([]string, 0, 2*len(keep))
+	for i, ref := range keep {
+		placeholder := fmt.Sprintf("\x00%d\x00", i)
+		s = strings.ReplaceAll(s, ref, placeholder)
+		placeholders = append(placeholders, placeholder, ref)
+	}
+	return strings.NewReplacer(placeholders...).Replace(redact(s))
+}
+
+// ledgerRefs returns the ledger's commit SHAs, longest first so a short
+// SHA never splits a longer one.
+func ledgerRefs(l message.BranchLedger) []string {
+	var refs []string
+	for _, e := range l.Events {
+		for _, r := range e.Refs {
+			if shaPattern.MatchString(r) && !slices.Contains(refs, r) {
+				refs = append(refs, r)
+			}
+		}
+	}
+	slices.SortFunc(refs, func(a, b string) int { return len(b) - len(a) })
+	return refs
+}

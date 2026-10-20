@@ -111,11 +111,11 @@ func (b *branchSummaryFeature) Observe(msg tea.Msg) tea.Cmd {
 			switch {
 			case r.summaryID != "" && msg.Payload.ParentMessageID == r.summaryID:
 				delete(b.runs, msg.Payload.SessionID)
-			case r.state == branchsummaries.StateRunning && msg.Payload.Role == message.User:
+			case r.state == branchsummaries.StateRunning && isSentMessage(msg.Payload):
 				r.used = true
 			}
 		}
-		if msg.Payload.Role == message.User && msg.Payload.SessionID == b.pending.SessionID {
+		if isSentMessage(msg.Payload) && msg.Payload.SessionID == b.pending.SessionID {
 			b.pending = dialog.BranchSummaryOffer{}
 		}
 	}
@@ -163,6 +163,12 @@ func (b *branchSummaryFeature) observeRewind(done navigateTreeDoneMsg) tea.Cmd {
 		}
 		return branchSummaryOfferMsg{offer: offer}
 	}
+}
+
+// isSentMessage reports whether m is a message the user sent, not a
+// metadata entry such as a branch summary, which is also a user message.
+func isSentMessage(m message.Message) bool {
+	return m.Role == message.User && (m.MessageType == message.MessageTypeMessage || m.MessageType == "")
 }
 
 func sameRewind(a, b dialog.BranchSummaryOffer) bool {

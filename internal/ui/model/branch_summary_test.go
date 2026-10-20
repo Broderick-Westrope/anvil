@@ -400,3 +400,16 @@ func TestBranchSummary_SendSeenBeforeStoredRetiresDiscard(t *testing.T) {
 
 	require.Empty(t, b.f.PaletteEntries())
 }
+
+func TestBranchSummary_TheSummaryItselfDoesNotRetireDiscard(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
+	b.f.Observe(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		ID: "summary-1", SessionID: "sess-1", Role: message.User, MessageType: message.MessageTypeBranchSummary, ParentMessageID: "a1",
+	}})
+	b.event(branchsummaries.StateStored, "summary-1", nil)
+
+	require.Len(t, b.f.PaletteEntries(), 1)
+}
