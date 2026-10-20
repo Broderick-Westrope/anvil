@@ -413,3 +413,19 @@ func TestBranchSummary_TheSummaryItselfDoesNotRetireDiscard(t *testing.T) {
 
 	require.Len(t, b.f.PaletteEntries(), 1)
 }
+
+func TestBranchSummary_HoldsMCPTogglesWhileRunning(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	toggle := dialog.ActionToggleLazyMCP{ServerName: "linear", Enabled: true}
+
+	_, claimed := b.f.HandleAction(toggle)
+	require.False(t, claimed, "toggles pass through when no summary runs")
+
+	b.runPicked()
+	cmd, claimed := b.f.HandleAction(toggle)
+	require.True(t, claimed, "a toggle would move the leaf off the summary's target")
+	infos := b.run(cmd)
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
+}

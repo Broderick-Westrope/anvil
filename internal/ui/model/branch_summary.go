@@ -269,6 +269,13 @@ func (b *branchSummaryFeature) HandleAction(action dialog.Action) (tea.Cmd, bool
 			return nil, true
 		}
 		return b.start(action), true
+	case dialog.ActionToggleLazyMCP:
+		// A toggle is stored as a message under the leaf, which would move
+		// the leaf off the target the running summary is stored under.
+		if b.Busy(b.host.SessionID()) {
+			return util.ReportWarn("Wait for the branch summary, or cancel it, before toggling MCP servers."), true
+		}
+		return nil, false
 	case actionBranchSummaryCancel:
 		b.host.Dialogs().CloseDialog(dialog.CommandsID)
 		return b.Cancel(b.host.SessionID()), true
