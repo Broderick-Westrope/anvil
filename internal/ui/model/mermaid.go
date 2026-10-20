@@ -403,7 +403,7 @@ func (f *mermaidFeature) Observe(msg tea.Msg) tea.Cmd {
 			// Images for the old cells or background would draw wrong;
 			// results still rendering for them are dropped when they
 			// arrive, as their entries are gone.
-			cmds = append(cmds, f.forgetAll())
+			cmds = append(cmds, f.forgetWhere(func(diagramKey) bool { return true }))
 		}
 		if f.drawn.usable() || now.usable() {
 			// Placeholders for forgotten images, or code blocks that
@@ -556,11 +556,6 @@ func (f *mermaidFeature) forgetKind(kind diagramKind) tea.Cmd {
 	return f.forgetWhere(func(key diagramKey) bool { return key.kind == kind })
 }
 
-// forgetAll drops every diagram.
-func (f *mermaidFeature) forgetAll() tea.Cmd {
-	return f.forgetWhere(func(diagramKey) bool { return true })
-}
-
 func (f *mermaidFeature) forgetWhere(match func(diagramKey) bool) tea.Cmd {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -570,7 +565,7 @@ func (f *mermaidFeature) forgetWhere(match func(diagramKey) bool) tea.Cmd {
 			keys = append(keys, key)
 		}
 	}
-	slices.SortFunc(keys, func(a, b diagramKey) int { return cmp.Compare(a.hash, b.hash) })
+	slices.SortFunc(keys, func(a, b diagramKey) int { return strings.Compare(a.id(), b.id()) })
 	var cmds []tea.Cmd
 	for _, key := range keys {
 		cmds = append(cmds, f.forgetLocked(key))

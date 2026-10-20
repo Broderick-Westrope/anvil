@@ -752,11 +752,7 @@ func (m *Chat) RemoveMessage(id string) {
 	}
 
 	// Rebuild index map for all items after the removed one
-	for i := idx; i < m.list.Len(); i++ {
-		if item, ok := m.list.ItemAt(i).(chat.MessageItem); ok {
-			m.idInxMap[item.ID()] = i
-		}
-	}
+	m.reindexFrom(idx)
 
 	// Clean up any paused animations for this message
 	delete(m.pausedAnimations, id)
