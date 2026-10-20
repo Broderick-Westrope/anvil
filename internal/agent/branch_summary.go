@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/Broderick-Westrope/anvil/internal/agent/branchsummary"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -54,9 +56,10 @@ type BranchSummaryRequest struct {
 	TargetID string
 	Agent    string
 	Focus    string
-	// OnSession, when set, is called with the summarizer's child session
-	// ID once it exists.
-	OnSession func(childSessionID string)
+	// ChildSessionID, when set, is the ID of the session the summarizer
+	// runs in, so a caller can point at it before the summary finishes.
+	// Otherwise one is generated.
+	ChildSessionID string
 }
 
 // BranchSummarizers lists the agents that can summarize branches: marked
@@ -124,7 +127,7 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		return message.Message{}, err
 	}
 
-	var childID string
+	childID := cmp.Or(req.ChildSessionID, uuid.NewString())
 	// The summarizer acts for the root session, as a task subagent would.
 	runCtx := context.WithValue(ctx, tools.RootSessionIDContextKey, req.SessionID)
 	out, err := c.RunWorkflowAgent(runCtx, WorkflowAgentCall{
@@ -132,12 +135,7 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		Agent:           req.Agent,
 		Prompt:          branchsummary.Prompt(rng, ledger, req.Focus, budget),
 		Title:           "Branch summary",
-		OnSession: func(id string) {
-			childID = id
-			if req.OnSession != nil {
-				req.OnSession(id)
-			}
-		},
+		SessionID:       childID,
 	})
 	if err == nil && strings.TrimSpace(out.Text) == "" {
 		err = errors.New("summarizer returned no summary")

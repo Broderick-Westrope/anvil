@@ -126,9 +126,9 @@ func TestSummarizeBranch_StaleCompletionStoresNothing(t *testing.T) {
 		require.NoError(t, f.env.sessions.MoveLeaf(ctx, f.sessionID, f.a2))
 		return agentResultWithText("summary"), nil
 	})
-	var child string
+	child := "summary-child"
 	req := f.request()
-	req.OnSession = func(id string) { child = id }
+	req.ChildSessionID = child
 
 	_, err := f.c.SummarizeBranch(t.Context(), req)
 
@@ -148,9 +148,9 @@ func TestSummarizeBranch_CancelStoresNothing(t *testing.T) {
 		cancel()
 		return nil, ctx.Err()
 	})
-	var child string
+	child := "summary-child"
 	req := f.request()
-	req.OnSession = func(id string) { child = id }
+	req.ChildSessionID = child
 
 	_, err := f.c.SummarizeBranch(ctx, req)
 
