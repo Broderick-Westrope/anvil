@@ -162,27 +162,29 @@ Out:
 
 **3. Execution entry point and identity.**
 
-- **A new coordinator operation,** `SummarizeBranch(ctx, req)`, exposed
-  through `workspace`, runs the summarizer through the
-  `RunWorkflowAgent`/`buildWorkflowAgent` child-session path.
-- **The app owns the run's lifetime,** not a UI goroutine:
-  - Switching sessions doesn't cancel it.
+- **A new coordinator operation,** `SummarizeBranch(ctx, req)`, runs the
+  summarizer through the `RunWorkflowAgent` child-session path. It
+  refuses any agent that isn't marked `branch_summarizer`.
+- **An app service owns runs** (`internal/app/branchsummaries`), at most
+  one per root session, and publishes running, stored, failed, cancelled
+  and stale events. The TUI starts and cancels runs through the
+  workspace and renders only those events.
+  - Switching sessions doesn't cancel a run.
   - Quitting Anvil cancels it.
 - **Root identity.** The child session's parent is the root session, and
   its root identity (`ANVIL_ROOT_SESSION_ID`) is set explicitly to the
   root session rather than defaulting to itself.
-- **Streaming and cancel.** The child session's streaming events drive
-  the display, and the operation exposes a cancel.
 
 **4. Ordering: a hold on the root session.**
 
 `RunWorkflowAgent` admits work under the child session ID, so on its own
-it doesn't stop a root-session send from overtaking the summary. The
-operation therefore uses `Coordinator.Hold` on the root session:
+it doesn't stop a root-session send from overtaking the summary. The root
+session is therefore reserved and held:
 
-- **The hold is acquired before the summary starts** and released only
-  after the `branch_summary` message is persisted, or after cancel,
-  failure or discard.
+- **The service reserves the session synchronously when a run starts**
+  (`Coordinator.ReserveSession`), before the TUI can send anything, and
+  `SummarizeBranch` then holds it, waiting out work already in flight.
+  The reservation is released after the run's outcome is published.
 - **Sends during the hold queue** behind it, shown as queued in the
   composer like any queued message.
 - **The ordering follows from the hold.**
@@ -201,25 +203,18 @@ operation therefore uses `Coordinator.Hold` on the root session:
 - **When it starts.** The existing `cancelThenNavigate` flow cancels busy
   work, waits for it to settle and moves the leaf. The operation starts
   only after that, so the range can't change under it.
-- **A rewind while a summary is running** (nested rewind) first cancels
-  and discards the running summary, then proceeds as a fresh rewind. The
-  new range is computed from the leaf after that cleanup.
-  - The root hold is not released in between. It transfers from the
-    cancelled operation to the navigation, and then to the replacement
-    summary if one is chosen. Queued work therefore can't start in the
-    gap.
-  - Messages queued behind the cancelled summary are cleared, as
-    `AgentCancel` already clears a session's queue when a busy rewind
-    cancels it, so nothing runs against a range the user has just
-    abandoned. Their text is restored to the composer rather than lost.
-    The hold is released only when the new rewind settles
-    (with "No summary", or after the replacement summary).
-- **Stale completions are rejected.** On completion, the operation
-  persists the message only if it is still the session's current
-  operation and the session's leaf still equals the frozen target.
-  Otherwise it discards its output and child session.
-- **Navigation and finalisation are serialised** per session, so a
-  completion can't advance a leaf the user has just moved.
+- **A rewind while a summary is running** (nested rewind) is refused with
+  a warning; Esc cancels the summary first. This keeps queued work from
+  running against an abandoned range without transferring the hold
+  across navigation.
+- **Stale completions are rejected.** The summary is stored with
+  `CreateAtLeaf(target)`, which checks the session's leaf in the same
+  transaction as the insert. If the leaf moved, nothing is stored and the
+  child session is deleted.
+- **Metadata entries can't route around a summary.** MCP toggles, model
+  and reasoning changes are refused while a summary runs, and every
+  metadata entry is parented on the stored leaf (`AppendToLeaf`), not the
+  UI's cached one.
 
 **6. Cancel, discard, failure, quit.**
 
@@ -227,26 +222,24 @@ operation therefore uses `Coordinator.Hold` on the root session:
   - The `branch_summary` message is created only on success.
   - Output streams from the child session in the meantime.
   - So there is nothing in the main tree to roll back.
-- **Cancel (Esc or Ctrl+C on the summary item):** stop the child run,
-  delete the child session, release the hold, keep the rewind.
-- **Discard (key or palette action, before send):**
+- **Cancel (Esc, Ctrl+C on an empty composer, or the palette):** stop
+  the child run, delete the child session, release the reservation, keep
+  the rewind.
+- **Discard (palette action, before send):**
   - Delete the `branch_summary` message and its child session.
-  - Move the leaf back to the target.
+  - If the summary is the leaf, move the leaf back to the target.
   - It is allowed only while the summary has no children, so it is
     disabled once a message has been sent after it.
-  - **It can't race an accepted send.** Discard reacquires the root hold
-    and waits for in-flight work. A send that has started may already
-    have read the leaf but not yet persisted its message. Then, in one
-    step serialised with navigation, discard checks that the summary is
-    still the session leaf and has no children. If either check fails,
-    discard is refused (the summary is already in use) and the hold is
-    released.
-- **Failure (provider error, empty output):**
-  - The item shows the error with retry and dismiss.
-  - Dismiss deletes the child session.
-  - The hold is released when the error appears, so the user is never
-    blocked.
-- **"Return to pre-branch" before send** cancels or discards, as above.
+  - **It can't race an accepted send.** Discard holds the root session,
+    waiting for in-flight work, then calls `DeleteChildless`, which
+    checks for children, moves the leaf and deletes in one transaction.
+    If the summary has children, discard is refused.
+- **Failure (provider error, empty output, oversized prompt):** the panel
+  shows the error and the palette offers dismiss. There is no retry. The
+  child session is deleted and the reservation released when the run
+  ends.
+- **"Return to pre-branch" before send** discards a stored summary. While
+  a summary runs, Esc first cancels it and a second Esc returns.
 - **Quit or crash mid-summary:** the run is lost. Its child session may
   remain as an orphaned subagent session with partial output, and no
   `branch_summary` exists. This is intentional and documented, and
@@ -265,21 +258,18 @@ operation therefore uses `Coordinator.Hold` on the root session:
 - **Delegated subagents.** A `task` call in the range contributes its
   result text. Its child session is traversed for the ledger only (see
   below), not serialised in full.
-- **Total budget accounting.** The budget is measured against the
-  summarizer model's context window and covers the fully assembled
-  request:
-  - The agent's system prompt.
-  - Tool schemas and MCP instructions for the tools the agent has.
-  - The task framing and the focus text.
-  - The ledger and the in-range summaries.
-  - The messages.
-  - Output headroom, plus the expected tool-loop growth if the agent has
-    tools.
+- **Total budget accounting.** The budget is the summarizer model's
+  context window minus:
+  - its output tokens;
+  - the agent's measured request overhead
+    (`SessionAgent.RequestOverhead`): its system prompt, the MCP
+    instructions a run adds, and the schemas of the tools its model sees;
+  - one eighth of the window for the tool loop, if the agent has tools.
 
-  If the fixed overhead alone (system prompt, tools, framing and output
-  headroom) exceeds the window, nothing is sent and the operation fails
-  with a message naming the summarizer. Otherwise, overflow is handled in
-  this order:
+  Tokens are estimated at a conservative three characters each. If less
+  than 4k tokens remain, nothing is sent and the operation fails with a
+  message naming the summarizer. Otherwise, overflow is handled in this
+  order:
   1. The system prompt, framing and focus text are always included. Focus
      text is capped at 2k characters.
   2. The ledger is included, with a cap per list. The overflow is written
@@ -297,16 +287,17 @@ operation therefore uses `Coordinator.Hold` on the root session:
   range and in delegated child sessions spawned by in-range `task` calls,
   traversed recursively.
 - **Each record holds:**
-  - The call ID and session.
-  - The working directory, for bash.
+  - The command, redacted.
+  - The directory it acted in: its `git -C` directory, or the bash
+    working directory.
   - Its status: succeeded, failed, denied, or unknown (no result, or a
     background job that hasn't completed).
   - The evidence: the paths, SHAs and PR URLs parsed from the command and
     its output.
 - **Contents:**
-  - **File operations.** Paths from `edit`, `multiedit` and `write`, split
-    into modified (succeeded) and attempted-but-failed; plus files read
-    and not modified.
+  - **File operations.** Paths from successful `edit`, `multiedit` and
+    `write` calls, plus files read and not modified. Failed edits are
+    left out.
   - **State-changing commands, in chronological order:** `git commit`,
     `push`, `merge`, `rebase`, `reset`, `checkout -b`; `gh pr
     create`/`edit`/`merge`/`comment`; `wtp add`/`remove`. The events are
@@ -320,8 +311,9 @@ operation therefore uses `Coordinator.Hold` on the root session:
   - The appended lists are capped (for example 50 entries each, then
     "+N more"), so a recursive ledger can't blow out the resumed root's
     context.
-  - The full structured ledger stays on `BranchSummaryContent` and is
-    shown on drill-in.
+  - The structured ledger stays on `BranchSummaryContent` for later
+    summaries to carry forward, capped at the newest 200 commands and
+    500 entries per file list.
   - The final `Summary` text, appended lists included, also has a hard
     character cap. Any output beyond it is truncated with a marker.
 - **Ledger, not truth.** The prompt tells the summarizer the ledger
@@ -372,13 +364,12 @@ operation therefore uses `Coordinator.Hold` on the root session:
 
 **11. Display.**
 
-- **Before completion,** a collapsible item above the composer streams
-  the summarizer's output. It can be drilled into like a task subagent
-  and shows cancel.
-- **After completion,** the item shows the finished summary with discard
-  (while the summary has no children).
-- **After send,** it renders in the chat as a branch-summary item that
-  can be drilled into.
+- **While it runs,** a one-line panel above the composer names the
+  summarizer and offers cancel. The output doesn't stream there.
+- **Once stored,** the summary renders in the chat as a collapsible
+  branch-summary item (four lines until expanded). Clicking it, or `→`
+  or `l`, drills into the summarizer's session. The palette offers
+  discard while the summary has no children.
 
 **12. Built-in prompt.**
 
@@ -442,12 +433,11 @@ rebuilt:
 - **The ledger must understand `git -C <dir> …`,** the usual form in
   worktree workflows. Every serialised section, and the stored summary
   as a whole, has a hard size cap.
-- **Nested rewinds are refused, not replaced.**
-  - A rewind while a summary runs shows a warning, and Esc cancels the
-    summary.
-  - This keeps queued work from running against an abandoned range,
-    without the hold-transfer plumbing in decision 5. That is a
-    deliberate simplification of decision 5.
+- **Nested rewinds are refused, not replaced** (decision 5). A rewind
+  while a summary runs shows a warning, and Esc cancels the summary.
+  This keeps queued work from running against an abandoned range
+  without transferring the hold across navigation, which the original
+  design called for.
 
 **Success Criteria:**
 
@@ -468,23 +458,22 @@ rebuilt:
 - [ ] **Cancel and failure.** Cancelling or failing mid-summary releases
       the hold. A queued message runs parented to the target, and no
       `branch_summary` exists. Cancel deletes the child session.
-- [ ] **Nested rewind.** A rewind during a running summary cancels and
-      discards it before navigating.
+- [ ] **Nested rewind.** A rewind during a running summary is refused
+      with a warning, and Esc cancels the summary first.
 - [ ] **Stale completion.** A completion that arrives after a rewind, or
       after the leaf moves, persists nothing. A session switch alone does
       not cancel the summary.
 - [ ] **Discard.** Discard before send removes the message and its child
       session and restores the leaf. Discard is unavailable once the
-      summary has children. "Return to pre-branch" before send cancels or
-      discards.
+      summary has children. "Return to pre-branch" before send discards a
+      stored summary.
 - [ ] **Discard against a send.** A send is paused after it reads the
       leaf but before it persists its message. A discard issued at that
       point waits, then is refused, and the persisted chain stays
       target, then summary, then return message.
-- [ ] **Hold across a nested rewind.** The hold transfers across a nested
-      rewind: messages queued behind the cancelled summary never run
-      against the abandoned range, and their text is restored to the
-      composer.
+- [ ] **Metadata during a summary.** MCP toggles and model and reasoning
+      changes are refused while a summary runs, and a metadata entry
+      written with a stale parent is parented on the stored leaf.
 - [ ] **Storage.** The `branch_summary` message records `FromID`,
       `ChildSessionID`, `Agent` and the ledger. It can be drilled into,
       and its exact `Summary` text (including the file lists) appears in
@@ -504,12 +493,12 @@ rebuilt:
       session, the ledger records each with the correct status. It
       orders git/gh/wtp events chronologically and carries forward nested
       ledgers.
-- [ ] **Budget.** The assembled summarizer request, including tool
-      schemas and MCP instructions, stays within the window under the
-      overflow priorities. It records omission markers, labels compaction
-      provenance, and is byte-identical across runs. If the fixed
-      overhead exceeds the window, nothing is sent. The persisted
-      `Summary` respects its list and character caps.
+- [ ] **Budget.** The summarizer's budget subtracts its measured prompt
+      and tool schemas; the serialised branch stays within it under the
+      overflow priorities, records omission markers, labels compaction
+      provenance, and is byte-identical across runs. If too little room
+      is left, nothing is sent. The persisted `Summary` respects its list
+      and character caps.
 - [ ] **Redaction.** Synthetic secrets placed in commands, URLs, tool
       results, nested summaries and ledger entries are absent from both
       the summarizer input and the rendered output.
