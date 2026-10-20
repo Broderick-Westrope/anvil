@@ -99,12 +99,10 @@ Out:
 - **Input stability.** Serialisation and the ledger iterate in a stable
   order (sorted keys, chronological events), and the same input gives the
   same bytes.
-- **Summarizers run with normal subagent permissions.** A permission
-  prompt may appear while the user types, as with any background
-  subagent.
-- **Cancelling or discarding never undoes tool side effects** the
-  summarizer was permitted to make. Background jobs it leaves running are
-  handed to the root session, as `inChildSession` already does.
+- **Summarizers run with normal subagent permissions,** limited to the
+  read-only tools `view`, `grep`, `glob` and `ls` (decision 2). They
+  have no bash, so they start no background jobs, and their reads can't
+  change anything.
 
 **Design Decisions:**
 
@@ -177,8 +175,9 @@ Out:
   - Switching sessions doesn't cancel a run.
   - Quitting Anvil cancels it.
 - **Root identity.** The child session's parent is the root session, and
-  its root identity (`ANVIL_ROOT_SESSION_ID`) is set explicitly to the
-  root session rather than defaulting to itself.
+  its root identity is set explicitly to the root session rather than
+  defaulting to itself, so costs and drill-in attach to the conversation
+  the summary is for.
 
 **4. Ordering: a hold on the root session.**
 
@@ -216,10 +215,11 @@ session is therefore reserved and held:
   `CreateAtLeaf(target)`, which checks the session's leaf in the same
   transaction as the insert. If the leaf moved, nothing is stored and the
   child session is deleted.
-- **Metadata entries can't route around a summary.** MCP toggles, model
-  and reasoning changes are refused while a summary runs, and every
-  metadata entry is parented on the stored leaf (`AppendToLeaf`), not the
-  UI's cached one.
+- **Metadata entries can't route around a summary.** While a summary
+  runs, MCP toggles are refused, and model and reasoning changes take
+  effect but skip their metadata entry (as upstream already does while an
+  agent is busy). Every metadata entry is parented on the stored leaf
+  (`AppendToLeaf`), not the UI's cached one.
 
 **6. Cancel, discard, failure, quit.**
 
@@ -485,9 +485,10 @@ rebuilt:
       leaf but before it persists its message. A discard issued at that
       point waits, then is refused, and the persisted chain stays
       target, then summary, then return message.
-- [ ] **Metadata during a summary.** MCP toggles and model and reasoning
-      changes are refused while a summary runs, and a metadata entry
-      written with a stale parent is parented on the stored leaf.
+- [ ] **Metadata during a summary.** MCP toggles are refused and model
+      and reasoning changes write no metadata entry while a summary runs,
+      including before its summarizer starts; a metadata entry written
+      with a stale parent is parented on the stored leaf.
 - [ ] **Storage.** The `branch_summary` message records `FromID`,
       `ChildSessionID`, `Agent` and the ledger. It can be drilled into,
       and its exact `Summary` text (including the file lists) appears in
