@@ -34,9 +34,8 @@ is Anvil's old `measure.go` generalised.
   Pele's MIT notice. goja stays in `go.mod` for workflows.
 - The idle teardown stays, for resvg. The renderer now holds only the
   parsed fonts, whose data stays in the binary.
-- pele-go isn't published yet, so `go.mod` points at a local checkout with
-  a `replace` directive. This is temporary: replace it with a tagged
-  version before this merges, or CI can't build it.
+- `go.mod` requires pele-go at a pseudo-version of its `main` branch, as
+  pele-go has no tagged release yet. Move to a tag once one exists.
 
 ### Upgrading
 
