@@ -155,6 +155,22 @@ onto main's new code, not conflict-picked.
 | gocognit cap (main) | Five functions were over 30. Fixed without exclusions: `preparePrompt` (`ccd50e0c`), `SetProviderAPIKey` (`fdcc5ac9`, per-kind credential types), `Models.HandleMsg` (`a1da8c37`), `OAuth.HandleMsg` (`50012d48`), `handleSelectModel` (`2169ec31`, shared `writeMetadataEntry` with tests). |
 | VCR cassettes | Main's recordings plus A5's bash description sentence; all 13 replay. |
 
+### Third merge (2026-10-21, `94302b1a`)
+
+`origin/main` #116, #119, #121–#123 (tool-call timer, inline Mermaid
+diagrams, resvg sharing, ADR 0005). Build, `go test ./...` and `task lint`
+(0 issues) pass.
+
+| Area | Outcome |
+|---|---|
+| `ExtractMessageItems` | Kept our `ToolItemOptions` (F6) and added main's `DiagramRenderer` as a fifth argument. `SetToolCallStartedAt` became main's `SetToolMessageCreatedAt`. Main's per-item `StartAnimation` loops were dropped because C6's shared clock drives every spinner. |
+| A8 + tool timer | Main flushes immediately when a tool call's `StartedAt` changes. A8's `flushBaseline` now keeps `finished` and `startedAt` for each call (`toolCallBaseline`), not just `finished`. |
+| Session message events | C3's `applySessionMessageEvent` also starts main's tool-start elapsed tick on updates. |
+| D9 + diagrams | `List` keeps both `ItemTopAboveView` (D9) and main's `ScrollPosition`. `Chat.RemoveMessage` keeps main's `reindexFrom` and C6's `frozenSpinners` cleanup. |
+| F12 + diagrams | `tui.mouse` and `tui.diagrams` both kept (config, schema, anvil-config skill). |
+| Tests | Main's `TestToolTimerStart` session-load case now passes the transcript in `loadSessionMsg.messages` (C3). Main's CLI transcript test was renamed `TestOutputSessionHumanKeepsMermaidAsCodeBlock`, because the branch already has a test with the same name. |
+| VCR cassettes | Main's Mermaid prompt sentence was inserted into our recordings, with `content_length` adjusted by the same number of bytes. |
+
 ## Plan
 
 Every item has a decision. The work was done on this branch item by item, so
