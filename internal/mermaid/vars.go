@@ -9,31 +9,6 @@ import (
 // "pele-bg" -> "#1a1b26".
 type Theme map[string]string
 
-// TokyoNight is Anvil's default palette expressed as Pele variables.
-var TokyoNight = Theme{
-	"pele-bg":           "#1a1b26",
-	"pele-fg":           "#c0caf5",
-	"pele-muted":        "#565f89",
-	"pele-line":         "#a9b1d6",
-	"pele-surface":      "#292e42",
-	"pele-surface-alt":  "#24283b",
-	"pele-border":       "#bb9af7",
-	"pele-accent":       "#7aa2f7",
-	"pele-critical":     "#f7768e",
-	"pele-error":        "#db4b4b",
-	"pele-series-1":     "#7aa2f7",
-	"pele-series-2":     "#ff9e64",
-	"pele-series-3":     "#9ece6a",
-	"pele-series-4":     "#f7768e",
-	"pele-series-5":     "#73daca",
-	"pele-series-6":     "#e0af68",
-	"pele-series-7":     "#bb9af7",
-	"pele-series-8":     "#2ac3de",
-	"pele-font":         "sans-serif",
-	"pele-font-mono":    "monospace",
-	"pele-title-weight": "bold",
-}
-
 var customPropertyDecl = regexp.MustCompile(`--([A-Za-z0-9_-]+)\s*:\s*`)
 
 // ResolveVars substitutes every CSS var() in svg, because resvg cannot

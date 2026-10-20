@@ -218,17 +218,36 @@ func (f *mermaidFeature) FullDiagram(source string, width int) (string, bool) {
 	return f.diagram(source, width, diagramFull)
 }
 
-// theme is the palette diagrams draw with. pele-bg fills the boxes behind
-// edge labels, so it has to be the colour around the transparent image.
+// theme is the palette diagrams draw with, from the styles. pele-bg fills
+// the boxes behind edge labels, so it has to be the colour around the
+// transparent image: Anvil's background, the terminal's own when the TUI
+// is transparent, or the theme's until the terminal reports it.
 func (f *mermaidFeature) theme() mermaid.Theme {
-	bg := hexColor(f.host.AppBackground())
-	if bg == "" {
-		bg = f.termBg
+	p := f.com.Styles.Diagram
+	bg := cmp.Or(hexColor(f.host.AppBackground()), f.termBg, hexColor(f.com.Styles.Background))
+	return mermaid.Theme{
+		"pele-bg":           bg,
+		"pele-fg":           hexColor(p.Fg),
+		"pele-muted":        hexColor(p.Muted),
+		"pele-line":         hexColor(p.Line),
+		"pele-surface":      hexColor(p.Surface),
+		"pele-surface-alt":  hexColor(p.SurfaceAlt),
+		"pele-border":       hexColor(p.Border),
+		"pele-accent":       hexColor(p.Accent),
+		"pele-critical":     hexColor(p.Critical),
+		"pele-error":        hexColor(p.Error),
+		"pele-series-1":     hexColor(p.Series[0]),
+		"pele-series-2":     hexColor(p.Series[1]),
+		"pele-series-3":     hexColor(p.Series[2]),
+		"pele-series-4":     hexColor(p.Series[3]),
+		"pele-series-5":     hexColor(p.Series[4]),
+		"pele-series-6":     hexColor(p.Series[5]),
+		"pele-series-7":     hexColor(p.Series[6]),
+		"pele-series-8":     hexColor(p.Series[7]),
+		"pele-font":         "sans-serif",
+		"pele-font-mono":    "monospace",
+		"pele-title-weight": "bold",
 	}
-	if bg == "" {
-		return mermaid.TokyoNight
-	}
-	return mermaid.TokyoNight.With("pele-bg", bg)
 }
 
 func hexColor(c color.Color) string {

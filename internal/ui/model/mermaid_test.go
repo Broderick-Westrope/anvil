@@ -220,12 +220,12 @@ func TestMermaidFeatureThemeUsesTheBackgroundBehindTheImage(t *testing.T) {
 	require.Equal(t, "#0c0e14", f.theme()["pele-bg"], "Anvil's own background")
 
 	host.bg = nil
-	require.Equal(t, mermaid.TokyoNight["pele-bg"], f.theme()["pele-bg"], "transparent TUI before the terminal answers")
+	require.Equal(t, "#0c0e14", f.theme()["pele-bg"], "transparent TUI before the terminal answers: the theme's background")
 	f.Observe(tea.BackgroundColorMsg{Color: color.RGBA{R: 0x05, G: 0x00, B: 0x14, A: 0xff}})
 	require.Equal(t, "#050014", f.theme()["pele-bg"], "the terminal's background")
 
 	src := "flowchart LR\n A --> B\n"
-	require.NotEqual(t, sourceHash(src, mermaid.TokyoNight), sourceHash(src, f.theme()),
+	require.NotEqual(t, sourceHash(src, f.theme().With("pele-bg", "#0c0e14")), sourceHash(src, f.theme()),
 		"a new background renders the diagram again")
 }
 
@@ -308,4 +308,46 @@ func TestMermaidFeatureExportsForTheBrowser(t *testing.T) {
 			require.Empty(t, f.entries, "exporting caches nothing")
 		})
 	}
+}
+
+func TestMermaidFeatureThemeIsTheTokyoNightPalette(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{bg: color.RGBA{R: 0x0c, G: 0x0e, B: 0x14, A: 0xff}}
+	f := newTestMermaidFeature(t, host, kittyCaps())
+	require.Equal(t, mermaid.Theme{
+		"pele-bg":           "#0c0e14",
+		"pele-fg":           "#c0caf5",
+		"pele-muted":        "#565f89",
+		"pele-line":         "#a9b1d6",
+		"pele-surface":      "#292e42",
+		"pele-surface-alt":  "#1a1b26",
+		"pele-border":       "#bb9af7",
+		"pele-accent":       "#7aa2f7",
+		"pele-critical":     "#f7768e",
+		"pele-error":        "#db4b4b",
+		"pele-series-1":     "#7aa2f7",
+		"pele-series-2":     "#ff9e64",
+		"pele-series-3":     "#9ece6a",
+		"pele-series-4":     "#f7768e",
+		"pele-series-5":     "#73daca",
+		"pele-series-6":     "#e0af68",
+		"pele-series-7":     "#bb9af7",
+		"pele-series-8":     "#2ac3de",
+		"pele-font":         "sans-serif",
+		"pele-font-mono":    "monospace",
+		"pele-title-weight": "bold",
+	}, f.theme())
+}
+
+func TestMermaidFeatureThemeFollowsTheStyles(t *testing.T) {
+	t.Parallel()
+
+	st := uistyles.TokyoNight()
+	st.Diagram.Accent = color.RGBA{R: 1, G: 2, B: 3, A: 0xff}
+	st.Diagram.Series[7] = color.RGBA{R: 4, G: 5, B: 6, A: 0xff}
+	f := newMermaidFeature(&fakeDiagramHost{}, kittyCaps(), &common.Common{Styles: &st})
+	theme := f.theme()
+	require.Equal(t, "#010203", theme["pele-accent"])
+	require.Equal(t, "#040506", theme["pele-series-8"])
 }

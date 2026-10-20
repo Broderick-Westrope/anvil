@@ -17,10 +17,10 @@ func TestHTMLDocument(t *testing.T) {
 	res, err := r.Render(spikeDiagrams["nested"], Options{})
 	require.NoError(t, err)
 
-	doc, err := HTMLDocument(res, TokyoNight, "Diagram <1>")
+	doc, err := HTMLDocument(res, testTheme, "Diagram <1>")
 	require.NoError(t, err)
 	require.Contains(t, doc, "<title>Diagram &lt;1&gt;</title>")
-	require.Contains(t, doc, "background:"+TokyoNight["pele-bg"])
+	require.Contains(t, doc, "background:"+testTheme["pele-bg"])
 	require.Equal(t, len(fontFaces), strings.Count(doc, "@font-face"))
 	require.Contains(t, doc, `<svg xmlns="http://www.w3.org/2000/svg" class="pele`)
 	require.NotContains(t, doc, "var(--pele-", "theme colours are resolved")
