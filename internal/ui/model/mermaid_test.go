@@ -602,14 +602,18 @@ func TestMermaidFeatureExportPrunesOldPages(t *testing.T) {
 	require.FileExists(t, exported.path)
 }
 
-func TestDiagramExportDirIsPerUser(t *testing.T) {
+func TestMermaidFeatureExportsToTheUsersCacheDir(t *testing.T) {
 	t.Parallel()
 
 	cache, err := os.UserCacheDir()
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(cache, "anvil", "diagrams"), diagramExportDir())
+	st := uistyles.TokyoNight()
+	f := newMermaidFeature(&fakeDiagramHost{}, kittyCaps(), &common.Common{Styles: &st})
+	require.Equal(t, filepath.Join(cache, "anvil", "diagrams"), f.exportDir)
 }
 
+// TestFileURL tests the URL directly, since the path that uses it opens the
+// user's browser.
 func TestFileURL(t *testing.T) {
 	t.Parallel()
 

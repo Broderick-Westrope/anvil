@@ -11,76 +11,63 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSplitMermaid(t *testing.T) {
-	t.Parallel()
-
-	content := "Intro\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n```go\n```mermaid inside go\n```\n\nOutro\n\n```mermaid\nunclosed"
-	segs := splitMermaid(content)
-	require.Equal(t, []markdownSegment{
-		{text: "Intro\n\n"},
-		{text: "flowchart LR\n  A --> B\n", mermaid: true},
-		{text: "\n```go\n```mermaid inside go\n```\n\nOutro\n\n```mermaid\nunclosed"},
-	}, segs)
-}
-
-func TestSplitMermaidLeavesExamplesInsideOtherFences(t *testing.T) {
-	t.Parallel()
-
-	for name, content := range map[string]string{
-		"tilde fence":          "~~~markdown\n```mermaid\nA --> B\n```\n~~~\n",
-		"longer backtick":      "````markdown\n```mermaid\nA --> B\n```\n````\n",
-		"longer, then outro":   "````md\n```mermaid\nA\n```\n````\n\nOutro\n",
-		"info string not ours": "```mermaidjs\nA\n```\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, []markdownSegment{{text: content}}, splitMermaid(content))
-		})
+// segmentKeys splits content as a finished message and returns each node's
+// segment key, or nil when the message stays one node.
+func segmentKeys(content string) []string {
+	sty := styles.TokyoNight()
+	items := NewAssistantMessageItems(&sty, finishedMessage("m", message.TextContent{Text: content}), fakeDiagrams{})
+	if len(items) == 1 && items[0].(SegmentKeyed).SegmentKey() == "" {
+		return nil
 	}
+	keys := make([]string, len(items))
+	for i, item := range items {
+		keys[i] = item.(SegmentKeyed).SegmentKey()
+	}
+	return keys
 }
 
-func TestSplitMermaidFenceVariants(t *testing.T) {
+func TestSplittingAtMermaidFences(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
 		content string
-		want    []markdownSegment
+		want    []string
 	}{
+		"other fences and an unclosed one stay text": {
+			content: "Intro\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n```go\n```mermaid inside go\n```\n\nOutro\n\n```mermaid\nunclosed",
+			want: []string{
+				"text:Intro\n\n",
+				"diagram:flowchart LR\n  A --> B\n",
+				"text:\n```go\n```mermaid inside go\n```\n\nOutro\n\n```mermaid\nunclosed",
+			},
+		},
 		"tilde mermaid": {
 			content: "~~~mermaid\nA\n~~~\n",
-			want:    []markdownSegment{{text: "A\n", mermaid: true}},
+			want:    []string{"diagram:A\n"},
 		},
 		"longer fence holds a shorter one": {
 			content: "````mermaid\nA\n```\nB\n````\n",
-			want:    []markdownSegment{{text: "A\n```\nB\n", mermaid: true}},
+			want:    []string{"diagram:A\n```\nB\n"},
 		},
 		"other fence char does not close": {
 			content: "```mermaid\nA\n~~~\n```\n",
-			want:    []markdownSegment{{text: "A\n~~~\n", mermaid: true}},
+			want:    []string{"diagram:A\n~~~\n"},
 		},
 		"info string with attributes": {
 			content: "```mermaid title\nA\n```\n",
-			want:    []markdownSegment{{text: "A\n", mermaid: true}},
+			want:    []string{"diagram:A\n"},
 		},
+		"example in a tilde fence":       {content: "~~~markdown\n```mermaid\nA --> B\n```\n~~~\n"},
+		"example in a longer fence":      {content: "````markdown\n```mermaid\nA --> B\n```\n````\n"},
+		"example in a longer, then text": {content: "````md\n```mermaid\nA\n```\n````\n\nOutro\n"},
+		"info string not ours":           {content: "```mermaidjs\nA\n```\n"},
+		"in a list item":                 {content: "1. Step\n\n   ```mermaid\n   A --> B\n   ```\n\n2. Next\n"},
+		"in a blockquote":                {content: "> ```mermaid\n> A --> B\n> ```\n"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			require.Equal(t, tc.want, splitMermaid(tc.content))
-		})
-	}
-}
-
-func TestSplitMermaidLeavesNestedFences(t *testing.T) {
-	t.Parallel()
-
-	for name, content := range map[string]string{
-		"list item":  "1. Step\n\n   ```mermaid\n   A --> B\n   ```\n\n2. Next\n",
-		"blockquote": "> ```mermaid\n> A --> B\n> ```\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, []markdownSegment{{text: content}}, splitMermaid(content))
+			require.Equal(t, tc.want, segmentKeys(tc.content))
 		})
 	}
 }
