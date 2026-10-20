@@ -126,17 +126,21 @@ type Workspace interface {
 	AgentQueuedPromptsList(sessionID string) []string
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
-	// AgentSummarizeBranch summarizes the branch the user rewound from and
-	// stores the summary under the rewind target.
-	AgentSummarizeBranch(ctx context.Context, req agent.BranchSummaryRequest) (message.Message, error)
+	// AgentStartBranchSummary starts summarizing the branch the user
+	// rewound from, in the background, and returns the run's ID. Its
+	// progress arrives as branchsummaries events. The session is reserved
+	// before it returns, so messages sent afterwards queue behind it.
+	AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error)
+	// AgentCancelBranchSummary cancels the session's running summary.
+	AgentCancelBranchSummary(sessionID string)
+	// AgentBranchSummaryRunning reports whether the session has a summary
+	// running.
+	AgentBranchSummaryRunning(sessionID string) bool
 	// AgentDiscardBranchSummary deletes an unused branch summary.
 	AgentDiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error
 	// AgentBranchSummarizers lists the agents that can summarize branches,
 	// the built-in first.
 	AgentBranchSummarizers() []string
-	// AgentHold stops new runs from starting in sessionID until release;
-	// messages sent meanwhile queue.
-	AgentHold(ctx context.Context, sessionID string) (release func(), err error)
 	AgentRegenerateTitle(ctx context.Context, sessionID string) error
 	// AgentPause stops new top-level runs from being admitted and waits up
 	// to budget for active ones to finish. On success the caller must call

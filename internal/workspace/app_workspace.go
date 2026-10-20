@@ -224,11 +224,16 @@ func (w *AppWorkspace) AgentSummarize(ctx context.Context, sessionID string) err
 	return w.app.AgentCoordinator.Summarize(ctx, sessionID)
 }
 
-func (w *AppWorkspace) AgentSummarizeBranch(ctx context.Context, req agent.BranchSummaryRequest) (message.Message, error) {
-	if w.app.AgentCoordinator == nil {
-		return message.Message{}, errors.New("agent coordinator not initialized")
-	}
-	return w.app.AgentCoordinator.SummarizeBranch(ctx, req)
+func (w *AppWorkspace) AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error) {
+	return w.app.BranchSummaries.Start(req)
+}
+
+func (w *AppWorkspace) AgentCancelBranchSummary(sessionID string) {
+	w.app.BranchSummaries.Cancel(sessionID)
+}
+
+func (w *AppWorkspace) AgentBranchSummaryRunning(sessionID string) bool {
+	return w.app.BranchSummaries.Running(sessionID)
 }
 
 func (w *AppWorkspace) AgentDiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error {
@@ -243,13 +248,6 @@ func (w *AppWorkspace) AgentBranchSummarizers() []string {
 		return nil
 	}
 	return w.app.AgentCoordinator.BranchSummarizers()
-}
-
-func (w *AppWorkspace) AgentHold(ctx context.Context, sessionID string) (func(), error) {
-	if w.app.AgentCoordinator == nil {
-		return nil, errors.New("agent coordinator not initialized")
-	}
-	return w.app.AgentCoordinator.Hold(ctx, []string{sessionID})
 }
 
 func (w *AppWorkspace) AgentRegenerateTitle(ctx context.Context, sessionID string) error {
