@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -96,10 +97,11 @@ const (
 	peleBaseFontPx       = 16
 	// diagramIdleTimeout is how long the render engines (about 95 MB of
 	// process memory together) stay loaded after the last render.
-	diagramIdleTimeout = 2 * time.Minute
-	// diagramCacheBudget caps the decoded pixels kept for diagrams that
-	// are already in the terminal. Past it, the least recently drawn are
-	// dropped and render again if they scroll back into view.
+	// Reloading them costs about 370 ms.
+	diagramIdleTimeout = 20 * time.Second
+	// diagramCacheBudget caps the pixels of the diagrams held in the
+	// terminal (Anvil keeps none once sent). Past it, the least recently
+	// drawn are deleted and render again if they scroll back into view.
 	diagramCacheBudget = 32 << 20
 )
 
@@ -137,7 +139,7 @@ type diagramEntry struct {
 	// err is why the render failed.
 	err        string
 	cols, rows int
-	// bytes is the decoded image held in the image cache once the
+	// bytes is the size of the image the terminal holds once the
 	// diagram is transmitted.
 	bytes int
 	// lastUsed orders entries for eviction.
@@ -204,6 +206,10 @@ type mermaidFeature struct {
 	idleTimeout time.Duration
 	cacheBudget int
 	exportDir   string
+	// returnMemory hands memory freed by releasing the engines back to
+	// the OS; Go would otherwise keep it, and the process stays at its
+	// peak.
+	returnMemory func()
 	// enginesLoaded reports whether the worker holds the render engines.
 	enginesLoaded atomic.Bool
 	listening     bool
@@ -230,15 +236,16 @@ func (c drawConditions) usable() bool { return c.kitty && c.cellW > 0 && c.cellH
 
 func newMermaidFeature(host diagramHost, caps *common.Capabilities, com *common.Common) *mermaidFeature {
 	return &mermaidFeature{
-		host:        host,
-		caps:        caps,
-		com:         com,
-		entries:     map[diagramKey]*diagramEntry{},
-		requests:    make(chan diagramRequest, 64),
-		results:     make(chan tea.Msg, 64),
-		idleTimeout: diagramIdleTimeout,
-		cacheBudget: diagramCacheBudget,
-		exportDir:   filepath.Join(os.TempDir(), "anvil-diagrams"),
+		host:         host,
+		caps:         caps,
+		com:          com,
+		entries:      map[diagramKey]*diagramEntry{},
+		requests:     make(chan diagramRequest, 64),
+		results:      make(chan tea.Msg, 64),
+		idleTimeout:  diagramIdleTimeout,
+		cacheBudget:  diagramCacheBudget,
+		exportDir:    filepath.Join(os.TempDir(), "anvil-diagrams"),
+		returnMemory: debug.FreeOSMemory,
 	}
 }
 
@@ -436,6 +443,7 @@ func (f *mermaidFeature) work() {
 				engines.close()
 				engines = nil
 				f.enginesLoaded.Store(false)
+				f.returnMemory()
 			}
 		}
 	}

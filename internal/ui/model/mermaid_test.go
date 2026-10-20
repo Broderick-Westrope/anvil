@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -171,13 +172,18 @@ func TestMermaidFeatureReleasesEnginesWhenIdle(t *testing.T) {
 	t.Parallel()
 
 	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	require.Equal(t, 20*time.Second, f.idleTimeout)
 	f.idleTimeout = 50 * time.Millisecond
+	var returned atomic.Int32
+	f.returnMemory = func() { returned.Add(1) }
 	require.False(t, f.enginesLoaded.Load(), "nothing loads before the first diagram")
 
 	f.Diagram("flowchart LR\n A --> B\n", 80)
 	waitReady(t, f)
 	require.True(t, f.enginesLoaded.Load())
 	require.Eventually(t, func() bool { return !f.enginesLoaded.Load() }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return returned.Load() == 1 }, 5*time.Second, 10*time.Millisecond,
+		"the freed memory is handed back to the OS")
 
 	f.Diagram("flowchart LR\n C --> D\n", 80)
 	waitReady(t, f)
