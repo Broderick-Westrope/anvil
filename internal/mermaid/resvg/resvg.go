@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"sync"
 	"time"
 
 	"github.com/tetratelabs/wazero"
@@ -89,11 +90,17 @@ func New(ctx context.Context) (*Engine, error) {
 	return newWithLimits(ctx, defaultLimits)
 }
 
+// newRuntimeMu serialises creating runtimes: wazero v1.12 sets a package
+// global on first use without synchronising it, so two at once race.
+var newRuntimeMu sync.Mutex
+
 func newWithLimits(ctx context.Context, limits renderLimits) (*Engine, error) {
 	cfg := wazero.NewRuntimeConfig().
 		WithMemoryLimitPages(limits.Memory / wasmPageSize).
 		WithCloseOnContextDone(true)
+	newRuntimeMu.Lock()
 	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
+	newRuntimeMu.Unlock()
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
 		_ = rt.Close(ctx)
 		return nil, fmt.Errorf("resvg: wasi: %w", err)

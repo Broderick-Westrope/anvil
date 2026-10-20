@@ -3,9 +3,11 @@ package resvg
 import (
 	"fmt"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,4 +111,19 @@ func TestRenderPastItsDeadlineFailsAndRecovers(t *testing.T) {
 	e.limits.Timeout = defaultLimits.Timeout
 	_, err = e.Render([]byte(rectSVG), 40, 20)
 	require.NoError(t, err, "the next render starts from a fresh instance")
+}
+
+func TestNewIsSafeToCallConcurrently(t *testing.T) {
+	t.Parallel()
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			e, err := New(t.Context())
+			if assert.NoError(t, err) {
+				_ = e.Close()
+			}
+		})
+	}
+	wg.Wait()
 }
